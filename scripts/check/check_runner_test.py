@@ -56,7 +56,8 @@ else:
     environment = {key: value for key, value in os.environ.items()
                    if key not in ('BASH_ENV', 'ENV') and not key.startswith('BASH_FUNC_') and not key.startswith('GIT_')}
     # Discovery follows Git; keep personal and system excludes out of the fixture.
-    environment.update({'GIT_CONFIG_GLOBAL': os.devnull, 'GIT_CONFIG_NOSYSTEM': '1'})
+    # The fixture holds no tooling catalog, so its Python helpers run on this interpreter.
+    environment.update({'GIT_CONFIG_GLOBAL': os.devnull, 'GIT_CONFIG_NOSYSTEM': '1', 'PYTHON': sys.executable})
     subprocess.run(['git', 'init', '-q', str(root)], check=True, env=environment)
     log = root / 'commands.json'
     for prefix, separator in [('/repo/tools/harness/', '/'), ('C:\\repo\\tools\\harness\\', '\\')]:
@@ -187,7 +188,8 @@ if name == 'cargo' and args[0] == 'deny':
                                                f"    output.write(json.dumps(['{name}', *sys.argv[1:]]) + '\\n')\n")
     environment = {key: value for key, value in os.environ.items()
                    if key not in ('BASH_ENV', 'ENV') and not key.startswith(('BASH_FUNC_', 'GIT_'))}
-    environment.update(PATH=f'{binary}:{os.environ["PATH"]}', CHECK_PYTHON=sys.executable,
+    # The fixture holds no tooling catalog, so its Python helpers run on this interpreter.
+    environment.update(PATH=f'{binary}:{os.environ["PATH"]}', PYTHON=sys.executable,
                        CHECK_LOG=str(log), CHECK_HOST='aarch64-apple-darwin',
                        GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1')
     subprocess.run(['git', 'init', '-q', str(root)], check=True, env=environment)

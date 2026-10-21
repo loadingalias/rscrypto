@@ -54,6 +54,8 @@ class Tooling(unittest.TestCase):
         data = catalog.read()
         catalog.validate(data)
         self.assertEqual(tomlkit.parse(update.catalog_text(data)), data)
+        # The uv bootstraps read their pins line by line, so just update must keep this exact layout.
+        self.assertEqual(update.catalog_text(data), catalog.CATALOG.read_text())
         self.assertEqual(set(data['ci-cross-build']['assets']), set(data['ci-cross-build']['cargo']))
         self.assertNotIn('cargo-rail', data['aarch64-win']['assets'])
         for platform in ('aarch64-linux', 'x86_64-linux', 'x86_64-win'):
@@ -70,6 +72,21 @@ class Tooling(unittest.TestCase):
             self.assertEqual(set(data[platform]['assets']),
                              {'rustup', 'uv', 'cargo-binstall'} if platform == 'riscv64-linux' else {'rustup', 'uv'})
             self.assertEqual(data[platform]['components'], [])
+
+    def test_macos_pins_only_catalog_uv_and_zig(self):
+        data = catalog.read()
+        self.assertEqual(set(data[catalog.MACOS]['assets']), {'uv', 'zig'})
+        for name in ('uv', 'zig'):
+            for field, value in (('url', 'https://example.invalid/0.0.1/archive.tar.xz'), ('sha256', 'f' * 63)):
+                with self.subTest(name=name, field=field):
+                    broken = copy.deepcopy(data)
+                    broken[catalog.MACOS]['assets'][name][field] = value
+                    with self.assertRaisesRegex(ValueError, f'verified {name}'):
+                        catalog.validate(broken)
+        broken = copy.deepcopy(data)
+        broken[catalog.MACOS]['assets']['cmake'] = data['x86_64-linux']['assets']['cmake']
+        with self.assertRaisesRegex(ValueError, 'exactly uv and zig'):
+            catalog.validate(broken)
 
     def test_stable_release_selection_respects_msrv_and_yanks(self):
         versions = [{'num': '2.0.0', 'created_at': '2099-01-01T00:00:00Z', 'rust_version': '1.98'},

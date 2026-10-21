@@ -1,17 +1,21 @@
 #!/usr/bin/env -S uv run python
-"""Exercise Linux provisioning with substitute host and installation commands."""
+"""Exercise Linux provisioning and the Mac's pinned uv and zig with substitute host and installation commands."""
+import hashlib
 import json
 import os
 from pathlib import Path
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
 import tomllib
 import unittest
-from unittest.mock import ANY
+from unittest.mock import ANY, patch
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / 'scripts/ct'))
+import provenance  # noqa: E402
 BASH = shutil.which('bash')
 CATALOG = tomllib.loads((ROOT / '.config/tooling.toml').read_text())
 
@@ -502,6 +506,100 @@ class WindowsDownload(unittest.TestCase):
                                  str(ROOT / 'scripts/tooling/windows_download_test.ps1')],
                                 capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+
+class MacTools(unittest.TestCase):
+    """The Apple Silicon Mac runs the catalog's uv and zig from the installers' layout, never from PATH."""
+
+    def fixture(self, system='Darwin', machine='arm64'):
+        temporary = tempfile.TemporaryDirectory(prefix='rscrypto-mac-')
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name)
+        checkout = root / 'checkout'
+        for name in ('.config/tooling.toml', 'scripts/lib/python.sh', 'scripts/tooling/uv.sh',
+                     'scripts/tooling/zig.sh', 'scripts/ct/zig-cc.sh'):
+            (checkout / name).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(ROOT / name, checkout / name)
+        binaries = root / 'bin'
+        binaries.mkdir()
+        tools = {'uname': f'case "$1" in -s) echo {system} ;; -m) echo {machine} ;; *) echo {system} {machine} ;; esac',
+                 # Homebrew's uv and zig on PATH must stay unused on the Mac.
+                 'uv': 'echo \'["path-uv"]\' >> "$INSTALL_LOG"; exit 99',
+                 'zig': 'echo \'["path-zig"]\' >> "$INSTALL_LOG"',
+                 'curl': 'echo \'["curl"]\' >> "$INSTALL_LOG"\n'
+                         'while [ $# -gt 0 ]; do [ "$1" != -o ] || output=$2; shift; done\ncp "$UV_ARCHIVE" "$output"'}
+        for name, body in tools.items():
+            (binaries / name).write_text('#!/bin/sh\n' + body + '\n')
+            (binaries / name).chmod(0o755)
+        (root / 'commands.jsonl').touch()
+        env = {key: value for key, value in os.environ.items() if key != 'PYTHON'}
+        env.update(HOME=str(root), PATH=str(binaries) + os.pathsep + os.environ['PATH'], BASH_ENV='/dev/null',
+                   INSTALL_LOG=str(root / 'commands.jsonl'))
+        return root, checkout, env
+
+    def calls(self, root):
+        return [json.loads(line) for line in (root / 'commands.jsonl').read_text().splitlines()]
+
+    def test_python_installs_and_runs_the_pinned_uv(self):
+        root, checkout, env = self.fixture()
+        # The upstream archive layout: one directory holding the executables.
+        archive = root / 'uv.tar.gz'
+        stub(root / 'uv')
+        with tarfile.open(archive, 'w:gz') as bundle:
+            bundle.add(root / 'uv', 'uv-aarch64-apple-darwin/uv')
+        digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+        catalog = checkout / '.config/tooling.toml'
+        pinned = CATALOG['aarch64-macos']['assets']['uv']['sha256']
+        catalog.write_text(catalog.read_text().replace(pinned, digest))
+        env.update(UV_ARCHIVE=str(archive), INSTALL_PYTHON=sys.executable)
+        command = [str(checkout / 'scripts/lib/python.sh'), '-c', 'import os; print(os.environ["UV_PROJECT"])']
+        for _ in range(2):
+            result = subprocess.run(command, env=env, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(Path(result.stdout.strip()).resolve(), checkout.resolve())
+        directory = root / '.local/share/rscrypto-tooling/uv' / digest[:16]
+        self.assertEqual((directory / '.rscrypto-installed').read_text(), digest + '\n')
+        calls = self.calls(root)
+        # One verified download serves every later run; the Python that .python-version names comes with it.
+        self.assertEqual(calls.count(['curl']), 1)
+        self.assertEqual(calls.count(['uv', 'python', 'install', '--compile-bytecode']), 1)
+        self.assertEqual(sum(call[:2] == ['uv', 'run'] for call in calls), 2)
+        self.assertNotIn(['path-uv'], calls)
+
+        # An archive that does not match its pin is never installed or run.
+        catalog.write_text(catalog.read_text().replace(digest, 'f' * 64))
+        result = subprocess.run(command, env=env, capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse((root / '.local/share/rscrypto-tooling/uv/ffffffffffffffff').exists())
+
+    def zig_fixture(self, **host):
+        root, checkout, env = self.fixture(**host)
+        # Installation itself is the catalog's install-archive, which the Linux installers exercise.
+        python = checkout / 'scripts/lib/python.sh'
+        python.write_text('#!/bin/sh\nexec "$INSTALL_PYTHON" "$@"\n')
+        stub(root / 'python')
+        env['INSTALL_PYTHON'] = str(root / 'python')
+        return root, checkout, env
+
+    def test_zig_links_with_the_pinned_zig_only_on_the_mac(self):
+        command = ['--target=powerpc64le-unknown-linux-gnu', 'main.o', '-o', 'main']
+        root, checkout, env = self.zig_fixture()
+        result = subprocess.run([str(checkout / 'scripts/ct/zig-cc.sh'), *command], env=env, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        prefix = root / '.local/share/rscrypto-tooling'
+        self.assertEqual(self.calls(root), [
+            ['python', str(checkout / 'scripts/tooling/catalog.py'), 'install-archive', 'aarch64-macos', 'zig', str(prefix)],
+            ['zig', 'cc', '-target', 'powerpc64le-linux-gnu.2.32', 'main.o', '-o', 'main']])
+        # CT provenance records the zig that linked the artifact.
+        with patch.dict(os.environ, env):
+            linker = provenance.resolve_executable(str(checkout / 'scripts/ct/zig-cc.sh'), checkout)
+        self.assertEqual(linker, (prefix / 'zig/zig').resolve())
+
+        # Linux hosts keep the zig that their installers put on PATH.
+        root, checkout, env = self.zig_fixture(system='Linux', machine='x86_64')
+        result = subprocess.run([str(checkout / 'scripts/ct/zig-cc.sh'), *command], env=env, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.calls(root), [['path-zig']])
 
 
 if __name__ == '__main__':

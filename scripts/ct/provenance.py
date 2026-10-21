@@ -147,15 +147,27 @@ def resolve_linker(root: Path, target: str) -> tuple[str, str]:
   return "cc", "rustc-target-default"
 
 
-def resolve_executable(command: str) -> Path | None:
+def zig_executable(root: Path) -> Path | None:
+  """Return the zig that scripts/ct/zig-cc.sh runs, as scripts/tooling/zig.sh selects it."""
+  if os.name == "nt":
+    found = shutil.which("zig")
+  else:
+    selected = subprocess.run([str(root / "scripts" / "tooling" / "zig.sh")], cwd=root, text=True,
+                              stdout=subprocess.PIPE, check=False)
+    found = selected.stdout.strip() if selected.returncode == 0 else None
+  return Path(found).resolve() if found else None
+
+
+def resolve_executable(command: str, root: Path) -> Path | None:
   direct = Path(command)
   if direct.is_file() and direct.name != "zig-cc.sh":
     return direct.resolve()
   parts = shlex.split(command)
   if not parts:
     return None
-  executable = "zig" if Path(parts[0]).name == "zig-cc.sh" else parts[0]
-  found = shutil.which(executable)
+  if Path(parts[0]).name == "zig-cc.sh":
+    return zig_executable(root)
+  found = shutil.which(parts[0])
   if found is None:
     return None
   return Path(found).resolve()
@@ -381,7 +393,7 @@ def main() -> int:
   )
   target_cfg_text = run(["rustc", "--print", "cfg", "--target", args.target, *effective_rustflags], cwd=root)
   linker, linker_source = resolve_linker(root, args.target)
-  linker_path = resolve_executable(linker)
+  linker_path = resolve_executable(linker, root)
   artifacts = artifact_records(args.artifact_dir)
   reports = report_records(args.out_dir)
   write_artifact_hashes(args.out_dir, artifacts)

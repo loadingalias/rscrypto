@@ -16,7 +16,7 @@ from pathlib import Path
 # Embedded Windows Python omits the script directory.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from provenance import sha256_file
+from provenance import sha256_file, zig_executable
 from internal import build_environment
 from manifest import binsec_kernel_targets, target_record
 
@@ -162,9 +162,8 @@ def configure_cross_linker(env: dict[str, str], target: str) -> None:
   if "linux" in host:
     return
 
-  zig = shutil.which("zig")
   wrapper = ROOT / "scripts" / "ct" / "zig-cc.sh"
-  if zig is None or not wrapper.exists():
+  if not wrapper.exists() or zig_executable(ROOT) is None:
     return
 
   env[linker_env] = str(wrapper)

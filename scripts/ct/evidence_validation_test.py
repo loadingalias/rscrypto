@@ -533,7 +533,7 @@ def main() -> None:
     linker = root / "Build Tools/link.exe"
     linker.parent.mkdir()
     linker.touch()
-    assert resolve_executable(str(linker)) == linker.resolve()
+    assert resolve_executable(str(linker), root) == linker.resolve()
     banner = "Microsoft (R) Incremental Linker Version 14.51.36256.0"
     for status, output, expected in ((0, banner, banner), (1100, banner, banner),
                                      (1104, banner, None), (1100, "usage without version", None)):

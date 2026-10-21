@@ -92,6 +92,8 @@ Run `just install-hooks` once for each checkout.
   only in paths that no check reads: `docs/`, `.changes/`, `.github/`, `benchmark_results/`,
   `.config/tooling.toml`, `CHANGELOG.md`, `CONTRIBUTING.md`, `SECURITY.md`, and `THREAT_MODEL.md`.
   `scripts/check/qualified.py` owns this list. A change to any other path, or a different compiler, runs the checks.
+  The checks read only the Mac's uv pin from `.config/tooling.toml`; a new uv does not invalidate a pass,
+  because only the tree and the compiler identify one.
   `README.md` is checked because the crate documentation includes it.
 - `check-macos` skips `just ci-check` when the clean checkout already passed it in the pre-commit hook.
 - In a push of more than one commit, the intermediate commits get only `just ci-check`.

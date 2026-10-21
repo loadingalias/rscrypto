@@ -19,7 +19,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from catalog import CATALOG, PLATFORMS, NATIVE_SOURCE_PLATFORMS, ROOT, read, rust_channel, validate
+from catalog import CATALOG, MACOS, PLATFORMS, NATIVE_SOURCE_PLATFORMS, ROOT, read, rust_channel, validate
 
 REPOS = {'cargo-rail': 'loadingalias/cargo-rail', 'cargo-binstall': 'cargo-bins/cargo-binstall',
          'llvm': 'llvm/llvm-project', 'cmake': 'Kitware/CMake', 'zig': None,
@@ -139,11 +139,11 @@ def catalog_text(data):
     for section, fields in data.items():
         lines.append(f'[{section}]')
         for key, value in fields.items():
-            if section in PLATFORMS and key == 'assets':
+            if section in (*PLATFORMS, MACOS) and key == 'assets':
                 continue
             lines.append(f'{key} = {toml_value(value)}')
         lines.append('')
-        if section in PLATFORMS:
+        if section in (*PLATFORMS, MACOS):
             for name, asset in fields['assets'].items():
                 lines.append(f'[{section}.assets.{name}]')
                 lines.extend(f'{key} = {toml_value(value)}' for key, value in asset.items())
@@ -233,6 +233,9 @@ def resolve_catalog():
                 NEXTEST_REPO, f'cargo-nextest-{data["cargo"]["cargo-nextest"]}-{host}.tar.gz')
             assets['wasmtime'] = github_asset(REPOS['wasmtime'], f'wasmtime-v{versions["wasmtime"]}-x86_64-linux.tar.xz')
         data[platform] = native
+    entry = zig[versions['zig']]['aarch64-macos']
+    data[MACOS] = {'assets': {'uv': github_asset(REPOS['uv'], 'uv-aarch64-apple-darwin.tar.gz'),
+                              'zig': {'url': entry['tarball'], 'sha256': entry['shasum']}}}
     validate(data)
     return data
 
@@ -245,8 +248,10 @@ def update_python():
     import tomlkit
     path = ROOT / '.python-version'
     minor = path.read_text().strip().rsplit('.', 1)[0]
+    # The uv that runs this script is the catalog's pin.
+    uv = os.environ.get('UV', 'uv')
     downloads = json.loads(subprocess.check_output(
-        ['uv', 'python', 'list', '--only-downloads', '--output-format', 'json', minor], cwd=ROOT, text=True))
+        [uv, 'python', 'list', '--only-downloads', '--output-format', 'json', minor], cwd=ROOT, text=True))
     path.write_text(max((item['version'] for item in downloads if item['implementation'] == 'cpython'
                          and item['variant'] == 'default' and semver(item['version'])), key=semver) + '\n')
     project = ROOT / 'pyproject.toml'
@@ -257,7 +262,7 @@ def update_python():
         tooling[index] = f'{name}=={api(f"https://pypi.org/pypi/{name}/json")["info"]["version"]}'
     project.write_text(tomlkit.dumps(document))
     environment = {key: value for key, value in os.environ.items() if key != 'UV_LOCKED'}
-    subprocess.run(['uv', 'lock'], cwd=ROOT, env=environment, check=True)
+    subprocess.run([uv, 'lock'], cwd=ROOT, env=environment, check=True)
 
 
 def write_catalog(data):

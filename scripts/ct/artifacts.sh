@@ -68,7 +68,7 @@ if [[ "$TARGET" != "$HOST" && "$TARGET" == *linux* ]]; then
   if [[ -z "${!linker_env:-}" && "$TARGET" == *-linux-musl && "$(uname -m)" == "${TARGET%%-*}" ]] \
     && command -v musl-gcc >/dev/null 2>&1; then
     export "$linker_env=musl-gcc"
-  elif [[ -z "${!linker_env:-}" && -x "$ROOT/scripts/ct/zig-cc.sh" ]] && command -v zig >/dev/null 2>&1; then
+  elif [[ -z "${!linker_env:-}" && -x "$ROOT/scripts/ct/zig-cc.sh" ]] && "$ROOT/scripts/tooling/zig.sh" >/dev/null; then
     export "$linker_env=$ROOT/scripts/ct/zig-cc.sh"
     export ZIG_CC_TARGET="${ZIG_CC_TARGET:-$TARGET}"
   fi

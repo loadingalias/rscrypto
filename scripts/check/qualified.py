@@ -19,7 +19,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 KINDS = {'ci-check', 'macos'}
 MACOS_CONTEXT = 'rscrypto/macos'
-# Paths that `just ci-check` and `just check-macos` never compile, test, or read.
+# Paths that `just ci-check` and `just check-macos` never compile, test, or read, apart from the Mac's
+# uv pin, which scripts/lib/python.sh reads from .config/tooling.toml. The uv version was never part of
+# a pass's identity, and CI runs every new uv release.
 # README.md is not here: `src/lib.rs` includes it as crate documentation, so doctests run it.
 INERT = re.compile(
   r'^(\.changes/|\.github/|benchmark_results/|docs/|\.config/tooling\.toml$'

@@ -21,6 +21,8 @@ CATALOG = ROOT / '.config/tooling.toml'
 NATIVE_SOURCE_PLATFORMS = ('riscv64-linux', 's390x-linux', 'powerpc64le-linux')
 PROFILING_PLATFORMS = ('aarch64-linux', 'x86_64-linux')
 PLATFORMS = (*PROFILING_PLATFORMS, 'aarch64-win', 'x86_64-win', *NATIVE_SOURCE_PLATFORMS)
+# The Apple Silicon workstation pins only the uv that runs Python and the zig that cross-links review binaries.
+MACOS = 'aarch64-macos'
 
 
 def read(path=CATALOG):
@@ -199,6 +201,14 @@ def validate(data):
             raise ValueError(f'{platform}: profiling is not enabled')
         if platform in NATIVE_SOURCE_PLATFORMS and not {'cmake', 'clang', 'libclang-dev'} <= packages:
             raise ValueError(f'{platform}: missing native build prerequisites')
+    assets = data[MACOS]['assets']
+    if set(assets) != {'uv', 'zig'}:
+        raise ValueError(f'{MACOS}: pins exactly uv and zig')
+    for name, asset in assets.items():
+        version = data['versions'][name]
+        if not asset['url'].startswith('https://') or f'/{version}/' not in asset['url'] \
+                or not re.fullmatch('[0-9a-f]{64}', asset['sha256']):
+            raise ValueError(f'{MACOS}: the {name} asset must be a verified {name} {version}')
 
 
 def main():

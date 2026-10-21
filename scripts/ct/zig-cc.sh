@@ -36,6 +36,12 @@ for arg in "$@"; do
 	fi
 done
 
+# The Mac links with the catalog's pinned zig; other hosts use the zig on PATH.
+ZIG="$("$(dirname "${BASH_SOURCE[0]}")/../tooling/zig.sh")" || {
+	echo "zig-cc.sh: no zig; install the pinned tooling for this host" >&2
+	exit 127
+}
+
 # Translate Rust target triple to Zig target triple
 # Aligned with .cargo/config.toml targets
 case "$TARGET" in
@@ -66,7 +72,7 @@ x86_64-unknown-none) ZIG_TARGET="x86_64-freestanding" ;;
 
 # No target specified - pass through to zig cc directly
 "")
-	exec zig cc "${ARGS[@]}"
+	exec "$ZIG" cc "${ARGS[@]}"
 	;;
 
 # Unknown target - fail explicitly
@@ -78,7 +84,7 @@ x86_64-unknown-none) ZIG_TARGET="x86_64-freestanding" ;;
 esac
 
 if [[ -n "${RSCRYPTO_CT_LINK_MAP:-}" && "$PRINT_CT_MAP" == true ]]; then
-	exec zig cc -target "$ZIG_TARGET" "${ARGS[@]}" >"$RSCRYPTO_CT_LINK_MAP"
+	exec "$ZIG" cc -target "$ZIG_TARGET" "${ARGS[@]}" >"$RSCRYPTO_CT_LINK_MAP"
 fi
 
-exec zig cc -target "$ZIG_TARGET" "${ARGS[@]}"
+exec "$ZIG" cc -target "$ZIG_TARGET" "${ARGS[@]}"

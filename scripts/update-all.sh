@@ -7,7 +7,7 @@ export PYTHONDONTWRITEBYTECODE=1
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO_ROOT"
-for command in uv cargo rustup curl jq gh cargo-audit cargo-deny rg; do
+for command in cargo rustup curl jq gh cargo-audit cargo-deny rg; do
   command -v "$command" >/dev/null 2>&1 || { echo "missing update prerequisite: $command" >&2; exit 127; }
 done
 

@@ -328,7 +328,7 @@ They do not detect a compromised producer that forges its own metadata.
 
 | Script                 | Caller |
 | ---------------------- | ------ |
-| `ct/zig-cc.sh`         | `ct/artifacts.sh`, `ct/binsec.py` |
+| `ct/zig-cc.sh`         | `ct/artifacts.sh`, `ct/binsec.py`, `stack/frames.py` |
 | `ct/test.sh`           | `just ct-test` |
 | `ct/artifacts.sh`      | `just ct-artifacts`, `ct/full.py` |
 | `ct/dudect.sh`         | `just ct-dudect`, `ct/full.py` (preparation only) |
@@ -455,7 +455,10 @@ Release callers, and manual runs with no diagnostic input, keep the full require
 
 - It builds `tools/frame-review` with `-Z emit-stack-sizes` and the shipping release profile.
   The binary runs every ML-DSA and ML-KEM public operation once.
-- Linux targets other than the host link through `ct/zig-cc.sh`.
+- Linux targets other than the host link through `ct/zig-cc.sh`, with the pinned Zig on the Mac.
+  POWER links against glibc 2.32,
+  the first release with the IEEE-128 `printf` entry points that Zig's ppc64le libunwind calls.
+  The linked binaries are reviewed, never run.
 - Frame sizes come from the compiler's `.stack_sizes` records.
   Calls come from the linked disassembly, resolved by address.
 
@@ -621,7 +624,8 @@ Check, Miri, and fuzz commands run independently of that plan.
 | `lib/dispatched_run.py`                | The CI and CT `riscv64-linux` jobs |
 | `lib/toolchain.py`, `lib/toolchain.sh` | Shared toolchain selection for installers, builds, checks, tests, and benchmarks |
 | `tooling/transfer.py`                  | Cross-build and verify the pinned native runner tools |
-| `tooling/uv.sh`                        | Install the catalog-pinned uv and Python on Linux, including jobs that run no installer |
+| `tooling/uv.sh`                        | Install the catalog-pinned uv and Python on Linux and the Apple Silicon Mac, including jobs that run no installer |
+| `tooling/zig.sh`                       | Select the Zig that `ct/zig-cc.sh` runs: the catalog pin on the Apple Silicon Mac, otherwise the one on PATH |
 | `tooling/fingerprint.py`               | Digest the inputs of one platform's installation, so a converged host or image can trust it |
 | `lib/evidence_bundle.py`               | Source binding, sealing, and transfer integrity for cross-compiled tests, tools, and CT |
 | `lib/cross_build.py`                   | Explicit target identities and the cross-compiler environment for test, tool, and CT preparation |
@@ -636,7 +640,9 @@ so each worktree runs its own lock.
 Checks and benchmarks use only the standard library.
 The `tooling` group holds the updater's libraries and those of the catalog and workflow tests;
 `lib/python.sh --group tooling` selects it.
-The installers install the catalog's pinned uv; on macOS, install uv with Homebrew.
+The installers install the catalog's pinned uv.
+On the Apple Silicon Mac, `lib/python.sh` runs the catalog's `aarch64-macos` uv, which `tooling/uv.sh` installs under `~/.local/share/rscrypto-tooling/uv/` on first use;
+a uv on PATH, such as Homebrew's, is neither used nor changed.
 
 ## Native tooling
 
@@ -711,7 +717,9 @@ Run `scripts/tooling/<platform>.sh` on the native Ubuntu version pinned in [the 
 The platforms are `aarch64-linux`, `x86_64-linux`, `riscv64-linux`, `s390x-linux`, and `powerpc64le-linux`.
 The installers use `sudo` when needed.
 On Windows, use `aarch64-win.ps1` or `x86_64-win.ps1` in an elevated PowerShell session.
-Local macOS tools are managed locally.
+Local macOS tools are managed locally, except the uv and Zig that the catalog pins for `aarch64-macos`.
+The scripts install those two on first use under `~/.local/share/rscrypto-tooling/` and keep them off PATH,
+so a Homebrew uv or Zig stays as it is.
 `scripts/tooling/aarch64-macos.sh` can install the pinned prerequisites for `just check-macos`.
 
 All full profiles install the prerequisites for `just ci-check`, `just test`, and Criterion `just bench`.
