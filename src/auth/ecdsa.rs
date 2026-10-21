@@ -57,6 +57,8 @@ mod ecdsa_safegcd;
 ))]
 #[path = "ecdsa_x86_64_asm.rs"]
 mod ecdsa_x86_64_asm;
+#[path = "ecdsa_p256_verify.rs"]
+mod p256_verify;
 
 use super::ecdsa_generator_tables::{
   P256_SIGNING_COMB_WIDTH, P256_SIGNING_GENERATOR_COMB_X, P256_SIGNING_GENERATOR_COMB_Y, P384_SIGNING_COMB_WIDTH,
@@ -1232,7 +1234,7 @@ impl EcdsaP256PublicKey {
   fn from_affine(point: Affine<4>) -> Self {
     Self {
       point,
-      table: precompute_comb_table(point),
+      table: p256_verify::comb_table(point),
     }
   }
 
@@ -1277,7 +1279,9 @@ impl EcdsaP256PublicKey {
   #[must_use = "signature verification must be checked; a dropped Result silently accepts a forged signature"]
   pub fn verify(&self, message: &[u8], signature: &EcdsaP256Signature) -> Result<(), VerificationError> {
     let digest = Sha256::digest(message);
-    verify_digest(&P256, &self.table, signature.r, signature.s, &digest)
+    verify_digest(&P256, signature.r, signature.s, &digest, |u1, u2| {
+      p256_verify::scalar_mul_two(u1, u2, &self.table)
+    })
   }
 
   /// Verify a message against a P-256/SHA-384 ECDSA signature.
@@ -1290,7 +1294,9 @@ impl EcdsaP256PublicKey {
   #[must_use = "signature verification must be checked; a dropped Result silently accepts a forged signature"]
   pub fn verify_sha384(&self, message: &[u8], signature: &EcdsaP256Signature) -> Result<(), VerificationError> {
     let digest = Sha384::digest(message);
-    verify_digest(&P256, &self.table, signature.r, signature.s, &digest[..32])
+    verify_digest(&P256, signature.r, signature.s, &digest[..32], |u1, u2| {
+      p256_verify::scalar_mul_two(u1, u2, &self.table)
+    })
   }
 }
 
@@ -1375,7 +1381,9 @@ impl EcdsaP384PublicKey {
   #[must_use = "signature verification must be checked; a dropped Result silently accepts a forged signature"]
   pub fn verify(&self, message: &[u8], signature: &EcdsaP384Signature) -> Result<(), VerificationError> {
     let digest = Sha384::digest(message);
-    verify_digest(&P384, &self.table, signature.r, signature.s, &digest)
+    verify_digest(&P384, signature.r, signature.s, &digest, |u1, u2| {
+      scalar_mul_two(&P384, u1, u2, &self.table)
+    })
   }
 
   /// Verify a message against a P-384/SHA-256 ECDSA signature.
@@ -1388,7 +1396,9 @@ impl EcdsaP384PublicKey {
   #[must_use = "signature verification must be checked; a dropped Result silently accepts a forged signature"]
   pub fn verify_sha256(&self, message: &[u8], signature: &EcdsaP384Signature) -> Result<(), VerificationError> {
     let digest = Sha256::digest(message);
-    verify_digest(&P384, &self.table, signature.r, signature.s, &digest)
+    verify_digest(&P384, signature.r, signature.s, &digest, |u1, u2| {
+      scalar_mul_two(&P384, u1, u2, &self.table)
+    })
   }
 }
 
@@ -2476,12 +2486,13 @@ struct Curve<const L: usize> {
   signing_generator_comb_y: &'static [GeneratorTableUint<L>],
 }
 
+/// Verify with `multiply(u1, u2) = u1·G + u2·Q`, the curve's double-scalar multiplication.
 fn verify_digest<const L: usize>(
   curve: &Curve<L>,
-  public_table: &[Affine<L>; COMB_TABLE_SIZE],
   r: Uint<L>,
   s: Uint<L>,
   digest: &[u8],
+  multiply: impl FnOnce(Uint<L>, Uint<L>) -> Jacobian<L>,
 ) -> Result<(), VerificationError> {
   if !r.is_in_range(&curve.scalar_modulus.value) || !s.is_in_range(&curve.scalar_modulus.value) {
     return Err(VerificationError::new());
@@ -2491,7 +2502,7 @@ fn verify_digest<const L: usize>(
   let w = s.inv_mod_vartime(curve.scalar_modulus.value);
   let u1 = mul_mod_montgomery(z, w, curve.scalar_modulus);
   let u2 = mul_mod_montgomery(r, w, curve.scalar_modulus);
-  let point = scalar_mul_two(curve, u1, u2, public_table);
+  let point = multiply(u1, u2);
 
   if projective_x_matches_scalar(point, r, curve) {
     Ok(())
@@ -5205,6 +5216,52 @@ mod tests {
     P256_GX.write_be(&mut sec1[1..33]);
     P256_GY.write_be(&mut sec1[33..]);
     EcdsaP256PublicKey::from_sec1_bytes(&sec1).expect("the P-256 generator is a valid public key")
+  }
+
+  #[test]
+  fn p256_specialized_verification_matches_generic_arithmetic() {
+    // Points k·G for small, structured and near-order k, then double-scalar products with
+    // zero, equal and opposite terms, which reach the infinity and doubling branches.
+    let scalars = [
+      Uint::ONE,
+      Uint::from_u64(2),
+      Uint::from_u64(3),
+      Uint::from_u64(0x1234_5678_9abc_def0),
+      P256_ORDER_HALF,
+      P256_ORDER.sub_raw(&Uint::ONE).0,
+    ];
+    for key_scalar in scalars {
+      let point = scalar_mul_basepoint_comb_ct(&P256, key_scalar).to_affine_ct(P256_FIELD_MINUS_TWO);
+      let table = p256_verify::comb_table(point);
+      assert!(
+        table == precompute_comb_table(point),
+        "comb table for {:x?}",
+        key_scalar.0
+      );
+      for (u1, u2) in [
+        (Uint::ZERO, Uint::ONE),
+        (Uint::ONE, Uint::ZERO),
+        (key_scalar, Uint::ONE),
+        (P256_ORDER.sub_raw(&key_scalar).0, Uint::ONE),
+        (Uint::from_u64(0xfedc_ba98_7654_3210), P256_ORDER_HALF),
+        (
+          P256_ORDER.sub_raw(&Uint::ONE).0,
+          P256_ORDER.sub_raw(&Uint::from_u64(2)).0,
+        ),
+      ] {
+        let fast = p256_verify::scalar_mul_two(u1, u2, &table);
+        let generic = scalar_mul_two(&P256, u1, u2, &table);
+        assert_eq!(fast.infinity, generic.infinity, "u1 {:x?}, u2 {:x?}", u1.0, u2.0);
+        if !generic.infinity {
+          assert!(
+            fast.to_affine_ct(P256_FIELD_MINUS_TWO) == generic.to_affine_ct(P256_FIELD_MINUS_TWO),
+            "u1 {:x?}, u2 {:x?}",
+            u1.0,
+            u2.0
+          );
+        }
+      }
+    }
   }
 
   fn p384_public_key() -> EcdsaP384PublicKey {
