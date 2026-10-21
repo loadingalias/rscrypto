@@ -1817,8 +1817,30 @@ pub(super) fn precompute_powers(h: u128) -> [u128; 4] {
   [h, h2, h3, h4]
 }
 
-/// Precompute hash key powers [H, H^2, ..., H^8] for 8-block GHASH windows.
+/// Precompute hash key powers [H, H^2, ..., H^N] in eight independent chains.
+///
+/// H through H^8 come from one serial chain. Every later power is `H^(i-8)·H^8`, so each step
+/// issues eight independent multiplications instead of one. Field multiplication is exact, so
+/// every entry equals the serial chain's.
 #[cfg(feature = "aes-gcm")]
+pub(super) fn precompute_powers_chained<const N: usize>(h: u128) -> [u128; N] {
+  let clmul = CLMUL128_REDUCE_DISPATCH.get_or_init(resolve_clmul128_reduce);
+  let mut powers = [0u128; N];
+  let serial = N.min(8);
+  let mut i = 0usize;
+  while i < serial {
+    powers[i] = if i == 0 { h } else { clmul(powers[i.strict_sub(1)], h) };
+    i = i.strict_add(1);
+  }
+  while i < N {
+    powers[i] = clmul(powers[i.strict_sub(8)], powers[7]);
+    i = i.strict_add(1);
+  }
+  powers
+}
+
+/// Precompute hash key powers [H, H^2, ..., H^8] for 8-block GHASH windows.
+#[cfg(all(test, target_arch = "aarch64", feature = "aes-gcm"))]
 pub(super) fn precompute_powers_8(h: u128) -> [u128; 8] {
   let h2 = clmul128_reduce(h, h);
   let h3 = clmul128_reduce(h2, h);
@@ -1832,12 +1854,6 @@ pub(super) fn precompute_powers_8(h: u128) -> [u128; 8] {
 
 /// Precompute hash key powers [H, H^2, ..., H^16] for 16-block GHASH/POLYVAL windows.
 #[cfg(any(
-  all(feature = "aes-gcm", all(target_arch = "x86_64", target_feature = "sse2")),
-  all(
-    feature = "aes-gcm",
-    target_arch = "aarch64",
-    any(target_os = "macos", target_os = "linux")
-  ),
   all(feature = "aes-gcm-siv", all(target_arch = "x86_64", target_feature = "sse2")),
   test
 ))]
@@ -1855,7 +1871,7 @@ pub(super) fn precompute_powers_16(h: u128) -> [u128; 16] {
 }
 
 /// Precompute hash key powers [H, H^2, ..., H^32] for 32-block GHASH windows.
-#[cfg(any(all(feature = "aes-gcm", all(target_arch = "x86_64", target_feature = "sse2")), test))]
+#[cfg(test)]
 pub(super) fn precompute_powers_32(h: u128) -> [u128; 32] {
   let mut powers = [0u128; 32];
   powers[0] = h;
@@ -1870,7 +1886,7 @@ pub(super) fn precompute_powers_32(h: u128) -> [u128; 32] {
 }
 
 /// Precompute hash key powers [H, H^2, ..., H^64] for 64-block GHASH windows.
-#[cfg(any(all(feature = "aes-gcm", all(target_arch = "x86_64", target_feature = "sse2")), test))]
+#[cfg(test)]
 pub(super) fn precompute_powers_64(h: u128) -> [u128; 64] {
   let mut powers = [0u128; 64];
   powers[0] = h;
@@ -1885,7 +1901,7 @@ pub(super) fn precompute_powers_64(h: u128) -> [u128; 64] {
 }
 
 /// Precompute hash key powers [H, H^2, ..., H^128] for 128-block GHASH windows.
-#[cfg(any(all(feature = "aes-gcm", all(target_arch = "x86_64", target_feature = "sse2")), test))]
+#[cfg(test)]
 pub(super) fn precompute_powers_128(h: u128) -> [u128; 128] {
   let mut powers = [0u128; 128];
   powers[0] = h;
@@ -2536,6 +2552,30 @@ mod tests {
         "powers[{i}] should extend the H power chain"
       );
       i = i.strict_add(1);
+    }
+  }
+
+  /// The eight-chain powers equal a serial power chain built with the portable multiply, and
+  /// the shorter tables are its prefixes.
+  #[cfg(feature = "aes-gcm")]
+  #[test]
+  fn precompute_powers_chained_matches_portable_serial_chain() {
+    let keys = [
+      u128::from_le_bytes(RFC_H),
+      1,
+      u128::MAX,
+      0x8000_0000_0000_0000_0000_0000_0000_0001,
+      0x1287_3d5b_fedc_ba09_7654_3210_f0e1_d2c3,
+    ];
+    for h in keys {
+      let chained = precompute_powers_chained::<128>(h);
+      let mut expected = h;
+      for (index, &power) in chained.iter().enumerate() {
+        assert_eq!(power, expected, "H^{} for H = {h:#x}", index.strict_add(1));
+        expected = clmul128_reduce_portable(expected, h);
+      }
+      assert_eq!(precompute_powers_chained::<16>(h)[..], chained[..16]);
+      assert_eq!(precompute_powers_chained::<8>(h)[..], chained[..8]);
     }
   }
 

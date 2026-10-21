@@ -426,35 +426,29 @@ impl Aead for Aes256Gcm {
     // Precompute H powers for 4/8-block wide GHASH.
     // GHASH loads H as BE, then applies mulX_POLYVAL to get the POLYVAL-domain key.
     let h_polyval = ghash::h_to_polyval(&h);
-    let powers = polyval::precompute_powers_8(h_polyval);
-    // Reverse: [H, H^2, H^3, H^4] -> [H^4, H^3, H^2, H]
+    // One chain of powers feeds every window table; each table is a reversed prefix.
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+    let powers = polyval::precompute_powers_chained::<128>(h_polyval);
+    #[cfg(all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")))]
+    let powers = polyval::precompute_powers_chained::<16>(h_polyval);
+    #[cfg(not(any(
+      all(target_arch = "x86_64", target_feature = "sse2"),
+      all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux"))
+    )))]
+    let powers = polyval::precompute_powers_chained::<8>(h_polyval);
     let h_powers_rev = [powers[3], powers[2], powers[1], powers[0]];
-    let h_powers_rev_8 = [
-      powers[7], powers[6], powers[5], powers[4], powers[3], powers[2], powers[1], powers[0],
-    ];
+    let h_powers_rev_8 = core::array::from_fn(|i| powers[7usize.strict_sub(i)]);
     #[cfg(any(
       all(target_arch = "x86_64", target_feature = "sse2"),
       all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux"))
     ))]
-    let h_powers_rev_16 = {
-      let powers = polyval::precompute_powers_16(h_polyval);
-      core::array::from_fn(|i| powers[15usize.strict_sub(i)])
-    };
+    let h_powers_rev_16 = core::array::from_fn(|i| powers[15usize.strict_sub(i)]);
     #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
-    let h_powers_rev_32 = {
-      let powers = polyval::precompute_powers_32(h_polyval);
-      core::array::from_fn(|i| powers[31usize.strict_sub(i)])
-    };
+    let h_powers_rev_32 = core::array::from_fn(|i| powers[31usize.strict_sub(i)]);
     #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
-    let h_powers_rev_64 = {
-      let powers = polyval::precompute_powers_64(h_polyval);
-      core::array::from_fn(|i| powers[63usize.strict_sub(i)])
-    };
+    let h_powers_rev_64 = core::array::from_fn(|i| powers[63usize.strict_sub(i)]);
     #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
-    let h_powers_rev_128 = {
-      let powers = polyval::precompute_powers_128(h_polyval);
-      core::array::from_fn(|i| powers[127usize.strict_sub(i)])
-    };
+    let h_powers_rev_128 = core::array::from_fn(|i| powers[127usize.strict_sub(i)]);
     #[cfg(all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")))]
     let h_powers_rev_16_mid = polyval::precompute_powers_16_mid(&h_powers_rev_16);
     #[cfg(all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")))]
