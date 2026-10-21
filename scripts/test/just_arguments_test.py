@@ -68,6 +68,7 @@ with open(os.environ['ARGUMENT_LOG'], 'a') as log:
       'ct-full': ['scripts/ct/full.py'], 'ct-binsec': ['scripts/ct/binsec.py'],
       'ct-replay': ['scripts/ct/replay.py'],
       'ct-validate': ['scripts/ct/validate.py'],
+      'ct-renew': ['scripts/ct/renew_waivers.py'],
       'stack-frames': ['scripts/stack/frames.py'],
       'stack-residue': ['scripts/stack/residue.py'],
       'bench': ['scripts/bench/bounded.py', '--bench'],
