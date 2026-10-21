@@ -417,17 +417,12 @@ mod implementation {
       #[cfg(feature = "ecdsa-p384")]
       Operation::P384Sha256 | Operation::P384Sha384 => {
         let signature = EcdsaP384Signature::from_der(signature).map_err(|_| InvalidSignature)?;
-        let imported;
-        let key = match anchors.and_then(|anchors| anchors.p384.get(key)) {
-          Some(prepared) => prepared,
-          None => {
-            imported = EcdsaP384PublicKey::from_sec1_bytes(key).map_err(|_| InvalidSignature)?;
-            &imported
-          }
-        };
-        match operation {
-          Operation::P384Sha384 => key.verify(message, &signature),
-          _ => key.verify_sha256(message, &signature),
+        match (anchors.and_then(|anchors| anchors.p384.get(key)), operation) {
+          (Some(prepared), Operation::P384Sha384) => prepared.verify(message, &signature),
+          (Some(prepared), _) => prepared.verify_sha256(message, &signature),
+          // A key that is not a prepared anchor verifies once, so skip its table.
+          (None, Operation::P384Sha384) => EcdsaP384PublicKey::verify_sec1(key, message, &signature),
+          (None, _) => EcdsaP384PublicKey::verify_sec1_sha256(key, message, &signature),
         }
       }
       #[cfg(feature = "ed25519")]
