@@ -16,8 +16,8 @@ use rscrypto::{
   HmacSha512Tag, Kmac256, MlKem512, MlKem512Ciphertext, MlKem512DecapsulationKey, MlKem768, MlKem768Ciphertext,
   MlKem768DecapsulationKey, MlKem1024, MlKem1024Ciphertext, MlKem1024DecapsulationKey, MlKemError, P256EphemeralSecret,
   P384EphemeralSecret, Pbkdf2Sha256, Pbkdf2Sha512, RsaBlindingPair, RsaEncryptionError, RsaOaepProfile,
-  RsaPkcs1v15Profile, RsaPrivateKey, RsaPssProfile, RsaPublicKeyPolicy, SecretBytes, Sha512, X25519SecretKey,
-  XChaCha20Poly1305, XChaCha20Poly1305Key,
+  RsaPkcs1v15Profile, RsaPrivateKey, RsaPrivateScratch, RsaPssProfile, RsaPublicKeyPolicy, SecretBytes, Sha512,
+  X25519SecretKey, XChaCha20Poly1305, XChaCha20Poly1305Key,
   aead::{
     Nonce96, Nonce128, Nonce192, Nonce256, diag_aes_siv_cmac256_open_portable, diag_aes_siv_cmac256_s2v_portable,
     diag_aes128gcm_ctr32_be, diag_aes128gcm_ghash, diag_aes128gcm_tag_aes, diag_aes128gcmsiv_ctr32,
@@ -46,7 +46,10 @@ use rscrypto::{
   traits::Kem as _,
 };
 
-use rscrypto::auth::rsa::diag_rsa_blinding_factor_inverse;
+use rscrypto::auth::rsa::{
+  diag_rsa_blinding_factor_inverse, diag_rsa_private_crt_pair_uses_ifma,
+  diag_rsa_private_exponentiate_crt_pair_with_scratch,
+};
 
 const DEFAULT_SAMPLES: usize = 20_000;
 const MESSAGE: &[u8] = b"rscrypto constant-time dudect timing lane input";
@@ -2586,6 +2589,173 @@ fn rsa_private_exponent_fixed_width_high_byte(runner: &mut CtRunner, rng: &mut B
   }
 }
 
+/// Measured state for the production CRT exponentiation pair.
+struct RsaCrtPair {
+  key: RsaPrivateKey,
+  scratch: RsaPrivateScratch,
+  outputs: [Vec<u8>; 2],
+}
+
+impl RsaCrtPair {
+  /// Prepare the pair and require the AVX-512 IFMA kernel on hosts that support it.
+  fn new() -> Self {
+    let key = rsa_ct_fixture_key(RSA_CT_KEY_A_INDEX);
+    let scratch = key.private_scratch();
+    let uses_ifma = diag_rsa_private_crt_pair_uses_ifma(&key, &scratch);
+    #[cfg(target_arch = "x86_64")]
+    if std::arch::is_x86_feature_detected!("avx512f") && std::arch::is_x86_feature_detected!("avx512ifma") {
+      assert!(
+        uses_ifma,
+        "an AVX-512 IFMA host must measure the IFMA RSA CRT pair kernel"
+      );
+    }
+    eprintln!(
+      "rsa CRT pair backend: {}",
+      if uses_ifma { "avx512-ifma" } else { "fixed-window" }
+    );
+    let len = key.signature_len().div_euclid(2);
+    Self {
+      key,
+      scratch,
+      outputs: [vec![0u8; len], vec![0u8; len]],
+    }
+  }
+
+  fn width(&self) -> usize {
+    self.outputs[0].len()
+  }
+
+  /// Run once outside measurement so that a rejected input cannot produce a timing result.
+  fn validate(&mut self, exponents: [&[u8]; 2], inputs: [&[u8]; 2]) {
+    assert!(
+      self.run(exponents, inputs).0,
+      "the RSA CRT pair must accept its measured inputs"
+    );
+  }
+
+  fn run(&mut self, exponents: [&[u8]; 2], inputs: [&[u8]; 2]) -> (bool, u8) {
+    let [out_p, out_q] = &mut self.outputs;
+    let result = diag_rsa_private_exponentiate_crt_pair_with_scratch(
+      &self.key,
+      exponents,
+      inputs,
+      [out_p.as_mut_slice(), out_q.as_mut_slice()],
+      &mut self.scratch,
+    );
+    (result.is_ok(), core::hint::black_box(out_p[0] ^ out_q[0]))
+  }
+}
+
+/// A same-width CRT input below every 1024-bit prime: the top two bits are clear.
+fn rsa_crt_input(rng: &mut BenchRng, len: usize) -> Vec<u8> {
+  let mut input = vec![0u8; len];
+  rng.fill(input.as_mut_slice());
+  input[0] &= 0x3f;
+  input
+}
+
+fn rsa_crt_pair_fixed_vs_random_exponents(runner: &mut CtRunner, rng: &mut BenchRng) {
+  let state = RefCell::new(RsaCrtPair::new());
+  let len = state.borrow().width();
+  let inputs = [rsa_crt_input(rng, len), rsa_crt_input(rng, len)];
+  let fixed = [vec![0u8; len], vec![0u8; len]].map(|mut exponent| {
+    rng.fill(exponent.as_mut_slice());
+    exponent
+  });
+  let cases: Vec<_> = balanced_classes(rng, samples())
+    .into_iter()
+    .map(|class| {
+      let exponents = if matches!(class, Class::Left) {
+        fixed.clone()
+      } else {
+        [vec![0u8; len], vec![0u8; len]].map(|mut exponent| {
+          rng.fill(exponent.as_mut_slice());
+          exponent
+        })
+      };
+      (class, exponents)
+    })
+    .collect();
+  for (_, exponents) in &cases {
+    state.borrow_mut().validate(
+      [exponents[0].as_slice(), exponents[1].as_slice()],
+      [inputs[0].as_slice(), inputs[1].as_slice()],
+    );
+  }
+  for (class, exponents) in &cases {
+    runner.run_one(*class, || {
+      state.borrow_mut().run(
+        [exponents[0].as_slice(), exponents[1].as_slice()],
+        [inputs[0].as_slice(), inputs[1].as_slice()],
+      )
+    });
+  }
+}
+
+fn rsa_crt_pair_fixed_vs_random_inputs(runner: &mut CtRunner, rng: &mut BenchRng) {
+  let state = RefCell::new(RsaCrtPair::new());
+  let len = state.borrow().width();
+  let exponents = [vec![0u8; len], vec![0u8; len]].map(|mut exponent| {
+    rng.fill(exponent.as_mut_slice());
+    exponent
+  });
+  let fixed = [rsa_crt_input(rng, len), rsa_crt_input(rng, len)];
+  let cases: Vec<_> = balanced_classes(rng, samples())
+    .into_iter()
+    .map(|class| {
+      let inputs = if matches!(class, Class::Left) {
+        fixed.clone()
+      } else {
+        [rsa_crt_input(rng, len), rsa_crt_input(rng, len)]
+      };
+      (class, inputs)
+    })
+    .collect();
+  for (_, inputs) in &cases {
+    state.borrow_mut().validate(
+      [exponents[0].as_slice(), exponents[1].as_slice()],
+      [inputs[0].as_slice(), inputs[1].as_slice()],
+    );
+  }
+  for (class, inputs) in &cases {
+    runner.run_one(*class, || {
+      state.borrow_mut().run(
+        [exponents[0].as_slice(), exponents[1].as_slice()],
+        [inputs[0].as_slice(), inputs[1].as_slice()],
+      )
+    });
+  }
+}
+
+fn rsa_crt_pair_exponent_high_byte(runner: &mut CtRunner, rng: &mut BenchRng) {
+  let state = RefCell::new(RsaCrtPair::new());
+  let len = state.borrow().width();
+  let inputs = [rsa_crt_input(rng, len), rsa_crt_input(rng, len)];
+  let mut exponents = [vec![0x5a; len], vec![0xa5; len]];
+  for high in [0, 1] {
+    exponents[0][0] = high;
+    exponents[1][0] = high;
+    state.borrow_mut().validate(
+      [exponents[0].as_slice(), exponents[1].as_slice()],
+      [inputs[0].as_slice(), inputs[1].as_slice()],
+    );
+  }
+  for class in balanced_classes(rng, samples()) {
+    let high = u8::from(matches!(class, Class::Left));
+    exponents[0][0] = high;
+    exponents[1][0] = high;
+    let exponents = [
+      core::hint::black_box(exponents[0].as_slice()),
+      core::hint::black_box(exponents[1].as_slice()),
+    ];
+    runner.run_one(class, || {
+      state
+        .borrow_mut()
+        .run(exponents, [inputs[0].as_slice(), inputs[1].as_slice()])
+    });
+  }
+}
+
 fn rsa_blinding_inverse_fixed_vs_random_factor(runner: &mut CtRunner, rng: &mut BenchRng) {
   let key = rsa_ct_fixture_key(RSA_CT_KEY_A_INDEX);
   let len = key.signature_len();
@@ -3658,6 +3828,9 @@ ctbench_main_with_seeds!(
     Some(0x7273615f6372746c)
   ),
   (rsa_private_exponent_fixed_width_high_byte, Some(0x7273615f65787068)),
+  (rsa_crt_pair_fixed_vs_random_exponents, Some(0x7273615f70657870)),
+  (rsa_crt_pair_fixed_vs_random_inputs, Some(0x7273615f70696e70)),
+  (rsa_crt_pair_exponent_high_byte, Some(0x7273615f70686967)),
   (rsa_blinding_inverse_fixed_vs_random_factor, Some(0x7273615f696e7662)),
   (
     rsa_blinding_inverse_full_width_fixed_vs_random_factor,

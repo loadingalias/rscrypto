@@ -941,6 +941,74 @@ pub fn diag_rsa_private_exponentiate_fixed_width_with_scratch(
   clear_output_on_error(result, out)
 }
 
+/// Apply the production RSA CRT exponentiation pair with reusable scratch.
+///
+/// This diagnostic-only primitive raises `inputs[0]` and `inputs[1]` to `exponents[0]` and
+/// `exponents[1]` modulo the key's two CRT primes, through the same dispatch as private
+/// operations: on x86-64 with AVX-512F and AVX-512 IFMA, equal-width primes run the interleaved
+/// IFMA kernel, and otherwise each prime runs the fixed-window loop in turn. It is raw modular
+/// arithmetic without padding, blinding, or recombination and must not be used as a
+/// cryptographic protocol API. Both outputs are cleared on error.
+///
+/// # Errors
+///
+/// Returns [`RsaPrivateOpError`] if `scratch` has another public modulus width, if an exponent,
+/// input, or output is not exactly its prime's width, or if an input is outside its prime.
+#[cfg(all(rscrypto_internal, feature = "diag"))]
+#[doc(hidden)]
+pub fn diag_rsa_private_exponentiate_crt_pair_with_scratch(
+  key: &RsaPrivateKey,
+  exponents: [&[u8]; 2],
+  inputs: [&[u8]; 2],
+  outs: [&mut [u8]; 2],
+  scratch: &mut RsaPrivateScratch,
+) -> Result<(), RsaPrivateOpError> {
+  let [out_p, out_q] = outs;
+  let result = scratch.ensure_len(key.signature_len()).and_then(|()| {
+    private_exponentiate_crt_with_scratch(
+      (&key.components.prime_p_modulus, exponents[0], inputs[0], &mut *out_p),
+      (&key.components.prime_q_modulus, exponents[1], inputs[1], &mut *out_q),
+      &mut scratch.exponent_scratch,
+    )
+  });
+  if result.is_err() {
+    ct::zeroize(out_p);
+    ct::zeroize(out_q);
+  }
+  result
+}
+
+/// Report whether private operations with `key` and `scratch` run the CRT pair on the AVX-512
+/// IFMA kernel on this host.
+#[cfg(all(rscrypto_internal, feature = "diag"))]
+#[doc(hidden)]
+#[must_use]
+pub fn diag_rsa_private_crt_pair_uses_ifma(key: &RsaPrivateKey, scratch: &RsaPrivateScratch) -> bool {
+  #[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "sse2",
+    not(feature = "portable-only"),
+    not(miri)
+  ))]
+  let uses_ifma = private_crt_pair_ifma_shape(
+    &key.components.prime_p_modulus,
+    &key.components.prime_q_modulus,
+    &scratch.exponent_scratch,
+  )
+  .is_some();
+  #[cfg(not(all(
+    target_arch = "x86_64",
+    target_feature = "sse2",
+    not(feature = "portable-only"),
+    not(miri)
+  )))]
+  let uses_ifma = {
+    let _ = (key, scratch);
+    false
+  };
+  uses_ifma
+}
+
 /// Apply the RSA public operation with product-then-reduce Montgomery multiplication.
 ///
 /// Diagnostic-only benchmark baseline for threshold selection. This forces the
@@ -10422,17 +10490,33 @@ fn private_exponentiate_crt_with_scratch(
     not(feature = "portable-only"),
     not(miri)
   ))]
-  if first.0.limbs.len() == second.0.limbs.len()
-    && first.0.bytes.len() == second.0.bytes.len()
-    && let Some(shape) = rsa_x86_64_ifma::shape(first.0.limbs.len())
-    && scratch.ifma.as_slice().len() >= rsa_x86_64_ifma::workspace_words(first.0.limbs.len())
-  {
+  if let Some(shape) = private_crt_pair_ifma_shape(first.0, second.0, scratch) {
     return private_exponentiate_crt_pair_ifma(first, second, shape, scratch);
   }
   let (modulus, exponent, input, out) = first;
   private_exponentiate_representative_with_scratch(modulus, exponent, input, out, scratch)?;
   let (modulus, exponent, input, out) = second;
   private_exponentiate_representative_with_scratch(modulus, exponent, input, out, scratch)
+}
+
+/// The IFMA kernel shape for a CRT pair, when both primes have one width that the kernel supports
+/// and `scratch` holds the pair workspace.
+#[cfg(all(
+  target_arch = "x86_64",
+  target_feature = "sse2",
+  not(feature = "portable-only"),
+  not(miri)
+))]
+fn private_crt_pair_ifma_shape(
+  first: &RsaPublicModulus,
+  second: &RsaPublicModulus,
+  scratch: &RsaPrivateExponentScratch,
+) -> Option<(usize, usize)> {
+  if first.limbs.len() != second.limbs.len() || first.bytes.len() != second.bytes.len() {
+    return None;
+  }
+  let shape = rsa_x86_64_ifma::shape(first.limbs.len())?;
+  (scratch.ifma.as_slice().len() >= rsa_x86_64_ifma::workspace_words(first.limbs.len())).then_some(shape)
 }
 
 /// The CRT pair on the IFMA kernel. Both primes have `shape`'s limb count and byte width.

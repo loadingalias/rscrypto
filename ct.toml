@@ -1376,6 +1376,36 @@ smoke_samples = 128
 notes = "The precomputed CRT component modulus, representative, reusable scratch addresses, buffer lengths, and all lower exponent bytes are identical across classes. AArch64 execution enters FEAT_DIT when the target advertises it."
 
 [[dudect_case]]
+name = "rsa_crt_pair_fixed_vs_random_exponents"
+primitive = "rsa.private_ops"
+filter = "rsa_crt_pair_fixed_vs_random_exponents"
+left_class = "fixed same-width exponents for both CRT primes"
+right_class = "random same-width exponents for both CRT primes"
+samples = 512
+smoke_samples = 128
+notes = "Production CRT exponentiation pair on the fixture key's primes, with fixed inputs below both primes. On x86-64 hosts with AVX-512F and AVX-512 IFMA, the case asserts that dispatch selects the interleaved IFMA kernel; elsewhere it measures the fixed-window loop for each prime."
+
+[[dudect_case]]
+name = "rsa_crt_pair_fixed_vs_random_inputs"
+primitive = "rsa.private_ops"
+filter = "rsa_crt_pair_fixed_vs_random_inputs"
+left_class = "fixed same-width inputs below both CRT primes"
+right_class = "random same-width inputs below both CRT primes"
+samples = 512
+smoke_samples = 128
+notes = "Production CRT exponentiation pair with fixed random exponents. Inputs clear their top two bits, so they stay below both 1024-bit primes. On x86-64 hosts with AVX-512F and AVX-512 IFMA, the case asserts that dispatch selects the interleaved IFMA kernel."
+
+[[dudect_case]]
+name = "rsa_crt_pair_exponent_high_byte"
+primitive = "rsa.private_ops"
+filter = "rsa_crt_pair_exponent_high_byte"
+left_class = "same-width exponents with a nonzero high byte"
+right_class = "the same exponents with a zero high byte"
+samples = 512
+smoke_samples = 128
+notes = "Production CRT exponentiation pair; all lower exponent bytes, inputs, primes, and scratch addresses are identical across classes. On x86-64 hosts with AVX-512F and AVX-512 IFMA, the case asserts that dispatch selects the interleaved IFMA kernel."
+
+[[dudect_case]]
 name = "rsa_blinding_inverse_fixed_vs_random_factor"
 primitive = "rsa.private_ops"
 filter = "rsa_blinding_inverse_fixed_vs_random_factor"
@@ -2268,21 +2298,38 @@ binsec = ["aead.symmetric_transform.aes_round_portable.all"]
 id = "rsa.private_ops.pkcs1v15_sign"
 primitive = "rsa.private_ops"
 variant = "Pkcs1v15Sign"
-dudect = ["rsa_pkcs1v15_fixed_vs_random_message", "rsa_private_exponent_fixed_width_high_byte"]
+dudect = [
+  "rsa_pkcs1v15_fixed_vs_random_message",
+  "rsa_private_exponent_fixed_width_high_byte",
+  "rsa_crt_pair_fixed_vs_random_exponents",
+  "rsa_crt_pair_fixed_vs_random_inputs",
+  "rsa_crt_pair_exponent_high_byte",
+]
 binsec = ["rsa.private_ops.window_select.portable.all"]
 
 [[evidence_unit]]
 id = "rsa.private_ops.pss_sign"
 primitive = "rsa.private_ops"
 variant = "PssSign"
-dudect = ["rsa_pss_fixed_vs_random_message"]
+dudect = [
+  "rsa_pss_fixed_vs_random_message",
+  "rsa_crt_pair_fixed_vs_random_exponents",
+  "rsa_crt_pair_fixed_vs_random_inputs",
+  "rsa_crt_pair_exponent_high_byte",
+]
 binsec = ["rsa.private_ops.window_select.portable.all"]
 
 [[evidence_unit]]
 id = "rsa.private_ops.oaep_decrypt"
 primitive = "rsa.private_ops"
 variant = "OaepDecrypt"
-dudect = ["rsa_oaep_decrypt_fixed_vs_random_plaintext", "rsa_oaep_decrypt_valid_vs_invalid"]
+dudect = [
+  "rsa_oaep_decrypt_fixed_vs_random_plaintext",
+  "rsa_oaep_decrypt_valid_vs_invalid",
+  "rsa_crt_pair_fixed_vs_random_exponents",
+  "rsa_crt_pair_fixed_vs_random_inputs",
+  "rsa_crt_pair_exponent_high_byte",
+]
 binsec = ["rsa.private_ops.window_select.portable.all"]
 
 [[evidence_unit]]
@@ -2293,6 +2340,9 @@ dudect = [
   "rsa_pkcs1v15_decrypt_fixed_vs_random_plaintext",
   "rsa_pkcs1v15_decrypt_valid_vs_invalid_padding",
   "rsa_pkcs1v15_decrypt_invalid_padding_classes",
+  "rsa_crt_pair_fixed_vs_random_exponents",
+  "rsa_crt_pair_fixed_vs_random_inputs",
+  "rsa_crt_pair_exponent_high_byte",
 ]
 binsec = [
   "rsa.private_ops.window_select.portable.all",

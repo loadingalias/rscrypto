@@ -40,6 +40,7 @@ use rscrypto::auth::diag_rsa_private_component_validation_32;
 use rscrypto::auth::rsa::expert::RsaPkcs1v15Decrypt;
 #[cfg(all(rscrypto_internal, feature = "diag"))]
 use rscrypto::auth::rsa::{
+  diag_rsa_private_crt_pair_uses_ifma, diag_rsa_private_exponentiate_crt_pair_with_scratch,
   diag_rsa_private_exponentiate_fixed_width, diag_rsa_private_exponentiate_fixed_width_with_scratch,
   diag_rsa_public_operation_bitserial, diag_rsa_public_operation_cios, diag_rsa_public_operation_cios_portable,
   diag_rsa_public_operation_comba_product, diag_rsa_public_operation_product,
@@ -3658,6 +3659,78 @@ fn diagnostic_private_exponentiation_matches_independent_fixed_width_reference()
   let reference =
     BigUint::from_bytes_be(&component_input).modpow(&BigUint::from_bytes_be(&component_exponent), &component_modulus);
   assert_eq!(component_out, left_pad_to_len(&reference.to_bytes_be(), component_len));
+}
+
+#[cfg(all(rscrypto_internal, feature = "diag"))]
+#[test]
+fn private_crt_pair_diagnostic_matches_independent_modpow() {
+  let rustcrypto_key = rustcrypto_fixture_private_key();
+  let primes = [rustcrypto_key.primes()[0].clone(), rustcrypto_key.primes()[1].clone()];
+  let private_der = rustcrypto_key
+    .to_pkcs8_der()
+    .expect("the fixed private key must encode as PKCS#8");
+  let key =
+    RsaPrivateKey::from_pkcs8_der_with_policy(private_der.as_bytes(), &RsaPublicKeyPolicy::legacy_verification())
+      .expect("the fixed private key must import for CRT pair diagnostics");
+  let len = primes[0].to_bytes_be().len();
+  assert_eq!(primes[1].to_bytes_be().len(), len, "the fixture primes share one width");
+  let mut scratch = key.private_scratch();
+  // Production dispatch runs these cases on the interleaved IFMA pair kernel exactly when the host
+  // has AVX-512F and AVX-512 IFMA.
+  #[cfg(all(target_arch = "x86_64", not(feature = "portable-only")))]
+  let ifma_host = std::arch::is_x86_feature_detected!("avx512f") && std::arch::is_x86_feature_detected!("avx512ifma");
+  #[cfg(not(all(target_arch = "x86_64", not(feature = "portable-only"))))]
+  let ifma_host = false;
+  assert_eq!(diag_rsa_private_crt_pair_uses_ifma(&key, &scratch), ifma_host);
+  let pattern = |seed: usize| -> Vec<u8> {
+    (0..len)
+      .map(|index| u8::try_from(index.strict_mul(31).strict_add(seed.strict_mul(97)) % 251).expect("below 251"))
+      .collect()
+  };
+  for seed in 0..4 {
+    let exponents = [pattern(seed), pattern(seed.strict_add(5))];
+    // Clearing the top two bits keeps each input below its 1024-bit prime.
+    let inputs = [pattern(seed.strict_add(9)), pattern(seed.strict_add(13))].map(|mut input| {
+      input[0] &= 0x3f;
+      input
+    });
+    let mut outputs = [vec![0u8; len], vec![0u8; len]];
+    let [out_p, out_q] = &mut outputs;
+    diag_rsa_private_exponentiate_crt_pair_with_scratch(
+      &key,
+      [&exponents[0], &exponents[1]],
+      [&inputs[0], &inputs[1]],
+      [out_p.as_mut_slice(), out_q.as_mut_slice()],
+      &mut scratch,
+    )
+    .expect("the CRT pair must accept inputs below both primes");
+    for index in 0..2 {
+      let expected =
+        BigUint::from_bytes_be(&inputs[index]).modpow(&BigUint::from_bytes_be(&exponents[index]), &primes[index]);
+      assert_eq!(
+        outputs[index],
+        left_pad_to_len(&expected.to_bytes_be(), len),
+        "prime {index}, seed {seed}"
+      );
+    }
+  }
+
+  // An input equal to the second prime is rejected after the first prime's checks, and both
+  // outputs are cleared.
+  let exponent = pattern(1);
+  let mut outputs = [vec![0xa5u8; len], vec![0xa5u8; len]];
+  let [out_p, out_q] = &mut outputs;
+  assert_eq!(
+    diag_rsa_private_exponentiate_crt_pair_with_scratch(
+      &key,
+      [&exponent, &exponent],
+      [&pattern(2), &primes[1].to_bytes_be()],
+      [out_p.as_mut_slice(), out_q.as_mut_slice()],
+      &mut scratch,
+    ),
+    Err(rscrypto::RsaPrivateOpError::RepresentativeOutOfRange)
+  );
+  assert!(outputs.iter().flatten().all(|&byte| byte == 0));
 }
 
 #[cfg(all(rscrypto_internal, feature = "diag"))]
