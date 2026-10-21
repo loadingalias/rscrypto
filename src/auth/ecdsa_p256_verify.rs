@@ -7,7 +7,7 @@
 //! and point formulas, so tables match limb for limb and verification makes the same decisions.
 
 use super::{
-  Affine, COMB_TABLE_SIZE, COMB_WIDTH, FieldElement, Jacobian, P256_FIELD, P256_FIELD_MODULUS, P256_SIGNING_COMB_ROWS,
+  Affine, COMB_TABLE_SIZE, COMB_WIDTH, FieldElement, Jacobian, P256_FIELD_MODULUS, P256_SIGNING_COMB_ROWS,
   P256_SIGNING_COMB_WIDTH, P256_SIGNING_GENERATOR_COMB_X, P256_SIGNING_GENERATOR_COMB_Y, Uint, comb_digit, comb_rows,
 };
 
@@ -15,6 +15,7 @@ use super::{
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct Fe([u64; 4]);
 
+#[cfg(any(test, not(all(target_arch = "aarch64", not(feature = "portable-only"), not(miri)))))]
 #[inline(always)]
 fn adc(lhs: u64, rhs: u64, carry: u64) -> (u64, u64) {
   let (sum, overflow0) = lhs.overflowing_add(rhs);
@@ -22,6 +23,7 @@ fn adc(lhs: u64, rhs: u64, carry: u64) -> (u64, u64) {
   (sum, u64::from(overflow0 | overflow1))
 }
 
+#[cfg(any(test, not(all(target_arch = "aarch64", not(feature = "portable-only"), not(miri)))))]
 #[inline(always)]
 fn sbb(lhs: u64, rhs: u64, borrow: u64) -> (u64, u64) {
   let (difference, overflow0) = lhs.overflowing_sub(rhs);
@@ -59,6 +61,31 @@ impl Fe {
 
   #[inline(always)]
   fn add(self, rhs: Self) -> Self {
+    #[cfg(all(target_arch = "aarch64", not(feature = "portable-only"), not(miri)))]
+    {
+      Self(aarch64::add(self.0, rhs.0))
+    }
+    #[cfg(not(all(target_arch = "aarch64", not(feature = "portable-only"), not(miri))))]
+    {
+      self.add_portable(rhs)
+    }
+  }
+
+  #[inline(always)]
+  fn sub(self, rhs: Self) -> Self {
+    #[cfg(all(target_arch = "aarch64", not(feature = "portable-only"), not(miri)))]
+    {
+      Self(aarch64::sub(self.0, rhs.0))
+    }
+    #[cfg(not(all(target_arch = "aarch64", not(feature = "portable-only"), not(miri))))]
+    {
+      self.sub_portable(rhs)
+    }
+  }
+
+  #[cfg(any(test, not(all(target_arch = "aarch64", not(feature = "portable-only"), not(miri)))))]
+  #[inline(always)]
+  fn add_portable(self, rhs: Self) -> Self {
     let [a0, a1, a2, a3] = self.0;
     let [b0, b1, b2, b3] = rhs.0;
     let (s0, carry) = adc(a0, b0, 0);
@@ -68,8 +95,9 @@ impl Fe {
     Self::reduce_once([s0, s1, s2, s3, carry])
   }
 
+  #[cfg(any(test, not(all(target_arch = "aarch64", not(feature = "portable-only"), not(miri)))))]
   #[inline(always)]
-  fn sub(self, rhs: Self) -> Self {
+  fn sub_portable(self, rhs: Self) -> Self {
     let [a0, a1, a2, a3] = self.0;
     let [b0, b1, b2, b3] = rhs.0;
     let (d0, borrow) = sbb(a0, b0, 0);
@@ -78,7 +106,7 @@ impl Fe {
     let (d3, borrow) = sbb(a3, b3, borrow);
     // Add p back when the difference wrapped.
     let mask = 0u64.wrapping_sub(borrow);
-    let p = P256_FIELD.0;
+    let p = super::P256_FIELD.0;
     let (r0, carry) = adc(d0, p[0] & mask, 0);
     let (r1, carry) = adc(d1, p[1] & mask, carry);
     let (r2, carry) = adc(d2, p[2] & mask, carry);
@@ -97,9 +125,10 @@ impl Fe {
   }
 
   /// Subtract p once from a value below 2p.
+  #[cfg(any(test, not(all(target_arch = "aarch64", not(feature = "portable-only"), not(miri)))))]
   #[inline(always)]
   fn reduce_once(limbs: [u64; 5]) -> Self {
-    let p = P256_FIELD.0;
+    let p = super::P256_FIELD.0;
     let (w0, borrow) = sbb(limbs[0], p[0], 0);
     let (w1, borrow) = sbb(limbs[1], p[1], borrow);
     let (w2, borrow) = sbb(limbs[2], p[2], borrow);
@@ -243,6 +272,70 @@ impl Fe {
 #[cfg(all(target_arch = "aarch64", not(feature = "portable-only"), not(miri)))]
 mod aarch64 {
   use core::arch::asm;
+
+  /// `a + b mod p` for canonical inputs: a flag-chained sum, then `p` subtracted unless that
+  /// borrows.
+  #[inline(always)]
+  pub(super) fn add(a: [u64; 4], b: [u64; 4]) -> [u64; 4] {
+    let (r0, r1, r2, r3): (u64, u64, u64, u64);
+    // SAFETY: Register operands only, base A64 integer instructions, no memory or stack access.
+    unsafe {
+      asm!(
+        "adds {a0}, {a0}, {b0}",
+        "adcs {a1}, {a1}, {b1}",
+        "adcs {a2}, {a2}, {b2}",
+        "adcs {a3}, {a3}, {b3}",
+        "adc {c}, xzr, xzr",
+        // p = [2^64 - 1, 2^32 - 1, 0, 2^64 - 2^32 + 1]; subtracting p[0] adds one.
+        "mov {p1}, #0xffffffff",
+        "mov {p3}, #0xffffffff00000001",
+        "adds {t0}, {a0}, #1",
+        "sbcs {t1}, {a1}, {p1}",
+        "sbcs {t2}, {a2}, xzr",
+        "sbcs {t3}, {a3}, {p3}",
+        "sbcs xzr, {c}, xzr",
+        "csel {a0}, {a0}, {t0}, lo",
+        "csel {a1}, {a1}, {t1}, lo",
+        "csel {a2}, {a2}, {t2}, lo",
+        "csel {a3}, {a3}, {t3}, lo",
+        a0 = inout(reg) a[0] => r0, a1 = inout(reg) a[1] => r1, a2 = inout(reg) a[2] => r2, a3 = inout(reg) a[3] => r3,
+        b0 = in(reg) b[0], b1 = in(reg) b[1], b2 = in(reg) b[2], b3 = in(reg) b[3],
+        c = out(reg) _, p1 = out(reg) _, p3 = out(reg) _,
+        t0 = out(reg) _, t1 = out(reg) _, t2 = out(reg) _, t3 = out(reg) _,
+        options(pure, nomem, nostack),
+      );
+    }
+    [r0, r1, r2, r3]
+  }
+
+  /// `a - b mod p` for canonical inputs: a flag-chained difference, then `p` added back under
+  /// the borrow mask.
+  #[inline(always)]
+  pub(super) fn sub(a: [u64; 4], b: [u64; 4]) -> [u64; 4] {
+    let (r0, r1, r2, r3): (u64, u64, u64, u64);
+    // SAFETY: Register operands only, base A64 integer instructions, no memory or stack access.
+    unsafe {
+      asm!(
+        "subs {a0}, {a0}, {b0}",
+        "sbcs {a1}, {a1}, {b1}",
+        "sbcs {a2}, {a2}, {b2}",
+        "sbcs {a3}, {a3}, {b3}",
+        "csetm {m}, lo",
+        // p & mask, limb by limb: m, m >> 32, 0, m & (2^64 - 2^32 + 1).
+        "lsr {t1}, {m}, #32",
+        "and {t3}, {m}, #0xffffffff00000001",
+        "adds {a0}, {a0}, {m}",
+        "adcs {a1}, {a1}, {t1}",
+        "adcs {a2}, {a2}, xzr",
+        "adc {a3}, {a3}, {t3}",
+        a0 = inout(reg) a[0] => r0, a1 = inout(reg) a[1] => r1, a2 = inout(reg) a[2] => r2, a3 = inout(reg) a[3] => r3,
+        b0 = in(reg) b[0], b1 = in(reg) b[1], b2 = in(reg) b[2], b3 = in(reg) b[3],
+        m = out(reg) _, t1 = out(reg) _, t3 = out(reg) _,
+        options(pure, nomem, nostack),
+      );
+    }
+    [r0, r1, r2, r3]
+  }
 
   /// `a·b·2^-256 mod p` for canonical inputs.
   #[inline(always)]
@@ -784,9 +877,141 @@ pub(super) fn scalar_mul_two(
   generator.add(key).to_jacobian()
 }
 
+impl Point {
+  #[inline(always)]
+  fn negate(self) -> Self {
+    Self {
+      y: Fe::ZERO.sub(self.y),
+      ..self
+    }
+  }
+}
+
+/// Width-5 non-adjacent form of a scalar below 2^256: digit `i` is zero or odd in
+/// `[-15, 15]`, and `Σ digit_i·2^i` equals the scalar. The scalar is public.
+fn naf5(scalar: Uint<4>) -> [i8; 257] {
+  let mut limbs = [scalar.0[0], scalar.0[1], scalar.0[2], scalar.0[3], 0];
+  let mut digits = [0i8; 257];
+  for digit in &mut digits {
+    if limbs[0] & 1 == 1 {
+      let window = limbs[0] & 31;
+      if window < 16 {
+        // Subtract the positive digit; the low limb is at least `window`.
+        limbs[0] = limbs[0].strict_sub(window);
+        *digit = i8::try_from(window).expect("a five-bit window fits i8");
+      } else {
+        // Add 32 - window, carrying through the limbs; the scalar stays below 2^257.
+        let mut carry = 32u64.strict_sub(window);
+        for limb in &mut limbs {
+          let (sum, overflow) = limb.overflowing_add(carry);
+          *limb = sum;
+          carry = u64::from(overflow);
+        }
+        *digit = i8::try_from(window).expect("a five-bit window fits i8").strict_sub(32);
+      }
+    }
+    // Shift the five-limb scalar right by one bit.
+    for index in 0..4 {
+      limbs[index] = (limbs[index] >> 1) | (limbs[index.strict_add(1)] << 63);
+    }
+    limbs[4] >>= 1;
+  }
+  digits
+}
+
+/// `generator_scalar·G + point_scalar·Q` for a point Q used once, without its comb table.
+///
+/// The key term runs a width-5 NAF of `point_scalar` over the Jacobian odd multiples
+/// Q, 3Q, ..., 15Q, which cost one doubling and seven additions; the generator term runs the
+/// signing comb in an independent chain, as in [`scalar_mul_two`].
+pub(super) fn scalar_mul_two_single(generator_scalar: Uint<4>, point_scalar: Uint<4>, point: Affine<4>) -> Jacobian<4> {
+  let base = AffinePoint::from_affine(point);
+  let twice = Point::from_affine(base).double();
+  let mut odd = [Point::from_affine(base); 8];
+  for index in 1..odd.len() {
+    odd[index] = odd[index.strict_sub(1)].add(twice);
+  }
+
+  let digits = naf5(point_scalar);
+  let mut generator = Point::INFINITY;
+  let mut key = Point::INFINITY;
+  for (row, &digit) in digits.iter().enumerate().rev() {
+    if row < P256_SIGNING_COMB_ROWS {
+      generator = generator.double();
+      let comb = comb_digit(generator_scalar, row, P256_SIGNING_COMB_ROWS, P256_SIGNING_COMB_WIDTH);
+      if comb != 0 {
+        generator = generator.add_mixed(AffinePoint {
+          x: Fe(P256_SIGNING_GENERATOR_COMB_X[comb].0),
+          y: Fe(P256_SIGNING_GENERATOR_COMB_Y[comb].0),
+        });
+      }
+    }
+    key = key.double();
+    if digit != 0 {
+      let entry = odd[usize::from(digit.unsigned_abs() >> 1)];
+      key = key.add(if digit > 0 { entry } else { entry.negate() });
+    }
+  }
+  generator.add(key).to_jacobian()
+}
+
 #[cfg(test)]
 mod tests {
-  use super::{Fe, P256_FIELD};
+  use super::super::P256_FIELD;
+  use super::Fe;
+
+  #[test]
+  fn naf5_digits_reconstruct_the_scalar() {
+    use super::{Uint, naf5};
+    let p = P256_FIELD.0;
+    for scalar in [
+      [0u64; 4],
+      [1, 0, 0, 0],
+      [31, 0, 0, 0],
+      [u64::MAX; 4],
+      [p[0], p[1], p[2], p[3]],
+      [
+        0x0123_4567_89ab_cdef,
+        0xfedc_ba98_7654_3210,
+        0x8000_0000_0000_0001,
+        0x7fff_ffff_ffff_fffe,
+      ],
+    ] {
+      let digits = naf5(Uint(scalar));
+      // Rebuild Σ digit·2^i from the top digit down as a signed five-limb value.
+      let mut acc = [0u64; 5];
+      for &digit in digits.iter().rev() {
+        let mut carry = 0u64;
+        for limb in &mut acc {
+          let next = *limb >> 63;
+          *limb = (*limb << 1) | carry;
+          carry = next;
+        }
+        let magnitude = u64::from(digit.unsigned_abs());
+        let mut borrow_or_carry = magnitude;
+        for limb in &mut acc {
+          let (value, flag) = if digit >= 0 {
+            limb.overflowing_add(borrow_or_carry)
+          } else {
+            limb.overflowing_sub(borrow_or_carry)
+          };
+          *limb = value;
+          borrow_or_carry = u64::from(flag);
+        }
+      }
+      assert_eq!(acc, [scalar[0], scalar[1], scalar[2], scalar[3], 0], "{scalar:x?}");
+      let mut last_nonzero: Option<usize> = None;
+      for (index, &digit) in digits.iter().enumerate() {
+        if digit != 0 {
+          assert!(digit % 2 != 0 && (-15..=15).contains(&digit), "{scalar:x?}");
+          if let Some(last) = last_nonzero {
+            assert!(index - last >= 5, "nonzero digits are at least five apart: {scalar:x?}");
+          }
+          last_nonzero = Some(index);
+        }
+      }
+    }
+  }
 
   #[test]
   fn dispatched_field_arithmetic_matches_portable_authority() {
@@ -818,6 +1043,11 @@ mod tests {
       let a = edges.get(index).map_or_else(&mut generated, |&edge| Fe(edge));
       for b in [previous, Fe(edges[index % edges.len()])] {
         assert!(a.mul(b) == a.mul_portable(b), "{:x?} · {:x?}", a.0, b.0);
+      }
+      for b in [previous, Fe(edges[index % edges.len()])] {
+        assert!(a.add(b) == a.add_portable(b), "{:x?} + {:x?}", a.0, b.0);
+        assert!(a.sub(b) == a.sub_portable(b), "{:x?} - {:x?}", a.0, b.0);
+        assert!(b.sub(a) == b.sub_portable(a), "{:x?} - {:x?}", b.0, a.0);
       }
       assert!(a.square() == a.square_portable(), "{:x?}²", a.0);
       assert!(a.square() == a.mul_portable(a), "{:x?}² as a product", a.0);

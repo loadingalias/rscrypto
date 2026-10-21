@@ -1298,6 +1298,38 @@ impl EcdsaP256PublicKey {
       p256_verify::scalar_mul_two(u1, u2, &self.table)
     })
   }
+
+  /// Verify a P-256/SHA-256 signature with an uncompressed SEC1 key used once.
+  ///
+  /// The result equals [`Self::from_sec1_bytes`] followed by [`Self::verify`]; a key that
+  /// does not parse fails verification. It skips the verification table that a parsed key
+  /// builds for repeated use, so it is faster for a key that verifies one signature, such as
+  /// a TLS peer's certificate key. Keep a parsed key for repeated verification.
+  #[must_use = "signature verification must be checked; a dropped Result silently accepts a forged signature"]
+  pub fn verify_sec1(sec1: &[u8], message: &[u8], signature: &EcdsaP256Signature) -> Result<(), VerificationError> {
+    let digest = Sha256::digest(message);
+    Self::verify_sec1_digest(sec1, &digest, signature)
+  }
+
+  /// Verify a P-256/SHA-384 signature with an uncompressed SEC1 key used once.
+  ///
+  /// As [`Self::verify_sec1`], with the digest of [`Self::verify_sha384`].
+  #[must_use = "signature verification must be checked; a dropped Result silently accepts a forged signature"]
+  pub fn verify_sec1_sha384(
+    sec1: &[u8],
+    message: &[u8],
+    signature: &EcdsaP256Signature,
+  ) -> Result<(), VerificationError> {
+    let digest = Sha384::digest(message);
+    Self::verify_sec1_digest(sec1, &digest[..32], signature)
+  }
+
+  fn verify_sec1_digest(sec1: &[u8], digest: &[u8], signature: &EcdsaP256Signature) -> Result<(), VerificationError> {
+    let point = parse_public_key(sec1, &P256).map_err(|_| VerificationError::new())?;
+    verify_digest(&P256, signature.r, signature.s, digest, |u1, u2| {
+      p256_verify::scalar_mul_two_single(u1, u2, point)
+    })
+  }
 }
 
 impl PartialEq for EcdsaP256PublicKey {
@@ -5250,7 +5282,17 @@ mod tests {
         ),
       ] {
         let fast = p256_verify::scalar_mul_two(u1, u2, &table);
+        let single = p256_verify::scalar_mul_two_single(u1, u2, point);
         let generic = scalar_mul_two(&P256, u1, u2, &table);
+        assert_eq!(single.infinity, generic.infinity, "u1 {:x?}, u2 {:x?}", u1.0, u2.0);
+        if !generic.infinity {
+          assert!(
+            single.to_affine_ct(P256_FIELD_MINUS_TWO) == generic.to_affine_ct(P256_FIELD_MINUS_TWO),
+            "single-use u1 {:x?}, u2 {:x?}",
+            u1.0,
+            u2.0
+          );
+        }
         assert_eq!(fast.infinity, generic.infinity, "u1 {:x?}, u2 {:x?}", u1.0, u2.0);
         if !generic.infinity {
           assert!(
