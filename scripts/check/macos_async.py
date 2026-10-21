@@ -56,10 +56,8 @@ def queue(remote, expected=None):
             return
         state = {'commit': sha, 'tree': tree, 'compiler': rustc, 'repository': repo}
         save(job, state, 'queued')
-        # Hook-local Git variables must not redirect commands in the detached worktree
-        # back to the developer's index, HEAD, or working directory.
-        local_git = set(qualified.git('rev-parse', '--local-env-vars').splitlines())
-        env = {key: value for key, value in os.environ.items() if key not in local_git}
+        # The detached worktree runs its own Git state and uv project, never the pusher's.
+        env = qualified.environment()
         # Freeze the runner too: an edit just after the push must not change code
         # that the background Python process has not loaded yet.
         for name in ('macos_async.py', 'qualified.py'):

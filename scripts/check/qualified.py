@@ -10,6 +10,7 @@ local check reads. Any other difference, and any compiler change, requires a new
 """
 
 import hashlib
+import os
 import re
 import subprocess
 import sys
@@ -26,10 +27,27 @@ INERT = re.compile(
 )
 # Bound the ancestor walk; an older pass is not worth the lookup.
 ANCESTORS = 64
+# `uv run` exports these for the project that started this process; it also puts VIRTUAL_ENV/bin first on PATH.
+UV_RUN = ('UV', 'UV_LOCKED', 'UV_PROJECT', 'UV_RUN_RECURSION_DEPTH', 'VIRTUAL_ENV')
 
 
 def git(*args):
   return subprocess.check_output(['git', *args], cwd=ROOT, text=True).strip()
+
+
+def environment():
+  """Return this process's environment for a check in another worktree.
+
+  Hook-local Git variables would point the check's Git commands at the developer's index, HEAD, or
+  working directory. The `uv run` variables would run its Python with the developer's project, lock,
+  and virtual environment, which may change or disappear before the check ends.
+  """
+  hidden = set(git('rev-parse', '--local-env-vars').splitlines()) | set(UV_RUN)
+  env = {name: value for name, value in os.environ.items() if name not in hidden}
+  if venv := os.environ.get('VIRTUAL_ENV'):
+    env['PATH'] = os.pathsep.join(entry for entry in env.get('PATH', '').split(os.pathsep)
+                                  if entry != os.path.join(venv, 'bin'))
+  return env
 
 
 def compiler():

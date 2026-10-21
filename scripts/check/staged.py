@@ -57,7 +57,8 @@ def main():
             print(reason)
             return 0
         target = state / 'target'
-        env = {**os.environ, 'CARGO_TARGET_DIR': str(target),
+        # The staged pyproject.toml, uv.lock, and .python-version run the check's Python, not the developer's.
+        env = {**qualified.environment(), 'CARGO_TARGET_DIR': str(target),
                'RSCRYPTO_INDEPENDENT_LINT_TARGET_DIR': str(target / 'independent-lints')}
         status = subprocess.run(['just', 'ci-check'], cwd=checkout, env=env).returncode
         if status:

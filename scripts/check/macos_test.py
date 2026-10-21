@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -30,7 +31,37 @@ def install_qualification(root):
     rustc.chmod(0o755)
 
 
+# The check stubs record what `uv run` would export to them and the PATH they see.
+RECORD_UV = 'printf "%s\\n" "${UV-}${UV_LOCKED-}${UV_PROJECT-}${UV_RUN_RECURSION_DEPTH-}${VIRTUAL_ENV-}" "$PATH"'
+
+
+def uv_run(root, path):
+    """The variables that `uv run` exports to a script started from the developer checkout ROOT."""
+    venv = root / '.venv'
+    return {'UV': '/opt/uv', 'UV_LOCKED': '1', 'UV_PROJECT': str(root), 'UV_RUN_RECURSION_DEPTH': '1',
+            'VIRTUAL_ENV': str(venv), 'PATH': f'{venv / "bin"}{os.pathsep}{path}'}
+
+
+def assert_own_project(test, record, root):
+    """A check in another worktree selects its own uv project, not the one of the checkout ROOT."""
+    variables, path = record.read_text().splitlines()
+    test.assertEqual(variables, '')
+    test.assertNotIn(str(root / '.venv/bin'), path.split(os.pathsep))
+
+
 class MacOSCommit(unittest.TestCase):
+    def test_python_runs_its_own_checkout(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            python = root / 'scripts/lib/python.sh'
+            python.parent.mkdir(parents=True)
+            shutil.copy2(ROOT / 'scripts/lib/python.sh', python)
+            # A worktree inherits the project of the `uv run` that started it, which may no longer exist.
+            result = subprocess.run([str(python), '-c', 'import os; print(os.environ["UV_PROJECT"])'],
+                                    env={**os.environ, 'PYTHON': sys.executable, 'UV_PROJECT': str(root / 'removed')},
+                                    capture_output=True, text=True, check=True)
+            self.assertEqual(Path(result.stdout.strip()).resolve(), root.resolve())
+
     def test_gate_preserves_ci_modes_and_stops_on_failure(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -76,12 +107,14 @@ class MacOSCommit(unittest.TestCase):
 common=$(git rev-parse --path-format=absolute --git-common-dir)
 [ ! -e untracked ] || exit 8
 echo "$* $(cat source)" >> "$common/calls"
+''' + RECORD_UV + ''' > "$common/environment"
 [ -z "${RESTAGE:-}" ] || { echo restaged > "$RESTAGE/source"; git -C "$RESTAGE" add source; }
 [ -z "${DIRTY:-}" ] || echo changed > source
 exit "${CHECK_STATUS:-0}"
 ''')
             tool.chmod(0o755)
-            env = {**os.environ, 'BASH_ENV': '/dev/null', 'PATH': str(root / '.git') + os.pathsep + os.environ['PATH']}
+            env = {**os.environ, 'BASH_ENV': '/dev/null', 'PYTHON': sys.executable,
+                   'PATH': str(root / '.git') + os.pathsep + os.environ['PATH']}
             source = root / 'source'
 
             def stage(text):
@@ -99,10 +132,12 @@ exit "${CHECK_STATUS:-0}"
             stage('staged')
             self.assertEqual(run(CHECK_STATUS='7'), 7)
             # Unstaged edits and untracked files neither block the commit nor enter the check.
+            # Neither does the committer's uv project: the check runs the staged one.
             source.write_text('unstaged')
             (root / 'untracked').write_text('new source')
-            self.assertEqual(run(), 0)
+            self.assertEqual(run(**uv_run(root, env['PATH'])), 0)
             self.assertEqual(calls(), ['ci-check staged', 'ci-check staged'])
+            assert_own_project(self, root / '.git/environment', root)
             self.assertEqual(source.read_text(), 'unstaged')
             self.assertTrue((root / 'untracked').exists())
 
@@ -161,6 +196,7 @@ class AsyncMacOS(unittest.TestCase):
             'just': '''
 common=$(git rev-parse --path-format=absolute --git-common-dir)
 printf '%s %s\\n' "$*" "$(git rev-parse HEAD)" >> "$common/calls"
+''' + RECORD_UV + ''' > "$common/environment"
 touch "$common/started"
 while [ -f "$common/hold" ]; do sleep 0.05; done
 [ ! -f "$common/interrupt" ] || { kill -KILL "$PPID"; exit 1; }
@@ -172,7 +208,8 @@ exit "${CHECK_STATUS:-0}"
             tool = self.common / name
             tool.write_text('#!/bin/sh\n' + body + '\n')
             tool.chmod(0o755)
-        self.env = {**os.environ, 'BASH_ENV': '/dev/null', 'PATH': str(self.common) + os.pathsep + os.environ['PATH']}
+        self.env = {**os.environ, 'BASH_ENV': '/dev/null', 'PYTHON': sys.executable,
+                    'PATH': str(self.common) + os.pathsep + os.environ['PATH']}
         self.commit('first')
         # Release held workers before removing their fixture, even on an assertion failure.
         self.addCleanup(self.finish_workers)
@@ -240,6 +277,14 @@ exit "${CHECK_STATUS:-0}"
         self.assertEqual(self.calls(), [f'check-macos {first}', f'check-macos {second}'])
         self.assertEqual(self.git('status', '--porcelain'), '')
         self.assertEqual(len(self.git('worktree', 'list', '--porcelain').split('worktree ')), 2)
+
+    def test_worker_runs_the_job_checkout_project(self):
+        # The pusher's uv project may be a temporary clone that is gone before the job runs.
+        pusher = self.root / 'removed'
+        self.assertEqual(self.push(**uv_run(pusher, self.env['PATH'])).returncode, 0)
+        self.finish_workers()
+        self.assertEqual(self.phases(), ['passed'])
+        assert_own_project(self, self.common / 'environment', pusher)
 
     def test_failures_record_no_pass_and_can_be_retried(self):
         for marker, environment in [(None, {'CHECK_STATUS': '7'}), ('dirty', {}), ('change-compiler', {})]:

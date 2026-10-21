@@ -627,6 +627,9 @@ Every Python command runs through uv: `lib/python.sh` runs `uv run`,
 and scripts start with `#!/usr/bin/env -S uv run python`.
 uv provides the interpreter that [`.python-version`](../.python-version) names,
 and [`uv.lock`](../uv.lock) pins the packages of [`pyproject.toml`](../pyproject.toml); a stale lock refuses.
+`lib/python.sh` always selects the project of its own checkout.
+The staged check and Mac qualification also remove the caller's `uv run` variables and virtual environment,
+so each worktree runs its own lock.
 Checks and benchmarks use only the standard library.
 The `tooling` group holds the updater's libraries and those of the catalog and workflow tests;
 `lib/python.sh --group tooling` selects it.

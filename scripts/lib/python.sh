@@ -5,8 +5,10 @@
 
 set -euo pipefail
 
-export UV_PROJECT="${UV_PROJECT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
-export UV_LOCKED=1
+# Always this checkout: `uv run` exports UV_PROJECT, and an inherited value would run another
+# checkout's lock and environment, which may since have been removed.
+UV_PROJECT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+export UV_PROJECT UV_LOCKED=1
 groups=()
 while [[ "${1:-}" == --group ]]; do
   groups+=(--group "${2:?--group requires a dependency group}")
