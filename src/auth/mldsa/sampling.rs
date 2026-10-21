@@ -195,33 +195,69 @@ pub(super) fn matrix(rho: &[u8], row: u8, column: u8, out: &mut [u32; N]) -> Res
     let candidates = remaining.min(56);
     let bytes = &mut block[..candidates.strict_mul(3)];
     reader.squeeze_into(bytes);
-    for bytes in bytes.as_chunks::<3>().0 {
-      let value = u32::from_le_bytes([bytes[0], bytes[1], bytes[2] & 0x7f, 0]);
-      if value < Q {
-        out[count] = to_montgomery(value);
-        count = count.strict_add(1);
-        if count == N {
-          return Ok(());
-        }
-      }
+    count = uniform(bytes, out, count);
+    if count == N {
+      return Ok(());
     }
     remaining = remaining.strict_sub(candidates);
   }
   Err(MlDsaError::RejectionLimit)
 }
 
-// Both streams and their rejection decisions depend only on the public rho seed.
-// Keep their squeeze positions equal so the shared Keccak backend can permute
-// two independent states together. Each stream retains the 298-candidate bound.
+/// Append the Montgomery form of each three-byte candidate below q, in order, until `out`
+/// holds N coefficients; return the new count. Candidates come from the public rho seed.
+#[inline]
+fn uniform(bytes: &[u8], out: &mut [u32; N], count: usize) -> usize {
+  #[cfg(all(
+    target_arch = "aarch64",
+    any(target_os = "macos", target_os = "linux"),
+    target_feature = "neon",
+    not(feature = "portable-only")
+  ))]
+  {
+    // SAFETY: This branch requires compile-time NEON on macOS/Linux AArch64.
+    unsafe { super::poly::aarch64::uniform(bytes, out, count) }
+  }
+  #[cfg(not(all(
+    target_arch = "aarch64",
+    any(target_os = "macos", target_os = "linux"),
+    target_feature = "neon",
+    not(feature = "portable-only")
+  )))]
+  {
+    uniform_portable(bytes, out, count)
+  }
+}
+
+/// The scalar authority for [`uniform`].
+pub(in crate::auth::mldsa) fn uniform_portable(bytes: &[u8], out: &mut [u32; N], mut count: usize) -> usize {
+  for candidate in bytes.as_chunks::<3>().0 {
+    if count == N {
+      break;
+    }
+    let value = u32::from_le_bytes([candidate[0], candidate[1], candidate[2] & 0x7f, 0]);
+    if value < Q {
+      out[count] = to_montgomery(value);
+      count = count.strict_add(1);
+    }
+  }
+  count
+}
+
+/// Expand the matrix entries at two `(row, column)` positions together.
+///
+/// Both streams and their rejection decisions depend only on the public rho seed. Their
+/// squeeze positions stay equal so the shared Keccak backend can permute two independent
+/// states together. Each stream retains the 298-candidate bound.
 pub(super) fn matrix_pair(
   rho: &[u8],
-  row: u8,
-  columns: [u8; 2],
+  positions: [(u8, u8); 2],
   out_a: &mut [u32; N],
   out_b: &mut [u32; N],
 ) -> Result<(), MlDsaError> {
   let seed = rho.try_into().expect("ML-DSA rho is 32 bytes");
-  let (mut a, mut b) = xof_seeded_32_2_pair::<168>(0x1f, seed, (columns[0], row), (columns[1], row));
+  let [(row_a, column_a), (row_b, column_b)] = positions;
+  let (mut a, mut b) = xof_seeded_32_2_pair::<168>(0x1f, seed, (column_a, row_a), (column_b, row_b));
   let mut block_a = [0u8; 168];
   let mut block_b = [0u8; 168];
   let mut counts = [0usize; 2];
@@ -230,24 +266,8 @@ pub(super) fn matrix_pair(
     let candidates = remaining.min(56);
     let bytes = candidates.strict_mul(3);
     PublicKeccakXof::squeeze_pair_into(&mut a, &mut b, &mut block_a[..bytes], &mut block_b[..bytes]);
-    for ((block, out), count) in [(&block_a, &mut *out_a), (&block_b, &mut *out_b)]
-      .into_iter()
-      .zip(&mut counts)
-    {
-      if *count == N {
-        continue;
-      }
-      for candidate in block[..bytes].as_chunks::<3>().0 {
-        let value = u32::from_le_bytes([candidate[0], candidate[1], candidate[2] & 0x7f, 0]);
-        if value < Q {
-          out[*count] = to_montgomery(value);
-          *count = count.strict_add(1);
-          if *count == N {
-            break;
-          }
-        }
-      }
-    }
+    counts[0] = uniform(&block_a[..bytes], out_a, counts[0]);
+    counts[1] = uniform(&block_b[..bytes], out_b, counts[1]);
     if counts == [N; 2] {
       return Ok(());
     }
@@ -424,18 +444,6 @@ fn challenge_first_candidate(bytes: &[u8; CHALLENGE_BYTES], offset: u32, limit: 
   first_challenge_candidate(bytes, offset, limit)
 }
 
-/// Run the fixed placement scan on NEON, which these targets require at compile time.
-#[cfg(all(
-  target_arch = "aarch64",
-  any(target_os = "macos", target_os = "linux"),
-  target_feature = "neon",
-  not(feature = "portable-only")
-))]
-fn challenge_place(coefficients: &mut [u32; N], j: u32, sign: u32) -> u32 {
-  // SAFETY: This configuration requires compile-time NEON on macOS/Linux AArch64.
-  unsafe { super::poly::aarch64::challenge_place(coefficients, j, sign) }
-}
-
 /// Run the fixed placement scan on AVX2 when detected, otherwise portably.
 #[cfg(not(all(
   target_arch = "aarch64",
@@ -499,16 +507,12 @@ fn first_challenge_candidate(bytes: &[u8; CHALLENGE_BYTES], offset: u32, limit: 
 }
 
 /// Write `sign` at coefficient `j` and return the coefficient it replaces.
-#[cfg_attr(
-  all(
-    target_arch = "aarch64",
-    any(target_os = "macos", target_os = "linux"),
-    target_feature = "neon",
-    not(feature = "portable-only"),
-    not(test)
-  ),
-  expect(dead_code, reason = "NEON targets always use the vector scan")
-)]
+#[cfg(not(all(
+  target_arch = "aarch64",
+  any(target_os = "macos", target_os = "linux"),
+  target_feature = "neon",
+  not(feature = "portable-only")
+)))]
 fn place_challenge_coefficient(coefficients: &mut [u32; N], j: u32, sign: u32) -> u32 {
   let mut previous = 0;
   for (index, coefficient) in coefficients.iter_mut().enumerate() {
@@ -520,6 +524,52 @@ fn place_challenge_coefficient(coefficients: &mut [u32; N], j: u32, sign: u32) -
   previous
 }
 
+/// Sample the challenge with fixed-work scans of the XOF buffer and coefficients.
+///
+/// NEON builds the coefficients as bytes `0`, `1` and `0xff`, so each placement scans sixteen
+/// coefficients per vector, then widens them once to canonical residues.
+#[cfg(all(
+  target_arch = "aarch64",
+  any(target_os = "macos", target_os = "linux"),
+  target_feature = "neon",
+  not(feature = "portable-only")
+))]
+fn challenge_from_bytes_valid(bytes: &[u8; CHALLENGE_BYTES], tau: usize, out: &mut Poly) -> u32 {
+  let b = bytes;
+  let mut signs = u64::from_le_bytes(b[..8].try_into().expect("fixed challenge sign prefix"));
+  let mut offset = 8u32;
+  let mut valid = 1u32;
+  let mut coefficients = ZeroizingBytes::<N>::zeroed();
+  for i in N.strict_sub(tau)..N {
+    let i_u32 = u32::try_from(i).expect("ML-DSA polynomial indices fit u32");
+    let first = challenge_first_candidate(b, offset, i_u32);
+    let found = nonzero_bit(first ^ u32::MAX);
+    let j = select(0, first & 255, found);
+    offset = select(offset, (first >> 8).strict_add(1), found);
+    valid &= found;
+    // A signing candidate's challenge is not public until that candidate is
+    // accepted. Scan both the XOF buffer and polynomial instead of indexing
+    // either one with secret-derived rejection state. The sign byte is 1 for a
+    // clear bit and 0xff for a set one.
+    let sign = 1u8 | 0u8.wrapping_sub(u8::from(signs & 1 != 0));
+    // SAFETY: This configuration requires compile-time NEON on macOS/Linux AArch64.
+    let previous = unsafe { super::poly::aarch64::challenge_place_bytes(coefficients.as_mut_array(), j, sign) };
+    let placed = select(u32::from(previous), u32::from(sign), equal_bit(i_u32, j));
+    coefficients.as_mut_array()[i] = placed.to_le_bytes()[0];
+    signs >>= 1;
+  }
+  // SAFETY: This configuration requires compile-time NEON on macOS/Linux AArch64.
+  unsafe { super::poly::aarch64::challenge_expand(coefficients.as_array(), &mut out.0) };
+  valid
+}
+
+/// Sample the challenge with fixed-work scans of the XOF buffer and coefficients.
+#[cfg(not(all(
+  target_arch = "aarch64",
+  any(target_os = "macos", target_os = "linux"),
+  target_feature = "neon",
+  not(feature = "portable-only")
+)))]
 fn challenge_from_bytes_valid(bytes: &[u8; CHALLENGE_BYTES], tau: usize, out: &mut Poly) -> u32 {
   let b = bytes;
   let mut signs = u64::from_le_bytes(b[..8].try_into().expect("fixed challenge sign prefix"));
@@ -597,6 +647,12 @@ mod tests {
 
     let n = u32::try_from(N).expect("ML-DSA degree fits u32");
     for j in 0..n {
+      #[cfg(not(all(
+        target_arch = "aarch64",
+        any(target_os = "macos", target_os = "linux"),
+        target_feature = "neon",
+        not(feature = "portable-only")
+      )))]
       for sign in [1, Q.strict_sub(1)] {
         let mut dispatched = [0u32; N];
         for coefficient in &mut dispatched {
@@ -609,6 +665,43 @@ mod tests {
           "j {j}"
         );
         assert_eq!(dispatched, portable, "j {j}");
+      }
+      #[cfg(all(
+        target_arch = "aarch64",
+        any(target_os = "macos", target_os = "linux"),
+        target_feature = "neon",
+        not(feature = "portable-only")
+      ))]
+      for sign in [1u8, 0xff] {
+        let mut placed = [0u8; N];
+        for coefficient in &mut placed {
+          *coefficient = next().to_le_bytes()[0];
+        }
+        let mut expected = placed;
+        let index = usize::try_from(j).expect("index fits usize");
+        let replaced = expected[index];
+        expected[index] = sign;
+        // SAFETY: These targets require compile-time NEON.
+        let previous = unsafe { super::super::poly::aarch64::challenge_place_bytes(&mut placed, j, sign) };
+        assert_eq!((previous, placed), (replaced, expected), "j {j}");
+      }
+    }
+  }
+
+  #[test]
+  fn constant_time_challenge_matches_public_sampler() {
+    // `challenge_public` is the independent variable-time sampler that verification uses.
+    let seeds = if cfg!(miri) { 4u32 } else { 3_000 };
+    for tau in [39, 49, 60] {
+      for seed in 0..seeds {
+        let seed = [seed.to_le_bytes(), [0x5a; 4]].concat();
+        let (mut fixed, mut public) = (Poly::zero(), Poly::zero());
+        let fixed_result = challenge(&seed, tau, &mut fixed);
+        let public_result = challenge_public(&seed, tau, &mut public);
+        assert_eq!(fixed_result.is_ok(), public_result.is_ok(), "tau {tau}");
+        if fixed_result.is_ok() {
+          assert_eq!(fixed.0, public.0, "tau {tau}");
+        }
       }
     }
   }
@@ -678,17 +771,68 @@ mod tests {
     // original scalar stream, including reversed and repeated coordinates.
     for seed_byte in [0u8, 1, 127, 255] {
       for row in 0..8 {
-        for columns in [[0, 1], [4, 5], [6, 0], [2, 2]] {
+        // Same-row pairs, cross-row pairs (verification pairs rows), and repeats.
+        for positions in [
+          [(row, 0), (row, 1)],
+          [(row, 4), (row, 5)],
+          [(row, 6), (row, 0)],
+          [(row, 2), (row, 2)],
+          [(row, 4), (row ^ 1, 4)],
+          [(row, 6), (7 - row, 3)],
+        ] {
           let seed = [seed_byte; 32];
           let mut a = [0; N];
           let mut b = [0; N];
           let mut expected_a = [0; N];
           let mut expected_b = [0; N];
-          matrix(&seed, row, columns[0], &mut expected_a).expect("scalar matrix");
-          matrix(&seed, row, columns[1], &mut expected_b).expect("scalar matrix");
-          matrix_pair(&seed, row, columns, &mut a, &mut b).expect("paired matrix");
+          matrix(&seed, positions[0].0, positions[0].1, &mut expected_a).expect("scalar matrix");
+          matrix(&seed, positions[1].0, positions[1].1, &mut expected_b).expect("scalar matrix");
+          matrix_pair(&seed, positions, &mut a, &mut b).expect("paired matrix");
           assert_eq!(a, expected_a);
           assert_eq!(b, expected_b);
+        }
+      }
+    }
+  }
+
+  #[test]
+  fn dispatched_uniform_sampling_matches_scalar_authority() {
+    // Random blocks, blocks with rejected candidates (2^23 - 1 and q) in varying positions, and
+    // starting counts at and around the last full group exercise the vector fast path, its
+    // scalar fallback and the N bound.
+    let mut state = 0x2545_f491_4f6c_dd1du64;
+    let mut next = || {
+      state ^= state << 13;
+      state ^= state >> 7;
+      state ^= state << 17;
+      state
+    };
+    let q = Q.to_le_bytes();
+    for case in 0..64usize {
+      let mut bytes = [0u8; 168];
+      for byte in &mut bytes {
+        *byte = next().to_le_bytes()[0];
+      }
+      if case % 2 == 1 {
+        let reject = (case / 2) % 56;
+        bytes[reject * 3..reject * 3 + 3].copy_from_slice(&[0xff, 0xff, 0x7f]);
+        let other = (reject * 7 + 5) % 56;
+        bytes[other * 3..other * 3 + 3].copy_from_slice(&q[..3]);
+      }
+      for len in [168, 165, 54, 24, 23, 3, 0] {
+        for start in [0, 1, 200, N - 9, N - 8, N - 7, N - 1, N] {
+          let mut fill = [0u32; N];
+          for (i, x) in fill.iter_mut().enumerate() {
+            *x = u32::try_from(i).expect("index fits u32");
+          }
+          let mut expected = fill;
+          let expected_count = uniform_portable(&bytes[..len], &mut expected, start);
+          let count = uniform(&bytes[..len], &mut fill, start);
+          assert_eq!(
+            (count, fill),
+            (expected_count, expected),
+            "case {case}, {len} bytes, start {start}"
+          );
         }
       }
     }

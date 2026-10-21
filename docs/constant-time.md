@@ -386,8 +386,9 @@ They do not establish a timing claim for a release or a downstream build by them
 ### ML-DSA
 
 ML-DSA has a separate required boundary, `signature.mldsa.secret_kernels`.
-Its timing cases, listed in `ct.toml`, cover transforms, products, accumulation, norm-rejection position,
-rounding, secret samplers, and valid-key preparation for ML-DSA-44/65/87.
+Its timing cases, listed in `ct.toml`, cover transforms, products, accumulation, the fused row product
+that prepared signing uses for `Â·ŷ`, norm-rejection position, rounding, secret samplers, and valid-key
+preparation for ML-DSA-44/65/87.
 
 - Polynomial classes use canonical coefficients.
 - Preparation compares one fixed key with a pool of 32 independently seeded valid keys.
@@ -491,7 +492,8 @@ and accumulation.
 - The `mldsa_*_dense_fixed_vs_random` cases compare one fixed dense polynomial with new ones, at 200,000 samples.
   They are required on every target,
   because NTT-domain secrets and the signing mask are dense residues.
-- The all-zero cases of those four kernels are required on every target except POWER.
+- The all-zero cases of those four kernels, and of the fused row product, which runs accumulation on
+  POWER, are required on every target except POWER.
   On POWER, `diagnostic_targets` in `ct.toml` marks them as non-gating diagnostics and gives the reason:
   production never gives those kernels zero or small repeated secrets on POWER.
   Products, accumulations, and inverse NTTs take NTT-domain operands.

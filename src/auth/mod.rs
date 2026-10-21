@@ -485,5 +485,5 @@ pub use mldsa::{
   diag_mldsa_accumulate, diag_mldsa_challenge, diag_mldsa_inverse_ntt, diag_mldsa_inverse_ntt_portable,
   diag_mldsa_mask, diag_mldsa_montgomery, diag_mldsa_montgomery_batch, diag_mldsa_noise, diag_mldsa_norm,
   diag_mldsa_ntt, diag_mldsa_prepare44, diag_mldsa_prepare65, diag_mldsa_prepare87, diag_mldsa_product,
-  diag_mldsa_rounding,
+  diag_mldsa_rounding, diag_mldsa_row_product,
 };

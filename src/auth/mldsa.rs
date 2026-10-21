@@ -1234,7 +1234,7 @@ pub fn diag_mldsa_take_sign_attempts() -> usize {
 pub use diagnostics::{
   diag_mldsa_accumulate, diag_mldsa_mask, diag_mldsa_montgomery, diag_mldsa_montgomery_batch, diag_mldsa_norm,
   diag_mldsa_ntt, diag_mldsa_prepare44, diag_mldsa_prepare65, diag_mldsa_prepare87, diag_mldsa_product,
-  diag_mldsa_rounding,
+  diag_mldsa_rounding, diag_mldsa_row_product,
 };
 
 /// Diagnostic execution of the production inverse NTT on canonical coefficients.

@@ -55,6 +55,7 @@ fn main() {
     rscrypto_ct_harness::mldsa::ct_entry_mldsa_rounding65,
     rscrypto_ct_harness::mldsa::ct_entry_mldsa_product,
     rscrypto_ct_harness::mldsa::ct_entry_mldsa_accumulate,
+    rscrypto_ct_harness::mldsa::ct_entry_mldsa_row_product,
     rscrypto_ct_harness::mldsa::ct_entry_mldsa_noise_eta2,
     rscrypto_ct_harness::mldsa::ct_entry_mldsa_noise_eta4,
     rscrypto_ct_harness::mldsa::ct_entry_mldsa_challenge44,

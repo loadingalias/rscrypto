@@ -22,12 +22,13 @@ class Selection(unittest.TestCase):
         cases = {case['name']: case for case in manifest['dudect_case']}
         dense = {'mldsa_ntt_dense_fixed_vs_random', 'mldsa_inverse_ntt_dense_fixed_vs_random',
                  'mldsa_montgomery_dense_fixed_vs_random', 'mldsa_product_dense_fixed_vs_random',
-                 'mldsa_accumulate_dense_fixed_vs_random'}
+                 'mldsa_accumulate_dense_fixed_vs_random', 'mldsa_row_product_dense_fixed_vs_random'}
         # The zero-input cases of the four kernels POWER dispatches to its vector unit.
         power_zero = {'mldsa_ntt_fixed_vs_random', 'mldsa_inverse_ntt_fixed_vs_random',
-                      'mldsa_product_fixed_vs_random', 'mldsa_accumulate_fixed_vs_random'}
-        for target, count in (('s390x-unknown-linux-gnu', 24), ('powerpc64le-unknown-linux-gnu', 20),
-                              ('riscv64gc-unknown-linux-gnu', 24), ('x86_64-unknown-linux-gnu', 24)):
+                      'mldsa_product_fixed_vs_random', 'mldsa_accumulate_fixed_vs_random',
+                      'mldsa_row_product_fixed_vs_random'}
+        for target, count in (('s390x-unknown-linux-gnu', 26), ('powerpc64le-unknown-linux-gnu', 21),
+                              ('riscv64gc-unknown-linux-gnu', 26), ('x86_64-unknown-linux-gnu', 26)):
             selected = set(ci.replay_cases(cases, 'mldsa', target))
             required = {case['name'] for case in required_dudect_cases(manifest, target)
                         if case['primitive'] == 'signature.mldsa.secret_kernels'}

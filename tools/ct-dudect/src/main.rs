@@ -1278,6 +1278,13 @@ mldsa_products_case!(mldsa_product_fixed_vs_random, 2, |input: &[[u32; 256]; 2]|
 mldsa_products_case!(mldsa_accumulate_fixed_vs_random, 3, |input: &[[u32; 256]; 3]| {
   rscrypto::auth::diag_mldsa_accumulate(&input[0], &input[1], &input[2])
 });
+mldsa_products_case!(mldsa_row_product_fixed_vs_random, 10, |input: &[[u32; 256]; 10]| {
+  let (entries, inputs) = input.split_at(5);
+  rscrypto::auth::diag_mldsa_row_product(
+    entries.try_into().expect("five matrix entries"),
+    inputs.try_into().expect("five input polynomials"),
+  )
+});
 
 // Probes for operand-dependent timing in ML-DSA arithmetic. Each case changes
 // one input property: zero, one fixed random input, or a fixed high-bit-count
@@ -1401,6 +1408,19 @@ mldsa_probe_case!(
   mldsa_probe_fixed,
   mldsa_probe_random,
   |input: &[[u32; 256]; 3]| rscrypto::auth::diag_mldsa_accumulate(&input[0], &input[1], &input[2])
+);
+mldsa_probe_case!(
+  mldsa_row_product_dense_fixed_vs_random,
+  10,
+  mldsa_probe_fixed,
+  mldsa_probe_random,
+  |input: &[[u32; 256]; 10]| {
+    let (entries, inputs) = input.split_at(5);
+    rscrypto::auth::diag_mldsa_row_product(
+      entries.try_into().expect("five matrix entries"),
+      inputs.try_into().expect("five input polynomials"),
+    )
+  }
 );
 mldsa_probe_montgomery!(
   mldsa_probe_montgomery_high_vs_random,
@@ -3653,6 +3673,7 @@ ctbench_main_with_seeds!(
   (mldsa_mask19_fixed_vs_random, Some(0x6d6c64736100000c)),
   (mldsa_product_fixed_vs_random, Some(0x6d6c64736100000d)),
   (mldsa_accumulate_fixed_vs_random, Some(0x6d6c64736100000e)),
+  (mldsa_row_product_fixed_vs_random, Some(0x6d6c647361000013)),
   (mldsa_probe_product_zero_vs_zero, Some(0x6d6c647370720000)),
   (mldsa_probe_product_zero_vs_fixed, Some(0x6d6c647370720001)),
   (mldsa_product_dense_fixed_vs_random, Some(0x6d6c647370720002)),
@@ -3677,6 +3698,7 @@ ctbench_main_with_seeds!(
   (mldsa_probe_prepare65_zero_secret_vs_random, Some(0x6d6c647370720015)),
   (mldsa_probe_prepare87_zero_secret_vs_random, Some(0x6d6c647370720016)),
   (mldsa_accumulate_dense_fixed_vs_random, Some(0x6d6c647370720017)),
+  (mldsa_row_product_dense_fixed_vs_random, Some(0x6d6c647370720018)),
   (mldsa_norm_first_vs_last, Some(0x6d6c64736100000f)),
   (mldsa_prepare44_fixed_vs_random, Some(0x6d6c647361000010)),
   (mldsa_prepare65_fixed_vs_random, Some(0x6d6c647361000011)),

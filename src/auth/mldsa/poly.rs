@@ -38,6 +38,13 @@ mod vector4;
 ))]
 mod riscv;
 
+// The NEON backend replaces every production scalar transform and product on AArch64.
+#[cfg(not(all(
+  target_arch = "aarch64",
+  any(target_os = "macos", target_os = "linux"),
+  target_feature = "neon",
+  not(feature = "portable-only")
+)))]
 const RISCV_NATIVE: bool = cfg!(all(
   any(target_arch = "riscv32", target_arch = "riscv64"),
   target_feature = "m",
@@ -265,6 +272,25 @@ impl Poly {
       }
       return;
     }
+    #[cfg(all(
+      target_arch = "aarch64",
+      any(target_os = "macos", target_os = "linux"),
+      target_feature = "neon",
+      not(feature = "portable-only")
+    ))]
+    {
+      // SAFETY: Compile-time NEON is required on this macOS/Linux AArch64 path.
+      // Fixed-size references provide initialized, disjoint output and inputs.
+      unsafe {
+        aarch64::product(&mut self.0, &a.0, b);
+      }
+    }
+    #[cfg(not(all(
+      target_arch = "aarch64",
+      any(target_os = "macos", target_os = "linux"),
+      target_feature = "neon",
+      not(feature = "portable-only")
+    )))]
     for ((out, &a), &b) in self.0.iter_mut().zip(&a.0).zip(b) {
       *out = scalar_multiply::<RISCV_NATIVE>(a, b);
     }
@@ -321,6 +347,33 @@ impl Poly {
     {
       for ((out, &a), &b) in self.0.iter_mut().zip(a).zip(&b.0) {
         *out = add(*out, scalar_multiply::<RISCV_NATIVE>(a, b));
+      }
+    }
+  }
+
+  /// Write `Σ a[j] ⊙ b[j]` over NTT-domain columns, with canonical Montgomery operands.
+  pub(super) fn row_product<const L: usize>(&mut self, a: &[[u32; N]; L], b: &[Self; L]) {
+    #[cfg(all(
+      target_arch = "aarch64",
+      any(target_os = "macos", target_os = "linux"),
+      target_feature = "neon",
+      not(feature = "portable-only")
+    ))]
+    {
+      // SAFETY: Compile-time NEON is required on this macOS/Linux AArch64 path.
+      // Fixed-size references provide initialized, disjoint output and inputs.
+      unsafe { aarch64::row_product(&mut self.0, a, b) };
+    }
+    #[cfg(not(all(
+      target_arch = "aarch64",
+      any(target_os = "macos", target_os = "linux"),
+      target_feature = "neon",
+      not(feature = "portable-only")
+    )))]
+    {
+      self.0.fill(0);
+      for (a, b) in a.iter().zip(b) {
+        self.accumulate_product(a, b);
       }
     }
   }
@@ -814,6 +867,16 @@ pub(super) fn montgomery(a: u32, b: u32) -> u32 {
 
 /// Select arithmetic at monomorphization, keeping one scalar transform schedule.
 /// The forced-portable timing and differential paths always instantiate `false`.
+#[cfg(any(
+  test,
+  all(rscrypto_internal, feature = "diag"),
+  not(all(
+    target_arch = "aarch64",
+    any(target_os = "macos", target_os = "linux"),
+    target_feature = "neon",
+    not(feature = "portable-only")
+  ))
+))]
 #[inline]
 fn scalar_multiply<const NATIVE: bool>(a: u32, b: u32) -> u32 {
   #[cfg(all(
@@ -874,6 +937,16 @@ pub(super) fn power2_round(x: u32) -> (u32, u32) {
 }
 
 /// Algorithm 36. Public parameter selection gives constant divisors.
+#[cfg(any(
+  test,
+  all(rscrypto_internal, feature = "diag"),
+  not(all(
+    target_arch = "aarch64",
+    any(target_os = "macos", target_os = "linux"),
+    target_feature = "neon",
+    not(feature = "portable-only")
+  ))
+))]
 pub(super) fn decompose(x: u32, gamma2: u32) -> (u32, u32) {
   let high = high_bits(x, gamma2);
   (high, sub(x, high.strict_mul(gamma2.strict_mul(2))))
@@ -881,6 +954,16 @@ pub(super) fn decompose(x: u32, gamma2: u32) -> (u32, u32) {
 
 /// High component of Algorithm 36 for canonical coefficients.
 /// Callers needing only this component need not compute the low remainder.
+#[cfg(any(
+  test,
+  all(rscrypto_internal, feature = "diag"),
+  not(all(
+    target_arch = "aarch64",
+    any(target_os = "macos", target_os = "linux"),
+    target_feature = "neon",
+    not(feature = "portable-only")
+  ))
+))]
 #[inline]
 pub(super) fn high_bits(x: u32, gamma2: u32) -> u32 {
   let rounded = x.strict_add(gamma2).strict_sub(1);
@@ -892,7 +975,42 @@ pub(super) fn high_bits(x: u32, gamma2: u32) -> u32 {
   select(quotient, 0, u32::from(quotient == modulus))
 }
 
+impl Poly {
+  /// Replace each coefficient with `UseHint(hints[i], x)`; hints are zero or one.
+  /// Inputs are public verification data.
+  pub(super) fn use_hints(&mut self, hints: &[u32; N], gamma2: u32) {
+    #[cfg(all(
+      target_arch = "aarch64",
+      any(target_os = "macos", target_os = "linux"),
+      target_feature = "neon",
+      not(feature = "portable-only")
+    ))]
+    {
+      // SAFETY: Compile-time NEON is required on this macOS/Linux AArch64 path.
+      unsafe { aarch64::use_hints(&mut self.0, hints, gamma2) };
+    }
+    #[cfg(not(all(
+      target_arch = "aarch64",
+      any(target_os = "macos", target_os = "linux"),
+      target_feature = "neon",
+      not(feature = "portable-only")
+    )))]
+    for (x, &hint) in self.0.iter_mut().zip(hints) {
+      *x = use_hint(*x, hint != 0, gamma2);
+    }
+  }
+}
+
 /// Algorithm 40; inputs are public verification data.
+#[cfg(any(
+  test,
+  not(all(
+    target_arch = "aarch64",
+    any(target_os = "macos", target_os = "linux"),
+    target_feature = "neon",
+    not(feature = "portable-only")
+  ))
+))]
 pub(super) fn use_hint(x: u32, hint: bool, gamma2: u32) -> u32 {
   let (high, low) = decompose(x, gamma2);
   if !hint {
@@ -1175,9 +1293,58 @@ mod tests {
           let (expected_high, expected_low) = super::decompose(x, gamma2);
           assert_eq!((h, l), (expected_high, expected_low), "x {x}, gamma2 {gamma2}");
         }
+        // Alternate hints so every coefficient is checked with and without one across the
+        // two shifted passes.
+        for shift in 0..2u32 {
+          let hints = core::array::from_fn(|i| (u32::try_from(i).expect("index fits u32") ^ shift) & 1);
+          let mut hinted = Poly(input.0);
+          hinted.use_hints(&hints, gamma2);
+          for ((&x, &hint), &result) in input.0.iter().zip(&hints).zip(&hinted.0) {
+            assert_eq!(
+              result,
+              super::use_hint(x, hint != 0, gamma2),
+              "x {x}, hint {hint}, gamma2 {gamma2}"
+            );
+          }
+        }
         start = start.strict_add(256);
       }
     }
+  }
+
+  #[test]
+  fn row_product_matches_column_accumulation() {
+    // All-(q - 1) columns reach the largest 64-bit lane sum at L = 7; zeros, ones and
+    // generated residues cover the remaining reduction paths.
+    fn check<const L: usize>(next: &mut impl FnMut() -> u32) {
+      for case in 0..6 {
+        let value = |next: &mut dyn FnMut() -> u32| match case {
+          0 => Q - 1,
+          1 => 0,
+          2 => 1,
+          _ => next(),
+        };
+        let a: [[u32; N]; L] = core::array::from_fn(|_| core::array::from_fn(|_| value(&mut *next)));
+        let b: [Poly; L] = core::array::from_fn(|_| Poly(core::array::from_fn(|_| value(&mut *next))));
+        let mut expected = Poly::zero();
+        for (a, b) in a.iter().zip(&b) {
+          expected.accumulate_product(a, b);
+        }
+        let mut fused = Poly(core::array::from_fn(|_| value(&mut *next)));
+        fused.row_product(&a, &b);
+        assert_eq!(fused.0, expected.0, "L {L}, case {case}");
+      }
+    }
+    let mut state = 0x9e37_79b9u32;
+    let mut next = move || {
+      state ^= state << 13;
+      state ^= state >> 17;
+      state ^= state << 5;
+      state % Q
+    };
+    check::<4>(&mut next);
+    check::<5>(&mut next);
+    check::<7>(&mut next);
   }
 
   // Norm checks, additions and hints against the scalar authority at the boundaries that decide

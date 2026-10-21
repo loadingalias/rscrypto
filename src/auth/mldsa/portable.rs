@@ -5,7 +5,7 @@
 
 use super::{
   MlDsaError, MlDsaKeyError, Parameters, encoding,
-  poly::{NttBlinding, Poly, power2_round, use_hint},
+  poly::{NttBlinding, Poly, power2_round},
   sampling,
 };
 use crate::secret::ZeroizingBytes;
@@ -52,39 +52,30 @@ impl<const K: usize, const L: usize> Matrix<K, L> {
       }
       return Ok(());
     }
-    for (i, row) in self.0.iter_mut().enumerate() {
-      let (pairs, tail) = row.as_chunks_mut::<2>();
-      for (j, [a, b]) in pairs.iter_mut().enumerate() {
-        let column = j.strict_mul(2);
-        sampling::matrix_pair(
-          rho,
-          index_byte(i),
-          [index_byte(column), index_byte(column.strict_add(1))],
-          a,
-          b,
-        )?;
-      }
-      if let [entry] = tail {
-        sampling::matrix(rho, index_byte(i), index_byte(L.strict_sub(1)), entry)?;
-      }
+    // Pair entries in row-major order, across row boundaries, so every stream shares a
+    // two-state permutation; K·L is even for every parameter set.
+    const { assert!((K * L).is_multiple_of(2)) };
+    let (pairs, _) = self.0.as_flattened_mut().as_chunks_mut::<2>();
+    for (pair, [a, b]) in pairs.iter_mut().enumerate() {
+      let first = pair.strict_mul(2);
+      let second = first.strict_add(1);
+      sampling::matrix_pair(rho, [position::<L>(first), position::<L>(second)], a, b)?;
     }
     Ok(())
   }
 
+  /// Row `i` of `Â·input` for NTT-domain `input`, left in the NTT domain.
   // Out of line for signing's code generation; see `sign_with_state`.
   #[inline(never)]
-  fn row(&self, i: usize, input: &[Poly; L], out: &mut Poly) {
-    out.0.fill(0);
-    for (entry, input) in self.0[i].iter().zip(input) {
-      out.accumulate_product(entry, input);
-    }
-    out.inverse_ntt();
+  fn row_ntt(&self, i: usize, input: &[Poly; L], out: &mut Poly) {
+    out.row_product(&self.0[i], input);
   }
 }
 
+/// Row `row` of `Â·input`, expanding `Â` from `rho`; NTT-domain input and output.
 // Out of line for signing's code generation; see `sign_with_state`.
 #[inline(never)]
-fn matrix_row<const L: usize>(rho: &[u8], row: usize, input: &[Poly; L], out: &mut Poly) -> Result<(), MlDsaError> {
+fn matrix_row_ntt<const L: usize>(rho: &[u8], row: usize, input: &[Poly; L], out: &mut Poly) -> Result<(), MlDsaError> {
   out.0.fill(0);
   if !PAIRED_MATRIX {
     let mut entry = Poly::zero();
@@ -92,7 +83,6 @@ fn matrix_row<const L: usize>(rho: &[u8], row: usize, input: &[Poly; L], out: &m
       sampling::matrix(rho, index_byte(row), index_byte(column), &mut entry.0)?;
       out.accumulate_product(&entry.0, input);
     }
-    out.inverse_ntt();
     return Ok(());
   }
   // Matrix entries are public; only the accumulated result owns secret data.
@@ -103,8 +93,10 @@ fn matrix_row<const L: usize>(rho: &[u8], row: usize, input: &[Poly; L], out: &m
     let column = pair.strict_mul(2);
     sampling::matrix_pair(
       rho,
-      index_byte(row),
-      [index_byte(column), index_byte(column.strict_add(1))],
+      [
+        (index_byte(row), index_byte(column)),
+        (index_byte(row), index_byte(column.strict_add(1))),
+      ],
       &mut entry_a,
       &mut entry_b,
     )?;
@@ -115,8 +107,40 @@ fn matrix_row<const L: usize>(rho: &[u8], row: usize, input: &[Poly; L], out: &m
     sampling::matrix(rho, index_byte(row), index_byte(L.strict_sub(1)), &mut entry_a)?;
     out.accumulate_product(&entry_a, last);
   }
-  out.inverse_ntt();
   Ok(())
+}
+
+/// Rows `first` and `first + 1` of `Â·input`, expanding `Â` from `rho`; NTT-domain input and
+/// output. Each column's two entries share one two-state stream, so an odd L leaves no
+/// single-state stream.
+#[inline(never)]
+fn matrix_rows_ntt<const L: usize>(
+  rho: &[u8],
+  first: usize,
+  input: &[Poly; L],
+  [out_a, out_b]: [&mut Poly; 2],
+) -> Result<(), MlDsaError> {
+  if !PAIRED_MATRIX {
+    matrix_row_ntt(rho, first, input, out_a)?;
+    return matrix_row_ntt(rho, first.strict_add(1), input, out_b);
+  }
+  out_a.0.fill(0);
+  out_b.0.fill(0);
+  let rows = [index_byte(first), index_byte(first.strict_add(1))];
+  let mut entry_a = [0u32; 256];
+  let mut entry_b = [0u32; 256];
+  for (column, input) in input.iter().enumerate() {
+    let column = index_byte(column);
+    sampling::matrix_pair(rho, [(rows[0], column), (rows[1], column)], &mut entry_a, &mut entry_b)?;
+    out_a.accumulate_product(&entry_a, input);
+    out_b.accumulate_product(&entry_b, input);
+  }
+  Ok(())
+}
+
+/// The `(row, column)` bytes of row-major matrix entry `index`.
+fn position<const L: usize>(index: usize) -> (u8, u8) {
+  (index_byte(index.strict_div(L)), index_byte(index.strict_rem(L)))
 }
 
 pub(super) fn keygen<const K: usize, const L: usize>(
@@ -162,7 +186,8 @@ pub(super) fn keygen<const K: usize, const L: usize>(
       Some(p.eta),
       &mut secret[start..start.strict_add(noise_bytes)],
     );
-    matrix_row(rho, i, &s1, &mut row)?;
+    matrix_row_ntt(rho, i, &s1, &mut row)?;
+    row.inverse_ntt();
     row.add_assign(&s2);
     for ((&coefficient, high), low) in row.0.iter().zip(&mut high.0).zip(&mut low.0) {
       (*high, *low) = power2_round(coefficient);
@@ -246,14 +271,13 @@ pub(super) fn validate_secret<const K: usize, const L: usize>(
   let mut difference = 0u32;
   let mut row = Poly::zero();
   let mut low = Poly::zero();
-  let mut s2 = Poly::zero();
   let mut high = Poly::zero();
   for i in 0..K {
     // Matrix expansion fails only by exhausting its FIPS 204 sampling bound.
-    matrix_row(&secret[..32], i, &state.s1, &mut row).map_err(|_| MlDsaKeyError::RejectionLimit)?;
-    s2.copy_from(&state.s2[i]);
-    s2.inverse_ntt();
-    row.add_assign(&s2);
+    matrix_row_ntt(&secret[..32], i, &state.s1, &mut row).map_err(|_| MlDsaKeyError::RejectionLimit)?;
+    // Both terms are NTT-domain Montgomery residues; one inverse transform covers their sum.
+    row.add_assign(&state.s2[i]);
+    row.inverse_ntt();
     low.copy_from(&state.t0[i]);
     low.inverse_ntt();
     for ((&x, &expected_low), high) in row.0.iter().zip(&low.0).zip(&mut high.0) {
@@ -376,10 +400,11 @@ pub(super) fn sign_with_state<const K: usize, const L: usize>(
     hash.update(mu);
     for (i, row) in w.iter_mut().enumerate() {
       if let Some(matrix) = matrix {
-        matrix.row(i, &z, row);
+        matrix.row_ntt(i, &z, row);
       } else {
-        matrix_row(&secret[..32], i, &z, row)?;
+        matrix_row_ntt(&secret[..32], i, &z, row)?;
       }
+      row.inverse_ntt();
       row.high_bits_into(p.gamma2, &mut high);
       encoding::pack(&high, p.w1_bits, None, &mut packed_high.as_mut_array()[..w1_len]);
       hash.update(&packed_high.as_array()[..w1_len]);
@@ -509,7 +534,7 @@ pub(super) fn verify_with_state<const K: usize, const L: usize>(
   signature: &[u8],
   p: Parameters,
 ) -> Result<(), MlDsaError> {
-  if !encoding::valid_signature(signature, p) {
+  if !encoding::valid_signature_structure(signature, p) {
     return Err(MlDsaError::InvalidSignature);
   }
   let mut z = vector::<L>();
@@ -517,6 +542,10 @@ pub(super) fn verify_with_state<const K: usize, const L: usize>(
   for (i, z) in z.iter_mut().enumerate() {
     let start = p.challenge_bytes.strict_add(i.strict_mul(z_len));
     encoding::unpack(&signature[start..start.strict_add(z_len)], p.z_bits, p.gamma1, z);
+    // The response norm completes `encoding::valid_signature` on this single decoding.
+    if z.exceeds_bound(p.gamma1.strict_sub(p.beta)) != 0 {
+      return Err(MlDsaError::InvalidSignature);
+    }
     z.ntt();
   }
   let hints = &signature[p.challenge_bytes.strict_add(L.strict_mul(z_len))..];
@@ -525,7 +554,10 @@ pub(super) fn verify_with_state<const K: usize, const L: usize>(
   // need the fixed-address sampler.
   sampling::challenge_public(&signature[..p.challenge_bytes], p.tau, &mut challenge)?;
   challenge.ntt();
-  let mut row = Poly::zero();
+  // Rows are taken in pairs, so an encoded key expands both rows' entries of each column
+  // with one two-state stream; K is even for every parameter set.
+  const { assert!(K.is_multiple_of(2)) };
+  let mut rows = [Poly::zero(), Poly::zero()];
   let mut t1 = Poly::zero();
   let mut work = Poly::zero();
   let mut packed = [0u8; 192];
@@ -533,32 +565,38 @@ pub(super) fn verify_with_state<const K: usize, const L: usize>(
   let mut hash = crate::hashes::crypto::keccak::KeccakCore::<136>::default();
   hash.update(mu);
   let mut hint_start = 0usize;
-  for i in 0..K {
+  for first in (0..K).step_by(2) {
+    let [row_a, row_b] = &mut rows;
     match key {
       VerifyingKey::Prepared(state) => {
-        state.matrix.row(i, &z, &mut row);
-        work.product(&challenge, &state.t1[i]);
+        state.matrix.row_ntt(first, &z, row_a);
+        state.matrix.row_ntt(first.strict_add(1), &z, row_b);
       }
-      VerifyingKey::Encoded(public) => {
-        matrix_row(&public[..32], i, &z, &mut row)?;
-        decode_public_poly(public, i, &mut t1);
-        work.product(&challenge, &t1.0);
-      }
+      VerifyingKey::Encoded(public) => matrix_rows_ntt(&public[..32], first, &z, [row_a, row_b])?,
     }
-    work.inverse_ntt();
-    row.sub_assign(&work);
-    let hint_end = usize::from(hints[p.omega.strict_add(i)]);
-    let mut next = hint_start;
-    for (j, x) in row.0.iter_mut().enumerate() {
-      let hint = next < hint_end && usize::from(hints[next]) == j;
-      if hint {
-        next = next.strict_add(1);
+    for (i, row) in (first..).zip(&mut rows) {
+      // w'ᵢ = NTT⁻¹(Âᵢ·ẑ − ĉ·t̂1ᵢ·2^d): both terms are NTT-domain Montgomery
+      // residues, so one inverse transform covers their difference.
+      match key {
+        VerifyingKey::Prepared(state) => work.product(&challenge, &state.t1[i]),
+        VerifyingKey::Encoded(public) => {
+          decode_public_poly(public, i, &mut t1);
+          work.product(&challenge, &t1.0);
+        }
       }
-      *x = use_hint(*x, hint, p.gamma2);
+      row.sub_assign(&work);
+      row.inverse_ntt();
+      // The validated hint positions of row i are strictly increasing and below N.
+      let hint_end = usize::from(hints[p.omega.strict_add(i)]);
+      let mut row_hints = [0u32; 256];
+      for &position in &hints[hint_start..hint_end] {
+        row_hints[usize::from(position)] = 1;
+      }
+      row.use_hints(&row_hints, p.gamma2);
+      hint_start = hint_end;
+      encoding::pack(row, p.w1_bits, None, &mut packed[..w1_len]);
+      hash.update(&packed[..w1_len]);
     }
-    hint_start = hint_end;
-    encoding::pack(&row, p.w1_bits, None, &mut packed[..w1_len]);
-    hash.update(&packed[..w1_len]);
   }
   let mut expected = [0u8; 64];
   hash.finalize_xof(0x1f).squeeze_into(&mut expected[..p.challenge_bytes]);

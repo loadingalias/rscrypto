@@ -72,6 +72,23 @@ pub unsafe extern "C" fn ct_entry_mldsa_accumulate(
   auth::diag_mldsa_accumulate(accumulator, left, right)
 }
 
+/// Execute the production ML-DSA fused row product over five columns. Null inputs are rejected.
+///
+/// # Safety
+/// Both inputs must be aligned, readable for five arrays of 256 initialized u32s, immutable
+/// during the call, and contain canonical residues below q. They may overlap.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ct_entry_mldsa_row_product(
+  entries: *const [[u32; 256]; 5],
+  inputs: *const [[u32; 256]; 5],
+) -> u32 {
+  // SAFETY: Both array borrows satisfy the caller contract and stay in this call.
+  let (Some(entries), Some(inputs)) = (unsafe { (entries.as_ref(), inputs.as_ref()) }) else {
+    return 0;
+  };
+  auth::diag_mldsa_row_product(entries, inputs)
+}
+
 macro_rules! seed_entry {
   ($name:ident, $operation:expr) => {
     /// Execute a production ML-DSA sampler. Null is rejected.

@@ -285,6 +285,7 @@ symbols = [
   "ct_entry_mldsa_rounding65",
   "ct_entry_mldsa_product",
   "ct_entry_mldsa_accumulate",
+  "ct_entry_mldsa_row_product",
   "ct_entry_mldsa_noise_eta2",
   "ct_entry_mldsa_noise_eta4",
   "ct_entry_mldsa_challenge44",
@@ -5553,7 +5554,7 @@ tier = "A"
 claim = "ct-intended"
 features = ["ml-dsa"]
 variants = ["ML-DSA-44", "ML-DSA-65", "ML-DSA-87"]
-entrypoints = ["poly::Poly::{ntt,inverse_ntt,product,accumulate_product,exceeds_bound}", "poly::{montgomery,power2_round,decompose}", "sampling::{noise,challenge,mask}", "portable::SigningState::decode"]
+entrypoints = ["poly::Poly::{ntt,inverse_ntt,product,accumulate_product,row_product,exceeds_bound}", "poly::{montgomery,power2_round,decompose}", "sampling::{noise,challenge,mask}", "portable::SigningState::decode"]
 secrets = ["canonical_coefficients", "expanded_secret_key", "noise_seed", "unpublished_challenge", "mask_seed"]
 public = ["parameter_set", "fixed_input_shape", "target_capabilities", "norm_bound"]
 may_leak = ["opaque_success_or_failure"]
@@ -5572,6 +5573,7 @@ symbols = [
   "ct_entry_mldsa_rounding65",
   "ct_entry_mldsa_product",
   "ct_entry_mldsa_accumulate",
+  "ct_entry_mldsa_row_product",
   "ct_entry_mldsa_noise_eta2",
   "ct_entry_mldsa_noise_eta4",
   "ct_entry_mldsa_challenge44",
@@ -5744,6 +5746,18 @@ diagnostic_targets = ["powerpc64le-unknown-linux-gnu"]
 diagnostic_targets_reason = "POWER10 vector multiplies run faster on zero operands. Production accumulations take NTT-domain operands, which are dense; mldsa_accumulate_dense_fixed_vs_random gates that distribution."
 
 [[dudect_case]]
+name = "mldsa_row_product_fixed_vs_random"
+primitive = "signature.mldsa.secret_kernels"
+filter = "mldsa_row_product_fixed_vs_random"
+left_class = "64 five-column row products with ten zero canonical polynomials"
+right_class = "64 five-column row products with ten independently random canonical polynomials"
+samples = 20000
+smoke_samples = 512
+notes = "Production fused row-product dispatch and normal polynomial cleanup are inside timing; signing computes Â·ŷ with it."
+diagnostic_targets = ["powerpc64le-unknown-linux-gnu"]
+diagnostic_targets_reason = "POWER10 vector multiplies run faster on zero operands. Production row products take NTT-domain operands, which are dense; mldsa_row_product_dense_fixed_vs_random gates that distribution."
+
+[[dudect_case]]
 name = "mldsa_probe_product_zero_vs_zero"
 primitive = "signature.mldsa.secret_kernels"
 filter = "mldsa_probe_product_zero_vs_zero"
@@ -5781,6 +5795,16 @@ primitive = "signature.mldsa.secret_kernels"
 filter = "mldsa_accumulate_dense_fixed_vs_random"
 left_class = "64 accumulations with one fixed triple of random canonical polynomials"
 right_class = "64 accumulations with three independently random canonical polynomials"
+samples = 200000
+smoke_samples = 512
+notes = "Required on every target. NTT-domain secrets and masks are dense residues; this is the production operand distribution."
+
+[[dudect_case]]
+name = "mldsa_row_product_dense_fixed_vs_random"
+primitive = "signature.mldsa.secret_kernels"
+filter = "mldsa_row_product_dense_fixed_vs_random"
+left_class = "64 five-column row products with one fixed set of ten random canonical polynomials"
+right_class = "64 five-column row products with ten independently random canonical polynomials"
 samples = 200000
 smoke_samples = 512
 notes = "Required on every target. NTT-domain secrets and masks are dense residues; this is the production operand distribution."

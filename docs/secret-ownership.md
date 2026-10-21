@@ -264,6 +264,9 @@ outside this claim. Keyed and derive-key readers do not enter this path.
   and its accepted count with the output bit planes.
   It clears the input owner after each fixed block.
   It clears the output owner on success and on exhaustion.
+- On AArch64 NEON, the signing challenge sampler builds the unpublished challenge as bytes
+  `0`, `1` and `0xff` in a zeroizing owner, then widens it into the challenge polynomial.
+  The byte owner clears when the sampler returns.
 - The [signing-residue qualification](../benchmark_results/OVERVIEW.md#2026-10-16-ml-dsa-optimization-qualification)
   checks masks, NTT masks, rejected candidates, commitments and hint maps in the
   measured macOS AArch64 stack. It does not change their ownership contract or

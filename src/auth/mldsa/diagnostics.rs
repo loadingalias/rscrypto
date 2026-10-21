@@ -39,6 +39,21 @@ pub fn diag_mldsa_accumulate(accumulator: &[u32; 256], left: &[u32; 256], right:
   core::hint::black_box(&out.0).iter().fold(0, |digest, x| digest ^ x)
 }
 
+/// Execute the production fused row product over five columns, as ML-DSA-65 signing computes
+/// `Â·ŷ`; every input contains canonical residues.
+#[must_use]
+pub fn diag_mldsa_row_product(entries: &[[u32; 256]; 5], inputs: &[[u32; 256]; 5]) -> u32 {
+  let _dit = crate::traits::ct::DataIndependentTiming::enter();
+  let input_owners: [Poly; 5] = core::array::from_fn(|i| {
+    let mut owner = Poly::zero();
+    owner.0.copy_from_slice(&inputs[i]);
+    owner
+  });
+  let mut out = Poly::zero();
+  out.row_product(entries, &input_owners);
+  core::hint::black_box(&out.0).iter().fold(0, |digest, x| digest ^ x)
+}
+
 /// Execute the production complete norm scan at a public bound.
 #[must_use]
 pub fn diag_mldsa_norm(input: &[u32; 256], bound: u32) -> u32 {
