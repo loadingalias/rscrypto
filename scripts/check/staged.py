@@ -30,10 +30,10 @@ def main():
                           capture_output=True, text=True).stdout.strip()
     if not head:
         raise SystemExit('The staged check starts from an existing commit; create the first commit separately.')
-    # Hook-local Git variables must not redirect commands in the check worktree
-    # back to the developer's index, HEAD, or working directory.
-    for name in qualified.git('rev-parse', '--local-env-vars').splitlines():
-        os.environ.pop(name, None)
+    # Every later command, including the compiler lookup, runs the check worktree's own Git state and uv project.
+    isolated = qualified.environment()
+    os.environ.clear()
+    os.environ.update(isolated)
     state = Path(qualified.git('rev-parse', '--path-format=absolute', '--git-common-dir')) / 'rscrypto-ci-check'
     state.mkdir(exist_ok=True)
     checkout = state / 'checkout'
@@ -57,8 +57,7 @@ def main():
             print(reason)
             return 0
         target = state / 'target'
-        # The staged pyproject.toml, uv.lock, and .python-version run the check's Python, not the developer's.
-        env = {**qualified.environment(), 'CARGO_TARGET_DIR': str(target),
+        env = {**os.environ, 'CARGO_TARGET_DIR': str(target),
                'RSCRYPTO_INDEPENDENT_LINT_TARGET_DIR': str(target / 'independent-lints')}
         status = subprocess.run(['just', 'ci-check'], cwd=checkout, env=env).returncode
         if status:

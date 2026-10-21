@@ -24,7 +24,9 @@ def install_qualification(root):
         (root / name).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(ROOT / name, root / name)
     toolchain = root / 'scripts/lib/toolchain.sh'
-    toolchain.write_text('#!/bin/sh\necho pinned\n')
+    # The compiler lookup runs Python in the checked worktree too; record what it inherits.
+    toolchain.write_text('#!/bin/sh\n' + RECORD_UV + ' > "$(git rev-parse --path-format=absolute --git-common-dir)/toolchain"\n'
+                         'echo pinned\n')
     toolchain.chmod(0o755)
     rustc = root / '.git/rustc'
     rustc.write_text('#!/bin/sh\necho "rustc nightly\ncommit-hash: ' + '1' * 40 + '\nhost: aarch64-apple-darwin\nrelease: ${COMPILER:-one}"\ncat "$(dirname "$0")/compiler-change" 2>/dev/null || true\n')
@@ -138,6 +140,7 @@ exit "${CHECK_STATUS:-0}"
             self.assertEqual(run(**uv_run(root, env['PATH'])), 0)
             self.assertEqual(calls(), ['ci-check staged', 'ci-check staged'])
             assert_own_project(self, root / '.git/environment', root)
+            assert_own_project(self, root / '.git/toolchain', root)
             self.assertEqual(source.read_text(), 'unstaged')
             self.assertTrue((root / 'untracked').exists())
 
