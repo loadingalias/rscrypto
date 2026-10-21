@@ -185,6 +185,10 @@ if [[ "$TARGET" == *linux* ]]; then
   fi
 elif [[ "$TARGET" == *windows-msvc ]]; then
   FINAL_LINK_ARGS+=("-C" "link-arg=/MAP:$LINK_MAP")
+elif [[ "$TARGET" == *apple-darwin ]]; then
+  # The symbolizer does not read ld64 maps; asm_heuristics.py takes data atom extents from it.
+  LD64_MAP="$ARTIFACT_DIR/rscrypto-ct-evidence.ld64-map.txt"
+  FINAL_LINK_ARGS+=("-C" "link-arg=-Wl,-map,$LD64_MAP")
 fi
 echo "building final linked equality evidence binary for $TARGET ($PROFILE)"
 cargo rustc \
@@ -208,6 +212,10 @@ if [[ "$link_command_count" -ne 1 ]]; then
 fi
 if [[ ( "$TARGET" == *linux* || "$TARGET" == *windows-msvc ) && ! -s "$LINK_MAP" ]]; then
   echo "final equality linker map is missing or empty: $LINK_MAP" >&2
+  exit 1
+fi
+if [[ "$TARGET" == *apple-darwin && ! -s "$LD64_MAP" ]]; then
+  echo "final equality ld64 map is missing or empty: $LD64_MAP" >&2
   exit 1
 fi
 

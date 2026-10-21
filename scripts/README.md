@@ -338,6 +338,8 @@ They do not detect a compromised producer that forges its own metadata.
   and `just ct-validate`.
 - `ct/manifest.py` owns the shared target and measurement selection.
 - `ct/provenance.py` owns the shared file hashing and build identity.
+- `ct/linked_image.py` reads the linked ELF, PE, or Mach-O binary and its linker map, so that
+  `ct/asm_heuristics.py` can describe data references independently of their placement.
 - The other Python files under `ct/` implement local artifact provenance, disassembly analysis,
   report parsing, and their focused regression tests.
 

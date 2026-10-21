@@ -38,9 +38,34 @@ and complete function hash. A count-only `asm_public_operand` rule cannot exempt
 another instruction in the same function could depend on a secret while staying within that count.
 Instruction identities use function-relative positions. Resolved direct transfers retain their
 instruction length, mnemonic, registers, condition, and exact destination symbol and offset instead
-of the placement-dependent displacement bytes. Other bytes and operands remain exact, including
-data addresses and unresolved or indirect transfers. Different compiler or linker output can therefore
-require renewed review. The artifact hashes retain the exact binary identity.
+of the placement-dependent displacement bytes.
+The same rule applies to resolved address references in the linked binary:
+x86-64 RIP-relative operands, AArch64 `adrp`, `adr`, and literal loads, RISC-V `auipc` pairs,
+POWER TOC-relative pairs and the global-entry TOC setup, and IBM Z relative-long instructions such as `larl`.
+Each keeps its length, mnemonic, and registers, and replaces the displacement with a description of the target:
+
+- code: the containing function and offset, plus the 16 target bytes for an interior of another function;
+- writable data: the containing symbol and offset, only when that symbol has a stable name;
+- read-only data: the stable name, if any, the offset, the size, and a digest of the complete allocation unit;
+- a slot that the loader fills, such as a GOT, TOC, or import-table entry: the imported symbol or the described target.
+
+Inside read-only data, each pointer that the loader relocates is replaced by the description of its target,
+up to three levels deep, so moved targets with unchanged contents keep the digest.
+ELF allocation units are linker-map input sections, and Mach-O units are ld64 map atoms.
+Merged string and literal sections bind only the referenced literal.
+On PE, a unit runs from the nearest known object start to the next one;
+x86-64 code generation does not merge globals.
+Mach-O artifacts without an ld64 map, such as the `543fa738` baseline, use the same bound.
+A merged unit, such as an LLVM `_MergedGlobals` block on POWER, binds all of its bytes,
+so a change anywhere in it requires renewed review.
+A high part (`adrp`, `auipc`, or `addis`) is described only when its uses are resolved low parts
+in the straight-line code that it dominates, and every later path overwrites or clobbers the register
+before another read.
+Other bytes and operands remain exact, including unresolved targets, anonymous writable data,
+immediates that add an offset to an address that is already formed, and indirect transfers.
+Because the identity binds read-only contents, a changed constant also requires renewed review,
+even at an unchanged address. Different compiler or linker output can therefore require renewed review.
+The artifact hashes retain the exact binary identity.
 The retained Linux and Windows reviews use the workflow checkout path, pinned
 compiler, target flags, and native or GNU cross linker recorded with each artifact.
 A Mac/Zig build or another checkout path can change embedded source locations,
@@ -169,6 +194,20 @@ Instruction locators, classifications, claim boundaries, and exact matching rema
 unchanged. The refreshed artifacts pass the assembly scanner with no
 unresolved failures. This review establishes artifact classification, not a new
 native timing result.
+
+### Identity v2 re-encoding, 2026-10-21
+
+The address-reference identity changes every function hash, so the 457 waivers that remain
+after the RSA scope change were re-encoded on the artifacts they were reviewed against:
+[Constant-Time 39100887496](https://github.com/loadingalias/rscrypto/actions/runs/39100887496) at `0c959150`
+for Linux, Windows, POWER, and IBM Z, its RISC-V run
+[39101292966](https://github.com/loadingalias/rscrypto/actions/runs/39101292966),
+and the local Apple Silicon artifact from `543fa738`.
+A waiver moved to the v2 locator and hash only when its exact v1 locator and hash named the same
+instruction in that artifact. Classifications, rationales, and review dates are unchanged.
+With the re-encoded waivers, the v2 scanner accepts all seven artifact sets with no unmatched waiver,
+the same result as v1. The re-encoding binds the existing reviews to the same binaries; it is not a
+review of later source.
 
 ## Public decisions and exclusions
 

@@ -6,6 +6,8 @@ from tempfile import TemporaryDirectory
 
 from asm_heuristics import (
   FunctionBody,
+  function_identity,
+  instruction_identities,
   all_direct_callees,
   apply_select_branch_enforcement,
   build_call_graph,
@@ -21,6 +23,7 @@ from asm_heuristics import (
   scan_symbol,
   unreachable_symbol_errors,
 )
+from linked_image import LinkedImage, Section, Slot
 from symbolize_linked_binary import demangle_table
 
 
@@ -130,6 +133,136 @@ def select_branch_regressions() -> None:
   assert branch_kinds("aarch64-unknown-linux-gnu", symbol, diamond, ["kx.p256_ecdh"]) == [
     ("conditional_branch", "warn"),
   ]
+
+
+def linked_fixture(
+  text: int, lines: list[str], data: dict[int, bytes], *, units: list[tuple[int, int, int | None]] | None = None,
+  names: dict[int, str] | None = None, slots: dict[int, Slot] | None = None, toc_base: int | None = None,
+) -> tuple[FunctionBody, LinkedImage]:
+  """Build one linked function and the read-only data it references."""
+  body = FunctionBody("rscrypto::fixture", Path("fixture.binary.disasm.txt"), text, list(enumerate(lines, start=1)))
+  image_bytes = bytearray()
+  sections = [Section(".text", text, 0x100, None, True, False)]
+  for address, contents in sorted(data.items()):
+    sections.append(Section(".rodata", address, len(contents), len(image_bytes), False, False))
+    image_bytes.extend(contents)
+  starts = dict(names or {})
+  image = LinkedImage(bytes(image_bytes), sections, True, starts=starts, extents=units or [], slots=slots or {},
+                      toc_base=toc_base)
+  image.set_functions([(text, text + 0x100, body.symbol)])
+  return body, image
+
+
+def fixture_hash(target: str, fixture: tuple[FunctionBody, LinkedImage]) -> str:
+  body, image = fixture
+  return function_identity(instruction_identities(target, body, {body.symbol}, image))
+
+
+def data_reference_regressions() -> None:
+  """Data references bind the referenced object, not its distance from the code."""
+  table = bytes(range(32))
+  changed = table[:17] + b"\xff" + table[18:]
+
+  def x86(text: int, rodata: int, contents: bytes, name: str = "rscrypto::TABLE"):
+    displacement = rodata + 0x10 - (text + 7)
+    return linked_fixture(text, [
+      f"{text:x}: 48 8d 05 {displacement.to_bytes(4, 'little').hex(' ')}\tleaq\t0x{displacement:x}(%rip), %rax"
+      f" # 0x{rodata + 0x10:x} <{name}+0x10>",
+      f"{text + 7:x}: c3\tretq",
+    ], {rodata: contents}, units=[(rodata, rodata + len(contents), None)], names={rodata: name})
+
+  def aarch64(text: int, rodata: int, contents: bytes):
+    return linked_fixture(text, [
+      f"{text:x}: 90000108\tadrp\tx8, 0x{rodata:x}",
+      f"{text + 4:x}: 91004108\tadd\tx8, x8, #0x10",
+      f"{text + 8:x}: d65f03c0\tret",
+    ], {rodata: contents}, units=[(rodata, rodata + len(contents), None)])
+
+  def riscv(text: int, rodata: int, contents: bytes):
+    return linked_fixture(text, [
+      f"{text:x}: 00020517\tauipc\ta0, 0x{(rodata - text) >> 12:x}",
+      f"{text + 4:x}: 01050513\taddi\ta0, a0, 0x10",
+      f"{text + 8:x}: 00008067\tret",
+    ], {rodata: contents}, units=[(rodata, rodata + len(contents), None)])
+
+  def power(text: int, rodata: int, contents: bytes):
+    # The global entry computes the TOC from r12; the pair then addresses TOC-relative data.
+    # The TOC sits at a placement-dependent distance from the data, as after relinking.
+    toc = rodata + 0x10000 + (text >> 4)
+    high = (toc - text + 0x8000) >> 16
+    low = toc - text - (high << 16)
+    delta = rodata + 0x10 - toc
+    data_high = (delta + 0x8000) >> 16
+    data_low = delta - (data_high << 16)
+    return linked_fixture(text, [
+      f"{text:x}: 3c4c0002\taddis 2, 12, {high}",
+      f"{text + 4:x}: 38428000\taddi 2, 2, {low}",
+      f"{text + 8:x}: 3c62ffff\taddis 3, 2, {data_high}",
+      f"{text + 12:x}: 38630010\taddi 3, 3, {data_low}",
+      f"{text + 16:x}: 4e800020\tblr",
+    ], {rodata: contents}, units=[(rodata, rodata + len(contents), None)], toc_base=toc)
+
+  def s390x(text: int, rodata: int, contents: bytes):
+    encoded = "c0 10 " + ((rodata + 0x10 - text) // 2).to_bytes(4, "big").hex(" ")
+    return linked_fixture(text, [
+      f"{text:x}: {encoded}\tlarl\t%r1, 0x{rodata + 0x10:x}",
+      f"{text + 6:x}: 07 fe\tbr\t%r14",
+    ], {rodata: contents}, units=[(rodata, rodata + len(contents), None)])
+
+  for target, build in (
+    ("x86_64-unknown-linux-gnu", x86),
+    ("aarch64-unknown-linux-gnu", aarch64),
+    ("riscv64gc-unknown-linux-gnu", riscv),
+    ("powerpc64le-unknown-linux-gnu", power),
+    ("s390x-unknown-linux-gnu", s390x),
+  ):
+    original = fixture_hash(target, build(0x10000, 0x30000, table))
+    # Relinking moves both the code and the data; the identity stays.
+    assert fixture_hash(target, build(0x50000, 0x91000, table)) == original, target
+    # One changed byte anywhere in the referenced object is a different instruction.
+    assert fixture_hash(target, build(0x10000, 0x30000, changed)) != original, target
+    # Without an allocation unit, the reference keeps its exact displacement.
+    body, image = build(0x10000, 0x30000, table)
+    image.extents.clear()
+    image.__post_init__()
+    exact = fixture_hash(target, (body, image))
+    body, image = build(0x50000, 0x91000, table)
+    image.extents.clear()
+    image.__post_init__()
+    assert fixture_hash(target, (body, image)) != exact, target
+
+  target = "x86_64-unknown-linux-gnu"
+  assert fixture_hash(target, x86(0x10000, 0x30000, table, "rscrypto::OTHER")) != fixture_hash(
+    target, x86(0x10000, 0x30000, table))
+
+  # A relocated pointer inside read-only data binds its target's contents, not its address.
+  def location(text: int, rodata: int, path: bytes, line: int):
+    contents = bytes(8) + len(path).to_bytes(8, "little") + line.to_bytes(8, "little")
+    strings = rodata + 0x100
+    displacement = rodata - (text + 7)
+    return linked_fixture(text, [
+      f"{text:x}: 48 8d 3d {displacement.to_bytes(4, 'little').hex(' ')}\tleaq\t0x{displacement:x}(%rip), %rdi",
+      f"{text + 7:x}: c3\tretq",
+    ], {rodata: contents, strings: path + b"\0" + b"padding"},
+      units=[(rodata, rodata + 24, None), (strings, strings + len(path) + 8, 0)], slots={rodata: Slot(address=strings)})
+
+  original = fixture_hash(target, location(0x10000, 0x30000, b"src/auth/rsa.rs", 7))
+  assert fixture_hash(target, location(0x50000, 0x92000, b"src/auth/rsa.rs", 7)) == original
+  assert fixture_hash(target, location(0x10000, 0x30000, b"src/auth/rsb.rs", 7)) != original
+  assert fixture_hash(target, location(0x10000, 0x30000, b"src/auth/rsa.rs", 8)) != original
+
+  # An `adrp` whose register is read after a branch cannot be attributed to
+  # one consumer, so the page stays exact and relinking changes the identity.
+  def branching(text: int, rodata: int):
+    return linked_fixture(text, [
+      f"{text:x}: 90000109\tadrp\tx9, 0x{rodata:x}",
+      f"{text + 4:x}: b4000040\tcbz\tx0, 0x{text + 0xc:x} <rscrypto::fixture+0xc>",
+      f"{text + 8:x}: f9400920\tldr\tx0, [x9, #0x10]",
+      f"{text + 0xc:x}: d65f03c0\tret",
+    ], {rodata: table}, units=[(rodata, rodata + 32, None)])
+
+  target = "aarch64-unknown-linux-gnu"
+  assert fixture_hash(target, branching(0x10000, 0x30000)) != fixture_hash(target, branching(0x50000, 0x91000))
 
 
 def main() -> None:
@@ -365,6 +498,7 @@ def main() -> None:
   assert identity("1000: d2800020\tmov\tx0, #1") != identity("1000: d2800040\tmov\tx0, #2")
   assert identity("1000: 94000400\tbl\t0x2000") != identity("1000: 94000800\tbl\t0x3000")
   select_branch_regressions()
+  data_reference_regressions()
 
 
 if __name__ == "__main__":

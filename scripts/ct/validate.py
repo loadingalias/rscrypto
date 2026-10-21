@@ -1213,6 +1213,7 @@ def validate_artifacts(root: Path, target: str, profile: str, ct: dict, errors: 
   binary_nm_maps = sorted(artifact_dir.glob("*.binary.nm-symbols.txt"))
   binary_indirect_maps = sorted(artifact_dir.glob("*.binary.indirect-symbols.txt"))
   binary_link_maps = sorted(artifact_dir.glob("rscrypto-ct-evidence.link-map.txt"))
+  binary_ld64_maps = sorted(artifact_dir.glob("rscrypto-ct-evidence.ld64-map.txt"))
   linked_binaries = sorted(
     path for path in artifact_dir.iterdir() if path.name in {"rscrypto-ct-evidence", "rscrypto-ct-evidence.exe"}
   )
@@ -1230,6 +1231,8 @@ def validate_artifacts(root: Path, target: str, profile: str, ct: dict, errors: 
     fail(errors, f"expected exactly one final linked equality binary linker map; found {len(binary_link_maps)}")
   if "apple-darwin" in target and len(binary_indirect_maps) != 1:
     fail(errors, f"expected exactly one final linked equality binary indirect symbol map; found {len(binary_indirect_maps)}")
+  if "apple-darwin" in target and len(binary_ld64_maps) != 1:
+    fail(errors, f"expected exactly one final linked equality binary ld64 map; found {len(binary_ld64_maps)}")
   for role, paths in (("equality pre-link object", equality_object_maps), ("final linked equality binary", binary_maps)):
     if len(paths) != 1:
       continue

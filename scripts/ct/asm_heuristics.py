@@ -16,6 +16,7 @@ from typing import Any
 # Embedded Windows Python omits the script directory.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from linked_image import LinkedImage, load_linked_image
 from provenance import load_toml, sha256_file
 from symbolize_linked_binary import demangle_table
 
@@ -1056,6 +1057,8 @@ def instruction_identity(target: str, body: FunctionBody, line: str, local_symbo
   a known symbol, retain its length, mnemonic, registers, condition, and exact
   symbol/offset, but omit the encoding of its layout-dependent displacement.
   Unknown encodings and unresolved destinations stay byte-exact.
+  `address_reference_identities` applies the same rule to resolved data and
+  code address references in the linked binary.
   """
   address = INSTRUCTION_ADDRESS.match(line)
   if address is None:
@@ -1082,6 +1085,467 @@ def instruction_identity(target: str, body: FunctionBody, line: str, local_symbo
   return f"{offset:x}: {length}B {text[:destination.start()]}<{symbol}>"
 
 
+IDENTITY_VERSION = "rscrypto.ct.instruction-identity.v2"
+COMMENT = re.compile(r"\s+(?:#\s|//|;)")
+SIGNED_IMMEDIATE = r"[-+]?(?:0x[0-9a-fA-F]+|\d+)"
+X86_RIP_OPERAND = re.compile(rf"(?P<disp>{SIGNED_IMMEDIATE})?\(%rip\)")
+AARCH64_REGISTER = re.compile(r"\b(?:[xw](\d+)|sp|wsp|xzr|wzr|[qdsbhv]\d+(?:\.\w+)?)\b")
+AARCH64_ADDRESS = re.compile(r"^(?P<reg>[xw]\d+), 0x(?P<address>[0-9a-fA-F]+)(?: <.*>)?$")
+AARCH64_ADD = re.compile(rf"^(?P<dst>[xw]\d+|sp), (?P<src>x\d+|sp), #(?P<imm>{SIGNED_IMMEDIATE})$")
+AARCH64_MEMORY = re.compile(rf"\[(?P<base>x\d+|sp)(?:, #(?P<imm>{SIGNED_IMMEDIATE}))?\](?P<writeback>!?)")
+RISCV_REGISTER = re.compile(r"\b(zero|ra|sp|gp|tp|fp|t[0-6]|s(?:1[01]|[0-9])|a[0-7]|f(?:t(?:1[01]|[0-9])|s(?:1[01]|[0-9])|a[0-7]))\b")
+RISCV_ADDI = re.compile(rf"^(?P<dst>\w+), (?P<src>\w+), (?P<imm>{SIGNED_IMMEDIATE})$")
+RISCV_MEMORY = re.compile(rf"(?P<imm>{SIGNED_IMMEDIATE})?\((?P<base>\w+)\)")
+RISCV_STORES = {"sb", "sh", "sw", "sd", "fsw", "fsd", "c.sw", "c.sd", "c.fsd", "c.swsp", "c.sdsp"}
+POWER_ADD_IMMEDIATE = re.compile(rf"^(?P<dst>\d+), (?P<src>\d+), (?P<imm>{SIGNED_IMMEDIATE})$")
+POWER_DISPLACEMENT = re.compile(rf"^(?P<reg>\d+), (?P<imm>{SIGNED_IMMEDIATE})\((?P<base>\d+)\)$")
+POWER_DISPLACEMENT_FORMS = {
+  "lbz", "lha", "lhz", "lwa", "lwz", "ld", "lfs", "lfd", "lxsd", "lxssp", "lxv",
+  "stb", "sth", "stw", "std", "stfs", "stfd", "stxsd", "stxssp", "stxv",
+}
+S390X_RELATIVE_LONG = {
+  "larl", "lgrl", "lrl", "lgfrl", "llgfrl", "lghrl", "llghrl", "lhrl", "llhrl", "stgrl", "strl", "sthrl",
+  "cgrl", "crl", "clgrl", "clrl", "chrl", "cghrl", "clhrl", "clghrl", "cgfrl", "clgfrl", "exrl", "pfdrl",
+}
+
+
+@dataclass(frozen=True)
+class DecodedLine:
+  number: int
+  offset: int
+  address: int
+  length: int
+  mnemonic: str
+  operands: str
+  comment: str
+  encoded: tuple[str, ...]
+
+
+def decode_lines(body: FunctionBody) -> list[DecodedLine]:
+  decoded = []
+  for number, line in body.lines:
+    address = INSTRUCTION_ADDRESS.match(line)
+    if address is None or RELOCATION_LINE.match(line):
+      continue
+    fields = [part.strip() for part in line.split("\t") if part.strip()]
+    if len(fields) < 2 or ":" not in fields[0]:
+      continue
+    encoded = fields[0].split(":", 1)[1].split()
+    if not encoded or any(not re.fullmatch(r"(?:[0-9a-fA-F]{2}){1,8}", word) for word in encoded):
+      continue
+    text = " ".join(" ".join(fields[1:]).split())
+    comment = ""
+    if match := COMMENT.search(text):
+      text, comment = text[: match.start()], text[match.end() :].strip()
+    inst, _, operands = text.partition(" ")
+    value = int(address.group(1), 16)
+    decoded.append(DecodedLine(number, value - body.address, value, sum(len(word) // 2 for word in encoded),
+                               inst.lower(), operands.strip(), comment, tuple(encoded)))
+  return decoded
+
+
+def reference_identity(row: DecodedLine, operands: str) -> str:
+  return f"{row.offset:x}: {row.length}B {row.mnemonic} {operands}".rstrip()
+
+
+def code_target_descriptor(image: LinkedImage, body: FunctionBody, target_address: int, descriptor: str) -> str:
+  """Bind a reference into another function's interior to the referenced bytes."""
+  function = image.function_at(target_address)
+  if function is None or function[2] == body.symbol or function[0] == target_address:
+    return descriptor
+  contents = image.read(target_address, 16)
+  return f"{descriptor}#{contents.hex()}" if contents is not None else descriptor
+
+
+def describe_reference(image: LinkedImage, body: FunctionBody, target_address: int) -> str | None:
+  descriptor = image.describe(target_address)
+  if descriptor is not None and descriptor.startswith("code:"):
+    descriptor = code_target_descriptor(image, body, target_address, descriptor)
+  return descriptor
+
+
+def local_branch_targets(body: FunctionBody) -> set[int]:
+  return {instruction.local_target for instruction in parse_instructions(body) if instruction.local_target is not None}
+
+
+def x86_reference_identities(rows: list[DecodedLine], body: FunctionBody, image: LinkedImage) -> dict[int, str]:
+  identities = {}
+  for row in rows:
+    matches = list(X86_RIP_OPERAND.finditer(row.operands))
+    if len(matches) != 1:
+      continue
+    match = matches[0]
+    target_address = row.address + row.length + (int(match.group("disp"), 0) if match.group("disp") else 0)
+    annotated = re.match(r"(?:GOT\s+)?0x([0-9a-fA-F]+)", row.comment)
+    if annotated is not None and int(annotated.group(1), 16) != target_address:
+      continue
+    if (descriptor := describe_reference(image, body, target_address)) is None:
+      continue
+    operands = f"{row.operands[: match.start()]}<{descriptor}>(%rip){row.operands[match.end() :]}"
+    identities[row.number] = reference_identity(row, operands)
+  return identities
+
+
+def row_successors(target: str, body: FunctionBody, rows: list[DecodedLine]) -> list[list[int] | None]:
+  """Return local successor row indices, or None for an unknown intra-function edge.
+
+  Calls fall through. Returns and transfers out of the function have no local
+  successors; the register classifier decides what they mean for liveness.
+  """
+  local = {instruction.offset: instruction.local_target for instruction in parse_instructions(body)}
+  index_by_offset = {row.offset: index for index, row in enumerate(rows)}
+  successors: list[list[int] | None] = []
+  for index, row in enumerate(rows):
+    destination = local.get(row.offset)
+    conditional = is_conditional_branch(target, row.mnemonic)
+    unconditional = row.mnemonic in DIRECT_TAIL_MNEMONICS and not conditional
+    if not conditional and not unconditional:
+      successors.append([index + 1])
+      continue
+    following = [] if unconditional else [index + 1]
+    if destination is not None:
+      if destination not in index_by_offset:
+        successors.append(None)
+        continue
+      following.append(index_by_offset[destination])
+    successors.append(following)
+  return successors
+
+
+def page_pair_identities(
+  target: str,
+  rows: list[DecodedLine],
+  body: FunctionBody,
+  image: LinkedImage,
+  *,
+  base: Any,
+  consumer: Any,
+  classify: Any,
+  page_name: str,
+) -> dict[int, str]:
+  """Resolve two-instruction address formation such as `adrp` or `auipc` pairs.
+
+  `base(row)` returns the high-part register and address. `consumer(row,
+  register, high)` returns a low-part target and replacement operands.
+  `classify(row, register, consumed)` returns "read", "dead", or None.
+
+  Consumers count only in the straight-line code that the high part
+  dominates. The high part itself is normalized only when every path from it
+  overwrites or clobbers the register before any other read, so no
+  unresolved use can depend on its placement-dependent value.
+  """
+  identities = {}
+  labels = local_branch_targets(body)
+  successors = row_successors(target, body, rows)
+
+  def dead_on_all_paths(starts: list[int], register: str) -> bool:
+    pending, seen = list(starts), set()
+    while pending:
+      index = pending.pop()
+      if index in seen:
+        continue
+      if index >= len(rows) or len(seen) > 4096:
+        return False
+      seen.add(index)
+      state = classify(rows[index], register, False)
+      if state == "read":
+        return False
+      if state == "dead":
+        continue
+      following = successors[index]
+      if following is None:
+        return False
+      pending.extend(following)
+    return True
+
+  for index, row in enumerate(rows):
+    high = base(row)
+    if high is None:
+      continue
+    register, high_address = high
+    targets = []
+    dead = False
+    position = index + 1
+    while position < len(rows):
+      following = rows[position]
+      if following.offset in labels:
+        dead = dead_on_all_paths([position], register)
+        break
+      result = consumer(following, register, high_address)
+      if result is not None:
+        descriptor = describe_reference(image, body, result[0])
+        if descriptor is None:
+          break
+        identities[following.number] = reference_identity(following, result[1](descriptor))
+        targets.append(descriptor)
+      state = classify(following, register, result is not None)
+      if state is not None:
+        dead = state == "dead"
+        break
+      if successors[position] != [position + 1]:
+        dead = successors[position] is not None and dead_on_all_paths(successors[position], register)
+        break
+      position += 1
+    if dead and targets:
+      identities[row.number] = reference_identity(row, f"{register}, <{page_name}:{','.join(targets)}>")
+  return identities
+
+
+def aarch64_reference_identities(
+  target: str, rows: list[DecodedLine], body: FunctionBody, image: LinkedImage,
+) -> dict[int, str]:
+  identities = {}
+  for row in rows:
+    match = AARCH64_ADDRESS.match(row.operands)
+    if match is None or "[" in row.operands:
+      continue
+    if row.mnemonic == "adr" or row.mnemonic in {"ldr", "ldrsw", "prfm"}:
+      if (descriptor := describe_reference(image, body, int(match.group("address"), 16))) is not None:
+        identities[row.number] = reference_identity(row, f"{match.group('reg')}, <{descriptor}>")
+
+  def base(row: DecodedLine) -> tuple[str, int] | None:
+    match = AARCH64_ADDRESS.match(row.operands) if row.mnemonic == "adrp" else None
+    return (match.group("reg"), int(match.group("address"), 16)) if match else None
+
+  def number(register: str) -> str | None:
+    return register[1:] if re.fullmatch(r"[xw]\d+", register) else None
+
+  def registers(operands: str) -> list[str | None]:
+    return [match.group(1) for match in AARCH64_REGISTER.finditer(operands)]
+
+  def consumer(row: DecodedLine, register: str, page: int):
+    if row.mnemonic == "add" and (match := AARCH64_ADD.match(row.operands)) and match.group("src") == register:
+      return page + int(match.group("imm"), 0), lambda d: f"{match.group('dst')}, {register}, <{d}>"
+    memory = [match for match in AARCH64_MEMORY.finditer(row.operands) if match.group("base") == register]
+    if len(memory) != 1 or memory[0].group("writeback") or row.operands[memory[0].end() :].strip():
+      return None
+    data = row.operands[: memory[0].start()]
+    stored = registers(data) if row.mnemonic.startswith("st") else registers(data)[2 if row.mnemonic.startswith("ldp") else 1:]
+    if number(register) in stored:
+      return None
+    match = memory[0]
+    return (page + (int(match.group("imm"), 0) if match.group("imm") else 0),
+            lambda d: f"{row.operands[: match.start()]}[{register}, <{d}>]")
+
+  def classify(row: DecodedLine, register: str, consumed: bool) -> str | None:
+    value = number(register)
+    tokens = registers(row.operands)
+    if row.mnemonic.startswith(("st", "cmp", "cmn", "tst", "ccmp", "ccmn", "fcmp", "prfm", "b", "cb", "tb", "ret")):
+      writes = 0
+    elif row.mnemonic.startswith(("ldp", "ldnp", "ldxp", "ldaxp")):
+      writes = 2
+    else:
+      writes = 1
+    reads_destination = row.mnemonic in {"movk", "bfi", "bfxil", "bfm", "bfc"}
+    written = value in tokens[:writes] and not reads_destination
+    read = value in tokens[writes:] or (reads_destination and value in tokens[:writes])
+    if read and not consumed:
+      return "read"
+    index = int(value)
+    if row.mnemonic in {"bl", "blr", "blraa", "blrab"}:
+      # x0-x8 carry arguments, x9-x18 are clobbered, and x19-x28 survive.
+      return "read" if index <= 8 else ("dead" if index <= 18 else None)
+    if row.mnemonic in {"ret", "retaa", "retab"}:
+      return "read" if index <= 7 else "dead"
+    if row.mnemonic in {"br", "braa", "brab"}:
+      return "read"
+    if row.mnemonic == "b" and re.search(rf"<_?{re.escape(body.symbol)}(?:\+|>)", row.operands) is None:
+      # A tail transfer leaves the function; only argument registers stay live.
+      return "read" if index <= 8 or index >= 19 else "dead"
+    return "dead" if written else None
+
+  identities.update(page_pair_identities(target, rows, body, image, base=base,
+                                         consumer=consumer, classify=classify, page_name="page"))
+  return identities
+
+
+def riscv_reference_identities(
+  target: str, rows: list[DecodedLine], body: FunctionBody, image: LinkedImage,
+) -> dict[int, str]:
+  def base(row: DecodedLine) -> tuple[str, int] | None:
+    match = re.fullmatch(r"(\w+), 0x([0-9a-fA-F]+)", row.operands) if row.mnemonic == "auipc" else None
+    if match is None:
+      return None
+    immediate = int(match.group(2), 16) & 0xFFFFF
+    if immediate & 0x80000:
+      immediate -= 0x100000
+    return match.group(1), row.address + (immediate << 12)
+
+  def without_annotation(operands: str) -> str:
+    return re.sub(r"\s+<.*>$", "", operands)
+
+  def consumer(row: DecodedLine, register: str, high: int):
+    operands = without_annotation(row.operands)
+    if row.mnemonic in {"addi", "c.addi"} and (match := RISCV_ADDI.match(operands)) and match.group("src") == register:
+      return high + int(match.group("imm"), 0), lambda d: f"{match.group('dst')}, {register}, <{d}>"
+    memory = [match for match in RISCV_MEMORY.finditer(operands) if match.group("base") == register]
+    if len(memory) != 1 or operands[memory[0].end() :].strip():
+      return None
+    data = operands[: memory[0].start()]
+    if row.mnemonic in RISCV_STORES and register in RISCV_REGISTER.findall(data):
+      return None
+    match = memory[0]
+    return (high + (int(match.group("imm"), 0) if match.group("imm") else 0),
+            lambda d: f"{data}<{d}>({register})")
+
+  def classify(row: DecodedLine, register: str, consumed: bool) -> str | None:
+    operands = without_annotation(row.operands)
+    tokens = RISCV_REGISTER.findall(operands)
+    indirect_form = re.match(rf"(?:{SIGNED_IMMEDIATE})?\(", operands) is not None
+    if row.mnemonic in RISCV_STORES or row.mnemonic.startswith(("b", "c.b")) or row.mnemonic in {"j", "c.j", "jr", "c.jr", "ret"}:
+      written, read = False, register in tokens
+    elif row.mnemonic in {"jalr", "c.jalr"} and indirect_form:
+      written, read = register == "ra", register in tokens
+    else:
+      written, read = bool(tokens) and tokens[0] == register, register in tokens[1:]
+    if read and not consumed:
+      return "read"
+    is_call = row.mnemonic in {"jal", "c.jal"} or (row.mnemonic in {"jalr", "c.jalr"} and (indirect_form or tokens[:1] == ["ra"]))
+    if is_call:
+      if consumed or written:
+        return "dead"
+      # a0-a7 carry arguments, s-registers survive, and temporaries are clobbered.
+      if re.fullmatch(r"a[0-7]|sp|gp|tp", register):
+        return "read"
+      return None if re.fullmatch(r"s\d+|fp", register) else "dead"
+    if row.mnemonic in {"ret", "jr", "c.jr"}:
+      if row.mnemonic != "ret" and tokens != ["ra"] and "<" not in row.operands:
+        return "read"
+      return "read" if register in {"a0", "a1"} else "dead"
+    return "dead" if written else None
+
+  return page_pair_identities(target, rows, body, image, base=base, consumer=consumer,
+                              classify=classify, page_name="high")
+
+
+def power_reference_identities(
+  target: str, rows: list[DecodedLine], body: FunctionBody, image: LinkedImage,
+) -> dict[int, str]:
+  toc = image.toc_base
+  if toc is None:
+    return {}
+  identities = {}
+  if (len(rows) >= 2 and rows[0].offset == 0 and rows[1].offset == 4 and rows[0].mnemonic == "addis"
+      and rows[1].mnemonic == "addi"):
+    high = POWER_ADD_IMMEDIATE.match(rows[0].operands)
+    low = POWER_ADD_IMMEDIATE.match(rows[1].operands)
+    if (high and low and (high.group("dst"), high.group("src")) == ("2", "12")
+        and (low.group("dst"), low.group("src")) == ("2", "2")
+        and body.address + (int(high.group("imm"), 0) << 16) + int(low.group("imm"), 0) == toc):
+      identities[rows[0].number] = reference_identity(rows[0], "2, 12, <toc-base>")
+      identities[rows[1].number] = reference_identity(rows[1], "2, 2, <toc-base>")
+
+  def consumer(row: DecodedLine, register: str, high: int):
+    if row.mnemonic == "addi" and (match := POWER_ADD_IMMEDIATE.match(row.operands)) and match.group("src") == register:
+      return high + int(match.group("imm"), 0), lambda d: f"{match.group('dst')}, {register}, <{d}>"
+    if row.mnemonic in POWER_DISPLACEMENT_FORMS and (match := POWER_DISPLACEMENT.match(row.operands)) and match.group("base") == register:
+      if row.mnemonic.startswith("st") and match.group("reg") == register:
+        return None
+      return high + int(match.group("imm"), 0), lambda d: f"{match.group('reg')}, <{d}>({register})"
+    return None
+
+  for row in rows:
+    if row.number in identities:
+      continue
+    single = consumer(row, "2", toc)
+    if single is not None and (descriptor := describe_reference(image, body, single[0])) is not None:
+      identities[row.number] = reference_identity(row, single[1](descriptor))
+
+  def base(row: DecodedLine) -> tuple[str, int] | None:
+    high = POWER_ADD_IMMEDIATE.match(row.operands) if row.mnemonic == "addis" else None
+    if high is None or high.group("src") != "2" or high.group("dst") == "2":
+      return None
+    return high.group("dst"), toc + (int(high.group("imm"), 0) << 16)
+
+  def classify(row: DecodedLine, register: str, consumed: bool) -> str | None:
+    # Bare register numbers cannot be told from immediates without an operand
+    # table, so any other mention of the register counts as a read.
+    numbers = re.findall(r"(?<![\w.-])\d+(?![\w.])", re.sub(r"\s+<.*>$", "", row.operands))
+    destination = numbers[0] if numbers else None
+    writes = not row.mnemonic.startswith(("st", "cmp", "b", "mt", "tw", "td", "dcb", "icb"))
+    index = int(register)
+    if row.mnemonic in {"bl", "bla"}:
+      # r3-r10 carry arguments, r0 and r11-r12 are clobbered, and r14-r31 survive.
+      return "read" if 3 <= index <= 10 else ("dead" if index in {0, 11, 12} else None)
+    if row.mnemonic in {"blr", "bctr", "bctrl"}:
+      return "read" if 3 <= index <= 10 or row.mnemonic != "blr" else "dead"
+    if consumed:
+      return "dead" if writes and destination == register else None
+    if register in numbers[1 if writes else 0 :]:
+      return "read"
+    if writes and destination == register:
+      return "dead"
+    if row.mnemonic == "b" and re.search(rf"<{re.escape(body.symbol)}(?:\+|>)", row.operands) is None:
+      return "read" if 3 <= index <= 10 or index >= 14 else "dead"
+    return None
+
+  identities.update(page_pair_identities(target, rows, body, image, base=base,
+                                         consumer=consumer, classify=classify, page_name="toc-high"))
+  return identities
+
+
+def s390x_reference_identities(rows: list[DecodedLine], body: FunctionBody, image: LinkedImage) -> dict[int, str]:
+  identities = {}
+  for row in rows:
+    if row.mnemonic not in S390X_RELATIVE_LONG or row.length != 6:
+      continue
+    match = re.fullmatch(r"(%r\d+|\d+), 0x([0-9a-fA-F]+)(?: <.*>)?", row.operands)
+    if match is None:
+      continue
+    displacement = int("".join(row.encoded)[4:12], 16)
+    if displacement & 0x80000000:
+      displacement -= 1 << 32
+    target_address = int(match.group(2), 16)
+    if row.address + 2 * displacement != target_address:
+      continue
+    if (descriptor := describe_reference(image, body, target_address)) is not None:
+      identities[row.number] = reference_identity(row, f"{match.group(1)}, <{descriptor}>")
+  return identities
+
+
+def address_reference_identities(target: str, body: FunctionBody, image: LinkedImage | None) -> dict[int, str]:
+  """Return placement-independent identities for resolved address references."""
+  if image is None:
+    return {}
+  rows = decode_lines(body)
+  if target.startswith(("x86_64-", "i686-")):
+    return x86_reference_identities(rows, body, image)
+  if target.startswith("aarch64-"):
+    return aarch64_reference_identities(target, rows, body, image)
+  if target.startswith("riscv64"):
+    return riscv_reference_identities(target, rows, body, image)
+  if target.startswith(("powerpc64", "ppc64")):
+    return power_reference_identities(target, rows, body, image)
+  if target.startswith("s390x-"):
+    return s390x_reference_identities(rows, body, image)
+  return {}
+
+
+def function_ranges(functions: dict[str, FunctionBody]) -> list[tuple[int, int, str]]:
+  ranges = {}
+  for symbol, body in functions.items():
+    rows = decode_lines(body)
+    end = max((row.address + row.length for row in rows), default=body.address + 1)
+    if body.address not in ranges or symbol < ranges[body.address][2]:
+      ranges[body.address] = (body.address, max(end, body.address + 1), symbol)
+  return sorted(ranges.values())
+
+
+def instruction_identities(
+  target: str, body: FunctionBody, local_symbols: set[str], image: LinkedImage | None = None,
+) -> dict[int, str]:
+  """Map each disassembly line number to its placement-independent identity."""
+  references = address_reference_identities(target, body, image)
+  return {
+    number: references.get(number) or instruction_identity(target, body, line, local_symbols)
+    for number, line in body.lines
+  }
+
+
+def function_identity(identities: dict[int, str]) -> str:
+  return hashlib.sha256((IDENTITY_VERSION + "\n" + "\n".join(identities.values())).encode()).hexdigest()
+
+
 def scan_symbol(
   target: str,
   symbol: str,
@@ -1091,6 +1555,7 @@ def scan_symbol(
   scope: str,
   primitive_ids: list[str],
   roots: list[str],
+  image: LinkedImage | None = None,
 ) -> list[dict[str, Any]]:
   findings: list[dict[str, Any]] = []
   instructions = parse_instructions(body)
@@ -1384,9 +1849,8 @@ def scan_symbol(
           roots=roots,
         )
       )
-  identities = {number: instruction_identity(target, body, line, local_symbols) for number, line in body.lines}
-  function_text = "rscrypto.ct.instruction-identity.v1\n" + "\n".join(identities.values())
-  function_sha256 = hashlib.sha256(function_text.encode()).hexdigest()
+  identities = instruction_identities(target, body, local_symbols, image)
+  function_sha256 = function_identity(identities)
   for item in findings:
     item["function_sha256"] = function_sha256
     if item["offset"] is not None:
@@ -1613,6 +2077,13 @@ def main() -> int:
       print(error)
     return 2
 
+  image = load_linked_image(args.artifact_dir)
+  if image is None:
+    print("cannot read the linked binary for placement-independent instruction identities")
+    return 2
+  image.set_functions(function_ranges(final_functions))
+  final_path = final_disassembly_files[0]
+
   call_graph = build_call_graph(functions)
   closures = closure_roots(ct_roots_by_primitive, call_graph)
   closure_symbols = {symbol for roots in closures.values() for symbols_for_root in roots.values() for symbol in symbols_for_root}
@@ -1639,6 +2110,7 @@ def main() -> int:
         scope=scope,
         primitive_ids=sorted(primitive_ids_by_symbol.get(symbol, [])),
         roots=sorted(root_symbols_by_symbol.get(symbol, [])),
+        image=image if body.path == final_path else None,
       )
     )
 

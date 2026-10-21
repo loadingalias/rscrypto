@@ -188,6 +188,8 @@ def artifact_kind(path: Path) -> str:
   name = path.name
   if name == "rscrypto-ct-evidence.link-map.txt":
     return "linked_binary_link_map"
+  if name == "rscrypto-ct-evidence.ld64-map.txt":
+    return "linked_binary_ld64_map"
   if name.endswith(".binary.raw-disasm.txt"):
     return "linked_binary_raw_disassembly"
   if name.endswith(".binary.nm-symbols.txt"):
