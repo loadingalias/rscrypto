@@ -162,6 +162,67 @@ fn rsa_ct_fixture_key(pkcs8_der: &[u8]) -> Option<RsaPrivateKey> {
   RsaPrivateKey::from_pkcs8_der_with_policy(pkcs8_der, &RsaPublicKeyPolicy::legacy_verification()).ok()
 }
 
+/// Borrow an RSA key prepared by [`ct_entry_rsa_fixture_key_import`].
+///
+/// # Safety
+///
+/// A non-null `key` must come from [`ct_entry_rsa_fixture_key_import`], must not have been passed
+/// to [`ct_entry_rsa_fixture_key_release`], and must not be released while the returned borrow is
+/// live.
+unsafe fn rsa_prepared_key<'a>(key: *const RsaPrivateKey) -> Option<&'a RsaPrivateKey> {
+  // SAFETY: Borrows the prepared key because:
+  // 1. A non-null `key` came from `Box::into_raw` in `ct_entry_rsa_fixture_key_import`, so it is
+  //    aligned and points to an initialized `RsaPrivateKey`.
+  // 2. The caller contract keeps that allocation live and unreleased for the returned borrow.
+  // 3. No harness entry mutates a prepared key, so a shared borrow cannot alias a mutable one.
+  // 4. `as_ref` maps null to `None`.
+  unsafe { key.as_ref() }
+}
+
+/// Import the CT fixture RSA private key outside the steady-state private-operation roots.
+///
+/// Parsing, policy checks, and consistency validation run here, once, so the sign and decrypt
+/// entries reach only steady-state private arithmetic. Returns null when the DER is rejected.
+/// Release the key with [`ct_entry_rsa_fixture_key_release`].
+///
+/// # Safety
+///
+/// - A null `pkcs8_der` pointer is permitted only when `pkcs8_der_len` is zero. A non-null pointer
+///   must reference one allocation of `pkcs8_der_len` initialized bytes, `pkcs8_der_len` must not
+///   exceed `isize::MAX`, and the range must remain immutable for the call.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ct_entry_rsa_fixture_key_import(
+  pkcs8_der: *const u8,
+  pkcs8_der_len: usize,
+) -> *mut RsaPrivateKey {
+  // SAFETY: The function contract establishes the allocation, length bound, initialization,
+  // immutability, and lifetime required for non-null pkcs8_der; input_slice handles both null
+  // shapes.
+  let Some(pkcs8_der) = (unsafe { input_slice(pkcs8_der, pkcs8_der_len) }) else {
+    return ptr::null_mut();
+  };
+  rsa_ct_fixture_key(pkcs8_der).map_or(ptr::null_mut(), |key| Box::into_raw(Box::new(key)))
+}
+
+/// Release an RSA key prepared by [`ct_entry_rsa_fixture_key_import`].
+///
+/// # Safety
+///
+/// A non-null `key` must come from [`ct_entry_rsa_fixture_key_import`] and must not have been
+/// released. No borrow of the key may be live. A null `key` is ignored.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ct_entry_rsa_fixture_key_release(key: *mut RsaPrivateKey) {
+  if key.is_null() {
+    return;
+  }
+  // SAFETY: Reclaims the prepared key because:
+  // 1. The caller contract requires `key` to come from `Box::into_raw` in
+  //    `ct_entry_rsa_fixture_key_import` with the same `RsaPrivateKey` layout.
+  // 2. The caller contract forbids an earlier release, so ownership is reclaimed exactly once.
+  // 3. The caller contract forbids a live borrow, so dropping the box cannot invalidate one.
+  drop(unsafe { Box::from_raw(key) });
+}
+
 /// HMAC-SHA256 tag verification harness.
 ///
 /// # Safety
@@ -2015,23 +2076,27 @@ pub unsafe extern "C" fn ct_entry_ed25519_verify(
 
 /// Sign with RSA PKCS#1 v1.5 and caller-supplied blinding through the CT harness.
 ///
+/// The key comes from [`ct_entry_rsa_fixture_key_import`]; key import and release stay outside
+/// this steady-state root.
+///
 /// # Safety
 ///
 /// - A null `out` pointer is permitted only when `out_len` is zero. A non-null pointer must
 ///   reference one allocation of `out_len` initialized writable bytes, `out_len` must not exceed
 ///   `isize::MAX`, and the range must be exclusively accessed for the call.
-/// - Each `(pointer, length)` pair for `pkcs8_der`, `message`, `blinding_factor`, and
-///   `blinding_inverse` may use a null pointer only with a zero length. Every non-null pointer must
-///   reference one allocation of initialized bytes, its length must not exceed `isize::MAX`, and
-///   the range must remain immutable for the call.
+/// - Each `(pointer, length)` pair for `message`, `blinding_factor`, and `blinding_inverse` may use
+///   a null pointer only with a zero length. Every non-null pointer must reference one allocation
+///   of initialized bytes, its length must not exceed `isize::MAX`, and the range must remain
+///   immutable for the call.
 /// - A nonempty output range must be disjoint from every input range. Read-only input ranges may
 ///   overlap one another.
+/// - A null `key` is rejected. A non-null `key` must come from [`ct_entry_rsa_fixture_key_import`]
+///   and must not be released during the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ct_entry_rsa_pkcs1v15_sign_fixed_blinding(
   out: *mut u8,
   out_len: usize,
-  pkcs8_der: *const u8,
-  pkcs8_der_len: usize,
+  key: *const RsaPrivateKey,
   message: *const u8,
   message_len: usize,
   blinding_factor: *const u8,
@@ -2045,10 +2110,9 @@ pub unsafe extern "C" fn ct_entry_rsa_pkcs1v15_sign_fixed_blinding(
   let Some(out) = (unsafe { output_slice(out, out_len) }) else {
     return STATUS_ERR;
   };
-  // SAFETY: The function contract establishes the allocation, length bound, initialization,
-  // immutability, lifetime, and output disjointness required for non-null pkcs8_der; input_slice
-  // handles both null shapes.
-  let Some(pkcs8_der) = (unsafe { input_slice(pkcs8_der, pkcs8_der_len) }) else {
+  // SAFETY: The function contract requires a non-null key from ct_entry_rsa_fixture_key_import
+  // that stays unreleased for this call; rsa_prepared_key maps null to None.
+  let Some(key) = (unsafe { rsa_prepared_key(key) }) else {
     return STATUS_ERR;
   };
   // SAFETY: The function contract establishes the allocation, length bound, initialization,
@@ -2070,9 +2134,6 @@ pub unsafe extern "C" fn ct_entry_rsa_pkcs1v15_sign_fixed_blinding(
     return STATUS_ERR;
   };
 
-  let Some(key) = rsa_ct_fixture_key(pkcs8_der) else {
-    return STATUS_ERR;
-  };
   let mut scratch = key.private_scratch();
   key
     .sign_pkcs1v15_with_blinding_factor_and_scratch(
@@ -2088,23 +2149,27 @@ pub unsafe extern "C" fn ct_entry_rsa_pkcs1v15_sign_fixed_blinding(
 
 /// Sign with RSA-PSS and caller-supplied salt and blinding through the CT harness.
 ///
+/// The key comes from [`ct_entry_rsa_fixture_key_import`]; key import and release stay outside
+/// this steady-state root.
+///
 /// # Safety
 ///
 /// - A null `out` pointer is permitted only when `out_len` is zero. A non-null pointer must
 ///   reference one allocation of `out_len` initialized writable bytes, `out_len` must not exceed
 ///   `isize::MAX`, and the range must be exclusively accessed for the call.
-/// - Each `(pointer, length)` pair for `pkcs8_der`, `message`, `salt`, `blinding_factor`, and
+/// - Each `(pointer, length)` pair for `message`, `salt`, `blinding_factor`, and
 ///   `blinding_inverse` may use a null pointer only with a zero length. Every non-null pointer must
 ///   reference one allocation of initialized bytes, its length must not exceed `isize::MAX`, and
 ///   the range must remain immutable for the call.
 /// - A nonempty output range must be disjoint from every input range. Read-only input ranges may
 ///   overlap one another.
+/// - A null `key` is rejected. A non-null `key` must come from [`ct_entry_rsa_fixture_key_import`]
+///   and must not be released during the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ct_entry_rsa_pss_sign_fixed_blinding(
   out: *mut u8,
   out_len: usize,
-  pkcs8_der: *const u8,
-  pkcs8_der_len: usize,
+  key: *const RsaPrivateKey,
   message: *const u8,
   message_len: usize,
   salt: *const u8,
@@ -2120,10 +2185,9 @@ pub unsafe extern "C" fn ct_entry_rsa_pss_sign_fixed_blinding(
   let Some(out) = (unsafe { output_slice(out, out_len) }) else {
     return STATUS_ERR;
   };
-  // SAFETY: The function contract establishes the allocation, length bound, initialization,
-  // immutability, lifetime, and output disjointness required for non-null pkcs8_der; input_slice
-  // handles both null shapes.
-  let Some(pkcs8_der) = (unsafe { input_slice(pkcs8_der, pkcs8_der_len) }) else {
+  // SAFETY: The function contract requires a non-null key from ct_entry_rsa_fixture_key_import
+  // that stays unreleased for this call; rsa_prepared_key maps null to None.
+  let Some(key) = (unsafe { rsa_prepared_key(key) }) else {
     return STATUS_ERR;
   };
   // SAFETY: The function contract establishes the allocation, length bound, initialization,
@@ -2151,9 +2215,6 @@ pub unsafe extern "C" fn ct_entry_rsa_pss_sign_fixed_blinding(
     return STATUS_ERR;
   };
 
-  let Some(key) = rsa_ct_fixture_key(pkcs8_der) else {
-    return STATUS_ERR;
-  };
   let mut scratch = key.private_scratch();
   key
     .sign_pss_with_salt_and_blinding_factor_and_scratch(
@@ -2170,23 +2231,27 @@ pub unsafe extern "C" fn ct_entry_rsa_pss_sign_fixed_blinding(
 
 /// Decrypt RSA-OAEP with caller-supplied blinding through the CT harness.
 ///
+/// The key comes from [`ct_entry_rsa_fixture_key_import`]; key import and release stay outside
+/// this steady-state root.
+///
 /// # Safety
 ///
 /// - A null `out` pointer is permitted only when `out_len` is zero. A non-null pointer must
 ///   reference one allocation of `out_len` initialized writable bytes, `out_len` must not exceed
 ///   `isize::MAX`, and the range must be exclusively accessed for the call.
-/// - Each `(pointer, length)` pair for `pkcs8_der`, `label`, `ciphertext`, `blinding_factor`, and
+/// - Each `(pointer, length)` pair for `label`, `ciphertext`, `blinding_factor`, and
 ///   `blinding_inverse` may use a null pointer only with a zero length. Every non-null pointer must
 ///   reference one allocation of initialized bytes, its length must not exceed `isize::MAX`, and
 ///   the range must remain immutable for the call.
 /// - A nonempty output range must be disjoint from every input range. Read-only input ranges may
 ///   overlap one another.
+/// - A null `key` is rejected. A non-null `key` must come from [`ct_entry_rsa_fixture_key_import`]
+///   and must not be released during the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ct_entry_rsa_oaep_decrypt_fixed_blinding(
   out: *mut u8,
   out_len: usize,
-  pkcs8_der: *const u8,
-  pkcs8_der_len: usize,
+  key: *const RsaPrivateKey,
   label: *const u8,
   label_len: usize,
   ciphertext: *const u8,
@@ -2202,10 +2267,9 @@ pub unsafe extern "C" fn ct_entry_rsa_oaep_decrypt_fixed_blinding(
   let Some(out) = (unsafe { output_slice(out, out_len) }) else {
     return usize::MAX;
   };
-  // SAFETY: The function contract establishes the allocation, length bound, initialization,
-  // immutability, lifetime, and output disjointness required for non-null pkcs8_der; input_slice
-  // handles both null shapes.
-  let Some(pkcs8_der) = (unsafe { input_slice(pkcs8_der, pkcs8_der_len) }) else {
+  // SAFETY: The function contract requires a non-null key from ct_entry_rsa_fixture_key_import
+  // that stays unreleased for this call; rsa_prepared_key maps null to None.
+  let Some(key) = (unsafe { rsa_prepared_key(key) }) else {
     return usize::MAX;
   };
   // SAFETY: The function contract establishes the allocation, length bound, initialization,
@@ -2233,9 +2297,6 @@ pub unsafe extern "C" fn ct_entry_rsa_oaep_decrypt_fixed_blinding(
     return usize::MAX;
   };
 
-  let Some(key) = rsa_ct_fixture_key(pkcs8_der) else {
-    return usize::MAX;
-  };
   let mut scratch = key.private_scratch();
   key
     .decrypt_oaep_with_blinding_factor_and_scratch(
@@ -2251,23 +2312,27 @@ pub unsafe extern "C" fn ct_entry_rsa_oaep_decrypt_fixed_blinding(
 
 /// Decrypt RSAES-PKCS1-v1_5 with caller-supplied blinding through the CT harness.
 ///
+/// The key comes from [`ct_entry_rsa_fixture_key_import`]; key import and release stay outside
+/// this steady-state root.
+///
 /// # Safety
 ///
 /// - A null `out` pointer is permitted only when `out_len` is zero. A non-null pointer must
 ///   reference one allocation of `out_len` initialized writable bytes, `out_len` must not exceed
 ///   `isize::MAX`, and the range must be exclusively accessed for the call.
-/// - Each `(pointer, length)` pair for `pkcs8_der`, `ciphertext`, `blinding_factor`, and
+/// - Each `(pointer, length)` pair for `ciphertext`, `blinding_factor`, and
 ///   `blinding_inverse` may use a null pointer only with a zero length. Every non-null pointer must
 ///   reference one allocation of initialized bytes, its length must not exceed `isize::MAX`, and
 ///   the range must remain immutable for the call.
 /// - A nonempty output range must be disjoint from every input range. Read-only input ranges may
 ///   overlap one another.
+/// - A null `key` is rejected. A non-null `key` must come from [`ct_entry_rsa_fixture_key_import`]
+///   and must not be released during the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ct_entry_rsa_pkcs1v15_decrypt_fixed_blinding(
   out: *mut u8,
   out_len: usize,
-  pkcs8_der: *const u8,
-  pkcs8_der_len: usize,
+  key: *const RsaPrivateKey,
   ciphertext: *const u8,
   ciphertext_len: usize,
   blinding_factor: *const u8,
@@ -2281,10 +2346,9 @@ pub unsafe extern "C" fn ct_entry_rsa_pkcs1v15_decrypt_fixed_blinding(
   let Some(out) = (unsafe { output_slice(out, out_len) }) else {
     return usize::MAX;
   };
-  // SAFETY: The function contract establishes the allocation, length bound, initialization,
-  // immutability, lifetime, and output disjointness required for non-null pkcs8_der; input_slice
-  // handles both null shapes.
-  let Some(pkcs8_der) = (unsafe { input_slice(pkcs8_der, pkcs8_der_len) }) else {
+  // SAFETY: The function contract requires a non-null key from ct_entry_rsa_fixture_key_import
+  // that stays unreleased for this call; rsa_prepared_key maps null to None.
+  let Some(key) = (unsafe { rsa_prepared_key(key) }) else {
     return usize::MAX;
   };
   // SAFETY: The function contract establishes the allocation, length bound, initialization,
@@ -2306,9 +2370,6 @@ pub unsafe extern "C" fn ct_entry_rsa_pkcs1v15_decrypt_fixed_blinding(
     return usize::MAX;
   };
 
-  let Some(key) = rsa_ct_fixture_key(pkcs8_der) else {
-    return usize::MAX;
-  };
   let mut scratch = key.private_scratch();
   key
     .decrypt_pkcs1v15_with_blinding_factor_and_scratch(
@@ -2321,6 +2382,10 @@ pub unsafe extern "C" fn ct_entry_rsa_pkcs1v15_decrypt_fixed_blinding(
 }
 
 /// Parse and re-encode the CT fixture RSA private key through the C ABI harness.
+///
+/// This is a diagnostic root for broad import, validation, and DER export. Those operations are
+/// outside the enforced `rsa.private_key_material` root, which covers only the bounded
+/// same-width validation leaf in [`ct_entry_rsa_private_component_validation_32`].
 ///
 /// # Safety
 ///
@@ -2360,6 +2425,40 @@ pub unsafe extern "C" fn ct_entry_rsa_private_key_pkcs8_roundtrip(
   }
   out[..der.len()].copy_from_slice(&der);
   der.len()
+}
+
+/// Evaluate the bounded same-width RSA private-component validation leaf through the CT harness.
+///
+/// Returns 1 when `component` is canonical, odd, below `upper_bound`, and distinct from `other`,
+/// and 0 otherwise. All three operands are 32-byte private values. A null pointer returns 0.
+///
+/// # Safety
+///
+/// - When non-null, `component`, `upper_bound`, and `other` must each be valid for reads of 32
+///   initialized bytes and must not be mutated while copied. Null pointers are rejected.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ct_entry_rsa_private_component_validation_32(
+  component: *const u8,
+  upper_bound: *const u8,
+  other: *const u8,
+) -> u8 {
+  // SAFETY: The function contract requires non-null component to expose 32 initialized, readable
+  // bytes that remain immutable while read_array copies them into owned storage.
+  let Some(component) = (unsafe { read_array::<32>(component) }) else {
+    return STATUS_ERR;
+  };
+  // SAFETY: The function contract requires non-null upper_bound to expose 32 initialized, readable
+  // bytes that remain immutable while read_array copies them into owned storage.
+  let Some(upper_bound) = (unsafe { read_array::<32>(upper_bound) }) else {
+    return STATUS_ERR;
+  };
+  // SAFETY: The function contract requires non-null other to expose 32 initialized, readable bytes
+  // that remain immutable while read_array copies them into owned storage.
+  let Some(other) = (unsafe { read_array::<32>(other) }) else {
+    return STATUS_ERR;
+  };
+
+  rscrypto::auth::diag_rsa_private_component_validation_32(&component, &upper_bound, &other)
 }
 
 macro_rules! blake2_keyed_entry {

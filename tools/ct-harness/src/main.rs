@@ -37,6 +37,13 @@ fn main() {
     rscrypto_ct_harness::ct_entry_p256_ecdh_agree,
   );
 
+  // RSA key preparation stays outside the steady-state roots, which borrow the prepared key.
+  retain!(
+    rscrypto_ct_harness::ct_entry_rsa_fixture_key_import,
+    rscrypto_ct_harness::ct_entry_rsa_fixture_key_release,
+    rscrypto_ct_harness::ct_entry_rsa_private_component_validation_32,
+  );
+
   retain!(
     rscrypto_ct_harness::mldsa::ct_entry_mldsa_ntt,
     rscrypto_ct_harness::mldsa::ct_entry_mldsa_montgomery,

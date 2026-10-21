@@ -575,6 +575,17 @@ def main() -> None:
   assert "asm_select_branch enforces unknown, which is not a ct-intended primitive" in manifest_errors(
     lambda manifest: manifest.update(asm_select_branch={"enforced_primitives": ["unknown"]})
   )
+  for unreachable in ["ct_entry_rsa_fixture_key_import", ["ct_entry_rsa_fixture_key_import"] * 2, [" "]]:
+    assert "asm_select_branch unreachable_symbols must be a list of unique strings" in manifest_errors(
+      lambda manifest: manifest["asm_select_branch"].update(unreachable_symbols=unreachable)
+    )
+  # An enforced root is reachable from itself, so listing one would make every artifact fail.
+  assert (
+    "enforced CT root ct_entry_rsa_pss_sign_fixed_blinding cannot also be unreachable from the enforced roots"
+    in manifest_errors(
+      lambda manifest: manifest["asm_select_branch"]["unreachable_symbols"].append("ct_entry_rsa_pss_sign_fixed_blinding")
+    )
+  )
 
   def public_operand_unknown_target(manifest) -> None:
     manifest["asm_public_operand"][0]["targets"] = ["unknown-target"]

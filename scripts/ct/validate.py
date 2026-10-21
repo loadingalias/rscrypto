@@ -574,8 +574,16 @@ def validate_manifest(root: Path, selected_target: str, errors: list[str], warni
     fail(errors, "asm_select_branch must be a table")
     select_branch = {}
   enforced = select_branch.get("enforced_primitives", [])
-  if set(select_branch) - {"enforced_primitives"}:
+  unreachable = select_branch.get("unreachable_symbols", [])
+  if set(select_branch) - {"enforced_primitives", "unreachable_symbols"}:
     fail(errors, "asm_select_branch has unknown fields")
+  if (
+    not isinstance(unreachable, list)
+    or any(not isinstance(value, str) or not value.strip() for value in unreachable)
+    or len(unreachable) != len(set(unreachable))
+  ):
+    fail(errors, "asm_select_branch unreachable_symbols must be a list of unique strings")
+    unreachable = []
   if (
     not isinstance(enforced, list)
     or any(not isinstance(value, str) or not value for value in enforced)
@@ -596,6 +604,8 @@ def validate_manifest(root: Path, selected_target: str, errors: list[str], warni
     }
     for symbol in sorted(enforced_roots - retained):
       fail(errors, f"enforced CT root {symbol} is not retained in the linked harness")
+    for symbol in sorted(enforced_roots.intersection(unreachable)):
+      fail(errors, f"enforced CT root {symbol} cannot also be unreachable from the enforced roots")
 
   try:
     dudect_confirmation_policy(ct)

@@ -58,6 +58,19 @@ Other primitives report the shape for review.
 If an enforced primitive shares a finding with other primitives, every affected
 primitive needs a classification before the shared finding is accepted.
 
+The enforced roots follow the claims as written.
+The RSA sign and decrypt roots borrow a key that a setup entry imported,
+and they create their private scratch for each call.
+Key import, validation, release, and DER export run only in setup and diagnostic roots.
+The `rsa.private_key_material` root is the bounded same-width component-validation leaf
+that its claim names, which BINSEC and DudeCT also cover.
+Broad import, validation, and export keep their diagnostic DudeCT cases and the diagnostic
+`ct_entry_rsa_private_key_pkcs8_roundtrip` root.
+`unreachable_symbols` under `[asm_select_branch]` lists the import, validation, and release symbols.
+The scanner fails when the linked direct-call and tail-transfer closure of an enforced root reaches
+one of them, and when one of them is missing from the linked binary.
+Indirect transfers inside the closure remain separate findings.
+
 Linked disassembly must include every mapped function start. If stripped inline
 tables make x86 decoding cross a function boundary, the artifact collector restarts
 the matching decoder at that mapped address on the original binary. It retains the

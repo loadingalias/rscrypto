@@ -19,6 +19,7 @@ from asm_heuristics import (
   parse_disassembly,
   reachable_closure,
   scan_symbol,
+  unreachable_symbol_errors,
 )
 from symbolize_linked_binary import demangle_table
 
@@ -309,6 +310,34 @@ def main() -> None:
     artifact.write_text("000fcc20 <ct_entry_p256_ecdh_agree>:\nfcc20: ff d0\tcallq *%rax\n")
     functions, _ = parse_disassembly(artifact)
     assert final_equality_closure({"ct_entry_p256_ecdh_agree"}, functions, artifact, "x86_64-unknown-linux-gnu")["unresolved_internal_calls"] == []
+
+  # Key import must stay outside the linked enforced closure. A reached symbol
+  # reports its call path; an absent symbol cannot satisfy the check.
+  linked = Path("linked.binary.disasm.txt")
+  import_symbol = "<rscrypto::auth::rsa::RsaPrivateKey>::from_pkcs8_der_with_policy"
+  linked_functions = {
+    "ct_entry_rsa_pss_sign_fixed_blinding": FunctionBody(
+      "ct_entry_rsa_pss_sign_fixed_blinding", linked, 0x1000,
+      [(1, "1000: 94000400\tbl\t0x2000 <rscrypto::auth::rsa::private_operation>")]),
+    "rscrypto::auth::rsa::private_operation": FunctionBody(
+      "rscrypto::auth::rsa::private_operation", linked, 0x2000, [(2, "2000: d65f03c0\tret")]),
+    "ct_entry_rsa_fixture_key_import": FunctionBody(
+      "ct_entry_rsa_fixture_key_import", linked, 0x3000,
+      [(3, f"3000: 14000400\tb\t0x4000 <{import_symbol}>")]),
+    import_symbol: FunctionBody(import_symbol, linked, 0x4000, [(4, "4000: d65f03c0\tret")]),
+  }
+  roots = {"ct_entry_rsa_pss_sign_fixed_blinding"}
+  unreachable = ["ct_entry_rsa_fixture_key_import", import_symbol]
+  assert unreachable_symbol_errors(roots, unreachable, linked_functions) == []
+  assert unreachable_symbol_errors(roots, ["rscrypto::auth::rsa::renamed_import"], linked_functions) == [
+    "unreachable symbol rscrypto::auth::rsa::renamed_import is absent from the linked binary",
+  ]
+  linked_functions["rscrypto::auth::rsa::private_operation"].lines = [
+    (2, f"2000: 94000800\tbl\t0x4000 <{import_symbol}>")]
+  assert unreachable_symbol_errors(roots, unreachable, linked_functions) == [
+    f"enforced CT closure reaches {import_symbol}: ct_entry_rsa_pss_sign_fixed_blinding -> "
+    f"rscrypto::auth::rsa::private_operation -> {import_symbol}",
+  ]
 
   # Identity is independent only of function placement and resolved direct
   # transfer displacement. Every condition, operand, destination and width stays.

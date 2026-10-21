@@ -376,6 +376,11 @@ def select_branch_enforced_primitives(root: Path) -> set[str]:
   return set(ct.get("asm_select_branch", {}).get("enforced_primitives", []))
 
 
+def enforced_unreachable_symbols(root: Path) -> list[str]:
+  ct = load_toml(root / "ct.toml")
+  return list(ct.get("asm_select_branch", {}).get("unreachable_symbols", []))
+
+
 def apply_select_branch_enforcement(findings: list[dict[str, Any]], enforced: set[str]) -> None:
   """Keep select-shaped branches blocking only where a primitive enforces them."""
   for finding in findings:
@@ -784,6 +789,36 @@ def final_equality_closure(
     "terminal_calls_by_symbol": terminal_calls,
     "unresolved_internal_calls": unresolved_internal_calls,
   }
+
+
+def unreachable_symbol_errors(
+  roots: set[str], unreachable: list[str], functions: dict[str, FunctionBody],
+) -> list[str]:
+  """Prove that the linked enforced closure cannot reach the listed symbols.
+
+  Each symbol must exist in the linked binary. A renamed or fully inlined
+  symbol would otherwise satisfy the check without evidence.
+  """
+  call_graph = build_call_graph(functions)
+  parents: dict[str, str | None] = {}
+  queue = [root for root in sorted(roots) if root in functions]
+  for root in queue:
+    parents.setdefault(root, None)
+  for symbol in queue:
+    for callee in sorted(call_graph.get(symbol, set())):
+      if callee not in parents:
+        parents[callee] = symbol
+        queue.append(callee)
+  errors = []
+  for symbol in unreachable:
+    if symbol not in functions:
+      errors.append(f"unreachable symbol {symbol} is absent from the linked binary")
+    elif symbol in parents:
+      path = [symbol]
+      while (parent := parents[path[-1]]) is not None:
+        path.append(parent)
+      errors.append(f"enforced CT closure reaches {symbol}: {' -> '.join(reversed(path))}")
+  return errors
 
 
 def is_s390x_return(target: str, inst: str, line: str) -> bool:
@@ -1567,11 +1602,15 @@ def main() -> int:
     for symbol in ct_roots_by_primitive.get(primitive, set())
   }
   final_enforced = final_equality_closure(enforced_roots, final_functions, final_disassembly_files[0], args.target)
-  if final_enforced["missing_root_symbols"] or final_enforced["unresolved_internal_calls"]:
+  final_enforced["unreachable_symbols"] = enforced_unreachable_symbols(root)
+  unreachable_errors = unreachable_symbol_errors(enforced_roots, final_enforced["unreachable_symbols"], final_functions)
+  if final_enforced["missing_root_symbols"] or final_enforced["unresolved_internal_calls"] or unreachable_errors:
     for symbol in final_enforced["missing_root_symbols"]:
       print(f"enforced CT closure is missing linked root {symbol}")
     for call in final_enforced["unresolved_internal_calls"]:
       print(f"enforced CT closure cannot resolve {call['caller']} -> {call['target']}")
+    for error in unreachable_errors:
+      print(error)
     return 2
 
   call_graph = build_call_graph(functions)
