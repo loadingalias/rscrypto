@@ -17,7 +17,7 @@ description = "An implementation of the DudeCT constant-time function tester"
 keywords = ["constant", "constant-time", "crypto", "benchmark"]
 
 [dependencies]
-clap = "2"
+clap = { version = "2", default-features = false, features = ["suggestions", "vec_map"] }
 ctrlc = "3"
 rand = "0.10"
 rand_chacha = "0.10"

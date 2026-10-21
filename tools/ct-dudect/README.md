@@ -56,6 +56,8 @@ The CSV columns are `benchname,sequence,class,runtime_ns`.
   label-independent recording removed the difference
   ([2026-10-09 record](../../benchmark_results/OVERVIEW.md#2026-10-09-graviton5-dudect-class-label-artifact)).
 - Buffered output is flushed before a result is reported.
+- Clap's optional terminal color support is disabled to remove `atty` and
+  `ansi_term` from the tool. Argument parsing and the measurement code are unchanged.
 - The statistical implementation in `src/stats.rs` does not change.
 - The export tests cover unequal classes, deterministic duration and order fixtures,
   and replay of real measured samples through the same statistic.
