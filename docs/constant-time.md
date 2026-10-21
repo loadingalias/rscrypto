@@ -66,6 +66,15 @@ immediates that add an offset to an address that is already formed, and indirect
 Because the identity binds read-only contents, a changed constant also requires renewed review,
 even at an unchanged address. Different compiler or linker output can therefore require renewed review.
 The artifact hashes retain the exact binary identity.
+`just ct-renew` supports renewed review when a waived function changes.
+For each stale waiver, it compares the reviewed and new linked artifacts and proposes renewal only
+when the branch and the backward slice of its condition are unchanged.
+The slice follows reaching definitions through registers and flags within the function,
+and binds read-only data by contents.
+A non-constant load, a call result, or an instruction of unknown effect in the slice requires manual review,
+as do changed slices and enforced findings without a waiver.
+The tool writes a review record for every comparison. The gate stays whole-function exact;
+see [the renewal workflow](../scripts/README.md#waiver-renewal).
 The retained Linux and Windows reviews use the workflow checkout path, pinned
 compiler, target flags, and native or GNU cross linker recorded with each artifact.
 A Mac/Zig build or another checkout path can change embedded source locations,

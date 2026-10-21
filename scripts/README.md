@@ -333,6 +333,7 @@ They do not detect a compromised producer that forges its own metadata.
 | `ct/artifacts.sh`      | `just ct-artifacts`, `ct/full.py` |
 | `ct/dudect.sh`         | `just ct-dudect`, `ct/full.py` (preparation only) |
 | `ct/dudect_execute.py` | `ct/dudect.sh`, `ct/full.py` |
+| `ct/renew_waivers.py`  | `just ct-renew` |
 
 - `ct/full.py`, `ct/binsec.py`, and `ct/validate.py` implement `just ct-full`, `just ct-binsec`,
   and `just ct-validate`.
@@ -348,6 +349,26 @@ They do not detect a compromised producer that forges its own metadata.
 and the environment setting overrides the manifest smoke budgets.
 Each smoke case keeps its own measurements.
 The latest report summarizes the selected cases and their requested budgets.
+
+### Waiver renewal
+
+`just ct-renew --target TARGET --reviewed-artifacts REVIEWED --artifacts NEW --out DIR [--apply]`
+compares each stale `asm_waiver` of one target between the artifact directory it was reviewed against
+and a new one, such as a CT preparation-failure artifact.
+
+- It runs the gate's scanner on the new artifacts, then computes the backward slice of each branch
+  condition in both linked binaries (`ct/condition_slice.py`): reaching definitions through registers
+  and flags inside the function, and read-only data bound by contents.
+- It proposes renewal only when the new function has the same branch and the same slice, and the slice
+  ends only at function inputs, immediates, or read-only data.
+  A non-constant load, a call result, an instruction of unknown effect, an indirect jump in the function,
+  a changed slice, or an ambiguous match needs manual review.
+  The record lists unchanged slices with such a leaf separately.
+- It lists every enforced `select_branch` finding that has no waiver or proposal, with its slice.
+- It writes `renewal-record.json` and `renewal-record.md` under `--out`.
+  `--apply` rewrites only the proposed waivers' locator, function hash, and review date in `ct.toml`;
+  classifications, rationales, and reviewers stay unchanged.
+- The gate stays whole-function exact. A proposal does not classify a branch.
 
 ### Transferred CT
 

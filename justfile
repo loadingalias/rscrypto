@@ -318,6 +318,11 @@ ct-artifacts *args:
 ct-validate *args:
     @scripts/lib/python.sh scripts/ct/validate.py "$@"
 
+# Propose renewals for stale CT asm waivers; write a review record
+[group('constant-time')]
+ct-renew *args:
+    @scripts/lib/python.sh scripts/ct/renew_waivers.py "$@"
+
 # Secret stack evidence
 # Review secret-worker stack depth against its scrub in linked release binaries.
 [group('secret-lifecycle')]
