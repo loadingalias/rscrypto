@@ -984,6 +984,41 @@ macro_rules! impl_mlkem_profile_ops {
         Ok(($encapsulation_key::from_bytes(encapsulation_key), decapsulation_key))
       }
 
+      /// Like [`Self::generate_keypair_in`], with the decapsulation key prepared
+      /// for decapsulation.
+      ///
+      /// The result equals [`Self::generate_keypair_in`] followed by
+      #[doc = concat!("[`", stringify!($decapsulation_key), "::prepare_in`]")]
+      /// for the same randomness, without expanding the public matrix or hashing
+      /// the encapsulation key a second time. Use it for a key that decapsulates
+      /// soon after generation, such as an ephemeral key share. The prepared key
+      /// keeps the expanded matrix as well as the encoded key. It is generated
+      /// directly into its allocation, and the box clears its secrets on drop;
+      /// entropy failure returns before any key is written. Allocation failure
+      /// is handled as by [`Box::new_in`].
+      ///
+      /// # Errors
+      ///
+      /// Returns the error from `fill_random`.
+      #[cfg(feature = "alloc")]
+      pub fn generate_prepared_keypair_in<A: Allocator>(
+        mut fill_random: impl FnMut(&mut [u8]) -> Result<(), MlKemError>,
+        alloc: A,
+      ) -> Result<($encapsulation_key, Box<$prepared_decapsulation_key, A>), MlKemError> {
+        let mut random = ZeroizingBytes::<{ Self::KEY_GENERATION_RANDOM_SIZE }>::zeroed();
+        fill_random(random.as_mut_array())?;
+        let mut encapsulation_key = [0u8; $ek_bytes];
+        let mut prepared = Box::new_in($prepared_decapsulation_key::zeroed(), alloc);
+        let $prepared_decapsulation_key { key, arithmetic } = &mut *prepared;
+        operations::keygen_prepared_into::<$k, $k_u8, $eta1_random_bytes, $dk_pke_bytes, $ek_bytes, $dk_bytes>(
+          random.as_array(),
+          &mut encapsulation_key,
+          &mut key.0,
+          arithmetic,
+        );
+        Ok(($encapsulation_key::from_bytes(encapsulation_key), prepared))
+      }
+
       /// Like [`Self::try_generate_keypair`], with the decapsulation key in
       /// memory from `alloc`. See [`Self::generate_keypair_in`].
       ///

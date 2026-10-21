@@ -128,6 +128,22 @@ macro_rules! wycheproof_suite {
             dk.expose_secret().as_bytes() == bytes(case, "dk").as_slice(),
             "keygen_in tcId {tc_id} dk"
           );
+          let (ek, prepared) = <$profile>::generate_prepared_keypair_in(
+            |out| {
+              out.copy_from_slice(&seed);
+              Ok(())
+            },
+            Global,
+          )
+          .expect("prepared key generation from a full seed must succeed");
+          assert!(
+            ek.as_bytes() == bytes(case, "ek").as_slice(),
+            "prepared keygen tcId {tc_id} ek"
+          );
+          assert!(
+            prepared.decapsulation_key().expose_secret().as_bytes() == bytes(case, "dk").as_slice(),
+            "prepared keygen tcId {tc_id} dk"
+          );
         }
         tally.record(true);
       }
@@ -171,6 +187,22 @@ macro_rules! wycheproof_suite {
               assert!(
                 shared.expose_secret().as_bytes() == bytes(case, "K").as_slice(),
                 "combined prepare_in tcId {tc_id} K"
+              );
+              let seed = bytes(case, "seed");
+              let (_, generated) = <$profile>::generate_prepared_keypair_in(
+                |out| {
+                  out.copy_from_slice(&seed);
+                  Ok(())
+                },
+                Global,
+              )
+              .expect("prepared key generation from a full seed must succeed");
+              let shared = generated
+                .decapsulate(&ciphertext)
+                .expect("decapsulation of a well-formed input");
+              assert!(
+                shared.expose_secret().as_bytes() == bytes(case, "K").as_slice(),
+                "combined prepared keygen tcId {tc_id} K"
               );
             }
           }

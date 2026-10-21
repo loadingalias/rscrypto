@@ -546,6 +546,77 @@ pub(super) fn keygen_into<
   ct::zeroize(&mut z);
 }
 
+/// Generate a key pair and its prepared decapsulation arithmetic from one matrix expansion.
+///
+/// `ek` and `dk` equal those of [`keygen_into`] for the same randomness, and `out` equals what
+/// [`validate_and_prepare_decapsulation_key_into`] derives from that `dk`: the transposed matrix
+/// is sampled once into `out`, the public vector is accumulated from those entries, and the
+/// prepared secret and public vectors are decoded from the encodings, as preparation decodes them.
+#[cfg(any(test, feature = "alloc"))]
+pub(super) fn keygen_prepared_into<
+  const K: usize,
+  const K_U8: u8,
+  const ETA1_RANDOM_BYTES: usize,
+  const DK_PKE_BYTES: usize,
+  const EK_BYTES: usize,
+  const DK_BYTES: usize,
+>(
+  random: &[u8; 64],
+  ek: &mut [u8; EK_BYTES],
+  dk: &mut [u8; DK_BYTES],
+  out: &mut PreparedDecapsulationArithmetic<K>,
+) {
+  let _dit = crate::traits::ct::DataIndependentTiming::enter();
+  let mut seed = [0u8; 33];
+  seed[..SEED_BYTES].copy_from_slice(&random[..SEED_BYTES]);
+  seed[SEED_BYTES] = K_U8;
+  let mut expanded = g(&seed);
+  let mut rho = [0u8; SEED_BYTES];
+  let mut sigma = [0u8; SEED_BYTES];
+  rho.copy_from_slice(&expanded[..SEED_BYTES]);
+  sigma.copy_from_slice(&expanded[SEED_BYTES..]);
+
+  let mut s_hat = [[0u16; N]; K];
+  let mut t_hat = [[0u16; N]; K];
+  keygen_sample_noise::<K, ETA1_RANDOM_BYTES>(&sigma, &mut s_hat, &mut t_hat);
+  keygen_ntt_noise::<K>(&mut s_hat, &mut t_hat);
+  // Row r of A is column r of the stored transpose; the matrix is public.
+  prepare_matrix_transpose_into::<K>(&rho, &mut out.encapsulation.a_transpose_hat);
+  let mut row = [[0u16; N]; K];
+  for (r, t_hat_r) in t_hat.iter_mut().enumerate() {
+    for (entry, column) in row.iter_mut().zip(&out.encapsulation.a_transpose_hat) {
+      *entry = column[r];
+    }
+    multiply_ntts_accumulate(t_hat_r, &row, &s_hat);
+  }
+  keygen_from_product_domain::<K>(&mut t_hat);
+
+  let (dk_pke, tail) = dk.split_at_mut(DK_PKE_BYTES);
+  keygen_encode_into::<K, DK_PKE_BYTES, EK_BYTES>(&rho, &s_hat, &t_hat, ek, dk_pke);
+  prepare_decapsulation_key_slice_into::<K, DK_PKE_BYTES>(dk_pke, &mut out.s_hat);
+  for (i, poly) in out.encapsulation.t_hat.iter_mut().enumerate() {
+    let start = i.strict_mul(POLY_BYTES);
+    byte_decode::<12>(&ek[start..start.strict_add(POLY_BYTES)], poly);
+  }
+  #[cfg(test)]
+  {
+    out.encapsulation.rho = rho;
+  }
+  let (dk_ek, tail) = tail.split_at_mut(EK_BYTES);
+  dk_ek.copy_from_slice(ek);
+  let (dk_hash, dk_z) = tail.split_at_mut(HASH_BYTES);
+  dk_hash.copy_from_slice(&h(ek));
+  dk_z.copy_from_slice(&random[SEED_BYTES..]);
+  let z = <&[u8; SEED_BYTES]>::try_from(&*dk_z).expect("the implicit-rejection seed is 32 bytes");
+  decryption_mask_into(z, &mut out.mask);
+
+  zeroize_polyvec(&mut s_hat);
+  zeroize_polyvec(&mut t_hat);
+  ct::zeroize(&mut seed);
+  ct::zeroize(&mut expanded);
+  ct::zeroize(&mut sigma);
+}
+
 pub(super) fn encapsulate<
   const K: usize,
   const ETA1_RANDOM_BYTES: usize,
@@ -8320,6 +8391,51 @@ fn zeroize_poly_no_fence(poly: &mut Poly) {
 
 #[cfg(test)]
 mod tests {
+
+  fn assert_prepared_keygen_matches_preparation<
+    const K: usize,
+    const K_U8: u8,
+    const ETA1_RANDOM_BYTES: usize,
+    const DK_PKE_BYTES: usize,
+    const EK_BYTES: usize,
+    const DK_BYTES: usize,
+  >() {
+    for offset in [0u8, 0x5a, 0xff] {
+      let random: [u8; 64] = core::array::from_fn(|i| offset.wrapping_add(u8::try_from(i).expect("index fits u8")));
+      let mut ek = [0u8; EK_BYTES];
+      let mut dk = [0u8; DK_BYTES];
+      keygen_into::<K, K_U8, ETA1_RANDOM_BYTES, DK_PKE_BYTES, EK_BYTES, DK_BYTES>(&random, &mut ek, &mut dk);
+      let mut expected = PreparedDecapsulationArithmetic::<K>::zeroed();
+      validate_and_prepare_decapsulation_key_into::<K, DK_PKE_BYTES, EK_BYTES, DK_BYTES>(&dk, &mut expected)
+        .expect("a generated key validates");
+
+      let (mut prepared_ek, mut prepared_dk) = ([0u8; EK_BYTES], [0u8; DK_BYTES]);
+      let mut prepared = PreparedDecapsulationArithmetic::<K>::zeroed();
+      keygen_prepared_into::<K, K_U8, ETA1_RANDOM_BYTES, DK_PKE_BYTES, EK_BYTES, DK_BYTES>(
+        &random,
+        &mut prepared_ek,
+        &mut prepared_dk,
+        &mut prepared,
+      );
+      assert_eq!((prepared_ek, prepared_dk), (ek, dk), "K = {K}");
+      assert_eq!(prepared.s_hat, expected.s_hat, "K = {K}");
+      assert_eq!(prepared.mask.hat, expected.mask.hat, "K = {K}");
+      assert_eq!(prepared.mask.negated, expected.mask.negated, "K = {K}");
+      assert_eq!(prepared.encapsulation.t_hat, expected.encapsulation.t_hat, "K = {K}");
+      assert_eq!(prepared.encapsulation.rho, expected.encapsulation.rho, "K = {K}");
+      assert_eq!(
+        prepared.encapsulation.a_transpose_hat, expected.encapsulation.a_transpose_hat,
+        "K = {K}"
+      );
+    }
+  }
+
+  #[test]
+  fn prepared_keygen_matches_key_generation_then_preparation() {
+    assert_prepared_keygen_matches_preparation::<2, 2, 192, 768, 800, 1632>();
+    assert_prepared_keygen_matches_preparation::<3, 3, 128, 1152, 1184, 2400>();
+    assert_prepared_keygen_matches_preparation::<4, 4, 128, 1536, 1568, 3168>();
+  }
   use alloc::vec::Vec;
 
   use super::*;
