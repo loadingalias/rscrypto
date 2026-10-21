@@ -26,6 +26,7 @@ import asm_heuristics as scanner
 
 MAX_SLICE_NODES = 2048
 ENTRY = -1
+FRAME = -2
 
 
 @dataclass(frozen=True)
@@ -363,7 +364,7 @@ def power_condition_field(row: scanner.DecodedLine) -> str:
 def power_effects(row: scanner.DecodedLine, identity: str) -> Effects:
   mnemonic = row.mnemonic.rstrip("+-")
   record = mnemonic.endswith(".") and mnemonic not in {"andi.", "andis.", "stdcx.", "stwcx."}
-  plain = mnemonic.rstrip(".")
+  plain = mnemonic if mnemonic in {"andi.", "andis."} else mnemonic.rstrip(".")
   numbers = power_numbers(row.operands)
   gprs = [f"r{number}" for number in numbers]
   constant = "<const:" in identity
@@ -390,6 +391,19 @@ def power_effects(row: scanner.DecodedLine, identity: str) -> Effects:
   if plain in POWER_IMMEDIATE or plain in {"addic", "subfic"}:
     uses = set() if plain in {"addi", "addis"} and numbers[1] == "0" else {gprs[1]}
     return effects(uses, {gprs[0]} | cr0 | ({"xer"} if plain in POWER_CARRY else set()))
+  if plain in {"sub", "subc"}:
+    # Extended mnemonics: sub rD, rA, rB computes rA - rB.
+    return effects(set(gprs[1:3]), {gprs[0]} | cr0 | ({"xer"} if plain == "subc" else set()))
+  if plain in {"iseleq", "isellt", "iselgt", "iselso"}:
+    uses = {gprs[2]} | ({gprs[1]} if numbers[1] != "0" else set()) | {"cr0"}
+    return effects(uses, {gprs[0]})
+  if plain == "mcrf":
+    return effects({f"cr{numbers[1]}"}, {f"cr{numbers[0]}"})
+  if plain in {"cror", "crorc", "crand", "crandc", "crxor", "crnor", "crnand", "creqv", "crset", "crclr", "crnot",
+               "crmove"}:
+    fields = [f"cr{int(number) // 4}" for number in numbers]
+    # One CR bit changes, so the destination field is also read.
+    return effects(set(fields), set(fields[:1]))
   if plain in POWER_ARITHMETIC:
     uses = set(gprs[1:3])
     if plain == "isel":
@@ -584,6 +598,17 @@ def s390x_effects(row: scanner.DecodedLine, identity: str) -> Effects:
   return effects(set(registers), set(first) | {"cc"}, load=load, unknown=True)
 
 
+def stack_pointer(target: str) -> str:
+  """The register whose value is the frame address; a slice records it as a leaf."""
+  if target.startswith(("x86_64-", "i686-")):
+    return "rsp"
+  if target.startswith(("powerpc64", "ppc64")):
+    return "r1"
+  if target.startswith("s390x-"):
+    return "r15"
+  return "sp"
+
+
 def isa_effects(target: str) -> Any:
   if target.startswith(("x86_64-", "i686-")):
     return x86_effects
@@ -596,20 +621,6 @@ def isa_effects(target: str) -> Any:
   if target.startswith("s390x-"):
     return s390x_effects
   raise ValueError(f"no condition-slice model for {target}")
-
-
-def is_indirect_jump(target: str, row: scanner.DecodedLine) -> bool:
-  if target.startswith(("x86_64-", "i686-")):
-    return row.mnemonic in {"jmp", "jmpq"} and "*" in row.operands
-  if target.startswith("aarch64-"):
-    return row.mnemonic in {"br", "braa", "brab"}
-  if target.startswith("riscv64"):
-    return row.mnemonic in {"jr", "c.jr"} and riscv_registers(row.operands) not in (["ra"], []) and "<" not in row.operands
-  if target.startswith(("powerpc64", "ppc64")):
-    return row.mnemonic.rstrip("+-") == "bctr"
-  if target.startswith("s390x-"):
-    return row.mnemonic in {"br", "bcr"} and "%r14" not in row.operands
-  return False
 
 
 @dataclass
@@ -644,18 +655,20 @@ def condition_slice(target: str, body: scanner.FunctionBody, image: Any, line_nu
   rows = scanner.decode_lines(body)
   identities = scanner.instruction_identities(target, body, local_symbols, image)
   model = isa_effects(target)
+  frame = stack_pointer(target)
   index_by_line = {row.number: index for index, row in enumerate(rows)}
   if line_number not in index_by_line:
     return Slice("", reasons=["branch line not decoded"])
   reasons: list[str] = []
-  if any(is_indirect_jump(target, row) for row in rows):
+  if any(scanner.is_register_jump(target, row) for row in rows):
     reasons.append("function contains an indirect jump; its control-flow graph is incomplete")
   successors = scanner.row_successors(target, body, rows)
   predecessors: dict[int, list[int]] = {index: [] for index in range(len(rows))}
   predecessors[0].append(ENTRY)
   for index, following in enumerate(successors):
     if following is None:
-      reasons.append(f"unresolved local branch at +0x{rows[index].offset:x}")
+      if not scanner.is_register_jump(target, rows[index]):
+        reasons.append(f"unresolved local branch at +0x{rows[index].offset:x}")
       continue
     for successor in following:
       if successor < len(rows):
@@ -694,9 +707,13 @@ def condition_slice(target: str, body: scanner.FunctionBody, image: Any, line_nu
     effect = row_effects[index]
     inputs = {}
     for register in sorted(effect.uses):
+      if register == frame:
+        # Stack addresses follow the frame layout, which the instruction identities already bind.
+        inputs[register] = [FRAME]
+        continue
       definitions = reaching(index, register)
       inputs[register] = definitions
-      pending.extend(definition for definition in definitions if definition != ENTRY)
+      pending.extend(definition for definition in definitions if definition >= 0)
     nodes.append({"index": index, "offset": row.offset, "identity": identities[row.number], "inputs": inputs,
                   "load": effect.load, "call": effect.call, "unknown": effect.unknown})
     if index != branch_index:
@@ -713,11 +730,11 @@ def condition_slice(target: str, body: scanner.FunctionBody, image: Any, line_nu
   for node in nodes:
     text = branch_signature(node["identity"]) if node["index"] == branch_index else strip_offset(node["identity"])
     inputs = ";".join(
-      f"{register}<-" + ",".join("entry" if definition == ENTRY else f"#{order[definition]}"
-                                  for definition in definitions if definition == ENTRY or definition in order)
+      f"{register}<-" + ",".join({ENTRY: "entry", FRAME: "frame"}.get(definition) or f"#{order[definition]}"
+                                  for definition in definitions if definition < 0 or definition in order)
       for register, definitions in sorted(node["inputs"].items()))
     lines.append(f"#{order[node['index']]} {text} [{inputs}]")
   for node in nodes:
-    node["inputs"] = {register: ["entry" if definition == ENTRY else f"+0x{rows[definition].offset:x}"
+    node["inputs"] = {register: [{ENTRY: "entry", FRAME: "frame"}.get(definition) or f"+0x{rows[definition].offset:x}"
                                  for definition in definitions] for register, definitions in node["inputs"].items()}
   return Slice("\n".join(lines), nodes, sorted(set(reasons)))

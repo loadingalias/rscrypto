@@ -59,6 +59,29 @@ def main() -> None:
   ], 4)
   assert any(reason.startswith("non-constant load") for reason in partial.reasons), partial.canonical
 
+  # A definition before a return cannot reach code that only a branch enters.
+  returned = slice_of(target, [
+    "1000: 48 83 ff 01\tcmpq\t$0x1, %rdi",
+    "1004: 74 06\tje\t0x100c <f+0xc>",
+    "1006: b8 05 00 00 00\tmovl\t$0x5, %eax",
+    "100b: c3\tretq",
+    "100c: 48 85 c0\ttestq\t%rax, %rax",
+    "100f: 74 01\tje\t0x1012 <f+0x12>",
+    "1011: 90\tnop",
+    "1012: c3\tretq",
+  ], 6)
+  assert returned.nodes[1]["inputs"] == {"rax": ["entry"]}, returned.canonical
+  # Stack addresses are frame leaves; the stored value still needs review.
+  spilled = slice_of(target, [
+    "1000: 48 8b 44 24 08\tmovq\t0x8(%rsp), %rax",
+    "1005: 48 85 c0\ttestq\t%rax, %rax",
+    "1008: 74 01\tje\t0x100b <f+0xb>",
+    "100a: 90\tnop",
+    "100b: c3\tretq",
+  ], 3)
+  assert spilled.nodes[2]["inputs"] == {"rsp": ["frame"]}, spilled.canonical
+  assert any(reason.startswith("non-constant load") for reason in spilled.reasons)
+
   # AArch64 flags come from the last flag-setting instruction on every path.
   target = "aarch64-unknown-linux-gnu"
   merged = slice_of(target, [

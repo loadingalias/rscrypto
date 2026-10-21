@@ -1186,16 +1186,55 @@ def x86_reference_identities(rows: list[DecodedLine], body: FunctionBody, image:
   return identities
 
 
+def is_return_or_trap(target: str, row: DecodedLine) -> bool:
+  """Whether control leaves the function or stops at `row` without a local successor."""
+  mnemonic = row.mnemonic
+  if target.startswith(("x86_64-", "i686-")):
+    return mnemonic in {"ret", "retq", "retl", "ud2", "int3", "hlt"}
+  if target.startswith("aarch64-"):
+    return mnemonic in {"ret", "retaa", "retab", "brk", "udf", "hlt"}
+  if target.startswith("riscv64"):
+    return mnemonic in {"ret", "ebreak", "c.ebreak", "unimp", "c.unimp"} or (
+      mnemonic in {"jr", "c.jr"} and re.fullmatch(r"(?:0x0\()?ra\)?", row.operands.strip()) is not None)
+  if target.startswith(("powerpc64", "ppc64")):
+    return mnemonic.rstrip("+-") in {"blr", "trap"}
+  if target.startswith("s390x-"):
+    return (mnemonic == "br" and row.operands.strip() == "%r14") or mnemonic == "j" and row.operands.strip() == "0x0"
+  return False
+
+
+def is_register_jump(target: str, row: DecodedLine) -> bool:
+  """Whether `row` jumps to a register target, such as a jump table entry."""
+  mnemonic = row.mnemonic
+  if target.startswith(("x86_64-", "i686-")):
+    return mnemonic in {"jmp", "jmpq"} and "*" in row.operands
+  if target.startswith("aarch64-"):
+    return mnemonic in {"br", "braa", "brab"}
+  if target.startswith("riscv64"):
+    return mnemonic in {"jr", "c.jr"} and not is_return_or_trap(target, row) and "<" not in row.operands
+  if target.startswith(("powerpc64", "ppc64")):
+    return mnemonic.rstrip("+-") == "bctr"
+  if target.startswith("s390x-"):
+    return mnemonic in {"br", "bcr"} and not is_return_or_trap(target, row)
+  return False
+
+
 def row_successors(target: str, body: FunctionBody, rows: list[DecodedLine]) -> list[list[int] | None]:
   """Return local successor row indices, or None for an unknown intra-function edge.
 
-  Calls fall through. Returns and transfers out of the function have no local
-  successors; the register classifier decides what they mean for liveness.
+  Calls fall through. Returns, traps, and direct transfers out of the function
+  have no local successors; an indirect jump has unknown successors.
   """
   local = {instruction.offset: instruction.local_target for instruction in parse_instructions(body)}
   index_by_offset = {row.offset: index for index, row in enumerate(rows)}
   successors: list[list[int] | None] = []
   for index, row in enumerate(rows):
+    if is_return_or_trap(target, row):
+      successors.append([])
+      continue
+    if is_register_jump(target, row):
+      successors.append(None)
+      continue
     destination = local.get(row.offset)
     conditional = is_conditional_branch(target, row.mnemonic)
     unconditional = row.mnemonic in DIRECT_TAIL_MNEMONICS and not conditional
