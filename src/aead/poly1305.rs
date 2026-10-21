@@ -733,6 +733,12 @@ pub(crate) fn authenticate_aead(primitive: AeadPrimitive, aad: &[u8], ciphertext
   #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   {
     use crate::platform::caps::x86;
+    // The eight-lane IFMA kernel takes text of at least `AVX512_IFMA_MIN_TEXT` bytes, two
+    // 128-byte groups; shorter text keeps the four-lane kernel, whose setup is cheaper.
+    if ciphertext.len() >= AVX512_IFMA_MIN_TEXT && current_caps().has(x86::AVX512F.union(x86::AVX512IFMA)) {
+      // SAFETY: this branch verifies AVX-512F and AVX-512 IFMA before selecting the kernel.
+      return unsafe { avx512_ifma::authenticate_aead_ifma(aad, ciphertext, key, lengths) };
+    }
     if lengths.total_at_least(64) && current_caps().has(x86::AVX2) {
       // SAFETY: this branch verifies AVX2 before selecting the x86-64 parallel kernel.
       return unsafe { avx2_par4::authenticate_aead_par4(aad, ciphertext, key, lengths) };
@@ -875,6 +881,12 @@ pub(crate) mod aarch64_neon;
 #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 #[path = "poly1305/x86_64_avx2_par4.rs"]
 mod avx2_par4;
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+#[path = "poly1305/x86_64_avx512_ifma.rs"]
+mod avx512_ifma;
+/// Shortest text that takes the eight-lane AVX-512 IFMA authenticator.
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+const AVX512_IFMA_MIN_TEXT: usize = 256;
 #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), target_endian = "little"))]
 #[path = "poly1305/powerpc64_vsx.rs"]
 mod power_vsx;
@@ -1042,6 +1054,49 @@ mod tests {
     }
 
     exercise_backend(super::x86_avx512::compute_block);
+  }
+
+  // Text lengths straddle the 128-byte groups and the scalar tail; AAD lengths straddle the
+  // padded scalar prefix that enters lane 0.
+  #[test]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+  fn avx512_ifma_authenticator_matches_portable_when_available() {
+    if !crate::platform::caps().has(x86::AVX512F.union(x86::AVX512IFMA)) {
+      return;
+    }
+    let keys = [[0x5au8; 32], [0xffu8; 32], [0u8; 32], patterned_key()];
+    for key in &keys {
+      for aad_len in [0usize, 1, 13, 16, 17, 31, 64, 129] {
+        for ciphertext_len in [
+          0usize, 1, 127, 128, 129, 255, 256, 257, 383, 384, 1023, 1024, 1025, 1200, 1350, 1399, 16_384, 16_385,
+        ] {
+          let aad = patterned_bytes(aad_len, 11, 7);
+          let ciphertext = patterned_bytes(ciphertext_len, 17, 3);
+          let portable = authenticate_aead_portable(&aad, &ciphertext, key);
+          let lengths = AeadByteLengths::from_usize(aad.len(), ciphertext.len());
+          // SAFETY: the capability check above establishes AVX-512F and AVX-512 IFMA.
+          let accelerated = unsafe { super::avx512_ifma::authenticate_aead_ifma(&aad, &ciphertext, key, lengths) };
+          assert_eq!(accelerated, portable, "aad {aad_len}, text {ciphertext_len}");
+        }
+      }
+    }
+    // Messages of all-ones blocks keep every limb at its bound through the lanes.
+    let ones = alloc::vec![0xffu8; 4096];
+    for key in &keys {
+      let lengths = AeadByteLengths::from_usize(0, ones.len());
+      // SAFETY: as above.
+      let accelerated = unsafe { super::avx512_ifma::authenticate_aead_ifma(&[], &ones, key, lengths) };
+      assert_eq!(accelerated, authenticate_aead_portable(&[], &ones, key));
+    }
+  }
+
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+  fn patterned_key() -> [u8; 32] {
+    let mut key = [0u8; 32];
+    for (byte, value) in key.iter_mut().zip(patterned_bytes(32, 29, 13)) {
+      *byte = value;
+    }
+    key
   }
 
   #[test]
