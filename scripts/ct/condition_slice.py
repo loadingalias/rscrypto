@@ -18,6 +18,7 @@ only supports renewal; it never classifies a branch by itself.
 
 from __future__ import annotations
 
+import functools
 import re
 from dataclasses import dataclass, field
 from typing import Any
@@ -76,6 +77,9 @@ for number in range(8, 16):
   for suffix in ("", "d", "w", "b"):
     X86_ALIASES[f"r{number}{suffix}"] = f"r{number}"
 X86_CALLER_SAVED = {"rax", "rcx", "rdx", "rsi", "rdi", "r8", "r9", "r10", "r11", "flags", *(f"v{n}" for n in range(32))}
+# Win64 callees preserve rsi and rdi. They preserve only the low 128 bits of xmm6-xmm15, and the
+# model does not split a vector register, so every vector register stays call-clobbered.
+X86_WIN64_CALLER_SAVED = X86_CALLER_SAVED - {"rsi", "rdi"}
 X86_FLAG_SETTERS = {
   "add", "sub", "and", "or", "xor", "adc", "sbb", "inc", "dec", "neg", "cmp", "test", "shl", "sal", "shr", "sar",
   "rol", "ror", "rcl", "rcr", "shld", "shrd", "imul", "mul", "bt", "bts", "btr", "btc", "bsf", "bsr", "popcnt",
@@ -119,7 +123,7 @@ def x86_registers(operand: str) -> set[str]:
   return registers
 
 
-def x86_effects(row: scanner.DecodedLine, identity: str) -> Effects:
+def x86_effects(row: scanner.DecodedLine, identity: str, caller_saved: set[str] = X86_CALLER_SAVED) -> Effects:
   mnemonic = row.mnemonic
   base = x86_base(mnemonic)
   operands = split_operands(row.operands)
@@ -132,7 +136,7 @@ def x86_effects(row: scanner.DecodedLine, identity: str) -> Effects:
   if scanner.is_conditional_branch("x86_64-unknown-linux-gnu", mnemonic):
     return effects({"flags"}, set())
   if mnemonic in {"call", "callq"}:
-    return effects(x86_registers(row.operands) | {"rsp"}, X86_CALLER_SAVED, call=True)
+    return effects(x86_registers(row.operands) | {"rsp"}, caller_saved, call=True)
   if mnemonic in {"ret", "retq", "jmp", "jmpq", "ud2", "int3", "hlt"}:
     return effects(x86_registers(row.operands), set())
   if not operands:
@@ -610,6 +614,8 @@ def stack_pointer(target: str) -> str:
 
 
 def isa_effects(target: str) -> Any:
+  if target.startswith("x86_64-") and "-windows-" in target:
+    return functools.partial(x86_effects, caller_saved=X86_WIN64_CALLER_SAVED)
   if target.startswith(("x86_64-", "i686-")):
     return x86_effects
   if target.startswith("aarch64-"):

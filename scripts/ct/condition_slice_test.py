@@ -82,6 +82,30 @@ def main() -> None:
   assert spilled.nodes[2]["inputs"] == {"rsp": ["frame"]}, spilled.canonical
   assert any(reason.startswith("non-constant load") for reason in spilled.reasons)
 
+  # Win64 callees preserve rsi, so its value crosses the call; System V callees may change it.
+  kept = [
+    "1000: be 05 00 00 00\tmovl\t$0x5, %esi",
+    "1005: e8 f6 0f 00 00\tcallq\t0x2000 <g>",
+    "100a: 48 85 f6\ttestq\t%rsi, %rsi",
+    "100d: 74 01\tje\t0x1010 <f+0x10>",
+    "100f: 90\tnop",
+    "1010: c3\tretq",
+  ]
+  windows = slice_of("x86_64-pc-windows-msvc", kept, 4)
+  assert windows.reasons == [] and windows.nodes[1]["inputs"] == {"rsi": ["+0x0"]}, windows.canonical
+  assert any(reason.startswith("call result") for reason in slice_of(target, kept, 4).reasons)
+  # Win64 callees may change the upper bits of xmm6, so a vector value never crosses a call.
+  vector = slice_of("x86_64-pc-windows-msvc", [
+    "1000: 66 48 0f 6e f7\tmovq\t%rdi, %xmm6",
+    "1005: e8 f6 0f 00 00\tcallq\t0x2000 <g>",
+    "100a: 66 48 0f 7e f0\tmovq\t%xmm6, %rax",
+    "100f: 48 85 c0\ttestq\t%rax, %rax",
+    "1012: 74 01\tje\t0x1015 <f+0x15>",
+    "1014: 90\tnop",
+    "1015: c3\tretq",
+  ], 5)
+  assert any(reason.startswith("call result") for reason in vector.reasons), vector.reasons
+
   # AArch64 flags come from the last flag-setting instruction on every path.
   target = "aarch64-unknown-linux-gnu"
   merged = slice_of(target, [

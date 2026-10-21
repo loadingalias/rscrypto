@@ -363,6 +363,9 @@ and a new one, such as a CT preparation-failure artifact.
   ends only at function inputs, immediates, or read-only data.
   A non-constant load, a call result, an instruction of unknown effect, an indirect jump in the function,
   a changed slice, or an ambiguous match needs manual review.
+  A call defines every register that the target's calling convention lets the callee change.
+  On Windows x86-64, `rsi` and `rdi` keep their values across a call; every vector register is still clobbered,
+  because callees may change the upper bits of `xmm6`-`xmm15`.
   The record lists unchanged slices with such a leaf separately.
 - It lists every enforced `select_branch` finding that has no waiver or proposal, with its slice.
 - It writes `renewal-record.json` and `renewal-record.md` under `--out`.
