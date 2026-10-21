@@ -219,7 +219,9 @@ mod implementation {
   mod hybrid {
     use super::*;
     use alloc::alloc::Global;
-    use rscrypto::{Kem, MlKem768, MlKem768Ciphertext, MlKem768DecapsulationKey, MlKem768EncapsulationKey, MlKemError};
+    use rscrypto::{
+      Kem, MlKem768, MlKem768Ciphertext, MlKem768EncapsulationKey, MlKem768PreparedDecapsulationKey, MlKemError,
+    };
     use rustls::crypto::kx::{CompletedKeyExchange, HybridKeyExchange};
     // RFC 10024, sections 4.1–4.3: the ML-KEM component
     // precedes X25519 in both shares and the input to the TLS key schedule.
@@ -250,7 +252,8 @@ mod implementation {
     impl SupportedKxGroup for X25519MlKem768Group {
       fn start(&self) -> Result<StartedKeyExchange, Error> {
         let classical = X25519Exchange::start(self.random)?;
-        let (public_key, secret) = MlKem768::generate_keypair_in(
+        // The key share decapsulates once, so keep the prepared form keygen already computed.
+        let (public_key, secret) = MlKem768::generate_prepared_keypair_in(
           |output| self.random.fill(output).map_err(|_| MlKemError::RandomGenerationFailed),
           Global,
         )
@@ -299,7 +302,7 @@ mod implementation {
 
     struct HybridExchange {
       classical: X25519Exchange,
-      secret: Box<MlKem768DecapsulationKey>,
+      secret: Box<MlKem768PreparedDecapsulationKey>,
       public: [u8; HYBRID_CLIENT_SHARE_LEN],
     }
 
@@ -311,7 +314,9 @@ mod implementation {
         let (kem_share, classical_share) = server_share.split_at(MlKem768::CIPHERTEXT_SIZE);
         let ciphertext = MlKem768Ciphertext::try_from_slice(kem_share).map_err(|_| PeerMisbehaved::InvalidKeyShare)?;
         let classical_secret = self.classical.agree(classical_share)?;
-        let kem_secret = MlKem768::decapsulate(&self.secret, &ciphertext)
+        let kem_secret = self
+          .secret
+          .decapsulate(&ciphertext)
           .map_err(|_| Error::General("ML-KEM decapsulation failed".into()))?;
         Ok(SharedSecret::from(
           [kem_secret.as_bytes().as_slice(), classical_secret.as_bytes()].concat(),

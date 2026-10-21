@@ -392,7 +392,8 @@ mod implementation {
   }
 
   /// Verify with the key prepared from exactly `key`'s bytes when `anchors`
-  /// holds one; otherwise import `key`. Both paths run the same verification.
+  /// holds one; otherwise import `key` for this signature. Both paths reach the
+  /// same decision.
   fn verify(
     operation: Operation,
     anchors: Option<&Anchors>,
@@ -405,17 +406,12 @@ mod implementation {
       #[cfg(feature = "ecdsa-p256")]
       Operation::P256Sha256 | Operation::P256Sha384 => {
         let signature = EcdsaP256Signature::from_der(signature).map_err(|_| InvalidSignature)?;
-        let imported;
-        let key = match anchors.and_then(|anchors| anchors.p256.get(key)) {
-          Some(prepared) => prepared,
-          None => {
-            imported = EcdsaP256PublicKey::from_sec1_bytes(key).map_err(|_| InvalidSignature)?;
-            &imported
-          }
-        };
-        match operation {
-          Operation::P256Sha256 => key.verify(message, &signature),
-          _ => key.verify_sha384(message, &signature),
+        match (anchors.and_then(|anchors| anchors.p256.get(key)), operation) {
+          (Some(prepared), Operation::P256Sha256) => prepared.verify(message, &signature),
+          (Some(prepared), _) => prepared.verify_sha384(message, &signature),
+          // A key that is not a prepared anchor verifies once, so skip its table.
+          (None, Operation::P256Sha256) => EcdsaP256PublicKey::verify_sec1(key, message, &signature),
+          (None, _) => EcdsaP256PublicKey::verify_sec1_sha384(key, message, &signature),
         }
       }
       #[cfg(feature = "ecdsa-p384")]
