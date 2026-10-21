@@ -53,7 +53,8 @@ aarch64-pc-windows-msvc) ZIG_TARGET="aarch64-windows-msvc" ;;
 
 # Tier B+: IBM Targets (s390x, POWER)
 s390x-unknown-linux-gnu) ZIG_TARGET="s390x-linux-gnu" ;;
-powerpc64le-unknown-linux-gnu) ZIG_TARGET="powerpc64le-linux-gnu" ;;
+# Zig's ppc64le libunwind calls glibc's IEEE-128 printf entry points, added in glibc 2.32.
+powerpc64le-unknown-linux-gnu) ZIG_TARGET="powerpc64le-linux-gnu.2.32" ;;
 
 # Tier C: Constrained Targets (WASM, no_std)
 wasm32-unknown-unknown) ZIG_TARGET="wasm32-freestanding" ;;
