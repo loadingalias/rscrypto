@@ -403,6 +403,10 @@ impl<'a, const V: usize> Prime<'a, V> {
 
   /// Select `table[window]` into the multiplier by reading every entry under lane masks.
   ///
+  /// Every entry is loaded without a mask. Otherwise LLVM folds the load into the merge-masked
+  /// OR, and a masked memory operand need not access its masked-off lanes, so the secret window
+  /// could decide which table lines are read.
+  ///
   /// # Safety
   /// Calling outside an AVX-512F-enabled function requires AVX-512F support.
   #[inline]
@@ -412,7 +416,11 @@ impl<'a, const V: usize> Prime<'a, V> {
     let mut selected = [_mm512_setzero_si512(); V];
     for (entry, values) in (0i64..).zip(self.table.chunks_exact(V.strict_mul(8))) {
       let hit = _mm512_cmpeq_epi64_mask(_mm512_set1_epi64(entry), target);
-      for (lanes, &value) in selected.iter_mut().zip(&load::<V>(values)) {
+      for (lanes, mut value) in selected.iter_mut().zip(load::<V>(values)) {
+        // SAFETY: the empty template emits no instruction and touches no memory, stack, or
+        // flags; this function enables AVX-512F, which `zmm_reg` requires. The barrier makes
+        // `value` an opaque register, so its table load stays a separate unmasked load.
+        unsafe { core::arch::asm!("/* {0} */", inout(zmm_reg) value, options(nomem, nostack, preserves_flags)) };
         *lanes = _mm512_mask_or_epi64(*lanes, hit, *lanes, value);
       }
     }
