@@ -218,6 +218,83 @@ With the re-encoded waivers, the v2 scanner accepts all seven artifact sets with
 the same result as v1. The re-encoding binds the existing reviews to the same binaries; it is not a
 review of later source.
 
+### Linked-artifact review, 2026-10-21
+
+The `select_branch` waivers of all seven targets were reviewed again on the linked binaries of `0b66b4ad`,
+and the x86-64 waivers again at `4266f7b5`. The RSA performance commits through `929955e7` and the
+later harness changes had made 304 of the 457 waivers stale.
+
+The new artifacts came from one Constant-Time run per architecture at `0b66b4ad`:
+Linux x86-64 [39545147429](https://github.com/loadingalias/rscrypto/actions/runs/39545147429),
+Linux AArch64 [39545154612](https://github.com/loadingalias/rscrypto/actions/runs/39545154612),
+Windows x86-64 [39545162420](https://github.com/loadingalias/rscrypto/actions/runs/39545162420),
+IBM Z [39545170015](https://github.com/loadingalias/rscrypto/actions/runs/39545170015),
+POWER [39545177824](https://github.com/loadingalias/rscrypto/actions/runs/39545177824),
+and RISC-V [39545184709](https://github.com/loadingalias/rscrypto/actions/runs/39545184709).
+Each run failed at the stale waivers and retained its artifacts.
+The Apple Silicon artifact was built locally from the clean `0b66b4ad` tree, with an ld64 map.
+`just ct-renew` compared each target with the artifacts of the
+[identity v2 re-encoding](#identity-v2-re-encoding-2026-10-21):
+
+- 75 waivers still matched exactly.
+- 78 waivers had an unchanged branch and condition slice and were renewed with their existing rationales.
+- The other 304 stale waivers were deleted.
+- All 347 enforced findings without a waiver were reviewed in their new binaries and received new exact waivers.
+  Each rationale names the registers and offsets that define the condition, follows frame-slot reloads
+  to their stores, and cites the source line at the reviewed revision.
+
+Of the 347 conditions, 346 are public:
+
+- zeroization tests that compare a buffer address with its public length;
+- loop, copy, and odd-limb bounds over public limb counts;
+- the PKCS#1 implicit-rejection shift bound, where the secret shift bit forms only a mask;
+- the PSS unused-top-bits test and the saved DIT state;
+- harness null checks;
+- digit-conversion and table-length checks in the AVX-512 IFMA CRT kernel.
+
+The remaining IBM Z condition maps the returned status to a length,
+which the `opaque_success_or_failure` disclosure allows.
+No reviewed condition depends on a key, limb, plaintext, or padding value. The waiver set now has 500 entries.
+
+The IFMA kernel from `929955e7` had no reviewed linked binary before this review.
+In both the Linux and the Windows x86-64 binaries, every conditional branch in its functions,
+select-shaped or not, tests a public length, loop counter, iterator index, or overflow check on a public index.
+The window selection had a different defect: LLVM folded each table load into the merge-masked `vporq` operand.
+The architecture lets a masked memory operand skip its masked-off lanes,
+so the secret window could choose which table lines were read.
+`4266f7b5` passes each loaded vector through an empty register barrier, so every entry is read
+with an unmasked load and the window reaches only the lane mask.
+The portable selector already reads every limb with volatile loads for the same reason.
+The x86-64 waivers were then renewed against Constant-Time runs
+[39549084956](https://github.com/loadingalias/rscrypto/actions/runs/39549084956) (Linux) and
+[39549094432](https://github.com/loadingalias/rscrypto/actions/runs/39549094432) (Windows) at `4266f7b5`:
+17 renewed with unchanged slices, and one branch with renamed registers received a new waiver.
+
+On an AWS c8i.xlarge host (Intel Xeon 6975P-C, AVX-512F and AVX-512 IFMA) at `4266f7b5`,
+each `rsa_crt_pair_*` DudeCT case confirmed that dispatch selected the IFMA kernel.
+The largest |t| values were 2.74 (exponent high byte), 1.44 (random exponents), and 1.52 (random inputs),
+against the threshold of 10. The internal regression suite passed with native and portable dispatch,
+including the comparison of the CRT pair with independent modular exponentiation.
+These single-host `ct-dudect` runs are diagnostic; release evidence is the Constant-Time campaign.
+
+The portable Montgomery code still adds 128-bit limb products with `strict_add`.
+On x86-64 and RV64, each overflow check compiles to a branch on a carry derived from secret limbs.
+No input takes it, because the sum is at most 2^128 − 1, so the branch direction never changes.
+These branches are not select-shaped and have no waiver. Converting them to `wrapping_add`,
+with the bound written at the definition as [the evidence model](#evidence-model) requires, remains open.
+
+The reviewed linked binary SHA-256 values are:
+
+| Target | Source | SHA-256 |
+| --- | --- | --- |
+| Apple Silicon | `0b66b4ad` | `bd883d317f1a596c2c7241d9be21c0dd4884babdaa9a53ad0271da80957ec11a` |
+| Linux AArch64 | `0b66b4ad` | `1e9ae799368916ba0d8947af4fd2fd5c542e93d239e9b97ed9ab9ea24f15b5ba` |
+| POWER | `0b66b4ad` | `4e9d356652410ac1523aa261d4f242d96d503fa6f59126c06b9872e6c4bfca69` |
+| IBM Z | `0b66b4ad` | `8afed39def07024d77d9384537e34dc47fc7b95c8309260e1412a8a89912fb83` |
+| RISC-V | `0b66b4ad` | `863b207ed46b6ca643ac65b8df3e4395a9ff990aaf56d63589addec468812918` |
+| Linux x86-64 | `4266f7b5` | `828925eba6a66dce9a31f77b145a21d7ad87e66fa065fb203c2cd5cc93fb081f` |
+| Windows x86-64 | `4266f7b5` | `a68ab698ab62731e942c061bc5416f798a01dad18a113886fec646142daa3b55` |
+
 ## Public decisions and exclusions
 
 Ordinary equality is allowed for public values, such as nonces, encoded public keys,
