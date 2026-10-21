@@ -128,7 +128,7 @@ mod curve {
   #[cfg(all(feature = "ecdsa-p384", feature = "getrandom"))]
   use rscrypto::EcdsaP384SecretKey;
   #[cfg(feature = "ed25519")]
-  use rscrypto::Ed25519SecretKey;
+  use rscrypto::{Ed25519Keypair, Ed25519SecretKey};
 
   pub(super) fn load(
     der: &PrivateKeyDer<'_>,
@@ -168,6 +168,9 @@ mod curve {
     if let PrivateKeyDer::Pkcs8(value) = der
       && let Ok(key) = Ed25519SecretKey::from_pkcs8_der(value.secret_pkcs8_der())
     {
+      // The configuration-bound key is expanded once; signing reuses the expanded secret and
+      // public key instead of deriving both for every signature.
+      let key = Ed25519Keypair::from_secret_key(key);
       let spki = key.public_key().to_spki_der().to_vec();
       return Ok(Some(Key {
         secret: Arc::new(Secret::Ed25519(key)),
@@ -178,13 +181,25 @@ mod curve {
   }
 
   #[derive(Debug)]
+  #[cfg_attr(
+    all(
+      feature = "ed25519",
+      feature = "getrandom",
+      any(feature = "ecdsa-p256", feature = "ecdsa-p384")
+    ),
+    expect(
+      clippy::large_enum_variant,
+      reason = "each configured key holds one `Secret` in an `Arc`; boxing the keypair would add an allocation and \
+                another moved-from secret copy"
+    )
+  )]
   enum Secret {
     #[cfg(all(feature = "ecdsa-p256", feature = "getrandom"))]
     P256(EcdsaP256SecretKey, &'static dyn rustls::crypto::SecureRandom),
     #[cfg(all(feature = "ecdsa-p384", feature = "getrandom"))]
     P384(EcdsaP384SecretKey, &'static dyn rustls::crypto::SecureRandom),
     #[cfg(feature = "ed25519")]
-    Ed25519(Ed25519SecretKey),
+    Ed25519(Ed25519Keypair),
   }
 
   impl Secret {
@@ -301,9 +316,8 @@ mod curve {
 mod rsa {
   use alloc::{boxed::Box, sync::Arc, vec, vec::Vec};
   use core::fmt;
-  use std::sync::Mutex;
 
-  use rscrypto::{RsaPrivateKey, RsaPrivateScratch, RsaPublicKeyPolicy};
+  use rscrypto::{RsaPrivateKey, RsaPublicKeyPolicy};
   use rustls::Error;
   use rustls::crypto::SignatureScheme;
   use rustls::crypto::{Signer, SigningKey};
@@ -345,8 +359,9 @@ mod rsa {
         .copied()
         .find(|scheme| offered.contains(scheme))
         .map(|scheme| {
+          // rustls asks for a signer on every ClientHello, including resumptions that never
+          // sign, so private scratch is built only when a signature is produced.
           Box::new(Sign {
-            scratch: Mutex::new(self.key.private_scratch()),
             key: Arc::clone(&self.key),
             scheme,
             random: self.random,
@@ -361,7 +376,6 @@ mod rsa {
 
   struct Sign {
     key: Arc<RsaPrivateKey>,
-    scratch: Mutex<RsaPrivateScratch>,
     scheme: SignatureScheme,
     random: &'static dyn rustls::crypto::SecureRandom,
   }
@@ -380,7 +394,8 @@ mod rsa {
       message: &[u8],
       fill: impl FnMut(&mut [u8]) -> Result<(), E>,
     ) -> Result<Vec<u8>, Error> {
-      let mut scratch = self.scratch.lock().map_err(|_| super::signing_failed())?;
+      // The scratch clears its secret buffers when dropped.
+      let mut scratch = self.key.private_scratch();
       let mut signature = vec![0; self.key.signature_len()];
       self
         .key
@@ -412,7 +427,6 @@ mod rsa {
     let key = RsaPrivateKey::from_pkcs8_der(include_bytes!("../tests/vectors/credentials/rsa3072-leaf-key.der"))
       .expect("fixture key");
     let signer = Sign {
-      scratch: Mutex::new(key.private_scratch()),
       key: Arc::new(key),
       scheme: SignatureScheme::RSA_PSS_SHA256,
       random: crate::random::SECURE_RANDOM,
@@ -422,7 +436,7 @@ mod rsa {
       Err(())
     });
     assert!(matches!(result, Err(Error::General(message)) if message == "TLS signing failed"));
-    // A failed entropy request must leave reusable scratch, not a partial signature.
+    // A failed entropy request must release no partial signature, and the signer still signs.
     let scheme = signer.scheme;
     let signature = Box::new(signer).sign(b"message").expect("sign after entropy failure");
     let peer = rustls_ring::DEFAULT_TLS13_PROVIDER.signature_verification_algorithms;

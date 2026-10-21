@@ -78,11 +78,12 @@ Public shares and ciphertexts carry no secret ownership obligation.
 ### rustls authentication
 
 The provider shares `EcdsaP256SecretKey`, `EcdsaP384SecretKey`,
-`Ed25519SecretKey`, `RsaPrivateKey`, and ML-DSA keys (prepared by default,
-compact with `sign::Provider::compact`) through `Arc`; their primitive owners
-clear when the last signing key or signer releases them. RSA signers each own
-one clearing `RsaPrivateScratch` behind a mutex. They borrow the key and scratch
-for the blinded operation and return only the resulting public signature.
+`Ed25519Keypair` (expanded once at load), `RsaPrivateKey`, and ML-DSA keys
+(prepared by default, compact with `sign::Provider::compact`) through `Arc`; their
+primitive owners clear when the last signing key or signer releases them. An RSA
+signer builds one clearing `RsaPrivateScratch` for each signature, borrows the key
+and scratch for the blinded operation, drops the scratch before returning, and
+returns only the resulting public signature.
 ECDSA signatures and cached SPKI are public. Key Debug formatting delegates to
 redacted primitive owners and the caller's selected entropy source; that source
 must not expose secret state through Debug. RSA signer formatting exposes only
