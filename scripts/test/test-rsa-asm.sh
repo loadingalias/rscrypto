@@ -39,8 +39,7 @@ run_gate() {
     rustc -vV
     test_name=auth::rsa::tests::aarch64_macos_rsa_montgomery_asm_matches_portable_across_supported_widths
     nm_args=(-m)
-    expected_symbols=(_rscrypto_rsa_bn_mul_mont_words_apple
-      _rscrypto_rsa_mont_reduce_cios_32_aarch64_apple_darwin
+    expected_symbols=(_rscrypto_rsa_mont_reduce_cios_32_aarch64_apple_darwin
       _rscrypto_rsa_mont_reduce_cios_words_aarch64_apple_darwin)
   fi
 

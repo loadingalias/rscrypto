@@ -7205,20 +7205,6 @@ reviewer = "Codex RSA task 2 review"
 reviewed_at = "2026-10-15"
 
 [[asm_waiver]]
-target = "aarch64-apple-darwin"
-primitive = "rsa.private_ops"
-symbol = "rscrypto_rsa_bn_mul_mont_words_apple"
-kind = "select_branch"
-artifact = "artifacts/rscrypto-ct-evidence.binary.disasm.txt"
-locator = "rscrypto_rsa_bn_mul_mont_words_apple+0x64c:select_branch:580a066182021cdd"
-function_sha256 = "37d9c34de6065a4fe5f3aa214139b483c0793dd952250ce1b47e4eda1ddcc456"
-source = "src/auth/asm/rscrypto_rsa_bignum_mont_apple.s:574"
-classification = "public"
-rationale = "x14 is the difference between the public operand end pointer and the next 64-byte block pointer. This selects the final square-loop block; product limbs and carry flags do not feed cbz."
-reviewer = "Codex RSA task 2 review"
-reviewed_at = "2026-10-21"
-
-[[asm_waiver]]
 target = "aarch64-unknown-linux-gnu"
 primitive = "rsa.private_ops"
 symbol = "<rscrypto::auth::rsa::RsaPrivateKeyComponents>::private_operation_from_scratch_encoded"
@@ -8113,20 +8099,6 @@ function_sha256 = "18d6110da36787791d31bb7e78ec11a7930569a849d17df2712d0f493ab48
 source = "src/traits/ct.rs:213"
 classification = "public"
 rationale = "The condition compares the public byte-slice remainder with six before reading the seventh tail byte. Compared contents are accumulated with XOR/OR and do not feed this branch; OAEP compares fixed digest lengths."
-reviewer = "Codex RSA task 2 review"
-reviewed_at = "2026-10-15"
-
-[[asm_waiver]]
-target = "aarch64-unknown-linux-gnu"
-primitive = "rsa.private_ops"
-symbol = "rscrypto_rsa_bn_mul_mont_words_aarch64_elf"
-kind = "select_branch"
-artifact = "artifacts/rscrypto-ct-evidence.binary.disasm.txt"
-locator = "rscrypto_rsa_bn_mul_mont_words_aarch64_elf+0x64c:select_branch:58fe45715e831fdc"
-function_sha256 = "92749d45070584fbc53f5b974afa6821f1906bc1a1270e60778d4ffb6c72762a"
-source = "src/auth/asm/rscrypto_rsa_bignum_mont_aarch64_elf.s:574"
-classification = "public"
-rationale = "x14 is the difference between the public operand end pointer and the next 64-byte block pointer. It selects the final square-loop block; product limbs and carry flags do not feed cbz."
 reviewer = "Codex RSA task 2 review"
 reviewed_at = "2026-10-15"
 
