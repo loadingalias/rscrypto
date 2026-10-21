@@ -100,6 +100,8 @@ The `rsa.private_key_material` root is the bounded same-width component-validati
 that its claim names, which BINSEC and DudeCT also cover.
 Broad import, validation, and export keep their diagnostic DudeCT cases and the diagnostic
 `ct_entry_rsa_private_key_pkcs8_roundtrip` root.
+That root is not a release equality root, so the public-length comparisons in import validation
+have source review but no linked-binary equality evidence; `public_len_comparison` in `ct.toml` counts them.
 `unreachable_symbols` under `[asm_select_branch]` lists the import, validation, and release symbols.
 The scanner fails when the linked direct-call and tail-transfer closure of an enforced root reaches
 one of them, and when one of them is missing from the linked binary.

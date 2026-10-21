@@ -29,7 +29,6 @@ fn main() {
     rscrypto_ct_harness::ct_entry_rsa_pss_sign_fixed_blinding,
     rscrypto_ct_harness::ct_entry_rsa_oaep_decrypt_fixed_blinding,
     rscrypto_ct_harness::ct_entry_rsa_pkcs1v15_decrypt_fixed_blinding,
-    rscrypto_ct_harness::ct_entry_rsa_private_key_pkcs8_roundtrip,
   );
 
   retain!(
@@ -37,8 +36,10 @@ fn main() {
     rscrypto_ct_harness::ct_entry_p256_ecdh_agree,
   );
 
-  // RSA key preparation stays outside the steady-state roots, which borrow the prepared key.
+  // RSA key preparation and the diagnostic PKCS#8 roundtrip stay outside the steady-state roots,
+  // which borrow the prepared key.
   retain!(
+    rscrypto_ct_harness::ct_entry_rsa_private_key_pkcs8_roundtrip,
     rscrypto_ct_harness::ct_entry_rsa_fixture_key_import,
     rscrypto_ct_harness::ct_entry_rsa_fixture_key_release,
     rscrypto_ct_harness::ct_entry_rsa_private_component_validation_32,

@@ -47,7 +47,6 @@ public_len_symbols = [
   "ct_entry_rsa_pss_sign_fixed_blinding",
   "ct_entry_rsa_oaep_decrypt_fixed_blinding",
   "ct_entry_rsa_pkcs1v15_decrypt_fixed_blinding",
-  "ct_entry_rsa_private_key_pkcs8_roundtrip",
 ]
 formal_owner_widths = [16, 32, 48, 64]
 formal_limitation = "BINSEC owner kernels cover the representative 16-, 32-, 48-, and 64-byte production monomorphizations. The 28- and ML-KEM-sized owner monomorphizations require linked-binary disassembly/closure and heuristics on every release lane; BINSEC proof kernels are deferred because they add no caller-selectable shape and the large copies exceed the present proof budget."
@@ -186,11 +185,10 @@ evidence_symbols = [
   "ct_entry_rsa_pss_sign_fixed_blinding",
   "ct_entry_rsa_oaep_decrypt_fixed_blinding",
   "ct_entry_rsa_pkcs1v15_decrypt_fixed_blinding",
-  "ct_entry_rsa_private_key_pkcs8_roundtrip",
 ]
-evidenced_call_count = 7
-limited_call_count = 5
-limitation = "The two Miller-Rabin key-generation comparisons and three public verification comparisons are not reachable from the retained release equality roots. Their lengths remain public and their source traversal is audited, but T3.3 does not convert that source review into linked-binary evidence."
+evidenced_call_count = 3
+limited_call_count = 9
+limitation = "The retained release equality roots reach the two comparisons in private_operation_from_scratch_encoded and the OAEP label-hash comparison. The other nine are not reachable from them: two Miller-Rabin key-generation comparisons, three public verification comparisons, three private-key import validation comparisons that only the diagnostic ct_entry_rsa_private_key_pkcs8_roundtrip root reaches, and the stored-blinding private operation, which the fixed-blinding harness roots do not call. Their lengths remain public and their source traversal is audited, but T3.3 does not convert that source review into linked-binary evidence."
 
 [[public_len_comparison]]
 id = "mlkem.parameter_set_shapes"
