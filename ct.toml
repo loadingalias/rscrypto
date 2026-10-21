@@ -3436,8 +3436,8 @@ name = "x86_64-unknown-linux-gnu"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 3428
-compiler_api_sha256 = "b9e0f8639e0822ebf41ceada731c54e12a8e2579959deba32413fbb0fbedd7f3"
+compiler_api_item_count = 3435
+compiler_api_sha256 = "d1960a22f9e16e68f3d52647909151509eb5d424221e351eeba319aea6bec4e4"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "required"
@@ -3447,8 +3447,8 @@ name = "aarch64-unknown-linux-gnu"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 3428
-compiler_api_sha256 = "b9e0f8639e0822ebf41ceada731c54e12a8e2579959deba32413fbb0fbedd7f3"
+compiler_api_item_count = 3435
+compiler_api_sha256 = "d1960a22f9e16e68f3d52647909151509eb5d424221e351eeba319aea6bec4e4"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "required"
@@ -3481,8 +3481,8 @@ group = "win"
 backend = "llvm"
 linker = "msvc-link-unpinned"
 claim = "ct-intended"
-compiler_api_item_count = 3428
-compiler_api_sha256 = "b9e0f8639e0822ebf41ceada731c54e12a8e2579959deba32413fbb0fbedd7f3"
+compiler_api_item_count = 3435
+compiler_api_sha256 = "d1960a22f9e16e68f3d52647909151509eb5d424221e351eeba319aea6bec4e4"
 physical_timing = "required"
 binsec = "unsupported"
 binsec_reason = "BINSEC PE/Windows evidence is not part of the current release evidence gate."
@@ -3503,8 +3503,8 @@ name = "aarch64-apple-darwin"
 group = "macos"
 backend = "llvm"
 linker = "apple-ld-unpinned"
-compiler_api_item_count = 3428
-compiler_api_sha256 = "b9e0f8639e0822ebf41ceada731c54e12a8e2579959deba32413fbb0fbedd7f3"
+compiler_api_item_count = 3435
+compiler_api_sha256 = "d1960a22f9e16e68f3d52647909151509eb5d424221e351eeba319aea6bec4e4"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -3515,8 +3515,8 @@ name = "s390x-unknown-linux-gnu"
 group = "ibm"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 3428
-compiler_api_sha256 = "b9e0f8639e0822ebf41ceada731c54e12a8e2579959deba32413fbb0fbedd7f3"
+compiler_api_item_count = 3435
+compiler_api_sha256 = "d1960a22f9e16e68f3d52647909151509eb5d424221e351eeba319aea6bec4e4"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -3527,8 +3527,8 @@ name = "powerpc64le-unknown-linux-gnu"
 group = "ibm"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 3428
-compiler_api_sha256 = "b9e0f8639e0822ebf41ceada731c54e12a8e2579959deba32413fbb0fbedd7f3"
+compiler_api_item_count = 3435
+compiler_api_sha256 = "d1960a22f9e16e68f3d52647909151509eb5d424221e351eeba319aea6bec4e4"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -3539,8 +3539,8 @@ name = "riscv64gc-unknown-linux-gnu"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 3428
-compiler_api_sha256 = "b9e0f8639e0822ebf41ceada731c54e12a8e2579959deba32413fbb0fbedd7f3"
+compiler_api_item_count = 3435
+compiler_api_sha256 = "d1960a22f9e16e68f3d52647909151509eb5d424221e351eeba319aea6bec4e4"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -4264,7 +4264,7 @@ limitation = "The claim begins only after a valid scalar has been sampled and, f
 [[operation]]
 id = "kem.mlkem512"
 api = [
-  "rscrypto::MlKem512::{generate_keypair,generate_keypair_with,encapsulate,encapsulate_with,decapsulate,generate_keypair_in,try_generate_keypair_in}",
+  "rscrypto::MlKem512::{generate_keypair,generate_keypair_with,encapsulate,encapsulate_with,decapsulate,generate_keypair_in,try_generate_keypair_in,generate_prepared_keypair_in}",
   "rscrypto::MlKem512*::{from_bytes,try_from_slice,to_bytes,as_bytes,expose_secret,duplicate_secret}",
   "rscrypto::MlKem512DecapsulationKey::{try_from_slice_in,prepare_in,from_pkcs8_der,from_pkcs8_der_in,to_pkcs8_der_into}",
   "rscrypto::MlKem512EncapsulationKey::{from_spki_der,to_spki_der}",
@@ -4309,12 +4309,12 @@ evidence = [
   "unit:kem.mlkem512.encapsulate",
   "unit:kem.mlkem512.decapsulate",
 ]
-limitation = "Public encapsulation-key/ciphertext equality is ordinary equality. Decapsulation-key/shared-secret owners return CtDecision and require explicit declassification."
+limitation = "Public encapsulation-key/ciphertext equality is ordinary equality. Decapsulation-key/shared-secret owners return CtDecision and require explicit declassification. generate_prepared_keypair_in composes the evidenced key-generation noise, NTT, and encoding kernels with the evidenced decapsulation-key preparation; no DudeCT case runs that composition directly."
 
 [[operation]]
 id = "kem.mlkem768"
 api = [
-  "rscrypto::MlKem768::{generate_keypair,generate_keypair_with,encapsulate,encapsulate_with,decapsulate,generate_keypair_in,try_generate_keypair_in}",
+  "rscrypto::MlKem768::{generate_keypair,generate_keypair_with,encapsulate,encapsulate_with,decapsulate,generate_keypair_in,try_generate_keypair_in,generate_prepared_keypair_in}",
   "rscrypto::MlKem768*::{from_bytes,try_from_slice,to_bytes,as_bytes,expose_secret,duplicate_secret}",
   "rscrypto::MlKem768DecapsulationKey::{try_from_slice_in,prepare_in,from_pkcs8_der,from_pkcs8_der_in,to_pkcs8_der_into}",
   "rscrypto::MlKem768EncapsulationKey::{from_spki_der,to_spki_der}",
@@ -4359,12 +4359,12 @@ evidence = [
   "unit:kem.mlkem768.encapsulate",
   "unit:kem.mlkem768.decapsulate",
 ]
-limitation = "Public encapsulation-key/ciphertext equality is ordinary equality. Decapsulation-key/shared-secret owners return CtDecision and require explicit declassification."
+limitation = "Public encapsulation-key/ciphertext equality is ordinary equality. Decapsulation-key/shared-secret owners return CtDecision and require explicit declassification. generate_prepared_keypair_in composes the evidenced key-generation noise, NTT, and encoding kernels with the evidenced decapsulation-key preparation; no DudeCT case runs that composition directly."
 
 [[operation]]
 id = "kem.mlkem1024"
 api = [
-  "rscrypto::MlKem1024::{generate_keypair,generate_keypair_with,encapsulate,encapsulate_with,decapsulate,generate_keypair_in,try_generate_keypair_in}",
+  "rscrypto::MlKem1024::{generate_keypair,generate_keypair_with,encapsulate,encapsulate_with,decapsulate,generate_keypair_in,try_generate_keypair_in,generate_prepared_keypair_in}",
   "rscrypto::MlKem1024*::{from_bytes,try_from_slice,to_bytes,as_bytes,expose_secret,duplicate_secret}",
   "rscrypto::MlKem1024DecapsulationKey::{try_from_slice_in,prepare_in,from_pkcs8_der,from_pkcs8_der_in,to_pkcs8_der_into}",
   "rscrypto::MlKem1024EncapsulationKey::{from_spki_der,to_spki_der}",
@@ -4409,7 +4409,7 @@ evidence = [
   "unit:kem.mlkem1024.encapsulate",
   "unit:kem.mlkem1024.decapsulate",
 ]
-limitation = "Public encapsulation-key/ciphertext equality is ordinary equality. Decapsulation-key/shared-secret owners return CtDecision and require explicit declassification."
+limitation = "Public encapsulation-key/ciphertext equality is ordinary equality. Decapsulation-key/shared-secret owners return CtDecision and require explicit declassification. generate_prepared_keypair_in composes the evidenced key-generation noise, NTT, and encoding kernels with the evidenced decapsulation-key preparation; no DudeCT case runs that composition directly."
 
 [[operation]]
 id = "signature.ed25519_signing"
@@ -4494,8 +4494,8 @@ limitation = "Blinding callbacks and entropy-source behavior are external and co
 id = "signature.public_parse_serialize_and_verify"
 api = [
   "rscrypto::{Ed25519,EcdsaP256,EcdsaP384}PublicKey::{from_bytes,to_bytes,as_bytes,verify}",
-  "rscrypto::EcdsaP256PublicKey::verify_sha384",
-  "rscrypto::EcdsaP384PublicKey::verify_sha256",
+  "rscrypto::EcdsaP256PublicKey::{verify_sha384,verify_sec1,verify_sec1_sha384}",
+  "rscrypto::EcdsaP384PublicKey::{verify_sha256,verify_sec1,verify_sec1_sha256}",
   "rscrypto::{Ed25519,EcdsaP256,EcdsaP384}Signature::{from_bytes,from_der,to_bytes,as_bytes}",
   "rscrypto::{Ed25519,EcdsaP256,EcdsaP384}PublicKey::{from_spki_der,to_spki_der}",
   "rscrypto::{EcdsaP256,EcdsaP384}Signature::to_der_into",
