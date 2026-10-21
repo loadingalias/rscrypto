@@ -326,26 +326,283 @@ impl Poly {
   }
 
   pub(super) fn add_assign(&mut self, rhs: &Self) {
-    for (a, &b) in self.0.iter_mut().zip(&rhs.0) {
-      *a = add(*a, b);
+    #[cfg(all(
+      target_arch = "x86_64",
+      target_os = "linux",
+      not(miri),
+      not(feature = "portable-only")
+    ))]
+    if crate::platform::caps().has(crate::platform::caps::x86::AVX2) {
+      // SAFETY: Cached capability detection establishes CPU and OS AVX2 support. Fixed-size
+      // references provide initialized arrays and disjoint output.
+      unsafe {
+        x86_64::add_assign(&mut self.0, &rhs.0);
+      }
+      return;
+    }
+    #[cfg(all(
+      target_arch = "aarch64",
+      any(target_os = "macos", target_os = "linux"),
+      target_feature = "neon",
+      not(feature = "portable-only")
+    ))]
+    {
+      // SAFETY: This branch requires compile-time NEON on macOS/Linux AArch64.
+      unsafe {
+        aarch64::add_assign(&mut self.0, &rhs.0);
+      }
+    }
+    #[cfg(not(all(
+      target_arch = "aarch64",
+      any(target_os = "macos", target_os = "linux"),
+      target_feature = "neon",
+      not(feature = "portable-only")
+    )))]
+    {
+      for (a, &b) in self.0.iter_mut().zip(&rhs.0) {
+        *a = add(*a, b);
+      }
     }
   }
 
   pub(super) fn sub_assign(&mut self, rhs: &Self) {
-    for (a, &b) in self.0.iter_mut().zip(&rhs.0) {
-      *a = sub(*a, b);
+    #[cfg(all(
+      target_arch = "x86_64",
+      target_os = "linux",
+      not(miri),
+      not(feature = "portable-only")
+    ))]
+    if crate::platform::caps().has(crate::platform::caps::x86::AVX2) {
+      // SAFETY: Cached capability detection establishes CPU and OS AVX2 support. Fixed-size
+      // references provide initialized arrays and disjoint output.
+      unsafe {
+        x86_64::sub_assign(&mut self.0, &rhs.0);
+      }
+      return;
+    }
+    #[cfg(all(
+      target_arch = "aarch64",
+      any(target_os = "macos", target_os = "linux"),
+      target_feature = "neon",
+      not(feature = "portable-only")
+    ))]
+    {
+      // SAFETY: This branch requires compile-time NEON on macOS/Linux AArch64.
+      unsafe {
+        aarch64::sub_assign(&mut self.0, &rhs.0);
+      }
+    }
+    #[cfg(not(all(
+      target_arch = "aarch64",
+      any(target_os = "macos", target_os = "linux"),
+      target_feature = "neon",
+      not(feature = "portable-only")
+    )))]
+    {
+      for (a, &b) in self.0.iter_mut().zip(&rhs.0) {
+        *a = sub(*a, b);
+      }
     }
   }
+
   /// Aggregate the norm decision without returning at the first coefficient.
   pub(super) fn exceeds_bound(&self, bound: u32) -> u32 {
-    let mut invalid = 0;
-    for &x in &self.0 {
-      let negative = u32::from(x > Q / 2);
-      let magnitude = select(x, Q.strict_sub(x), negative);
-      invalid |= u32::from(magnitude >= bound);
-    }
-    invalid
+    exceeds_bound_dispatch(&self.0, bound)
   }
+
+  /// `out[i] = HighBits(self[i])` (FIPS 204 Algorithm 37) for canonical coefficients.
+  pub(super) fn high_bits_into(&self, gamma2: u32, out: &mut Self) {
+    #[cfg(all(
+      target_arch = "x86_64",
+      target_os = "linux",
+      not(miri),
+      not(feature = "portable-only")
+    ))]
+    if crate::platform::caps().has(crate::platform::caps::x86::AVX2) {
+      // SAFETY: Cached capability detection establishes CPU and OS AVX2 support. Fixed-size
+      // references provide initialized arrays and disjoint output.
+      unsafe {
+        x86_64::high_bits_into(&self.0, gamma2, &mut out.0);
+      }
+      return;
+    }
+    #[cfg(all(
+      target_arch = "aarch64",
+      any(target_os = "macos", target_os = "linux"),
+      target_feature = "neon",
+      not(feature = "portable-only")
+    ))]
+    {
+      // SAFETY: This branch requires compile-time NEON on macOS/Linux AArch64.
+      unsafe {
+        aarch64::high_bits_into(&self.0, gamma2, &mut out.0);
+      }
+    }
+    #[cfg(not(all(
+      target_arch = "aarch64",
+      any(target_os = "macos", target_os = "linux"),
+      target_feature = "neon",
+      not(feature = "portable-only")
+    )))]
+    {
+      for (&x, high) in self.0.iter().zip(&mut out.0) {
+        *high = high_bits(x, gamma2);
+      }
+    }
+  }
+
+  /// `out[i]` = the low part of `Decompose(self[i])` (Algorithm 36), as a canonical residue.
+  pub(super) fn low_bits_into(&self, gamma2: u32, out: &mut Self) {
+    #[cfg(all(
+      target_arch = "x86_64",
+      target_os = "linux",
+      not(miri),
+      not(feature = "portable-only")
+    ))]
+    if crate::platform::caps().has(crate::platform::caps::x86::AVX2) {
+      // SAFETY: Cached capability detection establishes CPU and OS AVX2 support. Fixed-size
+      // references provide initialized arrays and disjoint output.
+      unsafe {
+        x86_64::low_bits_into(&self.0, gamma2, &mut out.0);
+      }
+      return;
+    }
+    #[cfg(all(
+      target_arch = "aarch64",
+      any(target_os = "macos", target_os = "linux"),
+      target_feature = "neon",
+      not(feature = "portable-only")
+    ))]
+    {
+      // SAFETY: This branch requires compile-time NEON on macOS/Linux AArch64.
+      unsafe {
+        aarch64::low_bits_into(&self.0, gamma2, &mut out.0);
+      }
+    }
+    #[cfg(not(all(
+      target_arch = "aarch64",
+      any(target_os = "macos", target_os = "linux"),
+      target_feature = "neon",
+      not(feature = "portable-only")
+    )))]
+    {
+      for (&x, low) in self.0.iter().zip(&mut out.0) {
+        *low = decompose(x, gamma2).1;
+      }
+    }
+  }
+
+  /// Replace each coefficient `r` with the hint bit `HighBits(r) != HighBits(r + t)`
+  /// (Algorithm 39 with the signer's operands) and return how many bits are set.
+  pub(super) fn make_hints(&mut self, t: &Self, gamma2: u32) -> usize {
+    make_hints_dispatch(&mut self.0, &t.0, gamma2)
+  }
+}
+
+/// [`Poly::exceeds_bound`] on the selected backend.
+#[cfg(all(
+  target_arch = "aarch64",
+  any(target_os = "macos", target_os = "linux"),
+  target_feature = "neon",
+  not(feature = "portable-only")
+))]
+fn exceeds_bound_dispatch(a: &[u32; N], bound: u32) -> u32 {
+  // SAFETY: This function requires compile-time NEON on macOS/Linux AArch64.
+  unsafe { aarch64::exceeds_bound(a, bound) }
+}
+
+/// [`Poly::exceeds_bound`] on the selected backend.
+#[cfg(not(all(
+  target_arch = "aarch64",
+  any(target_os = "macos", target_os = "linux"),
+  target_feature = "neon",
+  not(feature = "portable-only")
+)))]
+fn exceeds_bound_dispatch(a: &[u32; N], bound: u32) -> u32 {
+  #[cfg(all(
+    target_arch = "x86_64",
+    target_os = "linux",
+    not(miri),
+    not(feature = "portable-only")
+  ))]
+  if crate::platform::caps().has(crate::platform::caps::x86::AVX2) {
+    // SAFETY: Cached capability detection establishes CPU and OS AVX2 support.
+    return unsafe { x86_64::exceeds_bound(a, bound) };
+  }
+  exceeds_bound_scalar(a, bound)
+}
+
+#[cfg(any(
+  test,
+  not(all(
+    target_arch = "aarch64",
+    any(target_os = "macos", target_os = "linux"),
+    target_feature = "neon",
+    not(feature = "portable-only")
+  ))
+))]
+fn exceeds_bound_scalar(a: &[u32; N], bound: u32) -> u32 {
+  let mut invalid = 0;
+  for &x in a {
+    let negative = u32::from(x > Q / 2);
+    let magnitude = select(x, Q.strict_sub(x), negative);
+    invalid |= u32::from(magnitude >= bound);
+  }
+  invalid
+}
+
+/// [`Poly::make_hints`] on the selected backend.
+#[cfg(all(
+  target_arch = "aarch64",
+  any(target_os = "macos", target_os = "linux"),
+  target_feature = "neon",
+  not(feature = "portable-only")
+))]
+fn make_hints_dispatch(r: &mut [u32; N], t: &[u32; N], gamma2: u32) -> usize {
+  // SAFETY: This function requires compile-time NEON on macOS/Linux AArch64.
+  unsafe { aarch64::make_hints(r, t, gamma2) }
+}
+
+/// [`Poly::make_hints`] on the selected backend.
+#[cfg(not(all(
+  target_arch = "aarch64",
+  any(target_os = "macos", target_os = "linux"),
+  target_feature = "neon",
+  not(feature = "portable-only")
+)))]
+fn make_hints_dispatch(r: &mut [u32; N], t: &[u32; N], gamma2: u32) -> usize {
+  #[cfg(all(
+    target_arch = "x86_64",
+    target_os = "linux",
+    not(miri),
+    not(feature = "portable-only")
+  ))]
+  if crate::platform::caps().has(crate::platform::caps::x86::AVX2) {
+    // SAFETY: Cached capability detection establishes CPU and OS AVX2 support.
+    return unsafe { x86_64::make_hints(r, t, gamma2) };
+  }
+  make_hints_scalar(r, t, gamma2)
+}
+
+#[cfg(any(
+  test,
+  not(all(
+    target_arch = "aarch64",
+    any(target_os = "macos", target_os = "linux"),
+    target_feature = "neon",
+    not(feature = "portable-only")
+  ))
+))]
+fn make_hints_scalar(r: &mut [u32; N], t: &[u32; N], gamma2: u32) -> usize {
+  let mut count = 0usize;
+  for (r, &t) in r.iter_mut().zip(t) {
+    let hint = high_bits(*r, gamma2) != high_bits(add(*r, t), gamma2);
+    // Candidate hints remain in the zeroizing polynomial owner until every
+    // rejection check passes. The candidate controls no output addresses.
+    *r = u32::from(hint);
+    count = count.strict_add(usize::from(hint));
+  }
+  count
 }
 
 /// Forward-NTT blinding for small secret polynomials on POWER.
@@ -520,6 +777,17 @@ pub(super) fn reduce(x: u32) -> u32 {
   difference.wrapping_add(opaque_mask(0u32.wrapping_sub(difference >> 31)) & Q)
 }
 
+// The vector backends replace every AArch64 NEON caller outside tests and diagnostics.
+#[cfg(any(
+  test,
+  all(rscrypto_internal, feature = "diag"),
+  not(all(
+    target_arch = "aarch64",
+    any(target_os = "macos", target_os = "linux"),
+    target_feature = "neon",
+    not(feature = "portable-only")
+  ))
+))]
 #[inline]
 pub(super) fn add(a: u32, b: u32) -> u32 {
   reduce(a.strict_add(b))
@@ -885,6 +1153,115 @@ mod tests {
       }
       actual.accumulate_product(&a.0, &b);
       assert_eq!(actual.0, expected.0, "accumulation case {case}");
+    }
+  }
+
+  // Every canonical coefficient, for both ML-DSA γ2 values: the vector HighBits and low part
+  // equal Algorithm 36's scalar decomposition.
+  #[test]
+  fn elementwise_decomposition_matches_scalar_for_every_coefficient() {
+    for gamma2 in [95_232u32, 261_888] {
+      let mut start = 0u32;
+      while start < Q {
+        let mut input = Poly::zero();
+        for (offset, x) in (0u32..).zip(&mut input.0) {
+          *x = start.strict_add(offset).min(Q.strict_sub(1));
+        }
+        let mut high = Poly::zero();
+        let mut low = Poly::zero();
+        input.high_bits_into(gamma2, &mut high);
+        input.low_bits_into(gamma2, &mut low);
+        for ((&x, &h), &l) in input.0.iter().zip(&high.0).zip(&low.0) {
+          let (expected_high, expected_low) = super::decompose(x, gamma2);
+          assert_eq!((h, l), (expected_high, expected_low), "x {x}, gamma2 {gamma2}");
+        }
+        start = start.strict_add(256);
+      }
+    }
+  }
+
+  // Norm checks, additions and hints against the scalar authority at the boundaries that decide
+  // them, plus generated coefficients.
+  #[test]
+  fn elementwise_checks_and_hints_match_scalar() {
+    let mut state = 0x243f_6a88u32;
+    let mut next = || {
+      state ^= state << 13;
+      state ^= state >> 17;
+      state ^= state << 5;
+      state % Q
+    };
+    for bound in [
+      1u32,
+      95_232 - 196,
+      95_232,
+      261_888 - 196,
+      261_888,
+      (1 << 19) - 196,
+      (1 << 17) - 78,
+    ] {
+      let edges = [
+        0,
+        1,
+        bound.strict_sub(1),
+        bound,
+        bound.strict_add(1),
+        Q / 2,
+        (Q / 2).strict_add(1),
+        Q.strict_sub(bound).strict_sub(1),
+        Q.strict_sub(bound),
+        Q.strict_sub(bound).strict_add(1),
+        Q - 1,
+      ];
+      for edge in edges {
+        let mut poly = Poly::zero();
+        poly.0[200] = edge;
+        assert_eq!(
+          poly.exceeds_bound(bound),
+          super::exceeds_bound_scalar(&poly.0, bound),
+          "edge {edge}, bound {bound}"
+        );
+      }
+      let mut poly = Poly::zero();
+      for x in &mut poly.0 {
+        *x = next().checked_rem(bound).unwrap_or(0);
+      }
+      assert_eq!(
+        poly.exceeds_bound(bound),
+        super::exceeds_bound_scalar(&poly.0, bound),
+        "bound {bound}"
+      );
+    }
+    for _ in 0..64 {
+      let mut a = Poly::zero();
+      let mut b = Poly::zero();
+      for (a, b) in a.0.iter_mut().zip(&mut b.0) {
+        *a = next();
+        *b = next();
+      }
+      a.0[0] = Q - 1;
+      b.0[0] = Q - 1;
+      a.0[1] = 0;
+      b.0[1] = Q - 1;
+      let mut sum = Poly::zero();
+      sum.copy_from(&a);
+      sum.add_assign(&b);
+      let mut difference = Poly::zero();
+      difference.copy_from(&a);
+      difference.sub_assign(&b);
+      for (((&s, &d), &x), &y) in sum.0.iter().zip(&difference.0).zip(&a.0).zip(&b.0) {
+        assert_eq!(s, super::add(x, y));
+        assert_eq!(d, super::sub(x, y));
+      }
+      for gamma2 in [95_232u32, 261_888] {
+        let mut vector = Poly::zero();
+        vector.copy_from(&a);
+        let mut scalar = Poly::zero();
+        scalar.copy_from(&a);
+        let count = vector.make_hints(&b, gamma2);
+        assert_eq!(count, super::make_hints_scalar(&mut scalar.0, &b.0, gamma2));
+        assert_eq!(vector.0, scalar.0);
+      }
     }
   }
 

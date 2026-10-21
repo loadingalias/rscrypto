@@ -5,7 +5,7 @@
 
 use super::{
   MlDsaError, MlDsaKeyError, Parameters, encoding,
-  poly::{NttBlinding, Poly, add, decompose, high_bits, power2_round, use_hint},
+  poly::{NttBlinding, Poly, power2_round, use_hint},
   sampling,
 };
 use crate::secret::ZeroizingBytes;
@@ -13,6 +13,17 @@ use crate::secret::ZeroizingBytes;
 fn index_byte(index: usize) -> u8 {
   u8::try_from(index).expect("ML-DSA matrix dimensions are at most eight")
 }
+
+/// Expand matrix entries two streams at a time where the platform permuter runs two Keccak
+/// states together: SHA3 on AArch64 macOS and Linux, and AVX-512VL on Linux x86-64 when the CPU
+/// has it (without it the paired call runs the two permutations in turn).
+const PAIRED_MATRIX: bool = cfg!(all(
+  any(
+    all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
+    all(target_arch = "x86_64", target_os = "linux")
+  ),
+  not(feature = "portable-only")
+));
 
 fn nonce(index: usize) -> u16 {
   u16::try_from(index).expect("bounded ML-DSA nonce fits two bytes")
@@ -33,11 +44,7 @@ impl<const K: usize, const L: usize> Matrix<K, L> {
   }
 
   pub(super) fn expand_into(&mut self, rho: &[u8]) -> Result<(), MlDsaError> {
-    if !cfg!(all(
-      target_os = "macos",
-      target_arch = "aarch64",
-      not(feature = "portable-only")
-    )) {
+    if !PAIRED_MATRIX {
       for (i, row) in self.0.iter_mut().enumerate() {
         for (j, entry) in row.iter_mut().enumerate() {
           sampling::matrix(rho, index_byte(i), index_byte(j), entry)?;
@@ -79,11 +86,7 @@ impl<const K: usize, const L: usize> Matrix<K, L> {
 #[inline(never)]
 fn matrix_row<const L: usize>(rho: &[u8], row: usize, input: &[Poly; L], out: &mut Poly) -> Result<(), MlDsaError> {
   out.0.fill(0);
-  if !cfg!(all(
-    target_os = "macos",
-    target_arch = "aarch64",
-    not(feature = "portable-only")
-  )) {
+  if !PAIRED_MATRIX {
     let mut entry = Poly::zero();
     for (column, input) in input.iter().enumerate() {
       sampling::matrix(rho, index_byte(row), index_byte(column), &mut entry.0)?;
@@ -345,8 +348,27 @@ pub(super) fn sign_with_state<const K: usize, const L: usize>(
     #[cfg(rscrypto_mldsa_attempts)]
     attempts::record();
     signature.fill(0);
-    for (i, (y, z)) in y.iter_mut().zip(&mut z).enumerate() {
-      sampling::mask(rho_prime.as_array(), nonce(attempt.strict_mul(L).strict_add(i)), p, y);
+    // Nonces stay attempt·L + i; consecutive pairs share one two-state Keccak schedule.
+    let first_nonce = attempt.strict_mul(L);
+    let (pairs, last) = y.as_chunks_mut::<2>();
+    for (pair_index, [first, second]) in pairs.iter_mut().enumerate() {
+      let i = first_nonce.strict_add(pair_index.strict_mul(2));
+      sampling::mask_pair(
+        rho_prime.as_array(),
+        [nonce(i), nonce(i.strict_add(1))],
+        p,
+        [first, second],
+      );
+    }
+    if let Some(y) = last.first_mut() {
+      sampling::mask(
+        rho_prime.as_array(),
+        nonce(first_nonce.strict_add(L).strict_sub(1)),
+        p,
+        y,
+      );
+    }
+    for (z, y) in z.iter_mut().zip(&y) {
       z.copy_from(y);
       z.ntt();
     }
@@ -358,9 +380,7 @@ pub(super) fn sign_with_state<const K: usize, const L: usize>(
       } else {
         matrix_row(&secret[..32], i, &z, row)?;
       }
-      for (&x, high) in row.0.iter().zip(&mut high.0) {
-        *high = high_bits(x, p.gamma2);
-      }
+      row.high_bits_into(p.gamma2, &mut high);
       encoding::pack(&high, p.w1_bits, None, &mut packed_high.as_mut_array()[..w1_len]);
       hash.update(&packed_high.as_array()[..w1_len]);
     }
@@ -380,9 +400,7 @@ pub(super) fn sign_with_state<const K: usize, const L: usize>(
       work.product(&challenge, &s2.0);
       work.inverse_ntt();
       row.sub_assign(&work);
-      for (&x, low) in row.0.iter().zip(&mut high.0) {
-        *low = decompose(x, p.gamma2).1;
-      }
+      row.low_bits_into(p.gamma2, &mut high);
       invalid |= high.exceeds_bound(p.gamma2.strict_sub(p.beta));
     }
     // This is the scheme's aggregate rejection decision, never an error oracle.
@@ -394,13 +412,9 @@ pub(super) fn sign_with_state<const K: usize, const L: usize>(
       work.product(&challenge, &t0.0);
       work.inverse_ntt();
       invalid |= work.exceeds_bound(p.gamma2);
-      for (r, &t) in row.0.iter_mut().zip(&work.0) {
-        let hint = high_bits(*r, p.gamma2) != high_bits(add(*r, t), p.gamma2);
-        // Candidate hints remain in the zeroizing polynomial owner until every
-        // rejection check passes. The candidate controls no output addresses.
-        *r = u32::from(hint);
-        count = count.strict_add(usize::from(hint));
-      }
+      // Candidate hints remain in the zeroizing polynomial owner until every
+      // rejection check passes. The candidate controls no output addresses.
+      count = count.strict_add(row.make_hints(&work, p.gamma2));
     }
     if invalid != 0 || count > p.omega {
       continue;

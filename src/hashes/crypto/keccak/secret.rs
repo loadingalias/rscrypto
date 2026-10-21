@@ -11,9 +11,13 @@
 //! these functions require that review. Public SHA-3 and SHAKE hashing does
 //! not use this module.
 
+#[cfg(any(feature = "ml-kem", feature = "ml-dsa"))]
+use super::KeccakXofImpl;
+#[cfg(feature = "ml-dsa")]
+use super::xof_seeded_64_2_pair_secret;
 use super::{KeccakCoreImpl, PlatformPermuter};
 #[cfg(feature = "ml-kem")]
-use super::{KeccakXofImpl, xof_seeded_32_1_pair_secret, xof_seeded_32_1_quad_secret, xof_seeded_32_1_secret};
+use super::{xof_seeded_32_1_pair_secret, xof_seeded_32_1_quad_secret, xof_seeded_32_1_secret};
 
 /// Dead stack cleared after each worker. Every worker's linked frame,
 /// including its Keccak callees and any leaf red zone, must fit within it.
@@ -69,6 +73,15 @@ pub(crate) fn shake256_seeded_quad<const N: usize>(seed: &[u8; 32], nonces: [u8;
   scrub_dead_stack::<QUAD_STACK_SCRUB_WORDS>();
 }
 
+/// SHAKE256(`seed` || `nonce`) for two 16-bit nonces, the ML-DSA ExpandMask stream, permuted
+/// together where supported. The lane-parallel squeeze needs equal output lengths.
+#[cfg(feature = "ml-dsa")]
+pub(crate) fn shake256_seeded64_pair(seed: &[u8; 64], nonces: [u16; 2], outputs: [&mut [u8]; 2]) {
+  let permuter = PlatformPermuter::default();
+  squeeze_seeded64_pair(permuter, seed, nonces, outputs);
+  scrub_dead_stack::<STACK_SCRUB_WORDS>();
+}
+
 #[inline(never)]
 fn absorb_and_squeeze<const RATE: usize>(permuter: PlatformPermuter, suffix: u8, parts: &[&[u8]], out: &mut [u8]) {
   let mut state = KeccakCoreImpl::<RATE, PlatformPermuter, true>::with_permuter(permuter);
@@ -76,6 +89,18 @@ fn absorb_and_squeeze<const RATE: usize>(permuter: PlatformPermuter, suffix: u8,
     state.update(part);
   }
   state.finalize_xof_into(suffix, out);
+}
+
+#[cfg(feature = "ml-dsa")]
+#[inline(never)]
+fn squeeze_seeded64_pair(
+  permuter: PlatformPermuter,
+  seed: &[u8; 64],
+  [a, b]: [u16; 2],
+  [out_a, out_b]: [&mut [u8]; 2],
+) {
+  let (mut reader_a, mut reader_b) = xof_seeded_64_2_pair_secret::<SHAKE256_RATE>(permuter, SHAKE_SUFFIX, seed, a, b);
+  KeccakXofImpl::squeeze_pair_into(&mut reader_a, &mut reader_b, out_a, out_b);
 }
 
 #[cfg(feature = "ml-kem")]

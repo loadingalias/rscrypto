@@ -335,6 +335,23 @@ pub(super) fn mask(seed: &[u8], nonce: u16, p: Parameters, out: &mut Poly) {
   super::encoding::unpack(&bytes.as_array()[..len], p.z_bits, p.gamma1, out);
 }
 
+/// [`mask`] for two nonces, with both SHAKE256 streams permuted together where supported.
+pub(super) fn mask_pair(seed: &[u8; 64], nonces: [u16; 2], p: Parameters, [first, second]: [&mut Poly; 2]) {
+  let mut bytes_first = ZeroizingBytes::<640>::zeroed();
+  let mut bytes_second = ZeroizingBytes::<640>::zeroed();
+  let len = p.z_bits.strict_mul(32);
+  secret::shake256_seeded64_pair(
+    seed,
+    nonces,
+    [
+      &mut bytes_first.as_mut_array()[..len],
+      &mut bytes_second.as_mut_array()[..len],
+    ],
+  );
+  super::encoding::unpack(&bytes_first.as_array()[..len], p.z_bits, p.gamma1, first);
+  super::encoding::unpack(&bytes_second.as_array()[..len], p.z_bits, p.gamma1, second);
+}
+
 pub(super) fn challenge(seed: &[u8], tau: usize, out: &mut Poly) -> Result<(), MlDsaError> {
   let mut bytes = ZeroizingBytes::<CHALLENGE_BYTES>::zeroed();
   hash(&[seed], bytes.as_mut_array());
@@ -618,6 +635,38 @@ mod tests {
           assert_eq!(&actual[1..output_len + 1], &expected[..output_len]);
           assert_eq!(actual[0], 0xa5);
           assert!(actual[output_len + 1..].iter().all(|&byte| byte == 0xa5));
+        }
+      }
+    }
+  }
+
+  #[test]
+  fn paired_mask_matches_independent_shake256_streams() {
+    use tiny_keccak::Hasher as _;
+
+    let mut seed = [0u8; 64];
+    for (index, byte) in seed.iter_mut().enumerate() {
+      *byte = u8::try_from(index.strict_mul(37) % 251).expect("test byte fits u8");
+    }
+    for p in [super::super::P44, super::super::P65, super::super::P87] {
+      let len = p.z_bits.strict_mul(32);
+      for nonces in [[0u16, 1], [4, 5], [0x00ff, 0x0100], [0xfffe, 0xffff], [7, 7]] {
+        let mut paired = [Poly::zero(), Poly::zero()];
+        let [first, second] = &mut paired;
+        mask_pair(&seed, nonces, p, [first, second]);
+        for (poly, nonce) in paired.iter().zip(nonces) {
+          // Independent oracle: SHAKE256(seed || nonce) from tiny_keccak, unpacked like FIPS 204.
+          let mut oracle = tiny_keccak::Shake::v256();
+          oracle.update(&seed);
+          oracle.update(&nonce.to_le_bytes());
+          let mut bytes = [0u8; 640];
+          oracle.finalize(&mut bytes[..len]);
+          let mut expected = Poly::zero();
+          super::super::encoding::unpack(&bytes[..len], p.z_bits, p.gamma1, &mut expected);
+          assert_eq!(poly.0, expected.0, "nonce {nonce}");
+          let mut single = Poly::zero();
+          mask(&seed, nonce, p, &mut single);
+          assert_eq!(poly.0, single.0, "nonce {nonce}");
         }
       }
     }

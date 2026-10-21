@@ -1404,6 +1404,57 @@ fn xof_seeded_32_1_secret<const RATE: usize>(
   reader
 }
 
+/// Sponge state after absorbing `seed || nonce` (little-endian) and the padding as one block.
+#[cfg(feature = "ml-dsa")]
+#[inline(always)]
+fn xof_seeded_64_2_state<const RATE: usize>(ds: u8, seed: &[u8; 64], nonce: u16) -> [u64; 25] {
+  debug_assert!(RATE > 67);
+  debug_assert_eq!(RATE % 8, 0);
+
+  let mut state = [0u64; 25];
+  for (lane, word) in state.iter_mut().zip(seed.as_chunks::<8>().0) {
+    *lane = u64::from_le_bytes(*word);
+  }
+  // Bytes 64 and 65 hold the nonce; byte 66 starts the padding with the domain byte.
+  state[8] = u64::from(nonce) | (u64::from(ds) << 16);
+
+  let last = RATE.strict_sub(1);
+  state[last / 8] ^= 0x80_u64 << ((last & 7).strict_mul(8));
+  state
+}
+
+/// Two secret XOF readers over `seed || a` and `seed || b`, permuted together where the
+/// platform pairs Keccak states.
+#[cfg(feature = "ml-dsa")]
+fn xof_seeded_64_2_pair_secret<const RATE: usize>(
+  permuter: PlatformPermuter,
+  ds: u8,
+  seed: &[u8; 64],
+  a: u16,
+  b: u16,
+) -> (KeccakXof<RATE>, KeccakXof<RATE>) {
+  let mut state_a = xof_seeded_64_2_state::<RATE>(ds, seed, a);
+  let mut state_b = xof_seeded_64_2_state::<RATE>(ds, seed, b);
+  permuter.permute_x2(&mut state_a, &mut state_b, 0);
+
+  let readers = (
+    KeccakXofImpl {
+      state: state_a,
+      pos: 0,
+      permuter,
+    },
+    KeccakXofImpl {
+      state: state_b,
+      pos: 0,
+      permuter,
+    },
+  );
+  crate::traits::ct::zeroize_words_no_fence(&mut state_a);
+  crate::traits::ct::zeroize_words_no_fence(&mut state_b);
+  core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+  readers
+}
+
 #[cfg(feature = "ml-kem")]
 fn xof_seeded_32_1_pair_secret<const RATE: usize>(
   permuter: PlatformPermuter,

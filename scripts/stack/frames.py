@@ -65,7 +65,7 @@ BOUNDARIES = [
     name="secret SHA-3/SHAKE (ML-DSA; ML-KEM G, J, PRF)",
     workers=re.compile(
       r"^rscrypto::hashes::crypto::keccak::secret::"
-      r"(absorb_and_squeeze::<\d+>|squeeze_seeded|squeeze_seeded_pair)$"
+      r"(absorb_and_squeeze::<\d+>|squeeze_seeded|squeeze_seeded_pair|squeeze_seeded64_pair)$"
     ),
     scrub=re.compile(r"^rscrypto::hashes::crypto::keccak::secret::scrub_dead_stack::<256>$"),
     source=SECRET_HASHING,
