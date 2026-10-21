@@ -428,6 +428,13 @@ pub use pbkdf2::{Pbkdf2Error, Pbkdf2Params, Pbkdf2Sha256, Pbkdf2Sha512, Pbkdf2Ve
 pub use pbkdf2::{diag_pbkdf2_sha256_verify_portable, diag_pbkdf2_sha512_verify_portable};
 #[cfg(feature = "poly1305")]
 pub use poly1305::{Poly1305, Poly1305OneTimeKey, Poly1305Tag};
+#[cfg(all(
+  feature = "rsa",
+  all(rscrypto_internal, feature = "diag"),
+  target_arch = "aarch64",
+  not(miri)
+))]
+pub use rsa::diag_rsa_private_select_window_power_4_neon;
 #[cfg(feature = "rsa")]
 pub use rsa::{
   RsaBlindingPair, RsaEncryptionError, RsaJwtAlgorithm, RsaJwtVerifier, RsaKeyError, RsaKeyGenerationContract,

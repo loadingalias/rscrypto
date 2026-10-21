@@ -969,6 +969,24 @@ pub extern "C" fn ct_binsec_rsa_private_select_window_power_4() -> ! {
   ct_binsec_done(folded.to_le_bytes()[0])
 }
 
+#[cfg(target_arch = "aarch64")]
+#[unsafe(no_mangle)]
+#[inline(never)]
+pub extern "C" fn ct_binsec_rsa_private_select_window_power_4_neon() -> ! {
+  // SAFETY: This pointer references a fixed harness global with static storage.
+  let table = unsafe { limbs_from_global(ptr::addr_of!(CT_BINSEC_RSA_WINDOW_TABLE)) };
+  // SAFETY: This pointer references a fixed harness global with static storage.
+  let window = unsafe { ptr::read_volatile(ptr::addr_of!(CT_BINSEC_RSA_WINDOW)) };
+  let limbs = rscrypto::auth::diag_rsa_private_select_window_power_4_neon(&table, window);
+
+  let mut acc = 0u64;
+  for limb in limbs {
+    acc ^= limb;
+  }
+  let folded = acc | (acc >> 8) | (acc >> 16) | (acc >> 24) | (acc >> 32) | (acc >> 40) | (acc >> 48) | (acc >> 56);
+  ct_binsec_done(folded.to_le_bytes()[0])
+}
+
 #[unsafe(no_mangle)]
 #[inline(never)]
 pub extern "C" fn ct_binsec_rsa_private_component_validation_32() -> ! {
@@ -1155,6 +1173,12 @@ pub static CT_BINSEC_X86_ENTRYPOINTS: [unsafe extern "C" fn() -> !; 2] = [
   ct_binsec_ed25519_select_basepoint_cached_avx2,
   ct_binsec_ed25519_select_basepoint_cached_ifma,
 ];
+
+#[cfg(target_arch = "aarch64")]
+#[unsafe(no_mangle)]
+#[used]
+pub static CT_BINSEC_AARCH64_ENTRYPOINTS: [extern "C" fn() -> !; 1] =
+  [ct_binsec_rsa_private_select_window_power_4_neon];
 
 fn main() {
   ct_binsec_owner_eq_64();

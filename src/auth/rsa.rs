@@ -10798,12 +10798,205 @@ fn private_exponentiate_window(
 fn private_select_window_power(out: &mut [u64], table: &[u64], window: u8) {
   let limbs = out.len();
   debug_assert_eq!(table.len(), limbs.strict_mul(PRIVATE_FIXED_WINDOW_TABLE_ENTRIES));
+  #[cfg(all(target_arch = "aarch64", not(feature = "portable-only"), not(miri)))]
+  let vector_limbs = {
+    let vector_limbs = limbs & !3;
+    if vector_limbs != 0 {
+      let entries = &table[..PRIVATE_FIXED_WINDOW_TABLE_ENTRIES
+        .strict_sub(1)
+        .strict_mul(limbs)
+        .strict_add(vector_limbs)];
+      // SAFETY: `out` has `vector_limbs` writable limbs, a nonzero multiple of four. `entries`
+      // ends after limb `vector_limbs - 1` of entry 15, so every read of four limbs at
+      // `limbs·i + offset` for i in 0..16 and offset below `vector_limbs` stays inside it.
+      unsafe {
+        private_select_window_power_neon(
+          out.as_mut_ptr(),
+          entries.as_ptr(),
+          limbs,
+          vector_limbs.strict_div(4),
+          window,
+        );
+      }
+    }
+    vector_limbs
+  };
+  #[cfg(not(all(target_arch = "aarch64", not(feature = "portable-only"), not(miri))))]
+  let vector_limbs = 0;
+  if vector_limbs != limbs {
+    private_select_window_power_portable(out, table, vector_limbs, window);
+  }
+}
+
+/// Select the first `4·chunks` limbs of table entry `window` into `out`. The sixteen entry masks
+/// come from vector compares; each four-limb chunk then reads the same four limbs of all sixteen
+/// entries in a fixed order and merges them under those masks into four accumulators. The secret
+/// window decides only mask bits, never an address or a branch.
+///
+/// # Safety
+///
+/// `chunks` must be nonzero, `out` valid for writing `4·chunks` limbs, and `table` valid for
+/// reading `4·chunks` limbs at `entry_limbs·i` for every `i` in `0..16`.
+#[cfg(all(
+  target_arch = "aarch64",
+  not(miri),
+  any(not(feature = "portable-only"), all(rscrypto_internal, feature = "diag"))
+))]
+#[inline(always)]
+unsafe fn private_select_window_power_neon(
+  out: *mut u64,
+  table: *const u64,
+  entry_limbs: usize,
+  chunks: usize,
+  window: u8,
+) {
+  // SAFETY: The caller guarantees a nonzero chunk count, the writes at `out`, and the reads at byte
+  // stride `entry_limbs·8` from `table`; the block touches no other memory and no stack. LDP and
+  // STP of Q registers need only the eight-byte alignment of `u64`. NEON is part of the A64
+  // baseline that every AArch64 Rust target enables.
+  unsafe {
+    core::arch::asm!(
+      "dup {w:v}.2d, {window}",
+      "movi {index:v}.2d, #0",
+      "mov {tmp}, #1",
+      "dup {one:v}.2d, {tmp}",
+      "cmeq {m0:v}.2d, {index:v}.2d, {w:v}.2d",
+      "add {index:v}.2d, {index:v}.2d, {one:v}.2d",
+      "cmeq {m1:v}.2d, {index:v}.2d, {w:v}.2d",
+      "add {index:v}.2d, {index:v}.2d, {one:v}.2d",
+      "cmeq {m2:v}.2d, {index:v}.2d, {w:v}.2d",
+      "add {index:v}.2d, {index:v}.2d, {one:v}.2d",
+      "cmeq {m3:v}.2d, {index:v}.2d, {w:v}.2d",
+      "add {index:v}.2d, {index:v}.2d, {one:v}.2d",
+      "cmeq {m4:v}.2d, {index:v}.2d, {w:v}.2d",
+      "add {index:v}.2d, {index:v}.2d, {one:v}.2d",
+      "cmeq {m5:v}.2d, {index:v}.2d, {w:v}.2d",
+      "add {index:v}.2d, {index:v}.2d, {one:v}.2d",
+      "cmeq {m6:v}.2d, {index:v}.2d, {w:v}.2d",
+      "add {index:v}.2d, {index:v}.2d, {one:v}.2d",
+      "cmeq {m7:v}.2d, {index:v}.2d, {w:v}.2d",
+      "add {index:v}.2d, {index:v}.2d, {one:v}.2d",
+      "cmeq {m8:v}.2d, {index:v}.2d, {w:v}.2d",
+      "add {index:v}.2d, {index:v}.2d, {one:v}.2d",
+      "cmeq {m9:v}.2d, {index:v}.2d, {w:v}.2d",
+      "add {index:v}.2d, {index:v}.2d, {one:v}.2d",
+      "cmeq {m10:v}.2d, {index:v}.2d, {w:v}.2d",
+      "add {index:v}.2d, {index:v}.2d, {one:v}.2d",
+      "cmeq {m11:v}.2d, {index:v}.2d, {w:v}.2d",
+      "add {index:v}.2d, {index:v}.2d, {one:v}.2d",
+      "cmeq {m12:v}.2d, {index:v}.2d, {w:v}.2d",
+      "add {index:v}.2d, {index:v}.2d, {one:v}.2d",
+      "cmeq {m13:v}.2d, {index:v}.2d, {w:v}.2d",
+      "add {index:v}.2d, {index:v}.2d, {one:v}.2d",
+      "cmeq {m14:v}.2d, {index:v}.2d, {w:v}.2d",
+      "add {index:v}.2d, {index:v}.2d, {one:v}.2d",
+      "cmeq {m15:v}.2d, {index:v}.2d, {w:v}.2d",
+      "2:",
+      "mov {entry}, {table}",
+      "ldp {e0:q}, {e1:q}, [{entry}]",
+      "add {entry}, {entry}, {stride}",
+      "and {lo0:v}.16b, {e0:v}.16b, {m0:v}.16b",
+      "and {hi0:v}.16b, {e1:v}.16b, {m0:v}.16b",
+      "ldp {e0:q}, {e1:q}, [{entry}]",
+      "add {entry}, {entry}, {stride}",
+      "and {lo1:v}.16b, {e0:v}.16b, {m1:v}.16b",
+      "and {hi1:v}.16b, {e1:v}.16b, {m1:v}.16b",
+      "ldp {e0:q}, {e1:q}, [{entry}]",
+      "add {entry}, {entry}, {stride}",
+      "and {lo2:v}.16b, {e0:v}.16b, {m2:v}.16b",
+      "and {hi2:v}.16b, {e1:v}.16b, {m2:v}.16b",
+      "ldp {e0:q}, {e1:q}, [{entry}]",
+      "add {entry}, {entry}, {stride}",
+      "and {lo3:v}.16b, {e0:v}.16b, {m3:v}.16b",
+      "and {hi3:v}.16b, {e1:v}.16b, {m3:v}.16b",
+      "ldp {e0:q}, {e1:q}, [{entry}]",
+      "add {entry}, {entry}, {stride}",
+      "bit {lo0:v}.16b, {e0:v}.16b, {m4:v}.16b",
+      "bit {hi0:v}.16b, {e1:v}.16b, {m4:v}.16b",
+      "ldp {e0:q}, {e1:q}, [{entry}]",
+      "add {entry}, {entry}, {stride}",
+      "bit {lo1:v}.16b, {e0:v}.16b, {m5:v}.16b",
+      "bit {hi1:v}.16b, {e1:v}.16b, {m5:v}.16b",
+      "ldp {e0:q}, {e1:q}, [{entry}]",
+      "add {entry}, {entry}, {stride}",
+      "bit {lo2:v}.16b, {e0:v}.16b, {m6:v}.16b",
+      "bit {hi2:v}.16b, {e1:v}.16b, {m6:v}.16b",
+      "ldp {e0:q}, {e1:q}, [{entry}]",
+      "add {entry}, {entry}, {stride}",
+      "bit {lo3:v}.16b, {e0:v}.16b, {m7:v}.16b",
+      "bit {hi3:v}.16b, {e1:v}.16b, {m7:v}.16b",
+      "ldp {e0:q}, {e1:q}, [{entry}]",
+      "add {entry}, {entry}, {stride}",
+      "bit {lo0:v}.16b, {e0:v}.16b, {m8:v}.16b",
+      "bit {hi0:v}.16b, {e1:v}.16b, {m8:v}.16b",
+      "ldp {e0:q}, {e1:q}, [{entry}]",
+      "add {entry}, {entry}, {stride}",
+      "bit {lo1:v}.16b, {e0:v}.16b, {m9:v}.16b",
+      "bit {hi1:v}.16b, {e1:v}.16b, {m9:v}.16b",
+      "ldp {e0:q}, {e1:q}, [{entry}]",
+      "add {entry}, {entry}, {stride}",
+      "bit {lo2:v}.16b, {e0:v}.16b, {m10:v}.16b",
+      "bit {hi2:v}.16b, {e1:v}.16b, {m10:v}.16b",
+      "ldp {e0:q}, {e1:q}, [{entry}]",
+      "add {entry}, {entry}, {stride}",
+      "bit {lo3:v}.16b, {e0:v}.16b, {m11:v}.16b",
+      "bit {hi3:v}.16b, {e1:v}.16b, {m11:v}.16b",
+      "ldp {e0:q}, {e1:q}, [{entry}]",
+      "add {entry}, {entry}, {stride}",
+      "bit {lo0:v}.16b, {e0:v}.16b, {m12:v}.16b",
+      "bit {hi0:v}.16b, {e1:v}.16b, {m12:v}.16b",
+      "ldp {e0:q}, {e1:q}, [{entry}]",
+      "add {entry}, {entry}, {stride}",
+      "bit {lo1:v}.16b, {e0:v}.16b, {m13:v}.16b",
+      "bit {hi1:v}.16b, {e1:v}.16b, {m13:v}.16b",
+      "ldp {e0:q}, {e1:q}, [{entry}]",
+      "add {entry}, {entry}, {stride}",
+      "bit {lo2:v}.16b, {e0:v}.16b, {m14:v}.16b",
+      "bit {hi2:v}.16b, {e1:v}.16b, {m14:v}.16b",
+      "ldp {e0:q}, {e1:q}, [{entry}]",
+      "bit {lo3:v}.16b, {e0:v}.16b, {m15:v}.16b",
+      "bit {hi3:v}.16b, {e1:v}.16b, {m15:v}.16b",
+      "orr {lo0:v}.16b, {lo0:v}.16b, {lo1:v}.16b",
+      "orr {lo2:v}.16b, {lo2:v}.16b, {lo3:v}.16b",
+      "orr {hi0:v}.16b, {hi0:v}.16b, {hi1:v}.16b",
+      "orr {hi2:v}.16b, {hi2:v}.16b, {hi3:v}.16b",
+      "orr {lo0:v}.16b, {lo0:v}.16b, {lo2:v}.16b",
+      "orr {hi0:v}.16b, {hi0:v}.16b, {hi2:v}.16b",
+      "stp {lo0:q}, {hi0:q}, [{out}], #32",
+      "add {table}, {table}, #32",
+      "subs {chunks}, {chunks}, #1",
+      "b.ne 2b",
+      window = in(reg) u64::from(window),
+      table = inout(reg) table => _,
+      stride = in(reg) entry_limbs.strict_mul(8),
+      out = inout(reg) out => _,
+      chunks = inout(reg) chunks => _,
+      entry = out(reg) _,
+      tmp = out(reg) _,
+      w = out(vreg) _, index = out(vreg) _, one = out(vreg) _,
+      m0 = out(vreg) _, m1 = out(vreg) _, m2 = out(vreg) _, m3 = out(vreg) _,
+      m4 = out(vreg) _, m5 = out(vreg) _, m6 = out(vreg) _, m7 = out(vreg) _,
+      m8 = out(vreg) _, m9 = out(vreg) _, m10 = out(vreg) _, m11 = out(vreg) _,
+      m12 = out(vreg) _, m13 = out(vreg) _, m14 = out(vreg) _, m15 = out(vreg) _,
+      e0 = out(vreg) _, e1 = out(vreg) _,
+      lo0 = out(vreg) _, lo1 = out(vreg) _, lo2 = out(vreg) _, lo3 = out(vreg) _,
+      hi0 = out(vreg) _, hi1 = out(vreg) _, hi2 = out(vreg) _, hi3 = out(vreg) _,
+      options(nostack),
+    );
+  }
+}
+
+/// Select limbs `start..` of table entry `window` into `out` with masked scalar merges.
+#[inline(always)]
+fn private_select_window_power_portable(out: &mut [u64], table: &[u64], start: usize, window: u8) {
+  let limbs = out.len();
+  let out = &mut out[start..];
   out.fill(0);
   let entry_count =
     u8::try_from(PRIVATE_FIXED_WINDOW_TABLE_ENTRIES).expect("private fixed-window table entry count must fit u8");
   for index in 0..entry_count {
-    let start = usize::from(index).strict_mul(limbs);
-    let entry = &table[start..start.strict_add(limbs)];
+    let entry_start = usize::from(index).strict_mul(limbs);
+    let entry = &table[entry_start.strict_add(start)..entry_start.strict_add(limbs)];
     let mask = core::hint::black_box(private_choice_eq_mask_u8(window, index));
     for (dst, limb) in out.iter_mut().zip(entry) {
       // SAFETY: Volatile table read is used as a compiler barrier because:
@@ -10822,6 +11015,18 @@ fn private_select_window_power(out: &mut [u64], table: &[u64], window: u8) {
 pub fn diag_rsa_private_select_window_power_4(table: &[u64; 64], window: u8) -> [u64; 4] {
   let mut out = [0u64; 4];
   private_select_window_power(&mut out, table, window);
+  out
+}
+
+#[cfg(all(rscrypto_internal, feature = "diag", target_arch = "aarch64", not(miri)))]
+#[inline(always)]
+/// Run the four-limb AArch64 NEON RSA private fixed-window selector, which production uses on
+/// AArch64 without `portable-only`, for diagnostic harnesses in any build.
+pub fn diag_rsa_private_select_window_power_4_neon(table: &[u64; 64], window: u8) -> [u64; 4] {
+  let mut out = [0u64; 4];
+  // SAFETY: One chunk: `out` has four writable limbs, and `table` holds sixteen four-limb entries,
+  // so the reads at `4·i` for i in 0..16 stay inside it.
+  unsafe { private_select_window_power_neon(out.as_mut_ptr(), table.as_ptr(), 4, 1, window) };
   out
 }
 

@@ -2687,7 +2687,7 @@ claim = "ct-intended"
 [[binsec_kernel]]
 id = "rsa.private_ops.window_select.4limb.aarch64_linux"
 primitive = "rsa.private_ops"
-symbol = "ct_binsec_rsa_private_select_window_power_4"
+symbol = "ct_binsec_rsa_private_select_window_power_4_neon"
 tier = "A"
 required = true
 targets = ["aarch64-unknown-linux-gnu"]
@@ -2701,7 +2701,7 @@ public = [
   { name = "RSA_WINDOW_TABLE_ENTRIES", kind = "const", value = 16 },
 ]
 assumptions = []
-notes = "Validates the production fixed-window private exponent table selector. Full RSA private operations remain covered by DudeCT plus assembly/provenance gates because complete exponentiation is too large for BINSEC."
+notes = "Validates the AArch64 NEON fixed-window selector that production RSA private operations use without portable-only; the portable selector has its own all-target kernel. Full RSA private operations remain covered by DudeCT plus assembly/provenance gates because complete exponentiation is too large for BINSEC."
 claim = "ct-intended"
 
 [[binsec_kernel]]
