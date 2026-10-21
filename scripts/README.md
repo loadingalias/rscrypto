@@ -115,14 +115,14 @@ It does not download upstream archives.
   records the command, seed, hashes, and unsupported 2049-bit import.
 - `just test-provider-interop` builds the bounded loopback endpoint and runs the
   full suite/group/credential matrix in both roles against OpenSSL 4.0.3 and
-  Go 1.27.2. Each row requires a full and resumed mutually authenticated
+  Go 1.27.3. Each row requires a full and resumed mutually authenticated
   connection. Go also supplies an independent exporter check. This POSIX process
   harness retains commands, source, versions, stdout/stderr, and results beneath
   `benchmark_results/`; `--quick` selects one diagnostic profile and is not full
   qualification. The ephemeral session files and exporter values protect only
   public test fixtures. The runner enforces timeouts and reaps peer processes.
 - `just test-provider-quic` runs the pinned quinn-proto and quinn 0.12 revisions through
-  this provider against quic-go 0.61.0 (`579ee19d`) on Go 1.27.2. The peer builds
+  this provider against quic-go 0.61.0 (`579ee19d`) on Go 1.27.3. The peer builds
   with CGO disabled. Cases cover full/resumed mutual authentication, the selected
   classical and ML-DSA profiles, all suites/groups, Retry, explicit 0-RTT, and
   exporter equality. Peer qlogs must show a packet-key phase change. The Go-server

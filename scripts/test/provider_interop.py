@@ -129,7 +129,7 @@ def main():
     peers = ['openssl', 'go'] if args.peer == 'all' else [args.peer]
     for peer in peers:
         version = subprocess.check_output([peer, 'version'], text=True).strip()
-        expected = 'OpenSSL 4.0.3 ' if peer == 'openssl' else 'go version go1.27.2 '
+        expected = 'OpenSSL 4.0.3 ' if peer == 'openssl' else 'go version go1.27.3 '
         if not version.startswith(expected):
             raise RuntimeError(f'{peer}: expected {expected}, found {version}')
         versions[peer] = version

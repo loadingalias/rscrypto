@@ -1,4 +1,4 @@
-// Independent Go 1.27.2 crypto/tls peer for provider_interop.py.
+// Independent Go 1.27.3 crypto/tls peer for provider_interop.py.
 package main
 
 import (

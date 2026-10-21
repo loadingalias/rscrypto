@@ -85,8 +85,8 @@ def main():
     output = (args.output or ROOT / 'benchmark_results' / ('provider-quic-' + datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ'))).resolve()
     output.mkdir(parents=True, exist_ok=False)
     version = subprocess.check_output(['go', 'version'], text=True).strip()
-    if not version.startswith('go version go1.27.2 '):
-        raise RuntimeError('quic-go peer requires Go 1.27.2')
+    if not version.startswith('go version go1.27.3 '):
+        raise RuntimeError('quic-go peer requires Go 1.27.3')
     provenance = {'host': platform.platform(), 'go': version, 'quic-go': 'v0.61.0', 'commit': '579ee19d5b54c4f9320ffca668113c3513a138e5',
                   'head': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()}
     (output / 'provenance.json').write_text(json.dumps(provenance, indent=2) + '\n')

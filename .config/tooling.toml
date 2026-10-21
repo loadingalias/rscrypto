@@ -25,7 +25,7 @@ wasmtime = "49.0.3"
 git = "2.56.0.windows.2"
 jq = "1.8.2"
 powershell = "7.6.7"
-uv = "0.13.1"
+uv = "0.13.4"
 rustup = "1.29.1"
 zig = "0.17.0"
 nasm = "3.02"
@@ -114,8 +114,8 @@ url = "https://static.rust-lang.org/rustup/archive/1.29.1/aarch64-unknown-linux-
 sha256 = "15f6e4ce9f583b929c996c91562bad6d4454f3281de858b02cdfdef615fac433"
 
 [aarch64-linux.assets.uv]
-url = "https://github.com/astral-sh/uv/releases/download/0.13.1/uv-aarch64-unknown-linux-gnu.tar.gz"
-sha256 = "9041c73c99fdc5892cf128140beb354eca9231d502068cc36e6cb53a8e59ad14"
+url = "https://github.com/astral-sh/uv/releases/download/0.13.4/uv-aarch64-unknown-linux-gnu.tar.gz"
+sha256 = "1ae72b4718729e2ccc4f1ae2c6d1e531ca8467800e0546e9130b3886023a60ab"
 
 [aarch64-linux.assets.cargo-binstall]
 url = "https://github.com/cargo-bins/cargo-binstall/releases/download/v1.25.3/cargo-binstall-aarch64-unknown-linux-gnu.tgz"
@@ -149,8 +149,8 @@ url = "https://static.rust-lang.org/rustup/archive/1.29.1/x86_64-unknown-linux-g
 sha256 = "dda7234360b7f578ca8b0ddcb80145646fa61a67c1720a5abc7051b35c9fcb71"
 
 [x86_64-linux.assets.uv]
-url = "https://github.com/astral-sh/uv/releases/download/0.13.1/uv-x86_64-unknown-linux-gnu.tar.gz"
-sha256 = "eadd9d27c134ab5ac1ffd4473b97a741407f3ea238288f03121fc4deddf90220"
+url = "https://github.com/astral-sh/uv/releases/download/0.13.4/uv-x86_64-unknown-linux-gnu.tar.gz"
+sha256 = "2b428396f12572d4429cf210ca234dd599a33b3af0958a4d5ed569d63e3f344f"
 
 [x86_64-linux.assets.cargo-binstall]
 url = "https://github.com/cargo-bins/cargo-binstall/releases/download/v1.25.3/cargo-binstall-x86_64-unknown-linux-gnu.tgz"
@@ -195,8 +195,8 @@ url = "https://static.rust-lang.org/rustup/archive/1.29.1/aarch64-pc-windows-msv
 sha256 = "01aa49cf9574a8bd0ae52005d7de2590e8f27181ded6748236e702c92aef826d"
 
 [aarch64-win.assets.uv]
-url = "https://github.com/astral-sh/uv/releases/download/0.13.1/uv-aarch64-pc-windows-msvc.zip"
-sha256 = "ec7846a5939b4654afee24f2d82bf6fde71bd7a6952d7748f1135ab301dd0a49"
+url = "https://github.com/astral-sh/uv/releases/download/0.13.4/uv-aarch64-pc-windows-msvc.zip"
+sha256 = "c4bc5a9534b2bb6a12fe29ea748445e1a6f9cb7bb275211c4fb74c52ecf317a5"
 
 [aarch64-win.assets.cargo-binstall]
 url = "https://github.com/cargo-bins/cargo-binstall/releases/download/v1.25.3/cargo-binstall-aarch64-pc-windows-msvc.zip"
@@ -233,8 +233,8 @@ url = "https://static.rust-lang.org/rustup/archive/1.29.1/x86_64-pc-windows-msvc
 sha256 = "6f4bef66261261fcb43131be8720bab817d403a09edec7455c371974b90bdb7e"
 
 [x86_64-win.assets.uv]
-url = "https://github.com/astral-sh/uv/releases/download/0.13.1/uv-x86_64-pc-windows-msvc.zip"
-sha256 = "3b2661a463a5baea7f5076ea2b25ab71d77f36a6c0d809e5350651792f80a672"
+url = "https://github.com/astral-sh/uv/releases/download/0.13.4/uv-x86_64-pc-windows-msvc.zip"
+sha256 = "ccec7508a07d9933d7cb1261880633efcf1f30d6e6eddab21823f1dae6f23225"
 
 [x86_64-win.assets.cargo-binstall]
 url = "https://github.com/cargo-bins/cargo-binstall/releases/download/v1.25.3/cargo-binstall-x86_64-pc-windows-msvc.zip"
@@ -284,8 +284,8 @@ url = "https://static.rust-lang.org/rustup/archive/1.29.1/riscv64gc-unknown-linu
 sha256 = "e94134ed99fed1a3a1f13a3bf0a05d616fc1c2496ec0b557aaee4856cd34b2f2"
 
 [riscv64-linux.assets.uv]
-url = "https://github.com/astral-sh/uv/releases/download/0.13.1/uv-riscv64gc-unknown-linux-gnu.tar.gz"
-sha256 = "52d9f0677840c20a14ed037a6cba515cc2f20a03001aaa605f928e80f4b55ec2"
+url = "https://github.com/astral-sh/uv/releases/download/0.13.4/uv-riscv64gc-unknown-linux-gnu.tar.gz"
+sha256 = "0173f624fd99811a12c1e1d1b0c476d9e850b3408ab01b8d513028376fb1c9c0"
 
 [riscv64-linux.assets.cargo-binstall]
 url = "https://github.com/cargo-bins/cargo-binstall/releases/download/v1.25.3/cargo-binstall-riscv64gc-unknown-linux-musl.tgz"
@@ -303,8 +303,8 @@ url = "https://static.rust-lang.org/rustup/archive/1.29.1/s390x-unknown-linux-gn
 sha256 = "312ac9390467fd7870f8aff6557c7cb3bff0a04bb11b263173fdfd81586da641"
 
 [s390x-linux.assets.uv]
-url = "https://github.com/astral-sh/uv/releases/download/0.13.1/uv-s390x-unknown-linux-gnu.tar.gz"
-sha256 = "d04236f6631a514824e06ce45f1b4832edfb43648d2e9fed2188c9fc66d8c95f"
+url = "https://github.com/astral-sh/uv/releases/download/0.13.4/uv-s390x-unknown-linux-gnu.tar.gz"
+sha256 = "e2ccfa8c19d340cd282c91f715dd37b7f0c5efa9b256c0a6c373fec3e01ec20d"
 
 [powerpc64le-linux]
 rust-host = "powerpc64le-unknown-linux-gnu"
@@ -318,5 +318,5 @@ url = "https://static.rust-lang.org/rustup/archive/1.29.1/powerpc64le-unknown-li
 sha256 = "86ebc5b46b20013fca57dff4f83aa0c325ee90914626ce1c80ae76e126e48afb"
 
 [powerpc64le-linux.assets.uv]
-url = "https://github.com/astral-sh/uv/releases/download/0.13.1/uv-powerpc64le-unknown-linux-gnu.tar.gz"
-sha256 = "66b890c75291de97617705dcc275a3e4ed99446e73b93c7748c6ca28d6793203"
+url = "https://github.com/astral-sh/uv/releases/download/0.13.4/uv-powerpc64le-unknown-linux-gnu.tar.gz"
+sha256 = "ae7320fcf963ed6ca19bacf436cf5d71cd5c9fbaf66450d614e7673c1f876be4"
