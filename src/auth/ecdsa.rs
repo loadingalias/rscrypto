@@ -59,6 +59,10 @@ mod ecdsa_safegcd;
 mod ecdsa_x86_64_asm;
 #[path = "ecdsa_p256_verify.rs"]
 mod p256_verify;
+#[path = "ecdsa_p384_verify.rs"]
+mod p384_verify;
+#[path = "ecdsa_verify.rs"]
+mod verify;
 
 use super::ecdsa_generator_tables::{
   P256_SIGNING_COMB_WIDTH, P256_SIGNING_GENERATOR_COMB_X, P256_SIGNING_GENERATOR_COMB_Y, P384_SIGNING_COMB_WIDTH,
@@ -1234,7 +1238,7 @@ impl EcdsaP256PublicKey {
   fn from_affine(point: Affine<4>) -> Self {
     Self {
       point,
-      table: p256_verify::comb_table(point),
+      table: verify::comb_table::<p256_verify::Fe, 4>(point),
     }
   }
 
@@ -1280,7 +1284,7 @@ impl EcdsaP256PublicKey {
   pub fn verify(&self, message: &[u8], signature: &EcdsaP256Signature) -> Result<(), VerificationError> {
     let digest = Sha256::digest(message);
     verify_digest(&P256, signature.r, signature.s, &digest, |u1, u2| {
-      p256_verify::scalar_mul_two(u1, u2, &self.table)
+      verify::scalar_mul_two::<p256_verify::Fe, 4>(&P256, u1, u2, &self.table)
     })
   }
 
@@ -1295,7 +1299,7 @@ impl EcdsaP256PublicKey {
   pub fn verify_sha384(&self, message: &[u8], signature: &EcdsaP256Signature) -> Result<(), VerificationError> {
     let digest = Sha384::digest(message);
     verify_digest(&P256, signature.r, signature.s, &digest[..32], |u1, u2| {
-      p256_verify::scalar_mul_two(u1, u2, &self.table)
+      verify::scalar_mul_two::<p256_verify::Fe, 4>(&P256, u1, u2, &self.table)
     })
   }
 
@@ -1327,7 +1331,7 @@ impl EcdsaP256PublicKey {
   fn verify_sec1_digest(sec1: &[u8], digest: &[u8], signature: &EcdsaP256Signature) -> Result<(), VerificationError> {
     let point = parse_public_key(sec1, &P256).map_err(|_| VerificationError::new())?;
     verify_digest(&P256, signature.r, signature.s, digest, |u1, u2| {
-      p256_verify::scalar_mul_two_single(u1, u2, point)
+      verify::scalar_mul_two_single::<p256_verify::Fe, 4>(&P256, u1, u2, point)
     })
   }
 }
@@ -1368,7 +1372,7 @@ impl EcdsaP384PublicKey {
   fn from_affine(point: Affine<6>) -> Self {
     Self {
       point,
-      table: precompute_comb_table(point),
+      table: verify::comb_table::<p384_verify::Fe, 6>(point),
     }
   }
 
@@ -1414,7 +1418,7 @@ impl EcdsaP384PublicKey {
   pub fn verify(&self, message: &[u8], signature: &EcdsaP384Signature) -> Result<(), VerificationError> {
     let digest = Sha384::digest(message);
     verify_digest(&P384, signature.r, signature.s, &digest, |u1, u2| {
-      scalar_mul_two(&P384, u1, u2, &self.table)
+      verify::scalar_mul_two::<p384_verify::Fe, 6>(&P384, u1, u2, &self.table)
     })
   }
 
@@ -1429,7 +1433,39 @@ impl EcdsaP384PublicKey {
   pub fn verify_sha256(&self, message: &[u8], signature: &EcdsaP384Signature) -> Result<(), VerificationError> {
     let digest = Sha256::digest(message);
     verify_digest(&P384, signature.r, signature.s, &digest, |u1, u2| {
-      scalar_mul_two(&P384, u1, u2, &self.table)
+      verify::scalar_mul_two::<p384_verify::Fe, 6>(&P384, u1, u2, &self.table)
+    })
+  }
+
+  /// Verify a P-384/SHA-384 signature with an uncompressed SEC1 key used once.
+  ///
+  /// The result equals [`Self::from_sec1_bytes`] followed by [`Self::verify`]; a key that
+  /// does not parse fails verification. It skips the verification table that a parsed key
+  /// builds for repeated use, so it is faster for a key that verifies one signature, such as
+  /// a TLS peer's certificate key. Keep a parsed key for repeated verification.
+  #[must_use = "signature verification must be checked; a dropped Result silently accepts a forged signature"]
+  pub fn verify_sec1(sec1: &[u8], message: &[u8], signature: &EcdsaP384Signature) -> Result<(), VerificationError> {
+    let digest = Sha384::digest(message);
+    Self::verify_sec1_digest(sec1, &digest, signature)
+  }
+
+  /// Verify a P-384/SHA-256 signature with an uncompressed SEC1 key used once.
+  ///
+  /// As [`Self::verify_sec1`], with the digest of [`Self::verify_sha256`].
+  #[must_use = "signature verification must be checked; a dropped Result silently accepts a forged signature"]
+  pub fn verify_sec1_sha256(
+    sec1: &[u8],
+    message: &[u8],
+    signature: &EcdsaP384Signature,
+  ) -> Result<(), VerificationError> {
+    let digest = Sha256::digest(message);
+    Self::verify_sec1_digest(sec1, &digest, signature)
+  }
+
+  fn verify_sec1_digest(sec1: &[u8], digest: &[u8], signature: &EcdsaP384Signature) -> Result<(), VerificationError> {
+    let point = parse_public_key(sec1, &P384).map_err(|_| VerificationError::new())?;
+    verify_digest(&P384, signature.r, signature.s, digest, |u1, u2| {
+      verify::scalar_mul_two_single::<p384_verify::Fe, 6>(&P384, u1, u2, point)
     })
   }
 }
@@ -2355,6 +2391,7 @@ impl<const L: usize> Jacobian<L> {
     0u64.wrapping_sub(u64::from(self.infinity))
   }
 
+  #[cfg(test)]
   fn double(self) -> Self {
     if self.infinity || self.y.value.is_zero() {
       return Self::infinity(self.x.modulus);
@@ -2402,6 +2439,7 @@ impl<const L: usize> Jacobian<L> {
     )
   }
 
+  #[cfg(test)]
   fn add_mixed(self, rhs: Affine<L>) -> Self {
     if self.infinity {
       return Self::from_affine(rhs);
@@ -4252,6 +4290,9 @@ fn projective_x_matches_scalar<const L: usize>(point: Jacobian<L>, scalar: Uint<
   }
 }
 
+// The generic variable-time verification arithmetic is the oracle for the specialized
+// `verify` layer.
+#[cfg(test)]
 fn scalar_mul_two<const L: usize>(
   curve: &Curve<L>,
   generator_scalar: Uint<L>,
@@ -4283,6 +4324,9 @@ fn scalar_mul_two<const L: usize>(
 
 const _: () = assert!(P256_SIGNING_COMB_ROWS <= comb_rows::<4>() && P384_SIGNING_COMB_ROWS <= comb_rows::<6>());
 
+// The generic variable-time verification arithmetic is the oracle for the specialized
+// `verify` layer.
+#[cfg(test)]
 /// Read the fixed-base signing-comb entry for a public digit.
 fn signing_generator_affine<const L: usize>(curve: &Curve<L>, digit: usize) -> Affine<L> {
   Affine {
@@ -4306,6 +4350,9 @@ fn comb_digit<const L: usize>(scalar: Uint<L>, row: usize, rows: usize, width: u
   digit
 }
 
+// The generic variable-time verification arithmetic is the oracle for the specialized
+// `verify` layer.
+#[cfg(test)]
 fn precompute_comb_table<const L: usize>(point: Affine<L>) -> [Affine<L>; COMB_TABLE_SIZE] {
   let rows = comb_rows::<L>();
   let mut column_points = [Jacobian::from_affine(point); COMB_WIDTH];
@@ -4367,6 +4414,7 @@ fn precompute_comb_table_ct<const L: usize>(
   normalize_jacobian_table_ct(table, field_inverse_exponent)
 }
 
+#[cfg(test)]
 fn normalize_jacobian_table<const L: usize, const N: usize>(table: [Jacobian<L>; N]) -> [Affine<L>; N] {
   let modulus = table
     .first()
@@ -5264,7 +5312,7 @@ mod tests {
     ];
     for key_scalar in scalars {
       let point = scalar_mul_basepoint_comb_ct(&P256, key_scalar).to_affine_ct(P256_FIELD_MINUS_TWO);
-      let table = p256_verify::comb_table(point);
+      let table = verify::comb_table::<p256_verify::Fe, 4>(point);
       assert!(
         table == precompute_comb_table(point),
         "comb table for {:x?}",
@@ -5281,8 +5329,8 @@ mod tests {
           P256_ORDER.sub_raw(&Uint::from_u64(2)).0,
         ),
       ] {
-        let fast = p256_verify::scalar_mul_two(u1, u2, &table);
-        let single = p256_verify::scalar_mul_two_single(u1, u2, point);
+        let fast = verify::scalar_mul_two::<p256_verify::Fe, 4>(&P256, u1, u2, &table);
+        let single = verify::scalar_mul_two_single::<p256_verify::Fe, 4>(&P256, u1, u2, point);
         let generic = scalar_mul_two(&P256, u1, u2, &table);
         assert_eq!(single.infinity, generic.infinity, "u1 {:x?}, u2 {:x?}", u1.0, u2.0);
         if !generic.infinity {
@@ -5301,6 +5349,60 @@ mod tests {
             u1.0,
             u2.0
           );
+        }
+      }
+    }
+  }
+
+  #[test]
+  fn p384_specialized_verification_matches_generic_arithmetic() {
+    let scalars = [
+      Uint::ONE,
+      Uint::from_u64(2),
+      Uint::from_u64(3),
+      Uint::from_u64(0x1234_5678_9abc_def0),
+      P384_ORDER_HALF,
+      P384_ORDER.sub_raw(&Uint::ONE).0,
+    ];
+    for key_scalar in scalars {
+      let point = scalar_mul_basepoint_comb_ct(&P384, key_scalar).to_affine_ct(P384_FIELD_MINUS_TWO);
+      let table = verify::comb_table::<p384_verify::Fe, 6>(point);
+      assert!(
+        table == precompute_comb_table(point),
+        "comb table for {:x?}",
+        key_scalar.0
+      );
+      for (u1, u2) in [
+        (Uint::ZERO, Uint::ONE),
+        (Uint::ONE, Uint::ZERO),
+        (key_scalar, Uint::ONE),
+        (P384_ORDER.sub_raw(&key_scalar).0, Uint::ONE),
+        (Uint::from_u64(0xfedc_ba98_7654_3210), P384_ORDER_HALF),
+        (
+          P384_ORDER.sub_raw(&Uint::ONE).0,
+          P384_ORDER.sub_raw(&Uint::from_u64(2)).0,
+        ),
+      ] {
+        let generic = scalar_mul_two(&P384, u1, u2, &table);
+        for (name, fast) in [
+          (
+            "comb",
+            verify::scalar_mul_two::<p384_verify::Fe, 6>(&P384, u1, u2, &table),
+          ),
+          (
+            "single-use",
+            verify::scalar_mul_two_single::<p384_verify::Fe, 6>(&P384, u1, u2, point),
+          ),
+        ] {
+          assert_eq!(fast.infinity, generic.infinity, "{name} u1 {:x?}, u2 {:x?}", u1.0, u2.0);
+          if !generic.infinity {
+            assert!(
+              fast.to_affine_ct(P384_FIELD_MINUS_TWO) == generic.to_affine_ct(P384_FIELD_MINUS_TWO),
+              "{name} u1 {:x?}, u2 {:x?}",
+              u1.0,
+              u2.0
+            );
+          }
         }
       }
     }

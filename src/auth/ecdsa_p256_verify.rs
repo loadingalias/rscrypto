@@ -1,19 +1,14 @@
-//! P-256 arithmetic for public inputs: ECDSA verification and public-key comb tables.
+//! The P-256 field for public-input verification, in the generic Montgomery representation
+//! (`R = 2^256`), for [`super::verify`]'s point layer.
 //!
-//! Peer keys, signatures, digests and the tables derived from them are public, so this module
-//! may branch on point values and scalar digits. Its field and point operations are specialized
-//! to P-256 and inlined into the comb loops, instead of dispatching each field operation through
-//! the generic modulus. It keeps the generic arithmetic's Montgomery representation (`R = 2^256`)
-//! and point formulas, so tables match limb for limb and verification makes the same decisions.
+//! The portable Rust is the authority. AArch64 runs flag-chained assembly for multiplication,
+//! squaring, addition and subtraction.
 
-use super::{
-  Affine, COMB_TABLE_SIZE, COMB_WIDTH, FieldElement, Jacobian, P256_FIELD_MODULUS, P256_SIGNING_COMB_ROWS,
-  P256_SIGNING_COMB_WIDTH, P256_SIGNING_GENERATOR_COMB_X, P256_SIGNING_GENERATOR_COMB_Y, Uint, comb_digit, comb_rows,
-};
+use super::{Modulus, P256_FIELD_MODULUS, verify::VerifyField};
 
 /// A P-256 field element in Montgomery form, as canonical limbs below p.
 #[derive(Clone, Copy, PartialEq, Eq)]
-struct Fe([u64; 4]);
+pub(super) struct Fe([u64; 4]);
 
 #[cfg(any(test, not(all(target_arch = "aarch64", not(feature = "portable-only"), not(miri)))))]
 #[inline(always)]
@@ -55,23 +50,6 @@ fn mac(acc: u64, lhs: u64, rhs: u64, carry: u64) -> (u64, u64) {
 }
 
 impl Fe {
-  const ZERO: Self = Self([0; 4]);
-
-  #[inline(always)]
-  fn from_element(value: FieldElement<4>) -> Self {
-    Self(value.value.0)
-  }
-
-  #[inline(always)]
-  fn to_element(self) -> FieldElement<4> {
-    FieldElement::from_montgomery(Uint(self.0), &P256_FIELD_MODULUS)
-  }
-
-  #[inline(always)]
-  fn is_zero(self) -> bool {
-    self.0 == [0; 4]
-  }
-
   #[inline(always)]
   fn add(self, rhs: Self) -> Self {
     #[cfg(all(target_arch = "aarch64", not(feature = "portable-only"), not(miri)))]
@@ -125,16 +103,6 @@ impl Fe {
     let (r2, carry) = adc(d2, p[2] & mask, carry);
     let (r3, _) = adc(d3, p[3] & mask, carry);
     Self([r0, r1, r2, r3])
-  }
-
-  #[inline(always)]
-  fn double(self) -> Self {
-    self.add(self)
-  }
-
-  #[inline(always)]
-  fn triple(self) -> Self {
-    self.double().add(self)
   }
 
   /// Subtract p once from a value below 2p.
@@ -645,154 +613,6 @@ fn limb_3(acc: u64, value: u64, carry: u64) -> (u64, u64) {
   (result, product_high.wrapping_add(carry0).wrapping_add(carry1))
 }
 
-#[derive(Clone, Copy)]
-struct Point {
-  x: Fe,
-  y: Fe,
-  z: Fe,
-  infinity: bool,
-}
-
-#[derive(Clone, Copy)]
-struct AffinePoint {
-  x: Fe,
-  y: Fe,
-}
-
-impl AffinePoint {
-  #[inline(always)]
-  fn from_affine(point: Affine<4>) -> Self {
-    Self {
-      x: Fe::from_element(point.x),
-      y: Fe::from_element(point.y),
-    }
-  }
-
-  #[inline(always)]
-  fn to_affine(self) -> Affine<4> {
-    Affine {
-      x: self.x.to_element(),
-      y: self.y.to_element(),
-    }
-  }
-}
-
-impl Point {
-  const INFINITY: Self = Self {
-    x: Fe::ZERO,
-    y: Fe::ZERO,
-    z: Fe::ZERO,
-    infinity: true,
-  };
-
-  #[inline(always)]
-  fn from_affine(point: AffinePoint) -> Self {
-    Self {
-      x: point.x,
-      y: point.y,
-      z: Fe(FIELD_ONE),
-      infinity: false,
-    }
-  }
-
-  /// `2·self` with `a = -3` (dbl-2001-b), as `Jacobian::double` computes it.
-  #[inline(always)]
-  fn double(self) -> Self {
-    if self.infinity || self.y.is_zero() {
-      return Self::INFINITY;
-    }
-    let delta = self.z.square();
-    let gamma = self.y.square();
-    let beta = self.x.mul(gamma);
-    let alpha = self.x.sub(delta).mul(self.x.add(delta)).triple();
-    let x3 = alpha.square().sub(beta.double().double().double());
-    let z3 = self.y.add(self.z).square().sub(gamma).sub(delta);
-    let y3 = alpha
-      .mul(beta.double().double().sub(x3))
-      .sub(gamma.square().double().double().double());
-    Self {
-      x: x3,
-      y: y3,
-      z: z3,
-      infinity: false,
-    }
-  }
-
-  /// `self + rhs` for affine `rhs` (madd-2007-bl), as `Jacobian::add_mixed` computes it,
-  /// including the doubling and inverse cases.
-  #[inline(always)]
-  fn add_mixed(self, rhs: AffinePoint) -> Self {
-    if self.infinity {
-      return Self::from_affine(rhs);
-    }
-    let z1z1 = self.z.square();
-    let u2 = rhs.x.mul(z1z1);
-    let s2 = rhs.y.mul(self.z).mul(z1z1);
-    let h = u2.sub(self.x);
-    let r = s2.sub(self.y).double();
-    if h.is_zero() {
-      return if r.is_zero() { self.double() } else { Self::INFINITY };
-    }
-    let hh = h.square();
-    let i = hh.double().double();
-    let j = h.mul(i);
-    let v = self.x.mul(i);
-    let x3 = r.square().sub(j).sub(v.double());
-    let y3 = r.mul(v.sub(x3)).sub(self.y.mul(j).double());
-    let z3 = self.z.add(h).square().sub(z1z1).sub(hh);
-    Self {
-      x: x3,
-      y: y3,
-      z: z3,
-      infinity: false,
-    }
-  }
-
-  /// `self + rhs` for Jacobian `rhs` (add-2007-bl), including the infinity, doubling and inverse
-  /// cases.
-  fn add(self, rhs: Self) -> Self {
-    if self.infinity {
-      return rhs;
-    }
-    if rhs.infinity {
-      return self;
-    }
-    let z1z1 = self.z.square();
-    let z2z2 = rhs.z.square();
-    let u1 = self.x.mul(z2z2);
-    let u2 = rhs.x.mul(z1z1);
-    let s1 = self.y.mul(rhs.z).mul(z2z2);
-    let s2 = rhs.y.mul(self.z).mul(z1z1);
-    let h = u2.sub(u1);
-    let r = s2.sub(s1).double();
-    if h.is_zero() {
-      return if r.is_zero() { self.double() } else { Self::INFINITY };
-    }
-    let i = h.double().square();
-    let j = h.mul(i);
-    let v = u1.mul(i);
-    let x3 = r.square().sub(j).sub(v.double());
-    let y3 = r.mul(v.sub(x3)).sub(s1.mul(j).double());
-    let z3 = self.z.add(rhs.z).square().sub(z1z1).sub(z2z2).mul(h);
-    Self {
-      x: x3,
-      y: y3,
-      z: z3,
-      infinity: false,
-    }
-  }
-
-  #[inline(always)]
-  fn to_jacobian(self) -> Jacobian<4> {
-    Jacobian {
-      x: self.x.to_element(),
-      y: self.y.to_element(),
-      z: self.z.to_element(),
-      infinity: self.infinity,
-    }
-  }
-}
-
 /// One in Montgomery form: `2^256 mod p`.
 const FIELD_ONE: [u64; 4] = [
   0x0000_0000_0000_0001,
@@ -801,230 +621,46 @@ const FIELD_ONE: [u64; 4] = [
   0x0000_0000_ffff_fffe,
 ];
 
-/// Affine forms of finite points, with one field inversion for the whole table.
-fn normalize<const N: usize>(table: [Point; N]) -> [AffinePoint; N] {
-  let mut prefixes = [Fe(FIELD_ONE); N];
-  let mut acc = Fe(FIELD_ONE);
-  for (prefix, point) in prefixes.iter_mut().zip(&table) {
-    *prefix = acc;
-    acc = acc.mul(point.z);
-  }
-  let mut acc_inverse = Fe::from_element(acc.to_element().inv());
-  let mut out = [AffinePoint {
-    x: Fe::ZERO,
-    y: Fe::ZERO,
-  }; N];
-  for ((point, prefix), output) in table.iter().zip(prefixes).zip(out.iter_mut()).rev() {
-    let z_inverse = acc_inverse.mul(prefix);
-    acc_inverse = acc_inverse.mul(point.z);
-    let z2 = z_inverse.square();
-    let z3 = z2.mul(z_inverse);
-    *output = AffinePoint {
-      x: point.x.mul(z2),
-      y: point.y.mul(z3),
-    };
-  }
-  out
-}
+impl VerifyField<4> for Fe {
+  const ZERO: Self = Self([0; 4]);
+  const ONE: Self = Self(FIELD_ONE);
+  const MODULUS: &'static Modulus<4> = &P256_FIELD_MODULUS;
 
-/// The public-key comb table of `super::precompute_comb_table`: entry `mask` is the sum of the
-/// columns `2^(64·c)·point` whose bit `c` is set, and entry zero is `point`.
-pub(super) fn comb_table(point: Affine<4>) -> [Affine<4>; COMB_TABLE_SIZE] {
-  let rows = comb_rows::<4>();
-  let base = AffinePoint::from_affine(point);
-  let mut columns = [Point::from_affine(base); COMB_WIDTH];
-  let mut current = Point::from_affine(base);
-  for column in columns.iter_mut().skip(1) {
-    for _ in 0..rows {
-      current = current.double();
-    }
-    *column = current;
-  }
-  let columns = normalize(columns);
-
-  let mut table = [Point::from_affine(base); COMB_TABLE_SIZE];
-  for (mask, entry) in table.iter_mut().enumerate().skip(1) {
-    let mut acc = Point::INFINITY;
-    for (column, &column_point) in columns.iter().enumerate() {
-      if mask & (1usize << column) != 0 {
-        acc = acc.add_mixed(column_point);
-      }
-    }
-    *entry = acc;
-  }
-  normalize(table).map(AffinePoint::to_affine)
-}
-
-/// `generator_scalar·G + point_scalar·Q` with the signing generator comb and the public-key comb
-/// table of Q, using the digits of `super::scalar_mul_two`.
-///
-/// The generator and key terms accumulate in separate chains, combined by one addition, so the
-/// core overlaps their doublings and additions instead of serializing every addition on one
-/// accumulator.
-pub(super) fn scalar_mul_two(
-  generator_scalar: Uint<4>,
-  point_scalar: Uint<4>,
-  point_table: &[Affine<4>; COMB_TABLE_SIZE],
-) -> Jacobian<4> {
-  let rows = comb_rows::<4>();
-  let table = point_table.map(AffinePoint::from_affine);
-  let mut generator = Point::INFINITY;
-  let mut key = Point::INFINITY;
-  for row in (0..rows).rev() {
-    if row < P256_SIGNING_COMB_ROWS {
-      generator = generator.double();
-      let digit = comb_digit(generator_scalar, row, P256_SIGNING_COMB_ROWS, P256_SIGNING_COMB_WIDTH);
-      if digit != 0 {
-        generator = generator.add_mixed(AffinePoint {
-          x: Fe(P256_SIGNING_GENERATOR_COMB_X[digit].0),
-          y: Fe(P256_SIGNING_GENERATOR_COMB_Y[digit].0),
-        });
-      }
-    }
-    key = key.double();
-    let digit = comb_digit(point_scalar, row, rows, COMB_WIDTH);
-    if digit != 0 {
-      key = key.add_mixed(table[digit]);
-    }
-  }
-  generator.add(key).to_jacobian()
-}
-
-impl Point {
   #[inline(always)]
-  fn negate(self) -> Self {
-    Self {
-      y: Fe::ZERO.sub(self.y),
-      ..self
-    }
-  }
-}
-
-/// Width-5 non-adjacent form of a scalar below 2^256: digit `i` is zero or odd in
-/// `[-15, 15]`, and `Σ digit_i·2^i` equals the scalar. The scalar is public.
-fn naf5(scalar: Uint<4>) -> [i8; 257] {
-  let mut limbs = [scalar.0[0], scalar.0[1], scalar.0[2], scalar.0[3], 0];
-  let mut digits = [0i8; 257];
-  for digit in &mut digits {
-    if limbs[0] & 1 == 1 {
-      let window = limbs[0] & 31;
-      if window < 16 {
-        // Subtract the positive digit; the low limb is at least `window`.
-        limbs[0] = limbs[0].strict_sub(window);
-        *digit = i8::try_from(window).expect("a five-bit window fits i8");
-      } else {
-        // Add 32 - window, carrying through the limbs; the scalar stays below 2^257.
-        let mut carry = 32u64.strict_sub(window);
-        for limb in &mut limbs {
-          let (sum, overflow) = limb.overflowing_add(carry);
-          *limb = sum;
-          carry = u64::from(overflow);
-        }
-        *digit = i8::try_from(window).expect("a five-bit window fits i8").strict_sub(32);
-      }
-    }
-    // Shift the five-limb scalar right by one bit.
-    for index in 0..4 {
-      limbs[index] = (limbs[index] >> 1) | (limbs[index.strict_add(1)] << 63);
-    }
-    limbs[4] >>= 1;
-  }
-  digits
-}
-
-/// `generator_scalar·G + point_scalar·Q` for a point Q used once, without its comb table.
-///
-/// The key term runs a width-5 NAF of `point_scalar` over the Jacobian odd multiples
-/// Q, 3Q, ..., 15Q, which cost one doubling and seven additions; the generator term runs the
-/// signing comb in an independent chain, as in [`scalar_mul_two`].
-pub(super) fn scalar_mul_two_single(generator_scalar: Uint<4>, point_scalar: Uint<4>, point: Affine<4>) -> Jacobian<4> {
-  let base = AffinePoint::from_affine(point);
-  let twice = Point::from_affine(base).double();
-  let mut odd = [Point::from_affine(base); 8];
-  for index in 1..odd.len() {
-    odd[index] = odd[index.strict_sub(1)].add(twice);
+  fn from_limbs(limbs: [u64; 4]) -> Self {
+    Self(limbs)
   }
 
-  let digits = naf5(point_scalar);
-  let mut generator = Point::INFINITY;
-  let mut key = Point::INFINITY;
-  for (row, &digit) in digits.iter().enumerate().rev() {
-    if row < P256_SIGNING_COMB_ROWS {
-      generator = generator.double();
-      let comb = comb_digit(generator_scalar, row, P256_SIGNING_COMB_ROWS, P256_SIGNING_COMB_WIDTH);
-      if comb != 0 {
-        generator = generator.add_mixed(AffinePoint {
-          x: Fe(P256_SIGNING_GENERATOR_COMB_X[comb].0),
-          y: Fe(P256_SIGNING_GENERATOR_COMB_Y[comb].0),
-        });
-      }
-    }
-    key = key.double();
-    if digit != 0 {
-      let entry = odd[usize::from(digit.unsigned_abs() >> 1)];
-      key = key.add(if digit > 0 { entry } else { entry.negate() });
-    }
+  #[inline(always)]
+  fn limbs(self) -> [u64; 4] {
+    self.0
   }
-  generator.add(key).to_jacobian()
+
+  #[inline(always)]
+  fn add(self, rhs: Self) -> Self {
+    Self::add(self, rhs)
+  }
+
+  #[inline(always)]
+  fn sub(self, rhs: Self) -> Self {
+    Self::sub(self, rhs)
+  }
+
+  #[inline(always)]
+  fn mul(self, rhs: Self) -> Self {
+    Self::mul(self, rhs)
+  }
+
+  #[inline(always)]
+  fn square(self) -> Self {
+    Self::square(self)
+  }
 }
 
 #[cfg(test)]
 mod tests {
   use super::super::P256_FIELD;
   use super::Fe;
-
-  #[test]
-  fn naf5_digits_reconstruct_the_scalar() {
-    use super::{Uint, naf5};
-    let p = P256_FIELD.0;
-    for scalar in [
-      [0u64; 4],
-      [1, 0, 0, 0],
-      [31, 0, 0, 0],
-      [u64::MAX; 4],
-      [p[0], p[1], p[2], p[3]],
-      [
-        0x0123_4567_89ab_cdef,
-        0xfedc_ba98_7654_3210,
-        0x8000_0000_0000_0001,
-        0x7fff_ffff_ffff_fffe,
-      ],
-    ] {
-      let digits = naf5(Uint(scalar));
-      // Rebuild Σ digit·2^i from the top digit down as a signed five-limb value.
-      let mut acc = [0u64; 5];
-      for &digit in digits.iter().rev() {
-        let mut carry = 0u64;
-        for limb in &mut acc {
-          let next = *limb >> 63;
-          *limb = (*limb << 1) | carry;
-          carry = next;
-        }
-        let magnitude = u64::from(digit.unsigned_abs());
-        let mut borrow_or_carry = magnitude;
-        for limb in &mut acc {
-          let (value, flag) = if digit >= 0 {
-            limb.overflowing_add(borrow_or_carry)
-          } else {
-            limb.overflowing_sub(borrow_or_carry)
-          };
-          *limb = value;
-          borrow_or_carry = u64::from(flag);
-        }
-      }
-      assert_eq!(acc, [scalar[0], scalar[1], scalar[2], scalar[3], 0], "{scalar:x?}");
-      let mut last_nonzero: Option<usize> = None;
-      for (index, &digit) in digits.iter().enumerate() {
-        if digit != 0 {
-          assert!(digit % 2 != 0 && (-15..=15).contains(&digit), "{scalar:x?}");
-          if let Some(last) = last_nonzero {
-            assert!(index - last >= 5, "nonzero digits are at least five apart: {scalar:x?}");
-          }
-          last_nonzero = Some(index);
-        }
-      }
-    }
-  }
 
   #[test]
   fn dispatched_field_arithmetic_matches_portable_authority() {

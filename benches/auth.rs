@@ -1331,7 +1331,7 @@ fn ecdsa_p256_public_key(c: &mut Criterion) {
 //
 // `ecdsa-p384/verify/import-key`: every row gets the same 97-byte uncompressed SEC1 key and 96-byte signature.
 // Timed: key parsing and validation, signature parsing, verification, and drop of per-call objects.
-// - rscrypto also builds the verification table that key reuse amortizes.
+// - rscrypto uses its single-use SEC1 verification, which builds no verification table.
 // - aws-lc-rs allocates an EVP_PKEY and re-encodes the signature as DER.
 // Each row's check also requires the same path to reject a key that is not on the curve.
 fn ecdsa_p384_verify(c: &mut Criterion) {
@@ -1433,13 +1433,8 @@ fn ecdsa_p384_verify(c: &mut Criterion) {
 
   // Each closure is one row's timed import-and-verify path.
   let rscrypto_import = |key: &[u8; 97], message: &[u8], signature: &[u8; 96]| {
-    let (Ok(key), Ok(signature)) = (
-      EcdsaP384PublicKey::from_sec1_bytes(key),
-      EcdsaP384Signature::from_bytes(*signature),
-    ) else {
-      return false;
-    };
-    key.verify(message, &signature).is_ok()
+    EcdsaP384Signature::from_bytes(*signature)
+      .is_ok_and(|signature| EcdsaP384PublicKey::verify_sec1(key, message, &signature).is_ok())
   };
   let rustcrypto_import = |key: &[u8; 97], message: &[u8], signature: &[u8; 96]| {
     let (Ok(key), Ok(signature)) = (

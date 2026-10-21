@@ -171,7 +171,13 @@ fn wycheproof_p384_der_verification_matches_expected_results() {
     |sec1| EcdsaP384PublicKey::from_sec1_bytes(sec1).expect("Wycheproof P-384 SEC1 public key must parse"),
     |spki| EcdsaP384PublicKey::from_spki_der(spki).expect("Wycheproof P-384 SPKI public key must parse"),
     |public, message, der| {
-      EcdsaP384Signature::from_der(der).is_ok_and(|signature| public.verify(message, &signature).is_ok())
+      let signature = EcdsaP384Signature::from_der(der).ok();
+      let keyed = signature.is_some_and(|signature| public.verify(message, &signature).is_ok());
+      // The single-use path skips the key table; every vector must reach the same decision.
+      let single = signature
+        .is_some_and(|signature| EcdsaP384PublicKey::verify_sec1(&public.to_sec1_bytes(), message, &signature).is_ok());
+      assert_eq!(keyed, single, "single-use verification must agree with the parsed key");
+      keyed
     },
   );
 }
