@@ -1,0 +1,39 @@
+[package]
+name = "rscrypto-provider-size"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.100.0"
+publish = false
+license = "MIT OR Apache-2.0"
+
+[workspace]
+
+[features]
+# Link `default_provider()` and OS entropy instead of `ClientProvider` over caller entropy.
+default-provider = ["rscrypto-rustls/getrandom"]
+
+[dependencies]
+# The provider features that top-secret reaches; `getrandom` stays off.
+rscrypto-rustls = { path = "../../rscrypto-rustls", default-features = false, features = [
+  "sha2",
+  "hmac",
+  "hkdf",
+  "aes-gcm",
+  "chacha20poly1305",
+  "x25519",
+  "p256-ecdh",
+  "p384-ecdh",
+  "ml-kem",
+  "ecdsa-p256",
+  "ecdsa-p384",
+  "ed25519",
+  "rsa",
+] }
+rustls = { version = "=0.24.0-dev.2", git = "https://github.com/rustls/rustls", rev = "35a8f439137d45ed18962807d38684b0c6bc6e3f", default-features = false, features = ["webpki"] }
+rustls-util = { version = "=0.24.0-dev.2", git = "https://github.com/rustls/rustls", rev = "35a8f439137d45ed18962807d38684b0c6bc6e3f", default-features = false }
+
+# The release profile of top-secret.
+[profile.release]
+overflow-checks = true
+lto = "fat"
+codegen-units = 1
