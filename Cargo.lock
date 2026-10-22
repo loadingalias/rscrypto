@@ -2161,7 +2161,7 @@ dependencies = [
  "libc",
  "socket2",
  "tracing",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2464,7 +2464,7 @@ dependencies = [
 [[package]]
 name = "rustls"
 version = "0.24.0-dev.2"
-source = "git+https://github.com/rustls/rustls?rev=7ebba67075b0c3c2b8fe20c470d5c53410866544#7ebba67075b0c3c2b8fe20c470d5c53410866544"
+source = "git+https://github.com/rustls/rustls?rev=35a8f439137d45ed18962807d38684b0c6bc6e3f#35a8f439137d45ed18962807d38684b0c6bc6e3f"
 dependencies = [
  "rustls-pki-types",
  "rustls-webpki",
@@ -2474,8 +2474,8 @@ dependencies = [
 
 [[package]]
 name = "rustls-aws-lc-rs"
-version = "0.1.0-dev.1"
-source = "git+https://github.com/rustls/rustls?rev=7ebba67075b0c3c2b8fe20c470d5c53410866544#7ebba67075b0c3c2b8fe20c470d5c53410866544"
+version = "0.24.0-dev.2"
+source = "git+https://github.com/rustls/rustls?rev=35a8f439137d45ed18962807d38684b0c6bc6e3f#35a8f439137d45ed18962807d38684b0c6bc6e3f"
 dependencies = [
  "aws-lc-rs",
  "rustls",
@@ -2496,8 +2496,8 @@ dependencies = [
 
 [[package]]
 name = "rustls-ring"
-version = "0.1.0-dev.1"
-source = "git+https://github.com/rustls/rustls?rev=7ebba67075b0c3c2b8fe20c470d5c53410866544#7ebba67075b0c3c2b8fe20c470d5c53410866544"
+version = "0.24.0-dev.2"
+source = "git+https://github.com/rustls/rustls?rev=35a8f439137d45ed18962807d38684b0c6bc6e3f#35a8f439137d45ed18962807d38684b0c6bc6e3f"
 dependencies = [
  "ring",
  "rustls",
@@ -2508,17 +2508,17 @@ dependencies = [
 
 [[package]]
 name = "rustls-util"
-version = "0.1.0-dev.1"
-source = "git+https://github.com/rustls/rustls?rev=7ebba67075b0c3c2b8fe20c470d5c53410866544#7ebba67075b0c3c2b8fe20c470d5c53410866544"
+version = "0.24.0-dev.2"
+source = "git+https://github.com/rustls/rustls?rev=35a8f439137d45ed18962807d38684b0c6bc6e3f#35a8f439137d45ed18962807d38684b0c6bc6e3f"
 dependencies = [
  "rustls",
 ]
 
 [[package]]
 name = "rustls-webpki"
-version = "0.104.0-alpha.7"
+version = "0.104.0-alpha.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bea702cca24d344fc70973022bf7eb920c224e318466eb49784272337dd24b1a"
+checksum = "e4f05eb03bb89c8b88908947d1add6fbe564e58db7b686dbda59691aaec0e450"
 dependencies = [
  "rustls-pki-types",
  "untrusted 0.9.0",

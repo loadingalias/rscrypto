@@ -1,6 +1,6 @@
 //! TLS record and QUIC packet protection with protocol-owned nonces.
 
-use alloc::boxed::Box;
+use alloc::{boxed::Box, vec::Vec};
 
 use rscrypto::aead::{Nonce96, expert::AeadWithNonce};
 #[cfg(feature = "aes-gcm")]
@@ -9,7 +9,7 @@ use rscrypto::{Aes128Gcm, Aes128GcmKey, Aes128GcmTag, Aes256Gcm, Aes256GcmKey, A
 use rscrypto::{ChaCha20Poly1305, ChaCha20Poly1305Key, ChaCha20Poly1305Tag};
 use rustls::crypto::cipher::{
   AeadKey, InboundOpaque, Iv, Nonce, OutboundPlain, Record, RecordDecrypter, RecordEncrypter, Tls13AeadAlgorithm,
-  UnsupportedOperationError, make_tls13_aad,
+  UnsupportedOperationError, encode_record_header, make_tls13_aad,
 };
 use rustls::enums::ContentType;
 use rustls::quic::{PacketKey, Tag};
@@ -163,39 +163,39 @@ struct RecordKey {
 }
 
 impl RecordEncrypter for RecordKey {
-  fn encrypt<'a>(
-    &mut self,
-    msg: Record<OutboundPlain<'_>>,
-    seq: u64,
-    out: &'a mut [u8],
-  ) -> Result<Record<&'a [u8]>, Error> {
+  fn encrypt(&mut self, msg: Record<OutboundPlain<'_>>, seq: u64, out: &mut Vec<u8>) -> Result<(), Error> {
     // rustls fragments records at 2^14 bytes. Reject misuse before writing.
     if msg.payload.len() > 16_384 || matches!(self.cipher, Cipher::InvalidKeyLength) {
       return Err(Error::EncryptError);
     }
     let total_len = self.encrypted_payload_len(msg.payload.len());
-    let payload = out.get_mut(..total_len).ok_or(Error::EncryptError)?;
-    let (body, tag_out) = payload.split_at_mut(total_len.strict_sub(TAG_LEN));
-    let mut offset = 0usize;
-    for chunk in msg.payload.chunks() {
-      let end = offset.strict_add(chunk.len());
-      body[offset..end].copy_from_slice(chunk);
-      offset = end;
-    }
-    body[offset] = u8::from(msg.typ);
-    let tag = match self.cipher.seal(
+    let header = encode_record_header(
+      ContentType::ApplicationData,
+      msg.version,
+      u16::try_from(total_len).map_err(|_| Error::EncryptError)?,
+    );
+    let start = out.len();
+    // One reservation: plaintext is never left behind in a reallocated buffer.
+    out.reserve(header.len().strict_add(total_len));
+    out.extend_from_slice(&header);
+    let body = out.len();
+    msg.payload.copy_to_vec(out);
+    out.push(u8::from(msg.typ));
+    match self.cipher.seal(
       Nonce::new(&self.iv, seq),
       &make_tls13_aad(ContentType::ApplicationData, msg.version.encode(), total_len),
-      body,
+      &mut out[body..],
     ) {
-      Ok(tag) => tag,
-      Err(error) => {
-        rscrypto::traits::ct::zeroize(payload);
-        return Err(error);
+      Ok(tag) => {
+        out.extend_from_slice(&tag);
+        Ok(())
       }
-    };
-    tag_out.copy_from_slice(&tag);
-    Ok(Record::new(ContentType::ApplicationData, msg.version, payload))
+      Err(error) => {
+        rscrypto::traits::ct::zeroize(&mut out[start..]);
+        out.truncate(start);
+        Err(error)
+      }
+    }
   }
 
   fn encrypted_payload_len(&self, payload_len: usize) -> usize {

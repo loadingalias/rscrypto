@@ -53,8 +53,8 @@ quinn = ["dep:quinn-proto", "dep:bytes", "aes-gcm", "hkdf", "getrandom"]
 
 [dependencies]
 rscrypto = { version = "0.11.0", path = "..", default-features = false, features = ["std"] }
-rustls = { version = "=0.24.0-dev.2", git = "https://github.com/rustls/rustls", rev = "7ebba67075b0c3c2b8fe20c470d5c53410866544", default-features = false, features = ["webpki"] }
-rustls-webpki = { version = "=0.104.0-alpha.7", default-features = false, features = ["alloc", "std"] }
+rustls = { version = "=0.24.0-dev.2", git = "https://github.com/rustls/rustls", rev = "35a8f439137d45ed18962807d38684b0c6bc6e3f", default-features = false, features = ["webpki"] }
+rustls-webpki = { version = "=0.104.0-alpha.8", default-features = false, features = ["alloc", "std"] }
 rustls-pki-types = { version = "=1.15.1", default-features = false, features = ["std"] }
 getrandom = { version = "0.4.3", optional = true }
 zeroize = { version = "1.9.1", default-features = false }
@@ -62,9 +62,9 @@ quinn-proto = { version = "=0.12.0", git = "https://github.com/quinn-rs/quinn", 
 bytes = { version = "1.12.1", optional = true }
 
 [dev-dependencies]
-rustls-aws-lc-rs = { version = "=0.1.0-dev.1", git = "https://github.com/rustls/rustls", rev = "7ebba67075b0c3c2b8fe20c470d5c53410866544" }
-rustls-ring = { version = "=0.1.0-dev.1", git = "https://github.com/rustls/rustls", rev = "7ebba67075b0c3c2b8fe20c470d5c53410866544" }
-rustls-util = { version = "=0.1.0-dev.1", git = "https://github.com/rustls/rustls", rev = "7ebba67075b0c3c2b8fe20c470d5c53410866544", default-features = false }
+rustls-aws-lc-rs = { version = "=0.24.0-dev.2", git = "https://github.com/rustls/rustls", rev = "35a8f439137d45ed18962807d38684b0c6bc6e3f" }
+rustls-ring = { version = "=0.24.0-dev.2", git = "https://github.com/rustls/rustls", rev = "35a8f439137d45ed18962807d38684b0c6bc6e3f" }
+rustls-util = { version = "=0.24.0-dev.2", git = "https://github.com/rustls/rustls", rev = "35a8f439137d45ed18962807d38684b0c6bc6e3f", default-features = false }
 quinn = { version = "=0.12.0", git = "https://github.com/quinn-rs/quinn", rev = "9d729c1b6b7ad30d45d40265037eeeb9d98a7420", default-features = false, features = ["runtime-tokio"] }
 tokio = { version = "1.53.3", default-features = false, features = ["rt", "macros", "time", "io-util"] }
 

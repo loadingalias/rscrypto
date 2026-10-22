@@ -228,17 +228,16 @@ mod verifiers {
         && let Ok(cert) = webpki::EndEntityCert::try_from(&certificates.end_entity)
       {
         let algorithms = prepared_algorithms(&self.anchors);
-        if cert
-          .verify_for_usage(
-            &references(&algorithms),
-            &self.roots.roots,
-            &certificates.intermediates,
-            identity.now,
-            &webpki::ExtendedKeyUsage::client_auth(),
-            None,
-            None,
-          )
-          .is_ok()
+        let algorithms = references(&algorithms);
+        if webpki::PathBuilder::new(
+          &certificates.intermediates,
+          None,
+          &webpki::ExtendedKeyUsage::CLIENT_AUTH,
+          &algorithms,
+          &self.roots.roots,
+        )
+        .build(&cert, identity.now)
+        .is_ok()
         {
           return Ok(VerifiedIdentity::assertion(identity.identity.clone()));
         }

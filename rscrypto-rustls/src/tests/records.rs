@@ -105,8 +105,8 @@ fn rfc8448_complete_simple_handshake_symmetric_trace() {
       };
       let plaintext = &v["payload"];
       let parts = [plaintext.as_slice()];
-      let mut output = vec![0; key.encrypted_payload_len(plaintext.len())];
-      let actual = key
+      let mut output = Vec::new();
+      key
         .encrypt(
           Record {
             typ,
@@ -117,11 +117,7 @@ fn rfc8448_complete_simple_handshake_symmetric_trace() {
           &mut output,
         )
         .expect("published record encryption");
-      assert_eq!(
-        (actual.typ, actual.version.encode(), actual.payload),
-        (ContentType::ApplicationData, ProtocolVersion::TLSv1_2, &expected[5..]),
-        "{step}"
-      );
+      assert_eq!(&output, expected, "{step}");
       let mut ciphertext = expected[5..].to_vec();
       let opened = key
         .decrypt(
@@ -179,17 +175,15 @@ fn record_framing_fragmentation_and_failure_match_aws_lc() {
         let mut encrypt = ours.encrypter(key(), Iv::from([0x71; 12]));
         let mut peer = peer.encrypter(key(), Iv::from([0x71; 12]));
         let size = encrypt.encrypted_payload_len(len);
-        let mut actual = vec![0xa5; size.strict_add(1)];
-        let mut expected = vec![0; size];
-        let actual_record = encrypt.encrypt(message(), seq, &mut actual).expect("encrypt");
-        let expected_record = peer.encrypt(message(), seq, &mut expected).expect("peer encrypt");
-        assert_eq!(
-          (actual_record.typ, actual_record.version, actual_record.payload),
-          (expected_record.typ, expected_record.version, expected_record.payload)
-        );
-        assert_eq!(actual[size], 0xa5, "encryption must preserve the output tail");
+        let mut actual = vec![0xa5];
+        let mut expected = Vec::new();
+        encrypt.encrypt(message(), seq, &mut actual).expect("encrypt");
+        peer.encrypt(message(), seq, &mut expected).expect("peer encrypt");
+        assert_eq!(actual[0], 0xa5, "encryption must preserve existing output");
+        assert_eq!(actual[1..], expected);
+        assert_eq!(expected.len(), size.strict_add(5));
         let mut decrypt = ours.decrypter(key(), Iv::from([0x71; 12]));
-        let mut payload = expected.to_vec();
+        let mut payload = expected[5..].to_vec();
         let opened = decrypt
           .decrypt(
             Record::new(
@@ -203,7 +197,7 @@ fn record_framing_fragmentation_and_failure_match_aws_lc() {
         assert_eq!(opened.payload, plain);
         assert_eq!(opened.typ, ContentType::ApplicationData);
         assert_eq!(opened.version, EncodableVersion::Legacy(ProtocolVersion::TLSv1_3));
-        let mut corrupt = expected.to_vec();
+        let mut corrupt = expected[5..].to_vec();
         *corrupt.last_mut().expect("tag") ^= 1;
         assert!(matches!(
           decrypt.decrypt(
@@ -230,21 +224,25 @@ fn record_length_and_invalid_key_reject_before_releasing_plaintext() {
     version: EncodableVersion::Legacy(ProtocolVersion::TLSv1_3),
     payload: (&b"plaintext"[..]).into(),
   };
+  let mut out = vec![0xa5; 3];
   assert!(matches!(
-    invalid.encrypt(message(), 0, &mut [0xa5; 64]),
+    invalid.encrypt(message(), 0, &mut out),
     Err(Error::EncryptError)
   ));
+  assert_eq!(out, [0xa5; 3]);
   assert!(matches!(
     AES_128_GCM.extract_keys(AeadKey::from([0; 32]), Iv::from([0; 12])),
     Err(UnsupportedOperationError)
   ));
-  let mut short = [0xa5; 25]; // Nine plaintext bytes, one type byte, and a 16-byte tag need 26.
-  let mut valid = AES_256_GCM.encrypter(AeadKey::from([0; 32]), Iv::from([0; 12]));
+  // An 8-byte IV yields a nonce the cipher rejects after the plaintext is
+  // appended; the failure must clear and remove everything it appended.
+  let mut short_iv = AES_256_GCM.encrypter(AeadKey::from([0; 32]), Iv::new(&[0; 8]).expect("IV"));
+  let mut out = vec![0xa5; 3];
   assert!(matches!(
-    valid.encrypt(message(), 0, &mut short),
+    short_iv.encrypt(message(), 0, &mut out),
     Err(Error::EncryptError)
   ));
-  assert_eq!(short, [0xa5; 25]);
+  assert_eq!(out, [0xa5; 3]);
   let mut encrypt = AES_256_GCM.encrypter(AeadKey::from([0; 32]), Iv::from([0; 12]));
   let large = vec![0; 16_385];
   let large_message = Record {
@@ -252,10 +250,12 @@ fn record_length_and_invalid_key_reject_before_releasing_plaintext() {
     version: EncodableVersion::Legacy(ProtocolVersion::TLSv1_3),
     payload: large.as_slice().into(),
   };
+  let mut out = Vec::new();
   assert!(matches!(
-    encrypt.encrypt(large_message, 0, &mut []),
+    encrypt.encrypt(large_message, 0, &mut out),
     Err(Error::EncryptError)
   ));
+  assert!(out.is_empty());
 }
 
 #[test]
