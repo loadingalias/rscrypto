@@ -578,3 +578,389 @@ pub(super) unsafe fn encrypt_block_128(keys: &Ppc128RoundKeys, block: &mut [u8; 
   // SAFETY: target_feature gate guarantees POWER8 crypto.
   unsafe { encrypt_block_128_core(keys, block) }
 }
+
+// Eight-block AES-GCM: CTR keystream, data, and GHASH input stay in vector registers.
+
+/// `vperm` control that reverses the 16 register bytes.
+///
+/// A little-endian vector load puts memory byte `15 - k` in register byte `k`; reversing gives
+/// the AES state order (register byte `k` = memory byte `k`), and a second reversal undoes it
+/// before the store. The values are the register bytes 15..8 (element 1, ISA doubleword 0) and
+/// 7..0 (element 0, ISA doubleword 1).
+#[cfg(feature = "aes-gcm")]
+const BYTE_REVERSE: i64x2 = i64x2::from_array([0x0706_0504_0302_0100, 0x0f0e_0d0c_0b0a_0908]);
+
+/// POLYVAL reduction constant `x^63 + x^62 + x^57` in ISA doubleword 1 (element 0).
+#[cfg(feature = "aes-gcm")]
+const POLYVAL_FOLD: i64x2 = i64x2::from_array([0xc200_0000_0000_0000_u64.cast_signed(), 0]);
+
+/// `value` as a vector whose 128 register bits are its numeric bits (element 0 holds the low
+/// doubleword on little-endian POWER).
+#[cfg(feature = "aes-gcm")]
+#[inline(always)]
+fn vector_from_u128(value: u128) -> i64x2 {
+  let bytes = value.to_le_bytes();
+  let (low, high) = bytes.split_at(8);
+  i64x2::from_array([
+    i64::from_le_bytes(low.try_into().expect("eight low bytes")),
+    i64::from_le_bytes(high.try_into().expect("eight high bytes")),
+  ])
+}
+
+/// A little-endian vector load of 16 bytes: register byte `k` holds memory byte `15 - k`.
+#[cfg(feature = "aes-gcm")]
+#[inline(always)]
+fn load_le(bytes: &[u8; 16]) -> i64x2 {
+  let (low, high) = bytes.split_at(8);
+  i64x2::from_array([
+    i64::from_le_bytes(low.try_into().expect("eight low bytes")),
+    i64::from_le_bytes(high.try_into().expect("eight high bytes")),
+  ])
+}
+
+/// The inverse of [`load_le`].
+#[cfg(feature = "aes-gcm")]
+#[inline(always)]
+fn store_le(out: &mut [u8; 16], value: i64x2) {
+  let [low, high] = value.to_array();
+  let (out_low, out_high) = out.split_at_mut(8);
+  out_low.copy_from_slice(&low.to_le_bytes());
+  out_high.copy_from_slice(&high.to_le_bytes());
+}
+
+#[cfg(feature = "aes-gcm")]
+#[inline(always)]
+fn u128_from_vector(value: i64x2) -> u128 {
+  let [low, high] = value.to_array();
+  u128::from(low.cast_unsigned()) | (u128::from(high.cast_unsigned()) << u64::BITS)
+}
+
+/// The GCM key powers `[H^8, ..., H]` (POLYVAL domain) in the three `vpmsumd` operand forms.
+///
+/// With a block `b = b1·x^64 + b0` held as ISA doublewords `[b1, b0]`, `vpmsumd` multiplies the
+/// matching doublewords and adds the two products, so `low = [0, h0]` gives `b0·h0`,
+/// `mid = [h0, h1]` gives `b1·h0 + b0·h1`, and `high = [h1, 0]` gives `b1·h1`.
+#[cfg(feature = "aes-gcm")]
+struct GhashPowers8 {
+  low: [i64x2; 8],
+  mid: [i64x2; 8],
+  high: [i64x2; 8],
+}
+
+#[cfg(feature = "aes-gcm")]
+impl GhashPowers8 {
+  #[inline(always)]
+  fn new(h_powers_rev_8: &[u128; 8]) -> Self {
+    let split = |power: &u128| {
+      let [h0, h1] = vector_from_u128(*power).to_array();
+      (h0, h1)
+    };
+    Self {
+      low: h_powers_rev_8.each_ref().map(|power| {
+        let (h0, _) = split(power);
+        i64x2::from_array([h0, 0])
+      }),
+      mid: h_powers_rev_8.each_ref().map(|power| {
+        let (h0, h1) = split(power);
+        i64x2::from_array([h1, h0])
+      }),
+      high: h_powers_rev_8.each_ref().map(|power| {
+        let (_, h1) = split(power);
+        i64x2::from_array([0, h1])
+      }),
+    }
+  }
+}
+
+/// CTR-encrypt or decrypt `data`, a whole number of 128-byte chunks, from `initial_counter`, and
+/// fold the ciphertext into the POLYVAL accumulator `acc`. Returns the accumulator.
+///
+/// Each chunk runs eight AES states through the rounds together, then multiplies its eight
+/// ciphertext blocks by `H^8, ..., H` and reduces once. The counter word wraps modulo 2^32, as
+/// GCM's `inc32` does.
+///
+/// # Safety
+///
+/// Caller must ensure POWER8 vector crypto support is available.
+#[cfg(feature = "aes-gcm")]
+#[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
+unsafe fn gcm_ctr32_ghash_8x<const KEYS: usize, const OPEN: bool>(
+  rk: &[i64x2; KEYS],
+  initial_counter: &[u8; 16],
+  data: &mut [u8],
+  acc: u128,
+  h_powers_rev_8: &[u128; 8],
+) -> u128 {
+  debug_assert_eq!(data.len() % 128, 0);
+  let powers = GhashPowers8::new(h_powers_rev_8);
+  let increments: [i64x2; 9] =
+    core::array::from_fn(|index| i64x2::from_array([i64::try_from(index).expect("small counter increment"), 0]));
+  // SAFETY: eight-block POWER AES-GCM because:
+  // 1. The caller guarantees POWER8 crypto support before entering this target-feature scope.
+  // 2. Every asm block reads and writes only its vector register operands.
+  // 3. Data moves through safe 16-byte array loads and stores.
+  unsafe {
+    let mut counter = load_le(initial_counter);
+    asm!(
+      "vperm {c}, {c}, {c}, {rev}",
+      c = inout(vreg) counter,
+      rev = in(vreg) BYTE_REVERSE,
+      options(nomem, nostack, pure),
+    );
+    let mut acc = vector_from_u128(acc);
+
+    for chunk in data.as_chunks_mut::<128>().0 {
+      let blocks = chunk.as_chunks_mut::<16>().0;
+      let (mut s0, mut s1, mut s2, mut s3, mut s4, mut s5, mut s6, mut s7): (
+        i64x2,
+        i64x2,
+        i64x2,
+        i64x2,
+        i64x2,
+        i64x2,
+        i64x2,
+        i64x2,
+      );
+      asm!(
+        "vadduwm {s1}, {c}, {i1}",
+        "vadduwm {s2}, {c}, {i2}",
+        "vadduwm {s3}, {c}, {i3}",
+        "vadduwm {s4}, {c}, {i4}",
+        "vadduwm {s5}, {c}, {i5}",
+        "vadduwm {s6}, {c}, {i6}",
+        "vadduwm {s7}, {c}, {i7}",
+        s1 = out(vreg) s1,
+        s2 = out(vreg) s2,
+        s3 = out(vreg) s3,
+        s4 = out(vreg) s4,
+        s5 = out(vreg) s5,
+        s6 = out(vreg) s6,
+        s7 = out(vreg) s7,
+        c = in(vreg) counter,
+        i1 = in(vreg) increments[1],
+        i2 = in(vreg) increments[2],
+        i3 = in(vreg) increments[3],
+        i4 = in(vreg) increments[4],
+        i5 = in(vreg) increments[5],
+        i6 = in(vreg) increments[6],
+        i7 = in(vreg) increments[7],
+        options(nomem, nostack, pure),
+      );
+      s0 = counter;
+      asm!(
+        "vadduwm {c}, {c}, {i}",
+        c = inout(vreg) counter,
+        i = in(vreg) increments[8],
+        options(nomem, nostack, pure),
+      );
+
+      macro_rules! round_all {
+        ($op:literal, $rk:expr) => {
+          asm!(
+            concat!($op, " {s0}, {s0}, {rk}"),
+            concat!($op, " {s1}, {s1}, {rk}"),
+            concat!($op, " {s2}, {s2}, {rk}"),
+            concat!($op, " {s3}, {s3}, {rk}"),
+            concat!($op, " {s4}, {s4}, {rk}"),
+            concat!($op, " {s5}, {s5}, {rk}"),
+            concat!($op, " {s6}, {s6}, {rk}"),
+            concat!($op, " {s7}, {s7}, {rk}"),
+            s0 = inlateout(vreg) s0,
+            s1 = inlateout(vreg) s1,
+            s2 = inlateout(vreg) s2,
+            s3 = inlateout(vreg) s3,
+            s4 = inlateout(vreg) s4,
+            s5 = inlateout(vreg) s5,
+            s6 = inlateout(vreg) s6,
+            s7 = inlateout(vreg) s7,
+            rk = in(vreg) $rk,
+            options(nomem, nostack, pure),
+          );
+        };
+      }
+
+      round_all!("vxor", rk[0]);
+      for &round_key in &rk[1..KEYS.strict_sub(1)] {
+        round_all!("vcipher", round_key);
+      }
+      round_all!("vcipherlast", rk[KEYS.strict_sub(1)]);
+
+      // XOR the keystream into the data. GHASH takes the ciphertext, which is the output when
+      // sealing and the input when opening; in AES byte order it is the numeric POLYVAL block.
+      macro_rules! xor_block {
+        ($keystream:ident, $offset:literal) => {{
+          let slot = &mut blocks[$offset];
+          let input = load_le(slot);
+          let (input_be, output_be, output): (i64x2, i64x2, i64x2);
+          asm!(
+            "vperm {x}, {x}, {x}, {rev}",
+            "vxor {y}, {x}, {k}",
+            "vperm {out}, {y}, {y}, {rev}",
+            x = inout(vreg) input => input_be,
+            y = out(vreg) output_be,
+            out = lateout(vreg) output,
+            k = in(vreg) $keystream,
+            rev = in(vreg) BYTE_REVERSE,
+            options(nomem, nostack, pure),
+          );
+          store_le(slot, output);
+          if OPEN { input_be } else { output_be }
+        }};
+      }
+      let c0 = xor_block!(s0, 0);
+      let c1 = xor_block!(s1, 1);
+      let c2 = xor_block!(s2, 2);
+      let c3 = xor_block!(s3, 3);
+      let c4 = xor_block!(s4, 4);
+      let c5 = xor_block!(s5, 5);
+      let c6 = xor_block!(s6, 6);
+      let c7 = xor_block!(s7, 7);
+
+      // POLYVAL: (acc + c0)·H^8 + c1·H^7 + ... + c7·H, one reduction per chunk.
+      let (mut low, mut mid, mut high): (i64x2, i64x2, i64x2);
+      // Each product is written before the later power operands are read, so the outputs need
+      // registers of their own (`out`, not `lateout`).
+      asm!(
+        "vxor {b}, {b}, {a}",
+        "vpmsumd {low}, {b}, {hl}",
+        "vpmsumd {mid}, {b}, {hm}",
+        "vpmsumd {high}, {b}, {hh}",
+        b = inout(vreg) c0 => _,
+        a = in(vreg) acc,
+        hl = in(vreg) powers.low[0],
+        hm = in(vreg) powers.mid[0],
+        hh = in(vreg) powers.high[0],
+        low = out(vreg) low,
+        mid = out(vreg) mid,
+        high = out(vreg) high,
+        options(nomem, nostack, pure),
+      );
+      macro_rules! ghash_block {
+        ($block:ident, $index:literal) => {
+          asm!(
+            "vpmsumd {t}, {b}, {hl}",
+            "vxor {low}, {low}, {t}",
+            "vpmsumd {t}, {b}, {hm}",
+            "vxor {mid}, {mid}, {t}",
+            "vpmsumd {t}, {b}, {hh}",
+            "vxor {high}, {high}, {t}",
+            b = in(vreg) $block,
+            hl = in(vreg) powers.low[$index],
+            hm = in(vreg) powers.mid[$index],
+            hh = in(vreg) powers.high[$index],
+            low = inout(vreg) low,
+            mid = inout(vreg) mid,
+            high = inout(vreg) high,
+            t = out(vreg) _,
+            options(nomem, nostack, pure),
+          );
+        };
+      }
+      ghash_block!(c1, 1);
+      ghash_block!(c2, 2);
+      ghash_block!(c3, 3);
+      ghash_block!(c4, 4);
+      ghash_block!(c5, 5);
+      ghash_block!(c6, 6);
+      ghash_block!(c7, 7);
+
+      // low += mid·x^64 and high += mid/x^64; then two folds of x^-64 each: multiply the low
+      // doubleword by the constant, swap the doublewords, and add.
+      asm!(
+        "vxor {z}, {z}, {z}",
+        "vsldoi {t}, {mid}, {z}, 8",
+        "vxor {low}, {low}, {t}",
+        "vsldoi {t}, {z}, {mid}, 8",
+        "vxor {high}, {high}, {t}",
+        "vpmsumd {t}, {low}, {k}",
+        "vsldoi {low}, {low}, {low}, 8",
+        "vxor {low}, {low}, {t}",
+        "vpmsumd {t}, {low}, {k}",
+        "vsldoi {low}, {low}, {low}, 8",
+        "vxor {low}, {low}, {t}",
+        "vxor {low}, {low}, {high}",
+        low = inout(vreg) low,
+        mid = in(vreg) mid,
+        high = inout(vreg) high,
+        k = in(vreg) POLYVAL_FOLD,
+        z = out(vreg) _,
+        t = out(vreg) _,
+        options(nomem, nostack, pure),
+      );
+      acc = low;
+    }
+    u128_from_vector(acc)
+  }
+}
+
+/// Eight-block AES-256-GCM sealing over whole 128-byte chunks; see [`gcm_ctr32_ghash_8x`].
+///
+/// # Safety
+///
+/// Caller must ensure POWER8 vector crypto support is available.
+#[cfg(feature = "aes-gcm")]
+#[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
+pub(super) unsafe fn gcm_seal_8x(
+  keys: &PpcRoundKeys,
+  initial_counter: &[u8; 16],
+  data: &mut [u8],
+  acc: u128,
+  h_powers_rev_8: &[u128; 8],
+) -> u128 {
+  // SAFETY: the caller guarantees POWER8 crypto support.
+  unsafe { gcm_ctr32_ghash_8x::<15, false>(&keys.rk, initial_counter, data, acc, h_powers_rev_8) }
+}
+
+/// Eight-block AES-256-GCM opening over whole 128-byte chunks; see [`gcm_ctr32_ghash_8x`].
+///
+/// # Safety
+///
+/// Caller must ensure POWER8 vector crypto support is available.
+#[cfg(feature = "aes-gcm")]
+#[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
+pub(super) unsafe fn gcm_open_8x(
+  keys: &PpcRoundKeys,
+  initial_counter: &[u8; 16],
+  data: &mut [u8],
+  acc: u128,
+  h_powers_rev_8: &[u128; 8],
+) -> u128 {
+  // SAFETY: the caller guarantees POWER8 crypto support.
+  unsafe { gcm_ctr32_ghash_8x::<15, true>(&keys.rk, initial_counter, data, acc, h_powers_rev_8) }
+}
+
+/// Eight-block AES-128-GCM sealing over whole 128-byte chunks; see [`gcm_ctr32_ghash_8x`].
+///
+/// # Safety
+///
+/// Caller must ensure POWER8 vector crypto support is available.
+#[cfg(feature = "aes-gcm")]
+#[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
+pub(super) unsafe fn gcm_seal_8x_128(
+  keys: &Ppc128RoundKeys,
+  initial_counter: &[u8; 16],
+  data: &mut [u8],
+  acc: u128,
+  h_powers_rev_8: &[u128; 8],
+) -> u128 {
+  // SAFETY: the caller guarantees POWER8 crypto support.
+  unsafe { gcm_ctr32_ghash_8x::<11, false>(&keys.rk, initial_counter, data, acc, h_powers_rev_8) }
+}
+
+/// Eight-block AES-128-GCM opening over whole 128-byte chunks; see [`gcm_ctr32_ghash_8x`].
+///
+/// # Safety
+///
+/// Caller must ensure POWER8 vector crypto support is available.
+#[cfg(feature = "aes-gcm")]
+#[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
+pub(super) unsafe fn gcm_open_8x_128(
+  keys: &Ppc128RoundKeys,
+  initial_counter: &[u8; 16],
+  data: &mut [u8],
+  acc: u128,
+  h_powers_rev_8: &[u128; 8],
+) -> u128 {
+  // SAFETY: the caller guarantees POWER8 crypto support.
+  unsafe { gcm_ctr32_ghash_8x::<11, true>(&keys.rk, initial_counter, data, acc, h_powers_rev_8) }
+}

@@ -1306,6 +1306,7 @@ pub(crate) unsafe fn aes256_ctr32_encrypt_be_ppc_ghash(
   mut acc: u128,
   h_polyval: u128,
   h_powers_rev: &[u128; 4],
+  h_powers_rev_8: &[u128; 8],
 ) -> u128 {
   // SAFETY: fused POWER AES-GCM sealing because:
   // 1. This function's caller guarantees POWER8 crypto and VPMSUMD availability.
@@ -1332,6 +1333,16 @@ pub(crate) unsafe fn aes256_ctr32_encrypt_be_ppc_ghash(
       initial_counter[15],
     ]);
     let mut offset = 0usize;
+
+    // Whole 128-byte chunks run the eight-block kernel; the loops below finish the tail.
+    let bulk = data.len().strict_sub(data.len().strict_rem(128));
+    if bulk != 0 {
+      acc = ppc::gcm_seal_8x(ppc_rk, initial_counter, &mut data[..bulk], acc, h_powers_rev_8);
+      offset = bulk;
+      // `inc32` is modular: advance the counter word by the block count modulo 2^32.
+      let blocks = (bulk / BLOCK_SIZE).to_le_bytes();
+      ctr = ctr.wrapping_add(u32::from_le_bytes([blocks[0], blocks[1], blocks[2], blocks[3]]));
+    }
 
     while offset.strict_add(64) <= data.len() {
       let mut keystream = [[0u8; BLOCK_SIZE]; 4];
@@ -1412,6 +1423,7 @@ pub(crate) unsafe fn aes256_ctr32_decrypt_be_ppc_ghash(
   mut acc: u128,
   h_polyval: u128,
   h_powers_rev: &[u128; 4],
+  h_powers_rev_8: &[u128; 8],
 ) -> u128 {
   // SAFETY: fused POWER AES-GCM opening because:
   // 1. This function's caller guarantees POWER8 crypto and VPMSUMD availability.
@@ -1439,6 +1451,16 @@ pub(crate) unsafe fn aes256_ctr32_decrypt_be_ppc_ghash(
       initial_counter[15],
     ]);
     let mut offset = 0usize;
+
+    // Whole 128-byte chunks run the eight-block kernel; the loops below finish the tail.
+    let bulk = data.len().strict_sub(data.len().strict_rem(128));
+    if bulk != 0 {
+      acc = ppc::gcm_open_8x(ppc_rk, initial_counter, &mut data[..bulk], acc, h_powers_rev_8);
+      offset = bulk;
+      // `inc32` is modular: advance the counter word by the block count modulo 2^32.
+      let blocks = (bulk / BLOCK_SIZE).to_le_bytes();
+      ctr = ctr.wrapping_add(u32::from_le_bytes([blocks[0], blocks[1], blocks[2], blocks[3]]));
+    }
 
     while offset.strict_add(64) <= data.len() {
       let mut ciphertext_blocks = [0u128; 4];
@@ -1528,6 +1550,7 @@ pub(crate) unsafe fn aes128_ctr32_encrypt_be_ppc_ghash(
   mut acc: u128,
   h_polyval: u128,
   h_powers_rev: &[u128; 4],
+  h_powers_rev_8: &[u128; 8],
 ) -> u128 {
   // SAFETY: fused POWER AES-GCM sealing because:
   // 1. This function's caller guarantees POWER8 crypto and VPMSUMD availability.
@@ -1554,6 +1577,16 @@ pub(crate) unsafe fn aes128_ctr32_encrypt_be_ppc_ghash(
       initial_counter[15],
     ]);
     let mut offset = 0usize;
+
+    // Whole 128-byte chunks run the eight-block kernel; the loops below finish the tail.
+    let bulk = data.len().strict_sub(data.len().strict_rem(128));
+    if bulk != 0 {
+      acc = ppc::gcm_seal_8x_128(ppc_rk, initial_counter, &mut data[..bulk], acc, h_powers_rev_8);
+      offset = bulk;
+      // `inc32` is modular: advance the counter word by the block count modulo 2^32.
+      let blocks = (bulk / BLOCK_SIZE).to_le_bytes();
+      ctr = ctr.wrapping_add(u32::from_le_bytes([blocks[0], blocks[1], blocks[2], blocks[3]]));
+    }
 
     while offset.strict_add(64) <= data.len() {
       let mut keystream = [[0u8; BLOCK_SIZE]; 4];
@@ -1634,6 +1667,7 @@ pub(crate) unsafe fn aes128_ctr32_decrypt_be_ppc_ghash(
   mut acc: u128,
   h_polyval: u128,
   h_powers_rev: &[u128; 4],
+  h_powers_rev_8: &[u128; 8],
 ) -> u128 {
   // SAFETY: fused POWER AES-GCM opening because:
   // 1. This function's caller guarantees POWER8 crypto and VPMSUMD availability.
@@ -1661,6 +1695,16 @@ pub(crate) unsafe fn aes128_ctr32_decrypt_be_ppc_ghash(
       initial_counter[15],
     ]);
     let mut offset = 0usize;
+
+    // Whole 128-byte chunks run the eight-block kernel; the loops below finish the tail.
+    let bulk = data.len().strict_sub(data.len().strict_rem(128));
+    if bulk != 0 {
+      acc = ppc::gcm_open_8x_128(ppc_rk, initial_counter, &mut data[..bulk], acc, h_powers_rev_8);
+      offset = bulk;
+      // `inc32` is modular: advance the counter word by the block count modulo 2^32.
+      let blocks = (bulk / BLOCK_SIZE).to_le_bytes();
+      ctr = ctr.wrapping_add(u32::from_le_bytes([blocks[0], blocks[1], blocks[2], blocks[3]]));
+    }
 
     while offset.strict_add(64) <= data.len() {
       let mut ciphertext_blocks = [0u128; 4];

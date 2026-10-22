@@ -605,7 +605,15 @@ impl Aead for Aes256Gcm {
       //    crypto.
       // 2. The helper encrypts `buffer` in place and folds ciphertext into GHASH.
       acc.0 = unsafe {
-        aes::aes256_ctr32_encrypt_be_ppc_ghash(&self.ek, &ctr_block, buffer, acc.0, h_polyval, &self.h_powers_rev)
+        aes::aes256_ctr32_encrypt_be_ppc_ghash(
+          &self.ek,
+          &ctr_block,
+          buffer,
+          acc.0,
+          h_polyval,
+          &self.h_powers_rev,
+          &self.h_powers_rev_8,
+        )
       };
       acc.0 ^= u128::from_be_bytes(length_block);
       // SAFETY: POWER8 carryless multiply because backend resolution confirmed POWER8 crypto.
@@ -763,7 +771,15 @@ impl Aead for Aes256Gcm {
       //    crypto.
       // 2. The helper GHASHes ciphertext before decrypting the valid buffer in place.
       acc.0 = unsafe {
-        aes::aes256_ctr32_decrypt_be_ppc_ghash(&self.ek, &ctr_block, buffer, acc.0, h_polyval, &self.h_powers_rev)
+        aes::aes256_ctr32_decrypt_be_ppc_ghash(
+          &self.ek,
+          &ctr_block,
+          buffer,
+          acc.0,
+          h_polyval,
+          &self.h_powers_rev,
+          &self.h_powers_rev_8,
+        )
       };
       acc.0 ^= u128::from_be_bytes(length_block);
       // SAFETY: POWER8 carryless multiply because backend resolution confirmed POWER8 crypto.
