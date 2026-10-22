@@ -77,17 +77,17 @@ fn profile_matrix(credential: Credential) {
     {
       continue; // ring has no ML-DSA; AWS-LC and the OpenSSL matrix cover it.
     }
-    for group in crate::kx_group::ALL_KX_GROUPS {
+    for group in tls::kx_groups() {
       if !peer_provider().kx_groups.iter().any(|peer| peer.name() == group.name()) {
         continue; // ring has no hybrid group; AWS-LC covers it in both roles.
       }
       for suite in crate::cipher_suite::ALL_CIPHER_SUITES {
         for ours_client in [true, false] {
           for stateless in [false, true] {
-            if stateless && !ours_client && !cfg!(feature = "aes-gcm") {
+            if stateless && !ours_client && !cfg!(all(feature = "aes-gcm", feature = "getrandom")) {
               continue;
             }
-            let ours = select(crate::default_provider(), group.name(), suite.common.suite);
+            let ours = select(tls::provider(), group.name(), suite.common.suite);
             let peer = select(peer_provider(), group.name(), suite.common.suite);
             let (client, server) = if ours_client { (ours, peer) } else { (peer, ours) };
             let (client, mut server) = tls::configs(client, server, credential, true);
@@ -97,11 +97,11 @@ fn profile_matrix(credential: Credential) {
               server.ticketer = Some(if ours_client {
                 peer_ticketer().expect("independent ticketer")
               } else {
-                #[cfg(feature = "aes-gcm")]
+                #[cfg(all(feature = "aes-gcm", feature = "getrandom"))]
                 {
                   crate::ticket::ticketer().expect("rscrypto ticketer")
                 }
-                #[cfg(not(feature = "aes-gcm"))]
+                #[cfg(not(all(feature = "aes-gcm", feature = "getrandom")))]
                 {
                   continue;
                 }
@@ -213,7 +213,7 @@ fn early_data_requires_explicit_enablement_and_obeys_server_rejection() {
   ][0];
   for ours_client in [true, false] {
     for reject in [false, true] {
-      let mut ours = crate::default_provider();
+      let mut ours = tls::provider();
       let mut peer = rustls_aws_lc_rs::DEFAULT_TLS13_PROVIDER;
       // This case tests early-data policy. Offer the same first group so a
       // minimal P-256/P-384 build does not introduce an unrelated HRR rejection.

@@ -86,7 +86,7 @@ fn cases(kind: Credential) -> Vec<(&'static str, Arc<RootCertStore>, Identity<'s
 
 #[test]
 fn prepared_server_verifier_matches_webpki_results_and_errors() {
-  let provider = crate::default_provider();
+  let provider = super::tls::provider();
   for &kind in CREDENTIALS {
     for (case, roots, identity, now) in cases(kind) {
       let stock = WebPkiServerVerifier::builder(Arc::clone(&roots), &provider)
@@ -129,11 +129,11 @@ fn client_authentication(
       rustls::crypto::Identity::from_cert_chain(vec![CertificateDer::from(certificate.to_vec())]).expect("identity"),
     )
   };
-  let client = ClientConfig::builder_with_details(Arc::new(crate::default_provider()), Arc::new(At(VALID)))
+  let client = ClientConfig::builder_with_details(Arc::new(super::tls::provider()), Arc::new(At(VALID)))
     .with_root_certificates(roots(kind))
     .with_client_auth_cert(chain(client_leaf), key())
     .expect("client configuration");
-  let server = ServerConfig::builder_with_details(Arc::new(crate::default_provider()), Arc::new(At(server_time)))
+  let server = ServerConfig::builder_with_details(Arc::new(super::tls::provider()), Arc::new(At(server_time)))
     .with_client_cert_verifier(verifier)
     .with_single_cert(chain(leaf), key())
     .expect("server configuration");
@@ -145,7 +145,7 @@ fn client_authentication(
 fn prepared_client_verifier_matches_webpki_results_and_errors() {
   // `ClientIdentity` has no public constructor, so each case runs a real
   // handshake twice: once per verifier, with identical client inputs.
-  let provider = crate::default_provider();
+  let provider = super::tls::provider();
   for &kind in CREDENTIALS {
     let (_, leaf, _) = credentials(kind);
     let mut corrupted = leaf.to_vec();
@@ -218,12 +218,12 @@ fn mutual_handshakes_complete_through_prepared_verifiers() {
     };
     let key = || rustls::pki_types::PrivateKeyDer::try_from(key.to_vec()).expect("key fixture");
     let time = Arc::new(super::tls::FixtureTime);
-    let client = ClientConfig::builder_with_details(Arc::new(crate::default_provider()), time.clone())
+    let client = ClientConfig::builder_with_details(Arc::new(super::tls::provider()), time.clone())
       .dangerous()
       .with_custom_certificate_verifier(Arc::new(PreparedServerVerifier::new(roots(kind)).expect("verifier")))
       .with_client_auth_cert(chain(), key())
       .expect("client configuration");
-    let server = ServerConfig::builder_with_details(Arc::new(crate::default_provider()), time)
+    let server = ServerConfig::builder_with_details(Arc::new(super::tls::provider()), time)
       .with_client_cert_verifier(Arc::new(PreparedClientVerifier::new(roots(kind)).expect("verifier")))
       .with_single_cert(chain(), key())
       .expect("server configuration");

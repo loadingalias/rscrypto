@@ -294,8 +294,8 @@ mod verifiers {
       kx_groups: Cow::Borrowed(&[]),
       signature_verification_algorithms: supported,
       secure_random: &NoRandom,
-      key_provider: crate::sign::KEY_PROVIDER,
-      ticketer_factory: &NoTickets,
+      key_provider: &crate::client::NoKeys,
+      ticketer_factory: &crate::client::NoTickets,
     }
   }
 
@@ -305,15 +305,6 @@ mod verifiers {
   impl rustls::crypto::SecureRandom for NoRandom {
     fn fill(&self, _: &mut [u8]) -> Result<(), GetRandomFailed> {
       Err(GetRandomFailed)
-    }
-  }
-
-  #[derive(Debug)]
-  struct NoTickets;
-
-  impl rustls::crypto::TicketerFactory for NoTickets {
-    fn ticketer(&self) -> Result<Arc<dyn rustls::crypto::TicketProducer>, Error> {
-      Err(Error::General("verification-only provider".into()))
     }
   }
 }

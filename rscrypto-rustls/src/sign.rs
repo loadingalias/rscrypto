@@ -1,8 +1,9 @@
 //! Private-key loading and TLS 1.3 signing through rscrypto.
 //!
 //! PKCS#8 supports each enabled signing algorithm; SEC1 supports ECDSA, and
-//! PKCS#1 supports RSA. ECDSA and RSA signing require `getrandom`. RSA signing
-//! keys must have 3,072–8,192-bit moduli and public exponent 65,537.
+//! PKCS#1 supports RSA. RSA signing keys must have 3,072–8,192-bit moduli and
+//! public exponent 65,537. [`Provider::new`] takes the entropy source for key
+//! validation and signing; [`KEY_PROVIDER`] uses OS entropy and requires `getrandom`.
 
 use alloc::boxed::Box;
 use rustls::Error;
@@ -10,7 +11,7 @@ use rustls::crypto::KeyProvider;
 use rustls::crypto::SigningKey;
 use rustls::pki_types::PrivateKeyDer;
 
-#[cfg(all(feature = "ml-dsa", feature = "getrandom"))]
+#[cfg(feature = "ml-dsa")]
 mod mldsa;
 
 /// Load enabled signing keys through rscrypto's validated key codecs.
@@ -19,25 +20,19 @@ mod mldsa;
 /// rejected. Successful keys return SPKI for `rustls::crypto::Credentials::new`.
 /// Owned input DER is cleared on every return path. This provider uses OS entropy
 /// and prepares ML-DSA keys for repeated signing; see [`Provider::compact`].
-pub static KEY_PROVIDER: &dyn KeyProvider = &Provider {
-  #[cfg(feature = "getrandom")]
-  random: crate::random::SECURE_RANDOM,
-  #[cfg(all(feature = "ml-dsa", feature = "getrandom"))]
-  compact: false,
-};
+#[cfg(feature = "getrandom")]
+pub static KEY_PROVIDER: &dyn KeyProvider = &Provider::new(crate::random::SECURE_RANDOM);
 
 /// Private-key loader with a caller-selected entropy source.
 ///
 /// Loaded keys retain that source for signing. Ed25519 does not request entropy.
 #[derive(Debug)]
 pub struct Provider {
-  #[cfg(feature = "getrandom")]
   random: &'static dyn rustls::crypto::SecureRandom,
-  #[cfg(all(feature = "ml-dsa", feature = "getrandom"))]
+  #[cfg(feature = "ml-dsa")]
   compact: bool,
 }
 
-#[cfg(feature = "getrandom")]
 impl Provider {
   /// Use `random` for key validation, blinding, and randomized signing.
   ///
@@ -48,7 +43,7 @@ impl Provider {
   pub const fn new(random: &'static dyn rustls::crypto::SecureRandom) -> Self {
     Self {
       random,
-      #[cfg(all(feature = "ml-dsa", feature = "getrandom"))]
+      #[cfg(feature = "ml-dsa")]
       compact: false,
     }
   }
@@ -75,25 +70,17 @@ impl KeyProvider for Provider {
     if key_der.secret_der().len() > 16_384 {
       return Err(key_rejected());
     }
-    #[cfg(feature = "getrandom")]
     let _random = self.random;
-    #[cfg(all(feature = "ml-dsa", feature = "getrandom"))]
+    #[cfg(feature = "ml-dsa")]
     if let Some(key) = mldsa::load(&key_der, _random, self.compact) {
       return Ok(Box::new(key));
     }
-    #[cfg(all(feature = "rsa", feature = "getrandom"))]
+    #[cfg(feature = "rsa")]
     if let Some(key) = rsa::load(&key_der, _random) {
       return Ok(Box::new(key));
     }
-    #[cfg(any(
-      feature = "ed25519",
-      all(feature = "getrandom", any(feature = "ecdsa-p256", feature = "ecdsa-p384"))
-    ))]
-    if let Some(key) = curve::load(
-      &key_der,
-      #[cfg(feature = "getrandom")]
-      _random,
-    )? {
+    #[cfg(any(feature = "ed25519", feature = "ecdsa-p256", feature = "ecdsa-p384"))]
+    if let Some(key) = curve::load(&key_der, _random)? {
       return Ok(Box::new(key));
     }
     Err(key_rejected())
@@ -104,18 +91,12 @@ fn key_rejected() -> Error {
   Error::General("invalid or unsupported TLS private key".into())
 }
 
-#[cfg(all(
-  feature = "getrandom",
-  any(feature = "ecdsa-p256", feature = "ecdsa-p384", feature = "rsa", feature = "ml-dsa")
-))]
+#[cfg(any(feature = "ecdsa-p256", feature = "ecdsa-p384", feature = "rsa", feature = "ml-dsa"))]
 fn signing_failed() -> Error {
   Error::General("TLS signing failed".into())
 }
 
-#[cfg(any(
-  feature = "ed25519",
-  all(feature = "getrandom", any(feature = "ecdsa-p256", feature = "ecdsa-p384"))
-))]
+#[cfg(any(feature = "ed25519", feature = "ecdsa-p256", feature = "ecdsa-p384"))]
 mod curve {
   use alloc::{boxed::Box, sync::Arc, vec::Vec};
   use rustls::Error;
@@ -123,18 +104,18 @@ mod curve {
   use rustls::crypto::{Signer, SigningKey};
   use rustls::pki_types::{PrivateKeyDer, SubjectPublicKeyInfoDer};
 
-  #[cfg(all(feature = "ecdsa-p256", feature = "getrandom"))]
+  #[cfg(feature = "ecdsa-p256")]
   use rscrypto::EcdsaP256SecretKey;
-  #[cfg(all(feature = "ecdsa-p384", feature = "getrandom"))]
+  #[cfg(feature = "ecdsa-p384")]
   use rscrypto::EcdsaP384SecretKey;
   #[cfg(feature = "ed25519")]
   use rscrypto::{Ed25519Keypair, Ed25519SecretKey};
 
   pub(super) fn load(
     der: &PrivateKeyDer<'_>,
-    #[cfg(feature = "getrandom")] _random: &'static dyn rustls::crypto::SecureRandom,
+    _random: &'static dyn rustls::crypto::SecureRandom,
   ) -> Result<Option<Key>, Error> {
-    #[cfg(all(feature = "ecdsa-p256", feature = "getrandom"))]
+    #[cfg(feature = "ecdsa-p256")]
     {
       let key = match der {
         PrivateKeyDer::Pkcs8(value) => EcdsaP256SecretKey::from_pkcs8_der(value.secret_pkcs8_der()),
@@ -149,7 +130,7 @@ mod curve {
         }));
       }
     }
-    #[cfg(all(feature = "ecdsa-p384", feature = "getrandom"))]
+    #[cfg(feature = "ecdsa-p384")]
     {
       let key = match der {
         PrivateKeyDer::Pkcs8(value) => EcdsaP384SecretKey::from_pkcs8_der(value.secret_pkcs8_der()),
@@ -182,11 +163,7 @@ mod curve {
 
   #[derive(Debug)]
   #[cfg_attr(
-    all(
-      feature = "ed25519",
-      feature = "getrandom",
-      any(feature = "ecdsa-p256", feature = "ecdsa-p384")
-    ),
+    all(feature = "ed25519", any(feature = "ecdsa-p256", feature = "ecdsa-p384")),
     expect(
       clippy::large_enum_variant,
       reason = "each configured key holds one `Secret` in an `Arc`; boxing the keypair would add an allocation and \
@@ -194,9 +171,9 @@ mod curve {
     )
   )]
   enum Secret {
-    #[cfg(all(feature = "ecdsa-p256", feature = "getrandom"))]
+    #[cfg(feature = "ecdsa-p256")]
     P256(EcdsaP256SecretKey, &'static dyn rustls::crypto::SecureRandom),
-    #[cfg(all(feature = "ecdsa-p384", feature = "getrandom"))]
+    #[cfg(feature = "ecdsa-p384")]
     P384(EcdsaP384SecretKey, &'static dyn rustls::crypto::SecureRandom),
     #[cfg(feature = "ed25519")]
     Ed25519(Ed25519Keypair),
@@ -205,9 +182,9 @@ mod curve {
   impl Secret {
     fn scheme(&self) -> SignatureScheme {
       match self {
-        #[cfg(all(feature = "ecdsa-p256", feature = "getrandom"))]
+        #[cfg(feature = "ecdsa-p256")]
         Self::P256(..) => SignatureScheme::ECDSA_NISTP256_SHA256,
-        #[cfg(all(feature = "ecdsa-p384", feature = "getrandom"))]
+        #[cfg(feature = "ecdsa-p384")]
         Self::P384(..) => SignatureScheme::ECDSA_NISTP384_SHA384,
         #[cfg(feature = "ed25519")]
         Self::Ed25519(_) => SignatureScheme::ED25519,
@@ -240,7 +217,7 @@ mod curve {
     secret: Arc<Secret>,
   }
 
-  #[cfg(all(feature = "ecdsa-p256", feature = "getrandom"))]
+  #[cfg(feature = "ecdsa-p256")]
   fn sign_p256<E>(
     key: &EcdsaP256SecretKey,
     message: &[u8],
@@ -256,7 +233,7 @@ mod curve {
     )
   }
 
-  #[cfg(all(feature = "ecdsa-p384", feature = "getrandom"))]
+  #[cfg(feature = "ecdsa-p384")]
   fn sign_p384<E>(
     key: &EcdsaP384SecretKey,
     message: &[u8],
@@ -275,9 +252,9 @@ mod curve {
   impl Signer for Sign {
     fn sign(self: Box<Self>, message: &[u8]) -> Result<Vec<u8>, Error> {
       match self.secret.as_ref() {
-        #[cfg(all(feature = "ecdsa-p256", feature = "getrandom"))]
+        #[cfg(feature = "ecdsa-p256")]
         Secret::P256(key, random) => sign_p256(key, message, |out| random.fill(out)),
-        #[cfg(all(feature = "ecdsa-p384", feature = "getrandom"))]
+        #[cfg(feature = "ecdsa-p384")]
         Secret::P384(key, random) => sign_p384(key, message, |out| random.fill(out)),
         #[cfg(feature = "ed25519")]
         Secret::Ed25519(key) => Ok(key.sign(message).as_bytes().to_vec()),
@@ -289,7 +266,7 @@ mod curve {
     }
   }
 
-  #[cfg(all(test, feature = "getrandom", feature = "ecdsa-p256", feature = "ecdsa-p384"))]
+  #[cfg(all(test, feature = "ecdsa-p256", feature = "ecdsa-p384"))]
   #[test]
   fn ecdsa_partial_entropy_failure_is_opaque() {
     let p256 = EcdsaP256SecretKey::from_pkcs8_der(include_bytes!("../tests/vectors/credentials/p256-leaf-key.der"))
@@ -312,7 +289,7 @@ mod curve {
   }
 }
 
-#[cfg(all(feature = "rsa", feature = "getrandom"))]
+#[cfg(feature = "rsa")]
 mod rsa {
   use alloc::{boxed::Box, sync::Arc, vec, vec::Vec};
   use core::fmt;
@@ -429,7 +406,7 @@ mod rsa {
     let signer = Sign {
       key: Arc::new(key),
       scheme: SignatureScheme::RSA_PSS_SHA256,
-      random: crate::random::SECURE_RANDOM,
+      random: &crate::tests::RANDOM,
     };
     let result = signer.sign_with_random_fill(b"message", |out| {
       out[..17].fill(0x42);

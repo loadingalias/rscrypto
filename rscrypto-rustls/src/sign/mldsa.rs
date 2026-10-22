@@ -148,7 +148,7 @@ fn partial_entropy_failure_is_opaque_and_key_stays_usable() {
     for compact in [false, true] {
       let key = load(
         &PrivateKeyDer::try_from(der).expect("fixture container"),
-        crate::random::SECURE_RANDOM,
+        &crate::tests::RANDOM,
         compact,
       )
       .expect("fixture key");
@@ -193,7 +193,7 @@ fn prepared_and_compact_keys_sign_the_compact_signature() {
       for compact in [false, true] {
         let key = load(
           &PrivateKeyDer::try_from(&der[..]).expect("fixture container"),
-          crate::random::SECURE_RANDOM,
+          &crate::tests::RANDOM,
           compact,
         )
         .expect("fixture key");

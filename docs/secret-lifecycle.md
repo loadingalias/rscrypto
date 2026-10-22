@@ -266,6 +266,9 @@ Key construction crosses by-value arrays into typed rscrypto owners; compiler-ma
 copies at that boundary remain unqualified.
 
 An entropy fill error clears the entire destination, including partial writes.
+Record encryption reserves the whole record in rustls's output vector before it
+copies plaintext, so growth leaves no reallocated plaintext copy; a sealing
+failure clears the bytes it appended, then truncates them.
 An AEAD authentication failure clears the body before returning an opaque rustls
 error. Public length and key-shape rejections occur before decryption; those
 paths leave ciphertext unchanged. Successful plaintext belongs to rustls or its

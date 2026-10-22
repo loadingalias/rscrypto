@@ -46,7 +46,7 @@ class Provider(unittest.TestCase):
     def test_real_cargo_tree_excludes_dev_but_rejects_transitive_and_foreign_build_dependencies(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            names = ['rscrypto-rustls', 'relay', 'ring', 'cc', 'openssl-sys']
+            names = ['rscrypto-rustls', 'relay', 'ring', 'cc', 'openssl-sys', 'getrandom']
             (root / 'Cargo.toml').write_text('[workspace]\nresolver="3"\nmembers=' + json.dumps(names) + '\n')
             for name in names:
                 directory = root / name
@@ -59,7 +59,9 @@ class Provider(unittest.TestCase):
                 output.write('[dependencies]\nbackend={package="ring",path="../ring"}\n')
             with (root / 'rscrypto-rustls/Cargo.toml').open('a') as output:
                 output.write('[features]\ncrypto=["dep:relay"]\nbuilder=["dep:compiler"]\n'
+                             'getrandom=["dep:getrandom"]\nentropy=["dep:getrandom"]\n'
                              '[dependencies]\nrelay={path="../relay",optional=true}\n'
+                             'getrandom={path="../getrandom",optional=true}\n'
                              '[target.\'cfg(target_os="windows")\'.build-dependencies]\n'
                              'compiler={package="cc",path="../cc",optional=true}\n'
                              '[dev-dependencies]\nopenssl-sys={path="../openssl-sys"}\n')
@@ -69,7 +71,8 @@ class Provider(unittest.TestCase):
             # empty feature graph. Only normal/build reachability decides the gate.
             with contextlib.redirect_stdout(io.StringIO()):
                 provider.no_c([], root)
-                for features, name in ((['crypto'], 'ring'), (['builder'], 'cc')):
+                provider.no_c(['getrandom'], root)
+                for features, name in ((['crypto'], 'ring'), (['builder'], 'cc'), (['entropy'], 'getrandom')):
                     with self.subTest(features=features), self.assertRaisesRegex(ValueError, name):
                         provider.no_c(features, root)
 

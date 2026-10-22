@@ -33,7 +33,7 @@ quinn-proto revision makes its browser-WASM `ring` dependency optional
 | TLS records and QUIC packets | `Aes128Gcm`, `Aes256Gcm`, `ChaCha20Poly1305` | [aead](src/aead.rs) |
 | QUIC header protection | `Aes128HeaderProtection`, `Aes256HeaderProtection`, `ChaCha20HeaderProtection` | [quic](src/quic.rs) |
 | Stateless tickets | `Aes256Gcm`, fresh process-local keys, atomic counter nonces; rustls `TicketRotator` | [ticket](src/ticket.rs) |
-| Entropy | OS entropy through `getrandom::fill`, or caller-selected `SecureRandom`; partial primitive inputs clear on failure | [random](src/random.rs), [kx_group](src/kx_group.rs), [sign](src/sign.rs) |
+| Entropy | OS entropy through `getrandom::fill` with the `getrandom` feature, or a caller-selected `SecureRandom` without it; partial primitive inputs clear on failure | [random](src/random.rs), [kx_group](src/kx_group.rs), [sign](src/sign.rs), [client](src/client.rs) |
 | Certificate and handshake verification | ECDSA P-256/P-384, Ed25519, RSA-PSS and RSA PKCS#1 v1.5 | [verify](src/verify.rs) |
 | Key import and signing | rscrypto PKCS#8/SEC1/PKCS#1 codecs; blinded ECDSA, Ed25519, blinded RSA-PSS | [sign](src/sign.rs) |
 | ML-DSA authentication | Pure ML-DSA-44/65/87 with the empty TLS context; keys prepared once (or compact on request) and hedged signing | [sign](src/sign/mldsa.rs), [verify](src/verify.rs) |
@@ -61,8 +61,9 @@ Secret owners and cleanup boundaries are recorded in the workspace's
 Those contracts do not establish that compiler-made copies are erased.
 
 `kx_group::ALL_KX_GROUPS` prefers X25519MLKEM768, then X25519, P-256, and
-P-384. Every group requires `getrandom` and its primitive feature; the hybrid
-requires both `x25519` and `ml-kem`. The provider supplies no TLS 1.2 suites.
+P-384. Every group requires its primitive feature, and the hybrid requires both
+`x25519` and `ml-kem`; `ALL_KX_GROUPS` and the group constants use OS entropy and
+also require `getrandom`. The provider supplies no TLS 1.2 suites.
 The hybrid follows RFC 10024: ML-KEM precedes X25519 in both shares and the
 shared secret. It validates the ML-KEM encapsulation key before server key
 generation. A well-formed altered ciphertext retains ML-KEM's implicit rejection;
@@ -77,9 +78,20 @@ Use `default_provider()` with rustls's explicit `builder` or
 fallback. `post_quantum_required_provider()` offers only X25519MLKEM768; it
 requires hybrid key establishment, not a post-quantum certificate chain. Neither
 constructor installs a global provider. Cargo features determine the available
-lists. Provider constructors require `getrandom` and at least one signature
-verification feature. Primitive-only feature subsets still compile. Rustls
-rejects configurations without usable suites or groups.
+lists. Both constructors require `getrandom`, and every provider constructor
+requires at least one signature verification feature. Primitive-only feature
+subsets still compile. Rustls rejects configurations without usable suites or groups.
+
+`ClientProvider::new(random)` is a TLS 1.3 client over a caller-owned
+`SecureRandom`, and it does not need `getrandom`. Build it in a `static`, because
+its key-exchange groups live in it, and pass `provider()` to rustls's client
+builder. The provider offers the enabled suites, the groups in
+`ALL_KX_GROUPS`'s order, and `verify::SUPPORTED_ALGORITHMS`. Its key provider
+refuses every private key (clearing owned DER) and its ticketer factory refuses,
+so it supports no client authentication and cannot serve. A client built this way
+links no signing, ticket, or OS-entropy code; `scripts/bench/provider_size.py`
+measures the linked size of a minimal client with each constructor on
+top-secret's host targets.
 `verify::ALL_ALGORITHMS` preserves the certificate algorithm catalog when callers
 build a custom TLS signature-scheme mapping with `WebPkiSupportedAlgorithms::new`.
 
@@ -100,13 +112,13 @@ P-384 anchor, and 21,864, 38,888 or 68,200 per ML-DSA-44, 65 or 87 anchor, plus
 hash-map overhead. rustls's own verifiers with `verify::SUPPORTED_ALGORITHMS`
 retain no prepared anchors.
 
-`sign::KEY_PROVIDER` accepts PKCS#8 keys, EC SEC1 keys, and RSA PKCS#1 keys,
+`sign::KEY_PROVIDER`, which uses OS entropy and requires `getrandom`, accepts PKCS#8 keys, EC SEC1 keys, and RSA PKCS#1 keys,
 bounded to 16 KiB. Its signing keys expose SPKI for `rustls::crypto::Credentials::new`.
 Owned DER input is zeroized on success and rejection, including oversized input.
 Borrowed static DER remains the caller's responsibility; it cannot be cleared
 through an immutable borrow.
-ECDSA and RSA signing require `getrandom` for blinding and RSA-PSS salt;
-Ed25519 signing does not. RSA signing keys require 3,072–8,192-bit moduli and
+ECDSA and RSA signing draw blinding and RSA-PSS salt from the key provider's
+entropy source; Ed25519 signing does not. RSA signing keys require 3,072–8,192-bit moduli and
 exponent 65,537. Certificate verification accepts deployed 2,048–8,192-bit RSA
 keys under rscrypto's legacy verification policy. TLS 1.3 ECDSA signature
 schemes match their exact curve and hash; cross-hash ECDSA and RSA PKCS#1 v1.5
@@ -134,7 +146,8 @@ with the same `&'static dyn rustls::crypto::SecureRandom`. Assign them to the
 or signing keys. Each constructor retains its selected source and propagates
 failures without OS fallback. The source must be cryptographically secure;
 deterministic test sources are unsuitable for production. These constructors
-retain the same feature requirements as their OS-backed constants.
+need only their primitive features; without `getrandom`, the provider links no
+OS entropy source.
 
 `ticket::ticketer()` supplies stateless session tickets with six-hour key rotation
 and a six-hour advertised lifetime, as defined by the pinned rustls rotator. It requires `aes-gcm` and `getrandom`.

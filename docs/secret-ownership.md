@@ -107,6 +107,9 @@ rustls-pki-types 1.15.1 and zeroize 1.9.0, dropping this guard clears the owned
 vector's full allocation, then frees it. Success, rejection, and unwinding
 share that guard. Immutable borrowed static DER cannot be cleared and remains
 the caller's responsibility. Aborting the process does not run destructors.
+`ClientProvider` and the prepared verifiers' internal verification provider use a
+key provider that loads no key: it wraps the owned input in the same
+`zeroize::Zeroizing` guard and drops it before returning its error.
 
 ### rustls session tickets
 

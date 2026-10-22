@@ -2,7 +2,10 @@ use rustls::Error;
 use rustls::crypto::kx::NamedGroup;
 use rustls::error::PeerMisbehaved;
 
+#[cfg(feature = "getrandom")]
 use super::{ALL_KX_GROUPS, SECP256R1, SECP384R1, X25519, X25519MLKEM768};
+#[cfg(not(feature = "getrandom"))]
+use caller::{ALL_KX_GROUPS, SECP256R1, SECP384R1, X25519, X25519MLKEM768};
 use rustls::crypto::kx::{StartedKeyExchange, SupportedKxGroup};
 
 #[test]
@@ -44,7 +47,7 @@ fn group_inventory_and_both_roles_agree_with_independent_peers() {
   assert_eq!(ALL_KX_GROUPS.len(), expected.len());
   for (ours, (name, client_len, server_len, secret_len)) in ALL_KX_GROUPS.iter().zip(expected) {
     assert_eq!(ours.name(), name);
-    assert!(crate::default_provider().tls12_cipher_suites.is_empty());
+    assert!(crate::tests::tls::provider().tls12_cipher_suites.is_empty());
     assert!(ours.ffdhe_group().is_none());
     assert_eq!(ours.fips(), rustls::pki_types::FipsStatus::Unvalidated);
     for peer in aws
@@ -202,9 +205,9 @@ fn negotiation_uses_hybrid_fallback_and_hello_retry_request() {
       HandshakeKind::FullWithHelloRetryRequest,
     ),
   ] {
-    let mut client_provider = crate::default_provider();
+    let mut client_provider = crate::tests::tls::provider();
     client_provider.kx_groups = client_groups.into();
-    let mut server_provider = crate::default_provider();
+    let mut server_provider = crate::tests::tls::provider();
     server_provider.kx_groups = server_groups.into();
     let (client, server) = tls::configs(client_provider, server_provider, tls::Credential::P256, false);
     let (mut client, mut server) =
@@ -219,4 +222,18 @@ fn negotiation_uses_hybrid_fallback_and_hello_retry_request() {
     }
     tls::application_exchange(&mut client, &mut server);
   }
+}
+
+/// The groups of [`super::ALL_KX_GROUPS`] over test entropy.
+#[cfg(not(feature = "getrandom"))]
+mod caller {
+  use super::super::{P256Group, P384Group, X25519Group, X25519MlKem768Group};
+  use crate::tests::RANDOM;
+  use rustls::crypto::kx::SupportedKxGroup;
+
+  pub(super) static X25519MLKEM768: &dyn SupportedKxGroup = &X25519MlKem768Group::new(&RANDOM);
+  pub(super) static X25519: &dyn SupportedKxGroup = &X25519Group::new(&RANDOM);
+  pub(super) static SECP256R1: &dyn SupportedKxGroup = &P256Group::new(&RANDOM);
+  pub(super) static SECP384R1: &dyn SupportedKxGroup = &P384Group::new(&RANDOM);
+  pub(super) static ALL_KX_GROUPS: &[&dyn SupportedKxGroup] = &[X25519MLKEM768, X25519, SECP256R1, SECP384R1];
 }

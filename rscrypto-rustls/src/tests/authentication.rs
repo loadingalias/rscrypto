@@ -34,7 +34,7 @@ fn selected_entropy_controls_key_loading_and_signing_without_fallback() {
         output[..length].fill(0x42);
         Err(GetRandomFailed)
       } else {
-        crate::random::SECURE_RANDOM.fill(output)
+        crate::tests::RANDOM.fill(output)
       }
     }
   }
@@ -278,7 +278,7 @@ fn loaded_signing_keys_match_spki_and_independent_verifiers() {
     ),
   ] {
     let (_, cert, private) = tls::credentials(kind);
-    let key = sign::KEY_PROVIDER
+    let key = crate::tests::key_provider()
       .load_private_key(PrivatePkcs8KeyDer::from(private.to_vec()).into())
       .expect("valid fixture key");
     assert_eq!(key.public_key().expect("SPKI").as_ref(), spki);
@@ -366,7 +366,7 @@ fn alternate_private_key_encodings_and_invalid_containers() {
       fixture!("rsa3072-spki.der"),
     ),
   ] {
-    let key = sign::KEY_PROVIDER
+    let key = crate::tests::key_provider()
       .load_private_key(private)
       .expect("alternate encoding");
     assert_eq!(key.public_key().expect("SPKI").as_ref(), expected);
@@ -376,7 +376,7 @@ fn alternate_private_key_encodings_and_invalid_containers() {
     let mut trailing = private.to_vec();
     trailing.push(0);
     for malformed in [&private[..private.len().strict_sub(1)], &trailing, &[], &[0; 16_385]] {
-      let error = sign::KEY_PROVIDER
+      let error = crate::tests::key_provider()
         .load_private_key(PrivatePkcs8KeyDer::from(malformed.to_vec()).into())
         .expect_err("reject malformed key");
       assert!(matches!(error, Error::General(message) if message == "invalid or unsupported TLS private key"));
@@ -400,7 +400,8 @@ fn deployed_rsa2048_verifies_but_new_signing_keys_require_rsa3072() {
     )
     .expect("deployed RSA-2048 signature");
   assert!(matches!(
-    sign::KEY_PROVIDER.load_private_key(PrivatePkcs8KeyDer::from(fixture!("rsa2048-key.der").to_vec()).into()),
+    crate::tests::key_provider()
+      .load_private_key(PrivatePkcs8KeyDer::from(fixture!("rsa2048-key.der").to_vec()).into()),
     Err(Error::General(_))
   ));
 }
@@ -412,10 +413,7 @@ fn authenticated_handshakes_use_each_credential_in_both_roles() {
       (|| rustls_ring::DEFAULT_TLS13_PROVIDER),
       (|| rustls_aws_lc_rs::DEFAULT_TLS13_PROVIDER),
     ] {
-      for (client, server) in [
-        (crate::default_provider(), independent()),
-        (independent(), crate::default_provider()),
-      ] {
+      for (client, server) in [(tls::provider(), independent()), (independent(), tls::provider())] {
         let (client, server) = tls::configs(client, server, kind, false);
         let (mut client, mut server) = tls::connections_from_configs(Arc::new(client), Arc::new(server));
         tls::drive(&mut client, &mut server).expect("authenticated handshake");
@@ -426,6 +424,7 @@ fn authenticated_handshakes_use_each_credential_in_both_roles() {
   }
 }
 
+#[cfg(feature = "getrandom")]
 #[test]
 fn required_pq_refuses_classical_peers_in_both_roles() {
   for (client, server) in [

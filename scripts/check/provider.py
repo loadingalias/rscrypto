@@ -25,6 +25,9 @@ def runtime_matrix():
         ('tls-hybrid-ed25519-chacha', ['getrandom', 'hkdf', 'chacha20poly1305', 'x25519', 'ml-kem', 'ed25519']),
         ('tls-hybrid-mldsa-aes', ['getrandom', 'hkdf', 'aes-gcm', 'x25519', 'ml-kem', 'ml-dsa']),
         ('tls-x25519-mldsa-chacha', ['getrandom', 'hkdf', 'chacha20poly1305', 'x25519', 'ml-dsa']),
+        # The top-secret client: caller entropy, so no getrandom.
+        ('tls-caller-entropy', ['sha2', 'hmac', 'hkdf', 'aes-gcm', 'chacha20poly1305', 'x25519', 'ml-kem',
+                                'p256-ecdh', 'p384-ecdh', 'ecdsa-p256', 'ecdsa-p384', 'ed25519', 'rsa']),
         ('quinn-x25519-p256', ['quinn', 'x25519', 'ecdsa-p256']),
         ('quinn-hybrid-mldsa', ['quinn', 'x25519', 'ml-kem', 'ml-dsa', 'ecdsa-p256', 'chacha20poly1305']),
     ]
@@ -83,6 +86,9 @@ def no_c(features, root=ROOT):
                  or name.startswith('aws-lc-')}
     if forbidden:
         raise ValueError('provider normal/build graph contains forbidden packages: ' + ', '.join(sorted(forbidden)))
+    # OS entropy enters only through the getrandom feature, which quinn enables.
+    if 'getrandom' in packages and not {'default', 'getrandom', 'quinn'} & set(features):
+        raise ValueError('provider normal/build graph links getrandom without the getrandom feature')
 
 
 def main():

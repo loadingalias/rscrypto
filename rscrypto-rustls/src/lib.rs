@@ -10,6 +10,14 @@ extern crate alloc;
 #[cfg(any(feature = "aes-gcm", feature = "chacha20poly1305"))]
 pub mod aead;
 pub mod cipher_suite;
+#[cfg(any(
+  feature = "ecdsa-p256",
+  feature = "ecdsa-p384",
+  feature = "ed25519",
+  feature = "rsa",
+  feature = "ml-dsa"
+))]
+mod client;
 #[cfg(any(feature = "sha2", feature = "hmac", feature = "hkdf"))]
 pub mod hash;
 pub mod kx_group;
@@ -24,12 +32,22 @@ pub mod sign;
 pub mod ticket;
 pub mod verify;
 
+#[cfg(any(
+  feature = "ecdsa-p256",
+  feature = "ecdsa-p384",
+  feature = "ed25519",
+  feature = "rsa",
+  feature = "ml-dsa"
+))]
+pub use client::ClientProvider;
+
 /// TLS 1.3 cryptography with hybrid key exchange preferred and classical fallback.
 ///
 /// The enabled Cargo features determine the suite, group, and signature lists.
 /// Pass this provider explicitly to rustls's configuration builder. This
 /// constructor requires `getrandom` and at least one signature-verification
-/// feature; rustls rejects an empty signature-verification catalog.
+/// feature; rustls rejects an empty signature-verification catalog. For a client
+/// over caller entropy, without `getrandom`, use [`ClientProvider`].
 ///
 /// ```
 /// # #[cfg(feature = "default")]

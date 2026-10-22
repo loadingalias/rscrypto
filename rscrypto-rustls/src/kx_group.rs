@@ -1,37 +1,42 @@
 //! TLS 1.3 key exchange groups backed by rscrypto.
 //!
-//! Each group requires `getrandom` and its corresponding primitive feature.
+//! Each group requires its corresponding primitive feature.
 //! `X25519MLKEM768` requires both `x25519` and `ml-kem`.
-//! The constants use OS entropy. Construct a group with `new` to use a
-//! caller-supplied [`rustls::crypto::SecureRandom`] for all its entropy requests.
+//! Construct a group with `new` to use a caller-supplied
+//! [`rustls::crypto::SecureRandom`] for all its entropy requests. The constants
+//! and [`ALL_KX_GROUPS`] use OS entropy and also require `getrandom`.
 
-use rustls::crypto::kx::SupportedKxGroup;
-
-/// All enabled groups: hybrid first, then X25519, P-256, and P-384.
-pub static ALL_KX_GROUPS: &[&dyn SupportedKxGroup] = &[
-  #[cfg(all(feature = "getrandom", feature = "x25519", feature = "ml-kem"))]
+/// All enabled groups with OS entropy: hybrid first, then X25519, P-256, and P-384.
+#[cfg(feature = "getrandom")]
+pub static ALL_KX_GROUPS: &[&dyn rustls::crypto::kx::SupportedKxGroup] = &[
+  #[cfg(all(feature = "x25519", feature = "ml-kem"))]
   X25519MLKEM768,
-  #[cfg(all(feature = "getrandom", feature = "x25519"))]
+  #[cfg(feature = "x25519")]
   X25519,
-  #[cfg(all(feature = "getrandom", feature = "p256-ecdh"))]
+  #[cfg(feature = "p256-ecdh")]
   SECP256R1,
-  #[cfg(all(feature = "getrandom", feature = "p384-ecdh"))]
+  #[cfg(feature = "p384-ecdh")]
   SECP384R1,
 ];
 
+#[cfg(feature = "p256-ecdh")]
+pub use implementation::P256Group;
+#[cfg(feature = "p384-ecdh")]
+pub use implementation::P384Group;
 #[cfg(all(feature = "getrandom", feature = "p256-ecdh"))]
-pub use implementation::{P256Group, SECP256R1};
+pub use implementation::SECP256R1;
 #[cfg(all(feature = "getrandom", feature = "p384-ecdh"))]
-pub use implementation::{P384Group, SECP384R1};
+pub use implementation::SECP384R1;
 #[cfg(all(feature = "getrandom", feature = "x25519"))]
-pub use implementation::{X25519, X25519Group};
+pub use implementation::X25519;
+#[cfg(feature = "x25519")]
+pub use implementation::X25519Group;
 #[cfg(all(feature = "getrandom", feature = "x25519", feature = "ml-kem"))]
-pub use implementation::{X25519MLKEM768, X25519MlKem768Group};
+pub use implementation::X25519MLKEM768;
+#[cfg(all(feature = "x25519", feature = "ml-kem"))]
+pub use implementation::X25519MlKem768Group;
 
-#[cfg(all(
-  feature = "getrandom",
-  any(feature = "x25519", feature = "p256-ecdh", feature = "p384-ecdh")
-))]
+#[cfg(any(feature = "x25519", feature = "p256-ecdh", feature = "p384-ecdh"))]
 mod implementation {
   use alloc::boxed::Box;
   #[cfg(feature = "p256-ecdh")]
@@ -46,7 +51,7 @@ mod implementation {
   use rustls::crypto::kx::ffdhe::FfdheGroup;
   use rustls::crypto::kx::{ActiveKeyExchange, SharedSecret, StartedKeyExchange, SupportedKxGroup};
   use rustls::error::PeerMisbehaved;
-  #[cfg(feature = "x25519")]
+  #[cfg(all(feature = "getrandom", feature = "x25519"))]
   /// X25519 key agreement for TLS 1.3.
   pub static X25519: &dyn SupportedKxGroup = &X25519Group {
     random: crate::random::SECURE_RANDOM,
@@ -132,6 +137,7 @@ mod implementation {
   macro_rules! nist_curve {
     ($group:ident, $static:ident, $exchange:ident, $secret:ident, $public:ident, $name:ident) => {
       #[doc = concat!(stringify!($name), " key agreement for TLS 1.3.")]
+      #[cfg(feature = "getrandom")]
       pub static $static: &dyn SupportedKxGroup = &$group {
         random: crate::random::SECURE_RANDOM,
       };
@@ -229,6 +235,7 @@ mod implementation {
     const HYBRID_SERVER_SHARE_LEN: usize = MlKem768::CIPHERTEXT_SIZE + 32;
 
     /// ML-KEM-768 followed by X25519, as specified by RFC 10024.
+    #[cfg(feature = "getrandom")]
     pub static X25519MLKEM768: &dyn SupportedKxGroup = &X25519MlKem768Group {
       random: crate::random::SECURE_RANDOM,
     };
@@ -402,7 +409,9 @@ mod implementation {
         ));
         assert_eq!(random.calls.load(Ordering::Relaxed), random.fail_at.strict_add(1));
       }
-      let client = X25519MLKEM768.start().expect("key exchange");
+      let client = X25519MlKem768Group::new(&crate::tests::RANDOM)
+        .start()
+        .expect("key exchange");
       for random in &FAILURES[2..] {
         let group = X25519MlKem768Group::new(random);
         let mut malformed = client.pub_key().to_vec();
@@ -420,8 +429,10 @@ mod implementation {
       }
     }
   }
+  #[cfg(all(feature = "getrandom", feature = "ml-kem", feature = "x25519"))]
+  pub use hybrid::X25519MLKEM768;
   #[cfg(all(feature = "ml-kem", feature = "x25519"))]
-  pub use hybrid::{X25519MLKEM768, X25519MlKem768Group};
+  pub use hybrid::X25519MlKem768Group;
 
   #[cfg(all(test, feature = "x25519", feature = "p256-ecdh", feature = "p384-ecdh"))]
   #[test]
@@ -446,7 +457,6 @@ mod implementation {
 
 #[cfg(all(
   test,
-  feature = "getrandom",
   feature = "x25519",
   feature = "p256-ecdh",
   feature = "p384-ecdh",

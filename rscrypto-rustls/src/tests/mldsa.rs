@@ -4,7 +4,7 @@ use rustls::crypto::SignatureScheme;
 use rustls::crypto::{Credentials, Identity};
 use rustls::pki_types::{PrivateKeyDer, SignatureVerificationAlgorithm, alg_id};
 
-use crate::{sign, verify};
+use crate::verify;
 
 const MESSAGE: &[u8] = include_bytes!("../../tests/vectors/credentials/message.txt");
 
@@ -94,7 +94,7 @@ fn mldsa_pkcs8_schemes_spki_and_signatures_match_independent_peer() {
   let peer = rustls_aws_lc_rs::DEFAULT_TLS13_PROVIDER;
   for fixture in fixtures() {
     for der in [fixture.key, fixture.seed] {
-      let key = sign::KEY_PROVIDER
+      let key = crate::tests::key_provider()
         .load_private_key(PrivateKeyDer::try_from(der.to_vec()).expect("DER"))
         .expect("ML-DSA key");
       assert_eq!(key.public_key().expect("SPKI").as_ref(), fixture.spki);
@@ -139,7 +139,7 @@ fn mldsa_pkcs8_schemes_spki_and_signatures_match_independent_peer() {
     ] {
       let key = PrivateKeyDer::Pkcs8(malformed.to_vec().into());
       assert!(
-        matches!(sign::KEY_PROVIDER.load_private_key(key), Err(Error::General(message))
+        matches!(crate::tests::key_provider().load_private_key(key), Err(Error::General(message))
         if message == "invalid or unsupported TLS private key")
       );
     }
@@ -181,7 +181,7 @@ fn mldsa_import_and_sign_execute_on_a_256_kib_worker_stack() {
     .spawn(|| {
       for fixture in fixtures() {
         for der in [fixture.key, fixture.seed] {
-          let key = sign::KEY_PROVIDER
+          let key = crate::tests::key_provider()
             .load_private_key(PrivateKeyDer::try_from(der.to_vec()).expect("DER"))
             .expect("key import");
           for _ in 0..32 {

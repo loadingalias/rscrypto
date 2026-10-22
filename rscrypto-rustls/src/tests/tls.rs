@@ -86,6 +86,28 @@ pub(crate) fn credentials(kind: Credential) -> (&'static [u8], &'static [u8], &'
   }
 }
 
+/// The provider under test: [`crate::default_provider`] with `getrandom`;
+/// otherwise [`crate::ClientProvider`] over test entropy, with keys loaded by
+/// [`super::key_provider`] so it can also serve.
+pub(crate) fn provider() -> CryptoProvider {
+  #[cfg(feature = "getrandom")]
+  {
+    crate::default_provider()
+  }
+  #[cfg(not(feature = "getrandom"))]
+  {
+    static CLIENT: crate::ClientProvider = crate::ClientProvider::new(&super::RANDOM);
+    let mut provider = CLIENT.provider();
+    provider.key_provider = super::key_provider();
+    provider
+  }
+}
+
+/// The key exchange groups of [`provider`], hybrid first.
+pub(crate) fn kx_groups() -> Vec<&'static dyn rustls::crypto::kx::SupportedKxGroup> {
+  provider().kx_groups.into_owned()
+}
+
 pub(crate) fn configs(
   client: CryptoProvider,
   server: CryptoProvider,
