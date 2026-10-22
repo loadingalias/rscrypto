@@ -639,8 +639,10 @@ fn rsa_private_signing_for_size(c: &mut Criterion, bits: usize, load_key: impl F
     checked_with(
       buffers(),
       |(computed_inverse, inverse_scratch)| {
+        // The factor doubles as a valid inverse mask; production draws a fresh one.
         diag_rsa_blinding_factor_inverse_with_scratch(
           black_box(&key),
+          black_box(&factor),
           black_box(&factor),
           black_box(computed_inverse),
           black_box(inverse_scratch),

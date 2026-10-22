@@ -746,7 +746,7 @@ fn assert_private_scratch_operations_do_not_allocate(key: &RsaPrivateKey) {
       },
     )
     .expect("scratch-backed caller-random PSS signing must succeed");
-  assert_eq!(entropy_calls, 2);
+  assert_eq!(entropy_calls, 3);
   assert_eq!(allocation_count(), 0);
 
   let label = b"private-scratch-allocation";

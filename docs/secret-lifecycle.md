@@ -106,6 +106,11 @@ the [WASM SIMD128 record](../benchmark_results/OVERVIEW.md#2026-10-06-blake3-was
 - The CRT exponentiation keeps its limbs, window tables, and engine workspaces in
   `RsaPrivateScratch`, which every private operation clears before it returns.
   This includes the radix-2^52 IFMA workspace and the paired radix-2^28 NEON workspace.
+- Each blinding attempt keeps its candidate factor, the factor's inverse, and a fresh inverse
+  mask in `RsaPrivateScratch`. The masked inverse clears the mask and the masked product on
+  every return, and the inverse on failure. A rejected candidate clears the factor and the
+  inverse before the next draw. The allocating path inverts through a temporary scratch and
+  clears it before it returns.
 - **Not claimed:** the general-purpose and vector registers that the AArch64 and x86-64
   Montgomery, IFMA, and paired NEON kernels use.
 

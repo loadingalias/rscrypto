@@ -1532,7 +1532,7 @@ fn caller_random_signatures_verify_with_independent_implementations_without_getr
       Ok::<(), ExternalEntropyError>(())
     })
     .expect("TLS RSA-PSS signing with caller entropy must succeed");
-  assert_eq!(calls, 2);
+  assert_eq!(calls, 3);
   key
     .public_key()
     .verify_pss(RsaPssProfile::Sha256, message, &signature)
@@ -1559,7 +1559,7 @@ fn caller_random_signatures_verify_with_independent_implementations_without_getr
       Ok::<(), ExternalEntropyError>(())
     })
     .expect("TLS certificate PKCS#1 v1.5 signing with caller entropy must succeed");
-  assert_eq!(calls, 1);
+  assert_eq!(calls, 2);
   key
     .public_key()
     .verify_pkcs1v15(RsaPkcs1v15Profile::Sha256, message, &signature)

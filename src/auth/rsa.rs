@@ -1197,6 +1197,7 @@ pub fn diag_rsa_precompute_public_montgomery_r2(modulus: &[u8]) -> Result<u64, R
 
 /// Derive a blinding-factor inverse for RSA side-channel diagnostics.
 ///
+/// The production masked inverse draws its inverse mask from OS randomness.
 /// This helper is intentionally available only with `diag,getrandom`; normal
 /// callers should use the signing and decryption APIs, which generate and clear
 /// blinding material internally.
@@ -1213,8 +1214,9 @@ pub fn diag_rsa_blinding_factor_inverse(
 
 /// Derive a blinding-factor inverse with reusable scratch for side-channel diagnostics.
 ///
-/// This diagnostic-only leaf exercises the production modular inverse without
-/// per-call allocation. Normal callers should use the signing and decryption
+/// This diagnostic-only leaf exercises the production masked modular inverse without
+/// per-call allocation; `mask` stands in for the inverse mask that production draws
+/// from its entropy source. Normal callers should use the signing and decryption
 /// APIs, which generate and clear blinding material internally.
 #[cfg(all(rscrypto_internal, feature = "diag"))]
 #[cfg_attr(docsrs, doc(cfg(all(rscrypto_internal, feature = "diag"))))]
@@ -1224,16 +1226,22 @@ pub fn diag_rsa_blinding_factor_inverse(
 pub fn diag_rsa_blinding_factor_inverse_with_scratch(
   key: &RsaPrivateKey,
   factor: &[u8],
+  mask: &[u8],
   out: &mut [u8],
   scratch: &mut RsaPrivateScratch,
 ) -> Result<(), RsaPrivateOpError> {
   let len = key.signature_len();
   let result = scratch.ensure_len(len).and_then(|()| {
-    if factor.len() != len || out.len() != len {
+    if factor.len() != len || mask.len() != len || out.len() != len {
       return Err(RsaPrivateOpError::InvalidLength);
     }
     scratch.blinding_factor.as_mut_slice().copy_from_slice(factor);
-    key.components.blinding_factor_inverse_into_scratch(scratch)?;
+    key
+      .components
+      .blinding_factor_inverse_into_scratch(scratch, |random: &mut [u8]| {
+        random.copy_from_slice(mask);
+        Ok::<(), core::convert::Infallible>(())
+      })?;
     out.copy_from_slice(scratch.blinding_inverse.as_slice());
     Ok(())
   });
@@ -1474,6 +1482,7 @@ pub struct RsaPrivateScratch {
   salt: SecretBigEndianBuffer,
   blinding_factor: SecretBigEndianBuffer,
   blinding_inverse: SecretBigEndianBuffer,
+  inverse_mask: SecretBigEndianBuffer,
   blinding_power: SecretBigEndianBuffer,
   blinded: SecretBigEndianBuffer,
   blinded_private_result: SecretBigEndianBuffer,
@@ -1782,12 +1791,14 @@ impl RsaPrivateKey {
 
   /// Sign a message using a typed RSA signature profile and caller-provided entropy.
   ///
-  /// PKCS#1 v1.5 profiles request one modulus-width blinding candidate per
-  /// attempt. PSS profiles first request the profile's salt length, then the
-  /// blinding candidates. Invalid or non-invertible candidates are rejected for
-  /// at most 128 attempts. Requested buffer lengths depend only on public key
-  /// and profile data. The callback count also depends on whether the supplied
-  /// candidates pass rejection sampling, subject to that public retry bound.
+  /// Each blinding attempt requests one modulus-width blinding candidate and,
+  /// for a valid candidate, one modulus-width inverse mask, redrawn while it is
+  /// zero or not below the modulus. PSS profiles first request the profile's
+  /// salt length. Invalid or non-invertible candidates are rejected for at most
+  /// 128 attempts, and invalid masks for at most 128 draws per attempt.
+  /// Requested buffer lengths depend only on public key and profile data. The
+  /// callback count also depends on whether the supplied candidates and masks
+  /// pass rejection sampling, subject to those public retry bounds.
   ///
   /// The entropy callback's error type is intentionally unconstrained and is
   /// never exposed. Any callback error becomes
@@ -3105,6 +3116,7 @@ impl RsaPrivateScratch {
       salt: SecretBigEndianBuffer::zeroed(len),
       blinding_factor: SecretBigEndianBuffer::zeroed(len),
       blinding_inverse: SecretBigEndianBuffer::zeroed(len),
+      inverse_mask: SecretBigEndianBuffer::zeroed(len),
       blinding_power: SecretBigEndianBuffer::zeroed(len),
       blinded: SecretBigEndianBuffer::zeroed(len),
       blinded_private_result: SecretBigEndianBuffer::zeroed(len),
@@ -3122,6 +3134,7 @@ impl RsaPrivateScratch {
       && self.salt.as_slice().len() == len
       && self.blinding_factor.as_slice().len() == len
       && self.blinding_inverse.as_slice().len() == len
+      && self.inverse_mask.as_slice().len() == len
       && self.blinding_power.as_slice().len() == len
       && self.blinded.as_slice().len() == len
       && self.blinded_private_result.as_slice().len() == len
@@ -3148,6 +3161,7 @@ impl RsaPrivateScratch {
     ct::zeroize(self.salt.as_mut_slice());
     ct::zeroize(self.blinding_factor.as_mut_slice());
     ct::zeroize(self.blinding_inverse.as_mut_slice());
+    ct::zeroize(self.inverse_mask.as_mut_slice());
     ct::zeroize(self.blinding_power.as_mut_slice());
     ct::zeroize(self.blinded.as_mut_slice());
     ct::zeroize(self.blinded_private_result.as_mut_slice());
@@ -3246,7 +3260,7 @@ impl RsaPrivateKeyComponents {
       }
 
       let mut inverse = vec![0u8; len];
-      match self.blinding_factor_inverse(&factor, &mut inverse) {
+      match self.blinding_factor_inverse_with(&factor, &mut inverse, &mut fill_random) {
         Ok(()) => {
           let mut check = vec![0u8; len];
           if mod_mul_representatives(&self.public.modulus, &factor, &inverse, &mut check).is_ok()
@@ -3265,9 +3279,13 @@ impl RsaPrivateKeyComponents {
           ct::zeroize(&mut factor);
           ct::zeroize(&mut inverse);
         }
-        Err(_) => {
+        Err(error) => {
           ct::zeroize(&mut factor);
           ct::zeroize(&mut inverse);
+          // A failed mask draw is an entropy failure, not a rejected candidate.
+          if error == RsaPrivateOpError::EntropyUnavailable {
+            return Err(error);
+          }
         }
       }
     }
@@ -3297,7 +3315,7 @@ impl RsaPrivateKeyComponents {
       }
 
       scratch.blinding_inverse.as_mut_slice().fill(0);
-      match self.blinding_factor_inverse_into_scratch(scratch) {
+      match self.blinding_factor_inverse_into_scratch(scratch, &mut fill_random) {
         Ok(()) => {
           mod_mul_representatives_with_scratch(
             &self.public.modulus,
@@ -3320,18 +3338,32 @@ impl RsaPrivateKeyComponents {
           ct::zeroize(scratch.blinding_inverse.as_mut_slice());
           ct::zeroize(scratch.checked.as_mut_slice());
         }
-        Err(_) => {
+        Err(error) => {
           ct::zeroize(scratch.blinding_factor.as_mut_slice());
           ct::zeroize(scratch.blinding_inverse.as_mut_slice());
           ct::zeroize(scratch.checked.as_mut_slice());
+          // A failed mask draw is an entropy failure, not a rejected candidate.
+          if error == RsaPrivateOpError::EntropyUnavailable {
+            return Err(error);
+          }
         }
       }
     }
     Err(RsaPrivateOpError::InvalidBlindingFactor)
   }
 
-  #[cfg(feature = "getrandom")]
+  #[cfg(all(feature = "getrandom", any(test, all(rscrypto_internal, feature = "diag"))))]
   fn blinding_factor_inverse(&self, factor: &[u8], out: &mut [u8]) -> Result<(), RsaPrivateOpError> {
+    self.blinding_factor_inverse_with(factor, out, getrandom::fill)
+  }
+
+  #[cfg(feature = "getrandom")]
+  fn blinding_factor_inverse_with<E>(
+    &self,
+    factor: &[u8],
+    out: &mut [u8],
+    fill_random: impl FnMut(&mut [u8]) -> Result<(), E>,
+  ) -> Result<(), RsaPrivateOpError> {
     let n_len = self.public.modulus().len();
     if factor.len() != n_len || out.len() != n_len {
       return Err(RsaPrivateOpError::InvalidLength);
@@ -3339,25 +3371,84 @@ impl RsaPrivateKeyComponents {
 
     let mut scratch = RsaPrivateScratch::new_components(self);
     scratch.blinding_factor.as_mut_slice().copy_from_slice(factor);
-    let result = self.blinding_factor_inverse_into_scratch(&mut scratch).map(|()| {
-      out.copy_from_slice(scratch.blinding_inverse.as_slice());
-    });
+    let result = self
+      .blinding_factor_inverse_into_scratch(&mut scratch, fill_random)
+      .map(|()| {
+        out.copy_from_slice(scratch.blinding_inverse.as_slice());
+      });
     scratch.clear();
     result
   }
 
-  fn blinding_factor_inverse_into_scratch(&self, scratch: &mut RsaPrivateScratch) -> Result<(), RsaPrivateOpError> {
+  /// Invert `scratch.blinding_factor` into `scratch.blinding_inverse` through a fresh
+  /// multiplicative mask drawn from `fill_random`.
+  ///
+  /// The modular inverse runs on the Montgomery product `factor · mask · R⁻¹ mod n`, which is
+  /// uniform and independent of the factor, and the Montgomery product of its result with the
+  /// mask is the factor's inverse: `(factor · mask · R⁻¹)⁻¹ · mask · R⁻¹ = factor⁻¹`. The
+  /// inverse's running time may therefore depend on its input without depending on the factor:
+  /// native DudeCT measured such an input dependence for the 62-bit inverse on AArch64
+  /// (Constant-Time 39717348652). The mask is cleared on every return.
+  fn blinding_factor_inverse_into_scratch<E>(
+    &self,
+    scratch: &mut RsaPrivateScratch,
+    mut fill_random: impl FnMut(&mut [u8]) -> Result<(), E>,
+  ) -> Result<(), RsaPrivateOpError> {
     let n_len = self.public.modulus().len();
     scratch.ensure_len(n_len)?;
-    if scratch.blinding_factor.as_slice().len() != n_len || scratch.blinding_inverse.as_slice().len() != n_len {
-      return Err(RsaPrivateOpError::InvalidLength);
+    let mut mask_valid = false;
+    for _ in 0..128 {
+      if fill_random(scratch.inverse_mask.as_mut_slice()).is_err() {
+        ct::zeroize(scratch.inverse_mask.as_mut_slice());
+        return Err(RsaPrivateOpError::EntropyUnavailable);
+      }
+      if private_valid_blinding_factor(scratch.inverse_mask.as_slice(), self.public.modulus()) {
+        mask_valid = true;
+        break;
+      }
     }
-    private_modular_inverse_odd(
+    let result = if mask_valid {
+      self.masked_inverse_steps(scratch)
+    } else {
+      Err(RsaPrivateOpError::InvalidBlindingFactor)
+    };
+    ct::zeroize(scratch.inverse_mask.as_mut_slice());
+    ct::zeroize(scratch.checked.as_mut_slice());
+    if result.is_err() {
+      ct::zeroize(scratch.blinding_inverse.as_mut_slice());
+    }
+    result
+  }
+
+  /// `blinding_inverse = (factor · mask · R⁻¹)⁻¹ · mask · R⁻¹ mod n`, with `checked` as the masked value.
+  fn masked_inverse_steps(&self, scratch: &mut RsaPrivateScratch) -> Result<(), RsaPrivateOpError> {
+    // The products read the secret factor and mask, so they run under DIT like the inverse.
+    let _dit = crate::traits::ct::DataIndependentTiming::enter();
+    mont_mul_representatives_with_scratch(
       &self.public.modulus,
       scratch.blinding_factor.as_slice(),
+      scratch.inverse_mask.as_slice(),
+      scratch.checked.as_mut_slice(),
+      &mut scratch.mul_scratch,
+    )?;
+    private_modular_inverse_odd(
+      &self.public.modulus,
+      scratch.checked.as_slice(),
       scratch.blinding_inverse.as_mut_slice(),
       &mut scratch.inverse_scratch,
-    )
+    )?;
+    mont_mul_representatives_with_scratch(
+      &self.public.modulus,
+      scratch.blinding_inverse.as_slice(),
+      scratch.inverse_mask.as_slice(),
+      scratch.checked.as_mut_slice(),
+      &mut scratch.mul_scratch,
+    )?;
+    scratch
+      .blinding_inverse
+      .as_mut_slice()
+      .copy_from_slice(scratch.checked.as_slice());
+    Ok(())
   }
 
   fn sign_pkcs1v15_with_blinding_factor(
@@ -11456,6 +11547,55 @@ fn mod_mul_representatives_with_scratch(
   Ok(())
 }
 
+/// `out = left · right · R⁻¹ mod n` for representatives below `n`, with `R = 2^(64·limbs)`: one
+/// Montgomery multiplication, without conversion into or out of the Montgomery domain.
+fn mont_mul_representatives_with_scratch(
+  modulus: &RsaPublicModulus,
+  left: &[u8],
+  right: &[u8],
+  out: &mut [u8],
+  scratch: &mut RsaPrivateMulScratch,
+) -> Result<(), RsaPrivateOpError> {
+  let bytes = modulus.bytes.len();
+  let limbs = modulus.limbs.len();
+  if left.len() != bytes || right.len() != bytes || out.len() != bytes {
+    return Err(RsaPrivateOpError::InvalidLength);
+  }
+  scratch.ensure_limb_count(limbs)?;
+
+  let t_len = limbs.strict_mul(2).strict_add(2);
+  let t = scratch
+    .t
+    .as_mut_slice()
+    .get_mut(..t_len)
+    .ok_or(RsaPrivateOpError::InvalidScratch)?;
+  let left_limbs = scratch
+    .left_limbs
+    .as_mut_slice()
+    .get_mut(..limbs)
+    .ok_or(RsaPrivateOpError::InvalidScratch)?;
+  let right_limbs = scratch
+    .right_limbs
+    .as_mut_slice()
+    .get_mut(..limbs)
+    .ok_or(RsaPrivateOpError::InvalidScratch)?;
+  let product = scratch
+    .product
+    .as_mut_slice()
+    .get_mut(..limbs)
+    .ok_or(RsaPrivateOpError::InvalidScratch)?;
+
+  limbs_from_be_into(left, left_limbs);
+  limbs_from_be_into(right, right_limbs);
+  if !ct_limbs_lt(left_limbs, &modulus.limbs) || !ct_limbs_lt(right_limbs, &modulus.limbs) {
+    return Err(RsaPrivateOpError::RepresentativeOutOfRange);
+  }
+
+  private_mont_mul(product, left_limbs, right_limbs, modulus, t);
+  limbs_to_be(product, out);
+  Ok(())
+}
+
 fn private_mont_mul(out: &mut [u64], a: &[u64], b: &[u64], modulus: &RsaPublicModulus, t: &mut [u64]) {
   if use_cios_montgomery(modulus) {
     mont_mul_cios(out, a, b, modulus, t);
@@ -13286,6 +13426,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
       salt: SecretBigEndianBuffer::zeroed(wrong_len),
       blinding_factor: SecretBigEndianBuffer::zeroed(wrong_len),
       blinding_inverse: SecretBigEndianBuffer::zeroed(wrong_len),
+      inverse_mask: SecretBigEndianBuffer::zeroed(wrong_len),
       blinding_power: SecretBigEndianBuffer::zeroed(wrong_len),
       blinded: SecretBigEndianBuffer::zeroed(wrong_len),
       blinded_private_result: SecretBigEndianBuffer::zeroed(wrong_len),
@@ -13808,7 +13949,12 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
           1 => out.fill(0),
           2 => out.copy_from_slice(&modulus_candidate),
           3 => out.copy_from_slice(&noninvertible_candidate),
+          // The inverse mask for the noninvertible candidate.
           4 => out.copy_from_slice(&factor),
+          5 => out.copy_from_slice(&factor),
+          // An inverse mask equal to the modulus is redrawn.
+          6 => out.copy_from_slice(&modulus_candidate),
+          7 => out.copy_from_slice(&factor),
           _ => return Err(()),
         }
         calls = calls.strict_add(1);
@@ -13817,7 +13963,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
       .expect("a deterministic stream ending in an invertible factor must sign");
 
     modulus_candidate.fill(0);
-    assert_eq!(calls, 5);
+    assert_eq!(calls, 8);
     key
       .public_key()
       .verify_pss(RsaPssProfile::Sha256, message, &signature)
@@ -13848,7 +13994,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
           Ok::<(), ()>(())
         })
         .expect("every supported PSS profile must sign with caller entropy");
-      assert_eq!(calls, 2);
+      assert_eq!(calls, 3);
       key
         .public_key()
         .verify_pss(profile, message, &signature)
@@ -13877,7 +14023,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
           },
         )
         .expect("TLS RSAE-PSS and PSS-PSS schemes must sign with caller entropy");
-      assert_eq!(calls, 2);
+      assert_eq!(calls, 3);
       key
         .public_key()
         .verify_signature(profile, message, &signature)
@@ -13903,7 +14049,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
           },
         )
         .expect("TLS certificate PKCS#1 v1.5 schemes must sign with caller entropy");
-      assert_eq!(calls, 1);
+      assert_eq!(calls, 2);
       key
         .public_key()
         .verify_signature(profile, message, &signature)
@@ -13925,7 +14071,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
         Ok::<(), ()>(())
       })
       .expect("the general profile boundary must preserve an explicit PSS salt length");
-    assert_eq!(calls, 2);
+    assert_eq!(calls, 3);
     key
       .public_key()
       .verify_signature(explicit_salt, message, &signature)
@@ -13980,6 +14126,44 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
     assert_private_scratch_is_clear(&scratch);
 
     let (factor, _) = factor_two_and_inverse(key.public_key().modulus());
+    signature.fill(0xa5);
+    let mut calls = 0usize;
+    assert_eq!(
+      key.sign_signature_with_random_fill_and_scratch(profile, message, &mut signature, &mut scratch, |out| {
+        calls = calls.strict_add(1);
+        if calls == 1 {
+          out.copy_from_slice(&factor);
+          Ok(())
+        } else {
+          out.fill(0xa5);
+          Err(CallbackError)
+        }
+      }),
+      Err(RsaPrivateOpError::EntropyUnavailable)
+    );
+    assert_eq!(calls, 2, "a failed inverse-mask draw must end signing");
+    assert!(is_zero_unsigned_be(&signature));
+    assert_private_scratch_is_clear(&scratch);
+
+    // Each attempt draws a valid candidate, then 128 zero inverse masks.
+    signature.fill(0xa5);
+    let mut calls = 0usize;
+    assert_eq!(
+      key.sign_signature_with_random_fill_and_scratch(profile, message, &mut signature, &mut scratch, |out| {
+        if calls.is_multiple_of(129) {
+          out.copy_from_slice(&factor);
+        } else {
+          out.fill(0);
+        }
+        calls = calls.strict_add(1);
+        Ok::<(), CallbackError>(())
+      }),
+      Err(RsaPrivateOpError::InvalidBlindingFactor)
+    );
+    assert_eq!(calls, 128 * 129);
+    assert!(is_zero_unsigned_be(&signature));
+    assert_private_scratch_is_clear(&scratch);
+
     key
       .sign_signature_with_random_fill_and_scratch(profile, message, &mut signature, &mut scratch, |out| {
         out.copy_from_slice(&factor);
@@ -15769,6 +15953,69 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
       key.components.blinding_factor_inverse(&factor, &mut inverse),
       Err(RsaPrivateOpError::InvalidBlindingFactor)
     );
+  }
+
+  #[test]
+  fn masked_blinding_inverse_matches_the_unmasked_inverse_and_clears_the_mask() {
+    let key = prevalidated_test_private_key();
+    let len = key.signature_len();
+    let modulus = key.public_key().modulus().to_vec();
+    let mut factor = vec![0u8; len];
+    factor[len.strict_sub(8)..].copy_from_slice(&0x9e37_79b9_7f4a_7c15u64.to_be_bytes());
+    let mut expected = vec![0u8; len];
+    let mut inverse_scratch = RsaPrivateInverseScratch::new(key.components.public.modulus.bits);
+    private_modular_inverse_odd(
+      &key.components.public.modulus,
+      &factor,
+      &mut expected,
+      &mut inverse_scratch,
+    )
+    .expect("an odd 64-bit factor is invertible modulo the fixture modulus");
+
+    let mut one = vec![0u8; len];
+    one[len.strict_sub(1)] = 1;
+    // The modulus is odd, so n - 1 only changes the last byte.
+    let mut minus_one = modulus.clone();
+    minus_one[len.strict_sub(1)] = minus_one[len.strict_sub(1)].strict_sub(1);
+    let mut random = (0..len)
+      .map(|index| {
+        u8::try_from(index & 0xff)
+          .expect("masked to one byte")
+          .wrapping_mul(0x5b)
+          ^ 0xa7
+      })
+      .collect::<Vec<_>>();
+    random[0] &= 0x7f;
+    for mask in [&one, &minus_one, &random] {
+      let mut scratch = key.private_scratch();
+      scratch.blinding_factor.as_mut_slice().copy_from_slice(&factor);
+      // The first draw equals the modulus, so it is rejected and redrawn.
+      let mut draws = [modulus.as_slice(), mask.as_slice()].into_iter();
+      key
+        .components
+        .blinding_factor_inverse_into_scratch(&mut scratch, |out: &mut [u8]| {
+          out.copy_from_slice(draws.next().expect("two draws"));
+          Ok::<(), ()>(())
+        })
+        .expect("masked inverse");
+      assert_eq!(scratch.blinding_inverse.as_slice(), expected.as_slice());
+      assert!(scratch.inverse_mask.as_slice().iter().all(|&byte| byte == 0));
+      assert!(scratch.checked.as_slice().iter().all(|&byte| byte == 0));
+    }
+
+    let mut scratch = key.private_scratch();
+    scratch.blinding_factor.as_mut_slice().copy_from_slice(&factor);
+    assert_eq!(
+      key
+        .components
+        .blinding_factor_inverse_into_scratch(&mut scratch, |out: &mut [u8]| {
+          out.fill(0x42);
+          Err(())
+        }),
+      Err(RsaPrivateOpError::EntropyUnavailable)
+    );
+    assert!(scratch.inverse_mask.as_slice().iter().all(|&byte| byte == 0));
+    assert!(scratch.blinding_inverse.as_slice().iter().all(|&byte| byte == 0));
   }
 
   #[test]

@@ -2804,14 +2804,19 @@ fn rsa_blinding_inverse_fixed_vs_random_factor(runner: &mut CtRunner, rng: &mut 
       factor[start..].copy_from_slice(&random);
       *factor.last_mut().expect("RSA blinding factors must be nonempty") |= 1;
     }
-    inputs.push((class, factor));
+    // Both classes draw a fresh inverse mask below the modulus, as production does.
+    let mut mask = vec![0u8; len];
+    rng.fill(mask.as_mut_slice());
+    mask[0] &= 0x7f;
+    *mask.last_mut().expect("RSA inverse masks must be nonempty") |= 1;
+    inputs.push((class, factor, mask));
   }
 
-  for (class, factor) in inputs {
+  for (class, factor, mask) in inputs {
     runner.run_one(class, || {
       let mut state = state.borrow_mut();
       let (scratch, out) = &mut *state;
-      let result = diag_rsa_blinding_factor_inverse_with_scratch(&key, &factor, out, scratch);
+      let result = diag_rsa_blinding_factor_inverse_with_scratch(&key, &factor, &mask, out, scratch);
       (result.is_ok(), core::hint::black_box(out.as_slice())[0])
     });
   }
@@ -2831,10 +2836,13 @@ fn rsa_blinding_inverse_full_width_fixed_vs_random_factor(runner: &mut CtRunner,
       factors.push(factor);
     }
   }
+  // The fixed class copies its factor from its own cold buffer per sample, as the random class
+  // does; a single hot source line measurably favored it on Graviton4.
+  let fixed_copies = (0..samples()).map(|_| factors[0].clone()).collect::<Vec<_>>();
   let mut measured_factor = vec![0u8; len];
   for (index, class) in balanced_classes(rng, samples()).into_iter().enumerate() {
     let factor = if matches!(class, Class::Left) {
-      &factors[0]
+      &fixed_copies[index]
     } else {
       &factors[index]
     };

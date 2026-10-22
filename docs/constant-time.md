@@ -439,6 +439,51 @@ native DudeCT.
 The CT artifact gate reports these multiplies for review instead of rejecting them.
 Native DudeCT runs on each target qualify the claim; the instruction choice alone does not.
 
+### RSA blinding inverse
+
+Each blinding attempt needs the inverse of a fresh blinding factor `r` modulo `n`.
+The inverse never reads `r` itself:
+
+1. Draw a fresh mask `s` from the same entropy source. Redraw it while it is zero or not below `n`.
+2. Compute the Montgomery product `m = r·s·R⁻¹ mod n`, where `R = 2^(64·limbs)`.
+3. Invert `m` with the target's fixed-schedule inverse.
+4. Return the Montgomery product of `m⁻¹` and `s`, which is `r⁻¹`.
+
+For a uniform `s`, `m` is uniform and independent of `r`.
+The inverse's running time can therefore depend on its input without depending on `r`.
+Both products use the Montgomery multiplication of the private operations.
+Each attempt costs one more modulus-width entropy request and two Montgomery multiplications.
+
+Before the mask, Constant-Time 39717348652 at `9c8dfffd` failed
+`rsa_blinding_inverse_fixed_vs_random_factor` on AArch64 (t = −21.4).
+The 62-bit Bernstein-Yang inverse separated a fixed factor from random factors
+on Graviton4 and the M1, with DIT set. x86-64 passed.
+Experiments tied the difference to the update of `f` and `g` after they converge,
+but no single instruction explained all of it.
+The 31-bit inverse passed on Graviton4, but it cost about 75 µs per RSA-2048 signature on the M1.
+
+On Graviton4 (c8g.xlarge), interleaved 80,000-sample DudeCT runs at `2e46e609`,
+with and without the mask, gave these largest |t| values (threshold 8):
+
+| Case | Without the mask | With the mask |
+| --- | --- | --- |
+| Fixed against random 64-bit factor | 16.5, 16.9, 19.3 (fail); 3.1 | 1.8, 1.8, 2.5 |
+| Fixed against random full-width factor | 20.5, 20.7, 21.0 (fail) | 2.8 to 5.3 (6 runs) |
+
+Every masked full-width maximum had the sign of the original difference.
+In that case, the fixed class copied its factor from one hot source buffer before each sample,
+and the random class from a cold one.
+With a cold per-sample copy for the fixed class too, the maxima fell to 1.4 to 2.7 (4 runs),
+still with that sign. The harness now prepares both classes that way.
+A residual difference at that level is not excluded.
+
+On a loaded M1, the mask adds about 2 µs to the inverse at RSA-2048, 4 µs at RSA-3072,
+and 6 µs at RSA-4096. RSA-PSS signing time did not change beyond run-to-run noise of about 1%.
+
+The mask protects the 31-bit inverse on RISC-V and IBM Z in the same way,
+including the `MLGR` products on IBM Z.
+Native DudeCT in the Constant-Time campaign gives the timing evidence for those targets.
+
 ### ML-DSA
 
 ML-DSA has a separate required boundary, `signature.mldsa.secret_kernels`.

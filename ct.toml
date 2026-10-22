@@ -1415,7 +1415,7 @@ threshold_abs_max_t = 8.0
 smoke_samples = 2000
 timeout_seconds = 3600
 timeout_reason = "Retain all 20,000 fixed-schedule inverse samples on physical RISC-V; the default five-minute limit does not provide the adjacent RSA gates' execution headroom."
-notes = "Required allocation-free leaf evidence for the fixed-schedule batched modular inverse. Both classes use nonzero 64-bit factors, which cannot share either 1024-bit prime factor of the fixed RSA-2048 modulus. RV32 artifact heuristics must also reject scalar multiply in the retained evidence closure; riscv64 (normalized operands) and s390x multiply these words in hardware and report it for review (owner decision, 2026-10-21)."
+notes = "Required allocation-free leaf evidence for the masked blinding inverse: each sample multiplies the factor by a fresh valid inverse mask, inverts the product with the fixed-schedule batched modular inverse, and multiplies the result by the mask, as production does. Both classes use nonzero 64-bit factors, which cannot share either 1024-bit prime factor of the fixed RSA-2048 modulus. RV32 artifact heuristics must also reject scalar multiply in the retained evidence closure; riscv64 (normalized operands) and s390x multiply these words in hardware and report it for review (owner decision, 2026-10-21)."
 
 [[dudect_case]]
 name = "rsa_blinding_inverse_full_width_fixed_vs_random_factor"
@@ -1428,7 +1428,7 @@ smoke_samples = 128
 threshold_abs_max_t = 8.0
 timeout_seconds = 3600
 timeout_reason = "Full-width factor validation and measurement preserve the standalone RSA campaign."
-notes = "Retains full-width factor coverage separately from the allocation-free 64-bit-factor leaf. Factor validation happens before measurement."
+notes = "Retains full-width factor coverage separately from the allocation-free 64-bit-factor leaf. Factor validation happens before measurement. Each measured call draws its inverse mask from OS entropy, as production does."
 
 [[dudect_case]]
 name = "rsa_oaep_decrypt_fixed_vs_random_plaintext"
@@ -5238,6 +5238,7 @@ secrets = [
   "padding_state",
   "implicit_rejection_key",
   "blinding_inverse",
+  "inverse_mask",
 ]
 public = [
   "message",
@@ -5256,7 +5257,7 @@ may_leak = [
 ]
 must_not_leak_ref = "common_secret_data"
 required = ["tier_a"]
-notes = "Top-level OS randomness or caller entropy callbacks and public profile parsing may fail publicly. Candidate rejection uses only fresh entropy and the public modulus and is bounded before the shared private-operation leaf. Blinding inversion runs a public divstep count from Bernstein and Yang's bound in batches of 62 masked divsteps with fixed-width limb updates; RISC-V and s390x keep the public-width batched extended-binary-GCD schedule, whose secret-fed co-reduction products are multiplication-free and remain subject to the native timing gate. Validated CRT exponents and the CRT coefficient are retained at the corresponding factor width before steady-state private arithmetic; the stored private exponent is retained at the public modulus width. Steady-state private math and same-width padding/failure behavior are CT-critical. RSAES-PKCS1-v1_5 decryption uses draft-irtf-cfrg-rsa-guidance-10 implicit rejection: a padding failure returns a synthetic message derived with HMAC-SHA256 from the private exponent and the ciphertext, and the derivation, length selection, and output selection run the same work for every reduced ciphertext."
+notes = "Top-level OS randomness or caller entropy callbacks and public profile parsing may fail publicly. Candidate rejection uses only fresh entropy and the public modulus and is bounded before the shared private-operation leaf. Blinding inversion multiplies the factor by a fresh inverse mask, inverts the product, and multiplies the result by the mask, so the inverse never reads the factor itself. The inverse runs a public divstep count from Bernstein and Yang's bound in batches of 62 masked divsteps with fixed-width limb updates; RISC-V and s390x keep the public-width batched extended-binary-GCD schedule, whose secret-fed co-reduction products are multiplication-free and remain subject to the native timing gate. Validated CRT exponents and the CRT coefficient are retained at the corresponding factor width before steady-state private arithmetic; the stored private exponent is retained at the public modulus width. Steady-state private math and same-width padding/failure behavior are CT-critical. RSAES-PKCS1-v1_5 decryption uses draft-irtf-cfrg-rsa-guidance-10 implicit rejection: a padding failure returns a synthetic message derived with HMAC-SHA256 from the private exponent and the ciphertext, and the derivation, length selection, and output selection run the same work for every reduced ciphertext."
 [primitive.harness]
 status = "covered"
 symbols = [
