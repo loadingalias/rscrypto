@@ -7,7 +7,7 @@ use core::error::Error;
 use core::net::SocketAddr;
 use core::time::Duration;
 use std::io::{self, Read, Write};
-use std::net::{TcpListener, TcpStream};
+use std::net::{Shutdown, TcpListener, TcpStream};
 use std::path::Path;
 use std::time::Instant;
 
@@ -81,6 +81,11 @@ fn exchange(
   io::stdout().flush()?;
   stream.conn.send_close_notify(&mut stream.output)?;
   stream.flush()?;
+  // A peer record can still arrive after the last read, such as the reply to
+  // our KeyUpdate. Closing a socket with unread data sends a TCP reset, which
+  // can destroy the close_notify in flight, so drain until the peer closes.
+  stream.sock.shutdown(Shutdown::Write)?;
+  io::copy(&mut stream.sock, &mut io::sink())?;
   Ok(())
 }
 
