@@ -1251,7 +1251,7 @@ impl EcdsaP256PublicKey {
 
   /// Parse an uncompressed SEC1 P-256 public key.
   pub fn from_sec1_bytes(bytes: &[u8]) -> Result<Self, EcdsaError> {
-    parse_public_key(bytes, &P256).map(Self::from_affine)
+    parse_public_key::<p256_verify::Fe, 4>(bytes, &P256).map(Self::from_affine)
   }
 
   /// Parse a P-256 SubjectPublicKeyInfo public key.
@@ -1329,7 +1329,7 @@ impl EcdsaP256PublicKey {
   }
 
   fn verify_sec1_digest(sec1: &[u8], digest: &[u8], signature: &EcdsaP256Signature) -> Result<(), VerificationError> {
-    let point = parse_public_key(sec1, &P256).map_err(|_| VerificationError::new())?;
+    let point = parse_public_key::<p256_verify::Fe, 4>(sec1, &P256).map_err(|_| VerificationError::new())?;
     verify_digest(&P256, signature.r, signature.s, digest, |u1, u2| {
       verify::scalar_mul_two_single::<p256_verify::Fe, 4>(&P256, u1, u2, point)
     })
@@ -1385,7 +1385,7 @@ impl EcdsaP384PublicKey {
 
   /// Parse an uncompressed SEC1 P-384 public key.
   pub fn from_sec1_bytes(bytes: &[u8]) -> Result<Self, EcdsaError> {
-    parse_public_key(bytes, &P384).map(Self::from_affine)
+    parse_public_key::<p384_verify::Fe, 6>(bytes, &P384).map(Self::from_affine)
   }
 
   /// Parse a P-384 SubjectPublicKeyInfo public key.
@@ -1463,7 +1463,7 @@ impl EcdsaP384PublicKey {
   }
 
   fn verify_sec1_digest(sec1: &[u8], digest: &[u8], signature: &EcdsaP384Signature) -> Result<(), VerificationError> {
-    let point = parse_public_key(sec1, &P384).map_err(|_| VerificationError::new())?;
+    let point = parse_public_key::<p384_verify::Fe, 6>(sec1, &P384).map_err(|_| VerificationError::new())?;
     verify_digest(&P384, signature.r, signature.s, digest, |u1, u2| {
       verify::scalar_mul_two_single::<p384_verify::Fe, 6>(&P384, u1, u2, point)
     })
@@ -4483,7 +4483,14 @@ fn normalize_jacobian_table_ct<const L: usize, const N: usize>(
   out
 }
 
-fn parse_public_key<const L: usize>(bytes: &[u8], curve: &Curve<L>) -> Result<Affine<L>, EcdsaError> {
+/// Parse an uncompressed SEC1 point and check `y² = x³ - 3x + b`.
+///
+/// The key is public, so the conversion and the curve check run in the verification field `F`,
+/// which shares the generic Montgomery representation.
+fn parse_public_key<F: verify::VerifyField<L>, const L: usize>(
+  bytes: &[u8],
+  curve: &Curve<L>,
+) -> Result<Affine<L>, EcdsaError> {
   let field_len = L.strict_mul(8);
   if bytes.len() != field_len.strict_mul(2).strict_add(1) || bytes.first().copied() != Some(0x04) {
     return Err(EcdsaError::InvalidPublicKey);
@@ -4497,23 +4504,18 @@ fn parse_public_key<const L: usize>(bytes: &[u8], curve: &Curve<L>) -> Result<Af
     return Err(EcdsaError::InvalidPublicKey);
   }
 
-  let point = Affine {
-    x: FieldElement::from_uint(x, curve.field_modulus),
-    y: FieldElement::from_uint(y, curve.field_modulus),
-  };
-  if !is_on_curve(point, curve) {
+  // Multiplying canonical values by `R² mod p` enters the Montgomery domain.
+  let r2 = F::from_limbs(curve.field_modulus.r2.0);
+  let x = F::from_limbs(x.0).mul(r2);
+  let y = F::from_limbs(y.0).mul(r2);
+  let b = F::from_limbs(curve.b.0).mul(r2);
+  if y.square() != x.square().mul(x).sub(x.triple()).add(b) {
     return Err(EcdsaError::InvalidPublicKey);
   }
-  Ok(point)
-}
-
-fn is_on_curve<const L: usize>(point: Affine<L>, curve: &Curve<L>) -> bool {
-  let lhs = point.y.square();
-  let x2 = point.x.square();
-  let x3 = x2.mul(point.x);
-  let three_x = point.x.triple();
-  let b = FieldElement::from_uint(curve.b, curve.field_modulus);
-  lhs == x3.sub(three_x).add(b)
+  Ok(Affine {
+    x: x.to_element(),
+    y: y.to_element(),
+  })
 }
 
 fn encode_sec1<const L: usize, const N: usize>(point: &Affine<L>) -> [u8; N] {

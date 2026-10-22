@@ -144,7 +144,7 @@ impl Fe {
       )
     )))]
     {
-      self.mul_portable(self)
+      self.square_portable()
     }
   }
 
@@ -195,8 +195,8 @@ impl Fe {
     Self(difference)
   }
 
-  /// Montgomery multiplication `a·b·2^-384 mod p` by word-serial CIOS. `-p⁻¹ mod 2^64` is
-  /// `2^32 + 1`, and the running value stays below 2p, so one final subtraction suffices.
+  /// Montgomery multiplication `a·b·2^-384 mod p`: the full product by operand scanning, then
+  /// [`Self::reduce`].
   #[cfg(any(
     test,
     not(any(
@@ -209,30 +209,124 @@ impl Fe {
       )
     ))
   ))]
+  #[inline(always)]
   fn mul_portable(self, rhs: Self) -> Self {
-    const N0: u64 = 0x0000_0001_0000_0001;
-    let mut t = [0u64; 8];
-    for &b in &rhs.0 {
+    let mut product = [0u64; 12];
+    for (row, &b) in rhs.0.iter().enumerate() {
       let mut carry = 0u64;
-      for (limb, &a) in t.iter_mut().zip(&self.0) {
+      for (limb, &a) in product[row..].iter_mut().zip(&self.0) {
         (*limb, carry) = mac(*limb, a, b, carry);
       }
-      let (sum, top) = adc(t[6], carry, 0);
-      t[6] = sum;
-      t[7] = top;
-      let m = t[0].wrapping_mul(N0);
-      let mut carry = 0u64;
-      for (limb, &modulus) in t.iter_mut().zip(&P) {
-        (*limb, carry) = mac(*limb, m, modulus, carry);
-      }
-      let (sum, top) = adc(t[6], carry, 0);
-      t[6] = sum;
-      t[7] = t[7].wrapping_add(top);
-      // The low limb is now zero: divide by 2^64.
-      t.copy_within(1.., 0);
-      t[7] = 0;
+      // Earlier rows end below limb `row + 6`.
+      product[row.strict_add(6)] = carry;
     }
-    Self::reduce_once([t[0], t[1], t[2], t[3], t[4], t[5]], t[6])
+    Self::reduce(product)
+  }
+
+  /// Montgomery squaring `a²·2^-384 mod p`: the 15 cross products once, doubled, plus the six
+  /// diagonal squares, then [`Self::reduce`].
+  #[cfg(any(
+    test,
+    not(any(
+      all(target_arch = "aarch64", not(feature = "portable-only"), not(miri)),
+      all(
+        target_arch = "x86_64",
+        target_os = "linux",
+        not(feature = "portable-only"),
+        not(miri)
+      )
+    ))
+  ))]
+  #[inline(always)]
+  fn square_portable(self) -> Self {
+    let a = self.0;
+    let mut product = [0u64; 12];
+    // Row i adds a_i·a_j for j > i at limbs 2i + 1 through i + 5, and its carry starts limb i + 6.
+    for (row, &ai) in a.iter().enumerate().take(5) {
+      let next = row.strict_add(1);
+      let mut carry = 0u64;
+      for (limb, &aj) in product[row.strict_add(next)..].iter_mut().zip(&a[next..]) {
+        (*limb, carry) = mac(*limb, ai, aj, carry);
+      }
+      product[row.strict_add(6)] = carry;
+    }
+
+    // The cross sum is below 2^767, so doubling it fits twelve limbs.
+    let mut high_bit = 0u64;
+    for limb in &mut product {
+      let next = *limb >> 63;
+      *limb = (*limb << 1) | high_bit;
+      high_bit = next;
+    }
+
+    let mut carry = 0u64;
+    for ([low, high], &ai) in product.as_chunks_mut::<2>().0.iter_mut().zip(&a) {
+      let (square_low, square_high) = mac(0, ai, ai, 0);
+      (*low, carry) = adc(*low, square_low, carry);
+      (*high, carry) = adc(*high, square_high, carry);
+    }
+    Self::reduce(product)
+  }
+
+  /// Montgomery-reduce a product `T < p²` held in twelve limbs.
+  ///
+  /// With `T = T_hi·2^384 + T_lo`, the result is `T_hi + (T_lo + M·p)/2^384`, where six steps
+  /// choose `M` to clear `T_lo` one limb at a time. The reduced low half is at most p and `T_hi`
+  /// is below p, so one final subtraction suffices.
+  ///
+  /// Write `p = 2^384 - c` with `c = 2^128 + 2^96 - 2^32 + 1`; then `-p⁻¹ mod 2^64 = 2^32 + 1`.
+  /// For a low limb `w`, the factor is `m = w + (w << 32)`, and the low limb of `m·c` is `w`.
+  /// With `x = m << 32` and `y = m >> 32`, the rest of `m·c` is
+  /// `(x - y - [x > m]) + 2^64·(m + y)`, so each step subtracts that from the next limbs and
+  /// adds `m` at `2^384`, without a multiplication.
+  #[cfg(any(
+    test,
+    not(any(
+      all(target_arch = "aarch64", not(feature = "portable-only"), not(miri)),
+      all(
+        target_arch = "x86_64",
+        target_os = "linux",
+        not(feature = "portable-only"),
+        not(miri)
+      )
+    ))
+  ))]
+  #[inline(always)]
+  fn reduce(product: [u64; 12]) -> Self {
+    let [t0, t1, t2, t3, t4, t5, h0, h1, h2, h3, h4, h5] = product;
+    // A step maps a running value `r < 2^385` to `(r + m·p)/2^64 < 2^321 + p < 2^385`, so it
+    // fits six limbs and a top bit.
+    let mut r = [t0, t1, t2, t3, t4, t5];
+    let mut top = 0u64;
+    for _ in 0..6 {
+      let [w, r1, r2, r3, r4, r5] = r;
+      let m = w.wrapping_add(w << 32);
+      let x = m << 32;
+      let y = m >> 32;
+      let (d1, borrow) = sbb(x, y, u64::from(x > m));
+      // A borrow needs `x = 0`, which leaves `y` positive.
+      let (d2, d3) = adc(m, y.strict_sub(borrow), 0);
+
+      // `(r - w)/2^64 + m·2^320 - (d1 + d2·2^64 + d3·2^128)`.
+      let (n5, carry) = adc(top, m, 0);
+      let (n0, borrow) = sbb(r1, d1, 0);
+      let (n1, borrow) = sbb(r2, d2, borrow);
+      let (n2, borrow) = sbb(r3, d3, borrow);
+      let (n3, borrow) = sbb(r4, 0, borrow);
+      let (n4, borrow) = sbb(r5, 0, borrow);
+      let (n5, borrow) = sbb(n5, 0, borrow);
+      // `r + m·p` is not negative, so the final borrow cannot exceed the carry.
+      top = carry.strict_sub(borrow);
+      r = [n0, n1, n2, n3, n4, n5];
+    }
+
+    // The reduced low half is at most p and `T_hi` is below p, so the sum is below 2p.
+    let mut sum = [0u64; 6];
+    let mut carry = 0u64;
+    for ((out, &low), &high) in sum.iter_mut().zip(&r).zip(&[h0, h1, h2, h3, h4, h5]) {
+      (*out, carry) = adc(low, high, carry);
+    }
+    Self::reduce_once(sum, carry.strict_add(top))
   }
 }
 
@@ -917,6 +1011,8 @@ mod tests {
     let edges = [
       [0u64; 6],
       [1, 0, 0, 0, 0, 0],
+      // Times the previous edge, its low limb is 2^32, which takes the reduction's borrow.
+      [1 << 32, 0, 0, 0, 0, 0],
       [P[0] - 1, P[1], P[2], P[3], P[4], P[5]],
       [P[0], P[1] - 1, P[2], P[3], P[4], P[5]],
       [u64::MAX, u64::MAX, P[2] - 1, P[3], P[4], P[5]],
@@ -937,7 +1033,7 @@ mod tests {
       value
     };
     let count = if cfg!(miri) { 16 } else { 5_000 };
-    let mut previous = edges[2];
+    let mut previous = edges[3];
     for index in 0..count + edges.len() {
       let a = edges.get(index).copied().unwrap_or_else(&mut generated);
       for b in [previous, edges[index % edges.len()]] {
@@ -959,11 +1055,9 @@ mod tests {
         );
         assert_eq!(fb.sub(fa).0, sub_p384_field(b, a).0, "{b:x?} - {a:x?}");
       }
-      assert_eq!(
-        Fe(a).square().0,
-        montgomery_mul(Uint(a), Uint(a), &P384_FIELD_MODULUS).0,
-        "{a:x?}²"
-      );
+      let square = montgomery_mul(Uint(a), Uint(a), &P384_FIELD_MODULUS).0;
+      assert_eq!(Fe(a).square().0, square, "{a:x?}²");
+      assert_eq!(Fe(a).square_portable().0, square, "portable {a:x?}²");
       previous = a;
     }
   }
