@@ -424,10 +424,13 @@ They do not establish a timing claim for a release or a downstream build by them
 ### Secret limb multiplication on RISC-V and IBM Z
 
 Owner decisions, 2026-10-21: ECDSA, ECDH, and RSA private arithmetic, including the RSA blinding
-inverse, multiply secret limbs with the hardware multiplier on IBM Z and 64-bit RISC-V.
+inverse, multiply secret limbs with the hardware multiplier on IBM Z and 64-bit RISC-V, gated by
+native DudeCT.
 
-- IBM Z uses the plain 64-bit by 64-bit `MLGR` product.
-  IBM publishes no timing guarantee for it.
+- IBM Z uses the plain 64-bit by 64-bit `MLGR` product, for which IBM publishes no timing
+  guarantee. With it, P-384 ECDH agreement failed native DudeCT (fixed against random scalar,
+  t = -19.3 at the 80,000-sample confirmation, Constant-Time 39717348652 at `9c8dfffd`), so IBM Z
+  ECDSA and ECDH keep the fixed-work software multiplier. RSA private operations keep `MLGR`.
 - 64-bit RISC-V sets the top bit of both operands, multiplies, and subtracts the correction terms.
   This defends against multipliers that finish early on leading zeros.
   The open RTL of the RISC-V runner's C910 core shows a fixed-latency multiplier.

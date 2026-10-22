@@ -1026,7 +1026,7 @@ fn sbb_limb(left: u64, right: u64, borrow: u64) -> (u64, u64) {
   }
 }
 
-#[cfg(any(test, target_arch = "riscv32"))]
+#[cfg(any(test, target_arch = "riscv32", target_arch = "s390x"))]
 #[inline(never)]
 fn ct_mul_u64_wide(left: u64, right: u64) -> (u64, u64) {
   let mut product_low = 0u64;
@@ -1035,9 +1035,9 @@ fn ct_mul_u64_wide(left: u64, right: u64) -> (u64, u64) {
   let mut multiplicand_high = 0u64;
   let mut multiplier = right;
   for _ in 0..(u64::BITS / 4) {
-    // RV32 lowers ordinary wide multiplication through instructions or helpers
-    // without timing evidence. Keep the radix-16 authority fixed-work and
-    // prevent LLVM from recognizing it as an ordinary product.
+    // These targets lower ordinary wide multiplication through instructions or
+    // helpers whose latency is operand-dependent. Keep the radix-16 authority
+    // fixed-work and prevent LLVM from recognizing it as an ordinary product.
     let digit = core::hint::black_box(multiplier & 0xf);
     for bit in 0..4 {
       let mask = 0u64.wrapping_sub((digit >> bit) & 1);
@@ -1109,21 +1109,19 @@ fn ct_mul_riscv64_limbs(left: Riscv64MulLimb, right: Riscv64MulLimb) -> (u64, u6
 #[cfg(not(target_arch = "riscv64"))]
 #[cfg(any(test, not(all(target_arch = "aarch64", not(feature = "portable-only"), not(miri)))))]
 fn mul_u64_wide(left: u64, right: u64) -> (u64, u64) {
-  #[cfg(target_arch = "riscv32")]
+  #[cfg(any(target_arch = "riscv32", target_arch = "s390x"))]
   {
     ct_mul_u64_wide(left, right)
   }
 
-  // IBM Z multiplies secret limbs in hardware, as RSA private operations do; native timing
-  // evidence qualifies it.
-  #[cfg(not(target_arch = "riscv32"))]
+  #[cfg(not(any(target_arch = "riscv32", target_arch = "s390x")))]
   {
     split_u128(u128::from(left).strict_mul(u128::from(right)))
   }
 }
 
 #[inline(always)]
-#[cfg(any(test, not(target_arch = "riscv32")))]
+#[cfg(any(test, not(any(target_arch = "riscv32", target_arch = "s390x"))))]
 #[cfg(any(test, not(all(target_arch = "aarch64", not(feature = "portable-only"), not(miri)))))]
 fn split_u128(value: u128) -> (u64, u64) {
   let [b0, b1, b2, b3, b4, b5, b6, b7, b8, b9, b10, b11, b12, b13, b14, b15] = value.to_le_bytes();

@@ -1675,8 +1675,9 @@ fn low_u32_signed(value: i64) -> u32 {
   u32::from_le_bytes([b0, b1, b2, b3])
 }
 
-/// Fixed-work wide product for RV32, whose multiplier latency has no timing evidence.
-#[cfg(any(test, target_arch = "riscv32"))]
+/// Fixed-work wide product for RV32, whose multiplier latency has no timing evidence, and IBM Z,
+/// where secret-fed `MLGR` products failed native DudeCT (P-384 ECDH, Constant-Time 39717348652).
+#[cfg(any(test, target_arch = "riscv32", target_arch = "s390x"))]
 #[inline(never)]
 fn ct_mul_u64_wide(lhs: u64, rhs: u64) -> (u64, u64) {
   let mut product_lo = 0u64;
@@ -1690,7 +1691,7 @@ fn ct_mul_u64_wide(lhs: u64, rhs: u64) -> (u64, u64) {
     // optimization barriers from every wide product.
     //
     // Keep LLVM from recognizing the radix-16 product and lowering it back to a target multiply.
-    // The CT artifact gate independently rejects scalar multiply in RV32 ECDSA closures.
+    // The CT artifact gate independently rejects scalar multiply in RV32 and IBM Z ECDSA closures.
     let digit = core::hint::black_box(multiplier & 0xf);
     for bit in 0..4 {
       let mask = 0u64.wrapping_sub((digit >> bit) & 1);
@@ -1739,12 +1740,11 @@ fn ct_mul_u64_wide_riscv64(lhs: u64, rhs: u64) -> (u64, u64) {
 
 /// The wide product of secret-fed limbs.
 ///
-/// RV32 uses the fixed-work multiplier and RV64 the normalized hardware multiplier. Other
-/// targets, IBM Z included, use the hardware multiplier, as RSA private operations do; native
-/// timing evidence qualifies each target.
+/// RV32 and IBM Z use the fixed-work multiplier and RV64 the normalized hardware multiplier.
+/// Other targets use the hardware multiplier; native timing evidence qualifies each target.
 #[inline(always)]
 fn mul_u64_wide(lhs: u64, rhs: u64) -> (u64, u64) {
-  #[cfg(target_arch = "riscv32")]
+  #[cfg(any(target_arch = "riscv32", target_arch = "s390x"))]
   {
     ct_mul_u64_wide(lhs, rhs)
   }
@@ -1754,7 +1754,7 @@ fn mul_u64_wide(lhs: u64, rhs: u64) -> (u64, u64) {
     ct_mul_u64_wide_riscv64(lhs, rhs)
   }
 
-  #[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64")))]
+  #[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x")))]
   {
     split_u128(u128::from(lhs).strict_mul(u128::from(rhs)))
   }
@@ -1762,12 +1762,12 @@ fn mul_u64_wide(lhs: u64, rhs: u64) -> (u64, u64) {
 
 #[inline(always)]
 fn mul_u64_low(lhs: u64, rhs: u64) -> u64 {
-  #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
+  #[cfg(any(target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x"))]
   {
     mul_u64_wide(lhs, rhs).0
   }
 
-  #[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64")))]
+  #[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x")))]
   {
     lhs.wrapping_mul(rhs)
   }
@@ -5215,7 +5215,7 @@ fn mac_limb(acc: u64, lhs: u64, rhs: u64, carry: u64) -> (u64, u64) {
 }
 
 #[inline(always)]
-#[cfg(any(test, not(target_arch = "riscv32")))]
+#[cfg(any(test, not(any(target_arch = "riscv32", target_arch = "s390x"))))]
 fn split_u128(value: u128) -> (u64, u64) {
   let [b0, b1, b2, b3, b4, b5, b6, b7, b8, b9, b10, b11, b12, b13, b14, b15] = value.to_le_bytes();
   (

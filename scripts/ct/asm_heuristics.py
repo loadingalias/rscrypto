@@ -1699,11 +1699,13 @@ def scan_symbol(
         )
       )
     elif (
-      is_ecdsa_scope(primitive_ids) or is_rsa_inverse_scope(primitive_ids, symbol)
-    ) and is_riscv32_scalar_multiply(target, inst):
-      # ECDSA and the RSA blinding inverse multiply secret limbs in hardware on riscv64 and s390x
-      # (owner decisions, 2026-10-21) and fall through to the multiply review below, as ECDH and
-      # the RSA exponentiation do.
+      (is_ecdsa_scope(primitive_ids) or is_rsa_inverse_scope(primitive_ids, symbol))
+      and is_riscv32_scalar_multiply(target, inst)
+    ) or (is_ecdsa_scope(primitive_ids) and is_s390x_scalar_multiply(target, inst)):
+      # ECDSA and the RSA blinding inverse multiply secret limbs in hardware on riscv64, and the
+      # inverse on s390x (owner decisions, 2026-10-21); they fall through to the multiply review
+      # below, as ECDH and the RSA exponentiation do. s390x ECDSA keeps the fixed-work multiplier:
+      # secret MLGR products failed native DudeCT (P-384 ECDH, Constant-Time 39717348652).
       findings.append(
         finding(
           symbol,
