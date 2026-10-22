@@ -2712,6 +2712,8 @@ tier = "A"
 required = true
 targets = ["aarch64-unknown-linux-gnu"]
 rustflags = ["-C", "target-feature=+neon,+lse"]
+# One straight-line path of 8,639 instructions (BINSEC 0.11.1 at `c33bd426`); the default depth cuts it at 1,000.
+sse_depth = 20000
 secrets = [
   { name = "CT_BINSEC_RSA_PAIR_A", kind = "global", bytes = 384 },
   { name = "CT_BINSEC_RSA_PAIR_B", kind = "global", bytes = 384 },
