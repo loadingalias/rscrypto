@@ -91,16 +91,14 @@ pub(crate) fn credentials(kind: Credential) -> (&'static [u8], &'static [u8], &'
 /// [`super::key_provider`] so it can also serve.
 pub(crate) fn provider() -> CryptoProvider {
   #[cfg(feature = "getrandom")]
-  {
-    crate::default_provider()
-  }
+  let mut provider = crate::default_provider();
   #[cfg(not(feature = "getrandom"))]
-  {
+  let mut provider = {
     static CLIENT: crate::ClientProvider = crate::ClientProvider::new(&super::RANDOM);
-    let mut provider = CLIENT.provider();
-    provider.key_provider = super::key_provider();
-    provider
-  }
+    CLIENT.provider()
+  };
+  provider.key_provider = super::key_provider();
+  provider
 }
 
 /// The key exchange groups of [`provider`], hybrid first.

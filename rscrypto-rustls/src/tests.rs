@@ -15,6 +15,15 @@ pub(crate) static RANDOM: Random = Random;
 
 /// The key provider under test: [`crate::sign::KEY_PROVIDER`] with `getrandom`,
 /// otherwise the same loader over [`RANDOM`].
+#[cfg(any(
+  feature = "ml-dsa",
+  all(
+    feature = "hkdf",
+    any(feature = "aes-gcm", feature = "chacha20poly1305"),
+    any(feature = "x25519", feature = "p256-ecdh", feature = "p384-ecdh"),
+    any(feature = "ecdsa-p256", feature = "ecdsa-p384", feature = "ed25519", feature = "rsa")
+  )
+))]
 pub(crate) fn key_provider() -> &'static dyn rustls::crypto::KeyProvider {
   #[cfg(feature = "getrandom")]
   {
