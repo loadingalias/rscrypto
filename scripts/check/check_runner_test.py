@@ -182,7 +182,7 @@ if name == 'cargo' and args[0] == 'deny':
     for name in ('lint-independent-workspaces.sh',):
       (root / 'scripts/check' / name).symlink_to(stub)
     (root / 'scripts/asm').mkdir(parents=True)
-    for name in ('p384.py', 'provenance.py'):
+    for name in ('p384.py', 'rsa_pair.py', 'provenance.py'):
       (root / 'scripts/asm' / name).write_text('import json, os, sys\n'
                                                "with open(os.environ['CHECK_LOG'], 'a') as output:\n"
                                                f"    output.write(json.dumps(['{name}', *sys.argv[1:]]) + '\\n')\n")
@@ -277,6 +277,7 @@ if name == 'cargo' and args[0] == 'deny':
         assert '--exclude-dev' not in deny[1] and deny[1][-5:] == ['-D', 'warnings', '-A', 'duplicate', 'all']
       assert (['lint-independent-workspaces.sh'] in commands) == (mode != 'fix')
       assert (['p384.py', 'check'] in commands) == (mode != 'fix')
+      assert (['rsa_pair.py', 'check'] in commands) == (mode != 'fix')
       assert (['provenance.py', 'check'] in commands) == (mode != 'fix')
     for target in ('riscv64gc-unknown-linux-gnu', 'powerpc64le-unknown-linux-gnu', 's390x-unknown-linux-gnu'):
       result, commands = run('target', target)
@@ -288,6 +289,7 @@ if name == 'cargo' and args[0] == 'deny':
       assert sum('--release' in c for c in cross) == 1
       assert ['lint-independent-workspaces.sh'] in commands
       assert ['p384.py', 'check'] in commands
+      assert ['rsa_pair.py', 'check'] in commands
       assert ['provenance.py', 'check'] in commands
       assert not any('--fix' in c for c in commands)
     result, commands = run('check')
