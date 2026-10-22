@@ -74,6 +74,19 @@ mod rsa_aarch64_asm;
 #[path = "rsa_aarch64_mont.rs"]
 mod rsa_aarch64_mont;
 
+// Production dispatch selects the engine on Apple cores only; diagnostic builds compile it on every
+// AArch64 target so that the constant-time harnesses can analyze the kernels on Linux.
+#[cfg(all(
+  target_arch = "aarch64",
+  not(miri),
+  any(
+    all(target_vendor = "apple", not(feature = "portable-only")),
+    all(rscrypto_internal, feature = "diag")
+  )
+))]
+#[path = "rsa_aarch64_pair.rs"]
+mod rsa_aarch64_pair;
+
 #[cfg(all(
   target_arch = "aarch64",
   target_os = "linux",
@@ -4544,6 +4557,8 @@ struct RsaPrivateExponentScratch {
   table: SecretLimbs,
   // Radix-2^52 window table and digit buffers for the IFMA exponentiation; empty without it.
   ifma: SecretLimbs,
+  // Radix-2^28 paired window table and buffers for the Apple NEON CRT pair; empty without it.
+  pair: SecretLimbs,
   max_limb_count: usize,
 }
 
@@ -4559,6 +4574,13 @@ struct RsaPrivateExponentWorkspace<'a> {
   reduced: &'a mut [u64],
   table: &'a mut [u64],
   ifma: &'a mut [u64],
+  #[cfg(all(
+    target_arch = "aarch64",
+    target_vendor = "apple",
+    not(feature = "portable-only"),
+    not(miri)
+  ))]
+  pair: &'a mut [u64],
 }
 
 impl RsaPrivateExponentScratch {
@@ -4575,6 +4597,7 @@ impl RsaPrivateExponentScratch {
       reduced: SecretLimbs::zeroed(max_limb_count),
       table: SecretLimbs::zeroed(max_limb_count.strict_mul(PRIVATE_FIXED_WINDOW_TABLE_ENTRIES)),
       ifma: SecretLimbs::zeroed(private_ifma_workspace_words(max_limb_count)),
+      pair: SecretLimbs::zeroed(private_pair_workspace_words(max_limb_count)),
       max_limb_count,
     }
   }
@@ -4614,6 +4637,13 @@ impl RsaPrivateExponentScratch {
       reduced: private_scratch_prefix(&mut self.reduced, limb_count)?,
       table: private_scratch_prefix(&mut self.table, table_len)?,
       ifma: self.ifma.as_mut_slice(),
+      #[cfg(all(
+        target_arch = "aarch64",
+        target_vendor = "apple",
+        not(feature = "portable-only"),
+        not(miri)
+      ))]
+      pair: self.pair.as_mut_slice(),
     })
   }
 
@@ -4629,6 +4659,7 @@ impl RsaPrivateExponentScratch {
     ct::zeroize_words(self.reduced.as_mut_slice());
     ct::zeroize_words(self.table.as_mut_slice());
     ct::zeroize_words(self.ifma.as_mut_slice());
+    ct::zeroize_words(self.pair.as_mut_slice());
   }
 }
 
@@ -10513,14 +10544,38 @@ fn private_ifma_workspace_words(max_limb_count: usize) -> usize {
   words
 }
 
+/// Paired NEON workspace words for CRT primes of up to `max_limb_count` limbs; zero without the
+/// engine.
+fn private_pair_workspace_words(max_limb_count: usize) -> usize {
+  #[cfg(all(
+    target_arch = "aarch64",
+    target_vendor = "apple",
+    not(feature = "portable-only"),
+    not(miri)
+  ))]
+  let words = rsa_aarch64_pair::max_workspace_words(max_limb_count);
+  #[cfg(not(all(
+    target_arch = "aarch64",
+    target_vendor = "apple",
+    not(feature = "portable-only"),
+    not(miri)
+  )))]
+  let words = {
+    let _ = max_limb_count;
+    0
+  };
+  words
+}
+
 /// One CRT component's exponentiation: modulus, exponent, input and output.
 type RsaCrtExponentiation<'a> = (&'a RsaPublicModulus, &'a [u8], &'a [u8], &'a mut [u8]);
 
 /// Both CRT exponentiations, `input^exponent mod prime` for each component.
 ///
-/// Equal-width primes with an IFMA kernel run as one interleaved pair. Otherwise each component
-/// runs [`private_exponentiate_representative_with_scratch`] in turn. Both paths validate the
-/// first component, then the second, so they return the same errors.
+/// Equal-width primes with an IFMA kernel run as one interleaved pair, and on Apple AArch64 in the
+/// two lanes of the paired NEON engine. Otherwise each component runs
+/// [`private_exponentiate_representative_with_scratch`] in turn. Every path validates the first
+/// component, then the second, so they return the same errors.
 fn private_exponentiate_crt_with_scratch(
   first: RsaCrtExponentiation<'_>,
   second: RsaCrtExponentiation<'_>,
@@ -10534,6 +10589,15 @@ fn private_exponentiate_crt_with_scratch(
   ))]
   if let Some(shape) = private_crt_pair_ifma_shape(first.0, second.0, scratch) {
     return private_exponentiate_crt_pair_ifma(first, second, shape, scratch);
+  }
+  #[cfg(all(
+    target_arch = "aarch64",
+    target_vendor = "apple",
+    not(feature = "portable-only"),
+    not(miri)
+  ))]
+  if let Some(digits) = private_crt_pair_neon_shape(first.0, second.0, scratch) {
+    return private_exponentiate_crt_pair_neon(first, second, digits, scratch);
   }
   let (modulus, exponent, input, out) = first;
   private_exponentiate_representative_with_scratch(modulus, exponent, input, out, scratch)?;
@@ -10652,6 +10716,113 @@ fn private_exponentiate_crt_pair_ifma(
   Ok(())
 }
 
+/// The paired NEON digit count for a CRT pair, when both primes have one width that the engine
+/// supports and `scratch` holds the pair workspace.
+#[cfg(all(
+  target_arch = "aarch64",
+  target_vendor = "apple",
+  not(feature = "portable-only"),
+  not(miri)
+))]
+fn private_crt_pair_neon_shape(
+  first: &RsaPublicModulus,
+  second: &RsaPublicModulus,
+  scratch: &RsaPrivateExponentScratch,
+) -> Option<usize> {
+  if first.limbs.len() != second.limbs.len() || first.bytes.len() != second.bytes.len() {
+    return None;
+  }
+  let digits = rsa_aarch64_pair::shape(first.limbs.len())?;
+  (scratch.pair.as_slice().len() >= rsa_aarch64_pair::workspace_words(first.limbs.len())).then_some(digits)
+}
+
+/// The CRT pair on the paired NEON engine. Both primes have the limb count and byte width that
+/// gave `digits`.
+#[cfg(all(
+  target_arch = "aarch64",
+  target_vendor = "apple",
+  not(feature = "portable-only"),
+  not(miri)
+))]
+fn private_exponentiate_crt_pair_neon(
+  first: RsaCrtExponentiation<'_>,
+  second: RsaCrtExponentiation<'_>,
+  digits: usize,
+  scratch: &mut RsaPrivateExponentScratch,
+) -> Result<(), RsaPrivateOpError> {
+  let _dit = crate::traits::ct::DataIndependentTiming::enter();
+
+  let (modulus_p, exponent_p, input_p, out_p) = first;
+  let (modulus_q, exponent_q, input_q, out_q) = second;
+  let bytes = modulus_p.bytes.len();
+  let limbs = modulus_p.limbs.len();
+  if input_p.len() != bytes || out_p.len() != bytes || exponent_p.len() != bytes {
+    return Err(RsaPrivateOpError::InvalidLength);
+  }
+  let r2_p = modulus_p
+    .montgomery_r2()
+    .ok_or(RsaPrivateOpError::RepresentativeOutOfRange)?;
+  let RsaPrivateExponentWorkspace {
+    representative: base_p,
+    reduced: r2_pair_p,
+    acc: result_p,
+    base: base_q,
+    squared: r2_pair_q,
+    multiplied: result_q,
+    pair,
+    ..
+  } = scratch.workspace(limbs)?;
+  limbs_from_be_into(input_p, base_p);
+  if !ct_limbs_lt(base_p, &modulus_p.limbs) {
+    return Err(RsaPrivateOpError::RepresentativeOutOfRange);
+  }
+  if input_q.len() != bytes || out_q.len() != bytes || exponent_q.len() != bytes {
+    return Err(RsaPrivateOpError::InvalidLength);
+  }
+  let r2_q = modulus_q
+    .montgomery_r2()
+    .ok_or(RsaPrivateOpError::RepresentativeOutOfRange)?;
+  limbs_from_be_into(input_q, base_q);
+  if !ct_limbs_lt(base_q, &modulus_q.limbs) {
+    return Err(RsaPrivateOpError::RepresentativeOutOfRange);
+  }
+
+  // R = 2^(28·digits) for the paired engine: R² mod m is the cached 2^(128·limbs) mod m doubled
+  // 2·(28·digits - 64·limbs) times.
+  let doublings = digits.strict_mul(28).strict_sub(limbs.strict_mul(64)).strict_mul(2);
+  for (r2_pair, r2, modulus) in [(&mut *r2_pair_p, r2_p, modulus_p), (&mut *r2_pair_q, r2_q, modulus_q)] {
+    r2_pair.copy_from_slice(r2);
+    for _ in 0..doublings {
+      double_mod_in_place(r2_pair, &modulus.limbs);
+    }
+  }
+  rsa_aarch64_pair::exponentiate_pair(
+    [
+      rsa_aarch64_pair::Operands {
+        out: &mut *result_p,
+        base: base_p,
+        exponent: exponent_p,
+        m: &modulus_p.limbs,
+        r2: r2_pair_p,
+        n0: modulus_p.n0,
+      },
+      rsa_aarch64_pair::Operands {
+        out: &mut *result_q,
+        base: base_q,
+        exponent: exponent_q,
+        m: &modulus_q.limbs,
+        r2: r2_pair_q,
+        n0: modulus_q.n0,
+      },
+    ],
+    digits,
+    pair,
+  );
+  limbs_to_be(result_p, out_p);
+  limbs_to_be(result_q, out_q);
+  Ok(())
+}
+
 fn private_exponentiate_representative_with_scratch(
   modulus: &RsaPublicModulus,
   exponent: &[u8],
@@ -10681,6 +10852,13 @@ fn private_exponentiate_representative_with_scratch(
     reduced,
     table,
     ifma: scratch_ifma,
+    #[cfg(all(
+      target_arch = "aarch64",
+      target_vendor = "apple",
+      not(feature = "portable-only"),
+      not(miri)
+    ))]
+      pair: _,
   } = scratch.workspace(limbs)?;
   #[cfg(not(all(
     target_arch = "x86_64",
@@ -10857,7 +11035,7 @@ fn private_select_window_power(out: &mut [u64], table: &[u64], window: u8) {
           entries.as_ptr(),
           limbs,
           vector_limbs.strict_div(4),
-          window,
+          u64::from(window).strict_mul(0x1_0000_0001),
         );
       }
     }
@@ -10870,10 +11048,13 @@ fn private_select_window_power(out: &mut [u64], table: &[u64], window: u8) {
   }
 }
 
-/// Select the first `4·chunks` limbs of table entry `window` into `out`. The sixteen entry masks
-/// come from vector compares; each four-limb chunk then reads the same four limbs of all sixteen
-/// entries in a fixed order and merges them under those masks into four accumulators. The secret
-/// window decides only mask bits, never an address or a branch.
+/// Select the first `4·chunks` limbs of the table entries named by `windows` into `out`. The low
+/// 32 bits of every limb come from entry `windows mod 2^32` and the high 32 bits from entry
+/// `windows >> 32`; the single-modulus path repeats one window in both halves to select whole
+/// limbs, and the paired NEON engine keeps the two CRT primes in the two halves. The sixteen
+/// entry masks come from 32-bit lane compares; each four-limb chunk then reads the same four limbs
+/// of all sixteen entries in a fixed order and merges them under those masks into four
+/// accumulators. The secret windows decide only mask bits, never an address or a branch.
 ///
 /// # Safety
 ///
@@ -10890,7 +11071,7 @@ unsafe fn private_select_window_power_neon(
   table: *const u64,
   entry_limbs: usize,
   chunks: usize,
-  window: u8,
+  windows: u64,
 ) {
   // SAFETY: The caller guarantees a nonzero chunk count, the writes at `out`, and the reads at byte
   // stride `entry_limbs·8` from `table`; the block touches no other memory and no stack. LDP and
@@ -10898,41 +11079,41 @@ unsafe fn private_select_window_power_neon(
   // baseline that every AArch64 Rust target enables.
   unsafe {
     core::arch::asm!(
-      "dup {w:v}.2d, {window}",
+      "dup {w:v}.2d, {windows}",
       "movi {index:v}.2d, #0",
-      "mov {tmp}, #1",
-      "dup {one:v}.2d, {tmp}",
-      "cmeq {m0:v}.2d, {index:v}.2d, {w:v}.2d",
-      "add {index:v}.2d, {index:v}.2d, {one:v}.2d",
-      "cmeq {m1:v}.2d, {index:v}.2d, {w:v}.2d",
-      "add {index:v}.2d, {index:v}.2d, {one:v}.2d",
-      "cmeq {m2:v}.2d, {index:v}.2d, {w:v}.2d",
-      "add {index:v}.2d, {index:v}.2d, {one:v}.2d",
-      "cmeq {m3:v}.2d, {index:v}.2d, {w:v}.2d",
-      "add {index:v}.2d, {index:v}.2d, {one:v}.2d",
-      "cmeq {m4:v}.2d, {index:v}.2d, {w:v}.2d",
-      "add {index:v}.2d, {index:v}.2d, {one:v}.2d",
-      "cmeq {m5:v}.2d, {index:v}.2d, {w:v}.2d",
-      "add {index:v}.2d, {index:v}.2d, {one:v}.2d",
-      "cmeq {m6:v}.2d, {index:v}.2d, {w:v}.2d",
-      "add {index:v}.2d, {index:v}.2d, {one:v}.2d",
-      "cmeq {m7:v}.2d, {index:v}.2d, {w:v}.2d",
-      "add {index:v}.2d, {index:v}.2d, {one:v}.2d",
-      "cmeq {m8:v}.2d, {index:v}.2d, {w:v}.2d",
-      "add {index:v}.2d, {index:v}.2d, {one:v}.2d",
-      "cmeq {m9:v}.2d, {index:v}.2d, {w:v}.2d",
-      "add {index:v}.2d, {index:v}.2d, {one:v}.2d",
-      "cmeq {m10:v}.2d, {index:v}.2d, {w:v}.2d",
-      "add {index:v}.2d, {index:v}.2d, {one:v}.2d",
-      "cmeq {m11:v}.2d, {index:v}.2d, {w:v}.2d",
-      "add {index:v}.2d, {index:v}.2d, {one:v}.2d",
-      "cmeq {m12:v}.2d, {index:v}.2d, {w:v}.2d",
-      "add {index:v}.2d, {index:v}.2d, {one:v}.2d",
-      "cmeq {m13:v}.2d, {index:v}.2d, {w:v}.2d",
-      "add {index:v}.2d, {index:v}.2d, {one:v}.2d",
-      "cmeq {m14:v}.2d, {index:v}.2d, {w:v}.2d",
-      "add {index:v}.2d, {index:v}.2d, {one:v}.2d",
-      "cmeq {m15:v}.2d, {index:v}.2d, {w:v}.2d",
+      "mov {tmp:w}, #1",
+      "dup {one:v}.4s, {tmp:w}",
+      "cmeq {m0:v}.4s, {index:v}.4s, {w:v}.4s",
+      "add {index:v}.4s, {index:v}.4s, {one:v}.4s",
+      "cmeq {m1:v}.4s, {index:v}.4s, {w:v}.4s",
+      "add {index:v}.4s, {index:v}.4s, {one:v}.4s",
+      "cmeq {m2:v}.4s, {index:v}.4s, {w:v}.4s",
+      "add {index:v}.4s, {index:v}.4s, {one:v}.4s",
+      "cmeq {m3:v}.4s, {index:v}.4s, {w:v}.4s",
+      "add {index:v}.4s, {index:v}.4s, {one:v}.4s",
+      "cmeq {m4:v}.4s, {index:v}.4s, {w:v}.4s",
+      "add {index:v}.4s, {index:v}.4s, {one:v}.4s",
+      "cmeq {m5:v}.4s, {index:v}.4s, {w:v}.4s",
+      "add {index:v}.4s, {index:v}.4s, {one:v}.4s",
+      "cmeq {m6:v}.4s, {index:v}.4s, {w:v}.4s",
+      "add {index:v}.4s, {index:v}.4s, {one:v}.4s",
+      "cmeq {m7:v}.4s, {index:v}.4s, {w:v}.4s",
+      "add {index:v}.4s, {index:v}.4s, {one:v}.4s",
+      "cmeq {m8:v}.4s, {index:v}.4s, {w:v}.4s",
+      "add {index:v}.4s, {index:v}.4s, {one:v}.4s",
+      "cmeq {m9:v}.4s, {index:v}.4s, {w:v}.4s",
+      "add {index:v}.4s, {index:v}.4s, {one:v}.4s",
+      "cmeq {m10:v}.4s, {index:v}.4s, {w:v}.4s",
+      "add {index:v}.4s, {index:v}.4s, {one:v}.4s",
+      "cmeq {m11:v}.4s, {index:v}.4s, {w:v}.4s",
+      "add {index:v}.4s, {index:v}.4s, {one:v}.4s",
+      "cmeq {m12:v}.4s, {index:v}.4s, {w:v}.4s",
+      "add {index:v}.4s, {index:v}.4s, {one:v}.4s",
+      "cmeq {m13:v}.4s, {index:v}.4s, {w:v}.4s",
+      "add {index:v}.4s, {index:v}.4s, {one:v}.4s",
+      "cmeq {m14:v}.4s, {index:v}.4s, {w:v}.4s",
+      "add {index:v}.4s, {index:v}.4s, {one:v}.4s",
+      "cmeq {m15:v}.4s, {index:v}.4s, {w:v}.4s",
       "2:",
       "mov {entry}, {table}",
       "ldp {e0:q}, {e1:q}, [{entry}]",
@@ -11008,7 +11189,7 @@ unsafe fn private_select_window_power_neon(
       "add {table}, {table}, #32",
       "subs {chunks}, {chunks}, #1",
       "b.ne 2b",
-      window = in(reg) u64::from(window),
+      windows = in(reg) windows,
       table = inout(reg) table => _,
       stride = in(reg) entry_limbs.strict_mul(8),
       out = inout(reg) out => _,
@@ -11068,8 +11249,61 @@ pub fn diag_rsa_private_select_window_power_4_neon(table: &[u64; 64], window: u8
   let mut out = [0u64; 4];
   // SAFETY: One chunk: `out` has four writable limbs, and `table` holds sixteen four-limb entries,
   // so the reads at `4·i` for i in 0..16 stay inside it.
-  unsafe { private_select_window_power_neon(out.as_mut_ptr(), table.as_ptr(), 4, 1, window) };
+  unsafe {
+    private_select_window_power_neon(
+      out.as_mut_ptr(),
+      table.as_ptr(),
+      4,
+      1,
+      u64::from(window).strict_mul(0x1_0000_0001),
+    )
+  };
   out
+}
+
+#[cfg(all(rscrypto_internal, feature = "diag", target_arch = "aarch64", not(miri)))]
+/// Run one paired NEON almost-Montgomery multiplication `a·b·R⁻¹` and then one square of the
+/// product, per lane, at the smallest kernel shape (24 digits), for diagnostic harnesses in any
+/// AArch64 build. Production selects the paired engine on Apple AArch64 without `portable-only`.
+///
+/// `a`, `b` and `n` are replicated digit pairs (two equal words per digit, each
+/// `p_j | q_j << 32`), and `constants` holds `n'·2^36` for both lanes, then `n_0 + n_1·2^28` for
+/// both lanes. Timing does not depend on any of them; meaningful results need odd moduli,
+/// matching constants, and operands below twice each modulus.
+#[must_use]
+pub fn diag_rsa_pair_mul_square_24(a: &[u64; 48], b: &[u64; 48], n: &[u64; 48], constants: &[u64; 4]) -> [u64; 48] {
+  rsa_aarch64_pair::diag_mul_square_24(a, b, n, constants)
+}
+
+/// Report whether private operations with `key` and `scratch` run the CRT pair on the paired
+/// NEON engine on this host.
+#[cfg(all(rscrypto_internal, feature = "diag"))]
+#[doc(hidden)]
+#[must_use]
+pub fn diag_rsa_private_crt_pair_uses_neon_pair(key: &RsaPrivateKey, scratch: &RsaPrivateScratch) -> bool {
+  #[cfg(all(
+    target_arch = "aarch64",
+    target_vendor = "apple",
+    not(feature = "portable-only"),
+    not(miri)
+  ))]
+  let uses_pair = private_crt_pair_neon_shape(
+    &key.components.prime_p_modulus,
+    &key.components.prime_q_modulus,
+    &scratch.exponent_scratch,
+  )
+  .is_some();
+  #[cfg(not(all(
+    target_arch = "aarch64",
+    target_vendor = "apple",
+    not(feature = "portable-only"),
+    not(miri)
+  )))]
+  let uses_pair = {
+    let _ = (key, scratch);
+    false
+  };
+  uses_pair
 }
 
 #[cfg(all(rscrypto_internal, feature = "diag"))]
@@ -17490,6 +17724,147 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
             &mut scratch,
           )
           .expect("IFMA CRT pair must succeed");
+          let mut portable_p = vec![0u8; bytes];
+          let mut portable_q = vec![0u8; bytes];
+          private_exponentiate_representative(&components[0], exponent_p, base_p, &mut portable_p)
+            .expect("portable exponentiation must succeed");
+          private_exponentiate_representative(&components[1], exponent_q, base_q, &mut portable_q)
+            .expect("portable exponentiation must succeed");
+          assert_eq!(pair_p, portable_p, "{limbs} limbs, first prime");
+          assert_eq!(pair_q, portable_q, "{limbs} limbs, second prime");
+        }
+      }
+    }
+  }
+
+  // The NEON selector takes each limb's low and high 32 bits from the entries the two halves of
+  // `windows` name; the paired engine keeps the two CRT primes in those halves.
+  #[cfg(all(target_arch = "aarch64", not(feature = "portable-only"), not(miri)))]
+  #[test]
+  fn neon_window_select_takes_each_half_from_its_window() {
+    let entry_limbs = 8usize;
+    let table: Vec<u64> = (0..PRIVATE_FIXED_WINDOW_TABLE_ENTRIES.strict_mul(entry_limbs))
+      .map(|index| {
+        let index = index as u64;
+        (index.wrapping_mul(0x9e37_79b9) << 32) | index.wrapping_mul(0x85eb_ca6b) & 0xffff_ffff
+      })
+      .collect();
+    for low in 0..16u64 {
+      for high in 0..16u64 {
+        let mut out = [u64::MAX; 8];
+        // SAFETY: Two chunks: `out` has eight writable limbs, and `table` holds sixteen
+        // eight-limb entries, so the reads of eight limbs at `8·i` stay inside it.
+        unsafe { private_select_window_power_neon(out.as_mut_ptr(), table.as_ptr(), entry_limbs, 2, low | high << 32) };
+        for (limb, &value) in out.iter().enumerate() {
+          let from_low = table[usize::try_from(low)
+            .expect("window fits usize")
+            .strict_mul(entry_limbs)
+            .strict_add(limb)];
+          let from_high = table[usize::try_from(high)
+            .expect("window fits usize")
+            .strict_mul(entry_limbs)
+            .strict_add(limb)];
+          assert_eq!(
+            value,
+            (from_low & 0xffff_ffff) | (from_high & !0xffff_ffff),
+            "windows {low}, {high}, limb {limb}"
+          );
+        }
+      }
+    }
+  }
+
+  #[cfg(all(
+    target_arch = "aarch64",
+    target_vendor = "apple",
+    not(feature = "portable-only"),
+    not(miri)
+  ))]
+  #[test]
+  fn neon_pair_workspace_covers_crt_prime_widths() {
+    for prime_limbs in [16usize, 24, 32] {
+      let scratch = RsaPrivateExponentScratch::new(prime_limbs.strict_mul(2));
+      assert!(
+        scratch.pair.as_slice().len() >= rsa_aarch64_pair::workspace_words(prime_limbs),
+        "{prime_limbs}-limb primes"
+      );
+      assert!(
+        rsa_aarch64_pair::shape(prime_limbs).is_some(),
+        "{prime_limbs}-limb primes"
+      );
+    }
+  }
+
+  // The paired engine runs the two primes in the two vector lanes; each lane must equal the
+  // portable exponentiation of its own prime, with every base kind against every exponent kind
+  // across the lanes, and with moduli at both ends of the width so the 2^(28·D) > 4·m bound is
+  // exercised.
+  #[cfg(all(
+    target_arch = "aarch64",
+    target_vendor = "apple",
+    not(feature = "portable-only"),
+    not(miri)
+  ))]
+  #[test]
+  fn neon_crt_pair_matches_portable_exponentiation() {
+    let mut state = 0x6a09_e667_f3bc_c909u64;
+    let mut random_bytes = |len: usize| {
+      (0..len)
+        .map(|_| {
+          state ^= state << 13;
+          state ^= state >> 7;
+          state ^= state << 17;
+          state.to_le_bytes()[0]
+        })
+        .collect::<Vec<u8>>()
+    };
+    for limbs in [16usize, 24, 32] {
+      let bytes = limbs.strict_mul(8);
+      let mut moduli = Vec::new();
+      for top in [0xffu8, 0x80] {
+        let mut modulus_bytes = random_bytes(bytes);
+        modulus_bytes[0] |= top;
+        if top == 0x80 {
+          modulus_bytes[0] &= 0x80;
+        }
+        *modulus_bytes.last_mut().expect("modulus width must be nonzero") |= 1;
+        moduli.push(modulus_bytes);
+      }
+      let components = moduli
+        .iter()
+        .map(|bytes| private_component_modulus(bytes).expect("odd test modulus must import"))
+        .collect::<Vec<_>>();
+      let mut operands = Vec::new();
+      for modulus_bytes in &moduli {
+        let mut modulus_minus_one = modulus_bytes.clone();
+        *modulus_minus_one.last_mut().expect("modulus width must be nonzero") &= !1;
+        let mut one = vec![0u8; bytes];
+        *one.last_mut().expect("modulus width must be nonzero") = 1;
+        let mut base = random_bytes(bytes);
+        base[0] &= modulus_bytes[0] >> 1;
+        let mut bases = vec![vec![0u8; bytes], modulus_minus_one, one, base];
+        let mut exponents = vec![
+          vec![0u8; bytes],
+          vec![0xff; bytes],
+          random_bytes(bytes),
+          random_bytes(bytes),
+        ];
+        bases.rotate_left(operands.len());
+        exponents.rotate_left(operands.len().strict_mul(2));
+        operands.push((bases, exponents));
+      }
+      let mut scratch = RsaPrivateExponentScratch::new(limbs.strict_mul(2));
+      assert!(private_crt_pair_neon_shape(&components[0], &components[1], &scratch).is_some());
+      for (base_p, base_q) in operands[0].0.iter().zip(&operands[1].0) {
+        for (exponent_p, exponent_q) in operands[0].1.iter().zip(&operands[1].1) {
+          let mut pair_p = vec![0u8; bytes];
+          let mut pair_q = vec![0u8; bytes];
+          private_exponentiate_crt_with_scratch(
+            (&components[0], exponent_p, base_p, &mut pair_p),
+            (&components[1], exponent_q, base_q, &mut pair_q),
+            &mut scratch,
+          )
+          .expect("NEON CRT pair must succeed");
           let mut portable_p = vec![0u8; bytes];
           let mut portable_q = vec![0u8; bytes];
           private_exponentiate_representative(&components[0], exponent_p, base_p, &mut portable_p)

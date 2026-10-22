@@ -110,6 +110,7 @@ fi
 [[ "$mode" != fix ]] || exit 0
 
 "$python" scripts/asm/p384.py check
+"$python" scripts/asm/rsa_pair.py check
 "$python" scripts/asm/provenance.py check
 # Native CI keeps architecture-sensitive compilation and documentation here.
 scripts/check/lint-independent-workspaces.sh

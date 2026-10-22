@@ -239,6 +239,7 @@ test-scripts:
     @scripts/lib/python.sh scripts/test/fuzz_runner_test.py
     @scripts/lib/python.sh --group tooling scripts/test/fuzz_ci_test.py
     @scripts/lib/python.sh scripts/asm/p384_test.py
+    @scripts/lib/python.sh scripts/asm/rsa_pair_test.py
     @scripts/lib/python.sh scripts/stack/frames_test.py
     @scripts/lib/python.sh scripts/stack/residue_test.py
 

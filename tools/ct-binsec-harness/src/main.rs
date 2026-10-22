@@ -21,6 +21,8 @@ const CURVE25519_LIMBS: usize = 5;
 const ARGON2_BLOCK_WORDS: usize = 128;
 const RSA_WINDOW_LIMBS: usize = 4;
 const RSA_WINDOW_TABLE_LIMBS: usize = 16 * RSA_WINDOW_LIMBS;
+#[cfg(target_arch = "aarch64")]
+const RSA_PAIR_WORDS: usize = 48;
 
 #[unsafe(no_mangle)]
 #[inline(never)]
@@ -267,6 +269,26 @@ pub static mut CT_BINSEC_RSA_WINDOW_TABLE: [u64; RSA_WINDOW_TABLE_LIMBS] = [0u64
 #[unsafe(no_mangle)]
 #[used]
 pub static mut CT_BINSEC_RSA_WINDOW: u8 = 0;
+
+#[cfg(target_arch = "aarch64")]
+#[unsafe(no_mangle)]
+#[used]
+pub static mut CT_BINSEC_RSA_PAIR_A: [u64; RSA_PAIR_WORDS] = [0u64; RSA_PAIR_WORDS];
+
+#[cfg(target_arch = "aarch64")]
+#[unsafe(no_mangle)]
+#[used]
+pub static mut CT_BINSEC_RSA_PAIR_B: [u64; RSA_PAIR_WORDS] = [0u64; RSA_PAIR_WORDS];
+
+#[cfg(target_arch = "aarch64")]
+#[unsafe(no_mangle)]
+#[used]
+pub static mut CT_BINSEC_RSA_PAIR_MODULI: [u64; RSA_PAIR_WORDS] = [0u64; RSA_PAIR_WORDS];
+
+#[cfg(target_arch = "aarch64")]
+#[unsafe(no_mangle)]
+#[used]
+pub static mut CT_BINSEC_RSA_PAIR_CONSTANTS: [u64; 4] = [0u64; 4];
 
 #[unsafe(no_mangle)]
 #[used]
@@ -987,6 +1009,29 @@ pub extern "C" fn ct_binsec_rsa_private_select_window_power_4_neon() -> ! {
   ct_binsec_done(folded.to_le_bytes()[0])
 }
 
+#[cfg(target_arch = "aarch64")]
+#[unsafe(no_mangle)]
+#[inline(never)]
+pub extern "C" fn ct_binsec_rsa_pair_mul_square_24_neon() -> ! {
+  // SAFETY: These pointers reference fixed harness globals with static storage.
+  let (a, b, moduli, constants) = unsafe {
+    (
+      limbs_from_global(ptr::addr_of!(CT_BINSEC_RSA_PAIR_A)),
+      limbs_from_global(ptr::addr_of!(CT_BINSEC_RSA_PAIR_B)),
+      limbs_from_global(ptr::addr_of!(CT_BINSEC_RSA_PAIR_MODULI)),
+      limbs_from_global(ptr::addr_of!(CT_BINSEC_RSA_PAIR_CONSTANTS)),
+    )
+  };
+  let limbs = rscrypto::auth::diag_rsa_pair_mul_square_24(&a, &b, &moduli, &constants);
+
+  let mut acc = 0u64;
+  for limb in limbs {
+    acc ^= limb;
+  }
+  let folded = acc | (acc >> 8) | (acc >> 16) | (acc >> 24) | (acc >> 32) | (acc >> 40) | (acc >> 48) | (acc >> 56);
+  ct_binsec_done(folded.to_le_bytes()[0])
+}
+
 #[unsafe(no_mangle)]
 #[inline(never)]
 pub extern "C" fn ct_binsec_rsa_private_component_validation_32() -> ! {
@@ -1177,8 +1222,10 @@ pub static CT_BINSEC_X86_ENTRYPOINTS: [unsafe extern "C" fn() -> !; 2] = [
 #[cfg(target_arch = "aarch64")]
 #[unsafe(no_mangle)]
 #[used]
-pub static CT_BINSEC_AARCH64_ENTRYPOINTS: [extern "C" fn() -> !; 1] =
-  [ct_binsec_rsa_private_select_window_power_4_neon];
+pub static CT_BINSEC_AARCH64_ENTRYPOINTS: [extern "C" fn() -> !; 2] = [
+  ct_binsec_rsa_private_select_window_power_4_neon,
+  ct_binsec_rsa_pair_mul_square_24_neon,
+];
 
 fn main() {
   ct_binsec_owner_eq_64();

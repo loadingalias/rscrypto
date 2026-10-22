@@ -20,6 +20,7 @@ Those entry points call the supporting modules.
 | `check/dependencies.sh`                | `just ci-policy`, and the dependency checks in `just check` |
 | `check/lint-independent-workspaces.sh` | `check/check.sh` |
 | `asm/p384.py check`                    | `check/check.sh` |
+| `asm/rsa_pair.py check`                | `check/check.sh` |
 | `asm/provenance.py check`              | `check/check.sh` |
 
 `check/check_runner_test.py` tests command selection, repair behavior, and failure propagation with substitute executors.
@@ -72,6 +73,17 @@ The other assembly in those files is written by hand.
 
 `asm/p384_test.py` (part of `just test-scripts`) checks that edits and single dropped carries are detected.
 Native differential tests against the portable implementation are the runtime evidence.
+
+## Generated paired RSA assembly
+
+`asm/rsa_pair_aarch64.py` generates `mul_kernel` and `square_kernel` in `src/auth/rsa_aarch64_pair.rs`, the Apple
+AArch64 engine that runs an RSA private key's two CRT exponentiations in the two vector lanes.
+`asm/rsa_pair.py` has the same `check`, `write`, and `simulate [--cases N]` modes as `asm/p384.py`.
+Its simulator runs both kernels on bounds-checked memory against digit-serial radix-2^28 Montgomery reduction
+in Python integers, for every supported prime width and two other block counts.
+`asm/rsa_pair_test.py` (part of `just test-scripts`) checks that template edits and single-instruction mutations
+are detected.
+`neon_crt_pair_matches_portable_exponentiation` in `src/auth/rsa.rs` is the native differential evidence.
 
 ## Derived assembly provenance
 

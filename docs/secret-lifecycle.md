@@ -101,6 +101,14 @@ the [WASM SIMD128 record](../benchmark_results/OVERVIEW.md#2026-10-06-blake3-was
 | Secret parsing and generation | RAII owners cover success, parse failure, entropy failure, and early return. |
 | Caller-filled secret owners, P-256 and P-384 ECDH generation, and ECDSA blinding | See [Caller-filled owners](#caller-filled-owners). |
 
+### RSA private arithmetic
+
+- The CRT exponentiation keeps its limbs, window tables, and engine workspaces in
+  `RsaPrivateScratch`, which every private operation clears before it returns.
+  This includes the radix-2^52 IFMA workspace and the paired radix-2^28 NEON workspace.
+- **Not claimed:** the general-purpose and vector registers that the AArch64 and x86-64
+  Montgomery, IFMA, and paired NEON kernels use.
+
 ### RSA implicit rejection
 
 Legacy PKCS#1 v1.5 decryption hashes the stored private exponent at the public

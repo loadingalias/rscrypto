@@ -47,7 +47,7 @@ use rscrypto::{
 };
 
 use rscrypto::auth::rsa::{
-  diag_rsa_blinding_factor_inverse, diag_rsa_private_crt_pair_uses_ifma,
+  diag_rsa_blinding_factor_inverse, diag_rsa_private_crt_pair_uses_ifma, diag_rsa_private_crt_pair_uses_neon_pair,
   diag_rsa_private_exponentiate_crt_pair_with_scratch,
 };
 
@@ -2617,11 +2617,13 @@ struct RsaCrtPair {
 }
 
 impl RsaCrtPair {
-  /// Prepare the pair and require the AVX-512 IFMA kernel on hosts that support it.
+  /// Prepare the pair and require the AVX-512 IFMA kernel, or on Apple AArch64 the paired NEON
+  /// engine, on hosts that have it.
   fn new() -> Self {
     let key = rsa_ct_fixture_key(RSA_CT_KEY_A_INDEX);
     let scratch = key.private_scratch();
     let uses_ifma = diag_rsa_private_crt_pair_uses_ifma(&key, &scratch);
+    let uses_neon_pair = diag_rsa_private_crt_pair_uses_neon_pair(&key, &scratch);
     #[cfg(target_arch = "x86_64")]
     if std::arch::is_x86_feature_detected!("avx512f") && std::arch::is_x86_feature_detected!("avx512ifma") {
       assert!(
@@ -2629,9 +2631,20 @@ impl RsaCrtPair {
         "an AVX-512 IFMA host must measure the IFMA RSA CRT pair kernel"
       );
     }
+    #[cfg(all(target_arch = "aarch64", target_vendor = "apple"))]
+    assert!(
+      uses_neon_pair,
+      "an Apple AArch64 host must measure the paired NEON RSA CRT engine"
+    );
     eprintln!(
       "rsa CRT pair backend: {}",
-      if uses_ifma { "avx512-ifma" } else { "fixed-window" }
+      if uses_ifma {
+        "avx512-ifma"
+      } else if uses_neon_pair {
+        "neon-pair"
+      } else {
+        "fixed-window"
+      }
     );
     let len = key.signature_len().div_euclid(2);
     Self {

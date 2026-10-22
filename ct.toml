@@ -1382,7 +1382,7 @@ left_class = "fixed same-width exponents for both CRT primes"
 right_class = "random same-width exponents for both CRT primes"
 samples = 512
 smoke_samples = 128
-notes = "Production CRT exponentiation pair on the fixture key's primes, with fixed inputs below both primes. On x86-64 hosts with AVX-512F and AVX-512 IFMA, the case asserts that dispatch selects the interleaved IFMA kernel; elsewhere it measures the fixed-window loop for each prime."
+notes = "Production CRT exponentiation pair on the fixture key's primes, with fixed inputs below both primes. On x86-64 hosts with AVX-512F and AVX-512 IFMA, the case asserts that dispatch selects the interleaved IFMA kernel, and on Apple AArch64 the paired NEON engine; elsewhere it measures the fixed-window loop for each prime."
 
 [[dudect_case]]
 name = "rsa_crt_pair_fixed_vs_random_inputs"
@@ -1392,7 +1392,7 @@ left_class = "fixed same-width inputs below both CRT primes"
 right_class = "random same-width inputs below both CRT primes"
 samples = 512
 smoke_samples = 128
-notes = "Production CRT exponentiation pair with fixed random exponents. Inputs clear their top two bits, so they stay below both 1024-bit primes. On x86-64 hosts with AVX-512F and AVX-512 IFMA, the case asserts that dispatch selects the interleaved IFMA kernel."
+notes = "Production CRT exponentiation pair with fixed random exponents. Inputs clear their top two bits, so they stay below both 1024-bit primes. On x86-64 hosts with AVX-512F and AVX-512 IFMA, the case asserts that dispatch selects the interleaved IFMA kernel, and on Apple AArch64 the paired NEON engine."
 
 [[dudect_case]]
 name = "rsa_crt_pair_exponent_high_byte"
@@ -1402,7 +1402,7 @@ left_class = "same-width exponents with a nonzero high byte"
 right_class = "the same exponents with a zero high byte"
 samples = 512
 smoke_samples = 128
-notes = "Production CRT exponentiation pair; all lower exponent bytes, inputs, primes, and scratch addresses are identical across classes. On x86-64 hosts with AVX-512F and AVX-512 IFMA, the case asserts that dispatch selects the interleaved IFMA kernel."
+notes = "Production CRT exponentiation pair; all lower exponent bytes, inputs, primes, and scratch addresses are identical across classes. On x86-64 hosts with AVX-512F and AVX-512 IFMA, the case asserts that dispatch selects the interleaved IFMA kernel, and on Apple AArch64 the paired NEON engine."
 
 [[dudect_case]]
 name = "rsa_blinding_inverse_fixed_vs_random_factor"
@@ -2702,6 +2702,28 @@ public = [
 ]
 assumptions = []
 notes = "Validates the AArch64 NEON fixed-window selector that production RSA private operations use without portable-only; the portable selector has its own all-target kernel. Full RSA private operations remain covered by DudeCT plus assembly/provenance gates because complete exponentiation is too large for BINSEC."
+claim = "ct-intended"
+
+[[binsec_kernel]]
+id = "rsa.private_ops.pair_mul_square.24digit.aarch64_linux"
+primitive = "rsa.private_ops"
+symbol = "ct_binsec_rsa_pair_mul_square_24_neon"
+tier = "A"
+required = true
+targets = ["aarch64-unknown-linux-gnu"]
+rustflags = ["-C", "target-feature=+neon,+lse"]
+secrets = [
+  { name = "CT_BINSEC_RSA_PAIR_A", kind = "global", bytes = 384 },
+  { name = "CT_BINSEC_RSA_PAIR_B", kind = "global", bytes = 384 },
+  { name = "CT_BINSEC_RSA_PAIR_MODULI", kind = "global", bytes = 384 },
+  { name = "CT_BINSEC_RSA_PAIR_CONSTANTS", kind = "global", bytes = 32 },
+]
+public = [
+  { name = "RSA_PAIR_DIGITS", kind = "const", value = 24 },
+  { name = "RSA_PAIR_BLOCKS", kind = "const", value = 3 },
+]
+assumptions = []
+notes = "Validates both generated paired NEON Montgomery kernels (one multiplication, then one square) at the smallest shape; production RSA private operations on Apple AArch64 without portable-only run the same kernel text at 40, 56, or 80 digits, whose loop counts and addresses depend only on the public digit count. The operands, both CRT moduli, and their Montgomery constants are secret."
 claim = "ct-intended"
 
 [[binsec_kernel]]

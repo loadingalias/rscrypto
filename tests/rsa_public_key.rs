@@ -40,12 +40,12 @@ use rscrypto::auth::diag_rsa_private_component_validation_32;
 use rscrypto::auth::rsa::expert::RsaPkcs1v15Decrypt;
 #[cfg(all(rscrypto_internal, feature = "diag"))]
 use rscrypto::auth::rsa::{
-  diag_rsa_private_crt_pair_uses_ifma, diag_rsa_private_exponentiate_crt_pair_with_scratch,
-  diag_rsa_private_exponentiate_fixed_width, diag_rsa_private_exponentiate_fixed_width_with_scratch,
-  diag_rsa_public_operation_bitserial, diag_rsa_public_operation_cios, diag_rsa_public_operation_cios_portable,
-  diag_rsa_public_operation_comba_product, diag_rsa_public_operation_product,
-  diag_rsa_public_operation_window2_exponent, diag_rsa_verify_pkcs1v15_encoded, diag_rsa_verify_pss_encoded,
-  diag_rsa_verify_pss_encoded_with_scratch,
+  diag_rsa_private_crt_pair_uses_ifma, diag_rsa_private_crt_pair_uses_neon_pair,
+  diag_rsa_private_exponentiate_crt_pair_with_scratch, diag_rsa_private_exponentiate_fixed_width,
+  diag_rsa_private_exponentiate_fixed_width_with_scratch, diag_rsa_public_operation_bitserial,
+  diag_rsa_public_operation_cios, diag_rsa_public_operation_cios_portable, diag_rsa_public_operation_comba_product,
+  diag_rsa_public_operation_product, diag_rsa_public_operation_window2_exponent, diag_rsa_verify_pkcs1v15_encoded,
+  diag_rsa_verify_pss_encoded, diag_rsa_verify_pss_encoded_with_scratch,
 };
 use rscrypto::{
   RsaJwtAlgorithm, RsaKeyError, RsaPkcs1v15Profile, RsaPrivateKey, RsaProtocolAlgorithmError, RsaPssProfile,
@@ -3682,6 +3682,14 @@ fn private_crt_pair_diagnostic_matches_independent_modpow() {
   #[cfg(not(all(target_arch = "x86_64", not(feature = "portable-only"))))]
   let ifma_host = false;
   assert_eq!(diag_rsa_private_crt_pair_uses_ifma(&key, &scratch), ifma_host);
+  // And on the paired NEON engine on every Apple AArch64 host.
+  let apple_host = cfg!(all(
+    target_arch = "aarch64",
+    target_vendor = "apple",
+    not(feature = "portable-only"),
+    not(miri)
+  ));
+  assert_eq!(diag_rsa_private_crt_pair_uses_neon_pair(&key, &scratch), apple_host);
   let pattern = |seed: usize| -> Vec<u8> {
     (0..len)
       .map(|index| u8::try_from(index.strict_mul(31).strict_add(seed.strict_mul(97)) % 251).expect("below 251"))
