@@ -352,26 +352,34 @@ The latest report summarizes the selected cases and their requested budgets.
 
 ### Waiver renewal
 
-`just ct-renew --target TARGET --reviewed-artifacts REVIEWED --artifacts NEW --out DIR [--apply]`
-compares each stale `asm_waiver` of one target between the artifact directory it was reviewed against
-and a new one, such as a CT preparation-failure artifact.
+A waiver binds the backward slice of the condition it reviewed (`slice_sha256`,
+[docs/constant-time.md](../docs/constant-time.md#evidence-model)), so it goes stale only when the condition
+changed or, for an open slice, when its function changed.
+A stale waiver fails the verdict; the evidence and timing of the run are still complete.
 
-- It runs the gate's scanner on the new artifacts, then computes the backward slice of each branch
-  condition in both linked binaries (`ct/condition_slice.py`): reaching definitions through registers
-  and flags inside the function, and read-only data bound by contents.
-- It proposes renewal only when the new function has the same branch and the same slice, and the slice
-  ends only at function inputs, immediates, or read-only data.
-  A non-constant load, a call result, an instruction of unknown effect, an indirect jump in the function,
-  a changed slice, or an ambiguous match needs manual review.
-  A call defines every register that the target's calling convention lets the callee change.
-  On Windows x86-64, `rsi` and `rdi` keep their values across a call; every vector register is still clobbered,
-  because callees may change the upper bits of `xmm6`-`xmm15`.
-  The record lists unchanged slices with such a leaf separately.
-- It lists every enforced `select_branch` finding that has no waiver or proposal, with its slice.
-- It writes `renewal-record.json` and `renewal-record.md` under `--out`.
-  `--apply` rewrites only the proposed waivers' locator, function hash, and review date in `ct.toml`;
-  classifications, rationales, and reviewers stay unchanged.
-- The gate stays whole-function exact. A proposal does not classify a branch.
+`just ct-renew --target TARGET --reviewed-artifacts REVIEWED --artifacts NEW --out DIR` prepares the review.
+`NEW` is any retained CT artifact directory of the run.
+
+- It runs the gate's scanner on the new artifacts (`ct/asm_heuristics.py`, with slices from
+  `ct/condition_slice.py`).
+- For each stale waiver, it finds the reviewed branch in `REVIEWED` and lists the new branches of the same kind
+  in the same function, with their slices and identities.
+  A candidate whose slice is unchanged differs only because its open slice binds the function:
+  confirm its open leaves.
+- It lists every enforced `select_branch` finding that no waiver covers, with its slice and identity.
+- It writes `renewal-record.json` and `renewal-record.md` under `--out` and changes nothing.
+  To renew a waiver, set its `slice_sha256` to the reviewed candidate's identity and update `reviewed_at`.
+
+A call defines every register that the target's calling convention lets the callee change.
+On Windows x86-64, `rsi` and `rdi` keep their values across a call; every vector register is still clobbered,
+because callees may change the upper bits of `xmm6`-`xmm15`.
+
+### Constant-time verdict
+
+`ct/full.py`, `ct/artifacts.sh`, `ct/validate.py`, and `ct/asm_heuristics.py` exit with status 3 when the
+evidence is complete and its findings fail the verdict. Other nonzero statuses mean missing or inconsistent evidence.
+The Constant-Time matrix jobs fail only for missing evidence, so a finding on one platform never cancels another
+platform's timing. The `verdict` job runs `ct/ci.py verdict` on every retained report and decides the run.
 
 ### Transferred CT
 

@@ -965,13 +965,13 @@ def main() -> None:
   public_site = dict(
     finding, symbol="<rscrypto::auth::p256_ecdh::P256EphemeralSecret>::diffie_hellman",
     kind="select_branch", primitive_ids=["kx.p256_ecdh"], public_classification=None,
-    file="artifacts/rscrypto_ct_evidence.o.disasm.txt", locator="public-window-bound+0x1e0",
-    function_sha256="a" * 64, operand_class="unproven", disposition="needs-fix", waived=False,
+    file="artifacts/rscrypto_ct_evidence.binary.disasm.txt", locator="public-window-bound+0x1e0",
+    function_sha256="a" * 64, slice_sha256="c" * 64, operand_class="unproven", disposition="needs-fix",
+    waived=False,
   )
   waiver = {
     "target": target, "primitive": "kx.p256_ecdh", "symbol": public_site["symbol"],
-    "kind": "select_branch", "artifact": public_site["file"], "locator": public_site["locator"],
-    "function_sha256": public_site["function_sha256"], "source": "src/auth/p256_portable.rs:246",
+    "kind": "select_branch", "slice_sha256": public_site["slice_sha256"], "source": "src/auth/p256_portable.rs:246",
     "classification": "public", "rationale": "The compared value is the public window index.",
     "reviewer": "regression fixture", "reviewed_at": "2026-10-15",
   }
@@ -979,10 +979,15 @@ def main() -> None:
   assert apply_waivers([public_site], [waiver], target) == []
   assert public_site["operand_class"] == "public" and public_site["waived"]
   assert apply_waivers([], [waiver], "riscv64gc-unknown-linux-gnu") == []
+  # The waiver binds the reviewed condition; a moved branch or a changed function keeps it.
+  moved = dict(public_site, locator="public-window-bound+0x1f0", function_sha256="b" * 64,
+               operand_class="unproven", disposition="needs-fix", waived=False)
+  assert apply_waivers([moved], [waiver], target) == [] and moved["waived"]
+  assert any("slice_sha256 must be a SHA-256" in error for error in validate_waivers([dict(waiver, slice_sha256="c")]))
   for changes in (
-    {"locator": "secret-digit-correction+0x278"},
-    {"function_sha256": "b" * 64},
-    {"file": "artifacts/another.o.disasm.txt"},
+    {"slice_sha256": "d" * 64},
+    {"symbol": "<rscrypto::auth::p256_ecdh::P256EphemeralSecret>::public_key"},
+    {"kind": "conditional_branch"},
   ):
     changed = dict(public_site, **changes, operand_class="unproven", disposition="needs-fix", waived=False)
     assert apply_waivers([changed], [waiver], target)

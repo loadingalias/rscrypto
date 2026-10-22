@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import sys
+import tarfile
 import tempfile
 import tomllib
 import unittest
@@ -14,6 +15,35 @@ from manifest import required_dudect_cases
 spec = importlib.util.spec_from_file_location('ct_ci', Path(__file__).with_name('ci.py'))
 ci = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(ci)
+
+
+class Verdict(unittest.TestCase):
+    def archive(self, root, platform, report):
+        directory = root / f'ct-{platform}-full'
+        directory.mkdir()
+        source = root / f'source-{platform}' / 'ct' / platform / 'release'
+        source.mkdir(parents=True)
+        (source / 'ct-report.json').write_text(json.dumps(report))
+        with tarfile.open(directory / f'ct-{platform}-full.tar.gz', 'w:gz') as bundle:
+            bundle.add(root / f'source-{platform}' / 'ct', arcname='ct')
+
+    def test_every_report_decides_and_missing_evidence_fails(self):
+        passed = {'status': 'pass', 'failure_count': 0, 'evidence_complete': True}
+        findings = {'status': 'fail', 'failure_count': 2, 'evidence_complete': True}
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.archive(root, 'x86_64-linux', passed)
+            self.archive(root, 's390x-linux', passed)
+            self.assertEqual(ci.verdict(root, ['x86_64-linux', 's390x-linux'], 'skipped'), 0)
+            self.assertEqual(ci.verdict(root, ['x86_64-linux', 's390x-linux'], 'failure'), 1)
+            # A platform without retained evidence fails the run.
+            self.assertEqual(ci.verdict(root, ['x86_64-linux', 'aarch64-linux'], ''), 1)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.archive(root, 'x86_64-linux', passed)
+            self.archive(root, 'powerpc64le-linux', findings)
+            # A report with findings completed its evidence, and still fails the verdict.
+            self.assertEqual(ci.verdict(root, ['x86_64-linux', 'powerpc64le-linux'], ''), 1)
 
 
 class Selection(unittest.TestCase):

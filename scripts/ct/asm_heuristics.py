@@ -297,9 +297,7 @@ WAIVER_REQUIRED_FIELDS = {
   "primitive",
   "symbol",
   "kind",
-  "artifact",
-  "locator",
-  "function_sha256",
+  "slice_sha256",
   "source",
   "classification",
   "rationale",
@@ -490,9 +488,11 @@ def validate_waivers(configured: list[dict[str, Any]]) -> list[str]:
       errors.append(f"asm_waiver[{index}] missing field(s): {', '.join(missing)}")
     if extra:
       errors.append(f"asm_waiver[{index}] has unknown field(s): {', '.join(extra)}")
-    for field in ("target", "primitive", "symbol", "kind", "artifact", "locator", "function_sha256"):
+    for field in ("target", "primitive", "symbol", "kind", "slice_sha256"):
       if waiver.get(field) in (None, "", "*"):
         errors.append(f"asm_waiver[{index}] field {field} must be exact")
+    if not re.fullmatch(r"[0-9a-f]{64}", str(waiver.get("slice_sha256", ""))):
+      errors.append(f"asm_waiver[{index}] slice_sha256 must be a SHA-256 hex digest")
     classification = waiver.get("classification")
     if classification not in {"public", "outside-claim", "allowed-disclosure"}:
       errors.append(f"asm_waiver[{index}] classification must be public, outside-claim, or allowed-disclosure")
@@ -517,11 +517,52 @@ def waiver_matches(waiver: dict[str, Any], finding: dict[str, Any], target: str,
       waiver.get("primitive") == primitive_id,
       waiver.get("symbol") == finding["symbol"],
       waiver.get("kind") == finding["kind"],
-      waiver.get("artifact") == finding["file"],
-      waiver.get("locator") == finding["locator"],
-      waiver.get("function_sha256") == finding["function_sha256"],
+      waiver.get("slice_sha256") == finding.get("slice_sha256"),
     )
   )
+
+
+SLICE_IDENTITY_VERSION = "rscrypto.ct.condition-slice.v1"
+# Exit status of a check whose evidence is complete and whose findings fail the verdict. Other nonzero
+# statuses mean the evidence itself is missing or inconsistent.
+FINDINGS_EXIT = 3
+
+
+def condition_identity(canonical: str, reasons: list[str], function_sha256: str) -> str:
+  """The waiver identity of a finding: the backward slice of its condition.
+
+  A closed slice ends only at function inputs, entry memory, immediates, read-only data, and the stores that
+  can reach its loads, so code outside it cannot change the reviewed condition. An open slice also binds the
+  whole function, because a call or an unknown effect can change what its leaves hold.
+  """
+  text = f"{SLICE_IDENTITY_VERSION}\n{canonical}"
+  if reasons:
+    text += f"\nfunction {function_sha256}"
+  return hashlib.sha256(text.encode()).hexdigest()
+
+
+def attach_condition_identities(
+  target: str,
+  findings: list[dict[str, Any]],
+  functions: dict[str, FunctionBody],
+  final_file: str,
+  local_symbols: set[str],
+  image: Any,
+  kinds: set[str],
+) -> None:
+  """Give each linked-binary finding of a waivable kind its `slice_sha256`."""
+  from condition_slice import FunctionSlices
+
+  analyses: dict[str, Any] = {}
+  for item in findings:
+    if item["file"] != final_file or item["kind"] not in kinds:
+      continue
+    symbol = item["symbol"]
+    if symbol not in analyses:
+      analyses[symbol] = FunctionSlices(target, functions[symbol], image, local_symbols)
+    result = analyses[symbol].slice(item["line"])
+    item["slice_sha256"] = condition_identity(result.canonical, result.reasons, item["function_sha256"])
+    item["slice_open"] = bool(result.reasons)
 
 
 def apply_waivers(findings: list[dict[str, Any]], configured: list[dict[str, Any]], target: str) -> list[str]:
@@ -573,7 +614,7 @@ def apply_waivers(findings: list[dict[str, Any]], configured: list[dict[str, Any
       finding["disposition"] = "needs-fix" if finding["severity"] == "fail" else "needs-binsec"
 
   return [
-    f"asm_waiver[{index}] did not match generated disassembly"
+    f"asm_waiver[{index}] matches no finding: its reviewed condition changed or disappeared"
     for index, waiver in enumerate(configured)
     if waiver.get("target") == target and index not in used
   ]
@@ -2160,20 +2201,21 @@ def main() -> int:
     )
 
   apply_select_branch_enforcement(findings, select_branch_enforced_primitives(root))
+  attach_condition_identities(args.target, findings, functions, f"artifacts/{final_path.name}", local_symbols, image,
+                              {"select_branch"} | {waiver["kind"] for waiver in configured_waivers})
   try:
     public_operand_errors = apply_public_operand_rules(findings, configured_public_operands, args.target)
     if public_operand_errors:
       for error in public_operand_errors:
         print(error)
       return 2
-    waiver_match_errors = apply_waivers(findings, configured_waivers, args.target)
+    stale_waivers = apply_waivers(findings, configured_waivers, args.target)
   except ValueError as exc:
     print(f"invalid asm waiver set: {exc}")
     return 2
-  if waiver_match_errors:
-    for error in waiver_match_errors:
-      print(error)
-    return 2
+  # A stale waiver waives nothing; it fails the verdict without stopping evidence collection.
+  for error in stale_waivers:
+    print(error)
   missing_symbols = sorted(symbol for symbol in symbols if symbol not in functions)
   unwaived_failures = [
     item for item in findings if item["severity"] == "fail" and item["disposition"] != "accepted" and not item.get("waived")
@@ -2261,6 +2303,7 @@ def main() -> int:
     "unwaived_fail_count": len(unwaived_failures),
     "unwaived_warn_count": len(unwaived_warnings),
     "waiver_count": sum(1 for item in findings if item.get("waived")),
+    "stale_waivers": stale_waivers,
     "grouped_findings": grouped_findings(findings),
     "findings": findings,
   }
@@ -2268,8 +2311,8 @@ def main() -> int:
   out = args.out_dir / "asm-heuristics.json"
   out.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
   (args.out_dir / "asm-heuristics.md").write_text(markdown_report(report))
-  if missing_symbols or needs_fix or unclassified:
-    return 1
+  if missing_symbols or needs_fix or unclassified or stale_waivers:
+    return FINDINGS_EXIT
   return 0
 
 

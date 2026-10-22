@@ -20,7 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
 
 import evidence_bundle as bundle
 from dudect_report import raw_csv_rows
-from asm_heuristics import validate_waivers
+from asm_heuristics import FINDINGS_EXIT, validate_waivers
 from provenance import ct_function_symbols, dudect_runner_sources, load_toml, sha256_file
 from manifest import (
   binsec_kernel_targets, binsec_required_targets, is_diagnostic_dudect_case, primitive_supports_physical_timing,
@@ -1045,7 +1045,10 @@ def validate_strict_coverage(ct: dict, errors: list[str], target: str | None = N
             fail(errors, f"primitive {primitive_id} variant {variant} requires BINSEC kernel evidence")
 
 
-def validate_artifacts(root: Path, target: str, profile: str, ct: dict, errors: list[str], warnings: list[str]) -> None:
+def validate_artifacts(root: Path, target: str, profile: str, ct: dict, errors: list[str], warnings: list[str],
+                       findings: list[str] | None = None) -> None:
+  """Check the artifacts; `findings` collects verdict failures of complete evidence, `errors` the rest."""
+  findings = errors if findings is None else findings
   out_dir = root / "target" / "ct" / target / profile
   artifact_dir = out_dir / "artifacts"
   provenance_path = out_dir / "provenance.json"
@@ -1259,13 +1262,15 @@ def validate_artifacts(root: Path, target: str, profile: str, ct: dict, errors: 
           fail(errors, f"asm-heuristics {key} expected {value!r}, got {heuristics.get(key)!r}")
       missing = heuristics.get("missing_symbols", [])
       if missing:
-        fail(errors, f"asm-heuristics missing symbol(s): {', '.join(missing)}")
+        fail(findings, f"asm-heuristics missing symbol(s): {', '.join(missing)}")
       if heuristics.get("unwaived_fail_count", 0) != 0:
-        fail(errors, f"asm-heuristics has {heuristics.get('unwaived_fail_count')} unwaived failure finding(s)")
+        fail(findings, f"asm-heuristics has {heuristics.get('unwaived_fail_count')} unwaived failure finding(s)")
       if heuristics.get("needs_fix_count", 0) != 0:
-        fail(errors, f"asm-heuristics has {heuristics.get('needs_fix_count')} finding(s) that need fixes")
+        fail(findings, f"asm-heuristics has {heuristics.get('needs_fix_count')} finding(s) that need fixes")
+      if heuristics.get("stale_waivers"):
+        fail(findings, f"asm-heuristics has {len(heuristics['stale_waivers'])} stale waiver(s)")
       if heuristics.get("unclassified_count", 0) != 0:
-        fail(errors, f"asm-heuristics has {heuristics.get('unclassified_count')} unclassified finding(s)")
+        fail(findings, f"asm-heuristics has {heuristics.get('unclassified_count')} unclassified finding(s)")
       if heuristics.get("finding_count", 0) != (
         heuristics.get("needs_fix_count", 0)
         + heuristics.get("needs_binsec_count", 0)
@@ -1580,10 +1585,12 @@ def main() -> int:
     target = next(line.split(":", 1)[1].strip() for line in verbose.splitlines() if line.startswith("host:"))
 
   ct = validate_manifest(root, target, errors, warnings)
+  # Coverage gaps and asm findings fail the verdict of complete evidence; they are not missing evidence.
+  findings: list[str] = []
   if args.strict_coverage:
-    validate_strict_coverage(ct, errors, target)
+    validate_strict_coverage(ct, findings, target)
   if not args.manifest_only:
-    validate_artifacts(root, target, args.profile, ct, errors, warnings)
+    validate_artifacts(root, target, args.profile, ct, errors, warnings, findings)
     if args.require_dudect:
       validate_dudect(root, target, args.profile, ct, errors, warnings)
 
@@ -1591,9 +1598,13 @@ def main() -> int:
     print(f"warning: {message}", file=sys.stderr)
   for message in errors:
     print(f"error: {message}", file=sys.stderr)
+  for message in findings:
+    print(f"finding: {message}", file=sys.stderr)
 
   if errors:
     return 1
+  if findings:
+    return FINDINGS_EXIT
 
   print("ct validation ok")
   return 0

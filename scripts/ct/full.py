@@ -22,7 +22,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
 
 import evidence_bundle
+from asm_heuristics import FINDINGS_EXIT
 from provenance import load_toml, sha256_file
+from transfer import COMPLETE
 from manifest import (
   dudect_confirmation_policy, dudect_sample_count,
   is_diagnostic_dudect_case, primitive_supports_physical_timing, resolve_dudect_case, target_record,
@@ -81,7 +83,9 @@ def run_command(
   *,
   env: dict[str, str] | None = None,
   timeout: int | None = None,
+  findings_exit: int | None = None,
 ) -> CommandResult:
+  """Run one step. With `findings_exit`, that status means complete evidence whose findings fail the verdict."""
   started = datetime.now(UTC)
   stem = command_log_name(name)
   stdout_path = logs_dir / f"{stem}.stdout.txt"
@@ -101,7 +105,7 @@ def run_command(
       timeout=timeout,
       check=False,
     )
-    status = "pass" if proc.returncode == 0 else "fail"
+    status = "pass" if proc.returncode == 0 else ("findings" if proc.returncode == findings_exit else "fail")
     returncode: int | None = proc.returncode
     stdout = proc.stdout
     stderr = proc.stderr
@@ -1068,6 +1072,16 @@ def build_findings(
   diagnostics: list[dict[str, Any]] = []
 
   for step in steps:
+    if step["status"] == "findings":
+      findings.append(
+        {
+          "kind": "gate_findings",
+          "category": "verdict",
+          "severity": "blocker",
+          "summary": f"{step['name']} completed its evidence with findings; see its report",
+        }
+      )
+      continue
     if step["status"] not in {"fail", "timeout"}:
       continue
     findings.append(
@@ -1327,6 +1341,7 @@ def main() -> int:
       "ct-artifacts",
       shell_script(root, "scripts/ct/artifacts.sh", "--target", target, "--profile", profile),
       timeout=None,
+      findings_exit=FINDINGS_EXIT,
     )
     steps.append(result_record(artifacts_result))
 
@@ -1336,9 +1351,11 @@ def main() -> int:
       "ct-validate-artifacts",
       python_script(root, "scripts/ct/validate.py", "--target", target, "--profile", profile, "--strict-coverage"),
       timeout=None,
+      findings_exit=FINDINGS_EXIT,
     )
     steps.append(result_record(validate_result))
-    if artifacts_result.status == "pass" and validate_result.status == "pass":
+    # Findings fail the verdict but leave the evidence complete, so collection continues.
+    if artifacts_result.status in COMPLETE and validate_result.status in COMPLETE:
       cleanup_result = run_command(
         root, logs_dir, "ct-zeroization-sentinel",
         python_script(root, "scripts/ct/zeroization.py", "--artifact-dir", str(out_dir / "artifacts"),
@@ -1346,9 +1363,9 @@ def main() -> int:
       )
       steps.append(result_record(cleanup_result))
   identity = candidate_identity(out_dir)
-  if any(step["status"] != "pass" for step in steps):
+  if any(step["status"] not in COMPLETE for step in steps):
     for step in steps:
-      if step["status"] != "pass":
+      if step["status"] not in COMPLETE:
         print(f"ct-full: stopping after failed gate-one step {step['name']}", file=sys.stderr)
         print_command_logs(step)
     findings, diagnostics = build_findings(steps, [], [], [])
@@ -1454,7 +1471,7 @@ def main() -> int:
       return 1
     export(root, out_dir, shared, steps, transfer_identity, args.prepare_archive.resolve(), target)
     print(f"CT preparation complete; native timing remains required: {args.prepare_archive}")
-    return 0
+    return FINDINGS_EXIT if any(step["status"] == "findings" for step in steps) else 0
 
   binsec_kernels = []
   if binsec_enabled:
@@ -1532,7 +1549,7 @@ def main() -> int:
 
   dudect_run = None
   dudect_cases = []
-  if all(step["status"] in ("pass", "not_applicable") for step in steps):
+  if all(step["status"] in (*COMPLETE, "not_applicable") for step in steps):
     # Every case report must come from this source; a transferred binary was
     # built from the same checkout, which `transfer.consume` has verified.
     source = evidence_bundle.source_identity(root)
@@ -1577,6 +1594,8 @@ def main() -> int:
 
   failure_count = len(findings)
   status = "pass" if failure_count == 0 else "fail"
+  # Missing evidence is a tooling failure; complete evidence with findings is a failed verdict.
+  evidence_complete = all(step["status"] in (*COMPLETE, "not_applicable") for step in steps)
   report = {
     "schema_version": 1,
     "kind": "rscrypto.ct.full-report",
@@ -1587,6 +1606,7 @@ def main() -> int:
     "target_triple": target,
     "profile": profile,
     "status": status,
+    "evidence_complete": evidence_complete,
     "failure_count": failure_count,
     "summary": summarize_findings(findings, diagnostics),
     "host": {
@@ -1671,7 +1691,9 @@ def main() -> int:
   json_path, md_path = write_full_report(out_dir, report)
   print(f"ct-full report: {json_path}")
   print(f"ct-full summary: {md_path}")
-  return 0 if status == "pass" else 1
+  if status == "pass":
+    return 0
+  return FINDINGS_EXIT if evidence_complete else 1
 
 
 if __name__ == "__main__":

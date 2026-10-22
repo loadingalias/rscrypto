@@ -1,9 +1,10 @@
 #!/usr/bin/env -S uv run python
-"""Select native CT evidence lanes."""
+"""Select native CT evidence lanes, and decide a run from their reports."""
 import json
 import os
 from pathlib import Path
 import sys
+import tarfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'lib'))
 from ci_platforms import platforms
@@ -52,7 +53,45 @@ def main():
             output.write('cross=' + str(bool(builds)).lower() + '\n')
             output.write('builds=' + json.dumps({'include': builds}, separators=(',', ':')) + '\n')
         return
-    raise ValueError('usage: scripts/ct/ci.py plan')
+    if sys.argv[1:2] == ['verdict'] and len(sys.argv) == 3:
+        matrix = json.loads(os.environ['MATRIX'])
+        platforms_run = [row['platform'] for row in matrix['include']]
+        status = verdict(Path(sys.argv[2]), platforms_run, os.environ.get('RISCV_RESULT', ''))
+        raise SystemExit(status)
+    raise ValueError('usage: scripts/ct/ci.py plan | verdict DIRECTORY')
+
+
+def verdict(directory, platforms_run, riscv_result):
+    """Fail the run unless every platform's retained report passed.
+
+    Matrix jobs fail only when their evidence is incomplete; a report with findings
+    still uploads, so the run's verdict is decided here from every report at once.
+    """
+    rows = []
+    for platform in platforms_run:
+        archive = directory / f'ct-{platform}-full' / f'ct-{platform}-full.tar.gz'
+        if not archive.exists():
+            rows.append((platform, 'missing', 'no retained evidence'))
+            continue
+        with tarfile.open(archive) as bundle:
+            reports = [member for member in bundle.getmembers()
+                       if member.name.endswith('/release/ct-report.json') and member.name.startswith('ct/')]
+            if len(reports) != 1:
+                rows.append((platform, 'missing', f'{len(reports)} reports in the archive'))
+                continue
+            report = json.load(bundle.extractfile(reports[0]))
+        rows.append((platform, report['status'], f"{report['failure_count']} failure(s); evidence complete: "
+                                                   f"{report.get('evidence_complete', False)}"))
+    if riscv_result:
+        # The RISC-V run reports through its dispatching job; skipped means no runner started it.
+        rows.append(('riscv64-linux', {'success': 'pass', 'skipped': 'skipped'}.get(riscv_result, 'fail'),
+                     f'dispatched run: {riscv_result}'))
+    table = ['| Platform | Verdict | Detail |', '| --- | --- | --- |', *(f'| {a} | {b} | {c} |' for a, b, c in rows)]
+    print('\n'.join(table))
+    if os.environ.get('GITHUB_STEP_SUMMARY'):
+        with Path(os.environ['GITHUB_STEP_SUMMARY']).open('a', encoding='utf-8') as summary:
+            summary.write('## Constant-time verdict\n\n' + '\n'.join(table) + '\n')
+    return 0 if all(state in ('pass', 'skipped') for _, state, _ in rows) else 1
 
 
 if __name__ == '__main__':

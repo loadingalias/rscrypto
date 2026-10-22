@@ -33,8 +33,24 @@ LLVM can also turn a masked selection back into a branch on the mask.
 The binary inspection reports a conditional branch whose two paths rejoin after straight-line code
 as `select_branch`, the shape of that lowering.
 For the primitives under `[asm_select_branch]` in `ct.toml`, an unclassified `select_branch` fails the gate.
-An `asm_waiver` must bind each reviewed condition to its target, primitive, artifact, instruction locator,
-and complete function hash. A count-only `asm_public_operand` rule cannot exempt a branch:
+An `asm_waiver` binds a reviewed condition to its target, primitive, function, finding kind,
+and condition identity (`slice_sha256`): a digest of the backward slice of the condition in the linked binary.
+The slice holds every instruction whose result reaches the condition through registers, flags,
+or memory inside the function, each with the placement-independent identity described below.
+A load reaches the stores that can write the loaded bytes.
+Stack slots are tracked by their offset from the entry stack pointer,
+and fields read through an unmodified argument pointer by their offset from it.
+Any other store that can overlap a load joins its slice.
+If a frame address is stored, passed to a call, or used in arithmetic, every call can write the frame.
+
+- A slice is *closed* when it ends only at function inputs, entry memory, immediates,
+  and read-only data bound by contents.
+  Code outside a closed slice cannot change the condition,
+  so its waiver keeps matching when other code in the function or the file changes.
+- A slice is *open* when a call, an instruction of unknown effect, or an indirect jump can change a value it reads.
+  An open identity also binds the complete function hash, so any change in the function requires renewed review.
+
+A count-only `asm_public_operand` rule cannot exempt a branch:
 another instruction in the same function could depend on a secret while staying within that count.
 Instruction identities use function-relative positions. Resolved direct transfers retain their
 instruction length, mnemonic, registers, condition, and exact destination symbol and offset instead
@@ -66,20 +82,14 @@ immediates that add an offset to an address that is already formed, and indirect
 Because the identity binds read-only contents, a changed constant also requires renewed review,
 even at an unchanged address. Different compiler or linker output can therefore require renewed review.
 The artifact hashes retain the exact binary identity.
-`just ct-renew` supports renewed review when a waived function changes.
-For each stale waiver, it compares the reviewed and new linked artifacts and proposes renewal only
-when the branch and the backward slice of its condition are unchanged.
-The slice follows reaching definitions through registers and flags within the function,
-and binds read-only data by contents.
-A non-constant load, a call result, or an instruction of unknown effect in the slice requires manual review,
-as do changed slices and enforced findings without a waiver.
-The tool writes a review record for every comparison. The gate stays whole-function exact;
+A waiver that matches no finding fails the verdict, but evidence collection and timing continue.
+`just ct-renew` prepares the review of stale waivers and changes nothing;
 see [the renewal workflow](../scripts/README.md#waiver-renewal).
 The retained Linux and Windows reviews use the workflow checkout path, pinned
 compiler, target flags, and native or GNU cross linker recorded with each artifact.
 A Mac/Zig build or another checkout path can change embedded source locations,
-data placement, and function hashes. Reclassify those exact artifacts before
-rebinding a waiver; the review does not grant a portable hash exemption.
+data placement, and function hashes, and with them the identities of open slices.
+Reclassify those exact artifacts before rebinding a waiver; the review does not grant a portable hash exemption.
 Artifact builds require the configured `rust-src` component and record its
 source root and `std/src/lib.rs` digest. Rustc can translate standard-library
 source locations to installed sources, so component presence and path affect
@@ -219,6 +229,34 @@ instruction in that artifact. Classifications, rationales, and review dates are 
 With the re-encoded waivers, the v2 scanner accepts all seven artifact sets with no unmatched waiver,
 the same result as v1. The re-encoding binds the existing reviews to the same binaries; it is not a
 review of later source.
+
+### Condition-slice waiver identity, 2026-10-22
+
+Waivers moved from function identity (artifact, instruction locator, and function hash) to condition identity.
+Function identity made a waiver stale whenever anything in its function changed,
+including the source line numbers in panic locations, which any edit above the function moves.
+At `4a52f75c`, 33 of the 42 RISC-V waivers were stale; 31 of their conditions were unchanged.
+
+The 498 waivers were re-encoded on the artifacts they were reviewed against:
+[Constant-Time 39554592321](https://github.com/loadingalias/rscrypto/actions/runs/39554592321) at `6b5ea2f1`,
+its RISC-V run [39555382384](https://github.com/loadingalias/rscrypto/actions/runs/39555382384),
+and the local Apple Silicon build of `6b5ea2f1`.
+Each identity is the slice digest of the waiver's own reviewed finding.
+302 slices are closed and 196 are open.
+50 waivers that covered the same condition in the same function were merged;
+each merged pair had the same classification and contract, so 448 waivers remain.
+With them, the scanner accepts all seven artifact sets with no stale waiver and unchanged counts.
+The one exception is the vendored AArch64 Montgomery kernel, which is still in those binaries,
+although `68d942e2` removed it and its waiver.
+At `4a52f75c`, 12 RISC-V waivers are stale under condition identity:
+4 conditions changed, and 8 open slices bind a function that changed.
+
+The gate also separates evidence from the verdict.
+A check whose evidence is complete but whose findings fail the verdict exits with status 3.
+Preparation, sealing, and timing continue,
+and the Constant-Time workflow's verdict job decides the run from every platform's report.
+A finding on one platform no longer cancels timing on the others,
+and diagnostic replays run while waivers await review.
 
 ### Linked-artifact review, 2026-10-21
 

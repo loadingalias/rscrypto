@@ -13,11 +13,13 @@ import evidence_bundle as bundle
 from cross_build import require_host
 KIND = 'rscrypto.cross.ct'
 GATES = ('ct-artifacts', 'ct-validate-artifacts', 'ct-zeroization-sentinel')
+# Complete evidence: a gate passed, or completed with findings that the final report carries as failures.
+COMPLETE = ('pass', 'findings')
 
 
 def export(root, out_dir, shared, steps, identity, archive, target):
-    if [step['name'] for step in steps] != list(GATES) or any(step['status'] != 'pass' for step in steps):
-        raise ValueError('every CT preparation gate must pass before export')
+    if [step['name'] for step in steps] != list(GATES) or any(step['status'] not in COMPLETE for step in steps):
+        raise ValueError('every CT preparation gate must complete its evidence before export')
     with tempfile.TemporaryDirectory(prefix='ct-export-', dir=root / 'target') as temporary:
         directory = Path(temporary)
         for name in ('artifacts', 'full/logs'):
@@ -38,8 +40,8 @@ def consume(root, out_dir, archive, target):
     bundle.unpack(archive, directory)
     manifest = bundle.verify(root, directory, KIND, target)
     steps = manifest['metadata']['steps']
-    if [step['name'] for step in steps] != list(GATES) or any(step['status'] != 'pass' for step in steps):
-        raise ValueError('transferred CT preparation gates are incomplete or failed')
+    if [step['name'] for step in steps] != list(GATES) or any(step['status'] not in COMPLETE for step in steps):
+        raise ValueError('transferred CT preparation gates are incomplete')
     provenance = json.loads((directory / 'provenance.json').read_text())
     if provenance['target'] != target or provenance['profile'] != 'release':
         raise ValueError('wrong CT artifact target/profile')

@@ -328,11 +328,17 @@ if command -v rustfilt >/dev/null 2>&1; then
   done
 fi
 
+# Status 3 means the asm report is complete and its findings fail the verdict: finish the
+# provenance first, so the evidence stays complete, then return that status.
+asm_status=0
 "$PYTHON" -X utf8 scripts/ct/asm_heuristics.py \
   --target "$TARGET" \
   --profile "$PROFILE" \
   --artifact-dir "$ARTIFACT_DIR" \
-  --out-dir "$OUT_DIR"
+  --out-dir "$OUT_DIR" || asm_status=$?
+if ((asm_status != 0 && asm_status != 3)); then
+  exit "$asm_status"
+fi
 
 "$PYTHON" -X utf8 scripts/ct/provenance.py \
   --target "$TARGET" \
@@ -348,3 +354,4 @@ fi
   --linker-command-log "$LINK_LOG"
 
 echo "CT artifacts written to $OUT_DIR"
+exit "$asm_status"
