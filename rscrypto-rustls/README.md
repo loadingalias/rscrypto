@@ -112,6 +112,21 @@ P-384 anchor, and 21,864, 38,888 or 68,200 per ML-DSA-44, 65 or 87 anchor, plus
 hash-map overhead. rustls's own verifiers with `verify::SUPPORTED_ALGORITHMS`
 retain no prepared anchors.
 
+Choose the server verifier by how many handshakes it will verify. On the Intel
+and Graviton4 bench hosts, preparing a Debian or Fedora bundle (148 and 146 roots,
+42 and 44 of them P-256 or P-384) costs 4.1–5.1 ms. It saves 84–90 µs per handshake
+only when the chain ends at a P-256 or P-384 root; chains that end at an RSA root
+cost the same with either verifier. The preparation pays for itself after 46–61
+such handshakes. A short-lived client, such as a command that makes a few
+connections, should use rustls's `WebPkiServerVerifier` with
+`verify::SUPPORTED_ALGORITHMS`, which `with_root_certificates` builds: for 1, 3,
+and 10 handshakes it costs 2.3–123 times less than the prepared verifier. A
+long-lived client that reuses one verifier for many handshakes to EC-rooted origins
+should use `PreparedServerVerifier`. Lazy per-anchor preparation would not help the
+short-lived case, because preparing one anchor (about 98–117 µs) costs more than one
+prepared verification saves. The `tls-server-verifier` benchmark measures these
+rows with captured origin chains and the bundles in `tools/provider-bench/fixtures/server-verifier`.
+
 `sign::KEY_PROVIDER`, which uses OS entropy and requires `getrandom`, accepts PKCS#8 keys, EC SEC1 keys, and RSA PKCS#1 keys,
 bounded to 16 KiB. Its signing keys expose SPKI for `rustls::crypto::Credentials::new`.
 Owned DER input is zeroized on success and rejection, including oversized input.

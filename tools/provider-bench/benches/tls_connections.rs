@@ -1,5 +1,7 @@
 //! Matched TLS handshakes and application traffic through production TLS stacks.
 
+extern crate alloc;
+
 #[path = "../../../benches/common/criterion.rs"]
 #[expect(
   dead_code,
@@ -218,6 +220,161 @@ fn traffic(c: &mut Criterion) {
   }
 }
 
+/// Server-certificate verification as a short-lived client pays it: build a
+/// verifier over a Linux distribution bundle, then verify the chains that
+/// top-secret's origins serve. TLS 1.3 CertificateVerify is excluded: both
+/// rscrypto verifiers delegate it to the same rustls verifier.
+fn server_verifiers(c: &mut Criterion) {
+  use alloc::sync::Arc;
+  use core::time::Duration;
+  use rscrypto_rustls::verify::PreparedServerVerifier;
+  use rustls::RootCertStore;
+  use rustls::client::WebPkiServerVerifier;
+  use rustls::client::danger::{ServerIdentity, ServerVerifier};
+  use rustls::crypto::{CertificateIdentity, Identity};
+  use rustls::pki_types::pem::PemObject;
+  use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
+
+  macro_rules! fixture {
+    ($file:literal) => {
+      include_bytes!(concat!("../fixtures/server-verifier/", $file))
+    };
+  }
+  const BUNDLES: [(&str, &[u8]); 2] = [("debian", fixture!("debian.crt")), ("fedora", fixture!("fedora.crt"))];
+  const ORIGINS: [(&str, &[u8]); 4] = [
+    ("index.crates.io", fixture!("index.crates.io.crt")),
+    ("static.crates.io", fixture!("static.crates.io.crt")),
+    ("static.rust-lang.org", fixture!("static.rust-lang.org.crt")),
+    ("github.com", fixture!("github.com.crt")),
+  ];
+  // rustls's WebPKI verifier with each backend's algorithms, and the prepared verifier.
+  const VERIFIERS: [&str; 3] = ["rscrypto", "rscrypto-prepared", "aws-lc-rs"];
+  // The chains' capture time; see fixtures/server-verifier/README.md.
+  const NOW: UnixTime = UnixTime::since_unix_epoch(Duration::from_secs(1_792_638_752));
+
+  fn build(verifier: &str, roots: &Arc<RootCertStore>) -> Box<dyn ServerVerifier> {
+    match verifier {
+      "rscrypto-prepared" => Box::new(PreparedServerVerifier::new(Arc::clone(roots)).expect("bundle roots")),
+      "rscrypto" => Box::new(
+        WebPkiServerVerifier::builder(Arc::clone(roots), &rscrypto_rustls::default_provider())
+          .build()
+          .expect("bundle roots"),
+      ),
+      _ => Box::new(
+        WebPkiServerVerifier::builder(Arc::clone(roots), &rustls_aws_lc_rs::DEFAULT_TLS13_PROVIDER)
+          .build()
+          .expect("bundle roots"),
+      ),
+    }
+  }
+
+  fn verify(verifier: &dyn ServerVerifier, origin: &(Identity<'static>, ServerName<'static>)) {
+    let (identity, name) = origin;
+    black_box(verifier.verify_identity(&ServerIdentity::new(identity, name, NOW))).expect("origin chain");
+  }
+
+  let origins = ORIGINS.map(|(name, pem)| {
+    let mut chain = CertificateDer::pem_slice_iter(pem).map(|certificate| certificate.expect("PEM fixture"));
+    let leaf = chain.next().expect("leaf");
+    let identity = Identity::X509(CertificateIdentity::new(leaf, chain.collect()));
+    (name, (identity, ServerName::try_from(name).expect("origin name")))
+  });
+  for (bundle, pem) in BUNDLES {
+    let name = format!("tls13/server-verifier/{bundle}");
+    if !bench_config::selected(&name) {
+      continue;
+    }
+    // Bundle parsing is the same for every verifier, so it stays outside timing.
+    let mut roots = RootCertStore::empty();
+    let (_, unparsed) =
+      roots.add_parsable_certificates(CertificateDer::pem_slice_iter(pem).map(|root| root.expect("PEM fixture")));
+    assert_eq!(unparsed, 0, "{bundle} roots parse");
+    let roots = Arc::new(roots);
+    let check = |verifier: &str| {
+      let built = build(verifier, &roots);
+      for (_, origin) in &origins {
+        verify(built.as_ref(), origin);
+      }
+      built
+    };
+
+    let group = format!("{name}/build");
+    if bench_config::selected(&group) {
+      let mut measured = c.benchmark_group(&group);
+      for verifier in VERIFIERS {
+        if bench_config::selected(&format!("{group}/{verifier}")) {
+          measured.bench_function(
+            verifier,
+            checked_routine(
+              (),
+              |()| drop(check(verifier)),
+              |b, ()| b.iter(|| black_box(build(verifier, &roots))),
+            ),
+          );
+        }
+      }
+      measured.finish();
+    }
+    for (origin_name, origin) in &origins {
+      let group = format!("{name}/verify/{origin_name}");
+      if !bench_config::selected(&group) {
+        continue;
+      }
+      let mut measured = c.benchmark_group(&group);
+      for verifier in VERIFIERS {
+        if bench_config::selected(&format!("{group}/{verifier}")) {
+          measured.bench_function(
+            verifier,
+            checked_routine(
+              None,
+              |built| *built = Some(check(verifier)),
+              |b, built| {
+                let built = built.as_deref().expect("the check builds the verifier");
+                b.iter(|| verify(built, origin));
+              },
+            ),
+          );
+        }
+      }
+      measured.finish();
+    }
+    // A client lifetime: build, then verify one origin's chain per handshake.
+    for (origin_name, origin) in origins
+      .iter()
+      .filter(|(name, _)| ["index.crates.io", "github.com"].contains(name))
+    {
+      for handshakes in [1, 3, 10] {
+        let group = format!("{name}/lifetime/{origin_name}/{handshakes}");
+        if !bench_config::selected(&group) {
+          continue;
+        }
+        let mut measured = c.benchmark_group(&group);
+        for verifier in &VERIFIERS[..2] {
+          if bench_config::selected(&format!("{group}/{verifier}")) {
+            measured.bench_function(
+              *verifier,
+              checked_routine(
+                (),
+                |()| drop(check(verifier)),
+                |b, ()| {
+                  b.iter(|| {
+                    let built = build(verifier, &roots);
+                    for _ in 0..handshakes {
+                      verify(built.as_ref(), origin);
+                    }
+                    built
+                  });
+                },
+              ),
+            );
+          }
+        }
+        measured.finish();
+      }
+    }
+  }
+}
+
 fn main() {
   // Record the comparison libraries' identity in the run's output; discovery
   // and case matching keep their exact output.
@@ -228,5 +385,5 @@ fn main() {
       serde_json::json!({"provider_bench_provenance": rscrypto_provider_bench::provenance()})
     );
   }
-  bench_config::run(&[connections, expanded, traffic]);
+  bench_config::run(&[connections, expanded, traffic, server_verifiers]);
 }

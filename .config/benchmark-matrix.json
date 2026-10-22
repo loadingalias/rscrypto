@@ -291,6 +291,7 @@
     "tls-compact-key": { "bench": "tls_connections", "filter": "^tls13/compact-key/" },
     "tls-traffic": { "bench": "tls_connections", "filter": "^tls13/traffic/" },
     "tls-traffic-bidirectional": { "bench": "tls_connections", "filter": "^tls13/traffic-bidirectional/" },
+    "tls-server-verifier": { "bench": "tls_connections", "filter": "^tls13/server-verifier/" },
     "crc16-ccitt": { "bench": "crc", "filter": "crc16-ccitt" },
     "crc16-ibm": { "bench": "crc", "filter": "crc16-ibm" },
     "crc24-openpgp": { "bench": "crc", "filter": "crc24-openpgp" },
@@ -477,7 +478,8 @@
       "tls-hrr",
       "tls-compact-key",
       "tls-traffic",
-      "tls-traffic-bidirectional"
+      "tls-traffic-bidirectional",
+      "tls-server-verifier"
     ],
     "checksums": [
       "crc16-ccitt",
@@ -681,6 +683,13 @@
     }
   },
   "comparisons": {
+    "tls-server-verifier": {
+      "family": "TLS",
+      "bench": "tls_connections",
+      "cases": "^tls13/server-verifier/(?P<input>[^/]+)/(?P<variant>build|verify/[^/]+)/(?P<implementation>[^/]+)$",
+      "headline": false,
+      "task": "Build rustls's WebPKI server verifier over a Linux distribution bundle, or verify a captured origin chain and name with it; bundle parsing is untimed."
+    },
     "openssl-hashes": {
       "family": "OpenSSL hashes",
       "bench": "openssl_primitives",
