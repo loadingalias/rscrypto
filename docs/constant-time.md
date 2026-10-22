@@ -230,6 +230,45 @@ With the re-encoded waivers, the v2 scanner accepts all seven artifact sets with
 the same result as v1. The re-encoding binds the existing reviews to the same binaries; it is not a
 review of later source.
 
+### Linked-artifact review, 2026-10-22
+
+The RSA changes after `6b5ea2f1` made 225 of the 448 waivers stale on the seven targets:
+the paired NEON CRT engine (`87022028`), the portable Montgomery rewrite (`40087b27`),
+the masked blinding inverse and its new `inverse_mask` scratch field (`c33bd426`),
+and the IBM Z and RISC-V hardware-multiply changes.
+The new artifacts came from [Constant-Time 39835996527](https://github.com/loadingalias/rscrypto/actions/runs/39835996527)
+at `21908411`, one job or prepared bundle per architecture, and from a local Apple Silicon build of the same source.
+`just ct-renew` compared each target with the artifacts of the
+[2026-10-21 review](#linked-artifact-review-2026-10-21):
+
+- 197 stale waivers were renewed on their new conditions with rationales checked against the new binaries.
+- 28 stale waivers were deleted: their branches are gone, mostly from the rewritten portable Montgomery kernels.
+- 46 enforced findings without a waiver received new exact waivers.
+- 46 current waivers were corrected. `inverse_mask` took field 4 of `RsaPrivateScratch`,
+  so the later buffers each moved by one, and their texts named the old field for an offset.
+
+Every renewed or new rationale names the instructions and function offsets that define the condition,
+follows frame-slot reloads to their stores, and cites the current source line.
+A checker confirmed each cited instruction against the new disassembly,
+and the gate's scanner then accepted all seven artifact sets with no stale or unwaived finding.
+466 waivers remain.
+
+The review found one secret-dependent branch, which was fixed instead of waived.
+On RISC-V, `square_wide_portable` added the low limb's carry to the high limb as a `bool`,
+and LLVM compiled the add to a `beqz` on two carries of the secret limb square,
+taken for about half of the limbs. `e98dd68b` keeps the diagonal step in 128-bit arithmetic, as `mont_mac` does;
+the other targets compiled the old code branch-free.
+The 24-digit BINSEC root of the paired NEON engine also needed an explicit exploration depth:
+it is one straight path of 8,639 instructions, which the default depth cut at 1,000 (`21908411`).
+All other reviewed conditions are public:
+zeroization tests of public lengths and addresses, loop and copy bounds over public limb counts,
+the inlined `public_len_eq` tails, the saved DIT state, the PKCS#1 implicit-rejection shift bound,
+and the digit-conversion bounds of the paired NEON engine.
+
+The same run passed every required DudeCT case on all six CI platforms:
+131 on Linux x86-64, Linux AArch64, Windows x86-64, IBM Z, and RISC-V, and 126 on POWER.
+`square_wide_portable` changed with `e98dd68b`, so its waivers are renewed on the next run's artifacts.
+
 ### Condition-slice waiver identity, 2026-10-22
 
 Waivers moved from function identity (artifact, instruction locator, and function hash) to condition identity.
@@ -476,6 +515,12 @@ and the random class from a cold one.
 With a cold per-sample copy for the fixed class too, the maxima fell to 1.4 to 2.7 (4 runs),
 still with that sign. The harness now prepares both classes that way.
 A residual difference at that level is not excluded.
+
+In [Constant-Time 39835996527](https://github.com/loadingalias/rscrypto/actions/runs/39835996527) at `21908411`,
+both inverse cases passed on every CI platform, with largest |t| values (fixed against random 64-bit factor,
+then full width) of 1.71 and 3.80 on Linux AArch64, 1.99 and 3.81 on Linux x86-64, 3.16 and 3.96 on Windows,
+1.05 and 2.21 on POWER, 2.12 and 1.92 on IBM Z, and 1.53 and 1.67 on RISC-V.
+The full-width case reached its highest values on the x86-64 targets as well, where the unmasked inverse never leaked.
 
 On a loaded M1, the mask adds about 2 µs to the inverse at RSA-2048, 4 µs at RSA-3072,
 and 6 µs at RSA-4096. RSA-PSS signing time did not change beyond run-to-run noise of about 1%.
