@@ -67,7 +67,7 @@ def regenerate_double(text):
 def sources():
     for relative, kernels in SOURCES.items():
         path = ROOT / relative
-        text = path.read_text()
+        text = path.read_text(encoding='utf-8')
         new, stale = regenerate(text, kernels)
         if relative.endswith('p384_x86_64.rs'):
             new, stale_double = regenerate_double(new)
@@ -94,7 +94,7 @@ def main():
     for path, text, new, stale in sources():
         relative = path.relative_to(ROOT)
         if args.mode == 'write' and new != text:
-            path.write_text(new)
+            path.write_text(new, encoding='utf-8')
             print(f'rewrote {relative}: {", ".join(stale)}')
         stale_total += [f'{relative}: {name}' for name in stale]
     if args.mode == 'check' and stale_total:

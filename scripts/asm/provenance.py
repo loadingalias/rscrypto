@@ -21,7 +21,7 @@ OWNED = 'Copyright (c) 2026 rscrypto contributors'
 
 def outputs(manifest):
     """Yield `(path, lines, bytes, sha256)` for every output row; counts are None when absent."""
-    rows = [line.split('\t') for line in manifest.read_text().splitlines() if line and not line.startswith('#')]
+    rows = [line.split('\t') for line in manifest.read_text(encoding='utf-8').splitlines() if line and not line.startswith('#')]
     if ['schema', '1'] not in rows:
         raise ValueError(f'{manifest.relative_to(ROOT)}: missing `schema 1`')
     for row in rows:
@@ -52,7 +52,7 @@ def check():
                     errors.append(f'{path}: line or byte count differs from {manifest.name}')
     for file in sorted(p for p in (ROOT / 'src').rglob('*') if p.suffix in ('.s', '.S')):
         path = file.relative_to(ROOT).as_posix()
-        if path not in covered and OWNED not in file.read_text().split('\n', 1)[0]:
+        if path not in covered and OWNED not in file.read_text(encoding='utf-8').split('\n', 1)[0]:
             errors.append(f'{path}: derived assembly has no provenance manifest output')
     for error in errors:
         print(f'assembly provenance: {error}', file=sys.stderr)

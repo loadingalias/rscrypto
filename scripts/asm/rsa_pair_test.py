@@ -21,7 +21,7 @@ def check_committed_source_is_current():
 
 
 def check_detects_edited_template():
-    text = (rsa_pair.ROOT / rsa_pair.SOURCE).read_text()
+    text = (rsa_pair.ROOT / rsa_pair.SOURCE).read_text(encoding='utf-8')
     lines, first, _ = p384.template_span(text, 'square_kernel')
     lines[first + 3] = lines[first + 3].replace('x3', 'x1')
     _, stale = p384.regenerate('\n'.join(lines), rsa_pair_aarch64.KERNELS)

@@ -21,7 +21,7 @@ def check_committed_source_is_current():
 
 def check_detects_edited_template():
     relative = 'src/auth/p384_x86_64.rs'
-    text = (p384.ROOT / relative).read_text()
+    text = (p384.ROOT / relative).read_text(encoding='utf-8')
     lines, first, _ = p384.template_span(text, 'montgomery_mul_bmi2_adx')
     lines[first] = lines[first].replace('mov rdx', 'mov rax')
     _, stale = p384.regenerate('\n'.join(lines), p384.SOURCES[relative])

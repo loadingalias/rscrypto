@@ -26,7 +26,7 @@ SOURCE = 'src/auth/rsa_aarch64_pair.rs'
 
 def sources():
     path = ROOT / SOURCE
-    text = path.read_text()
+    text = path.read_text(encoding='utf-8')
     new, stale = p384.regenerate(text, rsa_pair_aarch64.KERNELS)
     yield path, text, new, stale
 
@@ -50,7 +50,7 @@ def main():
     for path, text, new, stale in sources():
         relative = path.relative_to(ROOT)
         if args.mode == 'write' and new != text:
-            path.write_text(new)
+            path.write_text(new, encoding='utf-8')
             print(f'rewrote {relative}: {", ".join(stale)}')
         stale_total += [f'{relative}: {name}' for name in stale]
     if args.mode == 'check' and stale_total:
