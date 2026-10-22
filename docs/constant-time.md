@@ -267,7 +267,17 @@ and the digit-conversion bounds of the paired NEON engine.
 
 The same run passed every required DudeCT case on all six CI platforms:
 131 on Linux x86-64, Linux AArch64, Windows x86-64, IBM Z, and RISC-V, and 126 on POWER.
-`square_wide_portable` changed with `e98dd68b`, so its waivers are renewed on the next run's artifacts.
+`square_wide_portable` changed with `e98dd68b`, so the artifacts of
+[Constant-Time 39853397151](https://github.com/loadingalias/rscrypto/actions/runs/39853397151) at `c9bd06a7`
+and a local Apple Silicon build of that source were compared with this review's.
+On every target, `square_wide_portable` is the only function whose pre-link object code changed.
+61 waivers on POWER, RISC-V, and Linux AArch64 went stale although their functions' object code is identical;
+only addresses moved, and they were renewed with their reviewed rationales.
+On IBM Z, the rewrite reallocated the function's registers. Five of its six waivers received new rationales,
+each instruction claim checked against the new disassembly. The sixth, the odd-chunk test of the old diagonal
+loop, was deleted because that branch is gone. The new diagonal loop has no branch on a carry on any target.
+x86-64 Linux, Windows, and Apple Silicon needed no change.
+465 waivers remain, and the scanner accepts all seven artifact sets.
 
 ### Condition-slice waiver identity, 2026-10-22
 
