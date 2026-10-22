@@ -1675,7 +1675,8 @@ fn low_u32_signed(value: i64) -> u32 {
   u32::from_le_bytes([b0, b1, b2, b3])
 }
 
-#[cfg(any(test, target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x"))]
+/// Fixed-work wide product for RV32, whose multiplier latency has no timing evidence.
+#[cfg(any(test, target_arch = "riscv32"))]
 #[inline(never)]
 fn ct_mul_u64_wide(lhs: u64, rhs: u64) -> (u64, u64) {
   let mut product_lo = 0u64;
@@ -1689,7 +1690,7 @@ fn ct_mul_u64_wide(lhs: u64, rhs: u64) -> (u64, u64) {
     // optimization barriers from every wide product.
     //
     // Keep LLVM from recognizing the radix-16 product and lowering it back to a target multiply.
-    // The CT artifact gate independently rejects scalar multiply in these ECDSA closures.
+    // The CT artifact gate independently rejects scalar multiply in RV32 ECDSA closures.
     let digit = core::hint::black_box(multiplier & 0xf);
     for bit in 0..4 {
       let mask = 0u64.wrapping_sub((digit >> bit) & 1);
@@ -1707,14 +1708,53 @@ fn ct_mul_u64_wide(lhs: u64, rhs: u64) -> (u64, u64) {
   (product_lo, product_hi)
 }
 
+/// RV64 wide product of the operands with their top bits forced set.
+///
+/// Some RV64 multipliers finish early for operands with leading zeros. Multiplying normalized
+/// operands and subtracting the correction terms keeps the multiplier's operand width fixed,
+/// as the RV64 P-256 and P-384 ECDH fields do.
+#[cfg(any(test, target_arch = "riscv64"))]
+#[inline(always)]
+fn ct_mul_u64_wide_riscv64(lhs: u64, rhs: u64) -> (u64, u64) {
+  const HIGH_BIT: u64 = 1 << 63;
+  // All ones when normalization added 2^63 to the operand.
+  let lhs_padding = 0u64.wrapping_sub((lhs >> 63) ^ 1);
+  let rhs_padding = 0u64.wrapping_sub((rhs >> 63) ^ 1);
+  let lhs_normalized = core::hint::black_box(lhs | HIGH_BIT);
+  let rhs_normalized = core::hint::black_box(rhs | HIGH_BIT);
+  let (low, high) = split_u128(u128::from(lhs_normalized).strict_mul(u128::from(rhs_normalized)));
+
+  // (lhs + 2^63·a)(rhs + 2^63·b) = lhs·rhs + 2^63·(a·rhs + b·lhs) + 2^126·a·b, where `a` and `b`
+  // are the padding bits; subtract the three correction terms.
+  let (low, borrow) = sbb_limb(low, (rhs << 63) & lhs_padding, 0);
+  let (high, borrow) = sbb_limb(high, (rhs >> 1) & lhs_padding, borrow);
+  debug_assert_eq!(borrow, 0);
+  let (low, borrow) = sbb_limb(low, (lhs << 63) & rhs_padding, 0);
+  let (high, borrow) = sbb_limb(high, (lhs >> 1) & rhs_padding, borrow);
+  debug_assert_eq!(borrow, 0);
+  let (high, borrow) = sbb_limb(high, (HIGH_BIT >> 1) & lhs_padding & rhs_padding, 0);
+  debug_assert_eq!(borrow, 0);
+  (low, high)
+}
+
+/// The wide product of secret-fed limbs.
+///
+/// RV32 uses the fixed-work multiplier and RV64 the normalized hardware multiplier. Other
+/// targets, IBM Z included, use the hardware multiplier, as RSA private operations do; native
+/// timing evidence qualifies each target.
 #[inline(always)]
 fn mul_u64_wide(lhs: u64, rhs: u64) -> (u64, u64) {
-  #[cfg(any(target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x"))]
+  #[cfg(target_arch = "riscv32")]
   {
     ct_mul_u64_wide(lhs, rhs)
   }
 
-  #[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x")))]
+  #[cfg(target_arch = "riscv64")]
+  {
+    ct_mul_u64_wide_riscv64(lhs, rhs)
+  }
+
+  #[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64")))]
   {
     split_u128(u128::from(lhs).strict_mul(u128::from(rhs)))
   }
@@ -1722,12 +1762,12 @@ fn mul_u64_wide(lhs: u64, rhs: u64) -> (u64, u64) {
 
 #[inline(always)]
 fn mul_u64_low(lhs: u64, rhs: u64) -> u64 {
-  #[cfg(any(target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x"))]
+  #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
   {
-    ct_mul_u64_wide(lhs, rhs).0
+    mul_u64_wide(lhs, rhs).0
   }
 
-  #[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x")))]
+  #[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64")))]
   {
     lhs.wrapping_mul(rhs)
   }
@@ -5175,10 +5215,7 @@ fn mac_limb(acc: u64, lhs: u64, rhs: u64, carry: u64) -> (u64, u64) {
 }
 
 #[inline(always)]
-#[cfg(any(
-  test,
-  not(any(target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x"))
-))]
+#[cfg(any(test, not(target_arch = "riscv32")))]
 fn split_u128(value: u128) -> (u64, u64) {
   let [b0, b1, b2, b3, b4, b5, b6, b7, b8, b9, b10, b11, b12, b13, b14, b15] = value.to_le_bytes();
   (
@@ -5456,6 +5493,47 @@ mod tests {
       rhs = rhs.wrapping_mul(0xd134_2543_de82_ef95).wrapping_add(1);
       let product = u128::from(lhs).strict_mul(u128::from(rhs));
       assert_eq!(ct_mul_u64_wide(lhs, rhs), split_u128(product));
+    }
+  }
+
+  #[test]
+  fn ct_mul_u64_wide_riscv64_matches_u128_for_edges_and_generated_inputs() {
+    // Each operand's top bit set and clear, so every correction term is exercised.
+    const EDGES: [u64; 10] = [
+      0,
+      1,
+      2,
+      0xffff_ffff,
+      1u64 << 32,
+      (1u64 << 63) - 1,
+      1u64 << 63,
+      (1u64 << 63) | 1,
+      u64::MAX - 1,
+      u64::MAX,
+    ];
+
+    for lhs in EDGES {
+      for rhs in EDGES {
+        let product = u128::from(lhs).strict_mul(u128::from(rhs));
+        assert_eq!(
+          ct_mul_u64_wide_riscv64(lhs, rhs),
+          split_u128(product),
+          "{lhs:x} * {rhs:x}"
+        );
+      }
+    }
+
+    let mut lhs = 0x243f_6a88_85a3_08d3u64;
+    let mut rhs = 0x1319_8a2e_0370_7344u64;
+    for _ in 0..4096 {
+      lhs = lhs.wrapping_mul(0x9e37_79b9_7f4a_7c15).wrapping_add(1);
+      rhs = rhs.wrapping_mul(0xd134_2543_de82_ef95).wrapping_add(1);
+      let product = u128::from(lhs).strict_mul(u128::from(rhs));
+      assert_eq!(
+        ct_mul_u64_wide_riscv64(lhs, rhs),
+        split_u128(product),
+        "{lhs:x} * {rhs:x}"
+      );
     }
   }
 

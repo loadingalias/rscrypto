@@ -383,6 +383,22 @@ RISC-V generator-table loads stay unconditional under LLVM optimization.
 These changes keep signature behavior the same.
 They do not establish a timing claim for a release or a downstream build by themselves.
 
+### Secret limb multiplication on RISC-V and IBM Z
+
+Owner decision, 2026-10-21: ECDSA, ECDH, and RSA private arithmetic multiply secret limbs
+with the hardware multiplier on IBM Z and 64-bit RISC-V.
+
+- IBM Z uses the plain 64-bit by 64-bit `MLGR` product.
+  IBM publishes no timing guarantee for it.
+- 64-bit RISC-V sets the top bit of both operands, multiplies, and subtracts the correction terms.
+  This defends against multipliers that finish early on leading zeros.
+  The open RTL of the RISC-V runner's C910 core shows a fixed-latency multiplier.
+- 32-bit RISC-V keeps the fixed-work software multiplier, because no runner gives it timing evidence.
+- The RSA blinding inverse keeps its fixed-work multiplier on all three targets.
+
+The CT artifact gate reports these multiplies for review instead of rejecting them.
+Native DudeCT runs on each target qualify the claim; the instruction choice alone does not.
+
 ### ML-DSA
 
 ML-DSA has a separate required boundary, `signature.mldsa.secret_kernels`.

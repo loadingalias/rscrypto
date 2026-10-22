@@ -879,6 +879,10 @@ def is_riscv_scalar_multiply(target: str, inst: str) -> bool:
   return target.startswith(("riscv32", "riscv64")) and inst in RISCV_MUL_MNEMONICS
 
 
+def is_riscv32_scalar_multiply(target: str, inst: str) -> bool:
+  return target.startswith("riscv32") and inst in RISCV_MUL_MNEMONICS
+
+
 def is_target_division_review(target: str, inst: str) -> bool:
   normalized = inst.rstrip(".")
   return (
@@ -1654,9 +1658,13 @@ def scan_symbol(
         )
       )
     elif (
-      (is_ecdsa_scope(primitive_ids) or is_rsa_inverse_scope(primitive_ids, symbol))
+      is_ecdsa_scope(primitive_ids) and is_riscv32_scalar_multiply(target, inst)
+    ) or (
+      is_rsa_inverse_scope(primitive_ids, symbol)
       and (is_s390x_scalar_multiply(target, inst) or is_riscv_scalar_multiply(target, inst))
     ):
+      # ECDSA on riscv64 and s390x multiplies secret limbs in hardware (owner decision,
+      # 2026-10-21) and falls through to the multiply review below, as ECDH and RSA do.
       findings.append(
         finding(
           symbol,
@@ -1665,7 +1673,7 @@ def scan_symbol(
           line,
           "variable_latency_multiply",
           "fail",
-          "Scalar multiply is forbidden in this s390x/RISC-V secret-arithmetic scope; use the fixed-work limb multiplier.",
+          "Scalar multiply is forbidden in this secret-arithmetic scope; use the fixed-work limb multiplier.",
           scope=scope,
           primitive_ids=primitive_ids,
           roots=roots,

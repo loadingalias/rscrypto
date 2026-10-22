@@ -37,6 +37,29 @@ def branch_kinds(target: str, symbol: str, lines: list[str], primitive_ids: list
           if row["kind"] in {"conditional_branch", "select_branch"}]
 
 
+def multiply_kinds(target: str, symbol: str, line: str, primitive_ids: list[str]) -> list[tuple[str, str]]:
+  body = FunctionBody(symbol=symbol, path=Path("fixture.o.disasm.txt"), address=0, lines=[(1, line)])
+  findings = scan_symbol(target, symbol, body, {symbol}, scope="ct_intended_call_closure",
+                         primitive_ids=primitive_ids, roots=[symbol])
+  return [(row["kind"], row["severity"]) for row in findings if "multiply" in row["kind"]]
+
+
+def multiply_regressions() -> None:
+  # Owner decision 2026-10-21: secret ECDSA limbs use the hardware multiplier on riscv64 and
+  # IBM Z, reviewed like ECDH and RSA. RV32 ECDSA and the RSA blinding inverse stay fixed-work.
+  ecdsa = "rscrypto::auth::ecdsa::montgomery_mul"
+  riscv = "  10: 02b50533     \tmul\ta0, a0, a1"
+  ibm_z = "  10: b9 86 00 24  \tmlgr\t%r2, %r4"
+  review = [("variable_latency_multiply_review", "warn")]
+  blocking = [("variable_latency_multiply", "fail")]
+  assert multiply_kinds("riscv64gc-unknown-linux-gnu", ecdsa, riscv, ["signature.ecdsa_p256"]) == review
+  assert multiply_kinds("s390x-unknown-linux-gnu", ecdsa, ibm_z, ["signature.ecdsa_p384"]) == review
+  assert multiply_kinds("riscv32imac-unknown-none-elf", ecdsa, riscv, ["signature.ecdsa_p256"]) == blocking
+  inverse = "rscrypto::auth::rsa::private_modular_inverse_odd_i31"
+  assert multiply_kinds("riscv64gc-unknown-linux-gnu", inverse, riscv, ["rsa.private_ops"]) == blocking
+  assert multiply_kinds("s390x-unknown-linux-gnu", inverse, ibm_z, ["rsa.private_ops"]) == blocking
+
+
 def select_branch_regressions() -> None:
   # riscv64 `Projective::select_signed` before 543fa738: LLVM skipped one
   # store on the entry matching the secret digit (Constant-Time 38072816018).
@@ -497,6 +520,7 @@ def main() -> None:
   assert identity("1000: 90000000\tadrp\tx0, 0x4000") != identity("1000: 90000020\tadrp\tx0, 0x5000")
   assert identity("1000: d2800020\tmov\tx0, #1") != identity("1000: d2800040\tmov\tx0, #2")
   assert identity("1000: 94000400\tbl\t0x2000") != identity("1000: 94000800\tbl\t0x3000")
+  multiply_regressions()
   select_branch_regressions()
   data_reference_regressions()
 
