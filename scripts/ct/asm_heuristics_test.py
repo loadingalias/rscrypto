@@ -45,8 +45,9 @@ def multiply_kinds(target: str, symbol: str, line: str, primitive_ids: list[str]
 
 
 def multiply_regressions() -> None:
-  # Owner decision 2026-10-21: secret ECDSA limbs use the hardware multiplier on riscv64 and
-  # IBM Z, reviewed like ECDH and RSA. RV32 ECDSA and the RSA blinding inverse stay fixed-work.
+  # Owner decisions 2026-10-21: secret ECDSA limbs and the RSA blinding inverse use the hardware
+  # multiplier on riscv64 and IBM Z, reviewed like ECDH and the RSA exponentiation. RV32 stays
+  # fixed-work.
   ecdsa = "rscrypto::auth::ecdsa::montgomery_mul"
   riscv = "  10: 02b50533     \tmul\ta0, a0, a1"
   ibm_z = "  10: b9 86 00 24  \tmlgr\t%r2, %r4"
@@ -56,8 +57,9 @@ def multiply_regressions() -> None:
   assert multiply_kinds("s390x-unknown-linux-gnu", ecdsa, ibm_z, ["signature.ecdsa_p384"]) == review
   assert multiply_kinds("riscv32imac-unknown-none-elf", ecdsa, riscv, ["signature.ecdsa_p256"]) == blocking
   inverse = "rscrypto::auth::rsa::private_modular_inverse_odd_i31"
-  assert multiply_kinds("riscv64gc-unknown-linux-gnu", inverse, riscv, ["rsa.private_ops"]) == blocking
-  assert multiply_kinds("s390x-unknown-linux-gnu", inverse, ibm_z, ["rsa.private_ops"]) == blocking
+  assert multiply_kinds("riscv64gc-unknown-linux-gnu", inverse, riscv, ["rsa.private_ops"]) == review
+  assert multiply_kinds("s390x-unknown-linux-gnu", inverse, ibm_z, ["rsa.private_ops"]) == review
+  assert multiply_kinds("riscv32imac-unknown-none-elf", inverse, riscv, ["rsa.private_ops"]) == blocking
 
 
 def select_branch_regressions() -> None:

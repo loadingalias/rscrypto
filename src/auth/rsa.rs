@@ -4346,8 +4346,8 @@ impl Drop for SecretI31 {
 
 /// Blinding-inverse workspace for the selected inverse.
 ///
-/// RISC-V and IBM Z keep the 31-bit batched inverse with its fixed-work multiplier, because their
-/// scalar multiply latency may depend on operands. Other targets use 62-bit batched divsteps.
+/// RISC-V and IBM Z use the 31-bit batched inverse, whose multiply is selected per target in
+/// `private_i31_mul_u64_low`. Other targets use 62-bit batched divsteps.
 #[cfg(any(target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x"))]
 type RsaPrivateInverseScratch = RsaPrivateI31InverseScratch;
 #[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x")))]
@@ -10042,7 +10042,7 @@ fn private_i31_cond_negate_factor(value: i64, negate: i64) -> i64 {
   (value ^ mask).wrapping_add(negate)
 }
 
-#[cfg(any(test, target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x"))]
+#[cfg(any(test, target_arch = "riscv32"))]
 #[inline(never)]
 fn private_i31_ct_mul_u64_low(lhs: u64, rhs: u64) -> u64 {
   let mut product = 0u64;
@@ -10051,7 +10051,7 @@ fn private_i31_ct_mul_u64_low(lhs: u64, rhs: u64) -> u64 {
   for _ in 0..u64::BITS {
     // Keep LLVM from recognizing this fixed-work product and lowering it back
     // to a target multiply. The CT artifact gate independently rejects scalar
-    // multiply in RISC-V and s390x evidence closures.
+    // multiply in RV32 evidence closures.
     let selected_bit = core::hint::black_box(multiplier & 1);
     product = product.wrapping_add(multiplicand & 0u64.wrapping_sub(selected_bit));
     multiplicand <<= 1;
@@ -10060,7 +10060,7 @@ fn private_i31_ct_mul_u64_low(lhs: u64, rhs: u64) -> u64 {
   product
 }
 
-#[cfg(any(test, target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x"))]
+#[cfg(any(test, target_arch = "riscv32"))]
 #[inline(never)]
 fn private_i31_ct_mul_u32_low(lhs: u32, rhs: u32) -> u32 {
   let mut product = 0u32;
@@ -10075,15 +10075,40 @@ fn private_i31_ct_mul_u32_low(lhs: u32, rhs: u32) -> u32 {
   product
 }
 
+/// RV64 low product of the operands with their top bits forced set.
+///
+/// Some RV64 multipliers finish early for operands with leading zeros. With padding bits `a` and
+/// `b`, `(lhs + 2^63·a)(rhs + 2^63·b) ≡ lhs·rhs + 2^63·(a·rhs + b·lhs) (mod 2^64)`, and adding
+/// `2^63` flips the top bit, so one XOR recovers the product.
+#[cfg(any(test, target_arch = "riscv64"))]
+#[inline(always)]
+fn private_i31_mul_u64_low_riscv64(lhs: u64, rhs: u64) -> u64 {
+  const HIGH_BIT: u64 = 1 << 63;
+  let lhs_padding = (lhs >> 63) ^ 1;
+  let rhs_padding = (rhs >> 63) ^ 1;
+  let product = core::hint::black_box(lhs | HIGH_BIT).wrapping_mul(core::hint::black_box(rhs | HIGH_BIT));
+  product ^ ((((lhs_padding & rhs) ^ (rhs_padding & lhs)) & 1) << 63)
+}
+
+/// The low product of secret-fed words in the 31-bit inverse.
+///
+/// RV32 uses the fixed-work multiplier and RV64 the normalized hardware multiplier; IBM Z uses
+/// the hardware multiplier, as the RSA exponentiation does. Native timing evidence qualifies
+/// each target.
 #[cfg(any(test, target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x"))]
 #[inline(always)]
 fn private_i31_mul_u64_low(lhs: u64, rhs: u64) -> u64 {
-  #[cfg(any(target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x"))]
+  #[cfg(target_arch = "riscv32")]
   {
     private_i31_ct_mul_u64_low(lhs, rhs)
   }
 
-  #[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x")))]
+  #[cfg(target_arch = "riscv64")]
+  {
+    private_i31_mul_u64_low_riscv64(lhs, rhs)
+  }
+
+  #[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64")))]
   {
     lhs.wrapping_mul(rhs)
   }
@@ -10092,12 +10117,17 @@ fn private_i31_mul_u64_low(lhs: u64, rhs: u64) -> u64 {
 #[cfg(any(test, target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x"))]
 #[inline(always)]
 fn private_i31_mul_u32_low(lhs: u32, rhs: u32) -> u32 {
-  #[cfg(any(target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x"))]
+  #[cfg(target_arch = "riscv32")]
   {
     private_i31_ct_mul_u32_low(lhs, rhs)
   }
 
-  #[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x")))]
+  #[cfg(target_arch = "riscv64")]
+  {
+    private_i31_low_u32(private_i31_mul_u64_low_riscv64(u64::from(lhs), u64::from(rhs)))
+  }
+
+  #[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64")))]
   {
     lhs.wrapping_mul(rhs)
   }
@@ -15307,6 +15337,47 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
         private_i31_ct_mul_u32_low(lhs_low, rhs_low),
         lhs_low.wrapping_mul(rhs_low)
       );
+    }
+  }
+
+  #[test]
+  fn private_i31_riscv64_multiply_matches_wrapping_products() {
+    // Each operand's top bit set and clear, with both low-bit parities, covers every correction.
+    const EDGES: [u64; 10] = [
+      0,
+      1,
+      2,
+      3,
+      0xffff_ffff,
+      (1u64 << 63) - 1,
+      1u64 << 63,
+      (1u64 << 63) | 1,
+      u64::MAX - 1,
+      u64::MAX,
+    ];
+    for lhs in EDGES {
+      for rhs in EDGES {
+        assert_eq!(
+          private_i31_mul_u64_low_riscv64(lhs, rhs),
+          lhs.wrapping_mul(rhs),
+          "{lhs:x} * {rhs:x}"
+        );
+      }
+    }
+
+    let mut lhs = 0x243f_6a88_85a3_08d3u64;
+    let mut rhs = 0x1319_8a2e_0370_7344u64;
+    for _ in 0..4096 {
+      lhs = lhs.wrapping_mul(0x9e37_79b9_7f4a_7c15).wrapping_add(1);
+      rhs = rhs.wrapping_mul(0xd134_2543_de82_ef95).wrapping_add(1);
+      assert_eq!(
+        private_i31_mul_u64_low_riscv64(lhs, rhs),
+        lhs.wrapping_mul(rhs),
+        "{lhs:x} * {rhs:x}"
+      );
+      // Sign-extended 31-bit factors, as the inverse passes them.
+      let factor = (lhs >> 33).cast_signed().wrapping_sub(1 << 30).cast_unsigned();
+      assert_eq!(private_i31_mul_u64_low_riscv64(rhs, factor), rhs.wrapping_mul(factor));
     }
   }
 

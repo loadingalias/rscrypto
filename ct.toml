@@ -1415,7 +1415,7 @@ threshold_abs_max_t = 8.0
 smoke_samples = 2000
 timeout_seconds = 3600
 timeout_reason = "Retain all 20,000 fixed-schedule inverse samples on physical RISC-V; the default five-minute limit does not provide the adjacent RSA gates' execution headroom."
-notes = "Required allocation-free leaf evidence for the fixed-schedule batched modular inverse. Both classes use nonzero 64-bit factors, which cannot share either 1024-bit prime factor of the fixed RSA-2048 modulus. RISC-V and s390x artifact heuristics must also reject scalar multiply in the retained evidence closure."
+notes = "Required allocation-free leaf evidence for the fixed-schedule batched modular inverse. Both classes use nonzero 64-bit factors, which cannot share either 1024-bit prime factor of the fixed RSA-2048 modulus. RV32 artifact heuristics must also reject scalar multiply in the retained evidence closure; riscv64 (normalized operands) and s390x multiply these words in hardware and report it for review (owner decision, 2026-10-21)."
 
 [[dudect_case]]
 name = "rsa_blinding_inverse_full_width_fixed_vs_random_factor"
