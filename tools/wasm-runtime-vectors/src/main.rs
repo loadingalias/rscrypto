@@ -224,6 +224,7 @@ fn assert_rsa_caller_random_signing_roundtrips() {
         assert_eq!(random.len(), Sha256::OUTPUT_SIZE);
         random.fill(0x5a);
       } else {
+        // The blinding factor, then its inverse mask.
         assert_eq!(random.len(), modulus_len);
         random.fill(0);
         random[modulus_len.strict_sub(1)] = 2;
@@ -232,7 +233,7 @@ fn assert_rsa_caller_random_signing_roundtrips() {
       Ok::<(), ()>(())
     })
     .expect("caller-random RSA-PSS signing must succeed without OS entropy");
-  assert_eq!(requests, 2, "factor two must be accepted on the first bounded attempt");
+  assert_eq!(requests, 3, "factor two and mask two must pass on the first draw");
   key
     .public_key()
     .verify_pss(profile, message, &signature)

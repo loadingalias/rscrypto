@@ -200,13 +200,14 @@ pub(super) fn run(data: &[u8]) {
           if calls == 0 {
             out.copy_from_slice(&salt);
           } else {
+            // The blinding factor, then its inverse mask.
             out.copy_from_slice(&one);
           }
           calls = calls.strict_add(1);
           Ok::<(), ()>(())
         })
         .expect("fixture caller-random RSA-PSS signing must succeed");
-      assert_eq!(calls, 2);
+      assert_eq!(calls, 3);
       key
         .public_key()
         .verify_pss(profile, left, &signature)
