@@ -11851,6 +11851,11 @@ fn mont_square_cios_in_place(value: &mut [u64], tmp: &mut [u64], modulus: &RsaPu
     return;
   }
 
+  if t.len() >= modulus.limbs.len().strict_mul(2) {
+    mont_square_portable_in_place(value, modulus, t);
+    return;
+  }
+
   copy_limbs(tmp, value);
   mont_mul_cios(value, tmp, tmp, modulus, t);
 }
@@ -11991,6 +11996,22 @@ fn mont_mul_cios(out: &mut [u64], a: &[u64], b: &[u64], modulus: &RsaPublicModul
   mont_mul_cios_portable(out, a, b, modulus, t);
 }
 
+/// `acc + a·b + carry` as `(low, high)`.
+///
+/// The sum is at most `(2^64 - 1)^2 + 2·(2^64 - 1) = 2^128 - 1`, so the additions never wrap;
+/// wrapping operations avoid an overflow branch on secret carries.
+#[inline(always)]
+fn mont_mac(acc: u64, a: u64, b: u64, carry: u64) -> (u64, u64) {
+  split_u128(
+    u128::from(a)
+      .strict_mul(u128::from(b))
+      .wrapping_add(u128::from(acc))
+      .wrapping_add(u128::from(carry)),
+  )
+}
+
+/// Montgomery multiplication by CIOS: each row adds `a·b_i`, then adds `q·n` and shifts down one
+/// limb in the same pass.
 fn mont_mul_cios_portable(out: &mut [u64], a: &[u64], b: &[u64], modulus: &RsaPublicModulus, t: &mut [u64]) {
   let n = modulus.limbs.len();
   debug_assert_eq!(out.len(), n);
@@ -11998,47 +12019,112 @@ fn mont_mul_cios_portable(out: &mut [u64], a: &[u64], b: &[u64], modulus: &RsaPu
   debug_assert_eq!(b.len(), n);
   debug_assert!(t.len() >= n.strict_add(2));
 
-  t[..n.strict_add(2)].fill(0);
+  let a = &a[..n];
+  let limbs = &modulus.limbs[..n];
+  let t = &mut t[..n.strict_add(2)];
+  t.fill(0);
 
   for &b_limb in &b[..n] {
     let mut carry = 0u64;
-    for (t_limb, &a_limb) in t[..n].iter_mut().zip(&a[..n]) {
-      let acc = u128::from(*t_limb)
-        .strict_add(u128::from(a_limb).strict_mul(u128::from(b_limb)))
-        .strict_add(u128::from(carry));
-      let (acc_low, acc_high) = split_u128(acc);
-      *t_limb = acc_low;
-      carry = acc_high;
+    for (t_limb, &a_limb) in t.iter_mut().zip(a) {
+      (*t_limb, carry) = mont_mac(*t_limb, a_limb, b_limb, carry);
     }
     let (sum, overflow) = t[n].overflowing_add(carry);
     t[n] = sum;
     t[n.strict_add(1)] = u64::from(overflow);
 
+    // `t + q·n` clears limb 0; write each sum one limb lower.
     let q = t[0].wrapping_mul(modulus.n0);
-    carry = 0;
-    for (t_limb, &modulus_limb) in t[..n].iter_mut().zip(modulus.limbs.iter()) {
-      let acc = u128::from(*t_limb)
-        .strict_add(u128::from(q).strict_mul(u128::from(modulus_limb)))
-        .strict_add(u128::from(carry));
-      let (acc_low, acc_high) = split_u128(acc);
-      *t_limb = acc_low;
-      carry = acc_high;
+    let (_, mut carry) = mont_mac(t[0], q, limbs[0], 0);
+    for index in 1..n {
+      (t[index.strict_sub(1)], carry) = mont_mac(t[index], q, limbs[index], carry);
     }
     let (sum, overflow) = t[n].overflowing_add(carry);
-    t[n] = sum;
-    t[n.strict_add(1)] = t[n.strict_add(1)].strict_add(u64::from(overflow));
+    t[n.strict_sub(1)] = sum;
+    // The running value stays below 2n, so its top limb is 0 or 1 and this cannot wrap.
+    t[n] = t[n.strict_add(1)].wrapping_add(u64::from(overflow));
+  }
 
-    for index in 0..=n {
-      t[index] = t[index.strict_add(1)];
+  out.copy_from_slice(&t[..n]);
+  subtract_modulus_if_needed(out, limbs, t[n]);
+}
+
+/// Montgomery squaring: [`square_wide_portable`] then [`mont_reduce_wide_portable`]. `t` needs
+/// at least `2n` limbs.
+fn mont_square_portable_in_place(value: &mut [u64], modulus: &RsaPublicModulus, t: &mut [u64]) {
+  let n = modulus.limbs.len();
+  debug_assert_eq!(value.len(), n);
+  let wide = &mut t[..n.strict_mul(2)];
+  square_wide_portable(wide, value);
+  mont_reduce_wide_portable(value, wide, modulus);
+}
+
+/// `value²` into `out` (`2n` limbs): the `n(n - 1)/2` cross products once, doubled, then the `n`
+/// diagonal squares.
+fn square_wide_portable(out: &mut [u64], value: &[u64]) {
+  let n = value.len();
+  debug_assert_eq!(out.len(), n.strict_mul(2));
+  out.fill(0);
+
+  // Row i adds `v_i·v_j` for j > i at limbs 2i + 1 through i + n - 1; its carry starts limb i + n.
+  for (row, &value_row) in value.iter().enumerate() {
+    let next = row.strict_add(1);
+    let mut carry = 0u64;
+    for (limb, &value_column) in out[row.strict_add(next)..].iter_mut().zip(&value[next..]) {
+      (*limb, carry) = mont_mac(*limb, value_row, value_column, carry);
     }
-    t[n.strict_add(1)] = 0;
+    out[row.strict_add(n)] = carry;
   }
 
-  for (dst, src) in out.iter_mut().zip(t[..n].iter().copied()) {
-    *dst = src;
+  // The cross sum is below 2^(128n - 1), so doubling it fits.
+  let mut high_bit = 0u64;
+  for limb in out.iter_mut() {
+    let next = *limb >> 63;
+    *limb = (*limb << 1) | high_bit;
+    high_bit = next;
   }
 
-  subtract_modulus_if_needed(out, &modulus.limbs, t[n]);
+  let mut carry = 0u64;
+  for ([low, high], &limb) in out.as_chunks_mut::<2>().0.iter_mut().zip(value) {
+    let (square_low, square_high) = split_u128(u128::from(limb).strict_mul(u128::from(limb)));
+    let (sum, overflow0) = low.overflowing_add(square_low);
+    let (sum, overflow1) = sum.overflowing_add(carry);
+    *low = sum;
+    let (sum, overflow2) = high.overflowing_add(square_high);
+    // The low limb's two carries cannot both be set.
+    let (sum, overflow3) = sum.overflowing_add(u64::from(overflow0 | overflow1));
+    *high = sum;
+    carry = u64::from(overflow2 | overflow3);
+  }
+}
+
+/// Montgomery-reduce a `2n`-limb value below `n·R` into `out`.
+///
+/// Row i clears limb i by adding `q·n·2^(64i)`; its carry out of limb i + n waits in `top` for the
+/// next row instead of propagating through the upper limbs.
+fn mont_reduce_wide_portable(out: &mut [u64], wide: &mut [u64], modulus: &RsaPublicModulus) {
+  let n = modulus.limbs.len();
+  debug_assert_eq!(out.len(), n);
+  debug_assert_eq!(wide.len(), n.strict_mul(2));
+  let limbs = &modulus.limbs[..n];
+
+  let mut top = 0u64;
+  for row in 0..n {
+    let q = wide[row].wrapping_mul(modulus.n0);
+    let mut carry = 0u64;
+    let end = row.strict_add(n);
+    for (limb, &modulus_limb) in wide[row..end].iter_mut().zip(limbs) {
+      (*limb, carry) = mont_mac(*limb, q, modulus_limb, carry);
+    }
+    // limb + carry + top is below 2^65, so at most one of the two additions carries.
+    let (sum, overflow0) = wide[end].overflowing_add(carry);
+    let (sum, overflow1) = sum.overflowing_add(top);
+    wide[end] = sum;
+    top = u64::from(overflow0 | overflow1);
+  }
+
+  out.copy_from_slice(&wide[n..]);
+  subtract_modulus_if_needed(out, limbs, top);
 }
 
 fn mont_reduce_cios(out: &mut [u64], value: &[u64], modulus: &RsaPublicModulus, t: &mut [u64]) {
@@ -12100,35 +12186,25 @@ fn mont_reduce_cios_portable(out: &mut [u64], value: &[u64], modulus: &RsaPublic
   debug_assert_eq!(value.len(), n);
   debug_assert!(t.len() >= n.strict_add(2));
 
-  t[..n.strict_add(2)].fill(0);
+  let limbs = &modulus.limbs[..n];
+  let t = &mut t[..n.strict_add(1)];
   t[..n].copy_from_slice(value);
+  t[n] = 0;
 
   for _ in 0..n {
+    // `t + q·n` clears limb 0; write each sum one limb lower.
     let q = t[0].wrapping_mul(modulus.n0);
-    let mut carry = 0u64;
-    for (t_limb, &modulus_limb) in t[..n].iter_mut().zip(modulus.limbs.iter()) {
-      let acc = u128::from(*t_limb)
-        .strict_add(u128::from(q).strict_mul(u128::from(modulus_limb)))
-        .strict_add(u128::from(carry));
-      let (acc_low, acc_high) = split_u128(acc);
-      *t_limb = acc_low;
-      carry = acc_high;
+    let (_, mut carry) = mont_mac(t[0], q, limbs[0], 0);
+    for index in 1..n {
+      (t[index.strict_sub(1)], carry) = mont_mac(t[index], q, limbs[index], carry);
     }
     let (sum, overflow) = t[n].overflowing_add(carry);
-    t[n] = sum;
-    t[n.strict_add(1)] = t[n.strict_add(1)].strict_add(u64::from(overflow));
-
-    for index in 0..=n {
-      t[index] = t[index.strict_add(1)];
-    }
-    t[n.strict_add(1)] = 0;
+    t[n.strict_sub(1)] = sum;
+    t[n] = u64::from(overflow);
   }
 
-  for (dst, src) in out.iter_mut().zip(t[..n].iter().copied()) {
-    *dst = src;
-  }
-
-  subtract_modulus_if_needed(out, &modulus.limbs, t[n]);
+  out.copy_from_slice(&t[..n]);
+  subtract_modulus_if_needed(out, limbs, t[n]);
 }
 
 #[cfg(all(rscrypto_internal, feature = "diag"))]
@@ -12196,6 +12272,7 @@ fn comba_mul_into(out: &mut [u64], a: &[u64], b: &[u64]) {
   out[product_limbs] = carry_hi;
 }
 
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 fn add_product_to_acc(acc_lo: &mut u64, acc_mid: &mut u64, acc_hi: &mut u64, a: u64, b: u64) {
   let product = u128::from(a).strict_mul(u128::from(b));
   let (product_lo, product_hi) = split_u128(product);
@@ -12208,75 +12285,20 @@ fn add_product_to_acc(acc_lo: &mut u64, acc_mid: &mut u64, acc_hi: &mut u64, a: 
   *acc_hi = acc_hi.strict_add(u64::from(product_hi_overflow).strict_add(u64::from(lo_carry_overflow)));
 }
 
-fn square_into_wide_product(out: &mut [u64], value: &[u64]) {
-  let n = value.len();
-  debug_assert!(out.len() >= n.strict_mul(2).strict_add(2));
-
-  out.fill(0);
-  let mut carry_lo = 0u64;
-  let mut carry_hi = 0u64;
-  let product_limbs = n.strict_mul(2);
-
-  let mut column = 0usize;
-  while column < product_limbs.strict_sub(1) {
-    let mut acc_lo = carry_lo;
-    let mut acc_mid = carry_hi;
-    let mut acc_hi = 0u64;
-    let min_i = column.saturating_sub(n.strict_sub(1));
-    let max_i = column.min(n.strict_sub(1));
-
-    for i in min_i..=max_i {
-      let j = column.strict_sub(i);
-      if i > j {
-        break;
-      }
-      add_product_to_acc(&mut acc_lo, &mut acc_mid, &mut acc_hi, value[i], value[j]);
-      if i != j {
-        add_product_to_acc(&mut acc_lo, &mut acc_mid, &mut acc_hi, value[i], value[j]);
-      }
-    }
-
-    out[column] = acc_lo;
-    carry_lo = acc_mid;
-    carry_hi = acc_hi;
-    column = column.strict_add(1);
-  }
-
-  out[product_limbs.strict_sub(1)] = carry_lo;
-  out[product_limbs] = carry_hi;
-}
-
+/// Montgomery squaring for widths without a CIOS kernel: [`square_wide_portable`] then
+/// [`mont_reduce_wide_portable`].
 fn mont_square_product(out: &mut [u64], modulus: &RsaPublicModulus, t: &mut [u64]) {
   let n = modulus.limbs.len();
   debug_assert_eq!(out.len(), n);
   debug_assert!(t.len() >= n.strict_mul(2).strict_add(2));
 
-  square_into_wide_product(t, out);
-
-  for i in 0..n {
-    let q = t[i].wrapping_mul(modulus.n0);
-    let mut carry = 0u64;
-    for j in 0..n {
-      let index = i.strict_add(j);
-      let acc = u128::from(q)
-        .strict_mul(u128::from(modulus.limbs[j]))
-        .strict_add(u128::from(t[index]))
-        .strict_add(u128::from(carry));
-      let (acc_low, acc_high) = split_u128(acc);
-      t[index] = acc_low;
-      carry = acc_high;
-    }
-    add_carry(t, i.strict_add(n), carry);
-  }
-
-  for (dst, src) in out.iter_mut().zip(t[n..n.strict_add(n)].iter().copied()) {
-    *dst = src;
-  }
-
-  let extra = t[n.strict_add(n)..].iter().copied().fold(0u64, |acc, limb| acc | limb);
-  subtract_modulus_if_needed(out, &modulus.limbs, extra);
+  let wide = &mut t[..n.strict_mul(2)];
+  square_wide_portable(wide, out);
+  mont_reduce_wide_portable(out, wide, modulus);
 }
 
+/// `a·b·R⁻¹ mod n` for widths without a CIOS kernel: the full product by operand scanning, then
+/// [`mont_reduce_wide_portable`].
 fn mont_mul(out: &mut [u64], a: &[u64], b: &[u64], modulus: &RsaPublicModulus, t: &mut [u64]) {
   let n = modulus.limbs.len();
   debug_assert_eq!(out.len(), n);
@@ -12284,80 +12306,34 @@ fn mont_mul(out: &mut [u64], a: &[u64], b: &[u64], modulus: &RsaPublicModulus, t
   debug_assert_eq!(b.len(), n);
   debug_assert!(t.len() >= n.strict_mul(2).strict_add(2));
 
-  t.fill(0);
-
-  for (i, &b_limb) in b[..n].iter().enumerate() {
+  let wide = &mut t[..n.strict_mul(2)];
+  wide.fill(0);
+  for (row, &b_limb) in b[..n].iter().enumerate() {
     let mut carry = 0u64;
-    let row_end = i.strict_add(n);
-    for (t_limb, &a_limb) in t[i..row_end].iter_mut().zip(&a[..n]) {
-      let acc = u128::from(a_limb)
-        .strict_mul(u128::from(b_limb))
-        .strict_add(u128::from(*t_limb))
-        .strict_add(u128::from(carry));
-      let (acc_low, acc_high) = split_u128(acc);
-      *t_limb = acc_low;
-      carry = acc_high;
+    for (limb, &a_limb) in wide[row..].iter_mut().zip(&a[..n]) {
+      (*limb, carry) = mont_mac(*limb, a_limb, b_limb, carry);
     }
-    add_carry(t, row_end, carry);
+    // Earlier rows end below limb `row + n`.
+    wide[row.strict_add(n)] = carry;
   }
-
-  for i in 0..n {
-    let q = t[i].wrapping_mul(modulus.n0);
-    let mut carry = 0u64;
-    for j in 0..n {
-      let index = i.strict_add(j);
-      let acc = u128::from(q)
-        .strict_mul(u128::from(modulus.limbs[j]))
-        .strict_add(u128::from(t[index]))
-        .strict_add(u128::from(carry));
-      let (acc_low, acc_high) = split_u128(acc);
-      t[index] = acc_low;
-      carry = acc_high;
-    }
-    add_carry(t, i.strict_add(n), carry);
-  }
-
-  for (dst, src) in out.iter_mut().zip(t[n..n.strict_add(n)].iter().copied()) {
-    *dst = src;
-  }
-
-  let extra = t[n.strict_add(n)..].iter().copied().fold(0u64, |acc, limb| acc | limb);
-  subtract_modulus_if_needed(out, &modulus.limbs, extra);
+  mont_reduce_wide_portable(out, wide, modulus);
 }
 
+/// `value·R⁻¹ mod n` for widths without a CIOS kernel.
 fn mont_reduce(out: &mut [u64], value: &[u64], modulus: &RsaPublicModulus, t: &mut [u64]) {
   let n = modulus.limbs.len();
   debug_assert_eq!(out.len(), n);
   debug_assert_eq!(value.len(), n);
   debug_assert!(t.len() >= n.strict_mul(2).strict_add(2));
 
-  t.fill(0);
-  t[..n].copy_from_slice(value);
-
-  for i in 0..n {
-    let q = t[i].wrapping_mul(modulus.n0);
-    let mut carry = 0u64;
-    for j in 0..n {
-      let index = i.strict_add(j);
-      let acc = u128::from(q)
-        .strict_mul(u128::from(modulus.limbs[j]))
-        .strict_add(u128::from(t[index]))
-        .strict_add(u128::from(carry));
-      let (acc_low, acc_high) = split_u128(acc);
-      t[index] = acc_low;
-      carry = acc_high;
-    }
-    add_carry(t, i.strict_add(n), carry);
-  }
-
-  for (dst, src) in out.iter_mut().zip(t[n..n.strict_add(n)].iter().copied()) {
-    *dst = src;
-  }
-
-  let extra = t[n.strict_add(n)..].iter().copied().fold(0u64, |acc, limb| acc | limb);
-  subtract_modulus_if_needed(out, &modulus.limbs, extra);
+  let wide = &mut t[..n.strict_mul(2)];
+  let (low, high) = wide.split_at_mut(n);
+  low.copy_from_slice(value);
+  high.fill(0);
+  mont_reduce_wide_portable(out, wide, modulus);
 }
 
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 fn add_carry(t: &mut [u64], index: usize, mut carry: u64) {
   for limb in &mut t[index..] {
     let (sum, overflow) = limb.overflowing_add(carry);
@@ -16986,6 +16962,95 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
         assert_limbs_match_as_bytes("mont_reduce", words, &asm_out, &portable_out);
       }
     };
+  }
+
+  #[test]
+  fn portable_montgomery_kernels_match_big_integer_products() {
+    fn big(limbs: &[u64]) -> rsa::BigUint {
+      let bytes: Vec<u8> = limbs.iter().flat_map(|limb| limb.to_le_bytes()).collect();
+      rsa::BigUint::from_bytes_le(&bytes)
+    }
+
+    let mut state = 0x2545_f491_4f6c_dd1du64;
+    let mut next = move || {
+      state ^= state << 13;
+      state ^= state >> 7;
+      state ^= state << 17;
+      state
+    };
+    let widths: &[usize] = if cfg!(miri) {
+      &[1, 3]
+    } else {
+      &[1, 2, 3, 5, 8, 16, 17, 32, 48, 64, 128]
+    };
+    for &words in widths {
+      for case in 0..6 {
+        let mut bytes: Vec<u8> = (0..words.strict_mul(8)).map(|_| next().to_le_bytes()[0]).collect();
+        if case == 0 {
+          bytes.fill(0xff);
+        }
+        bytes[0] |= 0x80;
+        *bytes.last_mut().expect("nonzero width") |= 1;
+        let modulus = RsaPublicModulus::new(&bytes, words.strict_mul(64));
+        let n = big(&modulus.limbs);
+        let r = rsa::BigUint::from(1u8) << words.strict_mul(64);
+        // Zero, n - 1, and random values below n.
+        let mut below = |kind: usize| -> Vec<u64> {
+          match kind {
+            0 => vec![0u64; words],
+            1 => {
+              let mut value = modulus.limbs.to_vec();
+              value[0] ^= 1;
+              value
+            }
+            _ => {
+              let mut value: Vec<u64> = (0..words).map(|_| next()).collect();
+              let top = words.strict_sub(1);
+              value[top] %= modulus.limbs[top];
+              value
+            }
+          }
+        };
+        for (left_kind, right_kind) in [(0, 2), (1, 1), (1, 2), (2, 1), (2, 2), (2, 2)] {
+          let a = below(left_kind);
+          let b = below(right_kind);
+          let mut t = vec![0u64; words.strict_mul(2).strict_add(2)];
+          let mut out = vec![0u64; words];
+          let product = |value: &[u64]| -> rsa::BigUint { big(value) * &r % &n };
+
+          mont_mul_cios_portable(&mut out, &a, &b, &modulus, &mut t);
+          assert!(big(&out) < n, "mul result below n for {words} limbs");
+          assert_eq!(product(&out), big(&a) * big(&b) % &n, "mul for {words} limbs");
+
+          let mut squared = a.clone();
+          mont_square_portable_in_place(&mut squared, &modulus, &mut t);
+          assert!(big(&squared) < n, "square result below n for {words} limbs");
+          assert_eq!(product(&squared), big(&a) * big(&a) % &n, "square for {words} limbs");
+
+          mont_reduce_cios_portable(&mut out, &a, &modulus, &mut t);
+          assert!(big(&out) < n, "reduce result below n for {words} limbs");
+          assert_eq!(product(&out), big(&a) % &n, "reduce for {words} limbs");
+
+          // The kernels for widths without CIOS.
+          mont_mul(&mut out, &a, &b, &modulus, &mut t);
+          assert!(big(&out) < n, "wide mul result below n for {words} limbs");
+          assert_eq!(product(&out), big(&a) * big(&b) % &n, "wide mul for {words} limbs");
+
+          let mut squared = a.clone();
+          mont_square_product(&mut squared, &modulus, &mut t);
+          assert!(big(&squared) < n, "wide square result below n for {words} limbs");
+          assert_eq!(
+            product(&squared),
+            big(&a) * big(&a) % &n,
+            "wide square for {words} limbs"
+          );
+
+          mont_reduce(&mut out, &a, &modulus, &mut t);
+          assert!(big(&out) < n, "wide reduce result below n for {words} limbs");
+          assert_eq!(product(&out), big(&a) % &n, "wide reduce for {words} limbs");
+        }
+      }
+    }
   }
 
   #[cfg(all(target_arch = "aarch64", not(feature = "portable-only"), not(miri)))]
