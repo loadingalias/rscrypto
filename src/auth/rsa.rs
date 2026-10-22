@@ -12460,15 +12460,15 @@ fn square_wide_portable(out: &mut [u64], value: &[u64]) {
 
   let mut carry = 0u64;
   for ([low, high], &limb) in out.as_chunks_mut::<2>().0.iter_mut().zip(value) {
-    let (square_low, square_high) = split_u128(u128::from(limb).strict_mul(u128::from(limb)));
-    let (sum, overflow0) = low.overflowing_add(square_low);
-    let (sum, overflow1) = sum.overflowing_add(carry);
-    *low = sum;
-    let (sum, overflow2) = high.overflowing_add(square_high);
-    // The low limb's two carries cannot both be set.
-    let (sum, overflow3) = sum.overflowing_add(u64::from(overflow0 | overflow1));
-    *high = sum;
-    carry = u64::from(overflow2 | overflow3);
+    // `low + limb² + carry` fits 128 bits, so its high limb is the square's high limb plus the low
+    // limb's carry, and adding `high` to it leaves a 0/1 carry. Both sums stay in 128-bit
+    // arithmetic, as in `mont_mac`: a carry added as a separate `bool` compiled to a branch on
+    // RISC-V (Constant-Time 39835996527).
+    let (sum_low, square_high) = mont_mac(*low, limb, limb, carry);
+    let (sum_high, carry_out) = split_u128(u128::from(*high).wrapping_add(u128::from(square_high)));
+    *low = sum_low;
+    *high = sum_high;
+    carry = carry_out;
   }
 }
 
