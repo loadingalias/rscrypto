@@ -92,6 +92,7 @@ auxiliary_cargo_manifests = [
   "tools/frame-review/Cargo.toml",
   "tools/mldsa-tail/Cargo.toml",
   "tools/provider-bench/Cargo.toml",
+  "tools/provider-size/Cargo.toml",
   "tools/residue-harness/Cargo.toml",
   "tools/wasm-runtime-vectors/Cargo.toml",
 ]
