@@ -73,6 +73,14 @@ def main(arguments: list[str]) -> int:
         if status:
           return status
       return 0
+    if not (args.prepare_archive or args.run_archive):
+      # A cold build can outlast a measurement budget: the auth target took over 600 s on Windows
+      # (Bench 39867778994). Build and discover each target under its own bound first, as listing
+      # does, so the measurement run finds its build current and spends its budget measuring.
+      for bench in dict.fromkeys(row["bench"] for row in runner.requests(args, catalog)):
+        status = run([*command, "--list", "--list-target", bench], load()["max_run_seconds"])
+        if status:
+          return status
     return run(command, runner.run_budget(args, catalog), maximum=load()["max_comparison_seconds"])
   return run(arguments, load()["max_run_seconds"])
 

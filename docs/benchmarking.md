@@ -926,10 +926,13 @@ No opt-in for expensive workloads is needed.
 
 ### Time budget
 
-`just bench` normally limits the whole pipeline to 10 minutes: build, discovery, measurement, analysis,
-and result verification.
-`--list` runs one bounded invocation for each selected target, so each target's build and discovery
-has its own limit; a cold listing of many targets can take longer in total.
+`just bench` normally limits each step to 10 minutes.
+A native run first builds and discovers each selected target in its own bounded invocation, as `--list` does.
+The measurement pipeline then has its own limit for discovery, measurement, analysis, and result verification,
+and finds the build current. The cold Windows build of the `auth` target alone outlasted one limit in
+[Bench run 39867778994](https://github.com/loadingalias/rscrypto/actions/runs/39867778994).
+`--list` runs only the per-target invocations; a cold listing of many targets can take longer in total.
+Cross-build preparation and runs of prepared binaries keep one bounded invocation.
 `just bench-structural` and `just profile` use the same limit, including their builds.
 The shared `max_run_seconds` setting can lower this ordinary limit; it cannot exceed 600 seconds.
 
@@ -953,7 +956,7 @@ CI expands umbrella selectors into separate operations before resolving their bu
 - A run that times out exits with status 124.
   Partial results are not a complete run.
 - A plan whose requested sampling windows alone use up the budget is rejected before measurement.
-  Build cost, analysis, and slow operations can still make a smaller plan reach the deadline.
+  Analysis and slow operations can still make a smaller plan reach the deadline.
 - Direct Cargo invocation limits each Criterion harness separately.
   Use `just bench` to limit a selection that spans more than one harness, together with its builds.
   Use `just bench-structural` for the structural benchmark deadline.

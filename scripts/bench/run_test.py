@@ -89,6 +89,8 @@ if '--list' in sys.argv:
 plan = json.loads(pathlib.Path(os.environ['RSCRYPTO_BENCH_CASES']).read_text())
 selected = plan['cases']
 print(f"Benchmark harness budget: {plan['budget_seconds']}s", flush=True)
+if os.environ.get('STALL_MEASURE'):
+  import time; time.sleep(30)
 assert set(selected) <= set(cases)
 if '--profile-time' in sys.argv: sys.exit(0)
 for case in selected:
@@ -577,7 +579,12 @@ sys.exit(64)
   def test_timeout_keeps_failed_run(self):
     path = self.root / '.config/criterion.json'; config = json.loads(path.read_text()); config['max_run_seconds'] = 3
     path.write_text(json.dumps(config))
+    # A stalled build times out in its own bounded build step, before any run directory exists.
     result = self.bench('sha256', STALL_BUILD='1')
+    self.assertEqual(result.returncode, 124, result.stdout + result.stderr)
+    self.assertFalse(self.runs())
+    # A stalled measurement keeps its failed run.
+    result = self.bench('sha256', STALL_MEASURE='1')
     self.assertEqual(result.returncode, 124, result.stdout + result.stderr)
     self.assertTrue(self.runs())
     self.assertNotIn('state=complete', (self.runs()[0] / 'status.txt').read_text())

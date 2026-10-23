@@ -37,14 +37,35 @@ class BudgetTests(unittest.TestCase):
                            ([selector, '--quick'], 600),
                            ([selector, '--prepare-archive', 'fixture.tar'], 600),
                            ([selector, '--run-archive', 'fixture.tar'], 1800)):
-      with self.subTest(args=args), patch.dict(os.environ, {}, clear=True), patch('bounded.run', return_value=7) as execute:
-        self.assertEqual(main(['--bench', *args]), 7)
+      with self.subTest(args=args), patch.dict(os.environ, {}, clear=True), patch('bounded.run', return_value=0) as execute:
+        self.assertEqual(main(['--bench', *args]), 0)
         self.assertEqual(execute.call_args.args[1], expected)
         self.assertEqual(execute.call_args.args[0][2:], ['bench', *args])
         self.assertEqual(execute.call_args.kwargs, {'maximum': 1800})
     with patch.dict(os.environ, {'BENCH_QUICK': 'true'}, clear=True), patch('bounded.run', return_value=0) as execute:
       self.assertEqual(main(['--bench', selector]), 0)
       self.assertEqual(execute.call_args.args[1], 600)
+
+  def test_native_measurement_builds_each_target_under_its_own_bound(self):
+    # A cold build must not spend the measurement budget, so each target first builds and lists alone.
+    args = ['hmac-sha256', 'sha2', '--measure-ms', '200']
+    with patch.dict(os.environ, {}, clear=True), patch('bounded.run', return_value=0) as execute:
+      self.assertEqual(main(['--bench', *args]), 0)
+    self.assertEqual([call.args[0][2:] for call in execute.call_args_list],
+                     [['bench', *args, '--list', '--list-target', name] for name in ('auth', 'sha2')]
+                     + [['bench', *args]])
+    self.assertEqual([call.args[1] for call in execute.call_args_list], [600] * 3)
+    self.assertEqual([call.kwargs for call in execute.call_args_list], [{}, {}, {'maximum': 1800}])
+    # A failed build ends the invocation before measurement.
+    with patch.dict(os.environ, {}, clear=True), patch('bounded.run', side_effect=[124]) as execute:
+      self.assertEqual(main(['--bench', *args]), 124)
+    self.assertEqual(execute.call_count, 1)
+    # Prepared binaries need no build: transfer preparation and consumption keep one bounded run.
+    for transfer in ('--prepare-archive', '--run-archive'):
+      with self.subTest(transfer=transfer), patch.dict(os.environ, {}, clear=True), \
+          patch('bounded.run', return_value=0) as execute:
+        self.assertEqual(main(['--bench', 'sha2', transfer, 'fixture.tar']), 0)
+        self.assertEqual(execute.call_count, 1)
 
   def test_listing_bounds_each_target_separately(self):
     # Listing builds every selected target, so each target's build and discovery gets the ordinary budget.
