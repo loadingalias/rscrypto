@@ -599,11 +599,12 @@ selects the first message index for reproducing a discovered rejection case.
 - `benches/common/criterion.rs` applies them to every Criterion harness.
   `bench/settings.py` resolves overrides for one invocation.
 - Catalog algorithms on split targets may declare `max_run_seconds` within that ceiling.
-  `bench/runner.py` grants it only to one complete operation without a filter; quick runs,
-  listing and preparation keep the ordinary budget.
+  `bench/runner.py` grants it only to one complete operation without a filter; quick runs
+  and preparation keep the ordinary budget.
 - `bench/bounded.py` stops the whole benchmark or profile process tree within the budget.
-  For `--list`, it runs one bounded runner invocation per selected target,
-  so each target's build and discovery has the ordinary budget.
+  For `--list`, and before a native measurement, it runs one runner invocation per selected target
+  that builds and discovers it within the `max_comparison_seconds` ceiling,
+  so a cold build cannot spend a measurement's budget.
 - `bench/runner.py` resolves filters to unique cases and records the budget in `requests.json`.
 - `bench/measure.py` runs one process for each configuration,
   passes the cases and budget to the compiled harness through `RSCRYPTO_BENCH_CASES`,

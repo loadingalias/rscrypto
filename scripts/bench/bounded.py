@@ -65,20 +65,20 @@ def main(arguments: list[str]) -> int:
     args = runner.parse(["bench", *arguments[1:]])
     catalog = runner.load_catalog()
     command = [sys.executable, str(Path(runner.__file__)), "bench", *arguments[1:]]
+    # Each target's build and discovery runs alone, under the longest permitted bound: a cold build of the
+    # auth target took over 600 s on Windows (Bench 39867778994 and 39880626790). Measurement keeps its own
+    # budget and finds the build current.
+    build = load()["max_comparison_seconds"]
+    targets = dict.fromkeys(row["bench"] for row in runner.requests(args, catalog))
     if args.list and not args.list_target:
-      # Listing builds every selected target. Bound each target's build and discovery separately,
-      # as CI bounds each invocation, so a cold listing of many targets cannot exhaust one budget.
-      for bench in dict.fromkeys(row["bench"] for row in runner.requests(args, catalog)):
-        status = run([*command, "--list-target", bench], load()["max_run_seconds"])
+      for bench in targets:
+        status = run([*command, "--list-target", bench], build, maximum=build)
         if status:
           return status
       return 0
     if not (args.prepare_archive or args.run_archive):
-      # A cold build can outlast a measurement budget: the auth target took over 600 s on Windows
-      # (Bench 39867778994). Build and discover each target under its own bound first, as listing
-      # does, so the measurement run finds its build current and spends its budget measuring.
-      for bench in dict.fromkeys(row["bench"] for row in runner.requests(args, catalog)):
-        status = run([*command, "--list", "--list-target", bench], load()["max_run_seconds"])
+      for bench in targets:
+        status = run([*command, "--list", "--list-target", bench], build, maximum=build)
         if status:
           return status
     return run(command, runner.run_budget(args, catalog), maximum=load()["max_comparison_seconds"])

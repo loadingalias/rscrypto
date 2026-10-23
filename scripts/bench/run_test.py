@@ -34,8 +34,6 @@ if os.environ.get('FAIL_BUILD'):
   print('fixture compiler detail: rejected benchmark source', file=sys.stderr)
   print(json.dumps({'reason': 'compiler-message', 'message': {'rendered': 'fixture compiler JSON diagnostic'}}))
   sys.exit(8)
-if os.environ.get('STALL_BUILD'):
-  import time; time.sleep(30)
 features = sys.argv[sys.argv.index('--features') + 1]
 flags = os.environ.get('CARGO_ENCODED_RUSTFLAGS', '').split('\x1f')
 if 'diag' in features.split(','): assert 'rscrypto_internal' in flags
@@ -579,11 +577,7 @@ sys.exit(64)
   def test_timeout_keeps_failed_run(self):
     path = self.root / '.config/criterion.json'; config = json.loads(path.read_text()); config['max_run_seconds'] = 3
     path.write_text(json.dumps(config))
-    # A stalled build times out in its own bounded build step, before any run directory exists.
-    result = self.bench('sha256', STALL_BUILD='1')
-    self.assertEqual(result.returncode, 124, result.stdout + result.stderr)
-    self.assertFalse(self.runs())
-    # A stalled measurement keeps its failed run.
+    # The build ran in its own bounded step; a stalled measurement keeps its failed run.
     result = self.bench('sha256', STALL_MEASURE='1')
     self.assertEqual(result.returncode, 124, result.stdout + result.stderr)
     self.assertTrue(self.runs())

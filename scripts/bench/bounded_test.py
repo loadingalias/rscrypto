@@ -54,8 +54,9 @@ class BudgetTests(unittest.TestCase):
     self.assertEqual([call.args[0][2:] for call in execute.call_args_list],
                      [['bench', *args, '--list', '--list-target', name] for name in ('auth', 'sha2')]
                      + [['bench', *args]])
-    self.assertEqual([call.args[1] for call in execute.call_args_list], [600] * 3)
-    self.assertEqual([call.kwargs for call in execute.call_args_list], [{}, {}, {'maximum': 1800}])
+    # Builds take the longest bound; the measurement keeps its ordinary budget.
+    self.assertEqual([call.args[1] for call in execute.call_args_list], [1800, 1800, 600])
+    self.assertEqual([call.kwargs for call in execute.call_args_list], [{'maximum': 1800}] * 3)
     # A failed build ends the invocation before measurement.
     with patch.dict(os.environ, {}, clear=True), patch('bounded.run', side_effect=[124]) as execute:
       self.assertEqual(main(['--bench', *args]), 124)
@@ -68,14 +69,14 @@ class BudgetTests(unittest.TestCase):
         self.assertEqual(execute.call_count, 1)
 
   def test_listing_bounds_each_target_separately(self):
-    # Listing builds every selected target, so each target's build and discovery gets the ordinary budget.
+    # Listing builds every selected target, so each target's build and discovery gets the longest bound.
     args = ['sha2', 'crc', 'slhdsa-sha2-128s-sign', '--list']
     with patch.dict(os.environ, {}, clear=True), patch('bounded.run', return_value=0) as execute:
       self.assertEqual(main(['--bench', *args]), 0)
     self.assertEqual([call.args[0][2:] for call in execute.call_args_list],
                      [['bench', *args, '--list-target', name] for name in ('sha2', 'crc', 'slhdsa')])
-    self.assertEqual([call.args[1] for call in execute.call_args_list], [600] * 3)
-    self.assertEqual([call.kwargs for call in execute.call_args_list], [{}] * 3)
+    self.assertEqual([call.args[1] for call in execute.call_args_list], [1800] * 3)
+    self.assertEqual([call.kwargs for call in execute.call_args_list], [{'maximum': 1800}] * 3)
     # The first failed target ends the listing.
     with patch.dict(os.environ, {}, clear=True), patch('bounded.run', side_effect=[0, 124, 0]) as execute:
       self.assertEqual(main(['--bench', *args]), 124)

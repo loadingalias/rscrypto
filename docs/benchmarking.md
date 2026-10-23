@@ -977,11 +977,13 @@ No opt-in for expensive workloads is needed.
 
 ### Time budget
 
-`just bench` normally limits each step to 10 minutes.
-A native run first builds and discovers each selected target in its own bounded invocation, as `--list` does.
-The measurement pipeline then has its own limit for discovery, measurement, analysis, and result verification,
-and finds the build current. The cold Windows build of the `auth` target alone outlasted one limit in
-[Bench run 39867778994](https://github.com/loadingalias/rscrypto/actions/runs/39867778994).
+`just bench` normally limits a measurement to 10 minutes: discovery, measurement, analysis,
+and result verification.
+A native run first builds and discovers each selected target in its own invocation, as `--list` does.
+That invocation has the 30-minute `max_comparison_seconds` limit, and the measurement then finds its build current.
+The cold Windows build of the `auth` target alone took longer than 10 minutes in Bench runs
+[39867778994](https://github.com/loadingalias/rscrypto/actions/runs/39867778994) and
+[39880626790](https://github.com/loadingalias/rscrypto/actions/runs/39880626790).
 `--list` runs only the per-target invocations; a cold listing of many targets can take longer in total.
 Cross-build preparation and runs of prepared binaries keep one bounded invocation.
 `just bench-structural` and `just profile` use the same limit, including their builds.
@@ -998,7 +1000,7 @@ The runner and compiled harness use the same resolved budget and retain every im
 and sampling setting.
 These exceptions use the catalog algorithm's `max_run_seconds`, bounded by `max_comparison_seconds` in `.config/criterion.json`;
 there is no invocation option to raise the limit.
-Quick runs, discovery, cross-build preparation, filters,
+Quick runs, cross-build preparation, filters,
 and local selections spanning multiple operations keep the ordinary limit.
 CI expands umbrella selectors into separate operations before resolving their budgets.
 
