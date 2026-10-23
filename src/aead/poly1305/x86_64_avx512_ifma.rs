@@ -104,11 +104,28 @@ fn low_u64(value: u128) -> u64 {
   ])
 }
 
-/// Scalar Poly1305 state over the shared radix.
+/// Scalar Poly1305 state over the shared radix. It holds the clamped key, so it clears itself on drop.
 struct Scalar {
   h: Limbs,
   r: Limbs,
   r20: Limbs,
+}
+
+impl Drop for Scalar {
+  fn drop(&mut self) {
+    for limbs in [&mut self.h, &mut self.r, &mut self.r20] {
+      crate::traits::ct::zeroize_words_no_fence(&mut limbs.0);
+    }
+    core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+  }
+}
+
+/// Clear stack copies of key powers. Copies held only in vector registers are not cleared.
+fn clear_powers(powers: &mut [Limbs]) {
+  for limbs in powers {
+    crate::traits::ct::zeroize_words_no_fence(&mut limbs.0);
+  }
+  core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
 }
 
 impl Scalar {
@@ -363,7 +380,10 @@ pub(super) unsafe fn authenticate_aead_ifma(
     let m = load_blocks(blocks);
     h = multiply(add_lanes(h, m), finish);
     scalar.h = sum_lanes(h);
+    clear_powers(&mut tail_powers);
+    clear_powers(&mut tail_powers20);
   }
+  clear_powers(&mut powers);
   scalar.absorb_padded(rest);
   scalar.absorb(&lengths.to_le_bytes_block());
   finalize(scalar.h, s_bytes)
