@@ -23,11 +23,13 @@ runners:
     image: ubuntu24-minimal-x64
     spot: price-capacity-optimized
     volume: 40gb:gp3
+  # On-Demand: a spot reclaim (BidEvictedEvent 14:25:39Z) failed this job of
+  # Fuzz 39967503881 during its RSA proofs.
   miri:
     family: [c7a.large, c8a.large]
     cpu: 2
     image: rscrypto-ci-linux-x64
-    spot: price-capacity-optimized
+    spot: false
     volume: 150gb:gp3
   package:
     family: [c7a.xlarge, c7i.xlarge, c8a.xlarge, c8i.xlarge]
@@ -89,17 +91,21 @@ runners:
     spot: false
     volume: 200gb:gp3
   # Eight concurrent fuzz targets need eight physical cores, including on x86.
+  # On-Demand: a spot reclaim (BidEvictedEvent 04:53:06Z) failed this row of
+  # Fuzz 39901210776 while it retained its corpora.
   fuzz-x86_64-linux:
     family: [c7a.2xlarge, c8a.2xlarge]
     cpu: 8
     image: rscrypto-ci-linux-x64
-    spot: price-capacity-optimized
+    spot: false
     volume: 150gb:gp3
+  # On-Demand: a spot reclaim (BidEvictedEvent 15:08:19Z) failed this row of
+  # Fuzz 39972507877 after its corpus replays had passed.
   fuzz-aarch64-linux:
     family: [c7g.2xlarge, c8g.2xlarge, c9g.2xlarge]
     cpu: 8
     image: rscrypto-ci-linux-arm64
-    spot: price-capacity-optimized
+    spot: false
     volume: 150gb:gp3
   # Fixed, non-Flex, On-Demand CT hardware; sized independently of benchmarks.
   ct-x86_64-linux-intel:

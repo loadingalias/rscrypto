@@ -675,8 +675,8 @@ Workflows refer to profile names, and do not override their shapes.
 - CI, CT, and benchmark cross-builds have separate profiles.
   So do native CI, fuzzing, and CT measurement.
 - Ordinary jobs use price-capacity-optimized Spot.
-  CI cross-build preparation and the native x86-64 Linux, AArch64 Linux, and Windows x86-64 CI rows
-  use On-Demand, because Spot reclaims cancelled them.
+  CI cross-build preparation, the native x86-64 Linux, AArch64 Linux, and Windows x86-64 CI rows,
+  and the Fuzz workflow's fuzz and Miri jobs use On-Demand, because Spot reclaims cancelled them.
   CT and benchmark measurement use separate fixed On-Demand profiles.
 - Cargo Rail cache setup and reporting are enabled only for native x86-64
   and Arm64 Linux compilation, and for the three x86-64 cross-build producers.
