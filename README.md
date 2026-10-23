@@ -140,38 +140,33 @@ Do not open a public issue.
 
 ## Performance
 
-Bench run [#37092266645](https://github.com/loadingalias/rscrypto/actions/runs/37092266645) measured the v0.10.0 source
-on eight platforms on 2026-10-03.
-Each platform has 346 like-for-like comparisons of hashes, checksums, MACs, XOFs, and scrypt.
+Bench run [#39888945058](https://github.com/loadingalias/rscrypto/actions/runs/39888945058) measured the v0.12.0 source
+on eight platforms on 2026-10-23, and the same plan ran on a local Apple M1 Pro.
+Each platform has up to 914 headline comparisons: checksums, hashes, MACs, KDFs, password hashing,
+AEADs, signatures, key exchange, ML-KEM, ML-DSA, SLH-DSA, and RSA.
+The comparisons follow [equal-task rules](docs/benchmarking.md#comparison-rules).
 Each comparison divides the median time of the fastest external crate by the median time of `rscrypto`.
-A ratio above 1.00x means `rscrypto` is faster.
+A ratio above 1.00x means `rscrypto` is faster; a tie is 0.95x through 1.05x.
 
-| Platform | Faster | Within 3% | Slower | Median ratio |
-| --- | ---: | ---: | ---: | ---: |
-| Intel Linux (`c8i`) | 211 | 88 | 47 | 1.09x |
-| AMD Linux (`c8a`) | 256 | 81 | 9 | 1.13x |
-| Intel Windows (`c8i`) | 186 | 105 | 55 | 1.05x |
-| AMD Windows (`c8a`) | 262 | 68 | 16 | 1.09x |
-| Graviton5 Linux (`c9g`) | 147 | 121 | 78 | 1.01x |
-| POWER10 Linux | 206 | 122 | 18 | 1.07x |
-| IBM Z Linux | 301 | 19 | 26 | 2.77x |
-| RISC-V Linux | 197 | 79 | 70 | 1.05x |
+| Platform | Points | Faster | Tie | Slower | Median | Geomean |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Intel Linux (`c8i`) | 914 | 372 | 254 | 288 | 1.00x | 1.23x |
+| AMD Linux (`c8a`) | 914 | 420 | 264 | 230 | 1.03x | 1.20x |
+| Intel Windows (`c8i`) | 914 | 420 | 258 | 236 | 1.03x | 1.25x |
+| AMD Windows (`c8a`) | 914 | 517 | 149 | 248 | 1.08x | 1.20x |
+| Graviton5 Linux (`c9g`) | 914 | 379 | 284 | 251 | 1.03x | 1.21x |
+| POWER10 Linux | 914 | 414 | 314 | 186 | 1.03x | 1.38x |
+| IBM Z Linux | 911 | 726 | 90 | 95 | 2.31x | 3.07x |
+| RISC-V Linux | 603 | 251 | 189 | 163 | 1.02x | 1.07x |
+| Apple M1 Pro (local) | 914 | 380 | 381 | 153 | 1.03x | 1.24x |
 
-These results are from one run on cloud and shared hosts.
-They do not include AEAD, signature, key-exchange, ML-KEM, ML-DSA, Argon2, or RSA cases,
-and they do not include macOS.
-On IBM Z, every comparison library is portable Rust, while `rscrypto` uses the CPACF hash instructions.
-
-Some rows in this run favor `rscrypto` through unequal work.
-On x86-64, the XXH3 rows from 256 B ran against xxhash-rust built for SSE2.
-The BLAKE3 rows used several threads against single-threaded upstream calls:
-at 256 KiB and 1 MiB on x86-64, and from 64 KiB on Graviton5.
-The RapidHash collection rows compared only with upstream's slower quality hasher.
-The benchmarks now follow [equal-task comparison rules](docs/benchmarking.md#comparison-rules),
-and the Bench workflow scores each run from its own artifacts.
-The next full run replaces this table; the [corrections](benchmark_results/OVERVIEW.md#corrections) list every affected comparison.
-The [benchmark overview](benchmark_results/OVERVIEW.md#2026-10-03-full-benchmark-run-v0100) gives the results by family,
-the method, and the limits.
+These results are from one run per platform, at half the default sampling time, on cloud and shared hosts.
+RISC-V's `auth` family (signatures, key exchange, KDFs, MACs, and password hashing) was still measuring,
+so its row covers 603 comparisons.
+The Apple row comes from one local run whose host was not checked for load first; treat its small differences as unconfirmed.
+On IBM Z, `rscrypto` uses its CPACF and vector backends where they exist, and AWS-LC is absent.
+The [benchmark overview](benchmark_results/OVERVIEW.md#2026-10-23-v0120-release-benchmark-run) gives the results by family,
+TLS 1.3 and QUIC connections through `rscrypto-rustls`, the largest remaining losses, the method, and the limits.
 The [comparison contracts](docs/benchmarking.md#ml-kem-and-argon2-comparison-contracts) define equivalent ML-KEM and Argon2 workloads.
 Older summary tables mixed different workloads. They are historical records, not current claims.
 

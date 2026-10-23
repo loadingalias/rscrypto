@@ -6,6 +6,206 @@ The dated campaign records come first.
 The 2026-08-18 Linux snapshot near the end is historical:
 its aggregate ratios are withdrawn as performance claims (see [Corrections](#corrections)).
 
+## 2026-10-23: v0.12.0 release benchmark run
+
+This run measures the v0.12.0 product source on eight CI platforms, on a local Apple M1 Pro,
+and, for TLS 1.3 and QUIC through `rscrypto-rustls`, on two small Linux hosts and the M1 Pro.
+Every measurement ran the same `src/` tree: it is unchanged from `c9bd06a7` through `4baec6d5`.
+The commits between them change only constant-time waivers, release notes, benchmark cases, benchmark tooling,
+and documentation.
+
+### Method
+
+- Toolchain: `nightly-2026-10-14` (rustc 1.101.0-nightly `822182db4`, LLVM 23.1.3), `bench` profile.
+- Criterion: 20 samples, 50 ms warm-up and 200 ms measurement, half of the catalog defaults
+  (100 ms and 400 ms), with 10,000 resamples and 95% confidence.
+- Each comparison point divides the median time of the fastest external library by the median time of `rscrypto`.
+  A ratio above 1.00x means `rscrypto` is faster. A tie is 0.95x through 1.05x.
+- The headline holds each primitive's primary operations, as the catalog's `headline` field declares.
+  Streaming, batch, construction, parsing, and equal-key-depth comparisons are reported by family outside it.
+- The tasks follow the [comparison rules](../docs/benchmarking.md#comparison-rules).
+  Compared with v0.10.0, the catalog now scores AEAD, ECDSA, Ed25519, X25519, ECDH, ML-KEM, ML-DSA,
+  SLH-DSA, RSA, Argon2, HKDF, PBKDF2, Poly1305, and BLAKE2, and it adds the v0.12 APIs
+  (`4eb11c24`): single-use SEC1 ECDSA verification, P-256/SHA-384 and P-384/SHA-256 verification,
+  the ML-KEM ephemeral key share, TLS 1.3 HKDF-Expand-Label from an imported PRK,
+  PHC verification with reused memory, and the BLAKE3 reader and tree APIs.
+
+### CI platforms
+
+[Bench run 39888945058](https://github.com/loadingalias/rscrypto/actions/runs/39888945058) measured `4baec6d5`
+with `benchmarks=all` on fixed On-Demand hosts: `c8i.2xlarge` (Intel Granite Rapids) and `c8a.2xlarge`
+(AMD Zen 5) for Linux and Windows, `c9g.2xlarge` (Graviton5), and the native POWER10, IBM Z, and RISC-V runners.
+POWER10, IBM Z, and RISC-V ran binaries that x86-64 compiled for them.
+The scorecard comes from the run's own measurement archives, scored by the workflow's scorer.
+RISC-V's `auth` family (RSA, elliptic curves, ML-KEM, ML-DSA, SLH-DSA, KDFs, MACs, and password hashing)
+was still measuring when this record was written; its points are added when it completes.
+
+The local Apple Silicon row is a separate run of the same CI plan on an Apple M1 Pro
+(10 cores, 16 GB, macOS 26.6.2) at `4eb11c24`.
+Its host was not checked for load and thermal state before collection,
+and a local build ran during its TLS handshake rows from 02:08 to 02:12 UTC.
+Treat its differences within about 15% as unconfirmed until a qualified run repeats them.
+
+Headline comparisons:
+
+| Platform | Points | Faster | Tie | Slower | Median | Geomean |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Intel Linux (`c8i`) | 914 | 372 | 254 | 288 | 1.00x | 1.23x |
+| AMD Linux (`c8a`) | 914 | 420 | 264 | 230 | 1.03x | 1.20x |
+| Intel Windows (`c8i`) | 914 | 420 | 258 | 236 | 1.03x | 1.25x |
+| AMD Windows (`c8a`) | 914 | 517 | 149 | 248 | 1.08x | 1.20x |
+| Graviton5 Linux (`c9g`) | 914 | 379 | 284 | 251 | 1.03x | 1.21x |
+| POWER10 Linux | 914 | 414 | 314 | 186 | 1.03x | 1.38x |
+| IBM Z Linux | 911 | 726 | 90 | 95 | 2.31x | 3.07x |
+| RISC-V Linux | 603 | 251 | 189 | 163 | 1.02x | 1.07x |
+| Apple M1 Pro (local) | 914 | 380 | 381 | 153 | 1.03x | 1.24x |
+
+On IBM Z, `rscrypto` uses its CPACF and vector backends where they exist, the competitors are portable,
+and AWS-LC is absent.
+
+Headline geometric mean by family:
+
+| Family | Intel Linux | AMD Linux | Intel Win | AMD Win | Graviton5 | POWER10 | IBM Z | RISC-V | Apple |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| AEAD | 1.20x | 1.36x | 1.35x | 1.43x | 1.31x | 1.30x | 5.57x | 0.95x | 1.18x |
+| Argon2 | 1.19x | 0.97x | 1.22x | 0.97x | 0.99x | 0.75x | 0.80x | — | 1.03x |
+| Ascon | 1.06x | 1.02x | 1.06x | 1.07x | 1.04x | 1.01x | 1.01x | 1.02x | 1.06x |
+| BLAKE2 | 0.96x | 0.55x | 0.93x | 0.57x | 0.92x | 0.99x | 1.00x | 1.06x | 1.04x |
+| BLAKE3 | 0.95x | 0.97x | 0.92x | 1.01x | 1.02x | 1.48x | 1.40x | 0.95x | 0.96x |
+| CRC | 7.33x | 6.30x | 7.51x | 6.49x | 4.88x | 11.75x | 7.92x | 1.57x | 5.49x |
+| ECDH | 1.31x | 1.28x | 2.42x | 2.66x | 1.01x | 1.28x | 0.12x | — | 0.97x |
+| ECDSA | 1.05x | 0.99x | 1.08x | 1.09x | 1.43x | 1.73x | 0.69x | — | 1.40x |
+| Ed25519 | 0.88x | 0.99x | 0.98x | 1.18x | 0.97x | 0.80x | 1.05x | — | 1.01x |
+| HKDF | 1.14x | 1.15x | 1.06x | 1.15x | 1.09x | 1.03x | 2.60x | — | 1.06x |
+| HMAC-SHA-2 | 1.01x | 1.01x | 0.95x | 1.02x | 0.96x | 0.94x | 5.04x | — | 1.00x |
+| HMAC-SHA-3 | 0.90x | 1.00x | 1.00x | 1.15x | 0.89x | 1.33x | 9.33x | — | 1.02x |
+| KMAC | 0.98x | 1.12x | 0.97x | 1.07x | 1.00x | 0.93x | 3.77x | — | 1.31x |
+| ML-DSA | 0.89x | 0.85x | 0.49x | 0.41x | 1.23x | 1.38x | 1.59x | — | 1.24x |
+| ML-KEM | 1.47x | 1.56x | 1.74x | 1.55x | 1.36x | 1.09x | 1.56x | — | 1.05x |
+| PBKDF2 | 1.22x | 1.18x | 1.14x | 1.23x | 1.06x | 1.08x | 2.57x | — | 0.99x |
+| Poly1305 | 0.40x | 0.44x | 0.41x | 0.47x | 0.36x | 0.47x | 0.65x | — | 0.30x |
+| RSA | 0.93x | 0.94x | 0.65x | 0.60x | 0.84x | 0.52x | 2.68x | — | 1.01x |
+| RapidHash | 1.13x | 1.05x | 1.19x | 1.06x | 1.19x | 1.21x | 1.03x | 0.84x | 0.88x |
+| SHA-2 | 1.05x | 1.08x | 1.09x | 1.04x | 1.04x | 1.02x | 5.63x | 1.05x | 1.07x |
+| SHA-3 | 0.93x | 1.06x | 0.96x | 1.08x | 0.94x | 1.55x | 6.83x | 1.37x | 0.97x |
+| SHAKE | 0.92x | 1.07x | 0.97x | 1.08x | 0.92x | 0.95x | 3.78x | 1.13x | 0.95x |
+| SLH-DSA | 1.59x | 1.69x | 1.53x | 1.60x | 1.52x | 1.48x | 1.86x | — | 1.29x |
+| X25519 | 1.02x | 1.06x | 0.89x | 0.94x | 1.01x | 0.58x | 0.86x | — | 1.01x |
+| XXH3 | 0.82x | 0.75x | 0.84x | 0.74x | 0.95x | 1.19x | 1.39x | 0.74x | 0.98x |
+| cSHAKE | 0.99x | 1.13x | 0.98x | 1.09x | 1.01x | 0.95x | 3.95x | — | 1.34x |
+| scrypt | 0.96x | 0.99x | 0.93x | 1.01x | 1.14x | 1.17x | 1.34x | — | 1.12x |
+
+Other comparisons, geometric mean by family:
+
+| Family | Intel Linux | AMD Linux | Intel Win | AMD Win | Graviton5 | POWER10 | IBM Z | RISC-V | Apple |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| AEAD | 0.83x | 0.88x | 0.87x | 0.93x | 1.17x | 1.54x | 5.84x | 0.94x | 1.22x |
+| Argon2 | 1.19x | 1.26x | 1.28x | 1.25x | 0.86x | 0.64x | 0.82x | — | 0.95x |
+| BLAKE2 | 0.96x | 0.61x | 0.91x | 0.66x | 1.01x | 0.94x | 0.96x | 0.98x | 1.02x |
+| BLAKE3 | 0.98x | 1.05x | 0.95x | 1.04x | 0.95x | 1.55x | 1.37x | 0.93x | 0.93x |
+| BLAKE3 multi-thread | 0.87x | 0.86x | 0.74x | 0.88x | 1.01x | 1.37x | 1.15x | 0.77x | 0.86x |
+| CRC | 2.45x | 1.73x | 2.57x | 1.74x | 2.00x | 4.82x | 1.57x | 0.81x | 2.42x |
+| ECDH | 1.70x | 1.76x | 2.39x | 2.70x | 2.05x | 1.71x | 0.07x | — | 2.27x |
+| ECDSA | 1.41x | 1.30x | 1.72x | 1.78x | 1.71x | 2.57x | 1.96x | — | 1.51x |
+| Ed25519 | 1.90x | 2.49x | 1.68x | 1.86x | 1.04x | 1.00x | 1.06x | — | 1.06x |
+| HKDF | 1.07x | 1.07x | 1.06x | 1.15x | 1.09x | 0.98x | 2.25x | — | 1.07x |
+| HMAC-SHA-2 | 1.01x | 1.00x | 0.96x | 1.00x | 0.98x | 0.91x | 3.55x | — | 0.95x |
+| ML-DSA | 2.67x | 3.01x | 0.96x | 0.95x | 4.68x | 2.75x | 4.12x | — | 5.22x |
+| ML-DSA equal key depth | 1.68x | 1.71x | 0.67x | 0.60x | 3.36x | 1.93x | 2.24x | — | 3.24x |
+| ML-KEM | 1.52x | 1.42x | 1.53x | 1.37x | 1.63x | 1.31x | 1.63x | — | 1.02x |
+| ML-KEM equal key depth | 1.13x | 1.03x | 1.15x | 1.00x | 1.34x | 1.23x | 1.31x | — | 0.81x |
+| PBKDF2 | 1.26x | 1.27x | 1.24x | 1.30x | 1.03x | 1.30x | 3.43x | — | 1.11x |
+| QUIC header protection | 0.74x | 0.71x | 0.69x | 0.67x | 0.99x | 0.66x | 4.71x | 0.77x | 0.67x |
+| RSA | 2.21x | 2.32x | 1.81x | 1.82x | 2.04x | 1.38x | 1.82x | — | 2.11x |
+| RapidHash | 1.11x | 0.98x | 1.07x | 0.94x | 0.96x | 1.06x | 1.02x | 1.04x | 1.02x |
+| SHA-2 | 0.99x | 1.02x | 1.06x | 0.99x | 1.01x | 0.99x | 5.46x | 1.05x | 1.01x |
+| SHA-3 | 0.91x | 1.04x | 0.97x | 1.08x | 0.89x | 1.56x | 7.14x | 1.42x | 0.99x |
+| SHAKE | 0.90x | 1.02x | 0.98x | 1.09x | 0.82x | 1.00x | 1.09x | 1.09x | 0.93x |
+| SLH-DSA | 1.90x | 2.06x | 1.91x | 2.04x | 2.90x | 1.90x | 2.01x | — | 4.25x |
+| WebSocket SHA-1 | 1.33x | 1.10x | 1.21x | 1.10x | 1.22x | 0.63x | 1.10x | 1.11x | 1.00x |
+| XXH3 | 0.87x | 0.76x | 0.79x | 0.62x | 0.91x | 1.17x | 1.33x | 1.13x | 0.96x |
+| XXH3 x86-64 baseline build | 0.95x | 1.04x | 0.98x | 1.05x | 0.95x | 1.19x | 1.39x | 0.74x | 0.98x |
+| XXH3 x86-64-v4 build | 0.89x | 0.92x | 0.90x | 0.95x | — | — | — | — | — |
+| scrypt | 0.96x | 0.99x | 0.94x | 1.01x | 1.16x | 1.17x | 1.25x | — | 1.11x |
+
+### TLS 1.3 and QUIC through `rscrypto-rustls`
+
+The `tls_connections`, `quic_connections`, and `openssl_primitives` targets need OpenSSL 4.0.3, which CI does not provision.
+They ran at `4eb11c24` on `aws-linux-x64-bench` (`c8i.xlarge`, Intel Xeon 6975P-C, Granite Rapids, 4 vCPU)
+and `aws-linux-arm64-bench` (`c8g.xlarge`, Neoverse-V2, Graviton4, 4 vCPU), and on the Apple M1 Pro.
+The Linux hosts built OpenSSL 4.0.3 from the release tarball (SHA-256 `325b5c80…16d9`) with `enable-ec_nistp_64_gcc_128`,
+linked it statically, and pinned measurement to their last CPU. The M1 Pro used Homebrew's OpenSSL 4.0.3.
+Each of the 34 algorithms ran as one bounded `just bench` with the same Criterion settings.
+All 1,666 measured rows on each Linux host passed their output checks. Both hosts are deleted.
+
+| Family | x64 (Granite Rapids) | arm64 (Graviton4) | Apple M1 Pro |
+| --- | ---: | ---: | ---: |
+| TLS (256 points) | 0.97x | 1.03x | 1.14x |
+| QUIC (30 points) | 0.98x | 1.11x | 1.08x |
+| OpenSSL hashes (135 points) | 1.25x | 1.33x | 1.57x |
+| OpenSSL AES-GCM (56 points) | 0.54x | 1.12x | 1.28x |
+
+Selected connection rows, `rscrypto` against the fastest external backend (median, ratio):
+
+| Workload | x64 (Granite Rapids) | arm64 (Graviton4) | Apple M1 Pro |
+| --- | ---: | ---: | ---: |
+| P-256 full mutual | 335.7 vs 326.7 µs AWS-LC (0.97x) | 326.8 vs 369.9 µs AWS-LC (1.13x) | 253.0 vs 299.8 µs AWS-LC (1.18x) |
+| P-256 with X25519MLKEM768, full mutual | 391.8 vs 366.8 µs AWS-LC (0.94x) | 391.9 vs 418.4 µs AWS-LC (1.07x) | 292.4 vs 342.6 µs AWS-LC (1.17x) |
+| Ed25519 full mutual | 260.7 vs 227.2 µs AWS-LC (0.87x) | 293.7 vs 291.6 µs AWS-LC (0.99x) | 208.8 vs 214.0 µs AWS-LC (1.02x) |
+| RSA-3072 full mutual | 1.71 vs 1.69 ms AWS-LC (0.99x) | 5.67 vs 5.00 ms AWS-LC (0.88x) | 2.57 vs 3.25 ms AWS-LC (1.27x) |
+| RSA-4096 full mutual | 3.15 vs 3.21 ms AWS-LC (1.02x) | 12.31 vs 10.81 ms AWS-LC (0.88x) | 6.26 vs 6.71 ms AWS-LC (1.07x) |
+| RSA-3072 server authentication | 905.5 vs 908.7 µs AWS-LC (1.00x) | 2.88 vs 2.55 ms AWS-LC (0.88x) | 1.31 vs 1.68 ms AWS-LC (1.28x) |
+| ML-DSA-65 full mutual | 580.1 vs 473.4 µs AWS-LC (0.82x) | 650.2 vs 583.5 µs AWS-LC (0.90x) | 362.9 vs 400.3 µs AWS-LC (1.10x) |
+| ML-DSA-65 with intermediate | 709.2 vs 579.1 µs AWS-LC (0.82x) | 824.5 vs 701.6 µs AWS-LC (0.85x) | 439.0 vs 467.4 µs AWS-LC (1.06x) |
+| P-256 resumed | 85.8 vs 92.6 µs AWS-LC (1.08x) | 106.9 vs 120.4 µs AWS-LC (1.13x) | 79.4 vs 101.3 µs AWS-LC (1.28x) |
+| AES-128-GCM, 1 MiB one way | 294.8 vs 256.2 µs OpenSSL (0.87x) | 452.3 vs 418.3 µs OpenSSL (0.92x) | 408.4 vs 354.9 µs OpenSSL (0.87x) |
+| ChaCha20-Poly1305, 1 MiB one way | 928.3 vs 652.8 µs OpenSSL (0.70x) | 1.78 vs 1.77 ms AWS-LC (0.99x) | 1.49 vs 1.28 ms OpenSSL (0.86x) |
+| QUIC handshake, P-256 and AES-128 | 216.7 vs 210.9 µs AWS-LC (0.97x) | 219.6 vs 247.3 µs AWS-LC (1.13x) | 165.7 vs 198.8 µs AWS-LC (1.20x) |
+
+On the same two Linux host types, the [2026-10-20 campaign](#2026-10-20-rsa-and-ml-dsa-provider-connection-costs-gap-1)
+measured `3076bfae` at the default Criterion settings. Since then the median RSA-4096 full mutual pair fell
+from 16.04 to 3.15 ms on x64 and from 19.05 to 12.31 ms on arm64, RSA-3072 from 7.86 to 1.71 ms and from 9.34 to 5.67 ms,
+and ML-DSA-65 from 1.05 to 0.58 ms and from 1.30 to 0.65 ms. Both campaigns are single runs on one host per architecture.
+The OpenSSL rows use the complete libssl stack; on the M1 Pro, `rscrypto` ties or leads the other `rustls` providers
+in bulk traffic. Certificate-chain verification (`tls-server-verifier`) trails on every host (0.77x to 0.93x);
+on the M1 Pro, triage traced that gap to RSA public-key import.
+
+### Largest remaining losses
+
+Read-only triage on the M1 Pro and source checks traced the largest losses. None is a regression from v0.11.0.
+
+- Standalone Poly1305 (0.30x to 0.65x on every measured platform): `Poly1305::update` processes one block at a time
+  through the portable kernel. The vector kernels serve only ChaCha20-Poly1305.
+- ML-DSA key generation (0.29x to 0.77x on every measured platform): the constant-time secret-noise sampler
+  compacts candidates bit by bit in memory and hashes one stream at a time.
+- RSA verification with an imported key (0.42x to 0.78x on x86-64, POWER10, and Graviton5, 0.82x on the M1 Pro):
+  each import computes R² mod n by doublings and portable squarings; AWS-LC uses one division.
+  The same cost sets the certificate-chain verification rows.
+- Windows x86-64 ML-DSA (0.41x to 0.49x) and RSA (0.60x to 0.65x): the AVX2 ML-DSA kernels and the
+  x86-64 Montgomery assembly are built only for Linux, so Windows runs the portable code.
+- IBM Z ECDH agreement (0.03x) and ECDSA signing (0.07x): secret elliptic-curve arithmetic on IBM Z keeps the
+  fixed-work multiplier, because the hardware multiplier failed native timing evidence (`d7a6496d`).
+  ECDSA verification, which handles only public data, is 1.65x to 2.68x faster there.
+- Smaller cross-platform gaps without an established cause: BLAKE2 on AMD (0.55x to 0.57x),
+  XXH3 on x86-64 (0.74x to 0.84x), X25519 on POWER10 (0.58x), Argon2 on POWER10 and IBM Z (0.75x to 0.80x),
+  and QUIC header protection on x86-64, POWER10, RISC-V, and the M1 Pro (0.66x to 0.77x).
+- Apple-specific findings, from the unqualified local run, include BLAKE3 `update_reader` on short inputs
+  (a 1 MiB buffer is allocated and cleared in each call), BLAKE3 multi-thread bulk hashing,
+  AES-GCM-SIV bulk POLYVAL, AEGIS-256 encryption, and the ML-KEM import path.
+
+### Limits
+
+- One run per platform at half the default sampling time. Shared cloud hosts can still have noisy neighbors.
+- Every x86-64 CI host has AVX-512 IFMA, so the AVX2-only x86-64 paths are not measured.
+  No lane measures WebAssembly, Windows on AArch64, or macOS in CI.
+- RISC-V lacks its `auth` points until that job completes.
+- The Apple run is unqualified local evidence, as described above.
+
+Raw results: the run's `bench-<platform>-<family>-39888945058-1` artifacts and, locally,
+`release-v012-bench/39888945058/` (archives, `score.txt`, `score.json`), `release-v012-bench/tables.py`,
+`bench-v012-apple-20261022/` (Criterion runs, `score-apple.txt`, `score-apple.json`), and
+`release-v012-tls-20261023/` (drivers, archives, scorecards, `summarize.py`, `summary.md`).
+
 ## 2026-10-20: RSA and ML-DSA provider connection costs (Gap 1)
 
 Lead reruns at `3076bfae` on quiet c8i.xlarge (Intel Xeon 6975P-C, Granite Rapids) and
@@ -3487,7 +3687,7 @@ The Argon2 comparisons gave `rscrypto` and RustCrypto a longer salt than dryoc.
 The affected ratios, rankings,
 and aggregates that contain those rows are withdrawn as performance claims.
 The 2026-10-03 run below has a like-for-like summary for hashes, checksums, MACs, XOFs, and scrypt.
-ML-KEM and Argon2 still have no replacement aggregate.
+The [2026-10-23 v0.12.0 run](#2026-10-23-v0120-release-benchmark-run) scores ML-KEM and Argon2 under the current contracts.
 The numerical effect on the historical scorecard has not been measured.
 The tables and raw artifacts stay as historical records, not corrected results.
 See the [current comparison contracts](../docs/benchmarking.md#ml-kem-and-argon2-comparison-contracts).
