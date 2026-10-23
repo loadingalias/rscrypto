@@ -230,83 +230,6 @@ With the re-encoded waivers, the v2 scanner accepts all seven artifact sets with
 the same result as v1. The re-encoding binds the existing reviews to the same binaries; it is not a
 review of later source.
 
-### Linked-artifact review, 2026-10-22
-
-The RSA changes after `6b5ea2f1` made 225 of the 448 waivers stale on the seven targets:
-the paired NEON CRT engine (`87022028`), the portable Montgomery rewrite (`40087b27`),
-the masked blinding inverse and its new `inverse_mask` scratch field (`c33bd426`),
-and the IBM Z and RISC-V hardware-multiply changes.
-The new artifacts came from [Constant-Time 39835996527](https://github.com/loadingalias/rscrypto/actions/runs/39835996527)
-at `21908411`, one job or prepared bundle per architecture, and from a local Apple Silicon build of the same source.
-`just ct-renew` compared each target with the artifacts of the
-[2026-10-21 review](#linked-artifact-review-2026-10-21):
-
-- 197 stale waivers were renewed on their new conditions with rationales checked against the new binaries.
-- 28 stale waivers were deleted: their branches are gone, mostly from the rewritten portable Montgomery kernels.
-- 46 enforced findings without a waiver received new exact waivers.
-- 46 current waivers were corrected. `inverse_mask` took field 4 of `RsaPrivateScratch`,
-  so the later buffers each moved by one, and their texts named the old field for an offset.
-
-Every renewed or new rationale names the instructions and function offsets that define the condition,
-follows frame-slot reloads to their stores, and cites the current source line.
-A checker confirmed each cited instruction against the new disassembly,
-and the gate's scanner then accepted all seven artifact sets with no stale or unwaived finding.
-466 waivers remain.
-
-The review found one secret-dependent branch, which was fixed instead of waived.
-On RISC-V, `square_wide_portable` added the low limb's carry to the high limb as a `bool`,
-and LLVM compiled the add to a `beqz` on two carries of the secret limb square,
-taken for about half of the limbs. `e98dd68b` keeps the diagonal step in 128-bit arithmetic, as `mont_mac` does;
-the other targets compiled the old code branch-free.
-The 24-digit BINSEC root of the paired NEON engine also needed an explicit exploration depth:
-it is one straight path of 8,639 instructions, which the default depth cut at 1,000 (`21908411`).
-All other reviewed conditions are public:
-zeroization tests of public lengths and addresses, loop and copy bounds over public limb counts,
-the inlined `public_len_eq` tails, the saved DIT state, the PKCS#1 implicit-rejection shift bound,
-and the digit-conversion bounds of the paired NEON engine.
-
-The same run passed every required DudeCT case on all six CI platforms:
-131 on Linux x86-64, Linux AArch64, Windows x86-64, IBM Z, and RISC-V, and 126 on POWER.
-`square_wide_portable` changed with `e98dd68b`, so the artifacts of
-[Constant-Time 39853397151](https://github.com/loadingalias/rscrypto/actions/runs/39853397151) at `c9bd06a7`
-and a local Apple Silicon build of that source were compared with this review's.
-On every target, `square_wide_portable` is the only function whose pre-link object code changed.
-61 waivers on POWER, RISC-V, and Linux AArch64 went stale although their functions' object code is identical;
-only addresses moved, and they were renewed with their reviewed rationales.
-On IBM Z, the rewrite reallocated the function's registers. Five of its six waivers received new rationales,
-each instruction claim checked against the new disassembly. The sixth, the odd-chunk test of the old diagonal
-loop, was deleted because that branch is gone. The new diagonal loop has no branch on a carry on any target.
-x86-64 Linux, Windows, and Apple Silicon needed no change.
-465 waivers remain, and the scanner accepts all seven artifact sets.
-
-### Condition-slice waiver identity, 2026-10-22
-
-Waivers moved from function identity (artifact, instruction locator, and function hash) to condition identity.
-Function identity made a waiver stale whenever anything in its function changed,
-including the source line numbers in panic locations, which any edit above the function moves.
-At `4a52f75c`, 33 of the 42 RISC-V waivers were stale; 31 of their conditions were unchanged.
-
-The 498 waivers were re-encoded on the artifacts they were reviewed against:
-[Constant-Time 39554592321](https://github.com/loadingalias/rscrypto/actions/runs/39554592321) at `6b5ea2f1`,
-its RISC-V run [39555382384](https://github.com/loadingalias/rscrypto/actions/runs/39555382384),
-and the local Apple Silicon build of `6b5ea2f1`.
-Each identity is the slice digest of the waiver's own reviewed finding.
-302 slices are closed and 196 are open.
-50 waivers that covered the same condition in the same function were merged;
-each merged pair had the same classification and contract, so 448 waivers remain.
-With them, the scanner accepts all seven artifact sets with no stale waiver and unchanged counts.
-The one exception is the vendored AArch64 Montgomery kernel, which is still in those binaries,
-although `68d942e2` removed it and its waiver.
-At `4a52f75c`, 12 RISC-V waivers are stale under condition identity:
-4 conditions changed, and 8 open slices bind a function that changed.
-
-The gate also separates evidence from the verdict.
-A check whose evidence is complete but whose findings fail the verdict exits with status 3.
-Preparation, sealing, and timing continue,
-and the Constant-Time workflow's verdict job decides the run from every platform's report.
-A finding on one platform no longer cancels timing on the others,
-and diagnostic replays run while waivers await review.
-
 ### Linked-artifact review, 2026-10-21
 
 The `select_branch` waivers of all seven targets were reviewed again on the linked binaries of `0b66b4ad`,
@@ -366,11 +289,11 @@ against the threshold of 10. The internal regression suite passed with native an
 including the comparison of the CRT pair with independent modular exponentiation.
 These single-host `ct-dudect` runs are diagnostic; release evidence is the Constant-Time campaign.
 
-The portable Montgomery code still adds 128-bit limb products with `strict_add`.
-On x86-64 and RV64, each overflow check compiles to a branch on a carry derived from secret limbs.
-No input takes it, because the sum is at most 2^128 − 1, so the branch direction never changes.
-These branches are not select-shaped and have no waiver. Converting them to `wrapping_add`,
-with the bound written at the definition as [the evidence model](#evidence-model) requires, remains open.
+At `0b66b4ad` and `4266f7b5`, the portable Montgomery code added 128-bit limb products with `strict_add`.
+On x86-64 and RV64, each overflow check compiled to a branch on a carry derived from secret limbs.
+No input took it, because the sum is at most 2^128 − 1, so the branch direction never changed.
+These branches were not select-shaped and had no waiver. `40087b27` replaced them with `wrapping_add`
+in `mont_mac`, with the bound written at the definition as [the evidence model](#evidence-model) requires.
 
 The reviewed linked binary SHA-256 values are:
 
@@ -383,6 +306,83 @@ The reviewed linked binary SHA-256 values are:
 | RISC-V | `0b66b4ad` | `863b207ed46b6ca643ac65b8df3e4395a9ff990aaf56d63589addec468812918` |
 | Linux x86-64 | `4266f7b5` | `828925eba6a66dce9a31f77b145a21d7ad87e66fa065fb203c2cd5cc93fb081f` |
 | Windows x86-64 | `4266f7b5` | `a68ab698ab62731e942c061bc5416f798a01dad18a113886fec646142daa3b55` |
+
+### Condition-slice waiver identity, 2026-10-22
+
+Waivers moved from function identity (artifact, instruction locator, and function hash) to condition identity.
+Function identity made a waiver stale whenever anything in its function changed,
+including the source line numbers in panic locations, which any edit above the function moves.
+At `4a52f75c`, 33 of the 42 RISC-V waivers were stale; 31 of their conditions were unchanged.
+
+The 498 waivers were re-encoded on the artifacts they were reviewed against:
+[Constant-Time 39554592321](https://github.com/loadingalias/rscrypto/actions/runs/39554592321) at `6b5ea2f1`,
+its RISC-V run [39555382384](https://github.com/loadingalias/rscrypto/actions/runs/39555382384),
+and the local Apple Silicon build of `6b5ea2f1`.
+Each identity is the slice digest of the waiver's own reviewed finding.
+302 slices are closed and 196 are open.
+50 waivers that covered the same condition in the same function were merged;
+each merged pair had the same classification and contract, so 448 waivers remain.
+With them, the scanner accepts all seven artifact sets with no stale waiver and unchanged counts.
+The one exception is the vendored AArch64 Montgomery kernel, which is still in those binaries,
+although `68d942e2` removed it and its two waivers.
+At `4a52f75c`, 12 RISC-V waivers were stale under condition identity:
+4 conditions changed, and 8 open slices bound a function that changed.
+
+The gate also separates evidence from the verdict.
+A check whose evidence is complete but whose findings fail the verdict exits with status 3.
+Preparation, sealing, and timing continue,
+and the Constant-Time workflow's verdict job decides the run from every platform's report.
+A finding on one platform no longer cancels timing on the others,
+and diagnostic replays run while waivers await review.
+
+### Linked-artifact review, 2026-10-22
+
+The RSA changes after `6b5ea2f1` made 225 of the 448 waivers stale on the seven targets:
+the paired NEON CRT engine (`87022028`), the portable Montgomery rewrite (`40087b27`),
+the masked blinding inverse and its new `inverse_mask` scratch field (`c33bd426`),
+and the IBM Z and RISC-V hardware-multiply changes.
+The new artifacts came from [Constant-Time 39835996527](https://github.com/loadingalias/rscrypto/actions/runs/39835996527)
+at `21908411`, one job or prepared bundle per architecture, and from a local Apple Silicon build of the same source.
+`just ct-renew` compared each target with the `6b5ea2f1` artifacts that the
+[condition-slice re-encoding](#condition-slice-waiver-identity-2026-10-22) used:
+
+- 197 stale waivers were renewed on their new conditions with rationales checked against the new binaries.
+- 28 stale waivers were deleted: their branches are gone, mostly from the rewritten portable Montgomery kernels.
+- 46 enforced findings without a waiver received new exact waivers.
+- 46 current waivers were corrected. `inverse_mask` took field 4 of `RsaPrivateScratch`,
+  so the later buffers each moved by one, and their texts named the old field for an offset.
+
+Every renewed or new rationale names the instructions and function offsets that define the condition,
+follows frame-slot reloads to their stores, and cites the current source line.
+A checker confirmed each cited instruction against the new disassembly,
+and the gate's scanner then accepted all seven artifact sets with no stale or unwaived finding.
+466 waivers remain.
+
+The review found one secret-dependent branch, which was fixed instead of waived.
+On RISC-V, `square_wide_portable` added the low limb's carry to the high limb as a `bool`,
+and LLVM compiled the add to a `beqz` on two carries of the secret limb square,
+taken for about half of the limbs. `e98dd68b` keeps the diagonal step in 128-bit arithmetic, as `mont_mac` does;
+the other targets compiled the old code branch-free.
+The 24-digit BINSEC root of the paired NEON engine also needed an explicit exploration depth:
+it is one straight path of 8,639 instructions, which the default depth cut at 1,000 (`21908411`).
+All other reviewed conditions are public:
+zeroization tests of public lengths and addresses, loop and copy bounds over public limb counts,
+the inlined `public_len_eq` tails, the saved DIT state, the PKCS#1 implicit-rejection shift bound,
+and the digit-conversion bounds of the paired NEON engine.
+
+The same run passed every required DudeCT case on all six CI platforms:
+131 on Linux x86-64, Linux AArch64, Windows x86-64, IBM Z, and RISC-V, and 126 on POWER.
+`square_wide_portable` changed with `e98dd68b`, so the artifacts of
+[Constant-Time 39853397151](https://github.com/loadingalias/rscrypto/actions/runs/39853397151) at `c9bd06a7`
+and a local Apple Silicon build of that source were compared with this review's.
+On every target, `square_wide_portable` is the only function whose pre-link object code changed.
+61 waivers on POWER, RISC-V, and Linux AArch64 went stale although their functions' object code is identical;
+only addresses moved, and they were renewed with their reviewed rationales.
+On IBM Z, the rewrite reallocated the function's registers. Five of its six waivers received new rationales,
+each instruction claim checked against the new disassembly. The sixth, the odd-chunk test of the old diagonal
+loop, was deleted because that branch is gone. The new diagonal loop has no branch on a carry on any target.
+x86-64 Linux, Windows, and Apple Silicon needed no change.
+465 waivers remain, and the scanner accepts all seven artifact sets.
 
 ## Public decisions and exclusions
 
@@ -464,7 +464,7 @@ A screening failure that the confirmation does not reproduce is reported as a `d
 
 ### ECDSA
 
-Recent ECDSA hardening keeps masked point selection on AArch64 and Windows,
+ECDSA hardening keeps masked point selection on AArch64 and Windows,
 masked selection in portable P-256, and table traversal with fixed bounds.
 RISC-V generator-table loads stay unconditional under LLVM optimization.
 These changes keep signature behavior the same.
@@ -486,6 +486,8 @@ native DudeCT.
 - 32-bit RISC-V keeps the fixed-work software multiplier, because no runner gives it timing evidence.
 
 The CT artifact gate reports these multiplies for review instead of rejecting them.
+It still rejects a scalar multiply in ECDSA on IBM Z and 32-bit RISC-V,
+and in the RSA blinding inverse on 32-bit RISC-V.
 Native DudeCT runs on each target qualify the claim; the instruction choice alone does not.
 
 ### RSA blinding inverse

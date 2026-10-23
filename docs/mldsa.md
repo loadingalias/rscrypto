@@ -27,10 +27,12 @@ NIST calls them potential corrections, not an amended final publication.
   This includes the correction from 814.
 - Challenge hashing uses `mu || w1`.
 - Hint subtraction wraps to the high-part modulus minus one.
-- The implementation uses its own unsigned Montgomery representation,
+- The portable implementation uses its own unsigned Montgomery representation,
   with multiplication operands below 2q.
   It does not implement the spreadsheet's signed-representative pseudocode.
   The multiplication routine carries the proof of its reduction bound.
+  Inside their transforms, AVX2 uses signed Montgomery multiplication and NEON uses signed Barrett
+  multiplication. Both return the same canonical residues.
 - The roots come from the standard's root 1753 and eight-bit index reversal.
   They are not imported from another implementation's table.
 
@@ -96,7 +98,7 @@ The seed itself is 32 bytes for every parameter set.
   `SecretKey::to_pkcs8_der_into` writes the expanded form.
   Both write version 1 without a public key into a fixed-size buffer that the caller owns and clears.
   Neither direction allocates.
-- The RFC 9881 Appendix C examples, RustCrypto ML-DSA 0.1.1, and aws-lc-rs 1.18.1 anchor both directions.
+- The RFC 9881 Appendix C examples, RustCrypto ML-DSA 0.1.1, and aws-lc-rs 1.18.2 anchor both directions.
   aws-lc-rs imports both exported forms. RustCrypto supports only the seed form.
 - Key import returns `MlDsaKeyError`.
   Generation, preparation, and signing return `MlDsaError`.
@@ -207,6 +209,9 @@ were measured before the 2026-10-13 change.
 That change copies rho, `K`, and tr into secret storage,
 makes prepared keys read only their storage, and builds storage from one zero constant.
 Those rows have not been measured again.
+The later signing, verification, matrix-expansion, and vector-kernel changes
+(`6cd54edd` and `4d76f163`, 2026-10-20 and 2026-10-21) can change every row.
+No row has been measured since them.
 
 How these values were measured:
 
@@ -288,8 +293,9 @@ Target qualification must keep these boundaries:
      and target they cover.
    - `ct.toml` keeps whole ML-DSA signing best effort,
      and requires separate evidence for its secret-sensitive kernels.
-     Its timing cases cover forward and inverse transforms, products, accumulation, norm checks,
-     rounding, secret samplers, and valid-key preparation for all parameter sets.
+     Its timing cases cover forward and inverse transforms, products, accumulation,
+     the fused row product of prepared signing, norm checks, rounding, secret samplers,
+     and valid-key preparation for all parameter sets.
    - Separate inverse-NTT and Montgomery cases run portable arithmetic.
    - Retained C ABI roots support review of the linked code and its call closure.
    - The bounded BINSEC root covers only the portable Montgomery leaf.
@@ -318,8 +324,8 @@ All paths use the same canonical coefficients and generated roots.
 
 | Build                                                          | Backend |
 | -------------------------------------------------------------- | ------- |
-| macOS and Linux AArch64, compile-time NEON, no `portable-only` | Original NEON forward and inverse NTTs and matrix-product accumulation. |
-| Linux x86-64, no `portable-only`                               | Original AVX2 arithmetic, after cached CPU and OS capability detection. |
+| macOS and Linux AArch64, compile-time NEON, no `portable-only` | Original NEON transforms, products, accumulation, fused row product, matrix rejection sampling, norm checks, rounding, hint computation and application, and SampleInBall scans. |
+| Linux x86-64, no `portable-only`                               | Original AVX2 transforms, accumulation, norm checks, rounding, hint computation, and SampleInBall scans, after cached CPU and OS capability detection. |
 | Linux IBM Z and little-endian POWER, no `portable-only`        | Original z/Vector or POWER8 vector transforms, products, and accumulation, after cached CPU and OS capability detection. |
 | RISC-V32 and RISC-V64, compile-time M, no `portable-only`      | Original scalar Montgomery assembly within the common scalar transform schedule. No vector extension is needed. |
 | All other configurations                                       | Portable arithmetic. |
@@ -329,15 +335,16 @@ All paths use the same canonical coefficients and generated roots.
   This prevents compiler scalarization and reduction branches that depend on coefficients.
 - Register barriers protect scalar reduction and selection on IBM Z and RISC-V,
   also with `portable-only`.
-- The Linux NEON inverse stage stays out of line.
-  This avoids coefficient spills found in the first optimized artifact.
-  It is a compiler-specific mitigation, not a general register or stack-cleanup guarantee.
-- On macOS AArch64 without `portable-only`, public matrix expansion batches adjacent columns through the existing
-  paired SHAKE backend.
-  Other targets, and `portable-only`, keep scalar expansion.
-  The paired path uses two public polynomial buffers for each row instead of one.
+- On macOS and Linux AArch64 and on Linux x86-64, without `portable-only`, public matrix expansion
+  pairs SHAKE128 streams, also across rows.
+  The two states permute together with the AArch64 SHA-3 instructions or x86-64 AVX-512VL;
+  otherwise the two permutations run in turn.
+  Other targets, and `portable-only`, expand one stream at a time.
+  The paired path uses two public polynomial buffers instead of one.
   Prepared operations keep the same key-owner sizes.
   Existing SHAKE dispatch is reused.
+- On every target, signing derives its mask polynomials two SHAKE256 streams at a time.
+  For an odd L, the last polynomial uses one stream.
 - `portable-only` stops runtime capability selection.
   A build that enables SHA-3 instructions at compile time can still use them in shared SHAKE.
   Benchmark claims must therefore record the compiler target features as well as the Cargo features.

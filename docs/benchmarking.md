@@ -232,7 +232,8 @@ regular runs in one report.
 
 A small planning job validates the request and groups the selected targets by primitive family.
 The catalog gives each Criterion target one `family`:
-`checksum`, `hashes`, `aead`, or `auth`, after the root modules, or `tls` for the provider comparison.
+`checksum`, `hashes`, `aead`, or `auth`, after the root modules, `tls` for the provider comparison,
+or `openssl` for the OpenSSL primitive comparison.
 Each checked platform and selected family pair becomes one job.
 The job runs one `just bench` for each selected target of its family, one after another.
 A split target, such as `slhdsa`, runs one `just bench` for each of its catalog algorithms instead;
@@ -462,8 +463,8 @@ file performance.
 Two catalog targets build the same binary:
 
 - **`blake3_serial`, without `parallel`:** single-thread groups under `blake3/serial/`:
-  `hash`, `keyed`, `derive-key/context`, `derive-key/prepared-context`, `xof`, `xof-output`, `update-reader`,
-  `subtree-update-reader`, `ordered`, and `ordered-alignment`.
+  `hash`, `keyed`, `derive-key/context`, `derive-key/prepared-context`, `xof`, `xof-output`, `bao-decode`,
+  `update-reader`, `subtree-update-reader`, `ordered`, and `ordered-alignment`.
   `xof-output` squeezes 1 KiB, 16 KiB, and 1 MiB from a 32-byte seed into a reused buffer.
   `bao-decode` verifies a whole Bao combined encoding of 1,024, 1,025, 65,536, or 1,048,576 bytes from memory
   against bao 0.13.1, the format's reference. `bao` calls its one-shot `decode`, which returns a new `Vec`;
@@ -1011,7 +1012,7 @@ CI expands umbrella selectors into separate operations before resolving their bu
 - A plan whose requested sampling windows alone use up the budget is rejected before measurement.
   Analysis and slow operations can still make a smaller plan reach the deadline.
 - Direct Cargo invocation limits each Criterion harness separately.
-  Use `just bench` to limit a selection that spans more than one harness, together with its builds.
+  Use `just bench` to limit a selection that spans more than one harness; it also bounds each target's build.
   Use `just bench-structural` for the structural benchmark deadline.
 - `just bench-mldsa-tail` and `just bench-provider-scorecard` are separate tools with their own timeouts:
   20 minutes per build and 60 per run for the ML-DSA tail, 10 minutes for each scorecard build and run.

@@ -27,3 +27,6 @@ test data only; no upstream implementation source is included.
 byte with rscrypto's export from the same seed and imports them. `tests/mldsa_pkcs8.rs` imports
 every private key, compares the seed and expanded forms with rscrypto's export, and requires
 each inconsistent key to be rejected.
+`src/auth/mldsa/tests.rs` repeats the private-key imports through the allocating constructors.
+`tests/mlkem_pkix.rs` and `tests/slhdsa_pkix.rs` use `mldsa44_spki.der` and `mldsa44_pkcs8_seed.der`
+as keys of another algorithm.

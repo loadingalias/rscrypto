@@ -212,12 +212,12 @@ RISC-V, POWER, and IBM Z CI build on Ubuntu x86-64 with the `--ci-cross-build TA
 
 CI, CT, Bench, and Profile share two preparation actions:
 
-- [cross-build/setup](../.github/actions/cross-build/setup/action.yml) restores the target's APT state, runs the pinned cross-build installer,
-  and saves verified state after the last package installer.
+- [cross-build/setup](../.github/actions/cross-build/setup/action.yml) runs the pinned cross-build installer and adds its Cargo tools to `PATH`.
   CI selects compiler-cache authority afterward.
   The other workflows keep compiler caching disabled.
-- [cross-build/upload](../.github/actions/cross-build/upload/action.yml) requires both the prepared suite and its runner-tools archive
-  before uploading the target's existing artifact name for two days.
+- [cross-build/upload](../.github/actions/cross-build/upload/action.yml) requires both the prepared suite and its runner-tools archive,
+  then uploads them together for two days,
+  under the target's artifact name or the name that the caller passes.
   A Bench suite is a directory with one sealed archive per catalog target, and it must hold at least one.
   Diagnostic logs retain their separate failure handling and retention periods.
 
@@ -319,10 +319,9 @@ They do not detect a compromised producer that forges its own metadata.
   `--full` and `--scoped` limit the scope.
   The default is full, including named targets.
 - `just test-fuzz --build --all` builds every fuzz package without starting fuzzing.
-- `just test-fuzz-ci plan` selects live targets from the GitHub event and validates the budget.
-  Product, shared harness, dependency, build, and unknown changes select all targets.
-  Exact harness or seed edits select the matching target in every package that contains it.
-  Documentation-only changes need no live campaign; CI still builds and replays every target.
+- `just test-fuzz-ci plan` accepts only a manual dispatch.
+  It selects the requested exact target names, the daily rotation, or every target,
+  in every package that contains each name, and validates the live-fuzzing budget.
 - `just test-fuzz-ci restore` merges the corpus checkpoint into the working corpora by SHA256.
   It rejects symlinks and invalid hashes and preserves committed seed files.
   `snapshot` prepares a new checkpoint after successful replay and fuzzing.
@@ -344,7 +343,7 @@ They do not detect a compromised producer that forges its own metadata.
 | `ct/test.sh`           | `just ct-test` |
 | `ct/artifacts.sh`      | `just ct-artifacts`, `ct/full.py` |
 | `ct/dudect.sh`         | `just ct-dudect`, `ct/full.py` (preparation only) |
-| `ct/dudect_execute.py` | `ct/dudect.sh`, `ct/full.py` |
+| `ct/dudect_execute.py` | `ct/dudect.sh`, `ct/full.py`, `ct/replay.py` |
 | `ct/renew_waivers.py`  | `just ct-renew` |
 
 - `ct/full.py`, `ct/binsec.py`, and `ct/validate.py` implement `just ct-full`, `just ct-binsec`,
@@ -430,8 +429,8 @@ and provenance snapshot for each invocation, under `target/ct/<target>/<profile>
 
 `just ct-replay --target TARGET --source-root SOURCE --archive ARCHIVE --out OUTPUT --case CASE` repeats prepared POWER, IBM Z, or RISC-V cases three times on one allowed CPU.
 
-- `--case` takes an exact manifest case, `mldsa` for every required ML-DSA kernel case,
-  or `mldsa-probe` for the ML-DSA diagnostic probes.
+- `--case` takes an exact manifest case, a comma-separated list of cases, `mldsa` for every required
+  ML-DSA kernel case, or `mldsa-probe` for the ML-DSA diagnostic probes.
 - The suite lists all planned cases, keeps each case's original budget and every result,
   and fails if any required case fails.
   A tooling failure leaves the inventory explicitly incomplete.
@@ -854,8 +853,10 @@ No package is published.
   on the exact source commit. A missing, failed, unfinished, or scoped run blocks release;
   preflight does not fall back to an older success or dispatch Fuzz itself.
 
-**`ct.yml`** always runs full CT evidence, only through manual dispatch or a reusable workflow call.
+**`ct.yml`** runs full CT evidence, only through manual dispatch or a reusable workflow call.
 It does not run on pull requests or pushes.
+A manual `diagnostic_case` input replaces the full campaign with scoped evidence;
+see [Diagnostic CT runs](#diagnostic-ct-runs).
 
 - Manual runs select one, several, or all six native platforms.
   The default is all.

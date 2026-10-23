@@ -34,7 +34,7 @@ and private-operation scratch follow the same rules, also when the table does no
 `RsaPrivateKey` retains the imported private exponent's value, padded to the
 public modulus width. It retains the CRT coefficient at the public factor width,
 so steady-state copies do not use its significant-byte count. Legacy
-`expert::RsaPkcs1v15Decrypt` borrows the stored exponent to derive a rejection key
+`auth::rsa::expert::RsaPkcs1v15Decrypt` borrows the stored exponent to derive a rejection key
 for each ciphertext; neither the exponent hash nor that key is cached, exported,
 or formatted.
 The local owners are the exponent's 32-byte SHA-256 hash, the 32-byte key
@@ -66,8 +66,8 @@ Transcript contexts can be cloned; they contain public handshake data.
 ### rustls key exchange
 
 Each active exchange owns an rscrypto `X25519SecretKey`, `P256EphemeralSecret`,
-or `P384EphemeralSecret`. The hybrid also owns a boxed `MlKem768DecapsulationKey`,
-generated directly into its allocation. Exchanges are neither cloneable nor
+or `P384EphemeralSecret`. The hybrid also owns a boxed `MlKem768PreparedDecapsulationKey`,
+generated in prepared form directly into its allocation. Exchanges are neither cloneable nor
 formattable. Completing or abandoning an exchange drops those clearing owners.
 
 Primitive shared secrets remain in rscrypto's clearing owners until copied into
@@ -99,11 +99,11 @@ compact key instead, and each signature prepares a temporary prepared key with
 `prepare_in`. A prepared key clears its transformed secret polynomials and `K`
 when it drops, and its storage clears them again before deallocation; a failed
 signature leaves a retained prepared key unchanged.
-`PreparedServerVerifier` and `PreparedClientVerifier` retain prepared ML-DSA
-anchor keys; their storage is public. PKCS#8 input uses rustls-pki-types' borrowed or owned
+`PreparedServerVerifier` and `PreparedClientVerifier` retain prepared P-256, P-384,
+and ML-DSA anchor keys; their storage is public. PKCS#8 input uses rustls-pki-types' borrowed or owned
 DER containers. `Provider::load_private_key` immediately wraps the input in
 `zeroize::Zeroizing`, before the size check or any parser call. With
-rustls-pki-types 1.15.1 and zeroize 1.9.0, dropping this guard clears the owned
+rustls-pki-types 1.15.1 and zeroize 1.9.1, dropping this guard clears the owned
 vector's full allocation, then frees it. Success, rejection, and unwinding
 share that guard. Immutable borrowed static DER cannot be cleared and remains
 the caller's responsibility. Aborting the process does not run destructors.
@@ -159,7 +159,7 @@ or Debug implementation exposes these keys.
 ### ML-KEM allocation
 
 With `alloc`, these functions write the key
-or prepared key directly into an allocation from a caller-selected `Allocator`, and return `Box<_, A>`: `generate_keypair_in`, `try_generate_keypair_in`, `DecapsulationKey::try_from_slice_in`, `DecapsulationKey::from_pkcs8_der_in`, `DecapsulationKey::prepare_in`, and `Seed::keypair_in`.
+or prepared key directly into an allocation from a caller-selected `Allocator`, and return `Box<_, A>`: `generate_keypair_in`, `generate_prepared_keypair_in`, `try_generate_keypair_in`, `DecapsulationKey::try_from_slice_in`, `DecapsulationKey::from_pkcs8_der_in`, `DecapsulationKey::prepare_in`, and `Seed::keypair_in`.
 PKCS #8 import borrows the caller's DER and does not clear it.
 
 ### BLAKE3 trees
@@ -263,11 +263,13 @@ outside this claim. Keyed and derive-key readers do not enter this path.
   then finalizes and squeezes inside that owner.
   It drops the absorbing core and the reader locally.
   It returns no state or reader that holds secret values.
+- The paired mask helper builds both SHAKE256 states locally, copies them into zeroizing readers,
+  and clears the local states before it squeezes. It also drops both readers locally.
 - The secret-noise sampler keeps its acceptance mask with the input bit planes,
   and its accepted count with the output bit planes.
   It clears the input owner after each fixed block.
   It clears the output owner on success and on exhaustion.
-- On AArch64 NEON, the signing challenge sampler builds the unpublished challenge as bytes
+- On macOS and Linux AArch64, the NEON signing challenge sampler builds the unpublished challenge as bytes
   `0`, `1` and `0xff` in a zeroizing owner, then widens it into the challenge polynomial.
   The byte owner clears when the sampler returns.
 - The [signing-residue qualification](../benchmark_results/OVERVIEW.md#2026-10-16-ml-dsa-optimization-qualification)

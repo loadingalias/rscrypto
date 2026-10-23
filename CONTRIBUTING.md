@@ -139,9 +139,9 @@ What the checks cover:
 - Every target gets a release/native Clippy pass and a debug/portable Clippy pass.
 - The host checks all Cargo targets.
   Cross checks compile the library without foreign C dependencies of tests or benchmarks.
-- Bare-metal and browser WASM use `full`, plus the applicable serialization features, without `std`, threads,
+- Bare-metal and browser WASM use `full`, the serialization features, and `websocket-sha1`, without `std`, threads,
   or operating-system entropy.
-  WASI adds `std` and entropy, without threads.
+  WASI adds `std`, `diag`, and entropy, without threads.
 - Every target uses the one repository-pinned nightly from `rust-toolchain.toml`.
 - Validation also checks the independent workspaces, dependencies, and documentation.
 - Check recipes verify vector inventories and checksums before compilation.
@@ -389,7 +389,7 @@ The workflow also accepts `dry-run: true` to run every check in CI without any e
 - The final job runs `cargo rail release` through `cargo-rail-action/release`.
   It also requires every other check and status on the source commit to pass,
   and then requires the `released` state.
-  Only this job gets registry authentication and repository write permission.
+  Only this job gets registry authentication and write access to the repository contents.
 
 After an interruption, run the workflow again with the same bump.
 cargo-rail reads the tag, crates.io, and GitHub, and finishes only the missing steps.

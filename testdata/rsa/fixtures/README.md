@@ -7,6 +7,7 @@ The corresponding signatures cover `b"rscrypto RSA-PSS verification fixture"` an
 
 `SHA256SUMS` is the complete three-key, six-signature inventory.
 Verify it from this directory with `shasum -a 256 -c SHA256SUMS`.
-RSA integration tests, the RSA example, RSA fuzz targets, source-level internal tests,
+Integration tests, the `rsa_pss_verify` example, RSA fuzz targets, the `src/auth/rsa.rs` module example and unit tests,
 and `benches/rsa.rs` consume these fixtures.
+`Cargo.toml` includes this directory in the published crate.
 They live under `testdata/` because benchmarks are only one of several consumers.

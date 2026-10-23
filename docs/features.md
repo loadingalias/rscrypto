@@ -10,10 +10,10 @@ For `no_std`, disable the default features, then name each primitive you need:
 
 ```toml
 # no_std SHA-2
-rscrypto = { version = "0.11", default-features = false, features = ["sha2"] }
+rscrypto = { version = "0.12", default-features = false, features = ["sha2"] }
 
 # All primitives, with operating-system randomness
-rscrypto = { version = "0.11", features = ["full", "getrandom"] }
+rscrypto = { version = "0.12", features = ["full", "getrandom"] }
 ```
 
 Umbrella features are convenient, but they make the build larger:
@@ -45,7 +45,7 @@ Enable it by name.
 | --------------- | ------ |
 | `alloc`         | Enables APIs that own heap memory, including `SecretVec` and `SecretString`. |
 | `std`           | Enables runtime CPU detection and standard-library integration. Enables `alloc`. |
-| `getrandom`     | Enables fallible helpers that get keys, nonces, salts, or seeds from the operating system. |
+| `getrandom`     | Enables fallible helpers that get randomness from the operating system, such as keys, nonces, salts, seeds, hedged signatures, ML-KEM encapsulation, and RSA blinding. |
 | `parallel`      | Enables Rayon-based BLAKE3 and Argon2 work. Enables `std`, `blake3`, and `argon2`. |
 | `serde`         | Serializes public types. |
 | `serde-secrets` | Also serializes secret keys and shared secrets. Use it only at an explicit key-storage boundary. |

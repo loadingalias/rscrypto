@@ -57,3 +57,5 @@ half-width-factor import policy: the test requires `InvalidModulus` and skips it
 here, and OpenSSL cross-checks them during generation; rscrypto decryption of
 that key remains a public-API coverage gap. The production derivation and
 depadding unit test includes all 12 B.2 cases at their full 257-byte width.
+A `src/traits/ct.rs` unit test imports the B.1 key to check that each RSA
+decryption entry point enters data-independent timing.

@@ -26,20 +26,20 @@ Minimal `no_std` build with SHA-2 only:
 
 ```toml
 [dependencies]
-rscrypto = { version = "0.11", default-features = false, features = ["sha2"] }
+rscrypto = { version = "0.12", default-features = false, features = ["sha2"] }
 ```
 
 All primitives, with operating-system randomness:
 
 ```toml
 [dependencies]
-rscrypto = { version = "0.11", features = ["full", "getrandom"] }
+rscrypto = { version = "0.12", features = ["full", "getrandom"] }
 ```
 
 The default feature is `std`.
 Set `default-features = false` to remove it.
-Enable `getrandom` only for the APIs that get salts, keys, nonces,
-or RSA key-generation entropy from the operating system.
+Enable `getrandom` only for the APIs that get randomness from the operating system,
+such as key generation, nonces, salts, hedged signing, ML-KEM encapsulation, and RSA blinding.
 The [feature guide](docs/features.md) explains how to select features.
 [`Cargo.toml`](Cargo.toml) defines the exact feature graph.
 

@@ -3,7 +3,7 @@
 `KAS_ECC_CDH_PrimitiveTest_P-256.rsp` and `KAS_ECC_CDH_PrimitiveTest_P-384.rsp` are the complete `[P-256]` and `[P-384]` sections from NIST CAVP's `KAS_ECC_CDH_PrimitiveTest.txt`.
 The source is the official [`ecccdhtestvectors.zip`](https://csrc.nist.gov/CSRC/media/Projects/Cryptographic-Algorithm-Validation-Program/documents/components/ecccdhtestvectors.zip) archive published by NIST.
 The P-256 section was imported into rscrypto on 2026-09-03 in commit `3bde831e`;
-the P-384 section was imported on 2026-09-25.
+the P-384 section was imported on 2026-09-26 in commit `d0bd1058`.
 The archive contains U.S. government test material and no separate third-party license file.
 
 The reproducible transform is deliberately narrow:

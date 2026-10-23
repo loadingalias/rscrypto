@@ -29,7 +29,7 @@ Keyed and derive-key BLAKE3 batches clear their named key and fallback digest
 owners. `merge_level` clears its bounded
 child/parent scratch in every mode. RAII covers normal return and ordinary
 unwinding after population; no whole-route erasure follows. The
-delivery evidence (`benchmark_results/blake3-delivery-20261008T185226Z/report.md`)
+delivery evidence (`benchmark_results/blake3-delivery-20261008T185226Z/report.md`, local)
 records the reviewed compiler/target scope. Existing Portable state, outer
 by-value keys, native fallbacks, plain-array unwind, returned outputs and
 compiler/register/spill copies remain separate limitations.
@@ -47,7 +47,7 @@ claims to the caller's reader, operating-system caches, or compiler-created copi
 
 The Linux AArch64 plain parallel reader clears its named 64-byte `ParentBlock`
 on normal return and unwinding after construction. The
-ordinary native review (`benchmark_results/blake3-linux-reader-20261008T074000Z/cleanup-review/arm64-review/report.md`)
+ordinary native review (`benchmark_results/blake3-linux-reader-20261008T074000Z/cleanup-review/arm64-review/report.md`, local)
 retains emitted clears and fences for this owner and the input allocation.
 The recursive return copy, caller-side CV argument and recursive plain arrays
 remain outside that scope. This does not close the separate Portable-state,
@@ -57,7 +57,7 @@ The BLAKE3 SIMD128 backend clears its named vector, tail, parent, and output scr
 and derive-key modes. Its plain tiny-input specialization adds no secret route. The
 [WASM backend record](../benchmark_results/OVERVIEW.md#2026-10-06-blake3-wasm-four-lane-backend)
 retains source-bound cleanup evidence and the separate pre-existing Portable state-owner gap.
-The parent caller review (`benchmark_results/blake3-wasm-parent-cost-20261006T063400Z/secret-review/key-borrow-follow-up.md`)
+The parent caller review (`benchmark_results/blake3-wasm-parent-cost-20261006T063400Z/secret-review/key-borrow-follow-up.md`, local)
 also records existing outer by-value key copies without explicit cleanup. The parent SIMD
 borrow introduces no key-copy owner and preserves explicit clears; differing stack placement is not proof
 of identical post-return residue. These outer copies remain a separate cleanup follow-up.
@@ -112,7 +112,7 @@ the [WASM SIMD128 record](../benchmark_results/OVERVIEW.md#2026-10-06-blake3-was
   inverse before the next draw. The allocating path inverts through a temporary scratch and
   clears it before it returns.
 - **Not claimed:** the general-purpose and vector registers that the AArch64 and x86-64
-  Montgomery, IFMA, and paired NEON kernels use.
+  Montgomery, IFMA, and paired NEON kernels and the AArch64 NEON window selection use.
 
 ### RSA implicit rejection
 
@@ -149,7 +149,9 @@ erasure of every compiler-created copy, register, or spill.
   `just stack-frames` checks that each linked worker fits inside its scrub on the reviewed targets.
 - By-value key generation, import, and preparation leave moved-from copies in the caller's frame.
   The `*_in` constructors, including PKCS #8 import, fill a box that the caller allocated, in place.
-  In the measured RV32 and Cortex-M runs, they leave no copies.
+  In the measured RV32 and Cortex-M runs, `generate_keypair_in`, `try_from_slice_in`, and
+  `from_pkcs8_der_in` leave no copies. Residue of `prepare_in` and `generate_prepared_keypair_in`
+  is not measured.
 - The pairwise check of PKCS #8 expanded-key import encapsulates with public coins and
   decapsulates under data-independent timing. It clears both shared secrets before it returns.
   A rejected import clears every owner it built.
@@ -202,6 +204,10 @@ erasure of every compiler-created copy, register, or spill.
 - Private SHAKE256 finalization and squeezing use a local zeroizing reader.
   The reader is initialized before the absorbed state is copied into it.
   It is dropped before control returns to the sampler or the hashing caller.
+- The paired mask sampler copies its two locally built SHAKE256 states into zeroizing readers
+  and clears the local states.
+  Both helpers run in the scrubbed out-of-line worker described under [ML-KEM](#ml-kem),
+  and `just stack-frames` checks that worker.
 - Secret-noise acceptance masks and counts share the wiped bit-plane owners.
 - By-value key constructors leave moved-from copies in the caller's frame.
   The `*_in` constructors, including PKCS #8 import, fill a box that the caller allocated, in place.
@@ -214,8 +220,8 @@ erasure of every compiler-created copy, register, or spill.
   It copies rho, `K`, and tr from the key into the storage.
   The prepared key clears the transformed polynomials and `K` on drop and when preparation fails.
   The storage clears them again on drop.
-  Release frames of `prepare_in` on five Linux targets are at most 2,240 bytes,
-  so the storage is not built on the stack; residue of `prepare_in` is not measured.
+  When `prepare_in` was added (`44dfa51d`), its release frames on five Linux targets were at most
+  2,240 bytes, so the storage was not built on the stack; residue of `prepare_in` is not measured.
 - The 2026-10-16 macOS AArch64 signing-residue check found no selected secret
   windows after 240 compact/prepared, deterministic/hedged calls across all three
   parameter sets and native/portable dispatch. It includes NTT masks, rejected
@@ -294,7 +300,7 @@ Key generation uses fallible entropy callbacks into the primitives' clearing
 scratch owners. Partial-fill failure propagates without a share. Malformed
 peer shares consume and drop the active exchange. Successful agreement copies
 the primitive result into rustls's clearing `SharedSecret`; hybrid fallback
-also drops the unused ML-KEM decapsulation key. Ownership is listed in the
+also drops the unused prepared ML-KEM decapsulation key. Ownership is listed in the
 [key-exchange inventory](secret-ownership.md#rustls-key-exchange).
 The adapter adds no raw private-key export or explicit secret duplication.
 Compiler-made moves and stack residue have not been separately qualified here.
@@ -303,8 +309,8 @@ Compiler-made moves and stack residue have not been separately qualified here.
 
 The provider's key loader uses rscrypto's bounded credential codecs and shares
 successful clearing key owners with signers. Rejected parsed keys drop before
-another format is attempted. Each RSA signer retains reusable clearing scratch;
-entropy failure returns no signature, and poisoned scratch fails opaquely.
+another format is attempted. Each RSA signature builds and drops its own clearing
+scratch; entropy failure returns no signature.
 ECDSA and hedged ML-DSA entropy failure also return no signature. ML-DSA keys are
 prepared once by default and the compact key is dropped; a compact-mode key prepares
 temporary storage per signature. ML-DSA tests cover partial entropy failure and
@@ -318,7 +324,7 @@ verification. They do not qualify compiler-made copies or native timing.
 Input DER enters a `zeroize::Zeroizing` guard before validation. The pinned
 pki-types/zeroize implementation wipes owned vector storage before deallocation
 on every return path and during unwinding. Borrowed static bytes remain unchanged.
-On `aarch64-apple-darwin` with `nightly-2026-09-30`, pre-deallocation observations
+On `aarch64-apple-darwin` with `nightly-2026-09-30` and zeroize 1.9.0, pre-deallocation observations
 cover all 13 accepted key forms, rejection, partial entropy failures, and unwind.
 A guard-removal control leaves the input uncleared. A separate, uninstrumented
 O3/fat-LTO/panic-abort artifact retains volatile writes through the vector's

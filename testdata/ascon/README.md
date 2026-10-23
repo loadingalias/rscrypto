@@ -2,7 +2,8 @@
 
 These vectors come from `ascon/ascon-c` commit `446347f21b209f3921c65ece70027c366cbe1693`.
 The upstream repository publishes them under CC0-1.0.
-They were imported into rscrypto on 2026-03-14 in commit `e94d8ce7`.
+The two `.txt` files were imported into rscrypto on 2026-07-28 in commit `c7338116`.
+The two `.blb` files were imported on 2026-01-13 in commit `ae646375`; commit `e94d8ce7` moved them here unchanged on 2026-03-14.
 
 | Local file         | Upstream file                                       | SHA-256 |
 | ------------------ | --------------------------------------------------- | ------- |

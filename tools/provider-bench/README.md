@@ -165,6 +165,18 @@ These measurements do not establish constant-time behavior, network latency,
 denial-of-service limits, or performance leadership by themselves.
 The normal benchmark artifact workflow retains source, commands, build identity and raw results.
 
+## Server-verifier rows
+
+`tls-server-verifier` times server-certificate verification without a connection.
+It builds rustls's WebPKI server verifier over the Debian or Fedora root bundle,
+with this provider's algorithms (`rscrypto`) or AWS-LC's (`aws-lc-rs`), or builds `PreparedServerVerifier` (`rscrypto-prepared`).
+It then verifies each of four captured origin chains and names at the chains' capture time.
+Lifetime rows time one build plus 1, 3, or 10 verifications of one origin,
+for the two rscrypto verifiers only.
+Bundle parsing is untimed, and TLS 1.3 CertificateVerify is excluded.
+Each row first verifies every origin outside timing.
+[The fixture record](fixtures/server-verifier/README.md) identifies the bundles and chains.
+
 ## OpenSSL primitive comparisons
 
 `openssl_primitives` also compares production SHA-2, SHA-3 and AES-GCM against OpenSSL 4.0.3.
@@ -204,11 +216,12 @@ this independent measurement workspace owns the OpenSSL dependency.
 
 Use the fastest measured external backend for each exact workload,
 not a single preferred competitor averaged over the suite.
-The catalog declares TLS handshake and traffic comparisons for `just bench-compare`;
+The catalog declares TLS handshake, traffic, and server-verifier comparisons for `just bench-compare`;
 `rscrypto-webpki` remains a provider variant and cannot count as an external competitor.
 Inspect individual medians and intervals as well as aggregate scores,
 and retain losses and missing rows.
-Compact-key rows compare configurations within rscrypto and have no external comparison score.
+Compact-key and server-verifier lifetime rows compare configurations within rscrypto
+and have no external comparison score.
 
 The present peers are strong baselines, but this suite does not establish a worldwide ranking.
 AWS-LC under rustls is not the s2n-tls stack, and ring is not the BoringSSL stack.

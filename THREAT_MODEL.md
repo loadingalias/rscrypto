@@ -76,6 +76,9 @@ resource use beyond the documented bounds, and authentication oracles.
   before private scalar arithmetic.
 - The APIs that receive rejected AEAD plaintext
   and RSA private-operation output clear those buffers.
+- Legacy RSAES-PKCS1-v1_5 decryption, through `auth::rsa::expert::RsaPkcs1v15Decrypt`,
+  uses implicit rejection: invalid padding returns a deterministic synthetic message, not an error.
+  The caller must authenticate the recovered message before using it.
 - The Bao combined-stream decoder verifies each chunk before returning bytes.
   Its root must come from an independent trusted source. It bounds its own
   memory, hides the unverified length, and stops permanently after an error.
