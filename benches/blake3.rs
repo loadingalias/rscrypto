@@ -21,6 +21,9 @@ mod leaf_alignment;
 #[path = "blake3/mixed.rs"]
 mod mixed_batches;
 
+#[path = "blake3/tree_io.rs"]
+mod tree_io;
+
 use core::hint::black_box;
 use std::io::{self, Read as _};
 
@@ -971,6 +974,8 @@ fn main() {
       batch,
       mixed_batches::bench,
       streaming,
+      tree_io::update_reader,
+      tree_io::merge_level,
       #[cfg(all(rscrypto_internal, feature = "diag"))]
       tail_diagnostics,
       #[cfg(all(rscrypto_internal, feature = "diag"))]
@@ -986,6 +991,8 @@ fn main() {
       xof,
       xof_output,
       bao_decode,
+      tree_io::update_reader,
+      tree_io::subtree_update_reader,
       streaming_shapes::bench,
       streaming_shapes::alignment_bench,
     ]);

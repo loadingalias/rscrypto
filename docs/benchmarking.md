@@ -462,23 +462,38 @@ file performance.
 Two catalog targets build the same binary:
 
 - **`blake3_serial`, without `parallel`:** single-thread groups under `blake3/serial/`:
-  `hash`, `keyed`, `derive-key/context`, `derive-key/prepared-context`, `xof`, `xof-output`, `ordered`,
-  and `ordered-alignment`.
+  `hash`, `keyed`, `derive-key/context`, `derive-key/prepared-context`, `xof`, `xof-output`, `update-reader`,
+  `subtree-update-reader`, `ordered`, and `ordered-alignment`.
   `xof-output` squeezes 1 KiB, 16 KiB, and 1 MiB from a 32-byte seed into a reused buffer.
   `bao-decode` verifies a whole Bao combined encoding of 1,024, 1,025, 65,536, or 1,048,576 bytes from memory
   against bao 0.13.1, the format's reference. `bao` calls its one-shot `decode`, which returns a new `Vec`;
   `bao-reader` and `rscrypto` read their decoders to EOF into a reused buffer.
   Each check also requires the timed path to reject the encoding with its last byte changed.
+  `update-reader` hashes 4 KiB, 64 KiB, 1 MiB, and 8 MiB from a `&[u8]` reader: `Blake3::update_reader`,
+  which coalesces reads into an aligned 1 MiB heap buffer cleared before deallocation,
+  against upstream `Hasher::update_reader`. Construction, every read and update, the buffer, and finalization are timed.
+  `subtree-update-reader` hashes a 64 KiB or 1 MiB subtree, starting at the offset equal to its length,
+  into its non-root chaining value: `Blake3Tree::subtree` and `Blake3Subtree::update_reader`
+  against upstream's hazmat `set_input_offset`, `update_reader`, and `finalize_non_root`.
+  `ordered` includes 3, 5, 6, 7, 11, and 15 complete chunks before a 1-, 70-, or 1,023-byte tail:
+  the one-pass NEON partial-chunk kernel takes 3, 7, 11, and 15, the AVX-512 one takes 3 and 15,
+  and 5 and 6 take neither.
   Upstream rows use its one-shot or `Hasher` APIs, which are single-threaded.
   The headline uses the `hash` and `keyed` groups, because a default install hashes on one thread.
 - **`blake3`, with `parallel`:** groups that allow threads, under `blake3/parallel/`:
-  `hash`, `keyed`, `derive-key/context`, and `xof`.
+  `hash`, `keyed`, `derive-key/context`, `xof`, and `update-reader`.
   `rscrypto` threads when its CPU profile's cost model admits the input.
+  In `update-reader`, `rscrypto` hashes complete 1 MiB buffers in the Rayon pool on little-endian Linux AArch64;
+  upstream has no threaded reader API, so its row is serial.
   `blake3` is upstream's single-threaded API, and `blake3-rayon` is `Hasher::update_rayon`.
   At each size, the faster upstream row counts.
   Both libraries use the global Rayon pool, which starts before timing.
   Report these results with the host's core and thread topology.
-- The `blake3` build also runs `batch`, `mixed-batch`, and `streaming`. No row of those groups uses threads.
+- The `blake3` build also runs `batch`, `mixed-batch`, `streaming`, and `merge-level`. No row of those groups uses threads.
+  `merge-level` merges 1, 16, or 256 pairs of chunk chaining values: `Blake3Tree::merge_level`,
+  which validates every pair and hashes up to 16 parents per kernel call,
+  against one hazmat `merge_subtrees_non_root` call per pair, which validates nothing.
+  Its check also requires `merge_level` to reject swapped children.
 - `derive-key/context` hashes the context string in every timed call, on both sides.
   `derive-key/prepared-context` hashes it before timing.
   There, `rscrypto` passes a `Blake3DeriveContext`; `rscrypto-cached` calls `Blake3::derive_key`,
@@ -636,7 +651,8 @@ the default Bench workflow does not provision them and excludes this optional ta
   - `verify/import-key` gives every library the same encoded key and signature bytes,
     and times key import and validation, signature parsing, verification, and destruction,
     as a TLS certificate or handshake check does.
-    `rscrypto` also builds the ECDSA verification table that key reuse amortizes. aws-lc-rs allocates an `EVP_PKEY`.
+    ECDSA `rscrypto` is `verify_sec1`, which skips the verification table that key reuse amortizes,
+    as rscrypto-rustls does for a key that verifies once. aws-lc-rs allocates an `EVP_PKEY`.
   - Each check also requires the timed path to reject a key that is not a curve point.
   - The diagnostic `verify-phase/portable-double-scalar` and `verify-phase/aarch64-asm-double-scalar` rows
     include portable public-point decoding and result encoding; they do not measure cached-key verification alone.
@@ -706,6 +722,12 @@ the default Bench workflow does not provision them and excludes this optional ta
   aws-lc-rs uses `Prk::new_less_safe`, because its `Salt::extract` only stores the inputs
   and would run Extract again inside every `fill`.
   AWS-LC's `HKDF_expand` still keys HMAC in each call: two more compressions than the libraries that keep a keyed state.
+- HKDF-SHA256 and HKDF-SHA384 `expand-label/import-prk` is the TLS 1.3 key-schedule step: import a hash-length PRK,
+  then expand an `HkdfLabel` given as six slices, with the PRK import and its HMAC key schedule timed.
+  `derive-secret` expands "c hs traffic" with a hash-length context to HashLen bytes;
+  `traffic-key` expands "key" with an empty context to 16 bytes.
+  `rscrypto` is `from_prk` and `expand_vectored`, RustCrypto `from_prk` and `expand_multi_info`,
+  and ring and aws-lc-rs `Prk::new_less_safe` and `expand` with the parts.
 - PBKDF2 rows derive into a reused output buffer and time password keying, every iteration, and the output.
   Below the password policy (1, 100, and 1,000 iterations), `rscrypto` calls `derive_key_primitive`,
   because the policy API rejects those counts.
@@ -758,7 +780,13 @@ the default Bench workflow does not provision them and excludes this optional ta
   AWS-LC receives its native ASN.1 signature form,
   so it does not convert fixed-width signatures to DER.
   `verify-der/import-key` also imports the same uncompressed SEC1 key and includes ring's ASN.1 verifier.
+  Its `rscrypto` row is `verify_sec1`, the single-use path rscrypto-rustls takes;
+  `rscrypto-parse-key` is `from_sec1_bytes` followed by `verify`, which also builds the verification table.
   Ring has no parsed-key reuse API and is absent from the reuse group.
+  `verify-der-sha384` (P-256) and `verify-der-sha256` (P-384) repeat both tasks with the curve's other TLS hash.
+  There `rscrypto` is `verify_sha384`/`verify_sha256` and `verify_sec1_sha384`/`verify_sec1_sha256`;
+  RustCrypto hashes the message on the timed path and calls `PrehashVerifier::verify_prehash`,
+  because its message API uses only the curve's own hash.
   Every row verifies an independently generated signature and rejects changed scalars
   and truncated DER.
 - HMAC-SHA3 rows time one tag from a key set up once outside timing.
@@ -798,6 +826,7 @@ Each parameter set has its own groups.
 | --- | --- | --- |
 | `keygen/derand-encoded` | Seed from the caller; generation and export | Encoded public key and expanded secret key as fixed byte arrays |
 | `keygen/internal-entropy-encoded` | AWS-LC generation, internal entropy, and export | The same key encodings as fixed byte arrays |
+| `keygen/derand-ephemeral-share` | Seed from the caller; generation, export of the encapsulation key, and decapsulation of one ciphertext built before timing for that key | Encoded public key and 32-byte shared-secret array |
 | `encapsulate/derand-reuse-key` | Each library's best reused key, checked once outside timing; randomness from the caller | Ciphertext array and 32-byte shared-secret array |
 | `encapsulate/derand-reuse-encoded` | Reused `rscrypto`, libcrux, or fips203 encoded-key wrapper; caller randomness; per-call decoding stays timed | The same ciphertext and secret arrays |
 | `encapsulate/derand-import-encoded` | Identical public-key bytes; each API's import, validation, and encapsulation with caller randomness | The same ciphertext and secret arrays |
@@ -832,6 +861,12 @@ Each parameter set has its own groups.
   They do not show identical validation or zeroization guarantees.
 - RustCrypto takes part in encapsulation and in reused-key decapsulation.
   Its decoded secret key is built from the fixture seed outside timing.
+- `keygen/derand-ephemeral-share` is a TLS client's key share: it generates a key, exports the encapsulation key,
+  and decapsulates one ciphertext with the new key.
+  `rscrypto` is `generate_prepared_keypair_in`, whose prepared key keeps the matrix that generation expanded;
+  `rscrypto-unprepared` is `generate_keypair` followed by `Kem::decapsulate`.
+  RustCrypto builds its key from the seed inside timing, and libcrux and fips203 decapsulate from the encoded key.
+  AWS-LC generates keys only from internal entropy, so no ciphertext for its key exists before timing, and it is absent.
 - Expanded-key generation and import rows use implementations that have expanded-key APIs.
 
 Correctness checks before timing:
@@ -871,6 +906,22 @@ The reused-memory groups (`argon2id-owasp/salt16-raw32-reused-memory` and `scryp
 - `rustcrypto/reused-memory` calls `hash_password_into_with_memory`, built without RustCrypto's `zeroize` feature.
   It does not clear its buffer, so the rows do not do equal cleanup.
 - Untimed checks compare all 32 output bytes with RustCrypto, after a call has already used the memory.
+
+The PHC verification groups (`argon2id-phc-verify` and `scrypt-phc-verify`) verify one password against one stored PHC record.
+
+- The record is created once outside timing. Record parsing and limit approval, derivation,
+  the constant-time comparison, and work-memory handling are timed.
+- `rscrypto/fresh-allocation` calls `verify_password`, which allocates, zero-fills, and clears its work memory in each call.
+- `rscrypto/reused-memory` calls `verify_password_with_memory` with one buffer allocated and freed outside timing.
+  `rscrypto` still clears every block it used, inside timing.
+- `rustcrypto/fresh-allocation` calls `PasswordVerifier::verify_password` on the same PHC string, parsed in each call.
+  It allocates its work memory in each call and, built without RustCrypto's `zeroize` feature, does not clear it.
+- `dryoc/fresh-allocation` (Argon2id only) calls `crypto_pwhash_str_verify`, which parses the record and allocates its work memory in each call.
+- Only the fresh-allocation rows enter a ratio; no external verifier here takes caller-owned memory.
+- Argon2id uses the OWASP shape (m=19 MiB, t=2, p=1). scrypt uses `log_n=14`, `r=8`, `p=1` (16 MiB),
+  so the unsplit `password_hashing` run stays within one budget on the slowest runner.
+- Untimed checks accept the password from a call that reuses the row's state and reject a wrong one.
+  Every record must also pass RustCrypto's verifier, and Argon2id records dryoc's.
 
 ## ML-DSA comparison contracts
 

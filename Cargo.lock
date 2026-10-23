@@ -2568,6 +2568,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d87af57419b594aa23fa95f09f0e06d80d84ba01c26148c43844cad6ff4485f0"
 dependencies = [
  "cfg-if",
+ "password-hash",
  "pbkdf2",
  "salsa20",
  "sha2 0.11.1",

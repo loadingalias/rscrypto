@@ -725,6 +725,20 @@
       "headline": false,
       "task": "Import the same uncompressed SEC1 key, parse the same DER signature, hash and verify the message."
     },
+    "ecdsa-verify-der-cross-hash-reuse": {
+      "family": "ECDSA",
+      "bench": "auth",
+      "cases": "^(?P<variant>ecdsa-p256/verify-der-sha384|ecdsa-p384/verify-der-sha256)/reuse-key/(?P<implementation>[^/]+)/(?P<input>[0-9]+)$",
+      "headline": false,
+      "task": "Parse the same DER signature, hash the message with the curve's other TLS hash, and verify with a parsed public key reused across calls; ring has no parsed-key API."
+    },
+    "ecdsa-verify-der-cross-hash-import": {
+      "family": "ECDSA",
+      "bench": "auth",
+      "cases": "^(?P<variant>ecdsa-p256/verify-der-sha384|ecdsa-p384/verify-der-sha256)/import-key/(?P<implementation>[^/]+)/(?P<input>[0-9]+)$",
+      "headline": false,
+      "task": "Import the same uncompressed SEC1 key, parse the same DER signature, hash the message with the curve's other TLS hash, and verify."
+    },
     "blake2-params": {
       "family": "BLAKE2",
       "bench": "blake2",
@@ -1036,6 +1050,13 @@
       "headline": true,
       "task": "Extract a pseudorandom key from a salt and input keying material of the named length."
     },
+    "hkdf-expand-label-import": {
+      "family": "HKDF",
+      "bench": "auth",
+      "cases": "^(?P<variant>hkdf-sha256|hkdf-sha384)/expand-label/import-prk/(?P<implementation>[^/]+)/(?P<input>[a-z-]+)$",
+      "headline": false,
+      "task": "Import a hash-length pseudorandom key and expand a TLS 1.3 HkdfLabel given as six slices."
+    },
     "pbkdf2": {
       "family": "PBKDF2",
       "bench": "pbkdf2",
@@ -1063,6 +1084,20 @@
       "cases": "^argon2id-owasp/salt16-raw32-reused-memory/(?P<implementation>[^/]+)/reused-memory/(?P<input>[^/]+)$",
       "headline": false,
       "task": "Derive 32 raw bytes into work memory allocated once outside timing."
+    },
+    "argon2id-phc-verify": {
+      "family": "Argon2",
+      "bench": "password_hashing",
+      "cases": "^argon2id-phc-verify/(?P<implementation>[^/]+)/fresh-allocation/(?P<input>[^/]+)$",
+      "headline": false,
+      "task": "Verify one password against one stored Argon2id PHC record, with work memory allocated in each call."
+    },
+    "scrypt-phc-verify": {
+      "family": "scrypt",
+      "bench": "password_hashing",
+      "cases": "^scrypt-phc-verify/(?P<implementation>[^/]+)/fresh-allocation/(?P<input>[^/]+)$",
+      "headline": false,
+      "task": "Verify one password against one stored scrypt PHC record, with work memory allocated in each call."
     },
     "scrypt": {
       "family": "scrypt",
@@ -1204,6 +1239,20 @@
       "headline": false,
       "task": "Verify and decode a whole Bao combined encoding from memory against a trusted root, on one thread."
     },
+    "blake3-update-reader": {
+      "family": "BLAKE3",
+      "bench": "blake3_serial",
+      "cases": "^blake3/serial/update-reader/(?P<implementation>[^/]+)/(?P<input>[0-9]+)$",
+      "headline": false,
+      "task": "Hash one in-memory input through each library's reader API, on one thread."
+    },
+    "blake3-subtree-update-reader": {
+      "family": "BLAKE3",
+      "bench": "blake3_serial",
+      "cases": "^blake3/serial/subtree-update-reader/(?P<implementation>[^/]+)/(?P<input>[0-9]+)$",
+      "headline": false,
+      "task": "Hash one subtree from an in-memory reader into its non-root chaining value, on one thread."
+    },
     "blake3-ordered": {
       "family": "BLAKE3",
       "bench": "blake3_serial",
@@ -1246,6 +1295,13 @@
       "headline": false,
       "task": "Absorb one buffer and squeeze 64 bytes; threads allowed."
     },
+    "blake3-parallel-update-reader": {
+      "family": "BLAKE3 multi-thread",
+      "bench": "blake3",
+      "cases": "^blake3/parallel/update-reader/(?P<implementation>[^/]+)/(?P<input>[0-9]+)$",
+      "headline": false,
+      "task": "Hash one in-memory input through each library's reader API; threads allowed."
+    },
     "blake3-streaming": {
       "family": "BLAKE3",
       "bench": "blake3",
@@ -1266,6 +1322,13 @@
       "cases": "^blake3/mixed-batch/(?P<variant>plain|keyed|derive)/(?P<implementation>[^/]+)/(?P<input>[a-z-]+/[0-9]+)$",
       "headline": false,
       "task": "Hash an ordered list of independent messages of mixed lengths."
+    },
+    "blake3-merge-level": {
+      "family": "BLAKE3",
+      "bench": "blake3",
+      "cases": "^blake3/merge-level/(?P<implementation>[^/]+)/(?P<input>[0-9]+)$",
+      "headline": false,
+      "task": "Merge adjacent pairs of chunk chaining values into their non-root parents."
     },
     "mldsa-keygen": {
       "family": "ML-DSA",
@@ -1548,6 +1611,13 @@
       "cases": "^(?P<variant>mlkem512|mlkem768|mlkem1024)/keygen/(?P<input>derand-encoded)/(?P<implementation>[^/]+)$",
       "headline": true,
       "task": "Generate a key pair from a 64-byte seed and export both encoded keys."
+    },
+    "mlkem-ephemeral-share": {
+      "family": "ML-KEM",
+      "bench": "auth",
+      "cases": "^(?P<variant>mlkem512|mlkem768|mlkem1024)/keygen/(?P<input>derand-ephemeral-share)/(?P<implementation>[^/]+)$",
+      "headline": false,
+      "task": "Generate a key pair from a 64-byte seed, export the encapsulation key, and decapsulate one ciphertext with the new key."
     },
     "mlkem-encapsulate-reuse": {
       "family": "ML-KEM",

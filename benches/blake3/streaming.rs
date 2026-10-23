@@ -264,7 +264,9 @@ pub(super) fn bench(c: &mut Criterion) {
     }
   }
   plain.push(case("prefix-24-bulk-3104".to_owned(), 3128, Some(24), false));
-  for chunks in [3usize, 5, 6, 7] {
+  // 3, 7, 11 and 15 complete chunks before a partial one take the one-pass NEON tail kernel at chunk
+  // counter 0, and 3 and 15 the AVX-512 one; 5 and 6 take neither.
+  for chunks in [3usize, 5, 6, 7, 11, 15] {
     for tail in [1usize, 70, 1023] {
       plain.push(case(
         format!("chunks-{chunks}-tail-{tail}"),

@@ -7,8 +7,9 @@
 //! Before timing, every raw row must return the RustCrypto output for its
 //! parameters. Each oracle runs at most once per parameter set, and only when
 //! one of its rows runs. Argon2id PHC records must pass dryoc's independent
-//! verifier; scrypt PHC records have no independent verifier here, so their
-//! rows check the encoded profile and rscrypto's accept/reject decisions.
+//! verifier. The scrypt PHC round-trip rows check the encoded profile and
+//! rscrypto's accept/reject decisions; the PHC verification groups also check
+//! every record with RustCrypto's verifier.
 
 #[path = "common/criterion.rs"]
 mod bench_config;
@@ -580,6 +581,189 @@ fn argon2id_phc_roundtrip(c: &mut Criterion) {
   g.finish();
 }
 
+/// PHC password verification with fresh versus caller-owned work memory.
+///
+/// Task: verify one password against one stored PHC record. Timed: record parsing and limit approval,
+/// derivation, the constant-time comparison, and work-memory handling. The record is created once
+/// outside timing.
+///
+/// - `rscrypto/fresh-allocation` calls `verify_password`, which allocates, zero-fills, and clears its
+///   work memory in each call.
+/// - `rscrypto/reused-memory` calls `verify_password_with_memory` with one buffer allocated and freed
+///   outside timing; rscrypto still clears the blocks it used before returning.
+/// - `rustcrypto/fresh-allocation` calls `PasswordVerifier::verify_password` on the same PHC string,
+///   parsed in each call. RustCrypto allocates its work memory in each call and, built without its
+///   `zeroize` feature, does not clear it.
+/// - `dryoc/fresh-allocation` (Argon2id only) calls `crypto_pwhash_str_verify`, which parses the record
+///   and allocates its work memory in each call. dryoc has no scrypt PHC verifier.
+/// - No external verifier here takes caller-owned work memory, so the reused-memory rows have no
+///   external peer.
+///
+/// Argon2id uses the OWASP shape of `argon2id_owasp`. scrypt uses `log_n=14` (16 MiB) from the small
+/// matrix rather than the 128 MiB OWASP shape, to keep the slowest runner within one run budget.
+/// Before timing, every row must accept the password from a call that reuses its state, and reject a
+/// wrong one. Each record must also pass RustCrypto's independent verifier, and Argon2id records dryoc's.
+fn phc_verify(c: &mut Criterion) {
+  let argon2_group = "argon2id-phc-verify";
+  if bench_config::selected(argon2_group) {
+    let mut g = c.benchmark_group(argon2_group);
+    let params = rs_params(19 * 1024, 2, 1, 32);
+    let password = Argon2idPassword::new(params).expect("supported password-hashing benchmark parameters must succeed");
+    let encoded = password
+      .hash_password(PASSWORD)
+      .expect("supported password-hashing benchmark parameters must succeed");
+    assert!(
+      encoded.starts_with("$argon2id$v=19$m=19456,t=2,p=1$"),
+      "Argon2id PHC profile: {encoded}"
+    );
+    crypto_pwhash_str_verify(&encoded, PASSWORD).expect("dryoc must verify the Argon2id PHC record");
+    crypto_pwhash_str_verify(&encoded, WRONG_PASSWORD)
+      .expect_err("dryoc must reject a wrong password for the Argon2id PHC record");
+    let oracle = argon2::Argon2::default();
+    let rustcrypto_verify = |password: &[u8], encoded: &str| {
+      <argon2::Argon2<'_> as argon2::PasswordVerifier<str>>::verify_password(&oracle, password, encoded)
+    };
+    rustcrypto_verify(PASSWORD, &encoded).expect("RustCrypto must verify the Argon2id PHC record");
+    let blocks = usize::try_from(params.memory_blocks()).expect("benchmark block count must fit usize");
+
+    g.bench_function(
+      BenchmarkId::new("rscrypto/fresh-allocation", "m=19MiB_t=2_p=1"),
+      checked(
+        || {
+          password
+            .verify_password(black_box(PASSWORD), black_box(&encoded))
+            .expect("Argon2id PHC record must verify")
+        },
+        |status| {
+          assert_eq!(status, PasswordStatus::Current);
+          password
+            .verify_password(WRONG_PASSWORD, &encoded)
+            .expect_err("Argon2id PHC verification must reject a wrong password");
+        },
+      ),
+    );
+    g.bench_function(
+      BenchmarkId::new("rscrypto/reused-memory", "m=19MiB_t=2_p=1"),
+      checked_with(
+        vec![Argon2Block::ZERO; blocks],
+        |memory| {
+          password
+            .verify_password_with_memory(black_box(PASSWORD), black_box(&encoded), black_box(memory))
+            .expect("Argon2id PHC record must verify")
+        },
+        |status, _| {
+          assert_eq!(status, PasswordStatus::Current);
+          let mut memory = vec![Argon2Block::ZERO; blocks];
+          password
+            .verify_password_with_memory(WRONG_PASSWORD, &encoded, &mut memory)
+            .expect_err("Argon2id PHC verification must reject a wrong password");
+        },
+      ),
+    );
+    g.bench_function(
+      BenchmarkId::new("rustcrypto/fresh-allocation", "m=19MiB_t=2_p=1"),
+      checked(
+        || rustcrypto_verify(black_box(PASSWORD), black_box(&encoded)),
+        |result| {
+          result.expect("RustCrypto must verify the Argon2id PHC record");
+          rustcrypto_verify(WRONG_PASSWORD, &encoded).expect_err("RustCrypto must reject a wrong password");
+        },
+      ),
+    );
+    g.bench_function(
+      BenchmarkId::new("dryoc/fresh-allocation", "m=19MiB_t=2_p=1"),
+      checked(
+        || crypto_pwhash_str_verify(black_box(&encoded), black_box(PASSWORD)),
+        |result| {
+          result.expect("dryoc must verify the Argon2id PHC record");
+          crypto_pwhash_str_verify(&encoded, WRONG_PASSWORD).expect_err("dryoc must reject a wrong password");
+        },
+      ),
+    );
+    g.finish();
+  }
+
+  let scrypt_group = "scrypt-phc-verify";
+  if bench_config::selected(scrypt_group) {
+    let mut g = c.benchmark_group(scrypt_group);
+    let params = rs_scrypt_params(14, 8, 1, 32);
+    let password = ScryptPassword::new(params).expect("supported password-hashing benchmark parameters must succeed");
+    let encoded = password
+      .hash_password(PASSWORD)
+      .expect("supported password-hashing benchmark parameters must succeed");
+    assert!(
+      encoded.starts_with("$scrypt$ln=14,r=8,p=1$"),
+      "scrypt PHC profile: {encoded}"
+    );
+    let oracle = scrypt::Scrypt::new();
+    // Parsing and verification report different error types; either failure rejects the record.
+    let rustcrypto_verify = |password: &[u8], encoded: &str| {
+      scrypt::phc::PasswordHash::new(encoded).is_ok_and(|hash| {
+        <scrypt::Scrypt as scrypt::password_hash::PasswordVerifier<_>>::verify_password(&oracle, password, &hash)
+          .is_ok()
+      })
+    };
+    assert!(
+      rustcrypto_verify(PASSWORD, &encoded),
+      "RustCrypto must verify the scrypt PHC record"
+    );
+    assert!(
+      !rustcrypto_verify(WRONG_PASSWORD, &encoded),
+      "RustCrypto must reject a wrong scrypt password"
+    );
+    let blocks = params.memory_blocks().expect("benchmark scrypt shape must fit");
+
+    g.bench_function(
+      BenchmarkId::new("rscrypto/fresh-allocation", "log_n=14_r=8_p=1"),
+      checked(
+        || {
+          password
+            .verify_password(black_box(PASSWORD), black_box(&encoded))
+            .expect("scrypt PHC record must verify")
+        },
+        |status| {
+          assert_eq!(status, PasswordStatus::Current);
+          password
+            .verify_password(WRONG_PASSWORD, &encoded)
+            .expect_err("scrypt PHC verification must reject a wrong password");
+        },
+      ),
+    );
+    g.bench_function(
+      BenchmarkId::new("rscrypto/reused-memory", "log_n=14_r=8_p=1"),
+      checked_with(
+        vec![ScryptBlock::ZERO; blocks],
+        |memory| {
+          password
+            .verify_password_with_memory(black_box(PASSWORD), black_box(&encoded), black_box(memory))
+            .expect("scrypt PHC record must verify")
+        },
+        |status, _| {
+          assert_eq!(status, PasswordStatus::Current);
+          let mut memory = vec![ScryptBlock::ZERO; blocks];
+          password
+            .verify_password_with_memory(WRONG_PASSWORD, &encoded, &mut memory)
+            .expect_err("scrypt PHC verification must reject a wrong password");
+        },
+      ),
+    );
+    g.bench_function(
+      BenchmarkId::new("rustcrypto/fresh-allocation", "log_n=14_r=8_p=1"),
+      checked(
+        || rustcrypto_verify(black_box(PASSWORD), black_box(&encoded)),
+        |verified| {
+          assert!(verified, "RustCrypto must verify the scrypt PHC record");
+          assert!(
+            !rustcrypto_verify(WRONG_PASSWORD, &encoded),
+            "RustCrypto must reject a wrong password"
+          );
+        },
+      ),
+    );
+    g.finish();
+  }
+}
+
 /// Bounded lane-parallel scaling curve. With `parallel` enabled,
 /// `p > 1` uses the `rayon::scope` slice driver; `p == 1` skips Rayon.
 /// Every row holds total memory and time cost constant while varying the
@@ -685,5 +869,6 @@ fn main() {
     argon2id_parallel_owasp,
     scrypt_owasp,
     reused_memory,
+    phc_verify,
   ]);
 }

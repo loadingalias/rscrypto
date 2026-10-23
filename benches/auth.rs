@@ -3,6 +3,8 @@
 //! Before timing, each row's output must match an independent implementation or a published vector. Rows with
 //! randomized output must instead verify under an independent implementation.
 
+extern crate alloc;
+
 #[path = "common/criterion.rs"]
 mod bench_config;
 
@@ -823,6 +825,136 @@ hkdf_expand_bench!(
   64,
   80,
   [64, 128, 256, 1024]
+);
+
+// TLS 1.3 HKDF-Expand-Label from an imported secret (RFC 8446 Section 7.1): import a hash-length PRK, then
+// expand an `HkdfLabel` given as six slices (output length, label length, "tls13 ", label, context length,
+// context), as a TLS key schedule does with each traffic secret. Timed: PRK import with its HMAC key schedule,
+// the expansion, and drop. Inputs: `derive-secret` ("c hs traffic" with a hash-length transcript hash, output
+// HashLen) and `traffic-key` ("key" with an empty context, a 16-byte output).
+// - rscrypto is `from_prk` and `expand_vectored`; RustCrypto is `from_prk` and `expand_multi_info`.
+// - ring and aws-lc-rs are `Prk::new_less_safe` and `expand` with the parts; `fill` keys HMAC from the PRK.
+macro_rules! hkdf_expand_label_bench {
+  ($name:ident, $group:literal, $rscrypto:ty, $rustcrypto:ty, $aws_algorithm:path, $ring_algorithm:path, $hash_len:literal) => {
+    fn $name(c: &mut Criterion) {
+      if !bench_config::selected($group) {
+        return;
+      }
+      let prk = [0x44u8; $hash_len];
+      let transcript = [0x55u8; $hash_len];
+      let derive = [
+        ($hash_len as u16).to_be_bytes().to_vec(),
+        vec![18],
+        b"tls13 ".to_vec(),
+        b"c hs traffic".to_vec(),
+        vec![$hash_len],
+        transcript.to_vec(),
+      ];
+      let key = [
+        16u16.to_be_bytes().to_vec(),
+        vec![9],
+        b"tls13 ".to_vec(),
+        b"key".to_vec(),
+        vec![0],
+        Vec::new(),
+      ];
+      let mut g = c.benchmark_group($group);
+      for (input, parts, out_len) in [("derive-secret", &derive, $hash_len), ("traffic-key", &key, 16usize)] {
+        let parts: Vec<&[u8]> = parts.iter().map(Vec::as_slice).collect();
+        let mut expected = vec![0u8; out_len];
+        <$rustcrypto>::from_prk(&prk)
+          .expect("hash-length PRK")
+          .expand_multi_info(&parts, &mut expected)
+          .expect("valid HKDF output length");
+        let mut ring_expected = vec![0u8; out_len];
+        ring::hkdf::Prk::new_less_safe($ring_algorithm, &prk)
+          .expand(&parts, RingHkdfLen(out_len))
+          .expect("valid HKDF output length")
+          .fill(&mut ring_expected)
+          .expect("valid HKDF output length");
+        g.throughput(criterion::Throughput::Bytes(out_len as u64));
+        g.bench_function(
+          BenchmarkId::new("rscrypto", input),
+          checked_with(
+            vec![0u8; out_len],
+            |out| {
+              <$rscrypto>::from_prk(black_box(&prk))
+                .expand_vectored(black_box(&parts), black_box(out.as_mut_slice()))
+                .expect("valid HKDF output length");
+              black_box(out[0])
+            },
+            |_, out| assert_eq!(out, &expected),
+          ),
+        );
+        g.bench_function(
+          BenchmarkId::new("rustcrypto", input),
+          checked_with(
+            vec![0u8; out_len],
+            |out| {
+              <$rustcrypto>::from_prk(black_box(&prk))
+                .expect("hash-length PRK")
+                .expand_multi_info(black_box(&parts), black_box(out.as_mut_slice()))
+                .expect("valid HKDF output length");
+              black_box(out[0])
+            },
+            |_, out| assert_eq!(out, &ring_expected),
+          ),
+        );
+        g.bench_function(
+          BenchmarkId::new("ring", input),
+          checked_with(
+            vec![0u8; out_len],
+            |out| {
+              ring::hkdf::Prk::new_less_safe($ring_algorithm, black_box(&prk))
+                .expand(black_box(&parts), RingHkdfLen(out_len))
+                .expect("valid HKDF output length")
+                .fill(black_box(out.as_mut_slice()))
+                .expect("valid HKDF output length");
+              black_box(out[0])
+            },
+            |_, out| assert_eq!(out, &expected),
+          ),
+        );
+        aws_lc_bench! {
+          g.bench_function(
+            BenchmarkId::new("aws-lc-rs", input),
+            checked_with(
+              vec![0u8; out_len],
+              |out| {
+                aws_lc_rs::hkdf::Prk::new_less_safe($aws_algorithm, black_box(&prk))
+                  .expand(black_box(&parts), AwsHkdfLen(out_len))
+                  .expect("valid HKDF output length")
+                  .fill(black_box(out.as_mut_slice()))
+                  .expect("valid HKDF output length");
+                black_box(out[0])
+              },
+              |_, out| assert_eq!(out, &expected),
+            ),
+          );
+        }
+      }
+      g.finish();
+    }
+  };
+}
+
+hkdf_expand_label_bench!(
+  hkdf_sha256_expand_label,
+  "hkdf-sha256/expand-label/import-prk",
+  HkdfSha256,
+  RustCryptoHkdfSha256,
+  aws_lc_rs::hkdf::HKDF_SHA256,
+  ring::hkdf::HKDF_SHA256,
+  32
+);
+hkdf_expand_label_bench!(
+  hkdf_sha384_expand_label,
+  "hkdf-sha384/expand-label/import-prk",
+  HkdfSha384,
+  RustCryptoHkdfSha384,
+  aws_lc_rs::hkdf::HKDF_SHA384,
+  ring::hkdf::HKDF_SHA384,
+  48
 );
 
 // HKDF-Extract rows time salt keying, HMAC(salt, IKM), the PRK HMAC key
@@ -1684,10 +1816,19 @@ fn verify_der_row<'a>(
 
 // DER signature parsing, message hashing and verification are timed in both groups.
 // Reuse amortizes each parsed key; ring only participates in import because its public API reparses the key.
+// Import gives every library the same uncompressed SEC1 bytes once per call, as a TLS certificate check does:
+// `rscrypto` is `verify_sec1`, which skips the verification table a parsed key builds for reuse, and
+// `rscrypto-parse-key` is `from_sec1_bytes` followed by `verify`, which builds it.
+// The `verify-der-<hash>` groups repeat both tasks with the curve's other TLS hash: P-256 with SHA-384 and
+// P-384 with SHA-256. RustCrypto has no message API for a hash other than the curve's own, so it hashes the
+// message on the timed path and verifies the digest through `PrehashVerifier`.
 macro_rules! ecdsa_verify_der {
-  ($function:ident, $group:literal, $curve:ident, $public:ty, $signature:ty, $oracle:ty, $secret:expr, $algorithm:ident) => {
+  (
+    $function:ident, $group:literal, $curve:ident, $public:ty, $signature:ty, $oracle:ty, $secret:expr, $algorithm:ident,
+    $cross:literal, $digest:ty, $cross_verify:ident, $cross_sec1:ident, $cross_algorithm:ident
+  ) => {
     fn $function(c: &mut Criterion) {
-      if !bench_config::selected(concat!($group, "/verify-der/")) {
+      if !bench_config::selected(concat!($group, "/verify-der")) {
         return;
       }
       let signing = $curve::ecdsa::SigningKey::from_slice(&$secret).expect("benchmark signing key");
@@ -1741,6 +1882,14 @@ macro_rules! ecdsa_verify_der {
         import.bench_function(
           BenchmarkId::new("rscrypto", len),
           verify_der_row(
+            |message, bytes| <$signature>::from_der(bytes)
+              .is_ok_and(|sig| <$public>::verify_sec1(black_box(sec1.as_bytes()), message, &sig).is_ok()),
+            data, signature.as_bytes(), tampered.as_bytes(),
+          ),
+        );
+        import.bench_function(
+          BenchmarkId::new("rscrypto-parse-key", len),
+          verify_der_row(
             |message, bytes| {
               let key = <$public>::from_sec1_bytes(black_box(sec1.as_bytes())).expect("benchmark public key");
               <$signature>::from_der(bytes).is_ok_and(|sig| key.verify(message, &sig).is_ok())
@@ -1780,6 +1929,100 @@ macro_rules! ecdsa_verify_der {
         }
       }
       import.finish();
+
+      use $curve::ecdsa::signature::hazmat::{PrehashSigner as _, PrehashVerifier as _};
+      use sha2::Digest as _;
+      aws_lc_bench! {
+        let aws_cross = aws_lc_rs::signature::ParsedPublicKey::new(&aws_lc_rs::signature::$cross_algorithm, sec1.as_bytes())
+          .expect("benchmark public key");
+      }
+      let cross_inputs = [0usize, 32, 1024, 16384].map(|len| {
+        let data = common::random_bytes(len);
+        let signature: $oracle = signing.sign_prehash(&<$digest>::digest(&data)).expect("prehash signature");
+        let mut changed = signature.to_bytes();
+        changed[($secret).len().strict_sub(1)] ^= 1;
+        let changed = <$oracle>::from_slice(&changed).expect("changed r remains a valid scalar");
+        (len, data, signature.to_der(), changed.to_der())
+      });
+      let mut reuse = c.benchmark_group(concat!($group, "/verify-der-", $cross, "/reuse-key"));
+      for (len, data, signature, tampered) in &cross_inputs {
+        common::set_throughput(&mut reuse, *len);
+        reuse.bench_function(
+          BenchmarkId::new("rscrypto", len),
+          verify_der_row(
+            |message, bytes| <$signature>::from_der(bytes).is_ok_and(|sig| public.$cross_verify(message, &sig).is_ok()),
+            data, signature.as_bytes(), tampered.as_bytes(),
+          ),
+        );
+        reuse.bench_function(
+          BenchmarkId::new(concat!("rustcrypto-", stringify!($curve)), len),
+          verify_der_row(
+            |message, bytes| <$oracle>::from_der(bytes)
+              .is_ok_and(|sig| oracle.verify_prehash(&<$digest>::digest(message), &sig).is_ok()),
+            data, signature.as_bytes(), tampered.as_bytes(),
+          ),
+        );
+        aws_lc_bench! {
+          reuse.bench_function(
+            BenchmarkId::new("aws-lc-rs", len),
+            verify_der_row(|message, bytes| aws_cross.verify_sig(message, bytes).is_ok(),
+              data, signature.as_bytes(), tampered.as_bytes()),
+          );
+        }
+      }
+      reuse.finish();
+
+      let mut import = c.benchmark_group(concat!($group, "/verify-der-", $cross, "/import-key"));
+      for (len, data, signature, tampered) in &cross_inputs {
+        common::set_throughput(&mut import, *len);
+        import.bench_function(
+          BenchmarkId::new("rscrypto", len),
+          verify_der_row(
+            |message, bytes| <$signature>::from_der(bytes)
+              .is_ok_and(|sig| <$public>::$cross_sec1(black_box(sec1.as_bytes()), message, &sig).is_ok()),
+            data, signature.as_bytes(), tampered.as_bytes(),
+          ),
+        );
+        import.bench_function(
+          BenchmarkId::new("rscrypto-parse-key", len),
+          verify_der_row(
+            |message, bytes| {
+              let key = <$public>::from_sec1_bytes(black_box(sec1.as_bytes())).expect("benchmark public key");
+              <$signature>::from_der(bytes).is_ok_and(|sig| key.$cross_verify(message, &sig).is_ok())
+            },
+            data, signature.as_bytes(), tampered.as_bytes(),
+          ),
+        );
+        import.bench_function(
+          BenchmarkId::new(concat!("rustcrypto-", stringify!($curve)), len),
+          verify_der_row(
+            |message, bytes| {
+              let key = $curve::ecdsa::VerifyingKey::from_sec1_bytes(black_box(sec1.as_bytes())).expect("benchmark public key");
+              <$oracle>::from_der(bytes).is_ok_and(|sig| key.verify_prehash(&<$digest>::digest(message), &sig).is_ok())
+            },
+            data, signature.as_bytes(), tampered.as_bytes(),
+          ),
+        );
+        import.bench_function(
+          BenchmarkId::new("ring", len),
+          verify_der_row(
+            |message, bytes| ring::signature::UnparsedPublicKey::new(&ring::signature::$cross_algorithm, black_box(sec1.as_bytes()))
+              .verify(message, bytes).is_ok(),
+            data, signature.as_bytes(), tampered.as_bytes(),
+          ),
+        );
+        aws_lc_bench! {
+          import.bench_function(
+            BenchmarkId::new("aws-lc-rs", len),
+            verify_der_row(
+              |message, bytes| aws_lc_rs::signature::UnparsedPublicKey::new(&aws_lc_rs::signature::$cross_algorithm, black_box(sec1.as_bytes()))
+                .verify(message, bytes).is_ok(),
+              data, signature.as_bytes(), tampered.as_bytes(),
+            ),
+          );
+        }
+      }
+      import.finish();
     }
   };
 }
@@ -1792,7 +2035,12 @@ ecdsa_verify_der!(
   EcdsaP256Signature,
   P256OracleSignature,
   [0x11u8; 32],
-  ECDSA_P256_SHA256_ASN1
+  ECDSA_P256_SHA256_ASN1,
+  "sha384",
+  sha2::Sha384,
+  verify_sha384,
+  verify_sec1_sha384,
+  ECDSA_P256_SHA384_ASN1
 );
 ecdsa_verify_der!(
   ecdsa_p384_verify_der,
@@ -1802,7 +2050,12 @@ ecdsa_verify_der!(
   EcdsaP384Signature,
   P384OracleSignature,
   [0x31u8; 48],
-  ECDSA_P384_SHA384_ASN1
+  ECDSA_P384_SHA384_ASN1,
+  "sha256",
+  sha2::Sha256,
+  verify_sha256,
+  verify_sec1_sha256,
+  ECDSA_P384_SHA256_ASN1
 );
 
 // ECDSA signature DER codec (RFC 3279 `Ecdsa-Sig-Value`), the form that X.509 and TLS carry. The fixture is
@@ -4008,6 +4261,67 @@ macro_rules! mlkem_profile_benches {
       }, |keys| assert_eq!(keys, expected())));
       g.finish();
 
+      // Ephemeral key share, as a TLS client's ML-KEM share: generate a key pair from a 64-byte seed, export the
+      // encapsulation key, and decapsulate one ciphertext for it with the new key. The ciphertext comes from the
+      // deterministic key before timing. Timed: key generation, the exported key bytes, decapsulation, and drop.
+      // - `rscrypto` is `generate_prepared_keypair_in`: its key keeps the matrix that generation expanded.
+      // - `rscrypto-unprepared` is `generate_keypair` followed by `Kem::decapsulate`, which expands it again.
+      // - RustCrypto builds its key from the seed; libcrux and fips203 decapsulate from the encoded key.
+      // AWS-LC generates keys only from internal entropy, so no ciphertext for its key exists before timing;
+      // it stays out.
+      let (share_ek, _) = <$profile>::generate_keypair(|out| {
+        out.copy_from_slice(&key_random);
+        Ok::<(), MlKemError>(())
+      }).expect("ML-KEM fixture key generation");
+      let (share_ct, _) = <$profile>::encapsulate(&share_ek, |out| {
+        out.fill(0x5a);
+        Ok::<(), MlKemError>(())
+      }).expect("ML-KEM fixture encapsulation");
+      let share_ct_bytes = share_ct.to_bytes();
+      let libcrux_share_ct = libcrux_ml_kem::MlKemCiphertext::from(share_ct_bytes);
+      let fips_share_ct = $fips::CipherText::try_from_bytes(share_ct_bytes).expect("fips203 ciphertext import");
+      let rustcrypto_share_ct = share_ct_bytes.into();
+      let share_expected = || {
+        let keys = $libcrux::generate_key_pair(key_random);
+        (*keys.public_key().as_slice(), $libcrux::decapsulate(keys.private_key(), &libcrux_share_ct))
+      };
+      let share_independent = || {
+        let (ek, dk) =
+          $fips::KG::keygen_from_seed(array_from_slice(&key_random[..32]), array_from_slice(&key_random[32..]));
+        (ek.into_bytes(), dk.try_decaps(&fips_share_ct).expect("fips203 decapsulation").into_bytes())
+      };
+      let mut g = c.benchmark_group(concat!($group, "/keygen/derand-ephemeral-share"));
+      g.bench_function("rscrypto", checked(|| {
+        let (ek, dk) = <$profile>::generate_prepared_keypair_in(|out| {
+          out.copy_from_slice(black_box(&key_random));
+          Ok::<(), MlKemError>(())
+        }, alloc::alloc::Global).expect("ML-KEM key generation");
+        (ek.to_bytes(), *dk.decapsulate(black_box(&share_ct)).expect("ML-KEM decapsulation").as_bytes())
+      }, |share| assert_eq!(share, share_expected())));
+      g.bench_function("rscrypto-unprepared", checked(|| {
+        let (ek, dk) = <$profile>::generate_keypair(|out| {
+          out.copy_from_slice(black_box(&key_random));
+          Ok::<(), MlKemError>(())
+        }).expect("ML-KEM key generation");
+        (ek.to_bytes(), *<$profile>::decapsulate(&dk, black_box(&share_ct)).expect("ML-KEM decapsulation").as_bytes())
+      }, |share| assert_eq!(share, share_expected())));
+      g.bench_function("rustcrypto", checked(|| {
+        use rustcrypto_ml_kem::KeyExport as _;
+        let dk = RustCryptoMlKemDecapsulationKey::<$rustcrypto>::from_seed(RustCryptoMlKemSeed::from(*black_box(&key_random)));
+        (array_from_slice::<{ <$profile>::ENCAPSULATION_KEY_SIZE }>(dk.encapsulation_key().to_bytes().as_slice()),
+         array_from_slice::<32>(dk.decapsulate(black_box(&rustcrypto_share_ct)).as_slice()))
+      }, |share| assert_eq!(share, share_expected())));
+      g.bench_function("libcrux", checked(|| {
+        let keys = $libcrux::generate_key_pair(black_box(key_random));
+        (*keys.public_key().as_slice(), $libcrux::decapsulate(keys.private_key(), black_box(&libcrux_share_ct)))
+      }, |share| assert_eq!(share, share_independent())));
+      g.bench_function("fips203", checked(|| {
+        let seed = black_box(&key_random);
+        let (ek, dk) = $fips::KG::keygen_from_seed(array_from_slice(&seed[..32]), array_from_slice(&seed[32..]));
+        (ek.into_bytes(), dk.try_decaps(black_box(&fips_share_ct)).expect("fips203 decapsulation").into_bytes())
+      }, |share| assert_eq!(share, share_expected())));
+      g.finish();
+
       aws_lc_bench! {
         let mut g = c.benchmark_group(concat!($group, "/keygen/internal-entropy-encoded"));
         g.bench_function("aws-lc-rs", checked(|| {
@@ -4359,6 +4673,8 @@ fn main() {
     hkdf_sha256_expand,
     hkdf_sha384_expand,
     hkdf_sha512_expand,
+    hkdf_sha256_expand_label,
+    hkdf_sha384_expand_label,
     hkdf_sha256_extract,
     hkdf_sha384_extract,
     hkdf_sha512_extract,

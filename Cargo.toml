@@ -248,13 +248,13 @@ crc32c = "0.6.8"
 crc32fast = "1.5.2"
 crc64fast = "1.1.0"
 ascon-hash = "0.4.0"
-argon2 = { version = "0.6.0", default-features = false, features = ["alloc"] }
+argon2 = { version = "0.6.0", default-features = false, features = ["alloc", "password-hash"] }
 blake3 = { version = "1.8.7", default-features = false, features = ["std", "rayon", "mmap"] }
 blake2 = "0.11.0"
 blake2b_simd = "1.0.5"
 blake2s_simd = "1.0.5"
 pbkdf2 = "0.13.0"
-scrypt = { version = "0.12.0", default-features = false }
+scrypt = { version = "0.12.0", default-features = false, features = ["phc"] }
 sha2 = "0.11.1"
 sha2_010 = { package = "sha2", version = "0.10.9" }
 sha3 = "0.12.0"
