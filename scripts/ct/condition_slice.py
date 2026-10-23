@@ -88,6 +88,10 @@ X86_FLAG_SETTERS = {
   "lzcnt", "tzcnt", "andn", "bzhi", "bextr", "blsi", "blsr", "blsmsk", "adcx", "adox", "xadd", "cmpxchg",
 }
 X86_FLAG_READERS = {"adc", "sbb", "rcl", "rcr", "adcx", "adox"}
+# These branches test the count register instead of the flags. The `loop` forms first decrement it,
+# and `loope`/`loopne` also test ZF.
+X86_COUNT_BRANCHES = {"jcxz", "jecxz", "jrcxz"}
+X86_LOOPS = {"loop", "loope", "loopne"}
 X86_WRITE_ONLY = {"mov", "movabs", "movzx", "movsx", "movsxd", "lea", "movd", "movq", "pop", "andn", "bzhi",
                   "bextr", "blsi", "blsr", "blsmsk", "shlx", "shrx", "sarx", "rorx", "popcnt", "lzcnt", "tzcnt",
                   "bsf", "bsr", "pext", "pdep", "crc32"}
@@ -137,6 +141,10 @@ def x86_effects(row: scanner.DecodedLine, identity: str, caller_saved: set[str] 
   address_uses = set().union(*(x86_registers(operand) for operand in memory)) if memory else set()
   if base in {"nop", "endbr64"} or mnemonic in {"nopw", "nopl", "data16"}:
     return effects(set(), set())
+  if mnemonic in X86_COUNT_BRANCHES:
+    return effects({"rcx"}, set())
+  if mnemonic in X86_LOOPS:
+    return effects({"rcx"} | ({"flags"} if mnemonic != "loop" else set()), {"rcx"})
   if scanner.is_conditional_branch("x86_64-unknown-linux-gnu", mnemonic):
     return effects({"flags"}, set())
   if mnemonic in {"call", "callq"}:

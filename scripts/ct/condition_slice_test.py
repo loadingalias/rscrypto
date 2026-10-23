@@ -84,6 +84,24 @@ def main() -> None:
   ], 3)
   assert spilled.nodes[2]["inputs"] == {"rsp": ["frame"], "mem": ["entry"]}, spilled.canonical
   assert spilled.reasons == [], spilled.reasons
+  # `jrcxz` tests rcx, not the flags: the slice reaches the count and skips the flag setter.
+  counted = slice_of(target, [
+    "1000: 48 89 f9\tmovq\t%rdi, %rcx",
+    "1003: 48 85 c0\ttestq\t%rax, %rax",
+    "1006: e3 01\tjrcxz\t0x1009 <f+0x9>",
+    "1008: 90\tnop",
+    "1009: c3\tretq",
+  ], 3)
+  assert counted.reasons == [] and len(counted.nodes) == 2, counted.canonical
+  assert counted.nodes[0]["inputs"] == {"rcx": ["+0x0"]}, counted.canonical
+  # `loop` decrements rcx and tests it: the count's start and the loop itself reach the condition.
+  looped = slice_of(target, [
+    "1000: b9 04 00 00 00\tmovl\t$0x4, %ecx",
+    "1005: 90\tnop",
+    "1006: e2 fd\tloop\t0x1005 <f+0x5>",
+    "1008: c3\tretq",
+  ], 3)
+  assert looped.nodes[0]["inputs"] == {"rcx": ["+0x0", "+0x6"]}, looped.canonical
   memory_regressions()
 
   # Win64 callees preserve rsi, so its value crosses the call; System V callees may change it.

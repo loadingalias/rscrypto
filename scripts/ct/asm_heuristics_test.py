@@ -142,6 +142,23 @@ def select_branch_regressions() -> None:
     " 18: c3  \tretq",
   ], ["kx.p256_ecdh"]) == [("conditional_branch", "warn"), ("conditional_branch", "warn")]
 
+  # `jrcxz` branches on rcx without reading the flags. The RSA squaring loop uses it as its exit,
+  # and the same instruction can also skip a selection arm.
+  symbol = "count_loop"
+  assert branch_kinds("x86_64-unknown-linux-gnu", symbol, [
+    "  0: 48 83 c1 20  \taddq $0x20, %rcx",
+    f"  4: e3 03  \tjrcxz 0x9 <{symbol}+0x9>",
+    "  6: 90  \tnop",
+    f"  7: eb f7  \tjmp 0x0 <{symbol}>",
+    "  9: c3  \tretq",
+  ], ["kx.p256_ecdh"]) == [("conditional_branch", "warn")]
+  symbol = "count_select"
+  assert branch_kinds("x86_64-unknown-linux-gnu", symbol, [
+    f"  0: e3 05  \tjrcxz 0x7 <{symbol}+0x7>",
+    "  2: b8 01 00 00 00  \tmovl $1, %eax",
+    "  7: c3  \tretq",
+  ], ["kx.p256_ecdh"]) == [("select_branch", "fail")]
+
   # A two-arm diamond really does select data; a call in either arm
   # requires separate control-flow analysis instead of this shape rule.
   diamond = [
@@ -522,6 +539,11 @@ def main() -> None:
   assert identity("1000: 90000000\tadrp\tx0, 0x4000") != identity("1000: 90000020\tadrp\tx0, 0x5000")
   assert identity("1000: d2800020\tmov\tx0, #1") != identity("1000: d2800040\tmov\tx0, #2")
   assert identity("1000: 94000400\tbl\t0x2000") != identity("1000: 94000800\tbl\t0x3000")
+  # x86 `jrcxz` is a resolved direct transfer too: moving its function keeps the identity.
+  target = "x86_64-unknown-linux-gnu"
+  counted = instruction_identity(target, body, "1006: e3 01\tjrcxz\t0x1009 <caller+0x9>", known)
+  assert counted == instruction_identity(target, moved, "3006: e3 01\tjrcxz\t0x3009 <caller+0x9>", known)
+  assert counted != instruction_identity(target, body, "1006: e3 02\tjrcxz\t0x100a <caller+0xa>", known)
   multiply_regressions()
   select_branch_regressions()
   data_reference_regressions()

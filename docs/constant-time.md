@@ -384,6 +384,34 @@ loop, was deleted because that branch is gone. The new diagonal loop has no bran
 x86-64 Linux, Windows, and Apple Silicon needed no change.
 465 waivers remain, and the scanner accepts all seven artifact sets.
 
+### Release review, 2026-10-23
+
+The v0.12.0 [Release 39993945116](https://github.com/loadingalias/rscrypto/actions/runs/39993945116) reran
+Constant-Time at `8818cbca`. Every required DudeCT case passed on all six CI platforms, and five artifact sets passed.
+On x86-64 Linux, one waiver went stale and its branch was reported without a waiver: the outer-loop `cmpq`/`je` at
++0x4ba in `rscrypto_rsa_bn_sqrx8x_internal_x86_64_elf`.
+`65b4d883` added x86-64 code ahead of the RSA assembly in the link, so the function moved 0x40 bytes lower.
+Its bytes and instruction offsets are unchanged.
+`just ct-renew` against the [Constant-Time 39853397151](https://github.com/loadingalias/rscrypto/actions/runs/39853397151)
+artifacts found the same branch with an unchanged slice and the same open leaves.
+The waiver's open slice binds the function hash, and one identity changed it: the `jrcxz` at +0x5f0 kept its
+absolute destination.
+
+The x86 scanner did not classify `jrcxz`, `jecxz`, or `jcxz` as conditional branches,
+so it reported none of them and kept their encoded destinations in the function identity.
+The condition slices also read only the flags for `loop`, `loope`, and `loopne`.
+The scanner now treats the three count-register branches as conditional branches,
+and the slices read rcx for all six forms; the `loop` forms also define it.
+In the CT closures of both x86-64 artifact sets, the only such instruction is the `jrcxz` at
+`src/auth/asm/rscrypto_rsa_x86_64_elf.S:2300`, now a `conditional_branch` finding that needs BINSEC review.
+It ends the shift-and-add loop when the negative byte count, which comes from the public modulus size, reaches zero.
+The 364 decoded `jrcxz` instructions in the four Curve25519 and Edwards25519 base-point functions lie in their
+precomputed `.quad` tables, outside the scanned closures.
+With the fix, the function has the same identity in the `c9bd06a7` and `8818cbca` binaries.
+The waiver was renewed with its reviewed rationale on that identity, and 465 waivers remain.
+The scanner accepts the release run's Linux and Windows x86-64 artifacts with no stale waiver.
+Other targets have no count-register branch and are unchanged.
+
 ## Public decisions and exclusions
 
 Ordinary equality is allowed for public values, such as nonces, encoded public keys,
