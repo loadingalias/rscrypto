@@ -6,6 +6,164 @@ The dated campaign records come first.
 The 2026-08-18 Linux snapshot near the end is historical:
 its aggregate ratios are withdrawn as performance claims (see [Corrections](#corrections)).
 
+## 2026-10-24: L1–L3 qualification after the dependency refresh
+
+This campaign qualifies the standalone Poly1305, BLAKE3 reader, and RSA public-key import changes.
+It uses `nightly-2026-10-24` (rustc `48f4b05538b8`, LLVM 23.1.4) and the refreshed lockfiles.
+The production `src/` tree is unchanged from `5d5f79fc` through the qualification fixes;
+its path-and-content SHA-256 is `907b125989da86a7e5addcf31a4ac44db23824d11f42ace465673ff0d6eb3e7a`.
+Raw samples, source/control receipts, binaries, host observations, and validation logs are retained in
+`benchmark_results/qualification-v013-20261024/`.
+
+### Matched Graviton3 comparison
+
+An isolated Graviton3 host ran v0.12.0 production source and the final source with the same updated
+compiler, dependencies, benchmark harness, features, and profile. Both were built before timing.
+Eight rounds use baseline/candidate/candidate/baseline twice, with source hashes checked before every
+round, 20 samples, 100 ms warm-up, and 400 ms measurement. All 98 cases and every raw sample survive.
+The 493 host observations span 492 seconds: CPU steal is zero and iowait is 0.034%.
+The verified compressed archive and deduplicated binaries were collected before instance and volume deletion.
+
+The estimate below divides the median of four baseline run means by the median of four candidate
+run means. Above 1.00x means the candidate is faster. The range is the spread of four paired ratios
+(1/2, 4/3, 5/6, 8/7), not a confidence interval. No run or sample was discarded.
+
+| Production operation | Candidate time | Baseline/candidate | Paired range |
+| --- | ---: | ---: | ---: |
+| Poly1305, empty message | 10.26 ns | 4.295x | 3.955–4.719x |
+| Poly1305, 64 B | 28.57 ns | 2.850x | 2.833–2.870x |
+| Poly1305, 1 KiB | 302.21 ns | 2.574x | 2.570–2.575x |
+| Poly1305, 16 KiB | 3.723 µs | 3.198x | 3.191–3.202x |
+| BLAKE3 serial reader, 4 KiB | 3.424 µs | 23.096x | 17.847–29.129x |
+| BLAKE3 serial reader, 64 KiB | 48.938 µs | 2.925x | 2.166–3.153x |
+| BLAKE3 serial reader, 1 MiB | 772.908 µs | 1.071x | 1.069–1.129x |
+| BLAKE3 subtree reader, 1 MiB | 773.029 µs | 1.075x | 1.072–1.077x |
+| BLAKE3 parallel reader, 1 MiB | 307.995 µs | 0.963x | 0.855–1.041x |
+| BLAKE3 serial reader, 8 MiB | 6.210 ms | 1.008x | 0.995–1.015x |
+| BLAKE3 parallel reader, 8 MiB | 1.715 ms | 0.999x | 0.984–1.005x |
+| BLAKE3 cold file reader, 1 MiB | 5.657 ms | 0.634x | 0.601–0.677x |
+| BLAKE3 warm file reader, 1 MiB | 440.994 µs | 0.905x | 0.880–1.071x |
+
+The cold file-reader candidate takes about 58% longer on the four-run median; all four pairs
+are slower. That regression remains open
+for profiling. The warm-file and 1 MiB parallel differences cross parity across repeats and do not
+establish a stable loss. The 16 ChaCha20-Poly1305/XChaCha20-Poly1305 copy/encrypt/decrypt controls
+have aggregate ratios from 0.999x through 1.002x. Serial, subtree, parallel, and file-reader workloads
+remain separate; the file case is a whole-file reader, with no distinct read-all-buffer case.
+
+Two earlier G3 attempts are invalid: source synchronization measured baseline source under both
+labels in the first, and an incomplete transfer lost most raw evidence in the second. Their estimates
+are excluded. The retained failure records document both tooling defects and the corrected collection.
+
+### Native comparison subset
+
+[Bench 40128170593](https://github.com/loadingalias/rscrypto/actions/runs/40128170593) is green on
+Intel/AMD Linux, Intel/AMD Windows and Graviton5. Its 25 production runs retain 870 raw cases, all
+with 20 samples and clean final-source receipts. The workflow scorecard has 50 comparisons per lane;
+the filtered subset does not replace the full v0.12 catalog or its historical totals. Settings are
+20 samples, 100 ms warm-up and 400 ms measurement, with quick validation off.
+
+The ranges below are fastest-external/rscrypto ratios across the indicated cases, from the workflow
+scorecard. Above 1.00x means rscrypto is faster. They are neither repeat spread nor a source A/B;
+per-point intervals and exact workloads remain in the scorecard. Poly1305 covers seven lengths;
+BLAKE3 keeps serial, subtree and parallel readers separate in the raw record. RSA import and reuse
+each cover two verification schemes at four key widths; the private control is 2048-bit PSS with
+fresh entropy. Scratch setup at every selected key width is retained as an absolute measurement.
+
+| Platform | Poly1305 (7) | BLAKE3 readers (10) | RSA import (8) | RSA reuse (8) | Private control (1) |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| aarch64-linux | 0.676–2.652x | 1.046–4.886x | 1.081–1.138x | 0.986–1.003x | 0.755x |
+| x86_64-linux-amd | 1.094–3.061x | 0.866–1.144x | 1.171–1.275x | 1.088–1.155x | 0.775x |
+| x86_64-linux-intel | 1.153–3.522x | 0.982–1.892x | 1.171–1.258x | 1.082–1.141x | 0.822x |
+| x86_64-win-amd | 0.963–3.671x | 0.873–1.136x | 0.573–0.753x | 0.482–0.651x | 0.730x |
+| x86_64-win-intel | 1.115–4.035x | 0.857–1.858x | 0.649–0.858x | 0.548–0.750x | 0.811x |
+
+Linux RSA import wins all eight selected comparisons per lane. The Windows public-key gaps remain,
+as does the private-signing control gap on every cloud lane. These results do not authorize moving
+variable-time public division into the private path. On Graviton5, three short Poly1305 comparisons
+remain slower, including the empty message at 0.676x versus dryoc; required secret clearing remains.
+The focused qualification does not close unrelated algorithm or backend losses.
+
+### Matched Apple comparison
+
+The Apple M1 Pro (10 cores, 16 GB, macOS 26.6.2) ran the same production selectors and updated
+controls. The qualified window is eight consecutive fully prebuilt rounds, 3–10, ordered
+candidate/baseline/baseline/candidate twice. The first two rounds rebuilt exact artifacts during
+preparation; they remain retained and are excluded from the qualified window as whole preparation
+rounds. The extra balanced pair and the fixed window were declared before the added timing.
+This decision does not discard individual samples or select runs by performance.
+
+All 174 cases per qualified round retain 20 samples. Source hashes and binary identities match
+each revision. The host stayed on AC power, reported no CPU speed/scheduler limit below 100,
+and its monitor records no compiler, linker, Clippy or nextest activity within the qualified rounds.
+The repository front door resolves/builds every artifact before executing its timed cases; brief
+Cargo metadata work is recorded separately from timed execution. OS activity and normal DVFS
+remain visible in the monitor and repeat spread. The same four-run-median and paired-spread
+method as Graviton3 applies. This subset does not close the separate full-catalog Apple baseline.
+
+| Operation | Candidate time | Baseline/candidate | Paired range |
+| --- | ---: | ---: | ---: |
+| `poly1305/authenticate/rscrypto/0` | 4.472 ns | 3.949x | 3.778–3.992x |
+| `poly1305/authenticate/rscrypto/64` | 15.641 ns | 3.437x | 3.391–3.654x |
+| `poly1305/authenticate/rscrypto/1024` | 163.279 ns | 4.190x | 4.029–4.313x |
+| `poly1305/authenticate/rscrypto/16384` | 2.031 µs | 5.234x | 5.219–5.448x |
+| `blake3/serial/update-reader/rscrypto/4096` | 2.709 µs | 19.667x | 18.960–21.258x |
+| `blake3/serial/update-reader/rscrypto/1048576` | 599.824 µs | 1.051x | 1.019–1.064x |
+| `blake3/parallel/update-reader/rscrypto/1048576` | 604.367 µs | 1.082x | 1.007–1.137x |
+| `rsa-2048/verify-pss-sha256/import-key/rscrypto` | 12.300 µs | 1.435x | 1.407–1.438x |
+| `rsa-8192/verify-pss-sha256/import-key/rscrypto` | 169.326 µs | 1.491x | 1.459–1.538x |
+| `rsa-2048/scratch-setup-rscrypto` | 2.810 µs | 1.927x | 1.916–1.932x |
+| `rsa-8192/scratch-setup-rscrypto` | 34.572 µs | 2.268x | 2.219–2.340x |
+| `rsa-2048-private-signing/sign-pss-sha256/fresh-entropy/rscrypto` | 459.406 µs | 1.003x | 0.961–1.052x |
+
+Exact raw estimates, all ten retained rounds, source/controls and the qualified-window verification
+are in `apple-native/`. Small differences whose repeat spread crosses parity remain unconfirmed.
+
+### POWER qualification subset
+
+[Bench 40130389330](https://github.com/loadingalias/rscrypto/actions/runs/40130389330) is green on
+native POWER10. Its five production runs retain 174 raw cases with 20 samples and clean matching
+source receipts. Its 50 scorecard comparisons use the same settings and definitions as the cloud
+subset. Public-key and private-control losses remain performance follow-ups; qualification does
+not claim those gaps are closed.
+
+| Platform | Poly1305 (7) | BLAKE3 readers (10) | RSA import (8) | RSA reuse (8) | Private control (1) |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| powerpc64le-linux | 0.529–3.266x | 2.555–3.070x | 0.550–0.760x | 0.495–0.668x | 0.704x |
+
+### RISC-V qualification subset
+
+[Bench 40132585825](https://github.com/loadingalias/rscrypto/actions/runs/40132585825) is green on
+native RISC-V. Five production runs retain 174 raw cases, all with 20 samples and clean matching
+source receipts. The scorecard's 50 comparisons use the same settings as the cloud/POWER subsets.
+The private control and some reader/reused-key comparisons remain slower; source qualification
+does not close those separate performance gaps.
+
+| Platform | Poly1305 (7) | BLAKE3 readers (10) | RSA import (8) | RSA reuse (8) | Private control (1) |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| riscv64-linux | 0.840–2.018x | 0.797–1.496x | 0.933–1.158x | 0.838–1.029x | 0.749x |
+
+### IBM Z host allocation
+
+All three native measurement jobs in
+[Bench 40133608798](https://github.com/loadingalias/rscrypto/actions/runs/40133608798) passed.
+The workflow's combined score failed its host-identity guard: the donated hash runner had four CPUs,
+while auth and AEAD had eight. Both report IBM machine `8562`. The five production runs retain
+142 raw cases, each with 20 samples and clean matching source receipts; AWS-LC is absent.
+
+The repository scorer reprocessed the unchanged raw estimates under distinct `s390x-linux-4cpu`
+and `s390x-linux-8cpu` labels. Its existing host-identity check remains active within each label.
+All 50 comparisons are retained, without pooling CPU allocations or claiming one host produced
+all families. `workflow-40133608798/split-host-score-command.json` records the exact command and
+hardware dictionaries. The original workflow remains a reporting failure, with valid native
+measurements; the corrected local score does not relabel it green.
+
+| Platform | Poly1305 (7) | BLAKE3 readers (10) | RSA import (8) | RSA reuse (8) | Private control (1) |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| s390x-linux-4cpu | — | 2.128–2.413x | — | — | — |
+| s390x-linux-8cpu | 1.517–2.760x | — | 4.268–6.960x | 4.147–7.428x | 0.862x |
+
+
 ## 2026-10-23: v0.12.0 release benchmark run
 
 This run measures the v0.12.0 product source on eight CI platforms, on a local Apple M1 Pro,
