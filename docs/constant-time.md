@@ -475,6 +475,24 @@ failure. This is compiled-code review, not native timing evidence. Full Constant
 updated source remains pending. The local review decisions and linked disassembly identities are retained in
 `benchmark_results/qualification-v013-20261024/apple-ct-renewal/`.
 
+### Final-source condition review, 2026-10-24
+
+The updated source required another review of 109 exact condition identities: 24 on Linux AArch64,
+28 on POWER, 19 on IBM Z, 11 on RISC-V, and 27 on Linux x86-64. Each renewal follows the current
+linked operands, saved metadata, frame ranges, and intervening call contracts. Cleanup conditions
+retain their public pointer and length classification; PSS bit masks, RSA fixed-window tails, IFMA
+table bounds, and harness output guards retain their existing scope. The review also classifies one
+new POWER branch on the second half of a public P-256 curve-equation comparison. Secret scalar
+construction follows public-point validation and does not feed that condition.
+
+The manifest now has 457 waivers. This changes exact artifact identities and adds that one public
+point-validation condition; primitive claims, exclusions, allowed disclosures, and gate thresholds
+stay unchanged. The review inputs, individual decisions, linked binaries, and fresh scanner reports
+are retained in `benchmark_results/qualification-v013-20261024/ct-*-renewal/` and its `zeroization/`
+subdirectory. The Linux x86-64 probe retains its dirty transfer provenance; its production Rust source
+matches the final source, while omitted benchmark records and fuzz corpora were not build inputs.
+These static reviews do not substitute for the complete native Constant-Time workflow.
+
 ## Public decisions and exclusions
 
 Ordinary equality is allowed for public values, such as nonces, encoded public keys,
