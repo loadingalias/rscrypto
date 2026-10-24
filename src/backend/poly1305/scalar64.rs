@@ -209,7 +209,7 @@ impl State {
 
   /// `value·r` for a value with a top word <= 4, normalized; used to derive key powers.
   #[cfg(any(
-    target_arch = "x86_64",
+    all(target_arch = "x86_64", target_feature = "sse2"),
     all(target_arch = "aarch64", target_endian = "little", target_feature = "neon")
   ))]
   #[inline(always)]

@@ -322,6 +322,7 @@ pub(crate) mod standalone;
 #[cfg(all(
   feature = "poly1305",
   target_arch = "x86_64",
+  target_feature = "sse2",
   target_pointer_width = "64",
   not(feature = "portable-only")
 ))]

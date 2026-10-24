@@ -19,12 +19,12 @@ pub(crate) struct Engine(Inner);
 #[cfg(all(target_pointer_width = "64", not(feature = "portable-only")))]
 const LONG_MIN_BLOCKS: usize = {
   let wide = super::scalar64::WIDE_MIN_BLOCKS;
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   let vector = super::x86_64_ifma::MIN_BLOCKS;
   #[cfg(all(target_arch = "aarch64", target_endian = "little", target_feature = "neon"))]
   let vector = super::aarch64_neon::MIN_BLOCKS;
   #[cfg(not(any(
-    target_arch = "x86_64",
+    all(target_arch = "x86_64", target_feature = "sse2"),
     all(target_arch = "aarch64", target_endian = "little", target_feature = "neon")
   )))]
   let vector = wide;
@@ -33,7 +33,7 @@ const LONG_MIN_BLOCKS: usize = {
 
 #[cfg(all(
   any(
-    target_arch = "x86_64",
+    all(target_arch = "x86_64", target_feature = "sse2"),
     all(target_arch = "aarch64", target_endian = "little", target_feature = "neon")
   ),
   target_pointer_width = "64",
@@ -73,7 +73,7 @@ impl Engine {
   /// vector kernels' register saves out of the short path.
   #[inline(never)]
   fn absorb_long(&mut self, blocks: &[[u8; 16]]) {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     if blocks.len() >= super::x86_64_ifma::MIN_BLOCKS {
       use crate::platform::caps::x86;
       let caps = current_caps();
@@ -285,7 +285,7 @@ mod tests {
   }
 
   #[test]
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   fn avx512_ifma_matches_portable() {
     use crate::platform::caps::x86;
     if !crate::platform::caps().has(x86::AVX512F.union(x86::AVX512IFMA)) {
