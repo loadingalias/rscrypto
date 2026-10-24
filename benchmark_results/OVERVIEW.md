@@ -37,8 +37,10 @@ with `benchmarks=all` on fixed On-Demand hosts: `c8i.2xlarge` (Intel Granite Rap
 (AMD Zen 5) for Linux and Windows, `c9g.2xlarge` (Graviton5), and the native POWER10, IBM Z, and RISC-V runners.
 POWER10, IBM Z, and RISC-V ran binaries that x86-64 compiled for them.
 The scorecard comes from the run's own measurement archives, scored by the workflow's scorer.
-RISC-V's `auth` family (RSA, elliptic curves, ML-KEM, ML-DSA, SLH-DSA, KDFs, MACs, and password hashing)
-was still measuring when this record was written; its points are added when it completes.
+RISC-V's completed `auth` family was collected on 2026-10-24 from the same run and attempt.
+The final scorecard adds 492 RISC-V comparison points and leaves every previously recorded point unchanged.
+Its raw archive is retained with the release run at
+`benchmark_results/release-v012-bench/39888945058/bench-riscv64-linux-auth-39888945058-1.tar.gz`.
 
 The local Apple Silicon row is a separate run of the same CI plan on an Apple M1 Pro
 (10 cores, 16 GB, macOS 26.6.2) at `4eb11c24`.
@@ -57,7 +59,7 @@ Headline comparisons:
 | Graviton5 Linux (`c9g`) | 914 | 379 | 284 | 251 | 1.03x | 1.21x |
 | POWER10 Linux | 914 | 414 | 314 | 186 | 1.03x | 1.38x |
 | IBM Z Linux | 911 | 726 | 90 | 95 | 2.31x | 3.07x |
-| RISC-V Linux | 603 | 251 | 189 | 163 | 1.02x | 1.07x |
+| RISC-V Linux | 914 | 406 | 276 | 232 | 1.03x | 1.08x |
 | Apple M1 Pro (local) | 914 | 380 | 381 | 153 | 1.03x | 1.24x |
 
 On IBM Z, `rscrypto` uses its CPACF and vector backends where they exist, the competitors are portable,
@@ -68,65 +70,65 @@ Headline geometric mean by family:
 | Family | Intel Linux | AMD Linux | Intel Win | AMD Win | Graviton5 | POWER10 | IBM Z | RISC-V | Apple |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | AEAD | 1.20x | 1.36x | 1.35x | 1.43x | 1.31x | 1.30x | 5.57x | 0.95x | 1.18x |
-| Argon2 | 1.19x | 0.97x | 1.22x | 0.97x | 0.99x | 0.75x | 0.80x | — | 1.03x |
+| Argon2 | 1.19x | 0.97x | 1.22x | 0.97x | 0.99x | 0.75x | 0.80x | 1.14x | 1.03x |
 | Ascon | 1.06x | 1.02x | 1.06x | 1.07x | 1.04x | 1.01x | 1.01x | 1.02x | 1.06x |
 | BLAKE2 | 0.96x | 0.55x | 0.93x | 0.57x | 0.92x | 0.99x | 1.00x | 1.06x | 1.04x |
 | BLAKE3 | 0.95x | 0.97x | 0.92x | 1.01x | 1.02x | 1.48x | 1.40x | 0.95x | 0.96x |
 | CRC | 7.33x | 6.30x | 7.51x | 6.49x | 4.88x | 11.75x | 7.92x | 1.57x | 5.49x |
-| ECDH | 1.31x | 1.28x | 2.42x | 2.66x | 1.01x | 1.28x | 0.12x | — | 0.97x |
-| ECDSA | 1.05x | 0.99x | 1.08x | 1.09x | 1.43x | 1.73x | 0.69x | — | 1.40x |
-| Ed25519 | 0.88x | 0.99x | 0.98x | 1.18x | 0.97x | 0.80x | 1.05x | — | 1.01x |
-| HKDF | 1.14x | 1.15x | 1.06x | 1.15x | 1.09x | 1.03x | 2.60x | — | 1.06x |
-| HMAC-SHA-2 | 1.01x | 1.01x | 0.95x | 1.02x | 0.96x | 0.94x | 5.04x | — | 1.00x |
-| HMAC-SHA-3 | 0.90x | 1.00x | 1.00x | 1.15x | 0.89x | 1.33x | 9.33x | — | 1.02x |
-| KMAC | 0.98x | 1.12x | 0.97x | 1.07x | 1.00x | 0.93x | 3.77x | — | 1.31x |
-| ML-DSA | 0.89x | 0.85x | 0.49x | 0.41x | 1.23x | 1.38x | 1.59x | — | 1.24x |
-| ML-KEM | 1.47x | 1.56x | 1.74x | 1.55x | 1.36x | 1.09x | 1.56x | — | 1.05x |
-| PBKDF2 | 1.22x | 1.18x | 1.14x | 1.23x | 1.06x | 1.08x | 2.57x | — | 0.99x |
-| Poly1305 | 0.40x | 0.44x | 0.41x | 0.47x | 0.36x | 0.47x | 0.65x | — | 0.30x |
-| RSA | 0.93x | 0.94x | 0.65x | 0.60x | 0.84x | 0.52x | 2.68x | — | 1.01x |
+| ECDH | 1.31x | 1.28x | 2.42x | 2.66x | 1.01x | 1.28x | 0.12x | 0.65x | 0.97x |
+| ECDSA | 1.05x | 0.99x | 1.08x | 1.09x | 1.43x | 1.73x | 0.69x | 1.21x | 1.40x |
+| Ed25519 | 0.88x | 0.99x | 0.98x | 1.18x | 0.97x | 0.80x | 1.05x | 0.94x | 1.01x |
+| HKDF | 1.14x | 1.15x | 1.06x | 1.15x | 1.09x | 1.03x | 2.60x | 1.09x | 1.06x |
+| HMAC-SHA-2 | 1.01x | 1.01x | 0.95x | 1.02x | 0.96x | 0.94x | 5.04x | 1.00x | 1.00x |
+| HMAC-SHA-3 | 0.90x | 1.00x | 1.00x | 1.15x | 0.89x | 1.33x | 9.33x | 1.14x | 1.02x |
+| KMAC | 0.98x | 1.12x | 0.97x | 1.07x | 1.00x | 0.93x | 3.77x | 1.05x | 1.31x |
+| ML-DSA | 0.89x | 0.85x | 0.49x | 0.41x | 1.23x | 1.38x | 1.59x | 0.81x | 1.24x |
+| ML-KEM | 1.47x | 1.56x | 1.74x | 1.55x | 1.36x | 1.09x | 1.56x | 1.20x | 1.05x |
+| PBKDF2 | 1.22x | 1.18x | 1.14x | 1.23x | 1.06x | 1.08x | 2.57x | 1.17x | 0.99x |
+| Poly1305 | 0.40x | 0.44x | 0.41x | 0.47x | 0.36x | 0.47x | 0.65x | 0.79x | 0.30x |
+| RSA | 0.93x | 0.94x | 0.65x | 0.60x | 0.84x | 0.52x | 2.68x | 0.82x | 1.01x |
 | RapidHash | 1.13x | 1.05x | 1.19x | 1.06x | 1.19x | 1.21x | 1.03x | 0.84x | 0.88x |
 | SHA-2 | 1.05x | 1.08x | 1.09x | 1.04x | 1.04x | 1.02x | 5.63x | 1.05x | 1.07x |
 | SHA-3 | 0.93x | 1.06x | 0.96x | 1.08x | 0.94x | 1.55x | 6.83x | 1.37x | 0.97x |
 | SHAKE | 0.92x | 1.07x | 0.97x | 1.08x | 0.92x | 0.95x | 3.78x | 1.13x | 0.95x |
-| SLH-DSA | 1.59x | 1.69x | 1.53x | 1.60x | 1.52x | 1.48x | 1.86x | — | 1.29x |
-| X25519 | 1.02x | 1.06x | 0.89x | 0.94x | 1.01x | 0.58x | 0.86x | — | 1.01x |
+| SLH-DSA | 1.59x | 1.69x | 1.53x | 1.60x | 1.52x | 1.48x | 1.86x | 1.66x | 1.29x |
+| X25519 | 1.02x | 1.06x | 0.89x | 0.94x | 1.01x | 0.58x | 0.86x | 0.82x | 1.01x |
 | XXH3 | 0.82x | 0.75x | 0.84x | 0.74x | 0.95x | 1.19x | 1.39x | 0.74x | 0.98x |
-| cSHAKE | 0.99x | 1.13x | 0.98x | 1.09x | 1.01x | 0.95x | 3.95x | — | 1.34x |
-| scrypt | 0.96x | 0.99x | 0.93x | 1.01x | 1.14x | 1.17x | 1.34x | — | 1.12x |
+| cSHAKE | 0.99x | 1.13x | 0.98x | 1.09x | 1.01x | 0.95x | 3.95x | 1.07x | 1.34x |
+| scrypt | 0.96x | 0.99x | 0.93x | 1.01x | 1.14x | 1.17x | 1.34x | 1.56x | 1.12x |
 
 Other comparisons, geometric mean by family:
 
 | Family | Intel Linux | AMD Linux | Intel Win | AMD Win | Graviton5 | POWER10 | IBM Z | RISC-V | Apple |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | AEAD | 0.83x | 0.88x | 0.87x | 0.93x | 1.17x | 1.54x | 5.84x | 0.94x | 1.22x |
-| Argon2 | 1.19x | 1.26x | 1.28x | 1.25x | 0.86x | 0.64x | 0.82x | — | 0.95x |
+| Argon2 | 1.19x | 1.26x | 1.28x | 1.25x | 0.86x | 0.64x | 0.82x | 1.09x | 0.95x |
 | BLAKE2 | 0.96x | 0.61x | 0.91x | 0.66x | 1.01x | 0.94x | 0.96x | 0.98x | 1.02x |
 | BLAKE3 | 0.98x | 1.05x | 0.95x | 1.04x | 0.95x | 1.55x | 1.37x | 0.93x | 0.93x |
 | BLAKE3 multi-thread | 0.87x | 0.86x | 0.74x | 0.88x | 1.01x | 1.37x | 1.15x | 0.77x | 0.86x |
 | CRC | 2.45x | 1.73x | 2.57x | 1.74x | 2.00x | 4.82x | 1.57x | 0.81x | 2.42x |
-| ECDH | 1.70x | 1.76x | 2.39x | 2.70x | 2.05x | 1.71x | 0.07x | — | 2.27x |
-| ECDSA | 1.41x | 1.30x | 1.72x | 1.78x | 1.71x | 2.57x | 1.96x | — | 1.51x |
-| Ed25519 | 1.90x | 2.49x | 1.68x | 1.86x | 1.04x | 1.00x | 1.06x | — | 1.06x |
-| HKDF | 1.07x | 1.07x | 1.06x | 1.15x | 1.09x | 0.98x | 2.25x | — | 1.07x |
-| HMAC-SHA-2 | 1.01x | 1.00x | 0.96x | 1.00x | 0.98x | 0.91x | 3.55x | — | 0.95x |
-| ML-DSA | 2.67x | 3.01x | 0.96x | 0.95x | 4.68x | 2.75x | 4.12x | — | 5.22x |
-| ML-DSA equal key depth | 1.68x | 1.71x | 0.67x | 0.60x | 3.36x | 1.93x | 2.24x | — | 3.24x |
-| ML-KEM | 1.52x | 1.42x | 1.53x | 1.37x | 1.63x | 1.31x | 1.63x | — | 1.02x |
-| ML-KEM equal key depth | 1.13x | 1.03x | 1.15x | 1.00x | 1.34x | 1.23x | 1.31x | — | 0.81x |
-| PBKDF2 | 1.26x | 1.27x | 1.24x | 1.30x | 1.03x | 1.30x | 3.43x | — | 1.11x |
+| ECDH | 1.70x | 1.76x | 2.39x | 2.70x | 2.05x | 1.71x | 0.07x | 1.03x | 2.27x |
+| ECDSA | 1.41x | 1.30x | 1.72x | 1.78x | 1.71x | 2.57x | 1.96x | 1.99x | 1.51x |
+| Ed25519 | 1.90x | 2.49x | 1.68x | 1.86x | 1.04x | 1.00x | 1.06x | 1.21x | 1.06x |
+| HKDF | 1.07x | 1.07x | 1.06x | 1.15x | 1.09x | 0.98x | 2.25x | 1.03x | 1.07x |
+| HMAC-SHA-2 | 1.01x | 1.00x | 0.96x | 1.00x | 0.98x | 0.91x | 3.55x | 0.99x | 0.95x |
+| ML-DSA | 2.67x | 3.01x | 0.96x | 0.95x | 4.68x | 2.75x | 4.12x | 1.42x | 5.22x |
+| ML-DSA equal key depth | 1.68x | 1.71x | 0.67x | 0.60x | 3.36x | 1.93x | 2.24x | 1.07x | 3.24x |
+| ML-KEM | 1.52x | 1.42x | 1.53x | 1.37x | 1.63x | 1.31x | 1.63x | 1.40x | 1.02x |
+| ML-KEM equal key depth | 1.13x | 1.03x | 1.15x | 1.00x | 1.34x | 1.23x | 1.31x | 1.26x | 0.81x |
+| PBKDF2 | 1.26x | 1.27x | 1.24x | 1.30x | 1.03x | 1.30x | 3.43x | 1.38x | 1.11x |
 | QUIC header protection | 0.74x | 0.71x | 0.69x | 0.67x | 0.99x | 0.66x | 4.71x | 0.77x | 0.67x |
-| RSA | 2.21x | 2.32x | 1.81x | 1.82x | 2.04x | 1.38x | 1.82x | — | 2.11x |
+| RSA | 2.21x | 2.32x | 1.81x | 1.82x | 2.04x | 1.38x | 1.82x | 1.69x | 2.11x |
 | RapidHash | 1.11x | 0.98x | 1.07x | 0.94x | 0.96x | 1.06x | 1.02x | 1.04x | 1.02x |
 | SHA-2 | 0.99x | 1.02x | 1.06x | 0.99x | 1.01x | 0.99x | 5.46x | 1.05x | 1.01x |
 | SHA-3 | 0.91x | 1.04x | 0.97x | 1.08x | 0.89x | 1.56x | 7.14x | 1.42x | 0.99x |
 | SHAKE | 0.90x | 1.02x | 0.98x | 1.09x | 0.82x | 1.00x | 1.09x | 1.09x | 0.93x |
-| SLH-DSA | 1.90x | 2.06x | 1.91x | 2.04x | 2.90x | 1.90x | 2.01x | — | 4.25x |
+| SLH-DSA | 1.90x | 2.06x | 1.91x | 2.04x | 2.90x | 1.90x | 2.01x | 2.09x | 4.25x |
 | WebSocket SHA-1 | 1.33x | 1.10x | 1.21x | 1.10x | 1.22x | 0.63x | 1.10x | 1.11x | 1.00x |
 | XXH3 | 0.87x | 0.76x | 0.79x | 0.62x | 0.91x | 1.17x | 1.33x | 1.13x | 0.96x |
 | XXH3 x86-64 baseline build | 0.95x | 1.04x | 0.98x | 1.05x | 0.95x | 1.19x | 1.39x | 0.74x | 0.98x |
 | XXH3 x86-64-v4 build | 0.89x | 0.92x | 0.90x | 0.95x | — | — | — | — | — |
-| scrypt | 0.96x | 0.99x | 0.94x | 1.01x | 1.16x | 1.17x | 1.25x | — | 1.11x |
+| scrypt | 0.96x | 0.99x | 0.94x | 1.01x | 1.16x | 1.17x | 1.25x | 1.51x | 1.11x |
 
 ### TLS 1.3 and QUIC through `rscrypto-rustls`
 
@@ -198,7 +200,6 @@ Read-only triage on the M1 Pro and source checks traced the largest losses. None
 - One run per platform at half the default sampling time. Shared cloud hosts can still have noisy neighbors.
 - Every x86-64 CI host has AVX-512 IFMA, so the AVX2-only x86-64 paths are not measured.
   No lane measures WebAssembly, Windows on AArch64, or macOS in CI.
-- RISC-V lacks its `auth` points until that job completes.
 - The Apple run is unqualified local evidence, as described above.
 
 Raw results: the run's `bench-<platform>-<family>-39888945058-1` artifacts and, locally,
