@@ -674,10 +674,14 @@ Workflows refer to profile names, and do not override their shapes.
 
 - CI, CT, and benchmark cross-builds have separate profiles.
   So do native CI, fuzzing, and CT measurement.
-- Ordinary jobs use price-capacity-optimized Spot.
-  CI cross-build preparation, the native x86-64 Linux, AArch64 Linux, and Windows x86-64 CI rows,
-  and the Fuzz workflow's fuzz and Miri jobs use On-Demand, because Spot reclaims cancelled them.
+- Release and every AWS profile used by its called CI and CT workflows use On-Demand.
+  This includes planning, cross-build preparation, package verification, compatibility,
+  and publication.
+  The workflow regression tests resolve the complete runner graph,
+  including the generated CT matrix, and require explicit `spot: false` without job-label overrides.
+- Fuzz and Miri also use On-Demand.
   CT and benchmark measurement use separate fixed On-Demand profiles.
+- Only benchmark cross-build preparation uses price-capacity-optimized Spot.
 - Cargo Rail cache setup and reporting are enabled only for native x86-64
   and Arm64 Linux compilation, and for the three x86-64 cross-build producers.
   Execution-only target jobs, and the CT, fuzz, benchmark, and profile workflows, stay cold.

@@ -1,5 +1,6 @@
 #!/usr/bin/env -S uv run python
 """Exercise shared preparation actions and protect their qualification boundaries."""
+import json
 import os
 from pathlib import Path
 import re
@@ -16,6 +17,7 @@ ROOT = Path(__file__).resolve().parents[2]
 ACTION = './.github/actions/cross-build/'
 sys.path.insert(0, str(ROOT / 'scripts/bench'))
 import ci as bench_ci  # noqa: E402
+from ci_platforms import PLATFORMS  # noqa: E402
 
 
 def read_yaml(path):
@@ -277,6 +279,54 @@ class CrossWorkflow(unittest.TestCase):
                     demand['on-demand' if runner['spot'] == 'false' else 'spot'] += int(runner['cpu'])
                 for pool, vcpus in demand.items():
                     self.assertLessEqual(vcpus, quotas[pool], pool)
+
+    def test_every_release_aws_runner_is_explicitly_on_demand(self):
+        runners = yaml.safe_load((ROOT / '.github/runs-on.yml').read_text())['runners']
+        release = read_yaml('.github/workflows/release.yml')
+        # Execute CT's production planner: its matrix is not written in workflow YAML.
+        subprocess.run([sys.executable, str(ROOT / 'scripts/ct/ci.py'), 'plan'], check=True,
+                       env={**self.env, 'INPUT_ARCHITECTURES': release['jobs']['ct']['with']['architectures'],
+                            'DIAGNOSTIC_CASE': '', 'GITHUB_RUN_ID': '42'}, capture_output=True, text=True)
+        outputs = dict(line.split('=', 1) for line in self.output.read_text().splitlines())
+        ct_rows = json.loads(outputs['matrix'])['include']
+        # RISC-V is dispatched by CI and CT rather than called as a reusable workflow.
+        pending = ['.github/workflows/release.yml', '.github/workflows/riscv.yml']
+        visited, labels = set(), set()
+        while pending:
+            path = pending.pop()
+            if path in visited:
+                continue
+            visited.add(path)
+            for name, job in read_yaml(path)['jobs'].items():
+                if 'uses' in job:
+                    self.assertTrue(job['uses'].startswith('./.github/workflows/'), job['uses'])
+                    pending.append(job['uses'].removeprefix('./'))
+                    continue
+                label = job['runs-on']
+                if label == '${{ matrix.runner }}':
+                    matrix = job['strategy']['matrix']
+                    if isinstance(matrix, dict):
+                        rows = matrix['include']
+                    else:
+                        self.assertEqual((path, name), ('.github/workflows/ct.yml', 'ct'))
+                        rows = ct_rows
+                    labels.update(row['runner'] for row in rows)
+                else:
+                    labels.add(label)
+        native_labels = {'ubuntu-24.04', *(runner for runner, _ in PLATFORMS.values()
+                                         if not runner.startswith('measure-'))}
+        profiles = set()
+        for label in labels:
+            if label in native_labels:
+                continue
+            match = re.fullmatch(r'runs-on=[^/]+/runner=([^/]+)/env=production', label)
+            self.assertIsNotNone(match, f'Unresolved or overridden Release runner: {label}')
+            profiles.add(match[1])
+        self.assertTrue(profiles)
+        for profile in sorted(profiles):
+            with self.subTest(profile=profile):
+                self.assertIs(runners[profile].get('spot'), False,
+                              f'Release runner {profile} must explicitly disable Spot')
 
     def test_ct_preparation_failure_keeps_diagnostics_out_of_transfer(self):
         jobs = read_yaml('.github/workflows/ct.yml')['jobs']

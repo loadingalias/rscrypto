@@ -16,12 +16,13 @@ images:
     platform: windows
     arch: x64
     ami: ami-03d64564ec4b4e7fa
+# Release and every profile used by its called CI/CT workflows require spot: false.
 runners:
   plan:
     family: [c7a.large, c7i.large, c8a.large, c8i.large]
     cpu: 2
     image: ubuntu24-minimal-x64
-    spot: price-capacity-optimized
+    spot: false
     volume: 40gb:gp3
   # On-Demand: a spot reclaim (BidEvictedEvent 14:25:39Z) failed this job of
   # Fuzz 39967503881 during its RSA proofs.
@@ -35,13 +36,13 @@ runners:
     family: [c7a.xlarge, c7i.xlarge, c8a.xlarge, c8i.xlarge]
     cpu: 4
     image: rscrypto-ci-linux-x64
-    spot: price-capacity-optimized
+    spot: false
     volume: 100gb:gp3
   compatibility:
     family: [c7a.2xlarge, c7i.2xlarge, c8a.2xlarge, c8i.2xlarge]
     cpu: 8
     image: rscrypto-ci-linux-x64
-    spot: price-capacity-optimized
+    spot: false
     volume: 150gb:gp3
   # On-Demand: the RISC-V, POWER and IBM Z rows wait on these ~20-minute builds, and
   # spot reclaims (BidEvictedEvent) cancelled them twice in CI 38298834264.
@@ -55,7 +56,7 @@ runners:
     family: [c7a.2xlarge, c7i.2xlarge, c8a.2xlarge, c8i.2xlarge]
     cpu: 8
     image: rscrypto-ci-linux-x64
-    spot: price-capacity-optimized
+    spot: false
     volume: 150gb:gp3
   # The bench profile links each target with one codegen unit and fat LTO, so more cores add little.
   # Bench starts one per cross target and primitive family at once;
