@@ -47,6 +47,10 @@ pub trait FastHash {
   }
 
   /// Compute the hash of `data` using `seed`.
+  ///
+  /// A seed selects a deterministic variant; it is not a key. Unless an
+  /// implementation documents otherwise, a secret seed does not prevent
+  /// chosen-input collisions.
   #[must_use]
   fn hash_with_seed(seed: Self::Seed, data: &[u8]) -> Self::Output;
 }

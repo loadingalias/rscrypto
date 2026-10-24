@@ -29,6 +29,9 @@ impl RapidStreamHasher {
   }
 
   /// Create a hasher with `seed`.
+  ///
+  /// As with [`RapidHash64::hash_with_seed`](super::RapidHash64::hash_with_seed),
+  /// the seed is not a key and does not resist chosen-input collisions.
   #[inline(always)]
   #[must_use]
   pub const fn with_seed(seed: u64) -> Self {
@@ -358,6 +361,11 @@ impl Hasher for RapidHasher {
 }
 
 /// Deterministic [`BuildHasher`] for reproducible, trusted collection keys.
+///
+/// The seed does not protect a map from chosen keys. Every seed keeps
+/// RapidHash's public secrets, so families of keys share one hash under every
+/// seed, even a secret one. Use [`RapidRandomState`] when an attacker can
+/// choose keys.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RapidSeededState {
   seed: u64,
@@ -480,6 +488,45 @@ mod tests {
           "entropy={entropy:#x}, len={len}"
         );
       }
+    }
+  }
+
+  /// `RapidSeededState` keeps the public secrets, so each key family below has one hash under
+  /// every seed: a 16-byte key whose first word cancels `secrets[1]`, and a field pair whose second
+  /// word cancels `secrets[0]` in the integer mix. `RapidRandomState` separates both families.
+  #[test]
+  fn seed_does_not_separate_public_secret_families_but_random_state_does() {
+    let tails = [0, 1, 0x0123_4567_89ab_cdef, u64::MAX];
+    let slice_key = |tail: u64| {
+      let mut key = [0u8; 16];
+      key[..8].copy_from_slice(&DEFAULT_SECRETS[1].to_le_bytes());
+      key[8..].copy_from_slice(&tail.to_le_bytes());
+      key
+    };
+    let pair_key = |first: u64| (first, DEFAULT_SECRETS[0]);
+
+    let slice_hash = RapidSeededState::new(0).hash_one(slice_key(0).as_slice());
+    for seed in [0, 1, u64::MAX, 0x243f_6a88_85a3_08d3] {
+      let state = RapidSeededState::new(seed);
+      for tail in tails {
+        assert_eq!(
+          state.hash_one(slice_key(tail).as_slice()),
+          slice_hash,
+          "seed={seed:#x}, tail={tail:#x}"
+        );
+        assert_eq!(state.hash_one(pair_key(tail)), 0, "seed={seed:#x}, first={tail:#x}");
+      }
+    }
+
+    let state = random_state(1);
+    for hashes in [
+      tails.map(|tail| state.hash_one(slice_key(tail).as_slice())),
+      tails.map(|tail| state.hash_one(pair_key(tail))),
+    ] {
+      let mut distinct = hashes.to_vec();
+      distinct.sort_unstable();
+      distinct.dedup();
+      assert_eq!(distinct.len(), tails.len(), "random secrets must separate {hashes:x?}");
     }
   }
 

@@ -61,6 +61,11 @@ impl RapidHash64 {
   }
 
   /// Hash `data` with the C++-compatible V3 seed schedule.
+  ///
+  /// The seed is not a key. Every seed keeps RapidHash's public secrets, so
+  /// families of inputs share one hash under every seed, and a secret seed does
+  /// not resist hash flooding. Hash keys that an attacker can choose with
+  /// [`RapidRandomState`].
   #[inline]
   #[must_use]
   pub const fn hash_with_seed(seed: u64, data: &[u8]) -> u64 {
@@ -305,7 +310,7 @@ mod tests {
   #[cfg(not(miri))]
   use proptest::prelude::*;
 
-  use super::RapidHash64;
+  use super::{DEFAULT_SECRETS, RapidHash64};
 
   const CONST_EMPTY: u64 = RapidHash64::hash(b"");
   const CONST_SEEDED: u64 = RapidHash64::hash_with_seed(42, b"const RapidHash");
@@ -342,6 +347,32 @@ mod tests {
           reference(seed, &input),
           "seed={seed:#x}, len={len}"
         );
+      }
+    }
+  }
+
+  /// A seed never changes RapidHash's public secrets. A key whose final multiply word cancels
+  /// `secrets[1]` zeroes that product, so each length has one hash for every seed and every
+  /// other byte. The seeded APIs document this; a change that claims more must change this test.
+  #[test]
+  fn seed_does_not_separate_public_secret_families() {
+    for len in [16usize, 24, 64, 112] {
+      let word = DEFAULT_SECRETS[1] ^ if len > 16 { len as u64 } else { 0 };
+      let at = len.strict_sub(16);
+      let key = |fill: u8| {
+        let mut key = alloc::vec![fill; len];
+        key[at..at.strict_add(8)].copy_from_slice(&word.to_le_bytes());
+        key
+      };
+      let expected = RapidHash64::hash_with_seed(0, &key(0));
+      for seed in [1, u64::MAX, 0x243f_6a88_85a3_08d3] {
+        for fill in [0x00, 0x5a, 0xff] {
+          assert_eq!(
+            RapidHash64::hash_with_seed(seed, &key(fill)),
+            expected,
+            "len={len}, seed={seed:#x}, fill={fill:#x}"
+          );
+        }
       }
     }
   }
