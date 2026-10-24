@@ -136,7 +136,7 @@ def validate(data):
                               ('ci-fuzz', {'just', 'cargo-fuzz'}),
                               ('ci-ct', {'just', 'cargo-nextest'}),
                               ('ci-miri', {'just'}),
-                              ('ci-package', {'just'}),
+                              ('ci-package', {'just', 'cargo-semver-checks'}),
                               ('ci-bench', {'just'})):
         if set(data[profile]['cargo']) != required:
             raise ValueError(f'{profile}: incorrect CI tool set')

@@ -376,6 +376,9 @@ just release
 (`gh workflow run release.yml --ref main -f bump=<bump>`).
 The workflow also accepts `dry-run: true` to run every check in CI without any effect.
 
+- The preflight installs and verifies the packaging toolchain, including the catalog-pinned `cargo-semver-checks`,
+  before CI and CT start.
+  The final release job installs and verifies the same profile.
 - The preflight requires the newest `rscrypto/macos` status of the source commit to pass
   for its tree and compiler.
 - It also requires the latest explicitly started Fuzz run on that exact source commit to pass,
@@ -392,8 +395,12 @@ The workflow also accepts `dry-run: true` to run every check in CI without any e
   Only this job gets registry authentication and write access to the repository contents.
 
 After an interruption, run the workflow again with the same bump.
-cargo-rail reads the tag, crates.io, and GitHub, and finishes only the missing steps.
-It never moves an existing tag. It counts a published version as done only when the package names the release commit.
+The release command reads the tag, crates.io, and GitHub, and finishes only the missing steps.
+It never moves an existing tag.
+It counts a published version as done only when the package names the release commit.
+
+If the fix changes the workflow or installer, qualify the new commit and start a new Release run.
+Re-running a failed job uses the original commit, so it does not pick up that fix.
 
 ## Security and test evidence
 

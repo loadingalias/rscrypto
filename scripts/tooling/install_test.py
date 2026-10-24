@@ -295,7 +295,9 @@ class LinuxInstall(unittest.TestCase):
         result, calls, _ = self.provision('x86_64-linux', profile='ci-package')
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         installs = [c for c in calls if c[0] == 'cargo' and 'binstall' in c]
-        self.assertEqual([c[-1] for c in installs], [f"just@{CATALOG['cargo']['just']}"])
+        self.assertEqual([c[-1] for c in installs],
+                         [f"{tool}@{CATALOG['cargo'][tool]}" for tool in ('just', 'cargo-semver-checks')])
+        self.assertTrue(any(c[0] == 'cargo' and c[-2:] == ['semver-checks', '--version'] for c in calls))
         self.assertEqual(package_installs(calls), [CATALOG['linux-ci']['packages']])
         compiler_installs = [c for c in python(calls) if '--install' in c]
         self.assertEqual(len(compiler_installs), 1)

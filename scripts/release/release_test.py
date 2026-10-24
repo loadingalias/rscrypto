@@ -133,6 +133,16 @@ class Release(unittest.TestCase):
         self.assertEqual(jobs['preflight']['permissions']['actions'], 'read')
         self.assertTrue(any('scripts/release/release.py preflight' in step.get('run', '')
                             for step in jobs['preflight']['steps']))
+        installer = 'scripts/tooling/x86_64-linux.sh --ci-package'
+        for job in ('preflight', 'release'):
+            steps = jobs[job]['steps']
+            install = next(index for index, step in enumerate(steps) if installer in step.get('run', ''))
+            self.assertIn('source "$HOME/.local/share/rscrypto-tooling/environment.sh"', steps[install]['run'])
+            self.assertIn('>>"$GITHUB_ENV"', steps[install]['run'])
+            gate = next(index for index, step in enumerate(steps)
+                        if 'scripts/release/release.py preflight' in step.get('run', '')
+                        or step.get('id') == 'release')
+            self.assertLess(install, gate)
         self.assertEqual(jobs['ci']['needs'], 'preflight')
         self.assertEqual(jobs['ct']['needs'], 'preflight')
         self.assertEqual(set(jobs['release']['needs']), {'ci', 'ct'})

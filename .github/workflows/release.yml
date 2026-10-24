@@ -30,7 +30,7 @@ env:
 jobs:
   preflight:
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 15
     permissions:
       contents: read
       statuses: read
@@ -40,11 +40,11 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
-      # This job runs no installer; Python still runs through the catalog-pinned uv.
-      - name: Install the pinned uv
-        run: scripts/tooling/uv.sh x86_64-linux >>"$GITHUB_PATH"
-      - name: Install the compiler whose Mac qualification is required
-        run: rustup toolchain install "$(scripts/lib/toolchain.sh)" --profile minimal --no-self-update
+      - name: Install and verify the release toolchain
+        run: |
+          scripts/tooling/x86_64-linux.sh --ci-package
+          source "$HOME/.local/share/rscrypto-tooling/environment.sh"
+          printf 'PATH=%s\n' "$PATH" >>"$GITHUB_ENV"
       - name: Require the source commit's Mac and manual Fuzz qualifications
         env:
           GH_TOKEN: ${{ github.token }}

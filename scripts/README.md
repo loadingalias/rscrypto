@@ -1016,18 +1016,21 @@ Ordinary tests continue to check the application build without internal access.
 
 ## Release orchestration
 
-`.github/workflows/release.yml` checks prior Mac and manual Fuzz qualification,
-then calls CI and CT before its release job.
-That job runs `cargo rail release` through `cargo-rail-action/release`, which commits, tags, pushes,
-publishes to crates.io, and creates the GitHub Release.
+`.github/workflows/release.yml` installs and verifies the `ci-package` tooling profile.
+The profile includes the catalog-pinned `cargo-semver-checks` required by the release API gate.
+The preflight then checks prior Mac and manual Fuzz qualification before calling CI and CT.
+The final release job installs and verifies the same profile on its own runner.
+That job runs `cargo rail release` through `cargo-rail-action/release`, which commits, tags, pushes, publishes to crates.io,
+and creates the GitHub Release.
 `scripts/release/release.py preflight` first requires the newest `rscrypto/macos` commit status of the source commit to pass.
-Its description binds the Git tree and a SHA-256 digest of `rustc -vV`, excluding only the host line
-so the Linux release runner can compare the same compiler distribution.
+Its description binds the Git tree and a SHA-256 digest of `rustc -vV`,
+excluding only the host line so the Linux release runner can compare the same compiler distribution.
 An older successful status cannot override a newer failure or compiler mismatch.
 The preflight also reads the latest manually dispatched Fuzz run for the exact source commit.
 It requires a successful run and a successful `Release qualification` job in that run's current attempt.
 Only a full smoke campaign on both architectures, with Miri and at least 120 seconds per target,
-can pass that job. The default Fuzz inputs satisfy this contract.
+can pass that job.
+The default Fuzz inputs satisfy this contract.
 The preflight can read statuses and workflow runs but cannot write them or dispatch Fuzz.
 Its refusal tests run through `just test-scripts`.
 [CONTRIBUTING.md](../CONTRIBUTING.md#release) has the maintainer setup, check, deployment, and retry instructions.
