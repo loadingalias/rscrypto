@@ -84,7 +84,7 @@ dependencies = [
 
 [[package]]
 name = "rscrypto"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "getrandom",
  "rayon",
@@ -96,7 +96,3 @@ version = "0.0.0"
 dependencies = [
  "rscrypto",
 ]
-
-[[patch.unused]]
-name = "rscrypto-rustls"
-version = "0.1.0"

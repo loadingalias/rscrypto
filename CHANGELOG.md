@@ -1,6 +1,91 @@
 # Changelog
 
 
+## [0.12.0](https://github.com/loadingalias/rscrypto/compare/v0.11.0...v0.12.0) - 2026-10-24
+- Move legacy RSAES-PKCS1-v1_5 decryption behind `rscrypto::auth::rsa::expert::RsaPkcs1v15Decrypt`
+  and implement implicit rejection from draft-irtf-cfrg-rsa-guidance-10 section 7.
+  Import that trait to keep calling the four `decrypt_pkcs1v15*` methods on `RsaPrivateKey`.
+  The inherent methods and explicit padding-failure form are removed; the root decryption API is OAEP only.
+  
+  Invalid padding now returns a deterministic synthetic message derived from the private key and ciphertext,
+  instead of an error. Authenticate the recovered message before using it. Public length and representative
+  errors remain errors, and `RsaPrivateOpError::DecryptionFailed` now applies only to OAEP.
+  TLS 1.2 fixed-length premaster-secret handling is not provided by this trait.
+
+- Add an AVX-512 IFMA Poly1305 path for ChaCha20-Poly1305 and XChaCha20-Poly1305. On x86-64 with AVX-512F and
+  AVX-512 IFMA, text of at least 256 bytes that does not take the fused assembly is authenticated eight blocks
+  at a time in radix 2^44. Ciphertexts, plaintexts and tags are unchanged.
+
+- Add EcdsaP256PublicKey::verify_sec1 and verify_sec1_sha384, which verify with an uncompressed SEC1 key used once. They reach the same decisions as from_sec1_bytes followed by verify or verify_sha384, without building the verification table that a parsed key keeps for repeated use. P-256 verification on AArch64 also uses assembly field addition and subtraction.
+
+- Add EcdsaP384PublicKey::verify_sec1 and verify_sec1_sha256, which verify with an uncompressed SEC1 key used once. They reach the same decisions as from_sec1_bytes followed by verify or verify_sha256, without building the verification table that a parsed key keeps for repeated use. P-384 verification and public-key import use P-384-specific field and point arithmetic, with Montgomery multiplication, squaring, addition, and subtraction in assembly on AArch64. Verification results and public-key tables are unchanged.
+
+- Add generate_prepared_keypair_in to MlKem512, MlKem768, and MlKem1024. It returns the encapsulation key and a prepared decapsulation key built from the same matrix expansion, equal to generate_keypair_in followed by prepare_in without expanding the matrix or hashing the encapsulation key again. Use it for ephemeral key shares that decapsulate once.
+
+- Expand ML-KEM matrices two SHAKE128 streams at a time when importing encapsulation and decapsulation keys, and four at a time for ML-KEM-768 key generation on Apple silicon. Keys, ciphertexts, and shared secrets are unchanged.
+
+- Fix compiler-introduced secret branches in portable P-256 ECDH: the signed-window table selection on RISC-V, and signed-digit correction and point doubling on IBM Z. Keep the selection masks opaque and add a blocking compiled-code check and, on AArch64, a bounded signed-selector proof. Results are unchanged.
+
+- Remove compiler-introduced secret branches from ML-KEM implicit rejection on RISC-V, ECDSA arithmetic on RISC-V and IBM Z, and Curve25519 field normalization on those targets. Replace the Curve25519 zero test's early exit with a fixed limb reduction. Signing, key agreement, and decapsulation results are unchanged.
+
+- RSA Montgomery arithmetic on AArch64 now uses rscrypto's own assembly instead of kernels adapted from AWS-LC, and AArch64 Windows gains the assembly path. Results are unchanged.
+
+- Restructure AES-GCM key setup. Constructing an AES-128-GCM or AES-256-GCM key computes its GHASH powers once
+  and takes every window table from them instead of building each table serially. On x86-64 and on macOS and
+  Linux AArch64, the powers above H^8 come from eight independent chains. Ciphertexts and tags are unchanged.
+
+- Speed up AES-128-GCM and AES-256-GCM on POWER8 and later. Whole 128-byte chunks run eight AES blocks together with counters, data, and GHASH input kept in vector registers, then fold the eight ciphertext blocks into GHASH with one reduction. Ciphertexts and tags are unchanged.
+
+- Speed up ECDSA P-256 verification and public-key import. Verification and comb-table construction use P-256-specific field and point arithmetic, with flag-chained Montgomery multiplication and squaring in assembly on AArch64, and verification accumulates its generator and key terms in independent chains. Verification results and public-key tables are unchanged.
+
+- Speed up ECDSA P-384 verification on targets without P-384 field assembly, including RISC-V, POWER, IBM Z and portable builds: the portable Montgomery reduction uses the field prime's special limbs instead of multiplications, and squaring has its own kernel. P-256 and P-384 public-key import now checks the curve equation in the verification field, which removes the fixed-work software multiply from key import on RISC-V and IBM Z. Verification results and accepted keys are unchanged.
+
+- Speed up ECDSA signing and key generation on 64-bit RISC-V. Secret limb products now use the hardware multiplier with both operands' top bits set, as RISC-V ECDH already does, instead of a fixed-work software multiply. 32-bit RISC-V and IBM Z keep the software multiply. Native constant-time evidence qualifies the change; results are unchanged.
+
+- Speed up ML-DSA signing and verification. Verification decodes and bounds the response once and inverts one
+  number-theoretic transform per row, encodings pack fixed-width groups, signing hashes its mask polynomials two
+  SHAKE256 streams at a time, and matrix expansion pairs SHAKE128 streams, also across rows.
+  
+  On Linux x86-64, the AVX2 transforms use signed Montgomery arithmetic with lazy reduction and merged stages.
+  On macOS and Linux AArch64, NEON runs Barrett-form transforms, the pointwise products, matrix rejection
+  sampling, hint application, and a fused row product for prepared signing. Both vector backends run the norm
+  checks, HighBits, the low part of Decompose, the hint loop, and the constant-time SampleInBall scans for each
+  challenge candidate and its placement. On Intel Granite Rapids, the AVX2 SampleInBall scans alone made
+  ML-DSA-65 signing about 20% faster and an ML-DSA-65 TLS 1.3 handshake about 12% faster.
+  Signatures and verification results are unchanged.
+
+- Reduce the multiplications in ECDSA P-256 field arithmetic. The Montgomery reduction uses the field prime's
+  special limbs, which turns eight of its multiplications into shifts and additions, and squaring has its own
+  kernel, so a point doubling computes 98 64-bit limb products instead of 192. Signatures are unchanged.
+
+- Speed up RSA Montgomery setup and private operations. `R² mod n` now takes about one modular doubling per
+  limb and six Montgomery squarings instead of about 64 doublings per limb, and new scratch copies a key's
+  precomputed value. Verifying with a newly imported RSA-2048 key drops from 123 µs to 20 µs on Intel Granite
+  Rapids, and creating private-key scratch no longer repeats the computation. Private operations reduce their
+  CRT inputs with one Montgomery reduction instead of a bit-serial reduction, so RSA-3072 and RSA-4096 signing
+  is about 20% faster. On Linux x86-64 with BMI2 and ADX, private exponentiation squares with the dedicated
+  square kernel, a further 15–22% for signing on Granite Rapids before the AVX-512 IFMA path below.
+  The per-operation blinding-factor inverse runs batches of 62 Bernstein–Yang divsteps on every target except
+  RISC-V and IBM Z, a further 5–10% for signing. On x86-64 with AVX-512 IFMA, 2048-, 3072- and 4096-bit
+  private operations run both CRT exponentiations together in radix 2^52. On Intel Granite Rapids, RSA-4096,
+  RSA-3072 and RSA-2048 signing take 66%, 61% and 49% less time. Results are unchanged.
+  
+  Blinded private operations invert the blinding factor multiplied by a fresh random mask, then multiply the
+  result by the mask, so the inverse never reads the factor itself on any target. Native timing tests on
+  Graviton4 and Apple Silicon separated a fixed factor from random ones in the unmasked 62-bit inverse.
+  Each blinding attempt with a valid candidate also requests a modulus-width mask, redrawn while it is zero or
+  not below the modulus, so the `sign_*_with_random_fill*` methods call their entropy callback at least once
+  more per attempt. A failed mask request returns `EntropyUnavailable`.
+
+- Speed up RSA on targets that use the portable Montgomery arithmetic, including POWER, RISC-V, IBM Z, WebAssembly, and x86-64 outside Linux. Squaring has its own kernel with half the cross products, multiplication folds the per-row shift into its reduction pass, and limb products no longer carry overflow checks. Results are unchanged.
+
+- Speed up RSA private operations on AArch64. The constant-time fixed-window table selection merges each entry under vector-compare masks in NEON assembly instead of scalar volatile reads; it still reads every entry in a fixed order, and its results are unchanged.
+
+- Speed up RSA private operations on Apple AArch64. Keys whose two CRT primes share a width of 1024, 1536, or 2048 bits run both CRT exponentiations together, one in each lane of the vector unit. Loop counts, branches and addresses depend only on the public prime width, the exponents select table entries through lane masks, and the results are identical. Other AArch64 targets keep the scalar Montgomery kernels.
+
+- Speed up RSA private-key operations on 64-bit RISC-V and IBM Z. The 31-bit blinding-factor inverse multiplies words with the hardware multiplier, as the RSA exponentiation already does, instead of a 64-step software multiply; on RISC-V it sets both operands' top bits. 32-bit RISC-V keeps the software multiply. Native constant-time evidence qualifies each target; results are unchanged.
+
+- Stop HKDF-Extract from leaving secret copies on the stack. `HkdfSha512::extract` left a copy of its pseudorandom key (PRK), and extract for every hash left copies of the HMAC prefix states, which are as sensitive as the PRK. Extract now writes the HMAC tag into a PRK copy that it clears, and the prefix setup, which `from_prk` shares, gives the compression function only scratch that it clears. Residue tests on RV32 and Cortex-M3 under QEMU find no PRK or prefix-state bytes after extract. Outputs are unchanged.
 ## [0.11.0](https://github.com/loadingalias/rscrypto/compare/v0.10.0...v0.11.0) - 2026-10-14
 - Add `Argon2idPassword::verify_password_with_memory`, `Argon2idPassword::verify_password_with_context_and_memory`, and `ScryptPassword::verify_password_with_memory`. They verify PHC records in a reusable block slice that the caller owns, from any allocator, with the same record limits, opaque failures, and workspace cleanup.
 

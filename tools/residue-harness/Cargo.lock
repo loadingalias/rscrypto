@@ -62,7 +62,7 @@ checksum = "ce5d3ddc6d3fa000eb1536d85e147bfe31aacaba692ed6a876f95cb7c855be78"
 
 [[package]]
 name = "rscrypto"
-version = "0.11.0"
+version = "0.12.0"
 
 [[package]]
 name = "rscrypto-residue-harness"

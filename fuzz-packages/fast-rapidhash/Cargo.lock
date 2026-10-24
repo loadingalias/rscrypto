@@ -86,7 +86,7 @@ dependencies = [
 
 [[package]]
 name = "rscrypto"
-version = "0.11.0"
+version = "0.12.0"
 
 [[package]]
 name = "rscrypto-fuzz-fast-rapidhash"

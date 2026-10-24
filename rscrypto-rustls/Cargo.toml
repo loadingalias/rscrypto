@@ -52,7 +52,7 @@ portable-only = ["rscrypto/portable-only"]
 quinn = ["dep:quinn-proto", "dep:bytes", "aes-gcm", "hkdf", "getrandom"]
 
 [dependencies]
-rscrypto = { version = "0.11.0", path = "..", default-features = false, features = ["std"] }
+rscrypto = { version = "0.12.0", path = "..", default-features = false, features = ["std"] }
 rustls = { version = "=0.24.0-dev.2", git = "https://github.com/rustls/rustls", rev = "35a8f439137d45ed18962807d38684b0c6bc6e3f", default-features = false, features = ["webpki"] }
 rustls-webpki = { version = "=0.104.0-alpha.8", default-features = false, features = ["alloc", "std"] }
 rustls-pki-types = { version = "=1.15.1", default-features = false, features = ["std"] }
