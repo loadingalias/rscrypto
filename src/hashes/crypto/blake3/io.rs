@@ -122,10 +122,13 @@ impl ReadBuffer {
 
   #[inline(always)]
   fn bytes(&mut self) -> &mut [u8] {
-    if let Some(heap) = &mut self.heap {
-      return &mut heap.storage[heap.offset..];
+    if self.heap.is_none() {
+      return self.stack_bytes();
     }
-    self.stack_bytes()
+    // Check the storage kind before borrowing it: the MSRV cannot retain the conditional heap
+    // borrow across the stack branch. No mutation can change the kind before this borrow.
+    let heap = self.heap.as_mut().expect("heap storage selected above");
+    &mut heap.storage[heap.offset..]
   }
 
   /// Continue on the heap with the first `keep` stack bytes.
