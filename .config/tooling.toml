@@ -71,7 +71,7 @@ packages = ["build-essential", "ca-certificates", "curl", "git", "clang", "libcl
 
 [ci-ct]
 cargo = ["just", "cargo-nextest"]
-components = ["llvm-tools"]
+components = ["rust-src", "llvm-tools"]
 packages = ["build-essential", "ca-certificates", "curl", "git", "clang", "libclang-dev"]
 
 [ci-ct-proof]

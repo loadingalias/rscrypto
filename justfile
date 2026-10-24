@@ -64,8 +64,8 @@ ssh-status target="":
 
 # Bootstrap a repository development machine.
 [group('remote')]
-ssh-bootstrap target profile="":
-    @if [ -n "$2" ]; then "$DEV_MACHINE_EXECUTOR" bootstrap rscrypto "$1" "$2"; else "$DEV_MACHINE_EXECUTOR" bootstrap rscrypto "$1"; fi
+ssh-bootstrap target:
+    @"$DEV_MACHINE_EXECUTOR" bootstrap rscrypto "$1"
 
 # Run a Just recipe on a repository development machine.
 [group('remote')]

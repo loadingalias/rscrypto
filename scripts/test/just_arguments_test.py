@@ -93,7 +93,6 @@ with open(os.environ['ARGUMENT_LOG'], 'a') as log:
     run('ssh-status', [], [['status', 'rscrypto']])
     run('ssh-status', [words[2]], [['status', 'rscrypto', words[2]]])
     run('ssh-bootstrap', [words[2]], [['bootstrap', 'rscrypto', words[2]]])
-    run('ssh-bootstrap', words[:2], [['bootstrap', 'rscrypto', *words[:2]]])
     run('ssh-collect-bench', words[:3], [['just', 'rscrypto', words[0], 'bench-export', 'benchmark_results/criterion/' + words[1]],
                                       ['collect-results', 'rscrypto', words[0], 'criterion', *words[1:3]]])
     run('bench-export', [words[2]], [['scripts/bench/runner.py', 'export', words[2]]])
