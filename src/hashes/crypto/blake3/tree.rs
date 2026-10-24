@@ -435,7 +435,8 @@ impl Blake3Subtree {
   /// therefore imply EOF. For a smaller scheduled range, pass a
   /// [`std::io::Read::take`] adapter and check the returned count.
   ///
-  /// Uses the same bounded, cleared input buffer as [`Blake3::update_reader`].
+  /// Uses the same input storage as [`Blake3::update_reader`], including its
+  /// clearing of every byte passed to the reader.
   /// Callers may schedule independent subtree readers on their own threads and
   /// combine their results with [`Blake3Tree::merge`] or [`Blake3Tree::merge_root`].
   /// Each reader must supply bytes from the subtree's position in the same input.
@@ -469,7 +470,8 @@ impl Blake3Subtree {
   /// ```
   #[cfg(feature = "std")]
   pub fn update_reader(&mut self, reader: &mut (impl std::io::Read + ?Sized)) -> std::io::Result<u64> {
-    super::io::read_into(reader, self.max_len.strict_sub(self.len), |input| {
+    let batch = self.hasher.reader_batch(false);
+    super::io::read_into(reader, self.max_len.strict_sub(self.len), batch, |input| {
       // read_into never supplies more than the remaining subtree capacity.
       self.hasher.update(input);
       self.len = self

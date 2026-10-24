@@ -141,6 +141,17 @@ pub(super) fn parallel_policy_threads_with_admission(
   decision.would_parallelize.then_some(decision.threads)
 }
 
+/// Whether `mode`'s table can admit threads for this work.
+///
+/// Unlike [`parallel_admission_decision`], this omits the thread count and cost
+/// model, so it never queries or starts a thread pool.
+#[cfg(feature = "parallel")]
+#[inline]
+pub(super) fn policy_may_parallelize(mode: ParallelPolicyKind, input_bytes: usize, full_chunks: usize) -> bool {
+  let policy = resolved_parallel_policy(mode);
+  policy.max_threads != 1 && input_bytes >= policy.min_bytes && full_chunks >= policy.min_chunks
+}
+
 #[cfg(feature = "parallel")]
 #[inline]
 pub(super) fn streaming_parallel_threads_for_flags(

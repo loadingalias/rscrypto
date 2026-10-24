@@ -15,16 +15,16 @@ use rscrypto::{
 
 use super::bench_config::{checked, checked_with};
 
-/// A short input inside one reader buffer, two inputs that fill rscrypto's
-/// 1 MiB coalescing buffer partly and exactly, and an input of eight buffers.
+/// A short input, an input that fills upstream's 64 KiB reader buffer and
+/// rscrypto's stack buffer exactly, one whole 1 MiB buffer, and eight of them.
 const READER_LENGTHS: [usize; 4] = [4096, 65536, 1048576, 8388608];
 
 /// Hash one in-memory input through each library's reader API.
 ///
-/// rscrypto `Blake3::update_reader` coalesces reads into an aligned 1 MiB heap
-/// buffer, cleared before deallocation, and hashes each buffer with `update`.
-/// Upstream `Hasher::update_reader` copies through its own buffer into
-/// `update`. The reader is a `&[u8]` over the whole input.
+/// rscrypto `Blake3::update_reader` zeroes its buffer only as reads need it,
+/// hashes each full buffer with one `update`, and clears every byte it passed
+/// to the reader. Upstream `Hasher::update_reader` copies through its own
+/// buffer into `update`. The reader is a `&[u8]` over the whole input.
 ///
 /// `blake3/serial/update-reader` (build `blake3_serial`): neither row threads.
 /// `blake3/parallel/update-reader` (build `blake3`): threads are allowed. With

@@ -39,16 +39,21 @@ A caught reader panic permanently disables decoding; the buffer is cleared
 when the decoder drops. No claim covers the underlying reader or bytes already
 returned to the caller. Abort and double-panic exits do not guarantee cleanup.
 
-The BLAKE3 buffered reader methods clear their owned input allocation before
-deallocation on success, I/O error, and panic unwinding. The allocation stays
-fixed while it contains input; alignment uses a borrowed slice within it.
-An abort does not run destructors. This buffer contract does not extend cleanup
-claims to the caller's reader, operating-system caches, or compiler-created copies.
+The BLAKE3 buffered reader methods clear every initialized byte of their owned
+stack and heap input storage before release on success, I/O error, and panic
+unwinding. Storage is zeroed only as reads need it, so the clear covers the bytes
+passed to readers and the heap alignment padding. The heap allocation is
+reserved before it holds input and never reallocates; alignment uses a borrowed
+slice within it. An abort does not run destructors. This buffer contract does not
+extend cleanup claims to the caller's reader, operating-system caches, or
+compiler-created copies.
 
 The Linux AArch64 plain parallel reader clears its named 64-byte `ParentBlock`
 on normal return and unwinding after construction. The
 ordinary native review (`benchmark_results/blake3-linux-reader-20261008T074000Z/cleanup-review/arm64-review/report.md`, local)
-retains emitted clears and fences for this owner and the input allocation.
+retains emitted clears and fences for this owner and for the fixed input
+allocation that preceded the current reader storage. The current storage clears
+through the same `ct::zeroize` and has no separate machine-code review.
 The recursive return copy, caller-side CV argument and recursive plain arrays
 remain outside that scope. This does not close the separate Portable-state,
 outer-key, native-fallback or compiler-spill findings.

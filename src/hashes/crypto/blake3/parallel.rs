@@ -55,15 +55,43 @@ pub(super) fn diag_zeroize_blake3_parallel_scratch(input: [u32; 8]) -> u32 {
 }
 
 impl Blake3 {
+  /// Whether a plain hasher sits at a reader-buffer boundary, where
+  /// [`Self::try_parallel_reader_update`] can hash one whole buffer.
+  #[cfg(all(target_os = "linux", target_endian = "little", target_arch = "aarch64"))]
+  #[inline]
+  fn parallel_reader_aligned(&self) -> bool {
+    const CHUNKS: u64 = (super::io::BUFFER_LEN / CHUNK_LEN) as u64;
+    self.chunk_state.flags == 0 && self.chunk_state.len() == 0 && self.chunk_state.chunk_counter.is_multiple_of(CHUNKS)
+  }
+
+  /// Whether one whole reader buffer may hash with threads in this state.
+  ///
+  /// This reads only the static policy tables, so it never starts a pool;
+  /// hashing a buffer still applies the full admission policy.
+  #[inline]
+  pub(super) fn reader_may_thread_full_buffers(&self, reader_path: bool) -> bool {
+    const CHUNKS: usize = super::io::BUFFER_LEN / CHUNK_LEN;
+    #[cfg(all(target_os = "linux", target_endian = "little", target_arch = "aarch64"))]
+    if reader_path
+      && self.parallel_reader_aligned()
+      && control::policy_may_parallelize(control::ParallelPolicyKind::Oneshot, super::io::BUFFER_LEN, CHUNKS)
+    {
+      return true;
+    }
+    #[cfg(not(all(target_os = "linux", target_endian = "little", target_arch = "aarch64")))]
+    let _ = reader_path;
+    control::policy_may_parallelize(
+      control::streaming_policy_kind_from_flags(self.chunk_state.flags),
+      super::io::BUFFER_LEN,
+      CHUNKS,
+    )
+  }
+
   #[cfg(all(target_os = "linux", target_endian = "little", target_arch = "aarch64"))]
   pub(super) fn try_parallel_reader_update(&mut self, input: &[u8]) -> bool {
     const CHUNKS: usize = super::io::BUFFER_LEN / CHUNK_LEN;
     const HALF: u64 = (CHUNKS / 2) as u64;
-    if self.chunk_state.flags != 0
-      || self.chunk_state.len() != 0
-      || input.len() != super::io::BUFFER_LEN
-      || !self.chunk_state.chunk_counter.is_multiple_of(CHUNKS as u64)
-    {
+    if input.len() != super::io::BUFFER_LEN || !self.parallel_reader_aligned() {
       return false;
     }
     let Some(threads) = control::parallel_policy_threads_with_admission(

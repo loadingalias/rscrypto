@@ -125,6 +125,247 @@ impl Read for CallerFragments<'_> {
   }
 }
 
+/// Fills up to `max` bytes of each read, so reads end exactly where the
+/// hasher's offered storage ends. Can interrupt every other call and fail once.
+struct Exact<'a> {
+  input: &'a [u8],
+  position: usize,
+  max: usize,
+  interrupts: bool,
+  interrupt_next: bool,
+  fail_at: Option<usize>,
+}
+
+impl<'a> Exact<'a> {
+  fn new(input: &'a [u8], max: usize) -> Self {
+    Self {
+      input,
+      position: 0,
+      max,
+      interrupts: false,
+      interrupt_next: false,
+      fail_at: None,
+    }
+  }
+}
+
+impl Read for Exact<'_> {
+  fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+    if self.interrupts {
+      self.interrupt_next = !self.interrupt_next;
+      if self.interrupt_next {
+        return Err(io::ErrorKind::Interrupted.into());
+      }
+    }
+    if self.fail_at == Some(self.position) {
+      self.fail_at = None;
+      buffer.fill(0xac);
+      return Err(io::Error::from_raw_os_error(5));
+    }
+    let count = buffer
+      .len()
+      .min(self.max)
+      .min(self.input.len().strict_sub(self.position))
+      .min(self.fail_at.map_or(usize::MAX, |at| at.strict_sub(self.position)));
+    let end = self.position.strict_add(count);
+    buffer[..count].copy_from_slice(&self.input[self.position..end]);
+    self.position = end;
+    Ok(count)
+  }
+}
+
+const KIB: usize = 1024;
+
+/// Lengths around each internal read size: the buffer doubling to 16 KiB
+/// (serial) or 1 MiB (threaded), serial growth to 32 and 64 KiB after 256 and
+/// 512 KiB, the 64-byte end-of-input check past the 64 KiB stack buffer, the
+/// move to the heap after 1 MiB of serial input, and whole 1 MiB buffers.
+fn threshold_lengths() -> Vec<usize> {
+  let mut lengths = Vec::new();
+  for size in [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024].map(|kib: usize| kib.strict_mul(KIB)) {
+    lengths.extend([size.strict_sub(1), size, size.strict_add(1)]);
+  }
+  lengths.extend([64 * KIB + 63, 64 * KIB + 64, 64 * KIB + 65]);
+  lengths.extend([
+    MIB + 64 * KIB - 1,
+    MIB + 64 * KIB,
+    MIB + 64 * KIB + 64,
+    MIB + 64 * KIB + 65,
+  ]);
+  lengths
+}
+
+fn in_reader_pools(check: impl Fn() + Sync) {
+  #[cfg(feature = "parallel")]
+  for threads in [1, 4] {
+    rayon::ThreadPoolBuilder::new()
+      .num_threads(threads)
+      .build()
+      .expect("reader test pool")
+      .install(&check);
+  }
+  #[cfg(not(feature = "parallel"))]
+  check();
+}
+
+#[test]
+fn reader_exact_reads_around_internal_sizes_match_upstream() {
+  in_reader_pools(|| {
+    let storage = data(MIB + 64 * KIB + 136);
+    for len in threshold_lengths() {
+      // A prefix moves the hasher off a 1 MiB boundary.
+      for prefix in [0usize, 70] {
+        let input = &storage[prefix..prefix + len];
+        // Byte-at-a-time reads consume each offered window one byte at a time.
+        let maxima: &[usize] = if len <= 130 * KIB {
+          &[usize::MAX, 1]
+        } else {
+          &[usize::MAX]
+        };
+        for &max in maxima {
+          for mode in 0..3 {
+            let (mut ours, mut reference, _) = states(mode);
+            ours.update(&storage[..prefix]);
+            reference.update(&storage[..prefix]);
+            let mut reader = Exact::new(input, max);
+            reader.interrupts = max == 1;
+            assert_eq!(
+              ours.update_reader(&mut reader).expect("exact reads"),
+              len as u64,
+              "mode={mode} len={len} prefix={prefix} max={max}"
+            );
+            assert_eq!(reader.position, len);
+            reference.update(input);
+            assert_eq!(
+              ours.clone().finalize(),
+              *reference.finalize().as_bytes(),
+              "mode={mode} len={len} prefix={prefix} max={max}"
+            );
+            ours.update(b"continued");
+            reference.update(b"continued");
+            assert_reader_state(&ours, &reference);
+          }
+        }
+      }
+    }
+  });
+}
+
+#[test]
+fn reader_serial_read_growth_boundaries_match_upstream() {
+  // Serial reads grow to 128 KiB, 256 KiB, 512 KiB and 1 MiB after 1, 2, 4
+  // and 8 MiB; the first 1 MiB serial read completes at 9 MiB.
+  in_reader_pools(|| {
+    let storage = data(9 * MIB + 1);
+    for len in [2 * MIB, 4 * MIB, 8 * MIB, 9 * MIB]
+      .into_iter()
+      .flat_map(|size| [size - 1, size, size + 1])
+    {
+      let len = len.min(storage.len());
+      let input = &storage[..len];
+      for mode in 0..2 {
+        let (mut ours, mut reference, _) = states(mode);
+        assert_eq!(ours.update_reader(&mut &input[..]).expect("slice reads"), len as u64);
+        reference.update(input);
+        assert_reader_state(&ours, &reference);
+      }
+    }
+  });
+}
+
+#[test]
+fn reader_errors_at_internal_sizes_commit_consumed_bytes() {
+  let storage = data(MIB + 64 * KIB + 200);
+  let input = &storage[..];
+  for fail_at in [
+    KIB,
+    KIB + 64,
+    4 * KIB,
+    64 * KIB,
+    64 * KIB + 1,
+    64 * KIB + 64,
+    64 * KIB + 65,
+    MIB,
+    MIB + 64 * KIB,
+    MIB + 64 * KIB + 64,
+  ] {
+    for mode in 0..3 {
+      let (mut ours, mut reference, _) = states(mode);
+      let mut reader = Exact::new(input, usize::MAX);
+      reader.interrupts = true;
+      reader.fail_at = Some(fail_at);
+      assert_eq!(
+        ours
+          .update_reader(&mut reader)
+          .expect_err("injected read error")
+          .raw_os_error(),
+        Some(5),
+        "mode={mode} fail_at={fail_at}"
+      );
+      assert_eq!(reader.position, fail_at);
+      reference.update(&input[..fail_at]);
+      assert_reader_state(&ours, &reference);
+      assert_eq!(
+        ours.update_reader(&mut reader).expect("resumed read"),
+        (input.len() - fail_at) as u64
+      );
+      reference.update(&input[fail_at..]);
+      assert_reader_state(&ours, &reference);
+    }
+  }
+}
+
+#[test]
+fn reader_take_and_subtree_capacity_stop_at_internal_sizes() {
+  let storage = data(2 * MIB + 200);
+  for limit in [
+    KIB,
+    64 * KIB,
+    64 * KIB + 64,
+    128 * KIB,
+    MIB,
+    MIB + 64 * KIB + 64,
+    2 * MIB,
+  ] {
+    for mode in 0..3 {
+      let (mut ours, mut reference, _) = states(mode);
+      let mut reader = Exact::new(&storage, usize::MAX).take(limit as u64);
+      assert_eq!(ours.update_reader(&mut reader).expect("taken reads"), limit as u64);
+      assert_eq!(reader.into_inner().position, limit);
+      reference.update(&storage[..limit]);
+      assert_reader_state(&ours, &reference);
+    }
+  }
+  // A subtree at offset `capacity` holds exactly `capacity` bytes. A prefix
+  // leaves a remaining capacity that no internal read size divides.
+  for capacity in [KIB, 64 * KIB, 128 * KIB, MIB, 2 * MIB] {
+    for prefix in [0usize, 70] {
+      for mode in 0..3 {
+        let (_, mut reference, tree) = states(mode);
+        let offset = capacity as u64;
+        let mut subtree = tree.subtree(offset).expect("aligned offset");
+        assert_eq!(subtree.max_len(), offset);
+        subtree.update(&storage[..prefix]).expect("prefix fits");
+        let mut reader = Exact::new(&storage[prefix..], usize::MAX);
+        assert_eq!(
+          subtree.update_reader(&mut reader).expect("bounded read"),
+          (capacity - prefix) as u64
+        );
+        assert_eq!(reader.position, capacity - prefix, "no read past the subtree capacity");
+        assert_eq!(subtree.update_reader(&mut reader).expect("full subtree"), 0);
+        assert_eq!(reader.position, capacity - prefix);
+        reference.set_input_offset(offset);
+        reference.update(&storage[..capacity]);
+        assert_eq!(
+          subtree.finalize().expect("nonempty").as_bytes(),
+          &reference.finalize_non_root(),
+          "mode={mode} capacity={capacity} prefix={prefix}"
+        );
+      }
+    }
+  }
+}
+
 fn assert_reader_state(ours: &Blake3, reference: &blake3::Hasher) {
   assert_eq!(ours.finalize(), *reference.finalize().as_bytes());
   let mut actual = [0u8; 131];

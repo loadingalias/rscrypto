@@ -147,6 +147,10 @@ case "$MIRI_SCOPE" in
       "auth::scrypt::tests::caller_memory" \
       "scrypt" \
       2
+    run_miri_lib_filter_features "BLAKE3 reader initialized-prefix storage under Miri" \
+      "hashes::crypto::blake3::io::tests::miri_" \
+      "blake3,std" \
+      1
     ;;
   rsa)
     echo "Scope: RSA volatile fixed-window reads, private scratch/clearing layouts, and small-number Miller-Rabin"

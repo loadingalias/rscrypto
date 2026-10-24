@@ -198,12 +198,17 @@ returned verified bytes and the underlying reader remain caller-owned.
 
 ### BLAKE3 reader input
 
-`Blake3::update_reader` and `Blake3Subtree::update_reader` own a temporary heap
-buffer under `std`. The buffer is initialized before reading, never grows after
-input arrives, and has no clone, formatting, serialization, or export path.
-Drop clears its full initialized length, including alignment padding and bytes
-written by a reader that returns an error. This applies in every hash mode.
-The source reader and any copies it owns remain the caller's responsibility.
+`Blake3::update_reader` and `Blake3Subtree::update_reader` own temporary input
+storage under `std`: a 64 KiB + 64 B stack buffer and, for longer inputs, one
+heap buffer of up to 1 MiB + 63 B. A byte is zeroed only when a read first needs
+it, so the initialized bytes are the bytes passed to readers plus heap alignment
+padding. The heap buffer is reserved in full before it receives input and never
+reallocates. Moving to it copies the pending stack input; the stack buffer stays
+owned until the call returns. Neither buffer has a clone, formatting,
+serialization, or export path. Drop clears every initialized byte of both
+buffers, including bytes written by a reader that returns an error. This applies
+in every hash mode. The source reader and any copies it owns remain the caller's
+responsibility.
 
 The plain parallel reader on Linux AArch64 also owns a 64-byte `ParentBlock`.
 Its destructor clears all 64 bytes after the two child chaining values enter the
