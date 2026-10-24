@@ -245,7 +245,7 @@ cshake = { version = "0.2.1", default-features = false }
 crc = "3.4.0"
 crc-fast = { version = "1.10.0", default-features = false, features = ["std"] }
 crc32c = "0.6.8"
-crc32fast = "1.5.2"
+crc32fast = "1.5.3"
 crc64fast = "1.1.0"
 ascon-hash = "0.4.0"
 argon2 = { version = "0.6.0", default-features = false, features = ["alloc", "password-hash"] }
@@ -270,7 +270,7 @@ p256 = { version = "0.14.0", default-features = false, features = ["ecdh", "ecds
 p384 = { version = "0.14.0", default-features = false, features = ["ecdh", "ecdsa", "pkcs8", "std"] }
 ed25519-dalek = "3.0.0"
 x25519-dalek = { version = "3.0.0", features = ["static_secrets"] }
-fips203 = { version = "0.4.3", default-features = false, features = [
+fips203 = { version = "0.5.0", default-features = false, features = [
   "ml-kem-512",
   "ml-kem-768",
   "ml-kem-1024",
@@ -297,7 +297,7 @@ rsa = { version = "0.9.10", default-features = false, features = ["std", "u64_di
 dryoc = "2.0.0"
 rustcrypto-ml-dsa = { version = "=0.1.1", package = "ml-dsa", default-features = false, features = ["alloc", "pkcs8", "zeroize"] }
 rustcrypto-slh-dsa = { version = "=0.2.0-rc.5", package = "slh-dsa" }
-fips205 = "=0.4.1"
+fips205 = "=0.5.0"
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 # Explicit collection boundaries avoid ARM Callgrind return-heuristic leakage.

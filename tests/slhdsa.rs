@@ -1,10 +1,13 @@
 //! Differential tests of the public SLH-DSA API against two independent
 //! FIPS 205 implementations: RustCrypto `slh-dsa` 0.2.0-rc.5 (pure signing,
-//! key generation) and `fips205` 0.4.1 (pure and HashSLH-DSA, both variants).
+//! key generation) and `fips205` 0.5.0 (pure and HashSLH-DSA, both variants).
 #![cfg(feature = "slh-dsa")]
 
 use fips205::traits::{SerDes as _, Signer as _, Verifier as _};
 use rscrypto::*;
+
+#[path = "common/slhdsa_prehash.rs"]
+mod reference_prehash;
 
 /// Deterministic test bytes that vary with `seed`.
 fn bytes(len: usize, seed: u8) -> Vec<u8> {
@@ -23,7 +26,7 @@ macro_rules! differential {
     $hash_secret:ident,
     $rustcrypto:ty,
     $fips:ident,
-    $ph:expr,
+    $ph:path,
     $n:literal,
     $cases:literal
   ) => {
@@ -48,8 +51,8 @@ macro_rules! differential {
           &seeds[2 * $n..],
         );
         assert_eq!(rustcrypto.to_bytes().as_slice(), encoded.as_bytes());
-        let fips_secret = oracle::PrivateKey::try_from_bytes(encoded.as_bytes()).expect("fips205 secret key");
-        let fips_public = oracle::PublicKey::try_from_bytes(&public.to_bytes()).expect("fips205 public key");
+        let fips_secret = oracle::PrivateKey::try_from_bytes(*encoded.as_bytes()).expect("fips205 secret key");
+        let fips_public = oracle::PublicKey::try_from_bytes(public.to_bytes()).expect("fips205 public key");
 
         let message = bytes(usize::from(case).strict_mul(97).strict_add(1), case ^ 0x5a);
         let context = bytes(usize::from(case).strict_mul(61), case ^ 0xc3);
@@ -96,7 +99,9 @@ macro_rules! differential {
           .verify_with_context(&message, &context, &random)
           .expect("fips205 hedged signature");
 
-        // HashSLH-DSA with the RFC 9909 pairing, against fips205.
+        // HashSLH-DSA with the RFC 9909 pairing, against fips205 and
+        // independent RustCrypto message hashing.
+        let (digest, oid) = $ph(&message);
         let hash_secret = $hash_secret::try_from_slice(encoded.as_bytes()).expect("HashSLH-DSA secret key");
         let hash_public = $hash_public::from_bytes(public.to_bytes());
         hash_secret
@@ -104,14 +109,14 @@ macro_rules! differential {
           .expect("deterministic HashSLH-DSA");
         assert_eq!(
           fips_secret
-            .try_hash_sign(&message, &context, &$ph, false)
+            .try_hash_sign(&digest, &context, oid, false)
             .expect("fips205 HashSLH-DSA"),
           ours
         );
-        assert!(fips_public.hash_verify(&message, &ours, &context, &$ph));
+        assert!(fips_public.hash_verify(&digest, &ours, &context, oid));
         assert!(!fips_public.verify(&message, &ours, &context));
         let random = fips_secret
-          .try_hash_sign(&message, &context, &$ph, true)
+          .try_hash_sign(&digest, &context, oid, true)
           .expect("fips205 hedged HashSLH-DSA");
         hash_public
           .verify_with_context(&message, &context, &random)
@@ -147,7 +152,7 @@ differential!(
   HashSlhDsaSha2_128sWithSha256SecretKey,
   rustcrypto_slh_dsa::Sha2_128s,
   slh_dsa_sha2_128s,
-  fips205::Ph::SHA256,
+  reference_prehash::sha256,
   16,
   1
 );
@@ -160,7 +165,7 @@ differential!(
   HashSlhDsaSha2_128fWithSha256SecretKey,
   rustcrypto_slh_dsa::Sha2_128f,
   slh_dsa_sha2_128f,
-  fips205::Ph::SHA256,
+  reference_prehash::sha256,
   16,
   3
 );
@@ -173,7 +178,7 @@ differential!(
   HashSlhDsaSha2_192sWithSha512SecretKey,
   rustcrypto_slh_dsa::Sha2_192s,
   slh_dsa_sha2_192s,
-  fips205::Ph::SHA512,
+  reference_prehash::sha512,
   24,
   1
 );
@@ -186,7 +191,7 @@ differential!(
   HashSlhDsaSha2_192fWithSha512SecretKey,
   rustcrypto_slh_dsa::Sha2_192f,
   slh_dsa_sha2_192f,
-  fips205::Ph::SHA512,
+  reference_prehash::sha512,
   24,
   3
 );
@@ -199,7 +204,7 @@ differential!(
   HashSlhDsaSha2_256sWithSha512SecretKey,
   rustcrypto_slh_dsa::Sha2_256s,
   slh_dsa_sha2_256s,
-  fips205::Ph::SHA512,
+  reference_prehash::sha512,
   32,
   1
 );
@@ -212,7 +217,7 @@ differential!(
   HashSlhDsaSha2_256fWithSha512SecretKey,
   rustcrypto_slh_dsa::Sha2_256f,
   slh_dsa_sha2_256f,
-  fips205::Ph::SHA512,
+  reference_prehash::sha512,
   32,
   3
 );
@@ -225,7 +230,7 @@ differential!(
   HashSlhDsaShake128sWithShake128SecretKey,
   rustcrypto_slh_dsa::Shake128s,
   slh_dsa_shake_128s,
-  fips205::Ph::SHAKE128,
+  reference_prehash::shake128,
   16,
   1
 );
@@ -238,7 +243,7 @@ differential!(
   HashSlhDsaShake128fWithShake128SecretKey,
   rustcrypto_slh_dsa::Shake128f,
   slh_dsa_shake_128f,
-  fips205::Ph::SHAKE128,
+  reference_prehash::shake128,
   16,
   3
 );
@@ -251,7 +256,7 @@ differential!(
   HashSlhDsaShake192sWithShake256SecretKey,
   rustcrypto_slh_dsa::Shake192s,
   slh_dsa_shake_192s,
-  fips205::Ph::SHAKE256,
+  reference_prehash::shake256,
   24,
   1
 );
@@ -264,7 +269,7 @@ differential!(
   HashSlhDsaShake192fWithShake256SecretKey,
   rustcrypto_slh_dsa::Shake192f,
   slh_dsa_shake_192f,
-  fips205::Ph::SHAKE256,
+  reference_prehash::shake256,
   24,
   3
 );
@@ -277,7 +282,7 @@ differential!(
   HashSlhDsaShake256sWithShake256SecretKey,
   rustcrypto_slh_dsa::Shake256s,
   slh_dsa_shake_256s,
-  fips205::Ph::SHAKE256,
+  reference_prehash::shake256,
   32,
   1
 );
@@ -290,7 +295,7 @@ differential!(
   HashSlhDsaShake256fWithShake256SecretKey,
   rustcrypto_slh_dsa::Shake256f,
   slh_dsa_shake_256f,
-  fips205::Ph::SHAKE256,
+  reference_prehash::shake256,
   32,
   3
 );

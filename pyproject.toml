@@ -8,7 +8,7 @@ dependencies = []
 
 [dependency-groups]
 # `just update` and the tests of the catalog and workflows.
-tooling = ["PyYAML==6.0.3", "tomlkit==0.15.1"]
+tooling = ["PyYAML==6.0.3", "tomlkit==0.15.2"]
 
 [tool.uv]
 package = false

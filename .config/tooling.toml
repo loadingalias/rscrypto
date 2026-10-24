@@ -6,12 +6,12 @@
 [cargo]
 cargo-audit = "0.22.2"
 cargo-deny = "0.20.2"
-cargo-nextest = "0.9.148"
+cargo-nextest = "0.9.149"
 cargo-mutants = "27.1.0"
 cargo-semver-checks = "0.51.0"
-just = "1.58.0"
+just = "1.59.0"
 ripgrep = "15.2.0"
-rumdl = "0.2.79"
+rumdl = "0.3.0"
 lychee = "0.24.2"
 samply = "0.13.1"
 gungraun-runner = "0.20.0"
@@ -19,15 +19,15 @@ cargo-fuzz = "0.13.2"
 
 [versions]
 cargo-rail = "0.32.0"
-cargo-binstall = "1.25.3"
-llvm = "23.1.3"
+cargo-binstall = "1.26.1"
+llvm = "23.1.4"
 cmake = "4.4.4"
-wasmtime = "49.0.3"
-git = "2.56.0.windows.2"
+wasmtime = "50.0.0"
+git = "2.56.0.windows.3"
 jq = "1.8.2"
-powershell = "7.6.7"
-uv = "0.13.4"
-rustup = "1.29.1"
+powershell = "7.6.8"
+uv = "0.13.5"
+rustup = "1.29.2"
 zig = "0.17.0"
 nasm = "3.02"
 strawberry-perl = "5.42.3.1"
@@ -95,12 +95,12 @@ ubuntu = "24.04"
 packages = ["build-essential", "ca-certificates", "curl", "git", "jq", "cmake", "clang", "libclang-dev", "perl"]
 
 [windows]
-visual-studio = "18.11.0"
-build-version = "18.11.12306.390"
-channel-url = "https://download.visualstudio.microsoft.com/download/pr/4ee8a2e7-bc71-435a-8180-6703ab4d2017/6b171cb5a6addabf1c0aec1ad31b6bc60f55a03bf0d83cc01642988637ad657f/VisualStudio.18.Release.chman"
-channel-sha256 = "b526439707f8c93c8a59636849a9cf995d74bce9e75a9fe9845fd13baade4437"
-bootstrap-url = "https://download.visualstudio.microsoft.com/download/pr/4ee8a2e7-bc71-435a-8180-6703ab4d2017/5f06f1052f562620f27d0c14c5f9ab9658ff6b6908b35c59755ab14e2eb5a473/vs_BuildTools.exe"
-bootstrap-sha256 = "5f06f1052f562620f27d0c14c5f9ab9658ff6b6908b35c59755ab14e2eb5a473"
+visual-studio = "18.11.1"
+build-version = "18.11.12315.225"
+channel-url = "https://download.visualstudio.microsoft.com/download/pr/e07fb79d-d4ec-45bc-b19d-200bc819ee8d/3a0c2ef61056807e6d244b844e6d50025955463ac995ec5c6bfaa590b977491b/VisualStudio.18.Release.chman"
+channel-sha256 = "b89b9c30356e86cb6ed8560a6b95e77e28b84b31b31b9bb79fa5f701f61d540f"
+bootstrap-url = "https://download.visualstudio.microsoft.com/download/pr/e07fb79d-d4ec-45bc-b19d-200bc819ee8d/994ddaa3c0a5795ad700fafbc6414c1ed5b580c32eb29bbe46f4e21388eb5df3/vs_BuildTools.exe"
+bootstrap-sha256 = "994ddaa3c0a5795ad700fafbc6414c1ed5b580c32eb29bbe46f4e21388eb5df3"
 sdk-component = "Microsoft.VisualStudio.Component.Windows11SDK.28000"
 
 [aarch64-linux]
@@ -111,16 +111,16 @@ cargo = ["cargo-audit", "cargo-deny", "cargo-nextest", "cargo-mutants", "just", 
 packages = ["libelf-dev", "libdw-dev", "libunwind-dev", "liblzma-dev", "libzstd-dev", "zlib1g-dev", "valgrind", "linux-tools-generic", "numactl", "hwloc"]
 
 [aarch64-linux.assets.rustup]
-url = "https://static.rust-lang.org/rustup/archive/1.29.1/aarch64-unknown-linux-gnu/rustup-init"
-sha256 = "15f6e4ce9f583b929c996c91562bad6d4454f3281de858b02cdfdef615fac433"
+url = "https://static.rust-lang.org/rustup/archive/1.29.2/aarch64-unknown-linux-gnu/rustup-init"
+sha256 = "a9c168dbea81a84671c6b7a5c1795cb0eb699020110d107ddfca427bd797e697"
 
 [aarch64-linux.assets.uv]
-url = "https://github.com/astral-sh/uv/releases/download/0.13.4/uv-aarch64-unknown-linux-gnu.tar.gz"
-sha256 = "1ae72b4718729e2ccc4f1ae2c6d1e531ca8467800e0546e9130b3886023a60ab"
+url = "https://github.com/astral-sh/uv/releases/download/0.13.5/uv-aarch64-unknown-linux-gnu.tar.gz"
+sha256 = "4bb69cf95ed13f23713bb7bc09f241896ea0c75b7c557e615a20604b82f9c403"
 
 [aarch64-linux.assets.cargo-binstall]
-url = "https://github.com/cargo-bins/cargo-binstall/releases/download/v1.25.3/cargo-binstall-aarch64-unknown-linux-gnu.tgz"
-sha256 = "6beb20bdaa19033d51e296a3610e812e0b41f43bd6646287e4d510b3256bcda0"
+url = "https://github.com/cargo-bins/cargo-binstall/releases/download/v1.26.1/cargo-binstall-aarch64-unknown-linux-gnu.tgz"
+sha256 = "5e1413cda21a619b9eb66477c9a78904aadc70e724855d2b3572209ed12f67c3"
 
 [aarch64-linux.assets.cargo-rail]
 url = "https://github.com/loadingalias/cargo-rail/releases/download/v0.32.0/cargo-rail-aarch64-unknown-linux-gnu.zip"
@@ -131,8 +131,8 @@ url = "https://github.com/Kitware/CMake/releases/download/v4.4.4/cmake-4.4.4-lin
 sha256 = "a1b6cc63636a0e55c63257cf3315a8a5f129e42fade25db1afea4ff8ab06f25e"
 
 [aarch64-linux.assets.llvm]
-url = "https://github.com/llvm/llvm-project/releases/download/llvmorg-23.1.3/LLVM-23.1.3-Linux-ARM64.tar.xz"
-sha256 = "56d005e339c979a696ed6c244e6472e16f3b1371e48987a07e6145bda7ee0d03"
+url = "https://github.com/llvm/llvm-project/releases/download/llvmorg-23.1.4/LLVM-23.1.4-Linux-ARM64.tar.xz"
+sha256 = "9b27cf263d711aa6ebfd4045ab241d947bd09b3cd19ffa5728f48a80c9eb3a91"
 
 [aarch64-linux.assets.zig]
 url = "https://ziglang.org/download/0.17.0/zig-aarch64-linux-0.17.0.tar.xz"
@@ -146,16 +146,16 @@ cargo = ["cargo-audit", "cargo-deny", "cargo-nextest", "cargo-mutants", "just", 
 packages = ["libelf-dev", "libdw-dev", "libunwind-dev", "liblzma-dev", "libzstd-dev", "zlib1g-dev", "valgrind", "linux-tools-generic", "numactl", "hwloc"]
 
 [x86_64-linux.assets.rustup]
-url = "https://static.rust-lang.org/rustup/archive/1.29.1/x86_64-unknown-linux-gnu/rustup-init"
-sha256 = "dda7234360b7f578ca8b0ddcb80145646fa61a67c1720a5abc7051b35c9fcb71"
+url = "https://static.rust-lang.org/rustup/archive/1.29.2/x86_64-unknown-linux-gnu/rustup-init"
+sha256 = "5be191e8c70a5007074254cb74d78dbfdd25cd5a61c27de7b8e5410122ec24f4"
 
 [x86_64-linux.assets.uv]
-url = "https://github.com/astral-sh/uv/releases/download/0.13.4/uv-x86_64-unknown-linux-gnu.tar.gz"
-sha256 = "2b428396f12572d4429cf210ca234dd599a33b3af0958a4d5ed569d63e3f344f"
+url = "https://github.com/astral-sh/uv/releases/download/0.13.5/uv-x86_64-unknown-linux-gnu.tar.gz"
+sha256 = "f68d291c75783122dad58ab77def0e13f3233f358731db5d6d7e8715603b928f"
 
 [x86_64-linux.assets.cargo-binstall]
-url = "https://github.com/cargo-bins/cargo-binstall/releases/download/v1.25.3/cargo-binstall-x86_64-unknown-linux-gnu.tgz"
-sha256 = "a974ce4e525edfb78f953869cbe7c1b57d00ae04358adc1ae47462120d80bb6c"
+url = "https://github.com/cargo-bins/cargo-binstall/releases/download/v1.26.1/cargo-binstall-x86_64-unknown-linux-gnu.tgz"
+sha256 = "97d3fe139df2eb0947e9db09c129e4381847440a4622d2a94fc38ce4bd52f378"
 
 [x86_64-linux.assets.cargo-rail]
 url = "https://github.com/loadingalias/cargo-rail/releases/download/v0.32.0/cargo-rail-x86_64-unknown-linux-gnu.zip"
@@ -166,24 +166,24 @@ url = "https://github.com/Kitware/CMake/releases/download/v4.4.4/cmake-4.4.4-lin
 sha256 = "e5bb807f7728cb60cd8b27ebc97a2edb469b68655f21e844a600c3575b76f5bb"
 
 [x86_64-linux.assets.llvm]
-url = "https://github.com/llvm/llvm-project/releases/download/llvmorg-23.1.3/LLVM-23.1.3-Linux-X64.tar.xz"
-sha256 = "ca9fe385a5d9e2d88132dc0e23a00e9f87f38fa75f67207b5e457d208e71d013"
+url = "https://github.com/llvm/llvm-project/releases/download/llvmorg-23.1.4/LLVM-23.1.4-Linux-X64.tar.xz"
+sha256 = "25d814fda50d5fb0084b42be09605d8b1595d49d5e2e03a3345d7e112ff6f9f3"
 
 [x86_64-linux.assets.zig]
 url = "https://ziglang.org/download/0.17.0/zig-x86_64-linux-0.17.0.tar.xz"
 sha256 = "1cbe9df9f27e6b78d14ccbca43b6703a404ef79ef1c463de901d7f088d4e2026"
 
 [x86_64-linux.assets.just]
-url = "https://github.com/casey/just/releases/download/1.58.0/just-1.58.0-x86_64-unknown-linux-musl.tar.gz"
-sha256 = "4a5cc2f53e6f0f8c59092a6cc38291eb729d46a7dd95d3ae582008881b84931d"
+url = "https://github.com/casey/just/releases/download/1.59.0/just-1.59.0-x86_64-unknown-linux-musl.tar.gz"
+sha256 = "409044617b6f06517c1035e55ca38c8c856ff8b650e41bc2aa1ef82d5903a23e"
 
 [x86_64-linux.assets.cargo-nextest]
-url = "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.148/cargo-nextest-0.9.148-x86_64-unknown-linux-gnu.tar.gz"
-sha256 = "223ba936714cc861a9cdedad5a8eb664dfdd69d6fbdf6cea6aa8184f523290dc"
+url = "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.149/cargo-nextest-0.9.149-x86_64-unknown-linux-gnu.tar.gz"
+sha256 = "32d1d8c0567b7a80bee2bad8bb09125c846da96bc009b2de11ec08557290c770"
 
 [x86_64-linux.assets.wasmtime]
-url = "https://github.com/bytecodealliance/wasmtime/releases/download/v49.0.3/wasmtime-v49.0.3-x86_64-linux.tar.xz"
-sha256 = "4001225413f208345b980525f31c4080e1873808b38d0ddc7918497340667fbb"
+url = "https://github.com/bytecodealliance/wasmtime/releases/download/v50.0.0/wasmtime-v50.0.0-x86_64-linux.tar.xz"
+sha256 = "77c19ee0437991f9ac7837b9c269d9c7076744f85dad263fea5214cc2723c7ff"
 
 [aarch64-win]
 os = "Windows 11 Enterprise ARM64"
@@ -192,36 +192,36 @@ components = ["rust-src", "llvm-tools"]
 cargo = ["cargo-audit", "cargo-deny", "cargo-nextest", "cargo-mutants", "just", "ripgrep", "rumdl", "lychee"]
 
 [aarch64-win.assets.rustup]
-url = "https://static.rust-lang.org/rustup/archive/1.29.1/aarch64-pc-windows-msvc/rustup-init.exe"
-sha256 = "01aa49cf9574a8bd0ae52005d7de2590e8f27181ded6748236e702c92aef826d"
+url = "https://static.rust-lang.org/rustup/archive/1.29.2/aarch64-pc-windows-msvc/rustup-init.exe"
+sha256 = "58005a321c5dcb9c4457c0a13bb5d6a56a5793efaef429004edaa1db33019b59"
 
 [aarch64-win.assets.uv]
-url = "https://github.com/astral-sh/uv/releases/download/0.13.4/uv-aarch64-pc-windows-msvc.zip"
-sha256 = "c4bc5a9534b2bb6a12fe29ea748445e1a6f9cb7bb275211c4fb74c52ecf317a5"
+url = "https://github.com/astral-sh/uv/releases/download/0.13.5/uv-aarch64-pc-windows-msvc.zip"
+sha256 = "09f47edf90726084a70f9426f6e3ca4f46e9bf7cbf23b1716ec64d60b055fae3"
 
 [aarch64-win.assets.cargo-binstall]
-url = "https://github.com/cargo-bins/cargo-binstall/releases/download/v1.25.3/cargo-binstall-aarch64-pc-windows-msvc.zip"
-sha256 = "52723f6d28fc769c3d9de7841f37bddc0f3bade0061641e9f483fb1f4ff17dcf"
+url = "https://github.com/cargo-bins/cargo-binstall/releases/download/v1.26.1/cargo-binstall-aarch64-pc-windows-msvc.zip"
+sha256 = "4806a9f038dd040a1845d18e10efa7985c61f2d31e75a88c11b2935219337797"
 
 [aarch64-win.assets.cmake]
 url = "https://github.com/Kitware/CMake/releases/download/v4.4.4/cmake-4.4.4-windows-arm64.zip"
 sha256 = "ed673bbc4eb7c1e59b0407fd52f1680fc0ae3229a46b9b7b3ea9133764f07f67"
 
 [aarch64-win.assets.llvm]
-url = "https://github.com/llvm/llvm-project/releases/download/llvmorg-23.1.3/clang%2Bllvm-23.1.3-aarch64-pc-windows-msvc.tar.xz"
-sha256 = "4a42903db59f990a10c245eb32999f1e3247c37ba66de87f8f8dc2338ed9a79b"
+url = "https://github.com/llvm/llvm-project/releases/download/llvmorg-23.1.4/clang%2Bllvm-23.1.4-aarch64-pc-windows-msvc.tar.xz"
+sha256 = "f0d2e32424850ffb9b6aef190587a8298353d858a8a7260f490c173fe98d6811"
 
 [aarch64-win.assets.git]
-url = "https://github.com/git-for-windows/git/releases/download/v2.56.0.windows.2/Git-2.56.0.2-arm64.exe"
-sha256 = "b9ced78ce371577dc966f50ae571909d6731e36d31065d35c8efa21544c58bf0"
+url = "https://github.com/git-for-windows/git/releases/download/v2.56.0.windows.3/Git-2.56.0.3-arm64.exe"
+sha256 = "53cfe6358a1f0573c8c777c9ad71151df8f29986759c689c7b8a5cbb84cca495"
 
 [aarch64-win.assets.jq]
 url = "https://github.com/jqlang/jq/releases/download/jq-1.8.2/jq-windows-arm64.exe"
 sha256 = "083b5377392bc57cf27052b6d20a2d927770683bca844632901ff38b4b7b0ac7"
 
 [aarch64-win.assets.powershell]
-url = "https://github.com/PowerShell/PowerShell/releases/download/v7.6.7/PowerShell-7.6.7-win-arm64.zip"
-sha256 = "119bd9221254ef3637523cb1990797618f5fd68848b57de40f12b561d743149e"
+url = "https://github.com/PowerShell/PowerShell/releases/download/v7.6.8/PowerShell-7.6.8-win-arm64.zip"
+sha256 = "e889c9bfa6c3a9796bd6268cbeeb389e3968f77c6db46cb282178274d71c160b"
 
 [x86_64-win]
 os = "Windows Server 2025"
@@ -230,16 +230,16 @@ components = ["rust-src", "llvm-tools"]
 cargo = ["cargo-audit", "cargo-deny", "cargo-nextest", "cargo-mutants", "just", "ripgrep", "rumdl", "lychee", "cargo-fuzz"]
 
 [x86_64-win.assets.rustup]
-url = "https://static.rust-lang.org/rustup/archive/1.29.1/x86_64-pc-windows-msvc/rustup-init.exe"
-sha256 = "6f4bef66261261fcb43131be8720bab817d403a09edec7455c371974b90bdb7e"
+url = "https://static.rust-lang.org/rustup/archive/1.29.2/x86_64-pc-windows-msvc/rustup-init.exe"
+sha256 = "00f139da614dced87d3c3d4121c43eebdac3c1bf8a5ee86b9d80dfd71c8d70fd"
 
 [x86_64-win.assets.uv]
-url = "https://github.com/astral-sh/uv/releases/download/0.13.4/uv-x86_64-pc-windows-msvc.zip"
-sha256 = "ccec7508a07d9933d7cb1261880633efcf1f30d6e6eddab21823f1dae6f23225"
+url = "https://github.com/astral-sh/uv/releases/download/0.13.5/uv-x86_64-pc-windows-msvc.zip"
+sha256 = "a38b8d1902b7cfbc76b423ba1bb456f623f42064cdc72628b6075b89afd1019a"
 
 [x86_64-win.assets.cargo-binstall]
-url = "https://github.com/cargo-bins/cargo-binstall/releases/download/v1.25.3/cargo-binstall-x86_64-pc-windows-msvc.zip"
-sha256 = "de20bf4eefbbc4d90888e32938e4e66808c14bfe122458b2dd7d826821529cd9"
+url = "https://github.com/cargo-bins/cargo-binstall/releases/download/v1.26.1/cargo-binstall-x86_64-pc-windows-msvc.zip"
+sha256 = "b6d110d4911bc77c6dcf53f7ba0322ba826e487684adf1d468cdaf30607cad2b"
 
 [x86_64-win.assets.cargo-rail]
 url = "https://github.com/loadingalias/cargo-rail/releases/download/v0.32.0/cargo-rail-x86_64-pc-windows-msvc.zip"
@@ -250,20 +250,20 @@ url = "https://github.com/Kitware/CMake/releases/download/v4.4.4/cmake-4.4.4-win
 sha256 = "bace36e94b31c68ab6fa295f26dfa11219e0701cf7c94b0284a7d1cb13dac536"
 
 [x86_64-win.assets.llvm]
-url = "https://github.com/llvm/llvm-project/releases/download/llvmorg-23.1.3/clang%2Bllvm-23.1.3-x86_64-pc-windows-msvc.tar.xz"
-sha256 = "9ee6a2192fbb30c776415af529927f76ca6b5d1d55699bb1315f9878e610b5b8"
+url = "https://github.com/llvm/llvm-project/releases/download/llvmorg-23.1.4/clang%2Bllvm-23.1.4-x86_64-pc-windows-msvc.tar.xz"
+sha256 = "854bffcfc84528e0ee92490ff5c178920abd358a79c3e98f053e41e3e8e4c6d2"
 
 [x86_64-win.assets.git]
-url = "https://github.com/git-for-windows/git/releases/download/v2.56.0.windows.2/Git-2.56.0.2-64-bit.exe"
-sha256 = "52188f917b378f00c70ec136bcf090005f30d44fbc4eba0bce759cc6592d60f6"
+url = "https://github.com/git-for-windows/git/releases/download/v2.56.0.windows.3/Git-2.56.0.3-64-bit.exe"
+sha256 = "dc6d3db061999136e139f31376c5582a9ed6f36a4ea12f15e54ad7fa2bfc0bf2"
 
 [x86_64-win.assets.jq]
 url = "https://github.com/jqlang/jq/releases/download/jq-1.8.2/jq-windows-amd64.exe"
 sha256 = "a6fc67fedaf9128a3309a1e2ebb8b986aeccf70122ee46d2cb4849e423f0c627"
 
 [x86_64-win.assets.powershell]
-url = "https://github.com/PowerShell/PowerShell/releases/download/v7.6.7/PowerShell-7.6.7-win-x64.zip"
-sha256 = "d2f952ebdbf24386cb8923553aa58e41a846db35a6155ea04c58142a4b16dbb7"
+url = "https://github.com/PowerShell/PowerShell/releases/download/v7.6.8/PowerShell-7.6.8-win-x64.zip"
+sha256 = "b9f074f923c499b51ec99d313da8e9ae90d17a9f3adf00c73d6189f34d908528"
 
 [x86_64-win.assets.nasm]
 url = "https://www.nasm.us/pub/nasm/releasebuilds/3.02/win64/nasm-3.02-win64.zip"
@@ -281,16 +281,16 @@ packages = ["cmake", "clang", "libclang-dev"]
 os = "Ubuntu 26.04 LTS"
 
 [riscv64-linux.assets.rustup]
-url = "https://static.rust-lang.org/rustup/archive/1.29.1/riscv64gc-unknown-linux-gnu/rustup-init"
-sha256 = "e94134ed99fed1a3a1f13a3bf0a05d616fc1c2496ec0b557aaee4856cd34b2f2"
+url = "https://static.rust-lang.org/rustup/archive/1.29.2/riscv64gc-unknown-linux-gnu/rustup-init"
+sha256 = "1217772975cb864e12a2cad757cd27d7dcdbac3b490a05ad9b86b61ffa6a8b3b"
 
 [riscv64-linux.assets.uv]
-url = "https://github.com/astral-sh/uv/releases/download/0.13.4/uv-riscv64gc-unknown-linux-gnu.tar.gz"
-sha256 = "0173f624fd99811a12c1e1d1b0c476d9e850b3408ab01b8d513028376fb1c9c0"
+url = "https://github.com/astral-sh/uv/releases/download/0.13.5/uv-riscv64gc-unknown-linux-gnu.tar.gz"
+sha256 = "5c2692ecbf3a9d2c5955c403b30e61740b3ea2fdcc9b6eb533eeda268bf2b56d"
 
 [riscv64-linux.assets.cargo-binstall]
-url = "https://github.com/cargo-bins/cargo-binstall/releases/download/v1.25.3/cargo-binstall-riscv64gc-unknown-linux-musl.tgz"
-sha256 = "a8655de13dc912ad74b71bb06f446f3f4ba0fb142f6cb853ebe6f82cc0f4c9ef"
+url = "https://github.com/cargo-bins/cargo-binstall/releases/download/v1.26.1/cargo-binstall-riscv64gc-unknown-linux-musl.tgz"
+sha256 = "4532498bde89d776dcfc66e6daa0e8771e56f57ce3d850cce015b44efa11c80c"
 
 [s390x-linux]
 rust-host = "s390x-unknown-linux-gnu"
@@ -300,12 +300,12 @@ packages = ["cmake", "clang", "libclang-dev"]
 os = "Ubuntu 26.04 LTS"
 
 [s390x-linux.assets.rustup]
-url = "https://static.rust-lang.org/rustup/archive/1.29.1/s390x-unknown-linux-gnu/rustup-init"
-sha256 = "312ac9390467fd7870f8aff6557c7cb3bff0a04bb11b263173fdfd81586da641"
+url = "https://static.rust-lang.org/rustup/archive/1.29.2/s390x-unknown-linux-gnu/rustup-init"
+sha256 = "c60999321d0363f6e4d75b646f59ba25feb41b20f872ffb3a46b9a9aea6da1fc"
 
 [s390x-linux.assets.uv]
-url = "https://github.com/astral-sh/uv/releases/download/0.13.4/uv-s390x-unknown-linux-gnu.tar.gz"
-sha256 = "e2ccfa8c19d340cd282c91f715dd37b7f0c5efa9b256c0a6c373fec3e01ec20d"
+url = "https://github.com/astral-sh/uv/releases/download/0.13.5/uv-s390x-unknown-linux-gnu.tar.gz"
+sha256 = "b383e82d562f269fffbb69f44258ae278b6f4b45fbe7e572574669021b547e94"
 
 [powerpc64le-linux]
 rust-host = "powerpc64le-unknown-linux-gnu"
@@ -315,18 +315,18 @@ packages = ["cmake", "clang", "libclang-dev"]
 os = "Ubuntu 26.04 LTS"
 
 [powerpc64le-linux.assets.rustup]
-url = "https://static.rust-lang.org/rustup/archive/1.29.1/powerpc64le-unknown-linux-gnu/rustup-init"
-sha256 = "86ebc5b46b20013fca57dff4f83aa0c325ee90914626ce1c80ae76e126e48afb"
+url = "https://static.rust-lang.org/rustup/archive/1.29.2/powerpc64le-unknown-linux-gnu/rustup-init"
+sha256 = "96d46b6164ff778288c789e7e94dd09ce55d35777043aabe4e7af1d99b04bd71"
 
 [powerpc64le-linux.assets.uv]
-url = "https://github.com/astral-sh/uv/releases/download/0.13.4/uv-powerpc64le-unknown-linux-gnu.tar.gz"
-sha256 = "ae7320fcf963ed6ca19bacf436cf5d71cd5c9fbaf66450d614e7673c1f876be4"
+url = "https://github.com/astral-sh/uv/releases/download/0.13.5/uv-powerpc64le-unknown-linux-gnu.tar.gz"
+sha256 = "f891bc62de89832775d5104ad3b3332848122536a8dc8bac5775a18cce42b845"
 
 [aarch64-macos]
 
 [aarch64-macos.assets.uv]
-url = "https://github.com/astral-sh/uv/releases/download/0.13.4/uv-aarch64-apple-darwin.tar.gz"
-sha256 = "e0b1d4743ce64c55d9f0f4a444afa6b81125680070ee04e853fcd0f6c1ebf8f1"
+url = "https://github.com/astral-sh/uv/releases/download/0.13.5/uv-aarch64-apple-darwin.tar.gz"
+sha256 = "743f85035a1996ecb350659e01cd9faea9709829be09b1b4b03c73eaf3c9cd73"
 
 [aarch64-macos.assets.zig]
 url = "https://ziglang.org/download/0.17.0/zig-aarch64-macos-0.17.0.tar.xz"

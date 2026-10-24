@@ -6,7 +6,8 @@
 //!
 //! HashSLH-DSA rows sign and verify the same message under each set's RFC 9909
 //! profile. Each implementation hashes the message with that profile's
-//! function (SHA-256, SHA-512, SHAKE128, or SHAKE256) inside timing. Only
+//! function (SHA-256, SHA-512, SHAKE128, or SHAKE256) inside timing; the
+//! fips205 adapter uses RustCrypto to hash before its digest-based API. Only
 //! `fips205` implements HashSLH-DSA, so it is the sole comparison there.
 //!
 //! Key generation, pure and HashSLH-DSA signing, and secret-key import compute
@@ -20,14 +21,14 @@
 #[path = "common/criterion.rs"]
 mod bench_config;
 
+#[path = "../tests/common/slhdsa_prehash.rs"]
+mod reference_prehash;
+
 use core::hint::black_box;
 
 use bench_config::{checked, checked_with};
 use criterion::{Bencher, Criterion, SamplingMode};
-use fips205::{
-  Ph,
-  traits::{KeyGen as _, SerDes as _, Signer as _, Verifier as _},
-};
+use fips205::traits::{KeyGen as _, SerDes as _, Signer as _, Verifier as _};
 
 const MESSAGE: [u8; 32] = [0xa5; 32];
 
@@ -63,7 +64,7 @@ macro_rules! parameter_set {
       // fips205 checks both key-generation rows.
       let reference_keys = || {
         let (fields, _) = seeds.as_chunks::<$n>();
-        let (public, secret) = fips205::$fips::KG::keygen_with_seeds(&fields[0], &fields[1], &fields[2]);
+        let (public, secret) = fips205::$fips::KG::keygen_from_seed(&fields[0], &fields[1], &fields[2]);
         (public.into_bytes(), secret.into_bytes())
       };
       // Generic fields keep each library's key and signature types inferred.
@@ -89,8 +90,9 @@ macro_rules! parameter_set {
             &seeds[2 * $n..],
           );
           let external_public: oracle::VerifyingKey<oracle::$rustcrypto> = external.as_ref().clone();
-          let fips_secret = fips205::$fips::PrivateKey::try_from_bytes(encoded.as_bytes()).expect("fips205 secret key");
-          let fips_public = fips205::$fips::PublicKey::try_from_bytes(&public.to_bytes()).expect("fips205 public key");
+          let fips_secret =
+            fips205::$fips::PrivateKey::try_from_bytes(*encoded.as_bytes()).expect("fips205 secret key");
+          let fips_public = fips205::$fips::PublicKey::try_from_bytes(public.to_bytes()).expect("fips205 public key");
           // RustCrypto's deterministic signature is the reference of the
           // signing rows and the input of the verification rows.
           let external_signature = external
@@ -420,13 +422,14 @@ macro_rules! prehash_set {
           })
           .expect("key generation");
           let fips_secret =
-            fips205::$fips::PrivateKey::try_from_bytes(secret.expose_secret().as_bytes()).expect("fips205 secret key");
-          let fips_public = fips205::$fips::PublicKey::try_from_bytes(&public.to_bytes()).expect("fips205 public key");
+            fips205::$fips::PrivateKey::try_from_bytes(*secret.expose_secret().as_bytes()).expect("fips205 secret key");
+          let fips_public = fips205::$fips::PublicKey::try_from_bytes(public.to_bytes()).expect("fips205 public key");
           // fips205 is the only other HashSLH-DSA. Its deterministic signature
           // is the reference of the rscrypto signing row and the input of both
           // verification rows; rscrypto checks the fips205 signing row.
+          let (digest, oid) = reference_prehash::$ph(&MESSAGE);
           let signature = fips_secret
-            .try_hash_sign(&MESSAGE, b"", &Ph::$ph, false)
+            .try_hash_sign(&digest, b"", oid, false)
             .expect("fips205 signature");
           Fixture {
             public,
@@ -470,11 +473,8 @@ macro_rules! prehash_set {
           } = fixture();
           checked(
             move || {
-              black_box(
-                fips_secret
-                  .try_hash_sign(black_box(&MESSAGE), b"", &Ph::$ph, false)
-                  .expect("signature"),
-              )
+              let (digest, oid) = reference_prehash::$ph(black_box(&MESSAGE));
+              black_box(fips_secret.try_hash_sign(&digest, b"", oid, false).expect("signature"))
             },
             move |signature| {
               let mut expected = [0; $profile::SIGNATURE_LENGTH];
@@ -513,7 +513,10 @@ macro_rules! prehash_set {
             fips_public, signature, ..
           } = fixture();
           checked(
-            move || fips_public.hash_verify(black_box(&MESSAGE), black_box(signature), b"", &Ph::$ph),
+            move || {
+              let (digest, oid) = reference_prehash::$ph(black_box(&MESSAGE));
+              fips_public.hash_verify(&digest, black_box(signature), b"", oid)
+            },
             |accepted| assert!(accepted),
           )
         }),
@@ -528,7 +531,7 @@ prehash_set!(
   "slhdsa-sha2-128s",
   HashSlhDsaSha2_128sWithSha256,
   slh_dsa_sha2_128s,
-  SHA256,
+  sha256,
   "sha256",
   16
 );
@@ -537,7 +540,7 @@ prehash_set!(
   "slhdsa-sha2-128f",
   HashSlhDsaSha2_128fWithSha256,
   slh_dsa_sha2_128f,
-  SHA256,
+  sha256,
   "sha256",
   16
 );
@@ -546,7 +549,7 @@ prehash_set!(
   "slhdsa-sha2-192s",
   HashSlhDsaSha2_192sWithSha512,
   slh_dsa_sha2_192s,
-  SHA512,
+  sha512,
   "sha512",
   24
 );
@@ -555,7 +558,7 @@ prehash_set!(
   "slhdsa-sha2-192f",
   HashSlhDsaSha2_192fWithSha512,
   slh_dsa_sha2_192f,
-  SHA512,
+  sha512,
   "sha512",
   24
 );
@@ -564,7 +567,7 @@ prehash_set!(
   "slhdsa-sha2-256s",
   HashSlhDsaSha2_256sWithSha512,
   slh_dsa_sha2_256s,
-  SHA512,
+  sha512,
   "sha512",
   32
 );
@@ -573,7 +576,7 @@ prehash_set!(
   "slhdsa-sha2-256f",
   HashSlhDsaSha2_256fWithSha512,
   slh_dsa_sha2_256f,
-  SHA512,
+  sha512,
   "sha512",
   32
 );
@@ -582,7 +585,7 @@ prehash_set!(
   "slhdsa-shake-128s",
   HashSlhDsaShake128sWithShake128,
   slh_dsa_shake_128s,
-  SHAKE128,
+  shake128,
   "shake128",
   16
 );
@@ -591,7 +594,7 @@ prehash_set!(
   "slhdsa-shake-128f",
   HashSlhDsaShake128fWithShake128,
   slh_dsa_shake_128f,
-  SHAKE128,
+  shake128,
   "shake128",
   16
 );
@@ -600,7 +603,7 @@ prehash_set!(
   "slhdsa-shake-192s",
   HashSlhDsaShake192sWithShake256,
   slh_dsa_shake_192s,
-  SHAKE256,
+  shake256,
   "shake256",
   24
 );
@@ -609,7 +612,7 @@ prehash_set!(
   "slhdsa-shake-192f",
   HashSlhDsaShake192fWithShake256,
   slh_dsa_shake_192f,
-  SHAKE256,
+  shake256,
   "shake256",
   24
 );
@@ -618,7 +621,7 @@ prehash_set!(
   "slhdsa-shake-256s",
   HashSlhDsaShake256sWithShake256,
   slh_dsa_shake_256s,
-  SHAKE256,
+  shake256,
   "shake256",
   32
 );
@@ -627,7 +630,7 @@ prehash_set!(
   "slhdsa-shake-256f",
   HashSlhDsaShake256fWithShake256,
   slh_dsa_shake_256f,
-  SHAKE256,
+  shake256,
   "shake256",
   32
 );

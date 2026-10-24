@@ -412,6 +412,14 @@ The waiver was renewed with its reviewed rationale on that identity, and 465 wai
 The scanner accepts the release run's Linux and Windows x86-64 artifacts with no stale waiver.
 Other targets have no count-register branch and are unchanged.
 
+### v0.12.0 release qualification, 2026-10-24
+
+[Release 40053762138](https://github.com/loadingalias/rscrypto/actions/runs/40053762138) completed at source
+`9e8b827b`. Its full Constant-Time gate passed on Linux x86-64, AArch64, POWER, IBM Z, RISC-V, and Windows x86-64.
+The [RISC-V CT child](https://github.com/loadingalias/rscrypto/actions/runs/40054514887) also passed.
+The workflow published v0.12.0 from release commit `1c364ca5`; its source qualification predates the following
+RSA public-key import and standalone Poly1305 changes.
+
 ### RSA public-key import review, 2026-10-24
 
 RSA public-key operations now enter the Montgomery domain by a variable-time long division by the public modulus
@@ -444,6 +452,21 @@ Nine waivers are retired and 456 remain. The scanner accepts the candidate artif
 stale waiver and no unwaived enforced finding. On Apple Silicon, 16 waivers were already stale in a local build of
 `9e8b827b` at another checkout path; their open slices bind path-dependent data, so they are unchanged here.
 The three Apple waivers that this change affects bind closed slices. The CI Constant-Time run remains the gate.
+
+### October 24 compiler review
+
+The dependency refresh selects `nightly-2026-10-24`, rustc `48f4b05538b8` with LLVM 23.1.4.
+A fresh Apple Silicon release harness exposed 18 stale conditions: two P-256 ECDH conditions changed with
+register and stack allocation, and 16 RSA conditions were already unmatched in the retained L3 Apple artifacts.
+All 18 were reviewed against the current linked instructions and source ownership before renewal.
+The RSA review follows output-pointer and scratch-buffer ownership through conservative alias leaves, public
+modulus and output widths, fixed-pattern digit positions, and saved PSTATE.DIT. The ECDH conditions test the
+harness output pointer and the alignment tail of its fixed-size shared-result clear.
+
+The manifest retains 456 waivers. The new Apple scan reports no stale waiver, blocking finding, or unwaived
+failure. This is compiled-code review, not native timing evidence. Full Constant-Time qualification of the
+updated source remains pending. The local review decisions and linked disassembly identities are retained in
+`benchmark_results/qualification-v013-20261024/apple-ct-renewal/`.
 
 ## Public decisions and exclusions
 
