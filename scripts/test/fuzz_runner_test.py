@@ -44,6 +44,12 @@ def main():
 import json, os, sys
 with open(os.environ['FUZZ_LOG'], 'a') as output:
     output.write(json.dumps(sys.argv[1:]) + '\\n')
+if sys.argv[1] == 'test' and os.environ.get('CHECK_ASAN_FLAGS'):
+    flags = os.environ.get('RUSTFLAGS', '')
+    assert '-Zsanitizer=address' in flags
+    assert '--cfg rscrypto_internal_fuzzing' in flags
+    assert ('-Ctarget-feature=-outline-atomics' in flags) == (
+        os.environ.get('FIXTURE_HOST') == 'aarch64-unknown-linux-gnu')
 if sys.argv[1:3] == ['fuzz', 'list']:
     if os.environ.get('DISCOVERY') == 'fail':
         print('target discovery failed', file=sys.stderr)
@@ -65,7 +71,7 @@ elif sys.argv[1] == 'test':
 ''')
     cargo.chmod(0o755)
     rustc = binary / 'rustc'
-    rustc.write_text('#!/bin/sh\necho "host: fixture-host"\n')
+    rustc.write_text('#!/bin/sh\necho "host: ${FIXTURE_HOST:-fixture-host}"\n')
     rustc.chmod(0o755)
     log = root / 'commands.jsonl'
     environment = {key: value for key, value in os.environ.items()
@@ -107,6 +113,11 @@ elif sys.argv[1] == 'test':
           assert 'inventory mismatch' in result.stderr, result.stderr
         if replay != 'run-fail':
           assert not any(c[0] == 'test' and '--list' not in c for c in commands), commands
+    for host in ('aarch64-unknown-linux-gnu', 'x86_64-unknown-linux-gnu'):
+      result, commands = run(['--all'], script='test-fuzz-asan.sh',
+                             FIXTURE_HOST=host, CHECK_ASAN_FLAGS='1')
+      assert result.returncode == 0, (host, result.stderr)
+      assert len([c for c in commands if c[0] == 'test']) == 4, commands
     for args in (['--build', '--all'], ['--all', '--build']):
       result, commands = run(args)
       assert result.returncode == 0, result.stderr

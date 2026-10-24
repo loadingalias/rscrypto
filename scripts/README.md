@@ -109,6 +109,10 @@ It does not download upstream archives.
 
 - `just test-scripts` runs the argument-forwarding, toolchain, test, check, and fuzz regressions
   with substitute executors.
+- `just test-fuzz-asan` rebuilds the standard library and replays the selected corpus tests
+  with address instrumentation. On AArch64 Linux it disables outlined atomics: the current
+  rebuilt Rust runtime otherwise reads sanitizer shadow memory inside `__asan_init`, before
+  that memory exists. Inline LL/SC atomics preserve the sanitizer checks and corpus inventory.
 - Check recipes run `test/fixtures.py` before compilation.
   It verifies Git-visible payloads under `testdata/`, `tests/vectors/`, and
   `rscrypto-rustls/tests/vectors/`.

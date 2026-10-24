@@ -61,6 +61,12 @@ fuzz_select_packages "$PACKAGE_SCOPE"
 export ASAN_OPTIONS="${ASAN_OPTIONS:-detect_leaks=0:abort_on_error=1:strict_init_order=1}"
 # Replay through the internal fuzz entry points that cargo-fuzz compiles under `cfg(fuzzing)`.
 export RUSTFLAGS="${RUSTFLAGS:-} -Zsanitizer=address -Cforce-frame-pointers=yes --cfg rscrypto_internal_fuzzing"
+# The rebuilt AArch64 std calls an instrumented outline-atomic helper during
+# __asan_init, before shadow memory exists. Use inline LL/SC atomics so the
+# standard library and corpus tests can retain their address instrumentation.
+if [[ "$(fuzz_host_target)" == "aarch64-unknown-linux-gnu" ]]; then
+  export RUSTFLAGS="$RUSTFLAGS -Ctarget-feature=-outline-atomics"
+fi
 export RUSTDOCFLAGS="${RUSTDOCFLAGS:-} -Zsanitizer=address"
 export CARGO_TARGET_DIR="${RSCRYPTO_ASAN_TARGET_DIR:-$FUZZ_ROOT/target-asan}"
 
