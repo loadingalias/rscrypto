@@ -739,7 +739,8 @@ the default Bench workflow does not provision them and excludes this optional ta
   RustCrypto's `pbkdf2` has no raw-key verification API, so it is absent there.
   Each verification check also requires the timed path to reject a stored key with one changed byte.
 - RSA `verify-*/reuse-key` prepares the key outside timing, and each call verifies one signature.
-  `rscrypto` reuses a scratch that caches R²; `rscrypto-oneshot` rebuilds it in each call.
+  `rscrypto` reuses a scratch that caches R²; `rscrypto-oneshot` allocates scratch in each call
+  and enters the Montgomery domain by one division by the modulus instead.
   aws-lc-rs reuses a `ParsedPublicKey`, which caches its Montgomery context, and builds an `EVP_PKEY_CTX` in each call.
   RustCrypto keeps only n and e, and converts the signature in each call.
   ring has no prepared-key API, so its `RsaPublicKeyComponents` row rebuilds the modulus in each call.

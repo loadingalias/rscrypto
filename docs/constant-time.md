@@ -412,6 +412,39 @@ The waiver was renewed with its reviewed rationale on that identity, and 465 wai
 The scanner accepts the release run's Linux and Windows x86-64 artifacts with no stale waiver.
 Other targets have no count-register branch and are unchanged.
 
+### RSA public-key import review, 2026-10-24
+
+RSA public-key operations now enter the Montgomery domain by a variable-time long division by the public modulus
+(`src/auth/rsa_public_division.rs`). The private-key blinding and fault-check public operations call
+`prepared_public_operation_with_scratch`, which keeps the precomputed `R² mod n` path, and private scratch
+construction no longer copies `R² mod n`. The division is absent from every CT harness binary, so no enforced
+closure reaches it. `public_montgomery_r2_into` stays in the private closure through the prepared path's scratch
+binding, so its `asm_public_operand` entry still applies. The `rsa.rs` edits keep every line count, and the new
+module is declared after the production items, so no later panic location moved.
+
+The reviewed baseline is the Constant-Time run of
+[Release 40053762138](https://github.com/loadingalias/rscrypto/actions/runs/40053762138) at `9e8b827b`.
+The candidate artifacts were built at the CI checkout, home, and rustup paths: in an `ubuntu:24.04` container with
+the GNU 13 linkers for Linux x86-64, AArch64, POWER, IBM Z, and RISC-V, and on a Windows host at
+`C:\actions-runner\_work\rscrypto\rscrypto` with `C:\Rust` as the Cargo and rustup home.
+The pre-link object diff changes only `private_operation_from_scratch_encoded`, `RsaPrivateScratch::new`, and
+`diag_rsa_caller_random_signing_success`; `public_operation_with_scratch`, `public_operation_with_arithmetic_scratch`,
+and `split_limb_scratch` now inline into `prepared_public_operation_with_scratch`.
+
+- In `private_operation_from_scratch_encoded`, the `set_one` and `public_len_eq` conditions are renewed with
+  offset-free rationales. The inlined clears after the public operation are gone, because both public operations
+  are now calls; their waivers are retired.
+- The `public_operation_with_scratch` output-clear waiver of each target moves to
+  `prepared_public_operation_with_scratch`, with the same condition on the output pointer and length.
+- Other stale waivers have unchanged conditions in functions whose identity moved: AArch64 MachineOutliner
+  renumbering, POWER merged-constant digests and PLT call encodings, decrypt roots that inline the changed code,
+  and two RISC-V slices in which a `lui` immediate keeps the disassembler's nearest-symbol annotation.
+
+Nine waivers are retired and 456 remain. The scanner accepts the candidate artifacts of all six CI targets with no
+stale waiver and no unwaived enforced finding. On Apple Silicon, 16 waivers were already stale in a local build of
+`9e8b827b` at another checkout path; their open slices bind path-dependent data, so they are unchanged here.
+The three Apple waivers that this change affects bind closed slices. The CI Constant-Time run remains the gate.
+
 ## Public decisions and exclusions
 
 Ordinary equality is allowed for public values, such as nonces, encoded public keys,

@@ -3122,7 +3122,7 @@ impl RsaPrivateScratch {
       blinded_private_result: SecretBigEndianBuffer::zeroed(len),
       checked: SecretBigEndianBuffer::zeroed(len),
       one,
-      public_scratch: components.public.public_scratch(),
+      public_scratch: RsaPublicScratch::new(&components.public),
       mul_scratch: RsaPrivateMulScratch::new(components.public.modulus.limbs.len()),
       inverse_scratch: RsaPrivateInverseScratch::new(components.public.modulus.bits),
       exponent_scratch: RsaPrivateExponentScratch::new(components.public.modulus.limbs.len()),
@@ -3946,7 +3946,7 @@ impl RsaPrivateKeyComponents {
 
     self
       .public
-      .public_operation_with_scratch(
+      .prepared_public_operation_with_scratch(
         blinding.factor,
         scratch.blinding_power.as_mut_slice(),
         &mut scratch.public_scratch,
@@ -3971,7 +3971,7 @@ impl RsaPrivateKeyComponents {
 
     self
       .public
-      .public_operation_with_scratch(
+      .prepared_public_operation_with_scratch(
         scratch.blinded.as_slice(),
         scratch.checked.as_mut_slice(),
         &mut scratch.public_scratch,
@@ -4003,7 +4003,7 @@ impl RsaPrivateKeyComponents {
 
     self
       .public
-      .public_operation_with_scratch(
+      .prepared_public_operation_with_scratch(
         scratch.blinding_factor.as_slice(),
         scratch.blinding_power.as_mut_slice(),
         &mut scratch.public_scratch,
@@ -4028,7 +4028,7 @@ impl RsaPrivateKeyComponents {
 
     self
       .public
-      .public_operation_with_scratch(
+      .prepared_public_operation_with_scratch(
         scratch.blinded.as_slice(),
         scratch.checked.as_mut_slice(),
         &mut scratch.public_scratch,
@@ -5607,11 +5607,11 @@ impl RsaPublicKey {
     ])
   }
 
-  /// Allocate scratch space for repeated RSA public operations with this key.
+  /// Allocate scratch for repeated public operations, with this key's `R² mod n` precomputed.
   #[inline]
   #[must_use]
   pub fn public_scratch(&self) -> RsaPublicScratch {
-    RsaPublicScratch::new(self)
+    RsaPublicScratch::with_montgomery_r2(self)
   }
 
   /// Apply the RSA public operation to a fixed-width representative.
@@ -5626,7 +5626,7 @@ impl RsaPublicKey {
   #[must_use = "RSA public-operation failure must be checked; a dropped Result silently accepts an invalid \
                 representative"]
   pub fn public_operation(&self, input: &[u8], out: &mut [u8]) -> Result<(), RsaPublicOpError> {
-    let mut scratch = self.public_scratch();
+    let mut scratch = RsaPublicScratch::new(self);
     self.public_operation_with_scratch(input, out, &mut scratch)
   }
 
@@ -5646,7 +5646,7 @@ impl RsaPublicKey {
     out: &mut [u8],
     scratch: &mut RsaPublicScratch,
   ) -> Result<(), RsaPublicOpError> {
-    let result = self.modulus.public_operation(self.exponent, input, out, scratch);
+    let result = self.public_operation_by_division(input, out, scratch);
     clear_output_on_error(result, out)
   }
 
@@ -5710,7 +5710,7 @@ impl RsaPublicKey {
     out: &mut [u8],
     fill_random: impl FnMut(&mut [u8]) -> Result<(), RsaEncryptionError>,
   ) -> Result<(), RsaEncryptionError> {
-    let mut scratch = self.public_scratch();
+    let mut scratch = RsaPublicScratch::new(self);
     self.encrypt_pkcs1v15_with_random_fill_and_scratch(message, out, &mut scratch, fill_random)
   }
 
@@ -5749,7 +5749,7 @@ impl RsaPublicKey {
         .and_then(|()| {
           self
             .modulus
-            .public_operation_with_arithmetic_scratch(self.exponent, encoded, out, arithmetic_scratch)
+            .public_operation_by_division(self.exponent, encoded, out, arithmetic_scratch)
             .map_err(|_| RsaEncryptionError::PublicOperationFailed)
         }),
       None => Err(RsaEncryptionError::InvalidLength),
@@ -5778,7 +5778,7 @@ impl RsaPublicKey {
     seed: &[u8],
     out: &mut [u8],
   ) -> Result<(), RsaEncryptionError> {
-    let mut scratch = self.public_scratch();
+    let mut scratch = RsaPublicScratch::new(self);
     self.diag_encrypt_pkcs1v15_with_seed_and_scratch(message, seed, out, &mut scratch)
   }
 
@@ -5813,7 +5813,7 @@ impl RsaPublicKey {
     let result = encode_pkcs1v15_encryption_with_seed(message, seed, encoded).and_then(|()| {
       self
         .modulus
-        .public_operation_with_arithmetic_scratch(self.exponent, encoded, out, arithmetic_scratch)
+        .public_operation_by_division(self.exponent, encoded, out, arithmetic_scratch)
         .map_err(|_| RsaEncryptionError::PublicOperationFailed)
     });
     ct::zeroize(encoded);
@@ -5891,7 +5891,7 @@ impl RsaPublicKey {
     out: &mut [u8],
     fill_random: impl FnMut(&mut [u8]) -> Result<(), RsaEncryptionError>,
   ) -> Result<(), RsaEncryptionError> {
-    let mut scratch = self.public_scratch();
+    let mut scratch = RsaPublicScratch::new(self);
     self.encrypt_oaep_with_random_fill_and_scratch(profile, label, message, out, &mut scratch, fill_random)
   }
 
@@ -5946,7 +5946,7 @@ impl RsaPublicKey {
       .and_then(|()| {
         self
           .modulus
-          .public_operation_with_arithmetic_scratch(self.exponent, encoded, out, arithmetic_scratch)
+          .public_operation_by_division(self.exponent, encoded, out, arithmetic_scratch)
           .map_err(|_| RsaEncryptionError::PublicOperationFailed)
       });
       ct::zeroize(encoded);
@@ -5978,7 +5978,7 @@ impl RsaPublicKey {
     seed: &[u8],
     out: &mut [u8],
   ) -> Result<(), RsaEncryptionError> {
-    let mut scratch = self.public_scratch();
+    let mut scratch = RsaPublicScratch::new(self);
     self.diag_encrypt_oaep_with_seed_and_scratch(profile, label, message, seed, out, &mut scratch)
   }
 
@@ -6020,7 +6020,7 @@ impl RsaPublicKey {
     .and_then(|()| {
       self
         .modulus
-        .public_operation_with_arithmetic_scratch(self.exponent, encoded, out, arithmetic_scratch)
+        .public_operation_by_division(self.exponent, encoded, out, arithmetic_scratch)
         .map_err(|_| RsaEncryptionError::PublicOperationFailed)
     });
     ct::zeroize(encoded);
@@ -6039,7 +6039,7 @@ impl RsaPublicKey {
   /// externally visible failure classes.
   #[must_use = "signature verification must be checked; a dropped Result silently accepts a forged signature"]
   pub fn verify_pss(&self, profile: RsaPssProfile, message: &[u8], signature: &[u8]) -> Result<(), VerificationError> {
-    let mut scratch = self.public_scratch();
+    let mut scratch = RsaPublicScratch::new(self);
     self.verify_pss_with_scratch(profile, message, signature, &mut scratch)
   }
 
@@ -6064,7 +6064,7 @@ impl RsaPublicKey {
     if !self.pss_salt_len_is_possible(profile, salt_len) {
       return Err(VerificationError::new());
     }
-    let mut scratch = self.public_scratch();
+    let mut scratch = RsaPublicScratch::new(self);
     self.verify_pss_with_salt_len_and_scratch(profile, salt_len, message, signature, &mut scratch)
   }
 
@@ -6108,7 +6108,7 @@ impl RsaPublicKey {
     let (arithmetic_scratch, encoded, db, db_mask) = scratch.split_all();
     self
       .modulus
-      .public_operation_with_arithmetic_scratch(self.exponent, signature, encoded, arithmetic_scratch)
+      .public_operation_by_division(self.exponent, signature, encoded, arithmetic_scratch)
       .map_err(|_| VerificationError::new())?;
 
     let em_bits = self.modulus_bits().strict_sub(1);
@@ -6159,7 +6159,7 @@ impl RsaPublicKey {
     if !self.signature_profile_is_possible(profile) {
       return Err(VerificationError::new());
     }
-    let mut scratch = self.public_scratch();
+    let mut scratch = RsaPublicScratch::new(self);
     self.verify_signature_with_scratch(profile, message, signature, &mut scratch)
   }
 
@@ -6264,7 +6264,7 @@ impl RsaPublicKey {
     if !self.signature_profile_is_possible(profile) {
       return Err(VerificationError::new());
     }
-    let mut scratch = self.public_scratch();
+    let mut scratch = RsaPublicScratch::new(self);
     self.verify_signature_with_scratch(profile, message, signature, &mut scratch)
   }
 
@@ -6306,7 +6306,7 @@ impl RsaPublicKey {
     message: &[u8],
     signature: &[u8],
   ) -> Result<(), VerificationError> {
-    let mut scratch = self.public_scratch();
+    let mut scratch = RsaPublicScratch::new(self);
     self.verify_pkcs1v15_with_scratch(profile, message, signature, &mut scratch)
   }
 
@@ -6326,7 +6326,7 @@ impl RsaPublicKey {
     let (arithmetic_scratch, encoded, _, _) = scratch.split_all();
     self
       .modulus
-      .public_operation_with_arithmetic_scratch(self.exponent, signature, encoded, arithmetic_scratch)
+      .public_operation_by_division(self.exponent, signature, encoded, arithmetic_scratch)
       .map_err(|_| VerificationError::new())?;
 
     match profile {
@@ -6395,24 +6395,24 @@ struct RsaPublicArithmeticScratch<'a> {
 
 impl RsaPublicScratch {
   /// Allocate scratch space for `key`.
+  ///
+  /// Construction only allocates and serves any key with the same modulus width.
+  /// [`RsaPublicKey::public_scratch`] also precomputes that key's `R² mod n` for reuse.
   #[must_use]
   pub fn new(key: &RsaPublicKey) -> Self {
     let limbs = key.modulus.limbs.len();
     let bytes = key.modulus.bytes.len();
-    let mut montgomery = Vec::with_capacity(limbs.strict_mul(2));
-    montgomery.extend_from_slice(&key.modulus.limbs);
-    montgomery.resize(limbs.strict_mul(2), 0);
-    let mut scratch = Self {
-      montgomery: montgomery.into_boxed_slice(),
+
+    // Unbound, an imported key enters the Montgomery domain by long division. `public_scratch`
+    // and private keys bind a key's `R² mod n` in the `montgomery` slots; the all-zero modulus
+    // slot binds no key, because every RSA modulus is odd.
+    Self {
+      montgomery: vec![0u64; limbs.strict_mul(2)].into_boxed_slice(),
       limbs: vec![0u64; limbs.strict_mul(6).strict_add(2)].into_boxed_slice(),
       bytes: vec![0u8; bytes.strict_mul(3)].into_boxed_slice(),
       limb_count: limbs,
       byte_count: bytes,
-    };
-    let RsaPublicArithmeticScratch { r2, t, tmp, .. } = scratch.arithmetic_scratch();
-    key.modulus.montgomery_r2_into(r2, tmp, t);
-    scratch.limbs.fill(0);
-    scratch
+    }
   }
 
   fn arithmetic_scratch(&mut self) -> RsaPublicArithmeticScratch<'_> {
@@ -12722,6 +12722,11 @@ impl MalformedDer for RsaKeyError {
   const MALFORMED_DER: Self = Self::MalformedDer;
 }
 
+// Declared after the production items: lines added above them would move the panic locations
+// that constant-time waiver identities bind.
+#[path = "rsa_public_division.rs"]
+mod rsa_public_division;
+
 #[cfg(test)]
 mod tests {
   use alloc::format;
@@ -17814,16 +17819,6 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
           Some(expected.as_slice()),
           "precomputed R² for {words} limbs"
         );
-        let key = RsaPublicKey {
-          modulus,
-          exponent: RsaPublicExponent(65_537),
-        };
-        let scratch = key.public_scratch();
-        assert_eq!(
-          &scratch.montgomery[words..],
-          expected.as_slice(),
-          "scratch R² for {words} limbs"
-        );
       }
     }
   }
@@ -18208,12 +18203,17 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
   fn diag_montgomery_r2_precompute_matches_imported_key() {
     let spki = include_bytes!("../../testdata/rsa/fixtures/rsa3072_spki.der");
     let key = RsaPublicKey::from_spki_der(spki).expect("RSA-3072 SPKI fixture must import");
-    let scratch = key.public_scratch();
-    let (_, scratch_r2) = scratch.montgomery.split_at(scratch.limb_count);
+    let n = rsa::BigUint::from_bytes_be(key.modulus());
+    let r2 = (rsa::BigUint::from(1u8) << key.modulus.limbs.len().strict_mul(128)) % &n;
+    let mut r2_bytes = r2.to_bytes_be();
+    r2_bytes.splice(
+      ..0,
+      core::iter::repeat_n(0, key.modulus().len().strict_sub(r2_bytes.len())),
+    );
 
     assert_eq!(
       diag_rsa_precompute_public_montgomery_r2(key.modulus()),
-      Ok(limb_checksum(scratch_r2))
+      Ok(limb_checksum(&limbs_from_be(&r2_bytes)))
     );
   }
 

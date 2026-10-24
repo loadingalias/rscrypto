@@ -1653,8 +1653,8 @@ fn rsa_verify_for_scheme<V: VerifyScheme>(
   // operation, and padding checks are timed.
   // - `rscrypto` reuses the key and a public scratch, which caches
   //   R^2 mod n for Montgomery multiplication.
-  // - `rscrypto-oneshot` reuses the key, but allocates scratch and recomputes
-  //   R^2 on every call.
+  // - `rscrypto-oneshot` reuses the key, but allocates scratch on every call
+  //   and enters the Montgomery domain by one division by n instead of R^2.
   // - aws-lc-rs reuses a `ParsedPublicKey`. AWS-LC caches its Montgomery
   //   context in the key after the first call. aws-lc-rs builds an
   //   `EVP_PKEY_CTX` on every call.
