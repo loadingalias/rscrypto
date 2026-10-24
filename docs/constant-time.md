@@ -21,6 +21,13 @@ Release evidence combines:
 - BINSEC proofs for declared fixed-shape kernels;
 - DudeCT timing tests for declared end-to-end cases.
 
+Standalone Poly1305 has a retained `authenticate_once` entry point and required native timing cases
+for 64-byte and 16 KiB messages. They compare zero with random one-time keys through the production
+dispatch, including the short scalar and selected bulk kernels. The entry point is checked against
+the RFC 8439 vector and its pointer/output bounds. This adds generated-code and timing coverage to
+the existing best-effort inventory. It does not promote a general constant-time claim, provide a
+symbolic proof of the new kernels, or cover arbitrary secret messages and standalone verification.
+
 Source code that looks branchless is not proof.
 Compiler lowering, inlining, target features, and linking can change machine behavior.
 For example, a checked `strict_*` operation on a secret-derived value tests that value.

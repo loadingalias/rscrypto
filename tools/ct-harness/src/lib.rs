@@ -24,8 +24,9 @@ use rscrypto::{
   MlKem512DecapsulationKey, MlKem512EncapsulationKey, MlKem768, MlKem768Ciphertext, MlKem768DecapsulationKey,
   MlKem768EncapsulationKey, MlKem1024, MlKem1024Ciphertext, MlKem1024DecapsulationKey, MlKem1024EncapsulationKey,
   MlKemError, P256EphemeralSecret, P256PublicKey, P384EphemeralSecret, P384PublicKey, Pbkdf2Sha256, Pbkdf2Sha512,
-  RsaBlindingPair, RsaOaepProfile, RsaPkcs1v15Profile, RsaPrivateKey, RsaPssProfile, RsaPublicKeyPolicy, Scrypt,
-  ScryptParams, SecretBytes, Sha256, X25519PublicKey, X25519SecretKey, XChaCha20Poly1305, XChaCha20Poly1305Key,
+  Poly1305, Poly1305OneTimeKey, RsaBlindingPair, RsaOaepProfile, RsaPkcs1v15Profile, RsaPrivateKey, RsaPssProfile,
+  RsaPublicKeyPolicy, Scrypt, ScryptParams, SecretBytes, Sha256, X25519PublicKey, X25519SecretKey, XChaCha20Poly1305,
+  XChaCha20Poly1305Key,
   aead::{Nonce96, Nonce128, Nonce192, Nonce256, diag_aes_siv_cmac256_open_portable},
   checksum::Checksum,
   traits::Kem as _,
@@ -2555,6 +2556,43 @@ pub unsafe extern "C" fn ct_entry_blake3_keyed_digest(
   // and caller-input borrows have ended, and the contract prevents overlap with the stack-owned
   // digest copied by write_array.
   if unsafe { write_array(out, digest.as_bytes()) } {
+    STATUS_OK
+  } else {
+    STATUS_ERR
+  }
+}
+
+/// Authenticate through the standalone Poly1305 production dispatch.
+///
+/// # Safety
+///
+/// A non-null `key` must expose 32 initialized readable bytes. Non-null `data` must expose
+/// `data_len` initialized readable bytes in one allocation, with `data_len <= isize::MAX`.
+/// Those ranges must remain live and immutable until authentication finishes. Null data is
+/// accepted only for zero length. Non-null `out` must allow 16 writable bytes and must not
+/// overlap the stack-owned tag; output is written after input borrows end. Null key or output
+/// is rejected. Byte pointers need no extra alignment.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ct_entry_poly1305_authenticate(
+  key: *const u8,
+  data: *const u8,
+  data_len: usize,
+  out: *mut u8,
+) -> u8 {
+  // SAFETY: The caller establishes 32 initialized readable bytes for non-null key.
+  // Construct its existing zeroizing owner immediately, including on later input rejection.
+  let Some(key) = (unsafe { read_array::<32>(key) }).map(Poly1305OneTimeKey::from_bytes) else {
+    return STATUS_ERR;
+  };
+  // SAFETY: The caller establishes allocation, bounds, initialization, immutability and lifetime;
+  // input_slice rejects null with nonzero length and accepts null for an empty message.
+  let Some(data) = (unsafe { input_slice(data, data_len) }) else {
+    return STATUS_ERR;
+  };
+  let tag = Poly1305::authenticate_once(key, data);
+  // SAFETY: Input borrows have ended. A non-null output allows 16 writes and cannot overlap
+  // this stack-owned tag. write_array rejects a null output before copying.
+  if unsafe { write_array(out, tag.as_bytes()) } {
     STATUS_OK
   } else {
     STATUS_ERR

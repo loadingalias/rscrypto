@@ -305,6 +305,7 @@ symbols = [
   "ct_entry_owner_eq_2400",
   "ct_entry_owner_eq_3168",
   "ct_entry_secret_bytes32_debug_masked",
+  "ct_entry_poly1305_authenticate",
   "ct_entry_hmac_sha256_verify",
   "ct_entry_hmac_sha256_verify_truncated_64",
   "ct_entry_hmac_sha384_verify",
@@ -413,6 +414,24 @@ covers = [
   "public_hashes_and_checksums",
 ]
 notes = "Harness coverage is complete for Step 3/4/5. This does not make release CT claims; ct-claimed still requires the evidence gates in the required profiles."
+
+[[dudect_case]]
+name = "poly1305_short_fixed_vs_random_key"
+primitive = "mac.poly1305_authenticate"
+filter = "poly1305_short_fixed_vs_random_key"
+left_class = "64-byte standalone authentication with zero one-time key"
+right_class = "same public message with random one-time key"
+samples = 20000
+smoke_samples = 2000
+
+[[dudect_case]]
+name = "poly1305_bulk_fixed_vs_random_key"
+primitive = "mac.poly1305_authenticate"
+filter = "poly1305_bulk_fixed_vs_random_key"
+left_class = "16 KiB standalone authentication with zero one-time key"
+right_class = "same public message with random one-time key"
+samples = 20000
+smoke_samples = 2000
 
 [[dudect_case]]
 name = "owner_eq_16_equal_vs_first_diff"
@@ -2004,6 +2023,12 @@ primitive = "owner_equality.fixed"
 variant = "Owner64"
 dudect = ["owner_eq_64_equal_vs_first_diff"]
 binsec = ["owner_equality.fixed.64.portable.all"]
+
+[[evidence_unit]]
+id = "mac.poly1305_authenticate.standalone"
+primitive = "mac.poly1305_authenticate"
+variant = "Poly1305"
+dudect = ["poly1305_short_fixed_vs_random_key", "poly1305_bulk_fixed_vs_random_key"]
 
 [[evidence_unit]]
 id = "mac.hmac_verify.sha256"
@@ -3836,12 +3861,25 @@ evidence = [
 limitation = "The HMAC verification evidence computes and finalizes HMAC-SHA-2; the KMAC evidence covers KMAC256. Other MAC variants and downstream Mac implementations are inventoried separately without generated-code evidence."
 
 [[operation]]
+id = "mac.poly1305_authenticate"
+api = ["rscrypto::Poly1305::{new,update,finalize,authenticate_once}"]
+features = ["poly1305"]
+targets = ["all-supported", "backend selected by public target capabilities"]
+secret_inputs = ["one-time key", "accumulator"]
+public_inputs = ["message", "message length", "backend capabilities"]
+variable_time_components = ["public message-length loops", "public backend dispatch"]
+permitted_leakage = ["message length", "backend", "returned tag"]
+claim = "best-effort"
+evidence = ["primitive:mac.poly1305_authenticate", "unit:mac.poly1305_authenticate.standalone", "harness:ct_entry_poly1305_authenticate"]
+limitation = "The short and bulk native cases test zero versus random one-time keys on one fixed public message per length. They do not establish a general constant-time claim, symbolic proof, arbitrary secret-message timing, or standalone verification coverage."
+
+[[operation]]
 id = "mac.compute_and_finalize_source_only"
 api = [
   "rscrypto::Mac::{new,update,update_vectored,update_io_slices,finalize,reset,mac,finalize_to_vec,mac_to_vec}",
-  "rscrypto::{HmacSha3_224,HmacSha3_256,HmacSha3_384,HmacSha3_512,Kmac128,Poly1305}::{new,update,finalize,reset,mac}",
+  "rscrypto::{HmacSha3_224,HmacSha3_256,HmacSha3_384,HmacSha3_512,Kmac128}::{new,update,finalize,reset,mac}",
 ]
-features = ["hmac-sha3", "kmac", "poly1305", "alloc/std for Vec/IoSlice helpers"]
+features = ["hmac-sha3", "kmac", "alloc/std for Vec/IoSlice helpers"]
 targets = ["all-supported", "backend selected by public target capabilities"]
 secret_inputs = ["MAC key", "MAC state", "message when caller classifies it secret", "computed tag"]
 public_inputs = ["message length", "algorithm", "backend capabilities"]
@@ -3852,7 +3890,7 @@ variable_time_components = [
 ]
 permitted_leakage = ["algorithm", "message length", "backend", "returned tag"]
 claim = "best-effort"
-limitation = "No generated-code unit currently covers HMAC-SHA-3, KMAC128, standalone Poly1305, allocating trait helpers, or downstream Mac implementations. This row records source intent only."
+limitation = "No generated-code unit currently covers HMAC-SHA-3, KMAC128, allocating trait helpers, or downstream Mac implementations. This row records source intent only."
 
 [[operation]]
 id = "mac.verify_typed_tag"
@@ -4788,6 +4826,23 @@ notes = "Generic secret wrappers deliberately implement neither PartialEq nor Eq
 [primitive.harness]
 status = "covered"
 symbols = ["ct_entry_secret_bytes32_debug_masked"]
+
+[[primitive]]
+id = "mac.poly1305_authenticate"
+tier = "A"
+claim = "best-effort"
+features = ["poly1305"]
+variants = ["Poly1305"]
+entrypoints = ["Poly1305::authenticate_once"]
+secrets = ["one-time key", "accumulator"]
+public = ["message", "message_length", "backend_capabilities"]
+may_leak = ["message_length", "backend", "returned_tag"]
+must_not_leak_ref = "common_secret_data"
+required = ["tier_a"]
+notes = "Required short and bulk native timing cases reach the standalone production dispatch, including scalar64, wide, NEON and IFMA where selected. Zero versus random keys probes multiply operands. This adds evidence to the existing best-effort inventory; it does not promote a constant-time claim or establish symbolic proof of the new kernels."
+[primitive.harness]
+status = "covered"
+symbols = ["ct_entry_poly1305_authenticate"]
 
 [[primitive]]
 id = "mac.hmac_verify"
@@ -6936,7 +6991,7 @@ target = "aarch64-apple-darwin"
 primitive = "rsa.private_ops"
 symbol = "rscrypto::auth::rsa::encode_pss_with_mask::<rscrypto::hashes::crypto::sha256::Sha256>"
 kind = "select_branch"
-slice_sha256 = "0a97991717f3d320840bce84b9978280167f846552a366180602c96fc5e487ff"
+slice_sha256 = "8eee6e7e9435d4054aee2f39ab781243444894438cab203b407babd73e6c9d0e"
 source = "src/auth/rsa.rs:9158 encode_pss_with_mask"
 classification = "public"
 rationale = "x26 is entry out.len()*8. x8 reloads em_bits from sp+0x10, whose only direct frame store saves entry x4; the call-result and output buffers are disjoint from that slot. cmp x26,x8 tests whether unused_bits is zero and skips the public top-bit mask. The message hash, salt, and mask bytes do not feed the condition."

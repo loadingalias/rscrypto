@@ -322,6 +322,42 @@ fn secret_wrappers_debug_fixed_vs_random(runner: &mut CtRunner, rng: &mut BenchR
   }
 }
 
+fn poly1305_fixed_vs_random_key<const N: usize>(runner: &mut CtRunner, rng: &mut BenchRng) {
+  let mut inputs = Vec::with_capacity(samples());
+  for _ in 0..samples() {
+    let class = random_class(rng);
+    // Zero versus random clamped multipliers also probes operand-dependent multiply latency.
+    let key = if matches!(class, Class::Left) {
+      [0; 32]
+    } else {
+      rand_array::<32>(rng)
+    };
+    inputs.push((class, key));
+  }
+  let message = [0x5a; N];
+  let entry = core::hint::black_box(
+    rscrypto_ct_harness::ct_entry_poly1305_authenticate
+      as unsafe extern "C" fn(*const u8, *const u8, usize, *mut u8) -> u8,
+  );
+  for (class, key) in inputs {
+    runner.run_one(class, || {
+      let mut tag = [0u8; 16];
+      // SAFETY: key and message are initialized, live immutable arrays; tag is a distinct
+      // writable 16-byte array. Each call constructs and consumes a fresh one-time key owner.
+      let status = unsafe { entry(key.as_ptr(), message.as_ptr(), message.len(), tag.as_mut_ptr()) };
+      core::hint::black_box((status, tag))
+    });
+  }
+}
+
+fn poly1305_short_fixed_vs_random_key(runner: &mut CtRunner, rng: &mut BenchRng) {
+  poly1305_fixed_vs_random_key::<64>(runner, rng);
+}
+
+fn poly1305_bulk_fixed_vs_random_key(runner: &mut CtRunner, rng: &mut BenchRng) {
+  poly1305_fixed_vs_random_key::<16384>(runner, rng);
+}
+
 macro_rules! hmac_valid_vs_invalid_tag {
   ($name:ident, $ty:ty, $tag_ty:ty, $tag_len:expr) => {
     fn $name(runner: &mut CtRunner, rng: &mut BenchRng) {
@@ -3618,6 +3654,8 @@ ctbench_main_with_seeds!(
   (owner_eq_48_equal_vs_first_diff, Some(0x6f776e657234385f)),
   (owner_eq_64_equal_vs_first_diff, Some(0x6f776e657236345f)),
   (secret_wrappers_debug_fixed_vs_random, Some(0x7365637265745f77)),
+  (poly1305_short_fixed_vs_random_key, Some(0x706f6c795f736872)),
+  (poly1305_bulk_fixed_vs_random_key, Some(0x706f6c795f62756c)),
   (hmac_sha256_valid_vs_invalid_tag, Some(0x686d61635f736861)),
   (hmac_sha256_truncated_64_valid_vs_invalid_tag, Some(0x686d61635f743634)),
   (hmac_sha384_valid_vs_invalid_tag, Some(0x686d61633338345f)),

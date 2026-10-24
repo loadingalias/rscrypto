@@ -31,6 +31,8 @@ fn main() {
     rscrypto_ct_harness::ct_entry_rsa_pkcs1v15_decrypt_fixed_blinding,
   );
 
+  retain!(rscrypto_ct_harness::ct_entry_poly1305_authenticate);
+
   retain!(
     rscrypto_ct_harness::ct_entry_p256_ecdh_public_key,
     rscrypto_ct_harness::ct_entry_p256_ecdh_agree,
