@@ -246,6 +246,53 @@ fn rapidhash_key_types(c: &mut Criterion) {
   group.finish();
 }
 
+/// Short-key `hash_one` through a randomized state, the state for keys an attacker can choose.
+///
+/// rscrypto's state uses fixed caller entropy; upstream draws its own seed and global secrets, so
+/// its rows check that a second call returns the same hash. `rscrypto-seeded` is the deterministic
+/// floor and `rscrypto-xxh3-seeded` the one-shot seeded XXH3-64 alternative; the scorecard reads
+/// neither.
+fn rapidhash_random_state(c: &mut Criterion) {
+  if !bench_config::selected("rapidhash-random-state/") {
+    return;
+  }
+  const ENTROPY: u64 = 0x243f_6a88_85a3_08d3;
+  let ours = rscrypto::RapidRandomState::try_new_with(|seed| {
+    seed.copy_from_slice(&ENTROPY.to_le_bytes());
+    Ok::<_, ()>(())
+  })
+  .expect("fixed entropy initializes the state");
+  let seeded = rscrypto::RapidSeededState::new(0);
+  let fast = rapidhash::fast::RandomState::new();
+  let quality = rapidhash::quality::RandomState::new();
+  let source = [collection_key(17), collection_key(18)].concat();
+
+  let mut group = c.benchmark_group("rapidhash-random-state");
+  for len in [8usize, 16, 32, 64] {
+    common::set_throughput(&mut group, len);
+    let key = &source[..len];
+    group.bench_function(BenchmarkId::new("rscrypto", len), hash_one_row(ours.clone(), key, None));
+    group.bench_function(
+      BenchmarkId::new("rscrypto-seeded", len),
+      hash_one_row(seeded, key, None),
+    );
+    #[cfg(feature = "xxh3")]
+    group.bench_function(
+      BenchmarkId::new("rscrypto-xxh3-seeded", len),
+      checked(
+        || <rscrypto::Xxh3 as rscrypto::FastHash>::hash_with_seed(ENTROPY, black_box(key)),
+        |out| assert_eq!(out, xxhash_rust::xxh3::xxh3_64_with_seed(key, ENTROPY)),
+      ),
+    );
+    group.bench_function(BenchmarkId::new("rapidhash-fast", len), hash_one_row(fast, key, None));
+    group.bench_function(
+      BenchmarkId::new("rapidhash-quality", len),
+      hash_one_row(quality, key, None),
+    );
+  }
+  group.finish();
+}
+
 fn rapidhash_hashmap_operations(c: &mut Criterion) {
   if !bench_config::selected("rapidhash-hashmap/") {
     return;
@@ -347,6 +394,7 @@ fn main() {
     rapidhash_v3_64,
     rapidhash_seeded_state,
     rapidhash_key_types,
+    rapidhash_random_state,
     rapidhash_hashmap_operations,
     rapidhash_streaming,
   ]);

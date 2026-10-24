@@ -101,7 +101,7 @@
       "kind": "criterion",
       "family": "hashes",
       "required": true,
-      "features": ["std", "rapidhash"]
+      "features": ["std", "rapidhash", "xxh3"]
     },
     "aead_kernels": {
       "binary": "aead_kernels",
@@ -986,6 +986,13 @@
       "cases": "^rapidhash-hash-one/(?P<input>[^/]+)/(?P<implementation>[^/]+)$",
       "headline": false,
       "task": "Hash one value through the collection hasher."
+    },
+    "rapidhash-random-state": {
+      "family": "RapidHash",
+      "bench": "rapidhash",
+      "cases": "^rapidhash-random-state/(?P<implementation>[^/]+)/(?P<input>[0-9]+)$",
+      "headline": false,
+      "task": "Hash one short byte key through a randomized collection hasher."
     },
     "rapidhash-hashmap": {
       "family": "RapidHash",

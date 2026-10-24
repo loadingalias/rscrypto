@@ -208,9 +208,10 @@ impl Hasher for RapidStreamHasher {
 #[derive(Clone, Copy)]
 pub struct RapidHasher {
   seed: u64,
-  random_word0: u64,
   sponge: u128,
   sponge_bits: u8,
+  /// The state's derived schedule; `None` selects the public default secrets.
+  secrets: Option<[u64; 7]>,
 }
 
 impl RapidHasher {
@@ -218,28 +219,27 @@ impl RapidHasher {
   const fn deterministic(seed: u64) -> Self {
     Self {
       seed,
-      random_word0: 0,
       sponge: 0,
       sponge_bits: 0,
+      secrets: None,
     }
   }
 
   #[inline]
-  const fn randomized(seed: u64, random_word0: u64) -> Self {
+  const fn randomized(seed: u64, secrets: [u64; 7]) -> Self {
     Self {
       seed,
-      random_word0,
       sponge: 0,
       sponge_bits: 0,
+      secrets: Some(secrets),
     }
   }
 
   #[inline(always)]
   const fn word0(&self) -> u64 {
-    if self.random_word0 == 0 {
-      DEFAULT_SECRETS[0]
-    } else {
-      self.random_word0
+    match &self.secrets {
+      Some(secrets) => secrets[0],
+      None => DEFAULT_SECRETS[0],
     }
   }
 
@@ -273,9 +273,8 @@ impl core::fmt::Debug for RapidHasher {
 // Keep byte hashing out of fixed-size key callers; inlining either schedule bloats collection
 // paths.
 #[inline(never)]
-fn hash_randomized(bytes: &[u8], seed: u64, random_word0: u64) -> u64 {
-  let state = RapidSecrets::derived(seed, random_word0);
-  rapidhash_core(bytes, state.seed, &state.words)
+fn hash_randomized(bytes: &[u8], seed: u64, secrets: &[u64; 7]) -> u64 {
+  rapidhash_core(bytes, seed, secrets)
 }
 
 #[inline(never)]
@@ -317,10 +316,9 @@ impl Hasher for RapidHasher {
       return;
     }
     self.flush_sponge();
-    self.seed = if self.random_word0 == 0 {
-      hash_deterministic(bytes, self.seed)
-    } else {
-      hash_randomized(bytes, self.seed, self.random_word0)
+    self.seed = match &self.secrets {
+      Some(secrets) => hash_randomized(bytes, self.seed, secrets),
+      None => hash_deterministic(bytes, self.seed),
     };
   }
 
@@ -388,11 +386,11 @@ impl BuildHasher for RapidSeededState {
 /// Fallible randomized [`BuildHasher`] with a per-state seed and secret schedule.
 ///
 /// This changes collision behavior between states, but RapidHash remains
-/// non-cryptographic.
+/// non-cryptographic. The state derives its schedule once; a hash reads it.
 #[derive(Clone)]
 pub struct RapidRandomState {
   seed: u64,
-  word0: u64,
+  secrets: [u64; 7],
 }
 
 impl RapidRandomState {
@@ -403,9 +401,10 @@ impl RapidRandomState {
     let mut seed = [0u8; 8];
     fill(&mut seed)?;
     let seed = premix_seed(u64::from_le_bytes(seed), 0);
+    let schedule = RapidSecrets::derived(seed, premix_seed(seed, 0));
     Ok(Self {
-      seed,
-      word0: premix_seed(seed, 0),
+      seed: schedule.seed,
+      secrets: schedule.words,
     })
   }
 
@@ -421,7 +420,7 @@ impl BuildHasher for RapidRandomState {
 
   #[inline]
   fn build_hasher(&self) -> Self::Hasher {
-    RapidHasher::randomized(self.seed, self.word0)
+    RapidHasher::randomized(self.seed, self.secrets)
   }
 }
 
@@ -449,6 +448,39 @@ mod tests {
 
   fn seeded_hasher(seed: u64) -> RapidHasher {
     RapidSeededState::new(seed).build_hasher()
+  }
+
+  fn random_state(entropy: u64) -> RapidRandomState {
+    RapidRandomState::try_new_with(|seed| {
+      seed.copy_from_slice(&entropy.to_le_bytes());
+      Ok::<_, ()>(())
+    })
+    .expect("caller-provided entropy should initialize the state")
+  }
+
+  /// rapidhash's `RapidSecrets::seed` derives the seed and all seven secrets from the same
+  /// entropy word, so one byte write must equal upstream V3 with those secrets at every length.
+  #[test]
+  fn random_state_byte_writes_match_upstream_random_secrets() {
+    #[cfg(not(miri))]
+    let lengths: Vec<usize> = (1..=260).chain([335, 336, 337, 447, 448, 449, 1024]).collect();
+    #[cfg(miri)]
+    let lengths = [1, 8, 16, 17, 112, 113, 224, 225, 337];
+
+    for entropy in [0, 1, u64::MAX, 0x243f_6a88_85a3_08d3] {
+      let state = random_state(entropy);
+      let upstream = rapidhash::v3::RapidSecrets::seed(entropy);
+      for len in lengths.iter().copied() {
+        let input = data(len);
+        let mut hasher = state.build_hasher();
+        hasher.write(&input);
+        assert_eq!(
+          hasher.finish(),
+          rapidhash::v3::rapidhash_v3_seeded(&input, &upstream),
+          "entropy={entropy:#x}, len={len}"
+        );
+      }
+    }
   }
 
   #[test]
