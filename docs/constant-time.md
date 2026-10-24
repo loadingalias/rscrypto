@@ -472,7 +472,7 @@ harness output pointer and the alignment tail of its fixed-size shared-result cl
 
 The manifest retains 456 waivers. The new Apple scan reports no stale waiver, blocking finding, or unwaived
 failure. This is compiled-code review, not native timing evidence. Full Constant-Time qualification of the
-updated source remains pending. The local review decisions and linked disassembly identities are retained in
+updated source was pending at that point. The local review decisions and linked disassembly identities are retained in
 `benchmark_results/qualification-v013-20261024/apple-ct-renewal/`.
 
 ### Final-source condition review, 2026-10-24
@@ -492,6 +492,30 @@ are retained in `benchmark_results/qualification-v013-20261024/ct-*-renewal/` an
 subdirectory. The Linux x86-64 probe retains its dirty transfer provenance; its production Rust source
 matches the final source, while omitted benchmark records and fuzz corpora were not build inputs.
 These static reviews do not substitute for the complete native Constant-Time workflow.
+
+### Final CI artifact binding, 2026-10-24
+
+The complete CI artifacts exposed 25 remaining open Linux x86 identities and 18 Windows identities.
+Both targets completed every required native timing case. Their assembly findings still blocked the
+full-report verdict: per-platform workflow steps intentionally retain evidence after findings, and
+the final workflow gate decides qualification. A successful collection step is not a passing CT report.
+
+The Linux instructions and public operands match the reviewed probe. The differing 21 panic
+`Location` constants retain their source suffix, line and column; only the checkout/toolchain path
+prefix changes. Every constant was resolved through the ELF loader relocation before comparison.
+Windows also moves the P-256 output and result-clear frame slots. The review traces the caller output
+pointer separately from the 32-byte result/secret and 136-byte public-key objects, and preserves the
+four duplicate cleanup identities. All 43 conditions were reviewed against the actual CI artifacts.
+Fresh scans of both targets have no stale waiver or unresolved enforced finding. There are still
+457 waivers; primitive claims, required cases, thresholds and disclosures are unchanged.
+
+The final-source record is
+`benchmark_results/qualification-v013-20261024/ct-final-baseline/manifest.json`.
+It owns the pass/fail verdict, exact source and execution commits, manifest hash, compiler, native
+workflow/child runs, report completeness and archive hashes for the six required targets. Qualification
+requires a complete all-target workflow with RISC-V required and passing full reports, not collection
+job status alone. Individual condition reviews and their scope remain in the same campaign's
+`ct-ci-*-renewal/` and `zeroization/ct-ci-cleanup-renewal/` records.
 
 ## Public decisions and exclusions
 
