@@ -406,6 +406,16 @@ The sentinel does not qualify other alignments, owners, heap storage, error path
 or compiler-made copies.
 The retained machine code still needs review for each target.
 
+The October 24 L1/L2 review inspected 20 named BLAKE3 reader and standalone Poly1305 owners
+with `nightly-2026-10-24` (LLVM 23.1.4) on Apple Silicon. Linked O3 fat-LTO code retains the
+initialized reader stack prefix and full initialized heap wipe, including reader errors and ordinary
+unwind, and the reviewed scalar, NEON, and portable state and local-array wipes. Separate optimized
+unwind, portable-only, and parallel consumers built and executed. The x86 IFMA powers and squares
+have compile-only evidence. No missing wipe was established in that scope. The retained report is
+`benchmark_results/qualification-v013-20261024/zeroization/report/final-report.md`.
+This covers named storage on the reviewed paths; it excludes registers, compiler spills, moved-from
+copies, aborts, and arbitrary internal invariant panics. It is not a memory-residue or timing claim.
+
 `just stack-residue` measures moved-copy residue under QEMU on the RV32 `virt` board and the Cortex-M3 `mps2-an385` board,
 with native and portable backends.
 [`scripts/README.md`](../scripts/README.md) describes the method and its controls.
