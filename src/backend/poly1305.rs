@@ -4,11 +4,35 @@
 //! and suppress the full-block high bit; AEAD segments zero-pad to full blocks.
 //! Accelerated AEAD kernels read `r` and update `h` in the same radix-2^26 form.
 
+#[cfg(any(
+  feature = "chacha20poly1305",
+  feature = "xchacha20poly1305",
+  test,
+  not(all(target_pointer_width = "64", not(feature = "portable-only")))
+))]
 use crate::traits::ct;
 
+#[cfg(any(
+  feature = "chacha20poly1305",
+  feature = "xchacha20poly1305",
+  test,
+  not(all(target_pointer_width = "64", not(feature = "portable-only")))
+))]
 pub(crate) const LIMB_MASK: u32 = 0x03ff_ffff;
+#[cfg(any(
+  feature = "chacha20poly1305",
+  feature = "xchacha20poly1305",
+  test,
+  not(all(target_pointer_width = "64", not(feature = "portable-only")))
+))]
 pub(crate) const FULL_BLOCK_HIBIT: u32 = 1 << 24;
 
+#[cfg(any(
+  feature = "chacha20poly1305",
+  feature = "xchacha20poly1305",
+  test,
+  not(all(target_pointer_width = "64", not(feature = "portable-only")))
+))]
 #[inline]
 pub(crate) fn load_u32_le(input: &[u8]) -> u32 {
   let mut bytes = [0u8; 4];
@@ -16,6 +40,12 @@ pub(crate) fn load_u32_le(input: &[u8]) -> u32 {
   u32::from_le_bytes(bytes)
 }
 
+#[cfg(any(
+  feature = "chacha20poly1305",
+  feature = "xchacha20poly1305",
+  test,
+  not(all(target_pointer_width = "64", not(feature = "portable-only")))
+))]
 #[derive(Clone, Default)]
 pub(crate) struct State {
   pub(crate) r: [u32; 5],
@@ -23,6 +53,12 @@ pub(crate) struct State {
   pad: [u32; 4],
 }
 
+#[cfg(any(
+  feature = "chacha20poly1305",
+  feature = "xchacha20poly1305",
+  test,
+  not(all(target_pointer_width = "64", not(feature = "portable-only")))
+))]
 impl Drop for State {
   fn drop(&mut self) {
     ct::zeroize_words_no_fence(&mut self.r);
@@ -32,6 +68,12 @@ impl Drop for State {
   }
 }
 
+#[cfg(any(
+  feature = "chacha20poly1305",
+  feature = "xchacha20poly1305",
+  test,
+  not(all(target_pointer_width = "64", not(feature = "portable-only")))
+))]
 impl State {
   #[inline]
   pub(crate) fn new(key: &[u8; 32]) -> Self {
@@ -147,13 +189,14 @@ impl State {
     self.h = [h0, h1, h2, h3, h4];
   }
 
+  #[cfg(any(feature = "chacha20poly1305", feature = "xchacha20poly1305"))]
   #[inline(always)]
-  pub(crate) fn finalize(mut self) -> [u8; 16] {
+  pub(crate) fn finalize(self) -> [u8; 16] {
     self.finalize_in_place()
   }
 
   #[inline(always)]
-  fn finalize_in_place(&mut self) -> [u8; 16] {
+  fn finalize_in_place(&self) -> [u8; 16] {
     #[inline(always)]
     fn fivefold_carry(carry: u32) -> u32 {
       const MAX_UNSCALED: u32 = 858_993_459;
@@ -249,4 +292,37 @@ impl State {
     tag[12..16].copy_from_slice(&h3.to_le_bytes());
     tag
   }
+
+  /// Computes the tag without consuming the owner, whose drop still clears it.
+  #[cfg(all(
+    feature = "poly1305",
+    any(test, not(all(target_pointer_width = "64", not(feature = "portable-only"))))
+  ))]
+  #[inline(always)]
+  pub(crate) fn tag(&self) -> [u8; 16] {
+    self.finalize_in_place()
+  }
 }
+
+#[cfg(all(
+  feature = "poly1305",
+  target_arch = "aarch64",
+  target_endian = "little",
+  target_feature = "neon",
+  target_pointer_width = "64",
+  not(feature = "portable-only")
+))]
+mod aarch64_neon;
+#[cfg(all(feature = "poly1305", target_pointer_width = "64", not(feature = "portable-only")))]
+mod radix26;
+#[cfg(all(feature = "poly1305", target_pointer_width = "64", not(feature = "portable-only")))]
+mod scalar64;
+#[cfg(feature = "poly1305")]
+pub(crate) mod standalone;
+#[cfg(all(
+  feature = "poly1305",
+  target_arch = "x86_64",
+  target_pointer_width = "64",
+  not(feature = "portable-only")
+))]
+mod x86_64_ifma;

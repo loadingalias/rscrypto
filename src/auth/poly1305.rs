@@ -4,7 +4,7 @@ use core::fmt;
 
 use crate::{
   SecretBytes,
-  backend::poly1305::State,
+  backend::poly1305::standalone::Engine,
   secret::ZeroizingBytes,
   traits::{VerificationError, ct},
 };
@@ -187,7 +187,7 @@ impl fmt::Debug for Poly1305Tag {
 /// Construction consumes a [`Poly1305OneTimeKey`]. Finalization consumes the
 /// authenticator so the keyed state cannot be reset and reused.
 pub struct Poly1305 {
-  state: State,
+  engine: Engine,
   buffer: [u8; TAG_SIZE],
   buffer_len: usize,
 }
@@ -209,16 +209,18 @@ impl Poly1305 {
   #[inline]
   #[must_use]
   pub fn new(key: Poly1305OneTimeKey) -> Self {
-    let state = State::new(key.as_bytes());
+    let engine = Engine::new(key.as_bytes());
     drop(key);
     Self {
-      state,
+      engine,
       buffer: [0u8; TAG_SIZE],
       buffer_len: 0,
     }
   }
 
   /// Absorb more message bytes.
+  ///
+  /// Every full block of `data` past a buffered fragment reaches the block kernel in one call.
   #[inline]
   pub fn update(&mut self, mut data: &[u8]) {
     if self.buffer_len != 0 {
@@ -228,15 +230,15 @@ impl Poly1305 {
       data = &data[take..];
 
       if self.buffer_len == TAG_SIZE {
-        self.state.compute_block_portable(&self.buffer, false);
+        self.engine.absorb_blocks(core::slice::from_ref(&self.buffer));
         ct::zeroize_no_fence(&mut self.buffer);
         self.buffer_len = 0;
       }
     }
 
     let (blocks, rem) = data.as_chunks::<TAG_SIZE>();
-    for block in blocks {
-      self.state.compute_block_portable(block, false);
+    if !blocks.is_empty() {
+      self.engine.absorb_blocks(blocks);
     }
 
     if !rem.is_empty() {
@@ -250,12 +252,12 @@ impl Poly1305 {
   #[must_use]
   pub fn finalize(mut self) -> Poly1305Tag {
     if self.buffer_len != 0 {
+      // Bytes past the fragment are zero: the buffer starts zeroed and is cleared after each full block.
       self.buffer[self.buffer_len] = 1;
-      self.state.compute_block_portable(&self.buffer, true);
+      self.engine.absorb_final_fragment(&self.buffer);
     }
-    ct::zeroize_no_fence(&mut self.buffer);
-    self.buffer_len = 0;
-    Poly1305Tag::from_bytes(core::mem::take(&mut self.state).finalize())
+    // Dropping `self` clears the engine and the buffer.
+    Poly1305Tag::from_bytes(self.engine.tag())
   }
 
   /// Verify `expected` through the tag owner's sealed comparison decision.
@@ -276,9 +278,17 @@ impl Poly1305 {
   #[inline]
   #[must_use]
   pub fn authenticate_once(key: Poly1305OneTimeKey, data: &[u8]) -> Poly1305Tag {
-    let mut authenticator = Self::new(key);
-    authenticator.update(data);
-    authenticator.finalize()
+    let mut engine = Engine::new(key.as_bytes());
+    drop(key);
+    let (blocks, rem) = data.as_chunks::<TAG_SIZE>();
+    if !blocks.is_empty() {
+      engine.absorb_blocks(blocks);
+    }
+    if !rem.is_empty() {
+      engine.absorb_final_bytes(rem);
+    }
+    // Dropping `engine` clears its key, accumulator, and pad.
+    Poly1305Tag::from_bytes(engine.tag())
   }
 
   /// Verify a one-shot Poly1305 tag, consuming the one-time key.
