@@ -421,8 +421,8 @@ rotation on a simulated clock, and resumption. They do not qualify compiler-made
 
 ### rustls QUIC integration
 
-Endpoint reset and server token-key acquisition use the selected fallible entropy source and
-clearing owners. Token derivation clears its intermediate key. The derived
+Endpoint reset, connection-ID, endpoint-seed, initial-ID, and server token-key
+acquisition use the selected fallible entropy source and clearing owners. Token derivation clears its intermediate key. The derived
 sealer atomically consumes its one-use permission before encryption and rejects
 plaintext above 4 KiB. Authentication failure clears the decrypted token body;
 length rejection occurs before mutation. Token buffers and authenticated

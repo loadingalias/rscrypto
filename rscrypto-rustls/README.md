@@ -38,6 +38,7 @@ quinn-proto revision makes its browser-WASM `ring` dependency optional
 | Key import and signing | rscrypto PKCS#8/SEC1/PKCS#1 codecs; blinded ECDSA, Ed25519, blinded RSA-PSS | [sign](src/sign.rs) |
 | ML-DSA authentication | Pure ML-DSA-44/65/87 with the empty TLS context; keys prepared once (or compact on request) and hedged signing | [sign](src/sign/mldsa.rs), [verify](src/verify.rs) |
 | QUIC Retry, reset, and address tokens | RFC 9001 AES-128-GCM Retry; HMAC-SHA256 reset tokens; HKDF-SHA256 and AES-256-GCM token keys | [quinn](src/quinn/) |
+| QUIC connection IDs | `ChaCha20Rng` nonces and initial IDs seeded from caller entropy; AES-128 connection-ID tags | [quinn](src/quinn/cid.rs) |
 | Key exchange | `X25519SecretKey`, `P256EphemeralSecret`, `P384EphemeralSecret`, `MlKem768` | [kx_group](src/kx_group.rs) |
 
 `cipher_suite::ALL_CIPHER_SUITES` lists enabled suites in preference order.
@@ -191,9 +192,10 @@ the caller explicitly enables it.
 ## QUIC v1
 
 Enable `quinn` and select only a runtime feature on the application's Quinn
-dependency. Use `quinn::endpoint_config()`, `quinn::client_config(tls)`, and
-`quinn::server_config(tls)` from this crate. Pass the resulting configuration
-and UDP socket to Quinn's `Endpoint::new`. The TLS configurations use this
+dependency. Use `quinn::EndpointKeys`, `quinn::client_config(tls)`, and
+`quinn::server_config(tls)` from this crate, or `quinn::endpoint_config()` with
+`getrandom`. Pass the resulting configuration and UDP socket to Quinn's
+`Endpoint::new`. The TLS configurations use this
 provider explicitly, require TLS 1.3, and must supply a nonempty ALPN list.
 The adapter accepts version 1 only. QUIC v2 and draft versions are excluded.
 
@@ -205,15 +207,35 @@ perform another key exchange or supply fresh post-compromise entropy.
 
 Initial keys always use AES-128-GCM and HKDF-SHA256, even when the negotiated
 suite is ChaCha20 or AES-256. Retry uses the fixed RFC 9001 key and nonce.
-Endpoint configurations retain the reset key and matching connection-ID filter
-when cloned. Address-token roots belong to the returned server configuration;
-cloning it keeps outstanding tokens valid. Each derived token key seals once,
-with at most 4 KiB of plaintext. Quinn supplies the fresh per-token random value.
-Quinn also owns connection-ID generation and its Rust random generator.
-`quinn::endpoint_config_with_random` selects the reset and CID filter key source
-at construction; `quinn::server_config` uses the TLS provider's `secure_random`
-for its address-token root. Quinn's transport RNG and the optional stateless
-ticket rotator have separate entropy ownership; the ticketer uses OS entropy.
+The `quinn` feature does not enable `getrandom`. Every transport random value
+comes from the caller's sources, and a failing source fails construction without
+OS fallback:
+
+- `quinn::EndpointKeys::generate(random)` draws the 32-byte stateless-reset key,
+  a 16-byte connection-ID tag key, and a 32-byte connection-ID generator seed.
+  Endpoints built from one key set authenticate each other's resets and accept
+  each other's connection IDs.
+- `EndpointKeys::endpoint_config(random)` draws a 32-byte seed for Quinn's
+  endpoint random generator, which seeds each connection's generator: token
+  nonces, path-challenge data, packet-number skips, key-update timing, and
+  grease. Build one configuration per endpoint. A clone repeats the seed, so
+  two endpoints sharing a server configuration would draw the same token nonces.
+  Quinn's `Debug` output for an endpoint configuration includes the seed.
+  `quinn::endpoint_config_with_random(random)` combines both calls.
+- Each endpoint's connection IDs are a three-byte nonce from its own
+  `ChaCha20Rng` and a five-byte AES-128 tag, so Quinn can reject IDs the key set
+  never issued. They carry no counter or endpoint index.
+- `quinn::client_config(tls)` seeds the client's 20-byte initial destination
+  connection IDs from the TLS provider's `secure_random`, and
+  `quinn::server_config(tls)` draws its address-token root from it.
+
+With fixed sources and a fixed clock, including the server configuration's
+`time_source`, the endpoints are deterministic; a test replays a whole handshake,
+transfer, and key update byte for byte. The pinned quinn-proto generators are
+`rand` 0.10's `StdRng`, and quinn-proto links `getrandom` through `rand`'s
+default features; these paths never call it. Address-token roots belong to the
+returned server configuration; cloning it keeps outstanding tokens valid. Each
+derived token key seals once, with at most 4 KiB of plaintext.
 
 Early data is off by default. Opting in requires a replay-safe application
 protocol, a client with `enable_early_data`, and a server with

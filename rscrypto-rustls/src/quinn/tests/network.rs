@@ -5,13 +5,25 @@ use crate::tests::tls::{self, Credential};
 use alloc::collections::VecDeque;
 use core::{net::SocketAddr, time::Duration};
 use quinn_proto::{Connection, ConnectionHandle, DatagramEvent, Dir, EcnCodepoint, Endpoint, Event};
-use std::time::Instant;
+use std::time::{Instant, SystemTime};
+
+/// Address-token issue time for simulated runs.
+#[derive(Debug)]
+struct FixedTime;
+
+impl quinn_proto::TimeSource for FixedTime {
+  fn now(&self) -> SystemTime {
+    SystemTime::UNIX_EPOCH
+      .checked_add(Duration::from_secs(1_792_627_200))
+      .expect("fixture time")
+  }
+}
 
 struct Peer {
   endpoint: Endpoint,
   connection: Option<(ConnectionHandle, Connection)>,
   address: SocketAddr,
-  config: Arc<quinn_proto::EndpointConfig>,
+  keys: EndpointKeys,
 }
 
 #[derive(Clone)]
@@ -36,18 +48,39 @@ struct Link {
   reset_received: bool,
   mark_congestion: bool,
   congestion_marks: [usize; 2],
+  /// Every datagram handed to the network, in send order.
+  sent_log: Vec<(usize, Vec<u8>)>,
 }
 
 impl Link {
   fn new(client: rustls::ClientConfig, server: rustls::ServerConfig, distort: bool, retry: bool) -> Self {
+    Self::with_entropy(client, server, distort, retry, &crate::tests::RANDOM)
+  }
+
+  /// Build both endpoints with keys and seeds from `random`, so every transport
+  /// value comes from the TLS providers' sources and `random`.
+  fn with_entropy(
+    client: rustls::ClientConfig,
+    server: rustls::ServerConfig,
+    distort: bool,
+    retry: bool,
+    random: &dyn rustls::crypto::SecureRandom,
+  ) -> Self {
     let addresses = [
       "127.0.0.1:44330".parse().expect("address"),
       "127.0.0.1:44331".parse().expect("address"),
     ];
     let now = Instant::now();
-    let client_endpoint = Arc::new(endpoint_config().expect("endpoint"));
-    let server_endpoint = Arc::new(endpoint_config().expect("endpoint"));
-    let mut endpoint = Endpoint::new(client_endpoint.clone(), None, false);
+    let keys = [
+      EndpointKeys::generate(random).expect("client keys"),
+      EndpointKeys::generate(random).expect("server keys"),
+    ];
+    let client_endpoint = Arc::new(keys[0].endpoint_config(random).expect("client endpoint"));
+    let server_endpoint = Arc::new(keys[1].endpoint_config(random).expect("server endpoint"));
+    let mut server_config = server_config(server).expect("server config");
+    // A fixed issue time keeps address tokens a function of the simulated run.
+    server_config.time_source(Arc::new(FixedTime));
+    let mut endpoint = Endpoint::new(client_endpoint, None, false);
     let connection = endpoint
       .connect(
         now,
@@ -56,24 +89,21 @@ impl Link {
         "localhost",
       )
       .expect("start client");
-    let server = Endpoint::new(
-      server_endpoint.clone(),
-      Some(Arc::new(server_config(server).expect("server config"))),
-      false,
-    );
+    let server = Endpoint::new(server_endpoint, Some(Arc::new(server_config)), false);
+    let [client_keys, server_keys] = keys;
     Self {
       peers: [
         Peer {
           endpoint,
           connection: Some(connection),
           address: addresses[0],
-          config: client_endpoint,
+          keys: client_keys,
         },
         Peer {
           endpoint: server,
           connection: None,
           address: addresses[1],
-          config: server_endpoint,
+          keys: server_keys,
         },
       ],
       now,
@@ -87,12 +117,14 @@ impl Link {
       reset_received: false,
       mark_congestion: false,
       congestion_marks: [0; 2],
+      sent_log: Vec::new(),
     }
   }
 
   fn send(&mut self, source: usize, address: SocketAddr, ecn: Option<EcnCodepoint>, bytes: &[u8]) {
     self.sent = self.sent.strict_add(1);
     let destination = 1usize.strict_sub(source);
+    self.sent_log.push((destination, bytes.to_vec()));
     if address != self.peers[destination].address {
       return;
     }
@@ -310,11 +342,12 @@ impl Link {
 
 fn exercise(credential: Credential, distort: bool, retry: bool) {
   for suite in crate::cipher_suite::ALL_CIPHER_SUITES {
-    let mut provider = crate::default_provider();
+    let mut provider = tls::provider();
     provider.tls13_cipher_suites = vec![*suite].into();
     let expected_group = provider.kx_groups[0].name();
     let (client, mut server) = tls::configs(provider.clone(), provider, credential, true);
-    server.ticketer = Some(crate::ticket::ticketer().expect("ticket key"));
+    server.ticketer =
+      Some(crate::ticket::ticketer_with(&crate::tests::RANDOM, Arc::new(tls::FixtureTime)).expect("ticket key"));
     let mut link = Link::new(client, server, distort, retry);
     link.handshake();
     let mut exported = [[0; 32]; 2];
@@ -368,12 +401,7 @@ fn quinn_mldsa_chain_survives_fragmented_lossy_transport() {
 
 #[test]
 fn quinn_ecn_feedback_reaches_both_congestion_controllers() {
-  let (client, server) = tls::configs(
-    crate::default_provider(),
-    crate::default_provider(),
-    Credential::P256,
-    true,
-  );
+  let (client, server) = tls::configs(tls::provider(), tls::provider(), Credential::P256, true);
   let mut link = Link::new(client, server, false, false);
   link.handshake();
   let before = [
@@ -397,12 +425,7 @@ fn quinn_ecn_feedback_reaches_both_congestion_controllers() {
 
 #[test]
 fn quinn_streams_survive_client_address_migration() {
-  let (client, server) = tls::configs(
-    crate::default_provider(),
-    crate::default_provider(),
-    Credential::P256,
-    true,
-  );
+  let (client, server) = tls::configs(tls::provider(), tls::provider(), Credential::P256, true);
   let mut link = Link::new(client, server, false, false);
   link.handshake();
   link.stream(0);
@@ -429,12 +452,7 @@ fn quinn_streams_survive_client_address_migration() {
 #[test]
 fn quinn_resumes_with_explicit_early_data_and_rejects_it_after_policy_change() {
   for accept in [false, true] {
-    let (mut client, mut server) = tls::configs(
-      crate::default_provider(),
-      crate::default_provider(),
-      Credential::P256,
-      true,
-    );
+    let (mut client, mut server) = tls::configs(tls::provider(), tls::provider(), Credential::P256, true);
     client.enable_early_data = true;
     server.max_early_data_size = u32::MAX;
     let mut first = Link::new(client.clone(), server.clone(), false, false);
@@ -498,12 +516,7 @@ fn quinn_resumes_with_explicit_early_data_and_rejects_it_after_policy_change() {
 #[test]
 fn quinn_reset_authenticates_forgotten_connection_in_both_directions() {
   for forgotten in 0..2 {
-    let (client, server) = tls::configs(
-      crate::default_provider(),
-      crate::default_provider(),
-      Credential::P256,
-      true,
-    );
+    let (client, server) = tls::configs(tls::provider(), tls::provider(), Credential::P256, true);
     let mut link = Link::new(client, server, false, false);
     link.handshake();
     link.stream(0);
@@ -511,7 +524,12 @@ fn quinn_reset_authenticates_forgotten_connection_in_both_directions() {
     let survivor = 1usize.strict_sub(forgotten);
     link.expected_reset = Some(survivor);
     link.peers[forgotten].connection = None;
-    link.peers[forgotten].endpoint = Endpoint::new(link.peers[forgotten].config.clone(), None, false);
+    // The restarted endpoint keeps its reset key but draws a fresh endpoint seed.
+    let restarted = link.peers[forgotten]
+      .keys
+      .endpoint_config(&crate::tests::RANDOM)
+      .expect("restarted endpoint");
+    link.peers[forgotten].endpoint = Endpoint::new(Arc::new(restarted), None, false);
     link.queue.clear();
     link.connection(survivor).ping();
     for _ in 0..1000 {
@@ -525,4 +543,47 @@ fn quinn_reset_authenticates_forgotten_connection_in_both_directions() {
       "a reset authenticated with the retained endpoint key terminates the peer"
     );
   }
+}
+
+/// Test entropy that replays: a ChaCha20 stream from a fixed seed.
+#[derive(Debug)]
+struct Replayable(std::sync::Mutex<rscrypto::ChaCha20Rng>);
+
+impl rustls::crypto::SecureRandom for Replayable {
+  fn fill(&self, output: &mut [u8]) -> Result<(), rustls::crypto::GetRandomFailed> {
+    self.0.lock().expect("test entropy").fill_bytes(output);
+    Ok(())
+  }
+}
+
+/// Every datagram of one handshake, transfer, and key update, from fixed sources.
+fn transcript(seed: u8) -> Vec<(usize, Vec<u8>)> {
+  let random: &'static Replayable = Box::leak(Box::new(Replayable(std::sync::Mutex::new(
+    rscrypto::ChaCha20Rng::from_seed([seed; 32]),
+  ))));
+  let client: &'static crate::ClientProvider = Box::leak(Box::new(crate::ClientProvider::new(random)));
+  let mut provider = client.provider();
+  provider.key_provider = Box::leak(Box::new(crate::sign::Provider::new(random)));
+  let (client, server) = tls::configs(provider.clone(), provider, Credential::P256, true);
+  let mut link = Link::with_entropy(client, server, false, false, random);
+  link.handshake();
+  link.stream(0);
+  link.connection(0).force_key_update();
+  link.stream(1);
+  assert!(link.sent_log.len() > 20, "the run exchanged packets");
+  link.sent_log
+}
+
+#[test]
+fn quinn_transcript_is_a_function_of_the_caller_sources_and_clock() {
+  // TLS, endpoint keys, endpoint and connection generators, connection IDs,
+  // and address tokens all draw from the replayed source; the clock is
+  // simulated. Any read of OS entropy would make two runs diverge.
+  let first = transcript(1);
+  assert_eq!(
+    first,
+    transcript(1),
+    "identical sources and clock replay every datagram"
+  );
+  assert_ne!(first, transcript(2), "the transcript depends on the caller's entropy");
 }

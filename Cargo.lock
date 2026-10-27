@@ -2419,6 +2419,7 @@ dependencies = [
 name = "rscrypto-rustls"
 version = "0.1.0"
 dependencies = [
+ "aes",
  "bytes",
  "getrandom 0.4.3",
  "quinn",

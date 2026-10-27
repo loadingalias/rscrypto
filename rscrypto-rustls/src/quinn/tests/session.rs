@@ -3,12 +3,7 @@ use crate::tests::tls::{self, Credential};
 use quinn_proto::crypto::ClientConfig as _;
 
 fn configs() -> (rustls::ClientConfig, rustls::ServerConfig) {
-  tls::configs(
-    crate::default_provider(),
-    crate::default_provider(),
-    Credential::P256,
-    true,
-  )
+  tls::configs(tls::provider(), tls::provider(), Credential::P256, true)
 }
 
 fn sessions(
@@ -155,9 +150,9 @@ impl rustls::crypto::SecureRandom for FailedEntropy {
 
 #[test]
 fn partial_client_entropy_failure_returns_without_a_session() {
-  let mut provider = crate::default_provider();
+  let mut provider = tls::provider();
   provider.secure_random = &FailedEntropy;
-  let (client, _) = tls::configs(provider, crate::default_provider(), Credential::P256, false);
+  let (client, _) = tls::configs(provider, tls::provider(), Credential::P256, false);
   let client = Arc::new(Client(Arc::new(client)));
   let params = TransportParameters::read(Side::Server, &mut &[][..]).expect("empty peer parameters");
   let result = client.start_session(1, "localhost", &params);

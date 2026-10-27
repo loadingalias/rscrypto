@@ -49,7 +49,8 @@ ml-dsa = ["rscrypto/ml-dsa"]
 getrandom = ["rscrypto/getrandom", "dep:getrandom"]
 portable-only = ["rscrypto/portable-only"]
 # Integration support uses the same primitive leaf features as ordinary TLS.
-quinn = ["dep:quinn-proto", "dep:bytes", "aes-gcm", "hkdf", "getrandom"]
+# The connection-ID and initial-ID generators seed rscrypto's ChaCha20Rng from caller entropy.
+quinn = ["dep:quinn-proto", "dep:bytes", "aes-gcm", "hkdf", "rscrypto/chacha20-rng"]
 
 [dependencies]
 rscrypto = { version = "0.12.0", path = "..", default-features = false, features = ["std"] }
@@ -62,6 +63,7 @@ quinn-proto = { version = "=0.12.0", git = "https://github.com/quinn-rs/quinn", 
 bytes = { version = "1.12.1", optional = true }
 
 [dev-dependencies]
+aes = "0.9.3"
 rustls-aws-lc-rs = { version = "=0.24.0-dev.2", git = "https://github.com/rustls/rustls", rev = "35a8f439137d45ed18962807d38684b0c6bc6e3f" }
 rustls-ring = { version = "=0.24.0-dev.2", git = "https://github.com/rustls/rustls", rev = "35a8f439137d45ed18962807d38684b0c6bc6e3f" }
 rustls-util = { version = "=0.24.0-dev.2", git = "https://github.com/rustls/rustls", rev = "35a8f439137d45ed18962807d38684b0c6bc6e3f", default-features = false }
@@ -74,4 +76,4 @@ required-features = ["getrandom", "hkdf", "aes-gcm"]
 
 [[example]]
 name = "quic_interop"
-required-features = ["quinn"]
+required-features = ["quinn", "getrandom"]

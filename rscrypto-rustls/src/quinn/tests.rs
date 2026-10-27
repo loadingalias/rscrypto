@@ -7,37 +7,156 @@ mod session;
 use crate::tests::{fields, hex};
 use bytes::BytesMut;
 
-#[test]
-fn endpoint_construction_propagates_each_entropy_failure() {
-  use core::sync::atomic::{AtomicUsize, Ordering};
-  use rustls::crypto::{GetRandomFailed, SecureRandom};
+/// Records each request length and fails the request numbered `fail_at`.
+#[derive(Debug)]
+struct Recording {
+  lengths: std::sync::Mutex<Vec<usize>>,
+  fail_at: Option<usize>,
+}
 
-  #[derive(Debug)]
-  struct Source {
-    calls: AtomicUsize,
-    fail_at: usize,
-  }
-  impl SecureRandom for Source {
-    fn fill(&self, output: &mut [u8]) -> Result<(), GetRandomFailed> {
-      output.fill(0x42);
-      if self.calls.fetch_add(1, Ordering::Relaxed) == self.fail_at {
-        Err(GetRandomFailed)
-      } else {
-        Ok(())
-      }
+impl Recording {
+  const fn new(fail_at: Option<usize>) -> Self {
+    Self {
+      lengths: std::sync::Mutex::new(Vec::new()),
+      fail_at,
     }
   }
-  for fail_at in [0_usize, 1] {
-    let source = Source {
-      calls: AtomicUsize::new(0),
-      fail_at,
-    };
+
+  fn lengths(&self) -> Vec<usize> {
+    self.lengths.lock().expect("recorded lengths").clone()
+  }
+}
+
+impl rustls::crypto::SecureRandom for Recording {
+  fn fill(&self, output: &mut [u8]) -> Result<(), rustls::crypto::GetRandomFailed> {
+    let mut lengths = self.lengths.lock().expect("recorded lengths");
+    output.fill(0x42);
+    let failed = self.fail_at == Some(lengths.len());
+    lengths.push(output.len());
+    if failed {
+      Err(rustls::crypto::GetRandomFailed)
+    } else {
+      Ok(())
+    }
+  }
+}
+
+#[test]
+fn endpoint_construction_draws_every_key_from_the_caller_and_fails_closed() {
+  // Reset key, connection-ID tag key, connection-ID generator seed, endpoint seed.
+  const DRAWS: [usize; 4] = [32, 16, 32, 32];
+  let source = Recording::new(None);
+  let keys = EndpointKeys::generate(&source).expect("endpoint keys");
+  assert_eq!(source.lengths(), DRAWS[..3]);
+  drop(keys.endpoint_config(&source).expect("endpoint configuration"));
+  assert_eq!(source.lengths(), DRAWS);
+  for fail_at in 0..DRAWS.len() {
+    let source = Recording::new(Some(fail_at));
     assert!(matches!(
       endpoint_config_with_random(&source),
       Err(Error::FailedToGetRandomBytes)
     ));
-    assert_eq!(source.calls.load(Ordering::Relaxed), fail_at.strict_add(1));
+    assert_eq!(source.lengths(), DRAWS[..=fail_at], "no draw after a failure");
   }
+}
+
+#[test]
+fn connection_ids_carry_an_independent_aes_tag_and_validate_only_under_their_keys() {
+  use aes::cipher::{Array, BlockCipherEncrypt as _, KeyInit as _};
+  use quinn_proto::ConnectionIdGenerator;
+
+  let keys = Arc::new(cid::CidKeys::generate(&Recording::new(None)).expect("CID keys"));
+  let other = Arc::new(cid::CidKeys::generate(&crate::tests::RANDOM).expect("CID keys"));
+  let (mut first, mut second) = (keys.generator(), keys.generator());
+  // The recording source fills 0x42, so the tag key is [0x42; 16]. RustCrypto
+  // AES-128 computes the tag block independently.
+  let oracle = aes::Aes128::new(&Array::from([0x42; 16]));
+  let mut seen = alloc::collections::BTreeSet::new();
+  for round in 0..128 {
+    let id = if round % 2 == 0 {
+      first.generate_cid()
+    } else {
+      second.generate_cid()
+    };
+    assert_eq!(id.len(), 8);
+    let mut block = [0u8; 16];
+    block[..3].copy_from_slice(&id[..3]);
+    block[3..].copy_from_slice(b"rscrypto-cid1");
+    let mut block = Array::from(block);
+    oracle.encrypt_block(&mut block);
+    assert_eq!(id[3..], block[..5], "the tag is truncated AES-128 under the tag key");
+    first.validate(id).expect("issued by this key set");
+    second.validate(id).expect("same key set");
+    other.generator().validate(id).expect_err("different key set");
+    for bit in 0..64 {
+      let mut forged = [0u8; 8];
+      forged.copy_from_slice(&id);
+      forged[bit / 8] ^= 1 << (bit % 8);
+      first.validate(ConnectionId::new(&forged)).expect_err("altered ID");
+    }
+    seen.insert(id.to_vec());
+  }
+  assert!(seen.len() > 120, "endpoint generators draw independent nonces");
+  for length in [0, 7, 9, 20] {
+    first
+      .validate(ConnectionId::new(&vec![0; length]))
+      .expect_err("foreign length");
+  }
+}
+
+#[cfg(all(feature = "ecdsa-p256", feature = "x25519"))]
+#[test]
+fn initial_destination_ids_come_from_the_client_entropy_source() {
+  #[derive(Debug)]
+  struct Zero;
+  impl rustls::crypto::SecureRandom for Zero {
+    fn fill(&self, output: &mut [u8]) -> Result<(), rustls::crypto::GetRandomFailed> {
+      output.fill(0);
+      Ok(())
+    }
+  }
+  static ZERO: Zero = Zero;
+  static FAILING: Recording = Recording::new(Some(0));
+
+  let mut provider = crate::tests::tls::provider();
+  provider.secure_random = &ZERO;
+  let (client, _) = crate::tests::tls::configs(
+    provider.clone(),
+    crate::tests::tls::provider(),
+    crate::tests::tls::Credential::P256,
+    false,
+  );
+  let mut endpoint = quinn_proto::Endpoint::new(
+    Arc::new(endpoint_config_with_random(&crate::tests::RANDOM).expect("endpoint")),
+    None,
+    false,
+  );
+  let now = std::time::Instant::now();
+  let (_, mut connection) = endpoint
+    .connect(
+      now,
+      client_config(client).expect("client configuration"),
+      "127.0.0.1:4433".parse().expect("address"),
+      "localhost",
+    )
+    .expect("connect");
+  let mut datagram = Vec::new();
+  let transmit = connection.poll_transmit(now, 1, &mut datagram).expect("Initial packet");
+  assert_eq!(transmit.size, datagram.len());
+  // Long header: flags, version, then the destination connection ID length and value.
+  assert_eq!(datagram[5], 20);
+  // An all-zero seed makes the first ID the start of RFC 8439 Appendix A.1 test vector 1.
+  assert_eq!(datagram[6..26], hex("76b8e0ada0f13d90405d6ae55386bd28bdd219b8"));
+
+  provider.secure_random = &FAILING;
+  let (client, _) = crate::tests::tls::configs(
+    provider,
+    crate::tests::tls::provider(),
+    crate::tests::tls::Credential::P256,
+    false,
+  );
+  assert!(matches!(client_config(client), Err(Error::FailedToGetRandomBytes)));
+  assert_eq!(FAILING.lengths(), [32]);
 }
 
 #[cfg(all(feature = "ecdsa-p256", feature = "x25519"))]
@@ -56,10 +175,10 @@ fn server_tokens_use_the_selected_tls_entropy_source() {
     }
   }
   static SOURCE: Source = Source(AtomicUsize::new(0));
-  let mut provider = crate::default_provider();
+  let mut provider = crate::tests::tls::provider();
   provider.secure_random = &SOURCE;
   let (_, server) = crate::tests::tls::configs(
-    crate::default_provider(),
+    crate::tests::tls::provider(),
     provider,
     crate::tests::tls::Credential::P256,
     false,
@@ -73,8 +192,8 @@ fn server_tokens_use_the_selected_tls_entropy_source() {
 #[test]
 fn unsupported_quic_versions_never_derive_initial_keys() {
   let (_, server) = crate::tests::tls::configs(
-    crate::default_provider(),
-    crate::default_provider(),
+    crate::tests::tls::provider(),
+    crate::tests::tls::provider(),
     crate::tests::tls::Credential::P256,
     false,
   );

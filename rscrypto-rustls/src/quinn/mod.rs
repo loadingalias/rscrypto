@@ -2,10 +2,29 @@
 //!
 //! Build rustls configurations explicitly with this provider and TLS 1.3, set
 //! the application's ALPN protocols, then pass them to [`client_config`] or
-//! [`server_config`]. Construct the endpoint with [`endpoint_config`]. Enable
-//! only `runtime-tokio` (or another runtime) on the application's `quinn` crate;
-//! its `rustls-*`, `ring`, and `aws-lc-rs` features are unnecessary.
+//! [`server_config`]. Build each endpoint's configuration with
+//! [`EndpointKeys::endpoint_config`], or [`endpoint_config`] with `getrandom`.
+//! Enable only `runtime-tokio` (or another runtime) on the application's `quinn`
+//! crate; its `rustls-*`, `ring`, and `aws-lc-rs` features are unnecessary.
 //! Quinn's browser-WASM `ring` dependency is optional, so that graph stays free of C backends.
+//!
+//! # Entropy
+//!
+//! Every random value comes from the caller's [`SecureRandom`] sources, and a
+//! failing source fails construction without falling back to the OS:
+//!
+//! - TLS draws from the rustls provider's `secure_random`. [`client_config`]
+//!   also seeds the client's initial destination connection IDs from it, and
+//!   [`server_config`] draws the address-token key from it.
+//! - [`EndpointKeys`] draws the stateless-reset key and the connection-ID keys.
+//!   [`EndpointKeys::endpoint_config`] draws a seed for Quinn's endpoint random
+//!   generator, which seeds each connection's generator.
+//!
+//! With these constructors, Quinn reads no other entropy on the client or
+//! server path, so an endpoint run from fixed sources and a fixed clock is
+//! deterministic. Quinn's transport generators are `rand` 0.10's `StdRng`
+//! (ChaCha12); `quinn-proto` also links `getrandom` through `rand` 0.10's
+//! default features, but these paths never call it.
 //!
 //! Initial packets and Retry always use RFC 9001 AES-128-GCM, independently of
 //! the negotiated suite. Rustls owns handshake secrets and key updates. Quinn
@@ -16,16 +35,17 @@ use alloc::{boxed::Box, collections::VecDeque, string::String, sync::Arc, vec::V
 use core::any::Any;
 use quinn_proto::crypto::{self, ExportKeyingMaterialError, KeyPair, Keys, UnsupportedVersion};
 use quinn_proto::transport_parameters::TransportParameters;
-use quinn_proto::{ConnectError, ConnectionId, Side, TransportError, TransportErrorCode};
+use quinn_proto::{ConnectError, ConnectionId, ConnectionIdGenerator, Side, TransportError, TransportErrorCode};
 use rscrypto::aead::{Nonce96, expert::AeadWithNonce};
 use rscrypto::{Aes128Gcm, Aes128GcmKey, Aes128GcmTag};
-use rustls::crypto::CipherSuite;
 use rustls::crypto::kx::NamedGroup;
+use rustls::crypto::{CipherSuite, SecureRandom};
 use rustls::enums::ApplicationProtocol;
 use rustls::pki_types::ServerName;
 use rustls::{ClientSide, Connection, KeyingMaterialExporter, ServerSide, SideData, VecInput};
 use rustls::{Error, quic};
 
+mod cid;
 mod packet;
 mod token;
 
@@ -48,34 +68,81 @@ pub struct HandshakeData {
   pub handshake_kind: Option<rustls::HandshakeKind>,
 }
 
-/// Create a QUIC v1 endpoint configuration with a fresh clearing reset key.
+/// Stateless-reset and connection-ID keys for cooperating QUIC endpoints.
 ///
-/// Retain this configuration across endpoints which should share reset tokens.
-/// Fails if the OS random source fails.
-pub fn endpoint_config() -> Result<quinn_proto::EndpointConfig, Error> {
-  endpoint_config_with_random(crate::random::SECURE_RANDOM)
+/// Endpoints built from one key set authenticate each other's stateless resets
+/// and accept each other's connection IDs. Keep one key set for endpoints that
+/// replace each other, for example after a restart on the same address. Clones
+/// share the same keys.
+///
+/// Build a separate configuration for every endpoint with
+/// [`Self::endpoint_config`]. The keys clear when the last owner drops.
+#[derive(Clone)]
+pub struct EndpointKeys {
+  reset: Arc<token::ResetKey>,
+  cids: Arc<cid::CidKeys>,
 }
 
-/// Create a QUIC v1 endpoint using `random` for the reset and CID filter keys.
+impl EndpointKeys {
+  /// Generate keys from `random`.
+  ///
+  /// Draws a 32-byte stateless-reset key, a 16-byte connection-ID tag key, and
+  /// a 32-byte seed for the endpoints' connection-ID generators, in that order.
+  /// The source must provide cryptographically secure random bytes. A failure
+  /// returns an error without fallback.
+  pub fn generate(random: &dyn SecureRandom) -> Result<Self, Error> {
+    Ok(Self {
+      reset: Arc::new(token::ResetKey::generate_with(|out| random.fill(out))?),
+      cids: Arc::new(cid::CidKeys::generate(random)?),
+    })
+  }
+
+  /// Create a QUIC v1 configuration for one endpoint over these keys.
+  ///
+  /// Draws a 32-byte seed from `random` for Quinn's endpoint random generator.
+  /// Quinn seeds each connection's generator from it; together they supply
+  /// token nonces, path-challenge data, packet-number skips, key-update timing,
+  /// and grease. A failure returns an error without fallback.
+  ///
+  /// Use the result for exactly one `Endpoint`. A clone, or a second endpoint
+  /// built from the same configuration, repeats this stream: two endpoints that
+  /// share a server configuration would then draw the same address-token
+  /// nonces. Quinn's `Debug` output for this configuration includes the seed.
+  pub fn endpoint_config(&self, random: &dyn SecureRandom) -> Result<quinn_proto::EndpointConfig, Error> {
+    let seed = rscrypto::SecretBytes::<32>::try_fill_with(|out| random.fill(out))?;
+    let mut config = quinn_proto::EndpointConfig::new(Arc::clone(&self.reset) as Arc<dyn crypto::HmacKey>);
+    let cids = Arc::clone(&self.cids);
+    config.cid_generator(Arc::new(move || {
+      Box::new(cids.generator()) as Box<dyn ConnectionIdGenerator>
+    }));
+    config.supported_versions(vec![1]);
+    // Quinn keeps the seed as a plain array; this copy clears when `seed` drops.
+    config.rng_seed(Some(*seed.as_bytes()));
+    Ok(config)
+  }
+}
+
+impl core::fmt::Debug for EndpointKeys {
+  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    f.debug_struct("EndpointKeys").finish_non_exhaustive()
+  }
+}
+
+/// Create a QUIC v1 configuration for one endpoint with fresh keys from `random`.
 ///
-/// The source must provide cryptographically secure random bytes. A failure
-/// returns an error without fallback. This source is used only during construction;
-/// TLS and Quinn's transport randomness are configured separately.
-pub fn endpoint_config_with_random(
-  random: &dyn rustls::crypto::SecureRandom,
-) -> Result<quinn_proto::EndpointConfig, Error> {
-  let mut config = quinn_proto::EndpointConfig::new(Arc::new(token::ResetKey::generate_with(|out| random.fill(out))?));
-  // Quinn's default factory gives each endpoint a different CID filter key.
-  // Keep that filter stable with the reset key when this configuration is cloned.
-  // This non-cryptographic filter is not the reset token's authentication key.
-  let mut cid_key = [0; 8];
-  random.fill(&mut cid_key)?;
-  let cid_key = u64::from_le_bytes(cid_key);
-  config.cid_generator(Arc::new(move || {
-    Box::new(quinn_proto::HashedConnectionIdGenerator::from_key(cid_key))
-  }));
-  config.supported_versions(vec![1]);
-  Ok(config)
+/// Equivalent to [`EndpointKeys::generate`] followed by
+/// [`EndpointKeys::endpoint_config`] with the same source. Use [`EndpointKeys`]
+/// directly when several endpoints must share reset and connection-ID keys.
+pub fn endpoint_config_with_random(random: &dyn SecureRandom) -> Result<quinn_proto::EndpointConfig, Error> {
+  EndpointKeys::generate(random)?.endpoint_config(random)
+}
+
+/// Create a QUIC v1 configuration for one endpoint with fresh keys from OS entropy.
+///
+/// See [`endpoint_config_with_random`]. Fails if the OS random source fails.
+#[cfg(feature = "getrandom")]
+pub fn endpoint_config() -> Result<quinn_proto::EndpointConfig, Error> {
+  endpoint_config_with_random(crate::random::SECURE_RANDOM)
 }
 
 fn validate(alpn: &[ApplicationProtocol<'_>], provider: &rustls::crypto::CryptoProvider) -> Result<(), Error> {
@@ -96,13 +163,17 @@ fn validate(alpn: &[ApplicationProtocol<'_>], provider: &rustls::crypto::CryptoP
 
 /// Adapt a TLS 1.3 client configuration with explicit ALPN to QUIC v1.
 ///
-/// Use this crate's provider in `tls`. Early data stays as configured by the
-/// caller and is disabled by rustls by default. Quinn's `ConnectError` cannot express
-/// a TLS initialization error; a later entropy failure fails closed
-/// as `ConnectError::EndpointStopping`, without panicking.
+/// Use this crate's provider in `tls`. Seeds the generator for initial
+/// destination connection IDs from the provider's entropy source, propagating
+/// a failure without fallback. Early data stays as configured by the caller and
+/// is disabled by rustls by default. Quinn's `ConnectError` cannot express a TLS
+/// initialization error; a later entropy failure fails closed as
+/// `ConnectError::EndpointStopping`, without panicking.
 pub fn client_config(tls: rustls::ClientConfig) -> Result<quinn_proto::ClientConfig, Error> {
   validate(&tls.alpn_protocols, tls.provider())?;
+  let initial_cids = Arc::new(cid::InitialCids::generate(tls.provider().secure_random)?);
   let mut config = quinn_proto::ClientConfig::new(Arc::new(Client(Arc::new(tls))));
+  config.initial_dst_cid_provider(Arc::new(move || initial_cids.next()));
   config.version(1);
   Ok(config)
 }
@@ -111,8 +182,9 @@ pub fn client_config(tls: rustls::ClientConfig) -> Result<quinn_proto::ClientCon
 ///
 /// Creates a fresh clearing address-token key using the TLS provider's entropy
 /// source, propagating failures without fallback. Retain the returned configuration
-/// to accept its outstanding tokens. Set rustls's `ticketer` to [`crate::ticket::ticketer`]
-/// for stateless resumption. QUIC early data must stay disabled or explicitly use
+/// to accept its outstanding tokens. For stateless resumption, set rustls's
+/// `ticketer` to [`crate::ticket::ticketer_with`] over the same entropy source
+/// and clock. QUIC early data must stay disabled or explicitly use
 /// `max_early_data_size = u32::MAX`, with application replay protection.
 pub fn server_config(tls: rustls::ServerConfig) -> Result<quinn_proto::ServerConfig, Error> {
   validate(&tls.alpn_protocols, tls.provider())?;

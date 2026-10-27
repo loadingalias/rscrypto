@@ -41,8 +41,10 @@ def feature_matrix(root=ROOT):
     graph = provider['features']
     for feature, edges in graph.items():
         if feature == 'quinn':
-            if edges != ['dep:quinn-proto', 'dep:bytes', 'aes-gcm', 'hkdf', 'getrandom']:
-                raise ValueError('quinn integration must retain its fixed Initial/token primitives and backend-free dependencies')
+            # Caller entropy seeds the ID generators; OS entropy stays behind the getrandom feature.
+            if edges != ['dep:quinn-proto', 'dep:bytes', 'aes-gcm', 'hkdf', 'rscrypto/chacha20-rng']:
+                raise ValueError('quinn integration must retain its fixed Initial/token primitives, caller-seeded '
+                                 'ID generators, and backend-free dependencies without getrandom')
             continue
         # OS entropy is delegated to the same getrandom crate as rscrypto.
         expected = ['rscrypto/' + feature, *(['dep:getrandom'] if feature == 'getrandom' else [])]
@@ -86,9 +88,35 @@ def no_c(features, root=ROOT):
                  or name.startswith('aws-lc-')}
     if forbidden:
         raise ValueError('provider normal/build graph contains forbidden packages: ' + ', '.join(sorted(forbidden)))
-    # OS entropy enters only through the getrandom feature, which quinn enables.
-    if 'getrandom' in packages and not {'default', 'getrandom', 'quinn'} & set(features):
-        raise ValueError('provider normal/build graph links getrandom without the getrandom feature')
+    # OS entropy enters only through the getrandom feature. Pinned quinn-proto
+    # links rand 0.10 with its default OS generator, and getrandom directly for
+    # browser WASM; the adapter never calls either.
+    if 'getrandom' in packages and not {'default', 'getrandom'} & set(features):
+        dependents = getrandom_dependents(features, root)
+        if 'quinn' not in features or not dependents <= {'rand', 'quinn-proto'}:
+            raise ValueError('provider normal/build graph links getrandom without the getrandom feature: '
+                             + ', '.join(sorted(dependents)))
+
+
+def getrandom_dependents(features, root=ROOT):
+    """Packages that depend directly on any getrandom version in the provider graph."""
+    command = ['cargo', '+' + toolchain.channel(), 'tree', '--locked', '-p', PACKAGE,
+               '-e', 'normal,build', '--target', 'all', '--prefix', 'depth', '--format', '{p}',
+               *feature_args(features)]
+    tree = subprocess.check_output(command, cwd=root, text=True)
+    dependents = set()
+    parents = []
+    for line in tree.splitlines():
+        stripped = line.lstrip('0123456789')
+        if not stripped.strip():
+            continue
+        depth = int(line[:len(line) - len(stripped)])
+        name = stripped.split()[0]
+        del parents[depth:]
+        if name == 'getrandom' and parents:
+            dependents.add(parents[-1])
+        parents.append(name)
+    return dependents
 
 
 def main():

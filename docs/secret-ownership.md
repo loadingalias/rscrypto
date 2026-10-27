@@ -178,9 +178,13 @@ The incoming borrowed plaintext and the returned plaintext belong to rustls.
 
 ### rustls QUIC integration
 
-Each endpoint configuration owns a shared clearing `SecretBytes<32>` reset key.
-Its retained 64-bit connection-ID filter key is a non-cryptographic Quinn filter,
-not an authentication secret. Server configurations own a clearing `HkdfSha256`
+`EndpointKeys` shares a clearing `SecretBytes<32>` reset key and the
+connection-ID keys: an AES-128 tag context and a mutex-guarded `ChaCha20Rng` that
+seeds each endpoint's connection-ID generator. Each generator owns its own
+`ChaCha20Rng`. Each client configuration owns a `ChaCha20Rng` for initial
+destination IDs. The 32-byte endpoint seed is copied into Quinn's
+`EndpointConfig` as a plain array, which Quinn's `Debug` prints; the adapter's
+copy clears. Server configurations own a clearing `HkdfSha256`
 address-token root. Each token derives an `Aes256Gcm` context through a clearing
 `SecretBytes<32>` scratch. A derived context seals once; Quinn supplies the fresh
 128-bit derivation nonce. Incoming token buffers belong to Quinn.

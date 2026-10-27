@@ -32,13 +32,14 @@ class Provider(unittest.TestCase):
             with (root / 'Cargo.toml').open('a') as output:
                 output.write('portable-only=[]\ngetrandom=[]\n')
             valid += 'getrandom=["rscrypto/getrandom", "dep:getrandom"]\n'
-            valid += 'quinn=["dep:quinn-proto", "dep:bytes", "aes-gcm", "hkdf", "getrandom"]\n'
+            valid += 'quinn=["dep:quinn-proto", "dep:bytes", "aes-gcm", "hkdf", "rscrypto/chacha20-rng"]\n'
             manifest.write_text(valid)
             self.assertIn(('hkdf', ['hkdf']), provider.feature_matrix(root))
             for invalid in (valid.replace('1.100.0', '1.99.0'),
                             valid.replace('["rscrypto/hkdf"]', '["rscrypto/hkdf", "rscrypto/full"]'),
                             valid.replace('"dep:getrandom"', '"dep:other-rng"'),
-                            valid.replace('"dep:quinn-proto"', '"dep:quinn-proto", "quinn-proto/ring"')):
+                            valid.replace('"dep:quinn-proto"', '"dep:quinn-proto", "quinn-proto/ring"'),
+                            valid.replace('"rscrypto/chacha20-rng"', '"rscrypto/chacha20-rng", "getrandom"')):
                 manifest.write_text(invalid)
                 with self.assertRaises(ValueError):
                     provider.feature_matrix(root)
@@ -46,7 +47,7 @@ class Provider(unittest.TestCase):
     def test_real_cargo_tree_excludes_dev_but_rejects_transitive_and_foreign_build_dependencies(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            names = ['rscrypto-rustls', 'relay', 'ring', 'cc', 'openssl-sys', 'getrandom']
+            names = ['rscrypto-rustls', 'relay', 'ring', 'cc', 'openssl-sys', 'getrandom', 'rand', 'quinn-proto']
             (root / 'Cargo.toml').write_text('[workspace]\nresolver="3"\nmembers=' + json.dumps(names) + '\n')
             for name in names:
                 directory = root / name
@@ -57,11 +58,16 @@ class Provider(unittest.TestCase):
                     '[lib]\npath="lib.rs"\n')
             with (root / 'relay/Cargo.toml').open('a') as output:
                 output.write('[dependencies]\nbackend={package="ring",path="../ring"}\n')
+            with (root / 'rand/Cargo.toml').open('a') as output:
+                output.write('[dependencies]\ngetrandom={path="../getrandom"}\n')
+            with (root / 'quinn-proto/Cargo.toml').open('a') as output:
+                output.write('[dependencies]\nrand={path="../rand"}\n')
             with (root / 'rscrypto-rustls/Cargo.toml').open('a') as output:
                 output.write('[features]\ncrypto=["dep:relay"]\nbuilder=["dep:compiler"]\n'
-                             'getrandom=["dep:getrandom"]\nentropy=["dep:getrandom"]\n'
+                             'getrandom=["dep:getrandom"]\nentropy=["dep:getrandom"]\nquinn=["dep:quinn-proto"]\n'
                              '[dependencies]\nrelay={path="../relay",optional=true}\n'
                              'getrandom={path="../getrandom",optional=true}\n'
+                             'quinn-proto={path="../quinn-proto",optional=true}\n'
                              '[target.\'cfg(target_os="windows")\'.build-dependencies]\n'
                              'compiler={package="cc",path="../cc",optional=true}\n'
                              '[dev-dependencies]\nopenssl-sys={path="../openssl-sys"}\n')
@@ -72,7 +78,10 @@ class Provider(unittest.TestCase):
             with contextlib.redirect_stdout(io.StringIO()):
                 provider.no_c([], root)
                 provider.no_c(['getrandom'], root)
-                for features, name in ((['crypto'], 'ring'), (['builder'], 'cc'), (['entropy'], 'getrandom')):
+                # Quinn's rand may link getrandom; nothing else may without the feature.
+                provider.no_c(['quinn'], root)
+                for features, name in ((['crypto'], 'ring'), (['builder'], 'cc'), (['entropy'], 'getrandom'),
+                                       (['quinn', 'entropy'], 'rscrypto-rustls')):
                     with self.subTest(features=features), self.assertRaisesRegex(ValueError, name):
                         provider.no_c(features, root)
 
