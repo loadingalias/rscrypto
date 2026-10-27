@@ -28,7 +28,7 @@ pub mod quinn;
 #[cfg(feature = "getrandom")]
 pub mod random;
 pub mod sign;
-#[cfg(all(feature = "aes-gcm", feature = "getrandom"))]
+#[cfg(feature = "aes-gcm")]
 pub mod ticket;
 pub mod verify;
 

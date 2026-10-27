@@ -166,12 +166,12 @@ Rust moves copy the state, and only the final location clears.
 
 ### rustls session tickets
 
-Each private ticket key owns a clearing `Aes256Gcm` context behind a
-`RwLock<Option<_>>`, a monotonic creation instant, and an atomic public nonce
-counter. On its first use at or after twelve hours, it takes and drops the cipher.
-The missing cipher is terminal; neither encryption nor decryption can revive it. A `SecretBytes<32>` protects entropy acquisition; the typed key
-and temporary owner clear after context construction. `TicketRotator` owns the
-current and previous keys and releases displaced keys on rotation. The adapter
+Each private ticket key owns a clearing `Aes256Gcm` context and an atomic public
+nonce counter. The provider's rotator owns the current and previous keys with
+their creation times on a monotonic or caller clock, and drops a key on its
+first use at or after twelve hours; a dropped key cannot return. A
+`SecretBytes<32>` protects entropy acquisition; the typed key and temporary owner
+clear after context construction. The adapter
 neither clones keys nor serializes them. Plaintext copies during seal/open stay
 in `SecretVec` until successful transfer to ciphertext or rustls-owned plaintext.
 The incoming borrowed plaintext and the returned plaintext belong to rustls.

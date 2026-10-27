@@ -32,7 +32,7 @@ quinn-proto revision makes its browser-WASM `ring` dependency optional
 | HKDF extract and expand | `HkdfSha256`, `HkdfSha384`; imported PRKs and multi-part info | [hash](src/hash.rs) |
 | TLS records and QUIC packets | `Aes128Gcm`, `Aes256Gcm`, `ChaCha20Poly1305` | [aead](src/aead.rs) |
 | QUIC header protection | `Aes128HeaderProtection`, `Aes256HeaderProtection`, `ChaCha20HeaderProtection` | [quic](src/quic.rs) |
-| Stateless tickets | `Aes256Gcm`, fresh process-local keys, atomic counter nonces; rustls `TicketRotator` | [ticket](src/ticket.rs) |
+| Stateless tickets | `Aes256Gcm`, fresh process-local keys, atomic counter nonces; rotation on a monotonic or caller clock | [ticket](src/ticket.rs) |
 | Entropy | OS entropy through `getrandom::fill` with the `getrandom` feature, or a caller-selected `SecureRandom` without it; partial primitive inputs clear on failure | [random](src/random.rs), [kx_group](src/kx_group.rs), [sign](src/sign.rs), [client](src/client.rs) |
 | Certificate and handshake verification | ECDSA P-256/P-384, Ed25519, RSA-PSS and RSA PKCS#1 v1.5 | [verify](src/verify.rs) |
 | Key import and signing | rscrypto PKCS#8/SEC1/PKCS#1 codecs; blinded ECDSA, Ed25519, blinded RSA-PSS | [sign](src/sign.rs) |
@@ -172,15 +172,21 @@ deterministic test sources are unsuitable for production. These constructors
 need only their primitive features; without `getrandom`, the provider links no
 OS entropy source.
 
-`ticket::ticketer()` supplies stateless session tickets with six-hour key rotation
-and a six-hour advertised lifetime, as defined by the pinned rustls rotator. It requires `aes-gcm` and `getrandom`.
-Share the returned owner across server connections. Each key issues at most
-2^24 tickets of at most 16 KiB plaintext. Rotation occurs on use; inactive generations can remain resident until the
-rotator replaces or drops them. Each key enforces a monotonic
-twelve-hour deadline and releases its cipher on its first use at or after expiry,
-even when the rotator was idle. Process restart replaces ticket keys.
-Ticket encryption or rotation failure suppresses issuance without failing TLS.
-Early data remains off unless the caller explicitly enables it.
+`ticket::ticketer_with(random, time)` supplies stateless session tickets with
+keys from a caller-selected `SecureRandom` and rotation timed by a caller's rustls
+`TimeProvider`; pass the same clock as the server configuration. It requires
+`aes-gcm`. `ticket::ticketer()` is the same ticketer over OS entropy and the
+monotonic clock, and also requires `getrandom`. Keys rotate every six hours and
+the advertised lifetime is six hours. Share the returned owner across server
+connections. Each key issues at most 2^24 tickets of at most 16 KiB plaintext.
+Rotation occurs on use: the first use after six hours replaces the key and keeps
+one previous key, and the first use at or after twelve hours erases a key, even
+after a long idle period. Inactive keys can stay resident until that use. A
+caller clock that falls behind delays rotation; it never revives an erased key.
+Process restart replaces ticket keys. A missing time reading, encryption failure,
+or failed rotation suppresses tickets without failing TLS; after a failed
+rotation the previous key still opens its tickets. Early data remains off unless
+the caller explicitly enables it.
 
 ## QUIC v1
 

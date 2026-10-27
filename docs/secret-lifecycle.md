@@ -410,13 +410,14 @@ or sealing failure. The bounded counter cannot wrap. Temporary plaintext uses
 The adapter transfers successful decryption output to rustls through the required
 `Vec<u8>` interface; this transfer does not promise cleanup of rustls's copies.
 
-The six-hour rotator keeps current and previous clearing key owners. Each key
-also enforces a monotonic twelve-hour deadline before either seal or open and
-takes/drops its cipher on the first expired operation. Expired keys cannot be
-revived by an earlier timestamp. On-use expiration can defer destruction while idle, and rustls configuration sharing can
-extend the rotator's lifetime. Tests cover independent AES-GCM, hostile tickets,
-concurrent exhaustion, entropy failure, resumption, expiry, and bounded real-clock
-rotation. They do not qualify compiler-made copies or linked-code erasure.
+The six-hour rotator keeps current and previous clearing key owners, timed by
+the monotonic clock or a caller clock. Before each seal or open it drops a key
+twelve or more hours old; its view of time never moves backward, so a lagging
+clock cannot revive a key. A failed rotation keeps the previous key and issues
+no tickets. On-use expiration can defer destruction while idle, and rustls
+configuration sharing can extend the rotator's lifetime. Tests cover independent
+AES-GCM, hostile tickets, concurrent exhaustion, entropy and clock failure,
+rotation on a simulated clock, and resumption. They do not qualify compiler-made copies or linked-code erasure.
 
 ### rustls QUIC integration
 
