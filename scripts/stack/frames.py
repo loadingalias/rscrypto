@@ -555,12 +555,27 @@ def review(program: Program, boundaries: list[Boundary] = BOUNDARIES) -> dict[st
         if any(edge.kind == "call" and edge.target == worker.address for edge in function.edges)
       ]
       callers = sorted(function.demangled for function in caller_functions)
-      unscrubbed = sorted(
-        function.demangled
-        for function in caller_functions
-        if scrub is None or not any(edge.kind == "call" and edge.target == scrub.address for edge in function.edges)
-      )
+      unscrubbed = []
+      tail_scrubbed = []
       worker_problems = []
+      for function in caller_functions:
+        if scrub is not None and any(edge.kind == "call" and edge.target == scrub.address for edge in function.edges):
+          continue
+        if scrub is not None and any(edge.kind == "tail" and edge.target == scrub.address for edge in function.edges):
+          # A tail branch runs the scrub after this caller releases its frame, so the scrub's
+          # buffer starts at the caller's entry: the caller frame and the worker must both fit.
+          if function.frame is None:
+            worker_problems.append(f"tail-scrubbed caller without a frame record: {function.demangled}")
+          elif function.frame + total > bound:
+            worker_problems.append(
+              f"tail-scrubbed caller {function.demangled}: frame {function.frame} + depth {total} exceeds the {bound}-byte scrub"
+            )
+          else:
+            tail_scrubbed.append(function.demangled)
+          continue
+        unscrubbed.append(function.demangled)
+      unscrubbed.sort()
+      tail_scrubbed.sort()
       if depth.unbounded:
         worker_problems.append(f"{len(depth.unbounded)} unbounded path(s)")
       if depth.detection:
@@ -578,6 +593,7 @@ def review(program: Program, boundaries: list[Boundary] = BOUNDARIES) -> dict[st
           "depth": total,
           "deepest_path": depth.path,
           "callers": callers,
+          "tail_scrubbed_callers": tail_scrubbed,
           "unbounded": depth.unbounded,
           "detection": depth.detection,
           "panic_exits": sorted(depth.panic_exits),

@@ -258,6 +258,28 @@ def test_aarch64_leaf_assembly_frames(directory: Path) -> None:
     assert any(item["reason"] in {"no frame record", "recursion"} for item in unknown["unbounded"]), unknown
 
 
+def test_aarch64_tail_scrub_counts_the_caller_frame(directory: Path) -> None:
+  def tail(caller_frame: int) -> dict:
+    functions = [
+      (
+        0x1000,
+        CALLER,
+        caller_frame,
+        ["    1000:      \tbl\t0x2000 <worker>", "    1004:      \tadd\tsp, sp, #0xc0", "    1008:      \tb\t0x3000 <scrub>"],
+      ),
+      (0x2000, WORKER, 1648, ["    2000:      \tret"]),
+      (0x3000, SCRUB, 2064, ["    3000:      \tret"]),
+    ]
+    return worker_report(review(program("aarch64-unknown-linux-gnu", functions), [boundary(directory)]))
+
+  # The scrub runs from the caller's entry, so the caller frame plus the worker must fit.
+  covered = tail(192)
+  assert not covered["problems"] and covered["tail_scrubbed_callers"] == [CALLER], covered
+  oversized = tail(512)
+  assert any("frame 512 + depth 1648 exceeds" in problem for problem in oversized["problems"]), oversized
+  assert oversized["tail_scrubbed_callers"] == [], oversized
+
+
 def test_panic_exits_are_listed_and_not_counted(directory: Path) -> None:
   functions = [
     (0x1000, CALLER, 32, ["    1000:      \tbl\t0x2000 <worker>", "    1004:      \tbl\t0x3000 <scrub>"]),
@@ -300,6 +322,7 @@ def main() -> None:
     test_x86_got_imports_call_slots_and_red_zone(directory)
     test_x86_register_held_imports(directory)
     test_aarch64_leaf_assembly_frames(directory)
+    test_aarch64_tail_scrub_counts_the_caller_frame(directory)
     test_panic_exits_are_listed_and_not_counted(directory)
   test_record_parsers()
   print("frames tests passed")
