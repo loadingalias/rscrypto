@@ -181,6 +181,11 @@ test-provider-quic-runner *args:
 bench-provider-scorecard *args:
     @scripts/lib/python.sh scripts/bench/provider_scorecard.py "$@"
 
+# Observe live TLS allocations with shared keys and up to 64 admitted handshakes.
+[group('benchmarks')]
+bench-provider-resources *args:
+    @scripts/lib/python.sh scripts/bench/provider_resources.py "$@"
+
 # Record ML-DSA per-signature latency tails and rejection-sampling attempt counts.
 [group('benchmarks')]
 bench-mldsa-tail *args:

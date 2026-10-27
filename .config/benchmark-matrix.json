@@ -292,6 +292,7 @@
     "tls-traffic": { "bench": "tls_connections", "filter": "^tls13/traffic/" },
     "tls-traffic-bidirectional": { "bench": "tls_connections", "filter": "^tls13/traffic-bidirectional/" },
     "tls-server-verifier": { "bench": "tls_connections", "filter": "^tls13/server-verifier/" },
+    "tls-record-gather": { "bench": "tls_connections", "filter": "^tls13/record-gather/" },
     "crc16-ccitt": { "bench": "crc", "filter": "crc16-ccitt" },
     "crc16-ibm": { "bench": "crc", "filter": "crc16-ibm" },
     "crc24-openpgp": { "bench": "crc", "filter": "crc24-openpgp" },
@@ -480,7 +481,8 @@
       "tls-compact-key",
       "tls-traffic",
       "tls-traffic-bidirectional",
-      "tls-server-verifier"
+      "tls-server-verifier",
+      "tls-record-gather"
     ],
     "checksums": [
       "crc16-ccitt",
@@ -684,6 +686,13 @@
     }
   },
   "comparisons": {
+    "tls-record-gather": {
+      "family": "TLS",
+      "bench": "tls_connections",
+      "cases": "^tls13/(?P<variant>record-gather)/(?P<input>[^/]+/16384B/(?:1|4|64)-chunks)/(?P<implementation>[^/]+)$",
+      "headline": false,
+      "task": "Encrypt one 16 KiB TLS 1.3 record from 1, 4 or 64 ordered plaintext chunks through the production provider adapter, including framing, authentication and output append; key setup and output capacity are untimed."
+    },
     "tls-server-verifier": {
       "family": "TLS",
       "bench": "tls_connections",

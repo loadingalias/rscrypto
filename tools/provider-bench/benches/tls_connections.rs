@@ -169,20 +169,19 @@ fn traffic(c: &mut Criterion) {
           if !bench_config::selected(&format!("{name}/{backend}")) {
             continue;
           }
-          let client_bytes = vec![0x42; size];
-          let server_bytes = vec![0xa7; size];
-          let transfer = |pair: &mut rscrypto_provider_bench::Pair, output: &mut [u8]| {
-            if bidirectional {
-              pair.transfer_both(black_box(&client_bytes), black_box(&server_bytes), black_box(output));
-            } else {
-              pair.transfer(black_box(&client_bytes), black_box(output));
-            }
-          };
+          let transfer =
+            |pair: &mut rscrypto_provider_bench::Pair, client_bytes: &[u8], server_bytes: &[u8], output: &mut [u8]| {
+              if bidirectional {
+                pair.transfer_both(black_box(client_bytes), black_box(server_bytes), black_box(output));
+              } else {
+                pair.transfer(black_box(client_bytes), black_box(output));
+              }
+            };
           measured.bench_function(
             backend,
             checked_routine(
-              (vec![0; total], None),
-              |(output, connection)| {
+              (vec![0x42; size], vec![0xa7; size], vec![0; total], None),
+              |(client_bytes, server_bytes, output, connection)| {
                 let fixture = Fixture::new(
                   backend,
                   Profile {
@@ -193,21 +192,33 @@ fn traffic(c: &mut Criterion) {
                   },
                 );
                 let mut pair = fixture.checked_connect();
-                // Check consecutive operations too: no stale plaintext, sequence or direction mixup.
-                for _ in 0..2 {
+                // Change both directions between calls so replayed plaintext cannot pass.
+                for (client_fill, server_fill) in [(0x42, 0xa7), (0x53, 0xb8)] {
+                  client_bytes.fill(client_fill);
+                  server_bytes.fill(server_fill);
                   output.fill(0);
-                  transfer(&mut pair, output);
-                  assert_eq!(client_bytes, output[..size], "authenticated client-to-server transfer");
+                  transfer(&mut pair, client_bytes, server_bytes, output);
+                  assert_eq!(
+                    client_bytes.as_slice(),
+                    &output[..size],
+                    "authenticated client-to-server transfer"
+                  );
                   if bidirectional {
-                    assert_eq!(server_bytes, output[size..], "authenticated server-to-client transfer");
+                    assert_eq!(
+                      server_bytes.as_slice(),
+                      &output[size..],
+                      "authenticated server-to-client transfer"
+                    );
                   }
                 }
+                client_bytes.fill(0x42);
+                server_bytes.fill(0xa7);
                 *connection = Some((fixture, pair));
               },
-              |b, (output, connection)| {
+              |b, (client_bytes, server_bytes, output, connection)| {
                 let (_fixture, pair) = connection.as_mut().expect("the check opens the connection");
                 b.iter(|| {
-                  transfer(pair, output);
+                  transfer(pair, client_bytes, server_bytes, output);
                   black_box(&*output);
                 });
               },
@@ -256,7 +267,7 @@ fn server_verifiers(c: &mut Criterion) {
     match verifier {
       "rscrypto-prepared" => Box::new(PreparedServerVerifier::new(Arc::clone(roots)).expect("bundle roots")),
       "rscrypto" => Box::new(
-        WebPkiServerVerifier::builder(Arc::clone(roots), &rscrypto_rustls::default_provider())
+        WebPkiServerVerifier::builder(Arc::clone(roots), &rscrypto_rustls::DEFAULT_PROVIDER)
           .build()
           .expect("bundle roots"),
       ),
@@ -375,6 +386,118 @@ fn server_verifiers(c: &mut Criterion) {
   }
 }
 
+fn record_gather(c: &mut Criterion) {
+  use rustls::crypto::cipher::{AeadKey, EncodableVersion, Iv, OutboundPlain, Record, Tls13AeadAlgorithm};
+  use rustls::enums::{ContentType, ProtocolVersion};
+
+  let suites = [
+    (
+      "AES128-GCM-SHA256",
+      rscrypto_rustls::cipher_suite::TLS13_AES_128_GCM_SHA256,
+    ),
+    (
+      "AES256-GCM-SHA384",
+      rscrypto_rustls::cipher_suite::TLS13_AES_256_GCM_SHA384,
+    ),
+    (
+      "CHACHA20-POLY1305-SHA256",
+      rscrypto_rustls::cipher_suite::TLS13_CHACHA20_POLY1305_SHA256,
+    ),
+  ];
+  for (name, suite) in suites {
+    let peer_algorithm = rustls_aws_lc_rs::DEFAULT_TLS13_PROVIDER
+      .tls13_cipher_suites
+      .iter()
+      .find(|peer| peer.common.suite == suite.common.suite)
+      .expect("matching AWS-LC suite")
+      .aead_alg;
+    let ring_algorithm = rustls_ring::DEFAULT_TLS13_PROVIDER
+      .tls13_cipher_suites
+      .iter()
+      .find(|peer| peer.common.suite == suite.common.suite)
+      .expect("matching ring suite")
+      .aead_alg;
+    let algorithms: [(&str, &dyn Tls13AeadAlgorithm); 3] = [
+      ("rscrypto", suite.aead_alg),
+      ("aws-lc-rs", peer_algorithm),
+      ("ring", ring_algorithm),
+    ];
+    for count in [1usize, 4, 64] {
+      let group = format!("tls13/record-gather/{name}/16384B/{count}-chunks");
+      if !bench_config::selected(&group) {
+        continue;
+      }
+      let plaintext: Vec<_> = (0usize..16_384).map(|i| i.to_le_bytes()[0]).collect();
+      // Prepare genuinely separate input regions outside timing. Guards prevent
+      // treating logical neighbors as one physical plaintext range.
+      let storage: Vec<Vec<u8>> = plaintext
+        .chunks(16_384usize.strict_div(count))
+        .map(|chunk| {
+          let mut fragment = Vec::with_capacity(chunk.len().strict_add(2));
+          fragment.push(0xa5);
+          fragment.extend_from_slice(chunk);
+          fragment.push(0x5a);
+          fragment
+        })
+        .collect();
+      let chunks: Vec<_> = storage
+        .iter()
+        .map(|chunk| &chunk[1..chunk.len().strict_sub(1)])
+        .collect();
+      let message = || Record {
+        typ: ContentType::ApplicationData,
+        version: EncodableVersion::Legacy(ProtocolVersion::TLSv1_3),
+        payload: OutboundPlain::new(&chunks),
+      };
+      let key = |algorithm: &dyn Tls13AeadAlgorithm| {
+        if algorithm.key_len() == 16 {
+          AeadKey::from([0x19; 16])
+        } else {
+          AeadKey::from([0x19; 32])
+        }
+      };
+      let mut measured = c.benchmark_group(&group);
+      measured.throughput(Throughput::Bytes(16_384));
+      for (backend, algorithm) in algorithms {
+        if !bench_config::selected(&format!("{group}/{backend}")) {
+          continue;
+        }
+        measured.bench_function(
+          backend,
+          checked_routine(
+            None,
+            |state| {
+              let mut encrypter = algorithm.encrypter(key(algorithm), Iv::from([0x71; 12]));
+              let mut peer = peer_algorithm.encrypter(key(peer_algorithm), Iv::from([0x71; 12]));
+              let mut actual = Vec::with_capacity(16_406);
+              let mut expected = Vec::with_capacity(16_406);
+              encrypter.encrypt(message(), 0, &mut actual).expect("record encryption");
+              peer
+                .encrypt(message(), 0, &mut expected)
+                .expect("independent record encryption");
+              assert_eq!(actual, expected, "{backend} record from {count} chunks");
+              actual.clear();
+              *state = Some((encrypter, actual, 1u64));
+            },
+            |b, state| {
+              let (encrypter, out, sequence) = state.as_mut().expect("checked record fixture");
+              b.iter(|| {
+                out.clear();
+                encrypter
+                  .encrypt(message(), *sequence, out)
+                  .expect("bounded record encryption");
+                *sequence = sequence.strict_add(1);
+                black_box(out.as_slice());
+              });
+            },
+          ),
+        );
+      }
+      measured.finish();
+    }
+  }
+}
+
 fn main() {
   // Record the comparison libraries' identity in the run's output; discovery
   // and case matching keep their exact output.
@@ -385,5 +508,5 @@ fn main() {
       serde_json::json!({"provider_bench_provenance": rscrypto_provider_bench::provenance()})
     );
   }
-  bench_config::run(&[connections, expanded, traffic, server_verifiers]);
+  bench_config::run(&[connections, expanded, traffic, server_verifiers, record_gather]);
 }

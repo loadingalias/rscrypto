@@ -62,6 +62,7 @@ with open(os.environ['ARGUMENT_LOG'], 'a') as log:
       'test-provider-quic-runner': ['scripts/test/provider_quic_runner.py'],
       'test-provider-bogo': ['scripts/test/provider_bogo.py'],
       'bench-provider-scorecard': ['scripts/bench/provider_scorecard.py'],
+      'bench-provider-resources': ['scripts/bench/provider_resources.py'],
       'bench-mldsa-tail': ['scripts/bench/mldsa_tail.py'],
       'bench-compare': ['scripts/bench/compare.py'],
       'ct-dudect': [], 'ct-artifacts': [], 'update': [],

@@ -21,6 +21,7 @@ just bench tls-handshake-p256
 just bench tls-stateful
 just bench tls-traffic-bidirectional
 just bench-provider-scorecard rscrypto mldsa65 X25519MLKEM768 AES256-GCM-SHA384 full --iterations 256 --workers 4
+just bench-provider-resources mldsa87 X25519MLKEM768 AES256-GCM-SHA384 full --workers 64
 ```
 
 This connection workload has no internal-kernel diagnostic mode; `--diag` is rejected before compilation.
@@ -53,6 +54,7 @@ The expanded families vary one workload dimension:
 | `tls-compact-key` | ML-DSA-65, X25519/AES-128-GCM, full mutual authentication through the two rscrypto verifier configurations. Uses the production `sign::Provider::compact()` loader. Compare with the original prepared-signing-key row; this is a key-storage tradeoff, with no external compact-mode substitute. |
 | `tls-traffic` | Client-to-server writes of 64 B, 256 B, 1 KiB, 16 KiB, 64 KiB and 1 MiB, under each suite. |
 | `tls-traffic-bidirectional` | The same sizes per direction; send both directions before reading each record pair. Throughput counts both plaintext directions once. |
+| `tls-record-gather` | Encrypt one 16 KiB TLS 1.3 record from 1, 4 or 64 plaintext chunks through the production record adapter. Includes framing, content type, encryption and tag append; keys and reserved output capacity stay outside timing. Compare matching pre-change and candidate builds to measure copy-then-seal against direct gather output. AWS-LC and ring rows are controls. |
 
 Peers use the same credentials, roots, validation time, ALPN, selected group,
 suite and CertificateVerify algorithm.
@@ -77,7 +79,8 @@ the chain case checks exact leaf/intermediate bytes on both endpoints.
 A resumed OpenSSL session restores the peer leaf but may omit the transmitted chain.
 
 Application rows verify two consecutive authenticated transfers before timing,
-using distinct bytes in each direction to detect swapped or stale outputs.
+using distinct bytes in each direction and changing both inputs between checks
+to detect swapped or stale outputs. The timed payloads remain fixed.
 Their untimed handshake uses P-256/X25519 on every backend.
 Multi-record writes are driven in 16 KiB chunks through both real TLS endpoints;
 the harness does not encrypt or decrypt records.
@@ -158,6 +161,31 @@ It is not an allocation count, heap bound, or per-connection memory bound.
 Up to 16 workers and 10,000 connections per worker are accepted;
 each resource run has a ten-minute watchdog.
 
+`bench-provider-resources` observes this provider's live Rust heap on macOS and
+Linux. It counts System allocator usable payload bytes, including TLS endpoints,
+preparation, fixture transport and worker owners. Configuration construction also
+includes its correctness-checking warmup. OS thread stacks, allocator arena
+metadata and C allocations are outside this counter. The report separates
+construction, repeated individual pairs and simultaneous pairs. A pair includes
+both endpoints, so its peak conservatively bounds either endpoint; it is never
+divided by two. Every individual pair also transfers a full TLS record.
+The observer uses `GlobalAlloc`'s default moving reallocation, so old and new
+payloads are counted while both are live. It conservatively forgoes production
+System allocation's possible in-place reuse. It does not hide a moving
+reallocation's temporary allocation inside `System::realloc`.
+
+The selected qualification caps are 8 MiB of requested stack per worker, 1 MiB
+of incremental heap per endpoint, 64 admitted handshakes and 8 MiB of shared
+prepared-key storage. The observer uses the stricter 1 MiB cap for an entire
+pair and the entire configuration-construction peak for the shared-key cap.
+Each concurrent worker constructs its connections before the handshake barrier;
+all completed pairs remain live until every worker completes. Resumed workers
+have separately seeded session stores and share the Arc-owned signing keys and
+trust-anchor verifiers. `--workload compact`, `intermediate` and `stateful` select
+the existing catalog workloads. A cap failure retains its report and exits
+nonzero. These observations do not establish whole-call stack bounds, hostile
+input bounds, or admission control in an application.
+
 Run comparisons on the same quiet native machine with the same compiler, features,
 build profile and workload.
 Record contention and unsupported environments.
@@ -170,6 +198,7 @@ The normal benchmark artifact workflow retains source, commands, build identity 
 `tls-server-verifier` times server-certificate verification without a connection.
 It builds rustls's WebPKI server verifier over the Debian or Fedora root bundle,
 with this provider's algorithms (`rscrypto`) or AWS-LC's (`aws-lc-rs`), or builds `PreparedServerVerifier` (`rscrypto-prepared`).
+The WebPKI `rscrypto` row borrows `DEFAULT_PROVIDER`.
 It then verifies each of four captured origin chains and names at the chains' capture time.
 Lifetime rows time one build plus 1, 3, or 10 verifications of one origin,
 for the two rscrypto verifiers only.

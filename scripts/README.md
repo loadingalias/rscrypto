@@ -182,6 +182,13 @@ It does not download upstream archives.
   so default runs omit it and the Bench workflow rejects it; run it locally.
   Criterion measures complete TLS pairs and application records; the supplementary
   command retains individual latencies, process CPU, wire flights and process RSS.
+- `just bench-provider-resources` uses the same production TLS fixture with a
+  System-allocation observer on macOS/Linux. It shares signing keys and trust
+  anchors, seeds separate ticket stores for concurrent resumed connections, and
+  holds every pending pair live before releasing the workers. Reports retain
+  configuration/preparation, individual-pair and concurrent live-heap peaks,
+  allocation counts, source and binary identity, and cap failures. It does not
+  measure latency or establish static stack or hostile-input bounds.
 - Each ChaCha20 differential test must report execution of every backend marked runnable.
   All three tests must report the same inventory and target architecture.
   The inventory includes required features and availability.

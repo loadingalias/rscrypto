@@ -627,6 +627,35 @@ impl Fixture {
     fixture
   }
 
+  /// Share Rustls signing keys and trust anchors with a separately seeded ticket store.
+  ///
+  /// Rustls consumes a ticket for each connection and keeps a bounded number per
+  /// origin. Concurrent resumed observations therefore need independent stores.
+  /// Cloning `ClientConfig` retains its Arc-owned key resolver and verifier.
+  #[expect(clippy::panic, reason = "this resource boundary observes Rustls configurations only")]
+  pub fn fork_with_resumption_cache(&self) -> Self {
+    let Configs::Rustls(client, server) = &self.configs else {
+      panic!("independent ticket stores require a Rustls fixture");
+    };
+    let tickets = Arc::new(AtomicUsize::new(0));
+    let mut client = (**client).clone();
+    client.resumption = Resumption::store(Arc::new(CountingStore {
+      inner: self.profile.resumed.then(|| ClientSessionMemoryCache::new(256)),
+      tickets: tickets.clone(),
+    }))
+    .tls12_resumption(Tls12Resumption::Disabled);
+    let fixture = Self {
+      configs: Configs::Rustls(Arc::new(client), server.clone()),
+      profile: self.profile,
+      workload: self.workload,
+      tickets,
+    };
+    if fixture.profile.resumed {
+      fixture.checked(false);
+    }
+    fixture
+  }
+
   /// One timed-path connection: complete, of the selected kind, with the expected flights.
   pub fn connect(&self) -> Pair {
     self.connect_inner(self.profile.resumed)
@@ -657,6 +686,18 @@ impl Fixture {
   }
 
   fn connect_inner(&self, resumed: bool) -> Pair {
+    self.finish_inner(self.begin_inner(resumed), resumed)
+  }
+
+  /// Construct both production connections without driving the handshake.
+  ///
+  /// The resource observer uses this boundary to hold every admitted handshake
+  /// live before releasing its workers. Complete it with [`Self::finish`].
+  pub fn begin(&self) -> Pair {
+    self.begin_inner(self.profile.resumed)
+  }
+
+  fn begin_inner(&self, resumed: bool) -> Pair {
     let (left, right) = Pipe::pair();
     let (client, server) = match &self.configs {
       Configs::Rustls(client, server) => {
@@ -681,7 +722,15 @@ impl Fixture {
       server,
       flights: Vec::new(),
     }
-    .handshake(
+  }
+
+  /// Drive a pair created by this fixture through the normal checked flights.
+  pub fn finish(&self, pair: Pair) -> Pair {
+    self.finish_inner(pair, self.profile.resumed)
+  }
+
+  fn finish_inner(&self, pair: Pair, resumed: bool) -> Pair {
+    pair.handshake(
       resumed,
       self.workload == Workload::HelloRetryRequest,
       3_usize.strict_add(usize::from(self.profile.resumed)).strict_add(
