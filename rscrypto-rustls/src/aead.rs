@@ -17,6 +17,25 @@ use rustls::{ConnectionTrafficSecrets, Error};
 
 const TAG_LEN: usize = 16;
 
+// Keep key/context temporaries in workers that return only a heap owner. The
+// post-call scrub must cover their dead frames in the exact linked artifact.
+const CONSTRUCTION_SCRUB_BYTES: usize = 32 * 1024;
+
+pub(crate) struct ConstructionStackScrub;
+
+impl Drop for ConstructionStackScrub {
+  fn drop(&mut self) {
+    scrub_construction_stack();
+  }
+}
+
+#[inline(never)]
+fn scrub_construction_stack() {
+  let mut scratch = [0u8; CONSTRUCTION_SCRUB_BYTES];
+  rscrypto::traits::ct::zeroize(&mut scratch);
+  core::hint::black_box(&mut scratch);
+}
+
 #[derive(Clone, Copy)]
 pub(crate) enum Algorithm {
   #[cfg(feature = "aes-gcm")]
@@ -71,17 +90,13 @@ impl Algorithm {
 
 impl Tls13AeadAlgorithm for Algorithm {
   fn encrypter(&self, key: AeadKey, iv: Iv) -> Box<dyn RecordEncrypter> {
-    Box::new(RecordKey {
-      cipher: self.cipher(key.as_ref()),
-      iv,
-    })
+    let _scrub = ConstructionStackScrub;
+    RecordKey::boxed(*self, key.as_ref(), iv)
   }
 
   fn decrypter(&self, key: AeadKey, iv: Iv) -> Box<dyn RecordDecrypter> {
-    Box::new(RecordKey {
-      cipher: self.cipher(key.as_ref()),
-      iv,
-    })
+    let _scrub = ConstructionStackScrub;
+    RecordKey::boxed(*self, key.as_ref(), iv)
   }
 
   fn key_len(&self) -> usize {
@@ -121,6 +136,33 @@ enum Cipher {
 }
 
 impl Cipher {
+  fn seal_gather<'input>(
+    &self,
+    nonce: Nonce,
+    aad: &[u8],
+    plaintext: impl IntoIterator<Item = &'input [u8]>,
+    plaintext_len: usize,
+    out: &mut Vec<u8>,
+  ) -> Result<[u8; TAG_LEN], Error> {
+    let nonce = Nonce96::from_bytes(nonce.to_array().map_err(|_| Error::EncryptError)?);
+    match self {
+      #[cfg(feature = "aes-gcm")]
+      Self::Aes128(key) => key
+        .encrypt_gather_append(&nonce, aad, plaintext, plaintext_len, out)
+        .map(|tag| *tag.as_bytes()),
+      #[cfg(feature = "aes-gcm")]
+      Self::Aes256(key) => key
+        .encrypt_gather_append(&nonce, aad, plaintext, plaintext_len, out)
+        .map(|tag| *tag.as_bytes()),
+      #[cfg(feature = "chacha20poly1305")]
+      Self::ChaCha20(key) => key
+        .encrypt_gather_append(&nonce, aad, plaintext, plaintext_len, out)
+        .map(|tag| *tag.as_bytes()),
+      Self::InvalidKeyLength => return Err(Error::EncryptError),
+    }
+    .map_err(|_| Error::EncryptError)
+  }
+
   fn seal(&self, nonce: Nonce, aad: &[u8], payload: &mut [u8]) -> Result<[u8; TAG_LEN], Error> {
     let nonce = Nonce96::from_bytes(nonce.to_array().map_err(|_| Error::EncryptError)?);
     match self {
@@ -162,6 +204,16 @@ struct RecordKey {
   iv: Iv,
 }
 
+impl RecordKey {
+  #[inline(never)]
+  fn boxed(algorithm: Algorithm, key: &[u8], iv: Iv) -> Box<Self> {
+    Box::new(Self {
+      cipher: algorithm.cipher(key),
+      iv,
+    })
+  }
+}
+
 impl RecordEncrypter for RecordKey {
   fn encrypt(&mut self, msg: Record<OutboundPlain<'_>>, seq: u64, out: &mut Vec<u8>) -> Result<(), Error> {
     // rustls fragments records at 2^14 bytes. Reject misuse before writing.
@@ -175,16 +227,18 @@ impl RecordEncrypter for RecordKey {
       u16::try_from(total_len).map_err(|_| Error::EncryptError)?,
     );
     let start = out.len();
-    // One reservation: plaintext is never left behind in a reallocated buffer.
+    // One reservation covers the header, ciphertext, and tag. Plaintext is read
+    // directly from the payload chunks and never enters the output allocation.
     out.reserve(header.len().strict_add(total_len));
     out.extend_from_slice(&header);
-    let body = out.len();
-    msg.payload.copy_to_vec(out);
-    out.push(u8::from(msg.typ));
-    match self.cipher.seal(
+    let plaintext_len = msg.payload.len().strict_add(1);
+    let content_type = [u8::from(msg.typ)];
+    match self.cipher.seal_gather(
       Nonce::new(&self.iv, seq),
       &make_tls13_aad(ContentType::ApplicationData, msg.version.encode(), total_len),
-      &mut out[body..],
+      msg.payload.chunks().chain(core::iter::once(content_type.as_slice())),
+      plaintext_len,
+      out,
     ) {
       Ok(tag) => {
         out.extend_from_slice(&tag);
@@ -222,9 +276,9 @@ pub(crate) struct PacketKeyImpl {
 }
 
 impl PacketKeyImpl {
-  pub(crate) fn new(algorithm: Algorithm, key: AeadKey, iv: Iv) -> Self {
+  pub(crate) fn new(algorithm: Algorithm, key: &[u8], iv: Iv) -> Self {
     Self {
-      cipher: algorithm.cipher(key.as_ref()),
+      cipher: algorithm.cipher(key),
       iv,
       algorithm,
     }

@@ -73,6 +73,10 @@ component is available to rustls's fallback optimization.
 Malformed public shares and entropy failures never return a successful exchange.
 No new timing qualification is claimed.
 
+TLS 1.3 record encryption reads gathered plaintext directly into reserved ciphertext output.
+The provider does not stage plaintext in its output vector. Core rscrypto owns output
+initialization and error cleanup, so the companion keeps its `forbid(unsafe_code)` boundary.
+
 Use `DEFAULT_PROVIDER` when an API borrows a provider, for example
 `WebPkiServerVerifier::builder(roots, &rscrypto_rustls::DEFAULT_PROVIDER)`.
 This constant avoids constructing an owned provider for a borrowed argument.

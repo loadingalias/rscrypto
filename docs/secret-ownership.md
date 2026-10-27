@@ -100,7 +100,9 @@ HMAC results cross the boundary through rustls's clearing `hmac::Tag`.
 
 Record, packet, and header-protection keys own rscrypto AEAD or header-protection
 contexts. Construction borrows rustls's clearing `AeadKey`, then creates typed
-rscrypto key owners and expanded contexts. The adapters expose no key formatting
+rscrypto key owners and expanded contexts in private outlined workers. Each
+worker returns only a `Box`; a post-call guard scrubs its dead construction
+frames before the outer `AeadKey` drops. The adapters expose no key formatting
 or serialization. `Tls13AeadAlgorithm::extract_keys` explicitly transfers
 rustls-owned traffic secrets to the caller, as rustls requires.
 Transcript contexts can be cloned; they contain public handshake data.

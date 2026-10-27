@@ -290,17 +290,60 @@ erasure of every compiler-created copy, register, or spill.
 
 ### rustls symmetric adapters
 
+AES-GCM's scalar, batched and fused native tail paths keep their named 16-byte or
+64-byte CTR keystream scratch in `ZeroizingBytes`. Its drop clears the complete
+scratch with volatile writes and a compiler fence on normal return or unwind.
+This source boundary does not establish clearing of every register or compiler-made copy.
+The generic CTR functions also isolate block dispatch in borrowed-only workers
+and scrub an 8 KiB dead-stack region on return or ordinary unwind. The linked
+depth check covers their transitive crypto calls; buffer placement and saved
+slots need artifact review as well. This boundary covers stack copies within
+the reviewed region, without promising that every live register is erased.
+
+AArch64 GCM composition borrows its GHASH tables and updates one clearing accumulator owner
+through AAD and batch helpers. Padded AAD is assembled directly as a field element, avoiding
+memory-helper calls while H and the accumulator are live. The retained Apple provider review
+closes the demonstrated bulk saved-slot and short-eight-block accumulator copies, with success
+and bad-tag exits traced. The final executable, LLVM IR and assembly match the reviewed artifact
+byte for byte. This scoped result does not establish all-target or whole-provider cleanup;
+[provider qualification](../benchmark_results/OVERVIEW.md#2026-10-27-provider-residue-review-checkpoint)
+records the evidence and remaining gates.
+
 `rscrypto-rustls` holds HMAC keys, HKDF state, and AEAD/header-protection contexts
 in the clearing owners named in the [ownership inventory](secret-ownership.md#rustls-symmetric-adapters).
 No provider expansion loop duplicates HKDF. The adapter's fixed expansion
 scratch clears on return or unwind after rustls copies the output.
-Key construction crosses by-value arrays into typed rscrypto owners; compiler-made
-copies at that boundary remain unqualified.
+TLS record and QUIC packet/header-key construction borrow the incoming `AeadKey`
+in outlined workers and return only the final heap owner. A guard scrubs a
+32 KiB dead-stack region after construction and during ordinary unwind, then
+the outer incoming key drops. Coverage depends on the compiler's actual worker
+frames, their callees, and scrub placement. Abort exits do not run these guards.
 
 An entropy fill error clears the entire destination, including partial writes.
 Record encryption reserves the whole record in rustls's output vector before it
-copies plaintext, so growth leaves no reallocated plaintext copy; a sealing
-failure clears the bytes it appended, then truncates them.
+writes ciphertext. Gather encryption reads each plaintext chunk directly, carries partial
+keystream across chunk boundaries, and includes the content-type byte in the same authenticated
+message. Plaintext never enters the output allocation. The core output guard clears the complete
+reserved ciphertext region on a slice-length mismatch or iterator unwind. Its keystream owner
+clears on return or unwind. A sealing failure also clears the provider's appended bytes and
+restores the output vector's original length.
+The native little-endian AArch64 ChaCha20 path retains bounded public span metadata and
+uses the existing integrated cipher/authenticator. It reads short seams into registers,
+without a plaintext staging allocation. Its `SealData` key copy follows the existing tag
+overwrite and remaining-half clear. Iterators exceeding the metadata capacity continue
+through the stream-based gather path and its zeroizing keystream owner.
+The AES-128-GCM context's private x86 wide-power group retains two initialized arrays,
+with no internal padding. Context drop clears their 1024 and 2048 bytes separately.
+Linux cache-line alignment changes placement, not cleanup ownership. The provider
+construction scrub addresses copies within its reviewed stack region; construction
+through other callers, live registers, and unrelated object padding retain their
+separate qualification limits.
+
+The native AES-GCM ABI state clears its named GHASH accumulator on drop. Linux x86-64 assembly
+clears its explicit 512-, 1024-, or 2048-byte GHASH power workspace before releasing it, and
+the native kernels clear saved-register slots after restoring the caller's registers. Input
+descriptor arrays contain public pointers and lengths only. These clears do not cover every live register
+or compiler-created spill; generated-code qualification remains source and target bound.
 An AEAD authentication failure clears the body before returning an opaque rustls
 error. Public length and key-shape rejections occur before decryption; those
 paths leave ciphertext unchanged. Successful plaintext belongs to rustls or its

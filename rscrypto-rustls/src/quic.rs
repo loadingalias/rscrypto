@@ -2,7 +2,7 @@
 
 use alloc::{boxed::Box, string::ToString};
 
-use crate::aead::{Algorithm, PacketKeyImpl};
+use crate::aead::{Algorithm, ConstructionStackScrub, PacketKeyImpl};
 #[cfg(feature = "aes-gcm")]
 use rscrypto::aead::expert::header_protection::{
   Aes128HeaderProtection, Aes128HeaderProtectionKey, Aes256HeaderProtection, Aes256HeaderProtectionKey,
@@ -18,11 +18,13 @@ const MAX_PACKET_NUMBER_LEN: usize = 4;
 
 impl rustls::quic::Algorithm for Algorithm {
   fn packet_key(&self, key: AeadKey, iv: Iv) -> Box<dyn PacketKey> {
-    Box::new(PacketKeyImpl::new(*self, key, iv))
+    let _scrub = ConstructionStackScrub;
+    boxed_packet_key(*self, key.as_ref(), iv)
   }
 
   fn header_protection_key(&self, key: AeadKey) -> Box<dyn HeaderProtectionKey> {
-    Box::new(HeaderKey::from_bytes(*self, key.as_ref()))
+    let _scrub = ConstructionStackScrub;
+    boxed_header_key(*self, key.as_ref())
   }
 
   fn aead_key_len(&self) -> usize {
@@ -33,6 +35,16 @@ impl rustls::quic::Algorithm for Algorithm {
     // rscrypto is not currently a FIPS-validated module.
     rustls::pki_types::FipsStatus::Unvalidated
   }
+}
+
+#[inline(never)]
+fn boxed_packet_key(algorithm: Algorithm, key: &[u8], iv: Iv) -> Box<PacketKeyImpl> {
+  Box::new(PacketKeyImpl::new(algorithm, key, iv))
+}
+
+#[inline(never)]
+fn boxed_header_key(algorithm: Algorithm, key: &[u8]) -> Box<HeaderKey> {
+  Box::new(HeaderKey::from_bytes(algorithm, key))
 }
 
 #[cfg_attr(
