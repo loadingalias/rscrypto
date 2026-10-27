@@ -223,6 +223,10 @@ erasure of every compiler-created copy, register, or spill.
 - Preparation decodes directly into its storage, without moving the prepared owner:
   storage that the caller owns for `prepare`, or a box allocated first for `prepare_in`.
   It copies rho, `K`, and tr from the key into the storage.
+  Native macOS/Linux AArch64 and x86-64 copy these 128 bytes in a separate helper that clears
+  its two SIMD scratch registers. The helper does not expose the copied seed values to LLVM.
+  This is a named copy boundary, not whole-operation register clearance; portable dispatch
+  and other targets keep the Rust copy and its compiler-copy qualification limits.
   The prepared key clears the transformed polynomials and `K` on drop and when preparation fails.
   The storage clears them again on drop.
   When `prepare_in` was added (`44dfa51d`), its release frames on five Linux targets were at most

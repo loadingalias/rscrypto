@@ -149,6 +149,9 @@ or Debug implementation exposes these keys.
 - PKCS #8 import borrows the caller's DER and does not clear it.
   A seed owner copies its 32 bytes out of the DER; secret-key import copies or expands the key into its owner.
 - Preparation writes transformed secrets, the public matrix, and the key's rho, `K`, and tr into storage.
+  On native macOS/Linux AArch64 and x86-64, the fixed seed-field copy uses an out-of-line helper
+  that clears its two SIMD scratch registers before returning. Portable dispatch and other targets
+  retain Rust copying; this helper does not clear polynomial workers' or callers' register copies.
   `prepare` uses storage that the caller owns and returns a prepared key that borrows it.
   `prepare_in` allocates the storage from a caller-selected `Allocator`, prepares it in place,
   and returns a prepared key that owns the box.

@@ -41,6 +41,7 @@
 mod encoding;
 mod poly;
 mod portable;
+mod prepared_seeds;
 mod sampling;
 #[cfg(feature = "serde")]
 mod serde_impl;
@@ -1010,11 +1011,10 @@ macro_rules! parameter_set {
           return Err(MlDsaError::InvalidSecretKey);
         }
         prepared.storage.matrix.expand_into(&encoded[..32])?;
-        prepared
-          .storage
-          .seeds
-          .as_mut_array()
-          .copy_from_slice(&encoded[..128]);
+        prepared_seeds::copy(
+          prepared.storage.seeds.as_mut_array(),
+          encoded[..128].try_into().expect("validated ML-DSA seed fields"),
+        );
         Ok(prepared)
       }
 
