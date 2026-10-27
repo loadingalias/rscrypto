@@ -73,12 +73,16 @@ component is available to rustls's fallback optimization.
 Malformed public shares and entropy failures never return a successful exchange.
 No new timing qualification is claimed.
 
-Use `default_provider()` with rustls's explicit `builder` or
-`builder_with_details`. It prefers hybrid key exchange and permits classical
+Use `DEFAULT_PROVIDER` when an API borrows a provider, for example
+`WebPkiServerVerifier::builder(roots, &rscrypto_rustls::DEFAULT_PROVIDER)`.
+This constant avoids constructing an owned provider for a borrowed argument.
+Use `default_provider()` when rustls's explicit `builder` or
+`builder_with_details` needs ownership or when customizing its lists.
+Both forms prefer hybrid key exchange and permit classical
 fallback. `post_quantum_required_provider()` offers only X25519MLKEM768; it
 requires hybrid key establishment, not a post-quantum certificate chain. Neither
 constructor installs a global provider. Cargo features determine the available
-lists. Both constructors require `getrandom`, and every provider constructor
+lists. The constant and both constructors require `getrandom`; each also
 requires at least one signature verification feature. Primitive-only feature
 subsets still compile. Rustls rejects configurations without usable suites or groups.
 

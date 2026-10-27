@@ -41,6 +41,33 @@ pub mod verify;
 ))]
 pub use client::ClientProvider;
 
+/// Default TLS 1.3 cryptography, available by reference without construction.
+///
+/// The enabled features determine the supported algorithms, with hybrid key
+/// exchange preferred and classical fallback. Use this constant when a builder
+/// accepts a provider reference. Use [`default_provider`] for an owned provider
+/// that can be customized through its copy-on-write algorithm lists.
+/// Requires `getrandom` and at least one signature-verification feature.
+#[cfg(all(
+  feature = "getrandom",
+  any(
+    feature = "ecdsa-p256",
+    feature = "ecdsa-p384",
+    feature = "ed25519",
+    feature = "rsa",
+    feature = "ml-dsa"
+  )
+))]
+pub const DEFAULT_PROVIDER: rustls::crypto::CryptoProvider = rustls::crypto::CryptoProvider {
+  tls12_cipher_suites: alloc::borrow::Cow::Borrowed(&[]),
+  tls13_cipher_suites: alloc::borrow::Cow::Borrowed(cipher_suite::ALL_CIPHER_SUITES),
+  kx_groups: alloc::borrow::Cow::Borrowed(kx_group::ALL_KX_GROUPS),
+  signature_verification_algorithms: verify::SUPPORTED_ALGORITHMS,
+  secure_random: random::SECURE_RANDOM,
+  key_provider: sign::KEY_PROVIDER,
+  ticketer_factory: &TicketerFactory,
+};
+
 /// TLS 1.3 cryptography with hybrid key exchange preferred and classical fallback.
 ///
 /// The enabled Cargo features determine the suite, group, and signature lists.
@@ -74,15 +101,7 @@ pub use client::ClientProvider;
 ))]
 #[must_use]
 pub fn default_provider() -> rustls::crypto::CryptoProvider {
-  rustls::crypto::CryptoProvider {
-    tls12_cipher_suites: alloc::borrow::Cow::Borrowed(&[]),
-    tls13_cipher_suites: alloc::borrow::Cow::Borrowed(cipher_suite::ALL_CIPHER_SUITES),
-    kx_groups: alloc::borrow::Cow::Borrowed(kx_group::ALL_KX_GROUPS),
-    signature_verification_algorithms: verify::SUPPORTED_ALGORITHMS,
-    secure_random: random::SECURE_RANDOM,
-    key_provider: sign::KEY_PROVIDER,
-    ticketer_factory: &TicketerFactory,
-  }
+  DEFAULT_PROVIDER
 }
 
 /// TLS 1.3 cryptography requiring hybrid key establishment.
