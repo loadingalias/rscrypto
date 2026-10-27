@@ -2,7 +2,8 @@
 
 use core::fmt;
 
-use super::{AeadBufferError, Nonce96, OpenError, SealError, chacha20, poly1305, targets::AeadPrimitive};
+use super::{AeadBufferError, Nonce96, OpenError, SealError, poly1305, targets::AeadPrimitive};
+use crate::backend::chacha20;
 use crate::traits::{Aead, AeadGather, ct};
 
 const KEY_SIZE: usize = chacha20::KEY_SIZE;
@@ -617,14 +618,7 @@ impl ChaCha20Poly1305 {
       return Ok(tag);
     }
 
-    chacha20::xor_keystream(
-      AeadPrimitive::ChaCha20Poly1305,
-      self.key.as_bytes(),
-      1,
-      nonce.as_bytes(),
-      buffer,
-    )
-    .map_err(|_| SealError::too_large())?;
+    chacha20::xor_keystream(self.key.as_bytes(), 1, nonce.as_bytes(), buffer).map_err(|_| SealError::too_large())?;
 
     let mut poly_key = chacha20::poly1305_key_gen(self.key.as_bytes(), nonce.as_bytes());
     let tag = ChaCha20Poly1305Tag::from_bytes(poly1305::authenticate_aead(
@@ -655,14 +649,7 @@ impl ChaCha20Poly1305 {
       return Err(OpenError::verification());
     }
 
-    chacha20::xor_keystream(
-      AeadPrimitive::ChaCha20Poly1305,
-      self.key.as_bytes(),
-      1,
-      nonce.as_bytes(),
-      buffer,
-    )
-    .map_err(|_| OpenError::too_large())?;
+    chacha20::xor_keystream(self.key.as_bytes(), 1, nonce.as_bytes(), buffer).map_err(|_| OpenError::too_large())?;
     Ok(())
   }
 }
@@ -799,14 +786,8 @@ impl ChaCha20Poly1305 {
   ) -> Result<(ChaCha20Poly1305Tag, &'output mut [u8]), SealError> {
     let ciphertext = super::gather::xor::<64, 1024>(plaintext, out, 1, |counter, stream| {
       stream.fill(0);
-      chacha20::xor_keystream(
-        AeadPrimitive::ChaCha20Poly1305,
-        self.key.as_bytes(),
-        counter,
-        nonce.as_bytes(),
-        stream,
-      )
-      .map_err(|_| SealError::too_large())
+      chacha20::xor_keystream(self.key.as_bytes(), counter, nonce.as_bytes(), stream)
+        .map_err(|_| SealError::too_large())
     })?;
     let tag = ChaCha20Poly1305Tag::from_bytes(self.compute_tag(nonce, aad, ciphertext));
     Ok((tag, ciphertext))

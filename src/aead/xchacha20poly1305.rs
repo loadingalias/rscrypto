@@ -2,7 +2,8 @@
 
 use core::fmt;
 
-use super::{AeadBufferError, Nonce192, OpenError, SealError, chacha20, poly1305, targets::AeadPrimitive};
+use super::{AeadBufferError, Nonce192, OpenError, SealError, poly1305, targets::AeadPrimitive};
+use crate::backend::chacha20;
 use crate::traits::{Aead, ct};
 
 const KEY_SIZE: usize = chacha20::KEY_SIZE;
@@ -163,8 +164,7 @@ impl Aead for XChaCha20Poly1305 {
     super::seal_bounded_length_as_u64(buffer.len(), MAX_PLAINTEXT_LEN)?;
 
     let (mut subkey, ietf_nonce) = self.derive_subkey_and_nonce(nonce);
-    chacha20::xor_keystream(AeadPrimitive::XChaCha20Poly1305, &subkey, 1, &ietf_nonce, buffer)
-      .map_err(|_| SealError::too_large())?;
+    chacha20::xor_keystream(&subkey, 1, &ietf_nonce, buffer).map_err(|_| SealError::too_large())?;
 
     let mut poly_key = chacha20::poly1305_key_gen(&subkey, &ietf_nonce);
     let tag = XChaCha20Poly1305Tag::from_bytes(poly1305::authenticate_aead(
@@ -200,8 +200,7 @@ impl Aead for XChaCha20Poly1305 {
       return Err(OpenError::verification());
     }
 
-    chacha20::xor_keystream(AeadPrimitive::XChaCha20Poly1305, &subkey, 1, &ietf_nonce, buffer)
-      .map_err(|_| OpenError::too_large())?;
+    chacha20::xor_keystream(&subkey, 1, &ietf_nonce, buffer).map_err(|_| OpenError::too_large())?;
     ct::zeroize(&mut subkey);
     Ok(())
   }

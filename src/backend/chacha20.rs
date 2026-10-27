@@ -1,17 +1,22 @@
-//! Portable ChaCha20 and HChaCha20 core.
+//! ChaCha20 and HChaCha20 core for the ChaCha20 AEADs.
+//!
+//! This module owns the portable authority, the accelerated keystream kernels,
+//! and the capability rule that selects a kernel. Dispatch and AEAD
+//! introspection both derive from [`Kernel::select`], so introspection reports
+//! the kernel that actually runs.
 
 use core::mem;
 #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
 use core::simd::u32x4;
 
+#[cfg(any(feature = "chacha20poly1305", feature = "xchacha20poly1305"))]
+use crate::traits::ct;
 use crate::{
-  aead::{
-    LengthOverflow,
-    targets::{AeadPrimitive, select_backend},
-  },
   backend::cache::OnceCache,
-  platform::{Arch, Caps},
-  traits::ct,
+  platform::{
+    Arch, Caps,
+    caps::{aarch64, power, riscv, s390x, wasm, x86},
+  },
 };
 
 pub(crate) const KEY_SIZE: usize = 32;
@@ -19,16 +24,18 @@ pub(crate) const NONCE_SIZE: usize = 12;
 #[cfg(feature = "xchacha20poly1305")]
 pub(crate) const HCHACHA_NONCE_SIZE: usize = 16;
 pub(crate) const BLOCK_SIZE: usize = 64;
+#[cfg(any(feature = "chacha20poly1305", feature = "xchacha20poly1305"))]
 pub(crate) const POLY1305_KEY_SIZE: usize = 32;
 
 const CONSTANTS: [u32; 4] = [0x6170_7865, 0x3320_646e, 0x7962_2d32, 0x6b20_6574];
 
+/// XOR the keystream from `initial_counter` into `buffer`.
+///
+/// Callers keep every 64-byte block of `buffer` within the u32 block-counter
+/// range and establish the kernel's capabilities.
 type XorKeystreamFn = unsafe fn(&[u8; KEY_SIZE], u32, &[u8; NONCE_SIZE], &mut [u8]);
 
-#[cfg(feature = "xchacha20poly1305")]
-static XCHACHA20POLY1305_XOR_KEYSTREAM_DISPATCH: OnceCache<XorKeystreamFn> = OnceCache::new();
-#[cfg(feature = "chacha20poly1305")]
-static CHACHA20POLY1305_XOR_KEYSTREAM_DISPATCH: OnceCache<XorKeystreamFn> = OnceCache::new();
+static XOR_KEYSTREAM_DISPATCH: OnceCache<XorKeystreamFn> = OnceCache::new();
 
 #[inline(always)]
 fn quarter_round(state: &mut [u32; 16], a: usize, b: usize, c: usize, d: usize) {
@@ -142,6 +149,7 @@ pub(crate) fn block(key: &[u8; KEY_SIZE], counter: u32, nonce: &[u8; NONCE_SIZE]
 }
 
 /// Derive a one-time Poly1305 key from the ChaCha20 block with counter 0.
+#[cfg(any(feature = "chacha20poly1305", feature = "xchacha20poly1305"))]
 #[must_use]
 pub(crate) fn poly1305_key_gen(key: &[u8; KEY_SIZE], nonce: &[u8; NONCE_SIZE]) -> [u8; POLY1305_KEY_SIZE] {
   let mut initial = init_state(key, 0, nonce);
@@ -162,73 +170,61 @@ pub(crate) fn poly1305_key_gen(key: &[u8; KEY_SIZE], nonce: &[u8; NONCE_SIZE]) -
   out
 }
 
-/// XOR the ChaCha20 keystream into `buffer` starting from `initial_counter`.
-pub(crate) fn xor_keystream(
-  primitive: AeadPrimitive,
-  key: &[u8; KEY_SIZE],
-  initial_counter: u32,
-  nonce: &[u8; NONCE_SIZE],
-  buffer: &mut [u8],
-) -> Result<(), LengthOverflow> {
-  let blocks = {
-    let len = u64::try_from(buffer.len()).map_err(|_| LengthOverflow)?;
-    if len == 0 {
-      0
-    } else {
-      let block_size = u64::try_from(BLOCK_SIZE).map_err(|_| LengthOverflow)?;
-      len.strict_sub(1).strict_div(block_size).strict_add(1)
-    }
-  };
-
-  if blocks > 0 {
-    let last_counter = u64::from(initial_counter).strict_add(blocks).strict_sub(1);
-    if last_counter > u64::from(u32::MAX) {
-      return Err(LengthOverflow);
-    }
-  }
-
-  let kernel = xor_keystream_resolved(primitive);
-  // SAFETY: the counter-range check above covers every 64-byte block, and the resolver returns an accelerated kernel
-  // only when its complete capability set is available. The portable function also coerces to this unsafe fn type.
-  unsafe { kernel(key, initial_counter, nonce, buffer) };
-  Ok(())
+/// ChaCha20 keystream kernel classes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Kernel {
+  Portable,
+  X86Avx512,
+  X86Avx2,
+  Aarch64Neon,
+  WasmSimd128,
+  S390xVector,
+  PowerVector,
+  Riscv64Vector,
 }
 
-#[inline]
-fn xor_keystream_resolved(primitive: AeadPrimitive) -> XorKeystreamFn {
-  match primitive {
-    #[cfg(feature = "xchacha20poly1305")]
-    AeadPrimitive::XChaCha20Poly1305 => {
-      XCHACHA20POLY1305_XOR_KEYSTREAM_DISPATCH.get_or_init(|| resolve_xor_keystream(primitive))
+impl Kernel {
+  /// Select the fastest kernel class whose required capabilities `caps` proves on `arch`.
+  #[must_use]
+  pub(crate) fn select(arch: Arch, caps: Caps) -> Self {
+    match arch {
+      Arch::X86_64 if caps.has(x86::AVX512_READY) => Self::X86Avx512,
+      Arch::X86_64 if caps.has(x86::AVX2) => Self::X86Avx2,
+      Arch::Aarch64 if caps.has(aarch64::NEON) => Self::Aarch64Neon,
+      Arch::Wasm32 | Arch::Wasm64 if caps.has(wasm::SIMD128) => Self::WasmSimd128,
+      Arch::S390x if caps.has(s390x::VECTOR) => Self::S390xVector,
+      Arch::Power if caps.has(power::POWER8_VECTOR) => Self::PowerVector,
+      Arch::Riscv64 if caps.has(riscv::V) => Self::Riscv64Vector,
+      _ => Self::Portable,
     }
-    #[cfg(feature = "chacha20poly1305")]
-    AeadPrimitive::ChaCha20Poly1305 => {
-      CHACHA20POLY1305_XOR_KEYSTREAM_DISPATCH.get_or_init(|| resolve_xor_keystream(primitive))
+  }
+
+  /// This class's kernel. A class this build does not compile runs the portable kernel.
+  fn function(self) -> XorKeystreamFn {
+    match self {
+      #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+      Self::WasmSimd128 => wasm_simd128::xor_keystream,
+      #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+      Self::X86Avx512 => x86_avx512::xor_keystream,
+      #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+      Self::X86Avx2 => x86_avx2::xor_keystream,
+      #[cfg(target_arch = "aarch64")]
+      Self::Aarch64Neon => aarch64_neon::xor_keystream,
+      #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), target_endian = "little"))]
+      Self::PowerVector => power_vsx::xor_keystream,
+      #[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
+      Self::S390xVector => s390x_vector::xor_keystream,
+      #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
+      Self::Riscv64Vector => riscv64_vector::xor_keystream,
+      _ => xor_keystream_portable,
     }
-    #[cfg(any(test, feature = "aegis256", feature = "aes-gcm", feature = "aes-gcm-siv"))]
-    _ => resolve_xor_keystream(primitive),
   }
 }
 
+/// The host's kernel, selected once from the detected capabilities.
 #[inline]
-fn resolve_xor_keystream(primitive: AeadPrimitive) -> XorKeystreamFn {
-  match select_backend(primitive, Arch::current(), current_caps()) {
-    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
-    crate::aead::targets::AeadBackend::WasmSimd128 => wasm_simd128::xor_keystream,
-    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
-    crate::aead::targets::AeadBackend::X86Avx512 => x86_avx512::xor_keystream,
-    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
-    crate::aead::targets::AeadBackend::X86Avx2 => x86_avx2::xor_keystream,
-    #[cfg(target_arch = "aarch64")]
-    crate::aead::targets::AeadBackend::Aarch64Neon => aarch64_neon::xor_keystream,
-    #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), target_endian = "little"))]
-    crate::aead::targets::AeadBackend::PowerVector => power_vsx::xor_keystream,
-    #[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
-    crate::aead::targets::AeadBackend::S390xVector => s390x_vector::xor_keystream,
-    #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
-    crate::aead::targets::AeadBackend::Riscv64Vector => riscv64_vector::xor_keystream,
-    _ => xor_keystream_portable,
-  }
+fn kernel() -> XorKeystreamFn {
+  XOR_KEYSTREAM_DISPATCH.get_or_init(|| Kernel::select(Arch::current(), current_caps()).function())
 }
 
 #[inline]
@@ -244,11 +240,40 @@ fn current_caps() -> Caps {
   }
 }
 
-/// Resolve the stable production backend ID for one forced ChaCha20 capability set.
-#[cfg(all(rscrypto_internal, feature = "diag", feature = "chacha20poly1305"))]
-#[must_use]
-pub fn diag_chacha20_backend_id(required: Caps) -> &'static str {
-  select_backend(AeadPrimitive::ChaCha20Poly1305, Arch::current(), required).name()
+/// A keystream request would pass the final u32 block counter.
+#[cfg(any(feature = "chacha20poly1305", feature = "xchacha20poly1305"))]
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct CounterOverflow;
+
+/// XOR the ChaCha20 keystream into `buffer` starting from `initial_counter`.
+#[cfg(any(feature = "chacha20poly1305", feature = "xchacha20poly1305"))]
+pub(crate) fn xor_keystream(
+  key: &[u8; KEY_SIZE],
+  initial_counter: u32,
+  nonce: &[u8; NONCE_SIZE],
+  buffer: &mut [u8],
+) -> Result<(), CounterOverflow> {
+  let blocks = {
+    let len = u64::try_from(buffer.len()).map_err(|_| CounterOverflow)?;
+    if len == 0 {
+      0
+    } else {
+      let block_size = u64::try_from(BLOCK_SIZE).map_err(|_| CounterOverflow)?;
+      len.strict_sub(1).strict_div(block_size).strict_add(1)
+    }
+  };
+
+  if blocks > 0 {
+    let last_counter = u64::from(initial_counter).strict_add(blocks).strict_sub(1);
+    if last_counter > u64::from(u32::MAX) {
+      return Err(CounterOverflow);
+    }
+  }
+
+  // SAFETY: the counter-range check above covers every 64-byte block, and `kernel` returns an accelerated kernel only
+  // when its complete capability set is available. The portable function also coerces to this unsafe fn type.
+  unsafe { kernel()(key, initial_counter, nonce, buffer) };
+  Ok(())
 }
 
 fn xor_keystream_portable(key: &[u8; KEY_SIZE], initial_counter: u32, nonce: &[u8; NONCE_SIZE], buffer: &mut [u8]) {
@@ -508,7 +533,7 @@ mod x86_ssse3_x4;
 ///
 /// The caller must verify [`aarch64::NEON`](crate::platform::caps::aarch64::NEON) and ensure that the number of
 /// 64-byte blocks in `buffer` does not exhaust the `u32` block counter starting at `initial_counter`.
-pub(super) unsafe fn xor_keystream_aarch64_neon(
+pub(crate) unsafe fn xor_keystream_aarch64_neon(
   key: &[u8; KEY_SIZE],
   initial_counter: u32,
   nonce: &[u8; NONCE_SIZE],
@@ -521,7 +546,11 @@ pub(super) unsafe fn xor_keystream_aarch64_neon(
 // Forced entry points let backend-equivalence tests bypass runtime dispatch.
 
 /// Run the **portable** ChaCha20 XOR-keystream regardless of host caps.
-#[cfg(all(rscrypto_internal, feature = "diag"))]
+#[cfg(all(
+  rscrypto_internal,
+  feature = "diag",
+  any(feature = "chacha20poly1305", feature = "xchacha20poly1305")
+))]
 pub fn diag_chacha20_xor_keystream_portable(
   key: &[u8; KEY_SIZE],
   initial_counter: u32,
@@ -537,7 +566,12 @@ pub fn diag_chacha20_xor_keystream_portable(
 ///
 /// Caller must verify the host has `aarch64::NEON` and that `buffer`'s 64-byte block count fits the counter range
 /// starting at `initial_counter`. Compile-time gated to `target_arch = "aarch64"`.
-#[cfg(all(rscrypto_internal, feature = "diag", target_arch = "aarch64"))]
+#[cfg(all(
+  rscrypto_internal,
+  feature = "diag",
+  any(feature = "chacha20poly1305", feature = "xchacha20poly1305"),
+  target_arch = "aarch64"
+))]
 pub unsafe fn diag_chacha20_xor_keystream_aarch64_neon(
   key: &[u8; KEY_SIZE],
   initial_counter: u32,
@@ -557,6 +591,7 @@ pub unsafe fn diag_chacha20_xor_keystream_aarch64_neon(
 #[cfg(all(
   rscrypto_internal,
   feature = "diag",
+  any(feature = "chacha20poly1305", feature = "xchacha20poly1305"),
   all(target_arch = "x86_64", target_feature = "sse2")
 ))]
 pub unsafe fn diag_chacha20_xor_keystream_x86_avx2(
@@ -578,6 +613,7 @@ pub unsafe fn diag_chacha20_xor_keystream_x86_avx2(
 #[cfg(all(
   rscrypto_internal,
   feature = "diag",
+  any(feature = "chacha20poly1305", feature = "xchacha20poly1305"),
   all(target_arch = "x86_64", target_feature = "sse2")
 ))]
 pub unsafe fn diag_chacha20_xor_keystream_x86_avx512(
@@ -600,6 +636,7 @@ pub unsafe fn diag_chacha20_xor_keystream_x86_avx512(
 #[cfg(all(
   rscrypto_internal,
   feature = "diag",
+  any(feature = "chacha20poly1305", feature = "xchacha20poly1305"),
   target_arch = "powerpc64",
   not(feature = "portable-only"),
   target_endian = "little"
@@ -623,6 +660,7 @@ pub unsafe fn diag_chacha20_xor_keystream_power_vsx(
 #[cfg(all(
   rscrypto_internal,
   feature = "diag",
+  any(feature = "chacha20poly1305", feature = "xchacha20poly1305"),
   target_arch = "s390x",
   not(feature = "portable-only")
 ))]
@@ -645,6 +683,7 @@ pub unsafe fn diag_chacha20_xor_keystream_s390x_vector(
 #[cfg(all(
   rscrypto_internal,
   feature = "diag",
+  any(feature = "chacha20poly1305", feature = "xchacha20poly1305"),
   target_arch = "riscv64",
   not(feature = "portable-only")
 ))]
@@ -664,7 +703,12 @@ pub unsafe fn diag_chacha20_xor_keystream_riscv64_vector(
 ///
 /// Caller must verify the host has `wasm::SIMD128` and that `buffer`'s 64-byte block count fits the counter range
 /// starting at `initial_counter`.
-#[cfg(all(rscrypto_internal, feature = "diag", target_arch = "wasm32"))]
+#[cfg(all(
+  rscrypto_internal,
+  feature = "diag",
+  any(feature = "chacha20poly1305", feature = "xchacha20poly1305"),
+  target_arch = "wasm32"
+))]
 pub unsafe fn diag_chacha20_xor_keystream_wasm_simd128(
   key: &[u8; KEY_SIZE],
   initial_counter: u32,
@@ -695,6 +739,8 @@ mod tests {
 
   #[cfg(feature = "xchacha20poly1305")]
   use super::hchacha20;
+  #[cfg(any(feature = "chacha20poly1305", feature = "xchacha20poly1305"))]
+  use super::xor_keystream;
   #[cfg(any(
     all(target_arch = "x86_64", target_feature = "sse2"),
     target_arch = "aarch64",
@@ -702,19 +748,7 @@ mod tests {
     all(target_arch = "s390x", not(feature = "portable-only"))
   ))]
   use super::xor_keystream_portable;
-  use super::{KEY_SIZE, NONCE_SIZE, block, xor_keystream};
-  use crate::aead::targets::AeadPrimitive;
-
-  fn primitive() -> AeadPrimitive {
-    #[cfg(feature = "chacha20poly1305")]
-    {
-      AeadPrimitive::ChaCha20Poly1305
-    }
-    #[cfg(all(not(feature = "chacha20poly1305"), feature = "xchacha20poly1305"))]
-    {
-      AeadPrimitive::XChaCha20Poly1305
-    }
-  }
+  use super::{KEY_SIZE, NONCE_SIZE, block};
   #[cfg(target_arch = "aarch64")]
   use crate::platform::caps::aarch64;
   #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), target_endian = "little"))]
@@ -760,32 +794,31 @@ mod tests {
   }
 
   #[test]
+  #[cfg(any(feature = "chacha20poly1305", feature = "xchacha20poly1305"))]
   fn xor_keystream_is_symmetric() {
     let key = [0x42; KEY_SIZE];
     let nonce = [0x24; NONCE_SIZE];
     let plaintext = *b"chacha20 portable core";
     let mut ciphertext = plaintext;
 
-    xor_keystream(primitive(), &key, 1, &nonce, &mut ciphertext)
-      .expect("test message must fit the ChaCha20 counter range");
+    xor_keystream(&key, 1, &nonce, &mut ciphertext).expect("test message must fit the ChaCha20 counter range");
     assert_ne!(ciphertext, plaintext);
 
-    xor_keystream(primitive(), &key, 1, &nonce, &mut ciphertext)
-      .expect("test message must fit the XChaCha20 counter range");
+    xor_keystream(&key, 1, &nonce, &mut ciphertext).expect("test message must fit the XChaCha20 counter range");
     assert_eq!(ciphertext, plaintext);
   }
 
   #[test]
+  #[cfg(any(feature = "chacha20poly1305", feature = "xchacha20poly1305"))]
   fn xor_keystream_boundary_respects_u32_counter() {
     let key = [0u8; KEY_SIZE];
     let nonce = [0u8; NONCE_SIZE];
 
     let mut one_block = [0u8; 64];
-    xor_keystream(primitive(), &key, u32::MAX, &nonce, &mut one_block)
-      .expect("one block at the final counter must fit");
+    xor_keystream(&key, u32::MAX, &nonce, &mut one_block).expect("one block at the final counter must fit");
 
     let mut two_blocks = [0u8; 65];
-    xor_keystream(primitive(), &key, u32::MAX, &nonce, &mut two_blocks)
+    xor_keystream(&key, u32::MAX, &nonce, &mut two_blocks)
       .expect_err("a second block after the final counter must fail");
   }
 

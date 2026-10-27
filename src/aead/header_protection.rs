@@ -9,7 +9,7 @@ use core::fmt;
 #[cfg(feature = "aes-gcm")]
 use super::aes;
 #[cfg(feature = "chacha20poly1305")]
-use super::chacha20;
+use crate::backend::chacha20;
 use crate::traits::ct;
 
 /// Header-protection sample length in bytes.

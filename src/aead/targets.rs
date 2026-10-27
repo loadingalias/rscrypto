@@ -5,20 +5,15 @@
 //!
 //! Backend selection is derived from detected CPU capabilities.
 
-#[cfg(any(test, feature = "chacha20poly1305", feature = "xchacha20poly1305"))]
-use crate::platform::caps::wasm;
-use crate::platform::{
-  Arch, Caps,
-  caps::{aarch64, power, riscv, s390x, x86},
-};
+use crate::platform::{Arch, Caps};
 
 /// AEAD primitives on the public surface.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub(super) enum AeadPrimitive {
-  #[cfg(any(test, feature = "xchacha20poly1305"))]
+  #[cfg(feature = "xchacha20poly1305")]
   XChaCha20Poly1305,
-  #[cfg(any(test, feature = "chacha20poly1305"))]
+  #[cfg(feature = "chacha20poly1305")]
   ChaCha20Poly1305,
   #[cfg(any(
     test,
@@ -77,11 +72,11 @@ pub(super) enum AeadPrimitive {
 pub(super) enum AeadBackend {
   Portable,
   WasmPortable,
-  #[cfg(any(test, feature = "chacha20poly1305", feature = "xchacha20poly1305"))]
+  #[cfg(any(feature = "chacha20poly1305", feature = "xchacha20poly1305"))]
   WasmSimd128,
-  #[cfg(any(test, feature = "chacha20poly1305", feature = "xchacha20poly1305"))]
+  #[cfg(any(feature = "chacha20poly1305", feature = "xchacha20poly1305"))]
   X86Avx2,
-  #[cfg(any(test, feature = "chacha20poly1305", feature = "xchacha20poly1305"))]
+  #[cfg(any(feature = "chacha20poly1305", feature = "xchacha20poly1305"))]
   X86Avx512,
   #[cfg(any(
     test,
@@ -102,7 +97,7 @@ pub(super) enum AeadBackend {
   X86AesniPclmul,
   #[cfg(any(test, feature = "aes-gcm", feature = "aes-gcm-siv"))]
   X86VaesVpclmul,
-  #[cfg(any(test, feature = "chacha20poly1305", feature = "xchacha20poly1305"))]
+  #[cfg(any(feature = "chacha20poly1305", feature = "xchacha20poly1305"))]
   Aarch64Neon,
   #[cfg(any(
     test,
@@ -142,17 +137,17 @@ pub(super) enum AeadBackend {
     )
   ))]
   S390xVperm,
-  #[cfg(any(test, feature = "chacha20poly1305", feature = "xchacha20poly1305"))]
+  #[cfg(any(feature = "chacha20poly1305", feature = "xchacha20poly1305"))]
   S390xVector,
   #[cfg(any(test, feature = "aegis256", feature = "aes-gcm", feature = "aes-gcm-siv"))]
   Power8Crypto,
-  #[cfg(any(test, feature = "chacha20poly1305", feature = "xchacha20poly1305"))]
+  #[cfg(any(feature = "chacha20poly1305", feature = "xchacha20poly1305"))]
   PowerVector,
   #[cfg(any(test, feature = "aegis256", feature = "aes-gcm", feature = "aes-gcm-siv"))]
   Riscv64ScalarCrypto,
   #[cfg(any(test, feature = "aegis256", feature = "aes-gcm", feature = "aes-gcm-siv"))]
   Riscv64VectorCrypto,
-  #[cfg(any(test, feature = "chacha20poly1305", feature = "xchacha20poly1305"))]
+  #[cfg(any(feature = "chacha20poly1305", feature = "xchacha20poly1305"))]
   Riscv64Vector,
 }
 
@@ -164,11 +159,11 @@ impl AeadBackend {
     match self {
       Self::Portable => "portable",
       Self::WasmPortable => "wasm32/portable",
-      #[cfg(any(test, feature = "chacha20poly1305", feature = "xchacha20poly1305"))]
+      #[cfg(any(feature = "chacha20poly1305", feature = "xchacha20poly1305"))]
       Self::WasmSimd128 => "wasm32/simd128",
-      #[cfg(any(test, feature = "chacha20poly1305", feature = "xchacha20poly1305"))]
+      #[cfg(any(feature = "chacha20poly1305", feature = "xchacha20poly1305"))]
       Self::X86Avx2 => "x86_64/avx2",
-      #[cfg(any(test, feature = "chacha20poly1305", feature = "xchacha20poly1305"))]
+      #[cfg(any(feature = "chacha20poly1305", feature = "xchacha20poly1305"))]
       Self::X86Avx512 => "x86_64/avx512",
       #[cfg(any(
         test,
@@ -189,7 +184,7 @@ impl AeadBackend {
       Self::X86AesniPclmul => "x86_64/aesni+pclmul",
       #[cfg(any(test, feature = "aes-gcm", feature = "aes-gcm-siv"))]
       Self::X86VaesVpclmul => "x86_64/vaes+vpclmul",
-      #[cfg(any(test, feature = "chacha20poly1305", feature = "xchacha20poly1305"))]
+      #[cfg(any(feature = "chacha20poly1305", feature = "xchacha20poly1305"))]
       Self::Aarch64Neon => "aarch64/neon",
       #[cfg(any(
         test,
@@ -227,17 +222,17 @@ impl AeadBackend {
         )
       ))]
       Self::S390xVperm => "s390x/vperm",
-      #[cfg(any(test, feature = "chacha20poly1305", feature = "xchacha20poly1305"))]
+      #[cfg(any(feature = "chacha20poly1305", feature = "xchacha20poly1305"))]
       Self::S390xVector => "s390x/vector",
       #[cfg(any(test, feature = "aegis256", feature = "aes-gcm", feature = "aes-gcm-siv"))]
       Self::Power8Crypto => "powerpc64/crypto",
-      #[cfg(any(test, feature = "chacha20poly1305", feature = "xchacha20poly1305"))]
+      #[cfg(any(feature = "chacha20poly1305", feature = "xchacha20poly1305"))]
       Self::PowerVector => "powerpc64/vector",
       #[cfg(any(test, feature = "aegis256", feature = "aes-gcm", feature = "aes-gcm-siv"))]
       Self::Riscv64ScalarCrypto => "riscv64/scalar-crypto",
       #[cfg(any(test, feature = "aegis256", feature = "aes-gcm", feature = "aes-gcm-siv"))]
       Self::Riscv64VectorCrypto => "riscv64/vector-crypto",
-      #[cfg(any(test, feature = "chacha20poly1305", feature = "xchacha20poly1305"))]
+      #[cfg(any(feature = "chacha20poly1305", feature = "xchacha20poly1305"))]
       Self::Riscv64Vector => "riscv64/vector",
     }
   }
@@ -250,9 +245,9 @@ impl AeadBackend {
 #[must_use]
 pub(super) fn select_backend(primitive: AeadPrimitive, arch: Arch, caps: Caps) -> AeadBackend {
   match primitive {
-    #[cfg(any(test, feature = "xchacha20poly1305"))]
+    #[cfg(feature = "xchacha20poly1305")]
     AeadPrimitive::XChaCha20Poly1305 => select_chacha_backend(arch, caps),
-    #[cfg(any(test, feature = "chacha20poly1305"))]
+    #[cfg(feature = "chacha20poly1305")]
     AeadPrimitive::ChaCha20Poly1305 => select_chacha_backend(arch, caps),
     #[cfg(any(
       test,
@@ -289,61 +284,38 @@ pub(super) fn select_backend(primitive: AeadPrimitive, arch: Arch, caps: Caps) -
   }
 }
 
-#[cfg(any(test, feature = "chacha20poly1305", feature = "xchacha20poly1305"))]
+#[cfg(any(feature = "chacha20poly1305", feature = "xchacha20poly1305"))]
 #[inline]
 fn select_chacha_backend(arch: Arch, caps: Caps) -> AeadBackend {
-  match arch {
-    Arch::X86_64 => {
-      if caps.has(x86::AVX512_READY) {
-        AeadBackend::X86Avx512
-      } else if caps.has(x86::AVX2) {
-        AeadBackend::X86Avx2
-      } else {
-        AeadBackend::Portable
-      }
-    }
-    Arch::Aarch64 => {
-      if caps.has(aarch64::NEON) {
-        AeadBackend::Aarch64Neon
-      } else {
-        AeadBackend::Portable
-      }
-    }
-    Arch::Wasm32 | Arch::Wasm64 => {
-      if caps.has(wasm::SIMD128) {
-        AeadBackend::WasmSimd128
-      } else {
-        AeadBackend::WasmPortable
-      }
-    }
-    Arch::S390x => {
-      if caps.has(s390x::VECTOR) {
-        AeadBackend::S390xVector
-      } else {
-        AeadBackend::Portable
-      }
-    }
-    Arch::Power => {
-      if caps.has(power::POWER8_VECTOR) {
-        AeadBackend::PowerVector
-      } else {
-        AeadBackend::Portable
-      }
-    }
-    Arch::Riscv64 => {
-      if caps.has(riscv::V) {
-        AeadBackend::Riscv64Vector
-      } else {
-        AeadBackend::Portable
-      }
-    }
-    _ => AeadBackend::Portable,
+  use crate::backend::chacha20::Kernel;
+
+  // The shared ChaCha20 core owns the kernel capability rule; this maps its
+  // choice to the AEAD backend classes that introspection reports.
+  match Kernel::select(arch, caps) {
+    Kernel::X86Avx512 => AeadBackend::X86Avx512,
+    Kernel::X86Avx2 => AeadBackend::X86Avx2,
+    Kernel::Aarch64Neon => AeadBackend::Aarch64Neon,
+    Kernel::WasmSimd128 => AeadBackend::WasmSimd128,
+    Kernel::S390xVector => AeadBackend::S390xVector,
+    Kernel::PowerVector => AeadBackend::PowerVector,
+    Kernel::Riscv64Vector => AeadBackend::Riscv64Vector,
+    Kernel::Portable if matches!(arch, Arch::Wasm32 | Arch::Wasm64) => AeadBackend::WasmPortable,
+    Kernel::Portable => AeadBackend::Portable,
   }
+}
+
+/// Resolve the stable production backend ID for one forced ChaCha20 capability set.
+#[cfg(all(rscrypto_internal, feature = "diag", feature = "chacha20poly1305"))]
+#[must_use]
+pub fn diag_chacha20_backend_id(required: Caps) -> &'static str {
+  select_backend(AeadPrimitive::ChaCha20Poly1305, Arch::current(), required).name()
 }
 
 #[cfg(any(test, feature = "aes-gcm", feature = "aes-gcm-siv"))]
 #[inline]
 fn select_gcm_backend(arch: Arch, caps: Caps) -> AeadBackend {
+  use crate::platform::caps::{aarch64, power, riscv, s390x, x86};
+
   match arch {
     Arch::X86_64 => {
       if caps.has(x86::VAES_READY) && caps.has(x86::VPCLMUL_READY) && caps.has(x86::AESNI) {
@@ -413,6 +385,8 @@ fn select_gcm_backend(arch: Arch, caps: Caps) -> AeadBackend {
 ))]
 #[inline]
 fn select_aegis_backend(arch: Arch, caps: Caps) -> AeadBackend {
+  use crate::platform::caps::{aarch64, power, riscv, s390x, x86};
+
   // VAES-256 is intentionally not used for AEGIS-256. Its six dependent state
   // lanes require cross-lane shuffles in the packed representation; see the
   // XMM-state path in aegis256.rs.
@@ -551,18 +525,22 @@ mod tests {
 
   #[test]
   fn chacha_and_aegis_choose_lane_native_non_aes_and_aes_paths() {
+    #[cfg(feature = "xchacha20poly1305")]
     assert_eq!(
       select_backend(AeadPrimitive::XChaCha20Poly1305, Arch::X86_64, x86::AVX512_READY),
       AeadBackend::X86Avx512
     );
+    #[cfg(feature = "chacha20poly1305")]
     assert_eq!(
       select_backend(AeadPrimitive::ChaCha20Poly1305, Arch::X86_64, x86::AVX2),
       AeadBackend::X86Avx2
     );
+    #[cfg(feature = "xchacha20poly1305")]
     assert_eq!(
       select_backend(AeadPrimitive::XChaCha20Poly1305, Arch::Aarch64, aarch64::NEON),
       AeadBackend::Aarch64Neon
     );
+    #[cfg(feature = "chacha20poly1305")]
     assert_eq!(
       select_backend(AeadPrimitive::ChaCha20Poly1305, Arch::Wasm32, wasm::SIMD128),
       AeadBackend::WasmSimd128
@@ -607,10 +585,12 @@ mod tests {
       select_backend(AeadPrimitive::Aes128Gcm, Arch::S390x, s390x::MSA),
       AeadBackend::S390xMsa
     );
+    #[cfg(feature = "xchacha20poly1305")]
     assert_eq!(
       select_backend(AeadPrimitive::XChaCha20Poly1305, Arch::S390x, s390x::VECTOR),
       AeadBackend::S390xVector
     );
+    #[cfg(feature = "xchacha20poly1305")]
     assert_eq!(
       select_backend(AeadPrimitive::XChaCha20Poly1305, Arch::S390x, s390x::MSA),
       AeadBackend::Portable
@@ -635,6 +615,7 @@ mod tests {
       select_backend(AeadPrimitive::Aes128GcmSiv, Arch::Power, power::POWER8_CRYPTO),
       AeadBackend::Power8Crypto
     );
+    #[cfg(feature = "chacha20poly1305")]
     assert_eq!(
       select_backend(AeadPrimitive::ChaCha20Poly1305, Arch::Power, power::POWER8_VECTOR),
       AeadBackend::PowerVector
@@ -732,6 +713,7 @@ mod tests {
     );
 
     // ChaCha: V → Riscv64Vector
+    #[cfg(feature = "xchacha20poly1305")]
     assert_eq!(
       select_backend(AeadPrimitive::XChaCha20Poly1305, Arch::Riscv64, riscv::V),
       AeadBackend::Riscv64Vector
@@ -740,6 +722,7 @@ mod tests {
 
   #[test]
   fn wasm_uses_simd128_only_for_chacha() {
+    #[cfg(feature = "chacha20poly1305")]
     assert_eq!(
       select_backend(AeadPrimitive::ChaCha20Poly1305, Arch::Wasm64, wasm::SIMD128),
       AeadBackend::WasmSimd128

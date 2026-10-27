@@ -28,6 +28,8 @@ pub(crate) mod ascon;
   feature = "xchacha20poly1305"
 ))]
 pub(crate) mod cache;
+#[cfg(any(feature = "chacha20poly1305", feature = "xchacha20poly1305"))]
+pub(crate) mod chacha20;
 #[cfg(any(
   feature = "ed25519",
   all(

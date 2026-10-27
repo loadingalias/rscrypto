@@ -171,8 +171,6 @@ mod test_vectors {
 }
 #[cfg(feature = "ascon-aead")]
 mod ascon128;
-#[cfg(any(feature = "chacha20poly1305", feature = "xchacha20poly1305"))]
-mod chacha20;
 #[cfg(feature = "chacha20poly1305")]
 mod chacha20poly1305;
 #[cfg(any(feature = "aes-gcm", feature = "chacha20poly1305"))]
@@ -219,6 +217,13 @@ mod polyval;
 mod targets;
 #[cfg(feature = "xchacha20poly1305")]
 mod xchacha20poly1305;
+#[cfg(all(
+  rscrypto_internal,
+  feature = "diag",
+  target_arch = "aarch64",
+  any(feature = "chacha20poly1305", feature = "xchacha20poly1305")
+))]
+pub use crate::backend::chacha20::diag_chacha20_xor_keystream_aarch64_neon;
 #[cfg(all(rscrypto_internal, feature = "diag", feature = "aegis256"))]
 pub use aegis256::diag_aegis256_update_portable;
 #[cfg(feature = "aegis256")]
@@ -256,22 +261,13 @@ pub use aes256gcmsiv::{diag_aes256gcmsiv_ctr32, diag_aes256gcmsiv_derive_keys, d
 pub use ascon128::diag_ascon_aead128_tag_portable;
 #[cfg(feature = "ascon-aead")]
 pub use ascon128::{AsconAead128, AsconAead128Key, AsconAead128Tag};
-#[cfg(all(
-  rscrypto_internal,
-  feature = "diag",
-  target_arch = "aarch64",
-  any(feature = "chacha20poly1305", feature = "xchacha20poly1305")
-))]
-pub use chacha20::diag_chacha20_xor_keystream_aarch64_neon;
 // Backend-equivalence tests use these entry points to bypass runtime dispatch.
-#[cfg(all(rscrypto_internal, feature = "diag", feature = "chacha20poly1305"))]
-pub use chacha20::diag_chacha20_backend_id;
 #[cfg(all(
   rscrypto_internal,
   feature = "diag",
   any(feature = "chacha20poly1305", feature = "xchacha20poly1305")
 ))]
-pub use chacha20::diag_chacha20_xor_keystream_portable;
+pub use crate::backend::chacha20::diag_chacha20_xor_keystream_portable;
 #[cfg(all(
   rscrypto_internal,
   feature = "diag",
@@ -280,7 +276,7 @@ pub use chacha20::diag_chacha20_xor_keystream_portable;
   target_endian = "little",
   any(feature = "chacha20poly1305", feature = "xchacha20poly1305")
 ))]
-pub use chacha20::diag_chacha20_xor_keystream_power_vsx;
+pub use crate::backend::chacha20::diag_chacha20_xor_keystream_power_vsx;
 #[cfg(all(
   rscrypto_internal,
   feature = "diag",
@@ -288,7 +284,7 @@ pub use chacha20::diag_chacha20_xor_keystream_power_vsx;
   not(feature = "portable-only"),
   any(feature = "chacha20poly1305", feature = "xchacha20poly1305")
 ))]
-pub use chacha20::diag_chacha20_xor_keystream_riscv64_vector;
+pub use crate::backend::chacha20::diag_chacha20_xor_keystream_riscv64_vector;
 #[cfg(all(
   rscrypto_internal,
   feature = "diag",
@@ -296,21 +292,21 @@ pub use chacha20::diag_chacha20_xor_keystream_riscv64_vector;
   not(feature = "portable-only"),
   any(feature = "chacha20poly1305", feature = "xchacha20poly1305")
 ))]
-pub use chacha20::diag_chacha20_xor_keystream_s390x_vector;
+pub use crate::backend::chacha20::diag_chacha20_xor_keystream_s390x_vector;
 #[cfg(all(
   rscrypto_internal,
   feature = "diag",
   target_arch = "wasm32",
   any(feature = "chacha20poly1305", feature = "xchacha20poly1305")
 ))]
-pub use chacha20::diag_chacha20_xor_keystream_wasm_simd128;
+pub use crate::backend::chacha20::diag_chacha20_xor_keystream_wasm_simd128;
 #[cfg(all(
   rscrypto_internal,
   feature = "diag",
   all(target_arch = "x86_64", target_feature = "sse2"),
   any(feature = "chacha20poly1305", feature = "xchacha20poly1305")
 ))]
-pub use chacha20::{diag_chacha20_xor_keystream_x86_avx2, diag_chacha20_xor_keystream_x86_avx512};
+pub use crate::backend::chacha20::{diag_chacha20_xor_keystream_x86_avx2, diag_chacha20_xor_keystream_x86_avx512};
 #[cfg(feature = "chacha20poly1305")]
 pub use chacha20poly1305::{ChaCha20Poly1305, ChaCha20Poly1305Key, ChaCha20Poly1305Tag};
 #[cfg(all(rscrypto_internal, feature = "diag", feature = "chacha20poly1305"))]
@@ -351,6 +347,8 @@ pub use poly1305::diag_chacha20poly1305_authenticate_aead_aarch64_neon_par4;
 pub use poly1305::{diag_chacha20poly1305_authenticate_aead, diag_poly1305_block_portable_digest};
 #[cfg(all(rscrypto_internal, feature = "diag", feature = "aes-gcm-siv"))]
 pub use polyval::diag_polyval_reduce_portable;
+#[cfg(all(rscrypto_internal, feature = "diag", feature = "chacha20poly1305"))]
+pub use targets::diag_chacha20_backend_id;
 #[cfg(feature = "xchacha20poly1305")]
 pub use xchacha20poly1305::{XChaCha20Poly1305, XChaCha20Poly1305Key, XChaCha20Poly1305Tag};
 
