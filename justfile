@@ -234,6 +234,7 @@ test-scripts:
     @scripts/lib/python.sh scripts/bench/file_cache_test.py
     @scripts/lib/python.sh scripts/bench/profile_ci_test.py
     @scripts/lib/python.sh scripts/bench/compare_test.py
+    @scripts/lib/python.sh scripts/bench/benchmark_catalog_test.py
     @scripts/lib/python.sh scripts/test/fuzz_features_test.py
     @scripts/lib/python.sh scripts/check/macos_test.py
     @scripts/lib/python.sh scripts/check/check_runner_test.py

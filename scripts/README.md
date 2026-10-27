@@ -629,7 +629,7 @@ selects the first message index for reproducing a discovered rejection case.
   `--diag` enables diagnostic cases.
 
 `bench/benchmark_catalog_test.py` includes the benchmark runner and profiling regression tests.
-Run that focused suite with `scripts/lib/python.sh scripts/bench/benchmark_catalog_test.py`.
+`just test-scripts` runs it; run it alone with `scripts/lib/python.sh scripts/bench/benchmark_catalog_test.py`.
 It tests the Python runner, Just argument forwarding, and export in temporary directories,
 with substitute Cargo, benchmark, and profiler executors.
 It does not run cryptographic benchmarks.
