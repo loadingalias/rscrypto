@@ -29,6 +29,10 @@ It does not prove that the compiler erases every copy it makes.
 Typed private keys, shared secrets, keyed states, expanded schedules,
 and private-operation scratch follow the same rules, also when the table does not name them.
 
+The internal AArch64 RSA reduction owns a local ten-word parameter array. It copies inverse
+words and reduction multipliers, which can be secret during private arithmetic, and clears
+the array before returning. This local owner is separate from `RsaPrivateScratch` and key fields.
+
 ### RSA implicit rejection
 
 `RsaPrivateKey` retains the imported private exponent's value, padded to the

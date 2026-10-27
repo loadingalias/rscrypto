@@ -517,6 +517,69 @@ requires a complete all-target workflow with RISC-V required and passing full re
 job status alone. Individual condition reviews and their scope remain in the same campaign's
 `ct-ci-*-renewal/` and `zeroization/ct-ci-cleanup-renewal/` records.
 
+### Completed final-source qualification, 2026-10-24
+
+[Constant-Time 40135118601](https://github.com/loadingalias/rscrypto/actions/runs/40135118601) passes the full report gate at `2622c4a9`, with RISC-V required.
+The [RISC-V child](https://github.com/loadingalias/rscrypto/actions/runs/40135843390) also passes.
+All six full native reports are complete, have zero failures,
+and retain verified compiled artifacts, raw timing CSVs and stdout.
+Their 793 required target/case results pass: 133 per target except POWER, which requires 128.
+The canonical baseline manifest above retains each archive, report,
+linked-binary and provenance hash with the exact compiler and source identity.
+
+Two supplemental physical Apple Silicon Poly1305 cases also pass at that source:
+64-byte and 16 KiB authentication with zero versus random one-time keys,
+20,000 samples each at threshold 10.
+The owner accepted the recorded host load and noise.
+The retained binary, disassembly, raw samples and host observations are in `benchmark_results/qualification-v013-20261024/apple-poly1305-ct/`.
+These cases do not constitute full Apple CT qualification,
+cover arbitrary secret messages or standalone verification,
+or promote Poly1305 beyond its existing best-effort inventory.
+
+### Retained-provider Apple condition review, 2026-10-26
+
+One fresh Apple Silicon artifact build of the retained working tree reproduced the 16 stale RSA
+waivers and 16 unwaived enforced findings from the October 25 checkpoint. Each condition was reviewed
+against its linked instructions and source ownership. Twelve slices match the primary reviewed
+baseline. The remaining checks cover output-clear metadata, the PSS public bit count, and the saved
+DIT state, whose stack slot moved from `sp+0xa0` to `sp+0xc0`. Conservative alias leaves resolve to
+separate scratch or output allocations; no reviewed branch depends on secret contents.
+
+The 16 exact bindings and their source references are renewed. The generated-code scan and artifact
+validation pass on the same binary, with zero stale waivers and zero unwaived blocking findings.
+All 457 waivers remain; claim scopes, required cases, thresholds, and other targets are unchanged.
+This is static evidence for `aarch64-apple-darwin`, the pinned compiler, and this effective source.
+Final native timing, Linux execution, whole-call stack bounds, and composed secret-lifecycle
+qualification remain open. The source patch, input hashes, individual decisions, original failure,
+unchanged compiled artifacts, and passing reports are retained in
+`benchmark_results/provider-ct-review-20261026/`.
+
+The subsequent native Apple capture passes the three required paired RSA CRT cases:
+fixed versus random exponents, fixed versus random inputs, and exponent high-byte classes.
+Each retained stderr identifies `neon-pair`. The exact executable
+(`526dc6265606a0c5522cc61915e4d36bbcc03af56323dd67216e594f5e0e5510`), disassembly,
+raw samples, complete reports and compiler provenance are retained in
+`benchmark_results/provider-gap2-g1d-20261026/mac-core-ct/`.
+This supplies the scoped paired-kernel timing evidence. Later AES-GCM changes still require
+fresh combined qualification; this capture does not qualify the current working tree.
+
+### Borrowed-state Apple checkpoint, 2026-10-27
+
+The isolated AES-GCM correction checkpoint passes the complete 133-case Apple CT gate with
+zero blocking findings. Its 16 RSA condition bindings were renewed after comparing all seven
+affected instruction streams byte for byte. The 20 differing resolved `Location` constants
+change only the checkout filename prefix; source suffixes, lines and columns match. Claim
+scopes, required cases and thresholds are unchanged. The individual decisions, decoded constants,
+artifacts and complete reports are retained in
+`benchmark_results/provider-gap2-g1d-20261026/cleanup/borrowed-state/mac-ct-renewal/` and
+`benchmark_results/provider-gap2-g1d-20261026/cleanup/borrowed-state/mac-ct-qualified/`.
+
+This checkpoint precedes the final safety-comment placement and x86 test-fixture correction.
+The final provider resource executable, LLVM IR and assembly are byte-identical to the reviewed
+version, which preserves that artifact's copy evidence. It does not rebind the CT report to the
+final source. Final-source Apple CT binding and complete Linux native CT qualification remain open;
+the interrupted Linux captures are not passing reports.
+
 ## Public decisions and exclusions
 
 Ordinary equality is allowed for public values, such as nonces, encoded public keys,

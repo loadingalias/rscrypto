@@ -12,6 +12,12 @@ use core::arch::asm;
 
 use super::split_u128;
 
+#[cfg(target_os = "linux")]
+#[path = "rsa_aarch64_linux_mont.rs"]
+mod linux;
+#[cfg(target_os = "linux")]
+use linux::{product, reduce};
+
 /// Whether the kernels support `words` limbs.
 #[inline]
 pub(super) fn supports(words: usize) -> bool {
@@ -133,6 +139,7 @@ fn low_mul(a: &[u64; 4], b: &[u64; 4]) -> [u64; 4] {
 /// strip's window end. A strip's eighth step finishes limbs `s + 4..s + 8`, so the next strip's
 /// multipliers are computed there and parked in `params`, off the strip boundary's critical path. The final subtraction writes `t[n..2n] - modulus` to `out`, then keeps it
 /// when that did not borrow or the carry is set, and otherwise copies `t[n..2n]` back.
+#[cfg(not(target_os = "linux"))]
 fn reduce(out: &mut [u64], t: &mut [u64], modulus: &[u64], k: &[u64; 4]) {
   let n = modulus.len();
   assert!(supports(n) && out.len() == n && t.len() >= n.strict_mul(2));
@@ -359,9 +366,12 @@ fn reduce(out: &mut [u64], t: &mut [u64], modulus: &[u64], k: &[u64; 4]) {
       options(nostack),
     );
   }
+  // Private arithmetic can leave inverse words and reduction multipliers here.
+  crate::traits::ct::zeroize_words(&mut params);
 }
 
 /// `t[0..2n] = a·b`.
+#[cfg(not(target_os = "linux"))]
 fn product(t: &mut [u64], a: &[u64], b: &[u64]) {
   let n = a.len();
   assert!(supports(n) && b.len() == n && t.len() >= n.strict_mul(2));
@@ -471,6 +481,7 @@ pub(super) fn mul_in_place_left(left: &mut [u64], right: &[u64], modulus: &[u64]
 /// fill limbs `2s..2s + 8` of `t`, which also clears it, and each block's rows times the limbs
 /// after the block are added by the strip kernel. Doubling and the diagonal squares follow, then
 /// the reduction.
+#[cfg(not(target_os = "linux"))]
 pub(super) fn square_in_place(value: &mut [u64], modulus: &[u64], k: &[u64; 4], t: &mut [u64]) {
   let n = modulus.len();
   assert!(supports(n) && value.len() == n);
@@ -600,4 +611,9 @@ pub(super) fn square_in_place(value: &mut [u64], modulus: &[u64], k: &[u64; 4], 
   unsafe { double_add_squares(t.as_mut_ptr(), value.as_ptr(), n) };
   // The square no longer reads `value`, so the reduction writes the result there.
   reduce(value, t, modulus, k);
+}
+
+#[cfg(target_os = "linux")]
+pub(super) fn square_in_place(value: &mut [u64], modulus: &[u64], k: &[u64; 4], t: &mut [u64]) {
+  linux::square_in_place(value, modulus, k, t);
 }

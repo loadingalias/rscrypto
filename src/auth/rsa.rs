@@ -4738,6 +4738,41 @@ impl RsaPrivateExponentScratch {
     })
   }
 
+  #[cfg(all(
+    target_arch = "aarch64",
+    target_os = "linux",
+    not(feature = "portable-only"),
+    not(miri)
+  ))]
+  fn workspace_with_table_entries<const ENTRIES: usize>(
+    &mut self,
+    limb_count: usize,
+  ) -> Result<RsaPrivateExponentWorkspace<'_>, RsaPrivateOpError> {
+    self.ensure_limb_count(limb_count)?;
+    let t_len = limb_count.strict_mul(2).strict_add(2);
+    let table_len = limb_count.strict_mul(ENTRIES);
+    Ok(RsaPrivateExponentWorkspace {
+      t: private_scratch_prefix(&mut self.t, t_len)?,
+      representative: private_scratch_prefix(&mut self.representative, limb_count)?,
+      one: private_scratch_prefix(&mut self.one, limb_count)?,
+      base: private_scratch_prefix(&mut self.base, limb_count)?,
+      acc: private_scratch_prefix(&mut self.acc, limb_count)?,
+      squared: private_scratch_prefix(&mut self.squared, limb_count)?,
+      multiplied: private_scratch_prefix(&mut self.multiplied, limb_count)?,
+      selected: private_scratch_prefix(&mut self.selected, limb_count)?,
+      reduced: private_scratch_prefix(&mut self.reduced, limb_count)?,
+      table: private_scratch_prefix(&mut self.table, table_len)?,
+      ifma: self.ifma.as_mut_slice(),
+      #[cfg(all(
+        target_arch = "aarch64",
+        target_vendor = "apple",
+        not(feature = "portable-only"),
+        not(miri)
+      ))]
+      pair: self.pair.as_mut_slice(),
+    })
+  }
+
   fn clear(&mut self) {
     ct::zeroize_words(self.t.as_mut_slice());
     ct::zeroize_words(self.representative.as_mut_slice());
@@ -10931,6 +10966,15 @@ fn private_exponentiate_representative_with_scratch(
   let r2 = modulus
     .montgomery_r2()
     .ok_or(RsaPrivateOpError::RepresentativeOutOfRange)?;
+  // A balanced CRT prime's 32-entry table fits the existing allocation. Check actual capacity
+  // so direct exponentiation and wider components retain the 16-entry fallback when necessary.
+  #[cfg(all(
+    target_arch = "aarch64",
+    target_os = "linux",
+    not(feature = "portable-only"),
+    not(miri)
+  ))]
+  let use_five_bit = rsa_aarch64_mont::supports(limbs) && scratch.table.as_slice().len() >= limbs.strict_mul(32);
   let RsaPrivateExponentWorkspace {
     t,
     representative,
@@ -10950,7 +10994,30 @@ fn private_exponentiate_representative_with_scratch(
       not(miri)
     ))]
       pair: _,
-  } = scratch.workspace(limbs)?;
+  } = {
+    #[cfg(all(
+      target_arch = "aarch64",
+      target_os = "linux",
+      not(feature = "portable-only"),
+      not(miri)
+    ))]
+    {
+      if use_five_bit {
+        scratch.workspace_with_table_entries::<32>(limbs)?
+      } else {
+        scratch.workspace(limbs)?
+      }
+    }
+    #[cfg(not(all(
+      target_arch = "aarch64",
+      target_os = "linux",
+      not(feature = "portable-only"),
+      not(miri)
+    )))]
+    {
+      scratch.workspace(limbs)?
+    }
+  };
   #[cfg(not(all(
     target_arch = "x86_64",
     target_feature = "sse2",
@@ -11004,6 +11071,31 @@ fn private_exponentiate_representative_with_scratch(
   one[0] = 1;
   private_mont_mul(base, representative, r2, modulus, t);
   private_mont_mul(acc, one, r2, modulus, t);
+
+  #[cfg(all(
+    target_arch = "aarch64",
+    target_os = "linux",
+    not(feature = "portable-only"),
+    not(miri)
+  ))]
+  if use_five_bit {
+    private_fixed_window_table_into_entries(table, base, acc, modulus, t, 32);
+    private_exponentiate_five_bit(
+      table,
+      exponent,
+      modulus,
+      RsaPrivateWindowWorkspace {
+        t: &mut *t,
+        acc: &mut *acc,
+        squared: &mut *squared,
+        multiplied: &mut *multiplied,
+        selected: &mut *selected,
+      },
+    );
+    private_mont_reduce(reduced, acc, modulus, t);
+    limbs_to_be(reduced, out);
+    return Ok(());
+  }
 
   private_fixed_window_table_into(table, base, acc, modulus, t);
   let mut index = 0;
@@ -11075,6 +11167,35 @@ fn private_fixed_window_table_into(
   }
 }
 
+#[cfg(all(
+  target_arch = "aarch64",
+  target_os = "linux",
+  not(feature = "portable-only"),
+  not(miri)
+))]
+fn private_fixed_window_table_into_entries(
+  table: &mut [u64],
+  base: &[u64],
+  one_montgomery: &[u64],
+  modulus: &RsaPublicModulus,
+  t: &mut [u64],
+  entries: usize,
+) {
+  let limbs = base.len();
+  debug_assert_eq!(table.len(), entries.strict_mul(limbs));
+  table[..limbs].copy_from_slice(one_montgomery);
+  table[limbs..limbs.strict_mul(2)].copy_from_slice(base);
+
+  for index in 2..entries {
+    let previous_start = index.strict_sub(1).strict_mul(limbs);
+    let current_start = index.strict_mul(limbs);
+    let (previous, current_and_rest) = table.split_at_mut(current_start);
+    let previous = &previous[previous_start..previous_start.strict_add(limbs)];
+    let current = &mut current_and_rest[..limbs];
+    private_mont_mul(current, previous, base, modulus, t);
+  }
+}
+
 struct RsaPrivateWindowWorkspace<'a> {
   t: &'a mut [u64],
   acc: &'a mut [u64],
@@ -11101,6 +11222,68 @@ fn private_exponentiate_window(
   }
 
   private_select_window_power(selected, table, window);
+  private_mont_mul(multiplied, acc, selected, modulus, t);
+  acc.copy_from_slice(multiplied);
+}
+
+/// Exponentiate with fixed five-bit windows, padding only the public leading partial window.
+/// All 32 table entries are scanned on every step, including zero windows.
+#[cfg(all(
+  target_arch = "aarch64",
+  target_os = "linux",
+  not(feature = "portable-only"),
+  not(miri)
+))]
+fn private_exponentiate_five_bit(
+  table: &[u64],
+  exponent: &[u8],
+  modulus: &RsaPublicModulus,
+  mut workspace: RsaPrivateWindowWorkspace<'_>,
+) {
+  let bits = exponent.len().strict_mul(8);
+  let first_bits = (bits.strict_sub(1) % 5).strict_add(1);
+  let first = exponent[0] >> 8usize.strict_sub(first_bits);
+  private_exponentiate_window_five_bit(table, first, modulus, &mut workspace);
+  let mut offset = first_bits;
+  while offset < bits {
+    let index = offset / 8;
+    let pair = (u16::from(exponent[index]) << 8) | u16::from(exponent.get(index.strict_add(1)).copied().unwrap_or(0));
+    let window = u8::try_from((pair >> 11usize.strict_sub(offset % 8)) & 31).expect("five-bit window fits u8");
+    private_exponentiate_window_five_bit(table, window, modulus, &mut workspace);
+    offset = offset.strict_add(5);
+  }
+}
+
+#[cfg(all(
+  target_arch = "aarch64",
+  target_os = "linux",
+  not(feature = "portable-only"),
+  not(miri)
+))]
+fn private_exponentiate_window_five_bit(
+  table: &[u64],
+  window: u8,
+  modulus: &RsaPublicModulus,
+  workspace: &mut RsaPrivateWindowWorkspace<'_>,
+) {
+  let RsaPrivateWindowWorkspace {
+    t,
+    acc,
+    squared,
+    multiplied,
+    selected,
+  } = workspace;
+  for _ in 0..5 {
+    private_mont_square_in_place(acc, squared, modulus, t);
+  }
+  let (low, high) = table.split_at(selected.len().strict_mul(PRIVATE_FIXED_WINDOW_TABLE_ENTRIES));
+  private_select_window_power(selected, low, window);
+  // Modulo-256 subtraction maps low-half windows outside 0..16. Both selectors always run;
+  // exactly one half contributes, and no secret value controls a branch or table address.
+  private_select_window_power(multiplied, high, window.wrapping_sub(16));
+  for (out, &upper) in selected.iter_mut().zip(multiplied.iter()) {
+    *out |= upper;
+  }
   private_mont_mul(multiplied, acc, selected, modulus, t);
   acc.copy_from_slice(multiplied);
 }
@@ -18115,6 +18298,56 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
             .expect("portable exponentiation must succeed");
           assert_eq!(pair_p, portable_p, "{limbs} limbs, first prime");
           assert_eq!(pair_q, portable_q, "{limbs} limbs, second prime");
+        }
+      }
+    }
+  }
+
+  #[cfg(all(
+    target_arch = "aarch64",
+    target_os = "linux",
+    not(feature = "portable-only"),
+    not(miri)
+  ))]
+  #[test]
+  fn five_bit_crt_exponentiation_matches_big_integer_power() {
+    for words in [8usize, 16, 20, 24, 32] {
+      let bytes = words.strict_mul(8);
+      let mut modulus_bytes = vec![0xffu8; bytes];
+      modulus_bytes[0] = 0xbf;
+      let modulus = private_component_modulus(&modulus_bytes).expect("odd modulus imports");
+      let reference_modulus = rsa::BigUint::from_bytes_be(&modulus_bytes);
+      let mut scratch = RsaPrivateExponentScratch::new(words.strict_mul(2));
+      assert!(scratch.table.as_slice().len() >= words.strict_mul(32));
+      for pattern in [0u8, 0xff, 0xa5, 0x81] {
+        let exponent = vec![pattern; bytes];
+        for base in [0u8, 7] {
+          let mut input = vec![0u8; bytes];
+          input[bytes.strict_sub(1)] = base;
+          let mut out = vec![0u8; bytes];
+          private_exponentiate_representative_with_scratch(&modulus, &exponent, &input, &mut out, &mut scratch)
+            .expect("five-bit exponentiation succeeds");
+          let expected =
+            rsa::BigUint::from_bytes_be(&input).modpow(&rsa::BigUint::from_bytes_be(&exponent), &reference_modulus);
+          assert_eq!(
+            rsa::BigUint::from_bytes_be(&out),
+            expected,
+            "{words} words, {pattern:#x}, base {base}"
+          );
+        }
+      }
+      if words == 16 {
+        // Alternate both halves to expose a stale contribution or a bad 16-entry offset.
+        for window in (0u8..16).flat_map(|low| [low, 31u8.strict_sub(low)]) {
+          let mut exponent = vec![0u8; bytes];
+          exponent[bytes.strict_sub(1)] = window;
+          let mut input = vec![0u8; bytes];
+          input[bytes.strict_sub(1)] = 7;
+          let mut out = vec![0u8; bytes];
+          private_exponentiate_representative_with_scratch(&modulus, &exponent, &input, &mut out, &mut scratch)
+            .expect("every five-bit window succeeds");
+          let expected = rsa::BigUint::from(7u8).modpow(&rsa::BigUint::from(window), &reference_modulus);
+          assert_eq!(rsa::BigUint::from_bytes_be(&out), expected, "window {window}");
         }
       }
     }
