@@ -6573,7 +6573,8 @@ mod tests {
       let mut fix_256 = fixslice64::FixsliceRoundKeys::new(&key_256);
 
       for offset in 0usize..8 {
-        for count in 1usize..=8 {
+        // KM copies at most eight blocks per batch; cross one, two, and four batch boundaries.
+        for count in (1usize..=17).chain([31, 32, 33]) {
           let len = count.strict_mul(BLOCK_SIZE);
           let mut input = std::vec![0u8; offset.strict_add(len)];
           for (i, byte) in input[offset..].iter_mut().enumerate() {
@@ -6598,7 +6599,7 @@ mod tests {
           for block in expected_256.as_chunks_mut::<BLOCK_SIZE>().0 {
             fixslice64::encrypt_block(&fix_256, block);
           }
-          let mut actual_256 = input;
+          let mut actual_256 = input.clone();
           // SAFETY: same MSA and initialized, exact-length, alignment-independent block proof as
           // the AES-128 call above, with an initialized AES-256 KM parameter block.
           unsafe { km::encrypt_blocks(&km_256, &mut actual_256[offset..], count) };
@@ -6606,6 +6607,23 @@ mod tests {
             &actual_256[offset..],
             expected_256,
             "AES-256 offset={offset} count={count}"
+          );
+
+          let mut raw_128 = input.clone();
+          // SAFETY: same MSA and block proof as above; the raw key is the 16-byte KM parameter block.
+          unsafe { km::encrypt_blocks_raw_128(&key_128, &mut raw_128[offset..], count) };
+          assert_eq!(
+            &raw_128[offset..],
+            expected_128,
+            "raw AES-128 offset={offset} count={count}"
+          );
+          let mut raw_256 = input;
+          // SAFETY: same MSA and block proof as above; the raw key is the 32-byte KM parameter block.
+          unsafe { km::encrypt_blocks_raw(&key_256, &mut raw_256[offset..], count) };
+          assert_eq!(
+            &raw_256[offset..],
+            expected_256,
+            "raw AES-256 offset={offset} count={count}"
           );
         }
       }
