@@ -120,6 +120,12 @@ fn matrix_rows_ntt<const L: usize>(
   input: &[Poly; L],
   [out_a, out_b]: [&mut Poly; 2],
 ) -> Result<(), MlDsaError> {
+  if L == 5 && triple_matrix() {
+    return matrix_rows_triple_ntt(rho, first, input, [out_a, out_b]);
+  }
+  if quad_matrix() {
+    return matrix_rows_quad_ntt(rho, first, input, [out_a, out_b]);
+  }
   if !PAIRED_MATRIX {
     matrix_row_ntt(rho, first, input, out_a)?;
     return matrix_row_ntt(rho, first.strict_add(1), input, out_b);
@@ -134,6 +140,142 @@ fn matrix_rows_ntt<const L: usize>(
     sampling::matrix_pair(rho, [(rows[0], column), (rows[1], column)], &mut entry_a, &mut entry_b)?;
     out_a.accumulate_product(&entry_a, input);
     out_b.accumulate_product(&entry_b, input);
+  }
+  Ok(())
+}
+
+fn triple_matrix() -> bool {
+  #[cfg(all(
+    target_arch = "aarch64",
+    target_os = "linux",
+    not(miri),
+    not(feature = "portable-only")
+  ))]
+  {
+    crate::platform::caps().has(crate::platform::caps::aarch64::SHA3)
+  }
+  #[cfg(not(all(
+    target_arch = "aarch64",
+    target_os = "linux",
+    not(miri),
+    not(feature = "portable-only")
+  )))]
+  {
+    false
+  }
+}
+
+/// Group the existing two rows' public entry streams in threes, alternating
+/// rows before advancing the column. The verification row order is unchanged.
+#[inline(never)]
+fn matrix_rows_triple_ntt<const L: usize>(
+  rho: &[u8],
+  first: usize,
+  input: &[Poly; L],
+  [out_a, out_b]: [&mut Poly; 2],
+) -> Result<(), MlDsaError> {
+  out_a.0.fill(0);
+  out_b.0.fill(0);
+  let rows = [index_byte(first), index_byte(first.strict_add(1))];
+  let streams = L.strict_mul(2);
+  let mut entries = [[0u32; 256]; 3];
+  let mut stream = 0usize;
+  while stream.strict_add(3) <= streams {
+    let positions = core::array::from_fn(|offset| {
+      let index = stream.strict_add(offset);
+      (rows[index.strict_rem(2)], index_byte(index.strict_div(2)))
+    });
+    sampling::matrix_triple(rho, positions, entries.each_mut())?;
+    for (offset, entry) in entries.iter().enumerate() {
+      let index = stream.strict_add(offset);
+      let input = &input[index.strict_div(2)];
+      if index.is_multiple_of(2) {
+        out_a.accumulate_product(entry, input);
+      } else {
+        out_b.accumulate_product(entry, input);
+      }
+    }
+    stream = stream.strict_add(3);
+  }
+  let column = stream.strict_div(2);
+  match streams.strict_sub(stream) {
+    2 => {
+      let [a, b, _] = &mut entries;
+      let column = index_byte(column);
+      sampling::matrix_pair(rho, [(rows[0], column), (rows[1], column)], a, b)?;
+      out_a.accumulate_product(a, &input[usize::from(column)]);
+      out_b.accumulate_product(b, &input[usize::from(column)]);
+    }
+    1 => {
+      sampling::matrix(rho, rows[1], index_byte(column), &mut entries[0])?;
+      out_b.accumulate_product(&entries[0], &input[column]);
+    }
+    _ => {}
+  }
+  Ok(())
+}
+
+fn quad_matrix() -> bool {
+  #[cfg(all(
+    target_arch = "x86_64",
+    target_os = "linux",
+    not(miri),
+    not(feature = "portable-only")
+  ))]
+  {
+    use crate::platform::caps::x86;
+    crate::platform::caps().has(x86::AVX512F.union(x86::AVX512VL).union(x86::SSE41))
+  }
+  #[cfg(not(all(
+    target_arch = "x86_64",
+    target_os = "linux",
+    not(miri),
+    not(feature = "portable-only")
+  )))]
+  {
+    false
+  }
+}
+
+/// Four streams cover both rows and two columns. Keep the larger public-entry
+/// buffer out of the paired/scalar caller's frame on targets without a four-state kernel.
+#[inline(never)]
+fn matrix_rows_quad_ntt<const L: usize>(
+  rho: &[u8],
+  first: usize,
+  input: &[Poly; L],
+  [out_a, out_b]: [&mut Poly; 2],
+) -> Result<(), MlDsaError> {
+  out_a.0.fill(0);
+  out_b.0.fill(0);
+  let rows = [index_byte(first), index_byte(first.strict_add(1))];
+  let mut entries = [[0u32; 256]; 4];
+  let (pairs, last) = input.as_chunks::<2>();
+  for (pair, [a, b]) in pairs.iter().enumerate() {
+    let column = pair.strict_mul(2);
+    let columns = [index_byte(column), index_byte(column.strict_add(1))];
+    let [a0, b0, a1, b1] = &mut entries;
+    sampling::matrix_quad(
+      rho,
+      [
+        (rows[0], columns[0]),
+        (rows[1], columns[0]),
+        (rows[0], columns[1]),
+        (rows[1], columns[1]),
+      ],
+      [a0, b0, a1, b1],
+    )?;
+    out_a.accumulate_product(a0, a);
+    out_b.accumulate_product(b0, a);
+    out_a.accumulate_product(a1, b);
+    out_b.accumulate_product(b1, b);
+  }
+  if let [last] = last {
+    let column = index_byte(L.strict_sub(1));
+    let [a, b, _, _] = &mut entries;
+    sampling::matrix_pair(rho, [(rows[0], column), (rows[1], column)], a, b)?;
+    out_a.accumulate_product(a, last);
+    out_b.accumulate_product(b, last);
   }
   Ok(())
 }

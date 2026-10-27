@@ -50,7 +50,7 @@ fn residue_poly(attempt: usize, stage: u32, index: usize, value: &Poly) {
 def instrument(text: str) -> str:
   replacements = [
     ("fn index_byte(index: usize)", CAPTURE_HELPERS + "\nfn index_byte(index: usize)"),
-    ("      z.ntt();\n    }\n    let mut hash", "      z.ntt();\n      residue_poly(attempt, 1, i, y);\n      residue_poly(attempt, 2, i, z);\n    }\n    let mut hash"),
+    ("    for (z, y) in z.iter_mut().zip(&y) {\n      z.copy_from(y);\n      z.ntt();\n    }\n    let mut hash", "    for (i, (z, y)) in z.iter_mut().zip(&y).enumerate() {\n      z.copy_from(y);\n      z.ntt();\n      residue_poly(attempt, 1, i, y);\n      residue_poly(attempt, 2, i, z);\n    }\n    let mut hash"),
     ("    sampling::challenge(&commitment.as_array()[..p.challenge_bytes], p.tau, &mut challenge)?;", "    residue_observe(attempt, 3, 0, &commitment.as_array()[..p.challenge_bytes]);\n    sampling::challenge(&commitment.as_array()[..p.challenge_bytes], p.tau, &mut challenge)?;"),
     ("    // This is the scheme's aggregate rejection decision, never an error oracle.", "    for (i, response) in z.iter().enumerate() { residue_poly(attempt, 4, i, response); }\n    residue_observe(attempt, 5, 0, &[u8::from(invalid != 0)]);\n    // This is the scheme's aggregate rejection decision, never an error oracle."),
     ("    if invalid != 0 || count > p.omega {", "    for (i, hints) in w.iter().enumerate() { residue_poly(attempt, 6, i, hints); }\n    residue_observe(attempt, 7, 0, &[u8::from(invalid != 0 || count > p.omega)]);\n    if invalid != 0 || count > p.omega {"),

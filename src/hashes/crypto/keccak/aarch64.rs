@@ -127,7 +127,11 @@ macro_rules! keccakf_sha3_neon_round {
   }};
 }
 
-#[cfg(all(target_arch = "aarch64", target_os = "linux", feature = "ml-kem"))]
+#[cfg(all(
+  target_arch = "aarch64",
+  target_os = "linux",
+  any(feature = "ml-kem", feature = "ml-dsa")
+))]
 macro_rules! keccakf_scalar_round {
   ($a0:ident, $a1:ident, $a2:ident, $a3:ident, $a4:ident,
    $a5:ident, $a6:ident, $a7:ident, $a8:ident, $a9:ident,
@@ -704,7 +708,11 @@ pub(crate) fn keccakf_aarch64_sha3_x2(state_a: &mut [u64; 25], state_b: &mut [u6
 /// # Safety
 ///
 /// Caller must ensure `sha3` target feature is available.
-#[cfg(all(target_arch = "aarch64", target_os = "linux", feature = "ml-kem"))]
+#[cfg(all(
+  target_arch = "aarch64",
+  target_os = "linux",
+  any(feature = "ml-kem", feature = "ml-dsa")
+))]
 #[target_feature(enable = "sha3")]
 unsafe fn keccakf_sha3_x3_hybrid_impl(state_a: &mut [u64; 25], state_b: &mut [u64; 25], state_c: &mut [u64; 25]) {
   // SAFETY: NEON + SHA3 CE intrinsics are available because:
@@ -855,7 +863,11 @@ unsafe fn keccakf_sha3_x3_hybrid_impl(state_a: &mut [u64; 25], state_b: &mut [u6
   }
 }
 
-#[cfg(all(target_arch = "aarch64", target_os = "linux", feature = "ml-kem"))]
+#[cfg(all(
+  target_arch = "aarch64",
+  target_os = "linux",
+  any(feature = "ml-kem", feature = "ml-dsa")
+))]
 #[inline]
 pub(crate) fn keccakf_aarch64_sha3_x3_hybrid(
   state_a: &mut [u64; 25],

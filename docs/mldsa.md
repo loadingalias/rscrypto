@@ -31,7 +31,7 @@ NIST calls them potential corrections, not an amended final publication.
   with multiplication operands below 2q.
   It does not implement the spreadsheet's signed-representative pseudocode.
   The multiplication routine carries the proof of its reduction bound.
-  Inside their transforms, AVX2 uses signed Montgomery multiplication and NEON uses signed Barrett
+  Inside their transforms, AVX2 and AVX-512 use signed Montgomery multiplication and NEON uses signed Barrett
   multiplication. Both return the same canonical residues.
 - The roots come from the standard's root 1753 and eight-bit index reversal.
   They are not imported from another implementation's table.
@@ -325,7 +325,7 @@ All paths use the same canonical coefficients and generated roots.
 | Build                                                          | Backend |
 | -------------------------------------------------------------- | ------- |
 | macOS and Linux AArch64, compile-time NEON, no `portable-only` | Original NEON transforms, products, accumulation, fused row product, matrix rejection sampling, norm checks, rounding, hint computation and application, and SampleInBall scans. |
-| Linux x86-64, no `portable-only`                               | Original AVX2 transforms, accumulation, norm checks, rounding, hint computation, and SampleInBall scans, after cached CPU and OS capability detection. |
+| Linux x86-64, no `portable-only`                               | Original AVX-512F transforms, products, and fused row product when available, with AVX2 fallbacks. AVX2 also handles accumulation, norm checks, rounding, hint computation, and SampleInBall scans, after cached CPU and OS capability detection. |
 | Linux IBM Z and little-endian POWER, no `portable-only`        | Original z/Vector or POWER8 vector transforms, products, and accumulation, after cached CPU and OS capability detection. |
 | RISC-V32 and RISC-V64, compile-time M, no `portable-only`      | Original scalar Montgomery assembly within the common scalar transform schedule. No vector extension is needed. |
 | All other configurations                                       | Portable arithmetic. |
@@ -335,14 +335,12 @@ All paths use the same canonical coefficients and generated roots.
   This prevents compiler scalarization and reduction branches that depend on coefficients.
 - Register barriers protect scalar reduction and selection on IBM Z and RISC-V,
   also with `portable-only`.
-- On macOS and Linux AArch64 and on Linux x86-64, without `portable-only`, public matrix expansion
-  pairs SHAKE128 streams, also across rows.
-  The two states permute together with the AArch64 SHA-3 instructions or x86-64 AVX-512VL;
-  otherwise the two permutations run in turn.
-  Other targets, and `portable-only`, expand one stream at a time.
-  The paired path uses two public polynomial buffers instead of one.
-  Prepared operations keep the same key-owner sizes.
-  Existing SHAKE dispatch is reused.
+- Without `portable-only`, public matrix expansion groups four SHAKE128 streams on capable Linux
+  x86-64. ML-DSA-65 groups three on Linux AArch64 with SHA-3 instructions. Those paths use four or
+  three public polynomial buffers. macOS AArch64 and the remaining supported native configurations
+  retain paired expansion, with scalar permutations when the shared SHAKE backend requires them.
+  Other targets and `portable-only` expand one stream at a time. The existing SHAKE dispatch and
+  paired/scalar fallbacks remain available. Prepared operations keep the same key-owner sizes.
 - On every target, signing derives its mask polynomials two SHAKE256 streams at a time.
   For an odd L, the last polynomial uses one stream.
 - `portable-only` stops runtime capability selection.

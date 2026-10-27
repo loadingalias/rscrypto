@@ -31,12 +31,12 @@ macro_rules! chi {
   ($a:expr, $b:expr, $c:expr) => {{ _mm_ternarylogic_epi64($a, $b, $c, 0xD2) }};
 }
 
-#[cfg(all(target_arch = "x86_64", feature = "ml-kem"))]
+#[cfg(all(target_arch = "x86_64", any(feature = "ml-kem", feature = "ml-dsa")))]
 macro_rules! rol4 {
   ($value:expr, $left:literal) => {{ _mm256_rol_epi64::<$left>($value) }};
 }
 
-#[cfg(all(target_arch = "x86_64", feature = "ml-kem"))]
+#[cfg(all(target_arch = "x86_64", any(feature = "ml-kem", feature = "ml-dsa")))]
 macro_rules! chi4 {
   ($a:expr, $b:expr, $c:expr) => {{ _mm256_ternarylogic_epi64($a, $b, $c, 0xD2) }};
 }
@@ -245,7 +245,7 @@ pub(crate) unsafe fn keccakf_x86_avx512_x2(state_a: &mut [u64; 25], state_b: &mu
 /// # Safety
 ///
 /// Caller must ensure `avx512f`, `avx512vl`, and `sse4.1` CPU features are available.
-#[cfg(all(target_arch = "x86_64", feature = "ml-kem"))]
+#[cfg(all(target_arch = "x86_64", any(feature = "ml-kem", feature = "ml-dsa")))]
 #[target_feature(enable = "avx512f,avx512vl,sse4.1")]
 #[inline]
 unsafe fn keccakf_x86_avx512_x4_impl(
@@ -442,7 +442,7 @@ unsafe fn keccakf_x86_avx512_x4_impl(
 /// # Safety
 ///
 /// Caller must ensure `avx512f`, `avx512vl`, and `sse4.1` CPU features are available.
-#[cfg(all(target_arch = "x86_64", feature = "ml-kem"))]
+#[cfg(all(target_arch = "x86_64", any(feature = "ml-kem", feature = "ml-dsa")))]
 #[inline]
 pub(crate) unsafe fn keccakf_x86_avx512_x4(
   state_a: &mut [u64; 25],

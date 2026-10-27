@@ -79,6 +79,18 @@ impl Poly {
   /// FIPS 204 Algorithm 41, with Montgomery-domain butterfly operands.
   pub(super) fn ntt(&mut self) {
     #[cfg(all(
+      target_arch = "x86_64",
+      target_os = "linux",
+      not(miri),
+      not(feature = "portable-only")
+    ))]
+    if crate::platform::caps().has(crate::platform::caps::x86::AVX512F) {
+      // SAFETY: Cached detection establishes CPU and OS AVX-512F support. The uniquely
+      // borrowed polynomial contains 256 initialized canonical coefficients.
+      unsafe { x86_64::avx512::ntt(self) };
+      return;
+    }
+    #[cfg(all(
       any(target_arch = "s390x", all(target_arch = "powerpc64", target_endian = "little")),
       target_os = "linux",
       not(miri),
@@ -169,6 +181,18 @@ impl Poly {
   /// FIPS 204 Algorithm 42, including conversion out of Montgomery form.
   pub(super) fn inverse_ntt(&mut self) {
     #[cfg(all(
+      target_arch = "x86_64",
+      target_os = "linux",
+      not(miri),
+      not(feature = "portable-only")
+    ))]
+    if crate::platform::caps().has(crate::platform::caps::x86::AVX512F) {
+      // SAFETY: Cached detection establishes CPU and OS AVX-512F support. The uniquely
+      // borrowed polynomial contains 256 initialized canonical coefficients.
+      unsafe { x86_64::avx512::inverse_ntt(self) };
+      return;
+    }
+    #[cfg(all(
       any(target_arch = "s390x", all(target_arch = "powerpc64", target_endian = "little")),
       target_os = "linux",
       not(miri),
@@ -258,6 +282,18 @@ impl Poly {
   }
 
   pub(super) fn product(&mut self, a: &Self, b: &[u32; N]) {
+    #[cfg(all(
+      target_arch = "x86_64",
+      target_os = "linux",
+      not(miri),
+      not(feature = "portable-only")
+    ))]
+    if crate::platform::caps().has(crate::platform::caps::x86::AVX512F) {
+      // SAFETY: Cached detection establishes CPU and OS AVX-512F support. Fixed-size
+      // references provide canonical initialized inputs and uniquely borrowed output.
+      unsafe { x86_64::avx512::product(&mut self.0, &a.0, b) };
+      return;
+    }
     #[cfg(all(
       any(target_arch = "s390x", all(target_arch = "powerpc64", target_endian = "little")),
       target_os = "linux",
@@ -353,6 +389,19 @@ impl Poly {
 
   /// Write `Σ a[j] ⊙ b[j]` over NTT-domain columns, with canonical Montgomery operands.
   pub(super) fn row_product<const L: usize>(&mut self, a: &[[u32; N]; L], b: &[Self; L]) {
+    #[cfg(all(
+      target_arch = "x86_64",
+      target_os = "linux",
+      not(miri),
+      not(feature = "portable-only")
+    ))]
+    if crate::platform::caps().has(crate::platform::caps::x86::AVX512F) {
+      // SAFETY: Cached detection establishes CPU and OS AVX-512F support. Fixed-size
+      // references provide canonical initialized inputs and uniquely borrowed output;
+      // the callee statically checks the FIPS 204 column bound.
+      unsafe { x86_64::avx512::row_product(&mut self.0, a, b) };
+      return;
+    }
     #[cfg(all(
       target_arch = "aarch64",
       any(target_os = "macos", target_os = "linux"),

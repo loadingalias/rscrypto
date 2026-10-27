@@ -11,6 +11,8 @@ use core::arch::x86_64::*;
 use super::{FIRST_FACTOR, INV_N, LAST_FACTOR, N, NEG_Q_INVERSE, Poly, Q, R2, ROOTS};
 use crate::auth::mldsa::sampling::{CHALLENGE_BYTES, CHALLENGE_WINDOWS};
 
+pub(super) mod avx512;
+
 /// # Safety
 /// Calling outside an AVX2-enabled function requires AVX2 support.
 #[inline]

@@ -549,7 +549,7 @@ pub(crate) trait Permuter: Copy {
 
   /// Permute three independent states in parallel.
   /// Default: one paired permutation and one single-state permutation.
-  #[cfg(feature = "ml-kem")]
+  #[cfg(any(feature = "ml-kem", feature = "ml-dsa"))]
   #[inline(always)]
   fn permute_x3(self, state_a: &mut [u64; 25], state_b: &mut [u64; 25], state_c: &mut [u64; 25], len_hint: usize) {
     self.permute_x2(state_a, state_b, len_hint);
@@ -558,7 +558,7 @@ pub(crate) trait Permuter: Copy {
 
   /// Permute four independent states in parallel.
   /// Default: two paired permutations.
-  #[cfg(feature = "ml-kem")]
+  #[cfg(any(feature = "ml-kem", feature = "ml-dsa"))]
   #[inline(always)]
   fn permute_x4(
     self,
@@ -652,7 +652,7 @@ impl Permuter for X86Permuter {
     }
   }
 
-  #[cfg(feature = "ml-kem")]
+  #[cfg(any(feature = "ml-kem", feature = "ml-dsa"))]
   #[inline(always)]
   fn permute_x4(
     self,
@@ -737,22 +737,30 @@ impl Permuter for Aarch64Permuter {
     aarch64::keccakf_aarch64_sha3_x2(state_a, state_b);
   }
 
-  #[cfg(feature = "ml-kem")]
+  #[cfg(any(feature = "ml-kem", feature = "ml-dsa"))]
   #[inline(always)]
   fn permute_x3(self, state_a: &mut [u64; 25], state_b: &mut [u64; 25], state_c: &mut [u64; 25], _len_hint: usize) {
-    #[cfg(all(target_os = "linux", not(target_vendor = "apple"), feature = "ml-kem"))]
+    #[cfg(all(
+      target_os = "linux",
+      not(target_vendor = "apple"),
+      any(feature = "ml-kem", feature = "ml-dsa")
+    ))]
     {
       aarch64::keccakf_aarch64_sha3_x3_hybrid(state_a, state_b, state_c);
     }
 
-    #[cfg(not(all(target_os = "linux", not(target_vendor = "apple"), feature = "ml-kem")))]
+    #[cfg(not(all(
+      target_os = "linux",
+      not(target_vendor = "apple"),
+      any(feature = "ml-kem", feature = "ml-dsa")
+    )))]
     {
       self.permute_x2(state_a, state_b, _len_hint);
       self.permute(state_c, _len_hint);
     }
   }
 
-  #[cfg(feature = "ml-kem")]
+  #[cfg(any(feature = "ml-kem", feature = "ml-dsa"))]
   #[inline(always)]
   fn permute_x4(
     self,
@@ -772,13 +780,21 @@ impl Permuter for Aarch64Permuter {
       }
     }
 
-    #[cfg(all(target_os = "linux", not(target_vendor = "apple"), feature = "ml-kem"))]
+    #[cfg(all(
+      target_os = "linux",
+      not(target_vendor = "apple"),
+      any(feature = "ml-kem", feature = "ml-dsa")
+    ))]
     {
       aarch64::keccakf_aarch64_sha3_x3_hybrid(state_a, state_b, state_c);
       keccakf_portable(state_d);
     }
 
-    #[cfg(not(all(target_os = "linux", not(target_vendor = "apple"), feature = "ml-kem")))]
+    #[cfg(not(all(
+      target_os = "linux",
+      not(target_vendor = "apple"),
+      any(feature = "ml-kem", feature = "ml-dsa")
+    )))]
     {
       self.permute_x2(state_a, state_b, _len_hint);
       self.permute_x2(state_c, state_d, _len_hint);
@@ -839,10 +855,14 @@ impl Permuter for Aarch64Permuter {
     }
   }
 
-  #[cfg(feature = "ml-kem")]
+  #[cfg(any(feature = "ml-kem", feature = "ml-dsa"))]
   #[inline(always)]
   fn permute_x3(self, state_a: &mut [u64; 25], state_b: &mut [u64; 25], state_c: &mut [u64; 25], len_hint: usize) {
-    #[cfg(all(target_os = "linux", not(target_vendor = "apple"), feature = "ml-kem"))]
+    #[cfg(all(
+      target_os = "linux",
+      not(target_vendor = "apple"),
+      any(feature = "ml-kem", feature = "ml-dsa")
+    ))]
     if self.has_sha3 {
       aarch64::keccakf_aarch64_sha3_x3_hybrid(state_a, state_b, state_c);
       return;
@@ -852,7 +872,7 @@ impl Permuter for Aarch64Permuter {
     self.permute(state_c, len_hint);
   }
 
-  #[cfg(feature = "ml-kem")]
+  #[cfg(any(feature = "ml-kem", feature = "ml-dsa"))]
   #[inline(always)]
   fn permute_x4(
     self,
@@ -867,7 +887,11 @@ impl Permuter for Aarch64Permuter {
       return;
     }
 
-    #[cfg(all(target_os = "linux", not(target_vendor = "apple"), feature = "ml-kem"))]
+    #[cfg(all(
+      target_os = "linux",
+      not(target_vendor = "apple"),
+      any(feature = "ml-kem", feature = "ml-dsa")
+    ))]
     if self.has_sha3 {
       aarch64::keccakf_aarch64_sha3_x3_hybrid(state_a, state_b, state_c);
       keccakf_portable(state_d);
@@ -1570,7 +1594,7 @@ pub(crate) fn xof_seeded_32_2_pair<const RATE: usize>(
   )
 }
 
-#[cfg(feature = "ml-kem")]
+#[cfg(any(feature = "ml-kem", feature = "ml-dsa"))]
 pub(crate) fn xof_seeded_32_2_triple<const RATE: usize>(
   ds: u8,
   seed: &[u8; 32],
@@ -1604,7 +1628,7 @@ pub(crate) fn xof_seeded_32_2_triple<const RATE: usize>(
   )
 }
 
-#[cfg(feature = "ml-kem")]
+#[cfg(any(feature = "ml-kem", feature = "ml-dsa"))]
 pub(crate) fn xof_seeded_32_2_quad<const RATE: usize>(
   ds: u8,
   seed: &[u8; 32],
@@ -1870,14 +1894,17 @@ impl<const RATE: usize, P: Permuter, const ZEROIZE: bool> KeccakXofImpl<RATE, P,
     }
   }
 
-  #[cfg(all(
-    feature = "ml-kem",
-    not(all(
-      target_arch = "aarch64",
-      target_endian = "little",
-      not(miri),
-      not(feature = "portable-only")
-    ))
+  #[cfg(any(
+    feature = "ml-dsa",
+    all(
+      feature = "ml-kem",
+      not(all(
+        target_arch = "aarch64",
+        target_endian = "little",
+        not(miri),
+        not(feature = "portable-only")
+      ))
+    )
   ))]
   pub(crate) fn squeeze_triple_into(
     a: &mut Self,
@@ -1934,7 +1961,7 @@ impl<const RATE: usize, P: Permuter, const ZEROIZE: bool> KeccakXofImpl<RATE, P,
     }
   }
 
-  #[cfg(feature = "ml-kem")]
+  #[cfg(any(feature = "ml-kem", feature = "ml-dsa"))]
   pub(crate) fn squeeze_quad_into(states: [&mut Self; 4], outputs: [&mut [u8]; 4]) {
     let [a, b, c, d] = states;
     let [mut out_a, mut out_b, mut out_c, mut out_d] = outputs;

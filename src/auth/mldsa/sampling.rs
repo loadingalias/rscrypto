@@ -5,7 +5,9 @@ use super::{
   poly::{N, Poly, Q, select, to_montgomery},
 };
 use crate::{
-  hashes::crypto::keccak::{KeccakCore, KeccakXof, PublicKeccakXof, secret, xof_seeded_32_2_pair},
+  hashes::crypto::keccak::{
+    KeccakCore, KeccakXof, PublicKeccakXof, secret, xof_seeded_32_2_pair, xof_seeded_32_2_quad, xof_seeded_32_2_triple,
+  },
   secret::ZeroizingBytes,
 };
 
@@ -269,6 +271,91 @@ pub(super) fn matrix_pair(
     counts[0] = uniform(&block_a[..bytes], out_a, counts[0]);
     counts[1] = uniform(&block_b[..bytes], out_b, counts[1]);
     if counts == [N; 2] {
+      return Ok(());
+    }
+    remaining = remaining.strict_sub(candidates);
+  }
+  Err(MlDsaError::RejectionLimit)
+}
+
+/// Expand four public matrix entries with equal squeeze positions. Each stream
+/// keeps its own coefficient count and the same 298-candidate bound as [`matrix`].
+pub(super) fn matrix_quad(rho: &[u8], positions: [(u8, u8); 4], outputs: [&mut [u32; N]; 4]) -> Result<(), MlDsaError> {
+  let seed = rho.try_into().expect("ML-DSA rho is 32 bytes");
+  let [
+    (row_a, column_a),
+    (row_b, column_b),
+    (row_c, column_c),
+    (row_d, column_d),
+  ] = positions;
+  let (mut a, mut b, mut c, mut d) = xof_seeded_32_2_quad::<168>(
+    0x1f,
+    seed,
+    (column_a, row_a),
+    (column_b, row_b),
+    (column_c, row_c),
+    (column_d, row_d),
+  );
+  let [out_a, out_b, out_c, out_d] = outputs;
+  let mut blocks = [[0u8; 168]; 4];
+  let mut counts = [0usize; 4];
+  let mut remaining = 298usize;
+  while remaining != 0 {
+    let candidates = remaining.min(56);
+    let bytes = candidates.strict_mul(3);
+    let [block_a, block_b, block_c, block_d] = &mut blocks;
+    PublicKeccakXof::squeeze_quad_into(
+      [&mut a, &mut b, &mut c, &mut d],
+      [
+        &mut block_a[..bytes],
+        &mut block_b[..bytes],
+        &mut block_c[..bytes],
+        &mut block_d[..bytes],
+      ],
+    );
+    counts[0] = uniform(&block_a[..bytes], out_a, counts[0]);
+    counts[1] = uniform(&block_b[..bytes], out_b, counts[1]);
+    counts[2] = uniform(&block_c[..bytes], out_c, counts[2]);
+    counts[3] = uniform(&block_d[..bytes], out_d, counts[3]);
+    if counts == [N; 4] {
+      return Ok(());
+    }
+    remaining = remaining.strict_sub(candidates);
+  }
+  Err(MlDsaError::RejectionLimit)
+}
+
+/// Three public matrix streams, preserving each stream's coefficient order and
+/// the same 298-candidate bound as [`matrix`].
+pub(super) fn matrix_triple(
+  rho: &[u8],
+  positions: [(u8, u8); 3],
+  outputs: [&mut [u32; N]; 3],
+) -> Result<(), MlDsaError> {
+  let seed = rho.try_into().expect("ML-DSA rho is 32 bytes");
+  let [(row_a, column_a), (row_b, column_b), (row_c, column_c)] = positions;
+  let (mut a, mut b, mut c) =
+    xof_seeded_32_2_triple::<168>(0x1f, seed, (column_a, row_a), (column_b, row_b), (column_c, row_c));
+  let [out_a, out_b, out_c] = outputs;
+  let mut blocks = [[0u8; 168]; 3];
+  let mut counts = [0usize; 3];
+  let mut remaining = 298usize;
+  while remaining != 0 {
+    let candidates = remaining.min(56);
+    let bytes = candidates.strict_mul(3);
+    let [block_a, block_b, block_c] = &mut blocks;
+    PublicKeccakXof::squeeze_triple_into(
+      &mut a,
+      &mut b,
+      &mut c,
+      &mut block_a[..bytes],
+      &mut block_b[..bytes],
+      &mut block_c[..bytes],
+    );
+    counts[0] = uniform(&block_a[..bytes], out_a, counts[0]);
+    counts[1] = uniform(&block_b[..bytes], out_b, counts[1]);
+    counts[2] = uniform(&block_c[..bytes], out_c, counts[2]);
+    if counts == [N; 3] {
       return Ok(());
     }
     remaining = remaining.strict_sub(candidates);
@@ -766,7 +853,7 @@ mod tests {
   }
 
   #[test]
-  fn paired_matrix_preserves_stream_order_and_coefficients() {
+  fn parallel_matrix_preserves_stream_order_and_coefficients() {
     // Compare distinct production paths: paired public SHAKE against the
     // original scalar stream, including reversed and repeated coordinates.
     for seed_byte in [0u8, 1, 127, 255] {
@@ -790,6 +877,24 @@ mod tests {
           matrix_pair(&seed, positions, &mut a, &mut b).expect("paired matrix");
           assert_eq!(a, expected_a);
           assert_eq!(b, expected_b);
+          let positions = [positions[0], positions[1], (7 - row, 0), (row, 7)];
+          let mut quad = [[0; N]; 4];
+          let [a, b, c, d] = &mut quad;
+          matrix_quad(&seed, positions, [a, b, c, d]).expect("four-way matrix");
+          for (actual, (row, column)) in quad.iter().zip(positions) {
+            let mut expected = [0; N];
+            matrix(&seed, row, column, &mut expected).expect("scalar matrix");
+            assert_eq!(*actual, expected);
+          }
+          let positions = [positions[0], positions[1], positions[2]];
+          let mut triple = [[0; N]; 3];
+          let [a, b, c] = &mut triple;
+          matrix_triple(&seed, positions, [a, b, c]).expect("three-way matrix");
+          for (actual, (row, column)) in triple.iter().zip(positions) {
+            let mut expected = [0; N];
+            matrix(&seed, row, column, &mut expected).expect("scalar matrix");
+            assert_eq!(*actual, expected);
+          }
         }
       }
     }
