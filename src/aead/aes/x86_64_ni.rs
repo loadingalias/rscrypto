@@ -637,7 +637,7 @@ pub(super) unsafe fn encrypt_block_prefix_5_128(keys: &Ni128RoundKeys, block: &[
 ///
 /// # Safety
 /// Caller must ensure the CPU supports AES-NI (`target_feature = "aes"`).
-#[cfg(any(test, feature = "aes-gcm-siv", feature = "aes-siv"))]
+#[cfg(any(test, feature = "aes-gcm", feature = "aes-gcm-siv", feature = "aes-siv"))]
 #[target_feature(enable = "aes,sse2")]
 pub(super) unsafe fn encrypt_blocks_128(keys: &Ni128RoundKeys, blocks: &mut [[u8; 16]]) {
   // SAFETY: AES-NI + SSE2 are enabled. Every load and store is through a complete initialized
@@ -666,7 +666,7 @@ pub(super) unsafe fn encrypt_blocks_128(keys: &Ni128RoundKeys, blocks: &mut [[u8
 ///
 /// # Safety
 /// Caller must ensure the CPU and OS support AES-NI, VAES, AVX-512F, and AVX-512VL.
-#[cfg(any(test, feature = "aes-gcm-siv", feature = "aes-siv"))]
+#[cfg(any(test, feature = "aes-gcm", feature = "aes-gcm-siv", feature = "aes-siv"))]
 #[target_feature(enable = "aes,sse2,avx512f,avx512vl,vaes")]
 pub(super) unsafe fn encrypt_blocks_128_vaes512(keys: &Ni128RoundKeys, blocks: &mut [[u8; 16]]) {
   // SAFETY: required target features are enabled. Each 256-byte batch contains sixteen complete,

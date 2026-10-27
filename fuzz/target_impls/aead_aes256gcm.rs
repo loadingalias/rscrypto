@@ -21,6 +21,10 @@ pub(super) fn run(data: &[u8]) {
   use aes_gcm::aead::{Aead as _, KeyInit, Payload};
   let oracle = aes_gcm::Aes256Gcm::new_from_slice(&key_bytes).expect("AES-256-GCM accepts a 32-byte key");
   let on = aes_gcm::Nonce::from(nonce_bytes);
+  let expected = oracle
+    .encrypt(&on, Payload { msg: plaintext, aad })
+    .expect("independent gather fixture");
+  rscrypto_fuzz::assert_aead_gather_against_oracle(&cipher, &nonce, aad, plaintext, control, &expected);
   assert_aead_against_oracle(
     &cipher,
     &nonce,

@@ -2,8 +2,6 @@
 
 use core::fmt;
 
-#[cfg(target_arch = "aarch64")]
-use super::ghash::ghash_update_padded_wide_aarch64;
 #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
 use super::ghash::ghash_update_padded_wide_ppc;
 use super::ghash::{GhashAccumulator, ghash_update_padded, ghash_update_padded_wide};
@@ -14,7 +12,7 @@ use super::{
   AeadBufferError, LengthOverflow, Nonce96, OpenError, SealError, aes, ghash, polyval,
   targets::{AeadBackend, AeadPrimitive, select_backend},
 };
-use crate::traits::{Aead, ct};
+use crate::traits::{Aead, AeadGather, ct};
 
 const KEY_SIZE: usize = 32;
 const TAG_SIZE: usize = 16;
@@ -407,6 +405,148 @@ fn resolve_backend() -> AeadBackend {
   )
 }
 
+impl AeadGather for Aes256Gcm {
+  fn __validate_gather_lengths(aad_len: usize, plaintext_len: usize) -> Result<(), SealError> {
+    super::seal_bounded_length_as_u64(plaintext_len, MAX_PLAINTEXT_LEN)?;
+    super::seal_bit_lengths(aad_len, plaintext_len)?;
+    Ok(())
+  }
+
+  fn __encrypt_gather_with_nonce<'input, 'output>(
+    &self,
+    nonce: &Self::Nonce,
+    aad: &[u8],
+    plaintext: impl IntoIterator<Item = &'input [u8]>,
+    out: &'output mut [core::mem::MaybeUninit<u8>],
+    _token: crate::traits::aead::SealToken,
+  ) -> Result<(Self::Tag, &'output mut [u8]), SealError> {
+    Self::__validate_gather_lengths(aad.len(), out.len())?;
+    let (j0, _) = make_j0_and_ctr(nonce);
+    #[cfg(all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")))]
+    if matches!(
+      self.backend,
+      AeadBackend::Aarch64AesPmull | AeadBackend::Aarch64Sve2AesPmull
+    ) && out.len() >= 128
+    {
+      let length_block = super::seal_bit_lengths(aad.len(), out.len())?.to_be_bits_block();
+      let tables = aes::Aarch64GcmTables {
+        h_powers_rev: &self.h_powers_rev,
+        h_powers_rev_8: &self.h_powers_rev_8,
+        h_powers_rev_16: &self.h_powers_rev_16,
+        h_powers_rev_16_mid: &self.h_powers_rev_16_mid,
+        h_powers_rev_16_pair: &self.h_powers_rev_16_pair,
+      };
+      let mut acc = GhashAccumulator(0);
+      // SAFETY: the selected backend establishes AES-CE/PMULL/NEON; AAD is a valid slice.
+      unsafe { aes::aarch64_gcm_update(&tables, &mut acc.0, aad) };
+      let ciphertext = super::gather::fused::<16, 128, _>(
+        plaintext,
+        out,
+        2,
+        &mut acc,
+        |acc, counter, input, output| {
+          let mut ctr = [0u8; 16];
+          ctr[..12].copy_from_slice(nonce.as_bytes());
+          ctr[12..].copy_from_slice(&counter.to_be_bytes());
+          // SAFETY: the selected backend establishes AES/PMULL/NEON. The gather
+          // driver supplies matching disjoint input/output and the validated
+          // total length bounds every counter. The helper checks EOR3 separately.
+          Ok(unsafe {
+            aes::aes256_ctr32_encrypt_be_gather_aarch64_ghash(&self.ek, &ctr, input, output, &mut acc.0, &tables)
+          })
+        },
+        |counter, stream| {
+          stream[..12].copy_from_slice(nonce.as_bytes());
+          stream[12..].copy_from_slice(&counter.to_be_bytes());
+          aes::aes256_encrypt_block(&self.ek, stream);
+        },
+        |acc, ciphertext| {
+          // SAFETY: the selected backend establishes AES/PMULL/NEON.
+          unsafe { aes::aarch64_gcm_update(&tables, &mut acc.0, ciphertext) };
+        },
+      )?;
+      acc.0 ^= u128::from_be_bytes(length_block);
+      // SAFETY: the selected backend establishes PMULL for this fixed field multiply.
+      acc.0 = unsafe { aes::aarch64_gcm_multiply(&tables, acc.0) };
+      let tag = Aes256GcmTag::from_bytes(encrypt_j0_tag(&self.ek, &j0, acc.0));
+      return Ok((tag, ciphertext));
+    }
+
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2", target_os = "linux"))]
+    if self.backend == AeadBackend::X86VaesVpclmul && out.len() >= X86_VAES_GCM_MIN_LEN {
+      let length_block = super::seal_bit_lengths(aad.len(), out.len())?.to_be_bits_block();
+      let tables = self.x86_gcm_tables();
+      // SAFETY: the selected backend establishes VPCLMULQDQ and its AVX-512 prerequisites.
+      let mut acc =
+        GhashAccumulator(unsafe { ghash_update_padded_wide_x86(0, tables.h_polyval, tables.h_powers_rev, aad) });
+      // Match the established whole-message cadence; a stripped partial tail
+      // must not select a wider workspace than the in-place operation.
+      let whole_message_aligned = out.len().is_multiple_of(2048);
+      let ciphertext = super::gather::fused::<16, 256, _>(
+        plaintext,
+        out,
+        2,
+        &mut acc,
+        |acc, counter, input, output| {
+          let mut ctr = [0u8; 16];
+          ctr[..12].copy_from_slice(nonce.as_bytes());
+          ctr[12..].copy_from_slice(&counter.to_be_bytes());
+          // SAFETY: X86VaesVpclmul establishes the complete AES/VAES/VPCLMUL
+          // capability set. The gather driver passes matching disjoint input
+          // and output ranges; the validated total length bounds every counter.
+          Ok(unsafe {
+            aes::aes256_ctr32_encrypt_be_gather_wide_ghash(
+              &self.ek,
+              &ctr,
+              input,
+              whole_message_aligned,
+              output,
+              &mut acc.0,
+              tables,
+            )
+          })
+        },
+        |counter, stream| {
+          stream[..12].copy_from_slice(nonce.as_bytes());
+          stream[12..].copy_from_slice(&counter.to_be_bytes());
+          aes::aes256_encrypt_block(&self.ek, stream);
+        },
+        |acc, ciphertext| {
+          acc.0 = ghash_update_padded(acc.0, tables.h_polyval, ciphertext);
+        },
+      )?;
+      acc.0 ^= u128::from_be_bytes(length_block);
+      // SAFETY: the selected backend establishes PCLMULQDQ for this fixed field multiply.
+      acc.0 = unsafe { polyval::x86_clmul128_reduce_inline(acc.0, tables.h_polyval) };
+      let tag = Aes256GcmTag::from_bytes(encrypt_j0_tag(&self.ek, &j0, acc.0));
+      return Ok((tag, ciphertext));
+    }
+
+    let ciphertext = super::gather::xor::<16, 512>(plaintext, out, 2, |counter, stream| {
+      let (blocks, _) = stream.as_chunks_mut::<16>();
+      for (index, block) in blocks.iter_mut().enumerate() {
+        block[..12].copy_from_slice(nonce.as_bytes());
+        let index = u32::try_from(index).map_err(|_| SealError::too_large())?;
+        block[12..].copy_from_slice(&counter.strict_add(index).to_be_bytes());
+      }
+      aes::aes256_encrypt_blocks_ecb(&self.ek, blocks);
+      Ok(())
+    })?;
+    let tag = if should_use_wide_ghash(self.backend, aad.len(), ciphertext.len()) {
+      compute_tag_wide(&self.ek, self.h_powers_rev[3], &self.h_powers_rev, &j0, aad, ciphertext)
+    } else {
+      compute_tag(&self.ek, self.h_powers_rev[3], &j0, aad, ciphertext)
+    };
+    match tag {
+      Ok(tag) => Ok((Aes256GcmTag::from_bytes(tag), ciphertext)),
+      Err(_) => {
+        ct::zeroize(ciphertext);
+        Err(SealError::too_large())
+      }
+    }
+  }
+}
+
 impl Aead for Aes256Gcm {
   const KEY_SIZE: usize = KEY_SIZE;
   const NONCE_SIZE: usize = NONCE_SIZE;
@@ -562,15 +702,7 @@ impl Aead for Aes256Gcm {
       self.backend,
       AeadBackend::Aarch64AesPmull | AeadBackend::Aarch64Sve2AesPmull
     ) {
-      let h_polyval = self.h_powers_rev[3];
-      // SAFETY: aarch64 GHASH AAD path because:
-      // 1. Backend resolution selected an AES/PMULL backend only after runtime detection confirmed AES-CE
-      //    and PMULL.
-      // 2. `aad` is a valid byte slice; padding is handled inside the helper.
-      let mut acc =
-        GhashAccumulator(unsafe { ghash_update_padded_wide_aarch64(0, h_polyval, &self.h_powers_rev, aad) });
       let tables = aes::Aarch64GcmTables {
-        h_polyval,
         h_powers_rev: &self.h_powers_rev,
         h_powers_rev_8: &self.h_powers_rev_8,
         #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -580,14 +712,19 @@ impl Aead for Aes256Gcm {
         #[cfg(any(target_os = "macos", target_os = "linux"))]
         h_powers_rev_16_pair: &self.h_powers_rev_16_pair,
       };
+      let mut acc = GhashAccumulator(0);
+      // SAFETY: aarch64 GHASH AAD path because:
+      // 1. Backend resolution established AES-CE and PMULL.
+      // 2. `aad` is a valid byte slice; padding is handled inside the helper.
+      unsafe { aes::aarch64_gcm_update(&tables, &mut acc.0, aad) };
       // SAFETY: backend selection confirmed AES-CE/PMULL, and the helper encrypts the valid buffer
       // in place while folding ciphertext into GHASH.
-      acc.0 = unsafe { aes::aes256_ctr32_encrypt_be_aarch64_ghash(&self.ek, &ctr_block, buffer, acc.0, &tables) };
+      unsafe { aes::aes256_ctr32_encrypt_be_aarch64_ghash(&self.ek, &ctr_block, buffer, &mut acc.0, &tables) };
       acc.0 ^= u128::from_be_bytes(length_block);
       // SAFETY: aarch64 GHASH final multiply because:
       // 1. Backend resolution selected an AES/PMULL backend only after runtime detection confirmed PMULL.
-      // 2. `acc` and `h_polyval` are initialized GHASH field elements.
-      acc.0 = unsafe { polyval::aarch64_clmul128_reduce_inline(acc.0, h_polyval) };
+      // 2. `acc` and the borrowed table contain initialized GHASH field elements.
+      acc.0 = unsafe { aes::aarch64_gcm_multiply(&tables, acc.0) };
       let tag_bytes = encrypt_j0_tag(&self.ek, &j0, acc.0);
       return Ok(Aes256GcmTag::from_bytes(tag_bytes));
     }
@@ -724,15 +861,7 @@ impl Aead for Aes256Gcm {
       self.backend,
       AeadBackend::Aarch64AesPmull | AeadBackend::Aarch64Sve2AesPmull
     ) {
-      let h_polyval = self.h_powers_rev[3];
-      // SAFETY: aarch64 GHASH AAD path because:
-      // 1. Backend resolution selected an AES/PMULL backend only after runtime detection confirmed AES-CE
-      //    and PMULL.
-      // 2. `aad` is a valid byte slice; padding is handled inside the helper.
-      let mut acc =
-        GhashAccumulator(unsafe { ghash_update_padded_wide_aarch64(0, h_polyval, &self.h_powers_rev, aad) });
       let tables = aes::Aarch64GcmTables {
-        h_polyval,
         h_powers_rev: &self.h_powers_rev,
         h_powers_rev_8: &self.h_powers_rev_8,
         #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -742,14 +871,19 @@ impl Aead for Aes256Gcm {
         #[cfg(any(target_os = "macos", target_os = "linux"))]
         h_powers_rev_16_pair: &self.h_powers_rev_16_pair,
       };
+      let mut acc = GhashAccumulator(0);
+      // SAFETY: aarch64 GHASH AAD path because:
+      // 1. Backend resolution established AES-CE and PMULL.
+      // 2. `aad` is a valid byte slice; padding is handled inside the helper.
+      unsafe { aes::aarch64_gcm_update(&tables, &mut acc.0, aad) };
       // SAFETY: backend selection confirmed AES-CE/PMULL, and the helper GHASHes ciphertext before
       // decrypting the valid buffer in place.
-      acc.0 = unsafe { aes::aes256_ctr32_decrypt_be_aarch64_ghash(&self.ek, &ctr_block, buffer, acc.0, &tables) };
+      unsafe { aes::aes256_ctr32_decrypt_be_aarch64_ghash(&self.ek, &ctr_block, buffer, &mut acc.0, &tables) };
       acc.0 ^= u128::from_be_bytes(length_block);
       // SAFETY: aarch64 GHASH final multiply because:
       // 1. Backend resolution selected an AES/PMULL backend only after runtime detection confirmed PMULL.
-      // 2. `acc` and `h_polyval` are initialized GHASH field elements.
-      acc.0 = unsafe { polyval::aarch64_clmul128_reduce_inline(acc.0, h_polyval) };
+      // 2. `acc` and the borrowed table contain initialized GHASH field elements.
+      acc.0 = unsafe { aes::aarch64_gcm_multiply(&tables, acc.0) };
       let expected = encrypt_j0_tag(&self.ek, &j0, acc.0);
       if !ct::fixed_eq(&expected, tag.as_bytes()).declassify() {
         ct::zeroize(buffer);

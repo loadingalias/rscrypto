@@ -146,6 +146,88 @@ pub(super) fn seal_in_place(key: &[u8; KEY_SIZE], nonce: &[u8; 12], aad: &[u8], 
   }
 }
 
+/// Seal borrowed nonempty spans directly into separate ciphertext output.
+#[cfg(target_endian = "little")]
+pub(super) fn seal_gather<'input, 'output>(
+  key: &[u8; KEY_SIZE],
+  nonce: &[u8; 12],
+  aad: &[u8],
+  input: &[super::super::gather::Slice<'input>],
+  output: &'output mut [core::mem::MaybeUninit<u8>],
+) -> ([u8; 16], &'output mut [u8]) {
+  let extra_ciphertext = [0u8; 16];
+  let mut total = 0usize;
+  for part in input {
+    let bytes = part.as_slice();
+    assert!(!bytes.is_empty());
+    total = total.strict_add(bytes.len());
+  }
+  assert_eq!(total, output.len());
+  assert!(!input.is_empty());
+  const {
+    assert!(mem::size_of::<super::super::gather::Slice<'static>>() == 16);
+  }
+  let mut data = SealData {
+    input: SealDataIn {
+      key: *key,
+      counter: 0,
+      nonce: *nonce,
+      extra_ciphertext: extra_ciphertext.as_ptr(),
+      extra_ciphertext_len: 0,
+    },
+  };
+  unsafe extern "C" {
+    #[cfg(target_os = "macos")]
+    fn rscrypto_chacha20_poly1305_seal_gather_aarch64_apple_darwin(
+      out: *mut u8,
+      input: *const super::super::gather::Slice<'_>,
+      len: usize,
+      aad: *const u8,
+      aad_len: usize,
+      data: *mut SealData,
+    );
+    #[cfg(target_os = "linux")]
+    fn rscrypto_chacha20_poly1305_seal_gather_aarch64(
+      out: *mut u8,
+      input: *const super::super::gather::Slice<'_>,
+      len: usize,
+      aad: *const u8,
+      aad_len: usize,
+      data: *mut SealData,
+    );
+  }
+  // SAFETY: the repr(C) spans retain live, initialized, nonempty input borrows.
+  // Their checked total equals exclusive output. The public entry validated
+  // counters and lengths. AArch64 NEON is baseline on these existing targets.
+  // The native cursor loads only the current span's bytes; seams stay in SIMD
+  // registers. It initializes all output once and writes the complete tag.
+  // data has the unchanged aligned ABI; its copied key's remaining half clears
+  // after the tag overwrites the first half, as in seal_in_place.
+  unsafe {
+    #[cfg(target_os = "macos")]
+    rscrypto_chacha20_poly1305_seal_gather_aarch64_apple_darwin(
+      output.as_mut_ptr().cast(),
+      input.as_ptr(),
+      total,
+      aad.as_ptr(),
+      aad.len(),
+      core::ptr::from_mut(&mut data),
+    );
+    #[cfg(target_os = "linux")]
+    rscrypto_chacha20_poly1305_seal_gather_aarch64(
+      output.as_mut_ptr().cast(),
+      input.as_ptr(),
+      total,
+      aad.as_ptr(),
+      aad.len(),
+      core::ptr::from_mut(&mut data),
+    );
+    crate::traits::ct::zeroize(&mut data.input.key[16..]);
+    let tag = data.out.tag;
+    (tag, core::slice::from_raw_parts_mut(output.as_mut_ptr().cast(), total))
+  }
+}
+
 #[inline]
 pub(super) fn open_in_place(key: &[u8; KEY_SIZE], nonce: &[u8; 12], aad: &[u8], buffer: &mut [u8]) -> [u8; 16] {
   let mut data = OpenData {

@@ -212,6 +212,23 @@ impl NonceCounter<Aes256Gcm> {
     Ok(nonce)
   }
 
+  /// Encrypt ordered plaintext slices into ciphertext with the next fresh nonce.
+  ///
+  /// `out` must have the complete plaintext length. The tag is returned separately.
+  /// A nonce is consumed before sealing, including when sealing fails.
+  #[inline]
+  pub fn encrypt_gather<'input>(
+    &mut self,
+    cipher: &Aes256Gcm,
+    aad: &[u8],
+    plaintext: impl IntoIterator<Item = &'input [u8]>,
+    out: &mut [u8],
+  ) -> Result<(Nonce96, Aes256GcmTag), NonceCounterSealError> {
+    let nonce = self.next_nonce()?;
+    let tag = cipher.encrypt_gather(&nonce, aad, plaintext, out)?;
+    Ok((nonce, tag))
+  }
+
   #[inline]
   fn build_nonce(fixed_prefix: [u8; FIXED_PREFIX_LEN], counter: u64) -> Nonce96 {
     let mut bytes = [0u8; Nonce96::LENGTH];
@@ -330,6 +347,23 @@ impl NonceCounter<Aes128Gcm> {
     let nonce = self.next_nonce()?;
     cipher.encrypt(&nonce, aad, plaintext, out)?;
     Ok(nonce)
+  }
+
+  /// Encrypt ordered plaintext slices into ciphertext with the next fresh nonce.
+  ///
+  /// `out` must have the complete plaintext length. The tag is returned separately.
+  /// A nonce is consumed before sealing, including when sealing fails.
+  #[inline]
+  pub fn encrypt_gather<'input>(
+    &mut self,
+    cipher: &Aes128Gcm,
+    aad: &[u8],
+    plaintext: impl IntoIterator<Item = &'input [u8]>,
+    out: &mut [u8],
+  ) -> Result<(Nonce96, Aes128GcmTag), NonceCounterSealError> {
+    let nonce = self.next_nonce()?;
+    let tag = cipher.encrypt_gather(&nonce, aad, plaintext, out)?;
+    Ok((nonce, tag))
   }
 
   #[inline]

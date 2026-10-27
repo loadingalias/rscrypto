@@ -222,6 +222,92 @@ pub fn assert_aead_against_oracle<A, EncFn, DecFn>(
 }
 
 #[cfg(feature = "aead")]
+/// Compare production gather encryption and its output adapters with an independent combined ciphertext/tag.
+pub fn assert_aead_gather_against_oracle<A: rscrypto::AeadGather>(
+  cipher: &A,
+  nonce: &A::Nonce,
+  aad: &[u8],
+  plaintext: &[u8],
+  control: u8,
+  expected: &[u8],
+) {
+  const WIDTHS: [usize; 18] = [
+    1, 15, 16, 17, 63, 64, 65, 127, 128, 129, 255, 256, 257, 511, 512, 513, 1024, 4096,
+  ];
+  let width = WIDTHS[usize::from(control).rem_euclid(WIDTHS.len())];
+  let mut storage = Vec::new();
+  let mut remaining = plaintext;
+  // Bound harness allocations while preserving a final large slice that can
+  // cross the production descriptor-batch capacity.
+  for _ in 0..64 {
+    if remaining.is_empty() {
+      break;
+    }
+    let take = remaining.len().min(width);
+    let mut fragment = vec![0xa5];
+    fragment.extend_from_slice(&remaining[..take]);
+    fragment.push(0x5a);
+    storage.push(fragment);
+    remaining = &remaining[take..];
+  }
+  if !remaining.is_empty() {
+    let mut fragment = vec![0xa5];
+    fragment.extend_from_slice(remaining);
+    fragment.push(0x5a);
+    storage.push(fragment);
+  }
+  let mut chunks = vec![b"".as_slice()];
+  for fragment in &storage {
+    chunks.push(&fragment[1..fragment.len().strict_sub(1)]);
+    chunks.push(&[]);
+  }
+  assert_eq!(expected.len(), plaintext.len().strict_add(A::TAG_SIZE));
+  let (expected_text, expected_tag) = expected.split_at(plaintext.len());
+  let mut initialized = vec![0xa5; plaintext.len().strict_add(2)];
+  let end = plaintext.len().strict_add(1);
+  let tag = cipher
+    .encrypt_gather(nonce, aad, chunks.iter().copied(), &mut initialized[1..end])
+    .expect("gather accepts equivalent ordered plaintext");
+  assert_eq!(&initialized[1..end], expected_text);
+  assert_eq!(tag.as_ref(), expected_tag);
+  assert_eq!((initialized[0], initialized[end]), (0xa5, 0xa5));
+
+  let mut spare = Vec::with_capacity(plaintext.len().strict_add(2));
+  spare.extend_from_slice(&[0x25, 0x52]);
+  let (tag, text) = cipher
+    .encrypt_gather_uninit(
+      nonce,
+      aad,
+      chunks.iter().copied(),
+      &mut spare.spare_capacity_mut()[..plaintext.len()],
+    )
+    .expect("gather initializes caller-owned spare capacity");
+  assert_eq!(text, expected_text);
+  assert_eq!(tag.as_ref(), expected_tag);
+  assert_eq!(spare, [0x25, 0x52]);
+
+  let mut appended = vec![0x25, 0x52];
+  let tag = cipher
+    .encrypt_gather_append(nonce, aad, chunks.iter().copied(), plaintext.len(), &mut appended)
+    .expect("gather appends the initialized ciphertext");
+  assert_eq!(&appended[..2], &[0x25, 0x52]);
+  assert_eq!(&appended[2..], expected_text);
+  assert_eq!(tag.as_ref(), expected_tag);
+
+  let wrong_len = if plaintext.is_empty() {
+    1
+  } else {
+    plaintext.len().strict_sub(1)
+  };
+  let mut wrong = vec![0xa5; wrong_len];
+  let error = cipher
+    .encrypt_gather(nonce, aad, chunks.iter().copied(), &mut wrong)
+    .expect_err("gather rejects a mismatched output length");
+  assert_eq!(error, rscrypto::aead::SealError::buffer());
+  assert!(wrong.iter().all(|&byte| byte == 0));
+}
+
+#[cfg(feature = "aead")]
 /// Assert that flipping a single bit in ciphertext, tag, or AAD causes
 /// `decrypt_in_place` to reject.
 pub fn assert_aead_forgery<A: Aead>(

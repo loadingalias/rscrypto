@@ -592,7 +592,7 @@ pub use secret::{SecretString, SecretVec, SecretVecConstructionError};
   feature = "aegis256",
   feature = "ascon-aead"
 ))]
-pub use traits::Aead;
+pub use traits::{Aead, AeadGather};
 pub use traits::{Checksum, ChecksumCombine, Kem, Mac, TrySigner, TrySignerInto, VerificationError, Verifier, ct};
 #[cfg(any(
   feature = "sha2",
@@ -651,7 +651,7 @@ pub mod prelude {
     feature = "aegis256",
     feature = "ascon-aead"
   ))]
-  pub use crate::traits::Aead;
+  pub use crate::traits::{Aead, AeadGather};
   pub use crate::traits::{
     Checksum, ChecksumCombine, Digest, FastHash, Kem, Mac, TrySigner, TrySignerInto, VerificationError, Verifier, Xof,
   };

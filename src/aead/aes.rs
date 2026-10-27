@@ -80,7 +80,6 @@ mod rv_scalar_aes;
 mod x86_64_asm;
 #[cfg(all(target_arch = "aarch64", feature = "aes-gcm"))]
 pub(crate) struct Aarch64GcmTables<'a> {
-  pub(crate) h_polyval: u128,
   pub(crate) h_powers_rev: &'a [u128; 4],
   pub(crate) h_powers_rev_8: &'a [u128; 8],
   #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -89,6 +88,30 @@ pub(crate) struct Aarch64GcmTables<'a> {
   pub(crate) h_powers_rev_16_mid: &'a [u128; 16],
   #[cfg(any(target_os = "macos", target_os = "linux"))]
   pub(crate) h_powers_rev_16_pair: &'a [u128; 24],
+}
+
+/// Update an owned accumulator without returning H or GHASH state through the caller's registers.
+///
+/// # Safety
+/// The caller must establish AES, PMULL, and NEON availability.
+#[cfg(all(target_arch = "aarch64", feature = "aes-gcm"))]
+#[target_feature(enable = "aes,neon")]
+#[inline]
+pub(crate) unsafe fn aarch64_gcm_update(tables: &Aarch64GcmTables<'_>, acc: &mut u128, data: &[u8]) {
+  // SAFETY: the caller establishes the borrowed PMULL leaf's feature contract.
+  unsafe { ce::update_gcm(tables, acc, data) }
+}
+
+/// Multiply a GHASH accumulator without carrying an owned H copy across calls.
+///
+/// # Safety
+/// The caller must establish AES, PMULL, and NEON availability.
+#[cfg(all(target_arch = "aarch64", feature = "aes-gcm"))]
+#[target_feature(enable = "aes,neon")]
+#[inline]
+pub(crate) unsafe fn aarch64_gcm_multiply(tables: &Aarch64GcmTables<'_>, acc: u128) -> u128 {
+  // SAFETY: the caller establishes the borrowed PMULL leaf's feature contract.
+  unsafe { ce::multiply_gcm(tables, acc) }
 }
 
 #[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm"))]
@@ -1345,7 +1368,13 @@ pub(crate) unsafe fn aes256_ctr32_encrypt_be_ppc_ghash(
     }
 
     while offset.strict_add(64) <= data.len() {
-      let mut keystream = [[0u8; BLOCK_SIZE]; 4];
+      let mut keystream_storage = crate::secret::ZeroizingBytes::<{ 4 * BLOCK_SIZE }>::zeroed();
+      let keystream = keystream_storage
+        .as_mut_array()
+        .as_chunks_mut::<BLOCK_SIZE>()
+        .0
+        .first_chunk_mut::<4>()
+        .expect("four AES counter blocks");
       let mut i = 0u32;
       while i < 4 {
         keystream[i as usize][..12].copy_from_slice(&iv_prefix);
@@ -1353,7 +1382,7 @@ pub(crate) unsafe fn aes256_ctr32_encrypt_be_ppc_ghash(
         i = i.strict_add(1);
       }
 
-      ppc::encrypt_4blocks_core(ppc_rk, &mut keystream);
+      ppc::encrypt_4blocks_core(ppc_rk, keystream);
 
       let mut ciphertext_blocks = [0u128; 4];
       let mut lane = 0usize;
@@ -1378,12 +1407,16 @@ pub(crate) unsafe fn aes256_ctr32_encrypt_be_ppc_ghash(
       counter_block[..12].copy_from_slice(&iv_prefix);
       counter_block[12..16].copy_from_slice(&ctr.to_be_bytes());
 
-      let mut keystream = counter_block;
-      ppc::encrypt_block_core(ppc_rk, &mut keystream);
+      let mut keystream_storage = crate::secret::ZeroizingBytes::<BLOCK_SIZE>::zeroed();
+
+      let keystream = keystream_storage.as_mut_array();
+
+      *keystream = counter_block;
+      ppc::encrypt_block_core(ppc_rk, keystream);
 
       let remaining = data.len().strict_sub(offset);
       if remaining >= BLOCK_SIZE {
-        let ks = u128::from_ne_bytes(keystream);
+        let ks = u128::from_ne_bytes(*keystream);
         let mut plaintext = [0u8; BLOCK_SIZE];
         plaintext.copy_from_slice(&data[offset..offset.strict_add(BLOCK_SIZE)]);
         let ciphertext = (u128::from_ne_bytes(plaintext) ^ ks).to_ne_bytes();
@@ -1474,7 +1507,14 @@ pub(crate) unsafe fn aes256_ctr32_decrypt_be_ppc_ghash(
       }
       acc = super::polyval::ppc_aggregate_4blocks_inline(acc, h_powers_rev, &ciphertext_blocks);
 
-      let mut keystream = [[0u8; BLOCK_SIZE]; 4];
+      let mut keystream_storage = crate::secret::ZeroizingBytes::<{ 4 * BLOCK_SIZE }>::zeroed();
+
+      let keystream = keystream_storage
+        .as_mut_array()
+        .as_chunks_mut::<BLOCK_SIZE>()
+        .0
+        .first_chunk_mut::<4>()
+        .expect("four AES counter blocks");
       let mut i = 0u32;
       while i < 4 {
         keystream[i as usize][..12].copy_from_slice(&iv_prefix);
@@ -1482,7 +1522,7 @@ pub(crate) unsafe fn aes256_ctr32_decrypt_be_ppc_ghash(
         i = i.strict_add(1);
       }
 
-      ppc::encrypt_4blocks_core(ppc_rk, &mut keystream);
+      ppc::encrypt_4blocks_core(ppc_rk, keystream);
 
       lane = 0;
       while lane < 4 {
@@ -1504,8 +1544,12 @@ pub(crate) unsafe fn aes256_ctr32_decrypt_be_ppc_ghash(
       counter_block[..12].copy_from_slice(&iv_prefix);
       counter_block[12..16].copy_from_slice(&ctr.to_be_bytes());
 
-      let mut keystream = counter_block;
-      ppc::encrypt_block_core(ppc_rk, &mut keystream);
+      let mut keystream_storage = crate::secret::ZeroizingBytes::<BLOCK_SIZE>::zeroed();
+
+      let keystream = keystream_storage.as_mut_array();
+
+      *keystream = counter_block;
+      ppc::encrypt_block_core(ppc_rk, keystream);
 
       let remaining = data.len().strict_sub(offset);
       if remaining >= BLOCK_SIZE {
@@ -1514,7 +1558,7 @@ pub(crate) unsafe fn aes256_ctr32_decrypt_be_ppc_ghash(
         acc ^= u128::from_be_bytes(ciphertext);
         acc = super::polyval::ppc_clmul128_reduce_inline(acc, h_polyval);
 
-        let plaintext = (u128::from_ne_bytes(ciphertext) ^ u128::from_ne_bytes(keystream)).to_ne_bytes();
+        let plaintext = (u128::from_ne_bytes(ciphertext) ^ u128::from_ne_bytes(*keystream)).to_ne_bytes();
         data[offset..offset.strict_add(BLOCK_SIZE)].copy_from_slice(&plaintext);
         offset = offset.strict_add(BLOCK_SIZE);
       } else {
@@ -1589,7 +1633,13 @@ pub(crate) unsafe fn aes128_ctr32_encrypt_be_ppc_ghash(
     }
 
     while offset.strict_add(64) <= data.len() {
-      let mut keystream = [[0u8; BLOCK_SIZE]; 4];
+      let mut keystream_storage = crate::secret::ZeroizingBytes::<{ 4 * BLOCK_SIZE }>::zeroed();
+      let keystream = keystream_storage
+        .as_mut_array()
+        .as_chunks_mut::<BLOCK_SIZE>()
+        .0
+        .first_chunk_mut::<4>()
+        .expect("four AES counter blocks");
       let mut i = 0u32;
       while i < 4 {
         keystream[i as usize][..12].copy_from_slice(&iv_prefix);
@@ -1597,7 +1647,7 @@ pub(crate) unsafe fn aes128_ctr32_encrypt_be_ppc_ghash(
         i = i.strict_add(1);
       }
 
-      ppc::encrypt_4blocks_128_core(ppc_rk, &mut keystream);
+      ppc::encrypt_4blocks_128_core(ppc_rk, keystream);
 
       let mut ciphertext_blocks = [0u128; 4];
       let mut lane = 0usize;
@@ -1622,12 +1672,16 @@ pub(crate) unsafe fn aes128_ctr32_encrypt_be_ppc_ghash(
       counter_block[..12].copy_from_slice(&iv_prefix);
       counter_block[12..16].copy_from_slice(&ctr.to_be_bytes());
 
-      let mut keystream = counter_block;
-      ppc::encrypt_block_128_core(ppc_rk, &mut keystream);
+      let mut keystream_storage = crate::secret::ZeroizingBytes::<BLOCK_SIZE>::zeroed();
+
+      let keystream = keystream_storage.as_mut_array();
+
+      *keystream = counter_block;
+      ppc::encrypt_block_128_core(ppc_rk, keystream);
 
       let remaining = data.len().strict_sub(offset);
       if remaining >= BLOCK_SIZE {
-        let ks = u128::from_ne_bytes(keystream);
+        let ks = u128::from_ne_bytes(*keystream);
         let mut plaintext = [0u8; BLOCK_SIZE];
         plaintext.copy_from_slice(&data[offset..offset.strict_add(BLOCK_SIZE)]);
         let ciphertext = (u128::from_ne_bytes(plaintext) ^ ks).to_ne_bytes();
@@ -1718,7 +1772,14 @@ pub(crate) unsafe fn aes128_ctr32_decrypt_be_ppc_ghash(
       }
       acc = super::polyval::ppc_aggregate_4blocks_inline(acc, h_powers_rev, &ciphertext_blocks);
 
-      let mut keystream = [[0u8; BLOCK_SIZE]; 4];
+      let mut keystream_storage = crate::secret::ZeroizingBytes::<{ 4 * BLOCK_SIZE }>::zeroed();
+
+      let keystream = keystream_storage
+        .as_mut_array()
+        .as_chunks_mut::<BLOCK_SIZE>()
+        .0
+        .first_chunk_mut::<4>()
+        .expect("four AES counter blocks");
       let mut i = 0u32;
       while i < 4 {
         keystream[i as usize][..12].copy_from_slice(&iv_prefix);
@@ -1726,7 +1787,7 @@ pub(crate) unsafe fn aes128_ctr32_decrypt_be_ppc_ghash(
         i = i.strict_add(1);
       }
 
-      ppc::encrypt_4blocks_128_core(ppc_rk, &mut keystream);
+      ppc::encrypt_4blocks_128_core(ppc_rk, keystream);
 
       lane = 0;
       while lane < 4 {
@@ -1748,8 +1809,12 @@ pub(crate) unsafe fn aes128_ctr32_decrypt_be_ppc_ghash(
       counter_block[..12].copy_from_slice(&iv_prefix);
       counter_block[12..16].copy_from_slice(&ctr.to_be_bytes());
 
-      let mut keystream = counter_block;
-      ppc::encrypt_block_128_core(ppc_rk, &mut keystream);
+      let mut keystream_storage = crate::secret::ZeroizingBytes::<BLOCK_SIZE>::zeroed();
+
+      let keystream = keystream_storage.as_mut_array();
+
+      *keystream = counter_block;
+      ppc::encrypt_block_128_core(ppc_rk, keystream);
 
       let remaining = data.len().strict_sub(offset);
       if remaining >= BLOCK_SIZE {
@@ -1758,7 +1823,7 @@ pub(crate) unsafe fn aes128_ctr32_decrypt_be_ppc_ghash(
         acc ^= u128::from_be_bytes(ciphertext);
         acc = super::polyval::ppc_clmul128_reduce_inline(acc, h_polyval);
 
-        let plaintext = (u128::from_ne_bytes(ciphertext) ^ u128::from_ne_bytes(keystream)).to_ne_bytes();
+        let plaintext = (u128::from_ne_bytes(ciphertext) ^ u128::from_ne_bytes(*keystream)).to_ne_bytes();
         data[offset..offset.strict_add(BLOCK_SIZE)].copy_from_slice(&plaintext);
         offset = offset.strict_add(BLOCK_SIZE);
       } else {
@@ -2112,20 +2177,7 @@ pub(crate) fn aes128_xor_encrypt_blocks(ek: &Aes128EncKey, state: &mut [u8; BLOC
 /// AArch64, POWER, s390x, or RV64 batch kernel and otherwise uses the per-block
 /// dispatcher. Live callers are AES-SIV CTR, AES-GCM-SIV key derivation, target
 /// batch CTR paths, and the differential tests below.
-#[cfg(any(
-  test,
-  feature = "aes-gcm-siv",
-  feature = "aes-siv",
-  all(
-    feature = "aes-gcm",
-    any(
-      target_arch = "aarch64",
-      target_arch = "powerpc64",
-      target_arch = "riscv64",
-      target_arch = "s390x"
-    )
-  )
-))]
+#[cfg(any(test, feature = "aes-gcm", feature = "aes-gcm-siv", feature = "aes-siv"))]
 #[inline]
 pub(crate) fn aes128_encrypt_blocks_ecb(ek: &Aes128EncKey, blocks: &mut [[u8; BLOCK_SIZE]]) {
   #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
@@ -2312,19 +2364,7 @@ fn aes128_encrypt_block_portable(rk: &[u32; EXPANDED_KEY_WORDS_128], block: &mut
 // Live callers are GCM-SIV key derivation (any arch), the batch CTR path on the
 // arches that have a block-batch kernel, and the unit tests below -- `mod aes`
 // is also compiled for `aegis256` under `cfg(test)`.
-#[cfg(any(
-  test,
-  feature = "aes-gcm-siv",
-  all(
-    feature = "aes-gcm",
-    any(
-      target_arch = "aarch64",
-      target_arch = "powerpc64",
-      target_arch = "riscv64",
-      target_arch = "s390x"
-    )
-  )
-))]
+#[cfg(any(test, feature = "aes-gcm", feature = "aes-gcm-siv"))]
 #[inline]
 pub(crate) fn aes256_encrypt_blocks_ecb(ek: &Aes256EncKey, blocks: &mut [[u8; BLOCK_SIZE]]) {
   #[cfg(target_arch = "aarch64")]
@@ -2918,6 +2958,13 @@ fn aes128_ctr32_be_uses_block_batch(ek: &Aes128EncKey) -> bool {
 #[inline]
 #[cfg(feature = "aes-gcm")]
 pub(crate) fn aes256_ctr32_encrypt_be(ek: &Aes256EncKey, initial_counter: &[u8; BLOCK_SIZE], data: &mut [u8]) {
+  let _scrub = CtrStackScrub;
+  aes256_ctr32_encrypt_be_worker(ek, initial_counter, data);
+}
+
+#[inline(never)]
+#[cfg(feature = "aes-gcm")]
+fn aes256_ctr32_encrypt_be_worker(ek: &Aes256EncKey, initial_counter: &[u8; BLOCK_SIZE], data: &mut [u8]) {
   let mut counter_block = *initial_counter;
   // Maintain the 32-bit counter separately to avoid per-block BE decode/encode.
   let mut ctr = u32::from_be_bytes([
@@ -2973,7 +3020,13 @@ pub(crate) fn aes256_ctr32_encrypt_be(ek: &Aes256EncKey, initial_counter: &[u8; 
     };
 
     while offset.strict_add(64) <= data.len() {
-      let mut keystream = [[0u8; BLOCK_SIZE]; 4];
+      let mut keystream_storage = crate::secret::ZeroizingBytes::<{ 4 * BLOCK_SIZE }>::zeroed();
+      let keystream = keystream_storage
+        .as_mut_array()
+        .as_chunks_mut::<BLOCK_SIZE>()
+        .0
+        .first_chunk_mut::<4>()
+        .expect("four AES counter blocks");
       let mut i = 0u32;
       while i < 4 {
         keystream[i as usize][..12].copy_from_slice(&iv_prefix);
@@ -2981,7 +3034,7 @@ pub(crate) fn aes256_ctr32_encrypt_be(ek: &Aes256EncKey, initial_counter: &[u8; 
         i = i.strict_add(1);
       }
 
-      aes256_encrypt_blocks_ecb(ek, &mut keystream);
+      aes256_encrypt_blocks_ecb(ek, keystream);
 
       let mut lane = 0usize;
       while lane < 4 {
@@ -3010,7 +3063,14 @@ pub(crate) fn aes256_ctr32_encrypt_be(ek: &Aes256EncKey, initial_counter: &[u8; 
         break;
       }
 
-      let mut keystream = [[0u8; BLOCK_SIZE]; 4];
+      let mut keystream_storage = crate::secret::ZeroizingBytes::<{ 4 * BLOCK_SIZE }>::zeroed();
+
+      let keystream = keystream_storage
+        .as_mut_array()
+        .as_chunks_mut::<BLOCK_SIZE>()
+        .0
+        .first_chunk_mut::<4>()
+        .expect("four AES counter blocks");
       let mut i = 0u32;
       while (i as usize) < block_count {
         keystream[i as usize][..12].copy_from_slice(&counter_block[..12]);
@@ -3019,7 +3079,7 @@ pub(crate) fn aes256_ctr32_encrypt_be(ek: &Aes256EncKey, initial_counter: &[u8; 
       }
 
       aes256_encrypt_blocks_ecb(ek, &mut keystream[..block_count]);
-      let processed = xor_keystream_tail(data, offset, &keystream, block_count);
+      let processed = xor_keystream_tail(data, offset, keystream, block_count);
       offset = offset.strict_add(processed);
       ctr = ctr.wrapping_add(u32::from(block_count.to_le_bytes()[0]));
     }
@@ -3029,13 +3089,17 @@ pub(crate) fn aes256_ctr32_encrypt_be(ek: &Aes256EncKey, initial_counter: &[u8; 
     // Encode current counter into bytes 12..15 (big-endian).
     counter_block[12..16].copy_from_slice(&ctr.to_be_bytes());
 
-    let mut keystream = counter_block;
-    aes256_encrypt_block(ek, &mut keystream);
+    let mut keystream_storage = crate::secret::ZeroizingBytes::<BLOCK_SIZE>::zeroed();
+
+    let keystream = keystream_storage.as_mut_array();
+
+    *keystream = counter_block;
+    aes256_encrypt_block(ek, keystream);
 
     let remaining = data.len().strict_sub(offset);
     if remaining >= BLOCK_SIZE {
       // Full block: XOR as u128 for vectorization.
-      let ks = u128::from_ne_bytes(keystream);
+      let ks = u128::from_ne_bytes(*keystream);
       let mut d = [0u8; BLOCK_SIZE];
       d.copy_from_slice(&data[offset..offset.strict_add(BLOCK_SIZE)]);
       let xored = u128::from_ne_bytes(d) ^ ks;
@@ -3293,12 +3357,16 @@ pub(crate) unsafe fn aes256_ctr32_encrypt_be_aesni_pclmul_ghash(
       counter_block[..12].copy_from_slice(&iv_prefix);
       counter_block[12..16].copy_from_slice(&ctr.to_be_bytes());
 
-      let mut keystream = counter_block;
-      ni::encrypt_block(ni_rk, &mut keystream);
+      let mut keystream_storage = crate::secret::ZeroizingBytes::<BLOCK_SIZE>::zeroed();
+
+      let keystream = keystream_storage.as_mut_array();
+
+      *keystream = counter_block;
+      ni::encrypt_block(ni_rk, keystream);
 
       let remaining = data.len().strict_sub(offset);
       if remaining >= BLOCK_SIZE {
-        let ks = u128::from_ne_bytes(keystream);
+        let ks = u128::from_ne_bytes(*keystream);
         let mut d = [0u8; BLOCK_SIZE];
         d.copy_from_slice(&data[offset..offset.strict_add(BLOCK_SIZE)]);
         let xored = u128::from_ne_bytes(d) ^ ks;
@@ -3401,8 +3469,12 @@ pub(crate) unsafe fn aes256_ctr32_decrypt_be_aesni_pclmul_ghash(
       counter_block[..12].copy_from_slice(&iv_prefix);
       counter_block[12..16].copy_from_slice(&ctr.to_be_bytes());
 
-      let mut keystream = counter_block;
-      ni::encrypt_block(ni_rk, &mut keystream);
+      let mut keystream_storage = crate::secret::ZeroizingBytes::<BLOCK_SIZE>::zeroed();
+
+      let keystream = keystream_storage.as_mut_array();
+
+      *keystream = counter_block;
+      ni::encrypt_block(ni_rk, keystream);
 
       let remaining = data.len().strict_sub(offset);
       if remaining >= BLOCK_SIZE {
@@ -3411,7 +3483,7 @@ pub(crate) unsafe fn aes256_ctr32_decrypt_be_aesni_pclmul_ghash(
         acc ^= u128::from_be_bytes(ciphertext);
         acc = super::polyval::x86_clmul128_reduce_inline(acc, h_polyval);
 
-        let plaintext = u128::from_ne_bytes(ciphertext) ^ u128::from_ne_bytes(keystream);
+        let plaintext = u128::from_ne_bytes(ciphertext) ^ u128::from_ne_bytes(*keystream);
         data[offset..offset.strict_add(BLOCK_SIZE)].copy_from_slice(&plaintext.to_ne_bytes());
         offset = offset.strict_add(BLOCK_SIZE);
       } else {
@@ -3436,7 +3508,7 @@ pub(crate) unsafe fn aes256_ctr32_decrypt_be_aesni_pclmul_ghash(
 
 /// AES-256 CTR encryption fused with GHASH accumulation for GCM sealing.
 ///
-/// Encrypts `data` in place and returns the GHASH accumulator after the
+/// Encrypts `data` in place and updates the GHASH accumulator after the
 /// ciphertext has been folded in. The incoming `acc` is normally the GHASH
 /// state after AAD processing.
 ///
@@ -3490,7 +3562,7 @@ pub(crate) unsafe fn aes256_ctr32_encrypt_be_wide_ghash(
 
     #[cfg(target_os = "linux")]
     if data.len() >= 256 {
-      let mut state = x86_64_asm::AesGcmX86State::new(acc, ctr);
+      let mut state = x86_64_asm::AesGcmX86State::new(acc, ctr, data.as_ptr());
       // SAFETY: external x86-64 VAES-512 AES-256-GCM seal kernel because:
       // 1. This target-feature function is only entered after VAES, VPCLMULQDQ, AVX-512, AES-NI, and SSE2
       //    were selected by runtime/backend dispatch.
@@ -3575,12 +3647,16 @@ pub(crate) unsafe fn aes256_ctr32_encrypt_be_wide_ghash(
       counter_block[..12].copy_from_slice(&iv_prefix);
       counter_block[12..16].copy_from_slice(&ctr.to_be_bytes());
 
-      let mut keystream = counter_block;
-      ni::encrypt_block(ni_rk, &mut keystream);
+      let mut keystream_storage = crate::secret::ZeroizingBytes::<BLOCK_SIZE>::zeroed();
+
+      let keystream = keystream_storage.as_mut_array();
+
+      *keystream = counter_block;
+      ni::encrypt_block(ni_rk, keystream);
 
       let remaining = data.len().strict_sub(offset);
       if remaining >= BLOCK_SIZE {
-        let ks = u128::from_ne_bytes(keystream);
+        let ks = u128::from_ne_bytes(*keystream);
         let mut d = [0u8; BLOCK_SIZE];
         d.copy_from_slice(&data[offset..offset.strict_add(BLOCK_SIZE)]);
         let xored = u128::from_ne_bytes(d) ^ ks;
@@ -3665,7 +3741,7 @@ pub(crate) unsafe fn aes256_ctr32_decrypt_be_wide_ghash(
 
     #[cfg(target_os = "linux")]
     if data.len() >= 256 {
-      let mut state = x86_64_asm::AesGcmX86State::new(acc, ctr);
+      let mut state = x86_64_asm::AesGcmX86State::new(acc, ctr, data.as_ptr());
       // SAFETY: external x86-64 VAES-512 AES-256-GCM open kernel because:
       // 1. This target-feature function is only entered after VAES, VPCLMULQDQ, AVX-512, AES-NI, and SSE2
       //    were selected by runtime/backend dispatch.
@@ -3755,8 +3831,12 @@ pub(crate) unsafe fn aes256_ctr32_decrypt_be_wide_ghash(
       counter_block[..12].copy_from_slice(&iv_prefix);
       counter_block[12..16].copy_from_slice(&ctr.to_be_bytes());
 
-      let mut keystream = counter_block;
-      ni::encrypt_block(ni_rk, &mut keystream);
+      let mut keystream_storage = crate::secret::ZeroizingBytes::<BLOCK_SIZE>::zeroed();
+
+      let keystream = keystream_storage.as_mut_array();
+
+      *keystream = counter_block;
+      ni::encrypt_block(ni_rk, keystream);
 
       let remaining = data.len().strict_sub(offset);
       if remaining >= BLOCK_SIZE {
@@ -3765,7 +3845,7 @@ pub(crate) unsafe fn aes256_ctr32_decrypt_be_wide_ghash(
         acc ^= u128::from_be_bytes(ciphertext);
         acc = super::polyval::x86_clmul128_reduce_inline(acc, h_polyval);
 
-        let plaintext = u128::from_ne_bytes(ciphertext) ^ u128::from_ne_bytes(keystream);
+        let plaintext = u128::from_ne_bytes(ciphertext) ^ u128::from_ne_bytes(*keystream);
         data[offset..offset.strict_add(BLOCK_SIZE)].copy_from_slice(&plaintext.to_ne_bytes());
         offset = offset.strict_add(BLOCK_SIZE);
       } else {
@@ -3790,7 +3870,7 @@ pub(crate) unsafe fn aes256_ctr32_decrypt_be_wide_ghash(
 
 /// AES-256 CTR encryption fused with PMULL GHASH accumulation for GCM sealing.
 ///
-/// Encrypts `data` in place and returns the GHASH accumulator after the
+/// Encrypts `data` in place and updates the GHASH accumulator after the
 /// ciphertext has been folded in. The incoming `acc` is normally the GHASH
 /// state after AAD processing.
 ///
@@ -3802,9 +3882,9 @@ pub(crate) unsafe fn aes256_ctr32_encrypt_be_aarch64_ghash(
   ek: &Aes256EncKey,
   initial_counter: &[u8; BLOCK_SIZE],
   data: &mut [u8],
-  mut acc: u128,
+  acc: &mut u128,
   tables: &Aarch64GcmTables<'_>,
-) -> u128 {
+) {
   // SAFETY: fused aarch64 AES-GCM sealing because:
   // 1. This function's caller guarantees AES-CE and PMULL availability.
   // 2. `data` is a valid mutable byte slice; all chunk processing uses checked slice ranges and the
@@ -3814,7 +3894,8 @@ pub(crate) unsafe fn aes256_ctr32_encrypt_be_aarch64_ghash(
       KeyInner::Aarch64Aes(rk) => rk,
       _ => {
         aes256_ctr32_encrypt_be(ek, initial_counter, data);
-        return ghash_ciphertext_fallback(acc, tables.h_polyval, data);
+        *acc = ghash_ciphertext_fallback(*acc, tables.h_powers_rev[3], data);
+        return;
       }
     };
 
@@ -3833,15 +3914,13 @@ pub(crate) unsafe fn aes256_ctr32_encrypt_be_aarch64_ghash(
 
     if offset.strict_add(128) <= data.len() {
       let state = ce::encrypt_ctr32_be_xor_ghash_128b_chunks_core(ce_rk, &iv_prefix, ctr, data, acc, tables);
-      acc = state.0;
-      ctr = state.1;
-      offset = state.2;
+      ctr = state.0;
+      offset = state.1;
     }
 
     while offset.strict_add(64) <= data.len() {
       let end = offset.strict_add(64);
-      let blocks = ce::encrypt_ctr32_be_xor_4blocks_core(ce_rk, &iv_prefix, ctr, &mut data[offset..end]);
-      acc = super::polyval::aarch64_aggregate_4blocks_inline(acc, tables.h_powers_rev, &blocks);
+      ce::encrypt_gcm_four(ce_rk, &iv_prefix, ctr, &mut data[offset..end], tables, acc);
       ctr = ctr.wrapping_add(4);
       offset = end;
     }
@@ -3851,19 +3930,23 @@ pub(crate) unsafe fn aes256_ctr32_encrypt_be_aarch64_ghash(
       counter_block[..12].copy_from_slice(&iv_prefix);
       counter_block[12..16].copy_from_slice(&ctr.to_be_bytes());
 
-      let mut keystream = counter_block;
-      ce::encrypt_block_core(ce_rk, &mut keystream);
+      let mut keystream_storage = crate::secret::ZeroizingBytes::<BLOCK_SIZE>::zeroed();
+
+      let keystream = keystream_storage.as_mut_array();
+
+      *keystream = counter_block;
+      ce::encrypt_gcm_tail_block(ce_rk, keystream);
 
       let remaining = data.len().strict_sub(offset);
       if remaining >= BLOCK_SIZE {
-        let ks = u128::from_ne_bytes(keystream);
+        let ks = u128::from_ne_bytes(*keystream);
         let mut d = [0u8; BLOCK_SIZE];
         d.copy_from_slice(&data[offset..offset.strict_add(BLOCK_SIZE)]);
         let xored = u128::from_ne_bytes(d) ^ ks;
         let ciphertext = xored.to_ne_bytes();
         data[offset..offset.strict_add(BLOCK_SIZE)].copy_from_slice(&ciphertext);
-        acc ^= u128::from_be_bytes(ciphertext);
-        acc = super::polyval::aarch64_clmul128_reduce_inline(acc, tables.h_polyval);
+        *acc ^= u128::from_be_bytes(ciphertext);
+        *acc = ce::multiply_gcm(tables, *acc);
         offset = offset.strict_add(BLOCK_SIZE);
       } else {
         let mut block = [0u8; BLOCK_SIZE];
@@ -3873,21 +3956,19 @@ pub(crate) unsafe fn aes256_ctr32_encrypt_be_aarch64_ghash(
           block[i] = data[offset.strict_add(i)];
           i = i.strict_add(1);
         }
-        acc ^= u128::from_be_bytes(block);
-        acc = super::polyval::aarch64_clmul128_reduce_inline(acc, tables.h_polyval);
+        *acc ^= u128::from_be_bytes(block);
+        *acc = ce::multiply_gcm(tables, *acc);
         offset = offset.strict_add(remaining);
       }
       ctr = ctr.wrapping_add(1);
     }
-
-    acc
   }
 }
 
 /// AES-256 CTR decryption fused with PMULL GHASH accumulation for GCM open.
 ///
-/// Folds ciphertext into GHASH, decrypts the same chunk in place, and returns
-/// the accumulator. Authentication is still finalized and checked by the
+/// Folds ciphertext into GHASH and decrypts the same chunk in place while
+/// updating the accumulator. Authentication is still finalized and checked by the
 /// caller, which zeroizes the buffer on failure.
 ///
 /// # Safety
@@ -3898,9 +3979,9 @@ pub(crate) unsafe fn aes256_ctr32_decrypt_be_aarch64_ghash(
   ek: &Aes256EncKey,
   initial_counter: &[u8; BLOCK_SIZE],
   data: &mut [u8],
-  mut acc: u128,
+  acc: &mut u128,
   tables: &Aarch64GcmTables<'_>,
-) -> u128 {
+) {
   // SAFETY: fused aarch64 AES-GCM opening because:
   // 1. This function's caller guarantees AES-CE and PMULL availability.
   // 2. `data` is a valid mutable ciphertext slice. Ciphertext blocks are copied before in-place
@@ -3910,9 +3991,9 @@ pub(crate) unsafe fn aes256_ctr32_decrypt_be_aarch64_ghash(
     let ce_rk = match &ek.inner {
       KeyInner::Aarch64Aes(rk) => rk,
       _ => {
-        acc = ghash_ciphertext_fallback(acc, tables.h_polyval, data);
+        *acc = ghash_ciphertext_fallback(*acc, tables.h_powers_rev[3], data);
         aes256_ctr32_encrypt_be(ek, initial_counter, data);
-        return acc;
+        return;
       }
     };
 
@@ -3928,22 +4009,12 @@ pub(crate) unsafe fn aes256_ctr32_decrypt_be_aarch64_ghash(
       initial_counter[15],
     ]);
     let state = ce::decrypt_ctr32_be_xor_ghash_128b_chunks_core(ce_rk, &iv_prefix, ctr, data, acc, tables);
-    acc = state.0;
-    ctr = state.1;
-    let mut offset = state.2;
+    ctr = state.0;
+    let mut offset = state.1;
 
     while offset.strict_add(64) <= data.len() {
       let end = offset.strict_add(64);
-      let chunk = &data[offset..end];
-      let (ciphertext_blocks, _) = chunk.as_chunks::<16>();
-      let blocks = [
-        u128::from_be_bytes(ciphertext_blocks[0]),
-        u128::from_be_bytes(ciphertext_blocks[1]),
-        u128::from_be_bytes(ciphertext_blocks[2]),
-        u128::from_be_bytes(ciphertext_blocks[3]),
-      ];
-      let _ = ce::encrypt_ctr32_be_xor_4blocks_core(ce_rk, &iv_prefix, ctr, &mut data[offset..end]);
-      acc = super::polyval::aarch64_aggregate_4blocks_inline(acc, tables.h_powers_rev, &blocks);
+      ce::decrypt_gcm_four(ce_rk, &iv_prefix, ctr, &mut data[offset..end], tables, acc);
       ctr = ctr.wrapping_add(4);
       offset = end;
     }
@@ -3953,25 +4024,29 @@ pub(crate) unsafe fn aes256_ctr32_decrypt_be_aarch64_ghash(
       counter_block[..12].copy_from_slice(&iv_prefix);
       counter_block[12..16].copy_from_slice(&ctr.to_be_bytes());
 
-      let mut keystream = counter_block;
-      ce::encrypt_block_core(ce_rk, &mut keystream);
+      let mut keystream_storage = crate::secret::ZeroizingBytes::<BLOCK_SIZE>::zeroed();
+
+      let keystream = keystream_storage.as_mut_array();
+
+      *keystream = counter_block;
+      ce::encrypt_gcm_tail_block(ce_rk, keystream);
 
       let remaining = data.len().strict_sub(offset);
       if remaining >= BLOCK_SIZE {
         let mut ciphertext = [0u8; BLOCK_SIZE];
         ciphertext.copy_from_slice(&data[offset..offset.strict_add(BLOCK_SIZE)]);
-        acc ^= u128::from_be_bytes(ciphertext);
-        acc = super::polyval::aarch64_clmul128_reduce_inline(acc, tables.h_polyval);
+        *acc ^= u128::from_be_bytes(ciphertext);
+        *acc = ce::multiply_gcm(tables, *acc);
 
-        let ks = u128::from_ne_bytes(keystream);
+        let ks = u128::from_ne_bytes(*keystream);
         let plaintext = u128::from_ne_bytes(ciphertext) ^ ks;
         data[offset..offset.strict_add(BLOCK_SIZE)].copy_from_slice(&plaintext.to_ne_bytes());
         offset = offset.strict_add(BLOCK_SIZE);
       } else {
         let mut block = [0u8; BLOCK_SIZE];
         block[..remaining].copy_from_slice(&data[offset..offset.strict_add(remaining)]);
-        acc ^= u128::from_be_bytes(block);
-        acc = super::polyval::aarch64_clmul128_reduce_inline(acc, tables.h_polyval);
+        *acc ^= u128::from_be_bytes(block);
+        *acc = ce::multiply_gcm(tables, *acc);
 
         let mut i = 0usize;
         while i < remaining {
@@ -3982,8 +4057,6 @@ pub(crate) unsafe fn aes256_ctr32_decrypt_be_aarch64_ghash(
       }
       ctr = ctr.wrapping_add(1);
     }
-
-    acc
   }
 }
 
@@ -3997,6 +4070,38 @@ pub(crate) unsafe fn aes256_ctr32_decrypt_be_aarch64_ghash(
 #[inline]
 #[cfg(feature = "aes-gcm")]
 pub(crate) fn aes128_ctr32_encrypt_be(ek: &Aes128EncKey, initial_counter: &[u8; BLOCK_SIZE], data: &mut [u8]) {
+  let _scrub = CtrStackScrub;
+  aes128_ctr32_encrypt_be_worker(ek, initial_counter, data);
+}
+
+// A block dispatch can cache expanded round keys and spill intermediate state
+// outside the named keystream owner. Keep that work below a borrowed-only
+// boundary, then overwrite its dead frame, including the portable block core.
+// The linked worker depth and scrub placement require target-specific review.
+#[cfg(feature = "aes-gcm")]
+const CTR_STACK_SCRUB_WORDS: usize = 1024;
+
+#[cfg(feature = "aes-gcm")]
+struct CtrStackScrub;
+
+#[cfg(feature = "aes-gcm")]
+impl Drop for CtrStackScrub {
+  fn drop(&mut self) {
+    scrub_ctr_stack();
+  }
+}
+
+#[cfg(feature = "aes-gcm")]
+#[inline(never)]
+fn scrub_ctr_stack() {
+  let mut scratch = [0u64; CTR_STACK_SCRUB_WORDS];
+  crate::traits::ct::zeroize_words(&mut scratch);
+  core::hint::black_box(&mut scratch);
+}
+
+#[inline(never)]
+#[cfg(feature = "aes-gcm")]
+fn aes128_ctr32_encrypt_be_worker(ek: &Aes128EncKey, initial_counter: &[u8; BLOCK_SIZE], data: &mut [u8]) {
   let mut counter_block = *initial_counter;
   let mut ctr = u32::from_be_bytes([
     counter_block[12],
@@ -4051,7 +4156,13 @@ pub(crate) fn aes128_ctr32_encrypt_be(ek: &Aes128EncKey, initial_counter: &[u8; 
     };
 
     while offset.strict_add(64) <= data.len() {
-      let mut keystream = [[0u8; BLOCK_SIZE]; 4];
+      let mut keystream_storage = crate::secret::ZeroizingBytes::<{ 4 * BLOCK_SIZE }>::zeroed();
+      let keystream = keystream_storage
+        .as_mut_array()
+        .as_chunks_mut::<BLOCK_SIZE>()
+        .0
+        .first_chunk_mut::<4>()
+        .expect("four AES counter blocks");
       let mut i = 0u32;
       while i < 4 {
         keystream[i as usize][..12].copy_from_slice(&iv_prefix);
@@ -4059,7 +4170,7 @@ pub(crate) fn aes128_ctr32_encrypt_be(ek: &Aes128EncKey, initial_counter: &[u8; 
         i = i.strict_add(1);
       }
 
-      aes128_encrypt_blocks_ecb(ek, &mut keystream);
+      aes128_encrypt_blocks_ecb(ek, keystream);
 
       let mut lane = 0usize;
       while lane < 4 {
@@ -4088,7 +4199,14 @@ pub(crate) fn aes128_ctr32_encrypt_be(ek: &Aes128EncKey, initial_counter: &[u8; 
         break;
       }
 
-      let mut keystream = [[0u8; BLOCK_SIZE]; 4];
+      let mut keystream_storage = crate::secret::ZeroizingBytes::<{ 4 * BLOCK_SIZE }>::zeroed();
+
+      let keystream = keystream_storage
+        .as_mut_array()
+        .as_chunks_mut::<BLOCK_SIZE>()
+        .0
+        .first_chunk_mut::<4>()
+        .expect("four AES counter blocks");
       let mut i = 0u32;
       while (i as usize) < block_count {
         keystream[i as usize][..12].copy_from_slice(&counter_block[..12]);
@@ -4097,7 +4215,7 @@ pub(crate) fn aes128_ctr32_encrypt_be(ek: &Aes128EncKey, initial_counter: &[u8; 
       }
 
       aes128_encrypt_blocks_ecb(ek, &mut keystream[..block_count]);
-      let processed = xor_keystream_tail(data, offset, &keystream, block_count);
+      let processed = xor_keystream_tail(data, offset, keystream, block_count);
       offset = offset.strict_add(processed);
       ctr = ctr.wrapping_add(u32::from(block_count.to_le_bytes()[0]));
     }
@@ -4106,12 +4224,16 @@ pub(crate) fn aes128_ctr32_encrypt_be(ek: &Aes128EncKey, initial_counter: &[u8; 
   while offset < data.len() {
     counter_block[12..16].copy_from_slice(&ctr.to_be_bytes());
 
-    let mut keystream = counter_block;
-    aes128_encrypt_block(ek, &mut keystream);
+    let mut keystream_storage = crate::secret::ZeroizingBytes::<BLOCK_SIZE>::zeroed();
+
+    let keystream = keystream_storage.as_mut_array();
+
+    *keystream = counter_block;
+    aes128_encrypt_block(ek, keystream);
 
     let remaining = data.len().strict_sub(offset);
     if remaining >= BLOCK_SIZE {
-      let ks = u128::from_ne_bytes(keystream);
+      let ks = u128::from_ne_bytes(*keystream);
       let mut d = [0u8; BLOCK_SIZE];
       d.copy_from_slice(&data[offset..offset.strict_add(BLOCK_SIZE)]);
       let xored = u128::from_ne_bytes(d) ^ ks;
@@ -4132,7 +4254,7 @@ pub(crate) fn aes128_ctr32_encrypt_be(ek: &Aes128EncKey, initial_counter: &[u8; 
 
 /// AES-128 CTR encryption fused with PMULL GHASH accumulation for GCM sealing.
 ///
-/// Encrypts `data` in place and returns the GHASH accumulator after the
+/// Encrypts `data` in place and updates the GHASH accumulator after the
 /// ciphertext has been folded in. The incoming `acc` is normally the GHASH
 /// state after AAD processing.
 ///
@@ -4144,9 +4266,9 @@ pub(crate) unsafe fn aes128_ctr32_encrypt_be_aarch64_ghash(
   ek: &Aes128EncKey,
   initial_counter: &[u8; BLOCK_SIZE],
   data: &mut [u8],
-  mut acc: u128,
+  acc: &mut u128,
   tables: &Aarch64GcmTables<'_>,
-) -> u128 {
+) {
   // SAFETY: fused aarch64 AES-GCM sealing because:
   // 1. This function's caller guarantees AES-CE and PMULL availability.
   // 2. `data` is a valid mutable byte slice; all chunk processing uses checked slice ranges and the
@@ -4156,7 +4278,8 @@ pub(crate) unsafe fn aes128_ctr32_encrypt_be_aarch64_ghash(
       Key128Inner::Aarch64Aes(rk) => rk,
       _ => {
         aes128_ctr32_encrypt_be(ek, initial_counter, data);
-        return ghash_ciphertext_fallback(acc, tables.h_polyval, data);
+        *acc = ghash_ciphertext_fallback(*acc, tables.h_powers_rev[3], data);
+        return;
       }
     };
 
@@ -4178,22 +4301,19 @@ pub(crate) unsafe fn aes128_ctr32_encrypt_be_aarch64_ghash(
     if data.len() <= 256 {
       while offset.strict_add(128) <= data.len() {
         let end = offset.strict_add(128);
-        let blocks = ce::encrypt_ctr32_be_xor_8blocks_128_core(ce_rk, &iv_prefix, ctr, &mut data[offset..end]);
-        acc = super::polyval::aarch64_aggregate_8blocks_be_lanes_inline(acc, tables.h_powers_rev_8, &blocks);
+        ce::encrypt_gcm_eight_128(ce_rk, &iv_prefix, ctr, &mut data[offset..end], tables, acc);
         ctr = ctr.wrapping_add(8);
         offset = end;
       }
     } else if offset.strict_add(128) <= data.len() {
       let state = ce::encrypt_ctr32_be_xor_ghash_128b_chunks_128_core(ce_rk, &iv_prefix, ctr, data, acc, tables);
-      acc = state.0;
-      ctr = state.1;
-      offset = state.2;
+      ctr = state.0;
+      offset = state.1;
     }
 
     while offset.strict_add(64) <= data.len() {
       let end = offset.strict_add(64);
-      let blocks = ce::encrypt_ctr32_be_xor_4blocks_128_core(ce_rk, &iv_prefix, ctr, &mut data[offset..end]);
-      acc = super::polyval::aarch64_aggregate_4blocks_inline(acc, tables.h_powers_rev, &blocks);
+      ce::encrypt_gcm_four_128(ce_rk, &iv_prefix, ctr, &mut data[offset..end], tables, acc);
       ctr = ctr.wrapping_add(4);
       offset = end;
     }
@@ -4203,19 +4323,23 @@ pub(crate) unsafe fn aes128_ctr32_encrypt_be_aarch64_ghash(
       counter_block[..12].copy_from_slice(&iv_prefix);
       counter_block[12..16].copy_from_slice(&ctr.to_be_bytes());
 
-      let mut keystream = counter_block;
-      ce::encrypt_block_128_core(ce_rk, &mut keystream);
+      let mut keystream_storage = crate::secret::ZeroizingBytes::<BLOCK_SIZE>::zeroed();
+
+      let keystream = keystream_storage.as_mut_array();
+
+      *keystream = counter_block;
+      ce::encrypt_gcm_tail_block_128(ce_rk, keystream);
 
       let remaining = data.len().strict_sub(offset);
       if remaining >= BLOCK_SIZE {
-        let ks = u128::from_ne_bytes(keystream);
+        let ks = u128::from_ne_bytes(*keystream);
         let mut d = [0u8; BLOCK_SIZE];
         d.copy_from_slice(&data[offset..offset.strict_add(BLOCK_SIZE)]);
         let xored = u128::from_ne_bytes(d) ^ ks;
         let ciphertext = xored.to_ne_bytes();
         data[offset..offset.strict_add(BLOCK_SIZE)].copy_from_slice(&ciphertext);
-        acc ^= u128::from_be_bytes(ciphertext);
-        acc = super::polyval::aarch64_clmul128_reduce_inline(acc, tables.h_polyval);
+        *acc ^= u128::from_be_bytes(ciphertext);
+        *acc = ce::multiply_gcm(tables, *acc);
         offset = offset.strict_add(BLOCK_SIZE);
       } else {
         let mut block = [0u8; BLOCK_SIZE];
@@ -4225,21 +4349,19 @@ pub(crate) unsafe fn aes128_ctr32_encrypt_be_aarch64_ghash(
           block[i] = data[offset.strict_add(i)];
           i = i.strict_add(1);
         }
-        acc ^= u128::from_be_bytes(block);
-        acc = super::polyval::aarch64_clmul128_reduce_inline(acc, tables.h_polyval);
+        *acc ^= u128::from_be_bytes(block);
+        *acc = ce::multiply_gcm(tables, *acc);
         offset = offset.strict_add(remaining);
       }
       ctr = ctr.wrapping_add(1);
     }
-
-    acc
   }
 }
 
 /// AES-128 CTR decryption fused with PMULL GHASH accumulation for GCM open.
 ///
-/// Folds ciphertext into GHASH, decrypts the same chunk in place, and returns
-/// the accumulator. Authentication is still finalized and checked by the
+/// Folds ciphertext into GHASH and decrypts the same chunk in place while
+/// updating the accumulator. Authentication is still finalized and checked by the
 /// caller, which zeroizes the buffer on failure.
 ///
 /// # Safety
@@ -4250,9 +4372,9 @@ pub(crate) unsafe fn aes128_ctr32_decrypt_be_aarch64_ghash(
   ek: &Aes128EncKey,
   initial_counter: &[u8; BLOCK_SIZE],
   data: &mut [u8],
-  mut acc: u128,
+  acc: &mut u128,
   tables: &Aarch64GcmTables<'_>,
-) -> u128 {
+) {
   // SAFETY: fused aarch64 AES-GCM opening because:
   // 1. This function's caller guarantees AES-CE and PMULL availability.
   // 2. `data` is a valid mutable ciphertext slice. Ciphertext blocks are copied before in-place
@@ -4262,9 +4384,9 @@ pub(crate) unsafe fn aes128_ctr32_decrypt_be_aarch64_ghash(
     let ce_rk = match &ek.inner {
       Key128Inner::Aarch64Aes(rk) => rk,
       _ => {
-        acc = ghash_ciphertext_fallback(acc, tables.h_polyval, data);
+        *acc = ghash_ciphertext_fallback(*acc, tables.h_powers_rev[3], data);
         aes128_ctr32_encrypt_be(ek, initial_counter, data);
-        return acc;
+        return;
       }
     };
 
@@ -4280,22 +4402,12 @@ pub(crate) unsafe fn aes128_ctr32_decrypt_be_aarch64_ghash(
       initial_counter[15],
     ]);
     let state = ce::decrypt_ctr32_be_xor_ghash_128b_chunks_128_core(ce_rk, &iv_prefix, ctr, data, acc, tables);
-    acc = state.0;
-    ctr = state.1;
-    let mut offset = state.2;
+    ctr = state.0;
+    let mut offset = state.1;
 
     while offset.strict_add(64) <= data.len() {
       let end = offset.strict_add(64);
-      let chunk = &data[offset..end];
-      let (ciphertext_blocks, _) = chunk.as_chunks::<16>();
-      let blocks = [
-        u128::from_be_bytes(ciphertext_blocks[0]),
-        u128::from_be_bytes(ciphertext_blocks[1]),
-        u128::from_be_bytes(ciphertext_blocks[2]),
-        u128::from_be_bytes(ciphertext_blocks[3]),
-      ];
-      let _ = ce::encrypt_ctr32_be_xor_4blocks_128_core(ce_rk, &iv_prefix, ctr, &mut data[offset..end]);
-      acc = super::polyval::aarch64_aggregate_4blocks_inline(acc, tables.h_powers_rev, &blocks);
+      ce::decrypt_gcm_four_128(ce_rk, &iv_prefix, ctr, &mut data[offset..end], tables, acc);
       ctr = ctr.wrapping_add(4);
       offset = end;
     }
@@ -4305,25 +4417,29 @@ pub(crate) unsafe fn aes128_ctr32_decrypt_be_aarch64_ghash(
       counter_block[..12].copy_from_slice(&iv_prefix);
       counter_block[12..16].copy_from_slice(&ctr.to_be_bytes());
 
-      let mut keystream = counter_block;
-      ce::encrypt_block_128_core(ce_rk, &mut keystream);
+      let mut keystream_storage = crate::secret::ZeroizingBytes::<BLOCK_SIZE>::zeroed();
+
+      let keystream = keystream_storage.as_mut_array();
+
+      *keystream = counter_block;
+      ce::encrypt_gcm_tail_block_128(ce_rk, keystream);
 
       let remaining = data.len().strict_sub(offset);
       if remaining >= BLOCK_SIZE {
         let mut ciphertext = [0u8; BLOCK_SIZE];
         ciphertext.copy_from_slice(&data[offset..offset.strict_add(BLOCK_SIZE)]);
-        acc ^= u128::from_be_bytes(ciphertext);
-        acc = super::polyval::aarch64_clmul128_reduce_inline(acc, tables.h_polyval);
+        *acc ^= u128::from_be_bytes(ciphertext);
+        *acc = ce::multiply_gcm(tables, *acc);
 
-        let ks = u128::from_ne_bytes(keystream);
+        let ks = u128::from_ne_bytes(*keystream);
         let plaintext = u128::from_ne_bytes(ciphertext) ^ ks;
         data[offset..offset.strict_add(BLOCK_SIZE)].copy_from_slice(&plaintext.to_ne_bytes());
         offset = offset.strict_add(BLOCK_SIZE);
       } else {
         let mut block = [0u8; BLOCK_SIZE];
         block[..remaining].copy_from_slice(&data[offset..offset.strict_add(remaining)]);
-        acc ^= u128::from_be_bytes(block);
-        acc = super::polyval::aarch64_clmul128_reduce_inline(acc, tables.h_polyval);
+        *acc ^= u128::from_be_bytes(block);
+        *acc = ce::multiply_gcm(tables, *acc);
 
         let mut i = 0usize;
         while i < remaining {
@@ -4334,8 +4450,6 @@ pub(crate) unsafe fn aes128_ctr32_decrypt_be_aarch64_ghash(
       }
       ctr = ctr.wrapping_add(1);
     }
-
-    acc
   }
 }
 
@@ -4418,12 +4532,16 @@ pub(crate) unsafe fn aes128_ctr32_encrypt_be_aesni_pclmul_ghash(
       counter_block[..12].copy_from_slice(&iv_prefix);
       counter_block[12..16].copy_from_slice(&ctr.to_be_bytes());
 
-      let mut keystream = counter_block;
-      ni::encrypt_block_128(ni_rk, &mut keystream);
+      let mut keystream_storage = crate::secret::ZeroizingBytes::<BLOCK_SIZE>::zeroed();
+
+      let keystream = keystream_storage.as_mut_array();
+
+      *keystream = counter_block;
+      ni::encrypt_block_128(ni_rk, keystream);
 
       let remaining = data.len().strict_sub(offset);
       if remaining >= BLOCK_SIZE {
-        let ks = u128::from_ne_bytes(keystream);
+        let ks = u128::from_ne_bytes(*keystream);
         let mut d = [0u8; BLOCK_SIZE];
         d.copy_from_slice(&data[offset..offset.strict_add(BLOCK_SIZE)]);
         let xored = u128::from_ne_bytes(d) ^ ks;
@@ -4526,8 +4644,12 @@ pub(crate) unsafe fn aes128_ctr32_decrypt_be_aesni_pclmul_ghash(
       counter_block[..12].copy_from_slice(&iv_prefix);
       counter_block[12..16].copy_from_slice(&ctr.to_be_bytes());
 
-      let mut keystream = counter_block;
-      ni::encrypt_block_128(ni_rk, &mut keystream);
+      let mut keystream_storage = crate::secret::ZeroizingBytes::<BLOCK_SIZE>::zeroed();
+
+      let keystream = keystream_storage.as_mut_array();
+
+      *keystream = counter_block;
+      ni::encrypt_block_128(ni_rk, keystream);
 
       let remaining = data.len().strict_sub(offset);
       if remaining >= BLOCK_SIZE {
@@ -4536,7 +4658,7 @@ pub(crate) unsafe fn aes128_ctr32_decrypt_be_aesni_pclmul_ghash(
         acc ^= u128::from_be_bytes(ciphertext);
         acc = super::polyval::x86_clmul128_reduce_inline(acc, h_polyval);
 
-        let plaintext = u128::from_ne_bytes(ciphertext) ^ u128::from_ne_bytes(keystream);
+        let plaintext = u128::from_ne_bytes(ciphertext) ^ u128::from_ne_bytes(*keystream);
         data[offset..offset.strict_add(BLOCK_SIZE)].copy_from_slice(&plaintext.to_ne_bytes());
         offset = offset.strict_add(BLOCK_SIZE);
       } else {
@@ -4561,7 +4683,7 @@ pub(crate) unsafe fn aes128_ctr32_decrypt_be_aesni_pclmul_ghash(
 
 /// AES-128 CTR encryption fused with GHASH accumulation for GCM sealing.
 ///
-/// Encrypts `data` in place and returns the GHASH accumulator after the
+/// Encrypts `data` in place and updates the GHASH accumulator after the
 /// ciphertext has been folded in. The incoming `acc` is normally the GHASH
 /// state after AAD processing.
 ///
@@ -4615,7 +4737,7 @@ pub(crate) unsafe fn aes128_ctr32_encrypt_be_wide_ghash(
 
     #[cfg(target_os = "linux")]
     if data.len() >= 256 {
-      let mut state = x86_64_asm::AesGcmX86State::new(acc, ctr);
+      let mut state = x86_64_asm::AesGcmX86State::new(acc, ctr, data.as_ptr());
       // SAFETY: external x86-64 VAES-512 AES-128-GCM seal kernel because:
       // 1. This target-feature function is only entered after VAES, VPCLMULQDQ, AVX-512, AES-NI, and SSE2
       //    were selected by runtime/backend dispatch.
@@ -4700,12 +4822,16 @@ pub(crate) unsafe fn aes128_ctr32_encrypt_be_wide_ghash(
       counter_block[..12].copy_from_slice(&iv_prefix);
       counter_block[12..16].copy_from_slice(&ctr.to_be_bytes());
 
-      let mut keystream = counter_block;
-      ni::encrypt_block_128(ni_rk, &mut keystream);
+      let mut keystream_storage = crate::secret::ZeroizingBytes::<BLOCK_SIZE>::zeroed();
+
+      let keystream = keystream_storage.as_mut_array();
+
+      *keystream = counter_block;
+      ni::encrypt_block_128(ni_rk, keystream);
 
       let remaining = data.len().strict_sub(offset);
       if remaining >= BLOCK_SIZE {
-        let ks = u128::from_ne_bytes(keystream);
+        let ks = u128::from_ne_bytes(*keystream);
         let mut d = [0u8; BLOCK_SIZE];
         d.copy_from_slice(&data[offset..offset.strict_add(BLOCK_SIZE)]);
         let xored = u128::from_ne_bytes(d) ^ ks;
@@ -4790,7 +4916,7 @@ pub(crate) unsafe fn aes128_ctr32_decrypt_be_wide_ghash(
 
     #[cfg(target_os = "linux")]
     if data.len() >= 256 {
-      let mut state = x86_64_asm::AesGcmX86State::new(acc, ctr);
+      let mut state = x86_64_asm::AesGcmX86State::new(acc, ctr, data.as_ptr());
       // SAFETY: external x86-64 VAES-512 AES-128-GCM open kernel because:
       // 1. This target-feature function is only entered after VAES, VPCLMULQDQ, AVX-512, AES-NI, and SSE2
       //    were selected by runtime/backend dispatch.
@@ -4880,8 +5006,12 @@ pub(crate) unsafe fn aes128_ctr32_decrypt_be_wide_ghash(
       counter_block[..12].copy_from_slice(&iv_prefix);
       counter_block[12..16].copy_from_slice(&ctr.to_be_bytes());
 
-      let mut keystream = counter_block;
-      ni::encrypt_block_128(ni_rk, &mut keystream);
+      let mut keystream_storage = crate::secret::ZeroizingBytes::<BLOCK_SIZE>::zeroed();
+
+      let keystream = keystream_storage.as_mut_array();
+
+      *keystream = counter_block;
+      ni::encrypt_block_128(ni_rk, keystream);
 
       let remaining = data.len().strict_sub(offset);
       if remaining >= BLOCK_SIZE {
@@ -4890,7 +5020,7 @@ pub(crate) unsafe fn aes128_ctr32_decrypt_be_wide_ghash(
         acc ^= u128::from_be_bytes(ciphertext);
         acc = super::polyval::x86_clmul128_reduce_inline(acc, h_polyval);
 
-        let plaintext = u128::from_ne_bytes(ciphertext) ^ u128::from_ne_bytes(keystream);
+        let plaintext = u128::from_ne_bytes(ciphertext) ^ u128::from_ne_bytes(*keystream);
         data[offset..offset.strict_add(BLOCK_SIZE)].copy_from_slice(&plaintext.to_ne_bytes());
         offset = offset.strict_add(BLOCK_SIZE);
       } else {
@@ -5193,6 +5323,230 @@ pub(crate) unsafe fn aes128_ctr32_encrypt_wide(ek: &Aes128EncKey, initial_counte
 }
 
 // Tests
+
+/// Initialize one descriptor batch with the owned fused GCM kernel.
+/// The input type retains every borrowed native unit and its final sentinel.
+///
+/// # Safety
+/// The caller establishes AES, SSE2, AVX512F/VL/BW/DQ, VAES, VPCLMULQDQ and
+/// PCLMULQDQ. The validated GCM message length covers the counter range.
+#[cfg(all(
+  target_arch = "x86_64",
+  target_feature = "sse2",
+  target_os = "linux",
+  feature = "aes-gcm"
+))]
+#[target_feature(enable = "aes,sse2,avx512f,avx512vl,avx512bw,avx512dq,vaes,vpclmulqdq,pclmulqdq")]
+pub(crate) unsafe fn aes128_ctr32_encrypt_be_gather_wide_ghash<'output>(
+  ek: &Aes128EncKey,
+  initial_counter: &[u8; BLOCK_SIZE],
+  plaintext: &super::gather::Input<'_, 256>,
+  whole_message_aligned: bool,
+  out: &'output mut [core::mem::MaybeUninit<u8>],
+  acc: &mut u128,
+  tables: X86GcmTables<'_>,
+) -> &'output mut [u8] {
+  assert_eq!(plaintext.byte_len(), out.len());
+  let mut processed = 0;
+  if let Key128Inner::X86AesNi(rk) = &ek.inner
+    && plaintext.byte_len() >= 256
+  {
+    let ctr = u32::from_be_bytes(initial_counter[12..].try_into().expect("fixed counter width"));
+    let (input, spans) = plaintext.read_cursor();
+    let mut state = x86_64_asm::AesGcmX86State::new_gather(*acc, ctr, input, spans);
+    // SAFETY: the caller establishes the complete target-feature set. The key
+    // contains the initialized 128-bit AES schedule; the counter is 16 bytes.
+    // Input retains a complete contiguous slice or equally sized borrowed
+    // native units plus a pointer sentinel, all disjoint from exclusive output.
+    // The state selects a contiguous cursor or one pointer per 256-byte unit.
+    // The kernel writes without reading output and reports its initialized prefix.
+    // Each cadence receives its matching initialized H-power table. The SysV
+    // assembly preserves r12 and restores its aligned scratch stack on all exits.
+    unsafe {
+      if whole_message_aligned && plaintext.byte_len() >= 4096 && plaintext.byte_len().is_multiple_of(2048) {
+        x86_64_asm::rscrypto_aes128_gcm_seal_128x_vaes512_x86_64_linux(
+          rk.as_ptr(),
+          initial_counter.as_ptr(),
+          out.as_mut_ptr().cast(),
+          plaintext.byte_len(),
+          tables.h_powers_rev_128.as_ptr(),
+          core::ptr::from_mut(&mut state),
+        );
+      } else if plaintext.byte_len() >= 1024 {
+        x86_64_asm::rscrypto_aes128_gcm_seal_64x_vaes512_x86_64_linux(
+          rk.as_ptr(),
+          initial_counter.as_ptr(),
+          out.as_mut_ptr().cast(),
+          plaintext.byte_len(),
+          tables.h_powers_rev_64.as_ptr(),
+          core::ptr::from_mut(&mut state),
+        );
+      } else {
+        x86_64_asm::rscrypto_aes128_gcm_seal_16x_vaes512_x86_64_linux(
+          rk.as_ptr(),
+          initial_counter.as_ptr(),
+          out.as_mut_ptr().cast(),
+          plaintext.byte_len(),
+          tables.h_powers_rev_32.as_ptr(),
+          core::ptr::from_mut(&mut state),
+        );
+      }
+    }
+    *acc = state.acc();
+    processed = state.processed;
+  }
+  assert!(processed <= out.len() && processed.is_multiple_of(BLOCK_SIZE));
+  // SAFETY: only complete batches reported by the audited kernel are included.
+  // With no applicable kernel `processed` is zero. This exclusive initialized
+  // prefix remains tied to the original output borrow.
+  unsafe { core::slice::from_raw_parts_mut(out.as_mut_ptr().cast(), processed) }
+}
+
+/// Initialize one descriptor batch with the owned fused GCM kernel.
+/// The input type retains every borrowed native unit and its final sentinel.
+///
+/// # Safety
+/// The caller establishes AES, SSE2, AVX512F/VL/BW/DQ, VAES, VPCLMULQDQ and
+/// PCLMULQDQ. The validated GCM message length covers the counter range.
+#[cfg(all(
+  target_arch = "x86_64",
+  target_feature = "sse2",
+  target_os = "linux",
+  feature = "aes-gcm"
+))]
+#[target_feature(enable = "aes,sse2,avx512f,avx512vl,avx512bw,avx512dq,vaes,vpclmulqdq,pclmulqdq")]
+pub(crate) unsafe fn aes256_ctr32_encrypt_be_gather_wide_ghash<'output>(
+  ek: &Aes256EncKey,
+  initial_counter: &[u8; BLOCK_SIZE],
+  plaintext: &super::gather::Input<'_, 256>,
+  whole_message_aligned: bool,
+  out: &'output mut [core::mem::MaybeUninit<u8>],
+  acc: &mut u128,
+  tables: X86GcmTables<'_>,
+) -> &'output mut [u8] {
+  assert_eq!(plaintext.byte_len(), out.len());
+  let mut processed = 0;
+  if let KeyInner::X86AesNi(rk) = &ek.inner
+    && plaintext.byte_len() >= 256
+  {
+    let ctr = u32::from_be_bytes(initial_counter[12..].try_into().expect("fixed counter width"));
+    let (input, spans) = plaintext.read_cursor();
+    let mut state = x86_64_asm::AesGcmX86State::new_gather(*acc, ctr, input, spans);
+    // SAFETY: the caller establishes the complete target-feature set. The key
+    // contains the initialized 256-bit AES schedule; the counter is 16 bytes.
+    // Input retains a complete contiguous slice or equally sized borrowed
+    // native units plus a pointer sentinel, all disjoint from exclusive output.
+    // The state selects a contiguous cursor or one pointer per 256-byte unit.
+    // The kernel writes without reading output and reports its initialized prefix.
+    // Each cadence receives its matching initialized H-power table. The SysV
+    // assembly preserves r12 and restores its aligned scratch stack on all exits.
+    unsafe {
+      if whole_message_aligned && plaintext.byte_len() >= 4096 && plaintext.byte_len().is_multiple_of(2048) {
+        x86_64_asm::rscrypto_aes256_gcm_seal_128x_vaes512_x86_64_linux(
+          rk.as_ptr(),
+          initial_counter.as_ptr(),
+          out.as_mut_ptr().cast(),
+          plaintext.byte_len(),
+          tables.h_powers_rev_128.as_ptr(),
+          core::ptr::from_mut(&mut state),
+        );
+      } else if plaintext.byte_len() >= 1024 {
+        x86_64_asm::rscrypto_aes256_gcm_seal_64x_vaes512_x86_64_linux(
+          rk.as_ptr(),
+          initial_counter.as_ptr(),
+          out.as_mut_ptr().cast(),
+          plaintext.byte_len(),
+          tables.h_powers_rev_64.as_ptr(),
+          core::ptr::from_mut(&mut state),
+        );
+      } else {
+        x86_64_asm::rscrypto_aes256_gcm_seal_16x_vaes512_x86_64_linux(
+          rk.as_ptr(),
+          initial_counter.as_ptr(),
+          out.as_mut_ptr().cast(),
+          plaintext.byte_len(),
+          tables.h_powers_rev_32.as_ptr(),
+          core::ptr::from_mut(&mut state),
+        );
+      }
+    }
+    *acc = state.acc();
+    processed = state.processed;
+  }
+  assert!(processed <= out.len() && processed.is_multiple_of(BLOCK_SIZE));
+  // SAFETY: only complete batches reported by the audited kernel are included.
+  // With no applicable kernel `processed` is zero. This exclusive initialized
+  // prefix remains tied to the original output borrow.
+  unsafe { core::slice::from_raw_parts_mut(out.as_mut_ptr().cast(), processed) }
+}
+
+/// Encrypt a whole-block gather prefix with the selected AArch64 GCM kernel.
+///
+/// # Safety
+/// The caller establishes AES/PMULL/NEON and the validated GCM counter range.
+#[cfg(all(
+  target_arch = "aarch64",
+  any(target_os = "macos", target_os = "linux"),
+  feature = "aes-gcm"
+))]
+#[target_feature(enable = "aes,neon")]
+pub(crate) unsafe fn aes128_ctr32_encrypt_be_gather_aarch64_ghash<'output>(
+  ek: &Aes128EncKey,
+  initial_counter: &[u8; BLOCK_SIZE],
+  plaintext: &super::gather::Input<'_, 128>,
+  out: &'output mut [core::mem::MaybeUninit<u8>],
+  acc: &mut u128,
+  tables: &Aarch64GcmTables<'_>,
+) -> &'output mut [u8] {
+  assert_eq!(plaintext.byte_len(), out.len());
+  if let Key128Inner::Aarch64Aes(rk) = &ek.inner {
+    let prefix: &[u8; 12] = initial_counter[..12].try_into().expect("fixed nonce width");
+    let counter = u32::from_be_bytes(initial_counter[12..].try_into().expect("fixed counter width"));
+    // SAFETY: the caller establishes AES/PMULL/NEON and the counter range. The
+    // key variant is the matching AES-CE schedule. Equally sized Rust borrows
+    // prove disjoint valid input and writable output; the helper returns only
+    // its initialized ciphertext prefix.
+    unsafe { ce::encrypt_ctr32_be_gather_ghash_128_core(rk, prefix, counter, plaintext, out, acc, tables) }
+  } else {
+    // SAFETY: a zero-length initialized prefix needs no writes and retains the
+    // exclusive output's provenance. The gather driver handles the remainder.
+    unsafe { core::slice::from_raw_parts_mut(out.as_mut_ptr().cast(), 0) }
+  }
+}
+
+/// Encrypt a whole-block gather prefix with the selected AArch64 GCM kernel.
+///
+/// # Safety
+/// The caller establishes AES/PMULL/NEON and the validated GCM counter range.
+#[cfg(all(
+  target_arch = "aarch64",
+  any(target_os = "macos", target_os = "linux"),
+  feature = "aes-gcm"
+))]
+#[target_feature(enable = "aes,neon")]
+pub(crate) unsafe fn aes256_ctr32_encrypt_be_gather_aarch64_ghash<'output>(
+  ek: &Aes256EncKey,
+  initial_counter: &[u8; BLOCK_SIZE],
+  plaintext: &super::gather::Input<'_, 128>,
+  out: &'output mut [core::mem::MaybeUninit<u8>],
+  acc: &mut u128,
+  tables: &Aarch64GcmTables<'_>,
+) -> &'output mut [u8] {
+  assert_eq!(plaintext.byte_len(), out.len());
+  if let KeyInner::Aarch64Aes(rk) = &ek.inner {
+    let prefix: &[u8; 12] = initial_counter[..12].try_into().expect("fixed nonce width");
+    let counter = u32::from_be_bytes(initial_counter[12..].try_into().expect("fixed counter width"));
+    // SAFETY: the caller establishes AES/PMULL/NEON and the counter range. The
+    // key variant is the matching AES-CE schedule. Equally sized Rust borrows
+    // prove disjoint valid input and writable output; the helper returns only
+    // its initialized ciphertext prefix.
+    unsafe { ce::encrypt_ctr32_be_gather_ghash_core(rk, prefix, counter, plaintext, out, acc, tables) }
+  } else {
+    // SAFETY: a zero-length initialized prefix needs no writes and retains the
+    // exclusive output's provenance. The gather driver handles the remainder.
+    unsafe { core::slice::from_raw_parts_mut(out.as_mut_ptr().cast(), 0) }
+  }
+}
 
 #[cfg(test)]
 mod tests {
@@ -5519,7 +5873,6 @@ mod tests {
   impl Aarch64GcmTestPowers {
     fn tables(&self) -> Aarch64GcmTables<'_> {
       Aarch64GcmTables {
-        h_polyval: self.h_polyval,
         h_powers_rev: &self.h_powers_rev,
         h_powers_rev_8: &self.h_powers_rev_8,
         #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -5608,9 +5961,10 @@ mod tests {
     let expected_acc = ghash_ciphertext_fallback(seed_acc, powers.h_polyval, &expected);
 
     let mut actual = plaintext;
+    let mut actual_acc = seed_acc;
     // SAFETY: runtime caps above confirmed AES-CE + PMULL before calling the AArch64 target-feature
     // helper. Inputs are fixed-size initialized test buffers.
-    let actual_acc = unsafe { aes128_ctr32_encrypt_be_aarch64_ghash(&ek, &counter, &mut actual, seed_acc, &tables) };
+    unsafe { aes128_ctr32_encrypt_be_aarch64_ghash(&ek, &counter, &mut actual, &mut actual_acc, &tables) };
 
     assert_eq!(
       actual, expected,
@@ -5646,9 +6000,10 @@ mod tests {
     let expected_acc = ghash_ciphertext_fallback(seed_acc, powers.h_polyval, &ciphertext);
 
     let mut actual = ciphertext;
+    let mut actual_acc = seed_acc;
     // SAFETY: runtime caps above confirmed AES-CE + PMULL before calling the AArch64 target-feature
     // helper. Inputs are fixed-size initialized test buffers.
-    let actual_acc = unsafe { aes128_ctr32_decrypt_be_aarch64_ghash(&ek, &counter, &mut actual, seed_acc, &tables) };
+    unsafe { aes128_ctr32_decrypt_be_aarch64_ghash(&ek, &counter, &mut actual, &mut actual_acc, &tables) };
 
     assert_eq!(
       actual, plaintext,
@@ -5684,9 +6039,10 @@ mod tests {
     let expected_acc = ghash_ciphertext_fallback(seed_acc, powers.h_polyval, &expected);
 
     let mut actual = plaintext;
+    let mut actual_acc = seed_acc;
     // SAFETY: runtime caps above confirmed AES-CE + PMULL before calling the AArch64 target-feature
     // helper. Inputs are fixed-size initialized test buffers.
-    let actual_acc = unsafe { aes256_ctr32_encrypt_be_aarch64_ghash(&ek, &counter, &mut actual, seed_acc, &tables) };
+    unsafe { aes256_ctr32_encrypt_be_aarch64_ghash(&ek, &counter, &mut actual, &mut actual_acc, &tables) };
 
     assert_eq!(
       actual, expected,
@@ -5722,9 +6078,10 @@ mod tests {
     let expected_acc = ghash_ciphertext_fallback(seed_acc, powers.h_polyval, &ciphertext);
 
     let mut actual = ciphertext;
+    let mut actual_acc = seed_acc;
     // SAFETY: runtime caps above confirmed AES-CE + PMULL before calling the AArch64 target-feature
     // helper. Inputs are fixed-size initialized test buffers.
-    let actual_acc = unsafe { aes256_ctr32_decrypt_be_aarch64_ghash(&ek, &counter, &mut actual, seed_acc, &tables) };
+    unsafe { aes256_ctr32_decrypt_be_aarch64_ghash(&ek, &counter, &mut actual, &mut actual_acc, &tables) };
 
     assert_eq!(
       actual, plaintext,

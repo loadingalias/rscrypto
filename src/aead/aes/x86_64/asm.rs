@@ -12,19 +12,48 @@ pub(super) struct AesGcmX86State {
   pub(super) ctr: u32,
   _pad: u32,
   pub(super) processed: usize,
+  // Read pointer can alias the output for the existing in-place caller.
+  input: *const u8,
+  input_spans: *const *const u8,
+}
+
+#[cfg(feature = "aes-gcm")]
+const _: () = {
+  assert!(core::mem::offset_of!(AesGcmX86State, acc_lo) == 0);
+  assert!(core::mem::offset_of!(AesGcmX86State, ctr) == 16);
+  assert!(core::mem::offset_of!(AesGcmX86State, processed) == 24);
+  assert!(core::mem::offset_of!(AesGcmX86State, input) == 32);
+  assert!(core::mem::offset_of!(AesGcmX86State, input_spans) == 40);
+};
+
+#[cfg(feature = "aes-gcm")]
+impl Drop for AesGcmX86State {
+  fn drop(&mut self) {
+    crate::traits::ct::zeroize_words_no_fence(core::slice::from_mut(&mut self.acc_lo));
+    crate::traits::ct::zeroize_words(core::slice::from_mut(&mut self.acc_hi));
+  }
 }
 
 #[cfg(feature = "aes-gcm")]
 impl AesGcmX86State {
   #[inline]
-  pub(super) fn new(acc: u128, ctr: u32) -> Self {
+  pub(super) fn new(acc: u128, ctr: u32, input: *const u8) -> Self {
     Self {
       acc_lo: u64::try_from(acc & u128::from(u64::MAX)).expect("masked accumulator half fits u64"),
       acc_hi: u64::try_from(acc >> 64).expect("shifted accumulator half fits u64"),
       ctr,
       _pad: 0,
       processed: 0,
+      input,
+      input_spans: core::ptr::null(),
     }
+  }
+
+  #[inline]
+  pub(super) fn new_gather(acc: u128, ctr: u32, input: *const u8, input_spans: *const *const u8) -> Self {
+    let mut state = Self::new(acc, ctr, input);
+    state.input_spans = input_spans;
+    state
   }
 
   #[inline]

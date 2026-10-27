@@ -48,7 +48,45 @@ The caller clears each returned derivation block after use. The selected
 plaintext or synthetic message is copied into caller-owned `out`; its cleanup
 is the caller's responsibility. See [cleanup boundaries](secret-lifecycle.md#rsa-implicit-rejection).
 
+### AES-128-GCM wide tables
+
+The x86 AES-128-GCM context retains its 64- and 128-block GHASH tables in one private
+group. Linux aligns this group to 64 bytes. It contains the same two initialized arrays;
+the context retains cleanup ownership and clears both on drop. The group adds no copy,
+formatting, or export API. Compiler-created construction copies remain outside this inventory's proof.
+
 ### rustls symmetric adapters
+
+AES-GCM's big-endian CTR paths retain each materialized single-block or four-block
+keystream in the existing private `ZeroizingBytes` owner. They borrow its storage for
+AES output and XOR, then clear it on scope exit or unwind. Counters remain public;
+compiler-created copies and registers require separate artifact evidence.
+The generic CTR dispatch runs inside an outlined worker that borrows its key and
+data. A post-call guard overwrites a fixed dead-stack region to clear cached
+schedules and block-core spills. It owns no key, output, or allocation. Linked
+worker depth and actual overwrite placement require separate review for each target.
+
+Internal AArch64 GCM table descriptors borrow the context's H-power arrays. The enclosing
+`GhashAccumulator` owns the live authentication state; AAD and four-, eight-, and bulk-block
+helpers update it through a mutable borrow. These borrows add no secret owner or allocation.
+
+`AeadGather` borrows ordered plaintext slices and caller-owned output. It retains no key or
+plaintext copy. Its operation-local `ZeroizingBytes` owner holds a bounded keystream batch and
+the unused bytes of a partial block. The output guard owns initialization progress, not a second
+plaintext buffer. The initialized-output and spare-capacity APIs return the same ciphertext and
+detached tag. The allocating append helper preserves existing output and extends its length only
+after checking that the returned initialized slice covers its complete reserved tail.
+
+Native AES-GCM batches retain public input pointers, with no copied plaintext. Native
+little-endian AArch64 ChaCha20 gathers retain at most 128 nonempty input spans as public
+pointer/length pairs. Longer iterators continue through the stream-based gather fallback.
+The integrated kernel reads seams into registers and writes ciphertext directly. Its aligned
+`SealData` copies the key, as in the existing in-place path: the tag replaces the first 16 key
+bytes and the remaining 16 bytes are volatile-zeroed before return. The Rust GCM ABI state
+owns its copied GHASH accumulator and clears both halves on drop.
+Linux x86-64 kernels clear their explicit GHASH power workspaces before restoring the stack;
+native GCM kernels and AArch64 ChaCha20 seal restore saved registers before clearing their saved slots.
+Other live register values and compiler-created copies retain their separate qualification limits.
 
 The `rscrypto-rustls` companion owns its HMAC keys in `SecretVec` and its HKDF
 expansion state in `HkdfSha256` or `HkdfSha384`. Neither adapter is cloneable.

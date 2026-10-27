@@ -56,10 +56,10 @@
 
 use core::fmt;
 
-pub use crate::traits::Aead;
 use crate::traits::VerificationError;
 #[doc(hidden)]
 pub use crate::traits::aead::SealToken as __SealToken;
+pub use crate::traits::{Aead, AeadGather};
 
 /// Expert cryptographic capabilities with protocol-enforced preconditions.
 pub mod expert {
@@ -175,6 +175,8 @@ mod ascon128;
 mod chacha20;
 #[cfg(feature = "chacha20poly1305")]
 mod chacha20poly1305;
+#[cfg(any(feature = "aes-gcm", feature = "chacha20poly1305"))]
+mod gather;
 #[cfg(feature = "aes-gcm")]
 mod ghash;
 #[cfg(any(feature = "aes-gcm", feature = "chacha20poly1305"))]

@@ -215,15 +215,15 @@
     .endm
 
     .macro OPEN_GHASH_ONLY ll_b, hh_b, mm_b, data_off, h_off, with_acc
-        ldr q24, [x2, #\data_off]
+        ldr q24, [x15, #\data_off]
         GHASH_FOLD_INTO \ll_b, \hh_b, \mm_b, v24.16b, \h_off, \with_acc
     .endm
 
     .macro LOAD_OPEN_CT8
-        ldp q8, q9, [x2]
-        ldp q10, q11, [x2, #32]
-        ldp q12, q13, [x2, #64]
-        ldp q14, q15, [x2, #96]
+        ldp q8, q9, [x15]
+        ldp q10, q11, [x15, #32]
+        ldp q12, q13, [x15, #64]
+        ldp q14, q15, [x15, #96]
     .endm
 
     .macro AES_ENCRYPT8_GHASH_OPEN rounds
@@ -611,65 +611,65 @@
     .endm
 
     .macro SEAL_XOR_STORE
-        ldr q24, [x2]
+        ldr q24, [x15]
         eor v0.16b, v0.16b, v24.16b
         str q0, [x2]
-        ldr q24, [x2, #16]
+        ldr q24, [x15, #16]
         eor v1.16b, v1.16b, v24.16b
         str q1, [x2, #16]
-        ldr q24, [x2, #32]
+        ldr q24, [x15, #32]
         eor v2.16b, v2.16b, v24.16b
         str q2, [x2, #32]
-        ldr q24, [x2, #48]
+        ldr q24, [x15, #48]
         eor v3.16b, v3.16b, v24.16b
         str q3, [x2, #48]
-        ldr q24, [x2, #64]
+        ldr q24, [x15, #64]
         eor v4.16b, v4.16b, v24.16b
         str q4, [x2, #64]
-        ldr q24, [x2, #80]
+        ldr q24, [x15, #80]
         eor v5.16b, v5.16b, v24.16b
         str q5, [x2, #80]
-        ldr q24, [x2, #96]
+        ldr q24, [x15, #96]
         eor v6.16b, v6.16b, v24.16b
         str q6, [x2, #96]
-        ldr q24, [x2, #112]
+        ldr q24, [x15, #112]
         eor v7.16b, v7.16b, v24.16b
         str q7, [x2, #112]
     .endm
 
     .macro SEAL_XOR_STORE_TO_PREV
-        ldp q8, q9, [x2]
+        ldp q8, q9, [x15]
         eor v8.16b, v8.16b, v0.16b
         eor v9.16b, v9.16b, v1.16b
         stp q8, q9, [x2]
-        ldp q10, q11, [x2, #32]
+        ldp q10, q11, [x15, #32]
         eor v10.16b, v10.16b, v2.16b
         eor v11.16b, v11.16b, v3.16b
         stp q10, q11, [x2, #32]
-        ldp q12, q13, [x2, #64]
+        ldp q12, q13, [x15, #64]
         eor v12.16b, v12.16b, v4.16b
         eor v13.16b, v13.16b, v5.16b
         stp q12, q13, [x2, #64]
-        ldp q14, q15, [x2, #96]
+        ldp q14, q15, [x15, #96]
         eor v14.16b, v14.16b, v6.16b
         eor v15.16b, v15.16b, v7.16b
         stp q14, q15, [x2, #96]
     .endm
 
     .macro SEAL_EOR3_STORE_TO_PREV
-        ldp q8, q9, [x2]
+        ldp q8, q9, [x15]
         eor3 v8.16b, v8.16b, v0.16b, v23.16b
         eor3 v9.16b, v9.16b, v1.16b, v23.16b
         stp q8, q9, [x2]
-        ldp q10, q11, [x2, #32]
+        ldp q10, q11, [x15, #32]
         eor3 v10.16b, v10.16b, v2.16b, v23.16b
         eor3 v11.16b, v11.16b, v3.16b, v23.16b
         stp q10, q11, [x2, #32]
-        ldp q12, q13, [x2, #64]
+        ldp q12, q13, [x15, #64]
         eor3 v12.16b, v12.16b, v4.16b, v23.16b
         eor3 v13.16b, v13.16b, v5.16b, v23.16b
         stp q12, q13, [x2, #64]
-        ldp q14, q15, [x2, #96]
+        ldp q14, q15, [x15, #96]
         eor3 v14.16b, v14.16b, v6.16b, v23.16b
         eor3 v15.16b, v15.16b, v7.16b, v23.16b
         stp q14, q15, [x2, #96]
@@ -677,7 +677,7 @@
 
     .macro SEAL_XOR_STORE_TO_PREV_BUILD_NEXT
         PREP_NEXT_COUNTER8
-        ldp q8, q9, [x2]
+        ldp q8, q9, [x15]
         eor v8.16b, v8.16b, v0.16b
         eor v9.16b, v9.16b, v1.16b
         stp q8, q9, [x2]
@@ -685,7 +685,7 @@
         orr v1.16b, v25.16b, v25.16b
         mov v0.s[3], v24.s[0]
         mov v1.s[3], v24.s[1]
-        ldp q10, q11, [x2, #32]
+        ldp q10, q11, [x15, #32]
         eor v10.16b, v10.16b, v2.16b
         eor v11.16b, v11.16b, v3.16b
         stp q10, q11, [x2, #32]
@@ -693,7 +693,7 @@
         orr v3.16b, v25.16b, v25.16b
         mov v2.s[3], v24.s[2]
         mov v3.s[3], v24.s[3]
-        ldp q12, q13, [x2, #64]
+        ldp q12, q13, [x15, #64]
         eor v12.16b, v12.16b, v4.16b
         eor v13.16b, v13.16b, v5.16b
         stp q12, q13, [x2, #64]
@@ -701,7 +701,7 @@
         orr v5.16b, v25.16b, v25.16b
         mov v4.s[3], v31.s[0]
         mov v5.s[3], v31.s[1]
-        ldp q14, q15, [x2, #96]
+        ldp q14, q15, [x15, #96]
         eor v14.16b, v14.16b, v6.16b
         eor v15.16b, v15.16b, v7.16b
         stp q14, q15, [x2, #96]
@@ -713,7 +713,7 @@
 
     .macro SEAL_EOR3_STORE_TO_PREV_BUILD_NEXT
         PREP_NEXT_COUNTER8
-        ldp q8, q9, [x2]
+        ldp q8, q9, [x15]
         eor3 v8.16b, v8.16b, v0.16b, v23.16b
         eor3 v9.16b, v9.16b, v1.16b, v23.16b
         stp q8, q9, [x2]
@@ -721,7 +721,7 @@
         orr v1.16b, v25.16b, v25.16b
         mov v0.s[3], v24.s[0]
         mov v1.s[3], v24.s[1]
-        ldp q10, q11, [x2, #32]
+        ldp q10, q11, [x15, #32]
         eor3 v10.16b, v10.16b, v2.16b, v23.16b
         eor3 v11.16b, v11.16b, v3.16b, v23.16b
         stp q10, q11, [x2, #32]
@@ -729,7 +729,7 @@
         orr v3.16b, v25.16b, v25.16b
         mov v2.s[3], v24.s[2]
         mov v3.s[3], v24.s[3]
-        ldp q12, q13, [x2, #64]
+        ldp q12, q13, [x15, #64]
         eor3 v12.16b, v12.16b, v4.16b, v23.16b
         eor3 v13.16b, v13.16b, v5.16b, v23.16b
         stp q12, q13, [x2, #64]
@@ -737,7 +737,7 @@
         orr v5.16b, v25.16b, v25.16b
         mov v4.s[3], v31.s[0]
         mov v5.s[3], v31.s[1]
-        ldp q14, q15, [x2, #96]
+        ldp q14, q15, [x15, #96]
         eor3 v14.16b, v14.16b, v6.16b, v23.16b
         eor3 v15.16b, v15.16b, v7.16b, v23.16b
         stp q14, q15, [x2, #96]
@@ -889,6 +889,14 @@
         mov v7.s[3], v31.s[3]
     .endm
 
+    .macro ADVANCE_GCM_READ128
+        add x15, x15, #128
+        cbz x16, 7f
+        add x16, x16, #8
+        ldr x15, [x16]
+7:
+    .endm
+
     .macro DEFINE_SEAL name, rounds
         .globl _\name
         .p2align 4
@@ -898,6 +906,11 @@ _\name:
         stp d10, d11, [sp, #16]
         stp d12, d13, [sp, #32]
         stp d14, d15, [sp, #48]
+        ldr x15, [x5, #32]
+        ldr x16, [x5, #40]
+        cbz x16, 6f
+        ldr x15, [x16]
+6:
         ldr q19, [x5]
         ldr w6, [x5, #16]
         mov x7, #0
@@ -910,6 +923,7 @@ _\name:
         SEAL_XOR_STORE_TO_PREV
         add w6, w6, #8
         add x2, x2, #128
+        ADVANCE_GCM_READ128
         add x7, x7, #128
         subs x3, x3, #128
         cmp x3, #128
@@ -920,6 +934,7 @@ _\name:
         SEAL_XOR_STORE_TO_PREV
         add w6, w6, #8
         add x2, x2, #128
+        ADVANCE_GCM_READ128
         add x7, x7, #128
         subs x3, x3, #128
         cmp x3, #128
@@ -934,6 +949,10 @@ _\name:
         ldp d12, d13, [sp, #32]
         ldp d10, d11, [sp, #16]
         ldp d8, d9, [sp]
+        // Restore the caller's registers before clearing their saved slots.
+        movi v31.16b, #0
+        stp q31, q31, [sp]
+        stp q31, q31, [sp, #32]
         add sp, sp, #64
         ret
     .endm
@@ -947,6 +966,11 @@ _\name:
         stp d10, d11, [sp, #16]
         stp d12, d13, [sp, #32]
         stp d14, d15, [sp, #48]
+        ldr x15, [x5, #32]
+        ldr x16, [x5, #40]
+        cbz x16, 6f
+        ldr x15, [x16]
+6:
         ldr q19, [x5]
         ldr w6, [x5, #16]
         mov x7, #0
@@ -960,6 +984,7 @@ _\name:
         OPEN_STORE_REG8
         add w6, w6, #8
         add x2, x2, #128
+        ADVANCE_GCM_READ128
         add x7, x7, #128
         subs x3, x3, #128
         cmp x3, #128
@@ -972,6 +997,10 @@ _\name:
         ldp d12, d13, [sp, #32]
         ldp d10, d11, [sp, #16]
         ldp d8, d9, [sp]
+        // Restore the caller's registers before clearing their saved slots.
+        movi v31.16b, #0
+        stp q31, q31, [sp]
+        stp q31, q31, [sp, #32]
         add sp, sp, #64
         ret
     .endm
@@ -991,6 +1020,11 @@ _\name:
         .if \rounds == 14
             mov x14, #0xc200000000000000
         .endif
+        ldr x15, [x10, #32]
+        ldr x16, [x10, #40]
+        cbz x16, 6f
+        ldr x15, [x16]
+6:
         ldr q19, [x10]
         ldr w6, [x10, #16]
         mov x7, #0
@@ -1003,6 +1037,7 @@ _\name:
         SEAL_EOR3_STORE_TO_PREV_BUILD_NEXT
         add w6, w6, #8
         add x2, x2, #128
+        ADVANCE_GCM_READ128
         add x7, x7, #128
         subs x3, x3, #128
         cmp x3, #256
@@ -1012,6 +1047,7 @@ _\name:
         SEAL_EOR3_STORE_TO_PREV_BUILD_NEXT
         add w6, w6, #8
         add x2, x2, #128
+        ADVANCE_GCM_READ128
         add x7, x7, #128
         subs x3, x3, #128
 
@@ -1023,6 +1059,7 @@ _\name:
         SEAL_EOR3_STORE_TO_PREV_BUILD_NEXT
         add w6, w6, #8
         add x2, x2, #128
+        ADVANCE_GCM_READ128
         add x7, x7, #128
         subs x3, x3, #128
         cmp x3, #256
@@ -1035,6 +1072,7 @@ _\name:
         SEAL_EOR3_STORE_TO_PREV
         add w6, w6, #8
         add x2, x2, #128
+        ADVANCE_GCM_READ128
         add x7, x7, #128
         subs x3, x3, #128
         .if \rounds == 14
@@ -1058,6 +1096,10 @@ _\name:
         ldp d12, d13, [sp, #32]
         ldp d10, d11, [sp, #16]
         ldp d8, d9, [sp]
+        // Restore the caller's registers before clearing their saved slots.
+        movi v31.16b, #0
+        stp q31, q31, [sp]
+        stp q31, q31, [sp, #32]
         add sp, sp, #64
         ret
     .endm
@@ -1077,6 +1119,11 @@ _\name:
         .if \rounds == 10
             mov x14, #0xc200000000000000
         .endif
+        ldr x15, [x10, #32]
+        ldr x16, [x10, #40]
+        cbz x16, 6f
+        ldr x15, [x16]
+6:
         ldr q19, [x10]
         ldr w6, [x10, #16]
         mov x7, #0
@@ -1090,6 +1137,7 @@ _\name:
         OPEN_STORE_REG8_EOR3_BUILD_NEXT
         add w6, w6, #8
         add x2, x2, #128
+        ADVANCE_GCM_READ128
         add x7, x7, #128
         subs x3, x3, #128
 
@@ -1102,6 +1150,7 @@ _\name:
         OPEN_STORE_REG8_EOR3_BUILD_NEXT
         add w6, w6, #8
         add x2, x2, #128
+        ADVANCE_GCM_READ128
         add x7, x7, #128
         subs x3, x3, #128
         cmp x3, #256
@@ -1120,6 +1169,7 @@ _\name:
         OPEN_STORE_REG8_EOR3
         add w6, w6, #8
         add x2, x2, #128
+        ADVANCE_GCM_READ128
         add x7, x7, #128
 3:
         str q19, [x10]
@@ -1129,6 +1179,10 @@ _\name:
         ldp d12, d13, [sp, #32]
         ldp d10, d11, [sp, #16]
         ldp d8, d9, [sp]
+        // Restore the caller's registers before clearing their saved slots.
+        movi v31.16b, #0
+        stp q31, q31, [sp]
+        stp q31, q31, [sp, #32]
         add sp, sp, #64
         ret
     .endm

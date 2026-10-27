@@ -22,6 +22,10 @@ pub(super) fn run(data: &[u8]) {
   let oracle =
     chacha20poly1305::ChaCha20Poly1305::new_from_slice(&key_bytes).expect("ChaCha20-Poly1305 accepts a 32-byte key");
   let on = chacha20poly1305::Nonce::from(nonce_bytes);
+  let expected = oracle
+    .encrypt(&on, Payload { msg: plaintext, aad })
+    .expect("independent gather fixture");
+  rscrypto_fuzz::assert_aead_gather_against_oracle(&cipher, &nonce, aad, plaintext, control, &expected);
   assert_aead_against_oracle(
     &cipher,
     &nonce,

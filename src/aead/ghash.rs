@@ -218,9 +218,14 @@ pub(super) unsafe fn ghash_update_padded_wide_aarch64(
   }
 
   if !remainder.is_empty() {
-    let mut block = [0u8; 16];
-    block[..remainder.len()].copy_from_slice(remainder);
-    acc ^= u128::from_be_bytes(block);
+    // Assemble the padded field element without calling memcpy/bzero while H
+    // and the accumulator are live. Their callees may save those registers.
+    let mut block = 0u128;
+    for (index, &byte) in remainder.iter().enumerate() {
+      let shift = 15usize.strict_sub(index).strict_mul(8);
+      block |= u128::from(byte) << shift;
+    }
+    acc ^= block;
     // SAFETY: PMULL carryless multiply because:
     // 1. This function's caller must guarantee AES-CE/PMULL availability.
     // 2. `acc` and `h_polyval` are initialized GHASH field elements.

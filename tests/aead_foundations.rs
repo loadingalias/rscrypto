@@ -53,6 +53,72 @@ impl Aead for DirtyRejectingAead {
   }
 }
 
+#[cfg(feature = "aead")]
+impl rscrypto::AeadGather for DirtyRejectingAead {
+  fn __validate_gather_lengths(_: usize, _: usize) -> Result<(), rscrypto::aead::SealError> {
+    Ok(())
+  }
+
+  #[expect(
+    clippy::panic,
+    clippy::panic_in_result_fn,
+    reason = "exercise adapter cleanup when an external implementation unwinds"
+  )]
+  fn __encrypt_gather_with_nonce<'input, 'output>(
+    &self,
+    nonce: &Self::Nonce,
+    _: &[u8],
+    _: impl IntoIterator<Item = &'input [u8]>,
+    out: &'output mut [core::mem::MaybeUninit<u8>],
+    _: rscrypto::aead::__SealToken,
+  ) -> Result<(Self::Tag, &'output mut [u8]), rscrypto::aead::SealError> {
+    // Safe external implementations can deinitialize every supplied slot and
+    // return unrelated storage, an error, or a panic. Adapters must remain sound.
+    out.fill(core::mem::MaybeUninit::uninit());
+    match nonce.as_bytes()[0] {
+      1 => return Err(rscrypto::aead::SealError::buffer()),
+      2 => panic!("external implementation panics after deinitializing output"),
+      _ => {}
+    }
+    Ok(([0; 16], &mut []))
+  }
+}
+
+#[cfg(feature = "aead")]
+#[test]
+fn gather_initialized_adapter_reinitializes_after_an_external_implementation() {
+  for mode in [1u8, 0, 2] {
+    let mut bytes = [0xa5; 8];
+    let mut nonce = [0u8; 12];
+    nonce[0] = mode;
+    let result = std::panic::catch_unwind(core::panic::AssertUnwindSafe(|| {
+      DirtyRejectingAead.encrypt_gather(&Nonce96::from_bytes(nonce), b"", [b"payload!".as_slice()], &mut bytes)
+    }));
+    if mode == 2 {
+      assert!(result.is_err());
+    } else {
+      assert_eq!(
+        result.expect("returned without panic"),
+        Err(rscrypto::aead::SealError::buffer())
+      );
+    }
+    assert_eq!(bytes, [0; 8]);
+  }
+}
+
+#[cfg(all(feature = "aead", feature = "alloc"))]
+#[test]
+fn gather_append_rejects_an_external_implementation_that_does_not_initialize_its_output() {
+  let mut out = vec![0xa5, 0x5a];
+  let result =
+    DirtyRejectingAead.encrypt_gather_append(&Nonce96::from_bytes([0; 12]), b"", [b"data".as_slice()], 4, &mut out);
+  assert_eq!(
+    result.expect_err("foreign output cannot extend the vector"),
+    rscrypto::aead::SealError::buffer()
+  );
+  assert_eq!(out, [0xa5, 0x5a]);
+}
+
 #[test]
 #[cfg(feature = "aead")]
 fn nonce96_round_trips() {

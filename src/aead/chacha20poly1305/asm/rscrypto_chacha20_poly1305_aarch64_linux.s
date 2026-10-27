@@ -4,7 +4,8 @@
 // Adapted for rscrypto from the generated AWS-LC/BoringSSL aarch64
 // ChaCha20-Poly1305 assembly. Symbols are namespaced to avoid collisions.
 
-// source tree. Do not edit by hand.
+// rscrypto span-input loads and saved-slot cleanup extend the existing ABI.
+// Cipher rounds and Poly1305 arithmetic retain their recorded upstream provenance.
 
 
 .section .rodata
@@ -23,6 +24,61 @@ Lclamp:
 
 
 .align	6
+
+// Input loads retain the integrated cipher/authentication schedule. x20 holds
+// public bytes left in the current span; normal seal uses usize::MAX. A public
+// boundary advances x19 to the next nonempty (pointer,length) descriptor.
+// The slow seam reads only valid input bytes into registers, never into memory.
+.macro RSCRYPTO_READ_BYTES reg, count
+    movi \reg\().16b, #0
+    mov x22, \count
+Lrscrypto_read_loop\@:
+    cbnz x20, Lrscrypto_read_byte\@
+    ldp x1, x20, [x19], #16
+Lrscrypto_read_byte\@:
+    ldrb w21, [x1], #1
+    ext \reg\().16b, \reg\().16b, \reg\().16b, #1
+    mov \reg\().b[15], w21
+    sub x20, x20, #1
+    subs x22, x22, #1
+    b.ne Lrscrypto_read_loop\@
+.endm
+
+.macro RSCRYPTO_LOAD64
+Lrscrypto_load64_retry\@:
+    subs x20, x20, #64
+    b.hs Lrscrypto_load64_fast\@
+    add x20, x20, #64
+    cbnz x20, Lrscrypto_load64_seam\@
+    ldp x1, x20, [x19], #16
+    b Lrscrypto_load64_retry\@
+Lrscrypto_load64_seam\@:
+    RSCRYPTO_READ_BYTES v20, #16
+    RSCRYPTO_READ_BYTES v21, #16
+    RSCRYPTO_READ_BYTES v22, #16
+    RSCRYPTO_READ_BYTES v23, #16
+    b Lrscrypto_load64_done\@
+Lrscrypto_load64_fast\@:
+    ld1 {{v20.16b - v23.16b}}, [x1], #64
+Lrscrypto_load64_done\@:
+.endm
+
+.macro RSCRYPTO_LOAD16
+Lrscrypto_load16_retry\@:
+    subs x20, x20, #16
+    b.hs Lrscrypto_load16_fast\@
+    add x20, x20, #16
+    cbnz x20, Lrscrypto_load16_seam\@
+    ldp x1, x20, [x19], #16
+    b Lrscrypto_load16_retry\@
+Lrscrypto_load16_seam\@:
+    RSCRYPTO_READ_BYTES v20, #16
+    b Lrscrypto_load16_done\@
+Lrscrypto_load16_fast\@:
+    ld1 {{v20.16b}}, [x1], #16
+Lrscrypto_load16_done\@:
+.endm
+
 Lpoly_hash_ad_internal:
 .cfi_startproc
 	cbnz	x4, Lpoly_hash_intro
@@ -121,28 +177,48 @@ Lpoly_hash_ad_ret:
 
 .align	6
 rscrypto_chacha20_poly1305_seal_aarch64:
+	mov x6, #0
+	b Lseal_entry
+
+.globl rscrypto_chacha20_poly1305_seal_gather_aarch64
+.align 6
+rscrypto_chacha20_poly1305_seal_gather_aarch64:
+	mov x6, x1
+Lseal_entry:
 	hint	#25
 .cfi_startproc
-	stp	x29, x30, [sp, #-80]!
-.cfi_def_cfa_offset	80
-.cfi_offset	w30, -72
-.cfi_offset	w29, -80
+	stp	x29, x30, [sp, #-112]!
+.cfi_def_cfa_offset	112
+.cfi_offset	w30, -104
+.cfi_offset	w29, -112
 	mov	x29, sp
-    // We probably could do .cfi_def_cfa w29, 80 at this point, but since
+    // We probably could do .cfi_def_cfa w29, 112 at this point, but since
     // we don't actually use the frame pointer like that, it's probably not
     // worth bothering.
 	stp	d8, d9, [sp, #16]
 	stp	d10, d11, [sp, #32]
 	stp	d12, d13, [sp, #48]
 	stp	d14, d15, [sp, #64]
-.cfi_offset	b15, -8
-.cfi_offset	b14, -16
-.cfi_offset	b13, -24
-.cfi_offset	b12, -32
-.cfi_offset	b11, -40
-.cfi_offset	b10, -48
-.cfi_offset	b9, -56
-.cfi_offset	b8, -64
+.cfi_offset	b15, -40
+.cfi_offset	b14, -48
+.cfi_offset	b13, -56
+.cfi_offset	b12, -64
+.cfi_offset	b11, -72
+.cfi_offset	b10, -80
+.cfi_offset	b9, -88
+.cfi_offset	b8, -96
+
+    stp x19, x20, [sp, #80]
+    stp x21, x22, [sp, #96]
+.cfi_offset w19, -32
+.cfi_offset w20, -24
+.cfi_offset w21, -16
+.cfi_offset w22, -8
+    mov x19, x6
+    mov x20, #-1
+    cbz x19, Lseal_input_ready
+    ldp x1, x20, [x19], #16
+Lseal_input_ready:
 
 	adrp	x11, Lchacha20_consts
 	add	x11, x11, :lo12:Lchacha20_consts
@@ -437,28 +513,28 @@ Lseal_init_rounds:
 	cmp	x2, #256
 	b.le	Lseal_tail
 
-	ld1	{{v20.16b - v23.16b}}, [x1], #64
+	RSCRYPTO_LOAD64
 	eor	v20.16b, v20.16b, v0.16b
 	eor	v21.16b, v21.16b, v5.16b
 	eor	v22.16b, v22.16b, v10.16b
 	eor	v23.16b, v23.16b, v15.16b
 	st1	{{v20.16b - v23.16b}}, [x0], #64
 
-	ld1	{{v20.16b - v23.16b}}, [x1], #64
+	RSCRYPTO_LOAD64
 	eor	v20.16b, v20.16b, v1.16b
 	eor	v21.16b, v21.16b, v6.16b
 	eor	v22.16b, v22.16b, v11.16b
 	eor	v23.16b, v23.16b, v16.16b
 	st1	{{v20.16b - v23.16b}}, [x0], #64
 
-	ld1	{{v20.16b - v23.16b}}, [x1], #64
+	RSCRYPTO_LOAD64
 	eor	v20.16b, v20.16b, v2.16b
 	eor	v21.16b, v21.16b, v7.16b
 	eor	v22.16b, v22.16b, v12.16b
 	eor	v23.16b, v23.16b, v17.16b
 	st1	{{v20.16b - v23.16b}}, [x0], #64
 
-	ld1	{{v20.16b - v23.16b}}, [x1], #64
+	RSCRYPTO_LOAD64
 	eor	v20.16b, v20.16b, v3.16b
 	eor	v21.16b, v21.16b, v8.16b
 	eor	v22.16b, v22.16b, v13.16b
@@ -810,35 +886,35 @@ Lseal_main_loop_rounds:
 	cmp	x2, #320
 	b.le	Lseal_tail
 
-	ld1	{{v20.16b - v23.16b}}, [x1], #64
+	RSCRYPTO_LOAD64
 	eor	v20.16b, v20.16b, v0.16b
 	eor	v21.16b, v21.16b, v5.16b
 	eor	v22.16b, v22.16b, v10.16b
 	eor	v23.16b, v23.16b, v15.16b
 	st1	{{v20.16b - v23.16b}}, [x0], #64
 
-	ld1	{{v20.16b - v23.16b}}, [x1], #64
+	RSCRYPTO_LOAD64
 	eor	v20.16b, v20.16b, v1.16b
 	eor	v21.16b, v21.16b, v6.16b
 	eor	v22.16b, v22.16b, v11.16b
 	eor	v23.16b, v23.16b, v16.16b
 	st1	{{v20.16b - v23.16b}}, [x0], #64
 
-	ld1	{{v20.16b - v23.16b}}, [x1], #64
+	RSCRYPTO_LOAD64
 	eor	v20.16b, v20.16b, v2.16b
 	eor	v21.16b, v21.16b, v7.16b
 	eor	v22.16b, v22.16b, v12.16b
 	eor	v23.16b, v23.16b, v17.16b
 	st1	{{v20.16b - v23.16b}}, [x0], #64
 
-	ld1	{{v20.16b - v23.16b}}, [x1], #64
+	RSCRYPTO_LOAD64
 	eor	v20.16b, v20.16b, v3.16b
 	eor	v21.16b, v21.16b, v8.16b
 	eor	v22.16b, v22.16b, v13.16b
 	eor	v23.16b, v23.16b, v18.16b
 	st1	{{v20.16b - v23.16b}}, [x0], #64
 
-	ld1	{{v20.16b - v23.16b}}, [x1], #64
+	RSCRYPTO_LOAD64
 	eor	v20.16b, v20.16b, v4.16b
 	eor	v21.16b, v21.16b, v9.16b
 	eor	v22.16b, v22.16b, v14.16b
@@ -859,7 +935,7 @@ Lseal_tail:
 	b.lt	Lseal_tail_64
 
     // Store and authenticate 64B blocks per iteration
-	ld1	{{v20.16b - v23.16b}}, [x1], #64
+	RSCRYPTO_LOAD64
 
 	eor	v20.16b, v20.16b, v0.16b
 	eor	v21.16b, v21.16b, v5.16b
@@ -1022,7 +1098,7 @@ Lseal_tail_64:
 	cmp	x2, #16
 	b.lt	Lseal_tail_16
     // Each iteration encrypt and authenticate a 16B block
-	ld1	{{v20.16b}}, [x1], #16
+	RSCRYPTO_LOAD16
 	eor	v20.16b, v20.16b, v0.16b
 	mov	x11, v20.d[0]
 	mov	x12, v20.d[1]
@@ -1070,6 +1146,25 @@ Lseal_tail_16:
     // Here we handle the last [0,16) bytes of ciphertext that require a padded block
 	cbz	x2, Lseal_hash_extra
 
+    cbz x19, Lseal_contiguous_tail
+    mov x6, x2
+    RSCRYPTO_READ_BYTES v20, x2
+    mov x22, #16
+    sub x22, x22, x2
+Lseal_gather_tail_align:
+    ext v20.16b, v20.16b, v20.16b, #1
+    subs x22, x22, #1
+    b.ne Lseal_gather_tail_align
+    movi v21.16b, #0
+    movi v22.16b, #255
+    mov x22, x2
+Lseal_gather_tail_mask:
+    ext v21.16b, v22.16b, v21.16b, #15
+    subs x22, x22, #1
+    b.ne Lseal_gather_tail_mask
+    mov x2, #0
+    b Lseal_tail_16_xor
+Lseal_contiguous_tail:
 	eor	v20.16b, v20.16b, v20.16b // Use T0 to load the plaintext/extra in
 	eor	v21.16b, v21.16b, v21.16b // Use T1 to generate an AND mask that will only mask the ciphertext bytes
 	not	v22.16b, v20.16b
@@ -1104,6 +1199,7 @@ Lseal_tail_16_compose:
 	subs	x2, x2, #1
 	b.gt	Lseal_tail_16_compose
 
+Lseal_tail_16_xor:
 	and	v0.16b, v0.16b, v21.16b
 	eor	v20.16b, v20.16b, v0.16b
 	mov	v21.16b, v20.16b
@@ -1283,6 +1379,7 @@ Lseal_finalize:
 
 	stp	x8, x9, [x5]
 
+.cfi_remember_state
 	ldp	d8, d9, [sp, #16]
 	ldp	d10, d11, [sp, #32]
 	ldp	d12, d13, [sp, #48]
@@ -1295,13 +1392,26 @@ Lseal_finalize:
 .cfi_restore	b10
 .cfi_restore	b9
 .cfi_restore	b8
-	ldp	x29, x30, [sp], 80
+    ldp x19, x20, [sp, #80]
+    ldp x21, x22, [sp, #96]
+.cfi_restore w19
+.cfi_restore w20
+.cfi_restore w21
+.cfi_restore w22
+    stp xzr, xzr, [sp, #16]
+    stp xzr, xzr, [sp, #32]
+    stp xzr, xzr, [sp, #48]
+    stp xzr, xzr, [sp, #64]
+    stp xzr, xzr, [sp, #80]
+    stp xzr, xzr, [sp, #96]
+	ldp x29, x30, [sp], 112
 .cfi_restore	w29
 .cfi_restore	w30
 .cfi_def_cfa_offset	0
 	hint	#29
 	ret
 
+.cfi_restore_state
 Lseal_128:
     // On some architectures preparing 5 blocks for small buffers is wasteful
 	eor	v25.16b, v25.16b, v25.16b

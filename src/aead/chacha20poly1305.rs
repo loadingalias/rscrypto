@@ -3,7 +3,7 @@
 use core::fmt;
 
 use super::{AeadBufferError, Nonce96, OpenError, SealError, chacha20, poly1305, targets::AeadPrimitive};
-use crate::traits::{Aead, ct};
+use crate::traits::{Aead, AeadGather, ct};
 
 const KEY_SIZE: usize = chacha20::KEY_SIZE;
 const TAG_SIZE: usize = 16;
@@ -742,6 +742,75 @@ pub fn diag_chacha20poly1305_decrypt_in_place_owned(
 ) -> Result<(), OpenError> {
   super::open_bounded_length_as_u64(buffer.len(), MAX_PLAINTEXT_LEN)?;
   cipher.decrypt_in_place_owned_unchecked(nonce, aad, buffer, tag)
+}
+
+impl AeadGather for ChaCha20Poly1305 {
+  fn __validate_gather_lengths(_aad_len: usize, plaintext_len: usize) -> Result<(), SealError> {
+    super::seal_bounded_length_as_u64(plaintext_len, MAX_PLAINTEXT_LEN)?;
+    Ok(())
+  }
+
+  fn __encrypt_gather_with_nonce<'input, 'output>(
+    &self,
+    nonce: &Self::Nonce,
+    aad: &[u8],
+    plaintext: impl IntoIterator<Item = &'input [u8]>,
+    out: &'output mut [core::mem::MaybeUninit<u8>],
+    _token: crate::traits::aead::SealToken,
+  ) -> Result<(Self::Tag, &'output mut [u8]), SealError> {
+    Self::__validate_gather_lengths(aad.len(), out.len())?;
+    #[cfg(all(
+      target_arch = "aarch64",
+      target_endian = "little",
+      any(target_os = "macos", target_os = "linux"),
+      not(debug_assertions),
+      not(miri),
+      not(feature = "portable-only")
+    ))]
+    if !out.is_empty() {
+      return super::gather::slices(
+        plaintext,
+        out,
+        |input, output| {
+          let (tag, ciphertext) = aarch64_asm::seal_gather(self.key.as_bytes(), nonce.as_bytes(), aad, input, output);
+          (ChaCha20Poly1305Tag::from_bytes(tag), ciphertext)
+        },
+        |prefix, rest, output| {
+          self.__seal_gather_fallback(
+            nonce,
+            aad,
+            prefix.iter().map(super::gather::Slice::as_slice).chain(rest),
+            output,
+          )
+        },
+      );
+    }
+    self.__seal_gather_fallback(nonce, aad, plaintext, out)
+  }
+}
+
+impl ChaCha20Poly1305 {
+  fn __seal_gather_fallback<'input, 'output>(
+    &self,
+    nonce: &Nonce96,
+    aad: &[u8],
+    plaintext: impl IntoIterator<Item = &'input [u8]>,
+    out: &'output mut [core::mem::MaybeUninit<u8>],
+  ) -> Result<(ChaCha20Poly1305Tag, &'output mut [u8]), SealError> {
+    let ciphertext = super::gather::xor::<64, 1024>(plaintext, out, 1, |counter, stream| {
+      stream.fill(0);
+      chacha20::xor_keystream(
+        AeadPrimitive::ChaCha20Poly1305,
+        self.key.as_bytes(),
+        counter,
+        nonce.as_bytes(),
+        stream,
+      )
+      .map_err(|_| SealError::too_large())
+    })?;
+    let tag = ChaCha20Poly1305Tag::from_bytes(self.compute_tag(nonce, aad, ciphertext));
+    Ok((tag, ciphertext))
+  }
 }
 
 impl Aead for ChaCha20Poly1305 {

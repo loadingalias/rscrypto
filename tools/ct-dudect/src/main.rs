@@ -3400,6 +3400,53 @@ macro_rules! aead_fixed_vs_random_key_seal {
   };
 }
 
+macro_rules! aead_gather_fixed_vs_random_key_seal {
+  ($name:ident, $cipher:ty, $key:ty, $key_len:expr) => {
+    fn $name(runner: &mut CtRunner, rng: &mut BenchRng) {
+      let nonce = Nonce96::from_bytes([0x73; 12]);
+      let mut inputs = Vec::with_capacity(samples());
+      for class in balanced_classes(rng, samples()) {
+        let key = if matches!(class, Class::Left) {
+          [0x33; $key_len]
+        } else {
+          rand_array::<$key_len>(rng)
+        };
+        inputs.push((class, <$key>::from_bytes(key)));
+      }
+      let plaintext = [0x71; 16_385];
+      // One fixed public partition reaches wide native batches, a partial-block
+      // seam, an empty slice, and a shorter native batch before the final byte.
+      let chunks = [
+        &plaintext[..4096],
+        &plaintext[4096..4097],
+        &[],
+        &plaintext[4097..4112],
+        &plaintext[4112..4368],
+        &plaintext[4368..],
+      ];
+      for (class, key) in inputs {
+        let cipher = <$cipher>::new(&key);
+        runner.run_one(class, || {
+          let mut out = [core::mem::MaybeUninit::uninit(); 16_385];
+          let result = cipher
+            .encrypt_gather_uninit(&nonce, AAD, chunks, &mut out)
+            .expect("fixed public gather lengths");
+          core::hint::black_box(result);
+        });
+      }
+    }
+  };
+}
+
+aead_gather_fixed_vs_random_key_seal!(aes128gcm_gather_fixed_vs_random_key_seal, Aes128Gcm, Aes128GcmKey, 16);
+aead_gather_fixed_vs_random_key_seal!(aes256gcm_gather_fixed_vs_random_key_seal, Aes256Gcm, Aes256GcmKey, 32);
+aead_gather_fixed_vs_random_key_seal!(
+  chacha20poly1305_gather_fixed_vs_random_key_seal,
+  ChaCha20Poly1305,
+  ChaCha20Poly1305Key,
+  32
+);
+
 aead_fixed_vs_random_key_seal!(
   aes128gcm_fixed_vs_random_key_seal,
   Aes128Gcm,
@@ -3999,6 +4046,12 @@ ctbench_main_with_seeds!(
   (argon2i_parallel_fixed_vs_random_password, Some(0x6172673269706172)),
   (aes128gcm_fixed_vs_random_key_seal, Some(0x6165733132386773)),
   (aes256gcm_fixed_vs_random_key_seal, Some(0x6165733235366773)),
+  (aes128gcm_gather_fixed_vs_random_key_seal, Some(0x6165733132386761)),
+  (aes256gcm_gather_fixed_vs_random_key_seal, Some(0x6165733235366761)),
+  (
+    chacha20poly1305_gather_fixed_vs_random_key_seal,
+    Some(0x6368616368676174)
+  ),
   (aes128gcmsiv_fixed_vs_random_key_seal, Some(0x6131323867737365)),
   (aes256gcmsiv_fixed_vs_random_key_seal, Some(0x6132353667737365)),
   (ietf_chacha20poly1305_fixed_vs_random_key_seal, Some(0x6368616368613230)),

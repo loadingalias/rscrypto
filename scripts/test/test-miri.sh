@@ -57,6 +57,10 @@ case "${1:-}" in
     MIRI_SCOPE="exhaustive"
     shift
     ;;
+  --aead-gather | aead-gather)
+    MIRI_SCOPE="aead-gather"
+    shift
+    ;;
   --rsa | rsa)
     MIRI_SCOPE="rsa"
     shift
@@ -68,7 +72,7 @@ case "${1:-}" in
   "")
     ;;
   *)
-    echo "Usage: $0 [--focused|--rsa|--all]"
+    echo "Usage: $0 [--focused|--rsa|--aead-gather|--all]"
     echo "Set RSCRYPTO_MIRI_FEATURES to override the default feature set: $MIRI_FEATURES"
     exit 2
     ;;
@@ -76,7 +80,7 @@ esac
 
 if [ "$#" -ne 0 ]; then
   echo "Unexpected extra arguments: $*"
-  echo "Usage: $0 [--focused|--rsa|--all]"
+  echo "Usage: $0 [--focused|--rsa|--aead-gather|--all]"
   exit 2
 fi
 
@@ -89,24 +93,29 @@ run_miri_lib_filter() {
   cargo miri test --locked --lib --features "$MIRI_FEATURES" "$filter"
 }
 
-run_miri_lib_filter_features() {
+run_miri_filter_features() {
   local label="$1"
   local filter="$2"
   local features="$3"
   local expected_count="$4"
   local listing
   local count
+  shift 4
 
   echo ""
   echo "━━━ $label ━━━"
-  listing=$(cargo miri test --locked --lib --features "$features" "$filter" -- --list)
+  listing=$(cargo miri test --locked "$@" --features "$features" "$filter" -- --list)
   printf '%s\n' "$listing"
   count=$(printf '%s\n' "$listing" | awk '/: test$/ { count++ } END { print count + 0 }')
   if [ "$count" -ne "$expected_count" ]; then
     echo "Expected $expected_count Miri tests matching '$filter'; found $count" >&2
     return 1
   fi
-  cargo miri test --locked --lib --features "$features" "$filter"
+  cargo miri test --locked "$@" --features "$features" "$filter"
+}
+
+run_miri_lib_filter_features() {
+  run_miri_filter_features "$@" --lib
 }
 
 run_miri_test_target() {
@@ -150,7 +159,24 @@ case "$MIRI_SCOPE" in
     run_miri_lib_filter_features "BLAKE3 reader initialized-prefix storage under Miri" \
       "hashes::crypto::blake3::io::tests::miri_" \
       "blake3,std" \
-      1
+      2
+    run_miri_lib_filter_features "AEAD gather output initialization and cleanup under Miri" \
+      "aead::gather::tests::miri_" \
+      "std,aes-gcm,chacha20poly1305" \
+      2
+    run_miri_filter_features "Initialized gather adapter against a deinitializing external implementation" \
+      "gather_initialized_adapter_reinitializes_after_an_external_implementation" \
+      "aead" 1 --test aead_foundations
+    ;;
+  aead-gather)
+    echo "Scope: gather output initialization, spare capacity, bounds and unwind cleanup"
+    run_miri_lib_filter_features "AEAD gather output initialization and cleanup under Miri" \
+      "aead::gather::tests::miri_" \
+      "std,aes-gcm,chacha20poly1305" \
+      2
+    run_miri_filter_features "Initialized gather adapter against a deinitializing external implementation" \
+      "gather_initialized_adapter_reinitializes_after_an_external_implementation" \
+      "aead" 1 --test aead_foundations
     ;;
   rsa)
     echo "Scope: RSA volatile fixed-window reads, private scratch/clearing layouts, and small-number Miller-Rabin"
@@ -167,7 +193,7 @@ case "$MIRI_SCOPE" in
     ;;
   *)
     echo "Invalid RSCRYPTO_MIRI_SCOPE: $MIRI_SCOPE"
-    echo "Expected: focused, rsa, or exhaustive"
+    echo "Expected: focused, rsa, aead-gather, or exhaustive"
     exit 2
     ;;
 esac

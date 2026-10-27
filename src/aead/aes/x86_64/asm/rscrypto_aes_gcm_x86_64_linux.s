@@ -495,10 +495,10 @@
   GHASH_FOLD_MID \d2, zmm14, 128
   AES_ROUND 48
   GHASH_FOLD_MID \d3, zmm15, 192
-  vmovdqu64 \d0, ZMMWORD PTR [rdx]
-  vmovdqu64 \d1, ZMMWORD PTR [rdx + 64]
-  vmovdqu64 \d2, ZMMWORD PTR [rdx + 128]
-  vmovdqu64 \d3, ZMMWORD PTR [rdx + 192]
+  vmovdqu64 \d0, ZMMWORD PTR [r12]
+  vmovdqu64 \d1, ZMMWORD PTR [r12 + 64]
+  vmovdqu64 \d2, ZMMWORD PTR [r12 + 128]
+  vmovdqu64 \d3, ZMMWORD PTR [r12 + 192]
   AES_ROUND 64
   AES_ROUND 80
   AES_ROUND 96
@@ -525,10 +525,10 @@
   GHASH_FOLD_MID \d6, zmm18, 384
   AES_ROUND 48
   GHASH_FOLD_MID \d7, zmm19, 448
-  vmovdqu64 \d4, ZMMWORD PTR [rdx]
-  vmovdqu64 \d5, ZMMWORD PTR [rdx + 64]
-  vmovdqu64 \d6, ZMMWORD PTR [rdx + 128]
-  vmovdqu64 \d7, ZMMWORD PTR [rdx + 192]
+  vmovdqu64 \d4, ZMMWORD PTR [r12]
+  vmovdqu64 \d5, ZMMWORD PTR [r12 + 64]
+  vmovdqu64 \d6, ZMMWORD PTR [r12 + 128]
+  vmovdqu64 \d7, ZMMWORD PTR [r12 + 192]
   GHASH_REDUCE_ASSEMBLE
   GHASH_REDUCE_COLLAPSE
   AES_ROUND 64
@@ -562,10 +562,10 @@
   GHASH_FOLD_MID_MEM \d2, 128, 640
   AES_ROUND 48
   GHASH_FOLD_MID_MEM \d3, 192, 704
-  vmovdqu64 \d0, ZMMWORD PTR [rdx]
-  vmovdqu64 \d1, ZMMWORD PTR [rdx + 64]
-  vmovdqu64 \d2, ZMMWORD PTR [rdx + 128]
-  vmovdqu64 \d3, ZMMWORD PTR [rdx + 192]
+  vmovdqu64 \d0, ZMMWORD PTR [r12]
+  vmovdqu64 \d1, ZMMWORD PTR [r12 + 64]
+  vmovdqu64 \d2, ZMMWORD PTR [r12 + 128]
+  vmovdqu64 \d3, ZMMWORD PTR [r12 + 192]
   AES_ROUND 64
   AES_ROUND 80
   AES_ROUND 96
@@ -592,10 +592,10 @@
   GHASH_FOLD_MID_MEM \d6, 384, 896
   AES_ROUND 48
   GHASH_FOLD_MID_MEM \d7, 448, 960
-  vmovdqu64 \d4, ZMMWORD PTR [rdx]
-  vmovdqu64 \d5, ZMMWORD PTR [rdx + 64]
-  vmovdqu64 \d6, ZMMWORD PTR [rdx + 128]
-  vmovdqu64 \d7, ZMMWORD PTR [rdx + 192]
+  vmovdqu64 \d4, ZMMWORD PTR [r12]
+  vmovdqu64 \d5, ZMMWORD PTR [r12 + 64]
+  vmovdqu64 \d6, ZMMWORD PTR [r12 + 128]
+  vmovdqu64 \d7, ZMMWORD PTR [r12 + 192]
   AES_ROUND 64
   AES_ROUND 80
   AES_ROUND 96
@@ -623,10 +623,10 @@
   GHASH_FOLD_MID \d2, zmm14, 128
   AES_ROUND 48
   GHASH_FOLD_MID \d3, zmm15, 192
-  vmovdqu64 \d0, ZMMWORD PTR [rdx]
-  vmovdqu64 \d1, ZMMWORD PTR [rdx + 64]
-  vmovdqu64 \d2, ZMMWORD PTR [rdx + 128]
-  vmovdqu64 \d3, ZMMWORD PTR [rdx + 192]
+  vmovdqu64 \d0, ZMMWORD PTR [r12]
+  vmovdqu64 \d1, ZMMWORD PTR [r12 + 64]
+  vmovdqu64 \d2, ZMMWORD PTR [r12 + 128]
+  vmovdqu64 \d3, ZMMWORD PTR [r12 + 192]
   AES_ROUND 64
   AES_ROUND 80
   AES_ROUND 96
@@ -654,10 +654,10 @@
   GHASH_FOLD_MID_MEM \d2, \h_base + 128, \mid_base + 128
   AES_ROUND 48
   GHASH_FOLD_MID_MEM \d3, \h_base + 192, \mid_base + 192
-  vmovdqu64 \d0, ZMMWORD PTR [rdx]
-  vmovdqu64 \d1, ZMMWORD PTR [rdx + 64]
-  vmovdqu64 \d2, ZMMWORD PTR [rdx + 128]
-  vmovdqu64 \d3, ZMMWORD PTR [rdx + 192]
+  vmovdqu64 \d0, ZMMWORD PTR [r12]
+  vmovdqu64 \d1, ZMMWORD PTR [r12 + 64]
+  vmovdqu64 \d2, ZMMWORD PTR [r12 + 128]
+  vmovdqu64 \d3, ZMMWORD PTR [r12 + 192]
   AES_ROUND 64
   AES_ROUND 80
   AES_ROUND 96
@@ -685,10 +685,10 @@
   GHASH_FOLD_MID_MEM \d2, \h_base + 128, \mid_base + 128
   AES_ROUND 48
   GHASH_FOLD_MID_MEM \d3, \h_base + 192, \mid_base + 192
-  vmovdqu64 \d0, ZMMWORD PTR [rdx]
-  vmovdqu64 \d1, ZMMWORD PTR [rdx + 64]
-  vmovdqu64 \d2, ZMMWORD PTR [rdx + 128]
-  vmovdqu64 \d3, ZMMWORD PTR [rdx + 192]
+  vmovdqu64 \d0, ZMMWORD PTR [r12]
+  vmovdqu64 \d1, ZMMWORD PTR [r12 + 64]
+  vmovdqu64 \d2, ZMMWORD PTR [r12 + 128]
+  vmovdqu64 \d3, ZMMWORD PTR [r12 + 192]
   AES_ROUND 64
   AES_ROUND 80
   AES_ROUND 96
@@ -715,10 +715,10 @@
   GHASH_FOLD_MID_MEM \d6, \h_base + 384, \mid_base + 384
   AES_ROUND 48
   GHASH_FOLD_MID_MEM \d7, \h_base + 448, \mid_base + 448
-  vmovdqu64 \d4, ZMMWORD PTR [rdx]
-  vmovdqu64 \d5, ZMMWORD PTR [rdx + 64]
-  vmovdqu64 \d6, ZMMWORD PTR [rdx + 128]
-  vmovdqu64 \d7, ZMMWORD PTR [rdx + 192]
+  vmovdqu64 \d4, ZMMWORD PTR [r12]
+  vmovdqu64 \d5, ZMMWORD PTR [r12 + 64]
+  vmovdqu64 \d6, ZMMWORD PTR [r12 + 128]
+  vmovdqu64 \d7, ZMMWORD PTR [r12 + 192]
   AES_ROUND 64
   AES_ROUND 80
   AES_ROUND 96
@@ -737,12 +737,32 @@
 .endm
 
 
+.macro GCM_CLEAR_SCRATCH bytes
+  // The aligned workspace holds key-derived GHASH powers. Explicit assembly
+  // stores cannot be removed by LLVM; preserve the saved rsp just above it.
+  vpxord zmm0, zmm0, zmm0
+  .irp offset, 0, 64, 128, 192, 256, 320, 384, 448, 512, 576, 640, 704, 768, 832, 896, 960, 1024, 1088, 1152, 1216, 1280, 1344, 1408, 1472, 1536, 1600, 1664, 1728, 1792, 1856, 1920, 1984
+    .if \offset < \bytes
+      vmovdqa64 ZMMWORD PTR [rsp + \offset], zmm0
+    .endif
+  .endr
+.endm
+
+.macro GCM_ADVANCE_READ256
+  add r12, 256
+  test r13, r13
+  jz .Lgcm_contiguous\@
+  add r13, 8
+  mov r12, QWORD PTR [r13]
+.Lgcm_contiguous\@:
+.endm
+
 .macro AES_GCM_STORE_Z open, d0, d1, d2, d3
   .if \open
-    vmovdqu64 \d0, ZMMWORD PTR [rdx]
-    vmovdqu64 \d1, ZMMWORD PTR [rdx + 64]
-    vmovdqu64 \d2, ZMMWORD PTR [rdx + 128]
-    vmovdqu64 \d3, ZMMWORD PTR [rdx + 192]
+    vmovdqu64 \d0, ZMMWORD PTR [r12]
+    vmovdqu64 \d1, ZMMWORD PTR [r12 + 64]
+    vmovdqu64 \d2, ZMMWORD PTR [r12 + 128]
+    vmovdqu64 \d3, ZMMWORD PTR [r12 + 192]
     vpxord zmm0, zmm0, \d0
     vpxord zmm1, zmm1, \d1
     vpxord zmm2, zmm2, \d2
@@ -752,10 +772,10 @@
     vmovdqu64 ZMMWORD PTR [rdx + 128], zmm2
     vmovdqu64 ZMMWORD PTR [rdx + 192], zmm3
   .else
-    vmovdqu64 \d0, ZMMWORD PTR [rdx]
-    vmovdqu64 \d1, ZMMWORD PTR [rdx + 64]
-    vmovdqu64 \d2, ZMMWORD PTR [rdx + 128]
-    vmovdqu64 \d3, ZMMWORD PTR [rdx + 192]
+    vmovdqu64 \d0, ZMMWORD PTR [r12]
+    vmovdqu64 \d1, ZMMWORD PTR [r12 + 64]
+    vmovdqu64 \d2, ZMMWORD PTR [r12 + 128]
+    vmovdqu64 \d3, ZMMWORD PTR [r12 + 192]
     vpxord \d0, \d0, zmm0
     vpxord \d1, \d1, zmm1
     vpxord \d2, \d2, zmm2
@@ -794,6 +814,14 @@
   .globl \name
   .type \name, @function
 \name:
+  push r12
+  push r13
+  mov r12, QWORD PTR [r9 + 32]
+  mov r13, QWORD PTR [r9 + 40]
+  test r13, r13
+  jz .L\name\()_input_ready
+  mov r12, QWORD PTR [r13]
+.L\name\()_input_ready:
   xor r11d, r11d
   mov r10d, DWORD PTR [r9 + 16]
 
@@ -801,6 +829,10 @@
   jae .L\name\()_have_min
   mov DWORD PTR [r9 + 16], r10d
   vzeroupper
+  pop r13
+  pop r12
+  mov QWORD PTR [rsp - 16], 0
+  mov QWORD PTR [rsp - 8], 0
   ret
 
 .L\name\()_have_min:
@@ -830,28 +862,30 @@
 
   GCM_COUNTERS_16
 
-  vmovdqu64 zmm4, ZMMWORD PTR [rdx]
-  vmovdqu64 zmm5, ZMMWORD PTR [rdx + 64]
-  vmovdqu64 zmm6, ZMMWORD PTR [rdx + 128]
-  vmovdqu64 zmm7, ZMMWORD PTR [rdx + 192]
+  vmovdqu64 zmm4, ZMMWORD PTR [r12]
+  vmovdqu64 zmm5, ZMMWORD PTR [r12 + 64]
+  vmovdqu64 zmm6, ZMMWORD PTR [r12 + 128]
+  vmovdqu64 zmm7, ZMMWORD PTR [r12 + 192]
   AES_ENCRYPT_16 \aes256
   AES_GCM_STORE_Z_LOADED \open, zmm4, zmm5, zmm6, zmm7
 
   add rdx, 256
+  GCM_ADVANCE_READ256
   sub rcx, 256
   add r10d, 16
   add r11, 256
 
   GCM_COUNTERS_16
 
-  vmovdqu64 zmm8, ZMMWORD PTR [rdx]
-  vmovdqu64 zmm9, ZMMWORD PTR [rdx + 64]
-  vmovdqu64 zmm10, ZMMWORD PTR [rdx + 128]
-  vmovdqu64 zmm11, ZMMWORD PTR [rdx + 192]
+  vmovdqu64 zmm8, ZMMWORD PTR [r12]
+  vmovdqu64 zmm9, ZMMWORD PTR [r12 + 64]
+  vmovdqu64 zmm10, ZMMWORD PTR [r12 + 128]
+  vmovdqu64 zmm11, ZMMWORD PTR [r12 + 192]
   AES_ENCRYPT_16 \aes256
   AES_GCM_STORE_Z_LOADED \open, zmm8, zmm9, zmm10, zmm11
 
   add rdx, 256
+  GCM_ADVANCE_READ256
   sub rcx, 256
   add r10d, 16
   add r11, 256
@@ -866,6 +900,7 @@
   AES_GCM_STORE_Z_LOADED \open, zmm4, zmm5, zmm6, zmm7
 
   add rdx, 256
+  GCM_ADVANCE_READ256
   sub rcx, 256
   add r10d, 16
   add r11, 256
@@ -876,6 +911,7 @@
   AES_GCM_STORE_Z_LOADED \open, zmm8, zmm9, zmm10, zmm11
 
   add rdx, 256
+  GCM_ADVANCE_READ256
   sub rcx, 256
   add r10d, 16
   add r11, 256
@@ -889,20 +925,22 @@
 
   GCM_COUNTERS_16
 
-  vmovdqu64 zmm4, ZMMWORD PTR [rdx]
-  vmovdqu64 zmm5, ZMMWORD PTR [rdx + 64]
-  vmovdqu64 zmm6, ZMMWORD PTR [rdx + 128]
-  vmovdqu64 zmm7, ZMMWORD PTR [rdx + 192]
+  vmovdqu64 zmm4, ZMMWORD PTR [r12]
+  vmovdqu64 zmm5, ZMMWORD PTR [r12 + 64]
+  vmovdqu64 zmm6, ZMMWORD PTR [r12 + 128]
+  vmovdqu64 zmm7, ZMMWORD PTR [r12 + 192]
   AES_ENCRYPT_16 \aes256
   AES_GCM_STORE_Z_LOADED \open, zmm4, zmm5, zmm6, zmm7
 
   add rdx, 256
+  GCM_ADVANCE_READ256
   sub rcx, 256
   add r10d, 16
   add r11, 256
   GHASH16_REG_H zmm4, zmm5, zmm6, zmm7, zmm16, zmm17, zmm18, zmm19
 
 .L\name\()_done_stack:
+  GCM_CLEAR_SCRATCH 512
   mov rsp, QWORD PTR [rsp + 512]
   jmp .L\name\()_done
 
@@ -914,14 +952,15 @@
 
   GCM_COUNTERS_16
 
-  vmovdqu64 zmm4, ZMMWORD PTR [rdx]
-  vmovdqu64 zmm5, ZMMWORD PTR [rdx + 64]
-  vmovdqu64 zmm6, ZMMWORD PTR [rdx + 128]
-  vmovdqu64 zmm7, ZMMWORD PTR [rdx + 192]
+  vmovdqu64 zmm4, ZMMWORD PTR [r12]
+  vmovdqu64 zmm5, ZMMWORD PTR [r12 + 64]
+  vmovdqu64 zmm6, ZMMWORD PTR [r12 + 128]
+  vmovdqu64 zmm7, ZMMWORD PTR [r12 + 192]
   AES_ENCRYPT_16 \aes256
   AES_GCM_STORE_Z_LOADED \open, zmm4, zmm5, zmm6, zmm7
 
   add rdx, 256
+  GCM_ADVANCE_READ256
   sub rcx, 256
   add r10d, 16
   add r11, 256
@@ -932,6 +971,10 @@
   mov DWORD PTR [r9 + 16], r10d
   mov QWORD PTR [r9 + 24], r11
   vzeroupper
+  pop r13
+  pop r12
+  mov QWORD PTR [rsp - 16], 0
+  mov QWORD PTR [rsp - 8], 0
   ret
   .size \name, . - \name
 .endm
@@ -941,6 +984,14 @@
   .globl \name
   .type \name, @function
 \name:
+  push r12
+  push r13
+  mov r12, QWORD PTR [r9 + 32]
+  mov r13, QWORD PTR [r9 + 40]
+  test r13, r13
+  jz .L\name\()_input_ready
+  mov r12, QWORD PTR [r13]
+.L\name\()_input_ready:
   xor r11d, r11d
   mov r10d, DWORD PTR [r9 + 16]
 
@@ -948,6 +999,10 @@
   jae .L\name\()_have_min
   mov DWORD PTR [r9 + 16], r10d
   vzeroupper
+  pop r13
+  pop r12
+  mov QWORD PTR [rsp - 16], 0
+  mov QWORD PTR [rsp - 8], 0
   ret
 
 .L\name\()_have_min:
@@ -971,28 +1026,30 @@
 
   GCM_COUNTERS_16
 
-  vmovdqu64 zmm4, ZMMWORD PTR [rdx]
-  vmovdqu64 zmm5, ZMMWORD PTR [rdx + 64]
-  vmovdqu64 zmm6, ZMMWORD PTR [rdx + 128]
-  vmovdqu64 zmm7, ZMMWORD PTR [rdx + 192]
+  vmovdqu64 zmm4, ZMMWORD PTR [r12]
+  vmovdqu64 zmm5, ZMMWORD PTR [r12 + 64]
+  vmovdqu64 zmm6, ZMMWORD PTR [r12 + 128]
+  vmovdqu64 zmm7, ZMMWORD PTR [r12 + 192]
   AES_ENCRYPT_16 \aes256
   AES_GCM_STORE_Z_LOADED \open, zmm4, zmm5, zmm6, zmm7
 
   add rdx, 256
+  GCM_ADVANCE_READ256
   sub rcx, 256
   add r10d, 16
   add r11, 256
 
   GCM_COUNTERS_16
 
-  vmovdqu64 zmm8, ZMMWORD PTR [rdx]
-  vmovdqu64 zmm9, ZMMWORD PTR [rdx + 64]
-  vmovdqu64 zmm10, ZMMWORD PTR [rdx + 128]
-  vmovdqu64 zmm11, ZMMWORD PTR [rdx + 192]
+  vmovdqu64 zmm8, ZMMWORD PTR [r12]
+  vmovdqu64 zmm9, ZMMWORD PTR [r12 + 64]
+  vmovdqu64 zmm10, ZMMWORD PTR [r12 + 128]
+  vmovdqu64 zmm11, ZMMWORD PTR [r12 + 192]
   AES_ENCRYPT_16 \aes256
   AES_GCM_STORE_Z_LOADED \open, zmm8, zmm9, zmm10, zmm11
 
   add rdx, 256
+  GCM_ADVANCE_READ256
   sub rcx, 256
   add r10d, 16
   add r11, 256
@@ -1008,6 +1065,7 @@
   AES_GCM_STORE_Z_LOADED \open, zmm4, zmm5, zmm6, zmm7
 
   add rdx, 256
+  GCM_ADVANCE_READ256
   sub rcx, 256
   add r10d, 16
   add r11, 256
@@ -1018,6 +1076,7 @@
   AES_GCM_STORE_Z_LOADED \open, zmm8, zmm9, zmm10, zmm11
 
   add rdx, 256
+  GCM_ADVANCE_READ256
   sub rcx, 256
   add r10d, 16
   add r11, 256
@@ -1028,6 +1087,7 @@
   AES_GCM_STORE_Z_LOADED \open, zmm4, zmm5, zmm6, zmm7
 
   add rdx, 256
+  GCM_ADVANCE_READ256
   sub rcx, 256
   add r10d, 16
   add r11, 256
@@ -1038,6 +1098,7 @@
   AES_GCM_STORE_Z_LOADED \open, zmm8, zmm9, zmm10, zmm11
 
   add rdx, 256
+  GCM_ADVANCE_READ256
   sub rcx, 256
   add r10d, 16
   add r11, 256
@@ -1055,14 +1116,15 @@
 
   GCM_COUNTERS_16
 
-  vmovdqu64 zmm4, ZMMWORD PTR [rdx]
-  vmovdqu64 zmm5, ZMMWORD PTR [rdx + 64]
-  vmovdqu64 zmm6, ZMMWORD PTR [rdx + 128]
-  vmovdqu64 zmm7, ZMMWORD PTR [rdx + 192]
+  vmovdqu64 zmm4, ZMMWORD PTR [r12]
+  vmovdqu64 zmm5, ZMMWORD PTR [r12 + 64]
+  vmovdqu64 zmm6, ZMMWORD PTR [r12 + 128]
+  vmovdqu64 zmm7, ZMMWORD PTR [r12 + 192]
   AES_ENCRYPT_16 \aes256
   AES_GCM_STORE_Z_LOADED \open, zmm4, zmm5, zmm6, zmm7
 
   add rdx, 256
+  GCM_ADVANCE_READ256
   sub rcx, 256
   add r10d, 16
   add r11, 256
@@ -1076,6 +1138,7 @@
   AES_GCM_STORE_Z_LOADED \open, zmm4, zmm5, zmm6, zmm7
 
   add rdx, 256
+  GCM_ADVANCE_READ256
   sub rcx, 256
   add r10d, 16
   add r11, 256
@@ -1086,6 +1149,7 @@
   AES_GCM_STORE_Z_LOADED \open, zmm8, zmm9, zmm10, zmm11
 
   add rdx, 256
+  GCM_ADVANCE_READ256
   sub rcx, 256
   add r10d, 16
   add r11, 256
@@ -1096,20 +1160,22 @@
 
   GCM_COUNTERS_16
 
-  vmovdqu64 zmm4, ZMMWORD PTR [rdx]
-  vmovdqu64 zmm5, ZMMWORD PTR [rdx + 64]
-  vmovdqu64 zmm6, ZMMWORD PTR [rdx + 128]
-  vmovdqu64 zmm7, ZMMWORD PTR [rdx + 192]
+  vmovdqu64 zmm4, ZMMWORD PTR [r12]
+  vmovdqu64 zmm5, ZMMWORD PTR [r12 + 64]
+  vmovdqu64 zmm6, ZMMWORD PTR [r12 + 128]
+  vmovdqu64 zmm7, ZMMWORD PTR [r12 + 192]
   AES_ENCRYPT_16 \aes256
   AES_GCM_STORE_Z_LOADED \open, zmm4, zmm5, zmm6, zmm7
 
   add rdx, 256
+  GCM_ADVANCE_READ256
   sub rcx, 256
   add r10d, 16
   add r11, 256
   GHASH16_REG_H zmm4, zmm5, zmm6, zmm7, zmm16, zmm17, zmm18, zmm19
 
 .L\name\()_done_stack:
+  GCM_CLEAR_SCRATCH 1024
   mov rsp, QWORD PTR [rsp + 1024]
 
 .L\name\()_done:
@@ -1117,6 +1183,10 @@
   mov DWORD PTR [r9 + 16], r10d
   mov QWORD PTR [r9 + 24], r11
   vzeroupper
+  pop r13
+  pop r12
+  mov QWORD PTR [rsp - 16], 0
+  mov QWORD PTR [rsp - 8], 0
   ret
   .size \name, . - \name
 .endm
@@ -1126,6 +1196,14 @@
   .globl \name
   .type \name, @function
 \name:
+  push r12
+  push r13
+  mov r12, QWORD PTR [r9 + 32]
+  mov r13, QWORD PTR [r9 + 40]
+  test r13, r13
+  jz .L\name\()_input_ready
+  mov r12, QWORD PTR [r13]
+.L\name\()_input_ready:
   xor r11d, r11d
   mov r10d, DWORD PTR [r9 + 16]
 
@@ -1139,6 +1217,10 @@
 .L\name\()_ret_unprocessed:
   mov DWORD PTR [r9 + 16], r10d
   vzeroupper
+  pop r13
+  pop r12
+  mov QWORD PTR [rsp - 16], 0
+  mov QWORD PTR [rsp - 8], 0
   ret
 
 .L\name\()_have_min:
@@ -1162,28 +1244,30 @@
 
   GCM_COUNTERS_16
 
-  vmovdqu64 zmm4, ZMMWORD PTR [rdx]
-  vmovdqu64 zmm5, ZMMWORD PTR [rdx + 64]
-  vmovdqu64 zmm6, ZMMWORD PTR [rdx + 128]
-  vmovdqu64 zmm7, ZMMWORD PTR [rdx + 192]
+  vmovdqu64 zmm4, ZMMWORD PTR [r12]
+  vmovdqu64 zmm5, ZMMWORD PTR [r12 + 64]
+  vmovdqu64 zmm6, ZMMWORD PTR [r12 + 128]
+  vmovdqu64 zmm7, ZMMWORD PTR [r12 + 192]
   AES_ENCRYPT_16 \aes256
   AES_GCM_STORE_Z_LOADED \open, zmm4, zmm5, zmm6, zmm7
 
   add rdx, 256
+  GCM_ADVANCE_READ256
   sub rcx, 256
   add r10d, 16
   add r11, 256
 
   GCM_COUNTERS_16
 
-  vmovdqu64 zmm8, ZMMWORD PTR [rdx]
-  vmovdqu64 zmm9, ZMMWORD PTR [rdx + 64]
-  vmovdqu64 zmm10, ZMMWORD PTR [rdx + 128]
-  vmovdqu64 zmm11, ZMMWORD PTR [rdx + 192]
+  vmovdqu64 zmm8, ZMMWORD PTR [r12]
+  vmovdqu64 zmm9, ZMMWORD PTR [r12 + 64]
+  vmovdqu64 zmm10, ZMMWORD PTR [r12 + 128]
+  vmovdqu64 zmm11, ZMMWORD PTR [r12 + 192]
   AES_ENCRYPT_16 \aes256
   AES_GCM_STORE_Z_LOADED \open, zmm8, zmm9, zmm10, zmm11
 
   add rdx, 256
+  GCM_ADVANCE_READ256
   sub rcx, 256
   add r10d, 16
   add r11, 256
@@ -1199,6 +1283,7 @@
   AES_GCM_STORE_Z_LOADED \open, zmm4, zmm5, zmm6, zmm7
 
   add rdx, 256
+  GCM_ADVANCE_READ256
   sub rcx, 256
   add r10d, 16
   add r11, 256
@@ -1209,6 +1294,7 @@
   AES_GCM_STORE_Z_LOADED \open, zmm8, zmm9, zmm10, zmm11
 
   add rdx, 256
+  GCM_ADVANCE_READ256
   sub rcx, 256
   add r10d, 16
   add r11, 256
@@ -1219,6 +1305,7 @@
   AES_GCM_STORE_Z_LOADED \open, zmm4, zmm5, zmm6, zmm7
 
   add rdx, 256
+  GCM_ADVANCE_READ256
   sub rcx, 256
   add r10d, 16
   add r11, 256
@@ -1229,6 +1316,7 @@
   AES_GCM_STORE_Z_LOADED \open, zmm8, zmm9, zmm10, zmm11
 
   add rdx, 256
+  GCM_ADVANCE_READ256
   sub rcx, 256
   add r10d, 16
   add r11, 256
@@ -1239,6 +1327,7 @@
   AES_GCM_STORE_Z_LOADED \open, zmm4, zmm5, zmm6, zmm7
 
   add rdx, 256
+  GCM_ADVANCE_READ256
   sub rcx, 256
   add r10d, 16
   add r11, 256
@@ -1249,6 +1338,7 @@
   AES_GCM_STORE_Z_LOADED \open, zmm8, zmm9, zmm10, zmm11
 
   add rdx, 256
+  GCM_ADVANCE_READ256
   sub rcx, 256
   add r10d, 16
   add r11, 256
@@ -1259,6 +1349,7 @@
   AES_GCM_STORE_Z_LOADED \open, zmm4, zmm5, zmm6, zmm7
 
   add rdx, 256
+  GCM_ADVANCE_READ256
   sub rcx, 256
   add r10d, 16
   add r11, 256
@@ -1269,6 +1360,7 @@
   AES_GCM_STORE_Z_LOADED \open, zmm8, zmm9, zmm10, zmm11
 
   add rdx, 256
+  GCM_ADVANCE_READ256
   sub rcx, 256
   add r10d, 16
   add r11, 256
@@ -1282,6 +1374,7 @@
   AES_GCM_STORE_Z_LOADED \open, zmm4, zmm5, zmm6, zmm7
 
   add rdx, 256
+  GCM_ADVANCE_READ256
   sub rcx, 256
   add r10d, 16
   add r11, 256
@@ -1292,6 +1385,7 @@
   AES_GCM_STORE_Z_LOADED \open, zmm8, zmm9, zmm10, zmm11
 
   add rdx, 256
+  GCM_ADVANCE_READ256
   sub rcx, 256
   add r10d, 16
   add r11, 256
@@ -1302,6 +1396,7 @@
   AES_GCM_STORE_Z_LOADED \open, zmm4, zmm5, zmm6, zmm7
 
   add rdx, 256
+  GCM_ADVANCE_READ256
   sub rcx, 256
   add r10d, 16
   add r11, 256
@@ -1312,6 +1407,7 @@
   AES_GCM_STORE_Z_LOADED \open, zmm8, zmm9, zmm10, zmm11
 
   add rdx, 256
+  GCM_ADVANCE_READ256
   sub rcx, 256
   add r10d, 16
   add r11, 256
@@ -1322,6 +1418,7 @@
   AES_GCM_STORE_Z_LOADED \open, zmm4, zmm5, zmm6, zmm7
 
   add rdx, 256
+  GCM_ADVANCE_READ256
   sub rcx, 256
   add r10d, 16
   add r11, 256
@@ -1332,17 +1429,23 @@
   AES_GCM_STORE_Z_LOADED \open, zmm8, zmm9, zmm10, zmm11
 
   add rdx, 256
+  GCM_ADVANCE_READ256
   sub rcx, 256
   add r10d, 16
   add r11, 256
 
   GHASH32_REG_MID_CONT zmm4, zmm5, zmm6, zmm7, zmm8, zmm9, zmm10, zmm11
 
+  GCM_CLEAR_SCRATCH 2048
   mov rsp, QWORD PTR [rsp + 2048]
   vmovdqu64 XMMWORD PTR [r9], xmm30
   mov DWORD PTR [r9 + 16], r10d
   mov QWORD PTR [r9 + 24], r11
   vzeroupper
+  pop r13
+  pop r12
+  mov QWORD PTR [rsp - 16], 0
+  mov QWORD PTR [rsp - 8], 0
   ret
   .size \name, . - \name
 .endm

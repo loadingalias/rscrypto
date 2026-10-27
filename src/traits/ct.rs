@@ -391,7 +391,8 @@ pub(crate) fn zeroize_words<T: WordZero>(words: &mut [T]) {
 /// costs well under 1% at realistic parameters. Short symmetric operations such as MACs, AEADs, and
 /// fixed-size comparisons do not toggle it per call, because a toggle costs about
 /// 30 ns on Apple Silicon. Wrap that work, or a whole worker loop, in this function
-/// to cover it for one toggle per scope.
+/// to cover it for one toggle per scope. Gather encryption enters it for the complete
+/// message, including all slices and output initialization.
 ///
 /// The previous state is restored when `f` returns or unwinds. On other
 /// architectures, on cores without `FEAT_DIT`, and under Miri, this calls `f`
@@ -524,7 +525,7 @@ pub(crate) mod tests {
     DIT_ENTRIES.with(core::cell::Cell::get).strict_sub(before)
   }
 
-  /// Every asymmetric, post-quantum, and password operation must run under the guard.
+  /// Asymmetric, post-quantum, password, and gather operations enter the guard.
   #[cfg(any(
     feature = "x25519",
     feature = "ed25519",
@@ -538,7 +539,9 @@ pub(crate) mod tests {
     feature = "argon2",
     feature = "scrypt",
     feature = "pbkdf2",
-    feature = "rsa"
+    feature = "rsa",
+    feature = "aes-gcm",
+    feature = "chacha20poly1305"
   ))]
   #[test]
   fn slow_secret_operations_enter_data_independent_timing() {
@@ -547,6 +550,38 @@ pub(crate) mod tests {
         core::hint::black_box(operation());
       });
       assert!(entries >= 1, "{name} must enter data-independent timing");
+    }
+
+    #[cfg(feature = "aes-gcm")]
+    {
+      use crate::aead::expert::AeadWithNonce;
+      let nonce = crate::aead::Nonce96::from_bytes([0x11; 12]);
+      let cipher = crate::Aes128Gcm::new(&crate::Aes128GcmKey::from_bytes([0x22; 16]));
+      let mut out = [0; 1];
+      covered("AES-128-GCM gather", || {
+        cipher.encrypt_gather(&nonce, b"", [b"x".as_slice()], &mut out)
+      });
+      let cipher = crate::Aes256Gcm::new(&crate::Aes256GcmKey::from_bytes([0x22; 32]));
+      let mut out = [core::mem::MaybeUninit::uninit(); 1];
+      covered("AES-256-GCM uninitialized gather", || {
+        cipher
+          .encrypt_gather_uninit(&nonce, b"", [b"x".as_slice()], &mut out)
+          .map(|(tag, _)| tag)
+      });
+    }
+    #[cfg(feature = "chacha20poly1305")]
+    {
+      use crate::aead::expert::AeadWithNonce;
+      let cipher = crate::ChaCha20Poly1305::new(&crate::ChaCha20Poly1305Key::from_bytes([0x22; 32]));
+      let mut out = [0; 1];
+      covered("ChaCha20-Poly1305 gather", || {
+        cipher.encrypt_gather(
+          &crate::aead::Nonce96::from_bytes([0x11; 12]),
+          b"",
+          [b"x".as_slice()],
+          &mut out,
+        )
+      });
     }
 
     #[cfg(feature = "rsa")]
@@ -867,6 +902,18 @@ pub(crate) mod tests {
   #[cfg(all(rscrypto_internal, feature = "diag"))]
   #[test]
   fn proof_leaves_stay_outside_data_independent_timing() {
+    #[cfg(feature = "aes-gcm")]
+    assert_eq!(
+      dit_entries_during(|| {
+        let cipher = crate::Aes128Gcm::new(&crate::Aes128GcmKey::from_bytes([0x22; 16]));
+        core::hint::black_box(crate::aead::diag_aes128gcm_ctr32_be(
+          &cipher,
+          &crate::aead::Nonce96::from_bytes([0x11; 12]),
+          &[0; 44],
+        ));
+      }),
+      0
+    );
     #[cfg(feature = "rsa")]
     assert_eq!(
       dit_entries_during(|| {

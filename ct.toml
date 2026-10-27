@@ -1764,6 +1764,39 @@ samples = 256
 smoke_samples = 16
 
 [[dudect_case]]
+name = "aes128gcm_gather_fixed_vs_random_key_seal"
+primitive = "aead.symmetric_transform"
+filter = "aes128gcm_gather_fixed_vs_random_key_seal"
+left_class = "16385-byte gather seal with fixed public partition and fixed secret key"
+right_class = "16385-byte gather seal with the same public partition and random secret key"
+samples = 20000
+smoke_samples = 2000
+gate = "diagnostic"
+reason = "High-level gather seal exposes class-dependent public ciphertext/tag. This composed-path timing diagnostic supplements the required secret-only CTR/GHASH/tag-AES probes and generated-code review."
+
+[[dudect_case]]
+name = "aes256gcm_gather_fixed_vs_random_key_seal"
+primitive = "aead.symmetric_transform"
+filter = "aes256gcm_gather_fixed_vs_random_key_seal"
+left_class = "16385-byte gather seal with fixed public partition and fixed secret key"
+right_class = "16385-byte gather seal with the same public partition and random secret key"
+samples = 20000
+smoke_samples = 2000
+gate = "diagnostic"
+reason = "High-level gather seal exposes class-dependent public ciphertext/tag. This composed-path timing diagnostic supplements the required secret-only CTR/GHASH/tag-AES probes and generated-code review."
+
+[[dudect_case]]
+name = "chacha20poly1305_gather_fixed_vs_random_key_seal"
+primitive = "aead.symmetric_transform"
+filter = "chacha20poly1305_gather_fixed_vs_random_key_seal"
+left_class = "16385-byte gather seal with fixed public partition and fixed secret key"
+right_class = "16385-byte gather seal with the same public partition and random secret key"
+samples = 20000
+smoke_samples = 2000
+gate = "diagnostic"
+reason = "High-level gather seal exposes class-dependent public ciphertext/tag. This composed-path timing diagnostic supplements the required primitive probes and generated-code review."
+
+[[dudect_case]]
 name = "aes128gcm_fixed_vs_random_key_seal"
 primitive = "aead.symmetric_transform"
 filter = "aes128gcm_fixed_vs_random_key_seal"
@@ -3485,8 +3518,8 @@ name = "x86_64-unknown-linux-gnu"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 3435
-compiler_api_sha256 = "d1960a22f9e16e68f3d52647909151509eb5d424221e351eeba319aea6bec4e4"
+compiler_api_item_count = 3441
+compiler_api_sha256 = "f99db63d297d1ea8e5833172e4e7953e68637d44ec0dedd7e768a677073023d5"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "required"
@@ -3496,8 +3529,8 @@ name = "aarch64-unknown-linux-gnu"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 3435
-compiler_api_sha256 = "d1960a22f9e16e68f3d52647909151509eb5d424221e351eeba319aea6bec4e4"
+compiler_api_item_count = 3441
+compiler_api_sha256 = "f99db63d297d1ea8e5833172e4e7953e68637d44ec0dedd7e768a677073023d5"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "required"
@@ -3530,8 +3563,8 @@ group = "win"
 backend = "llvm"
 linker = "msvc-link-unpinned"
 claim = "ct-intended"
-compiler_api_item_count = 3435
-compiler_api_sha256 = "d1960a22f9e16e68f3d52647909151509eb5d424221e351eeba319aea6bec4e4"
+compiler_api_item_count = 3441
+compiler_api_sha256 = "f99db63d297d1ea8e5833172e4e7953e68637d44ec0dedd7e768a677073023d5"
 physical_timing = "required"
 binsec = "unsupported"
 binsec_reason = "BINSEC PE/Windows evidence is not part of the current release evidence gate."
@@ -3552,8 +3585,8 @@ name = "aarch64-apple-darwin"
 group = "macos"
 backend = "llvm"
 linker = "apple-ld-unpinned"
-compiler_api_item_count = 3435
-compiler_api_sha256 = "d1960a22f9e16e68f3d52647909151509eb5d424221e351eeba319aea6bec4e4"
+compiler_api_item_count = 3441
+compiler_api_sha256 = "f99db63d297d1ea8e5833172e4e7953e68637d44ec0dedd7e768a677073023d5"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -3564,8 +3597,8 @@ name = "s390x-unknown-linux-gnu"
 group = "ibm"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 3435
-compiler_api_sha256 = "d1960a22f9e16e68f3d52647909151509eb5d424221e351eeba319aea6bec4e4"
+compiler_api_item_count = 3441
+compiler_api_sha256 = "f99db63d297d1ea8e5833172e4e7953e68637d44ec0dedd7e768a677073023d5"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -3576,8 +3609,8 @@ name = "powerpc64le-unknown-linux-gnu"
 group = "ibm"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 3435
-compiler_api_sha256 = "d1960a22f9e16e68f3d52647909151509eb5d424221e351eeba319aea6bec4e4"
+compiler_api_item_count = 3441
+compiler_api_sha256 = "f99db63d297d1ea8e5833172e4e7953e68637d44ec0dedd7e768a677073023d5"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -3588,8 +3621,8 @@ name = "riscv64gc-unknown-linux-gnu"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 3435
-compiler_api_sha256 = "d1960a22f9e16e68f3d52647909151509eb5d424221e351eeba319aea6bec4e4"
+compiler_api_item_count = 3441
+compiler_api_sha256 = "f99db63d297d1ea8e5833172e4e7953e68637d44ec0dedd7e768a677073023d5"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -3771,6 +3804,28 @@ evidence = [
   "unit:aead.symmetric_transform.aes_siv_cmac256",
 ]
 limitation = "Release claims require exact target artifacts. Random-nonce helper timing includes the platform entropy source."
+
+[[operation]]
+id = "aead.gather_seal"
+api = [
+  "rscrypto::AeadGather::{seal_random_gather,__validate_gather_lengths,__encrypt_gather_with_nonce}",
+  "rscrypto::aead::expert::AeadWithNonce::{encrypt_gather,encrypt_gather_uninit,encrypt_gather_append}",
+  "rscrypto::aead::NonceCounter::{encrypt_gather}",
+]
+features = ["aes-gcm or chacha20poly1305", "alloc for vector append", "getrandom for random nonces"]
+targets = ["all-supported", "backend selected by public target capabilities"]
+secret_inputs = ["key", "plaintext", "keystream", "authentication subkeys and state"]
+public_inputs = ["nonce", "AAD", "slice boundaries and lengths", "declared plaintext length", "output capacity", "backend capabilities"]
+variable_time_components = ["public-length loops", "public buffer and length errors", "public backend dispatch", "entropy-source latency"]
+permitted_leakage = ["algorithm", "lengths and slice boundaries", "nonce", "AAD", "backend", "opaque success/failure"]
+claim = "ct-intended"
+evidence = [
+  "primitive:aead.symmetric_transform",
+  "unit:aead.symmetric_transform.aes128gcm",
+  "unit:aead.symmetric_transform.aes256gcm",
+  "unit:aead.symmetric_transform.chacha20poly1305",
+]
+limitation = "Component evidence does not qualify the composed gather path or compiler-made keystream copies. Composed-path gather timing cases are diagnostics; final-source native generated-code and cleanup review remain required. Slice lengths and iterator behavior are caller-controlled. Iterator panics run Rust unwind cleanup; an abort cannot run destructors."
 
 [[operation]]
 id = "aead.header_protection"

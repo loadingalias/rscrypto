@@ -54,7 +54,7 @@ mod xof;
   feature = "aegis256",
   feature = "ascon-aead"
 ))]
-pub use aead::Aead;
+pub use aead::{Aead, AeadGather};
 pub use checksum::{Checksum, ChecksumCombine};
 pub use digest::Digest;
 pub use error::VerificationError;

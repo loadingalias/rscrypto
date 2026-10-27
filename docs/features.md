@@ -59,6 +59,11 @@ No Cargo feature combination exposes them, including `--all-features`.
 Applications must not use either cfg.
 It has no compatibility guarantee.
 
+The `aes-gcm` and `chacha20poly1305` leaves implement `AeadGather`. It encrypts ordered plaintext
+slices into one ciphertext without staging plaintext or allocating. Fresh-random-nonce sealing
+requires `getrandom`; caller-supplied nonces use `aead::expert::AeadWithNonce`. The append helper
+requires `alloc` and writes ciphertext directly into a vector's spare capacity.
+
 With `std` and `blake3`, `Blake3::update_reader` hashes through EOF with bounded
 input buffering. `Blake3::update_file` reads from a file's current position through
 actual EOF and uses regular-file size and position hints to choose buffer sizes.

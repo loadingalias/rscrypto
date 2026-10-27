@@ -78,6 +78,13 @@ BOUNDARIES = [
     source=SECRET_HASHING,
     constant="QUAD_STACK_SCRUB_WORDS",
   ),
+  Boundary(
+    name="AES-GCM generic CTR compiler spills",
+    workers=re.compile(r"^rscrypto::aead::aes::aes(?:128|256)_ctr32_encrypt_be_worker$"),
+    scrub=re.compile(r"^rscrypto::aead::aes::scrub_ctr_stack$"),
+    source=ROOT / "src" / "aead" / "aes.rs",
+    constant="CTR_STACK_SCRUB_WORDS",
+  ),
 ]
 
 DETECTION = re.compile(

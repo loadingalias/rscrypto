@@ -156,6 +156,20 @@ pub(super) unsafe fn encrypt_block_core(keys: &CeRoundKeys, block: &mut [u8; 16]
   }
 }
 
+/// Keep GCM tail round keys inside a single-block leaf instead of caching them
+/// across the enclosing fused loop's calls. Review emitted spills per target.
+///
+/// # Safety
+/// Caller must ensure the CPU supports AES-CE and NEON.
+#[cfg(feature = "aes-gcm")]
+#[target_feature(enable = "aes,neon")]
+#[inline(never)]
+pub(super) unsafe fn encrypt_gcm_tail_block(keys: &CeRoundKeys, block: &mut [u8; 16]) {
+  // SAFETY: the caller establishes AES-CE and NEON; the typed references cover
+  // one initialized key schedule and one complete writable block.
+  unsafe { encrypt_block_core(keys, block) };
+}
+
 #[target_feature(enable = "aes,neon")]
 #[inline]
 /// # Safety
@@ -1173,9 +1187,9 @@ pub(super) unsafe fn encrypt_ctr32_be_xor_ghash_128b_chunks_core(
   iv_prefix: &[u8; 12],
   mut ctr: u32,
   data: &mut [u8],
-  mut acc: u128,
+  acc: &mut u128,
   tables: &super::Aarch64GcmTables<'_>,
-) -> (u128, u32, usize) {
+) -> (u32, usize) {
   debug_assert!(data.len() >= 128);
 
   // SAFETY: AES-256-GCM full-chunk loop because:
@@ -1190,7 +1204,7 @@ pub(super) unsafe fn encrypt_ctr32_be_xor_ghash_128b_chunks_core(
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     {
       if crate::platform::caps().has(crate::platform::caps::aarch64::PMULL_EOR3_READY) {
-        let mut state = asm::AesGcmAarch64State::new(acc, ctr);
+        let mut state = asm::AesGcmAarch64State::new(*acc, ctr, data.as_ptr());
         asm::rscrypto_aes256_gcm_seal_16x_eor3_aarch64(
           keys.rk.as_ptr().cast::<u8>(),
           iv_prefix.as_ptr(),
@@ -1202,11 +1216,12 @@ pub(super) unsafe fn encrypt_ctr32_be_xor_ghash_128b_chunks_core(
           &raw mut state,
         );
         if state.processed != 0 {
-          return (state.acc(), state.ctr, state.processed);
+          *acc = state.acc();
+          return (state.ctr, state.processed);
         }
       }
 
-      let mut state = asm::AesGcmAarch64State::new(acc, ctr);
+      let mut state = asm::AesGcmAarch64State::new(*acc, ctr, data.as_ptr());
       asm::rscrypto_aes256_gcm_seal_8x_aarch64(
         keys.rk.as_ptr().cast::<u8>(),
         iv_prefix.as_ptr(),
@@ -1216,7 +1231,8 @@ pub(super) unsafe fn encrypt_ctr32_be_xor_ghash_128b_chunks_core(
         &raw mut state,
       );
       if state.processed != 0 {
-        return (state.acc(), state.ctr, state.processed);
+        *acc = state.acc();
+        return (state.ctr, state.processed);
       }
     }
 
@@ -1235,19 +1251,19 @@ pub(super) unsafe fn encrypt_ctr32_be_xor_ghash_128b_chunks_core(
         iv_prefix,
         ctr,
         current,
-        acc,
+        *acc,
         tables.h_powers_rev_8,
         &prev_blocks,
       );
-      acc = next_acc;
+      *acc = next_acc;
       prev_blocks = next_blocks;
       ctr = ctr.wrapping_add(8);
       offset = offset.strict_add(128);
     }
 
-    acc = super::super::polyval::aarch64_aggregate_8blocks_be_lanes_inline(acc, tables.h_powers_rev_8, &prev_blocks);
+    *acc = super::super::polyval::aarch64_aggregate_8blocks_be_lanes_inline(*acc, tables.h_powers_rev_8, &prev_blocks);
 
-    (acc, ctr, offset)
+    (ctr, offset)
   }
 }
 
@@ -1265,9 +1281,9 @@ pub(super) unsafe fn decrypt_ctr32_be_xor_ghash_128b_chunks_core(
   iv_prefix: &[u8; 12],
   mut ctr: u32,
   data: &mut [u8],
-  mut acc: u128,
+  acc: &mut u128,
   tables: &super::Aarch64GcmTables<'_>,
-) -> (u128, u32, usize) {
+) -> (u32, usize) {
   // SAFETY: AES-256-GCM full-chunk open loop because:
   // 1. The caller guarantees AES-CE + PMULL availability.
   // 2. The external assembly path receives the checked slice pointer/length and reports its exact
@@ -1278,7 +1294,7 @@ pub(super) unsafe fn decrypt_ctr32_be_xor_ghash_128b_chunks_core(
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     {
       if crate::platform::caps().has(crate::platform::caps::aarch64::PMULL_EOR3_READY) {
-        let mut state = asm::AesGcmAarch64State::new(acc, ctr);
+        let mut state = asm::AesGcmAarch64State::new(*acc, ctr, data.as_ptr());
         asm::rscrypto_aes256_gcm_open_16x_eor3_aarch64(
           keys.rk.as_ptr().cast::<u8>(),
           iv_prefix.as_ptr(),
@@ -1290,11 +1306,12 @@ pub(super) unsafe fn decrypt_ctr32_be_xor_ghash_128b_chunks_core(
           &raw mut state,
         );
         if state.processed != 0 {
-          return (state.acc(), state.ctr, state.processed);
+          *acc = state.acc();
+          return (state.ctr, state.processed);
         }
       }
 
-      let mut state = asm::AesGcmAarch64State::new(acc, ctr);
+      let mut state = asm::AesGcmAarch64State::new(*acc, ctr, data.as_ptr());
       asm::rscrypto_aes256_gcm_open_8x_aarch64(
         keys.rk.as_ptr().cast::<u8>(),
         iv_prefix.as_ptr(),
@@ -1304,7 +1321,8 @@ pub(super) unsafe fn decrypt_ctr32_be_xor_ghash_128b_chunks_core(
         &raw mut state,
       );
       if state.processed != 0 {
-        return (state.acc(), state.ctr, state.processed);
+        *acc = state.acc();
+        return (state.ctr, state.processed);
       }
     }
 
@@ -1313,12 +1331,13 @@ pub(super) unsafe fn decrypt_ctr32_be_xor_ghash_128b_chunks_core(
 
     while offset.strict_add(128) <= data.len() {
       let current = core::slice::from_raw_parts_mut(data_ptr.add(offset), 128);
-      acc = decrypt_ctr32_be_xor_8blocks_ghash_current_core(keys, iv_prefix, ctr, current, acc, tables.h_powers_rev_8);
+      *acc =
+        decrypt_ctr32_be_xor_8blocks_ghash_current_core(keys, iv_prefix, ctr, current, *acc, tables.h_powers_rev_8);
       ctr = ctr.wrapping_add(8);
       offset = offset.strict_add(128);
     }
 
-    (acc, ctr, offset)
+    (ctr, offset)
   }
 }
 
@@ -1635,6 +1654,19 @@ pub(super) unsafe fn encrypt_block_128_core(keys: &Ce128RoundKeys, block: &mut [
     let state = encrypt_state_128_core(keys, vld1q_u8(block.as_ptr()));
     vst1q_u8(block.as_mut_ptr(), state);
   }
+}
+
+/// AES-128 counterpart of the isolated AES-256 GCM tail leaf.
+///
+/// # Safety
+/// Caller must ensure the CPU supports AES-CE and NEON.
+#[cfg(feature = "aes-gcm")]
+#[target_feature(enable = "aes,neon")]
+#[inline(never)]
+pub(super) unsafe fn encrypt_gcm_tail_block_128(keys: &Ce128RoundKeys, block: &mut [u8; 16]) {
+  // SAFETY: the caller establishes AES-CE and NEON; the typed references cover
+  // one initialized key schedule and one complete writable block.
+  unsafe { encrypt_block_128_core(keys, block) };
 }
 
 /// XOR a serial block stream into `state` and AES-128-encrypt after every block.
@@ -2209,9 +2241,9 @@ pub(super) unsafe fn encrypt_ctr32_be_xor_ghash_128b_chunks_128_core(
   iv_prefix: &[u8; 12],
   mut ctr: u32,
   data: &mut [u8],
-  mut acc: u128,
+  acc: &mut u128,
   tables: &super::Aarch64GcmTables<'_>,
-) -> (u128, u32, usize) {
+) -> (u32, usize) {
   debug_assert!(data.len() >= 128);
 
   // SAFETY: AES-128-GCM full-chunk loop because:
@@ -2226,7 +2258,7 @@ pub(super) unsafe fn encrypt_ctr32_be_xor_ghash_128b_chunks_128_core(
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     {
       if crate::platform::caps().has(crate::platform::caps::aarch64::PMULL_EOR3_READY) {
-        let mut state = asm::AesGcmAarch64State::new(acc, ctr);
+        let mut state = asm::AesGcmAarch64State::new(*acc, ctr, data.as_ptr());
         asm::rscrypto_aes128_gcm_seal_16x_eor3_aarch64(
           keys.rk.as_ptr().cast::<u8>(),
           iv_prefix.as_ptr(),
@@ -2238,11 +2270,12 @@ pub(super) unsafe fn encrypt_ctr32_be_xor_ghash_128b_chunks_128_core(
           &raw mut state,
         );
         if state.processed != 0 {
-          return (state.acc(), state.ctr, state.processed);
+          *acc = state.acc();
+          return (state.ctr, state.processed);
         }
       }
 
-      let mut state = asm::AesGcmAarch64State::new(acc, ctr);
+      let mut state = asm::AesGcmAarch64State::new(*acc, ctr, data.as_ptr());
       asm::rscrypto_aes128_gcm_seal_8x_aarch64(
         keys.rk.as_ptr().cast::<u8>(),
         iv_prefix.as_ptr(),
@@ -2252,7 +2285,8 @@ pub(super) unsafe fn encrypt_ctr32_be_xor_ghash_128b_chunks_128_core(
         &raw mut state,
       );
       if state.processed != 0 {
-        return (state.acc(), state.ctr, state.processed);
+        *acc = state.acc();
+        return (state.ctr, state.processed);
       }
     }
 
@@ -2271,19 +2305,19 @@ pub(super) unsafe fn encrypt_ctr32_be_xor_ghash_128b_chunks_128_core(
         iv_prefix,
         ctr,
         current,
-        acc,
+        *acc,
         tables.h_powers_rev_8,
         &prev_blocks,
       );
-      acc = next_acc;
+      *acc = next_acc;
       prev_blocks = next_blocks;
       ctr = ctr.wrapping_add(8);
       offset = offset.strict_add(128);
     }
 
-    acc = super::super::polyval::aarch64_aggregate_8blocks_be_lanes_inline(acc, tables.h_powers_rev_8, &prev_blocks);
+    *acc = super::super::polyval::aarch64_aggregate_8blocks_be_lanes_inline(*acc, tables.h_powers_rev_8, &prev_blocks);
 
-    (acc, ctr, offset)
+    (ctr, offset)
   }
 }
 
@@ -2301,9 +2335,9 @@ pub(super) unsafe fn decrypt_ctr32_be_xor_ghash_128b_chunks_128_core(
   iv_prefix: &[u8; 12],
   mut ctr: u32,
   data: &mut [u8],
-  mut acc: u128,
+  acc: &mut u128,
   tables: &super::Aarch64GcmTables<'_>,
-) -> (u128, u32, usize) {
+) -> (u32, usize) {
   // SAFETY: AES-128-GCM full-chunk open loop because:
   // 1. The caller guarantees AES-CE + PMULL availability.
   // 2. The external assembly path receives the checked slice pointer/length and reports its exact
@@ -2314,7 +2348,7 @@ pub(super) unsafe fn decrypt_ctr32_be_xor_ghash_128b_chunks_128_core(
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     {
       if crate::platform::caps().has(crate::platform::caps::aarch64::PMULL_EOR3_READY) {
-        let mut state = asm::AesGcmAarch64State::new(acc, ctr);
+        let mut state = asm::AesGcmAarch64State::new(*acc, ctr, data.as_ptr());
         asm::rscrypto_aes128_gcm_open_16x_eor3_aarch64(
           keys.rk.as_ptr().cast::<u8>(),
           iv_prefix.as_ptr(),
@@ -2326,11 +2360,12 @@ pub(super) unsafe fn decrypt_ctr32_be_xor_ghash_128b_chunks_128_core(
           &raw mut state,
         );
         if state.processed != 0 {
-          return (state.acc(), state.ctr, state.processed);
+          *acc = state.acc();
+          return (state.ctr, state.processed);
         }
       }
 
-      let mut state = asm::AesGcmAarch64State::new(acc, ctr);
+      let mut state = asm::AesGcmAarch64State::new(*acc, ctr, data.as_ptr());
       asm::rscrypto_aes128_gcm_open_8x_aarch64(
         keys.rk.as_ptr().cast::<u8>(),
         iv_prefix.as_ptr(),
@@ -2340,7 +2375,8 @@ pub(super) unsafe fn decrypt_ctr32_be_xor_ghash_128b_chunks_128_core(
         &raw mut state,
       );
       if state.processed != 0 {
-        return (state.acc(), state.ctr, state.processed);
+        *acc = state.acc();
+        return (state.ctr, state.processed);
       }
     }
 
@@ -2349,13 +2385,13 @@ pub(super) unsafe fn decrypt_ctr32_be_xor_ghash_128b_chunks_128_core(
 
     while offset.strict_add(128) <= data.len() {
       let current = core::slice::from_raw_parts_mut(data_ptr.add(offset), 128);
-      acc =
-        decrypt_ctr32_be_xor_8blocks_ghash_current_128_core(keys, iv_prefix, ctr, current, acc, tables.h_powers_rev_8);
+      *acc =
+        decrypt_ctr32_be_xor_8blocks_ghash_current_128_core(keys, iv_prefix, ctr, current, *acc, tables.h_powers_rev_8);
       ctr = ctr.wrapping_add(8);
       offset = offset.strict_add(128);
     }
 
-    (acc, ctr, offset)
+    (ctr, offset)
   }
 }
 
@@ -2537,4 +2573,293 @@ pub(super) unsafe fn encrypt_block_prefix_5_128(keys: &Ce128RoundKeys, block: &[
     let prefix = vgetq_lane_u64(vreinterpretq_u64_u8(state), 0).to_le_bytes();
     [prefix[0], prefix[1], prefix[2], prefix[3], prefix[4]]
   }
+}
+
+// Keep borrowed AES/GHASH key material inside one batch. Inlining these into
+// a loop can cache round keys and H powers in unowned caller stack slots.
+// These boundaries still require emitted-code spill review for each target.
+
+/// Fold padded data into the caller's GHASH accumulator using borrowed key tables.
+///
+/// # Safety
+/// The caller must establish AES, PMULL, and NEON availability.
+#[cfg(feature = "aes-gcm")]
+#[target_feature(enable = "aes,neon")]
+#[inline(never)]
+pub(super) unsafe fn update_gcm(tables: &super::Aarch64GcmTables<'_>, acc: &mut u128, data: &[u8]) {
+  // Preserve the borrowed boundary through interprocedural argument promotion.
+  let tables = core::hint::black_box(tables);
+  let acc = core::hint::black_box(acc);
+  // SAFETY: the caller establishes PMULL; all field elements and data are initialized.
+  *acc = unsafe {
+    super::super::ghash::ghash_update_padded_wide_aarch64(*acc, tables.h_powers_rev[3], tables.h_powers_rev, data)
+  };
+}
+
+/// Multiply one GHASH accumulator by the borrowed authentication key.
+///
+/// # Safety
+/// The caller must establish AES, PMULL, and NEON availability.
+#[cfg(feature = "aes-gcm")]
+#[target_feature(enable = "aes,neon")]
+#[inline(never)]
+pub(super) unsafe fn multiply_gcm(tables: &super::Aarch64GcmTables<'_>, acc: u128) -> u128 {
+  // Preserve the borrowed boundary through interprocedural argument promotion.
+  let tables = core::hint::black_box(tables);
+  // SAFETY: the caller establishes PMULL; the table borrows initialized field elements.
+  unsafe { super::super::polyval::aarch64_clmul128_reduce_inline(acc, tables.h_powers_rev[3]) }
+}
+
+/// Encrypt one four-block AES-256-GCM batch using borrowed key tables.
+///
+/// # Safety
+/// The caller must establish AES, PMULL, and NEON availability, provide at least
+/// 64 writable bytes, and use the counter and tables belonging to `keys`.
+#[cfg(feature = "aes-gcm")]
+#[target_feature(enable = "aes,neon")]
+#[inline(never)]
+pub(super) unsafe fn encrypt_gcm_four(
+  keys: &CeRoundKeys,
+  iv_prefix: &[u8; 12],
+  ctr: u32,
+  data: &mut [u8],
+  tables: &super::Aarch64GcmTables<'_>,
+  acc: &mut u128,
+) {
+  // SAFETY: the caller establishes AES/PMULL/NEON and the complete batch bounds.
+  // Ciphertext is authenticated with the existing production PMULL helper.
+  unsafe {
+    let blocks = encrypt_ctr32_be_xor_4blocks_core(keys, iv_prefix, ctr, data);
+    *acc = super::super::polyval::aarch64_aggregate_4blocks_inline(*acc, tables.h_powers_rev, &blocks);
+  }
+}
+
+/// Authenticate and decrypt one four-block AES-256-GCM batch using borrowed key tables.
+///
+/// # Safety
+/// The caller must establish AES, PMULL, and NEON availability, provide at least
+/// 64 writable bytes, and use the counter and tables belonging to `keys`.
+#[cfg(feature = "aes-gcm")]
+#[target_feature(enable = "aes,neon")]
+#[inline(never)]
+pub(super) unsafe fn decrypt_gcm_four(
+  keys: &CeRoundKeys,
+  iv_prefix: &[u8; 12],
+  ctr: u32,
+  data: &mut [u8],
+  tables: &super::Aarch64GcmTables<'_>,
+  acc: &mut u128,
+) {
+  // SAFETY: the caller establishes AES/PMULL/NEON and the complete batch bounds.
+  // Ciphertext is authenticated with the existing production PMULL helper.
+  unsafe {
+    let (ciphertext_blocks, _) = data.as_chunks::<16>();
+    let blocks = [
+      u128::from_be_bytes(ciphertext_blocks[0]),
+      u128::from_be_bytes(ciphertext_blocks[1]),
+      u128::from_be_bytes(ciphertext_blocks[2]),
+      u128::from_be_bytes(ciphertext_blocks[3]),
+    ];
+    let _ = encrypt_ctr32_be_xor_4blocks_core(keys, iv_prefix, ctr, data);
+    *acc = super::super::polyval::aarch64_aggregate_4blocks_inline(*acc, tables.h_powers_rev, &blocks);
+  }
+}
+
+/// Encrypt one four-block AES-128-GCM batch using borrowed key tables.
+///
+/// # Safety
+/// The caller must establish AES, PMULL, and NEON availability, provide at least
+/// 64 writable bytes, and use the counter and tables belonging to `keys`.
+#[cfg(feature = "aes-gcm")]
+#[target_feature(enable = "aes,neon")]
+#[inline(never)]
+pub(super) unsafe fn encrypt_gcm_four_128(
+  keys: &Ce128RoundKeys,
+  iv_prefix: &[u8; 12],
+  ctr: u32,
+  data: &mut [u8],
+  tables: &super::Aarch64GcmTables<'_>,
+  acc: &mut u128,
+) {
+  // SAFETY: the caller establishes AES/PMULL/NEON and the complete batch bounds.
+  // Ciphertext is authenticated with the existing production PMULL helper.
+  unsafe {
+    let blocks = encrypt_ctr32_be_xor_4blocks_128_core(keys, iv_prefix, ctr, data);
+    *acc = super::super::polyval::aarch64_aggregate_4blocks_inline(*acc, tables.h_powers_rev, &blocks);
+  }
+}
+
+/// Authenticate and decrypt one four-block AES-128-GCM batch using borrowed key tables.
+///
+/// # Safety
+/// The caller must establish AES, PMULL, and NEON availability, provide at least
+/// 64 writable bytes, and use the counter and tables belonging to `keys`.
+#[cfg(feature = "aes-gcm")]
+#[target_feature(enable = "aes,neon")]
+#[inline(never)]
+pub(super) unsafe fn decrypt_gcm_four_128(
+  keys: &Ce128RoundKeys,
+  iv_prefix: &[u8; 12],
+  ctr: u32,
+  data: &mut [u8],
+  tables: &super::Aarch64GcmTables<'_>,
+  acc: &mut u128,
+) {
+  // SAFETY: the caller establishes AES/PMULL/NEON and the complete batch bounds.
+  // Ciphertext is authenticated with the existing production PMULL helper.
+  unsafe {
+    let (ciphertext_blocks, _) = data.as_chunks::<16>();
+    let blocks = [
+      u128::from_be_bytes(ciphertext_blocks[0]),
+      u128::from_be_bytes(ciphertext_blocks[1]),
+      u128::from_be_bytes(ciphertext_blocks[2]),
+      u128::from_be_bytes(ciphertext_blocks[3]),
+    ];
+    let _ = encrypt_ctr32_be_xor_4blocks_128_core(keys, iv_prefix, ctr, data);
+    *acc = super::super::polyval::aarch64_aggregate_4blocks_inline(*acc, tables.h_powers_rev, &blocks);
+  }
+}
+
+/// Encrypt and authenticate one eight-block AES-128-GCM batch using borrowed key tables.
+///
+/// # Safety
+/// The caller must establish AES, PMULL, and NEON availability, provide at least
+/// 128 writable bytes, and use the counter and tables belonging to `keys`.
+#[cfg(feature = "aes-gcm")]
+#[target_feature(enable = "aes,neon")]
+#[inline(never)]
+pub(super) unsafe fn encrypt_gcm_eight_128(
+  keys: &Ce128RoundKeys,
+  iv_prefix: &[u8; 12],
+  ctr: u32,
+  data: &mut [u8],
+  tables: &super::Aarch64GcmTables<'_>,
+  acc: &mut u128,
+) {
+  // SAFETY: the caller establishes AES/PMULL/NEON and the complete batch bounds.
+  // The existing AES and PMULL helpers pass the resulting ciphertext lanes directly.
+  unsafe {
+    let blocks = encrypt_ctr32_be_xor_8blocks_128_core(keys, iv_prefix, ctr, data);
+    *acc = super::super::polyval::aarch64_aggregate_8blocks_be_lanes_inline(*acc, tables.h_powers_rev_8, &blocks);
+  }
+}
+
+/// Initialize complete ciphertext batches through the owned AArch64 GCM kernel.
+///
+/// # Safety
+/// The caller establishes AES, PMULL and NEON; input and output have equal
+/// lengths, the counter range is valid, and all tables belong to `keys`.
+#[cfg(all(feature = "aes-gcm", any(target_os = "macos", target_os = "linux")))]
+#[target_feature(enable = "aes,neon")]
+pub(super) unsafe fn encrypt_ctr32_be_gather_ghash_128_core<'output>(
+  keys: &Ce128RoundKeys,
+  iv_prefix: &[u8; 12],
+  ctr: u32,
+  plaintext: &super::super::gather::Input<'_, 128>,
+  out: &'output mut [core::mem::MaybeUninit<u8>],
+  acc: &mut u128,
+  tables: &super::Aarch64GcmTables<'_>,
+) -> &'output mut [u8] {
+  assert_eq!(plaintext.byte_len(), out.len());
+  let (input, spans) = plaintext.read_cursor();
+  let mut state = asm::AesGcmAarch64State::new_gather(*acc, ctr, input, spans);
+  if plaintext.byte_len() >= 128 {
+    // SAFETY: the caller establishes AES/PMULL/NEON. Both kernels read complete
+    // 128-byte input batches and write ciphertext without reading the output.
+    // Input retains either the complete contiguous slice or each borrowed
+    // 128-byte unit and a pointer sentinel. Its total length equals the
+    // exclusive disjoint output. Keys and
+    // H-power tables have the selected cadence's exact size. EOR3 is
+    // entered only after its full runtime capability check. AAPCS64 scratch x15
+    // carries the read pointer; the assembly preserves all callee-saved registers.
+    unsafe {
+      if crate::platform::caps().has(crate::platform::caps::aarch64::PMULL_EOR3_READY) {
+        asm::rscrypto_aes128_gcm_seal_16x_eor3_aarch64(
+          keys.rk.as_ptr().cast(),
+          iv_prefix.as_ptr(),
+          out.as_mut_ptr().cast(),
+          plaintext.byte_len(),
+          tables.h_powers_rev_16.as_ptr(),
+          tables.h_powers_rev_16_mid.as_ptr(),
+          tables.h_powers_rev_16_pair.as_ptr(),
+          &raw mut state,
+        );
+      } else {
+        asm::rscrypto_aes128_gcm_seal_8x_aarch64(
+          keys.rk.as_ptr().cast(),
+          iv_prefix.as_ptr(),
+          out.as_mut_ptr().cast(),
+          plaintext.byte_len(),
+          tables.h_powers_rev_8.as_ptr(),
+          &raw mut state,
+        );
+      }
+    }
+  }
+  assert!(state.processed <= out.len() && state.processed.is_multiple_of(128));
+  *acc = state.acc();
+  // SAFETY: `processed` covers only complete batches initialized by the audited
+  // kernel. Zero bytes are included when no batch was available. The returned
+  // borrow has exactly the original output's provenance and lifetime.
+  unsafe { core::slice::from_raw_parts_mut(out.as_mut_ptr().cast(), state.processed) }
+}
+
+/// Initialize complete ciphertext batches through the owned AArch64 GCM kernel.
+///
+/// # Safety
+/// The caller establishes AES, PMULL and NEON; input and output have equal
+/// lengths, the counter range is valid, and all tables belong to `keys`.
+#[cfg(all(feature = "aes-gcm", any(target_os = "macos", target_os = "linux")))]
+#[target_feature(enable = "aes,neon")]
+pub(super) unsafe fn encrypt_ctr32_be_gather_ghash_core<'output>(
+  keys: &CeRoundKeys,
+  iv_prefix: &[u8; 12],
+  ctr: u32,
+  plaintext: &super::super::gather::Input<'_, 128>,
+  out: &'output mut [core::mem::MaybeUninit<u8>],
+  acc: &mut u128,
+  tables: &super::Aarch64GcmTables<'_>,
+) -> &'output mut [u8] {
+  assert_eq!(plaintext.byte_len(), out.len());
+  let (input, spans) = plaintext.read_cursor();
+  let mut state = asm::AesGcmAarch64State::new_gather(*acc, ctr, input, spans);
+  if plaintext.byte_len() >= 128 {
+    // SAFETY: the caller establishes AES/PMULL/NEON. Both kernels read complete
+    // 128-byte input batches and write ciphertext without reading the output.
+    // Input retains either the complete contiguous slice or each borrowed
+    // 128-byte unit and a pointer sentinel. Its total length equals the
+    // exclusive disjoint output. Keys and
+    // H-power tables have the selected cadence's exact size. EOR3 is
+    // entered only after its full runtime capability check. AAPCS64 scratch x15
+    // carries the read pointer; the assembly preserves all callee-saved registers.
+    unsafe {
+      if crate::platform::caps().has(crate::platform::caps::aarch64::PMULL_EOR3_READY) {
+        asm::rscrypto_aes256_gcm_seal_16x_eor3_aarch64(
+          keys.rk.as_ptr().cast(),
+          iv_prefix.as_ptr(),
+          out.as_mut_ptr().cast(),
+          plaintext.byte_len(),
+          tables.h_powers_rev_16.as_ptr(),
+          tables.h_powers_rev_16_mid.as_ptr(),
+          tables.h_powers_rev_16_pair.as_ptr(),
+          &raw mut state,
+        );
+      } else {
+        asm::rscrypto_aes256_gcm_seal_8x_aarch64(
+          keys.rk.as_ptr().cast(),
+          iv_prefix.as_ptr(),
+          out.as_mut_ptr().cast(),
+          plaintext.byte_len(),
+          tables.h_powers_rev_8.as_ptr(),
+          &raw mut state,
+        );
+      }
+    }
+  }
+  assert!(state.processed <= out.len() && state.processed.is_multiple_of(128));
+  *acc = state.acc();
+  // SAFETY: `processed` covers only complete batches initialized by the audited
+  // kernel. Zero bytes are included when no batch was available. The returned
+  // borrow has exactly the original output's provenance and lifetime.
+  unsafe { core::slice::from_raw_parts_mut(out.as_mut_ptr().cast(), state.processed) }
 }
