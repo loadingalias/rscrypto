@@ -42,6 +42,12 @@ unsafe fn usable(pointer: *mut u8) -> usize {
     // SAFETY: the caller supplies a live, non-null System allocation.
     unsafe { libc::malloc_usable_size(pointer.cast()) }
   }
+  #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+  {
+    // No usable-size query is wired here; `main` refuses to observe on this target.
+    let _ = pointer;
+    0
+  }
 }
 
 fn added(bytes: usize) {
@@ -140,6 +146,10 @@ fn invalid_argument(message: &str) -> ! {
 }
 
 fn main() {
+  if !cfg!(any(target_os = "macos", target_os = "linux")) {
+    eprintln!("resources observes System usable sizes on macOS and Linux only");
+    std::process::exit(2);
+  }
   let args = std::env::args().skip(1).collect::<Vec<_>>();
   assert_eq!(
     args.len(),
