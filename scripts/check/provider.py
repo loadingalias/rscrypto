@@ -150,7 +150,8 @@ def main():
                 selected = [*features, *(['portable-only'] if portable else [])]
                 run(['cargo', '+' + toolchain.channel(), 'nextest', 'run', '--locked',
                      '-p', PACKAGE, '--lib', '--release', *feature_args(selected),
-                     '-E', 'test(tests::profiles::) | test(quinn::)', '--success-output', 'final'])
+                     '-E', 'test(tests::profiles::) | test(tests::tls12::) | test(quinn::)',
+                     '--success-output', 'final'])
         return
     if args.mode == 'lint':
         for name, features in matrix[2:4]:

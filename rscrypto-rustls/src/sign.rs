@@ -1,9 +1,12 @@
-//! Private-key loading and TLS 1.3 signing through rscrypto.
+//! Private-key loading and TLS signing through rscrypto.
 //!
 //! PKCS#8 supports each enabled signing algorithm; SEC1 supports ECDSA, and
 //! PKCS#1 supports RSA. RSA signing keys must have 3,072–8,192-bit moduli and
-//! public exponent 65,537. [`Provider::new`] takes the entropy source for key
-//! validation and signing; [`KEY_PROVIDER`] uses OS entropy and requires `getrandom`.
+//! public exponent 65,537. RSA keys sign RSA-PSS, and also PKCS#1 v1.5 for
+//! TLS 1.2 peers; rustls never offers PKCS#1 v1.5 in TLS 1.3. ECDSA keys sign
+//! with their curve's hash only (P-256 with SHA-256, P-384 with SHA-384), also
+//! in TLS 1.2. [`Provider::new`] takes the entropy source for key validation
+//! and signing; [`KEY_PROVIDER`] uses OS entropy and requires `getrandom`.
 
 use alloc::boxed::Box;
 use rustls::Error;
@@ -294,16 +297,42 @@ mod rsa {
   use alloc::{boxed::Box, sync::Arc, vec, vec::Vec};
   use core::fmt;
 
-  use rscrypto::{RsaPrivateKey, RsaPublicKeyPolicy};
+  use rscrypto::{RsaPkcs1v15Profile, RsaPrivateKey, RsaPssProfile, RsaPublicKeyPolicy, RsaSignatureProfile};
   use rustls::Error;
   use rustls::crypto::SignatureScheme;
   use rustls::crypto::{Signer, SigningKey};
   use rustls::pki_types::{PrivateKeyDer, SubjectPublicKeyInfoDer};
 
-  const SCHEMES: &[SignatureScheme] = &[
-    SignatureScheme::RSA_PSS_SHA512,
-    SignatureScheme::RSA_PSS_SHA384,
-    SignatureScheme::RSA_PSS_SHA256,
+  // Preference order. TLS 1.3 permits only the RSA-PSS schemes, and rustls
+  // removes the others from TLS 1.3 offers. PKCS#1 v1.5 serves TLS 1.2 peers
+  // that offer nothing else, such as servers requesting client certificates.
+  // Loaded keys are `rsaEncryption` keys (the PKCS#8 import rejects
+  // `id-RSASSA-PSS`), for which both encodings and `rsa_pss_rsae_*` are valid.
+  const SCHEMES: &[(SignatureScheme, RsaSignatureProfile)] = &[
+    (
+      SignatureScheme::RSA_PSS_SHA512,
+      RsaSignatureProfile::pss(RsaPssProfile::Sha512),
+    ),
+    (
+      SignatureScheme::RSA_PSS_SHA384,
+      RsaSignatureProfile::pss(RsaPssProfile::Sha384),
+    ),
+    (
+      SignatureScheme::RSA_PSS_SHA256,
+      RsaSignatureProfile::pss(RsaPssProfile::Sha256),
+    ),
+    (
+      SignatureScheme::RSA_PKCS1_SHA512,
+      RsaSignatureProfile::pkcs1v15(RsaPkcs1v15Profile::Sha512),
+    ),
+    (
+      SignatureScheme::RSA_PKCS1_SHA384,
+      RsaSignatureProfile::pkcs1v15(RsaPkcs1v15Profile::Sha384),
+    ),
+    (
+      SignatureScheme::RSA_PKCS1_SHA256,
+      RsaSignatureProfile::pkcs1v15(RsaPkcs1v15Profile::Sha256),
+    ),
   ];
 
   pub(super) fn load(der: &PrivateKeyDer<'_>, random: &'static dyn rustls::crypto::SecureRandom) -> Option<Key> {
@@ -334,13 +363,14 @@ mod rsa {
       SCHEMES
         .iter()
         .copied()
-        .find(|scheme| offered.contains(scheme))
-        .map(|scheme| {
+        .find(|(scheme, _)| offered.contains(scheme))
+        .map(|(scheme, profile)| {
           // rustls asks for a signer on every ClientHello, including resumptions that never
           // sign, so private scratch is built only when a signature is produced.
           Box::new(Sign {
             key: Arc::clone(&self.key),
             scheme,
+            profile,
             random: self.random,
           }) as Box<dyn Signer>
         })
@@ -354,6 +384,7 @@ mod rsa {
   struct Sign {
     key: Arc<RsaPrivateKey>,
     scheme: SignatureScheme,
+    profile: RsaSignatureProfile,
     random: &'static dyn rustls::crypto::SecureRandom,
   }
 
@@ -376,13 +407,7 @@ mod rsa {
       let mut signature = vec![0; self.key.signature_len()];
       self
         .key
-        .sign_tls13_signature_scheme_with_random_fill_and_scratch(
-          u16::from_be_bytes(self.scheme.to_array()),
-          message,
-          &mut signature,
-          &mut scratch,
-          fill,
-        )
+        .sign_signature_with_random_fill_and_scratch(self.profile, message, &mut signature, &mut scratch, fill)
         .map_err(|_| super::signing_failed())?;
       Ok(signature)
     }
@@ -400,35 +425,75 @@ mod rsa {
 
   #[cfg(test)]
   #[test]
-  fn rsa_partial_entropy_failure_does_not_release_a_signature() {
-    let key = RsaPrivateKey::from_pkcs8_der(include_bytes!("../tests/vectors/credentials/rsa3072-leaf-key.der"))
-      .expect("fixture key");
-    let signer = Sign {
-      key: Arc::new(key),
-      scheme: SignatureScheme::RSA_PSS_SHA256,
-      random: &crate::tests::RANDOM,
-    };
-    let result = signer.sign_with_random_fill(b"message", |out| {
-      out[..17].fill(0x42);
-      Err(())
-    });
-    assert!(matches!(result, Err(Error::General(message)) if message == "TLS signing failed"));
-    // A failed entropy request must release no partial signature, and the signer still signs.
-    let scheme = signer.scheme;
-    let signature = Box::new(signer).sign(b"message").expect("sign after entropy failure");
-    let peer = rustls_ring::DEFAULT_TLS13_PROVIDER.signature_verification_algorithms;
-    let verifier = peer
-      .mapping()
-      .iter()
-      .find(|(candidate, _)| *candidate == scheme)
-      .expect("RSA-PSS verifier")
-      .1[0];
-    verifier
-      .verify_signature(
-        include_bytes!("../tests/vectors/credentials/rsa3072-public.der"),
-        b"message",
-        &signature,
-      )
-      .expect("independent verification");
+  fn rsa_schemes_match_an_independent_signer_and_fail_closed_on_entropy() {
+    use rustls::pki_types::PrivatePkcs8KeyDer;
+
+    let der = include_bytes!("../tests/vectors/credentials/rsa3072-leaf-key.der");
+    let public = include_bytes!("../tests/vectors/credentials/rsa3072-public.der");
+    let key = load(
+      &PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(der.to_vec())),
+      &crate::tests::RANDOM,
+    )
+    .expect("fixture key");
+    // RSA-PSS wins whenever a peer offers it: TLS 1.3 offers carry only RSA-PSS,
+    // and TLS 1.2 peers get PKCS#1 v1.5 only when they offer nothing else.
+    let preferred = key
+      .choose_scheme(&[SignatureScheme::RSA_PKCS1_SHA512, SignatureScheme::RSA_PSS_SHA256])
+      .expect("offered RSA scheme");
+    assert_eq!(preferred.scheme(), SignatureScheme::RSA_PSS_SHA256);
+    assert!(
+      key
+        .choose_scheme(&[SignatureScheme::RSA_PKCS1_SHA1, SignatureScheme::ECDSA_NISTP256_SHA256])
+        .is_none()
+    );
+    let peer = rustls_ring::DEFAULT_PROVIDER;
+    let peer_key = peer
+      .key_provider
+      .load_private_key(PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(der.to_vec())))
+      .expect("independent key");
+    for &(scheme, profile) in SCHEMES {
+      let signature = key
+        .choose_scheme(&[scheme])
+        .expect("offered scheme")
+        .sign(b"message")
+        .expect("sign");
+      let verifier = peer
+        .signature_verification_algorithms
+        .mapping()
+        .iter()
+        .find(|(candidate, _)| *candidate == scheme)
+        .expect("independent verifier")
+        .1[0];
+      verifier
+        .verify_signature(public, b"message", &signature)
+        .expect("independent verification");
+      assert!(verifier.verify_signature(public, b"massage", &signature).is_err());
+      if matches!(profile, RsaSignatureProfile::Pkcs1v15(_)) {
+        // PKCS#1 v1.5 is deterministic, so the independent signer's bytes are a known answer.
+        let expected = peer_key
+          .choose_scheme(&[scheme])
+          .expect("independent scheme")
+          .sign(b"message")
+          .expect("independent signature");
+        assert_eq!(signature, expected, "{scheme:?}");
+      }
+    }
+    // A failed entropy request (PSS salt or blinding) releases no partial
+    // signature, and the signer still signs afterwards.
+    for &(scheme, profile) in SCHEMES {
+      let signer = Sign {
+        key: Arc::clone(&key.key),
+        scheme,
+        profile,
+        random: &crate::tests::RANDOM,
+      };
+      let result = signer.sign_with_random_fill(b"message", |out| {
+        let partial = out.len().min(17);
+        out[..partial].fill(0x42);
+        Err(())
+      });
+      assert!(matches!(result, Err(Error::General(message)) if message == "TLS signing failed"));
+      Box::new(signer).sign(b"message").expect("sign after entropy failure");
+    }
   }
 }

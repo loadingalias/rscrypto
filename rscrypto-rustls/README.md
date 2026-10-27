@@ -2,7 +2,7 @@
 
 This unpublished crate supplies rscrypto-backed TLS 1.3 and QUIC cryptographic
 adapters for rustls 0.24 development, including hybrid key exchange, classical
-authentication, and opt-in ML-DSA authentication. The `quinn` feature supplies a QUIC v1 transport adapter for
+authentication, opt-in ML-DSA authentication, and opt-in TLS 1.2 suites. The `quinn` feature supplies a QUIC v1 transport adapter for
 quinn-proto 0.12 development.
 
 The [manifest](Cargo.toml) pins rustls and Quinn to upstream `main` revisions.
@@ -29,19 +29,20 @@ quinn-proto revision makes its browser-WASM `ring` dependency optional
 | --- | --- | --- |
 | Transcript hash | `Sha256`, `Sha384` | [hash](src/hash.rs) |
 | HMAC | `HmacSha256`, `HmacSha384`; each call creates a keyed state | [hash](src/hash.rs) |
+| TLS 1.2 PRF | rustls's `PrfUsingHmac` over this crate's HMAC | [hash](src/hash.rs) |
 | HKDF extract and expand | `HkdfSha256`, `HkdfSha384`; imported PRKs and multi-part info | [hash](src/hash.rs) |
-| TLS records and QUIC packets | `Aes128Gcm`, `Aes256Gcm`, `ChaCha20Poly1305` | [aead](src/aead.rs) |
+| TLS 1.3 and TLS 1.2 records, QUIC packets | `Aes128Gcm`, `Aes256Gcm`, `ChaCha20Poly1305` | [aead](src/aead.rs) |
 | QUIC header protection | `Aes128HeaderProtection`, `Aes256HeaderProtection`, `ChaCha20HeaderProtection` | [quic](src/quic.rs) |
 | Stateless tickets | `Aes256Gcm`, fresh process-local keys, atomic counter nonces; rotation on a monotonic or caller clock | [ticket](src/ticket.rs) |
 | Entropy | OS entropy through `getrandom::fill` with the `getrandom` feature, or a caller-selected `SecureRandom` without it; partial primitive inputs clear on failure | [random](src/random.rs), [kx_group](src/kx_group.rs), [sign](src/sign.rs), [client](src/client.rs) |
 | Certificate and handshake verification | ECDSA P-256/P-384, Ed25519, RSA-PSS and RSA PKCS#1 v1.5 | [verify](src/verify.rs) |
-| Key import and signing | rscrypto PKCS#8/SEC1/PKCS#1 codecs; blinded ECDSA, Ed25519, blinded RSA-PSS | [sign](src/sign.rs) |
+| Key import and signing | rscrypto PKCS#8/SEC1/PKCS#1 codecs; blinded ECDSA, Ed25519, blinded RSA-PSS and RSA PKCS#1 v1.5 | [sign](src/sign.rs) |
 | ML-DSA authentication | Pure ML-DSA-44/65/87 with the empty TLS context; keys prepared once (or compact on request) and hedged signing | [sign](src/sign/mldsa.rs), [verify](src/verify.rs) |
 | QUIC Retry, reset, and address tokens | RFC 9001 AES-128-GCM Retry; HMAC-SHA256 reset tokens; HKDF-SHA256 and AES-256-GCM token keys | [quinn](src/quinn/) |
 | QUIC connection IDs | `ChaCha20Rng` nonces and initial IDs seeded from caller entropy; AES-128 connection-ID tags | [quinn](src/quinn/cid.rs) |
 | Key exchange | `X25519SecretKey`, `P256EphemeralSecret`, `P384EphemeralSecret`, `MlKem768` | [kx_group](src/kx_group.rs) |
 
-`cipher_suite::ALL_CIPHER_SUITES` lists enabled suites in preference order.
+`cipher_suite::ALL_CIPHER_SUITES` lists enabled TLS 1.3 suites in preference order.
 AES suites need `hkdf` and `aes-gcm`; ChaCha20 needs `hkdf` and `chacha20poly1305`.
 Hash and primitive adapters remain available with their own leaf features.
 The implementation-inventory test checks each suite's wire identifier, hash,
@@ -64,7 +65,7 @@ Those contracts do not establish that compiler-made copies are erased.
 `kx_group::ALL_KX_GROUPS` prefers X25519MLKEM768, then X25519, P-256, and
 P-384. Every group requires its primitive feature, and the hybrid requires both
 `x25519` and `ml-kem`; `ALL_KX_GROUPS` and the group constants use OS entropy and
-also require `getrandom`. The provider supplies no TLS 1.2 suites.
+also require `getrandom`. TLS 1.2 is opt-in; see [TLS 1.2](#tls-12).
 The hybrid follows RFC 10024: ML-KEM precedes X25519 in both shares and the
 shared secret. It validates the ML-KEM encapsulation key before server key
 generation. A well-formed altered ciphertext retains ML-KEM's implicit rejection;
@@ -145,8 +146,9 @@ ECDSA and RSA signing draw blinding and RSA-PSS salt from the key provider's
 entropy source; Ed25519 signing does not. RSA signing keys require 3,072–8,192-bit moduli and
 exponent 65,537. Certificate verification accepts deployed 2,048–8,192-bit RSA
 keys under rscrypto's legacy verification policy. TLS 1.3 ECDSA signature
-schemes match their exact curve and hash; cross-hash ECDSA and RSA PKCS#1 v1.5
-are available for certificate verification only.
+schemes match their exact curve and hash, and RSA PKCS#1 v1.5 is available for
+certificate verification only. TLS 1.2 handshake signatures follow TLS 1.2's
+rules; see [TLS 1.2](#tls-12).
 
 With `ml-dsa`, RFC 9881 PKCS#8 keys load and are prepared once. Provider tests
 cover the seed and combined seed/key forms; the expanded form also loads through
@@ -188,6 +190,50 @@ Process restart replaces ticket keys. A missing time reading, encryption failure
 or failed rotation suppresses tickets without failing TLS; after a failed
 rotation the previous key still opens its tickets. Early data remains off unless
 the caller explicitly enables it.
+
+## TLS 1.2
+
+TLS 1.2 is opt-in: no provider constructor enables it. `cipher_suite::ALL_TLS12_CIPHER_SUITES`
+lists six ECDHE suites in preference order: ECDSA before RSA, each with AES-256-GCM,
+AES-128-GCM, then ChaCha20-Poly1305. There are no CBC, RSA key-transport, or
+finite-field Diffie-Hellman suites. AES suites need `aes-gcm`, ChaCha20 needs
+`chacha20poly1305`, and each suite needs `hmac` or `hkdf` for the PRF. Assign the
+list to an owned provider's `tls12_cipher_suites`, as the suite list's rustdoc example
+shows. `ClientProvider::provider()` returns an owned provider, so a caller-entropy
+client opts in the same way; for client certificates, also set its `key_provider` to
+a static `sign::Provider::new(random)`.
+
+Set `require_ems = true` on every TLS 1.2 client and server configuration. rustls
+then refuses a peer without the extended master secret (RFC 7627). The provider
+cannot enforce this setting. A client that also supports TLS 1.3 rejects a TLS 1.3
+server's downgrade marker (RFC 8446 §4.1.3).
+
+AES-GCM records use RFC 5288 nonces: the 4-byte salt and an 8-byte explicit part,
+which is the key block's explicit bytes XOR the sequence number, as in rustls's other
+providers. ChaCha20-Poly1305 records use RFC 7905 nonces. Record encryption reads
+gathered plaintext directly into the output, as in TLS 1.3, and a record whose
+plaintext would exceed 2^14 bytes is rejected before decryption. rustls derives the
+extended master secret and key block through the PRF.
+
+Key exchange uses X25519, P-256, or P-384. Hybrid groups are TLS 1.3 only, so
+`post_quantum_required_provider()` with TLS 1.2 suites still refuses every TLS 1.2
+handshake. QUIC rejects a provider with any TLS 1.2 suite.
+
+RSA keys sign RSA-PSS when the peer offers it and PKCS#1 v1.5 otherwise, for example
+for a TLS 1.2 server that accepts only PKCS#1 v1.5 client certificates. TLS 1.3 never
+signs PKCS#1 v1.5. ECDSA keys sign with their curve's hash only: P-256 with SHA-256
+and P-384 with SHA-384. A TLS 1.2 peer that offers only the other ECDSA hash gets no
+signature from such a key. Verification follows TLS 1.2's rule that an ECDSA scheme
+names a hash, not a curve: for example, an `ecdsa_secp384r1_sha384` signature from a
+P-256 key, which Go servers produce, verifies in TLS 1.2. TLS 1.3 verification stays
+curve-bound.
+
+Tests run both roles in memory against ring and AWS-LC: all six suites, the three
+groups, session-ID and stateless-ticket resumption, mutual authentication,
+PKCS#1 v1.5-only peers, the downgrade marker, and a stripped extended-master-secret
+acknowledgement. Record tests compare every byte with both peers' TLS 1.2 record
+layers. `just test-provider-interop --protocol tls12` runs the suites against the
+pinned Go and OpenSSL peers.
 
 ## QUIC v1
 

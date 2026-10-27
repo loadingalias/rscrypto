@@ -234,8 +234,8 @@ fn record_length_and_invalid_key_reject_before_releasing_plaintext() {
     AES_128_GCM.extract_keys(AeadKey::from([0; 32]), Iv::from([0; 12])),
     Err(UnsupportedOperationError)
   ));
-  // An 8-byte IV yields a nonce the cipher rejects after the plaintext is
-  // appended; the failure must clear and remove everything it appended.
+  // An 8-byte IV yields no 12-byte nonce; the record fails before anything
+  // is appended.
   let mut short_iv = AES_256_GCM.encrypter(AeadKey::from([0; 32]), Iv::new(&[0; 8]).expect("IV"));
   let mut out = vec![0xa5; 3];
   assert!(matches!(
@@ -266,10 +266,7 @@ fn rfc9001_retry_integrity_tag() {
   let nonce: [u8; 12] = hex("461599d35d632bf2239825bb").try_into().expect("Retry nonce");
   let aad = hex("088394c8f03e515708ff000000010008f067a5502a4262b5746f6b656e");
   assert_eq!(
-    cipher
-      .seal(Nonce::new(&Iv::from(nonce), 0), &aad, &mut [])
-      .expect("Retry tag")
-      .as_slice(),
+    cipher.seal(nonce, &aad, &mut []).expect("Retry tag").as_slice(),
     hex("04a265ba2eff4d829058fb3f0f2496ba")
   );
 }

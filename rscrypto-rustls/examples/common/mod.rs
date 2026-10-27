@@ -28,17 +28,30 @@ pub(super) fn credentials(
   Ok((roots, Arc::new(Identity::from_cert_chain(certificates)?), key))
 }
 
+/// The default provider restricted to one suite and group. A TLS 1.2 suite
+/// selects TLS 1.2 only, as a caller opts in with `ALL_TLS12_CIPHER_SUITES`.
 pub(super) fn provider(suite: &str, group: &str) -> Result<Arc<CryptoProvider>, Box<dyn Error>> {
   let mut provider = rscrypto_rustls::default_provider();
+  provider.tls12_cipher_suites = rscrypto_rustls::cipher_suite::ALL_TLS12_CIPHER_SUITES.into();
   provider
     .tls13_cipher_suites
+    .to_mut()
+    .retain(|item| format!("{:?}", item.common.suite) == suite);
+  provider
+    .tls12_cipher_suites
     .to_mut()
     .retain(|item| format!("{:?}", item.common.suite) == suite);
   provider
     .kx_groups
     .to_mut()
     .retain(|item| format!("{:?}", item.name()) == group);
-  if provider.tls13_cipher_suites.len() != 1 || provider.kx_groups.len() != 1 {
+  if provider
+    .tls13_cipher_suites
+    .len()
+    .strict_add(provider.tls12_cipher_suites.len())
+    != 1
+    || provider.kx_groups.len() != 1
+  {
     return Err(invalid("suite or group is unavailable").into());
   }
   Ok(Arc::new(provider))

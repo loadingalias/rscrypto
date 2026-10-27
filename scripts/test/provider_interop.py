@@ -1,5 +1,5 @@
 #!/usr/bin/env -S uv run python
-"""Execute bounded TLS 1.3 interoperability with pinned OpenSSL and Go peers."""
+"""Execute bounded TLS 1.3 and opt-in TLS 1.2 interoperability with pinned OpenSSL and Go peers."""
 
 import argparse
 import base64
@@ -21,6 +21,16 @@ FIXTURES = ROOT / 'rscrypto-rustls/tests/vectors/credentials'
 PAYLOAD = b'rscrypto provider interoperability\n'
 SUITES = ['TLS13_AES_128_GCM_SHA256', 'TLS13_AES_256_GCM_SHA384', 'TLS13_CHACHA20_POLY1305_SHA256']
 GROUPS = {'X25519': 'X25519', 'secp256r1': 'P-256', 'secp384r1': 'P-384', 'X25519MLKEM768': 'X25519MLKEM768'}
+# TLS 1.2 suites and their OpenSSL names. Hybrid groups are TLS 1.3 only.
+TLS12_SUITES = {
+    'TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384': 'ECDHE-ECDSA-AES256-GCM-SHA384',
+    'TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256': 'ECDHE-ECDSA-AES128-GCM-SHA256',
+    'TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256': 'ECDHE-ECDSA-CHACHA20-POLY1305',
+    'TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384': 'ECDHE-RSA-AES256-GCM-SHA384',
+    'TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256': 'ECDHE-RSA-AES128-GCM-SHA256',
+    'TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256': 'ECDHE-RSA-CHACHA20-POLY1305',
+}
+TLS12_GROUPS = ['X25519', 'secp256r1', 'secp384r1']
 CREDENTIALS = ['p256', 'p384', 'ed25519', 'rsa3072']
 MLDSA_CREDENTIALS = ['mldsa44', 'mldsa65', 'mldsa87']
 
@@ -55,11 +65,17 @@ def results(output):
     return [line for line in output.decode().splitlines() if line.startswith('RESULT ')]
 
 
+def tls12(suite):
+    return suite in TLS12_SUITES
+
+
 def check_results(output, suite, group):
     rows = results(output)
     if len(rows) != 2 or 'Full' not in rows[0] or 'Resumed' not in rows[1]:
         raise AssertionError(f'expected a full and resumed connection: {rows}')
-    if any(f'Some({suite})' not in row or f'Some({group})' not in row for row in rows):
+    # A resumed TLS 1.2 session performs no key exchange, so it reports no group.
+    groups = [f'Some({group})', 'None' if tls12(suite) else f'Some({group})']
+    if any(f'Some({suite})' not in row or expected not in row for row, expected in zip(rows, groups)):
         raise AssertionError(f'negotiation differs from the selected profile: {rows}')
     return [row.split()[-1] for row in rows]
 
@@ -117,6 +133,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--peer', choices=('all', 'openssl', 'go'), default='all')
     parser.add_argument('--profile', choices=('all', 'classical', 'mldsa'), default='all')
+    parser.add_argument('--protocol', choices=('all', 'tls13', 'tls12'), default='all',
+                        help='TLS 1.2 runs only the classical credentials')
     parser.add_argument('--quick', action='store_true', help='one profile for harness diagnosis')
     parser.add_argument('--output', type=Path)
     args = parser.parse_args()
@@ -124,7 +142,7 @@ def main():
         parser.error('the process harness requires POSIX pipe readiness; Rust tests cover other native hosts')
     output = args.output or ROOT / 'benchmark_results' / ('provider-interop-' + datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ'))
     output.mkdir(parents=True, exist_ok=False)
-    versions = {'host': platform.platform(), 'profile': args.profile,
+    versions = {'host': platform.platform(), 'profile': args.profile, 'protocol': args.protocol,
                 'head': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()}
     peers = ['openssl', 'go'] if args.peer == 'all' else [args.peer]
     for peer in peers:
@@ -150,9 +168,15 @@ def main():
     binary = str(Path(metadata['target_directory']) / 'release/examples/interop')
     credentials = ((CREDENTIALS if args.profile != 'mldsa' else []) +
                    (MLDSA_CREDENTIALS if args.profile != 'classical' else []))
-    cases = list(itertools.product(credentials, SUITES, GROUPS))
+    cases = []
+    if args.protocol != 'tls12':
+        cases += itertools.product(credentials, SUITES, GROUPS)
+    if args.protocol != 'tls13':
+        cases += [(kind, suite, group) for kind in credentials if kind in CREDENTIALS
+                  for suite in TLS12_SUITES if ('_RSA_' in suite) == (kind == 'rsa3072')
+                  for group in TLS12_GROUPS]
     if args.quick:
-        cases = [(credentials[0], SUITES[0], 'X25519MLKEM768')]
+        cases = cases[:1] if args.protocol == 'tls12' else [(credentials[0], SUITES[0], 'X25519MLKEM768')]
     converted = output / 'pem'
     converted.mkdir()
     for kind in credentials:
@@ -171,10 +195,12 @@ def main():
             run_case(output, name, theirs if ours_client else ours, [ours if ours_client else theirs],
                      suite=suite, group=group, peer=peer, ours_client=ours_client)
         else:
+            protocol = (['-tls1_2', '-cipher', TLS12_SUITES[suite]] if tls12(suite) else
+                        ['-tls1_3', '-ciphersuites', suite.replace('TLS13_', 'TLS_')])
             credentials = ['-cert', str(converted / f'{kind}-leaf.pem'), '-key', str(converted / f'{kind}-key.pem'),
                            '-CAfile', str(converted / f'{kind}-root.pem'), '-verify_return_error',
-                           '-no-CApath', '-no-CAstore', '-tls1_3', '-alpn', 'provider-test',
-                           '-groups', GROUPS[group], '-ciphersuites', suite.replace('TLS13_', 'TLS_')]
+                           '-no-CApath', '-no-CAstore', '-alpn', 'provider-test',
+                           '-groups', GROUPS[group], *protocol]
             if ours_client:
                 with socket.socket() as available:
                     available.bind(('127.0.0.1', 0))

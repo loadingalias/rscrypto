@@ -120,6 +120,18 @@ pub static HMAC_SHA256: &dyn rustls::crypto::hmac::Hmac = &Algorithm::Sha256;
 #[cfg(any(feature = "hmac", feature = "hkdf"))]
 pub static HMAC_SHA384: &dyn rustls::crypto::hmac::Hmac = &Algorithm::Sha384;
 
+// The TLS 1.2 PRF (RFC 5246 §5): rustls's P_hash over this crate's HMAC.
+// rustls derives the extended master secret and key block through it.
+#[cfg(all(
+  any(feature = "hmac", feature = "hkdf"),
+  any(feature = "aes-gcm", feature = "chacha20poly1305")
+))]
+pub(crate) static PRF_SHA256: &dyn rustls::crypto::tls12::Prf =
+  &rustls::crypto::tls12::PrfUsingHmac(&Algorithm::Sha256);
+#[cfg(all(any(feature = "hmac", feature = "hkdf"), feature = "aes-gcm"))]
+pub(crate) static PRF_SHA384: &dyn rustls::crypto::tls12::Prf =
+  &rustls::crypto::tls12::PrfUsingHmac(&Algorithm::Sha384);
+
 #[cfg(feature = "hkdf")]
 mod hkdf_adapter {
   use rscrypto::{HkdfSha256, HkdfSha384, HmacSha256, HmacSha384, SecretBytes};

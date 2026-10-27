@@ -135,7 +135,9 @@ It does not download upstream archives.
   connection. Go also supplies an independent exporter check. This POSIX process
   harness retains commands, source, versions, stdout/stderr, and results beneath
   `benchmark_results/`; `--quick` selects one diagnostic profile and is not full
-  qualification. The ephemeral session files and exporter values protect only
+  qualification. `--protocol tls12` runs only the opt-in TLS 1.2 suites, with the
+  classical credentials and groups and the extended master secret required;
+  `--protocol tls13` runs only the TLS 1.3 matrix. The ephemeral session files and exporter values protect only
   public test fixtures. The runner enforces timeouts and reaps peer processes.
 - `just test-provider-quic` runs the pinned quinn-proto and quinn 0.12 revisions through
   this provider against quic-go 0.61.0 (`579ee19d`) on Go 1.27.3. The peer builds

@@ -243,8 +243,13 @@ fn all_fourteen_verifiers_accept_independent_signatures_and_reject_corruption() 
       .find(|(name, _)| *name == scheme)
       .expect("TLS scheme")
       .1;
-    assert_eq!(mapped.len(), 1, "TLS 1.3 never substitutes another curve");
+    // TLS 1.3 verifies with the first algorithm only, so it never substitutes
+    // another curve. TLS 1.2 binds no curve and also accepts the other one
+    // with the same hash.
     assert_eq!(mapped[0].public_key_alg_id(), public);
+    assert_eq!(mapped.len(), 2);
+    assert_ne!(mapped[1].public_key_alg_id(), public);
+    assert_eq!(mapped[1].signature_alg_id(), mapped[0].signature_alg_id());
   }
 }
 
@@ -288,11 +293,13 @@ fn loaded_signing_keys_match_spki_and_independent_verifiers() {
     )
     .expect("certificate and key match");
     assert!(certified.key.choose_scheme(&[]).is_none());
-    assert!(
+    // Only RSA keys sign PKCS#1 v1.5, for TLS 1.2 peers that offer nothing else.
+    assert_eq!(
       certified
         .key
         .choose_scheme(&[SignatureScheme::RSA_PKCS1_SHA256])
-        .is_none()
+        .map(|signer| signer.scheme()),
+      matches!(kind, Credential::Rsa).then_some(SignatureScheme::RSA_PKCS1_SHA256)
     );
     let schemes = if matches!(kind, Credential::Rsa) {
       &[

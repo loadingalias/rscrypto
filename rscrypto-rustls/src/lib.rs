@@ -1,6 +1,8 @@
-//! TLS 1.3 provider integration for rustls, backed by rscrypto.
+//! TLS provider integration for rustls, backed by rscrypto.
 //!
-//! The provider implements TLS 1.3 cryptography, including hybrid key exchange.
+//! The provider implements TLS 1.3 cryptography, including hybrid key exchange,
+//! and opt-in TLS 1.2 ECDHE suites (`cipher_suite::ALL_TLS12_CIPHER_SUITES`).
+//! Every provider constructor is TLS 1.3 only.
 //! The crate requires `std`; its algorithm features forward to rscrypto's leaf features.
 
 #![forbid(unsafe_code)]

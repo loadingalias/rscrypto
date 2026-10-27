@@ -758,12 +758,29 @@ mod implementation {
       (SignatureScheme::ML_DSA_65, &[&ML_DSA_65]),
       #[cfg(feature = "ml-dsa")]
       (SignatureScheme::ML_DSA_44, &[&ML_DSA_44]),
-      // TLS 1.3 binds the curve to its hash. Certificate paths use `all`,
-      // including the cross-hash combinations, independently of this mapping.
+      // TLS 1.3 verifies with a scheme's first algorithm only, which binds the
+      // curve to the hash. TLS 1.2 binds no curve (RFC 5246 §7.4.1.4.1) and
+      // tries each algorithm: a TLS 1.2 server may sign with any offered ECDSA
+      // hash, as Go's does. Certificate paths use `all`, including the
+      // cross-hash combinations, independently of this mapping.
       #[cfg(feature = "ecdsa-p384")]
-      (SignatureScheme::ECDSA_NISTP384_SHA384, &[&P384_SHA384]),
+      (
+        SignatureScheme::ECDSA_NISTP384_SHA384,
+        &[
+          &P384_SHA384,
+          #[cfg(feature = "ecdsa-p256")]
+          &P256_SHA384,
+        ],
+      ),
       #[cfg(feature = "ecdsa-p256")]
-      (SignatureScheme::ECDSA_NISTP256_SHA256, &[&P256_SHA256]),
+      (
+        SignatureScheme::ECDSA_NISTP256_SHA256,
+        &[
+          &P256_SHA256,
+          #[cfg(feature = "ecdsa-p384")]
+          &P384_SHA256,
+        ],
+      ),
       #[cfg(feature = "ed25519")]
       (SignatureScheme::ED25519, &[&ED25519]),
       #[cfg(feature = "rsa")]

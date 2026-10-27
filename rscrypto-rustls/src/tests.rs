@@ -104,6 +104,20 @@ mod mldsa;
 
 #[cfg(all(
   feature = "hkdf",
+  feature = "aes-gcm",
+  feature = "chacha20poly1305",
+  feature = "x25519",
+  feature = "p256-ecdh",
+  feature = "p384-ecdh",
+  feature = "ecdsa-p256",
+  feature = "ecdsa-p384",
+  feature = "ed25519",
+  feature = "rsa"
+))]
+mod tls12;
+
+#[cfg(all(
+  feature = "hkdf",
   any(feature = "aes-gcm", feature = "chacha20poly1305"),
   any(feature = "x25519", feature = "p256-ecdh", feature = "p384-ecdh"),
   any(

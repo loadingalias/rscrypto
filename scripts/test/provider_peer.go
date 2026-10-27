@@ -18,7 +18,7 @@ import (
 
 var payload = []byte("rscrypto provider interoperability\n")
 
-func exchange(conn *tls.Conn, client bool, suite uint16, group tls.CurveID) error {
+func exchange(conn *tls.Conn, client bool, version, suite uint16, group tls.CurveID) error {
 	defer conn.Close()
 	if err := conn.SetDeadline(time.Now().Add(10 * time.Second)); err != nil {
 		return err
@@ -27,7 +27,10 @@ func exchange(conn *tls.Conn, client bool, suite uint16, group tls.CurveID) erro
 		return err
 	}
 	state := conn.ConnectionState()
-	if state.Version != tls.VersionTLS13 || state.CipherSuite != suite || state.CurveID != group ||
+	// A resumed TLS 1.2 session performs no key exchange.
+	resumedTLS12 := state.Version == tls.VersionTLS12 && state.DidResume
+	if state.Version != version || state.CipherSuite != suite ||
+		(state.CurveID != group && !(resumedTLS12 && state.CurveID == 0)) ||
 		state.NegotiatedProtocol != "provider-test" || len(state.VerifiedChains) == 0 {
 		return fmt.Errorf("negotiated profile or mutual authentication mismatch: %+v", state)
 	}
@@ -86,8 +89,14 @@ func run() error {
 	groups := map[string]tls.CurveID{"X25519": tls.X25519, "secp256r1": tls.CurveP256,
 		"secp384r1": tls.CurveP384, "X25519MLKEM768": tls.X25519MLKEM768}
 	suites := map[string]uint16{"TLS13_AES_128_GCM_SHA256": tls.TLS_AES_128_GCM_SHA256,
-		"TLS13_AES_256_GCM_SHA384":       tls.TLS_AES_256_GCM_SHA384,
-		"TLS13_CHACHA20_POLY1305_SHA256": tls.TLS_CHACHA20_POLY1305_SHA256}
+		"TLS13_AES_256_GCM_SHA384":                      tls.TLS_AES_256_GCM_SHA384,
+		"TLS13_CHACHA20_POLY1305_SHA256":                tls.TLS_CHACHA20_POLY1305_SHA256,
+		"TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256":       tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
+		"TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384":       tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
+		"TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256": tls.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256,
+		"TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256":         tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+		"TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384":         tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+		"TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256":   tls.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256}
 	group, ok := groups[os.Args[6]]
 	if !ok {
 		return fmt.Errorf("unknown group")
@@ -124,12 +133,20 @@ func run() error {
 	}
 	roots := x509.NewCertPool()
 	roots.AddCert(rootCert)
-	config := &tls.Config{MinVersion: tls.VersionTLS13, MaxVersion: tls.VersionTLS13,
+	version := uint16(tls.VersionTLS13)
+	if !strings.HasPrefix(os.Args[5], "TLS13_") {
+		version = tls.VersionTLS12
+	}
+	config := &tls.Config{MinVersion: version, MaxVersion: version,
 		Certificates: []tls.Certificate{certificate}, RootCAs: roots, ClientCAs: roots,
 		ClientAuth: tls.RequireAndVerifyClientCert, ServerName: "localhost", NextProtos: []string{"provider-test"},
 		CurvePreferences: []tls.CurveID{group}, ClientSessionCache: tls.NewLRUClientSessionCache(4)}
 	// Go does not expose TLS 1.3 suite selection. The provider offers one suite;
 	// exchange checks that the independently negotiated result matches it.
+	// TLS 1.2 selects the suite on both sides.
+	if version == tls.VersionTLS12 {
+		config.CipherSuites = []uint16{suite}
+	}
 	switch role {
 	case "client":
 		for i := 0; i < count; i++ {
@@ -137,7 +154,7 @@ func run() error {
 			if err != nil {
 				return err
 			}
-			if err := exchange(tls.Client(raw, config), true, suite, group); err != nil {
+			if err := exchange(tls.Client(raw, config), true, version, suite, group); err != nil {
 				return err
 			}
 		}
@@ -156,7 +173,7 @@ func run() error {
 			if err != nil {
 				return err
 			}
-			if err := exchange(tls.Server(raw, config), false, suite, group); err != nil {
+			if err := exchange(tls.Server(raw, config), false, version, suite, group); err != nil {
 				return err
 			}
 		}

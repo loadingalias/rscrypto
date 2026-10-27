@@ -219,7 +219,7 @@ pub(crate) fn connections_from_configs(
   )
 }
 
-fn transfer<S: SideData>(
+pub(crate) fn transfer<S: SideData>(
   source: &mut Peer<impl SideData>,
   destination: &mut Peer<S>,
   mut take_early: impl FnMut(&mut rustls::MessageHandler<'_, '_, S>, &mut Vec<u8>) -> Result<(), Error>,

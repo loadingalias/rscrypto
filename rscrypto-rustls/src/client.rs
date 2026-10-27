@@ -17,6 +17,10 @@ use crate::{cipher_suite, verify};
 /// request goes to the caller's source, and its failures propagate without
 /// fallback. The provider loads no private keys and builds no ticketers, so it
 /// supports neither client authentication nor serving. It does not need `getrandom`.
+/// It offers TLS 1.3 only; to enable TLS 1.2, set the returned provider's
+/// `tls12_cipher_suites` to `cipher_suite::ALL_TLS12_CIPHER_SUITES`.
+/// For client certificates, set its `key_provider` to a static
+/// [`crate::sign::Provider`] over the same source.
 ///
 /// The groups live in this value, so build it in a `static`:
 ///
