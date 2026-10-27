@@ -240,6 +240,15 @@ fn valid_retry(cid: ConnectionId, header: &[u8], payload: &[u8]) -> bool {
     .is_ok()
 }
 
+/// Map a TLS failure to QUIC's CRYPTO_ERROR with its TLS alert (RFC 9001, section 4.8).
+///
+/// Errors without a rustls alert are local failures and close with `internal_error`.
+fn crypto_error(error: &Error) -> TransportError {
+  let alert =
+    rustls::error::AlertDescription::try_from(error).unwrap_or(rustls::error::AlertDescription::InternalError);
+  TransportError::new(TransportErrorCode::crypto(u8::from(alert)), String::new())
+}
+
 trait EndpointSide: SideData {
   fn server_name(&self) -> Option<String>;
   fn early_data_accepted(&self) -> Option<bool>;
@@ -365,11 +374,7 @@ where
       }
       Ok::<(), Error>(())
     })()
-    .map_err(|error| {
-      let alert =
-        rustls::error::AlertDescription::try_from(&error).unwrap_or(rustls::error::AlertDescription::InternalError);
-      TransportError::new(TransportErrorCode::crypto(u8::from(alert)), String::new())
-    })
+    .map_err(|error| crypto_error(&error))
     .and_then(|()| {
       // A resumed client can restore cached transport parameters before
       // EncryptedExtensions selects ALPN. Check at handshake completion,

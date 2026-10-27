@@ -191,3 +191,24 @@ fn truncated_header_protection_is_untouched_and_does_not_panic() {
     }
   }
 }
+
+#[test]
+fn tls_failures_close_with_their_alert_or_internal_error() {
+  use rustls::error::PeerMisbehaved;
+  // RFC 9001, section 4.8: CRYPTO_ERROR is 0x0100 plus the TLS alert.
+  for (error, alert) in [
+    (Error::PeerMisbehaved(PeerMisbehaved::InvalidKeyShare), 0x2f),
+    (Error::DecryptError, 0x14),
+    (Error::FailedToGetRandomBytes, 0x50),
+  ] {
+    assert_eq!(crypto_error(&error).code, TransportErrorCode::crypto(alert));
+  }
+}
+
+#[cfg(all(feature = "x25519", feature = "ml-kem"))]
+#[test]
+fn hybrid_decapsulation_failure_closes_with_internal_error() {
+  // RFC 10024, section 4.2: internal_error (0x50).
+  let error = crate::kx_group::decapsulation_failed(rscrypto::MlKemError::InvalidCiphertext);
+  assert_eq!(crypto_error(&error).code, TransportErrorCode::crypto(0x50));
+}

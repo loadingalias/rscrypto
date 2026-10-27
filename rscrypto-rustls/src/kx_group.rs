@@ -35,6 +35,8 @@ pub use implementation::X25519Group;
 pub use implementation::X25519MLKEM768;
 #[cfg(all(feature = "x25519", feature = "ml-kem"))]
 pub use implementation::X25519MlKem768Group;
+#[cfg(all(test, feature = "quinn", feature = "x25519", feature = "ml-kem"))]
+pub(crate) use implementation::decapsulation_failed;
 
 #[cfg(any(feature = "x25519", feature = "p256-ecdh", feature = "p384-ecdh"))]
 mod implementation {
@@ -307,6 +309,16 @@ mod implementation {
       }
     }
 
+    /// Report an ML-KEM decapsulation failure after the share length checks.
+    ///
+    /// RFC 10024, section 4.2, requires an `internal_error` alert. The QUIC adapter
+    /// sends this error as CRYPTO_ERROR `internal_error`. rustls maps no error to
+    /// that alert over TCP and sends no alert for `Error::Other`. A typed ciphertext
+    /// cannot fail decapsulation (ML-KEM rejects implicitly), so this path is unreachable.
+    pub(crate) fn decapsulation_failed(error: MlKemError) -> Error {
+      Error::Other(rustls::error::OtherError::new(error))
+    }
+
     struct HybridExchange {
       classical: X25519Exchange,
       secret: Box<MlKem768PreparedDecapsulationKey>,
@@ -321,10 +333,7 @@ mod implementation {
         let (kem_share, classical_share) = server_share.split_at(MlKem768::CIPHERTEXT_SIZE);
         let ciphertext = MlKem768Ciphertext::try_from_slice(kem_share).map_err(|_| PeerMisbehaved::InvalidKeyShare)?;
         let classical_secret = self.classical.agree(classical_share)?;
-        let kem_secret = self
-          .secret
-          .decapsulate(&ciphertext)
-          .map_err(|_| Error::General("ML-KEM decapsulation failed".into()))?;
+        let kem_secret = self.secret.decapsulate(&ciphertext).map_err(decapsulation_failed)?;
         Ok(SharedSecret::from(
           [kem_secret.as_bytes().as_slice(), classical_secret.as_bytes()].concat(),
         ))
@@ -361,6 +370,16 @@ mod implementation {
       fn as_key_exchange(&self) -> &(dyn ActiveKeyExchange + 'static) {
         self
       }
+    }
+
+    #[cfg(test)]
+    #[test]
+    fn decapsulation_failure_is_local_and_sends_no_tcp_alert() {
+      let error = decapsulation_failed(MlKemError::InvalidCiphertext);
+      assert!(matches!(error, Error::Other(_)));
+      // Pinned rustls has no internal_error mapping. `Error::General` would send general_error;
+      // this error sends no alert over TCP, and the QUIC adapter maps it to internal_error.
+      rustls::error::AlertDescription::try_from(&error).expect_err("no TCP alert");
     }
 
     #[cfg(test)]
@@ -433,6 +452,8 @@ mod implementation {
   pub use hybrid::X25519MLKEM768;
   #[cfg(all(feature = "ml-kem", feature = "x25519"))]
   pub use hybrid::X25519MlKem768Group;
+  #[cfg(all(test, feature = "quinn", feature = "ml-kem", feature = "x25519"))]
+  pub(crate) use hybrid::decapsulation_failed;
 
   #[cfg(all(test, feature = "x25519", feature = "p256-ecdh", feature = "p384-ecdh"))]
   #[test]
