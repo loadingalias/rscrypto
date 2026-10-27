@@ -355,3 +355,66 @@ impl<const N: usize> Suite<N> for Shake<N> {
     sponge.finalize_into_fixed(SHAKE_SUFFIX, out);
   }
 }
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use alloc::{vec, vec::Vec};
+
+  fn pattern(len: usize, seed: u8) -> Vec<u8> {
+    (0..len)
+      .map(|index| u8::try_from(index % 251).expect("small index") ^ seed)
+      .collect()
+  }
+
+  /// `finish(parts, out)` of one seeded state.
+  type Finish<'a> = &'a dyn Fn(&[&[u8]], &mut [u8]);
+
+  /// Compare `finish` with the one-shot `oracle` of `PK.seed ||
+  /// toByte(0, block - n) || data`, truncated to n bytes (FIPS 205 Section
+  /// 11.2), for every data length through two blocks and the padding spill,
+  /// whole and split around each block edge. The parameter sets reach only
+  /// data lengths of 6, 38, 46, or 54 modulo 64 for SHA-256 and 46, 70, 86,
+  /// 94, or 118 modulo 128 for SHA-512, so vectors cannot cover the rest.
+  fn assert_seeded(block: usize, pk_seed: &[u8], finish: Finish<'_>, oracle: &dyn Fn(&[u8]) -> Vec<u8>) {
+    let n = pk_seed.len();
+    for len in 0..=block.strict_mul(2).strict_add(1) {
+      let data = pattern(len, 0xa3);
+      let mut input = pk_seed.to_vec();
+      input.resize(block, 0);
+      input.extend_from_slice(&data);
+      let expected = oracle(&input);
+      let edges = [0, 1, block.strict_sub(1), block, block.strict_add(1), len / 2, len];
+      for split in edges.into_iter().filter(|&split| split <= len) {
+        let (head, tail) = data.split_at(split);
+        let mut out = vec![0; n];
+        finish(&[head, &[], tail], &mut out);
+        assert_eq!(out, expected[..n], "n {n}, data length {len}, split {split}");
+      }
+    }
+  }
+
+  #[test]
+  fn seeded_sha256_matches_one_shot_sha256_across_block_edges() {
+    use sha2::Digest as _;
+    for n in [16, 24, 32] {
+      let pk_seed = pattern(n, 0x5c);
+      let seeded = SeededSha256::new(&pk_seed);
+      assert_seeded(64, &pk_seed, &|parts, out| seeded.finish(parts, out), &|input| {
+        sha2::Sha256::digest(input).to_vec()
+      });
+    }
+  }
+
+  #[test]
+  fn seeded_sha512_matches_one_shot_sha512_across_block_edges() {
+    use sha2::Digest as _;
+    for n in [24, 32] {
+      let pk_seed = pattern(n, 0x5c);
+      let seeded = SeededSha512::new(&pk_seed);
+      assert_seeded(128, &pk_seed, &|parts, out| seeded.finish(parts, out), &|input| {
+        sha2::Sha512::digest(input).to_vec()
+      });
+    }
+  }
+}
