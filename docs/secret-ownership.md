@@ -104,8 +104,13 @@ contexts. Construction borrows rustls's clearing `AeadKey`, then creates typed
 rscrypto key owners and expanded contexts in private outlined workers. Each
 worker returns only a `Box`; a post-call guard scrubs its dead construction
 frames before the outer `AeadKey` drops. The adapters expose no key formatting
-or serialization. `Tls13AeadAlgorithm::extract_keys` explicitly transfers
-rustls-owned traffic secrets to the caller, as rustls requires.
+or serialization. TLS 1.2 record keys use the same construction; an AES-GCM
+decrypter keeps only the 4-byte salt and takes each record's explicit nonce
+from the wire. `Tls13AeadAlgorithm::extract_keys` and
+`Tls12AeadAlgorithm::extract_keys` explicitly transfer rustls-owned traffic
+secrets to the caller, as rustls requires. The TLS 1.2 PRF is rustls's
+`PrfUsingHmac`: it keys the provider's `SecretVec` HMAC owner with the
+premaster secret, then the master secret, which rustls owns.
 Transcript contexts can be cloned; they contain public handshake data.
 
 ### rustls key exchange

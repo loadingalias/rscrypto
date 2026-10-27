@@ -344,6 +344,8 @@ clears its explicit 512-, 1024-, or 2048-byte GHASH power workspace before relea
 the native kernels clear saved-register slots after restoring the caller's registers. Input
 descriptor arrays contain public pointers and lengths only. These clears do not cover every live register
 or compiler-created spill; generated-code qualification remains source and target bound.
+TLS 1.2 records follow the same construction scrub, reservation, and failure
+clearing; decryption rejects a plaintext above 2^14 bytes before decrypting.
 An AEAD authentication failure clears the body before returning an opaque rustls
 error. Public length and key-shape rejections occur before decryption; those
 paths leave ciphertext unchanged. Successful plaintext belongs to rustls or its
