@@ -31,9 +31,14 @@ Umbrella features are convenient, but they make the build larger:
 | `key-exchange`     | X25519, P-256 ECDH, P-384 ECDH, and ML-KEM |
 | `auth`             | MACs, KDFs, password hashing, signatures, and key exchange |
 | `aead`             | All AEADs |
-| `full`             | Checksums, hashes, authentication, and AEADs |
+| `full`             | Checksums, hashes, authentication, AEADs, and the ChaCha20 generator |
 
 In libraries and constrained builds, use leaf features such as `sha2`, `blake3`, `aes-gcm`, `ed25519`, `p256-ecdh`, `p384-ecdh`, `ml-dsa`, `slh-dsa`, or `ml-kem`.
+
+`chacha20-rng` gives `ChaCha20Rng`, a ChaCha20 random generator seeded by the caller.
+It reads no operating-system entropy, works without `alloc`, and its output stream
+is a stable function of the seed. `ChaCha20Rng::try_generate` seeds it from the
+operating system and also needs `getrandom`.
 
 `websocket-sha1` gives only the compatibility digest for WebSocket handshakes.
 No umbrella feature enables it, including `full`.

@@ -116,6 +116,22 @@ mod x25519_rng {
   }
 }
 
+#[cfg(feature = "chacha20-rng")]
+mod chacha20_rng {
+  use rscrypto::ChaCha20Rng;
+
+  #[test]
+  fn generator_try_generate_uses_platform_entropy() {
+    let mut first = ChaCha20Rng::try_generate().expect("OS entropy must seed the first generator");
+    let mut second = ChaCha20Rng::try_generate().expect("OS entropy must seed the second generator");
+    assert_ne!(
+      first.next_u64(),
+      second.next_u64(),
+      "independently seeded generators agreed"
+    );
+  }
+}
+
 #[cfg(feature = "rapidhash")]
 mod rapidhash_rng {
   use core::hash::BuildHasher;

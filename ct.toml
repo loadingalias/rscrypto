@@ -152,6 +152,7 @@ compiler_api_prefixes = [
   "rscrypto::backend",
   "rscrypto::hashes::crypto",
   "rscrypto::hex",
+  "rscrypto::rng",
   "rscrypto::secret",
   "rscrypto::traits",
 ]
@@ -876,6 +877,15 @@ primitive = "aead.symmetric_transform"
 filter = "chacha20_header_protection_fixed_vs_random_key"
 left_class = "complete ChaCha20 header-protection operation with fixed secret key"
 right_class = "complete ChaCha20 header-protection operation with random secret key"
+samples = 20000
+smoke_samples = 2000
+
+[[dudect_case]]
+name = "chacha20_rng_fixed_vs_random_seed"
+primitive = "rng.chacha20"
+filter = "chacha20_rng_fixed_vs_random_seed"
+left_class = "ChaCha20Rng construction, two refills, and drop with a fixed secret seed"
+right_class = "ChaCha20Rng construction, two refills, and drop with a random secret seed"
 samples = 20000
 smoke_samples = 2000
 
@@ -2342,6 +2352,12 @@ dudect = ["chacha20_header_protection_fixed_vs_random_key"]
 binsec = ["aead.symmetric_transform.chacha20poly1305_seal.portable.all"]
 
 [[evidence_unit]]
+id = "rng.chacha20.chacha20_rng"
+primitive = "rng.chacha20"
+variant = "ChaCha20Rng"
+dudect = ["chacha20_rng_fixed_vs_random_seed"]
+
+[[evidence_unit]]
 id = "aead.symmetric_transform.aes_siv_cmac256"
 primitive = "aead.symmetric_transform"
 variant = "AesSivCmac256"
@@ -3518,8 +3534,8 @@ name = "x86_64-unknown-linux-gnu"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 3441
-compiler_api_sha256 = "f99db63d297d1ea8e5833172e4e7953e68637d44ec0dedd7e768a677073023d5"
+compiler_api_item_count = 3449
+compiler_api_sha256 = "45c96489879198ef685d719a5bb57e85ac4c229b65338fe7349506aa302295f0"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "required"
@@ -3529,8 +3545,8 @@ name = "aarch64-unknown-linux-gnu"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 3441
-compiler_api_sha256 = "f99db63d297d1ea8e5833172e4e7953e68637d44ec0dedd7e768a677073023d5"
+compiler_api_item_count = 3449
+compiler_api_sha256 = "45c96489879198ef685d719a5bb57e85ac4c229b65338fe7349506aa302295f0"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "required"
@@ -3563,8 +3579,8 @@ group = "win"
 backend = "llvm"
 linker = "msvc-link-unpinned"
 claim = "ct-intended"
-compiler_api_item_count = 3441
-compiler_api_sha256 = "f99db63d297d1ea8e5833172e4e7953e68637d44ec0dedd7e768a677073023d5"
+compiler_api_item_count = 3449
+compiler_api_sha256 = "45c96489879198ef685d719a5bb57e85ac4c229b65338fe7349506aa302295f0"
 physical_timing = "required"
 binsec = "unsupported"
 binsec_reason = "BINSEC PE/Windows evidence is not part of the current release evidence gate."
@@ -3585,8 +3601,8 @@ name = "aarch64-apple-darwin"
 group = "macos"
 backend = "llvm"
 linker = "apple-ld-unpinned"
-compiler_api_item_count = 3441
-compiler_api_sha256 = "f99db63d297d1ea8e5833172e4e7953e68637d44ec0dedd7e768a677073023d5"
+compiler_api_item_count = 3449
+compiler_api_sha256 = "45c96489879198ef685d719a5bb57e85ac4c229b65338fe7349506aa302295f0"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -3597,8 +3613,8 @@ name = "s390x-unknown-linux-gnu"
 group = "ibm"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 3441
-compiler_api_sha256 = "f99db63d297d1ea8e5833172e4e7953e68637d44ec0dedd7e768a677073023d5"
+compiler_api_item_count = 3449
+compiler_api_sha256 = "45c96489879198ef685d719a5bb57e85ac4c229b65338fe7349506aa302295f0"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -3609,8 +3625,8 @@ name = "powerpc64le-unknown-linux-gnu"
 group = "ibm"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 3441
-compiler_api_sha256 = "f99db63d297d1ea8e5833172e4e7953e68637d44ec0dedd7e768a677073023d5"
+compiler_api_item_count = 3449
+compiler_api_sha256 = "45c96489879198ef685d719a5bb57e85ac4c229b65338fe7349506aa302295f0"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -3621,8 +3637,8 @@ name = "riscv64gc-unknown-linux-gnu"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 3441
-compiler_api_sha256 = "f99db63d297d1ea8e5833172e4e7953e68637d44ec0dedd7e768a677073023d5"
+compiler_api_item_count = 3449
+compiler_api_sha256 = "45c96489879198ef685d719a5bb57e85ac4c229b65338fe7349506aa302295f0"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -3846,6 +3862,19 @@ evidence = [
   "unit:aead.symmetric_transform.chacha20_header_protection",
 ]
 limitation = "DudeCT covers complete key construction and mask generation. AES reuses the existing portable-round BINSEC leaf; ChaCha20 reuses the portable seal leaf. Exact release claims remain bound to target artifacts."
+
+[[operation]]
+id = "rng.chacha20_generate"
+api = ["rscrypto::ChaCha20Rng::{from_seed,try_generate_with,try_generate,fill_bytes,next_u32,next_u64}"]
+features = ["chacha20-rng", "getrandom for try_generate"]
+targets = ["all-supported", "ChaCha20 kernel selected by public target capabilities"]
+secret_inputs = ["seed", "generator key", "unread output", "keystream chunk"]
+public_inputs = ["request lengths", "call sequence", "backend capabilities"]
+variable_time_components = ["public-length copy and clear loops", "refill at public stream positions", "public backend dispatch", "entropy-source latency for seeding"]
+permitted_leakage = ["algorithm", "request lengths and call sequence", "backend", "seeding success/failure"]
+claim = "ct-intended"
+evidence = ["primitive:rng.chacha20", "unit:rng.chacha20.chacha20_rng"]
+limitation = "DudeCT covers seeding, two refills, and drop. The generator runs the ChaCha20 kernels that the AEAD evidence covers, but it has no BINSEC kernel, linked-image harness entry, or asm-heuristic gate of its own, so the primitive is not tier-gated. Rust moves copy the generator state; only its final location clears on drop."
 
 [[operation]]
 id = "aead.open_and_authenticate"
@@ -5587,6 +5616,31 @@ symbols = [
   "ct_entry_ascon_aead128_open",
 ]
 coverage = "AEAD open harnesses exercise encrypt/decrypt transforms and authentication backends through production public APIs; later BINSEC/asm leaf harnesses may split smaller kernels."
+
+[[primitive]]
+id = "rng.chacha20"
+tier = "B"
+claim = "ct-intended"
+features = ["chacha20-rng"]
+variants = ["ChaCha20Rng"]
+components = ["ChaCha20"]
+entrypoints = [
+  "ChaCha20Rng::from_seed",
+  "ChaCha20Rng::try_generate_with",
+  "ChaCha20Rng::fill_bytes",
+  "ChaCha20Rng::next_u32",
+  "ChaCha20Rng::next_u64",
+]
+secrets = ["seed", "generator key", "unread output", "keystream chunk"]
+public = ["request lengths", "call sequence", "backend_caps"]
+may_leak = ["input_length", "public_backend_dispatch"]
+must_not_leak_ref = "common_secret_data"
+required = []
+notes = "Fast-key-erasure generator over the shared ChaCha20 kernels. Output positions and refills depend only on request lengths."
+[primitive.harness]
+status = "partial"
+symbols = []
+gap = "No linked-image harness entry or BINSEC kernel yet; DudeCT covers the operation. Add both and the tier-B gate before any release CT claim."
 
 [[primitive]]
 id = "keyed_hash.blake2_blake3"

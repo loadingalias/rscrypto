@@ -1,9 +1,9 @@
-//! ChaCha20 and HChaCha20 core for the ChaCha20 AEADs.
+//! ChaCha20 and HChaCha20 core shared by the ChaCha20 AEADs and `ChaCha20Rng`.
 //!
 //! This module owns the portable authority, the accelerated keystream kernels,
-//! and the capability rule that selects a kernel. Dispatch and AEAD
-//! introspection both derive from [`Kernel::select`], so introspection reports
-//! the kernel that actually runs.
+//! and the capability rule that selects a kernel. Both families dispatch through
+//! [`Kernel::select`], and AEAD introspection derives from it, so introspection
+//! reports the kernel that actually runs.
 
 use core::mem;
 #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
@@ -274,6 +274,18 @@ pub(crate) fn xor_keystream(
   // when its complete capability set is available. The portable function also coerces to this unsafe fn type.
   unsafe { kernel()(key, initial_counter, nonce, buffer) };
   Ok(())
+}
+
+/// XOR the keystream for nonce zero and block counters `0..N / 64` into `chunk`.
+#[cfg(feature = "chacha20-rng")]
+pub(crate) fn xor_keystream_chunk<const N: usize>(key: &[u8; KEY_SIZE], chunk: &mut [u8; N]) {
+  const {
+    assert!(N.is_multiple_of(BLOCK_SIZE));
+    assert!(N / BLOCK_SIZE <= u32::MAX as usize);
+  }
+  // SAFETY: the const assertions keep all `N / 64` blocks within the u32 counter range starting at zero, and `kernel`
+  // returns an accelerated kernel only when its complete capability set is available.
+  unsafe { kernel()(key, 0, &[0; NONCE_SIZE], chunk) };
 }
 
 fn xor_keystream_portable(key: &[u8; KEY_SIZE], initial_counter: u32, nonce: &[u8; NONCE_SIZE], buffer: &mut [u8]) {

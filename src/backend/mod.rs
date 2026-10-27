@@ -25,10 +25,15 @@ pub(crate) mod ascon;
   feature = "aes-gcm",
   feature = "aes-gcm-siv",
   feature = "chacha20poly1305",
-  feature = "xchacha20poly1305"
+  feature = "xchacha20poly1305",
+  feature = "chacha20-rng"
 ))]
 pub(crate) mod cache;
-#[cfg(any(feature = "chacha20poly1305", feature = "xchacha20poly1305"))]
+#[cfg(any(
+  feature = "chacha20poly1305",
+  feature = "xchacha20poly1305",
+  feature = "chacha20-rng"
+))]
 pub(crate) mod chacha20;
 #[cfg(any(
   feature = "ed25519",

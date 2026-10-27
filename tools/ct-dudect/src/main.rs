@@ -531,6 +531,28 @@ header_protection_fixed_vs_random_key!(
   [0x63; 32]
 );
 
+fn chacha20_rng_fixed_vs_random_seed(runner: &mut CtRunner, rng: &mut BenchRng) {
+  let mut inputs = Vec::with_capacity(samples());
+  for class in balanced_classes(rng, samples()) {
+    let seed = if matches!(class, Class::Left) {
+      [0x64; 32]
+    } else {
+      rand_array::<32>(rng)
+    };
+    inputs.push((class, seed));
+  }
+
+  for (class, seed) in inputs {
+    runner.run_one(class, || {
+      // 600 bytes cross the first 480-byte chunk, so each sample seeds, refills twice, and drops.
+      let mut generator = rscrypto::ChaCha20Rng::from_seed(seed);
+      let mut output = [0u8; 600];
+      generator.fill_bytes(&mut output);
+      core::hint::black_box(output)[0]
+    });
+  }
+}
+
 fn aes_siv_cmac256_fixed_vs_random_key_open(runner: &mut CtRunner, rng: &mut BenchRng) {
   let nonce_bytes = [0x5B; 16];
   let nonce = AesSivCmac256Nonce::try_from(nonce_bytes.as_slice()).expect("timing nonce is non-empty");
@@ -3741,6 +3763,7 @@ ctbench_main_with_seeds!(
   (aes128_header_protection_fixed_vs_random_key, Some(0x6870616573313238)),
   (aes256_header_protection_fixed_vs_random_key, Some(0x6870616573323536)),
   (chacha20_header_protection_fixed_vs_random_key, Some(0x687063686132305f)),
+  (chacha20_rng_fixed_vs_random_seed, Some(0x6332307267736564)),
   (aes_siv_cmac256_fixed_vs_random_key_open, Some(0x7369765f6f70656e)),
   (aes_siv_cmac256_first_vs_last_tag_mismatch, Some(0x7369765f7461676d)),
   (

@@ -184,6 +184,9 @@ fn keyed_state_debug_snapshots_are_redacted() {
     assert_debug_snapshot(&key, "Poly1305OneTimeKey(****)");
     assert_debug_snapshot(&Poly1305::new(key), "Poly1305 { .. }");
   }
+
+  #[cfg(feature = "chacha20-rng")]
+  assert_debug_snapshot(&rscrypto::ChaCha20Rng::from_seed([0x53; 32]), "ChaCha20Rng { .. }");
 }
 
 #[test]

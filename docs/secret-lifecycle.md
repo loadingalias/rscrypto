@@ -391,6 +391,16 @@ Key loading and signers retain the selected entropy source; partial failures
 produce no signature and never select an OS fallback. Regression tests exercise
 ECDSA import, every signing family, and recovery through the same signer.
 
+### ChaCha20 generator
+
+Seeding through `try_generate_with` clears a partial seed on failure. Returned
+output bytes are cleared from the generator as they are read, and each refill
+replaces the key with fresh keystream before clearing that copy, so a later state
+capture does not reveal returned output. Drop clears the key and chunk. The
+generator never reseeds; replacing it is the only recovery from a compromised
+state. Unit tests check the cleared-state invariant after every read; they do
+not qualify compiler-made copies or linked-code erasure.
+
 ### rustls session tickets
 
 Ticket generation fails on partial entropy acquisition without exposing a key.

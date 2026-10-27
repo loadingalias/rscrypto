@@ -104,6 +104,7 @@ assert!(
 //! - `auth`: MACs, KDFs, password hashing, ECDSA signing/verification, Ed25519, RSA
 //!   signing/verification/OAEP, ML-DSA, SLH-DSA, P-256 and P-384 ECDH, X25519, ML-KEM.
 //! - `aead`: AES-GCM, AES-GCM-SIV, ChaCha20-Poly1305, XChaCha20-Poly1305, AEGIS-256, Ascon-AEAD128.
+//! - `chacha20-rng`: the seeded ChaCha20 random generator, [`ChaCha20Rng`].
 //! - `full`: all public primitive families.
 //!
 //! Leaf features are available for size-conscious builds.
@@ -374,6 +375,8 @@ pub mod auth;
 #[doc(hidden)]
 mod backend;
 pub mod platform;
+#[cfg(feature = "chacha20-rng")]
+pub mod rng;
 pub mod traits;
 
 #[cfg(any(feature = "crc16", feature = "crc24", feature = "crc32", feature = "crc64"))]
@@ -565,6 +568,8 @@ pub use hashes::fast::{RapidHash64, RapidHasher, RapidRandomState, RapidSeededSt
 pub use hashes::fast::{Xxh3, Xxh3_128};
 #[cfg(feature = "xxh3")]
 pub use hashes::fast::{Xxh3_128Hasher, Xxh3BuildHasher, Xxh3Hasher};
+#[cfg(feature = "chacha20-rng")]
+pub use rng::ChaCha20Rng;
 // Hex re-exports.
 #[cfg(any(
   feature = "aes-gcm",
