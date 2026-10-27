@@ -140,35 +140,48 @@ Do not open a public issue.
 
 ## Performance
 
-Bench run [#39888945058](https://github.com/loadingalias/rscrypto/actions/runs/39888945058) measured the v0.12.0 source
-on eight platforms on 2026-10-23, and the same plan ran on a local Apple M1 Pro.
+Bench run [#39888945058](https://github.com/loadingalias/rscrypto/actions/runs/39888945058) measured the v0.12.0 source on eight platforms on 2026-10-23,
+and the same plan ran on a local Apple M1 Pro.
 Each platform has up to 914 headline comparisons: checksums, hashes, MACs, KDFs, password hashing,
 AEADs, signatures, key exchange, ML-KEM, ML-DSA, SLH-DSA, and RSA.
 The comparisons follow [equal-task rules](docs/benchmarking.md#comparison-rules).
 Each comparison divides the median time of the fastest external crate by the median time of `rscrypto`.
 A ratio above 1.00x means `rscrypto` is faster; a tie is 0.95x through 1.05x.
 
-| Platform | Points | Faster | Tie | Slower | Median | Geomean |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| Intel Linux (`c8i`) | 914 | 372 | 254 | 288 | 1.00x | 1.23x |
-| AMD Linux (`c8a`) | 914 | 420 | 264 | 230 | 1.03x | 1.20x |
-| Intel Windows (`c8i`) | 914 | 420 | 258 | 236 | 1.03x | 1.25x |
-| AMD Windows (`c8a`) | 914 | 517 | 149 | 248 | 1.08x | 1.20x |
-| Graviton5 Linux (`c9g`) | 914 | 379 | 284 | 251 | 1.03x | 1.21x |
-| POWER10 Linux | 914 | 414 | 314 | 186 | 1.03x | 1.38x |
-| IBM Z Linux | 911 | 726 | 90 | 95 | 2.31x | 3.07x |
-| RISC-V Linux | 603 | 251 | 189 | 163 | 1.02x | 1.07x |
-| Apple M1 Pro (local) | 914 | 380 | 381 | 153 | 1.03x | 1.24x |
+| Platform                | Points | Faster |  Tie | Slower | Median | Geomean |
+| ----------------------- | -----: | -----: | ---: | -----: | -----: | ------: |
+| Intel Linux (`c8i`)     |    914 |    372 |  254 |    288 |  1.00x |   1.23x |
+| AMD Linux (`c8a`)       |    914 |    420 |  264 |    230 |  1.03x |   1.20x |
+| Intel Windows (`c8i`)   |    914 |    420 |  258 |    236 |  1.03x |   1.25x |
+| AMD Windows (`c8a`)     |    914 |    517 |  149 |    248 |  1.08x |   1.20x |
+| Graviton5 Linux (`c9g`) |    914 |    379 |  284 |    251 |  1.03x |   1.21x |
+| POWER10 Linux           |    914 |    414 |  314 |    186 |  1.03x |   1.38x |
+| IBM Z Linux             |    911 |    726 |   90 |     95 |  2.31x |   3.07x |
+| RISC-V Linux            |    914 |    406 |  276 |    232 |  1.03x |   1.08x |
+| Apple M1 Pro (local)    |    914 |    380 |  381 |    153 |  1.03x |   1.24x |
 
-These results are from one run per platform, at half the default sampling time, on cloud and shared hosts.
-RISC-V's `auth` family (signatures, key exchange, KDFs, MACs, and password hashing) was still measuring,
-so its row covers 603 comparisons.
-The Apple row comes from one local run whose host was not checked for load first; treat its small differences as unconfirmed.
+These results are from one run per platform, at half the default sampling time,
+on cloud and shared hosts.
+RISC-V's completed `auth` family was recovered from the same run on 2026-10-24;
+its row now includes all 914 headline comparisons.
+The Apple row comes from one local run whose host was not checked for load first;
+treat its small differences as unconfirmed.
 On IBM Z, `rscrypto` uses its CPACF and vector backends where they exist, and AWS-LC is absent.
 The [benchmark overview](benchmark_results/OVERVIEW.md#2026-10-23-v0120-release-benchmark-run) gives the results by family,
 TLS 1.3 and QUIC connections through `rscrypto-rustls`, the largest remaining losses, the method, and the limits.
 The [comparison contracts](docs/benchmarking.md#ml-kem-and-argon2-comparison-contracts) define equivalent ML-KEM and Argon2 workloads.
-Older summary tables mixed different workloads. They are historical records, not current claims.
+Older summary tables mixed different workloads.
+They are historical records, not current claims.
+
+The [October 24 follow-up](benchmark_results/OVERVIEW.md) measures standalone Poly1305, BLAKE3 readers,
+and RSA import after the dependency and compiler refresh.
+Matched Apple M1 Pro comparisons against rebuilt v0.12 source show Poly1305 at 3.44–5.23x
+for the selected empty, 64 B, 1 KiB, and 16 KiB inputs,
+and RSA import at 1.44x and 1.49x for the selected 2048- and 8192-bit PSS verification cases.
+These use eight balanced prebuilt rounds;
+the overview retains the repeat spread and exact workloads.
+The matched Graviton3 cold 1 MiB BLAKE3 file reader takes about 58% longer and remains unresolved.
+This focused subset does not replace the full release catalog above or qualify its older Apple row.
 
 ## Project
 

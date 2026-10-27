@@ -6,14 +6,127 @@ The dated campaign records come first.
 The 2026-08-18 Linux snapshot near the end is historical:
 its aggregate ratios are withdrawn as performance claims (see [Corrections](#corrections)).
 
+## 2026-10-27: provider residue review checkpoint
+
+The AArch64 AES-GCM correction keeps GHASH tables borrowed and updates the clearing accumulator
+owner through AAD and batch helpers. Direct field-element construction removes memory-helper
+calls from padded AAD folding while H and state are live. Linked caller/worker review closes the
+demonstrated saved-register and short-eight-block accumulator copies in the retained Apple
+artifact, including success and bad-tag exits. It does not establish general register erasure.
+
+The final v3 provider resource executable has SHA-256
+`f6377dc43793dcd19db314294c56daefe37d0d43e3a855d76b4c52a9a44da925`.
+The executable, complete LLVM IR and assembly are byte-identical to reviewed v2. The build uses
+`nightly-2026-10-24`, rustc `48f4b05538b8`, LLVM 23.1.4, native CPU features, O3 and fat LTO.
+The [handoff](provider-gap2-g1d-20261026/cleanup/borrowed-state/HANDOFF.md) records the frozen
+source archive, source hashes, commands, failed attempts and artifact identities.
+
+All 47 selected Apple resource profiles pass their caps. Worst observed configuration,
+single-pair and 64-pair concurrent Rust usable-payload peaks are 784,560, 402,800 and 18,582,384
+bytes. These measurements exclude OS stacks and allocator metadata; they are not universal
+hostile-input bounds. Twelve guarded-stack observations of actual ML-DSA preparation calls pass
+selected residue checks, but whole-call allocator composition remains unfinished.
+
+Host `just ci-check`, the `no_std` AES-GCM leaf check and focused Apple release tests pass.
+The complete 133-case Apple CT gate passes at the frozen checkpoint before the final
+comment/test-fixture correction; final-source CT binding remains open. Graviton4 native/portable
+focused tests pass 157/155 cases, provider tests pass 1,356/1,308, and `just ci-provider` passes.
+Granite Rapids focused tests pass 158/156 cases and native provider tests pass 1,389; its portable
+provider run and ARM CT run were stopped for review without complete results.
+
+No current traffic or performance result was obtained. Linux linked cleanup, full CT, resource,
+frame and ASan gates, whole-call allocator bounds, and pinned-comparator traffic qualification
+remain open. Both temporary native instances and their EBS volumes are deleted. Gap 2 remains
+open in [delivery.md](../docs/tasks/delivery.md#gap-2-native-security-and-resource-qualification).
+
+## 2026-10-25: Unreleased file and provider work
+
+These results describe retained working-tree changes on `main` at `2622c4a9`, not a new release
+or a replacement for the complete v0.12 scorecard. The final gather source manifest
+(`rail-gather-final-20261025/candidate-c10a-source.json`) matched all 89 recorded files at the start
+of the October 25 task reconciliation. Each experiment below keeps its own source and artifact
+binding. No new measurements were run for this summary.
+
+### Completed L2-R file-aware delivery
+
+`Blake3::update_file` reads from the current cursor through actual EOF, using regular-file size
+and position only as optional buffer hints. It preserves the generic reader and its small-input
+allocation and cleanup contracts. The original generic `update_reader(File)` cold-file limitation
+remains; this result qualifies the explicit file API in the named workload.
+
+The matched Graviton3 `c7g.4xlarge` comparison rebuilt v0.12 (`1c364ca5`), the generic baseline
+(`2622c4a9`), and the file candidate with the same nightly-2026-10-24 compiler, dependencies,
+features, fixtures, and four-worker pool. Opening, metadata/position queries, construction,
+hashing, cleanup, finalization, and closing stay timed. Cold arrivals are explicitly paced at
+80 MiB/s outside the operation timer; these are operation latencies, not sustained storage
+throughput. Do not pool them with unpaced results.
+
+| Cold file | Rebuilt v0.12 generic | Generic baseline | File candidate |
+| --- | ---: | ---: | ---: |
+| 1 MiB | 4.806 ms | 6.522 ms | 4.312 ms |
+| 16 MiB | 52.194 ms | 54.206 ms | 51.575 ms |
+
+Estimates are the median of two independent run means per source. The complete symmetric
+sequence is old/baseline/candidate/candidate/baseline/old. At 1 MiB, paired old/file ratios are
+1.11385–1.11555x and baseline/file ratios are 1.50732–1.51807x; these ranges are paired spread,
+not confidence intervals. At 16 MiB, the roughly 1.2% difference from v0.12 is not a material
+speed claim. Generic 4 KiB memory reading remains within 0.16% in the matched pairs.
+All 1,360 raw samples and 1,764 cold-zero cache observations survive, with no discarded qualified
+run or sample. Native automatic, portable, and nonparallel reader suites pass 19 tests each;
+the retained-policy Miri tests, storage tests, and 43 doctests pass. Broader combined release
+qualification remains separate.
+
+The [file delivery record](l2r-closure-20261024/file-api/FILE-API-RESULT.md) owns exact source,
+ELF, command, host, raw data, validation, rejected policies, and cleanup receipts. The
+[generic-policy study](l2r-closure-20261024/GENERIC-POLICY-RESULT.md) preserves the original loss
+and rejected generic-reader tradeoffs. L2-R's selected delivery is complete within this scope.
+
+### Provider improvements and remaining gates
+
+| Work | Retained result | Why it remains open |
+| --- | --- | --- |
+| G1-A, Graviton4 RSA | Selected full TLS screens take about 6–7% less time than the original implementation. | Still about 4.6–5.2% behind AWS-LC, beyond the 2% limit; final-source CT and the complete protected matrix remain. [Final handoff](g1a-closure-20261024/HANDOFF.md). |
+| G1-B, ML-DSA | Retained v6 screens reduce full-mutual/intermediate latency by about 16–18% on Intel and 5–6% on Graviton4. | Intermediate-chain screens still trail AWS-LC by about 8% and 11%, respectively; full qualification remains. [Native screen record](g1b-closure-20261024/PROGRESS.md), [final source](g1b-closure-20261024/FINAL-SOURCE.json). |
+| Rail gather encryption | API and direct provider ciphertext output are implemented. ARM's retained production path passes all nine protected and competitive rows, with 0.3384% control spread. | Intel and Mac meet the point-estimate speed margins but fail the fixed 1% control-spread limit at 2.9854% and 3.3408%; neither window qualifies. [Final result and source bindings](rail-gather-final-20261025/RESULTS.md). |
+| G1-C, borrowed provider | `DEFAULT_PROVIDER` and its benchmark integration exist. | Mac and Intel windows fail control stability; no performance gain is accepted. [Checkpoint](provider-finish-20261025/STATUS.md). |
+
+The final Mac resource observer passes 47 frozen profiles under the recorded budgets, but this
+does not establish whole-call stack bounds or final native Linux coverage. The newer Mac
+CT-artifacts gate fails with stale waivers and unwaived findings requiring review; the passing
+six-target baseline below applies to `2622c4a9`. All four provider delivery gaps remain open.
+Retained failed windows and rejected candidates must survive any future reconciliation.
+
 ## 2026-10-24: L1–L3 qualification after the dependency refresh
 
 This campaign qualifies the standalone Poly1305, BLAKE3 reader, and RSA public-key import changes.
 It uses `nightly-2026-10-24` (rustc `48f4b05538b8`, LLVM 23.1.4) and the refreshed lockfiles.
-The production `src/` tree is unchanged from `5d5f79fc` through the qualification fixes;
+`just update` refreshed the project and auxiliary Cargo dependencies, Python tooling, and tool/Action pins.
+The production `src/` tree is unchanged from `5d5f79fc` through the qualified commit `2622c4a9`;
 its path-and-content SHA-256 is `907b125989da86a7e5addcf31a4ac44db23824d11f42ace465673ff0d6eb3e7a`.
-Raw samples, source/control receipts, binaries, host observations, and validation logs are retained in
-`benchmark_results/qualification-v013-20261024/`.
+Raw samples, source/control receipts, binaries, host observations,
+and validation logs are retained in `benchmark_results/qualification-v013-20261024/`.
+
+### Completed validation
+
+[CI 40135094262](https://github.com/loadingalias/rscrypto/actions/runs/40135094262) passes all 12 jobs at `2622c4a9`, including the separate native RISC-V execution.
+[Constant-Time 40135118601](https://github.com/loadingalias/rscrypto/actions/runs/40135118601) passes its final report gate with all six native targets
+and RISC-V required.
+All 793 required target/case results pass: 133 each on Linux x86-64, AArch64, Windows x86-64,
+IBM Z and RISC-V, and 128 on POWER.
+The complete raw timing archives, compiled artifacts, source identities and report hashes verify;
+`ct-final-baseline/manifest.json` is the canonical retained baseline.
+Physical Mac native/portable qualification and RSA assembly controls also pass at that commit.
+Fuzz/ASan and Miri pass on the same production source;
+their exact execution commits and limits are retained in the campaign record.
+
+A separate physical Apple M1 Pro run passes the two production standalone Poly1305 timing cases:
+64 B has maximum absolute t = 0.96312; 16 KiB has 1.75845, against the unchanged threshold of 10.
+Each retains all 20,000 samples, its binary and disassembly, and host observations.
+The host's load averages were 2.69/2.86/2.59; the owner accepted load and noise for this run.
+This is bounded key-class timing evidence, not a performance ranking or full Apple CT qualification.
+Standalone Poly1305 remains best-effort;
+arbitrary secret messages and standalone verification are outside these two cases.
+Evidence is in `apple-poly1305-ct/` under the campaign directory.
 
 ### Matched Graviton3 comparison
 
