@@ -1,4 +1,8 @@
-#![cfg(any(all(feature = "xxh3", feature = "rapidhash"), feature = "aes-siv"))]
+#![cfg(any(
+  all(feature = "xxh3", feature = "rapidhash"),
+  feature = "aes-siv",
+  all(feature = "blake3", feature = "std")
+))]
 
 #[cfg(all(feature = "xxh3", feature = "rapidhash"))]
 use core::hash::{BuildHasher, Hasher};
@@ -12,6 +16,10 @@ use std::collections::HashMap;
 
 #[cfg(all(feature = "xxh3", feature = "rapidhash"))]
 use rscrypto::{RapidSeededState, RapidStreamHasher, Xxh3_128Hasher, Xxh3BuildHasher};
+
+#[cfg(all(feature = "blake3", feature = "std"))]
+#[path = "common/file.rs"]
+mod file;
 
 struct CountingAllocator;
 
@@ -90,6 +98,42 @@ fn measure_allocations(f: impl FnOnce()) -> usize {
   let count = ALLOCATIONS.with(|allocations| allocations.replace(MEASUREMENT_DISABLED));
   drop(measurement);
   count
+}
+
+#[cfg(all(feature = "blake3", feature = "std"))]
+#[test]
+fn small_blake3_file_inputs_keep_buffering_on_the_stack() {
+  use rscrypto::{Blake3, Digest};
+
+  let input: Vec<u8> = (0..65_536)
+    .map(|i| u8::try_from(i % 251).expect("byte pattern"))
+    .collect();
+  // Capability detection and fixture allocation are outside the measured operation.
+  core::hint::black_box(Blake3::digest(b"warm dispatch"));
+  for len in [0, 1, 1024, 4096, 65_535, 65_536] {
+    let fixture = file::TemporaryFile::new(&input[..len]);
+    for mode in 0..3 {
+      let mut file = fixture.open();
+      let mut hasher = match mode {
+        0 => Blake3::new(),
+        1 => Blake3::new_keyed(&[0xa7; 32]),
+        _ => Blake3::new_derive_key("rscrypto allocation fixture"),
+      };
+      let mut reference = match mode {
+        0 => blake3::Hasher::new(),
+        1 => blake3::Hasher::new_keyed(&[0xa7; 32]),
+        _ => blake3::Hasher::new_derive_key("rscrypto allocation fixture"),
+      };
+      reference.update(&input[..len]);
+      let mut count = 0;
+      let allocations = measure_allocations(|| {
+        count = hasher.update_file(&mut file).expect("read small file");
+      });
+      assert_eq!(count, len as u64);
+      assert_eq!(allocations, 0, "mode={mode} len={len}");
+      assert_eq!(hasher.finalize(), *reference.finalize().as_bytes());
+    }
+  }
 }
 
 #[test]

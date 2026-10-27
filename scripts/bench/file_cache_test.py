@@ -11,7 +11,8 @@ import file_cache
 
 
 class CacheGates(unittest.TestCase):
-    def replay(self, mode, stdout, *, initial=None, code=0, stderr="", fails=False, reads=False, size=4096):
+    def replay(self, mode, stdout, *, initial=None, code=0, stderr="", fails=False, reads=False, size=4096,
+               page_size=4096):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             fixture, log = root / "fixture.bin", root / "cache.jsonl"
@@ -22,7 +23,7 @@ class CacheGates(unittest.TestCase):
             with fixture.open("rb", buffering=0) as source, \
                  patch.object(file_cache.sys, "platform", "linux"), \
                  patch.object(file_cache.sys, "argv", ["cache", mode, str(fixture), str(log), "case"]), \
-                 patch.object(file_cache.os, "sysconf", return_value=4096), \
+                 patch.object(file_cache.os, "sysconf", return_value=page_size), \
                  patch.object(file_cache.os, "POSIX_FADV_DONTNEED", 4, create=True), \
                  patch.object(file_cache.os, "posix_fadvise", create=True) as advise, \
                  patch.object(file_cache.subprocess, "run", side_effect=observations) as run:
@@ -63,6 +64,16 @@ class CacheGates(unittest.TestCase):
     def test_partial_residency_requires_one_complete_read(self):
         record = self.replay("warm", "8192 2\n", initial="4096 1\n", reads=True, size=8192)
         self.assertEqual(record["warm_action"], "read")
+
+    def test_partial_file_page_uses_resident_page_coverage(self):
+        record = self.replay("warm", "65536 1\n", size=4096, page_size=65536)
+        self.assertEqual((record["size"], record["covered_bytes"]), (4096, 65536))
+        self.assertEqual(record["warm_action"], "already-resident")
+        self.replay("warm", "65536 1\n", initial="0 0\n", reads=True, size=4096, page_size=65536)
+        self.replay("warm", "0 0\n", initial="0 0\n", reads=True, fails=True, size=4096, page_size=65536)
+        self.replay("warm", "4096 1\n", fails=True, size=4096, page_size=65536)
+        self.replay("cold", "0 0\n", size=4096, page_size=65536)
+        self.replay("cold", "65536 1\n", fails=True, size=4096, page_size=65536)
 
     def test_warm_collector_failure_after_read_is_retained(self):
         record = self.replay("warm", "partial output", initial="0 0\n", code=1,

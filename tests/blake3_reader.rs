@@ -12,8 +12,157 @@ const KEY: [u8; 32] = [0xa7; 32];
 const CONTEXT: &str = "rscrypto BLAKE3 buffered reader";
 const MIB: usize = 1024 * 1024;
 
+#[path = "common/file.rs"]
+mod file;
+
 fn data(len: usize) -> Vec<u8> {
   (0..len).map(|i| u8::try_from(i % 251).expect("byte pattern")).collect()
+}
+
+#[test]
+fn file_updates_preserve_cursor_state_and_hash_modes() {
+  use std::io::{Seek, SeekFrom};
+
+  for (len, offset, prefix) in [
+    (0, 0, 0),
+    (1, 0, 70),
+    (4096, 17, 70),
+    (65_536, 0, 0),
+    (65_600, 0, 70),
+    (65_601, 0, 0),
+    (131_072, 17, 70),
+    (MIB, 0, 0),
+    (MIB + 17, 17, 70),
+    (MIB + 65_537, 0, 0),
+  ] {
+    let input = data(len);
+    let fixture = file::TemporaryFile::new(&input);
+    let before = data(prefix);
+    for mode in 0..3 {
+      let (mut ours, mut reference, _) = states(mode);
+      ours.update(&before);
+      reference.update(&before);
+      let mut file = fixture.open();
+      file
+        .seek(SeekFrom::Start(offset as u64))
+        .expect("seek initial file position");
+      let count = ours.update_file(&mut file).expect("hash file through EOF");
+      assert_eq!(count, (len - offset) as u64, "mode={mode} len={len} offset={offset}");
+      assert_eq!(file.stream_position().expect("file position"), len as u64);
+      assert_eq!(ours.update_file(&mut file).expect("file EOF continuation"), 0);
+      reference.update(&input[offset..]);
+      ours.update(b":after:");
+      reference.update(b":after:");
+      assert_eq!(
+        ours.finalize(),
+        *reference.finalize().as_bytes(),
+        "mode={mode} len={len}"
+      );
+    }
+  }
+}
+
+#[test]
+fn file_updates_observe_appends_and_truncation_at_the_current_cursor() {
+  use std::{
+    fs::OpenOptions,
+    io::{Seek, SeekFrom, Write},
+  };
+
+  let input = data(131_072);
+  let fixture = file::TemporaryFile::new(&input);
+  let mut file = fixture.open();
+  let mut ours = Blake3::new();
+  let mut reference = blake3::Hasher::new();
+  file.seek(SeekFrom::Start(17)).expect("seek file prefix");
+  assert_eq!(
+    ours.update_file(&mut file).expect("read original suffix"),
+    (input.len() - 17) as u64
+  );
+  reference.update(&input[17..]);
+  let mut writer = OpenOptions::new()
+    .write(true)
+    .open(fixture.path())
+    .expect("open fixture writer");
+  writer.seek(SeekFrom::End(0)).expect("seek append position");
+  writer.write_all(b"appended bytes").expect("append fixture bytes");
+  assert_eq!(ours.update_file(&mut file).expect("observe append"), 14);
+  reference.update(b"appended bytes");
+  writer.set_len(13).expect("truncate fixture");
+  assert_eq!(ours.update_file(&mut file).expect("cursor beyond shortened EOF"), 0);
+  file.seek(SeekFrom::Start(0)).expect("rewind shortened file");
+  assert_eq!(ours.update_file(&mut file).expect("read shortened file"), 13);
+  reference.update(&input[..13]);
+  assert_eq!(ours.finalize(), *reference.finalize().as_bytes());
+}
+
+#[test]
+fn file_read_errors_match_generic_reads_and_preserve_prior_hash_input() {
+  use std::fs::OpenOptions;
+
+  let fixture = file::TemporaryFile::new(&data(4096));
+  let mut generic_file = OpenOptions::new()
+    .write(true)
+    .open(fixture.path())
+    .expect("open write-only generic file");
+  let mut sized_file = OpenOptions::new()
+    .write(true)
+    .open(fixture.path())
+    .expect("open write-only sized file");
+  let mut generic = Blake3::new();
+  let mut sized = Blake3::new();
+  generic.update(b"prefix");
+  sized.update(b"prefix");
+  let generic_error = generic
+    .update_reader(&mut generic_file)
+    .expect_err("write-only file must reject reads");
+  let sized_error = sized
+    .update_file(&mut sized_file)
+    .expect_err("write-only file must reject reads");
+  assert_eq!(sized_error.kind(), generic_error.kind());
+  assert_eq!(sized_error.raw_os_error(), generic_error.raw_os_error());
+  let expected = *blake3::hash(b"prefix").as_bytes();
+  assert_eq!(generic.finalize(), expected);
+  assert_eq!(sized.finalize(), expected);
+}
+
+#[cfg(unix)]
+#[test]
+fn nonregular_files_fall_back_to_reading_until_actual_eof() {
+  use std::{
+    fs::File,
+    io::Write,
+    net::Shutdown,
+    os::{fd::OwnedFd, unix::net::UnixStream},
+  };
+
+  let input = data(4096);
+  let (source, mut peer) = UnixStream::pair().expect("local stream pair");
+  peer.write_all(&input).expect("write nonregular fixture");
+  peer.shutdown(Shutdown::Write).expect("finish nonregular fixture");
+  let mut file = File::from(OwnedFd::from(source));
+  assert!(!file.metadata().expect("socket metadata").is_file());
+  let mut ours = Blake3::new();
+  assert_eq!(
+    ours.update_file(&mut file).expect("read nonregular file"),
+    input.len() as u64
+  );
+  assert_eq!(ours.finalize(), *blake3::hash(&input).as_bytes());
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn zero_length_proc_metadata_does_not_replace_actual_eof() {
+  let path = "/proc/version";
+  let input = std::fs::read(path).expect("read stable proc fixture");
+  let mut file = std::fs::File::open(path).expect("open proc fixture");
+  assert_eq!(file.metadata().expect("proc metadata").len(), 0);
+  let mut ours = Blake3::new();
+  assert_eq!(
+    ours.update_file(&mut file).expect("read zero-length-metadata file"),
+    input.len() as u64
+  );
+  assert_eq!(ours.finalize(), *blake3::hash(&input).as_bytes());
 }
 
 fn states(mode: usize) -> (Blake3, blake3::Hasher, Blake3Tree) {

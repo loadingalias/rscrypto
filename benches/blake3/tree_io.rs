@@ -15,9 +15,10 @@ use rscrypto::{
 
 use super::bench_config::{checked, checked_with};
 
-/// A short input, an input that fills upstream's 64 KiB reader buffer and
-/// rscrypto's stack buffer exactly, one whole 1 MiB buffer, and eight of them.
-const READER_LENGTHS: [usize; 4] = [4096, 65536, 1048576, 8388608];
+/// A short input, the 64 KiB stack limit and its first EOF-probe byte, one
+/// partial heap window, one whole 1 MiB buffer, and eight of them. The two
+/// intermediate inputs expose initialization and clearing costs.
+const READER_LENGTHS: [usize; 6] = [4096, 65536, 65537, 131072, 1048576, 8388608];
 
 /// Hash one in-memory input through each library's reader API.
 ///

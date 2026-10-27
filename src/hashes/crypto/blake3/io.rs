@@ -3,23 +3,30 @@
 //! A safe reader needs initialized bytes, and any byte a reader receives may
 //! hold input. Storage is therefore zeroed only when a read needs it, and every
 //! zeroed byte is cleared on release, so both costs follow the input length.
-//! The first read receives 1 KiB, and the buffer doubles each time the reader
+//! Generic reads start at 1 KiB, and the buffer doubles each time the reader
 //! fills it until it holds one batch. When the reader has filled every
 //! initialized byte, a 64-byte read checks for end of input before more storage
 //! is zeroed, moved to the heap, or allocated. Inputs that fit the stack buffer
 //! never allocate, and the heap buffer is reserved once and never reallocated.
 //!
-//! A serial hasher receives one update per full buffer. Its buffer starts at
+//! A serial generic reader receives one update per full buffer. Its buffer starts at
 //! 16 KiB and is reused; it doubles only after eight times its size has been
 //! read, up to 1 MiB. Short inputs stay in the level-1 data cache, while long
 //! inputs and files reach 1 MiB reads and the zeroed bytes stay a small fraction
 //! of the input. A hasher that may use threads receives whole 1 MiB buffers.
 //! Every update ends at a multiple of the current buffer size within this
 //! call's input, so a reader panic leaves at most one buffer unabsorbed.
+//!
+//! File reads use an advisory remaining length to choose the first stack window
+//! and the heap window. The hint never limits the bytes read: both paths retain
+//! the same initialized storage, cleanup, and successful-read accounting.
 
 use alloc::vec::Vec;
 use core::mem::MaybeUninit;
-use std::io::{self, Read};
+use std::{
+  fs::File,
+  io::{self, Read, Seek},
+};
 
 use super::Blake3;
 use crate::traits::{Digest, ct};
@@ -169,17 +176,55 @@ fn absorb(update: &mut impl FnMut(&[u8]), input: &[u8]) {
 /// update receives one whole buffer, or the pending input at the end.
 pub(super) fn read_into(
   reader: &mut (impl Read + ?Sized),
-  mut remaining: u64,
+  remaining: u64,
   batch: usize,
-  mut update: impl FnMut(&[u8]),
+  update: impl FnMut(&[u8]),
 ) -> io::Result<u64> {
   debug_assert!(batch == SERIAL_BATCH || batch == BUFFER_LEN);
+  read_into_with_hint::<false>(reader, remaining, batch, 0, update)
+}
+
+/// Round an advisory length to a bounded power-of-two read window.
+fn hinted_window(hint: u64, minimum: usize, maximum: usize) -> usize {
+  // Both callers use power-of-two bounds no larger than BUFFER_LEN, so
+  // rounding the clamped value cannot overflow or exceed the maximum.
+  usize::try_from(hint)
+    .unwrap_or(maximum)
+    .clamp(minimum, maximum)
+    .next_power_of_two()
+}
+
+/// Use a file's remaining length only to choose buffer sizes, never an EOF.
+fn file_remaining_hint(file: &mut File) -> Option<u64> {
+  let metadata = file.metadata().ok()?;
+  if !metadata.is_file() || metadata.len() == 0 {
+    return None;
+  }
+  let remaining = metadata.len().checked_sub(file.stream_position().ok()?)?;
+  (remaining != 0).then_some(remaining)
+}
+
+fn read_into_with_hint<const FILE_HINT: bool>(
+  reader: &mut (impl Read + ?Sized),
+  mut remaining: u64,
+  batch: usize,
+  hint: u64,
+  mut update: impl FnMut(&[u8]),
+) -> io::Result<u64> {
   if remaining == 0 {
     return Ok(0);
   }
+  let (initial, batch) = if FILE_HINT {
+    (
+      hinted_window(hint, FIRST_READ, STACK_LEN),
+      hinted_window(hint, SERIAL_BATCH, BUFFER_LEN),
+    )
+  } else {
+    (FIRST_READ, batch)
+  };
   let mut buffer = ReadBuffer::new();
   // Coalesce reads until `filled == capacity`.
-  let mut capacity = FIRST_READ;
+  let mut capacity = initial;
   let mut filled = 0usize;
   let mut total = 0u64;
   // The last new storage was a probe, so the reader has more input.
@@ -200,6 +245,11 @@ pub(super) fn read_into(
         // Moving the pending input keeps every update boundary at a multiple
         // of the buffer size, so a failure loses no more than one buffer.
         buffer.promote(filled);
+        if FILE_HINT {
+          // Once the reader proves that stack storage is insufficient, use
+          // the hinted batch directly instead of serializing smaller reads.
+          capacity = capacity.max(batch);
+        }
       }
       capacity
     };
@@ -307,18 +357,64 @@ impl Blake3 {
   /// ```
   pub fn update_reader(&mut self, reader: &mut (impl Read + ?Sized)) -> io::Result<u64> {
     let batch = self.reader_batch(true);
-    read_into(reader, u64::MAX, batch, |input| {
-      #[cfg(all(
-        feature = "parallel",
-        target_os = "linux",
-        target_endian = "little",
-        target_arch = "aarch64"
-      ))]
-      if self.try_parallel_reader_update(input) {
-        return;
-      }
-      self.update(input);
+    read_into(reader, u64::MAX, batch, |input| self.update_reader_buffer(input))
+  }
+
+  /// Read a file from its current position through EOF and append its bytes to this hash state.
+  ///
+  /// The regular file's remaining length guides buffering: the first read uses
+  /// at most 64 KiB of stack storage. Larger inputs can reserve one 1 MiB heap
+  /// window plus up to 63 alignment bytes. The hint bounds initialization and
+  /// clearing for partial heap windows. Every byte offered to a reader is
+  /// initialized and cleared before release, in every hash mode.
+  ///
+  /// The length is advisory. Concurrent truncation or growth never substitutes
+  /// for an actual EOF. Nonregular files, zero-length metadata, and unavailable
+  /// metadata or position hints use [`Self::update_reader`]. Input buffering
+  /// stays on the stack when at most 64 KiB is actually read, even with a larger hint.
+  ///
+  /// Returns the number of bytes read and advances the file's cursor by those
+  /// successful reads. Existing hash input is preserved, and further updates
+  /// remain available. Requires `std`; it does not require `parallel`.
+  ///
+  /// # Errors
+  ///
+  /// Retries [`io::ErrorKind::Interrupted`]. Returns other read errors after
+  /// absorbing preceding successful reads, as [`Self::update_reader`] does.
+  /// Metadata and position errors only disable the sizing hint.
+  ///
+  /// # Example
+  ///
+  /// ```no_run
+  /// use rscrypto::{Blake3, Digest};
+  /// let mut file = std::fs::File::open("archive.tar")?;
+  /// let mut hasher = Blake3::new();
+  /// let bytes_read = hasher.update_file(&mut file)?;
+  /// let digest = hasher.finalize();
+  /// # let _ = (bytes_read, digest);
+  /// # Ok::<(), std::io::Error>(())
+  /// ```
+  pub fn update_file(&mut self, file: &mut File) -> io::Result<u64> {
+    let Some(hint) = file_remaining_hint(file) else {
+      return self.update_reader(file);
+    };
+    read_into_with_hint::<true>(file, u64::MAX, BUFFER_LEN, hint, |input| {
+      self.update_reader_buffer(input)
     })
+  }
+
+  #[inline]
+  fn update_reader_buffer(&mut self, input: &[u8]) {
+    #[cfg(all(
+      feature = "parallel",
+      target_os = "linux",
+      target_endian = "little",
+      target_arch = "aarch64"
+    ))]
+    if self.try_parallel_reader_update(input) {
+      return;
+    }
+    self.update(input);
   }
 }
 
@@ -327,7 +423,7 @@ mod tests {
   use alloc::vec::Vec;
   use std::io::{self, Read};
 
-  use super::{BUFFER_LEN, SERIAL_BATCH, STACK_LEN, read_into};
+  use super::{BUFFER_LEN, PROBE_LEN, SERIAL_BATCH, STACK_LEN, hinted_window, read_into, read_into_with_hint};
 
   /// Fills at most `max` bytes of each read and counts the bytes consumed.
   /// It first reads every byte it receives, which a safe reader may do, so
@@ -436,5 +532,100 @@ mod tests {
         }
       }
     }
+  }
+
+  #[test]
+  fn file_hint_windows_stay_inside_the_owned_storage_bounds() {
+    for (hint, first, batch) in [
+      (1, 1024, SERIAL_BATCH),
+      (4096, 4096, SERIAL_BATCH),
+      (65_536, STACK_LEN, STACK_LEN),
+      (65_537, STACK_LEN, 131_072),
+      (131_072, STACK_LEN, 131_072),
+      (u64::MAX, STACK_LEN, BUFFER_LEN),
+    ] {
+      assert_eq!(hinted_window(hint, 1024, STACK_LEN), first);
+      assert_eq!(hinted_window(hint, SERIAL_BATCH, BUFFER_LEN), batch);
+    }
+  }
+
+  #[test]
+  fn stale_file_hints_never_limit_successfully_read_input() {
+    let input: Vec<u8> = (0..BUFFER_LEN.strict_add(65))
+      .map(|i| u8::try_from(i % 251).expect("byte pattern"))
+      .collect();
+    for len in [0, 65, 4096, STACK_LEN, STACK_LEN + 65, 131_072, input.len()] {
+      for hint in [1, 4096, 65_536, BUFFER_LEN as u64, u64::MAX] {
+        let mut source = Source {
+          input: &input[..len],
+          position: 0,
+          max: usize::MAX,
+        };
+        let mut received = Vec::new();
+        let count = read_into_with_hint::<true>(&mut source, u64::MAX, BUFFER_LEN, hint, |part| {
+          received.extend_from_slice(part);
+        })
+        .expect("in-memory file-shaped reads");
+        assert_eq!(count, len as u64, "len={len} hint={hint}");
+        assert_eq!(received, input[..len], "len={len} hint={hint}");
+      }
+    }
+  }
+
+  struct ErrorAfter<'a> {
+    input: &'a [u8],
+    position: usize,
+    fail_at: usize,
+  }
+
+  impl Read for ErrorAfter<'_> {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+      if self.position == self.fail_at {
+        buffer.fill(0xa7);
+        return Err(io::ErrorKind::Other.into());
+      }
+      let count = buffer.len().min(self.fail_at.strict_sub(self.position));
+      let end = self.position.strict_add(count);
+      buffer[..count].copy_from_slice(&self.input[self.position..end]);
+      self.position = end;
+      Ok(count)
+    }
+  }
+
+  #[test]
+  fn miri_file_hint_storage_preserves_initialized_bytes_and_error_input() {
+    let input: Vec<u8> = (0..STACK_LEN.strict_add(PROBE_LEN))
+      .map(|i| u8::try_from(i % 251).expect("byte pattern"))
+      .collect();
+    // Exercise a short source with an overestimate. Source reads every offered
+    // byte, so Miri checks that the whole first window is initialized.
+    let mut short = Source {
+      input: &input[..65],
+      position: 0,
+      max: usize::MAX,
+    };
+    let mut received = Vec::new();
+    let count = read_into_with_hint::<true>(&mut short, u64::MAX, BUFFER_LEN, u64::MAX, |part| {
+      received.extend_from_slice(part);
+    })
+    .expect("short source with an oversized hint");
+    assert_eq!(count, 65);
+    assert_eq!(received, input[..65]);
+
+    // Fill the stack and probe, then write into the heap window before erroring.
+    // The production loop must commit only the successful prefix and release
+    // initialized storage on its normal error path.
+    let mut failing = ErrorAfter {
+      input: &input,
+      position: 0,
+      fail_at: input.len(),
+    };
+    received.clear();
+    let error = read_into_with_hint::<true>(&mut failing, u64::MAX, BUFFER_LEN, u64::MAX, |part| {
+      received.extend_from_slice(part);
+    })
+    .expect_err("injected read error after promotion");
+    assert_eq!(error.kind(), io::ErrorKind::Other);
+    assert_eq!(received, input);
   }
 }

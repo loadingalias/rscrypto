@@ -4035,20 +4035,21 @@ limitation = "Keyed outputs are explicitly extractable/serializable. Only Blake3
 id = "keyed_hash.blake3_readers"
 api = [
   "rscrypto::Blake3::update_reader",
+  "rscrypto::Blake3::update_file",
   "rscrypto::hashes::expert::blake3_tree::Blake3Subtree::update_reader",
 ]
 features = ["blake3", "std"]
 targets = ["all-supported targets with std"]
 secret_inputs = ["keyed state", "derive-key material", "owned input buffer"]
-public_inputs = ["reader", "read lengths", "subtree offsets and capacity", "I/O outcomes"]
+public_inputs = ["reader", "read lengths", "file kind, size and position hints", "subtree offsets and capacity", "I/O outcomes"]
 variable_time_components = [
   "caller-provided Read implementation and operating-system I/O",
   "public-length buffering and hashing",
   "Interrupted retries, EOF and error returns",
 ]
-permitted_leakage = ["read lengths", "I/O outcomes", "subtree capacity"]
+permitted_leakage = ["read lengths", "file metadata and position", "I/O outcomes", "subtree capacity"]
 claim = "best-effort"
-limitation = "No whole-call constant-time claim applies to arbitrary Read implementations, I/O or thread scheduling. Keyed and derive-key readers use the existing update operations; complete plain buffers may use the parallel tree path on Linux AArch64. Both readers clear their owned input buffer before normal return or unwind; process abort does not guarantee destruction. Cryptographic generated-code evidence and compiler-copy limitations retain their existing target and operation scope."
+limitation = "No whole-call constant-time claim applies to arbitrary Read implementations, file metadata/position queries, I/O or thread scheduling. File size and position guide buffering only; actual reads determine EOF and the absorbed input. Keyed and derive-key readers use the existing update operations; complete plain buffers may use the parallel tree path on Linux AArch64. All reader methods clear their owned input buffer before normal return or unwind; process abort does not guarantee destruction. Cryptographic generated-code evidence and compiler-copy limitations retain their existing target and operation scope."
 
 [[operation]]
 id = "keyed_hash.blake3_batches"

@@ -60,11 +60,14 @@ Applications must not use either cfg.
 It has no compatibility guarantee.
 
 With `std` and `blake3`, `Blake3::update_reader` hashes through EOF with bounded
-input buffering. `Blake3Subtree::update_reader` also stops at the subtree's
+input buffering. `Blake3::update_file` reads from a file's current position through
+actual EOF and uses regular-file size and position hints to choose buffer sizes.
+Unavailable or stale hints never limit the input. Small files stay on the stack;
+larger files may reserve one bounded heap window. `Blake3Subtree::update_reader` also stops at the subtree's
 remaining capacity, allowing callers to schedule independent readers and merge
-their results through `hashes::expert::blake3_tree`. Both methods preserve
+their results through `hashes::expert::blake3_tree`. All three methods preserve
 successfully read input on an I/O error and clear their owned input buffer.
-Neither method requires `parallel`. On little-endian Linux AArch64, `parallel`
+None requires `parallel`. On little-endian Linux AArch64, `parallel`
 allows the plain hasher to process complete aligned buffers in the current Rayon
 pool, initializing the global pool if needed. Keyed and derive-key readers use
 ordinary updates. The subtree reader creates no threads; callers own its scheduling.

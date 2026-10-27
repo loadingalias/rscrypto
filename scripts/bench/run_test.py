@@ -298,6 +298,7 @@ sys.exit(64)
     self.ok(self.bench('sha256'))
     previous = self.runs()[0]
     for env in ({'RAYON_NUM_THREADS': '2'}, {'RSCRYPTO_BLAKE3_BENCH_ISA': 'avx2'},
+                {'RSCRYPTO_BLAKE3_FILE_COLD_MIB_PER_SEC': '80'},
                 {'COMPILER': 'different compiler'}, {'RUSTFLAGS': '-C opt-level=1'}):
       with self.subTest(env=env):
         result = self.bench('sha256', f'baseline={previous}', **env)

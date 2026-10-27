@@ -317,6 +317,7 @@
     "cshake128": { "bench": "kmac_cshake", "filter": "cshake128" },
     "cshake256": { "bench": "kmac_cshake", "filter": "cshake256" },
     "blake3-mixed": { "bench": "blake3", "filter": "^blake3/mixed-batch/" },
+    "blake3-file-aware": { "bench": "blake3_file", "filter": "^blake3/file/(cold|warm)/(rscrypto-file|upstream-file-reader)/" },
     "ascon-hash256": { "bench": "ascon", "filter": "ascon-hash256" },
     "ascon-xof128": { "bench": "ascon", "filter": "ascon-xof128" },
     "ascon-cxof128": { "bench": "ascon", "filter": "ascon-cxof128" },
@@ -1252,6 +1253,20 @@
       "cases": "^blake3/serial/update-reader/(?P<implementation>[^/]+)/(?P<input>[0-9]+)$",
       "headline": false,
       "task": "Hash one in-memory input through each library's reader API, on one thread."
+    },
+    "blake3-file": {
+      "family": "BLAKE3 file",
+      "bench": "blake3_file",
+      "cases": "^blake3/file/(?P<variant>cold|warm)/(?P<implementation>rscrypto|upstream)-file(?:-reader)?/(?P<input>[0-9]+)B$",
+      "headline": false,
+      "task": "Hash a regular file through rscrypto's file-aware API or upstream's reader API, including open, metadata, reads and cleanup."
+    },
+    "blake3-file-generic-reader": {
+      "family": "BLAKE3 file",
+      "bench": "blake3_file",
+      "cases": "^blake3/file/(?P<variant>cold|warm)/(?P<implementation>rscrypto|upstream)-(?:file-)?reader/(?P<input>[0-9]+)B$",
+      "headline": false,
+      "task": "Hash a regular file through each library's generic reader API, preserving the original regression comparison."
     },
     "blake3-subtree-update-reader": {
       "family": "BLAKE3",

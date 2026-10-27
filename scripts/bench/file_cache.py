@@ -8,7 +8,7 @@ import sys
 import time
 
 
-def residency(filename, record, prefix, size, page_size):
+def residency(filename, record, prefix, covered_bytes, page_size):
     result = subprocess.run(
         ["fincore", "--bytes", "--raw", "--noheadings", "--output", "RES,PAGES", filename],
         text=True, capture_output=True, check=False,
@@ -18,7 +18,7 @@ def residency(filename, record, prefix, size, page_size):
                    prefix + "fincore_exit_code": result.returncode})
     result.check_returncode()
     resident, pages = map(int, result.stdout.split())
-    if not 0 <= resident <= size or pages * page_size != resident:
+    if not 0 <= resident <= covered_bytes or pages * page_size != resident:
         raise RuntimeError("inconsistent file residency counts")
     return resident, pages
 
@@ -33,25 +33,28 @@ def main():
         with open(filename, "rb", buffering=0) as stream:
             size = os.fstat(stream.fileno()).st_size
             page_size = os.sysconf("SC_PAGESIZE")
-            if size == 0 or size % page_size:
-                raise ValueError("fixture must contain complete pages")
-            record.update(size=size, conditioned_bytes=0)
+            if size == 0:
+                raise ValueError("fixture must be nonempty")
+            # fincore reports resident pages times page size, including a final
+            # partial file page (util-linux misc-utils/fincore.c, COL_RES).
+            covered_bytes = ((size + page_size - 1) // page_size) * page_size
+            record.update(size=size, page_size=page_size, covered_bytes=covered_bytes, conditioned_bytes=0)
             if mode == "cold":
                 # This is only advice. The independent residency check below
                 # must succeed; never retry until the desired state appears.
                 os.posix_fadvise(stream.fileno(), 0, size, os.POSIX_FADV_DONTNEED)
-                resident, pages = residency(filename, record, "", size, page_size)
+                resident, pages = residency(filename, record, "", covered_bytes, page_size)
             else:
-                resident, pages = residency(filename, record, "", size, page_size)
-                record["warm_action"] = "already-resident" if resident == size else "read"
-                if resident != size:
+                resident, pages = residency(filename, record, "", covered_bytes, page_size)
+                record["warm_action"] = "already-resident" if resident == covered_bytes else "read"
+                if resident != covered_bytes:
                     for key in ["fincore_stdout", "fincore_stderr", "fincore_exit_code"]:
                         record["initial_" + key] = record.pop(key)
                     while block := stream.read(1024 * 1024):
                         record["conditioned_bytes"] += len(block)
-                    resident, pages = residency(filename, record, "", size, page_size)
+                    resident, pages = residency(filename, record, "", covered_bytes, page_size)
             record.update(resident_bytes=resident, resident_pages=pages)
-            expected = 0 if mode == "cold" else size
+            expected = 0 if mode == "cold" else covered_bytes
             if resident != expected or pages * page_size != expected:
                 raise RuntimeError(f"{mode} residency differs: {resident} bytes, expected {expected}")
             record["passed"] = True

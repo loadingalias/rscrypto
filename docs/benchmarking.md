@@ -407,17 +407,18 @@ Every Criterion row checks its output before Criterion times it.
 
 ### BLAKE3 file inputs
 
-The optional `blake3_file` target measures `Blake3::update_reader`, four
-caller-scheduled subtrees, upstream `update_mmap_rayon`, and standalone `b3sum`.
-Discover its 40 cases
+The optional `blake3_file` target measures `Blake3::update_file`, `Blake3::update_reader`,
+four caller-scheduled subtrees, upstream `update_reader` and `update_mmap_rayon`, and standalone `b3sum`.
+Discover its cases
 with `just bench blake3_file --list`. It is excluded from default runs because
 it needs explicit file fixtures and Linux cache-residency checks.
 
 The artifact printed by discovery accepts `--rscrypto-prepare-file DIRECTORY BYTES`
 to create one new deterministic file and digest manifest, and
-`--rscrypto-verify-file DIRECTORY BYTES` to check the three library operations
+`--rscrypto-verify-file DIRECTORY BYTES` to check the library operations
 and the CLI when configured. The fixed
-sizes are 1 MiB, 16 MiB, 256 MiB, 1 GiB and 10 GiB. Preparation refuses to overwrite
+sizes include short files and stack/heap boundaries before the 1 MiB, 16 MiB,
+256 MiB, 1 GiB and 10 GiB bulk cases. The benchmark source defines the exact sizes. Preparation refuses to overwrite
 a fixture. Set `RSCRYPTO_BLAKE3_FILE_DIR` to that directory and
 `RSCRYPTO_BLAKE3_FILE_CACHE_LOG` to the retained JSONL output path before invoking
 `just bench blake3_file` with the desired case filter.
@@ -430,20 +431,28 @@ retain the source and build logs that substantiate it. The shared benchmark
 metadata hashes both external files, preventing baseline reuse after a change
 at the same path. Discovery and filtered library rows require neither file.
 
-Every iteration conditions the file outside timing and checks residency with
-`fincore`. Cold cases require zero resident pages after file-scoped eviction
-advice; warm cases require the entire file resident. Warm conditioning checks
-residency first and reads the file once only if pages are missing, then checks
-again. The log retains both observations when a read is needed. This does not
-promise CPU-cache warmth, and results must not be pooled with the older method
-that reread every warm file. A failed
+Cold cases condition the file and check residency with `fincore` before every
+operation, outside timing. Cold cases require zero resident pages after file-scoped
+eviction advice. By default, operations are unpaced and can reach the storage service's
+throughput limit. `RSCRYPTO_BLAKE3_FILE_COLD_MIB_PER_SEC` adds a delay of file size divided
+by the selected integer MiB/s before each cold conditioner, outside timing. Zero or an
+unset value keeps the unpaced method. A positive value measures cold-operation latency
+at that explicit arrival rate. The benchmark metadata records the value; keep paced
+and unpaced results separate and retain the storage throughput configuration.
+
+Warm conditioning checks residency before the initial output check and reads the file
+once only if pages are missing, then checks again. The output check also reads the file.
+Each Criterion batch then verifies residency before and after timing without rereading
+or rewarming the fixture. Every file page must remain resident, including a partial final
+page. This does not promise CPU-cache warmth, and results must not be pooled with the
+older method that reread every warm file or checked warm residency before every operation. A failed
 check stops measurement and retains the observation. These are Linux page-cache
 states, not claims about device or storage-service caches. A host must have enough
 available memory for the warm fixture; a shared machine is unsuitable for cache
 qualification. Retain the fixtures' manifests, cache log, host/storage identity,
 activity observations and complete Criterion output with the result.
 
-Timing includes open/seek, hash-state construction, reading, allocation and input
+Timing includes open/seek, file metadata and position queries in `update_file`, hash-state construction, reading, allocation and input
 cleanup, finalization, and destruction. The subtree row also includes scoped
 thread creation/join and public parent merges. A shared four-worker Rayon pool
 is initialized before timing for upstream and the Linux AArch64 plain reader.

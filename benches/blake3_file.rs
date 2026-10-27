@@ -19,7 +19,17 @@ use criterion::{BenchmarkId, Criterion, SamplingMode, Throughput};
 use rscrypto::{Blake3, Digest, hashes::expert::blake3_tree::Blake3Tree};
 
 const MIB: u64 = 1024 * 1024;
-const SIZES: [u64; 5] = [MIB, 16 * MIB, 256 * MIB, 1024 * MIB, 10 * 1024 * MIB];
+const SIZES: [u64; 9] = [
+  4096,
+  65_536,
+  69_632,
+  131_072,
+  MIB,
+  16 * MIB,
+  256 * MIB,
+  1024 * MIB,
+  10 * 1024 * MIB,
+];
 const B3SUM_EXECUTABLE: &str = "RSCRYPTO_BLAKE3_B3SUM";
 const B3SUM_RECEIPT: &str = "RSCRYPTO_BLAKE3_B3SUM_RECEIPT";
 const B3SUM_OPERATION: &str = "upstream-b3sum-4";
@@ -28,6 +38,8 @@ const UPSTREAM_VERSION: &str = "1.8.7";
 // Its b3sum package has the same version and enables blake3's mmap/rayon features.
 const UPSTREAM_COMMIT: &str = "f3149ec5bb5449af877ba20377a11008ff499fa2";
 static B3SUM: OnceLock<B3sum> = OnceLock::new();
+static PAGE_SIZE: OnceLock<u64> = OnceLock::new();
+static COLD_MIB_PER_SEC: OnceLock<u64> = OnceLock::new();
 
 struct B3sum {
   executable: PathBuf,
@@ -166,6 +178,28 @@ impl Fixture {
   }
 
   fn condition(&self, mode: &str, logfile: &Path, case: &str) {
+    if mode == "cold" {
+      let rate = *COLD_MIB_PER_SEC.get_or_init(|| {
+        std::env::var_os("RSCRYPTO_BLAKE3_FILE_COLD_MIB_PER_SEC").map_or(0, |value| {
+          value
+            .to_str()
+            .expect("cold arrival-rate budget is UTF-8")
+            .parse::<u64>()
+            .expect("cold arrival-rate budget is an integer MiB/s")
+        })
+      });
+      if rate != 0 {
+        // Pace before cache conditioning, outside the operation timer. This
+        // measures isolated cold-operation latency below a storage service's
+        // rate limit; zero retains the unpaced storage-throughput workload.
+        let nanos = u128::from(self.len)
+          .strict_mul(1_000_000_000)
+          .div_ceil(u128::from(rate).strict_mul(u128::from(MIB)));
+        std::thread::sleep(Duration::from_nanos(
+          u64::try_from(nanos).expect("catalog pacing delay fits u64 nanoseconds"),
+        ));
+      }
+    }
     // uv runs the repository's pinned Python, as every script does.
     let status = Command::new("uv")
       .args([
@@ -185,6 +219,55 @@ impl Fixture {
       .expect("run Linux file-cache precondition");
     assert!(status.success(), "file-cache precondition failed");
   }
+
+  fn verify_warm(&self, logfile: &Path, case: &str, phase: &str) {
+    let page_size = *PAGE_SIZE.get_or_init(|| {
+      let output = Command::new("getconf")
+        .arg("PAGESIZE")
+        .output()
+        .expect("query native page size");
+      assert!(output.status.success(), "native page-size query failed");
+      let size = core::str::from_utf8(&output.stdout)
+        .expect("page-size output text")
+        .trim()
+        .parse::<u64>()
+        .expect("native page-size integer");
+      assert!(
+        size.is_power_of_two(),
+        "native page size must be a nonzero power of two"
+      );
+      size
+    });
+    let output = Command::new("fincore")
+      .args(["--bytes", "--raw", "--noheadings", "--output", "RES", "--"])
+      .arg(&self.path)
+      .output()
+      .expect("verify warm file residency");
+    assert!(output.status.success(), "warm residency verification failed");
+    let resident = core::str::from_utf8(&output.stdout)
+      .expect("resident-byte output text")
+      .trim()
+      .parse::<u64>()
+      .expect("resident-byte count");
+    let covered = self.len.div_ceil(page_size).strict_mul(page_size);
+    let mut log = OpenOptions::new()
+      .create(true)
+      .append(true)
+      .open(logfile)
+      .expect("append cache observation");
+    writeln!(
+      log,
+      "{}",
+      serde_json::json!({
+        "mode": "warm", "phase": phase, "verification_only": true,
+        "path": self.path, "case": case, "size": self.len,
+        "resident_bytes": resident, "page_size": page_size,
+        "passed": resident == covered,
+      })
+    )
+    .expect("write cache observation");
+    assert_eq!(resident, covered, "file must remain warm through the complete batch");
+  }
 }
 
 fn reader(fixture: &Fixture) -> [u8; 32] {
@@ -192,6 +275,21 @@ fn reader(fixture: &Fixture) -> [u8; 32] {
   let mut hasher = Blake3::new();
   assert_eq!(hasher.update_reader(&mut file).expect("read fixture"), fixture.len);
   hasher.finalize()
+}
+
+fn file_aware(fixture: &Fixture) -> [u8; 32] {
+  let mut file = File::open(&fixture.path).expect("open fixture");
+  let mut hasher = Blake3::new();
+  assert_eq!(hasher.update_file(&mut file).expect("read fixture file"), fixture.len);
+  hasher.finalize()
+}
+
+fn upstream_file_reader(fixture: &Fixture) -> [u8; 32] {
+  let mut file = File::open(&fixture.path).expect("open fixture");
+  let mut hasher = blake3::Hasher::new();
+  hasher.update_reader(&mut file).expect("upstream file read");
+  assert_eq!(hasher.count(), fixture.len);
+  *hasher.finalize().as_bytes()
 }
 
 fn subtrees(fixture: &Fixture) -> [u8; 32] {
@@ -237,8 +335,10 @@ fn b3sum(fixture: &Fixture) -> [u8; 32] {
 }
 
 type FileOperation = fn(&Fixture) -> [u8; 32];
-const OPERATIONS: [(&str, FileOperation); 4] = [
+const OPERATIONS: [(&str, FileOperation); 6] = [
   ("rscrypto-reader", reader),
+  ("rscrypto-file", file_aware),
+  ("upstream-file-reader", upstream_file_reader),
   ("rscrypto-subtrees-4", subtrees),
   ("upstream-mmap-rayon-4", mmap_rayon),
   (B3SUM_OPERATION, b3sum),
@@ -294,9 +394,23 @@ fn files(c: &mut Criterion) {
               // hashing, caller threads, public merges, finalization and destruction.
               // The b3sum row also includes command setup, process/worker startup,
               // output capture and process exit; its build/version check is untimed.
+              // File-aware metadata and position queries stay inside operation.
               // Untimed: fixture generation, the output check and cache conditioning.
               // Cold means page-cache cold; no EBS/controller-cache claim is made.
               b.iter_custom(|iters| {
+                if cache == "warm" {
+                  // The output check warmed this fixture. Independently verify
+                  // residency around each batch without reading it again: Python
+                  // startup would dominate small-operation warmup calibration.
+                  fixture.verify_warm(cache_log(), &case, "batch-start");
+                  let start = Instant::now();
+                  for _ in 0..iters {
+                    black_box(operation(black_box(fixture)));
+                  }
+                  let elapsed = start.elapsed();
+                  fixture.verify_warm(cache_log(), &case, "batch-end");
+                  return elapsed;
+                }
                 let mut elapsed = Duration::ZERO;
                 for _ in 0..iters {
                   fixture.condition(cache, cache_log(), &case);
@@ -329,9 +443,12 @@ fn prepare(directory: &Path, len: u64) {
     .expect("create new fixture");
   let block: Vec<u8> = (0..MIB).map(|i| u8::try_from(i % 251).expect("pattern byte")).collect();
   let mut hasher = blake3::Hasher::new();
-  for _ in 0..len / MIB {
-    file.write_all(&block).expect("write complete fixture block");
-    hasher.update(&block);
+  let mut remaining = len;
+  while remaining != 0 {
+    let count = usize::try_from(remaining.min(MIB)).expect("fixture block length fits usize");
+    file.write_all(&block[..count]).expect("write fixture block");
+    hasher.update(&block[..count]);
+    remaining = remaining.strict_sub(count as u64);
   }
   file.sync_all().expect("sync fixture");
   let manifest = serde_json::json!({
