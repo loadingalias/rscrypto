@@ -152,13 +152,17 @@ It does not download upstream archives.
   local Docker. The application uses h3-quinn 0.0.10 from its release tag with
   only its Quinn requirement moved to the provider's Quinn revision. Source revisions, container digests, Python dependencies,
   commands and packet traces are retained. `--prepared PATH` reuses the exact
-  recorded images; `--tests` selects a bounded case batch. Each campaign has a
-  ten-minute cap and removes its own containers and networks on exit. Failed,
-  unsupported and incomplete cases remain nonzero. The independent Go image
+  recorded images; `--tests` selects a bounded case batch. `--budget-seconds` can
+  lower the default ten-minute cap. Each campaign removes its own containers and networks on exit.
+  Failed, unsupported and incomplete cases remain nonzero. The independent Go image
   contains quic-go `99c7436` built with Go 1.27.0. This transport harness uses
   the upstream application's permissive chain verifier; it tests handshake
   signatures and transport behavior, not certificate trust. The separate
   loopback matrix owns mutually authenticated trust-chain evidence.
+  A newly prepared ECN campaign wraps the pinned Go image to map the application's
+  `ecn` case to its ordinary transfer path. The upstream ECT and ACK-ECN trace assertions
+  stay unchanged. The wrapper's base digest and image identity are retained and checked;
+  it does not add preferred-address migration support.
 - `just test-provider-bogo` prepares pinned upstream rustls and runner checkouts,
   applies the retained provider/fixture patches, and runs the declared TLS 1.3
   profile. Scope exclusions come from protocol/version requirements and the

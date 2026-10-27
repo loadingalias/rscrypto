@@ -4,7 +4,7 @@ use super::*;
 use crate::tests::tls::{self, Credential};
 use alloc::collections::VecDeque;
 use core::{net::SocketAddr, time::Duration};
-use quinn_proto::{Connection, ConnectionHandle, DatagramEvent, Dir, Endpoint, Event};
+use quinn_proto::{Connection, ConnectionHandle, DatagramEvent, Dir, EcnCodepoint, Endpoint, Event};
 use std::time::Instant;
 
 struct Peer {
@@ -14,10 +14,19 @@ struct Peer {
   config: Arc<quinn_proto::EndpointConfig>,
 }
 
+#[derive(Clone)]
+struct Datagram {
+  destination: usize,
+  address: SocketAddr,
+  remote: SocketAddr,
+  ecn: Option<EcnCodepoint>,
+  bytes: BytesMut,
+}
+
 struct Link {
   peers: [Peer; 2],
   now: Instant,
-  queue: VecDeque<(usize, BytesMut)>,
+  queue: VecDeque<Datagram>,
   sent: usize,
   faults: [usize; 4],
   distort: bool,
@@ -25,6 +34,8 @@ struct Link {
   retries: usize,
   expected_reset: Option<usize>,
   reset_received: bool,
+  mark_congestion: bool,
+  congestion_marks: [usize; 2],
 }
 
 impl Link {
@@ -74,27 +85,44 @@ impl Link {
       retries: 0,
       expected_reset: None,
       reset_received: false,
+      mark_congestion: false,
+      congestion_marks: [0; 2],
     }
   }
 
-  fn send(&mut self, source: usize, bytes: &[u8]) {
+  fn send(&mut self, source: usize, address: SocketAddr, ecn: Option<EcnCodepoint>, bytes: &[u8]) {
     self.sent = self.sent.strict_add(1);
     let destination = 1usize.strict_sub(source);
+    if address != self.peers[destination].address {
+      return;
+    }
     if self.distort && self.sent.is_multiple_of(7) {
       self.faults[0] = self.faults[0].strict_add(1);
       return;
     }
-    let mut bytes = BytesMut::from(bytes);
+    let ecn = if self.mark_congestion && ecn.is_some() {
+      self.congestion_marks[source] = self.congestion_marks[source].strict_add(1);
+      Some(EcnCodepoint::Ce)
+    } else {
+      ecn
+    };
+    let mut datagram = Datagram {
+      destination,
+      address,
+      remote: self.peers[source].address,
+      ecn,
+      bytes: BytesMut::from(bytes),
+    };
     if self.distort && self.sent.is_multiple_of(11) {
-      let last = bytes.len().strict_sub(1);
-      bytes[last] ^= 1;
+      let last = datagram.bytes.len().strict_sub(1);
+      datagram.bytes[last] ^= 1;
       self.faults[1] = self.faults[1].strict_add(1);
     }
     if self.distort && self.sent.is_multiple_of(5) {
-      self.queue.push_back((destination, bytes.clone()));
+      self.queue.push_back(datagram.clone());
       self.faults[2] = self.faults[2].strict_add(1);
     }
-    self.queue.push_back((destination, bytes));
+    self.queue.push_back(datagram);
     assert!(self.queue.len() < 1024, "bounded simulated network");
   }
 
@@ -105,6 +133,7 @@ impl Link {
       .expect("simulated clock bound");
     for source in 0..2 {
       let mut output = Vec::new();
+      let mut route = None;
       let peer = &mut self.peers[source];
       if let Some((handle, connection)) = &mut peer.connection {
         if connection.poll_timeout().is_some_and(|deadline| deadline <= self.now) {
@@ -129,10 +158,12 @@ impl Link {
         if let Some(transmit) = connection.poll_transmit(self.now, 1, &mut output) {
           assert_eq!(transmit.size, output.len());
           assert!(transmit.segment_size.is_none());
+          route = Some((transmit.destination, transmit.ecn));
         }
       }
       if !output.is_empty() {
-        self.send(source, &output);
+        let (address, ecn) = route.expect("transmitted datagram has a route");
+        self.send(source, address, ecn, &output);
       }
     }
     let datagram = if self.distort && self.queue.len() > 1 && self.sent.is_multiple_of(3) {
@@ -141,11 +172,23 @@ impl Link {
     } else {
       self.queue.pop_front()
     };
-    let Some((destination, bytes)) = datagram else { return };
-    let remote = self.peers[1usize.strict_sub(destination)].address;
+    let Some(Datagram {
+      destination,
+      address,
+      remote,
+      ecn,
+      bytes,
+    }) = datagram
+    else {
+      return;
+    };
     let peer = &mut self.peers[destination];
+    if address != peer.address {
+      return;
+    }
     let mut response = Vec::new();
-    match peer.endpoint.handle(self.now, remote, None, None, bytes, &mut response) {
+    let mut response_route = (remote, None);
+    match peer.endpoint.handle(self.now, remote, None, ecn, bytes, &mut response) {
       Some(DatagramEvent::ConnectionEvent(handle, event)) => {
         let (expected, connection) = peer.connection.as_mut().expect("known connection");
         assert_eq!(handle, *expected);
@@ -156,6 +199,7 @@ impl Link {
           let transmit = peer.endpoint.retry(incoming, &mut response).expect("Retry");
           assert_eq!(transmit.size, response.len());
           self.retries = self.retries.strict_add(1);
+          response_route = (transmit.destination, transmit.ecn);
         } else {
           assert!(peer.connection.is_none(), "single connection per endpoint");
           peer.connection = Some(
@@ -166,11 +210,14 @@ impl Link {
           );
         }
       }
-      Some(DatagramEvent::Response(transmit)) => assert_eq!(transmit.size, response.len()),
+      Some(DatagramEvent::Response(transmit)) => {
+        assert_eq!(transmit.size, response.len());
+        response_route = (transmit.destination, transmit.ecn);
+      }
       None => {}
     }
     if !response.is_empty() {
-      self.send(destination, &response);
+      self.send(destination, response_route.0, response_route.1, &response);
     }
   }
 
@@ -317,6 +364,66 @@ fn quinn_retry_validates_the_client_before_accepting() {
 #[test]
 fn quinn_mldsa_chain_survives_fragmented_lossy_transport() {
   exercise(Credential::MlDsa87, true, false);
+}
+
+#[test]
+fn quinn_ecn_feedback_reaches_both_congestion_controllers() {
+  let (client, server) = tls::configs(
+    crate::default_provider(),
+    crate::default_provider(),
+    Credential::P256,
+    true,
+  );
+  let mut link = Link::new(client, server, false, false);
+  link.handshake();
+  let before = [
+    link.connection(0).stats().path.congestion_events,
+    link.connection(1).stats().path.congestion_events,
+  ];
+  link.mark_congestion = true;
+  link.stream(0);
+  link.stream(1);
+  for _ in 0..100 {
+    link.step();
+  }
+  for (side, initial) in before.into_iter().enumerate() {
+    assert!(link.congestion_marks[side] > 0, "peer sent ECN-capable datagrams");
+    assert!(
+      link.connection(side).stats().path.congestion_events > initial,
+      "authenticated ECN feedback must reach each sender's congestion controller"
+    );
+  }
+}
+
+#[test]
+fn quinn_streams_survive_client_address_migration() {
+  let (client, server) = tls::configs(
+    crate::default_provider(),
+    crate::default_provider(),
+    Credential::P256,
+    true,
+  );
+  let mut link = Link::new(client, server, false, false);
+  link.handshake();
+  link.stream(0);
+  let migrated: SocketAddr = "127.0.0.2:44332".parse().expect("new client address");
+  link.peers[0].address = migrated;
+  link.connection(0).local_address_changed();
+  link.stream(0);
+  link.connection(0).force_key_update();
+  link.stream(1);
+  for _ in 0..100 {
+    link.step();
+  }
+  assert_eq!(link.connection(1).remote_address(), migrated);
+  let client = link.connection(0).stats();
+  let server = link.connection(1).stats();
+  assert!(server.frame_tx.path_challenge > 0, "server challenged the new path");
+  assert!(client.frame_tx.path_response > 0, "client answered the path challenge");
+  assert!(
+    server.frame_rx.path_response > 0,
+    "server authenticated the path response"
+  );
 }
 
 #[test]

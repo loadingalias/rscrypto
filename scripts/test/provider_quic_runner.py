@@ -21,6 +21,13 @@ ENDPOINT_BASE = 'martenseemann/quic-network-simulator-endpoint@sha256:3b2b9e6fa3
 UBUNTU = 'ubuntu@sha256:f144425ff09be612d6d9ad965196e9cdc23dae1f42110a8a11a3e9a8198759f7'
 UV = 'ghcr.io/astral-sh/uv@sha256:cdc6093146eb3ff6a40107b38f008b789e050e77ad87865e381d9917da55a168'
 PROJECT = 'rscrypto_provider_interop'
+GO_ECN_ENTRYPOINT = '''#!/bin/sh
+set -eu
+if [ "${TESTCASE:-}" = ecn ]; then
+    export TESTCASE=transfer
+fi
+exec ./run_endpoint.sh "$@"
+'''
 
 
 def run(output, name, command, *, cwd=ROOT, data=None, timeout=600, check=True):
@@ -44,7 +51,7 @@ def checkout(output, name, url, revision):
     return directory
 
 
-def prepare(output):
+def prepare(output, *, adapt_go_ecn=False):
     runner = checkout(output, 'runner', 'https://github.com/quic-interop/quic-interop-runner.git', RUNNER)
     endpoint = checkout(output, 'endpoint', 'https://github.com/quinn-rs/quinn-interop.git', ENDPOINT)
     h3 = checkout(output, 'h3', 'https://github.com/hyperium/h3.git', H3)
@@ -89,6 +96,19 @@ def prepare(output):
     run(output, 'driver-image', ['docker', 'build', '-t', driver_image, str(driver)])
     for name, image in (('go', GO), ('simulator', SIMULATOR)):
         run(output, name + '-pull', ['docker', 'pull', image])
+    go_image = GO
+    if adapt_go_ecn:
+        # The pinned Go interop application omits the ECN case from its switch.
+        # Use its ordinary transfer path; the runner still verifies ECT and
+        # ACK-ECN packets in both directions with its original assertions.
+        adapter = output / 'build-go-ecn'
+        adapter.mkdir()
+        (adapter / 'entrypoint.sh').write_text(GO_ECN_ENTRYPOINT)
+        (adapter / 'Dockerfile').write_text(
+            f'FROM {GO}\nCOPY entrypoint.sh /rscrypto-ecn-entrypoint\n'
+            'RUN chmod +x /rscrypto-ecn-entrypoint\nENTRYPOINT ["/rscrypto-ecn-entrypoint"]\n')
+        go_image = 'rscrypto-quic-go-ecn:' + output.name.lower()
+        run(output, 'go-ecn-image', ['docker', 'build', '-t', go_image, str(adapter)])
     # Docker bind mounts resolve on the host daemon, not in the driver container.
     for path in (runner / 'interop.py', runner / 'testcase.py'):
         source = path.read_text().replace('dir="/tmp"', f'dir={str(output / "tmp")!r}')
@@ -100,19 +120,22 @@ def prepare(output):
     (output / 'tmp').mkdir()
     provenance = {'runner': RUNNER, 'endpoint': ENDPOINT, 'h3': H3, 'target': target,
                   'endpoint_image': endpoint_image, 'driver_image': driver_image,
+                  'go_image': go_image, 'go_base_image': GO,
                   'head': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()}
-    for role, image in (('endpoint', endpoint_image), ('driver', driver_image)):
+    for role, image in (('endpoint', endpoint_image), ('driver', driver_image), ('go', go_image)):
         provenance[role + '_image_id'] = subprocess.check_output(['docker', 'image', 'inspect', image, '--format', '{{.Id}}'], text=True).strip()
     (output / 'provenance.json').write_text(json.dumps(provenance, indent=2) + '\n')
     (output / 'source.patch').write_bytes(subprocess.check_output(['git', 'diff', '--binary', 'HEAD'], cwd=ROOT))
     shutil.copytree(ROOT / 'rscrypto-rustls', output / 'source/rscrypto-rustls')
+    shutil.copytree(ROOT / 'src', output / 'source/src')
     for relative in ('Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'scripts/test/provider_quic_runner.py',
+                     '.cargo/config.toml',
                      'scripts/test/provider_quic_runner_requirements.txt', 'scripts/test/provider_quinn_interop.patch',
                      'scripts/test/provider_h3_quinn.patch'):
         destination = output / 'source' / relative
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(ROOT / relative, destination)
-    run(output, 'images', ['docker', 'image', 'inspect', endpoint_image, driver_image, GO, SIMULATOR])
+    run(output, 'images', ['docker', 'image', 'inspect', endpoint_image, driver_image, go_image, GO, SIMULATOR])
     return provenance
 
 
@@ -135,11 +158,30 @@ def summarize(result, requested, pair_count):
     return {'complete': complete, 'passed': len(rows) - len(failures), 'other': failures}
 
 
+def campaign_budget(value):
+    try:
+        seconds = int(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError('budget must be an integer number of seconds') from error
+    if not 1 <= seconds <= 600:
+        raise argparse.ArgumentTypeError('budget must be between 1 and 600 seconds')
+    return seconds
+
+
+def go_image_for_bundle(provenance):
+    image = provenance.get('go_image', GO)
+    if image != GO and (provenance.get('go_base_image') != GO or not provenance.get('go_image_id')):
+        raise RuntimeError('the prepared Go ECN adapter lacks its pinned base and image identity')
+    return image
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--prepared', type=Path, help='reuse the source-bound images in an earlier prepared bundle')
     parser.add_argument('--output', type=Path)
     parser.add_argument('--tests', default='handshake,transfer,chacha20,retry,resumption,zerortt,keyupdate')
+    parser.add_argument('--budget-seconds', type=campaign_budget, default=600,
+                        help='campaign wall-clock limit, at most 600 seconds (default: 600)')
     parser.add_argument('--server', choices=('quinn', 'quic-go', 'quinn,quic-go'), default='quinn,quic-go')
     parser.add_argument('--client', choices=('quinn', 'quic-go', 'quinn,quic-go'), default='quinn,quic-go')
     args = parser.parse_args()
@@ -149,16 +191,21 @@ def main():
     output = (args.output or ROOT / 'benchmark_results' / ('provider-quic-runner-' + datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ'))).resolve()
     output.mkdir(parents=True, exist_ok=False)
     prepared = args.prepared.resolve() if args.prepared else output
-    provenance = json.loads((prepared / 'provenance.json').read_text()) if args.prepared else prepare(output)
+    provenance = (json.loads((prepared / 'provenance.json').read_text()) if args.prepared
+                  else prepare(output, adapt_go_ecn='ecn' in requested))
     if provenance['runner'] != RUNNER or provenance['endpoint'] != ENDPOINT:
         raise RuntimeError('prepared sources differ from the selected upstream pins')
     # Keep the original bundle mounted at its recorded path for its temp files.
     endpoint_image, driver_image = provenance['endpoint_image'], provenance['driver_image']
-    for role, image in (('endpoint', endpoint_image), ('driver', driver_image)):
+    go_image = go_image_for_bundle(provenance)
+    identities = [('endpoint', endpoint_image), ('driver', driver_image)]
+    if 'go_image_id' in provenance:
+        identities.append(('go', go_image))
+    for role, image in identities:
         actual = subprocess.check_output(['docker', 'image', 'inspect', image, '--format', '{{.Id}}'], text=True).strip()
         if actual != provenance[role + '_image_id']:
             raise RuntimeError(f'the prepared {role} image changed')
-    run(output, 'images', ['docker', 'image', 'inspect', endpoint_image, driver_image, GO, SIMULATOR])
+    run(output, 'images', ['docker', 'image', 'inspect', endpoint_image, driver_image, go_image, GO, SIMULATOR])
     (output / 'prepared.json').write_text(json.dumps({'path': str(prepared), 'provenance': provenance}, indent=2) + '\n')
     active = subprocess.check_output(['docker', 'ps', '-aq', '--filter', 'label=com.docker.compose.project=' + PROJECT], text=True).strip()
     if active:
@@ -171,14 +218,14 @@ def main():
         command += ['-v', f'{path}:{path}']
     selected = ','.join(dict.fromkeys(args.server.split(',') + args.client.split(',')))
     command += ['-w', str(prepared / 'runner'), driver_image, 'python', 'run.py', '-d',
-                '-s', args.server, '-c', args.client, '-n', selected, '-r', f'quinn={endpoint_image},quic-go={GO}',
+                '-s', args.server, '-c', args.client, '-n', selected, '-r', f'quinn={endpoint_image},quic-go={go_image}',
                 '-t', args.tests, '-l', str(output / 'logs'), '-j', str(output / 'results.json')]
     began = time.monotonic()
     status = 1
     try:
-        status = run(output, 'runner', command, timeout=600, check=False)
+        status = run(output, 'runner', command, timeout=args.budget_seconds, check=False)
     except subprocess.TimeoutExpired:
-        (output / 'timeout.json').write_text(json.dumps({'budget_seconds': 600, 'status': 'incomplete'}) + '\n')
+        (output / 'timeout.json').write_text(json.dumps({'budget_seconds': args.budget_seconds, 'status': 'incomplete'}) + '\n')
         status = 124
     finally:
         cleanup(name)
