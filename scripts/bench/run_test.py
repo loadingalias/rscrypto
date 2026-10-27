@@ -187,7 +187,15 @@ if '--version' in sys.argv: print('samply fixture'); sys.exit(0)
 if os.environ.get('FAIL_CAPTURE'): sys.exit(7)
 output = pathlib.Path(sys.argv[sys.argv.index('--output') + 1])
 subprocess.run(sys.argv[sys.argv.index('--output') + 2:], check=True)
-output.write_text('profile fixture')
+import gzip
+samples = [] if os.environ.get('EMPTY_CAPTURE') else [0]
+profile = {'libs': [{'name': 'criterion-fixture'}], 'threads': [
+  {'name': 'criterion-fixture', 'samples': {'length': len(samples), 'stack': samples}},
+]}
+if os.environ.get('MISSING_CAPTURE_LIBS'): profile['libs'] = []
+if os.environ.get('MALFORMED_CAPTURE'): output.write_text('invalid compressed profile')
+else:
+  with gzip.open(output, 'wt') as stream: json.dump(profile, stream)
 """)
     self.tool("perf", """
 if sys.argv[1:] == ['--version']: print('perf fixture'); sys.exit(0)

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import gzip
+import json
 import math
 import os
 import re
@@ -262,6 +264,23 @@ def prepared_profile(args, entry) -> None:
     raise failure
 
 
+def validate_samply_capture(path: Path) -> dict:
+  with gzip.open(path, 'rt', encoding='utf-8') as source:
+    profile = json.load(source)
+  captured = 0
+  for thread in profile.get('threads', []):
+    samples = thread.get('samples', {})
+    stacks = samples.get('stack', [])
+    if samples.get('length') != len(stacks):
+      raise ProfileIncomplete('Samply sample table length does not match its stacks')
+    if thread.get('name') != 'samply':
+      captured += sum(stack is not None for stack in stacks)
+  libraries = len(profile.get('libs', []))
+  if captured == 0 or libraries == 0:
+    raise ProfileIncomplete('Samply profile contains no captured native execution samples')
+  return {'samples': captured, 'libraries': libraries}
+
+
 def local_profile(args, entry) -> None:
   if not args.list and (not args.case or shutil.which('samply') is None):
     raise ValueError('profiling requires an exact case and samply')
@@ -297,9 +316,11 @@ def local_profile(args, entry) -> None:
       unchanged(artifact)
       if not (root / 'profile.json.gz').is_file():
         raise ValueError('samply produced no profile')
+      metadata['capture'] = validate_samply_capture(root / 'profile.json.gz')
       status = 0
     except BaseException as error:
       status = exit_code(error)
+      metadata['cause'] = str(error)
       raise
     finally:
       metadata.update(status='complete' if status == 0 else 'failed', exit_code=status)

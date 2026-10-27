@@ -70,6 +70,7 @@ class ProfileTests(unittest.TestCase):
     self.fixture.ok(self.profile('sha2', 'sha256/rscrypto/64', '1', **controls))
     metadata = self.metadata()
     self.assertEqual(metadata['status'], 'complete')
+    self.assertEqual(metadata['capture'], {'samples': 1, 'libraries': 1})
     self.assertEqual(metadata['compatibility'], self.fixture.plan()[0]['compatibility'])
     self.assertEqual(metadata['compatibility']['environment']['runtime']['RSCRYPTO_BENCH_DISABLE_IFMA'], '1')
     self.assertEqual(metadata['compatibility']['environment']['runtime']['RSCRYPTO_BLAKE3_BENCH_ISA'], 'avx2')
@@ -88,6 +89,15 @@ class ProfileTests(unittest.TestCase):
     self.assertEqual(result.returncode, 7, result.stdout + result.stderr)
     self.assertEqual(self.metadata()['status'], 'failed')
     self.assertEqual(self.metadata()['exit_code'], 7)
+
+  def test_empty_or_malformed_samply_capture_cannot_complete(self):
+    for environment in ({'EMPTY_CAPTURE': '1'}, {'MISSING_CAPTURE_LIBS': '1'}, {'MALFORMED_CAPTURE': '1'}):
+      with self.subTest(environment=environment):
+        result = self.profile('sha2', 'sha256/rscrypto/64', '1', **environment)
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        records = list((self.root / 'target/profiles').glob('*/metadata.json'))
+        metadata = max(records, key=lambda path: path.stat().st_mtime_ns)
+        self.assertEqual(json.loads(metadata.read_text())['status'], 'failed')
 
   def perf(self, **environment):
     root = self.root / 'target/perf-unit'
