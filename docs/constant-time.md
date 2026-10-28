@@ -670,16 +670,25 @@ function's 187 instructions differ only in relocated data-page and call-target i
 harness since the review (this entry and the ECDSA cross-hash signing paths) moved the link layout. Its
 `slice_sha256` was renewed.
 
-[Constant-Time 40759652685](https://github.com/loadingalias/rscrypto/actions/runs/40759652685) at `3b5ae581`
-passed on x86-64 Linux, AArch64 Linux, Windows x86-64 and POWER, with the new entry in each scan. RISC-V failed
-only on 7 stale RSA waivers, and a local scan of the prepared IBM Z artifacts found 14 more. `just ct-renew`
-compared each with its last passing artifacts (Constant-Time 40721967331 at `5af28f8e`). All 21 are renewed:
+Code added to the harness since `5af28f8e` (this entry and the ECDSA cross-hash signing paths) moved the
+link layout on every Linux target except x86-64. [Constant-Time 40759652685](https://github.com/loadingalias/rscrypto/actions/runs/40759652685)
+at `3b5ae581` and [Constant-Time 40769987250](https://github.com/loadingalias/rscrypto/actions/runs/40769987250)
+at `6c6bbc7f` found the resulting stale waivers. At `6c6bbc7f`, after the first renewal, the verdict passed
+x86-64 Linux, Windows x86-64, RISC-V and IBM Z. `just ct-renew` compared each target with its last passing artifacts
+(Constant-Time 40721967331 at `5af28f8e`). The scanner reports no finding in the new entry on any target.
+73 waivers are renewed, all RSA except one P-256 ECDH condition on POWER:
 
-- 18 kept an identical condition slice and identical open leaves (call addresses ignored): RISC-V 4, IBM Z 14.
-- 3 RISC-V slices differ only in relocations: `auipc` page offsets, a `jalr` displacement to the same callee,
-  and the nearest-symbol annotations of two `lui` immediates.
+- 54 kept an identical condition slice and identical open leaves (call addresses ignored): AArch64 23, IBM Z 14,
+  POWER 13 and RISC-V 4.
+- 5 differ only in relocations: RISC-V `auipc` page offsets, a `jalr` displacement to the same callee, and
+  `lui` nearest-symbol annotations (3); an AArch64 `movk` annotation (1); and POWER PLT call displacements to
+  the same `memset` and `memcpy` (1).
+- 14 POWER slices (13 in `ct_entry_rsa_pkcs1v15_decrypt_fixed_blinding`, 1 in `ct_entry_p256_ecdh_agree`)
+  differ only in offsets into the merged `.data.rel.ro` unit, each 64 bytes higher: the unit moved from
+  `0x100260` to `0x1001e0`. The SHA-256 initial state at `+20016`/`+20032` (now `+20080`/`+20096`) and the 64
+  P-256 bytes at `+19920` (now `+19984`) are byte-identical in the two linked binaries.
 
-With the renewals, both artifact sets scan with no stale waiver and no unwaived finding. The harness insertion
+With the renewals, all four artifact sets scan with no stale waiver and no unwaived finding. The harness insertion
 also moved 43 waiver source references into `tools/ct-harness/src/lib.rs` by 27 lines; they were shifted with it.
 
 ## Public decisions and exclusions
