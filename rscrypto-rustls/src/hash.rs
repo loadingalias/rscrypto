@@ -121,16 +121,61 @@ pub static HMAC_SHA256: &dyn rustls::crypto::hmac::Hmac = &Algorithm::Sha256;
 pub static HMAC_SHA384: &dyn rustls::crypto::hmac::Hmac = &Algorithm::Sha384;
 
 // The TLS 1.2 PRF (RFC 5246 §5): rustls's P_hash over this crate's HMAC.
-// rustls derives the extended master secret and key block through it.
+// rustls derives the master secret and key block through it.
 #[cfg(all(
   any(feature = "hmac", feature = "hkdf"),
   any(feature = "aes-gcm", feature = "chacha20poly1305")
 ))]
 pub(crate) static PRF_SHA256: &dyn rustls::crypto::tls12::Prf =
-  &rustls::crypto::tls12::PrfUsingHmac(&Algorithm::Sha256);
+  &tls12_prf::ExtendedMasterSecretOnly(rustls::crypto::tls12::PrfUsingHmac(&Algorithm::Sha256));
 #[cfg(all(any(feature = "hmac", feature = "hkdf"), feature = "aes-gcm"))]
 pub(crate) static PRF_SHA384: &dyn rustls::crypto::tls12::Prf =
-  &rustls::crypto::tls12::PrfUsingHmac(&Algorithm::Sha384);
+  &tls12_prf::ExtendedMasterSecretOnly(rustls::crypto::tls12::PrfUsingHmac(&Algorithm::Sha384));
+
+#[cfg(all(
+  any(feature = "hmac", feature = "hkdf"),
+  any(feature = "aes-gcm", feature = "chacha20poly1305")
+))]
+mod tls12_prf {
+  use rustls::Error;
+  use rustls::crypto::kx::ActiveKeyExchange;
+  use rustls::crypto::tls12::{Prf, PrfSecret, PrfUsingHmac};
+  use rustls::error::PeerIncompatible;
+
+  use super::Box;
+
+  /// RFC 7627's label for the session-hash master secret.
+  const EXTENDED_MASTER_SECRET: &[u8] = b"extended master secret";
+
+  /// A TLS 1.2 PRF that derives a master secret only with the extended master secret.
+  ///
+  /// rustls passes the legacy label `"master secret"` when a peer does not use the
+  /// extension; refusing it here means no session on this provider uses the legacy
+  /// derivation, whatever `require_ems` says. The refusal raises the error that
+  /// `require_ems` raises, which aborts with `handshake_failure` (RFC 7627 §5.2).
+  pub(crate) struct ExtendedMasterSecretOnly(pub(crate) PrfUsingHmac<'static>);
+
+  impl Prf for ExtendedMasterSecretOnly {
+    fn for_key_exchange(
+      &self,
+      output: &mut [u8; 48],
+      kx: Box<dyn ActiveKeyExchange>,
+      peer_pub_key: &[u8],
+      label: &[u8],
+      seed: &[u8],
+    ) -> Result<(), Error> {
+      if label != EXTENDED_MASTER_SECRET {
+        // Dropping `kx` clears the ephemeral secret without completing the exchange.
+        return Err(PeerIncompatible::ExtendedMainSecretExtensionRequired.into());
+      }
+      self.0.for_key_exchange(output, kx, peer_pub_key, label, seed)
+    }
+
+    fn new_secret(&self, master_secret: &[u8; 48]) -> Box<dyn PrfSecret> {
+      self.0.new_secret(master_secret)
+    }
+  }
+}
 
 #[cfg(feature = "hkdf")]
 mod hkdf_adapter {

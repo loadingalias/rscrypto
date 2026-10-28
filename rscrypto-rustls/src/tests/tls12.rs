@@ -494,28 +494,44 @@ fn downgrade_sentinel_rejects_a_stripped_supported_versions() {
 }
 
 #[test]
-fn required_ems_rejects_a_tls12_server_hello_without_it() {
+fn tls12_never_derives_a_master_secret_without_ems() {
   let suite = CipherSuite::TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256;
   for (peer_name, peer_provider, _) in PEERS {
-    for require_ems in [true, false] {
+    for (ours_client, require_ems) in [(true, true), (true, false), (false, true), (false, false)] {
       let ours = tls12_only(ours(), suite, NamedGroup::X25519);
       let peer = tls12_only(peer_provider(), suite, NamedGroup::X25519);
-      let (mut client, server) = configs(ours, peer, Credential::P256);
-      client.require_ems = require_ems;
+      let (client, server) = if ours_client { (ours, peer) } else { (peer, ours) };
+      let (mut client, mut server) = configs(client, server, Credential::P256);
+      // Only this provider's side may relax the requirement; the peer's PRF is legacy-capable.
+      if ours_client {
+        client.require_ems = require_ems;
+        server.require_ems = false;
+      } else {
+        client.require_ems = false;
+        server.require_ems = require_ems;
+      }
       let (mut client, mut server) = tls::connections_from_configs(Arc::new(client), Arc::new(server));
-      tls::transfer(&mut client, &mut server, |_, _| Ok(())).expect("ClientHello");
-      // An attacker removes the server's extended_master_secret acknowledgement.
-      strip_extension(&mut server.output, 2, 0x0017);
-      let error = tls::transfer(&mut server, &mut client, |_, _| Ok(()))
-        .and_then(|_| tls::drive(&mut client, &mut server))
-        .expect_err("a stripped acknowledgement never completes");
-      let refused = matches!(
-        error,
-        Error::PeerIncompatible(PeerIncompatible::ExtendedMainSecretExtensionRequired)
+      let error = if ours_client {
+        tls::transfer(&mut client, &mut server, |_, _| Ok(())).expect("ClientHello");
+        // An attacker removes the server's extended_master_secret acknowledgement.
+        strip_extension(&mut server.output, 2, 0x0017);
+        tls::transfer(&mut server, &mut client, |_, _| Ok(()))
+          .and_then(|_| tls::drive(&mut client, &mut server))
+          .expect_err("a stripped acknowledgement never completes")
+      } else {
+        // An attacker removes the client's extended_master_secret request.
+        strip_extension(&mut client.output, 1, 0x0017);
+        tls::drive(&mut client, &mut server).expect_err("a stripped request never completes")
+      };
+      // With or without `require_ems`, this provider refuses the legacy master
+      // secret before using it, as RFC 7627 §5.2 allows.
+      assert!(
+        matches!(
+          error,
+          Error::PeerIncompatible(PeerIncompatible::ExtendedMainSecretExtensionRequired)
+        ),
+        "{peer_name}/ours_client={ours_client}/require_ems={require_ems}: {error}"
       );
-      // Without the requirement the client continues with a different master
-      // secret and the Finished exchange fails later instead.
-      assert_eq!(refused, require_ems, "{peer_name}/require_ems={require_ems}: {error}");
     }
   }
 }

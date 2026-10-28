@@ -213,17 +213,19 @@ shows. `ClientProvider::provider()` returns an owned provider, so a caller-entro
 client opts in the same way; for client certificates, also set its `key_provider` to
 a static `sign::Provider::new(random)`.
 
-Set `require_ems = true` on every TLS 1.2 client and server configuration. rustls
-then refuses a peer without the extended master secret (RFC 7627). The provider
-cannot enforce this setting. A client that also supports TLS 1.3 rejects a TLS 1.3
-server's downgrade marker (RFC 8446 §4.1.3).
+The provider's TLS 1.2 PRF derives a master secret only with the extended master
+secret (RFC 7627). A client or server whose peer omits it aborts with
+`handshake_failure`, as RFC 7627 §5.2 allows, so no session on this provider uses the
+legacy derivation and `require_ems` needs no setting. With `require_ems = true`,
+rustls refuses such a peer one message earlier. A client that also supports TLS 1.3
+rejects a TLS 1.3 server's downgrade marker (RFC 8446 §4.1.3).
 
 AES-GCM records use RFC 5288 nonces: the 4-byte salt and an 8-byte explicit part,
 which is the key block's explicit bytes XOR the sequence number, as in rustls's other
 providers. ChaCha20-Poly1305 records use RFC 7905 nonces. Record encryption reads
 gathered plaintext directly into the output, as in TLS 1.3, and a record whose
 plaintext would exceed 2^14 bytes is rejected before decryption. rustls derives the
-extended master secret and key block through the PRF.
+extended master secret and key block through that PRF.
 
 Key exchange uses X25519, P-256, or P-384. Hybrid groups are TLS 1.3 only, so
 `post_quantum_required_provider()` with TLS 1.2 suites still refuses every TLS 1.2
@@ -239,11 +241,11 @@ P-256 key, which Go servers produce, verifies in TLS 1.2. TLS 1.3 verification s
 curve-bound.
 
 Tests run both roles in memory against ring and AWS-LC: all six suites, the three
-groups, session-ID and stateless-ticket resumption, mutual authentication,
-PKCS#1 v1.5-only peers, the downgrade marker, and a stripped extended-master-secret
-acknowledgement. Record tests compare every byte with both peers' TLS 1.2 record
-layers. `just test-provider-interop --protocol tls12` runs the suites against the
-pinned Go and OpenSSL peers.
+groups, session-ID and stateless-ticket resumption, mutual authentication, PKCS#1
+v1.5-only peers, the downgrade marker, and a stripped extended-master-secret request
+or acknowledgement in either role with or without `require_ems`. Record tests compare
+every byte with both peers' TLS 1.2 record layers. `just test-provider-interop
+--protocol tls12` runs the suites against the pinned Go and OpenSSL peers.
 
 ## QUIC v1
 

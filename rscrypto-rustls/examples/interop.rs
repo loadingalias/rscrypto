@@ -115,8 +115,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         .with_root_certificates(roots)
         .with_client_auth_cert(certificates, key)?;
       config.alpn_protocols = vec![b"provider-test".to_vec().into()];
-      // TLS 1.2 sessions require the extended master secret (RFC 7627).
-      config.require_ems = true;
+      // The provider's TLS 1.2 PRF requires the extended master secret itself.
       let config = Arc::new(config);
       for _ in 0..count {
         let socket = TcpStream::connect_timeout(&address, TIMEOUT)?;
@@ -131,7 +130,6 @@ fn main() -> Result<(), Box<dyn Error>> {
         .with_client_cert_verifier(Arc::new(verifier))
         .with_single_cert(certificates, key)?;
       config.alpn_protocols = vec![b"provider-test".to_vec().into()];
-      config.require_ems = true;
       config.ticketer = Some(rscrypto_rustls::ticket::ticketer()?);
       config.session_storage = Arc::new(rustls::server::NoServerSessionStorage {});
       let config = Arc::new(config);

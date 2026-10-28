@@ -177,7 +177,9 @@ pub static TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256: &Tls12CipherSuite = &Tls
 /// The AEAD order matches [`ALL_CIPHER_SUITES`]. ECDSA suites precede RSA so a
 /// server holding both certificate types signs with the smaller, faster key.
 /// No provider constructor includes these suites, and QUIC rejects them.
-/// Enable them on an owned provider, and require the extended master secret:
+/// Enable them on an owned provider. Their PRF derives a master secret only
+/// with the extended master secret (RFC 7627), so a peer without it fails the
+/// handshake with `handshake_failure` whatever `require_ems` says:
 ///
 /// ```
 /// # #[cfg(feature = "default")]
@@ -189,8 +191,6 @@ pub static TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256: &Tls12CipherSuite = &Tls
 /// let mut config = rustls::ClientConfig::builder(Arc::new(provider))
 ///   .with_root_certificates(rustls::RootCertStore::empty())
 ///   .with_no_client_auth()?;
-/// // Refuse TLS 1.2 peers without the extended master secret (RFC 7627).
-/// config.require_ems = true;
 /// # let _ = config;
 /// # }
 /// # Ok::<(), rustls::Error>(())
