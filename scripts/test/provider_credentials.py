@@ -11,7 +11,11 @@ import json
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'scripts/lib'))
+import openssl_peer
 
 
 def generate(openssl, output, profile):
@@ -127,10 +131,10 @@ def generate(openssl, output, profile):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('output', type=Path)
-    parser.add_argument('--openssl', default='openssl')
+    parser.add_argument('--openssl', help='OpenSSL 4.0.3 binary; default: the repository-built peer')
     parser.add_argument('--profile', choices=('classical', 'mldsa', 'tls-bench'), default='classical')
     args = parser.parse_args()
-    generate(args.openssl, args.output, args.profile)
+    generate(args.openssl or str(openssl_peer.binary()), args.output, args.profile)
 
 
 if __name__ == '__main__':

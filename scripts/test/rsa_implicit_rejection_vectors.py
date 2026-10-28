@@ -16,7 +16,11 @@ from pathlib import Path
 import random
 import re
 import subprocess
+import sys
 import tempfile
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'scripts/lib'))
+import openssl_peer
 
 ROOT = Path(__file__).resolve().parents[2]
 DRAFT = 'draft-irtf-cfrg-rsa-guidance-10'
@@ -81,7 +85,8 @@ def hex_block(body, label):
 class OpenSsl:
     def __init__(self, directory):
         self.directory = directory
-        version = subprocess.run(['openssl', 'version'], check=True, capture_output=True, text=True).stdout
+        self.executable = str(openssl_peer.binary())
+        version = subprocess.run([self.executable, 'version'], check=True, capture_output=True, text=True).stdout
         if not version.startswith('OpenSSL 4.0.3 '):
             raise ValueError('vector generation requires OpenSSL 4.0.3')
         self.version = version.strip()
@@ -89,7 +94,7 @@ class OpenSsl:
     def key(self, name, pkcs8_hex):
         path = self.directory / f'{name}.der'
         path.write_bytes(bytes.fromhex(pkcs8_hex))
-        modulus = subprocess.run(['openssl', 'pkey', '-inform', 'DER', '-in', path, '-noout', '-text'],
+        modulus = subprocess.run([self.executable, 'pkey', '-inform', 'DER', '-in', path, '-noout', '-text'],
                                  check=True, capture_output=True, text=True).stdout
         bits = int(re.search(r'Private-Key: \((\d+) bit', modulus)[1])
         return path, bits
@@ -99,7 +104,7 @@ class OpenSsl:
         ciphertext.write_bytes(bytes.fromhex(ciphertext_hex))
         padding = ['-pkeyopt', 'rsa_padding_mode:none'] if raw else [
             '-pkeyopt', 'rsa_padding_mode:pkcs1', '-pkeyopt', 'rsa_pkcs1_implicit_rejection:1']
-        result = subprocess.run(['openssl', 'pkeyutl', '-decrypt', '-inkey', key, '-keyform', 'DER',
+        result = subprocess.run([self.executable, 'pkeyutl', '-decrypt', '-inkey', key, '-keyform', 'DER',
                                  *padding, '-in', ciphertext],
                                 check=True, capture_output=True)
         return result.stdout.hex()

@@ -124,10 +124,14 @@ It does not download upstream archives.
   checksum-pinned RFC Editor text; it performs no cryptographic computation.
   `test/provider_credentials.py` generates equivalent fresh TLS credentials and
   independent signatures with pinned OpenSSL 4.0.3 in a new output directory.
+  These scripts and `just test-provider-interop` run the OpenSSL 4.0.3 peer that
+  `lib/openssl_peer.py` builds once per host from the checksum-pinned release
+  tarball (static, under `~/.cache/rscrypto` or `RSCRYPTO_OPENSSL_CACHE`), so no
+  host needs that version installed.
   `test/rsa_implicit_rejection_vectors.py --draft <text>` extracts the
   checksum-pinned RSA guidance draft's Appendix B, cross-checks every message
-  with OpenSSL 4.0.3, and records seeded and Wycheproof decryptions. It requires
-  that OpenSSL version on `PATH`; [fixture provenance](../testdata/rsa/implicit_rejection/README.md)
+  with OpenSSL 4.0.3, and records seeded and Wycheproof decryptions;
+  [fixture provenance](../testdata/rsa/implicit_rejection/README.md)
   records the command, seed, hashes, and unsupported 2049-bit import.
 - `just test-provider-interop` builds the bounded loopback endpoint and runs the
   full suite/group/credential matrix in both roles against OpenSSL 4.0.3 and

@@ -226,6 +226,7 @@ test-scripts:
     @scripts/lib/python.sh --group tooling scripts/test/ci_cache_test.py
     @scripts/lib/python.sh --group tooling scripts/test/cross_workflow_test.py
     @scripts/lib/python.sh scripts/lib/dispatched_run_test.py
+    @scripts/lib/python.sh scripts/lib/openssl_peer_test.py
     @scripts/lib/python.sh scripts/tooling/cache_test.py
     @scripts/lib/python.sh scripts/tooling/toolchain_test.py
     @scripts/lib/python.sh scripts/tooling/install_test.py

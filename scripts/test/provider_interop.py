@@ -14,9 +14,13 @@ import select
 import shutil
 import socket
 import subprocess
+import sys
 import time
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / 'scripts/lib'))
+import openssl_peer
+
 FIXTURES = ROOT / 'rscrypto-rustls/tests/vectors/credentials'
 PAYLOAD = b'rscrypto provider interoperability\n'
 SUITES = ['TLS13_AES_128_GCM_SHA256', 'TLS13_AES_256_GCM_SHA384', 'TLS13_CHACHA20_POLY1305_SHA256']
@@ -31,6 +35,9 @@ TLS12_SUITES = {
     'TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256': 'ECDHE-RSA-CHACHA20-POLY1305',
 }
 TLS12_GROUPS = ['X25519', 'secp256r1', 'secp384r1']
+# In TLS 1.2, supported_groups also lists the curves an ECDSA certificate may use (RFC 8422
+# section 5.1), so both endpoints list the certificate's curve after the group under test.
+CERTIFICATE_CURVES = {'p256': 'secp256r1', 'p384': 'secp384r1'}
 CREDENTIALS = ['p256', 'p384', 'ed25519', 'rsa3072']
 MLDSA_CREDENTIALS = ['mldsa44', 'mldsa65', 'mldsa87']
 
@@ -145,8 +152,10 @@ def main():
     versions = {'host': platform.platform(), 'profile': args.profile, 'protocol': args.protocol,
                 'head': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()}
     peers = ['openssl', 'go'] if args.peer == 'all' else [args.peer]
+    # The repository builds and caches its pinned OpenSSL peer; Go comes from PATH.
+    executables = {'openssl': str(openssl_peer.binary()) if 'openssl' in peers else 'openssl', 'go': 'go'}
     for peer in peers:
-        version = subprocess.check_output([peer, 'version'], text=True).strip()
+        version = subprocess.check_output([executables[peer], 'version'], text=True).strip()
         expected = 'OpenSSL 4.0.3 ' if peer == 'openssl' else 'go version go1.27.3 '
         if not version.startswith(expected):
             raise RuntimeError(f'{peer}: expected {expected}, found {version}')
@@ -187,8 +196,12 @@ def main():
     for peer, (kind, suite, group), ours_client in itertools.product(peers, cases, (True, False)):
         name = f'{peer}-{kind}-{suite}-{group}-ours-' + ('client' if ours_client else 'server')
         common = [str(FIXTURES), kind, suite, group, '2']
-        ours = [binary, 'client' if ours_client else 'server', '{address}' if ours_client else '127.0.0.1:0', *common,
-                'reverse' if peer == 'openssl' and ours_client else 'echo']
+        curve = CERTIFICATE_CURVES.get(kind) if tls12(suite) else None
+        extra = [curve] if curve not in (None, group) else []
+        # Servers choose in their own order, so the group under test stays the negotiated group.
+        offered = '+'.join([group, *extra])
+        ours = [binary, 'client' if ours_client else 'server', '{address}' if ours_client else '127.0.0.1:0',
+                str(FIXTURES), kind, suite, offered, '2', 'reverse' if peer == 'openssl' and ours_client else 'echo']
         if peer == 'go':
             theirs = [str(output / 'go-peer'), 'server' if ours_client else 'client',
                       '127.0.0.1:0' if ours_client else '{address}', *common]
@@ -200,18 +213,20 @@ def main():
             credentials = ['-cert', str(converted / f'{kind}-leaf.pem'), '-key', str(converted / f'{kind}-key.pem'),
                            '-CAfile', str(converted / f'{kind}-root.pem'), '-verify_return_error',
                            '-no-CApath', '-no-CAstore', '-alpn', 'provider-test',
-                           '-groups', GROUPS[group], *protocol]
+                           *protocol]
+            groups = ['-groups', ':'.join(GROUPS[name] for name in [group, *extra])]
             if ours_client:
                 with socket.socket() as available:
                     available.bind(('127.0.0.1', 0))
                     address = f'127.0.0.1:{available.getsockname()[1]}'
-                server = ['openssl', 's_server', '-accept', address, '-rev', '-naccept', '2', '-Verify', '1', *credentials]
+                server = [executables['openssl'], 's_server', '-accept', address, '-rev', '-naccept', '2', '-Verify', '1',
+                          *credentials, *groups, '-serverpref']
                 run_case(output, name, server, [ours], suite=suite, group=group, peer=peer,
                          ours_client=True, address=address)
             else:
                 session = str(output / (name + '.session.pem'))
-                client = ['openssl', 's_client', '-connect', '{address}', '-servername', 'localhost',
-                          '-verify_hostname', 'localhost', '-quiet', '-ign_eof', *credentials]
+                client = [executables['openssl'], 's_client', '-connect', '{address}', '-servername', 'localhost',
+                          '-verify_hostname', 'localhost', '-quiet', '-ign_eof', *credentials, *groups]
                 run_case(output, name, ours, [client + ['-sess_out', session], client + ['-sess_in', session]],
                          suite=suite, group=group, peer=peer, ours_client=False)
         completed.append(name)
