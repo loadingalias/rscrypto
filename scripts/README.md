@@ -490,7 +490,10 @@ Release callers, and manual runs with no diagnostic input, keep the full require
 `stack/frames.py` reviews each scrubbed secret-worker boundary in a linked release binary.
 
 - It builds `tools/frame-review` with `-Z emit-stack-sizes` and the shipping release profile.
-  The binary runs every ML-DSA and ML-KEM public operation once.
+  The binary runs every ML-DSA and ML-KEM public operation once, and AES-GCM and
+  ChaCha20-Poly1305 seal and open at lengths that reach each length-selected worker.
+- A boundary can name the targets whose artifact links its workers, and whether a
+  `--portable` build does; elsewhere it is skipped rather than failed.
 - Linux targets other than the host link through `ct/zig-cc.sh`, with the pinned Zig on the Mac.
   POWER links against glibc 2.32,
   the first release with the IEEE-128 `printf` entry points that Zig's ppc64le libunwind calls.

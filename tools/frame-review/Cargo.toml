@@ -17,7 +17,7 @@ panic = "abort"
 strip = false
 
 [dependencies]
-rscrypto = { path = "../..", default-features = false, features = ["aes-gcm", "ml-dsa", "ml-kem", "std"] }
+rscrypto = { path = "../..", default-features = false, features = ["aes-gcm", "chacha20poly1305", "ml-dsa", "ml-kem", "std"] }
 
 [[bin]]
 name = "rscrypto-frame-review"

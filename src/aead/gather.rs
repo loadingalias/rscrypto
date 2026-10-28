@@ -157,6 +157,176 @@ where
   Ok((tag, output.finish()?))
 }
 
+/// Pass the block-aligned prefix of the first nonempty span directly to an
+/// integrated kernel, after the remaining at most `TAIL` bytes are encrypted
+/// into their output range through the stream XOR. The kernel writes the
+/// prefix ciphertext and authenticates the remainder's ciphertext after it.
+/// Other shapes continue through `fallback` with the consumed span first.
+/// No plaintext is copied; the output guard clears every slot on any failure.
+#[cfg(all(
+  target_arch = "x86_64",
+  target_feature = "sse2",
+  target_os = "linux",
+  feature = "chacha20poly1305",
+  not(debug_assertions),
+  not(miri),
+  not(feature = "portable-only")
+))]
+pub(super) fn head_tail<'input, 'output, I, Tag, const BLOCK: usize, const TAIL: usize>(
+  plaintext: I,
+  out: &'output mut [MaybeUninit<u8>],
+  initial_counter: u32,
+  generate: impl FnMut(u32, &mut [u8]) -> Result<(), SealError>,
+  native: impl for<'a> FnOnce(&'input [u8], &'a mut [MaybeUninit<u8>], &[u8]) -> (Tag, &'a mut [u8]),
+  fallback: impl for<'a> FnOnce(
+    core::iter::Chain<core::iter::Once<&'input [u8]>, I::IntoIter>,
+    &'a mut [MaybeUninit<u8>],
+  ) -> Result<(Tag, &'a mut [u8]), SealError>,
+) -> Result<(Tag, &'output mut [u8]), SealError>
+where
+  I: IntoIterator<Item = &'input [u8]>,
+{
+  const {
+    assert!(BLOCK != 0 && TAIL >= BLOCK && TAIL.is_multiple_of(BLOCK));
+  }
+  let mut output = Output {
+    storage: out,
+    written: 0,
+    complete: false,
+  };
+  let len = output.storage.len();
+  let pointer = output.storage.as_mut_ptr().cast::<u8>();
+  let mut chunks = plaintext.into_iter();
+  let first = loop {
+    match chunks.next() {
+      Some([]) => {}
+      Some(chunk) => break chunk,
+      None => break &[][..],
+    }
+  };
+  let head_len = first.len().strict_sub(first.len().strict_rem(BLOCK));
+  let tag = match len.checked_sub(head_len) {
+    Some(tail_len) if head_len != 0 && first.len() <= len && tail_len <= TAIL => {
+      let (head, rest) = first.split_at(head_len);
+      let (head_out, tail_out) = output.storage.split_at_mut(head_len);
+      let counter = u32::try_from(head_len.strict_div(BLOCK))
+        .ok()
+        .and_then(|blocks| initial_counter.checked_add(blocks))
+        .ok_or_else(SealError::too_large)?;
+      // The tail checks the remaining slice sum against its exact range.
+      let tail = xor::<BLOCK, TAIL>(core::iter::once(rest).chain(chunks), tail_out, counter, generate)?;
+      let head_pointer = head_out.as_mut_ptr().cast::<u8>();
+      let (tag, ciphertext) = native(head, head_out, tail);
+      if ciphertext.as_mut_ptr() != head_pointer || ciphertext.len() != head_len {
+        return Err(SealError::buffer());
+      }
+      tag
+    }
+    _ => {
+      let (tag, ciphertext) = fallback(core::iter::once(first).chain(chunks), output.storage)?;
+      if ciphertext.as_mut_ptr() != pointer || ciphertext.len() != len {
+        return Err(SealError::buffer());
+      }
+      tag
+    }
+  };
+  output.written = len;
+  Ok((tag, output.finish()?))
+}
+
+/// Spans retained by [`head_tail_spans`]: the leading span, four tail spans,
+/// and one span that ended the collection early.
+#[cfg(all(
+  target_arch = "x86_64",
+  target_feature = "sse2",
+  any(
+    feature = "aes-gcm",
+    all(feature = "chacha20poly1305", not(feature = "portable-only"))
+  )
+))]
+const SHORT_SPANS: usize = 6;
+
+/// The input that [`head_tail_spans`] passes on when the message has another shape:
+/// every collected span, in order, then the rest of the iterator.
+#[cfg(all(
+  target_arch = "x86_64",
+  target_feature = "sse2",
+  any(
+    feature = "aes-gcm",
+    all(feature = "chacha20poly1305", not(feature = "portable-only"))
+  )
+))]
+pub(super) type ShortRest<'input, I> = core::iter::Chain<core::array::IntoIter<&'input [u8], SHORT_SPANS>, I>;
+
+/// Seal a message whose first nonempty span is followed by at most `max_tail`
+/// bytes in at most four spans, such as a TLS record's payload and content type.
+///
+/// `native` receives that span, the tail spans, and the output address, and must
+/// initialize the whole output. Other shapes continue through `fallback` with the
+/// collected spans first. Only span lengths, which are public, select the path,
+/// and this driver copies no plaintext. The output guard clears every slot on a
+/// length mismatch, a native error, or an unwind.
+#[cfg(all(
+  target_arch = "x86_64",
+  target_feature = "sse2",
+  any(
+    feature = "aes-gcm",
+    all(feature = "chacha20poly1305", not(feature = "portable-only"))
+  )
+))]
+pub(super) fn head_tail_spans<'input, 'output, I, Tag>(
+  plaintext: I,
+  out: &'output mut [MaybeUninit<u8>],
+  max_tail: usize,
+  native: impl FnOnce(&'input [u8], &[&'input [u8]], *mut u8) -> Result<Tag, SealError>,
+  fallback: impl FnOnce(
+    ShortRest<'input, I::IntoIter>,
+    &'output mut [MaybeUninit<u8>],
+  ) -> Result<(Tag, &'output mut [u8]), SealError>,
+) -> Result<(Tag, &'output mut [u8]), SealError>
+where
+  I: IntoIterator<Item = &'input [u8]>,
+{
+  let mut spans: [&'input [u8]; SHORT_SPANS] = [&[]; SHORT_SPANS];
+  let mut count = 0usize;
+  let mut tail_len = 0usize;
+  let mut chunks = plaintext.into_iter();
+  let mut output = Output {
+    storage: out,
+    written: 0,
+    complete: false,
+  };
+  let fits = loop {
+    let Some(chunk) = chunks.next() else { break true };
+    if chunk.is_empty() {
+      continue;
+    }
+    spans[count] = chunk;
+    count = count.strict_add(1);
+    if count > 1 {
+      tail_len = tail_len.strict_add(chunk.len());
+      if count == SHORT_SPANS || tail_len > max_tail {
+        break false;
+      }
+    }
+  };
+  if !fits {
+    // Hand the untouched output to the general driver, which owns its guard.
+    output.complete = true;
+    let storage = core::mem::take(&mut output.storage);
+    return fallback(spans.into_iter().chain(chunks), storage);
+  }
+  // With no nonempty span the message is empty and `spans[0]` is empty.
+  let total = spans[0].len().strict_add(tail_len);
+  if total != output.storage.len() {
+    return Err(SealError::buffer());
+  }
+  let tail = spans.get(1..count).unwrap_or_default();
+  let tag = native(spans[0], tail, output.storage.as_mut_ptr().cast())?;
+  output.written = total;
+  Ok((tag, output.finish()?))
+}
+
 /// Bounded public descriptors for full native input units. No plaintext is
 /// copied. The final null pointer is an initialized, never-dereferenced sentinel
 /// for the native kernel's read-cursor advance after its last complete unit.

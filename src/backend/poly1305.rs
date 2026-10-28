@@ -313,10 +313,31 @@ impl State {
   not(feature = "portable-only")
 ))]
 mod aarch64_neon;
-#[cfg(all(feature = "poly1305", target_pointer_width = "64", not(feature = "portable-only")))]
+#[cfg(all(
+  any(
+    feature = "poly1305",
+    all(feature = "chacha20poly1305", target_arch = "x86_64", target_feature = "sse2")
+  ),
+  target_pointer_width = "64",
+  not(feature = "portable-only")
+))]
 mod radix26;
-#[cfg(all(feature = "poly1305", target_pointer_width = "64", not(feature = "portable-only")))]
+#[cfg(all(
+  any(
+    feature = "poly1305",
+    all(feature = "chacha20poly1305", target_arch = "x86_64", target_feature = "sse2")
+  ),
+  target_pointer_width = "64",
+  not(feature = "portable-only")
+))]
 mod scalar64;
+#[cfg(all(
+  feature = "chacha20poly1305",
+  target_arch = "x86_64",
+  target_feature = "sse2",
+  not(feature = "portable-only")
+))]
+pub(crate) use scalar64::{aead_tag as aead_tag_scalar, aead_tag_one_chain as aead_tag_scalar_one_chain};
 #[cfg(feature = "poly1305")]
 pub(crate) mod standalone;
 #[cfg(all(

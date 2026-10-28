@@ -96,6 +96,12 @@ after checking that the returned initialized slice covers its complete reserved 
 Native AES-GCM batches retain public input pointers, with no copied plaintext. Native
 little-endian AArch64 ChaCha20 gathers retain at most 128 nonempty input spans as public
 pointer/length pairs. Longer iterators continue through the stream-based gather fallback.
+Record-shaped gathers retain at most six input spans as public pointer/length pairs while they
+choose a path. The x86-64 VAES and x86-64 AVX-512 ChaCha20 message paths read those spans directly
+and copy no plaintext into memory. Without AVX-512, Linux x86-64 ChaCha20 gathers up to 1 KiB
+pass the block-aligned prefix of the first span to the integrated kernel. A remainder of at most
+one block uses the stream path's zeroizing keystream owner and reaches the kernel only as
+ciphertext.
 The integrated kernel reads seams into registers and writes ciphertext directly. Its aligned
 `SealData` copies the key, as in the existing in-place path: the tag replaces the first 16 key
 bytes and the remaining 16 bytes are volatile-zeroed before return. The Rust GCM ABI state

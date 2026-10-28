@@ -98,3 +98,18 @@ pub(crate) mod pkix;
 
 #[cfg(any(feature = "poly1305", feature = "chacha20poly1305", feature = "xchacha20poly1305"))]
 pub(crate) mod poly1305;
+#[cfg(any(
+  feature = "ml-kem",
+  feature = "ml-dsa",
+  all(
+    target_arch = "x86_64",
+    target_feature = "sse2",
+    any(
+      feature = "aes-gcm",
+      feature = "chacha20poly1305",
+      feature = "xchacha20poly1305",
+      feature = "chacha20-rng"
+    )
+  )
+))]
+pub(crate) mod stack;

@@ -122,6 +122,70 @@ pub(super) unsafe fn seal_in_place(key: &[u8; KEY_SIZE], nonce: &[u8; 12], aad: 
   }
 }
 
+/// Seal a nonempty plaintext span into separate output, then authenticate
+/// `extra_ciphertext` as the message bytes that follow it.
+///
+/// The kernel reads `plaintext` directly and writes only `out`. Returns the tag
+/// and the initialized ciphertext covering `out`.
+///
+/// # Safety
+///
+/// The caller must ensure that AVX2 and BMI2 are available, that `plaintext` is nonempty, and that the complete
+/// message, including `extra_ciphertext`, is within ChaCha20's 2³²-block limit. `extra_ciphertext` must already be
+/// the ChaCha20 ciphertext of the message bytes at offset `plaintext.len()` under the same key and nonce.
+#[cfg(all(not(debug_assertions), not(feature = "portable-only")))]
+#[inline]
+pub(super) unsafe fn seal_with_extra<'out>(
+  key: &[u8; KEY_SIZE],
+  nonce: &[u8; 12],
+  aad: &[u8],
+  plaintext: &[u8],
+  out: &'out mut [mem::MaybeUninit<u8>],
+  extra_ciphertext: &[u8],
+) -> ([u8; 16], &'out mut [u8]) {
+  assert_eq!(plaintext.len(), out.len());
+
+  let mut data = SealData {
+    input: SealDataIn {
+      key: *key,
+      counter: 0,
+      nonce: *nonce,
+      extra_ciphertext: extra_ciphertext.as_ptr(),
+      extra_ciphertext_len: extra_ciphertext.len(),
+    },
+  };
+
+  // SAFETY: integrated x86_64 Linux seal call because:
+  // 1. The caller gates this function on AVX2 and BMI2 before crossing the assembly ABI boundary.
+  // 2. `plaintext` is valid for reads of `plaintext.len()` bytes. `out` is an exclusive borrow of the same length, so
+  //    it cannot overlap the shared plaintext or extra-ciphertext borrows. The AWS-LC seal ABI accepts separate
+  //    input and output; the kernel writes each ciphertext byte before reading it back for Poly1305.
+  // 3. `aad` is valid for `aad.len()` bytes, including the conventional dangling pointer for an empty slice.
+  // 4. `extra_ciphertext` is initialized for its length. The kernel only reads it, after the main ciphertext, and
+  //    advances only the copied pointer and length inside `data`. A zero length is never dereferenced.
+  // 5. `data` is 16-byte aligned and matches the assembly input/output union layout; `from_mut` preserves that
+  //    allocation's provenance and exclusive writability for the call, which initializes all 16 tag bytes before
+  //    the union output is read.
+  // 6. The tag replaces the first 16 copied key bytes; the second half remains initialized key material and is
+  //    volatile-zeroed before the stack allocation expires.
+  unsafe {
+    rscrypto_chacha20_poly1305_seal_x86_64(
+      out.as_mut_ptr().cast::<u8>(),
+      plaintext.as_ptr(),
+      plaintext.len(),
+      aad.as_ptr(),
+      aad.len(),
+      core::ptr::from_mut(&mut data),
+    );
+    crate::traits::ct::zeroize(&mut data.input.key[16..]);
+  }
+  // SAFETY: the completed seal call wrote all `out.len()` ciphertext bytes, so
+  // the exclusive output borrow is initialized for exactly its original range.
+  let ciphertext = unsafe { core::slice::from_raw_parts_mut(out.as_mut_ptr().cast::<u8>(), out.len()) };
+  // SAFETY: the seal call initialized the tag variant of this union.
+  (unsafe { data.out.tag }, ciphertext)
+}
+
 /// Open one nonempty buffer with the integrated x86-64 assembly kernel.
 ///
 /// # Safety

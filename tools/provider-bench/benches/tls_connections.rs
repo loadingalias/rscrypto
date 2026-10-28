@@ -498,6 +498,159 @@ fn record_gather(c: &mut Criterion) {
   }
 }
 
+/// One TLS 1.3 application-data record sealed, or opened, through each
+/// provider's record adapter, without connection or transport overhead.
+/// Sealing appends the framed record to reserved output. Opening first copies
+/// the sealed body into the record buffer, the same for every provider, because
+/// it decrypts in place.
+fn records(c: &mut Criterion) {
+  use rustls::crypto::cipher::{
+    AeadKey, EncodableVersion, InboundOpaque, Iv, OutboundPlain, Record, Tls13AeadAlgorithm,
+  };
+  use rustls::enums::{ContentType, ProtocolVersion};
+
+  let suites = [
+    (
+      "AES128-GCM-SHA256",
+      rscrypto_rustls::cipher_suite::TLS13_AES_128_GCM_SHA256,
+    ),
+    (
+      "AES256-GCM-SHA384",
+      rscrypto_rustls::cipher_suite::TLS13_AES_256_GCM_SHA384,
+    ),
+    (
+      "CHACHA20-POLY1305-SHA256",
+      rscrypto_rustls::cipher_suite::TLS13_CHACHA20_POLY1305_SHA256,
+    ),
+  ];
+  for (name, suite) in suites {
+    let find = |provider: &rustls::crypto::CryptoProvider| {
+      provider
+        .tls13_cipher_suites
+        .iter()
+        .find(|peer| peer.common.suite == suite.common.suite)
+        .expect("matching suite")
+        .aead_alg
+    };
+    let algorithms: [(&str, &dyn Tls13AeadAlgorithm); 3] = [
+      ("rscrypto", suite.aead_alg),
+      ("aws-lc-rs", find(&rustls_aws_lc_rs::DEFAULT_TLS13_PROVIDER)),
+      ("ring", find(&rustls_ring::DEFAULT_TLS13_PROVIDER)),
+    ];
+    let peer = algorithms[1].1;
+    let key = |algorithm: &dyn Tls13AeadAlgorithm| {
+      if algorithm.key_len() == 16 {
+        AeadKey::from([0x19; 16])
+      } else {
+        AeadKey::from([0x19; 32])
+      }
+    };
+    for size in [64usize, 256, 1024, 16_384] {
+      let plaintext: Vec<_> = (0..size).map(|i| i.to_le_bytes()[0]).collect();
+      let chunks = [plaintext.as_slice()];
+      let message = || Record {
+        typ: ContentType::ApplicationData,
+        version: EncodableVersion::Legacy(ProtocolVersion::TLSv1_3),
+        payload: OutboundPlain::new(&chunks),
+      };
+      let mut sealed = Vec::new();
+      peer
+        .encrypter(key(peer), Iv::from([0x71; 12]))
+        .encrypt(message(), 0, &mut sealed)
+        .expect("independent record encryption");
+      let body = sealed[5..].to_vec();
+
+      let group = format!("tls13/record-seal/{name}/{size}");
+      if bench_config::selected(&group) {
+        let mut measured = c.benchmark_group(&group);
+        measured.throughput(Throughput::Bytes(u64::try_from(size).expect("record size")));
+        for (backend, algorithm) in algorithms {
+          if !bench_config::selected(&format!("{group}/{backend}")) {
+            continue;
+          }
+          measured.bench_function(
+            backend,
+            checked_routine(
+              None,
+              |state| {
+                let mut encrypter = algorithm.encrypter(key(algorithm), Iv::from([0x71; 12]));
+                let mut out = Vec::with_capacity(sealed.len());
+                encrypter.encrypt(message(), 0, &mut out).expect("record encryption");
+                assert_eq!(out, sealed, "{backend} sealed record");
+                out.clear();
+                *state = Some((encrypter, out, 1u64));
+              },
+              |b, state| {
+                // AWS-LC derives its nonce mask from sequence 0 and rejects any
+                // sequence that does not increase.
+                let (encrypter, out, sequence) = state.as_mut().expect("checked record fixture");
+                b.iter(|| {
+                  out.clear();
+                  encrypter.encrypt(message(), *sequence, out).expect("record encryption");
+                  *sequence = sequence.strict_add(1);
+                  black_box(out.as_slice());
+                });
+              },
+            ),
+          );
+        }
+        measured.finish();
+      }
+
+      let group = format!("tls13/record-open/{name}/{size}");
+      if bench_config::selected(&group) {
+        let mut measured = c.benchmark_group(&group);
+        measured.throughput(Throughput::Bytes(u64::try_from(size).expect("record size")));
+        for (backend, algorithm) in algorithms {
+          if !bench_config::selected(&format!("{group}/{backend}")) {
+            continue;
+          }
+          measured.bench_function(
+            backend,
+            checked_routine(
+              None,
+              |state| {
+                let mut decrypter = algorithm.decrypter(key(algorithm), Iv::from([0x71; 12]));
+                let mut buffer = body.clone();
+                let opened = decrypter
+                  .decrypt(
+                    Record::new(
+                      ContentType::ApplicationData,
+                      EncodableVersion::Legacy(ProtocolVersion::TLSv1_2),
+                      InboundOpaque(&mut buffer),
+                    ),
+                    0,
+                  )
+                  .expect("record decryption");
+                assert_eq!(opened.payload, plaintext.as_slice(), "{backend} opened record");
+                *state = Some((decrypter, buffer));
+              },
+              |b, state| {
+                let (decrypter, buffer) = state.as_mut().expect("checked record fixture");
+                b.iter(|| {
+                  buffer.copy_from_slice(&body);
+                  let opened = decrypter
+                    .decrypt(
+                      Record::new(
+                        ContentType::ApplicationData,
+                        EncodableVersion::Legacy(ProtocolVersion::TLSv1_2),
+                        InboundOpaque(buffer),
+                      ),
+                      0,
+                    )
+                    .expect("record decryption");
+                  black_box(opened.payload);
+                });
+              },
+            ),
+          );
+        }
+        measured.finish();
+      }
+    }
+  }
+}
+
 fn main() {
   // Record the comparison libraries' identity in the run's output; discovery
   // and case matching keep their exact output.
@@ -508,5 +661,5 @@ fn main() {
       serde_json::json!({"provider_bench_provenance": rscrypto_provider_bench::provenance()})
     );
   }
-  bench_config::run(&[connections, expanded, traffic, server_verifiers, record_gather]);
+  bench_config::run(&[connections, expanded, traffic, server_verifiers, record_gather, records]);
 }

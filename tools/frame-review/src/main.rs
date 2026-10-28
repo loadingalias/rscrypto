@@ -2,7 +2,7 @@
 //!
 //! `scripts/stack/frames.py` reads the call graph and the compiler's
 //! `.stack_sizes` records from this binary. Each public operation runs once so
-//! every secret-hashing worker it reaches is linked exactly as an ordinary
+//! every secret worker it reaches is linked exactly as an ordinary
 //! caller would link it. Inputs pass through `black_box` so constant folding
 //! cannot remove or specialize those paths.
 
@@ -13,7 +13,7 @@ use core::hint::black_box;
 
 use rscrypto::aead::{Nonce96, expert::AeadWithNonce};
 use rscrypto::{
-  Aes128Gcm, Aes128GcmKey, Aes256Gcm, Aes256GcmKey, Kem, MlDsa44, MlDsa44PreparedSecretKey,
+  Aes128Gcm, Aes128GcmKey, Aes256Gcm, Aes256GcmKey, ChaCha20Poly1305, ChaCha20Poly1305Key, Kem, MlDsa44, MlDsa44PreparedSecretKey,
   MlDsa44PreparedSecretKeyStorage, MlDsa44SecretKey, MlDsa65, MlDsa65PreparedSecretKey,
   MlDsa65PreparedSecretKeyStorage, MlDsa65SecretKey, MlDsa87, MlDsa87PreparedSecretKey,
   MlDsa87PreparedSecretKeyStorage, MlDsa87SecretKey, MlDsaError, MlKem512, MlKem768, MlKem1024,
@@ -127,9 +127,28 @@ macro_rules! gcm {
   }};
 }
 
+// Lengths pass through `black_box` so every length-selected path stays linked:
+// the AVX-512 one-pass open, the row pass, and the column batches.
+fn chacha20poly1305() {
+  let cipher = ChaCha20Poly1305::new(&ChaCha20Poly1305Key::from_bytes(black_box([9; 32])));
+  let nonce = Nonce96::from_bytes(black_box([9; 12]));
+  for len in [black_box(129), black_box(1029)] {
+    let mut data = vec![37u8; len];
+    let tag = cipher
+      .encrypt_in_place(&nonce, black_box(b"frame review"), &mut data)
+      .expect("ChaCha20-Poly1305 encryption");
+    black_box(&data);
+    cipher
+      .decrypt_in_place(&nonce, black_box(b"frame review"), &mut data, &tag)
+      .expect("ChaCha20-Poly1305 decryption");
+    black_box(data);
+  }
+}
+
 fn main() {
   gcm!(Aes128Gcm, Aes128GcmKey, 7);
   gcm!(Aes256Gcm, Aes256GcmKey, 8);
+  chacha20poly1305();
   mldsa!(
     MlDsa44,
     MlDsa44PreparedSecretKeyStorage,

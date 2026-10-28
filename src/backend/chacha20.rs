@@ -533,6 +533,15 @@ mod x86_avx2;
 #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 #[path = "chacha20/x86_64_avx512.rs"]
 mod x86_avx512;
+#[cfg(all(
+  target_arch = "x86_64",
+  target_feature = "sse2",
+  feature = "chacha20poly1305",
+  not(feature = "portable-only")
+))]
+pub(crate) use x86_avx512::{
+  Source as X86Source, byte_mask as x86_byte_mask, rows as x86_rows, xor_from as x86_xor_from,
+};
 #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 #[path = "chacha20/x86_64_ssse3_x4.rs"]
 mod x86_ssse3_x4;

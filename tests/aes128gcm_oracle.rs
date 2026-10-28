@@ -134,7 +134,9 @@ fn aes128gcm_oracle_aad_size_sweep() {
 fn aes128gcm_oracle_all_short_lengths() {
   let key = [0xA8u8; 16];
 
-  for size in 0..=255usize {
+  // Every length through two VAES register groups past the x86 short-message
+  // bound (496 bytes) and the 256-byte wide-kernel start.
+  for size in 0..=576usize {
     let mut nonce = [0x18u8; 12];
     let size_word = u32::try_from(size).expect("short-length case must fit in a 32-bit nonce field");
     let size_byte = size.to_le_bytes()[0];
@@ -168,6 +170,46 @@ fn aes128gcm_oracle_large_aligned_and_unaligned_lengths() {
 }
 
 // Forgery Rejection
+
+#[test]
+fn aes128gcm_rejects_tampering_at_every_short_length() {
+  // A rejected open must leave every byte zero whichever kernel ran it. Each
+  // length flips the final ciphertext byte, then one tag bit, under a 5-byte
+  // TLS 1.3 AAD.
+  let key = Aes128GcmKey::from_bytes([0x3C; 16]);
+  let cipher = Aes128Gcm::new(&key);
+  let aad = [0x17, 0x03, 0x03, 0x01, 0x11];
+  for size in 1..=576usize {
+    let mut nonce = [0x5Bu8; 12];
+    nonce[8..].copy_from_slice(&u32::try_from(size).expect("short length fits u32").to_be_bytes());
+    let nonce = Nonce96::from_bytes(nonce);
+    let plaintext = deterministic_bytes(size.to_le_bytes()[0], size);
+    let mut sealed = plaintext.clone();
+    let tag = cipher
+      .encrypt_in_place(&nonce, &aad, &mut sealed)
+      .expect("short tampering fixture must seal");
+
+    let mut buffer = sealed.clone();
+    buffer[size.strict_sub(1)] ^= 0x80;
+    cipher
+      .decrypt_in_place(&nonce, &aad, &mut buffer, &tag)
+      .expect_err("modified ciphertext must not authenticate");
+    assert!(buffer.iter().all(|&byte| byte == 0), "len={size}: ciphertext rejection");
+
+    let mut bad = tag.to_bytes();
+    bad[size % 16] ^= 0x01;
+    let mut buffer = sealed.clone();
+    cipher
+      .decrypt_in_place(&nonce, &aad, &mut buffer, &Aes128GcmTag::from_bytes(bad))
+      .expect_err("modified tag must not authenticate");
+    assert!(buffer.iter().all(|&byte| byte == 0), "len={size}: tag rejection");
+
+    cipher
+      .decrypt_in_place(&nonce, &aad, &mut sealed, &tag)
+      .expect("unmodified short message must authenticate");
+    assert_eq!(sealed, plaintext, "len={size}");
+  }
+}
 
 #[test]
 fn aes128gcm_rejects_modified_tag() {

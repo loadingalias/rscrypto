@@ -78,6 +78,296 @@ mod rv_scalar_aes;
 ))]
 #[path = "aes/x86_64/asm.rs"]
 mod x86_64_asm;
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm"))]
+#[path = "aes/x86_64_short.rs"]
+mod x86_short;
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm"))]
+pub(crate) use x86_short::MAX_TAIL as X86_SHORT_GCM_MAX_TAIL;
+
+/// Linux messages longer than this take the assembly batch kernels for their
+/// whole 256-byte batches; shorter ones run the intrinsic passes alone, without
+/// the kernels' table setup.
+#[cfg(all(
+  target_arch = "x86_64",
+  target_feature = "sse2",
+  target_os = "linux",
+  feature = "aes-gcm"
+))]
+const X86_GCM_BATCH_MIN: usize = 512;
+
+/// The Linux VAES-512 seal or open kernels of one key size, by batch width.
+#[cfg(all(
+  target_arch = "x86_64",
+  target_feature = "sse2",
+  target_os = "linux",
+  feature = "aes-gcm"
+))]
+struct X86GcmKernels {
+  x16: unsafe extern "C" fn(*const u8, *const u8, *mut u8, usize, *const u128, *mut x86_64_asm::AesGcmX86State),
+  x64: unsafe extern "C" fn(*const u8, *const u8, *mut u8, usize, *const u128, *mut x86_64_asm::AesGcmX86State),
+  x128: unsafe extern "C" fn(*const u8, *const u8, *mut u8, usize, *const u128, *mut x86_64_asm::AesGcmX86State),
+}
+
+/// Process every whole 256-byte batch of `len` bytes from `input` into `output`
+/// with the widest applicable kernels: 128-block batches over the 2048-byte
+/// prefix of at least 4096 bytes, then 64- or 16-block batches. Returns the
+/// bytes processed and folds their ciphertext into `acc`.
+///
+/// # Safety
+/// The caller must establish AES, SSE2, AVX-512F/VL/BW/DQ, VAES, VPCLMULQDQ, and
+/// PCLMULQDQ. `round_keys` addresses the key size's initialized AES-NI schedule,
+/// `counter_block` holds the nonce, `input` is valid for `len` reads, `output`
+/// for `len` writes, the two are equal or disjoint, and the message's counters
+/// fit in 32 bits.
+#[cfg(all(
+  target_arch = "x86_64",
+  target_feature = "sse2",
+  target_os = "linux",
+  feature = "aes-gcm"
+))]
+#[expect(
+  clippy::too_many_arguments,
+  reason = "a kernel boundary: kernels, key, nonce, ranges, GHASH state and tables"
+)]
+#[inline]
+unsafe fn x86_gcm_bulk_asm(
+  kernels: &X86GcmKernels,
+  round_keys: *const u8,
+  counter_block: &[u8; BLOCK_SIZE],
+  input: *const u8,
+  output: *mut u8,
+  len: usize,
+  acc: &mut u128,
+  tables: X86GcmTables<'_>,
+) -> usize {
+  let mut ctr = u32::from_be_bytes([
+    counter_block[12],
+    counter_block[13],
+    counter_block[14],
+    counter_block[15],
+  ]);
+  let mut done = 0usize;
+  loop {
+    let rest = len.strict_sub(done);
+    let wide = rest.strict_sub(rest.strict_rem(2048));
+    let (kernel, batch_len, powers): (_, usize, *const u128) = if wide >= 4096 {
+      (kernels.x128, wide, tables.h_powers_rev_128.as_ptr())
+    } else if rest >= 1024 {
+      (kernels.x64, rest, tables.h_powers_rev_64.as_ptr())
+    } else if rest >= 256 {
+      (kernels.x16, rest, tables.h_powers_rev_32.as_ptr())
+    } else {
+      break;
+    };
+    // SAFETY: the caller's contract covers the kernel features and the key,
+    // counter, and range pointers. Bytes `done..done + batch_len` lie inside
+    // both ranges. Each kernel receives its matching H-power table, processes
+    // only whole batches, reports them, and restores its aligned scratch stack.
+    let processed = unsafe {
+      let mut state = x86_64_asm::AesGcmX86State::new(*acc, ctr, input.add(done));
+      kernel(
+        round_keys,
+        counter_block.as_ptr(),
+        output.add(done),
+        batch_len,
+        powers,
+        core::ptr::from_mut(&mut state),
+      );
+      *acc = state.acc();
+      ctr = state.ctr;
+      state.processed
+    };
+    if processed == 0 || processed > batch_len {
+      break;
+    }
+    done = done.strict_add(processed);
+  }
+  done
+}
+
+macro_rules! x86_gcm_message {
+  (
+    $seal:ident, $open:ident, $key:ty, $inner:path, $rounds:literal,
+    seal: ($s16:path, $s64:path, $s128:path), open: ($o16:path, $o64:path, $o128:path)
+  ) => {
+    /// Seal a whole message with the VAES kernels: plaintext `src[..src_len]`
+    /// followed by the `tail` spans, ciphertext into `dst`, returning the tag.
+    /// `None` when the key does not use the AES-NI schedule.
+    ///
+    /// # Safety
+    /// The caller must establish AES, SSE2, SSSE3, AVX-512F/VL/BW/DQ, VAES,
+    /// VPCLMULQDQ, and PCLMULQDQ. `src` is valid for `src_len` reads; `dst` is
+    /// valid for writes of the whole message and either equals `src` or does
+    /// not overlap it or any tail span. The tail holds at most
+    /// [`X86_SHORT_GCM_MAX_TAIL`] bytes, the message is within GCM's length
+    /// bound, `acc` is GHASH over the AAD, and `length_block` encodes both bit
+    /// lengths.
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm"))]
+    #[expect(
+      clippy::too_many_arguments,
+      reason = "a message boundary: key, nonce, GHASH state, ranges and tables"
+    )]
+    #[target_feature(enable = "aes,sse2,ssse3,avx512f,avx512vl,avx512bw,avx512dq,vaes,vpclmulqdq,pclmulqdq")]
+    pub(crate) unsafe fn $seal(
+      ek: &$key,
+      j0: &[u8; BLOCK_SIZE],
+      counter_block: &[u8; BLOCK_SIZE],
+      acc: u128,
+      src: *const u8,
+      src_len: usize,
+      tail: &[&[u8]],
+      dst: *mut u8,
+      length_block: &[u8; BLOCK_SIZE],
+      tables: X86GcmTables<'_>,
+    ) -> Option<[u8; BLOCK_SIZE]> {
+      let $inner(rk) = &ek.inner else {
+        return None;
+      };
+      let tail_len = tail.iter().fold(0usize, |len, span| len.strict_add(span.len()));
+      #[cfg(target_os = "linux")]
+      let (mut acc, mut done) = (acc, 0usize);
+      #[cfg(not(target_os = "linux"))]
+      let done = 0usize;
+      #[cfg(target_os = "linux")]
+      if src_len.strict_add(tail_len) > X86_GCM_BATCH_MIN {
+        let kernels = X86GcmKernels {
+          x16: $s16,
+          x64: $s64,
+          x128: $s128,
+        };
+        // SAFETY: the caller's contract covers the features and both ranges;
+        // the batches cover only `src`, never the tail.
+        done = unsafe {
+          x86_gcm_bulk_asm(
+            &kernels,
+            rk.as_ptr(),
+            counter_block,
+            src,
+            dst,
+            src_len,
+            &mut acc,
+            tables,
+          )
+        };
+      }
+      #[cfg(not(target_os = "linux"))]
+      let _ = (counter_block, tail_len);
+      let first = u32::try_from(done.strict_div(BLOCK_SIZE)).ok()?.checked_add(2)?;
+      // SAFETY: the rest starts `done` bytes into both ranges.
+      Some(unsafe {
+        x86_short::seal::<$rounds>(
+          rk.round_keys(),
+          j0,
+          first,
+          acc,
+          src.add(done),
+          src_len.strict_sub(done),
+          tail,
+          dst.add(done),
+          length_block,
+          tables.h_powers_rev_16,
+        )
+      })
+    }
+
+    /// Open a whole message in place with the VAES kernels.
+    ///
+    /// Returns `None` when the key does not use the AES-NI schedule, and
+    /// otherwise whether the tag matched. On a mismatch every byte of `data` is
+    /// zero.
+    ///
+    /// # Safety
+    /// The caller must establish the features of the seal function, `data`
+    /// valid for `len` reads and writes within GCM's length bound, `acc` GHASH
+    /// over the AAD, and `length_block` encoding both bit lengths.
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm"))]
+    #[expect(
+      clippy::too_many_arguments,
+      reason = "a message boundary: key, nonce, GHASH state, ranges and tables"
+    )]
+    #[target_feature(enable = "aes,sse2,ssse3,avx512f,avx512vl,avx512bw,avx512dq,vaes,vpclmulqdq,pclmulqdq")]
+    pub(crate) unsafe fn $open(
+      ek: &$key,
+      j0: &[u8; BLOCK_SIZE],
+      counter_block: &[u8; BLOCK_SIZE],
+      acc: u128,
+      data: *mut u8,
+      len: usize,
+      length_block: &[u8; BLOCK_SIZE],
+      tables: X86GcmTables<'_>,
+      expected: &[u8; BLOCK_SIZE],
+    ) -> Option<bool> {
+      let $inner(rk) = &ek.inner else {
+        return None;
+      };
+      #[cfg(target_os = "linux")]
+      let (mut acc, mut done) = (acc, 0usize);
+      #[cfg(not(target_os = "linux"))]
+      let done = 0usize;
+      #[cfg(target_os = "linux")]
+      if len > X86_GCM_BATCH_MIN {
+        let kernels = X86GcmKernels {
+          x16: $o16,
+          x64: $o64,
+          x128: $o128,
+        };
+        // SAFETY: the caller's contract covers the features and the range.
+        done = unsafe { x86_gcm_bulk_asm(&kernels, rk.as_ptr(), counter_block, data, data, len, &mut acc, tables) };
+      }
+      #[cfg(not(target_os = "linux"))]
+      let _ = counter_block;
+      let first = u32::try_from(done.strict_div(BLOCK_SIZE)).ok()?.checked_add(2)?;
+      // SAFETY: the rest starts `done` bytes into `data`.
+      let matched = unsafe {
+        x86_short::open::<$rounds>(
+          rk.round_keys(),
+          j0,
+          first,
+          acc,
+          data.add(done),
+          len.strict_sub(done),
+          length_block,
+          tables.h_powers_rev_16,
+          expected,
+        )
+      };
+      if !matched {
+        // The short kernel zeroed its range; clear the opened batches before it.
+        // SAFETY: `data` is valid for `done <= len` writes and no other borrow of it is live.
+        crate::traits::ct::zeroize(unsafe { core::slice::from_raw_parts_mut(data, done) });
+      }
+      Some(matched)
+    }
+  };
+}
+
+x86_gcm_message!(
+  aes128_gcm_seal_x86, aes128_gcm_open_x86, Aes128EncKey, Key128Inner::X86AesNi, 11,
+  seal: (
+    x86_64_asm::rscrypto_aes128_gcm_seal_16x_vaes512_x86_64_linux,
+    x86_64_asm::rscrypto_aes128_gcm_seal_64x_vaes512_x86_64_linux,
+    x86_64_asm::rscrypto_aes128_gcm_seal_128x_vaes512_x86_64_linux
+  ),
+  open: (
+    x86_64_asm::rscrypto_aes128_gcm_open_16x_vaes512_x86_64_linux,
+    x86_64_asm::rscrypto_aes128_gcm_open_64x_vaes512_x86_64_linux,
+    x86_64_asm::rscrypto_aes128_gcm_open_128x_vaes512_x86_64_linux
+  )
+);
+x86_gcm_message!(
+  aes256_gcm_seal_x86, aes256_gcm_open_x86, Aes256EncKey, KeyInner::X86AesNi, 15,
+  seal: (
+    x86_64_asm::rscrypto_aes256_gcm_seal_16x_vaes512_x86_64_linux,
+    x86_64_asm::rscrypto_aes256_gcm_seal_64x_vaes512_x86_64_linux,
+    x86_64_asm::rscrypto_aes256_gcm_seal_128x_vaes512_x86_64_linux
+  ),
+  open: (
+    x86_64_asm::rscrypto_aes256_gcm_open_16x_vaes512_x86_64_linux,
+    x86_64_asm::rscrypto_aes256_gcm_open_64x_vaes512_x86_64_linux,
+    x86_64_asm::rscrypto_aes256_gcm_open_128x_vaes512_x86_64_linux
+  )
+);
+
 #[cfg(all(target_arch = "aarch64", feature = "aes-gcm"))]
 pub(crate) struct Aarch64GcmTables<'a> {
   pub(crate) h_powers_rev: &'a [u128; 4],
@@ -3121,77 +3411,6 @@ fn aes256_ctr32_encrypt_be_worker(ek: &Aes256EncKey, initial_counter: &[u8; BLOC
 
 // Wide AES-CTR for GCM (big-endian 32-bit counter, VAES-512)
 
-/// Build four big-endian GCM counter blocks directly in a VAES register.
-///
-/// # Safety
-/// Caller must ensure AVX-512F is available.
-#[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm"))]
-#[target_feature(enable = "avx512f")]
-#[inline]
-unsafe fn x86_gcm_ctr_blocks_be_4(iv_words: [u32; 3], ctr: u32) -> core::arch::x86_64::__m512i {
-  use core::arch::x86_64::*;
-
-  let c0 = ctr.swap_bytes();
-  let c1 = ctr.wrapping_add(1).swap_bytes();
-  let c2 = ctr.wrapping_add(2).swap_bytes();
-  let c3 = ctr.wrapping_add(3).swap_bytes();
-  let iv0 = iv_words[0].cast_signed();
-  let iv1 = iv_words[1].cast_signed();
-  let iv2 = iv_words[2].cast_signed();
-  let b0 = _mm_set_epi32(c0.cast_signed(), iv2, iv1, iv0);
-  let b1 = _mm_set_epi32(c1.cast_signed(), iv2, iv1, iv0);
-  let b2 = _mm_set_epi32(c2.cast_signed(), iv2, iv1, iv0);
-  let b3 = _mm_set_epi32(c3.cast_signed(), iv2, iv1, iv0);
-
-  let z = _mm512_zextsi128_si512(b0);
-  let z = _mm512_inserti32x4(z, b1, 1);
-  let z = _mm512_inserti32x4(z, b2, 2);
-  _mm512_inserti32x4(z, b3, 3)
-}
-
-/// Build sixteen big-endian GCM counter blocks in four VAES registers.
-///
-/// # Safety
-/// Caller must ensure AVX-512F and AVX-512BW are available.
-#[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm"))]
-#[target_feature(enable = "avx512f,avx512bw")]
-#[inline]
-unsafe fn x86_gcm_ctr_blocks_be_16(
-  iv_words: [u32; 3],
-  ctr: u32,
-) -> (
-  core::arch::x86_64::__m512i,
-  core::arch::x86_64::__m512i,
-  core::arch::x86_64::__m512i,
-  core::arch::x86_64::__m512i,
-) {
-  use core::arch::x86_64::*;
-
-  let iv = _mm_set_epi32(
-    0,
-    iv_words[2].cast_signed(),
-    iv_words[1].cast_signed(),
-    iv_words[0].cast_signed(),
-  );
-  let template = _mm512_broadcast_i32x4(iv);
-  let ctrs = _mm512_set1_epi32(ctr.cast_signed());
-  let bswap = _mm512_broadcast_i32x4(_mm_set_epi8(12, 13, 14, 15, 8, 9, 10, 11, 4, 5, 6, 7, 0, 1, 2, 3));
-
-  let offsets0 = _mm512_set_epi32(3, 0, 0, 0, 2, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0);
-  let offsets1 = _mm512_set_epi32(7, 0, 0, 0, 6, 0, 0, 0, 5, 0, 0, 0, 4, 0, 0, 0);
-  let offsets2 = _mm512_set_epi32(11, 0, 0, 0, 10, 0, 0, 0, 9, 0, 0, 0, 8, 0, 0, 0);
-  let offsets3 = _mm512_set_epi32(15, 0, 0, 0, 14, 0, 0, 0, 13, 0, 0, 0, 12, 0, 0, 0);
-
-  macro_rules! make {
-    ($offsets:expr) => {{
-      let be = _mm512_shuffle_epi8(_mm512_add_epi32(ctrs, $offsets), bswap);
-      _mm512_mask_mov_epi32(template, 0x8888, be)
-    }};
-  }
-
-  (make!(offsets0), make!(offsets1), make!(offsets2), make!(offsets3))
-}
-
 #[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm", test))]
 #[target_feature(enable = "avx2")]
 #[inline]
@@ -3466,368 +3685,6 @@ pub(crate) unsafe fn aes256_ctr32_decrypt_be_aesni_pclmul_ghash(
 
     while offset < data.len() {
       let mut counter_block = [0u8; BLOCK_SIZE];
-      counter_block[..12].copy_from_slice(&iv_prefix);
-      counter_block[12..16].copy_from_slice(&ctr.to_be_bytes());
-
-      let mut keystream_storage = crate::secret::ZeroizingBytes::<BLOCK_SIZE>::zeroed();
-
-      let keystream = keystream_storage.as_mut_array();
-
-      *keystream = counter_block;
-      ni::encrypt_block(ni_rk, keystream);
-
-      let remaining = data.len().strict_sub(offset);
-      if remaining >= BLOCK_SIZE {
-        let mut ciphertext = [0u8; BLOCK_SIZE];
-        ciphertext.copy_from_slice(&data[offset..offset.strict_add(BLOCK_SIZE)]);
-        acc ^= u128::from_be_bytes(ciphertext);
-        acc = super::polyval::x86_clmul128_reduce_inline(acc, h_polyval);
-
-        let plaintext = u128::from_ne_bytes(ciphertext) ^ u128::from_ne_bytes(*keystream);
-        data[offset..offset.strict_add(BLOCK_SIZE)].copy_from_slice(&plaintext.to_ne_bytes());
-        offset = offset.strict_add(BLOCK_SIZE);
-      } else {
-        let mut block = [0u8; BLOCK_SIZE];
-        block[..remaining].copy_from_slice(&data[offset..offset.strict_add(remaining)]);
-        acc ^= u128::from_be_bytes(block);
-        acc = super::polyval::x86_clmul128_reduce_inline(acc, h_polyval);
-
-        let mut i = 0usize;
-        while i < remaining {
-          data[offset.strict_add(i)] ^= keystream[i];
-          i = i.strict_add(1);
-        }
-        offset = offset.strict_add(remaining);
-      }
-      ctr = ctr.wrapping_add(1);
-    }
-
-    acc
-  }
-}
-
-/// AES-256 CTR encryption fused with GHASH accumulation for GCM sealing.
-///
-/// Encrypts `data` in place and updates the GHASH accumulator after the
-/// ciphertext has been folded in. The incoming `acc` is normally the GHASH
-/// state after AAD processing.
-///
-/// # Safety
-/// Caller must ensure AVX-512F + AVX-512VL + AVX-512BW + AVX-512DQ +
-/// VAES + VPCLMULQDQ + PCLMULQDQ + AES + SSE2.
-#[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm"))]
-#[target_feature(enable = "aes,sse2,avx512f,avx512vl,avx512bw,avx512dq,vaes,vpclmulqdq,pclmulqdq")]
-pub(crate) unsafe fn aes256_ctr32_encrypt_be_wide_ghash(
-  ek: &Aes256EncKey,
-  initial_counter: &[u8; BLOCK_SIZE],
-  data: &mut [u8],
-  mut acc: u128,
-  tables: X86GcmTables<'_>,
-) -> u128 {
-  use core::arch::x86_64::*;
-  let h_polyval = tables.h_polyval;
-  let h_powers_rev = tables.h_powers_rev;
-  let h_powers_rev_16 = tables.h_powers_rev_16;
-
-  // SAFETY: fused x86 AES-GCM sealing because:
-  // 1. This function's caller guarantees all required x86 target features.
-  // 2. `data` is a valid mutable byte slice; all pointer arithmetic stays inside checked chunk
-  //    bounds.
-  unsafe {
-    let ni_rk = match &ek.inner {
-      KeyInner::X86AesNi(rk) => rk,
-      _ => {
-        aes256_ctr32_encrypt_be(ek, initial_counter, data);
-        return ghash_ciphertext_fallback(acc, h_polyval, data);
-      }
-    };
-
-    let iv_prefix: [u8; 12] = {
-      let mut buf = [0u8; 12];
-      buf.copy_from_slice(&initial_counter[..12]);
-      buf
-    };
-    let iv_words = [
-      u32::from_le_bytes([iv_prefix[0], iv_prefix[1], iv_prefix[2], iv_prefix[3]]),
-      u32::from_le_bytes([iv_prefix[4], iv_prefix[5], iv_prefix[6], iv_prefix[7]]),
-      u32::from_le_bytes([iv_prefix[8], iv_prefix[9], iv_prefix[10], iv_prefix[11]]),
-    ];
-    let mut ctr = u32::from_be_bytes([
-      initial_counter[12],
-      initial_counter[13],
-      initial_counter[14],
-      initial_counter[15],
-    ]);
-    let mut offset = 0usize;
-
-    #[cfg(target_os = "linux")]
-    if data.len() >= 256 {
-      let mut state = x86_64_asm::AesGcmX86State::new(acc, ctr, data.as_ptr());
-      // SAFETY: external x86-64 VAES-512 AES-256-GCM seal kernel because:
-      // 1. This target-feature function is only entered after VAES, VPCLMULQDQ, AVX-512, AES-NI, and SSE2
-      //    were selected by runtime/backend dispatch.
-      // 2. `ni_rk.as_ptr()` addresses 15 initialized 128-bit AES-256 round keys.
-      // 3. `initial_counter` points to the full 16-byte GCM counter block, and `data` is valid for
-      //    `data.len()` mutable bytes.
-      // 4. The selected H-power table matches the chosen 16-block, 64-block, or 128-block fold cadence.
-      // 5. The kernel only processes complete block batches and reports the processed byte count so the
-      //    Rust fallback below handles every remaining full/partial tail.
-      if (4096..=65536).contains(&data.len()) && (data.len() & 2047) == 0 {
-        x86_64_asm::rscrypto_aes256_gcm_seal_128x_vaes512_x86_64_linux(
-          ni_rk.as_ptr(),
-          initial_counter.as_ptr(),
-          data.as_mut_ptr(),
-          data.len(),
-          tables.h_powers_rev_128.as_ptr(),
-          core::ptr::from_mut(&mut state),
-        );
-      } else if data.len() >= 1024 {
-        x86_64_asm::rscrypto_aes256_gcm_seal_64x_vaes512_x86_64_linux(
-          ni_rk.as_ptr(),
-          initial_counter.as_ptr(),
-          data.as_mut_ptr(),
-          data.len(),
-          tables.h_powers_rev_64.as_ptr(),
-          core::ptr::from_mut(&mut state),
-        );
-      } else {
-        x86_64_asm::rscrypto_aes256_gcm_seal_16x_vaes512_x86_64_linux(
-          ni_rk.as_ptr(),
-          initial_counter.as_ptr(),
-          data.as_mut_ptr(),
-          data.len(),
-          tables.h_powers_rev_32.as_ptr(),
-          core::ptr::from_mut(&mut state),
-        );
-      }
-      acc = state.acc();
-      ctr = state.ctr;
-      offset = state.processed;
-    }
-
-    while offset.strict_add(256) <= data.len() {
-      let (ctr0, ctr1, ctr2, ctr3) = x86_gcm_ctr_blocks_be_16(iv_words, ctr);
-      let (ks0, ks1, ks2, ks3) = ni::encrypt_16blocks(ni_rk, ctr0, ctr1, ctr2, ctr3);
-
-      let p0 = _mm512_loadu_si512(data.as_ptr().add(offset).cast());
-      let c0 = _mm512_xor_si512(p0, ks0);
-      _mm512_storeu_si512(data.as_mut_ptr().add(offset).cast(), c0);
-
-      let p1 = _mm512_loadu_si512(data.as_ptr().add(offset.strict_add(64)).cast());
-      let c1 = _mm512_xor_si512(p1, ks1);
-      _mm512_storeu_si512(data.as_mut_ptr().add(offset.strict_add(64)).cast(), c1);
-
-      let p2 = _mm512_loadu_si512(data.as_ptr().add(offset.strict_add(128)).cast());
-      let c2 = _mm512_xor_si512(p2, ks2);
-      _mm512_storeu_si512(data.as_mut_ptr().add(offset.strict_add(128)).cast(), c2);
-
-      let p3 = _mm512_loadu_si512(data.as_ptr().add(offset.strict_add(192)).cast());
-      let c3 = _mm512_xor_si512(p3, ks3);
-      _mm512_storeu_si512(data.as_mut_ptr().add(offset.strict_add(192)).cast(), c3);
-      acc = super::polyval::x86_aggregate_16blocks_be_lanes_inline(acc, h_powers_rev_16, c0, c1, c2, c3);
-
-      ctr = ctr.wrapping_add(16);
-      offset = offset.strict_add(256);
-    }
-
-    while offset.strict_add(64) <= data.len() {
-      let ctr_vec = x86_gcm_ctr_blocks_be_4(iv_words, ctr);
-      let keystream = ni::encrypt_4blocks(ni_rk, ctr_vec);
-      let plaintext = _mm512_loadu_si512(data.as_ptr().add(offset).cast());
-      let ciphertext = _mm512_xor_si512(plaintext, keystream);
-      _mm512_storeu_si512(data.as_mut_ptr().add(offset).cast(), ciphertext);
-      acc = super::polyval::x86_aggregate_4blocks_be_lanes_inline(acc, h_powers_rev, ciphertext);
-
-      ctr = ctr.wrapping_add(4);
-      offset = offset.strict_add(64);
-    }
-
-    while offset < data.len() {
-      let mut counter_block = [0u8; 16];
-      counter_block[..12].copy_from_slice(&iv_prefix);
-      counter_block[12..16].copy_from_slice(&ctr.to_be_bytes());
-
-      let mut keystream_storage = crate::secret::ZeroizingBytes::<BLOCK_SIZE>::zeroed();
-
-      let keystream = keystream_storage.as_mut_array();
-
-      *keystream = counter_block;
-      ni::encrypt_block(ni_rk, keystream);
-
-      let remaining = data.len().strict_sub(offset);
-      if remaining >= BLOCK_SIZE {
-        let ks = u128::from_ne_bytes(*keystream);
-        let mut d = [0u8; BLOCK_SIZE];
-        d.copy_from_slice(&data[offset..offset.strict_add(BLOCK_SIZE)]);
-        let xored = u128::from_ne_bytes(d) ^ ks;
-        let ciphertext = xored.to_ne_bytes();
-        data[offset..offset.strict_add(BLOCK_SIZE)].copy_from_slice(&ciphertext);
-        acc ^= u128::from_be_bytes(ciphertext);
-        acc = super::polyval::x86_clmul128_reduce_inline(acc, h_polyval);
-        offset = offset.strict_add(BLOCK_SIZE);
-      } else {
-        let mut block = [0u8; BLOCK_SIZE];
-        let mut i = 0usize;
-        while i < remaining {
-          data[offset.strict_add(i)] ^= keystream[i];
-          block[i] = data[offset.strict_add(i)];
-          i = i.strict_add(1);
-        }
-        acc ^= u128::from_be_bytes(block);
-        acc = super::polyval::x86_clmul128_reduce_inline(acc, h_polyval);
-        offset = offset.strict_add(remaining);
-      }
-      ctr = ctr.wrapping_add(1);
-    }
-
-    acc
-  }
-}
-
-/// AES-256 CTR decryption fused with GHASH accumulation for GCM open.
-///
-/// Folds ciphertext into GHASH, decrypts the same chunk in place, and returns
-/// the accumulator. Authentication is finalized by the caller.
-///
-/// # Safety
-/// Caller must ensure AVX-512F + AVX-512VL + AVX-512BW + AVX-512DQ +
-/// VAES + VPCLMULQDQ + PCLMULQDQ + AES + SSE2.
-#[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm"))]
-#[target_feature(enable = "aes,sse2,avx512f,avx512vl,avx512bw,avx512dq,vaes,vpclmulqdq,pclmulqdq")]
-pub(crate) unsafe fn aes256_ctr32_decrypt_be_wide_ghash(
-  ek: &Aes256EncKey,
-  initial_counter: &[u8; BLOCK_SIZE],
-  data: &mut [u8],
-  mut acc: u128,
-  tables: X86GcmTables<'_>,
-) -> u128 {
-  use core::arch::x86_64::*;
-  let h_polyval = tables.h_polyval;
-  let h_powers_rev = tables.h_powers_rev;
-  let h_powers_rev_16 = tables.h_powers_rev_16;
-
-  // SAFETY: fused x86 AES-GCM opening because:
-  // 1. This function's caller guarantees all required x86 target features.
-  // 2. `data` is a valid mutable ciphertext slice. Each vector is folded into GHASH before the
-  //    corresponding plaintext is stored back.
-  // 3. All pointer arithmetic stays inside checked chunk bounds.
-  unsafe {
-    let ni_rk = match &ek.inner {
-      KeyInner::X86AesNi(rk) => rk,
-      _ => {
-        acc = ghash_ciphertext_fallback(acc, h_polyval, data);
-        aes256_ctr32_encrypt_be(ek, initial_counter, data);
-        return acc;
-      }
-    };
-
-    let iv_prefix: [u8; 12] = {
-      let mut buf = [0u8; 12];
-      buf.copy_from_slice(&initial_counter[..12]);
-      buf
-    };
-    let iv_words = [
-      u32::from_le_bytes([iv_prefix[0], iv_prefix[1], iv_prefix[2], iv_prefix[3]]),
-      u32::from_le_bytes([iv_prefix[4], iv_prefix[5], iv_prefix[6], iv_prefix[7]]),
-      u32::from_le_bytes([iv_prefix[8], iv_prefix[9], iv_prefix[10], iv_prefix[11]]),
-    ];
-    let mut ctr = u32::from_be_bytes([
-      initial_counter[12],
-      initial_counter[13],
-      initial_counter[14],
-      initial_counter[15],
-    ]);
-    let mut offset = 0usize;
-
-    #[cfg(target_os = "linux")]
-    if data.len() >= 256 {
-      let mut state = x86_64_asm::AesGcmX86State::new(acc, ctr, data.as_ptr());
-      // SAFETY: external x86-64 VAES-512 AES-256-GCM open kernel because:
-      // 1. This target-feature function is only entered after VAES, VPCLMULQDQ, AVX-512, AES-NI, and SSE2
-      //    were selected by runtime/backend dispatch.
-      // 2. `ni_rk.as_ptr()` addresses 15 initialized 128-bit AES-256 round keys.
-      // 3. `initial_counter` points to the full 16-byte GCM counter block, and `data` is valid for
-      //    `data.len()` mutable bytes of ciphertext.
-      // 4. The selected kernel folds ciphertext into GHASH before storing plaintext using the matching
-      //    16-block, 64-block, or 128-block H-power table.
-      // 5. The kernel only processes complete block batches and reports the processed byte count so the
-      //    Rust fallback below handles every remaining full/partial tail.
-      if (4096..=65536).contains(&data.len()) && (data.len() & 2047) == 0 {
-        x86_64_asm::rscrypto_aes256_gcm_open_128x_vaes512_x86_64_linux(
-          ni_rk.as_ptr(),
-          initial_counter.as_ptr(),
-          data.as_mut_ptr(),
-          data.len(),
-          tables.h_powers_rev_128.as_ptr(),
-          core::ptr::from_mut(&mut state),
-        );
-      } else if data.len() >= 1024 {
-        x86_64_asm::rscrypto_aes256_gcm_open_64x_vaes512_x86_64_linux(
-          ni_rk.as_ptr(),
-          initial_counter.as_ptr(),
-          data.as_mut_ptr(),
-          data.len(),
-          tables.h_powers_rev_64.as_ptr(),
-          core::ptr::from_mut(&mut state),
-        );
-      } else {
-        x86_64_asm::rscrypto_aes256_gcm_open_16x_vaes512_x86_64_linux(
-          ni_rk.as_ptr(),
-          initial_counter.as_ptr(),
-          data.as_mut_ptr(),
-          data.len(),
-          tables.h_powers_rev_32.as_ptr(),
-          core::ptr::from_mut(&mut state),
-        );
-      }
-      acc = state.acc();
-      ctr = state.ctr;
-      offset = state.processed;
-    }
-
-    while offset.strict_add(256) <= data.len() {
-      let (ctr0, ctr1, ctr2, ctr3) = x86_gcm_ctr_blocks_be_16(iv_words, ctr);
-      let (ks0, ks1, ks2, ks3) = ni::encrypt_16blocks(ni_rk, ctr0, ctr1, ctr2, ctr3);
-
-      let c0 = _mm512_loadu_si512(data.as_ptr().add(offset).cast());
-      let c1 = _mm512_loadu_si512(data.as_ptr().add(offset.strict_add(64)).cast());
-      let c2 = _mm512_loadu_si512(data.as_ptr().add(offset.strict_add(128)).cast());
-      let c3 = _mm512_loadu_si512(data.as_ptr().add(offset.strict_add(192)).cast());
-      acc = super::polyval::x86_aggregate_16blocks_be_lanes_inline(acc, h_powers_rev_16, c0, c1, c2, c3);
-      _mm512_storeu_si512(data.as_mut_ptr().add(offset).cast(), _mm512_xor_si512(c0, ks0));
-      _mm512_storeu_si512(
-        data.as_mut_ptr().add(offset.strict_add(64)).cast(),
-        _mm512_xor_si512(c1, ks1),
-      );
-      _mm512_storeu_si512(
-        data.as_mut_ptr().add(offset.strict_add(128)).cast(),
-        _mm512_xor_si512(c2, ks2),
-      );
-      _mm512_storeu_si512(
-        data.as_mut_ptr().add(offset.strict_add(192)).cast(),
-        _mm512_xor_si512(c3, ks3),
-      );
-
-      ctr = ctr.wrapping_add(16);
-      offset = offset.strict_add(256);
-    }
-
-    while offset.strict_add(64) <= data.len() {
-      let ctr_vec = x86_gcm_ctr_blocks_be_4(iv_words, ctr);
-      let keystream = ni::encrypt_4blocks(ni_rk, ctr_vec);
-      let ciphertext = _mm512_loadu_si512(data.as_ptr().add(offset).cast());
-      acc = super::polyval::x86_aggregate_4blocks_be_lanes_inline(acc, h_powers_rev, ciphertext);
-      _mm512_storeu_si512(
-        data.as_mut_ptr().add(offset).cast(),
-        _mm512_xor_si512(ciphertext, keystream),
-      );
-
-      ctr = ctr.wrapping_add(4);
-      offset = offset.strict_add(64);
-    }
-
-    while offset < data.len() {
-      let mut counter_block = [0u8; 16];
       counter_block[..12].copy_from_slice(&iv_prefix);
       counter_block[12..16].copy_from_slice(&ctr.to_be_bytes());
 
@@ -4641,368 +4498,6 @@ pub(crate) unsafe fn aes128_ctr32_decrypt_be_aesni_pclmul_ghash(
 
     while offset < data.len() {
       let mut counter_block = [0u8; BLOCK_SIZE];
-      counter_block[..12].copy_from_slice(&iv_prefix);
-      counter_block[12..16].copy_from_slice(&ctr.to_be_bytes());
-
-      let mut keystream_storage = crate::secret::ZeroizingBytes::<BLOCK_SIZE>::zeroed();
-
-      let keystream = keystream_storage.as_mut_array();
-
-      *keystream = counter_block;
-      ni::encrypt_block_128(ni_rk, keystream);
-
-      let remaining = data.len().strict_sub(offset);
-      if remaining >= BLOCK_SIZE {
-        let mut ciphertext = [0u8; BLOCK_SIZE];
-        ciphertext.copy_from_slice(&data[offset..offset.strict_add(BLOCK_SIZE)]);
-        acc ^= u128::from_be_bytes(ciphertext);
-        acc = super::polyval::x86_clmul128_reduce_inline(acc, h_polyval);
-
-        let plaintext = u128::from_ne_bytes(ciphertext) ^ u128::from_ne_bytes(*keystream);
-        data[offset..offset.strict_add(BLOCK_SIZE)].copy_from_slice(&plaintext.to_ne_bytes());
-        offset = offset.strict_add(BLOCK_SIZE);
-      } else {
-        let mut block = [0u8; BLOCK_SIZE];
-        block[..remaining].copy_from_slice(&data[offset..offset.strict_add(remaining)]);
-        acc ^= u128::from_be_bytes(block);
-        acc = super::polyval::x86_clmul128_reduce_inline(acc, h_polyval);
-
-        let mut i = 0usize;
-        while i < remaining {
-          data[offset.strict_add(i)] ^= keystream[i];
-          i = i.strict_add(1);
-        }
-        offset = offset.strict_add(remaining);
-      }
-      ctr = ctr.wrapping_add(1);
-    }
-
-    acc
-  }
-}
-
-/// AES-128 CTR encryption fused with GHASH accumulation for GCM sealing.
-///
-/// Encrypts `data` in place and updates the GHASH accumulator after the
-/// ciphertext has been folded in. The incoming `acc` is normally the GHASH
-/// state after AAD processing.
-///
-/// # Safety
-/// Caller must ensure AVX-512F + AVX-512VL + AVX-512BW + AVX-512DQ +
-/// VAES + VPCLMULQDQ + PCLMULQDQ + AES + SSE2.
-#[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm"))]
-#[target_feature(enable = "aes,sse2,avx512f,avx512vl,avx512bw,avx512dq,vaes,vpclmulqdq,pclmulqdq")]
-pub(crate) unsafe fn aes128_ctr32_encrypt_be_wide_ghash(
-  ek: &Aes128EncKey,
-  initial_counter: &[u8; BLOCK_SIZE],
-  data: &mut [u8],
-  mut acc: u128,
-  tables: X86GcmTables<'_>,
-) -> u128 {
-  use core::arch::x86_64::*;
-  let h_polyval = tables.h_polyval;
-  let h_powers_rev = tables.h_powers_rev;
-  let h_powers_rev_16 = tables.h_powers_rev_16;
-
-  // SAFETY: fused x86 AES-GCM sealing because:
-  // 1. This function's caller guarantees all required x86 target features.
-  // 2. `data` is a valid mutable byte slice; all pointer arithmetic stays inside checked chunk
-  //    bounds.
-  unsafe {
-    let ni_rk = match &ek.inner {
-      Key128Inner::X86AesNi(rk) => rk,
-      _ => {
-        aes128_ctr32_encrypt_be(ek, initial_counter, data);
-        return ghash_ciphertext_fallback(acc, h_polyval, data);
-      }
-    };
-
-    let iv_prefix: [u8; 12] = {
-      let mut buf = [0u8; 12];
-      buf.copy_from_slice(&initial_counter[..12]);
-      buf
-    };
-    let iv_words = [
-      u32::from_le_bytes([iv_prefix[0], iv_prefix[1], iv_prefix[2], iv_prefix[3]]),
-      u32::from_le_bytes([iv_prefix[4], iv_prefix[5], iv_prefix[6], iv_prefix[7]]),
-      u32::from_le_bytes([iv_prefix[8], iv_prefix[9], iv_prefix[10], iv_prefix[11]]),
-    ];
-    let mut ctr = u32::from_be_bytes([
-      initial_counter[12],
-      initial_counter[13],
-      initial_counter[14],
-      initial_counter[15],
-    ]);
-    let mut offset = 0usize;
-
-    #[cfg(target_os = "linux")]
-    if data.len() >= 256 {
-      let mut state = x86_64_asm::AesGcmX86State::new(acc, ctr, data.as_ptr());
-      // SAFETY: external x86-64 VAES-512 AES-128-GCM seal kernel because:
-      // 1. This target-feature function is only entered after VAES, VPCLMULQDQ, AVX-512, AES-NI, and SSE2
-      //    were selected by runtime/backend dispatch.
-      // 2. `ni_rk.as_ptr()` addresses 11 initialized 128-bit AES-128 round keys.
-      // 3. `initial_counter` points to the full 16-byte GCM counter block, and `data` is valid for
-      //    `data.len()` mutable bytes.
-      // 4. The selected H-power table matches the chosen 16-block, 64-block, or 128-block fold cadence.
-      // 5. The kernel only processes complete block batches and reports the processed byte count so the
-      //    Rust fallback below handles every remaining full/partial tail.
-      if data.len() >= 4096 && (data.len() & 2047) == 0 {
-        x86_64_asm::rscrypto_aes128_gcm_seal_128x_vaes512_x86_64_linux(
-          ni_rk.as_ptr(),
-          initial_counter.as_ptr(),
-          data.as_mut_ptr(),
-          data.len(),
-          tables.h_powers_rev_128.as_ptr(),
-          core::ptr::from_mut(&mut state),
-        );
-      } else if data.len() >= 1024 {
-        x86_64_asm::rscrypto_aes128_gcm_seal_64x_vaes512_x86_64_linux(
-          ni_rk.as_ptr(),
-          initial_counter.as_ptr(),
-          data.as_mut_ptr(),
-          data.len(),
-          tables.h_powers_rev_64.as_ptr(),
-          core::ptr::from_mut(&mut state),
-        );
-      } else {
-        x86_64_asm::rscrypto_aes128_gcm_seal_16x_vaes512_x86_64_linux(
-          ni_rk.as_ptr(),
-          initial_counter.as_ptr(),
-          data.as_mut_ptr(),
-          data.len(),
-          tables.h_powers_rev_32.as_ptr(),
-          core::ptr::from_mut(&mut state),
-        );
-      }
-      acc = state.acc();
-      ctr = state.ctr;
-      offset = state.processed;
-    }
-
-    while offset.strict_add(256) <= data.len() {
-      let (ctr0, ctr1, ctr2, ctr3) = x86_gcm_ctr_blocks_be_16(iv_words, ctr);
-      let (ks0, ks1, ks2, ks3) = ni::encrypt_16blocks_128(ni_rk, ctr0, ctr1, ctr2, ctr3);
-
-      let p0 = _mm512_loadu_si512(data.as_ptr().add(offset).cast());
-      let c0 = _mm512_xor_si512(p0, ks0);
-      _mm512_storeu_si512(data.as_mut_ptr().add(offset).cast(), c0);
-
-      let p1 = _mm512_loadu_si512(data.as_ptr().add(offset.strict_add(64)).cast());
-      let c1 = _mm512_xor_si512(p1, ks1);
-      _mm512_storeu_si512(data.as_mut_ptr().add(offset.strict_add(64)).cast(), c1);
-
-      let p2 = _mm512_loadu_si512(data.as_ptr().add(offset.strict_add(128)).cast());
-      let c2 = _mm512_xor_si512(p2, ks2);
-      _mm512_storeu_si512(data.as_mut_ptr().add(offset.strict_add(128)).cast(), c2);
-
-      let p3 = _mm512_loadu_si512(data.as_ptr().add(offset.strict_add(192)).cast());
-      let c3 = _mm512_xor_si512(p3, ks3);
-      _mm512_storeu_si512(data.as_mut_ptr().add(offset.strict_add(192)).cast(), c3);
-      acc = super::polyval::x86_aggregate_16blocks_be_lanes_inline(acc, h_powers_rev_16, c0, c1, c2, c3);
-
-      ctr = ctr.wrapping_add(16);
-      offset = offset.strict_add(256);
-    }
-
-    while offset.strict_add(64) <= data.len() {
-      let ctr_vec = x86_gcm_ctr_blocks_be_4(iv_words, ctr);
-      let keystream = ni::encrypt_4blocks_128(ni_rk, ctr_vec);
-      let plaintext = _mm512_loadu_si512(data.as_ptr().add(offset).cast());
-      let ciphertext = _mm512_xor_si512(plaintext, keystream);
-      _mm512_storeu_si512(data.as_mut_ptr().add(offset).cast(), ciphertext);
-      acc = super::polyval::x86_aggregate_4blocks_be_lanes_inline(acc, h_powers_rev, ciphertext);
-
-      ctr = ctr.wrapping_add(4);
-      offset = offset.strict_add(64);
-    }
-
-    while offset < data.len() {
-      let mut counter_block = [0u8; 16];
-      counter_block[..12].copy_from_slice(&iv_prefix);
-      counter_block[12..16].copy_from_slice(&ctr.to_be_bytes());
-
-      let mut keystream_storage = crate::secret::ZeroizingBytes::<BLOCK_SIZE>::zeroed();
-
-      let keystream = keystream_storage.as_mut_array();
-
-      *keystream = counter_block;
-      ni::encrypt_block_128(ni_rk, keystream);
-
-      let remaining = data.len().strict_sub(offset);
-      if remaining >= BLOCK_SIZE {
-        let ks = u128::from_ne_bytes(*keystream);
-        let mut d = [0u8; BLOCK_SIZE];
-        d.copy_from_slice(&data[offset..offset.strict_add(BLOCK_SIZE)]);
-        let xored = u128::from_ne_bytes(d) ^ ks;
-        let ciphertext = xored.to_ne_bytes();
-        data[offset..offset.strict_add(BLOCK_SIZE)].copy_from_slice(&ciphertext);
-        acc ^= u128::from_be_bytes(ciphertext);
-        acc = super::polyval::x86_clmul128_reduce_inline(acc, h_polyval);
-        offset = offset.strict_add(BLOCK_SIZE);
-      } else {
-        let mut block = [0u8; BLOCK_SIZE];
-        let mut i = 0usize;
-        while i < remaining {
-          data[offset.strict_add(i)] ^= keystream[i];
-          block[i] = data[offset.strict_add(i)];
-          i = i.strict_add(1);
-        }
-        acc ^= u128::from_be_bytes(block);
-        acc = super::polyval::x86_clmul128_reduce_inline(acc, h_polyval);
-        offset = offset.strict_add(remaining);
-      }
-      ctr = ctr.wrapping_add(1);
-    }
-
-    acc
-  }
-}
-
-/// AES-128 CTR decryption fused with GHASH accumulation for GCM open.
-///
-/// Folds ciphertext into GHASH, decrypts the same chunk in place, and returns
-/// the accumulator. Authentication is finalized by the caller.
-///
-/// # Safety
-/// Caller must ensure AVX-512F + AVX-512VL + AVX-512BW + AVX-512DQ +
-/// VAES + VPCLMULQDQ + PCLMULQDQ + AES + SSE2.
-#[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm"))]
-#[target_feature(enable = "aes,sse2,avx512f,avx512vl,avx512bw,avx512dq,vaes,vpclmulqdq,pclmulqdq")]
-pub(crate) unsafe fn aes128_ctr32_decrypt_be_wide_ghash(
-  ek: &Aes128EncKey,
-  initial_counter: &[u8; BLOCK_SIZE],
-  data: &mut [u8],
-  mut acc: u128,
-  tables: X86GcmTables<'_>,
-) -> u128 {
-  use core::arch::x86_64::*;
-  let h_polyval = tables.h_polyval;
-  let h_powers_rev = tables.h_powers_rev;
-  let h_powers_rev_16 = tables.h_powers_rev_16;
-
-  // SAFETY: fused x86 AES-GCM opening because:
-  // 1. This function's caller guarantees all required x86 target features.
-  // 2. `data` is a valid mutable ciphertext slice. Each vector is folded into GHASH before the
-  //    corresponding plaintext is stored back.
-  // 3. All pointer arithmetic stays inside checked chunk bounds.
-  unsafe {
-    let ni_rk = match &ek.inner {
-      Key128Inner::X86AesNi(rk) => rk,
-      _ => {
-        acc = ghash_ciphertext_fallback(acc, h_polyval, data);
-        aes128_ctr32_encrypt_be(ek, initial_counter, data);
-        return acc;
-      }
-    };
-
-    let iv_prefix: [u8; 12] = {
-      let mut buf = [0u8; 12];
-      buf.copy_from_slice(&initial_counter[..12]);
-      buf
-    };
-    let iv_words = [
-      u32::from_le_bytes([iv_prefix[0], iv_prefix[1], iv_prefix[2], iv_prefix[3]]),
-      u32::from_le_bytes([iv_prefix[4], iv_prefix[5], iv_prefix[6], iv_prefix[7]]),
-      u32::from_le_bytes([iv_prefix[8], iv_prefix[9], iv_prefix[10], iv_prefix[11]]),
-    ];
-    let mut ctr = u32::from_be_bytes([
-      initial_counter[12],
-      initial_counter[13],
-      initial_counter[14],
-      initial_counter[15],
-    ]);
-    let mut offset = 0usize;
-
-    #[cfg(target_os = "linux")]
-    if data.len() >= 256 {
-      let mut state = x86_64_asm::AesGcmX86State::new(acc, ctr, data.as_ptr());
-      // SAFETY: external x86-64 VAES-512 AES-128-GCM open kernel because:
-      // 1. This target-feature function is only entered after VAES, VPCLMULQDQ, AVX-512, AES-NI, and SSE2
-      //    were selected by runtime/backend dispatch.
-      // 2. `ni_rk.as_ptr()` addresses 11 initialized 128-bit AES-128 round keys.
-      // 3. `initial_counter` points to the full 16-byte GCM counter block, and `data` is valid for
-      //    `data.len()` mutable bytes of ciphertext.
-      // 4. The selected kernel folds ciphertext into GHASH before storing plaintext using the matching
-      //    16-block, 64-block, or 128-block H-power table.
-      // 5. The kernel only processes complete block batches and reports the processed byte count so the
-      //    Rust fallback below handles every remaining full/partial tail.
-      if data.len() >= 4096 && (data.len() & 2047) == 0 {
-        x86_64_asm::rscrypto_aes128_gcm_open_128x_vaes512_x86_64_linux(
-          ni_rk.as_ptr(),
-          initial_counter.as_ptr(),
-          data.as_mut_ptr(),
-          data.len(),
-          tables.h_powers_rev_128.as_ptr(),
-          core::ptr::from_mut(&mut state),
-        );
-      } else if data.len() >= 1024 {
-        x86_64_asm::rscrypto_aes128_gcm_open_64x_vaes512_x86_64_linux(
-          ni_rk.as_ptr(),
-          initial_counter.as_ptr(),
-          data.as_mut_ptr(),
-          data.len(),
-          tables.h_powers_rev_64.as_ptr(),
-          core::ptr::from_mut(&mut state),
-        );
-      } else {
-        x86_64_asm::rscrypto_aes128_gcm_open_16x_vaes512_x86_64_linux(
-          ni_rk.as_ptr(),
-          initial_counter.as_ptr(),
-          data.as_mut_ptr(),
-          data.len(),
-          tables.h_powers_rev_32.as_ptr(),
-          core::ptr::from_mut(&mut state),
-        );
-      }
-      acc = state.acc();
-      ctr = state.ctr;
-      offset = state.processed;
-    }
-
-    while offset.strict_add(256) <= data.len() {
-      let (ctr0, ctr1, ctr2, ctr3) = x86_gcm_ctr_blocks_be_16(iv_words, ctr);
-      let (ks0, ks1, ks2, ks3) = ni::encrypt_16blocks_128(ni_rk, ctr0, ctr1, ctr2, ctr3);
-
-      let c0 = _mm512_loadu_si512(data.as_ptr().add(offset).cast());
-      let c1 = _mm512_loadu_si512(data.as_ptr().add(offset.strict_add(64)).cast());
-      let c2 = _mm512_loadu_si512(data.as_ptr().add(offset.strict_add(128)).cast());
-      let c3 = _mm512_loadu_si512(data.as_ptr().add(offset.strict_add(192)).cast());
-      acc = super::polyval::x86_aggregate_16blocks_be_lanes_inline(acc, h_powers_rev_16, c0, c1, c2, c3);
-      _mm512_storeu_si512(data.as_mut_ptr().add(offset).cast(), _mm512_xor_si512(c0, ks0));
-      _mm512_storeu_si512(
-        data.as_mut_ptr().add(offset.strict_add(64)).cast(),
-        _mm512_xor_si512(c1, ks1),
-      );
-      _mm512_storeu_si512(
-        data.as_mut_ptr().add(offset.strict_add(128)).cast(),
-        _mm512_xor_si512(c2, ks2),
-      );
-      _mm512_storeu_si512(
-        data.as_mut_ptr().add(offset.strict_add(192)).cast(),
-        _mm512_xor_si512(c3, ks3),
-      );
-
-      ctr = ctr.wrapping_add(16);
-      offset = offset.strict_add(256);
-    }
-
-    while offset.strict_add(64) <= data.len() {
-      let ctr_vec = x86_gcm_ctr_blocks_be_4(iv_words, ctr);
-      let keystream = ni::encrypt_4blocks_128(ni_rk, ctr_vec);
-      let ciphertext = _mm512_loadu_si512(data.as_ptr().add(offset).cast());
-      acc = super::polyval::x86_aggregate_4blocks_be_lanes_inline(acc, h_powers_rev, ciphertext);
-      _mm512_storeu_si512(
-        data.as_mut_ptr().add(offset).cast(),
-        _mm512_xor_si512(ciphertext, keystream),
-      );
-
-      ctr = ctr.wrapping_add(4);
-      offset = offset.strict_add(64);
-    }
-
-    while offset < data.len() {
-      let mut counter_block = [0u8; 16];
       counter_block[..12].copy_from_slice(&iv_prefix);
       counter_block[12..16].copy_from_slice(&ctr.to_be_bytes());
 
@@ -5918,6 +5413,10 @@ mod tests {
     }
   }
 
+  /// The AArch64 message functions against the portable CTR keystream, GHASH,
+  /// and tag: the short kernel alone, then 128-byte batches with each finishing
+  /// tail, in place, into separate output, and as a payload span plus a one-byte
+  /// tail; each open with the correct tag and with a corrupted one.
   #[cfg(all(target_arch = "aarch64", feature = "aes-gcm"))]
   fn aarch64_gcm_wrap_counter_block() -> [u8; 16] {
     let mut counter = [0u8; 16];
@@ -6148,47 +5647,6 @@ mod tests {
   }
 
   #[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm"))]
-  #[target_feature(enable = "avx512f")]
-  /// # Safety
-  ///
-  /// Caller must ensure AVX-512F is available before calling this target-feature helper.
-  unsafe fn x86_gcm_ctr_blocks_be_4_test_bytes(iv_words: [u32; 3], ctr: u32) -> [u8; 64] {
-    use core::arch::x86_64::*;
-
-    let mut out = [0u8; 64];
-    // SAFETY: test-only ZMM counter block store because:
-    // 1. The caller verified AVX-512F before invoking this target-feature helper.
-    // 2. `out` is exactly 64 writable bytes, matching one `__m512i` store.
-    // 3. The vector under test is produced directly from the four-block counter constructor.
-    unsafe { _mm512_storeu_si512(out.as_mut_ptr().cast(), x86_gcm_ctr_blocks_be_4(iv_words, ctr)) };
-    out
-  }
-
-  #[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm"))]
-  #[target_feature(enable = "avx512f,avx512bw")]
-  /// # Safety
-  ///
-  /// Caller must ensure AVX-512F and AVX-512BW are available before calling this target-feature
-  /// helper.
-  unsafe fn x86_gcm_ctr_blocks_be_16_test_bytes(iv_words: [u32; 3], ctr: u32) -> [u8; 256] {
-    use core::arch::x86_64::*;
-
-    let mut out = [0u8; 256];
-    // SAFETY: test-only ZMM counter block stores because:
-    // 1. The caller verified AVX-512F + AVX-512BW before invoking this target-feature helper.
-    // 2. `out` is exactly 256 writable bytes, matching four contiguous `__m512i` stores.
-    // 3. The vectors under test are produced directly from the sixteen-block counter constructor.
-    unsafe {
-      let (c0, c1, c2, c3) = x86_gcm_ctr_blocks_be_16(iv_words, ctr);
-      _mm512_storeu_si512(out.as_mut_ptr().cast(), c0);
-      _mm512_storeu_si512(out.as_mut_ptr().add(64).cast(), c1);
-      _mm512_storeu_si512(out.as_mut_ptr().add(128).cast(), c2);
-      _mm512_storeu_si512(out.as_mut_ptr().add(192).cast(), c3);
-    }
-    out
-  }
-
-  #[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm"))]
   #[test]
   fn x86_gcm_ctr_block_be_preserves_prefix_and_encodes_counter() {
     if !crate::platform::caps().has(crate::platform::caps::x86::SSE2) {
@@ -6234,59 +5692,7 @@ mod tests {
     }
   }
 
-  #[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm"))]
-  #[test]
-  fn x86_gcm_ctr_blocks_be_4_preserves_prefix_and_wraps_counter() {
-    if !crate::platform::caps().has(crate::platform::caps::x86::AVX512F) {
-      return;
-    }
-
-    let iv_prefix = *b"ctr wrap iv!";
-    let iv_words = x86_gcm_iv_words(&iv_prefix);
-
-    for ctr in [0x0102_0304, u32::MAX - 1] {
-      let mut expected = [0u8; 64];
-      fill_expected_gcm_counter_blocks(&iv_prefix, ctr, &mut expected);
-      // SAFETY: runtime caps above confirmed AVX-512F before calling the target-feature helper.
-      let actual = unsafe { x86_gcm_ctr_blocks_be_4_test_bytes(iv_words, ctr) };
-      assert_eq!(
-        actual.as_slice(),
-        expected.as_slice(),
-        "x86 ZMM GCM counter block mismatch"
-      );
-    }
-  }
-
-  #[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm"))]
-  #[test]
-  fn x86_gcm_ctr_blocks_be_16_preserves_prefix_and_wraps_counter() {
-    let required = crate::platform::caps::x86::AVX512F | crate::platform::caps::x86::AVX512BW;
-    if !crate::platform::caps().has(required) {
-      return;
-    }
-
-    let iv_prefix = *b"ctr wrap iv!";
-    let iv_words = x86_gcm_iv_words(&iv_prefix);
-
-    for ctr in [0x0102_0304, u32::MAX - 7] {
-      let mut expected = [0u8; 256];
-      fill_expected_gcm_counter_blocks(&iv_prefix, ctr, &mut expected);
-      // SAFETY: runtime caps above confirmed AVX-512F + AVX-512BW before calling the
-      // target-feature helper.
-      let actual = unsafe { x86_gcm_ctr_blocks_be_16_test_bytes(iv_words, ctr) };
-      assert_eq!(
-        actual.as_slice(),
-        expected.as_slice(),
-        "x86 vectorized ZMM GCM counter block mismatch"
-      );
-    }
-  }
-
-  #[cfg(all(
-    all(target_arch = "x86_64", target_feature = "sse2"),
-    feature = "aes-gcm",
-    any(target_os = "linux", target_os = "macos")
-  ))]
+  #[cfg(all(all(target_arch = "x86_64", target_feature = "sse2"), feature = "aes-gcm"))]
   fn x86_z512_gcm_caps_available() -> bool {
     let required = crate::platform::caps::x86::VAES_READY
       | crate::platform::caps::x86::VPCLMUL_READY
@@ -6294,11 +5700,7 @@ mod tests {
     crate::platform::caps().has(required)
   }
 
-  #[cfg(all(
-    all(target_arch = "x86_64", target_feature = "sse2"),
-    feature = "aes-gcm",
-    any(target_os = "linux", target_os = "macos")
-  ))]
+  #[cfg(all(all(target_arch = "x86_64", target_feature = "sse2"), feature = "aes-gcm"))]
   struct X86GcmTestPowers16 {
     h_polyval: u128,
     h_powers_rev: [u128; 4],
@@ -6311,11 +5713,7 @@ mod tests {
     h_powers_rev_128: [u128; 128],
   }
 
-  #[cfg(all(
-    all(target_arch = "x86_64", target_feature = "sse2"),
-    feature = "aes-gcm",
-    any(target_os = "linux", target_os = "macos")
-  ))]
+  #[cfg(all(all(target_arch = "x86_64", target_feature = "sse2"), feature = "aes-gcm"))]
   impl X86GcmTestPowers16 {
     fn tables<'a>(&'a self) -> X86GcmTables<'a> {
       X86GcmTables {
@@ -6332,11 +5730,7 @@ mod tests {
     }
   }
 
-  #[cfg(all(
-    all(target_arch = "x86_64", target_feature = "sse2"),
-    feature = "aes-gcm",
-    any(target_os = "linux", target_os = "macos")
-  ))]
+  #[cfg(all(all(target_arch = "x86_64", target_feature = "sse2"), feature = "aes-gcm"))]
   fn x86_gcm_test_powers_16() -> X86GcmTestPowers16 {
     let h_polyval = 0x1287_3d5b_fedc_ba09_7654_3210_f0e1_d2c3u128;
     let powers = crate::aead::polyval::precompute_powers_128(h_polyval);
@@ -6361,23 +5755,7 @@ mod tests {
     }
   }
 
-  #[cfg(all(
-    all(target_arch = "x86_64", target_feature = "sse2"),
-    feature = "aes-gcm",
-    any(target_os = "linux", target_os = "macos")
-  ))]
-  fn x86_gcm_wrap_counter_block() -> [u8; 16] {
-    let mut counter = [0u8; 16];
-    counter[..12].copy_from_slice(b"ctr wrap iv!");
-    counter[12..16].copy_from_slice(&(u32::MAX - 3).to_be_bytes());
-    counter
-  }
-
-  #[cfg(all(
-    all(target_arch = "x86_64", target_feature = "sse2"),
-    feature = "aes-gcm",
-    any(target_os = "linux", target_os = "macos")
-  ))]
+  #[cfg(all(all(target_arch = "x86_64", target_feature = "sse2"), feature = "aes-gcm"))]
   fn fill_x86_gcm_test_plaintext(out: &mut [u8]) {
     let mut i = 0usize;
     while i < out.len() {
@@ -6388,129 +5766,120 @@ mod tests {
     }
   }
 
-  #[cfg(all(
-    all(target_arch = "x86_64", target_feature = "sse2"),
-    feature = "aes-gcm",
-    any(target_os = "linux", target_os = "macos")
-  ))]
-  #[test]
-  fn x86_aes128_gcm_avx512_large_asm_tail_matches_scalar() {
-    if !x86_z512_gcm_caps_available() {
-      return;
-    }
+  /// The VAES message functions against the portable CTR keystream, GHASH, and
+  /// tag. The lengths reach every chain: the short kernel alone, 16- and
+  /// 64-block batches, the 128-block prefix, and each finishing tail. Each seal
+  /// runs in place, into separate output, and as a payload span plus a one-byte
+  /// tail; each open runs with the correct tag and with a corrupted one.
+  #[cfg(all(all(target_arch = "x86_64", target_feature = "sse2"), feature = "aes-gcm"))]
+  macro_rules! x86_gcm_message_test {
+    ($name:ident, $key:expr, $expand:ident, $ctr:ident, $block:ident, $seal:ident, $open:ident) => {
+      #[test]
+      fn $name() {
+        if !x86_z512_gcm_caps_available() {
+          return;
+        }
+        let ek = $expand(&$key);
+        let mut j0 = [0u8; 16];
+        j0[..12].copy_from_slice(b"chained ctr!");
+        j0[15] = 1;
+        let mut counter = j0;
+        counter[15] = 2;
+        let mut tag_mask = j0;
+        $block(&ek, &mut tag_mask);
+        let powers = x86_gcm_test_powers_16();
+        let seed_acc = 0x1123_5813_2134_5589_1442_3337_6109_8715u128;
+        let lengths = [
+          0usize, 1, 15, 16, 17, 63, 64, 65, 239, 240, 241, 255, 256, 257, 271, 272, 495, 496, 497, 1023, 1024, 1025,
+          1057, 1280, 1536, 2048, 2305, 4095, 4096, 4097, 6000, 6143, 8192, 16_368, 16_385,
+        ];
+        for len in lengths {
+          let mut plaintext = std::vec![0u8; len];
+          fill_x86_gcm_test_plaintext(&mut plaintext);
+          let mut expected = plaintext.clone();
+          $ctr(&ek, &counter, &mut expected);
+          let mut length_block = [0u8; 16];
+          length_block[..8].copy_from_slice(&104u64.to_be_bytes());
+          length_block[8..].copy_from_slice(&u64::try_from(len).unwrap().strict_mul(8).to_be_bytes());
+          let acc = ghash_ciphertext_fallback(seed_acc, powers.h_polyval, &expected) ^ u128::from_be_bytes(length_block);
+          let acc = super::super::polyval::clmul128_reduce(acc, powers.h_polyval);
+          let expected_tag = (acc ^ u128::from_be_bytes(tag_mask)).to_be_bytes();
 
-    let ek = aes128_expand_key(&[0x17u8; KEY_SIZE_128]);
-    let counter = x86_gcm_wrap_counter_block();
-    let powers = x86_gcm_test_powers_16();
-    let seed_acc = 0x1123_5813_2134_5589_1442_3337_6109_8715u128;
+          let seal = |src: &[u8], tail: &[&[u8]], dst: *mut u8| {
+            // SAFETY: runtime caps confirmed every kernel feature; `src`, the
+            // tail, and `dst` cover the whole message and are disjoint or equal.
+            unsafe {
+              $seal(
+                &ek, &j0, &counter, seed_acc, src.as_ptr(), src.len(), tail, dst, &length_block, powers.tables(),
+              )
+            }
+            .expect("AES-NI schedule")
+          };
+          let mut in_place = plaintext.clone();
+          let pointer = in_place.as_mut_ptr();
+          // SAFETY: `in_place` is readable and writable for `len` bytes and sealed in place.
+          let tag = unsafe {
+            $seal(
+              &ek, &j0, &counter, seed_acc, pointer, len, &[], pointer, &length_block, powers.tables(),
+            )
+          }
+          .expect("AES-NI schedule");
+          assert_eq!((in_place.as_slice(), tag), (expected.as_slice(), expected_tag), "in place, len={len}");
+          let mut separate = std::vec![0xa5u8; len];
+          assert_eq!(seal(&plaintext, &[], separate.as_mut_ptr()), expected_tag, "separate, len={len}");
+          assert_eq!(separate, expected, "separate, len={len}");
+          if let Some((last, head)) = plaintext.split_last() {
+            let mut gathered = std::vec![0xa5u8; len];
+            let last = [*last];
+            assert_eq!(seal(head, &[&last], gathered.as_mut_ptr()), expected_tag, "tail, len={len}");
+            assert_eq!(gathered, expected, "tail, len={len}");
+          }
 
-    for len in [1057usize, 1280, 1536, 1792, 2048, 2305, 4096, 8192] {
-      let mut plaintext = std::vec![0u8; len];
-      fill_x86_gcm_test_plaintext(&mut plaintext);
-
-      let mut expected = plaintext.clone();
-      aes128_ctr32_encrypt_be(&ek, &counter, &mut expected);
-      let expected_acc = ghash_ciphertext_fallback(seed_acc, powers.h_polyval, &expected);
-
-      let mut actual = plaintext.clone();
-      // SAFETY: large x86 AES-128-GCM AVX-512 seal test because:
-      // 1. Runtime caps above confirmed VAES + VPCLMULQDQ + AVX-512 state + AES-NI.
-      // 2. These lengths force the Unix AVX-512 ASM bulk path through 64-block, 32-block, and 16-block
-      //    tails.
-      // 3. Any remaining partial block is handled by the shared Rust tail after the ASM path returns.
-      let actual_acc =
-        unsafe { aes128_ctr32_encrypt_be_wide_ghash(&ek, &counter, &mut actual, seed_acc, powers.tables()) };
-
-      assert_eq!(
-        actual, expected,
-        "AES-128 large AVX-512 ASM seal ciphertext mismatch at len={len}"
-      );
-      assert_eq!(
-        actual_acc, expected_acc,
-        "AES-128 large AVX-512 ASM seal GHASH accumulator mismatch at len={len}"
-      );
-
-      let mut opened = actual;
-      // SAFETY: large x86 AES-128-GCM AVX-512 open test because:
-      // 1. Runtime caps above confirmed VAES + VPCLMULQDQ + AVX-512 state + AES-NI.
-      // 2. These lengths force the Unix AVX-512 ASM bulk path through 64-block, 32-block, and 16-block
-      //    tails.
-      // 3. The helper GHASHes ciphertext before decrypting and leaves any partial block to the Rust tail.
-      let open_acc =
-        unsafe { aes128_ctr32_decrypt_be_wide_ghash(&ek, &counter, &mut opened, seed_acc, powers.tables()) };
-
-      assert_eq!(
-        opened, plaintext,
-        "AES-128 large AVX-512 ASM open plaintext mismatch at len={len}"
-      );
-      assert_eq!(
-        open_acc, expected_acc,
-        "AES-128 large AVX-512 ASM open GHASH accumulator mismatch at len={len}"
-      );
-    }
+          for corrupt in [false, true] {
+            let mut opened = expected.clone();
+            let mut tag = expected_tag;
+            if corrupt {
+              tag[len % 16] ^= 0x10;
+            }
+            // SAFETY: `opened` is readable and writable for `len` bytes.
+            let matched = unsafe {
+              $open(
+                &ek, &j0, &counter, seed_acc, opened.as_mut_ptr(), len, &length_block, powers.tables(), &tag,
+              )
+            }
+            .expect("AES-NI schedule");
+            assert_eq!(matched, !corrupt, "open, len={len}");
+            if corrupt {
+              assert!(opened.iter().all(|&byte| byte == 0), "rejected open, len={len}");
+            } else {
+              assert_eq!(opened, plaintext, "open, len={len}");
+            }
+          }
+        }
+      }
+    };
   }
 
-  #[cfg(all(
-    all(target_arch = "x86_64", target_feature = "sse2"),
-    feature = "aes-gcm",
-    any(target_os = "linux", target_os = "macos")
-  ))]
-  #[test]
-  fn x86_aes256_gcm_avx512_large_asm_tail_matches_scalar() {
-    if !x86_z512_gcm_caps_available() {
-      return;
-    }
-
-    let ek = aes256_expand_key(&[0x29u8; KEY_SIZE]);
-    let counter = x86_gcm_wrap_counter_block();
-    let powers = x86_gcm_test_powers_16();
-    let seed_acc = 0x2357_1113_1719_2329_3137_4143_4753_5961u128;
-
-    for len in [1057usize, 1280, 1536, 1792, 2048, 2305, 4096, 8192] {
-      let mut plaintext = std::vec![0u8; len];
-      fill_x86_gcm_test_plaintext(&mut plaintext);
-
-      let mut expected = plaintext.clone();
-      aes256_ctr32_encrypt_be(&ek, &counter, &mut expected);
-      let expected_acc = ghash_ciphertext_fallback(seed_acc, powers.h_polyval, &expected);
-
-      let mut actual = plaintext.clone();
-      // SAFETY: large x86 AES-256-GCM AVX-512 seal test because:
-      // 1. Runtime caps above confirmed VAES + VPCLMULQDQ + AVX-512 state + AES-NI.
-      // 2. These lengths force the Unix AVX-512 ASM bulk path through 64-block, 32-block, and 16-block
-      //    tails.
-      // 3. Any remaining partial block is handled by the shared Rust tail after the ASM path returns.
-      let actual_acc =
-        unsafe { aes256_ctr32_encrypt_be_wide_ghash(&ek, &counter, &mut actual, seed_acc, powers.tables()) };
-
-      assert_eq!(
-        actual, expected,
-        "AES-256 large AVX-512 ASM seal ciphertext mismatch at len={len}"
-      );
-      assert_eq!(
-        actual_acc, expected_acc,
-        "AES-256 large AVX-512 ASM seal GHASH accumulator mismatch at len={len}"
-      );
-
-      let mut opened = actual;
-      // SAFETY: large x86 AES-256-GCM AVX-512 open test because:
-      // 1. Runtime caps above confirmed VAES + VPCLMULQDQ + AVX-512 state + AES-NI.
-      // 2. These lengths force the Unix AVX-512 ASM bulk path through 64-block, 32-block, and 16-block
-      //    tails.
-      // 3. The helper GHASHes ciphertext before decrypting and leaves any partial block to the Rust tail.
-      let open_acc =
-        unsafe { aes256_ctr32_decrypt_be_wide_ghash(&ek, &counter, &mut opened, seed_acc, powers.tables()) };
-
-      assert_eq!(
-        opened, plaintext,
-        "AES-256 large AVX-512 ASM open plaintext mismatch at len={len}"
-      );
-      assert_eq!(
-        open_acc, expected_acc,
-        "AES-256 large AVX-512 ASM open GHASH accumulator mismatch at len={len}"
-      );
-    }
-  }
+  #[cfg(all(all(target_arch = "x86_64", target_feature = "sse2"), feature = "aes-gcm"))]
+  x86_gcm_message_test!(
+    x86_aes128_gcm_message_kernels_match_scalar,
+    [0x17u8; KEY_SIZE_128],
+    aes128_expand_key,
+    aes128_ctr32_encrypt_be,
+    aes128_encrypt_block,
+    aes128_gcm_seal_x86,
+    aes128_gcm_open_x86
+  );
+  #[cfg(all(all(target_arch = "x86_64", target_feature = "sse2"), feature = "aes-gcm"))]
+  x86_gcm_message_test!(
+    x86_aes256_gcm_message_kernels_match_scalar,
+    [0x29u8; KEY_SIZE],
+    aes256_expand_key,
+    aes256_ctr32_encrypt_be,
+    aes256_encrypt_block,
+    aes256_gcm_seal_x86,
+    aes256_gcm_open_x86
+  );
 
   #[test]
   fn aes128_encrypt_blocks_ecb_matches_scalar_dispatch() {

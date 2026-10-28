@@ -1821,6 +1821,39 @@ gate = "diagnostic"
 reason = "High-level gather seal exposes class-dependent public ciphertext/tag. This composed-path timing diagnostic supplements the required primitive probes and generated-code review."
 
 [[dudect_case]]
+name = "aes128gcm_record_gather_fixed_vs_random_key_seal"
+primitive = "aead.symmetric_transform"
+filter = "aes128gcm_record_gather_fixed_vs_random_key_seal"
+left_class = "TLS record gather seal (1024-byte payload span and content-type byte) with fixed secret key"
+right_class = "the same TLS record gather seal with random secret key"
+samples = 20000
+smoke_samples = 2000
+gate = "diagnostic"
+reason = "High-level record-shaped gather seal exposes class-dependent public ciphertext/tag. It reaches the head-and-tail gather kernels that the 16385-byte partition does not; this composed-path timing diagnostic supplements the required secret-only CTR/GHASH/tag-AES probes and generated-code review."
+
+[[dudect_case]]
+name = "aes256gcm_record_gather_fixed_vs_random_key_seal"
+primitive = "aead.symmetric_transform"
+filter = "aes256gcm_record_gather_fixed_vs_random_key_seal"
+left_class = "TLS record gather seal (1024-byte payload span and content-type byte) with fixed secret key"
+right_class = "the same TLS record gather seal with random secret key"
+samples = 20000
+smoke_samples = 2000
+gate = "diagnostic"
+reason = "High-level record-shaped gather seal exposes class-dependent public ciphertext/tag. It reaches the head-and-tail gather kernels that the 16385-byte partition does not; this composed-path timing diagnostic supplements the required secret-only CTR/GHASH/tag-AES probes and generated-code review."
+
+[[dudect_case]]
+name = "chacha20poly1305_record_gather_fixed_vs_random_key_seal"
+primitive = "aead.symmetric_transform"
+filter = "chacha20poly1305_record_gather_fixed_vs_random_key_seal"
+left_class = "TLS record gather seal (1024-byte payload span and content-type byte) with fixed secret key"
+right_class = "the same TLS record gather seal with random secret key"
+samples = 20000
+smoke_samples = 2000
+gate = "diagnostic"
+reason = "High-level record-shaped gather seal exposes class-dependent public ciphertext/tag. It reaches the head-and-tail gather kernels that the 16385-byte partition does not; this composed-path timing diagnostic supplements the required primitive probes and generated-code review."
+
+[[dudect_case]]
 name = "aes128gcm_fixed_vs_random_key_seal"
 primitive = "aead.symmetric_transform"
 filter = "aes128gcm_fixed_vs_random_key_seal"

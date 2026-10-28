@@ -57,6 +57,10 @@ class Boundary:
   scrub: re.Pattern[str]
   source: Path
   constant: str
+  # Targets whose artifact links the workers; None means every reviewed target.
+  targets: frozenset[str] | None = None
+  # Whether a portable-only build links the workers.
+  portable: bool = True
 
 
 SECRET_HASHING = ROOT / "src" / "hashes" / "crypto" / "keccak" / "secret.rs"
@@ -67,14 +71,14 @@ BOUNDARIES = [
       r"^rscrypto::hashes::crypto::keccak::secret::"
       r"(absorb_and_squeeze::<\d+>|squeeze_seeded|squeeze_seeded_pair|squeeze_seeded64_pair)$"
     ),
-    scrub=re.compile(r"^rscrypto::hashes::crypto::keccak::secret::scrub_dead_stack::<256>$"),
+    scrub=re.compile(r"^rscrypto::backend::stack::scrub_dead_stack::<256>$"),
     source=SECRET_HASHING,
     constant="STACK_SCRUB_WORDS",
   ),
   Boundary(
     name="secret four-state SHAKE256 (ML-KEM PRF)",
     workers=re.compile(r"^rscrypto::hashes::crypto::keccak::secret::squeeze_seeded_quad$"),
-    scrub=re.compile(r"^rscrypto::hashes::crypto::keccak::secret::scrub_dead_stack::<512>$"),
+    scrub=re.compile(r"^rscrypto::backend::stack::scrub_dead_stack::<512>$"),
     source=SECRET_HASHING,
     constant="QUAD_STACK_SCRUB_WORDS",
   ),
@@ -84,6 +88,33 @@ BOUNDARIES = [
     scrub=re.compile(r"^rscrypto::aead::aes::scrub_ctr_stack$"),
     source=ROOT / "src" / "aead" / "aes.rs",
     constant="CTR_STACK_SCRUB_WORDS",
+  ),
+  Boundary(
+    name="AES-GCM x86-64 VAES message tails",
+    workers=re.compile(r"^rscrypto::aead::aes::x86_short::(?:seal|open)_worker::<(?:11|15)>$"),
+    scrub=re.compile(r"^rscrypto::backend::stack::scrub_dead_stack_avx512::<40>$"),
+    source=ROOT / "src" / "aead" / "aes" / "x86_64_short.rs",
+    constant="STACK_SCRUB_WORDS",
+    targets=frozenset({"x86_64-unknown-linux-gnu"}),
+    portable=False,
+  ),
+  Boundary(
+    name="ChaCha20 x86-64 AVX-512 column batches",
+    workers=re.compile(r"^rscrypto::backend::chacha20::x86_avx512::columns$"),
+    scrub=re.compile(r"^rscrypto::backend::stack::scrub_dead_stack_avx512::<160>$"),
+    source=ROOT / "src" / "backend" / "chacha20" / "x86_64_avx512.rs",
+    constant="COLUMN_STACK_SCRUB_WORDS",
+    targets=frozenset({"x86_64-unknown-linux-gnu"}),
+    portable=False,
+  ),
+  Boundary(
+    name="ChaCha20-Poly1305 x86-64 AVX-512 one-pass open",
+    workers=re.compile(r"^rscrypto::aead::chacha20poly1305::x86_64_avx512::open_one_pass::<[12]>$"),
+    scrub=re.compile(r"^rscrypto::backend::stack::scrub_dead_stack_avx512::<40>$"),
+    source=ROOT / "src" / "aead" / "chacha20poly1305" / "x86_64_avx512.rs",
+    constant="ONE_PASS_STACK_SCRUB_WORDS",
+    targets=frozenset({"x86_64-unknown-linux-gnu"}),
+    portable=False,
   ),
 ]
 
@@ -527,10 +558,14 @@ def scrub_bound(boundary: Boundary) -> int:
   return int(match.group(1)) * 8
 
 
-def review(program: Program, boundaries: list[Boundary] = BOUNDARIES) -> dict[str, object]:
+def review(program: Program, boundaries: list[Boundary] = BOUNDARIES, portable: bool = False) -> dict[str, object]:
   arch = ARCHES[program.target]
   results = []
   for boundary in boundaries:
+    if boundary.targets is not None and program.target not in boundary.targets:
+      continue
+    if portable and not boundary.portable:
+      continue
     bound = scrub_bound(boundary)
     problems: list[str] = []
     scrubs = program.named(boundary.scrub)
@@ -698,7 +733,7 @@ def main(argv: list[str] | None = None) -> int:
   reports = []
   for target in targets:
     binary = args.binary or build(target, args.portable, args.rustflags.split())
-    report = review(load(target, binary))
+    report = review(load(target, binary), portable=args.portable)
     report["binary"] = str(binary)
     report["portable"] = args.portable
     report["rustflags"] = args.rustflags

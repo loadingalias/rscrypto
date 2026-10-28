@@ -40,6 +40,10 @@ fn wide(a: u64, b: u64) -> u128 {
 /// The little-endian value of at most eight bytes.
 ///
 /// Only the public length selects the loads.
+#[cfg(any(
+  feature = "poly1305",
+  all(feature = "chacha20poly1305", target_arch = "x86_64", target_feature = "sse2")
+))]
 #[inline(always)]
 fn partial_word(bytes: &[u8]) -> u64 {
   if let Some(word) = bytes.first_chunk::<8>() {
@@ -67,6 +71,7 @@ fn partial_word(bytes: &[u8]) -> u64 {
 /// The two words of a final fragment of 1 to 15 bytes followed by a byte of one and zeros.
 ///
 /// Building the words in registers leaves no stack copy of the fragment to clear.
+#[cfg(feature = "poly1305")]
 #[inline(always)]
 fn fragment_words(fragment: &[u8]) -> (u64, u64) {
   let len = fragment.len();
@@ -212,6 +217,7 @@ impl State {
     all(target_arch = "x86_64", target_feature = "sse2"),
     all(target_arch = "aarch64", target_endian = "little", target_feature = "neon")
   ))]
+  #[cfg(feature = "poly1305")]
   #[inline(always)]
   pub(super) fn times_r(&self, value: [u64; 3]) -> [u64; 3] {
     let [r0, r1] = self.r;
@@ -236,6 +242,20 @@ impl State {
       );
     }
     self.h = normalize(acc);
+  }
+
+  /// Absorbs a fragment of 1 to 15 bytes zero-padded to a full block, with
+  /// its 2^128 bit, as RFC 8439 pads each AEAD segment. The block's words are
+  /// built in registers, without a stack copy or a library call.
+  #[cfg(all(feature = "chacha20poly1305", target_arch = "x86_64", target_feature = "sse2"))]
+  #[inline(always)]
+  pub(crate) fn absorb_zero_padded(&mut self, fragment: &[u8]) {
+    let (lo, hi) = match fragment.split_first_chunk::<8>() {
+      Some((lo, rest)) => (u64::from_le_bytes(*lo), partial_word(rest)),
+      None => (partial_word(fragment), 0),
+    };
+    let [r0, r1] = self.r;
+    self.h = normalize(absorb_block(self.h, lo, hi, 1, r0, r1, self.s1()));
   }
 
   /// Absorbs full blocks with four independent Horner chains over contiguous regions.
@@ -294,6 +314,7 @@ impl State {
 
   /// Absorbs a final fragment of 1 to 15 message bytes, framed with a byte of one and zeros and
   /// without the 2^128 bit.
+  #[cfg(feature = "poly1305")]
   #[inline(always)]
   pub(crate) fn absorb_final_bytes(&mut self, fragment: &[u8]) {
     let [r0, r1] = self.r;
@@ -302,6 +323,7 @@ impl State {
   }
 
   /// Absorbs a caller-framed final fragment: its bytes, a byte of one, then zeros, without the 2^128 bit.
+  #[cfg(feature = "poly1305")]
   #[inline(always)]
   pub(crate) fn absorb_final_fragment(&mut self, block: &[u8; 16]) {
     let [r0, r1] = self.r;
@@ -338,4 +360,40 @@ impl State {
     tag[8..16].copy_from_slice(&t1.to_le_bytes());
     tag
   }
+}
+
+/// The ChaCha20-Poly1305 tag of `aad` and `ciphertext` (RFC 8439 §2.8): both
+/// zero-padded to 16-byte blocks, then the little-endian byte lengths. One
+/// scalar chain, or four for long messages; the intermediate state clears on drop.
+#[cfg(all(feature = "chacha20poly1305", target_arch = "x86_64", target_feature = "sse2"))]
+#[inline]
+pub(crate) fn aead_tag(key: &[u8; 32], aad: &[u8], ciphertext: &[u8], lengths: &[u8; 16]) -> [u8; 16] {
+  aead_tag_chains::<true>(key, aad, ciphertext, lengths)
+}
+
+/// [`aead_tag`] with one chain at every length. It always inlines, so a caller
+/// can hold vector state across it without a call that spills that state.
+#[cfg(all(feature = "chacha20poly1305", target_arch = "x86_64", target_feature = "sse2"))]
+#[inline(always)]
+pub(crate) fn aead_tag_one_chain(key: &[u8; 32], aad: &[u8], ciphertext: &[u8], lengths: &[u8; 16]) -> [u8; 16] {
+  aead_tag_chains::<false>(key, aad, ciphertext, lengths)
+}
+
+#[cfg(all(feature = "chacha20poly1305", target_arch = "x86_64", target_feature = "sse2"))]
+#[inline(always)]
+fn aead_tag_chains<const WIDE: bool>(key: &[u8; 32], aad: &[u8], ciphertext: &[u8], lengths: &[u8; 16]) -> [u8; 16] {
+  let mut state = State::new(key);
+  for segment in [aad, ciphertext] {
+    let (blocks, rest) = segment.as_chunks::<16>();
+    if WIDE && blocks.len() >= WIDE_MIN_BLOCKS {
+      state.absorb_blocks_wide(blocks);
+    } else {
+      state.absorb_blocks(blocks);
+    }
+    if !rest.is_empty() {
+      state.absorb_zero_padded(rest);
+    }
+  }
+  state.absorb_blocks(&[*lengths]);
+  state.tag()
 }

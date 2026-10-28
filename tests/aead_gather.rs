@@ -208,6 +208,80 @@ fn byte_chunks_cross_cipher_and_batch_boundaries() {
   );
 }
 
+fn leading_span_and_short_tail<C: AeadGather<Nonce = Nonce96>, O>(cipher: &C, oracle_cipher: &O, every_through: usize)
+where
+  O: aes_gcm::aead::Aead + aes_gcm::aead::AeadCore<NonceSize = aes_gcm::aead::consts::U12>,
+{
+  // TLS records gather one payload span and the content-type byte. Integrated
+  // kernels may take the span directly and authenticate a short remainder as
+  // trailing ciphertext; shorter seams share one keystream batch. Every length
+  // through `every_through` takes the TLS shape and one rotating remainder.
+  // Lengths next to 64-byte multiples through 1100 bytes and next to wider
+  // length policies take every remainder around one and two blocks. AAD
+  // rotates through the TLS 1.3 and 1.2 lengths.
+  let aads: [&[u8]; 4] = [b"", b"\x17\x03\x03\x00\x41", b"thirteen-byte", b"seventeen-byte-ad"];
+  let tails = [0usize, 2, 15, 16, 17, 63, 64, 65, 127, 128, 129];
+  let nonce = [0x6d; 12];
+  let lengths = (0usize..=1100).filter(|len| *len <= every_through || matches!(len.strict_rem(64), 0 | 1 | 63));
+  for len in lengths.chain([1535, 1536, 1537, 2047, 2048, 2049, 4095, 4096, 4097]) {
+    let plaintext: Vec<_> = (0..len).map(|i| (i.wrapping_mul(7) ^ 0x5c).to_le_bytes()[0]).collect();
+    let aad = aads[len.strict_rem(aads.len())];
+    let expected = oracle(oracle_cipher, &nonce, aad, &plaintext);
+    let boundary = len > 1100 || matches!(len.strict_rem(64), 0 | 1 | 63);
+    let rotating = [1, tails[len.strict_rem(tails.len())]];
+    let selected = if boundary { &tails[..] } else { &rotating[..] };
+    for &tail in selected.iter().chain(boundary.then_some(&1)) {
+      if let Some(head) = len.checked_sub(tail) {
+        check(cipher, nonce, aad, &plaintext, &[head], &expected);
+      }
+    }
+    if boundary && len >= 2 {
+      // A short middle span and a one-byte final span after the leading span.
+      check(
+        cipher,
+        nonce,
+        aad,
+        &plaintext,
+        &[len.strict_div(2), len.strict_sub(1)],
+        &expected,
+      );
+    }
+    if len >= 6 {
+      // Four one-byte tail spans fit a short-message kernel; a fifth does not.
+      for spans in [4usize, 5] {
+        let cuts: Vec<_> = (1..=spans).map(|back| len.strict_sub(back)).collect();
+        check(cipher, nonce, aad, &plaintext, &cuts, &expected);
+      }
+    }
+  }
+}
+
+#[test]
+fn leading_spans_with_short_remainders_match_one_message() {
+  #[cfg(feature = "aes-gcm")]
+  {
+    // AES-GCM seals short TLS shapes in one kernel call and batches other
+    // seams below its 256-byte native unit.
+    leading_span_and_short_tail(
+      &rscrypto::Aes128Gcm::new(&rscrypto::Aes128GcmKey::from_bytes([0x24; 16])),
+      &aes_gcm::Aes128Gcm::new(&Array([0x24; 16])),
+      576,
+    );
+    leading_span_and_short_tail(
+      &rscrypto::Aes256Gcm::new(&rscrypto::Aes256GcmKey::from_bytes([0x24; 32])),
+      &aes_gcm::Aes256Gcm::new(&Array([0x24; 32])),
+      576,
+    );
+  }
+  // The integrated x86 kernel has internal length paths through its bound.
+  #[cfg(feature = "chacha20poly1305")]
+  leading_span_and_short_tail(
+    &rscrypto::ChaCha20Poly1305::new(&rscrypto::ChaCha20Poly1305Key::from_bytes([0x24; 32])),
+    &chacha20poly1305::ChaCha20Poly1305::new(&Array([0x24; 32])),
+    1100,
+  );
+}
+
 fn descriptors<C: AeadGather<Nonce = Nonce96>, O>(cipher: &C, oracle_cipher: &O)
 where
   O: aes_gcm::aead::Aead + aes_gcm::aead::AeadCore<NonceSize = aes_gcm::aead::consts::U12>,

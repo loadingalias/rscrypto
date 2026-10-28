@@ -318,3 +318,54 @@ fn chacha20poly1305_boundary_and_large_inputs_match_oracle() {
     }
   }
 }
+
+#[test]
+fn chacha20poly1305_every_short_length_matches_oracle_and_rejects_tampering() {
+  // Every length through two sixteen-block batches and the one-pass bound,
+  // plus the lengths of a 16 KiB TLS write that rustls splits into two records.
+  // Each AAD length rotates through empty, TLS 1.3, TLS 1.2, and multi-block.
+  // A rejected open must leave every byte zero whichever kernel ran it.
+  let key_bytes = [0x5cu8; ChaCha20Poly1305::KEY_SIZE];
+  let cipher = ChaCha20Poly1305::new(&ChaCha20Poly1305Key::from_bytes(key_bytes));
+  let oracle = Oracle::new(&Array(key_bytes));
+  let lengths = (0usize..=2100).chain([4095, 4096, 4097, 16_367, 16_368, 16_383, 16_384, 16_385]);
+  for len in lengths {
+    let aad = pattern_bytes([0, 5, 13, 37][len % 4], 0x6e);
+    let mut nonce_bytes = [0x2au8; Nonce96::LENGTH];
+    nonce_bytes[8..].copy_from_slice(&u32::try_from(len).expect("length fits u32").to_be_bytes());
+    let nonce = Nonce96::from_bytes(nonce_bytes);
+    let plaintext = pattern_bytes(len, 0x13);
+
+    let mut sealed = plaintext.clone();
+    let tag = cipher
+      .encrypt_in_place(&nonce, &aad, &mut sealed)
+      .expect("valid ChaCha20-Poly1305 input must seal");
+    let mut expected = plaintext.clone();
+    let expected_tag = oracle
+      .encrypt_inout_detached(&Array(nonce_bytes), &aad, expected.as_mut_slice().into())
+      .expect("RustCrypto ChaCha20-Poly1305 must seal");
+    assert_eq!(sealed, expected, "ciphertext len={len}");
+    assert_eq!(tag.as_bytes(), expected_tag.as_slice(), "tag len={len}");
+
+    if let Some(last) = len.checked_sub(1) {
+      let mut buffer = sealed.clone();
+      buffer[last] ^= 0x40;
+      cipher
+        .decrypt_in_place(&nonce, &aad, &mut buffer, &tag)
+        .expect_err("modified ciphertext must not authenticate");
+      assert!(buffer.iter().all(|&byte| byte == 0), "ciphertext rejection len={len}");
+    }
+    let mut bad = tag.to_bytes();
+    bad[len % 16] ^= 0x02;
+    let mut buffer = sealed.clone();
+    cipher
+      .decrypt_in_place(&nonce, &aad, &mut buffer, &ChaCha20Poly1305Tag::from_bytes(bad))
+      .expect_err("modified tag must not authenticate");
+    assert!(buffer.iter().all(|&byte| byte == 0), "tag rejection len={len}");
+
+    cipher
+      .decrypt_in_place(&nonce, &aad, &mut sealed, &tag)
+      .expect("unmodified message must authenticate");
+    assert_eq!(sealed, plaintext, "open len={len}");
+  }
+}

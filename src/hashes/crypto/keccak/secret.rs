@@ -18,6 +18,7 @@ use super::xof_seeded_64_2_pair_secret;
 use super::{KeccakCoreImpl, PlatformPermuter};
 #[cfg(feature = "ml-kem")]
 use super::{xof_seeded_32_1_pair_secret, xof_seeded_32_1_quad_secret, xof_seeded_32_1_secret};
+use crate::backend::stack::scrub_dead_stack;
 
 /// Dead stack cleared after each worker. Every worker's linked frame,
 /// including its Keccak callees and any leaf red zone, must fit within it.
@@ -123,30 +124,6 @@ fn squeeze_seeded_quad(permuter: PlatformPermuter, seed: &[u8; 32], [a, b, c, d]
   let (mut reader_a, mut reader_b, mut reader_c, mut reader_d) =
     xof_seeded_32_1_quad_secret::<SHAKE256_RATE>(permuter, SHAKE_SUFFIX, seed, a, b, c, d);
   KeccakXofImpl::squeeze_quad_into([&mut reader_a, &mut reader_b, &mut reader_c, &mut reader_d], outputs);
-}
-
-#[inline(never)]
-fn scrub_dead_stack<const WORDS: usize>() {
-  const { assert!(WORDS.is_multiple_of(4)) };
-  // Leave the buffer uninitialized so only the volatile stores write it.
-  // Volatile stores cannot be elided, and no later access depends on their
-  // order, so no fence is needed.
-  let mut scratch = core::mem::MaybeUninit::<[u64; WORDS]>::uninit();
-  let words = scratch.as_mut_ptr().cast::<u64>();
-  // Four stores per iteration let cores with two store ports retire the
-  // scrub faster than a one-store loop.
-  for index in (0..WORDS).step_by(4) {
-    // SAFETY: the word count is a multiple of four, so `index + 3` is below
-    // the array length and every pointer stays inside this local, properly
-    // aligned `[u64; N]` allocation. Writing a `u64` needs no prior
-    // initialization, and the buffer is never read.
-    unsafe {
-      words.add(index).write_volatile(0);
-      words.add(index.strict_add(1)).write_volatile(0);
-      words.add(index.strict_add(2)).write_volatile(0);
-      words.add(index.strict_add(3)).write_volatile(0);
-    }
-  }
 }
 
 #[cfg(test)]

@@ -1056,7 +1056,7 @@ mod vpclmul {
   /// # Safety
   /// Caller must ensure AVX-512F + AVX-512VL + AVX-512BW + AVX-512DQ +
   /// VPCLMULQDQ + PCLMULQDQ + SSE2.
-  #[cfg(any(feature = "aes-gcm", feature = "aes-gcm-siv"))]
+  #[cfg(any(feature = "aes-gcm-siv", test))]
   #[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,vpclmulqdq,pclmulqdq,sse2")]
   #[inline]
   unsafe fn aggregate_16_lanes(data: [__m512i; 4], h_powers_rev: &[u128; 16]) -> u128 {
@@ -1297,49 +1297,87 @@ mod vpclmul {
     unsafe { aggregate_lanes(load_be_4blocks(acc, block_bytes), h_powers_rev) }
   }
 
-  /// Process 4 big-endian GHASH lanes already resident in a SIMD register.
+  /// Fold the first `count` big-endian GHASH lanes of `raw` with one reduction.
+  ///
+  /// Lane `i < count` holds block `i`; every later lane is zero. The result is
+  /// `(acc ⊕ X₀)·Hᶜᵒᵘⁿᵗ ⊕ X₁·Hᶜᵒᵘⁿᵗ⁻¹ ⊕ … ⊕ X_{count-1}·H`, the sequential
+  /// GHASH update over those blocks.
   ///
   /// # Safety
   /// Caller must ensure AVX-512F + AVX-512VL + AVX-512BW + AVX-512DQ +
-  /// VPCLMULQDQ + PCLMULQDQ + SSE2.
+  /// VPCLMULQDQ + PCLMULQDQ + SSE2, and `1 <= count <= 16`.
   #[cfg(feature = "aes-gcm")]
-  #[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,vpclmulqdq,pclmulqdq,sse2")]
-  pub(super) unsafe fn aggregate_4blocks_be_lanes(acc: u128, h_powers_rev: &[u128; 4], raw: __m512i) -> u128 {
-    // SAFETY: direct-lane GHASH aggregation because:
-    // 1. This function's caller guarantees all required x86 target features.
-    // 2. `raw` contains four initialized 16-byte ciphertext lanes in memory byte order.
-    unsafe { aggregate_lanes(be_lanes_with_acc(acc, raw), h_powers_rev) }
-  }
-
-  /// Process 16 big-endian GHASH lanes already resident in SIMD registers.
-  ///
-  /// # Safety
-  /// Caller must ensure AVX-512F + AVX-512VL + AVX-512BW + AVX-512DQ +
-  /// VPCLMULQDQ + PCLMULQDQ + SSE2.
-  #[cfg(feature = "aes-gcm")]
-  #[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,vpclmulqdq,pclmulqdq,sse2")]
-  pub(super) unsafe fn aggregate_16blocks_be_lanes(
+  #[inline(always)]
+  pub(super) unsafe fn aggregate_prefix_be_lanes(
     acc: u128,
     h_powers_rev: &[u128; 16],
-    raw0: __m512i,
-    raw1: __m512i,
-    raw2: __m512i,
-    raw3: __m512i,
+    raw: &[__m512i; 4],
+    count: usize,
   ) -> u128 {
+    debug_assert!((1..=16).contains(&count));
     // SAFETY: direct-lane GHASH aggregation because:
     // 1. This function's caller guarantees all required x86 target features.
-    // 2. `raw*` contain sixteen initialized 16-byte ciphertext lanes in memory byte order.
-    // 3. Only the first lane receives the incoming accumulator, matching GHASH recurrence.
+    // 2. `raw` holds initialized lanes; lanes at or after `count` are zero, so
+    //    any power multiplies them to zero.
+    // 3. A group of four lanes before the last partial group loads powers
+    //    `H^(count-4g)..H^(count-4g-3)` from index `16-count+4g`, whose last
+    //    element is at most index 15. The partial group shifts `[H⁴..H]`, loaded
+    //    from index 12, so no load leaves the table.
     unsafe {
-      aggregate_16_lanes(
-        [
-          be_lanes_with_acc(acc, raw0),
-          be_lanes(raw1),
-          be_lanes(raw2),
-          be_lanes(raw3),
-        ],
-        h_powers_rev,
-      )
+      let full = count.strict_div(4);
+      let partial = count.strict_rem(4);
+      let mut lo_sum = _mm512_setzero_si512();
+      let mut hi_sum = _mm512_setzero_si512();
+      for (group, &lanes) in raw.iter().enumerate().take(count.div_ceil(4)) {
+        let data = if group == 0 {
+          be_lanes_with_acc(acc, lanes)
+        } else {
+          be_lanes(lanes)
+        };
+        let h_vec = if group < full {
+          _mm512_loadu_si512(
+            h_powers_rev
+              .as_ptr()
+              .add(16usize.strict_sub(count).strict_add(group.strict_mul(4)))
+              .cast(),
+          )
+        } else {
+          let last = _mm512_loadu_si512(h_powers_rev.as_ptr().add(12).cast());
+          let zero = _mm512_setzero_si512();
+          match partial {
+            1 => _mm512_alignr_epi64::<6>(zero, last),
+            2 => _mm512_alignr_epi64::<4>(zero, last),
+            _ => _mm512_alignr_epi64::<2>(zero, last),
+          }
+        };
+        let lo = _mm512_clmulepi64_epi128(data, h_vec, 0x00);
+        let hi = _mm512_clmulepi64_epi128(data, h_vec, 0x11);
+        let data_mid = _mm512_xor_si512(data, _mm512_shuffle_epi32::<0x4e>(data));
+        let h_mid = _mm512_xor_si512(h_vec, _mm512_shuffle_epi32::<0x4e>(h_vec));
+        let mid = _mm512_xor_si512(
+          _mm512_xor_si512(_mm512_clmulepi64_epi128(data_mid, h_mid, 0x00), lo),
+          hi,
+        );
+        lo_sum = _mm512_xor_si512(lo_sum, _mm512_xor_si512(lo, _mm512_bslli_epi128(mid, 8)));
+        hi_sum = _mm512_xor_si512(hi_sum, _mm512_xor_si512(hi, _mm512_bsrli_epi128(mid, 8)));
+      }
+
+      let lo_0 = _mm512_extracti64x2_epi64(lo_sum, 0);
+      let lo_1 = _mm512_extracti64x2_epi64(lo_sum, 1);
+      let lo_2 = _mm512_extracti64x2_epi64(lo_sum, 2);
+      let lo_3 = _mm512_extracti64x2_epi64(lo_sum, 3);
+      let lo = _mm_xor_si128(_mm_xor_si128(lo_0, lo_1), _mm_xor_si128(lo_2, lo_3));
+
+      let hi_0 = _mm512_extracti64x2_epi64(hi_sum, 0);
+      let hi_1 = _mm512_extracti64x2_epi64(hi_sum, 1);
+      let hi_2 = _mm512_extracti64x2_epi64(hi_sum, 2);
+      let hi_3 = _mm512_extracti64x2_epi64(hi_sum, 3);
+      let hi = _mm_xor_si128(_mm_xor_si128(hi_0, hi_1), _mm_xor_si128(hi_2, hi_3));
+
+      let result = super::pclmul::mont_reduce_sse2(lo, hi);
+      let mut out = 0u128;
+      _mm_storeu_si128(core::ptr::from_mut(&mut out).cast(), result);
+      out
     }
   }
 }
@@ -1468,46 +1506,23 @@ pub(super) unsafe fn x86_aggregate_4blocks_be_bytes_inline(
   unsafe { vpclmul::aggregate_4blocks_be_bytes(acc, h_powers_rev, block_bytes) }
 }
 
-/// 4-block VPCLMULQDQ aggregate helper for big-endian GHASH lanes already in a register.
+/// GHASH update over the first `count` big-endian lanes of four registers, with one reduction.
 ///
 /// # Safety
 /// Caller must ensure AVX-512F + AVX-512VL + AVX-512BW + AVX-512DQ +
-/// VPCLMULQDQ + PCLMULQDQ + SSE2 are available.
+/// VPCLMULQDQ + PCLMULQDQ + SSE2 are available, `1 <= count <= 16`, and every
+/// lane at or after `count` is zero.
 #[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm"))]
-#[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,vpclmulqdq,pclmulqdq,sse2")]
-#[inline]
-pub(super) unsafe fn x86_aggregate_4blocks_be_lanes_inline(
-  acc: u128,
-  h_powers_rev: &[u128; 4],
-  raw: core::arch::x86_64::__m512i,
-) -> u128 {
-  // SAFETY: direct-lane VPCLMUL aggregation because:
-  // 1. Caller guarantees all required x86 target features.
-  // 2. `h_powers_rev` and `raw` are initialized inputs matching the backend contract.
-  unsafe { vpclmul::aggregate_4blocks_be_lanes(acc, h_powers_rev, raw) }
-}
-
-/// 16-block VPCLMULQDQ aggregate helper for big-endian GHASH lanes already in registers.
-///
-/// # Safety
-/// Caller must ensure AVX-512F + AVX-512VL + AVX-512BW + AVX-512DQ +
-/// VPCLMULQDQ + PCLMULQDQ + SSE2 are available.
-#[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm"))]
-#[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,vpclmulqdq,pclmulqdq,sse2")]
-#[inline]
-pub(super) unsafe fn x86_aggregate_16blocks_be_lanes_inline(
+#[inline(always)]
+pub(super) unsafe fn x86_aggregate_prefix_be_lanes_inline(
   acc: u128,
   h_powers_rev: &[u128; 16],
-  raw0: core::arch::x86_64::__m512i,
-  raw1: core::arch::x86_64::__m512i,
-  raw2: core::arch::x86_64::__m512i,
-  raw3: core::arch::x86_64::__m512i,
+  raw: &[core::arch::x86_64::__m512i; 4],
+  count: usize,
 ) -> u128 {
-  // SAFETY: direct-lane VPCLMUL aggregation because:
-  // 1. Caller guarantees all required x86 target features.
-  // 2. `h_powers_rev` and `raw*` are initialized inputs matching the backend contract.
-  // 3. The helper folds the incoming accumulator only into the first lane.
-  unsafe { vpclmul::aggregate_16blocks_be_lanes(acc, h_powers_rev, raw0, raw1, raw2, raw3) }
+  // SAFETY: the caller guarantees the target features, the lane count, and the
+  // zero lanes that `aggregate_prefix_be_lanes` requires.
+  unsafe { vpclmul::aggregate_prefix_be_lanes(acc, h_powers_rev, raw, count) }
 }
 
 // aarch64: inline helper for fused paths (#[target_feature] + #[inline(always)])

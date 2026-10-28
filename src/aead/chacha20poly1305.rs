@@ -44,6 +44,19 @@ const X86_64_ASM_SPR_MAX: usize = 256;
   any(test, all(not(debug_assertions), not(feature = "portable-only")))
 ))]
 const X86_64_OPEN_ASM_SHORT_MAX: usize = 256;
+/// Gathered messages up to this length seal their leading span through the
+/// integrated assembly. Longer gathers keep the vector stream and separate
+/// Poly1305 path: on Granite Rapids it was within a few percent of the
+/// integrated kernel for 1 KiB records and faster for 16 KiB records.
+#[cfg(all(
+  target_arch = "x86_64",
+  target_feature = "sse2",
+  target_os = "linux",
+  not(debug_assertions),
+  not(miri),
+  not(feature = "portable-only")
+))]
+const X86_64_GATHER_ASM_MAX: usize = 1024;
 
 #[cfg(all(
   target_arch = "aarch64",
@@ -64,6 +77,9 @@ mod aarch64_asm;
 ))]
 #[path = "chacha20poly1305/x86_64_asm.rs"]
 mod x86_64_asm;
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2", not(feature = "portable-only")))]
+#[path = "chacha20poly1305/x86_64_avx512.rs"]
+mod x86_64_avx512;
 
 define_aead_key_type!(ChaCha20Poly1305Key, KEY_SIZE, "ChaCha20-Poly1305 secret key bytes.");
 
@@ -257,6 +273,17 @@ impl ChaCha20Poly1305 {
 
     chacha20::xor_keystream_first_block_portable(self.key.as_bytes(), 1, nonce.as_bytes(), buffer);
     Some(Ok(()))
+  }
+
+  /// Whether the owned AVX-512 kernels may run: AVX512F, VL, BW, and DQ.
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2", not(feature = "portable-only")))]
+  #[inline]
+  fn x86_64_avx512_available() -> bool {
+    #[cfg(feature = "std")]
+    let caps = crate::platform::caps();
+    #[cfg(not(feature = "std"))]
+    let caps = crate::platform::caps_static();
+    caps.has(crate::platform::caps::x86::AVX512_READY)
   }
 
   #[cfg(all(
@@ -746,6 +773,30 @@ impl AeadGather for ChaCha20Poly1305 {
     _token: crate::traits::aead::SealToken,
   ) -> Result<(Self::Tag, &'output mut [u8]), SealError> {
     Self::__validate_gather_lengths(aad.len(), out.len())?;
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2", not(feature = "portable-only")))]
+    if Self::x86_64_avx512_available() {
+      // A TLS record's payload and content type seal like one contiguous
+      // message; other shapes take the stream path.
+      let len = out.len();
+      return super::gather::head_tail_spans(
+        plaintext,
+        out,
+        16,
+        |head, tail, dst| {
+          let source = chacha20::X86Source {
+            head: head.as_ptr(),
+            head_len: head.len(),
+            tail,
+          };
+          // SAFETY: the capability check proves AVX512F/VL/BW/DQ. The spans are
+          // shared input disjoint from the exclusive output, whose length the
+          // driver checked against the validated message.
+          let tag = unsafe { x86_64_avx512::seal(self.key.as_bytes(), nonce.as_bytes(), aad, source, dst, len) };
+          Ok(ChaCha20Poly1305Tag::from_bytes(tag))
+        },
+        |rest, out| self.__seal_gather_fallback(nonce, aad, rest, out),
+      );
+    }
     #[cfg(all(
       target_arch = "aarch64",
       target_endian = "little",
@@ -770,6 +821,44 @@ impl AeadGather for ChaCha20Poly1305 {
             output,
           )
         },
+      );
+    }
+    #[cfg(all(
+      target_arch = "x86_64",
+      target_feature = "sse2",
+      target_os = "linux",
+      not(debug_assertions),
+      not(miri),
+      not(feature = "portable-only")
+    ))]
+    if out.len() <= X86_64_GATHER_ASM_MAX && {
+      #[cfg(feature = "std")]
+      let caps = crate::platform::caps();
+      #[cfg(not(feature = "std"))]
+      let caps = crate::platform::caps_static();
+      Self::x86_64_asm_recommended(caps, out.len())
+    } {
+      // A TLS record's payload span enters the integrated kernel directly; its
+      // short remainder, such as the content type, follows as extra ciphertext.
+      return super::gather::head_tail::<_, _, { chacha20::BLOCK_SIZE }, { chacha20::BLOCK_SIZE }>(
+        plaintext,
+        out,
+        1,
+        |counter, stream| {
+          stream.fill(0);
+          chacha20::xor_keystream(self.key.as_bytes(), counter, nonce.as_bytes(), stream)
+            .map_err(|_| SealError::too_large())
+        },
+        |head, output, tail| {
+          // SAFETY: the recommendation gate proves AVX2 and BMI2. The driver
+          // passes a nonempty head of `output.len()` bytes and the tail
+          // ciphertext at the following stream offset; the public entry
+          // validated the complete length against ChaCha20's block limit.
+          let (tag, ciphertext) =
+            unsafe { x86_64_asm::seal_with_extra(self.key.as_bytes(), nonce.as_bytes(), aad, head, output, tail) };
+          (ChaCha20Poly1305Tag::from_bytes(tag), ciphertext)
+        },
+        |rest, output| self.__seal_gather_fallback(nonce, aad, rest, output),
       );
     }
     self.__seal_gather_fallback(nonce, aad, plaintext, out)
@@ -853,6 +942,20 @@ impl Aead for ChaCha20Poly1305 {
       return result;
     }
 
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2", not(feature = "portable-only")))]
+    if Self::x86_64_avx512_available() {
+      let data = buffer.as_mut_ptr();
+      let source = chacha20::X86Source {
+        head: data,
+        head_len: buffer.len(),
+        tail: &[],
+      };
+      // SAFETY: the capability check proves AVX512F/VL/BW/DQ, and the entry
+      // validated the ChaCha20 length bound. `buffer` is sealed in place.
+      let tag = unsafe { x86_64_avx512::seal(self.key.as_bytes(), nonce.as_bytes(), aad, source, data, buffer.len()) };
+      return Ok(ChaCha20Poly1305Tag::from_bytes(tag));
+    }
+
     #[cfg(all(
       target_arch = "x86_64",
       target_feature = "sse2",
@@ -889,6 +992,27 @@ impl Aead for ChaCha20Poly1305 {
     #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), target_endian = "little"))]
     if let Some(result) = self.decrypt_short_text_power_fast(nonce, aad, buffer, tag) {
       return result;
+    }
+
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2", not(feature = "portable-only")))]
+    if Self::x86_64_avx512_available() {
+      // SAFETY: the capability check proves AVX512F/VL/BW/DQ, and the entry
+      // validated the ChaCha20 length bound. The kernel zeroes `buffer` on a mismatch.
+      let matched = unsafe {
+        x86_64_avx512::open(
+          self.key.as_bytes(),
+          nonce.as_bytes(),
+          aad,
+          buffer.as_mut_ptr(),
+          buffer.len(),
+          tag.as_bytes(),
+        )
+      };
+      return if matched {
+        Ok(())
+      } else {
+        Err(OpenError::verification())
+      };
     }
 
     #[cfg(all(

@@ -22,7 +22,7 @@ const NONCE_SIZE: usize = Nonce96::LENGTH;
 /// In practice the portable CTR uses a 32-bit counter, limiting to (2^32 - 2) blocks.
 const MAX_PLAINTEXT_LEN: u64 = ((1u64 << 32).strict_sub(2)).strict_mul(16); // ~64 GiB
 
-#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2", target_os = "linux"))]
 const X86_VAES_GCM_MIN_LEN: usize = 64;
 #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 const X86_AESNI_GCM_MIN_LEN: usize = 64;
@@ -425,6 +425,60 @@ impl AeadGather for Aes128Gcm {
     _token: crate::traits::aead::SealToken,
   ) -> Result<(Self::Tag, &'output mut [u8]), SealError> {
     Self::__validate_gather_lengths(aad.len(), out.len())?;
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+    if self.backend == AeadBackend::X86VaesVpclmul && !out.is_empty() {
+      let length_block = super::seal_bit_lengths(aad.len(), out.len())?.to_be_bits_block();
+      let (j0, ctr_block) = make_j0_and_ctr(nonce);
+      let tables = self.x86_gcm_tables();
+      // SAFETY: the selected backend establishes VPCLMULQDQ and its AVX-512 prerequisites.
+      let acc =
+        GhashAccumulator(unsafe { ghash_update_padded_wide_x86(0, tables.h_polyval, tables.h_powers_rev, aad) });
+      // A TLS record's payload and content type seal like one contiguous
+      // message; other shapes take the general path.
+      return super::gather::head_tail_spans(
+        plaintext,
+        out,
+        aes::X86_SHORT_GCM_MAX_TAIL,
+        |head, tail, dst| {
+          // SAFETY: X86VaesVpclmul establishes every kernel feature. `head` and
+          // the tail spans are shared input, disjoint from the exclusive output,
+          // whose length the driver checked against the validated message; the
+          // tail holds at most X86_SHORT_GCM_MAX_TAIL bytes.
+          unsafe {
+            aes::aes128_gcm_seal_x86(
+              &self.ek,
+              &j0,
+              &ctr_block,
+              acc.0,
+              head.as_ptr(),
+              head.len(),
+              tail,
+              dst,
+              &length_block,
+              tables,
+            )
+          }
+          .map(Aes128GcmTag::from_bytes)
+          .ok_or_else(SealError::buffer)
+        },
+        |rest, out| self.seal_gather_general(nonce, aad, rest, out),
+      );
+    }
+    self.seal_gather_general(nonce, aad, plaintext, out)
+  }
+}
+
+impl Aes128Gcm {
+  // Always inlined, so targets without the record path compile main's gather
+  // entry unchanged.
+  #[inline(always)]
+  fn seal_gather_general<'input, 'output>(
+    &self,
+    nonce: &Nonce96,
+    aad: &[u8],
+    plaintext: impl IntoIterator<Item = &'input [u8]>,
+    out: &'output mut [core::mem::MaybeUninit<u8>],
+  ) -> Result<(Aes128GcmTag, &'output mut [u8]), SealError> {
     let (j0, _) = make_j0_and_ctr(nonce);
     #[cfg(all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")))]
     if matches!(
@@ -650,27 +704,34 @@ impl Aead for Aes128Gcm {
 
     let (j0, ctr_block) = make_j0_and_ctr(nonce);
 
-    // Wide path: VAES-512 CTR + VPCLMULQDQ GHASH when available.
+    // VAES path: the widest batch kernels, then one pass over the final
+    // blocks that also computes the tag.
     #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
-    if self.backend == AeadBackend::X86VaesVpclmul && buffer.len() >= X86_VAES_GCM_MIN_LEN {
+    if self.backend == AeadBackend::X86VaesVpclmul {
       let tables = self.x86_gcm_tables();
-      let h_polyval = tables.h_polyval;
-      // SAFETY: x86 GHASH AAD path because:
-      // 1. Backend resolution selected X86VaesVpclmul only after CPUID confirmed VPCLMULQDQ.
-      // 2. `aad` is a valid byte slice; padding is handled inside the helper.
-      let mut acc = GhashAccumulator(unsafe { ghash_update_padded_wide_x86(0, h_polyval, tables.h_powers_rev, aad) });
-      // SAFETY: fused x86 AES-GCM sealing because:
-      // 1. Backend resolution selected X86VaesVpclmul only after CPUID confirmed VAES, VPCLMULQDQ, and
-      //    AES-NI.
-      // 2. The helper encrypts `buffer` in place and folds the resulting ciphertext into GHASH.
-      acc.0 = unsafe { aes::aes128_ctr32_encrypt_be_wide_ghash(&self.ek, &ctr_block, buffer, acc.0, tables) };
-      acc.0 ^= u128::from_be_bytes(length_block);
-      // SAFETY: x86 GHASH final multiply because:
-      // 1. Backend resolution selected X86VaesVpclmul only after CPUID confirmed PCLMULQDQ.
-      // 2. `acc` and `h_polyval` are initialized GHASH field elements.
-      acc.0 = unsafe { polyval::x86_clmul128_reduce_inline(acc.0, h_polyval) };
-      let tag_bytes = encrypt_j0_tag(&self.ek, &j0, acc.0);
-      return Ok(Aes128GcmTag::from_bytes(tag_bytes));
+      // SAFETY: the selected backend establishes VPCLMULQDQ and its AVX-512 prerequisites.
+      let acc =
+        GhashAccumulator(unsafe { ghash_update_padded_wide_x86(0, tables.h_polyval, tables.h_powers_rev, aad) });
+      let data = buffer.as_mut_ptr();
+      // SAFETY: X86VaesVpclmul establishes AES, SSE2, SSSE3, AVX-512F/VL/BW/DQ,
+      // VAES, VPCLMULQDQ, and PCLMULQDQ. `buffer` is readable and writable for
+      // its validated length and is sealed in place.
+      if let Some(tag) = unsafe {
+        aes::aes128_gcm_seal_x86(
+          &self.ek,
+          &j0,
+          &ctr_block,
+          acc.0,
+          data,
+          buffer.len(),
+          &[],
+          data,
+          &length_block,
+          tables,
+        )
+      } {
+        return Ok(Aes128GcmTag::from_bytes(tag));
+      }
     }
 
     #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
@@ -801,31 +862,36 @@ impl Aead for Aes128Gcm {
 
     let (j0, ctr_block) = make_j0_and_ctr(nonce);
 
-    // Wide path: VPCLMULQDQ GHASH + VAES-512 CTR when available.
+    // VAES path: the widest batch kernels, then one pass over the final
+    // blocks whose plaintext is written only after the tag check.
     #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
-    if self.backend == AeadBackend::X86VaesVpclmul && buffer.len() >= X86_VAES_GCM_MIN_LEN {
+    if self.backend == AeadBackend::X86VaesVpclmul {
       let tables = self.x86_gcm_tables();
-      let h_polyval = tables.h_polyval;
-      // SAFETY: x86 GHASH AAD path because:
-      // 1. Backend resolution selected X86VaesVpclmul only after CPUID confirmed VPCLMULQDQ.
-      // 2. `aad` is a valid byte slice; padding is handled inside the helper.
-      let mut acc = GhashAccumulator(unsafe { ghash_update_padded_wide_x86(0, h_polyval, tables.h_powers_rev, aad) });
-      // SAFETY: fused x86 AES-GCM open because:
-      // 1. Backend resolution selected X86VaesVpclmul only after CPUID confirmed VAES, VPCLMULQDQ, and
-      //    AES-NI.
-      // 2. The helper GHASHes ciphertext bytes before decrypting each chunk in place.
-      acc.0 = unsafe { aes::aes128_ctr32_decrypt_be_wide_ghash(&self.ek, &ctr_block, buffer, acc.0, tables) };
-      acc.0 ^= u128::from_be_bytes(length_block);
-      // SAFETY: x86 GHASH final multiply because:
-      // 1. Backend resolution selected X86VaesVpclmul only after CPUID confirmed PCLMULQDQ.
-      // 2. `acc` and `h_polyval` are initialized GHASH field elements.
-      acc.0 = unsafe { polyval::x86_clmul128_reduce_inline(acc.0, h_polyval) };
-      let expected = encrypt_j0_tag(&self.ek, &j0, acc.0);
-      if !ct::fixed_eq(&expected, tag.as_bytes()).declassify() {
-        ct::zeroize(buffer);
-        return Err(OpenError::verification());
+      // SAFETY: the selected backend establishes VPCLMULQDQ and its AVX-512 prerequisites.
+      let acc =
+        GhashAccumulator(unsafe { ghash_update_padded_wide_x86(0, tables.h_polyval, tables.h_powers_rev, aad) });
+      // SAFETY: X86VaesVpclmul establishes every kernel feature. `buffer` is
+      // readable and writable for its validated length.
+      if let Some(matched) = unsafe {
+        aes::aes128_gcm_open_x86(
+          &self.ek,
+          &j0,
+          &ctr_block,
+          acc.0,
+          buffer.as_mut_ptr(),
+          buffer.len(),
+          &length_block,
+          tables,
+          tag.as_bytes(),
+        )
+      } {
+        // The kernels zeroed `buffer` on a mismatch.
+        return if matched {
+          Ok(())
+        } else {
+          Err(OpenError::verification())
+        };
       }
-      return Ok(());
     }
 
     #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]

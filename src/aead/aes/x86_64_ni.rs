@@ -13,6 +13,13 @@ impl NiRoundKeys {
     self.rk.as_ptr().cast()
   }
 
+  /// The fifteen round keys, for kernels outside this module.
+  #[cfg(feature = "aes-gcm")]
+  #[inline]
+  pub(super) fn round_keys(&self) -> &[__m128i; 15] {
+    &self.rk
+  }
+
   /// Zeroize all round keys via volatile writes.
   pub(super) fn zeroize(&mut self) {
     // SAFETY: `self.rk` is a valid, aligned, fully-initialized [__m128i; 15].
@@ -90,7 +97,7 @@ pub(super) unsafe fn expand_key(key: &[u8; 32]) -> NiRoundKeys {
 ///
 /// # Safety
 /// Caller must ensure AVX-512F + AVX-512VL + VAES + AES + SSE2.
-#[cfg(any(feature = "aes-gcm", feature = "aes-gcm-siv"))]
+#[cfg(feature = "aes-gcm-siv")]
 #[target_feature(enable = "aes,sse2,avx512f,avx512vl,vaes")]
 #[inline]
 pub(super) unsafe fn encrypt_4blocks(keys: &NiRoundKeys, blocks: __m512i) -> __m512i {
@@ -170,7 +177,7 @@ pub(super) unsafe fn encrypt_4blocks_aesni(
 ///
 /// # Safety
 /// Caller must ensure AVX-512F + AVX-512VL + VAES + AES + SSE2.
-#[cfg(any(feature = "aes-gcm", feature = "aes-gcm-siv"))]
+#[cfg(feature = "aes-gcm-siv")]
 #[target_feature(enable = "aes,sse2,avx512f,avx512vl,vaes")]
 #[inline]
 pub(super) unsafe fn encrypt_16blocks(
@@ -293,6 +300,13 @@ impl Ni128RoundKeys {
   #[inline]
   pub(super) fn as_ptr(&self) -> *const u8 {
     self.rk.as_ptr().cast()
+  }
+
+  /// The eleven round keys, for kernels outside this module.
+  #[cfg(feature = "aes-gcm")]
+  #[inline]
+  pub(super) fn round_keys(&self) -> &[__m128i; 11] {
+    &self.rk
   }
 
   /// Zeroize all round keys via volatile writes.
@@ -459,7 +473,7 @@ pub(super) unsafe fn ctr32_le_xor_short_128(keys: &Ni128RoundKeys, initial_count
 ///
 /// # Safety
 /// Caller must ensure AVX-512F + AVX-512VL + VAES + AES + SSE2.
-#[cfg(any(feature = "aes-gcm", feature = "aes-gcm-siv"))]
+#[cfg(feature = "aes-gcm-siv")]
 #[target_feature(enable = "aes,sse2,avx512f,avx512vl,vaes")]
 #[inline]
 pub(super) unsafe fn encrypt_4blocks_128(keys: &Ni128RoundKeys, blocks: __m512i) -> __m512i {

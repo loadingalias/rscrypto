@@ -347,6 +347,30 @@ uses the existing integrated cipher/authenticator. It reads short seams into reg
 without a plaintext staging allocation. Its `SealData` key copy follows the existing tag
 overwrite and remaining-half clear. Iterators exceeding the metadata capacity continue
 through the stream-based gather path and its zeroizing keystream owner.
+Record-shaped gathers (one leading span, then at most 16 bytes in at most four spans, such as a
+TLS record's payload and content type) and every in-place seal and open on x86-64 VAES with
+AVX-512 take one message path: the widest batch kernels for the leading span's whole batches,
+then one finishing pass over the final blocks, the length block, and the tag. That pass reads
+input and writes output with byte-masked loads and stores and keeps keystream, plaintext, and the
+encrypted J0 in registers. The finishing open compares the tag before it writes plaintext and
+zeroes its range on a mismatch; the caller clears the batches before it. The generated code
+still spills some round keys and H powers, so the finishing pass runs in an out-of-line worker,
+and a 320-byte volatile scrub of its dead stack follows from the same frame.
+These paths do not reach the generic CTR workers or their 8 KiB scrub.
+x86-64 ChaCha20-Poly1305 with AVX-512 follows the same shape: one pass XORs the keystream from
+block 1 with masked loads and stores and writes the Poly1305 key from block 0 directly into a
+32-byte array that is cleared after the tag. Opens of at most 448 bytes keep the keystream in
+registers through an inlined scalar tag check and write plaintext only on a match. Their worker
+is followed by a 320-byte dead-stack scrub, because Poly1305 state and spilled registers remain in
+its frame. Batches of sixteen blocks spill keystream; their out-of-line worker is followed by a
+1,280-byte scrub. These scrubs store whole 64-byte registers into an eight-byte-aligned buffer.
+`just stack-frames` checks on the reviewed x86-64 Linux artifact that each linked worker fits
+within its scrub; it bounds stack depth, not register contents.
+Without AVX-512, Linux x86-64 ChaCha20 gathers up to 1 KiB give the block-aligned prefix of their
+first span to the existing integrated seal kernel, which reads it directly. At most one block of
+remaining plaintext is first encrypted through the stream path, and the kernel authenticates it
+as trailing ciphertext. Its `SealData` key copy follows the same tag overwrite and remaining-half
+clear.
 The AES-128-GCM context's private x86 wide-power group retains two initialized arrays,
 with no internal padding. Context drop clears their 1024 and 2048 bytes separately.
 Linux cache-line alignment changes placement, not cleanup ownership. The provider

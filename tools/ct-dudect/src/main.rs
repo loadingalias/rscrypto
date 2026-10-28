@@ -3504,6 +3504,56 @@ macro_rules! aead_gather_fixed_vs_random_key_seal {
   };
 }
 
+/// A TLS 1.3 record's shape: one 1024-byte payload span and its content-type
+/// byte. It reaches the head-and-tail gather kernels rather than the general
+/// stream driver.
+macro_rules! aead_record_gather_fixed_vs_random_key_seal {
+  ($name:ident, $cipher:ty, $key:ty, $key_len:expr) => {
+    fn $name(runner: &mut CtRunner, rng: &mut BenchRng) {
+      let nonce = Nonce96::from_bytes([0x75; 12]);
+      let mut inputs = Vec::with_capacity(samples());
+      for class in balanced_classes(rng, samples()) {
+        let key = if matches!(class, Class::Left) {
+          [0x35; $key_len]
+        } else {
+          rand_array::<$key_len>(rng)
+        };
+        inputs.push((class, <$key>::from_bytes(key)));
+      }
+      let payload = [0x72; 1024];
+      let content_type = [0x17];
+      for (class, key) in inputs {
+        let cipher = <$cipher>::new(&key);
+        runner.run_one(class, || {
+          let mut out = [core::mem::MaybeUninit::uninit(); 1025];
+          let result = cipher
+            .encrypt_gather_uninit(&nonce, AAD, [payload.as_slice(), content_type.as_slice()], &mut out)
+            .expect("fixed public record lengths");
+          core::hint::black_box(result);
+        });
+      }
+    }
+  };
+}
+
+aead_record_gather_fixed_vs_random_key_seal!(
+  aes128gcm_record_gather_fixed_vs_random_key_seal,
+  Aes128Gcm,
+  Aes128GcmKey,
+  16
+);
+aead_record_gather_fixed_vs_random_key_seal!(
+  aes256gcm_record_gather_fixed_vs_random_key_seal,
+  Aes256Gcm,
+  Aes256GcmKey,
+  32
+);
+aead_record_gather_fixed_vs_random_key_seal!(
+  chacha20poly1305_record_gather_fixed_vs_random_key_seal,
+  ChaCha20Poly1305,
+  ChaCha20Poly1305Key,
+  32
+);
 aead_gather_fixed_vs_random_key_seal!(aes128gcm_gather_fixed_vs_random_key_seal, Aes128Gcm, Aes128GcmKey, 16);
 aead_gather_fixed_vs_random_key_seal!(aes256gcm_gather_fixed_vs_random_key_seal, Aes256Gcm, Aes256GcmKey, 32);
 aead_gather_fixed_vs_random_key_seal!(
@@ -4122,6 +4172,18 @@ ctbench_main_with_seeds!(
   (
     chacha20poly1305_gather_fixed_vs_random_key_seal,
     Some(0x6368616368676174)
+  ),
+  (
+    aes128gcm_record_gather_fixed_vs_random_key_seal,
+    Some(0x6131323872656367)
+  ),
+  (
+    aes256gcm_record_gather_fixed_vs_random_key_seal,
+    Some(0x6132353672656367)
+  ),
+  (
+    chacha20poly1305_record_gather_fixed_vs_random_key_seal,
+    Some(0x6368616372656367)
   ),
   (aes128gcmsiv_fixed_vs_random_key_seal, Some(0x6131323867737365)),
   (aes256gcmsiv_fixed_vs_random_key_seal, Some(0x6132353667737365)),

@@ -55,6 +55,7 @@ The expanded families vary one workload dimension:
 | `tls-traffic` | Client-to-server writes of 64 B, 256 B, 1 KiB, 16 KiB, 64 KiB and 1 MiB, under each suite. |
 | `tls-traffic-bidirectional` | The same sizes per direction; send both directions before reading each record pair. Throughput counts both plaintext directions once. |
 | `tls-record-gather` | Encrypt one 16 KiB TLS 1.3 record from 1, 4 or 64 plaintext chunks through the production record adapter. Includes framing, content type, encryption and tag append; keys and reserved output capacity stay outside timing. Compare matching pre-change and candidate builds to measure copy-then-seal against direct gather output. AWS-LC and ring rows are controls. |
+| `tls-record` | Seal, or open, one TLS 1.3 application-data record of 64 B, 256 B, 1 KiB or 16 KiB through each production record adapter, without connection or transport work. Sealing includes framing, the content type and the tag; opening first copies the sealed body back into the record buffer, the same for every provider. Separates provider cryptography from the `tls-traffic` connection costs. |
 
 Peers use the same credentials, roots, validation time, ALPN, selected group,
 suite and CertificateVerify algorithm.

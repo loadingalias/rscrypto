@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import re
 import tempfile
 from pathlib import Path
@@ -292,6 +293,17 @@ def test_panic_exits_are_listed_and_not_counted(directory: Path) -> None:
   assert worker["depth"] == 128 and not worker["problems"], worker
 
 
+def test_target_and_portable_scoped_boundaries_are_skipped(directory: Path) -> None:
+  # No worker is linked; a boundary that applies would fail with "no linked worker".
+  functions = [(0x1000, CALLER, 160, ["    1000:      \tbr\t%r14"])]
+  x86_only = dataclasses.replace(boundary(directory), targets=frozenset({"x86_64-unknown-linux-gnu"}))
+  report = review(program("s390x-unknown-linux-gnu", functions), [x86_only])
+  assert report["passed"] and not report["boundaries"], report
+  native_only = dataclasses.replace(boundary(directory), portable=False)
+  assert review(program("s390x-unknown-linux-gnu", functions), [native_only], portable=True)["passed"]
+  assert not review(program("s390x-unknown-linux-gnu", functions), [native_only])["passed"]
+
+
 def test_record_parsers() -> None:
   sizes = parse_stack_sizes(
     "StackSizes [\n  Entry {\n    Functions: [a, b]\n    Size: 0x330\n  }\n  Entry {\n    Functions: [c]\n    Size: 0x10\n  }\n]"
@@ -324,6 +336,7 @@ def main() -> None:
     test_aarch64_leaf_assembly_frames(directory)
     test_aarch64_tail_scrub_counts_the_caller_frame(directory)
     test_panic_exits_are_listed_and_not_counted(directory)
+    test_target_and_portable_scoped_boundaries_are_skipped(directory)
   test_record_parsers()
   print("frames tests passed")
 
