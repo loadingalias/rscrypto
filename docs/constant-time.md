@@ -580,6 +580,43 @@ version, which preserves that artifact's copy evidence. It does not rebind the C
 final source. Final-source Apple CT binding and complete Linux native CT qualification remain open;
 the interrupted Linux captures are not passing reports.
 
+### RSA blinding-cache renewal, 2026-10-27
+
+[Constant-Time 40607022402](https://github.com/loadingalias/rscrypto/actions/runs/40607022402) at `41d76d58`
+passed every required DudeCT case on all six CI platforms: 134 each on Linux x86-64, AArch64, Windows x86-64,
+IBM Z and RISC-V, and 129 on POWER. That includes the diagnostic cached-blinding case. The verdict failed only on
+stale generated-code waivers. The last passing verdict was at `2622c4a9`. `d4187d14` and `41d76d58` changed or moved
+RSA code on every target. `d4187d14` renewed only the Apple waivers, so the CI targets had been stale since then,
+not only RISC-V.
+
+`just ct-renew` compared each CI target with its `2622c4a9` artifacts, and a local Apple build at `41d76d58` with the
+Apple artifacts of the borrowed-state checkpoint.
+
+- 116 waivers kept an identical condition slice and identical open leaves (call addresses ignored):
+  Apple 16, AArch64 Linux 20, POWER 13, x86-64 Linux 21, Windows 12, RISC-V 8 and IBM Z 18.
+  The Apple functions' pre-link object code differs only in relocation names.
+- 19 slices changed only in placement:
+  - Windows 1: a 24-byte rodata atom now holds the same SHA-256 DigestInfo prefix bytes.
+  - RISC-V 3: `auipc` page offsets and disassembler annotations on unchanged `lui` immediates.
+  - POWER 15: PLT stub displacements and rodata-block offsets. The SHA-256 initial state and the P-256 `FIELD_R2`
+    constant are byte-identical, and the functions are instruction-identical apart from TOC offsets.
+- AArch64 Linux reflects `d4187d14`'s five-bit window rewrite.
+  - Three waivers have new rationales:
+    - the zeroize tail in `prepared_public_operation_with_scratch`;
+    - the two FEAT_DIT restore branches, now reached through one spilled flag at `sp+0xa4`.
+  - Three waivers are new:
+    - the public `exponent.get` bound in the five-bit loop;
+    - the public-length tail of `private_select_window_power_portable`;
+    - the out-of-line `public_len_eq` length test.
+  - Three waivers were deleted: two restore branches that no longer exist, and `public_len_eq`'s former inlined copy.
+  - A reaching-definitions pass confirmed that only the DIT flag reaches the spill slot.
+
+The scanner accepts all seven artifact sets, with no stale waiver and no unwaived finding.
+The decisions, review records and renewal tools are in `benchmark_results/rsa-cache-ct-20261027/`.
+Two scanner limits surfaced:
+- the POWER slice model does not treat `vcmpequb.` as writing CR6;
+- slices keep raw PLT-stub displacements, so code placed earlier in the link stales a waiver.
+
 ## Public decisions and exclusions
 
 Ordinary equality is allowed for public values, such as nonces, encoded public keys,
