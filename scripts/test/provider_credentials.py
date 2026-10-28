@@ -43,6 +43,8 @@ def generate(openssl, output, profile):
         ]
         if profile == 'mldsa':
             profiles = [(f'mldsa{size}', f'ML-DSA-{size}', []) for size in (44, 65, 87)]
+        if profile == 'rsa2048':
+            profiles = [('rsa2048', 'RSA', ['-pkeyopt', 'rsa_keygen_bits:2048'])]
         if profile == 'tls-bench':
             profiles += [(f'mldsa{size}', f'ML-DSA-{size}', []) for size in (44, 65, 87)]
             profiles = [(kind + '-chain', algorithm, options) for kind, algorithm, options in profiles]
@@ -108,15 +110,6 @@ def generate(openssl, output, profile):
                             options += ['-sigopt', 'rsa_pss_saltlen:digest']
                         run('dgst', '-' + digest, '-sign', key, *options,
                             '-out', f'{kind}-{padding}-{digest}.sig', 'message.txt')
-        if profile == 'classical':
-            run('genpkey', '-algorithm', 'RSA', '-pkeyopt', 'rsa_keygen_bits:2048',
-                '-out', 'rsa2048-key.pem')
-            run('pkcs8', '-topk8', '-nocrypt', '-in', 'rsa2048-key.pem', '-outform', 'DER',
-                '-out', 'rsa2048-key.der')
-            run('rsa', '-in', 'rsa2048-key.pem', '-RSAPublicKey_out', '-outform', 'DER',
-                '-out', 'rsa2048-public.der')
-            run('dgst', '-sha256', '-sign', 'rsa2048-key.pem', '-sigopt', 'rsa_padding_mode:pss',
-                '-sigopt', 'rsa_pss_saltlen:digest', '-out', 'rsa2048-pss-sha256.sig', 'message.txt')
         for path in sorted(work.iterdir()):
             if path.suffix in ('.der', '.sig') or (path.name == 'message.txt' and profile != 'tls-bench'):
                 shutil.copyfile(path, output / path.name)
@@ -132,7 +125,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('output', type=Path)
     parser.add_argument('--openssl', help='OpenSSL 4.0.3 binary; default: the repository-built peer')
-    parser.add_argument('--profile', choices=('classical', 'mldsa', 'tls-bench'), default='classical')
+    parser.add_argument('--profile', choices=('classical', 'mldsa', 'rsa2048', 'tls-bench'), default='classical')
     args = parser.parse_args()
     generate(args.openssl or str(openssl_peer.binary()), args.output, args.profile)
 

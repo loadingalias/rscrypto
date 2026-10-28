@@ -16,11 +16,15 @@ Only the leaf private key is retained.
 The RSA-4096 root signs a separate RSA-4096 leaf directly.
 These fixtures support the TLS benchmark's chain-depth and RSA-key-size comparisons.
 
+The `rsa2048-*` fixtures were regenerated on 2026-10-28 with OpenSSL 4.0.3 and the same validity
+interval: an RSA-2048 root signs an RSA-2048 leaf, with PKCS#1 and PKCS#8 keys and the six RSA
+signatures that RSA-3072 has. They exercise the provider's default 2,048-bit signing-key floor and
+the stricter 3,072-bit policy. The earlier RSA-2048 key, public key, and PSS signature had no
+certificate and were replaced.
+
 The private keys are intentionally public and must never protect real traffic.
 `SHA256SUMS` pins every payload.
 Root private keys are not shipped.
-The RSA-2048 fixture distinguishes deployed certificate verification from the provider's stricter
-RSA signing-key policy.
 
 ECDSA signatures cover SHA-256 and SHA-384.
 RSA covers PKCS#1 v1.5 and PSS with SHA-256, SHA-384, and SHA-512; PSS uses a digest-length salt.
@@ -37,10 +41,13 @@ and independent AWS-LC verification of provider signatures.
 Generate equivalent fixtures in separate new directories:
 
 ```bash
-python3 scripts/test/provider_credentials.py /tmp/provider-credentials-new --profile classical --openssl /opt/homebrew/bin/openssl
-python3 scripts/test/provider_credentials.py /tmp/provider-mldsa-new --profile mldsa --openssl /opt/homebrew/bin/openssl
-python3 scripts/test/provider_credentials.py /tmp/provider-tls-bench-new --profile tls-bench --openssl /opt/homebrew/bin/openssl
+scripts/lib/python.sh scripts/test/provider_credentials.py /tmp/provider-credentials-new --profile classical
+scripts/lib/python.sh scripts/test/provider_credentials.py /tmp/provider-mldsa-new --profile mldsa
+scripts/lib/python.sh scripts/test/provider_credentials.py /tmp/provider-rsa2048-new --profile rsa2048
+scripts/lib/python.sh scripts/test/provider_credentials.py /tmp/provider-tls-bench-new --profile tls-bench
 ```
+
+The generator runs the OpenSSL 4.0.3 that `scripts/lib/openssl_peer.py` builds unless `--openssl` names one.
 
 The generator records its commands beside that directory.
 It uses fresh keys and randomized signatures, so it reproduces the contracts, not the pinned bytes.

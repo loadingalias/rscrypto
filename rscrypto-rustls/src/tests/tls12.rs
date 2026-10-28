@@ -290,6 +290,11 @@ fn rsa_tls12_profiles() {
   matrix(Credential::Rsa);
 }
 
+#[test]
+fn rsa2048_tls12_profiles() {
+  matrix(Credential::Rsa2048);
+}
+
 /// A peer that verifies, and so advertises, only RSA PKCS#1 v1.5 signatures.
 fn pkcs1_only(mut provider: CryptoProvider) -> CryptoProvider {
   let mapping = provider.signature_verification_algorithms.mapping();
@@ -322,13 +327,15 @@ fn rsa_keys_sign_pkcs1_for_tls12_peers_that_accept_nothing_else() {
       let ours = tls12_only(ours(), suite, NamedGroup::X25519);
       let peer = pkcs1_only(tls12_only(peer_provider(), suite, NamedGroup::X25519));
       let (client, server) = if ours_client { (ours, peer) } else { (peer, ours) };
-      let (client, server) = configs(client, server, Credential::Rsa);
-      let (mut client, mut server) = tls::connections_from_configs(Arc::new(client), Arc::new(server));
-      tls::drive(&mut client, &mut server)
-        .map_err(|error| format!("{peer_name}/ours_client={ours_client}: {error}"))
-        .expect("PKCS#1 v1.5 handshake");
-      assert_eq!(client.protocol_version(), Some(ProtocolVersion::TLSv1_2));
-      exercise(&mut client, &mut server);
+      for kind in [Credential::Rsa, Credential::Rsa2048] {
+        let (client, server) = configs(client.clone(), server.clone(), kind);
+        let (mut client, mut server) = tls::connections_from_configs(Arc::new(client), Arc::new(server));
+        tls::drive(&mut client, &mut server)
+          .map_err(|error| format!("{peer_name}/{kind:?}/ours_client={ours_client}: {error}"))
+          .expect("PKCS#1 v1.5 handshake");
+        assert_eq!(client.protocol_version(), Some(ProtocolVersion::TLSv1_2));
+        exercise(&mut client, &mut server);
+      }
     }
   }
   // TLS 1.3 never signs PKCS#1 v1.5 (RFC 8446 §4.2.3), so the same peers fail there.

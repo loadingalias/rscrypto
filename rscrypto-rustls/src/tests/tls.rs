@@ -27,8 +27,11 @@ pub(crate) enum Credential {
   P384,
   #[cfg(feature = "ed25519")]
   Ed25519,
+  /// RSA-3072.
   #[cfg(feature = "rsa")]
   Rsa,
+  #[cfg(feature = "rsa")]
+  Rsa2048,
   #[cfg(feature = "ml-dsa")]
   MlDsa44,
   #[cfg(feature = "ml-dsa")]
@@ -38,6 +41,14 @@ pub(crate) enum Credential {
 }
 
 impl Credential {
+  pub(crate) const fn is_rsa(self) -> bool {
+    match self {
+      #[cfg(feature = "rsa")]
+      Self::Rsa | Self::Rsa2048 => true,
+      _ => false,
+    }
+  }
+
   pub(crate) fn scheme(self) -> rustls::crypto::SignatureScheme {
     match self {
       #[cfg(feature = "ecdsa-p256")]
@@ -47,7 +58,7 @@ impl Credential {
       #[cfg(feature = "ed25519")]
       Self::Ed25519 => rustls::crypto::SignatureScheme::ED25519,
       #[cfg(feature = "rsa")]
-      Self::Rsa => rustls::crypto::SignatureScheme::RSA_PSS_SHA256,
+      Self::Rsa | Self::Rsa2048 => rustls::crypto::SignatureScheme::RSA_PSS_SHA256,
       #[cfg(feature = "ml-dsa")]
       Self::MlDsa44 => rustls::crypto::SignatureScheme::ML_DSA_44,
       #[cfg(feature = "ml-dsa")]
@@ -77,6 +88,8 @@ pub(crate) fn credentials(kind: Credential) -> (&'static [u8], &'static [u8], &'
     Credential::Ed25519 => files!("ed25519"),
     #[cfg(feature = "rsa")]
     Credential::Rsa => files!("rsa3072"),
+    #[cfg(feature = "rsa")]
+    Credential::Rsa2048 => files!("rsa2048"),
     #[cfg(feature = "ml-dsa")]
     Credential::MlDsa44 => files!("mldsa44"),
     #[cfg(feature = "ml-dsa")]

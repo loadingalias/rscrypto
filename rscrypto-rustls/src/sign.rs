@@ -1,8 +1,9 @@
 //! Private-key loading and TLS signing through rscrypto.
 //!
 //! PKCS#8 supports each enabled signing algorithm; SEC1 supports ECDSA, and
-//! PKCS#1 supports RSA. RSA signing keys must have 3,072–8,192-bit moduli and
-//! public exponent 65,537. RSA keys sign RSA-PSS, and also PKCS#1 v1.5 for
+//! PKCS#1 supports RSA. RSA signing keys have 2,048–8,192-bit moduli by default
+//! ([`RsaSigningKeySizes`] can require 3,072 bits) and public exponent 65,537.
+//! RSA keys sign RSA-PSS, and also PKCS#1 v1.5 for
 //! TLS 1.2 peers; rustls never offers PKCS#1 v1.5 in TLS 1.3. ECDSA keys sign
 //! with their curve's hash only (P-256 with SHA-256, P-384 with SHA-384), also
 //! in TLS 1.2. [`Provider::new`] takes the entropy source for key validation
@@ -34,6 +35,23 @@ pub struct Provider {
   random: &'static dyn rustls::crypto::SecureRandom,
   #[cfg(any(feature = "ml-dsa", feature = "rsa"))]
   compact: bool,
+  #[cfg(feature = "rsa")]
+  rsa_sizes: RsaSigningKeySizes,
+}
+
+/// RSA signing-key modulus lengths that a [`Provider`] loads.
+///
+/// Both accept only public exponent 65,537. Peer keys in certificates and
+/// handshake signatures are verified separately and are not affected.
+#[cfg(feature = "rsa")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum RsaSigningKeySizes {
+  /// 2,048 to 8,192 bits, the default, so deployed RSA-2048 certificates work.
+  ///
+  /// RSA-2048 gives about 112-bit security (NIST SP 800-57 Part 1).
+  Bits2048To8192,
+  /// 3,072 to 8,192 bits, about 128-bit security or more.
+  Bits3072To8192,
 }
 
 impl Provider {
@@ -48,6 +66,21 @@ impl Provider {
       random,
       #[cfg(any(feature = "ml-dsa", feature = "rsa"))]
       compact: false,
+      #[cfg(feature = "rsa")]
+      rsa_sizes: RsaSigningKeySizes::Bits2048To8192,
+    }
+  }
+
+  /// Load only RSA signing keys whose moduli fall in `sizes`.
+  ///
+  /// Keys outside the range are rejected like any invalid key. The default is
+  /// [`RsaSigningKeySizes::Bits2048To8192`].
+  #[cfg(feature = "rsa")]
+  #[must_use]
+  pub const fn rsa_key_sizes(self, sizes: RsaSigningKeySizes) -> Self {
+    Self {
+      rsa_sizes: sizes,
+      ..self
     }
   }
 
@@ -86,7 +119,7 @@ impl KeyProvider for Provider {
       return Ok(Box::new(key));
     }
     #[cfg(feature = "rsa")]
-    if let Some(key) = rsa::load(&key_der, _random, self.compact) {
+    if let Some(key) = rsa::load(&key_der, _random, self.compact, self.rsa_sizes) {
       return Ok(Box::new(key));
     }
     #[cfg(any(feature = "ed25519", feature = "ecdsa-p256", feature = "ecdsa-p384"))]
@@ -353,8 +386,12 @@ mod rsa {
     der: &PrivateKeyDer<'_>,
     random: &'static dyn rustls::crypto::SecureRandom,
     compact: bool,
+    sizes: super::RsaSigningKeySizes,
   ) -> Option<Key> {
-    let policy = RsaPublicKeyPolicy::modulus_3072_to_8192();
+    let policy = match sizes {
+      super::RsaSigningKeySizes::Bits2048To8192 => RsaPublicKeyPolicy::modulus_2048_to_8192(),
+      super::RsaSigningKeySizes::Bits3072To8192 => RsaPublicKeyPolicy::modulus_3072_to_8192(),
+    };
     let key = match der {
       PrivateKeyDer::Pkcs1(value) => RsaPrivateKey::from_pkcs1_der_with_policy(value.secret_pkcs1_der(), &policy),
       PrivateKeyDer::Pkcs8(value) => RsaPrivateKey::from_pkcs8_der_with_policy(value.secret_pkcs8_der(), &policy),
@@ -522,18 +559,30 @@ mod rsa {
   fn rsa_schemes_match_an_independent_signer_and_fail_closed_on_entropy() {
     use rustls::pki_types::PrivatePkcs8KeyDer;
 
-    let der = include_bytes!("../tests/vectors/credentials/rsa3072-leaf-key.der");
-    let public = include_bytes!("../tests/vectors/credentials/rsa3072-public.der");
+    let fixtures: [(&[u8], &[u8]); 2] = [
+      (
+        include_bytes!("../tests/vectors/credentials/rsa2048-leaf-key.der"),
+        include_bytes!("../tests/vectors/credentials/rsa2048-public.der"),
+      ),
+      (
+        include_bytes!("../tests/vectors/credentials/rsa3072-leaf-key.der"),
+        include_bytes!("../tests/vectors/credentials/rsa3072-public.der"),
+      ),
+    ];
     let peer = rustls_ring::DEFAULT_PROVIDER;
-    let peer_key = peer
-      .key_provider
-      .load_private_key(PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(der.to_vec())))
-      .expect("independent key");
-    for compact in [false, true] {
+    for ((der, public), compact) in fixtures
+      .into_iter()
+      .flat_map(|fixture| [(fixture, false), (fixture, true)])
+    {
+      let peer_key = peer
+        .key_provider
+        .load_private_key(PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(der.to_vec())))
+        .expect("independent key");
       let key = load(
         &PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(der.to_vec())),
         &crate::tests::RANDOM,
         compact,
+        super::RsaSigningKeySizes::Bits2048To8192,
       )
       .expect("fixture key");
       let kept = usize::from(!compact);

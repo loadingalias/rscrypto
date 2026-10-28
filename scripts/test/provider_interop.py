@@ -38,7 +38,7 @@ TLS12_GROUPS = ['X25519', 'secp256r1', 'secp384r1']
 # In TLS 1.2, supported_groups also lists the curves an ECDSA certificate may use (RFC 8422
 # section 5.1), so both endpoints list the certificate's curve after the group under test.
 CERTIFICATE_CURVES = {'p256': 'secp256r1', 'p384': 'secp384r1'}
-CREDENTIALS = ['p256', 'p384', 'ed25519', 'rsa3072']
+CREDENTIALS = ['p256', 'p384', 'ed25519', 'rsa2048', 'rsa3072']
 MLDSA_CREDENTIALS = ['mldsa44', 'mldsa65', 'mldsa87']
 
 
@@ -182,7 +182,7 @@ def main():
         cases += itertools.product(credentials, SUITES, GROUPS)
     if args.protocol != 'tls13':
         cases += [(kind, suite, group) for kind in credentials if kind in CREDENTIALS
-                  for suite in TLS12_SUITES if ('_RSA_' in suite) == (kind == 'rsa3072')
+                  for suite in TLS12_SUITES if ('_RSA_' in suite) == kind.startswith('rsa')
                   for group in TLS12_GROUPS]
     if args.quick:
         cases = cases[:1] if args.protocol == 'tls12' else [(credentials[0], SUITES[0], 'X25519MLKEM768')]

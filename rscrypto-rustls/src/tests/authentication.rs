@@ -49,6 +49,7 @@ fn selected_entropy_controls_key_loading_and_signing_without_fallback() {
     (Credential::P384, public_bits(fixture!("p384-spki.der"), 97)),
     (Credential::Ed25519, public_bits(fixture!("ed25519-spki.der"), 32)),
     (Credential::Rsa, fixture!("rsa3072-public.der")),
+    (Credential::Rsa2048, fixture!("rsa2048-public.der")),
     #[cfg(feature = "ml-dsa")]
     (Credential::MlDsa44, &fixture!("mldsa44-spki.der")[22..]),
     #[cfg(feature = "ml-dsa")]
@@ -281,6 +282,12 @@ fn loaded_signing_keys_match_spki_and_independent_verifiers() {
       fixture!("rsa3072-spki.der"),
       fixture!("rsa3072-public.der"),
     ),
+    (
+      Credential::Rsa2048,
+      SignatureScheme::RSA_PSS_SHA256,
+      fixture!("rsa2048-spki.der"),
+      fixture!("rsa2048-public.der"),
+    ),
   ] {
     let (_, cert, private) = tls::credentials(kind);
     let key = crate::tests::key_provider()
@@ -299,9 +306,9 @@ fn loaded_signing_keys_match_spki_and_independent_verifiers() {
         .key
         .choose_scheme(&[SignatureScheme::RSA_PKCS1_SHA256])
         .map(|signer| signer.scheme()),
-      matches!(kind, Credential::Rsa).then_some(SignatureScheme::RSA_PKCS1_SHA256)
+      kind.is_rsa().then_some(SignatureScheme::RSA_PKCS1_SHA256)
     );
-    let schemes = if matches!(kind, Credential::Rsa) {
+    let schemes = if kind.is_rsa() {
       &[
         SignatureScheme::RSA_PSS_SHA256,
         SignatureScheme::RSA_PSS_SHA384,
@@ -330,7 +337,7 @@ fn loaded_signing_keys_match_spki_and_independent_verifiers() {
       if matches!(kind, Credential::Ed25519) {
         assert_eq!(signature, fixture!("ed25519.sig"));
       }
-      if matches!(kind, Credential::Rsa) {
+      if kind.is_rsa() {
         assert_ne!(
           signature,
           certified
@@ -372,13 +379,23 @@ fn alternate_private_key_encodings_and_invalid_containers() {
       PrivateKeyDer::Pkcs1(PrivatePkcs1KeyDer::from(fixture!("rsa3072-pkcs1.der").to_vec())),
       fixture!("rsa3072-spki.der"),
     ),
+    (
+      PrivateKeyDer::Pkcs1(PrivatePkcs1KeyDer::from(fixture!("rsa2048-pkcs1.der").to_vec())),
+      fixture!("rsa2048-spki.der"),
+    ),
   ] {
     let key = crate::tests::key_provider()
       .load_private_key(private)
       .expect("alternate encoding");
     assert_eq!(key.public_key().expect("SPKI").as_ref(), expected);
   }
-  for kind in [Credential::P256, Credential::P384, Credential::Ed25519, Credential::Rsa] {
+  for kind in [
+    Credential::P256,
+    Credential::P384,
+    Credential::Ed25519,
+    Credential::Rsa,
+    Credential::Rsa2048,
+  ] {
     let private = tls::credentials(kind).2;
     let mut trailing = private.to_vec();
     trailing.push(0);
@@ -392,30 +409,68 @@ fn alternate_private_key_encodings_and_invalid_containers() {
 }
 
 #[test]
-fn deployed_rsa2048_verifies_but_new_signing_keys_require_rsa3072() {
-  let verifier = verify::SUPPORTED_ALGORITHMS
-    .mapping()
-    .iter()
-    .find(|(scheme, _)| *scheme == SignatureScheme::RSA_PSS_SHA256)
-    .expect("PSS verifier")
-    .1[0];
-  verifier
-    .verify_signature(
-      fixture!("rsa2048-public.der"),
-      MESSAGE,
-      fixture!("rsa2048-pss-sha256.sig"),
-    )
-    .expect("deployed RSA-2048 signature");
+fn rsa_signing_keys_load_from_2048_bits_unless_the_policy_requires_3072() {
+  use rustls::crypto::KeyProvider as _;
+  use sign::RsaSigningKeySizes;
+
+  let rsa2048 = || {
+    PrivateKeyDer::from(PrivatePkcs8KeyDer::from(
+      tls::credentials(Credential::Rsa2048).2.to_vec(),
+    ))
+  };
+  let rsa3072 = || PrivateKeyDer::from(PrivatePkcs8KeyDer::from(tls::credentials(Credential::Rsa).2.to_vec()));
+  let key = crate::tests::key_provider()
+    .load_private_key(rsa2048())
+    .expect("default loads RSA-2048");
+  // PKCS#1 v1.5 is deterministic, so OpenSSL's signatures are known answers.
+  for (scheme, expected) in [
+    (SignatureScheme::RSA_PKCS1_SHA256, fixture!("rsa2048-pkcs1-sha256.sig")),
+    (SignatureScheme::RSA_PKCS1_SHA384, fixture!("rsa2048-pkcs1-sha384.sig")),
+    (SignatureScheme::RSA_PKCS1_SHA512, fixture!("rsa2048-pkcs1-sha512.sig")),
+  ] {
+    let signature = key
+      .choose_scheme(&[scheme])
+      .expect("scheme")
+      .sign(MESSAGE)
+      .expect("sign");
+    assert_eq!(signature, expected, "{scheme:?}");
+  }
+  for (scheme, signature) in [
+    (SignatureScheme::RSA_PSS_SHA256, fixture!("rsa2048-pss-sha256.sig")),
+    (SignatureScheme::RSA_PSS_SHA384, fixture!("rsa2048-pss-sha384.sig")),
+    (SignatureScheme::RSA_PSS_SHA512, fixture!("rsa2048-pss-sha512.sig")),
+  ] {
+    let verifier = verify::SUPPORTED_ALGORITHMS
+      .mapping()
+      .iter()
+      .find(|(candidate, _)| *candidate == scheme)
+      .expect("PSS verifier")
+      .1[0];
+    verifier
+      .verify_signature(fixture!("rsa2048-public.der"), MESSAGE, signature)
+      .expect("OpenSSL RSA-2048 signature");
+  }
+  let strict = sign::Provider::new(&crate::tests::RANDOM).rsa_key_sizes(RsaSigningKeySizes::Bits3072To8192);
   assert!(matches!(
-    crate::tests::key_provider()
-      .load_private_key(PrivatePkcs8KeyDer::from(fixture!("rsa2048-key.der").to_vec()).into()),
-    Err(Error::General(_))
+    strict.load_private_key(rsa2048()),
+    Err(Error::General(message)) if message == "invalid or unsupported TLS private key"
   ));
+  strict.load_private_key(rsa3072()).expect("strict loads RSA-3072");
+  sign::Provider::new(&crate::tests::RANDOM)
+    .rsa_key_sizes(RsaSigningKeySizes::Bits2048To8192)
+    .load_private_key(rsa2048())
+    .expect("explicit default loads RSA-2048");
 }
 
 #[test]
 fn authenticated_handshakes_use_each_credential_in_both_roles() {
-  for kind in [Credential::P256, Credential::P384, Credential::Ed25519, Credential::Rsa] {
+  for kind in [
+    Credential::P256,
+    Credential::P384,
+    Credential::Ed25519,
+    Credential::Rsa,
+    Credential::Rsa2048,
+  ] {
     for independent in [
       (|| rustls_ring::DEFAULT_TLS13_PROVIDER),
       (|| rustls_aws_lc_rs::DEFAULT_TLS13_PROVIDER),

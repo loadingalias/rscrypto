@@ -143,9 +143,11 @@ Owned DER input is zeroized on success and rejection, including oversized input.
 Borrowed static DER remains the caller's responsibility; it cannot be cleared
 through an immutable borrow.
 ECDSA and RSA signing draw blinding and RSA-PSS salt from the key provider's
-entropy source; Ed25519 signing does not. RSA signing keys require 3,072–8,192-bit moduli and
-exponent 65,537. Certificate verification accepts deployed 2,048–8,192-bit RSA
-keys under rscrypto's legacy verification policy. TLS 1.3 ECDSA signature
+entropy source; Ed25519 signing does not. RSA signing keys load with 2,048–8,192-bit moduli
+and exponent 65,537, so servers and clients with RSA-2048 certificates work.
+`sign::Provider::new(random).rsa_key_sizes(sign::RsaSigningKeySizes::Bits3072To8192)`
+requires 3,072 bits or more. Certificate and handshake verification accept 2,048–8,192-bit RSA
+peer keys whatever the signing policy. TLS 1.3 ECDSA signature
 schemes match their exact curve and hash, and RSA PKCS#1 v1.5 is available for
 certificate verification only. TLS 1.2 handshake signatures follow TLS 1.2's
 rules; see [TLS 1.2](#tls-12).
