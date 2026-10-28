@@ -75,10 +75,10 @@ run_checks() {
     case "$target" in
       *-none*|wasm32-unknown-unknown)
         # No OS entropy, threads, or std; full retains alloc-backed primitives.
-        features=full,serde,serde-secrets,websocket-sha1
+        features=full,rand_core,serde,serde-secrets,websocket-sha1
         ;;
       wasm32-wasip1)
-        features=std,full,diag,serde,serde-secrets,websocket-sha1,getrandom
+        features=std,full,diag,rand_core,serde,serde-secrets,websocket-sha1,getrandom
         ;;
     esac
     args=(-p rscrypto --locked --target "$target" "${scope[@]}" --no-default-features)

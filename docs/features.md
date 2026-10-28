@@ -38,7 +38,9 @@ In libraries and constrained builds, use leaf features such as `sha2`, `blake3`,
 `chacha20-rng` gives `ChaCha20Rng`, a ChaCha20 random generator seeded by the caller.
 It reads no operating-system entropy, works without `alloc`, and its output stream
 is a stable function of the seed. `ChaCha20Rng::try_generate` seeds it from the
-operating system and also needs `getrandom`.
+operating system and also needs `getrandom`. With `rand_core`, it implements the
+`rand_core` 0.10 generator traits, so `rand` and other `rand_core` consumers can
+use it directly.
 
 `websocket-sha1` gives only the compatibility digest for WebSocket handshakes.
 No umbrella feature enables it, including `full`.
@@ -52,6 +54,7 @@ Enable it by name.
 | `std`           | Enables runtime CPU detection and standard-library integration. Enables `alloc`. |
 | `getrandom`     | Enables fallible helpers that get randomness from the operating system, such as keys, nonces, salts, seeds, hedged signatures, ML-KEM encapsulation, and RSA blinding. |
 | `parallel`      | Enables Rayon-based BLAKE3 and Argon2 work. Enables `std`, `blake3`, and `argon2`. |
+| `rand_core`     | Implements `rand_core` 0.10's `TryRng`, `TryCryptoRng`, and `SeedableRng` for `ChaCha20Rng`. Enables `chacha20-rng`, adds only the `rand_core` dependency, and works without `alloc`. `SeedableRng::seed_from_u64` panics, because a 64-bit value is not a 256-bit seed. |
 | `serde`         | Serializes public types. |
 | `serde-secrets` | Also serializes secret keys and shared secrets. Use it only at an explicit key-storage boundary. |
 | `portable-only` | Uses portable Rust instead of accelerated backends, with the exceptions below. |

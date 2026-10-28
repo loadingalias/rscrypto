@@ -444,7 +444,8 @@ ECDSA import, every signing family, and recovery through the same signer.
 
 ### ChaCha20 generator
 
-Seeding through `try_generate_with` clears a partial seed on failure. Returned
+Seeding through `try_generate_with`, or through `rand_core`'s `try_from_rng`, clears
+a partial seed on failure; `from_rng` writes its seed straight into the key. Returned
 output bytes are cleared from the generator as they are read, and each refill
 replaces the key with fresh keystream before clearing that copy, so a later state
 capture does not reveal returned output. Drop clears the key and chunk. The

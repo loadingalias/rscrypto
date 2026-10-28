@@ -170,3 +170,138 @@ proptest! {
     prop_assert_eq!(&produced, &independent_stream(seed, produced.len()));
   }
 }
+
+#[cfg(feature = "rand_core")]
+mod rand_core_traits {
+  use core::{convert::Infallible, fmt};
+
+  use proptest::prelude::*;
+  use rand_core::{CryptoRng, Rng, SeedableRng, TryRng};
+  use rscrypto::ChaCha20Rng;
+
+  use super::{OUTPUT, Request, independent_stream, request, take};
+
+  /// Draw through the traits only, as a generic `rand_core` consumer does.
+  fn trait_take(rng: &mut (impl Rng + ?Sized), len: usize) -> Vec<u8> {
+    let mut output = vec![0; len];
+    rng.fill_bytes(&mut output);
+    output
+  }
+
+  #[test]
+  fn seedable_and_boxed_crypto_generators_return_the_documented_stream() {
+    let seed = [0x5d; 32];
+    let expected = independent_stream(seed, 2 * OUTPUT + 12);
+
+    let mut rng = <ChaCha20Rng as SeedableRng>::from_seed(seed);
+    let mut produced = trait_take(&mut rng, OUTPUT - 1);
+    produced.extend(Rng::next_u32(&mut rng).to_le_bytes());
+    produced.extend(
+      rng
+        .try_next_u64()
+        .map(u64::to_le_bytes)
+        .unwrap_or_else(|never| match never {}),
+    );
+    let mut rest = vec![0; OUTPUT + 1];
+    rng
+      .try_fill_bytes(&mut rest)
+      .unwrap_or_else(|never: Infallible| match never {});
+    produced.extend(rest);
+    assert_eq!(produced, expected);
+
+    // The Quinn RNG seam stores generators as boxed `CryptoRng` trait objects.
+    let mut boxed: Box<dyn CryptoRng + Send + Sync> = Box::new(ChaCha20Rng::from_seed(seed));
+    assert_eq!(trait_take(&mut boxed, expected.len()), expected);
+  }
+
+  #[test]
+  fn from_rng_and_fork_seed_the_child_from_the_parent_stream() {
+    let seed = [0x29; 32];
+    let parent_stream = independent_stream(seed, 32 + 100);
+    let child_seed: [u8; 32] = parent_stream[..32].try_into().expect("32 bytes");
+    let child_stream = independent_stream(child_seed, 600);
+
+    let mut parent = ChaCha20Rng::from_seed(seed);
+    let mut child = ChaCha20Rng::from_rng(&mut parent);
+    assert_eq!(take(&mut child, 600), child_stream);
+    assert_eq!(take(&mut parent, 100), parent_stream[32..]);
+
+    let mut parent = ChaCha20Rng::from_seed(seed);
+    assert_eq!(take(&mut parent.fork(), 600), child_stream);
+
+    let mut parent = ChaCha20Rng::from_seed(seed);
+    let mut child = ChaCha20Rng::try_from_rng(&mut parent).unwrap_or_else(|never| match never {});
+    assert_eq!(take(&mut child, 600), child_stream);
+
+    let mut parent = ChaCha20Rng::from_seed(seed);
+    let mut child = parent.try_fork().unwrap_or_else(|never| match never {});
+    assert_eq!(take(&mut child, 600), child_stream);
+  }
+
+  #[derive(Debug, PartialEq)]
+  struct Unavailable;
+
+  impl fmt::Display for Unavailable {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+      f.write_str("entropy source unavailable")
+    }
+  }
+
+  impl core::error::Error for Unavailable {}
+
+  /// Writes part of a request, then fails.
+  struct FailingSource;
+
+  impl TryRng for FailingSource {
+    type Error = Unavailable;
+
+    fn try_next_u32(&mut self) -> Result<u32, Unavailable> {
+      Err(Unavailable)
+    }
+
+    fn try_next_u64(&mut self) -> Result<u64, Unavailable> {
+      Err(Unavailable)
+    }
+
+    fn try_fill_bytes(&mut self, dst: &mut [u8]) -> Result<(), Unavailable> {
+      dst[..7].fill(0x42);
+      Err(Unavailable)
+    }
+  }
+
+  #[test]
+  fn try_from_rng_returns_the_source_error() {
+    assert_eq!(
+      ChaCha20Rng::try_from_rng(&mut FailingSource).expect_err("failing source"),
+      Unavailable
+    );
+  }
+
+  #[test]
+  #[should_panic(expected = "ChaCha20Rng needs a 32-byte secret seed")]
+  fn seed_from_u64_refuses_a_64_bit_seed() {
+    let _rng = ChaCha20Rng::seed_from_u64(7);
+  }
+
+  proptest! {
+    #[test]
+    fn trait_and_inherent_requests_share_one_stream(
+      seed in any::<[u8; 32]>(),
+      requests in proptest::collection::vec((request(), any::<bool>()), 0..24),
+    ) {
+      let mut rng = ChaCha20Rng::from_seed(seed);
+      let mut produced = Vec::new();
+      for (request, through_trait) in requests {
+        match (request, through_trait) {
+          (Request::Bytes(len), false) => produced.extend(take(&mut rng, len)),
+          (Request::Bytes(len), true) => produced.extend(trait_take(&mut rng, len)),
+          (Request::U32, false) => produced.extend(rng.next_u32().to_le_bytes()),
+          (Request::U32, true) => produced.extend(Rng::next_u32(&mut rng).to_le_bytes()),
+          (Request::U64, false) => produced.extend(rng.next_u64().to_le_bytes()),
+          (Request::U64, true) => produced.extend(Rng::next_u64(&mut rng).to_le_bytes()),
+        }
+      }
+      prop_assert_eq!(&produced, &independent_stream(seed, produced.len()));
+    }
+  }
+}

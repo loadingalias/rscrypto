@@ -191,9 +191,13 @@ key provider that loads no key: it wraps the owned input in the same
 
 `ChaCha20Rng` owns its current ChaCha20 key and one 512-byte keystream chunk.
 `from_seed` clears its parameter copy, and `try_generate_with` fills the key in
-place, clearing a partial seed on failure. Each read clears the output bytes it
-returns, and each refill erases the previous key; drop clears the key and chunk.
-Rust moves copy the state, and only the final location clears.
+place, clearing a partial seed on failure. With `rand_core`, `SeedableRng::from_rng`
+and `try_from_rng` (and so `fork` and `try_fork`) also write the seed directly
+into the key, so no seed copy is left in their frames; `seed_from_u64` panics
+before building any state. The trait read methods call the inherent ones. Each
+read clears the output bytes it returns, and each refill erases the previous
+key; drop clears the key and chunk. Rust moves copy the state, and only the
+final location clears.
 
 ### rustls session tickets
 

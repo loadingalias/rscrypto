@@ -92,7 +92,7 @@ def cases():
         yield f'{target}-portable-build', [check(msrv, target, selected, 'build')], {}
 
     for target in targets():
-        features = ['full', 'serde', 'serde-secrets', 'websocket-sha1']
+        features = ['full', 'rand_core', 'serde', 'serde-secrets', 'websocket-sha1']
         if target == 'wasm32-wasip1':
             features += ['std', 'diag', 'getrandom']
         yield target, [check(canonical, target, features, 'build')], {}

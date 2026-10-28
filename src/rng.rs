@@ -70,6 +70,16 @@ const OUTPUT_SIZE: usize = CHUNK_SIZE - SEED_SIZE;
 ///   not on the seed or the generator state.
 /// - Rust moves copy the state. Dropping clears the final location only; earlier
 ///   copies made by moves are not cleared.
+///
+/// # `rand_core`
+///
+/// With the `rand_core` feature, the generator implements `rand_core` 0.10's
+/// `TryRng` (with `Error = Infallible`, so `Rng` too), `TryCryptoRng` (so
+/// `CryptoRng` too), and `SeedableRng` with a 32-byte seed. The trait methods
+/// return the same stream as the inherent methods. `SeedableRng::from_rng` and
+/// `try_from_rng` write the seed directly into the new generator, so `fork`
+/// creates an independent generator from this one's output.
+/// `SeedableRng::seed_from_u64` panics: a 64-bit value is not a 256-bit secret.
 pub struct ChaCha20Rng {
   key: [u8; SEED_SIZE],
   /// `chunk[position..OUTPUT_SIZE]` is unread output. Every other byte is zero
@@ -175,6 +185,79 @@ impl ChaCha20Rng {
     self.key.copy_from_slice(next_key);
     ct::zeroize(next_key);
     self.position = 0;
+  }
+}
+
+#[cfg(feature = "rand_core")]
+#[cfg_attr(docsrs, doc(cfg(feature = "rand_core")))]
+impl rand_core::TryRng for ChaCha20Rng {
+  type Error = core::convert::Infallible;
+
+  #[inline]
+  fn try_next_u32(&mut self) -> Result<u32, Self::Error> {
+    Ok(Self::next_u32(self))
+  }
+
+  #[inline]
+  fn try_next_u64(&mut self) -> Result<u64, Self::Error> {
+    Ok(Self::next_u64(self))
+  }
+
+  #[inline]
+  fn try_fill_bytes(&mut self, dst: &mut [u8]) -> Result<(), Self::Error> {
+    Self::fill_bytes(self, dst);
+    Ok(())
+  }
+}
+
+#[cfg(feature = "rand_core")]
+#[cfg_attr(docsrs, doc(cfg(feature = "rand_core")))]
+impl rand_core::TryCryptoRng for ChaCha20Rng {}
+
+#[cfg(feature = "rand_core")]
+#[cfg_attr(docsrs, doc(cfg(feature = "rand_core")))]
+impl rand_core::SeedableRng for ChaCha20Rng {
+  type Seed = [u8; SEED_SIZE];
+
+  /// Create a generator from a 32-byte seed; see [`ChaCha20Rng::from_seed`].
+  #[inline]
+  fn from_seed(seed: Self::Seed) -> Self {
+    Self::from_seed(seed)
+  }
+
+  /// Refuse a 64-bit seed.
+  ///
+  /// # Panics
+  ///
+  /// Always. A `u64` holds at most 64 bits of entropy, so a generator seeded
+  /// from it would be predictable. Use [`ChaCha20Rng::from_seed`] with 32
+  /// secret, uniformly random bytes, or `from_rng` with a secure generator.
+  #[track_caller]
+  #[expect(
+    clippy::panic,
+    reason = "refusing a 64-bit seed is the documented contract; only an explicit seed_from_u64 call reaches it"
+  )]
+  fn seed_from_u64(_state: u64) -> Self {
+    panic!("ChaCha20Rng needs a 32-byte secret seed; seed_from_u64 would give it at most 64 bits of entropy")
+  }
+
+  /// Create a generator seeded with the next 32 bytes of `rng`.
+  ///
+  /// The seed is written directly into the new generator.
+  #[inline]
+  fn from_rng<R: rand_core::Rng + ?Sized>(rng: &mut R) -> Self {
+    let mut new = Self::from_seed([0; SEED_SIZE]);
+    rng.fill_bytes(&mut new.key);
+    new
+  }
+
+  /// Try to create a generator seeded with the next 32 bytes of `rng`.
+  ///
+  /// The seed is written directly into the new generator. On an error, any
+  /// partial seed is cleared and the error is returned.
+  #[inline]
+  fn try_from_rng<R: rand_core::TryRng + ?Sized>(rng: &mut R) -> Result<Self, R::Error> {
+    Self::try_generate_with(|seed| rng.try_fill_bytes(seed))
   }
 }
 
