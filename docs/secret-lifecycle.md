@@ -120,6 +120,11 @@ the [WASM SIMD128 record](../benchmark_results/OVERVIEW.md#2026-10-06-blake3-was
   volatile stores and a compiler fence before returning. The array can hold copied CRT
   inverse words and transient reduction multipliers. Caller scratch cleanup does not own
   this stack copy. This covers both the Linux and shared non-Linux schedules.
+- The x86-64 Montgomery product, square, and reduction kernels keep a 176-byte frame below
+  the stack pointer. Its first 96 bytes hold copied multiplier limbs, the reduction
+  multipliers, `n0`, and the carry words, which can be secret during private arithmetic.
+  Each kernel stores zero over those words before it releases the frame. Caller scratch
+  cleanup does not own this frame.
 - **Not claimed:** the general-purpose and vector registers that the AArch64 and x86-64
   Montgomery, IFMA, and paired NEON kernels and the AArch64 NEON window selection use.
 

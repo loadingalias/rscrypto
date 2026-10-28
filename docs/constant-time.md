@@ -617,6 +617,16 @@ Two scanner limits surfaced:
 - the POWER slice model does not treat `vcmpequb.` as writing CR6;
 - slices keep raw PLT-stub displacements, so code placed earlier in the link stales a waiver.
 
+### Owned x86-64 RSA Montgomery kernels, 2026-10-28
+
+Owned inline-assembly kernels in `src/auth/rsa_x86_64_mont.rs` replace the adapted AWS-LC x86-64 RSA
+Montgomery assembly on Linux and Windows. The two x86-64 Linux `select_branch` waivers on
+`rscrypto_rsa_bn_sqr8x_mont_x86_64_elf` and `rscrypto_rsa_bn_sqrx8x_internal_x86_64_elf` were deleted with
+those functions. The scanner's `select_branch` test finds no select-shaped branch in the new kernels. Each of
+their conditional branches closes a loop over a count derived from the public limb count; the diagonal pass
+ends its loop with `jrcxz` on that count. Secret limbs reach only MULX, the ADCX, ADOX, ADC and SBB carry
+chains, and the masked final subtraction.
+
 ## Public decisions and exclusions
 
 Ordinary equality is allowed for public values, such as nonces, encoded public keys,

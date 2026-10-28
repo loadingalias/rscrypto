@@ -26,8 +26,9 @@ run_gate() {
     [[ "$(uname -s)" == Linux && "$(uname -m)" == x86_64 ]] || fail "requires a Linux x86-64 host"
     flags=$(awk '/^flags[[:space:]]*:/ { sub(/^[^:]*:[[:space:]]*/, ""); print; exit }' /proc/cpuinfo)
     [[ " $flags " == *" bmi2 "* && " $flags " == *" adx "* ]] || fail "requires BMI2 and ADX"
-    test_name=auth::rsa::tests::x86_64_linux_rsa_montgomery_asm_matches_portable_across_supported_widths
-    expected_symbols=(rscrypto_rsa_bn_mulx4x_mont_x86_64_elf rscrypto_rsa_bn_sqr8x_mont_x86_64_elf)
+    test_name=auth::rsa::tests::x86_64_rsa_montgomery_kernel_matches_portable_across_supported_widths
+    # The owned kernel is inline assembly in Rust functions of this module.
+    expected_symbols=(rsa_x86_64_mont)
   else
     uname -a
     [[ "$(uname -s)" == Darwin && "$(uname -m)" == arm64 ]] || fail "requires an Arm64 macOS host"

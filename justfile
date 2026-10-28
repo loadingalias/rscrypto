@@ -269,7 +269,7 @@ test-miri *args:
 test-rsa-macos-asm:
     @scripts/test/test-rsa-asm.sh macos
 
-# Test x86-64 RSA assembly on a physical Linux host.
+# Test the owned x86-64 RSA Montgomery kernel on a physical Linux host.
 [group('tests')]
 test-rsa-linux-asm:
     @scripts/test/test-rsa-asm.sh linux

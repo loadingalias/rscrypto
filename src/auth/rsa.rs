@@ -96,14 +96,9 @@ mod rsa_aarch64_pair;
 #[path = "rsa_aarch64_linux_asm.rs"]
 mod rsa_aarch64_linux_asm;
 
-#[cfg(all(
-  target_arch = "x86_64",
-  target_os = "linux",
-  not(feature = "portable-only"),
-  not(miri)
-))]
-#[path = "rsa_x86_64_asm.rs"]
-mod rsa_x86_64_asm;
+#[cfg(all(target_arch = "x86_64", not(feature = "portable-only"), not(miri)))]
+#[path = "rsa_x86_64_mont.rs"]
+mod rsa_x86_64_mont;
 
 #[cfg(all(
   target_arch = "x86_64",
@@ -12767,17 +12762,12 @@ fn mont_square_cios_in_place(value: &mut [u64], tmp: &mut [u64], modulus: &RsaPu
     return;
   }
 
-  #[cfg(all(
-    target_arch = "x86_64",
-    target_os = "linux",
-    not(feature = "portable-only"),
-    not(miri)
-  ))]
+  #[cfg(all(target_arch = "x86_64", not(feature = "portable-only"), not(miri)))]
   if value.len() == modulus.limbs.len()
-    && rsa_x86_64_asm::supports_bignum_mont_square_words(modulus.limbs.len())
-    && t.len() >= rsa_x86_64_asm::bignum_mont_scratch_words(modulus.limbs.len())
+    && rsa_x86_64_mont::supports(modulus.limbs.len())
+    && t.len() >= rsa_x86_64_mont::scratch_words(modulus.limbs.len())
   {
-    rsa_x86_64_asm::mont_square_cios_words_in_place(value, &modulus.limbs, modulus.n0, modulus.limbs.len(), t);
+    rsa_x86_64_mont::square_in_place(value, &modulus.limbs, modulus.n0, t);
     return;
   }
 
@@ -12807,18 +12797,13 @@ fn mont_mul_cios_in_place_left(
     return;
   }
 
-  #[cfg(all(
-    target_arch = "x86_64",
-    target_os = "linux",
-    not(feature = "portable-only"),
-    not(miri)
-  ))]
+  #[cfg(all(target_arch = "x86_64", not(feature = "portable-only"), not(miri)))]
   if left.len() == modulus.limbs.len()
     && right.len() == modulus.limbs.len()
-    && rsa_x86_64_asm::supports_bignum_mont_words(modulus.limbs.len())
-    && t.len() >= rsa_x86_64_asm::bignum_mont_scratch_words(modulus.limbs.len())
+    && rsa_x86_64_mont::supports(modulus.limbs.len())
+    && t.len() >= rsa_x86_64_mont::scratch_words(modulus.limbs.len())
   {
-    rsa_x86_64_asm::mont_mul_cios_words_in_place_left(left, right, &modulus.limbs, modulus.n0, modulus.limbs.len(), t);
+    rsa_x86_64_mont::mul_in_place_left(left, right, &modulus.limbs, modulus.n0, t);
     return;
   }
 
@@ -12912,14 +12897,9 @@ fn mont_mul_cios(out: &mut [u64], a: &[u64], b: &[u64], modulus: &RsaPublicModul
     return;
   }
 
-  #[cfg(all(
-    target_arch = "x86_64",
-    target_os = "linux",
-    not(feature = "portable-only"),
-    not(miri)
-  ))]
-  if rsa_x86_64_asm::supports_bignum_mont_words(n) && t.len() >= rsa_x86_64_asm::bignum_mont_scratch_words(n) {
-    rsa_x86_64_asm::mont_mul_cios_words(out, a, b, &modulus.limbs, modulus.n0, n, t);
+  #[cfg(all(target_arch = "x86_64", not(feature = "portable-only"), not(miri)))]
+  if rsa_x86_64_mont::supports(n) && t.len() >= rsa_x86_64_mont::scratch_words(n) {
+    rsa_x86_64_mont::mul(out, a, b, &modulus.limbs, modulus.n0, t);
     return;
   }
 
@@ -18115,7 +18095,6 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
       all(target_arch = "aarch64", any(target_os = "linux", target_os = "macos")),
       all(
         target_arch = "x86_64",
-        target_os = "linux",
         any(feature = "std", all(target_feature = "bmi2", target_feature = "adx"))
       )
     ),
@@ -18139,7 +18118,6 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
       all(target_arch = "aarch64", any(target_os = "linux", target_os = "macos")),
       all(
         target_arch = "x86_64",
-        target_os = "linux",
         any(feature = "std", all(target_feature = "bmi2", target_feature = "adx"))
       )
     ),
@@ -18165,7 +18143,6 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
       all(target_arch = "aarch64", any(target_os = "linux", target_os = "macos")),
       all(
         target_arch = "x86_64",
-        target_os = "linux",
         any(feature = "std", all(target_feature = "bmi2", target_feature = "adx"))
       )
     ),
@@ -18182,7 +18159,6 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
 
   #[cfg(all(
     target_arch = "x86_64",
-    target_os = "linux",
     any(feature = "std", all(target_feature = "bmi2", target_feature = "adx")),
     not(feature = "portable-only"),
     not(miri)
@@ -18436,81 +18412,128 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
   }
 
   // x86-64 BMI2/ADX discovery is `std`-only: without it `caps()` reports just
-  // the compile-time feature set, so the assembly backend is unreachable and
-  // there is no second implementation to differentially test. Compile this
-  // evidence test exactly when the backend can be observed as available, and
-  // keep the assertion hard inside it.
+  // the compile-time feature set, so the owned kernel is unreachable and there
+  // is no second implementation to differentially test. Compile this evidence
+  // test exactly when the kernel can be observed as available, and keep the
+  // assertion hard inside it.
   #[cfg(all(
     target_arch = "x86_64",
-    target_os = "linux",
     not(feature = "portable-only"),
     not(miri),
     any(feature = "std", all(target_feature = "bmi2", target_feature = "adx"))
   ))]
   #[test]
-  fn x86_64_linux_rsa_montgomery_asm_matches_portable_across_supported_widths() {
+  fn x86_64_rsa_montgomery_kernel_matches_portable_across_supported_widths() {
     for words in [16usize, 24, 32, 48, 64, 128] {
       assert!(
-        rsa_x86_64_asm::supports_bignum_mont_words(words),
-        "RSA x86-64 assembly evidence requires BMI2 and ADX"
+        rsa_x86_64_mont::supports(words),
+        "RSA x86-64 Montgomery evidence requires BMI2 and ADX"
       );
-      assert!(rsa_x86_64_asm::supports_bignum_mont_square_words(words));
 
       let modulus = rsa_montgomery_test_modulus(words);
       let a = rsa_montgomery_test_limbs(words, 0x243f_6a88_85a3_08d3);
       let b = rsa_montgomery_test_limbs(words, 0x1319_8a2e_0370_7344);
       let r2 = public_montgomery_r2(&modulus);
-      let scratch_words = rsa_x86_64_asm::bignum_mont_scratch_words(words);
-      let mut asm_t = vec![0u64; scratch_words];
+      let mut kernel_t = vec![0u64; rsa_x86_64_mont::scratch_words(words)];
       let mut portable_t = vec![0u64; words.strict_mul(2).strict_add(2)];
-      let mut asm_out = vec![0u64; words];
+      let mut kernel_out = vec![0u64; words];
       let mut portable_out = vec![0u64; words];
 
-      rsa_x86_64_asm::mont_mul_cios_words(&mut asm_out, &a, &b, &modulus.limbs, modulus.n0, words, &mut asm_t);
+      rsa_x86_64_mont::mul(&mut kernel_out, &a, &b, &modulus.limbs, modulus.n0, &mut kernel_t);
       mont_mul_cios_portable(&mut portable_out, &a, &b, &modulus, &mut portable_t);
-      assert_limbs_match_as_bytes("mont_mul", words, &asm_out, &portable_out);
+      assert_limbs_match_as_bytes("mont_mul", words, &kernel_out, &portable_out);
 
-      asm_t.fill(0);
-      portable_t.fill(0);
-      let mut asm_square = a.clone();
-      rsa_x86_64_asm::mont_square_cios_words_in_place(&mut asm_square, &modulus.limbs, modulus.n0, words, &mut asm_t);
+      let mut kernel_square = a.clone();
+      rsa_x86_64_mont::square_in_place(&mut kernel_square, &modulus.limbs, modulus.n0, &mut kernel_t);
       mont_mul_cios_portable(&mut portable_out, &a, &a, &modulus, &mut portable_t);
-      assert_limbs_match_as_bytes("mont_square_in_place", words, &asm_square, &portable_out);
+      assert_limbs_match_as_bytes("mont_square_in_place", words, &kernel_square, &portable_out);
 
-      asm_t.fill(0);
-      portable_t.fill(0);
-      let mut asm_left = a.clone();
-      rsa_x86_64_asm::mont_mul_cios_words_in_place_left(
-        &mut asm_left,
-        &b,
-        &modulus.limbs,
-        modulus.n0,
-        words,
-        &mut asm_t,
-      );
+      let mut kernel_left = a.clone();
+      rsa_x86_64_mont::mul_in_place_left(&mut kernel_left, &b, &modulus.limbs, modulus.n0, &mut kernel_t);
       mont_mul_cios_portable(&mut portable_out, &a, &b, &modulus, &mut portable_t);
-      assert_limbs_match_as_bytes("mont_mul_in_place_left", words, &asm_left, &portable_out);
+      assert_limbs_match_as_bytes("mont_mul_in_place_left", words, &kernel_left, &portable_out);
 
-      asm_t.fill(0);
-      portable_t.fill(0);
-      rsa_x86_64_asm::mont_mul_cios_words(&mut asm_out, &a, &r2, &modulus.limbs, modulus.n0, words, &mut asm_t);
-      let mut asm_acc = asm_out.clone();
+      rsa_x86_64_mont::mul(&mut kernel_out, &a, &r2, &modulus.limbs, modulus.n0, &mut kernel_t);
+      let mut kernel_acc = kernel_out.clone();
       for _ in 0..16 {
-        rsa_x86_64_asm::mont_square_cios_words_in_place(&mut asm_acc, &modulus.limbs, modulus.n0, words, &mut asm_t);
+        rsa_x86_64_mont::square_in_place(&mut kernel_acc, &modulus.limbs, modulus.n0, &mut kernel_t);
       }
-      rsa_x86_64_asm::mont_mul_cios_words_in_place_left(
-        &mut asm_acc,
-        &asm_out,
-        &modulus.limbs,
-        modulus.n0,
-        words,
-        &mut asm_t,
-      );
-      mont_reduce_cios_portable(&mut asm_out, &asm_acc, &modulus, &mut asm_t);
+      rsa_x86_64_mont::mul_in_place_left(&mut kernel_acc, &kernel_out, &modulus.limbs, modulus.n0, &mut kernel_t);
+      mont_reduce_cios_portable(&mut kernel_out, &kernel_acc, &modulus, &mut portable_t);
 
       let mut portable_acc = vec![0u64; words];
       public_e65537_cios_portable(&mut portable_out, &a, &r2, &mut portable_acc, &modulus, &mut portable_t);
-      assert_limbs_match_as_bytes("public_e65537", words, &asm_out, &portable_out);
+      assert_limbs_match_as_bytes("public_e65537", words, &kernel_out, &portable_out);
+    }
+  }
+
+  #[cfg(all(
+    target_arch = "x86_64",
+    not(feature = "portable-only"),
+    not(miri),
+    any(feature = "std", all(target_feature = "bmi2", target_feature = "adx"))
+  ))]
+  #[test]
+  fn x86_64_rsa_montgomery_kernel_matches_portable_on_random_and_edge_operands() {
+    let mut state = 0x9e37_79b9_7f4a_7c15u64;
+    let mut next = move || {
+      state ^= state << 13;
+      state ^= state >> 7;
+      state ^= state << 17;
+      state
+    };
+    for words in [8usize, 16, 24, 32, 40, 48, 64, 128] {
+      assert!(
+        rsa_x86_64_mont::supports(words),
+        "the kernel must support {words} limbs"
+      );
+      for case in 0..24 {
+        let mut bytes: Vec<u8> = (0..words.strict_mul(8)).map(|_| next().to_le_bytes()[0]).collect();
+        if case == 0 {
+          bytes.fill(0xff);
+        }
+        bytes[0] |= 0x80;
+        *bytes.last_mut().expect("nonzero width") |= 1;
+        let modulus = RsaPublicModulus::new(&bytes, words.strict_mul(64));
+        // Operands below the modulus: zero, modulus - 1, and random values with a smaller top limb.
+        let mut below = |kind: usize| -> Vec<u64> {
+          match kind {
+            0 => vec![0u64; words],
+            1 => {
+              let mut value = modulus.limbs.to_vec();
+              value[0] ^= 1;
+              value
+            }
+            _ => {
+              let mut value: Vec<u64> = (0..words).map(|_| next()).collect();
+              let top = words.strict_sub(1);
+              value[top] %= modulus.limbs[top];
+              value
+            }
+          }
+        };
+        for (left_kind, right_kind) in [(0, 2), (1, 1), (1, 2), (2, 1), (2, 2), (2, 2)] {
+          let a = below(left_kind);
+          let b = below(right_kind);
+          let mut t = vec![0u64; rsa_x86_64_mont::scratch_words(words)];
+          let mut portable_t = vec![0u64; words.strict_mul(2).strict_add(2)];
+          let mut expected = vec![0u64; words];
+          let mut out = vec![0u64; words];
+
+          rsa_x86_64_mont::mul(&mut out, &a, &b, &modulus.limbs, modulus.n0, &mut t);
+          mont_mul_cios_portable(&mut expected, &a, &b, &modulus, &mut portable_t);
+          assert_limbs_match_as_bytes("owned mul", words, &out, &expected);
+
+          let mut left = a.clone();
+          rsa_x86_64_mont::mul_in_place_left(&mut left, &b, &modulus.limbs, modulus.n0, &mut t);
+          assert_limbs_match_as_bytes("owned mul_in_place_left", words, &left, &expected);
+
+          let mut squared = a.clone();
+          rsa_x86_64_mont::square_in_place(&mut squared, &modulus.limbs, modulus.n0, &mut t);
+          mont_mul_cios_portable(&mut expected, &a, &a, &modulus, &mut portable_t);
+          assert_limbs_match_as_bytes("owned square_in_place", words, &squared, &expected);
+        }
+      }
     }
   }
 
