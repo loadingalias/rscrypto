@@ -670,6 +670,18 @@ function's 187 instructions differ only in relocated data-page and call-target i
 harness since the review (this entry and the ECDSA cross-hash signing paths) moved the link layout. Its
 `slice_sha256` was renewed.
 
+[Constant-Time 40759652685](https://github.com/loadingalias/rscrypto/actions/runs/40759652685) at `3b5ae581`
+passed on x86-64 Linux, AArch64 Linux, Windows x86-64 and POWER, with the new entry in each scan. RISC-V failed
+only on 7 stale RSA waivers, and a local scan of the prepared IBM Z artifacts found 14 more. `just ct-renew`
+compared each with its last passing artifacts (Constant-Time 40721967331 at `5af28f8e`). All 21 are renewed:
+
+- 18 kept an identical condition slice and identical open leaves (call addresses ignored): RISC-V 4, IBM Z 14.
+- 3 RISC-V slices differ only in relocations: `auipc` page offsets, a `jalr` displacement to the same callee,
+  and the nearest-symbol annotations of two `lui` immediates.
+
+With the renewals, both artifact sets scan with no stale waiver and no unwaived finding. The harness insertion
+also moved 43 waiver source references into `tools/ct-harness/src/lib.rs` by 27 lines; they were shifted with it.
+
 ## Public decisions and exclusions
 
 Ordinary equality is allowed for public values, such as nonces, encoded public keys,
