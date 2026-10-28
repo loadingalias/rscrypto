@@ -306,9 +306,9 @@ fn loaded_signing_keys_match_spki_and_independent_verifiers() {
         .key
         .choose_scheme(&[SignatureScheme::RSA_PKCS1_SHA256])
         .map(|signer| signer.scheme()),
-      kind.is_rsa().then_some(SignatureScheme::RSA_PKCS1_SHA256)
+      matches!(kind, Credential::Rsa | Credential::Rsa2048).then_some(SignatureScheme::RSA_PKCS1_SHA256)
     );
-    let schemes = if kind.is_rsa() {
+    let schemes = if matches!(kind, Credential::Rsa | Credential::Rsa2048) {
       &[
         SignatureScheme::RSA_PSS_SHA256,
         SignatureScheme::RSA_PSS_SHA384,
@@ -337,7 +337,7 @@ fn loaded_signing_keys_match_spki_and_independent_verifiers() {
       if matches!(kind, Credential::Ed25519) {
         assert_eq!(signature, fixture!("ed25519.sig"));
       }
-      if kind.is_rsa() {
+      if matches!(kind, Credential::Rsa | Credential::Rsa2048) {
         assert_ne!(
           signature,
           certified

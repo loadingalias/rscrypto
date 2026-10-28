@@ -41,14 +41,6 @@ pub(crate) enum Credential {
 }
 
 impl Credential {
-  pub(crate) const fn is_rsa(self) -> bool {
-    match self {
-      #[cfg(feature = "rsa")]
-      Self::Rsa | Self::Rsa2048 => true,
-      _ => false,
-    }
-  }
-
   pub(crate) fn scheme(self) -> rustls::crypto::SignatureScheme {
     match self {
       #[cfg(feature = "ecdsa-p256")]

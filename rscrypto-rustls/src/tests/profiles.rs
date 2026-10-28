@@ -179,6 +179,12 @@ fn rsa_profiles() {
   profile_matrix(Credential::Rsa);
 }
 
+#[cfg(feature = "rsa")]
+#[test]
+fn rsa2048_profiles() {
+  profile_matrix(Credential::Rsa2048);
+}
+
 #[cfg(feature = "ml-dsa")]
 #[test]
 fn mldsa44_profiles() {
