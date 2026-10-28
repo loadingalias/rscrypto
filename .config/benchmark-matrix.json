@@ -1482,6 +1482,13 @@
       "headline": true,
       "task": "Sign with PSS or PKCS #1 v1.5 and SHA-256, using fresh salt or blinding randomness in each call, with a private key prepared once."
     },
+    "rsa-sign-cached-blinding": {
+      "family": "RSA",
+      "bench": "rsa",
+      "cases": "^(?P<variant>rsa-(?:2048|3072|4096))-private-signing/(?P<input>sign-(?:pss|pkcs1v15)-sha256)/(?:cached-blinding/(?=rscrypto$)|fresh-entropy/(?!rscrypto$))(?P<implementation>[^/]+)$",
+      "headline": false,
+      "task": "Sign with PSS or PKCS #1 v1.5 and SHA-256 and a private key prepared once, through each library's fastest blinded API: rscrypto through a reused RsaBlindingCache, and each external library through its fresh-entropy row. AWS-LC caches and squares its blinding pair on the same 32-use schedule; RustCrypto blinds afresh, and ring signs unblinded."
+    },
     "rsa-oaep-encrypt": {
       "family": "RSA",
       "bench": "rsa",
