@@ -625,7 +625,34 @@ Montgomery assembly on Linux and Windows. The two x86-64 Linux `select_branch` w
 those functions. The scanner's `select_branch` test finds no select-shaped branch in the new kernels. Each of
 their conditional branches closes a loop over a count derived from the public limb count; the diagonal pass
 ends its loop with `jrcxz` on that count. Secret limbs reach only MULX, the ADCX, ADOX, ADC and SBB carry
-chains, and the masked final subtraction.
+chains, and the masked final subtraction. In the x86-64 Linux and Windows artifacts, the scanner reports
+11 `conditional_branch` findings in the kernels, one per loop, and 2 `register_indexed_memory` findings: an
+address formed from the limb count.
+
+[Constant-Time 40638256446](https://github.com/loadingalias/rscrypto/actions/runs/40638256446) at `07bf7c9c`
+passed every required DudeCT case: 134 each on Linux x86-64, AArch64, Windows x86-64, IBM Z and RISC-V, and
+129 on POWER. The verdict failed only on stale generated-code waivers: RSA on every target, plus two POWER
+P-256 ECDH conditions.
+`just ct-renew` compared each CI target with its `41d76d58` artifacts from the
+[blinding-cache renewal](#rsa-blinding-cache-renewal-2026-10-27). It compared a local Apple build at
+`07bf7c9c` with the Apple artifacts at `41d76d58`.
+
+- 94 waivers kept an identical condition slice and identical open leaves (call addresses ignored), and were
+  renewed with their rationales: Apple 16, AArch64 Linux 13, POWER 4, x86-64 Linux 20, Windows 12, RISC-V 11
+  and IBM Z 18. Their open slices bind functions that moved, or that pass shifted `rsa.rs` panic locations.
+- 14 POWER slices changed only in one merged-data digest: 13 in `ct_entry_rsa_pkcs1v15_decrypt_fixed_blinding`
+  and 1 in `ct_entry_p256_ecdh_agree`. Both functions' pre-link object code is identical. The 32729-byte
+  `.data.rel.ro` unit at `0x100260` differs in 141 bytes (`+5192..+19880`). Each is in the line field of a
+  panic `Location` record, which moved with the `rsa.rs` lines. The slices read none of those bytes, and the
+  SHA-256 initial state at `+20016` and `+20032` is byte-identical.
+- 2 waivers have new rationales, because the owned-kernel dispatch reallocated registers:
+  - x86-64 Linux `mont_mul_cios`: the limb count moved from r15 to r13 and the branch from `+0x1a6` to `+0x194`.
+  - Windows `private_exponentiate_window`: the frame grew from `0xd8` to `0xe8`.
+- On Windows the kernels now build, so `mont_mul_cios` inlines the portable CIOS loop. Its odd-limb branch has a
+  new waiver, which replaces the deleted `mont_mul_cios_portable` waiver.
+
+455 waivers remain, and the scanner accepts all seven artifact sets with no stale waiver and no unwaived
+finding. The renewal records and decisions are in `benchmark_results/rsa-x86-ct-20261028/`.
 
 ## Public decisions and exclusions
 

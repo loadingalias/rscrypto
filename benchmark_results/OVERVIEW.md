@@ -6,6 +6,41 @@ The dated campaign records come first.
 The 2026-08-18 Linux snapshot near the end is historical:
 its aggregate ratios are withdrawn as performance claims (see [Corrections](#corrections)).
 
+## 2026-10-28: owned x86-64 RSA Montgomery kernels
+
+`07bf7c9c` replaced the adapted AWS-LC x86-64 RSA assembly with owned inline-assembly kernels
+(`src/auth/rsa_x86_64_mont.rs`) on Linux and Windows.
+
+Same-host A/B on `aws-linux-x64-perf` (c8i.4xlarge, Granite Rapids, CPU 15 pinned): base/cand/cand/base
+twice, medians of four runs of each, the borrowed kernel as base:
+
+| Rows | 2048 | 3072 | 4096 | 8192 |
+| --- | ---: | ---: | ---: | ---: |
+| Public op, e = 65537 | 1.032x | 1.030x | 1.034x | 1.036x |
+| Verify, reused key | 1.026–1.029x | 1.030–1.031x | 1.032–1.034x | 1.035–1.036x |
+| Verify, imported key | 1.015–1.019x | 1.019–1.025x | 1.022–1.023x | 1.023–1.024x |
+| OAEP encrypt | 1.025x | 1.028x | 1.033x | — |
+| Private signing, cached blinding (IFMA control) | 1.003x | 1.011x | 1.012x | — |
+
+The design notes in the kernel's module documentation record what mattered. Clearing CF and OF at the
+start of every row lets the rows overlap; carrying the flags across rows measured 0.88–0.93x. Storing
+each row's final limb just before its last product adds about 3%.
+
+[Bench 40638338357](https://github.com/loadingalias/rscrypto/actions/runs/40638338357) at `07bf7c9c`
+(`rsa`, fastest external backend per row):
+
+| Lane | Verify, reuse and import | OAEP encrypt | Before (Bench 40608121219, `41d76d58`) |
+| --- | --- | --- | --- |
+| x86-64 Linux, Intel | 1.12–1.29x | 1.13–1.16x | verify 1.08–1.28x, encrypt 1.09–1.12x |
+| x86-64 Linux, AMD | 1.29–1.42x | 1.30–1.32x | verify 1.09–1.29x, encrypt 1.10–1.15x |
+| x86-64 Windows, Intel | 1.18–1.51x | 1.23–1.38x | verify 0.55–0.86x, encrypt 0.63–0.76x |
+| x86-64 Windows, AMD | 1.40–1.68x | 1.43–1.54x | verify 0.49–0.76x, encrypt 0.55–0.66x |
+
+RSA-2048 signing and decryption with fresh blinding still trail on every lane (0.77–0.89x); cached-blinding
+RSA-2048 signing is 0.89–0.97x except on Windows Intel (1.02–1.03x). AArch64 Linux trails on signing and
+decryption at every width (0.77–0.93x). Those rows are private-operation and blinding costs, outside this kernel.
+The retained artifacts and score are in `rsa-bench-07bf7c9c/`.
+
 ## 2026-10-27: provider residue review checkpoint
 
 The AArch64 AES-GCM correction keeps GHASH tables borrowed and updates the clearing accumulator
