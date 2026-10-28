@@ -288,6 +288,12 @@ pub(crate) fn xor_keystream_chunk<const N: usize>(key: &[u8; KEY_SIZE], chunk: &
   unsafe { kernel()(key, 0, &[0; NONCE_SIZE], chunk) };
 }
 
+/// [`xor_keystream_chunk`] with the portable kernel regardless of host caps.
+#[cfg(all(rscrypto_internal, feature = "diag", feature = "chacha20-rng"))]
+pub(crate) fn xor_keystream_chunk_portable<const N: usize>(key: &[u8; KEY_SIZE], chunk: &mut [u8; N]) {
+  xor_keystream_portable(key, 0, &[0; NONCE_SIZE], chunk);
+}
+
 fn xor_keystream_portable(key: &[u8; KEY_SIZE], initial_counter: u32, nonce: &[u8; NONCE_SIZE], buffer: &mut [u8]) {
   let mut counter = initial_counter;
   for chunk in buffer.chunks_mut(BLOCK_SIZE) {

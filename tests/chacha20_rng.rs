@@ -305,3 +305,25 @@ mod rand_core_traits {
     }
   }
 }
+
+#[cfg(all(rscrypto_internal, feature = "diag"))]
+#[test]
+fn portable_diagnostic_fill_matches_the_documented_stream() {
+  // Binary constant-time analysis runs this entry point, so it must take the production state machine.
+  let seed: [u8; 32] = core::array::from_fn(|index| u8::try_from(index).unwrap_or(0).wrapping_mul(29).wrapping_add(3));
+  for len in [
+    0,
+    1,
+    32,
+    OUTPUT - 1,
+    OUTPUT,
+    OUTPUT + 1,
+    2 * OUTPUT,
+    2 * OUTPUT + 7,
+    3 * CHUNK,
+  ] {
+    let mut output = vec![0; len];
+    rscrypto::rng::diag_chacha20_rng_fill_portable(seed, &mut output);
+    assert_eq!(output, independent_stream(seed, len), "len={len}");
+  }
+}

@@ -140,21 +140,7 @@ impl ChaCha20Rng {
   /// Fill `output` with the next bytes of the stream.
   #[inline]
   pub fn fill_bytes(&mut self, output: &mut [u8]) {
-    let mut output = output;
-    loop {
-      let unread = &mut self.chunk[self.position..OUTPUT_SIZE];
-      let count = unread.len().min(output.len());
-      let (now, rest) = output.split_at_mut(count);
-      let (taken, _) = unread.split_at_mut(count);
-      now.copy_from_slice(taken);
-      ct::zeroize(taken);
-      self.position = self.position.strict_add(count);
-      output = rest;
-      if output.is_empty() {
-        return;
-      }
-      self.refill();
-    }
+    self.fill_bytes_with(output, chacha20::xor_keystream_chunk);
   }
 
   /// Return the next 4 bytes of the stream as a little-endian `u32`.
@@ -175,12 +161,33 @@ impl ChaCha20Rng {
     u64::from_le_bytes(bytes)
   }
 
+  /// [`fill_bytes`](Self::fill_bytes) with `keystream` as the kernel that XORs
+  /// the keystream for nonce zero and block counters 0 to 7 into a chunk.
+  #[inline]
+  fn fill_bytes_with(&mut self, output: &mut [u8], keystream: impl Fn(&[u8; SEED_SIZE], &mut [u8; CHUNK_SIZE])) {
+    let mut output = output;
+    loop {
+      let unread = &mut self.chunk[self.position..OUTPUT_SIZE];
+      let count = unread.len().min(output.len());
+      let (now, rest) = output.split_at_mut(count);
+      let (taken, _) = unread.split_at_mut(count);
+      now.copy_from_slice(taken);
+      ct::zeroize(taken);
+      self.position = self.position.strict_add(count);
+      output = rest;
+      if output.is_empty() {
+        return;
+      }
+      self.refill(&keystream);
+    }
+  }
+
   #[inline(never)]
-  fn refill(&mut self) {
+  fn refill(&mut self, keystream: &impl Fn(&[u8; SEED_SIZE], &mut [u8; CHUNK_SIZE])) {
     debug_assert_eq!(self.position, OUTPUT_SIZE);
     // Every output byte was cleared as it was read, so the chunk is zero and
     // XOR leaves the keystream itself.
-    chacha20::xor_keystream_chunk(&self.key, &mut self.chunk);
+    keystream(&self.key, &mut self.chunk);
     let (_, next_key) = self.chunk.split_at_mut(OUTPUT_SIZE);
     self.key.copy_from_slice(next_key);
     ct::zeroize(next_key);
@@ -259,6 +266,18 @@ impl rand_core::SeedableRng for ChaCha20Rng {
   fn try_from_rng<R: rand_core::TryRng + ?Sized>(rng: &mut R) -> Result<Self, R::Error> {
     Self::try_generate_with(|seed| rng.try_fill_bytes(seed))
   }
+}
+
+/// Fill `output` from a generator seeded with `seed`, refilling with the
+/// **portable** ChaCha20 kernel regardless of host caps.
+///
+/// Binary constant-time analysis uses this to run the generator's production
+/// state machine without runtime kernel dispatch.
+#[cfg(all(rscrypto_internal, feature = "diag"))]
+#[doc(hidden)]
+pub fn diag_chacha20_rng_fill_portable(seed: [u8; SEED_SIZE], output: &mut [u8]) {
+  let mut rng = ChaCha20Rng::from_seed(seed);
+  rng.fill_bytes_with(output, chacha20::xor_keystream_chunk_portable);
 }
 
 impl Drop for ChaCha20Rng {

@@ -307,6 +307,7 @@ symbols = [
   "ct_entry_owner_eq_3168",
   "ct_entry_secret_bytes32_debug_masked",
   "ct_entry_poly1305_authenticate",
+  "ct_entry_chacha20_rng_fill",
   "ct_entry_hmac_sha256_verify",
   "ct_entry_hmac_sha256_verify_truncated_64",
   "ct_entry_hmac_sha384_verify",
@@ -2403,6 +2404,7 @@ id = "rng.chacha20.chacha20_rng"
 primitive = "rng.chacha20"
 variant = "ChaCha20Rng"
 dudect = ["chacha20_rng_fixed_vs_random_seed"]
+binsec = ["rng.chacha20.fill.portable.all"]
 
 [[evidence_unit]]
 id = "aead.symmetric_transform.aes_siv_cmac256"
@@ -3414,6 +3416,21 @@ notes = "Bounded production ChaCha20-Poly1305 seal leaf covering stream transfor
 claim = "ct-intended"
 
 [[binsec_kernel]]
+id = "rng.chacha20.fill.portable.all"
+primitive = "rng.chacha20"
+symbol = "ct_binsec_chacha20_rng_fill"
+tier = "B"
+required = true
+targets = ["*"]
+rustflags = []
+sse_depth = 20000
+secrets = [{ name = "CT_BINSEC_KEY_32", kind = "global", bytes = 32 }]
+public = [{ name = "OUTPUT_LEN", kind = "const", value = 32 }]
+assumptions = []
+notes = "Bounded production ChaCha20Rng leaf: seeding, the first refill (eight portable ChaCha20 blocks), key replacement, output copy and clear, and drop."
+claim = "ct-intended"
+
+[[binsec_kernel]]
 id = "aead.open_authentication.aes_round_portable.all"
 primitive = "aead.open_authentication"
 symbol = "ct_binsec_aes_round_portable"
@@ -3924,7 +3941,7 @@ variable_time_components = ["public-length copy and clear loops", "refill at pub
 permitted_leakage = ["algorithm", "request lengths and call sequence", "backend", "seeding success/failure"]
 claim = "ct-intended"
 evidence = ["primitive:rng.chacha20", "unit:rng.chacha20.chacha20_rng"]
-limitation = "The rand_core trait methods call the inherent methods; from_rng and try_from_rng write the seed straight into the generator key, as try_generate_with does. seed_from_u64 always panics before touching state. DudeCT covers seeding, two refills, and drop. The generator runs the ChaCha20 kernels that the AEAD evidence covers, but it has no BINSEC kernel, linked-image harness entry, or asm-heuristic gate of its own, so the primitive is not tier-gated. Rust moves copy the generator state; only its final location clears on drop."
+limitation = "The rand_core trait methods call the inherent methods; from_rng and try_from_rng write the seed straight into the generator key, as try_generate_with does. seed_from_u64 always panics before touching state. DudeCT covers seeding, two refills, and drop. The linked-image harness entry ct_entry_chacha20_rng_fill runs construction, fill, and drop through the dispatched kernel; the BINSEC leaf runs the same state machine over the portable kernel, because symbolic execution does not model runtime dispatch. The accelerated kernels are covered by the AEAD evidence. Rust moves copy the generator state; only its final location clears on drop."
 
 [[operation]]
 id = "aead.open_and_authenticate"
@@ -5706,12 +5723,11 @@ secrets = ["seed", "generator key", "unread output", "keystream chunk"]
 public = ["request lengths", "call sequence", "backend_caps"]
 may_leak = ["input_length", "public_backend_dispatch"]
 must_not_leak_ref = "common_secret_data"
-required = []
+required = ["tier_b"]
 notes = "Fast-key-erasure generator over the shared ChaCha20 kernels. Output positions and refills depend only on request lengths."
 [primitive.harness]
-status = "partial"
-symbols = []
-gap = "No linked-image harness entry or BINSEC kernel yet; DudeCT covers the operation. Add both and the tier-B gate before any release CT claim."
+status = "covered"
+symbols = ["ct_entry_chacha20_rng_fill"]
 
 [[primitive]]
 id = "keyed_hash.blake2_blake3"
@@ -7172,7 +7188,7 @@ target = "aarch64-apple-darwin"
 primitive = "rsa.private_ops"
 symbol = "rscrypto::auth::rsa::encode_pss_with_mask::<rscrypto::hashes::crypto::sha256::Sha256>"
 kind = "select_branch"
-slice_sha256 = "703b9db5859ecde7eb4faa5c88c318e750d24906cf0e2051972fc8c77163fe43"
+slice_sha256 = "a7635fdd6eb2106fc7cd8f19eb54811f50afd977e6ec3373f6381ac9b9ff9f4c"
 source = "src/auth/rsa.rs:9561 encode_pss_with_mask"
 classification = "public"
 rationale = "x26 is entry out.len()*8. x8 reloads em_bits from sp+0x10, whose only direct frame store saves entry x4; the call-result and output buffers are disjoint from that slot. cmp x26,x8 tests whether unused_bits is zero and skips the public top-bit mask. The message hash, salt, and mask bytes do not feed the condition."

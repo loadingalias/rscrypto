@@ -654,6 +654,22 @@ P-256 ECDH conditions.
 455 waivers remain, and the scanner accepts all seven artifact sets with no stale waiver and no unwaived
 finding. The renewal records and decisions are in `benchmark_results/rsa-x86-ct-20261028/`.
 
+### ChaCha20Rng tier B, 2026-10-28
+
+`rng.chacha20` now requires the tier-B profile. The linked-image entry `ct_entry_chacha20_rng_fill` runs
+construction, one fill, and drop through the dispatched ChaCha20 kernel. The BINSEC leaf
+`rng.chacha20.fill.portable.all` runs the same generator state machine over the portable kernel, because
+symbolic execution does not model runtime dispatch: seeding, the first refill (eight blocks), key
+replacement, a 32-byte output copy and clear, and drop. BINSEC reports `secure` on x86-64 Linux and AArch64
+Linux, with one path explored to completion (depth 10769 and 8915). The accelerated kernels keep the AEAD
+evidence.
+
+In the local Apple build, the scanner reports no finding in the new entry. One RSA waiver went stale:
+`encode_pss_with_mask::<Sha256>` at `+0x240`. Its condition slice and seven open leaves are identical, and the
+function's 187 instructions differ only in relocated data-page and call-target immediates: code added to the
+harness since the review (this entry and the ECDSA cross-hash signing paths) moved the link layout. Its
+`slice_sha256` was renewed.
+
 ## Public decisions and exclusions
 
 Ordinary equality is allowed for public values, such as nonces, encoded public keys,

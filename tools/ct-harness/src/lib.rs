@@ -18,7 +18,7 @@ use rscrypto::{
   Aegis256, Aegis256Key, Aes128Gcm, Aes128GcmKey, Aes128GcmSiv, Aes128GcmSivKey, Aes256Gcm, Aes256GcmKey, Aes256GcmSiv,
   Aes256GcmSivKey, AesSivCmac256, AesSivCmac256Key, AesSivCmac256Nonce, Argon2Params, Argon2d, Argon2i, Argon2id,
   AsconAead128, AsconAead128Key, Blake2b256, Blake2b512, Blake2bKey, Blake2s128, Blake2s256, Blake2sKey, Blake3,
-  Blake3KeyedHash, ChaCha20Poly1305, ChaCha20Poly1305Key, Crc32, EcdsaP256SecretKey, EcdsaP384SecretKey,
+  Blake3KeyedHash, ChaCha20Poly1305, ChaCha20Poly1305Key, ChaCha20Rng, Crc32, EcdsaP256SecretKey, EcdsaP384SecretKey,
   Ed25519PublicKey, Ed25519SecretKey, Ed25519Signature, HkdfSha256, HkdfSha384, HmacSha3_224Tag, HmacSha256,
   HmacSha256Tag, HmacSha384, HmacSha384Tag, HmacSha512, HmacSha512Tag, Kmac256, MlKem512, MlKem512Ciphertext,
   MlKem512DecapsulationKey, MlKem512EncapsulationKey, MlKem768, MlKem768Ciphertext, MlKem768DecapsulationKey,
@@ -410,6 +410,33 @@ pub unsafe extern "C" fn ct_entry_chacha20poly1305_open(
     .decrypt_in_place(&nonce, aad, buffer, &tag)
     .map(|()| STATUS_OK)
     .unwrap_or(STATUS_ERR)
+}
+
+/// ChaCha20Rng construction, fill, and drop harness.
+///
+/// # Safety
+///
+/// - When non-null, `seed` must be valid for reads of 32 initialized bytes and must not be mutated
+///   while copied. A null pointer is rejected.
+/// - A null `out` pointer is permitted only when `out_len` is zero. A non-null pointer must
+///   reference one allocation of `out_len` initialized writable bytes, `out_len` must not exceed
+///   `isize::MAX`, and the range must be exclusively accessed for the call. It may overlap `seed`,
+///   because the seed is copied before the mutable borrow begins.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ct_entry_chacha20_rng_fill(seed: *const u8, out: *mut u8, out_len: usize) -> u8 {
+  // SAFETY: The function contract requires a non-null `seed` to reference exactly 32 readable,
+  // initialized bytes that remain immutable while copied into owned storage.
+  let Some(seed) = (unsafe { read_array::<32>(seed) }) else {
+    return STATUS_ERR;
+  };
+  // SAFETY: The function contract establishes the allocation, bounds, initialization, exclusivity,
+  // and lifetime required to borrow `out` mutably; `output_slice` handles both null shapes.
+  let Some(out) = (unsafe { output_slice(out, out_len) }) else {
+    return STATUS_ERR;
+  };
+  let mut generator = ChaCha20Rng::from_seed(seed);
+  generator.fill_bytes(out);
+  STATUS_OK
 }
 
 /// X25519 scalar multiplication / shared-secret harness.

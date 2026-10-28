@@ -2092,6 +2092,10 @@ let _ = rscrypto::RsaPublicKey::diag_encrypt_oaep_with_seed;
 let _ = rscrypto::RsaPublicKey::diag_encrypt_oaep_with_seed_and_scratch;
 ```
 
+```compile_fail,E0432
+use rscrypto::rng::diag_chacha20_rng_fill_portable;
+```
+
 "#]
 pub struct __RemainingEvidenceBoundary;
 

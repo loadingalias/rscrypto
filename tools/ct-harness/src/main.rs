@@ -33,6 +33,8 @@ fn main() {
 
   retain!(rscrypto_ct_harness::ct_entry_poly1305_authenticate);
 
+  retain!(rscrypto_ct_harness::ct_entry_chacha20_rng_fill);
+
   retain!(
     rscrypto_ct_harness::ct_entry_p256_ecdh_public_key,
     rscrypto_ct_harness::ct_entry_p256_ecdh_agree,

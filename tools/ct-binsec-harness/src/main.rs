@@ -817,6 +817,21 @@ pub extern "C" fn ct_binsec_chacha20poly1305_seal() -> ! {
 
 #[unsafe(no_mangle)]
 #[inline(never)]
+pub extern "C" fn ct_binsec_chacha20_rng_fill() -> ! {
+  // SAFETY: These pointers reference fixed harness globals with static storage.
+  let seed = unsafe { array_from_global(ptr::addr_of!(CT_BINSEC_KEY_32)) };
+  // One read takes the first refill: eight portable ChaCha20 blocks, key replacement, and clears.
+  let mut out = [0u8; 32];
+  rscrypto::rng::diag_chacha20_rng_fill_portable(seed, &mut out);
+  let mut acc = 0u8;
+  for byte in out {
+    acc ^= byte;
+  }
+  ct_binsec_done(acc)
+}
+
+#[unsafe(no_mangle)]
+#[inline(never)]
 pub extern "C" fn ct_binsec_blake2_blake3_keyed_digest() -> ! {
   // SAFETY: These pointers reference fixed harness globals with static storage.
   let key = unsafe { array_from_global(ptr::addr_of!(CT_BINSEC_KEY_32)) };
@@ -1155,7 +1170,7 @@ pub extern "C" fn ct_binsec_mldsa_montgomery() -> ! {
 
 #[unsafe(no_mangle)]
 #[used]
-pub static CT_BINSEC_ENTRYPOINTS: [extern "C" fn() -> !; 53] = [
+pub static CT_BINSEC_ENTRYPOINTS: [extern "C" fn() -> !; 54] = [
   ct_binsec_mldsa_montgomery,
   ct_binsec_owner_eq_16,
   ct_binsec_owner_eq_32,
@@ -1194,6 +1209,7 @@ pub static CT_BINSEC_ENTRYPOINTS: [extern "C" fn() -> !; 53] = [
   ct_binsec_ascon_aead128_open,
   ct_binsec_argon2i_hash,
   ct_binsec_chacha20poly1305_seal,
+  ct_binsec_chacha20_rng_fill,
   ct_binsec_blake2_blake3_keyed_digest,
   ct_binsec_poly1305_block_portable,
   ct_binsec_curve25519_conditional_swap,
