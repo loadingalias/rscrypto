@@ -119,16 +119,16 @@ fn wycheproof_result(result: &str) -> WycheproofResult {
 }
 
 fn public_key_from_wycheproof_spki(der: &[u8], key_size: u64, context: &str) -> RsaPublicKey {
-  if key_size < RsaPublicKeyPolicy::modern_verification().min_modulus_bits() as u64 {
-    RsaPublicKey::from_spki_der_with_policy(der, &RsaPublicKeyPolicy::legacy_verification()).expect(context)
+  if key_size < RsaPublicKeyPolicy::modulus_3072_to_8192().min_modulus_bits() as u64 {
+    RsaPublicKey::from_spki_der_with_policy(der, &RsaPublicKeyPolicy::modulus_2048_to_8192()).expect(context)
   } else {
     RsaPublicKey::from_spki_der(der).expect(context)
   }
 }
 
 fn private_key_from_wycheproof_pkcs8(der: &[u8], key_size: u64, context: &str) -> RsaPrivateKey {
-  if key_size < RsaPublicKeyPolicy::modern_verification().min_modulus_bits() as u64 {
-    RsaPrivateKey::from_pkcs8_der_with_policy(der, &RsaPublicKeyPolicy::legacy_verification()).expect(context)
+  if key_size < RsaPublicKeyPolicy::modulus_3072_to_8192().min_modulus_bits() as u64 {
+    RsaPrivateKey::from_pkcs8_der_with_policy(der, &RsaPublicKeyPolicy::modulus_2048_to_8192()).expect(context)
   } else {
     RsaPrivateKey::from_pkcs8_der(der).expect(context)
   }
@@ -142,7 +142,7 @@ fn assert_pkcs1v15_wycheproof_vectors(
   expected: ExpectedCounts,
 ) {
   let suite: Value = serde_json::from_str(json).expect("Wycheproof PKCS1v1.5 JSON must parse");
-  let policy = RsaPublicKeyPolicy::legacy_verification().allow_legacy_small_exponents();
+  let policy = RsaPublicKeyPolicy::modulus_2048_to_8192().allow_legacy_small_exponents();
   let mut valid = 0usize;
   let mut invalid = 0usize;
   let mut acceptable = 0usize;
@@ -724,7 +724,7 @@ fn assert_pkcs1v15_sig_gen_wycheproof_vectors(json: &str, expected_key_size: u64
     }
 
     let private_key_der = hex_to_vec(field(group, "privateKeyPkcs8"));
-    let key = RsaPrivateKey::from_pkcs8_der_with_policy(&private_key_der, &RsaPublicKeyPolicy::legacy_verification())
+    let key = RsaPrivateKey::from_pkcs8_der_with_policy(&private_key_der, &RsaPublicKeyPolicy::modulus_2048_to_8192())
       .expect("Wycheproof PKCS1v1.5 private key must parse");
     assert_eq!(key.public_key().modulus_bits() as u64, expected_key_size);
     let blinding_factor = fixed_width_one(key.public_key().modulus().len());

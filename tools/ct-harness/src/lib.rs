@@ -160,7 +160,7 @@ unsafe fn write_array<const N: usize>(ptr: *mut u8, value: &[u8; N]) -> bool {
 }
 
 fn rsa_ct_fixture_key(pkcs8_der: &[u8]) -> Option<RsaPrivateKey> {
-  RsaPrivateKey::from_pkcs8_der_with_policy(pkcs8_der, &RsaPublicKeyPolicy::legacy_verification()).ok()
+  RsaPrivateKey::from_pkcs8_der_with_policy(pkcs8_der, &RsaPublicKeyPolicy::modulus_2048_to_8192()).ok()
 }
 
 /// Borrow an RSA key prepared by [`ct_entry_rsa_fixture_key_import`].

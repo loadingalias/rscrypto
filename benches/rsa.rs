@@ -440,7 +440,7 @@ fn rsa2048_private_key() -> RsaPrivateKey {
       exponent_q: &exponent_q,
       coefficient: &coefficient,
     },
-    &RsaPublicKeyPolicy::legacy_verification(),
+    &RsaPublicKeyPolicy::modulus_2048_to_8192(),
   )
   .expect("valid RSA private benchmark fixture must succeed")
 }
@@ -448,9 +448,9 @@ fn rsa2048_private_key() -> RsaPrivateKey {
 /// RSA-2048 keys need the legacy policy; larger keys use the modern default.
 fn key_policy(bits: usize) -> RsaPublicKeyPolicy {
   if bits < 3072 {
-    RsaPublicKeyPolicy::legacy_verification()
+    RsaPublicKeyPolicy::modulus_2048_to_8192()
   } else {
-    RsaPublicKeyPolicy::modern_verification()
+    RsaPublicKeyPolicy::modulus_3072_to_8192()
   }
 }
 
@@ -2131,7 +2131,7 @@ fn rsa_public_exponents(c: &mut Criterion) {
   }
   let modulus = legacy_exponent_modulus();
   let input = legacy_exponent_input();
-  let policy = RsaPublicKeyPolicy::legacy_verification().allow_legacy_small_exponents();
+  let policy = RsaPublicKeyPolicy::modulus_2048_to_8192().allow_legacy_small_exponents();
 
   let key_e3 = RsaPublicKey::from_pkcs1_der_with_policy(&pkcs1_der_from_modulus_exponent(&modulus, &[0x03]), &policy)
     .expect("valid RSA benchmark fixture must succeed");
@@ -2537,7 +2537,7 @@ fn rsa_montgomery_thresholds(c: &mut Criterion) {
   ] {
     let key = RsaPublicKey::from_pkcs1_der_with_policy(
       &synthetic_pkcs1_der(modulus_len),
-      &RsaPublicKeyPolicy::legacy_verification(),
+      &RsaPublicKeyPolicy::modulus_2048_to_8192(),
     )
     .expect("valid RSA benchmark fixture must succeed");
     let input = modulus_minus_one(&key);
@@ -2605,8 +2605,8 @@ fn rsa_components(c: &mut Criterion) {
   let pss2048_sig = pss_signature_sha256();
   let pkcs1v15_2048_spki = pkcs1v15_spki();
   let pkcs1v15_2048_sig = pkcs1v15_signature_sha256();
-  let legacy_policy = RsaPublicKeyPolicy::legacy_verification();
-  let modern_policy = RsaPublicKeyPolicy::modern_verification();
+  let legacy_policy = RsaPublicKeyPolicy::modulus_2048_to_8192();
+  let modern_policy = RsaPublicKeyPolicy::modulus_3072_to_8192();
 
   rsa_components_for_size(
     c,

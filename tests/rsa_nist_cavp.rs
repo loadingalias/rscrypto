@@ -228,7 +228,7 @@ fn nist_cavp_odd_public_exponents_require_explicit_policy() {
     Err(RsaKeyError::InvalidPublicExponent)
   );
 
-  let policy = RsaPublicKeyPolicy::legacy_verification().allow_legacy_odd_exponents();
+  let policy = RsaPublicKeyPolicy::modulus_2048_to_8192().allow_legacy_odd_exponents();
   let key = RsaPublicKey::from_pkcs1_der_with_policy(&key_der, &policy)
     .expect("CAVP odd-exponent RSA key must parse under the explicit legacy policy");
   assert_eq!(key.modulus_bits(), 2048);
@@ -260,7 +260,7 @@ fn nist_cavp_sha2_siggen_private_operations_match_expected_signatures() {
   assert_eq!(suite["source_files"][0].as_str(), Some("SigGen15_186-3.txt"));
   assert_eq!(suite["source_files"][1].as_str(), Some("SigGenPSS_186-3.txt"));
 
-  let policy = RsaPublicKeyPolicy::legacy_verification().allow_legacy_odd_exponents();
+  let policy = RsaPublicKeyPolicy::modulus_2048_to_8192().allow_legacy_odd_exponents();
   let mut pkcs1v15 = 0usize;
   let mut pss = 0usize;
   let mut coverage: BTreeMap<(String, u64, String), usize> = BTreeMap::new();
@@ -363,7 +363,7 @@ fn nist_cavp_sha2_siggen_private_operations_match_expected_signatures() {
 fn nist_cavp_same_width_public_scratch_rebinds_between_keys() {
   let suite: Value = serde_json::from_str(CAVP_SIGGEN_186_3_PRIVATE).expect("CAVP SigGen JSON must parse");
   let tests = cavp_tests(&suite);
-  let policy = RsaPublicKeyPolicy::legacy_verification().allow_legacy_odd_exponents();
+  let policy = RsaPublicKeyPolicy::modulus_2048_to_8192().allow_legacy_odd_exponents();
   let key_a = private_key_from_cavp_siggen(&tests[0], &policy);
   let key_b = private_key_from_cavp_siggen(&tests[6], &policy);
   assert_eq!(key_a.public_key().modulus().len(), key_b.public_key().modulus().len());
@@ -404,7 +404,7 @@ fn nist_cavp_same_width_public_scratch_rebinds_between_keys() {
 fn nist_cavp_same_width_private_scratch_rebinds_between_keys() {
   let suite: Value = serde_json::from_str(CAVP_SIGGEN_186_3_PRIVATE).expect("CAVP SigGen JSON must parse");
   let tests = cavp_tests(&suite);
-  let policy = RsaPublicKeyPolicy::legacy_verification().allow_legacy_odd_exponents();
+  let policy = RsaPublicKeyPolicy::modulus_2048_to_8192().allow_legacy_odd_exponents();
   let key_a = private_key_from_cavp_siggen(&tests[0], &policy);
   let test_b = &tests[6];
   let key_b = private_key_from_cavp_siggen(test_b, &policy);
@@ -436,7 +436,7 @@ fn nist_cavp_same_width_private_scratch_rebinds_between_keys() {
 #[test]
 fn nist_cavp_sha2_siggen_profile_signing_matches_expected_results() {
   let suite: Value = serde_json::from_str(CAVP_SIGGEN_186_3_PRIVATE).expect("CAVP SigGen JSON must parse");
-  let policy = RsaPublicKeyPolicy::legacy_verification().allow_legacy_odd_exponents();
+  let policy = RsaPublicKeyPolicy::modulus_2048_to_8192().allow_legacy_odd_exponents();
   let mut pkcs1v15 = 0usize;
   let mut pss = 0usize;
 
@@ -518,7 +518,7 @@ fn nist_cavp_supported_sha2_sigver_subset_matches_expected_results() {
   assert_eq!(suite["counts"]["invalid"].as_u64(), Some(180));
   assert_eq!(cavp_tests(&suite).len(), 216);
 
-  let policy = RsaPublicKeyPolicy::legacy_verification().allow_legacy_odd_exponents();
+  let policy = RsaPublicKeyPolicy::modulus_2048_to_8192().allow_legacy_odd_exponents();
   let mut counts = Counts { valid: 0, invalid: 0 };
   let mut coverage: BTreeMap<(String, u64, String, Option<u64>), usize> = BTreeMap::new();
 

@@ -201,7 +201,7 @@ fn rsa_pkcs8_der(index: usize) -> Vec<u8> {
 
 fn rsa_ct_fixture_key(index: usize) -> RsaPrivateKey {
   let der = rsa_pkcs8_der(index);
-  RsaPrivateKey::from_pkcs8_der_with_policy(&der, &RsaPublicKeyPolicy::legacy_verification())
+  RsaPrivateKey::from_pkcs8_der_with_policy(&der, &RsaPublicKeyPolicy::modulus_2048_to_8192())
     .expect("bundled RSA fixture must contain a valid private key")
 }
 
@@ -3216,7 +3216,7 @@ fn rsa_private_key_pkcs8_import_key_a_vs_key_b(runner: &mut CtRunner, rng: &mut 
     let selected = if matches!(class, Class::Left) { &der_a } else { &der_b };
     der.copy_from_slice(selected);
     runner.run_one(class, || {
-      let key = RsaPrivateKey::from_pkcs8_der_with_policy(&der, &RsaPublicKeyPolicy::legacy_verification())
+      let key = RsaPrivateKey::from_pkcs8_der_with_policy(&der, &RsaPublicKeyPolicy::modulus_2048_to_8192())
         .expect("selected bundled RSA fixture must import");
       key.signature_len()
     });
@@ -3294,7 +3294,7 @@ fn rsa_private_key_pkcs8_import_stage54_key_a_vs_key_b(runner: &mut CtRunner, rn
 fn rsa_private_key_pkcs8_import_stage_key_a_vs_key_b(runner: &mut CtRunner, rng: &mut BenchRng, stage: u8) {
   let der_a = rsa_pkcs8_der(RSA_CT_KEY_A_INDEX);
   let der_b = rsa_pkcs8_der(RSA_CT_KEY_B_SAME_SHAPE_INDEX);
-  let policy = RsaPublicKeyPolicy::legacy_verification();
+  let policy = RsaPublicKeyPolicy::modulus_2048_to_8192();
   let mut inputs = Vec::with_capacity(samples());
   for _ in 0..samples() {
     inputs.push(random_class(rng));
@@ -3314,7 +3314,7 @@ fn rsa_private_key_pkcs8_import_stage_key_a_vs_key_b(runner: &mut CtRunner, rng:
 fn rsa_private_key_pkcs8_validate_stage_key_a_vs_key_b(runner: &mut CtRunner, rng: &mut BenchRng, stage: u8) {
   let der_a = rsa_pkcs8_der(RSA_CT_KEY_A_INDEX);
   let der_b = rsa_pkcs8_der(RSA_CT_KEY_B_SAME_SHAPE_INDEX);
-  let policy = RsaPublicKeyPolicy::legacy_verification();
+  let policy = RsaPublicKeyPolicy::modulus_2048_to_8192();
   let mut inputs = Vec::with_capacity(samples());
   for _ in 0..samples() {
     inputs.push(random_class(rng));

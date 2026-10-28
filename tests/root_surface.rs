@@ -384,7 +384,7 @@ fn root_surface_signature_exports_compile() {
 #[test]
 #[cfg(feature = "rsa")]
 fn root_surface_rsa_exports_compile() {
-  let policy = RsaPublicKeyPolicy::legacy_verification().allow_legacy_small_exponents();
+  let policy = RsaPublicKeyPolicy::modulus_2048_to_8192().allow_legacy_small_exponents();
   assert_eq!(policy.min_modulus_bits(), 2048);
   assert_eq!(policy.max_modulus_bits(), 8192);
   let _exponent_policy = RsaPublicExponentPolicy::Common65537;
@@ -471,7 +471,7 @@ fn root_surface_rsa_generated_key_end_to_end() {
     0x04, 0x02, 0x01, 0x05, 0x00, 0xa2, 0x03, 0x02, 0x01, 0x20,
   ];
 
-  let policy = RsaPublicKeyPolicy::legacy_verification();
+  let policy = RsaPublicKeyPolicy::modulus_2048_to_8192();
   let key =
     RsaPrivateKey::generate_with_policy(2048, &policy).expect("the supported 2048-bit policy must generate an RSA key");
   let public_key = key.public_key();

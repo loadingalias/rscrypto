@@ -258,17 +258,17 @@ fn valid_pkcs1_with_modulus_and_exponent(modulus: &[u8], exponent: &[u8]) -> Vec
 }
 
 fn legacy_public_key_from_pkcs1(der: &[u8]) -> RsaPublicKey {
-  RsaPublicKey::from_pkcs1_der_with_policy(der, &RsaPublicKeyPolicy::legacy_verification())
+  RsaPublicKey::from_pkcs1_der_with_policy(der, &RsaPublicKeyPolicy::modulus_2048_to_8192())
     .expect("the PKCS#1 fixture must satisfy the legacy verification policy")
 }
 
 fn legacy_public_key_from_spki(der: &[u8]) -> RsaPublicKey {
-  RsaPublicKey::from_spki_der_with_policy(der, &RsaPublicKeyPolicy::legacy_verification())
+  RsaPublicKey::from_spki_der_with_policy(der, &RsaPublicKeyPolicy::modulus_2048_to_8192())
     .expect("the SPKI fixture must satisfy the legacy verification policy")
 }
 
 fn legacy_x509_public_key_from_spki(der: &[u8]) -> RsaX509PublicKey {
-  RsaX509PublicKey::from_spki_der_with_policy(der, &RsaPublicKeyPolicy::legacy_verification())
+  RsaX509PublicKey::from_spki_der_with_policy(der, &RsaPublicKeyPolicy::modulus_2048_to_8192())
     .expect("the X.509 SPKI fixture must satisfy the legacy verification policy")
 }
 
@@ -1460,10 +1460,10 @@ fn private_key_der_exports_roundtrip_with_rustcrypto_rsa() {
     EncodePrivateKey::to_pkcs8_der(&rustcrypto_key).expect("the RustCrypto fixture must encode as PKCS#8");
 
   let rscrypto_from_pkcs1 =
-    RsaPrivateKey::from_pkcs1_der_with_policy(rustcrypto_pkcs1.as_bytes(), &RsaPublicKeyPolicy::legacy_verification())
+    RsaPrivateKey::from_pkcs1_der_with_policy(rustcrypto_pkcs1.as_bytes(), &RsaPublicKeyPolicy::modulus_2048_to_8192())
       .expect("rscrypto must decode the RustCrypto PKCS#1 private-key fixture");
   let rscrypto_from_pkcs8 =
-    RsaPrivateKey::from_pkcs8_der_with_policy(rustcrypto_pkcs8.as_bytes(), &RsaPublicKeyPolicy::legacy_verification())
+    RsaPrivateKey::from_pkcs8_der_with_policy(rustcrypto_pkcs8.as_bytes(), &RsaPublicKeyPolicy::modulus_2048_to_8192())
       .expect("rscrypto must decode the RustCrypto PKCS#8 private-key fixture");
   assert_eq!(rscrypto_from_pkcs1.public_key(), rscrypto_from_pkcs8.public_key());
 
@@ -1509,7 +1509,7 @@ fn caller_random_signatures_verify_with_independent_implementations_without_getr
   let rustcrypto_pkcs1 =
     EncodeRsaPrivateKey::to_pkcs1_der(&rustcrypto_key).expect("the RustCrypto fixture must encode as PKCS#1");
   let key =
-    RsaPrivateKey::from_pkcs1_der_with_policy(rustcrypto_pkcs1.as_bytes(), &RsaPublicKeyPolicy::legacy_verification())
+    RsaPrivateKey::from_pkcs1_der_with_policy(rustcrypto_pkcs1.as_bytes(), &RsaPublicKeyPolicy::modulus_2048_to_8192())
       .expect("rscrypto must decode the RustCrypto private-key fixture");
   let public_pkcs1 = key.public_key().to_pkcs1_der();
   let public_spki = key.public_key().to_spki_der();
@@ -1618,7 +1618,7 @@ fn private_key_outputs_verify_and_decrypt_with_rustcrypto_rsa() {
     EncodeRsaPrivateKey::to_pkcs1_der(&rustcrypto_key).expect("the RustCrypto fixture must encode as PKCS#1");
   let rustcrypto_public_key = rustcrypto_key.to_public_key();
   let rscrypto_key =
-    RsaPrivateKey::from_pkcs1_der_with_policy(rustcrypto_pkcs1.as_bytes(), &RsaPublicKeyPolicy::legacy_verification())
+    RsaPrivateKey::from_pkcs1_der_with_policy(rustcrypto_pkcs1.as_bytes(), &RsaPublicKeyPolicy::modulus_2048_to_8192())
       .expect("rscrypto must decode the RustCrypto private-key fixture");
   let rscrypto_public_pkcs1 = rscrypto_key.public_key().to_pkcs1_der();
   let rscrypto_public_spki = rscrypto_key.public_key().to_spki_der();
@@ -1826,7 +1826,7 @@ fn blinding_cache_signatures_match_rustcrypto_across_refreshes() {
   let rustcrypto_pkcs1 =
     EncodeRsaPrivateKey::to_pkcs1_der(&rustcrypto_key).expect("the RustCrypto fixture must encode as PKCS#1");
   let key =
-    RsaPrivateKey::from_pkcs1_der_with_policy(rustcrypto_pkcs1.as_bytes(), &RsaPublicKeyPolicy::legacy_verification())
+    RsaPrivateKey::from_pkcs1_der_with_policy(rustcrypto_pkcs1.as_bytes(), &RsaPublicKeyPolicy::modulus_2048_to_8192())
       .expect("rscrypto must decode the RustCrypto private-key fixture");
   let public_pkcs1 = key.public_key().to_pkcs1_der();
   let oracle = RustCryptoPkcs1v15SigningKey::<rsa::sha2::Sha256>::new(rustcrypto_key);
@@ -1877,7 +1877,7 @@ fn blinding_cache_rebinds_to_each_signing_key() {
   let pkcs1_2048 =
     EncodeRsaPrivateKey::to_pkcs1_der(&rustcrypto_2048).expect("the RustCrypto fixture must encode as PKCS#1");
   let key_2048 =
-    RsaPrivateKey::from_pkcs1_der_with_policy(pkcs1_2048.as_bytes(), &RsaPublicKeyPolicy::legacy_verification())
+    RsaPrivateKey::from_pkcs1_der_with_policy(pkcs1_2048.as_bytes(), &RsaPublicKeyPolicy::modulus_2048_to_8192())
       .expect("rscrypto must decode the RustCrypto private-key fixture");
   let pkcs8_3072 = wycheproof_rsa3072_private_key_pkcs8();
   let key_3072 = RsaPrivateKey::from_pkcs8_der(&pkcs8_3072).expect("rscrypto must import the RSA-3072 key");
@@ -1930,7 +1930,7 @@ fn blinding_cache_rebinds_to_each_signing_key() {
 fn generated_private_key_outputs_verify_and_decrypt_with_external_oracles() {
   use rsa::{oaep::DecryptingKey as RustCryptoOaepDecryptingKey, traits::Decryptor as _};
 
-  let key = RsaPrivateKey::generate_with_policy(2048, &RsaPublicKeyPolicy::legacy_verification())
+  let key = RsaPrivateKey::generate_with_policy(2048, &RsaPublicKeyPolicy::modulus_2048_to_8192())
     .expect("RSA-2048 key generation should succeed for legacy-policy coverage");
   let pkcs1 = key.to_pkcs1_der();
   let pkcs8 = key.to_pkcs8_der();
@@ -3340,8 +3340,8 @@ fn protocol_verification_helpers_collapse_adapter_failures_to_opaque_error() {
 
 #[test]
 fn rsa_policy_boundary_separates_legacy_rsa2048_from_modern_rsa3072_verification() {
-  let legacy_policy = RsaPublicKeyPolicy::legacy_verification();
-  let modern_policy = RsaPublicKeyPolicy::modern_verification();
+  let legacy_policy = RsaPublicKeyPolicy::modulus_2048_to_8192();
+  let modern_policy = RsaPublicKeyPolicy::modulus_3072_to_8192();
 
   let legacy_pss_key = RsaPublicKey::from_spki_der_with_policy(&pss_fixture_public_key(), &legacy_policy)
     .expect("the RSA-2048 PSS fixture must satisfy the legacy policy");
@@ -3586,7 +3586,7 @@ fn pkcs1_public_key_rejects_zero_even_and_tiny_moduli() {
 
 #[test]
 fn pkcs1_public_key_enforces_modern_minimum_when_requested() {
-  let policy = RsaPublicKeyPolicy::modern_verification();
+  let policy = RsaPublicKeyPolicy::modulus_3072_to_8192();
 
   assert_eq!(
     RsaPublicKey::from_pkcs1_der_with_policy(&valid_pkcs1(), &policy),
@@ -3613,7 +3613,7 @@ fn pkcs1_public_key_rejects_even_and_policy_disallowed_exponents() {
 
 #[test]
 fn pkcs1_public_key_can_accept_legacy_small_fermat_exponents_by_policy() {
-  let policy = RsaPublicKeyPolicy::legacy_verification().allow_legacy_small_exponents();
+  let policy = RsaPublicKeyPolicy::modulus_2048_to_8192().allow_legacy_small_exponents();
   let der = pkcs1_with_parts(integer_unsigned(&rsa2048_modulus()), integer_unsigned(&[0x03]));
 
   let key = RsaPublicKey::from_pkcs1_der_with_policy(&der, &policy)
@@ -3758,7 +3758,7 @@ fn diagnostic_private_exponentiation_matches_independent_fixed_width_reference()
     .to_pkcs8_der()
     .expect("the fixed private key must encode as PKCS#8");
   let key =
-    RsaPrivateKey::from_pkcs8_der_with_policy(private_der.as_bytes(), &RsaPublicKeyPolicy::legacy_verification())
+    RsaPrivateKey::from_pkcs8_der_with_policy(private_der.as_bytes(), &RsaPublicKeyPolicy::modulus_2048_to_8192())
       .expect("the fixed private key must import for reusable-scratch diagnostics");
   let component_len = component_modulus.to_bytes_be().len();
   let mut component_input = vec![0u8; component_len];
@@ -3792,7 +3792,7 @@ fn private_crt_pair_diagnostic_matches_independent_modpow() {
     .to_pkcs8_der()
     .expect("the fixed private key must encode as PKCS#8");
   let key =
-    RsaPrivateKey::from_pkcs8_der_with_policy(private_der.as_bytes(), &RsaPublicKeyPolicy::legacy_verification())
+    RsaPrivateKey::from_pkcs8_der_with_policy(private_der.as_bytes(), &RsaPublicKeyPolicy::modulus_2048_to_8192())
       .expect("the fixed private key must import for CRT pair diagnostics");
   let len = primes[0].to_bytes_be().len();
   assert_eq!(primes[1].to_bytes_be().len(), len, "the fixture primes share one width");
@@ -4005,7 +4005,7 @@ f40f8866e140a78f5bf55491d354087ad3c938d0b9f7b77eebcdcd16b7b628c26f18ae434c15\
 fc87eb5a2ea7a141091f3d2fa37a581ef39e6e496e5e476d43b6",
   );
 
-  let policy = RsaPublicKeyPolicy::legacy_verification().allow_legacy_small_exponents();
+  let policy = RsaPublicKeyPolicy::modulus_2048_to_8192().allow_legacy_small_exponents();
 
   let key_e3 =
     RsaPublicKey::from_pkcs1_der_with_policy(&valid_pkcs1_with_modulus_and_exponent(&modulus, &[0x03]), &policy)
@@ -4075,13 +4075,13 @@ d5add90a8a212c10dd997b0a4efcb3df990808509dcb28c504e0649827a83ffd864395d1f62f2\
 451b554e212cff4d92466438062c5202169b0adf0c95b7d3d31414602cf9d185252b550cc2e8f\
 5be08b7fc71f51210ff88363badadfaf5c2915c3a10b2389e",
   );
-  let small_policy = RsaPublicKeyPolicy::legacy_verification().allow_legacy_small_exponents();
+  let small_policy = RsaPublicKeyPolicy::modulus_2048_to_8192().allow_legacy_small_exponents();
   let odd_policy = small_policy.allow_legacy_odd_exponents();
 
   for (exponent, policy) in [
     (&[0x03][..], small_policy),
     (&[0x11][..], small_policy),
-    (&[0x01, 0x00, 0x01][..], RsaPublicKeyPolicy::legacy_verification()),
+    (&[0x01, 0x00, 0x01][..], RsaPublicKeyPolicy::modulus_2048_to_8192()),
     (&[0x49, 0xd2, 0xa1][..], odd_policy),
   ] {
     let key =
@@ -5113,7 +5113,7 @@ fn sha256_signature_verification_matches_external_oracles_for_valid_and_tampered
 fn nist_cavp_sha2_signatures_match_rust_external_oracles() {
   let suite: serde_json::Value = serde_json::from_str(CAVP_SIGVER_186_3).expect("CAVP JSON must parse");
   let tests = suite["tests"].as_array().expect("CAVP tests must be an array");
-  let policy = RsaPublicKeyPolicy::legacy_verification().allow_legacy_odd_exponents();
+  let policy = RsaPublicKeyPolicy::modulus_2048_to_8192().allow_legacy_odd_exponents();
 
   for test in tests {
     let scheme = cavp_field(test, "scheme");

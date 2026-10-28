@@ -444,7 +444,7 @@ mod implementation {
       Operation::Rsa(scheme) => {
         // Preserve the deployed WebPKI policy, independently of the stricter
         // policy for new TLS signing keys. Bound the public exponent's work.
-        let policy = RsaPublicKeyPolicy::legacy_verification().allow_legacy_odd_exponents();
+        let policy = RsaPublicKeyPolicy::modulus_2048_to_8192().allow_legacy_odd_exponents();
         let signature_lengths = policy.min_modulus_bits().div_ceil(8)..=policy.max_modulus_bits().div_ceil(8);
         if !signature_lengths.contains(&signature.len()) {
           return Err(InvalidSignature);

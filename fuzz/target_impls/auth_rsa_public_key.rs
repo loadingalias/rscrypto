@@ -16,10 +16,10 @@ pub(super) fn run(data: &[u8]) {
   let parsed = match mode.rem_euclid(4) {
     0 => RsaPublicKey::from_pkcs1_der(der),
     1 => RsaPublicKey::from_spki_der(der),
-    2 => RsaPublicKey::from_pkcs1_der_with_policy(der, &RsaPublicKeyPolicy::modern_verification()),
+    2 => RsaPublicKey::from_pkcs1_der_with_policy(der, &RsaPublicKeyPolicy::modulus_3072_to_8192()),
     _ => RsaPublicKey::from_spki_der_with_policy(
       der,
-      &RsaPublicKeyPolicy::legacy_verification().allow_legacy_small_exponents(),
+      &RsaPublicKeyPolicy::modulus_2048_to_8192().allow_legacy_small_exponents(),
     ),
   };
 

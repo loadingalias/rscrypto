@@ -53,7 +53,7 @@ fn hex(value: &Value) -> Vec<u8> {
 }
 
 fn try_import(pkcs8: &[u8]) -> Result<RsaPrivateKey, RsaKeyError> {
-  RsaPrivateKey::from_pkcs8_der_with_policy(pkcs8, &RsaPublicKeyPolicy::legacy_verification())
+  RsaPrivateKey::from_pkcs8_der_with_policy(pkcs8, &RsaPublicKeyPolicy::modulus_2048_to_8192())
 }
 
 fn import(pkcs8: &[u8]) -> RsaPrivateKey {

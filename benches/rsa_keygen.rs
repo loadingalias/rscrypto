@@ -90,9 +90,9 @@ impl RustCryptoCryptoRng for SeededRng {}
 /// RSA-2048 keys need the legacy policy; larger keys use the modern default.
 fn key_policy(bits: usize) -> RsaPublicKeyPolicy {
   if bits < 3072 {
-    RsaPublicKeyPolicy::legacy_verification()
+    RsaPublicKeyPolicy::modulus_2048_to_8192()
   } else {
-    RsaPublicKeyPolicy::modern_verification()
+    RsaPublicKeyPolicy::modulus_3072_to_8192()
   }
 }
 

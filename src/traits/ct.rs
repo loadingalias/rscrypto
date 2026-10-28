@@ -600,7 +600,7 @@ pub(crate) mod tests {
         .map(|pair| u8::from_str_radix(core::str::from_utf8(pair).expect("ASCII hex"), 16).expect("hex byte"))
         .collect();
       let key =
-        crate::RsaPrivateKey::from_pkcs8_der_with_policy(&der, &crate::RsaPublicKeyPolicy::legacy_verification())
+        crate::RsaPrivateKey::from_pkcs8_der_with_policy(&der, &crate::RsaPublicKeyPolicy::modulus_2048_to_8192())
           .expect("Appendix B RSA-2048 key");
       let mut scratch = key.private_scratch();
       let blinding = crate::RsaBlindingPair::new(&[], &[]);

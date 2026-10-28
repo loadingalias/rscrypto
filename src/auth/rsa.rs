@@ -272,7 +272,7 @@ pub enum RsaKeyGenerationError {
   /// `RsaPrivateKey::generate` accepts even lengths from 3072 through 8192
   /// bits. To mint an RSA-2048 compatibility key, call
   /// `RsaPrivateKey::generate_with_policy` with
-  /// [`RsaPublicKeyPolicy::legacy_verification`]. Odd lengths and lengths
+  /// [`RsaPublicKeyPolicy::modulus_2048_to_8192`]. Odd lengths and lengths
   /// below 2048 bits are always rejected.
   InvalidModulusBits,
   /// The platform entropy source was unavailable.
@@ -1305,9 +1305,9 @@ pub enum RsaPublicExponentPolicy {
   Common65537,
   /// Accept `3`, `17`, and `65537`.
   ///
-  /// This exists for legacy verification/import paths. Keep new signing-key
-  /// policy at `65537` unless a protocol adapter has a concrete compatibility
-  /// reason to loosen it.
+  /// This exists for verifying and importing deployed keys. Keep signing keys
+  /// at `65537` unless a protocol adapter has a concrete compatibility reason
+  /// to loosen it.
   LegacySmallFermat,
   /// Accept any odd exponent at least `3` that fits in `u64`.
   ///
@@ -1328,7 +1328,7 @@ impl RsaPublicExponentPolicy {
   }
 }
 
-/// RSA public-key validation policy.
+/// RSA key validation policy (moduli and public exponents) for any key role.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct RsaPublicKeyPolicy {
   min_modulus_bits: usize,
@@ -1339,43 +1339,43 @@ pub struct RsaPublicKeyPolicy {
 impl Default for RsaPublicKeyPolicy {
   #[inline]
   fn default() -> Self {
-    Self::modern_verification()
+    Self::modulus_3072_to_8192()
   }
 }
 
 impl RsaPublicKeyPolicy {
-  /// Compatibility verification policy: RSA-2048 through RSA-8192, exponent `65537`.
-  pub const LEGACY_VERIFICATION: Self = Self {
+  /// RSA-2048 through RSA-8192, exponent `65537`.
+  pub const MODULUS_2048_TO_8192: Self = Self {
     min_modulus_bits: MIN_RSA_MODULUS_BITS,
     max_modulus_bits: 8192,
     exponent_policy: RsaPublicExponentPolicy::Common65537,
   };
 
-  /// Modern verification policy: RSA-3072 through RSA-8192, exponent `65537`.
-  pub const MODERN_VERIFICATION: Self = Self {
+  /// RSA-3072 through RSA-8192, exponent `65537`.
+  pub const MODULUS_3072_TO_8192: Self = Self {
     min_modulus_bits: 3072,
     max_modulus_bits: 8192,
     exponent_policy: RsaPublicExponentPolicy::Common65537,
   };
 
-  /// Return the legacy RSA-2048 verification/import policy.
+  /// Accept RSA-2048 through RSA-8192 with exponent `65537`.
   ///
-  /// Use this only for compatibility with deployed RSA-2048 material. The
-  /// default parser policy is [`Self::modern_verification`].
+  /// RSA-2048 gives about 112-bit security (NIST SP 800-57 Part 1). Use it for
+  /// deployed RSA-2048 material, such as RSA-2048 certificates and their keys.
   #[inline]
   #[must_use]
-  pub const fn legacy_verification() -> Self {
-    Self::LEGACY_VERIFICATION
+  pub const fn modulus_2048_to_8192() -> Self {
+    Self::MODULUS_2048_TO_8192
   }
 
-  /// Return the modern RSA verification/import policy.
+  /// Accept RSA-3072 through RSA-8192 with exponent `65537`.
   ///
-  /// This is the default policy for parsers and accepts RSA-3072 through
-  /// RSA-8192 with exponent `65537`.
+  /// RSA-3072 gives about 128-bit security (NIST SP 800-57 Part 1). This is
+  /// the default policy for parsers and key generation.
   #[inline]
   #[must_use]
-  pub const fn modern_verification() -> Self {
-    Self::MODERN_VERIFICATION
+  pub const fn modulus_3072_to_8192() -> Self {
+    Self::MODULUS_3072_TO_8192
   }
 
   /// Return this policy with a different minimum modulus length.
@@ -1584,7 +1584,7 @@ impl RsaPrivateKey {
 
   /// Generate a new RSA private key with public exponent `65537`.
   ///
-  /// New key material uses the modern RSA policy: 3072 through 8192 modulus
+  /// New key material uses the default policy: 3072 through 8192 modulus
   /// bits. Use imported legacy RSA-2048 keys only for compatibility.
   ///
   /// Generation follows [`Self::GENERATION_CONTRACT`]: FIPS 186-5 Appendix
@@ -1600,7 +1600,7 @@ impl RsaPrivateKey {
   #[cfg(feature = "getrandom")]
   #[cfg_attr(docsrs, doc(cfg(feature = "getrandom")))]
   pub fn generate(modulus_bits: usize) -> Result<Self, RsaKeyGenerationError> {
-    Self::generate_with_policy(modulus_bits, &RsaPublicKeyPolicy::modern_verification())
+    Self::generate_with_policy(modulus_bits, &RsaPublicKeyPolicy::modulus_3072_to_8192())
   }
 
   /// Generate a new RSA private key with an explicit modulus policy.
@@ -1623,10 +1623,10 @@ impl RsaPrivateKey {
     generate_rsa_private_key(modulus_bits, policy).map(|components| Self { components })
   }
 
-  /// Parse a PKCS #1 `RSAPrivateKey` DER object with the modern default policy.
+  /// Parse a PKCS #1 `RSAPrivateKey` DER object with the default policy.
   ///
   /// The default policy accepts RSA-3072 through RSA-8192 with exponent
-  /// `65537`. Use [`RsaPublicKeyPolicy::legacy_verification`] with
+  /// `65537`. Use [`RsaPublicKeyPolicy::modulus_2048_to_8192`] with
   /// [`Self::from_pkcs1_der_with_policy`] only for deployed RSA-2048
   /// compatibility material.
   ///
@@ -1649,10 +1649,10 @@ impl RsaPrivateKey {
     parse_pkcs1_private_key_der_with_policy(der, policy).map(|components| Self { components })
   }
 
-  /// Parse a PKCS #8 `PrivateKeyInfo` DER object with the modern default policy.
+  /// Parse a PKCS #8 `PrivateKeyInfo` DER object with the default policy.
   ///
   /// The default policy accepts RSA-3072 through RSA-8192 with exponent
-  /// `65537`. Use [`RsaPublicKeyPolicy::legacy_verification`] with
+  /// `65537`. Use [`RsaPublicKeyPolicy::modulus_2048_to_8192`] with
   /// [`Self::from_pkcs8_der_with_policy`] only for deployed RSA-2048
   /// compatibility material.
   ///
@@ -5388,10 +5388,10 @@ pub struct RsaX509PublicKey {
 }
 
 impl RsaX509PublicKey {
-  /// Parse an X.509 RSA `SubjectPublicKeyInfo` DER object with the modern default policy.
+  /// Parse an X.509 RSA `SubjectPublicKeyInfo` DER object with the default policy.
   ///
   /// The default policy accepts RSA-3072 through RSA-8192 with exponent
-  /// `65537`. Use [`RsaPublicKeyPolicy::legacy_verification`] with
+  /// `65537`. Use [`RsaPublicKeyPolicy::modulus_2048_to_8192`] with
   /// [`Self::from_spki_der_with_policy`] only for deployed RSA-2048
   /// compatibility material.
   ///
@@ -5884,12 +5884,12 @@ impl RsaPublicKey {
   }
 
   /// Build an RSA public key from canonical unsigned big-endian components
-  /// with the modern default policy.
+  /// with the default policy.
   ///
   /// # Errors
   ///
-  /// Returns [`RsaKeyError`] if the modulus or exponent violates the modern
-  /// default public-key policy.
+  /// Returns [`RsaKeyError`] if the modulus or exponent violates the default
+  /// policy.
   pub fn from_modulus_exponent(modulus: &[u8], public_exponent: u64) -> Result<Self, RsaKeyError> {
     Self::from_modulus_exponent_with_policy(modulus, public_exponent, &RsaPublicKeyPolicy::default())
   }
@@ -5916,10 +5916,10 @@ impl RsaPublicKey {
     })
   }
 
-  /// Parse an RSA `SubjectPublicKeyInfo` DER object with the modern default policy.
+  /// Parse an RSA `SubjectPublicKeyInfo` DER object with the default policy.
   ///
   /// The default policy accepts RSA-3072 through RSA-8192 with exponent
-  /// `65537`. Use [`RsaPublicKeyPolicy::legacy_verification`] with
+  /// `65537`. Use [`RsaPublicKeyPolicy::modulus_2048_to_8192`] with
   /// [`Self::from_spki_der_with_policy`] only for deployed RSA-2048
   /// compatibility material.
   ///
@@ -5943,10 +5943,10 @@ impl RsaPublicKey {
     Self::from_pkcs1_der_with_policy(public_key_der, policy)
   }
 
-  /// Parse a PKCS #1 `RSAPublicKey` DER object with the modern default policy.
+  /// Parse a PKCS #1 `RSAPublicKey` DER object with the default policy.
   ///
   /// The default policy accepts RSA-3072 through RSA-8192 with exponent
-  /// `65537`. Use [`RsaPublicKeyPolicy::legacy_verification`] with
+  /// `65537`. Use [`RsaPublicKeyPolicy::modulus_2048_to_8192`] with
   /// [`Self::from_pkcs1_der_with_policy`] only for deployed RSA-2048
   /// compatibility material.
   ///
@@ -7829,9 +7829,9 @@ fn private_key_components_from_prevalidated_parts(
 #[doc(hidden)]
 pub fn fuzz_rsa_import_der(format: u8, der: &[u8]) -> bool {
   let policy = if format & 0b10 == 0 {
-    RsaPublicKeyPolicy::legacy_verification()
+    RsaPublicKeyPolicy::modulus_2048_to_8192()
   } else {
-    RsaPublicKeyPolicy::legacy_verification().allow_legacy_small_exponents()
+    RsaPublicKeyPolicy::modulus_2048_to_8192().allow_legacy_small_exponents()
   };
 
   let parsed = if format & 0b01 == 0 {
@@ -13321,8 +13321,8 @@ mod tests {
   }
 
   fn rsa_miri_private_limb_widths() -> core::ops::RangeInclusive<usize> {
-    let min_factor_bits = RsaPublicKeyPolicy::LEGACY_VERIFICATION.min_modulus_bits.div_ceil(2);
-    let max_factor_bits = RsaPublicKeyPolicy::LEGACY_VERIFICATION.max_modulus_bits.div_ceil(2);
+    let min_factor_bits = RsaPublicKeyPolicy::MODULUS_2048_TO_8192.min_modulus_bits.div_ceil(2);
+    let max_factor_bits = RsaPublicKeyPolicy::MODULUS_2048_TO_8192.max_modulus_bits.div_ceil(2);
     let bits_per_limb = u64::BITS as usize;
     let min_limbs = min_factor_bits.div_ceil(bits_per_limb);
     let max_limbs = max_factor_bits.div_ceil(bits_per_limb);
@@ -14023,7 +14023,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
   #[test]
   fn pkcs1_private_key_parser_preserves_components_and_public_key() {
     let der = test_pkcs1_private_key();
-    let key = parse_pkcs1_private_key_der_with_policy(&der, &RsaPublicKeyPolicy::legacy_verification())
+    let key = parse_pkcs1_private_key_der_with_policy(&der, &RsaPublicKeyPolicy::modulus_2048_to_8192())
       .expect("the canonical PKCS#1 private-key fixture must parse");
 
     assert_eq!(prevalidated_test_private_key().to_pkcs1_der().as_bytes(), der);
@@ -14083,7 +14083,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
         exponent_q: &exponent_q,
         coefficient: &coefficient,
       },
-      &RsaPublicKeyPolicy::legacy_verification().allow_legacy_odd_exponents(),
+      &RsaPublicKeyPolicy::modulus_2048_to_8192().allow_legacy_odd_exponents(),
     )
     .expect("algebraically valid components");
 
@@ -14143,7 +14143,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
       .to_bytes_be();
     assert_eq!(coefficient.len(), 127);
     let der = oracle.to_pkcs1_der().expect("independent canonical DER");
-    let key = RsaPrivateKey::from_pkcs1_der_with_policy(der.as_bytes(), &RsaPublicKeyPolicy::legacy_verification())
+    let key = RsaPrivateKey::from_pkcs1_der_with_policy(der.as_bytes(), &RsaPublicKeyPolicy::modulus_2048_to_8192())
       .expect("valid recombined RSA-2048 key");
     let retained = key.components.coefficient.as_bytes();
     assert_eq!(retained.len(), 128);
@@ -14226,7 +14226,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
           exponent_q: &exponent_q,
           coefficient: &coefficient,
         },
-        &RsaPublicKeyPolicy::legacy_verification(),
+        &RsaPublicKeyPolicy::modulus_2048_to_8192(),
       )
       .err(),
       Some(RsaKeyError::InvalidModulus)
@@ -14234,12 +14234,12 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
 
     let pkcs1 = rsa::pkcs1::EncodeRsaPrivateKey::to_pkcs1_der(&oracle).expect("RustCrypto PKCS #1 encoding");
     assert_eq!(
-      RsaPrivateKey::from_pkcs1_der_with_policy(pkcs1.as_bytes(), &RsaPublicKeyPolicy::legacy_verification()).err(),
+      RsaPrivateKey::from_pkcs1_der_with_policy(pkcs1.as_bytes(), &RsaPublicKeyPolicy::modulus_2048_to_8192()).err(),
       Some(RsaKeyError::InvalidModulus)
     );
     let pkcs8 = rsa::pkcs8::EncodePrivateKey::to_pkcs8_der(&oracle).expect("RustCrypto PKCS #8 encoding");
     assert_eq!(
-      RsaPrivateKey::from_pkcs8_der_with_policy(pkcs8.as_bytes(), &RsaPublicKeyPolicy::legacy_verification()).err(),
+      RsaPrivateKey::from_pkcs8_der_with_policy(pkcs8.as_bytes(), &RsaPublicKeyPolicy::modulus_2048_to_8192()).err(),
       Some(RsaKeyError::InvalidModulus)
     );
   }
@@ -14278,7 +14278,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
           exponent_q: &exponent_q,
           coefficient: &coefficient,
         },
-        &RsaPublicKeyPolicy::modern_verification(),
+        &RsaPublicKeyPolicy::modulus_3072_to_8192(),
       )
       .err(),
       Some(RsaKeyError::InvalidModulus)
@@ -15194,7 +15194,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
       let der = hex_to_vec(key["pkcs8"].as_str().expect("PKCS #8 hex"));
       // Read the stored exponent without importing a key. In particular, B.2's
       // 2049-bit key is outside the public half-width-factor import policy.
-      let parts = parse_pkcs8_private_key_der_parts_with_policy(&der, &RsaPublicKeyPolicy::legacy_verification())
+      let parts = parse_pkcs8_private_key_der_parts_with_policy(&der, &RsaPublicKeyPolicy::modulus_2048_to_8192())
         .expect("Appendix B DER structure must parse");
       for case in key["cases"].as_array().expect("Appendix B cases") {
         let ciphertext = hex_to_vec(case["ciphertext"].as_str().expect("ciphertext hex"));
@@ -15680,7 +15680,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
   #[test]
   fn key_der_exports_roundtrip_through_strict_importers() {
     let pkcs1 = test_pkcs1_private_key();
-    let key = RsaPrivateKey::from_pkcs1_der_with_policy(&pkcs1, &RsaPublicKeyPolicy::legacy_verification())
+    let key = RsaPrivateKey::from_pkcs1_der_with_policy(&pkcs1, &RsaPublicKeyPolicy::modulus_2048_to_8192())
       .expect("PKCS#1 fixture must import");
     let rsa_algorithm = algorithm_identifier(RSA_ENCRYPTION_OID, Some(&null()));
 
@@ -15695,24 +15695,24 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
 
     let exported_pkcs1 = key.to_pkcs1_der();
     let imported_pkcs1 =
-      RsaPrivateKey::from_pkcs1_der_with_policy(&exported_pkcs1, &RsaPublicKeyPolicy::legacy_verification())
+      RsaPrivateKey::from_pkcs1_der_with_policy(&exported_pkcs1, &RsaPublicKeyPolicy::modulus_2048_to_8192())
         .expect("exported PKCS#1 private key must re-import");
     assert_eq!(imported_pkcs1.public_key(), key.public_key());
 
     let exported_pkcs8 = key.to_pkcs8_der();
     let imported_pkcs8 =
-      RsaPrivateKey::from_pkcs8_der_with_policy(&exported_pkcs8, &RsaPublicKeyPolicy::legacy_verification())
+      RsaPrivateKey::from_pkcs8_der_with_policy(&exported_pkcs8, &RsaPublicKeyPolicy::modulus_2048_to_8192())
         .expect("exported PKCS#8 private key must re-import");
     assert_eq!(imported_pkcs8.public_key(), key.public_key());
 
     let public_pkcs1 = key.public_key().to_pkcs1_der();
     let imported_public_pkcs1 =
-      RsaPublicKey::from_pkcs1_der_with_policy(&public_pkcs1, &RsaPublicKeyPolicy::legacy_verification())
+      RsaPublicKey::from_pkcs1_der_with_policy(&public_pkcs1, &RsaPublicKeyPolicy::modulus_2048_to_8192())
         .expect("exported PKCS#1 public key must re-import");
     assert_eq!(imported_public_pkcs1, *key.public_key());
 
     let spki = key.public_key().to_spki_der();
-    let imported_spki = RsaPublicKey::from_spki_der_with_policy(&spki, &RsaPublicKeyPolicy::legacy_verification())
+    let imported_spki = RsaPublicKey::from_spki_der_with_policy(&spki, &RsaPublicKeyPolicy::modulus_2048_to_8192())
       .expect("exported SPKI public key must re-import");
     assert_eq!(imported_spki, *key.public_key());
   }
@@ -15726,7 +15726,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
     let exponent_p = rsa_private_exponent_p();
     let exponent_q = rsa_private_exponent_q();
     let coefficient = rsa_private_coefficient();
-    let policy = RsaPublicKeyPolicy::legacy_verification();
+    let policy = RsaPublicKeyPolicy::modulus_2048_to_8192();
 
     let public = RsaPublicKey::from_modulus_exponent_with_policy(&modulus, 65_537, &policy)
       .expect("valid raw public components must import");
@@ -15798,7 +15798,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
     let exponent_p = rsa_private_exponent_p();
     let exponent_q = rsa_private_exponent_q();
     let coefficient = rsa_private_coefficient();
-    let policy = RsaPublicKeyPolicy::legacy_verification();
+    let policy = RsaPublicKeyPolicy::modulus_2048_to_8192();
 
     let mut bad_private_exponent = private_exponent.clone();
     bad_private_exponent.insert(0, 0);
@@ -17075,7 +17075,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
     let modulus = rsa_private_modulus();
     let components = keygen_build_private_key_from_primes(
       unsigned_be_bit_len(&modulus),
-      &RsaPublicKeyPolicy::legacy_verification(),
+      &RsaPublicKeyPolicy::modulus_2048_to_8192(),
       rsa_private_prime_p(),
       rsa_private_prime_q(),
     )
@@ -17086,7 +17086,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
     assert_eq!(key.public_key().public_exponent().as_u64(), RSA_KEYGEN_PUBLIC_EXPONENT);
 
     let exported = key.to_pkcs1_der();
-    let imported = RsaPrivateKey::from_pkcs1_der_with_policy(&exported, &RsaPublicKeyPolicy::legacy_verification())
+    let imported = RsaPrivateKey::from_pkcs1_der_with_policy(&exported, &RsaPublicKeyPolicy::modulus_2048_to_8192())
       .expect("generated PKCS#1 private key must re-import");
     assert_eq!(imported.public_key(), key.public_key());
 
@@ -17153,7 +17153,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
     assert_eq!(suite["counts"]["total"].as_u64(), Some(2));
 
     let tests = suite["tests"].as_array().expect("CAVP keygen tests must be an array");
-    let policy = RsaPublicKeyPolicy::legacy_verification();
+    let policy = RsaPublicKeyPolicy::modulus_2048_to_8192();
     let mut covered = Vec::new();
 
     for test in tests {
@@ -17257,16 +17257,16 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
   #[cfg(feature = "getrandom")]
   #[test]
   fn keygen_generate_with_policy_produces_usable_private_key_end_to_end() {
-    let key = RsaPrivateKey::generate_with_policy(2048, &RsaPublicKeyPolicy::legacy_verification())
+    let key = RsaPrivateKey::generate_with_policy(2048, &RsaPublicKeyPolicy::modulus_2048_to_8192())
       .expect("legacy test policy must generate a 2048-bit key");
     assert_eq!(key.public_key().modulus_bits(), 2048);
     assert_eq!(key.public_key().public_exponent().as_u64(), RSA_KEYGEN_PUBLIC_EXPONENT);
 
     let pkcs1 = key.to_pkcs1_der();
     let pkcs8 = key.to_pkcs8_der();
-    let pkcs1_imported = RsaPrivateKey::from_pkcs1_der_with_policy(&pkcs1, &RsaPublicKeyPolicy::legacy_verification())
+    let pkcs1_imported = RsaPrivateKey::from_pkcs1_der_with_policy(&pkcs1, &RsaPublicKeyPolicy::modulus_2048_to_8192())
       .expect("generated PKCS#1 key must re-import");
-    let pkcs8_imported = RsaPrivateKey::from_pkcs8_der_with_policy(&pkcs8, &RsaPublicKeyPolicy::legacy_verification())
+    let pkcs8_imported = RsaPrivateKey::from_pkcs8_der_with_policy(&pkcs8, &RsaPublicKeyPolicy::modulus_2048_to_8192())
       .expect("generated PKCS#8 key must re-import");
     assert_eq!(pkcs1_imported.public_key(), key.public_key());
     assert_eq!(pkcs8_imported.public_key(), key.public_key());
@@ -17426,7 +17426,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
       Some(RsaKeyGenerationError::InvalidModulusBits)
     );
 
-    let impossible_policy = RsaPublicKeyPolicy::legacy_verification()
+    let impossible_policy = RsaPublicKeyPolicy::modulus_2048_to_8192()
       .with_min_modulus_bits(4096)
       .with_max_modulus_bits(3072);
     assert_eq!(
@@ -17434,7 +17434,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
       Some(RsaKeyGenerationError::InvalidModulusBits)
     );
 
-    let undersized_policy = RsaPublicKeyPolicy::legacy_verification().with_min_modulus_bits(3072);
+    let undersized_policy = RsaPublicKeyPolicy::modulus_2048_to_8192().with_min_modulus_bits(3072);
     assert_eq!(
       RsaPrivateKey::generate_with_policy(2048, &undersized_policy).err(),
       Some(RsaKeyGenerationError::InvalidModulusBits)
@@ -17445,7 +17445,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
   #[test]
   fn keygen_build_private_key_from_primes_rejects_duplicate_and_wrong_width_candidates() {
     let modulus_bits = unsigned_be_bit_len(&rsa_private_modulus());
-    let policy = RsaPublicKeyPolicy::legacy_verification();
+    let policy = RsaPublicKeyPolicy::modulus_2048_to_8192();
 
     assert!(
       keygen_build_private_key_from_primes(modulus_bits, &policy, rsa_private_prime_p(), rsa_private_prime_p())
@@ -17545,7 +17545,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
       &rsa_private_exponent_q(),
       &rsa_private_coefficient(),
     );
-    let policy = RsaPublicKeyPolicy::legacy_verification().with_max_modulus_bits(1024);
+    let policy = RsaPublicKeyPolicy::modulus_2048_to_8192().with_max_modulus_bits(1024);
 
     assert_eq!(
       parse_pkcs1_private_key_der_with_policy(&der, &policy).err(),
@@ -17558,7 +17558,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
     let pkcs1 = test_pkcs1_private_key();
     let rsa_algorithm = algorithm_identifier(RSA_ENCRYPTION_OID, Some(&null()));
     let der = test_pkcs8_private_key(&pkcs1, &rsa_algorithm);
-    let key = parse_pkcs8_private_key_der_with_policy(&der, &RsaPublicKeyPolicy::legacy_verification())
+    let key = parse_pkcs8_private_key_der_with_policy(&der, &RsaPublicKeyPolicy::modulus_2048_to_8192())
       .expect("valid PKCS#8 fixture must parse");
 
     assert_eq!(key.public_key().modulus(), rsa_private_modulus());
@@ -17566,7 +17566,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
     let pss_algorithm = algorithm_identifier(ID_RSASSA_PSS_OID, Some(&tlv(TAG_SEQUENCE, &[])));
     let wrong_algorithm = test_pkcs8_private_key(&pkcs1, &pss_algorithm);
     assert_eq!(
-      parse_pkcs8_private_key_der_with_policy(&wrong_algorithm, &RsaPublicKeyPolicy::legacy_verification()).err(),
+      parse_pkcs8_private_key_der_with_policy(&wrong_algorithm, &RsaPublicKeyPolicy::modulus_2048_to_8192()).err(),
       Some(RsaKeyError::UnsupportedAlgorithm)
     );
   }
@@ -17577,7 +17577,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
     let pkcs1 = test_pkcs1_private_key();
     let rsa_algorithm = algorithm_identifier(RSA_ENCRYPTION_OID, Some(&null()));
     let der = test_pkcs8_private_key(&pkcs1, &rsa_algorithm);
-    let policy = RsaPublicKeyPolicy::legacy_verification();
+    let policy = RsaPublicKeyPolicy::modulus_2048_to_8192();
 
     for stage in [0, 1, 2, 30, 32, 31, 3, 40, 41, 42, 4, u8::MAX] {
       assert_eq!(
@@ -17594,7 +17594,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
     assert_eq!(
       parse_pkcs1_private_key_der_with_policy(
         &tlv_with_leading_zero_long_len(&pkcs1),
-        &RsaPublicKeyPolicy::legacy_verification()
+        &RsaPublicKeyPolicy::modulus_2048_to_8192()
       )
       .err(),
       Some(RsaKeyError::MalformedDer)
@@ -17617,7 +17617,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
     assert_eq!(
       parse_pkcs1_private_key_der_with_policy(
         &tlv(TAG_SEQUENCE, &pkcs1_body),
-        &RsaPublicKeyPolicy::legacy_verification()
+        &RsaPublicKeyPolicy::modulus_2048_to_8192()
       )
       .err(),
       Some(RsaKeyError::MalformedDer)
@@ -17628,7 +17628,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
     assert_eq!(
       parse_pkcs8_private_key_der_with_policy(
         &tlv_with_leading_zero_long_len(&pkcs8),
-        &RsaPublicKeyPolicy::legacy_verification()
+        &RsaPublicKeyPolicy::modulus_2048_to_8192()
       )
       .err(),
       Some(RsaKeyError::MalformedDer)
@@ -17642,7 +17642,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
     assert_eq!(
       parse_pkcs8_private_key_der_with_policy(
         &tlv(TAG_SEQUENCE, &pkcs8_with_attributes),
-        &RsaPublicKeyPolicy::legacy_verification()
+        &RsaPublicKeyPolicy::modulus_2048_to_8192()
       )
       .err(),
       Some(RsaKeyError::MalformedDer)
@@ -17663,7 +17663,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
     multiprime_body.extend_from_slice(&integer_unsigned(&rsa_private_coefficient()));
     let multiprime = tlv(TAG_SEQUENCE, &multiprime_body);
     assert_eq!(
-      parse_pkcs1_private_key_der_with_policy(&multiprime, &RsaPublicKeyPolicy::legacy_verification()).err(),
+      parse_pkcs1_private_key_der_with_policy(&multiprime, &RsaPublicKeyPolicy::modulus_2048_to_8192()).err(),
       Some(RsaKeyError::UnsupportedAlgorithm)
     );
 
@@ -17686,7 +17686,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
     }
     let inconsistent = tlv(TAG_SEQUENCE, &inconsistent_body);
     assert_eq!(
-      parse_pkcs1_private_key_der_with_policy(&inconsistent, &RsaPublicKeyPolicy::legacy_verification()).err(),
+      parse_pkcs1_private_key_der_with_policy(&inconsistent, &RsaPublicKeyPolicy::modulus_2048_to_8192()).err(),
       Some(RsaKeyError::InvalidModulus)
     );
   }
@@ -17704,7 +17704,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
       &rsa_private_coefficient(),
     );
     assert_eq!(
-      parse_pkcs1_private_key_der_with_policy(&bad_dp, &RsaPublicKeyPolicy::legacy_verification()).err(),
+      parse_pkcs1_private_key_der_with_policy(&bad_dp, &RsaPublicKeyPolicy::modulus_2048_to_8192()).err(),
       Some(RsaKeyError::InvalidModulus)
     );
 
@@ -17719,7 +17719,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
       &rsa_private_coefficient(),
     );
     assert_eq!(
-      parse_pkcs1_private_key_der_with_policy(&bad_dq, &RsaPublicKeyPolicy::legacy_verification()).err(),
+      parse_pkcs1_private_key_der_with_policy(&bad_dq, &RsaPublicKeyPolicy::modulus_2048_to_8192()).err(),
       Some(RsaKeyError::InvalidModulus)
     );
 
@@ -17734,14 +17734,14 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
       &bad_coefficient,
     );
     assert_eq!(
-      parse_pkcs1_private_key_der_with_policy(&bad_qinv, &RsaPublicKeyPolicy::legacy_verification()).err(),
+      parse_pkcs1_private_key_der_with_policy(&bad_qinv, &RsaPublicKeyPolicy::modulus_2048_to_8192()).err(),
       Some(RsaKeyError::InvalidModulus)
     );
   }
 
   #[test]
   fn pkcs1_private_key_parser_rejects_invalid_secret_ranges() {
-    let policy = RsaPublicKeyPolicy::legacy_verification();
+    let policy = RsaPublicKeyPolicy::modulus_2048_to_8192();
 
     let zero_private_exponent = test_pkcs1_private_key_with_components(
       &[0x01, 0x00, 0x01],
@@ -17834,7 +17834,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
     assert_eq!(
       parse_pkcs1_private_key_der_with_policy(
         &wrong_exponent,
-        &RsaPublicKeyPolicy::legacy_verification().allow_legacy_small_exponents()
+        &RsaPublicKeyPolicy::modulus_2048_to_8192().allow_legacy_small_exponents()
       )
       .err(),
       Some(RsaKeyError::InvalidModulus)
@@ -17861,14 +17861,14 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
     }
     let noncanonical = tlv(TAG_SEQUENCE, &noncanonical_body);
     assert_eq!(
-      parse_pkcs1_private_key_der_with_policy(&noncanonical, &RsaPublicKeyPolicy::legacy_verification()).err(),
+      parse_pkcs1_private_key_der_with_policy(&noncanonical, &RsaPublicKeyPolicy::modulus_2048_to_8192()).err(),
       Some(RsaKeyError::MalformedDer)
     );
 
     let mut trailing = test_pkcs1_private_key();
     trailing.extend_from_slice(&null());
     assert_eq!(
-      parse_pkcs1_private_key_der_with_policy(&trailing, &RsaPublicKeyPolicy::legacy_verification()).err(),
+      parse_pkcs1_private_key_der_with_policy(&trailing, &RsaPublicKeyPolicy::modulus_2048_to_8192()).err(),
       Some(RsaKeyError::MalformedDer)
     );
   }
@@ -19109,7 +19109,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
     let modulus = [0xff; 256];
     let mut input = [0xff; 256];
     input[255] = 0xfe;
-    let policy = RsaPublicKeyPolicy::legacy_verification().allow_legacy_small_exponents();
+    let policy = RsaPublicKeyPolicy::modulus_2048_to_8192().allow_legacy_small_exponents();
 
     for exponent in [&[0x03][..], &[0x11][..], &[0x01, 0x00, 0x01][..]] {
       let key = RsaPublicKey::from_pkcs1_der_with_policy(&test_pkcs1_public_key(&modulus, exponent), &policy)
@@ -19139,7 +19139,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
     let exponent = [0x01, 0x00, 0x01];
     let key = RsaPublicKey::from_pkcs1_der_with_policy(
       &test_pkcs1_public_key(&modulus, &exponent),
-      &RsaPublicKeyPolicy::legacy_verification(),
+      &RsaPublicKeyPolicy::modulus_2048_to_8192(),
     )
     .expect("diagnostic backend test key must import");
     let representative = key.modulus().to_vec();
@@ -19253,7 +19253,7 @@ ec34e8c72cc58fd5324fbe1ddd9714909caedfaa38706cfa66d9bc1026ba3ec1188092392a54a\
     );
     let key = RsaPublicKey::from_pkcs1_der_with_policy(
       &test_pkcs1_public_key(&modulus, &[0x01, 0x00, 0x01]),
-      &RsaPublicKeyPolicy::legacy_verification(),
+      &RsaPublicKeyPolicy::modulus_2048_to_8192(),
     )
     .expect("independent-vector public key must import");
     let mut out = vec![0u8; key.modulus().len()];
@@ -19343,7 +19343,7 @@ ec34e8c72cc58fd5324fbe1ddd9714909caedfaa38706cfa66d9bc1026ba3ec1188092392a54a\
   fn x509_certificate_signature_helper_accepts_real_certificate_and_rejects_tamper() {
     let issuer = RsaX509PublicKey::from_spki_der_with_policy(
       &x509_certificate_fixture_public_key(),
-      &RsaPublicKeyPolicy::legacy_verification(),
+      &RsaPublicKeyPolicy::modulus_2048_to_8192(),
     )
     .expect("X.509 issuer fixture must import");
     let certificate = x509_pkcs1v15_certificate_fixture();
@@ -19445,7 +19445,7 @@ ec34e8c72cc58fd5324fbe1ddd9714909caedfaa38706cfa66d9bc1026ba3ec1188092392a54a\
       modulus[0] |= 0x80;
       modulus[255] |= 0x01;
       let exponent = RsaPublicExponent(65_537);
-      let bits = validate_modulus(&modulus, &RsaPublicKeyPolicy::legacy_verification())
+      let bits = validate_modulus(&modulus, &RsaPublicKeyPolicy::modulus_2048_to_8192())
         .expect("generated full-width odd modulus must satisfy the legacy test policy");
       let key = RsaPublicKey {
         modulus: RsaPublicModulus::new(&modulus, bits),

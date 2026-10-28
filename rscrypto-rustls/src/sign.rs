@@ -354,7 +354,7 @@ mod rsa {
     random: &'static dyn rustls::crypto::SecureRandom,
     compact: bool,
   ) -> Option<Key> {
-    let policy = RsaPublicKeyPolicy::modern_verification();
+    let policy = RsaPublicKeyPolicy::modulus_3072_to_8192();
     let key = match der {
       PrivateKeyDer::Pkcs1(value) => RsaPrivateKey::from_pkcs1_der_with_policy(value.secret_pkcs1_der(), &policy),
       PrivateKeyDer::Pkcs8(value) => RsaPrivateKey::from_pkcs8_der_with_policy(value.secret_pkcs8_der(), &policy),

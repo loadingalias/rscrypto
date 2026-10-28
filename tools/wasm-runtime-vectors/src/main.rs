@@ -209,7 +209,7 @@ fn assert_rsa_caller_random_signing_roundtrips() {
   // `rsa_pkcs1_2048_sig_gen_test.json`; only the key is copied here so this
   // runtime executable does not embed the complete vector corpus.
   let private_key_der = decode_base64(RSA_PRIVATE_KEY_PEM);
-  let key = RsaPrivateKey::from_pkcs1_der_with_policy(&private_key_der, &RsaPublicKeyPolicy::legacy_verification())
+  let key = RsaPrivateKey::from_pkcs1_der_with_policy(&private_key_der, &RsaPublicKeyPolicy::modulus_2048_to_8192())
     .expect("Wycheproof RSA-2048 private key must import under the explicit legacy policy");
   let profile = RsaPssProfile::Sha256;
   let message = b"rscrypto caller-random RSA signing on wasm32-wasip1";

@@ -32,7 +32,7 @@ fn legacy_rsa2048_fixture_key() -> RsaPrivateKey {
     .and_then(|groups| groups.first())
     .expect("Wycheproof OAEP group must exist");
   let der = hex_to_vec(group["privateKeyPkcs8"].as_str().expect("privateKeyPkcs8 must exist"));
-  let key = RsaPrivateKey::from_pkcs8_der_with_policy(&der, &RsaPublicKeyPolicy::legacy_verification())
+  let key = RsaPrivateKey::from_pkcs8_der_with_policy(&der, &RsaPublicKeyPolicy::modulus_2048_to_8192())
     .expect("Wycheproof RSA-2048 private key must parse with explicit legacy policy");
   assert_eq!(key.public_key().modulus_bits(), 2048);
   key

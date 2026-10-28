@@ -33,7 +33,7 @@ pub(super) fn run(data: &[u8]) {
 
   let key = RsaPrivateKey::from_pkcs1_der_with_policy(
     &rsa_fixture::valid_pkcs1_private_key_der(),
-    &RsaPublicKeyPolicy::legacy_verification(),
+    &RsaPublicKeyPolicy::modulus_2048_to_8192(),
   )
   .expect("fuzz RSA private-key fixture must parse");
   let (one, one_inverse) = factor_one(key.signature_len());

@@ -220,12 +220,12 @@ fn pss_algorithm_spki_from_rsa_encryption_spki(spki: &[u8]) -> Vec<u8> {
 }
 
 fn legacy_public_key_from_spki(spki: &[u8]) -> RsaPublicKey {
-  RsaPublicKey::from_spki_der_with_policy(spki, &RsaPublicKeyPolicy::legacy_verification())
+  RsaPublicKey::from_spki_der_with_policy(spki, &RsaPublicKeyPolicy::modulus_2048_to_8192())
     .expect("the SPKI fixture must satisfy the legacy verification policy")
 }
 
 fn legacy_x509_public_key_from_spki(spki: &[u8]) -> RsaX509PublicKey {
-  RsaX509PublicKey::from_spki_der_with_policy(spki, &RsaPublicKeyPolicy::legacy_verification())
+  RsaX509PublicKey::from_spki_der_with_policy(spki, &RsaPublicKeyPolicy::modulus_2048_to_8192())
     .expect("the X.509 SPKI fixture must satisfy the legacy verification policy")
 }
 
@@ -335,7 +335,7 @@ fn private_key() -> RsaPrivateKey {
   let der = rustcrypto_fixture_private_key()
     .to_pkcs1_der()
     .expect("the RustCrypto private-key fixture must encode as PKCS#1");
-  RsaPrivateKey::from_pkcs1_der_with_policy(der.as_bytes(), &RsaPublicKeyPolicy::legacy_verification())
+  RsaPrivateKey::from_pkcs1_der_with_policy(der.as_bytes(), &RsaPublicKeyPolicy::modulus_2048_to_8192())
     .expect("rscrypto must decode the RustCrypto private-key fixture")
 }
 
