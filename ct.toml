@@ -3581,8 +3581,8 @@ name = "x86_64-unknown-linux-gnu"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 3461
-compiler_api_sha256 = "96235a8bd6baa3810b60fff689c90f71ec9d6ca11673968d5f521ceb731d862c"
+compiler_api_item_count = 3469
+compiler_api_sha256 = "2eae8bd17b9d4a18e230bdbc4b3b26decfee3155cfc2aa818288e7fa50ee6eef"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "required"
@@ -3592,8 +3592,8 @@ name = "aarch64-unknown-linux-gnu"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 3461
-compiler_api_sha256 = "96235a8bd6baa3810b60fff689c90f71ec9d6ca11673968d5f521ceb731d862c"
+compiler_api_item_count = 3469
+compiler_api_sha256 = "2eae8bd17b9d4a18e230bdbc4b3b26decfee3155cfc2aa818288e7fa50ee6eef"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "required"
@@ -3626,8 +3626,8 @@ group = "win"
 backend = "llvm"
 linker = "msvc-link-unpinned"
 claim = "ct-intended"
-compiler_api_item_count = 3461
-compiler_api_sha256 = "96235a8bd6baa3810b60fff689c90f71ec9d6ca11673968d5f521ceb731d862c"
+compiler_api_item_count = 3469
+compiler_api_sha256 = "2eae8bd17b9d4a18e230bdbc4b3b26decfee3155cfc2aa818288e7fa50ee6eef"
 physical_timing = "required"
 binsec = "unsupported"
 binsec_reason = "BINSEC PE/Windows evidence is not part of the current release evidence gate."
@@ -3648,8 +3648,8 @@ name = "aarch64-apple-darwin"
 group = "macos"
 backend = "llvm"
 linker = "apple-ld-unpinned"
-compiler_api_item_count = 3461
-compiler_api_sha256 = "96235a8bd6baa3810b60fff689c90f71ec9d6ca11673968d5f521ceb731d862c"
+compiler_api_item_count = 3469
+compiler_api_sha256 = "2eae8bd17b9d4a18e230bdbc4b3b26decfee3155cfc2aa818288e7fa50ee6eef"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -3660,8 +3660,8 @@ name = "s390x-unknown-linux-gnu"
 group = "ibm"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 3461
-compiler_api_sha256 = "96235a8bd6baa3810b60fff689c90f71ec9d6ca11673968d5f521ceb731d862c"
+compiler_api_item_count = 3469
+compiler_api_sha256 = "2eae8bd17b9d4a18e230bdbc4b3b26decfee3155cfc2aa818288e7fa50ee6eef"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -3672,8 +3672,8 @@ name = "powerpc64le-unknown-linux-gnu"
 group = "ibm"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 3461
-compiler_api_sha256 = "96235a8bd6baa3810b60fff689c90f71ec9d6ca11673968d5f521ceb731d862c"
+compiler_api_item_count = 3469
+compiler_api_sha256 = "2eae8bd17b9d4a18e230bdbc4b3b26decfee3155cfc2aa818288e7fa50ee6eef"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -3684,8 +3684,8 @@ name = "riscv64gc-unknown-linux-gnu"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 3461
-compiler_api_sha256 = "96235a8bd6baa3810b60fff689c90f71ec9d6ca11673968d5f521ceb731d862c"
+compiler_api_item_count = 3469
+compiler_api_sha256 = "2eae8bd17b9d4a18e230bdbc4b3b26decfee3155cfc2aa818288e7fa50ee6eef"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -4659,6 +4659,8 @@ id = "signature.ecdsa_signing"
 api = [
   "rscrypto::EcdsaP{256,384}SecretKey::{try_sign,try_sign_blinded_with}",
   "rscrypto::EcdsaP{256,384}Keypair::{try_sign,try_sign_blinded_with}",
+  "rscrypto::EcdsaP256{SecretKey,Keypair}::{try_sign_sha384,try_sign_sha384_blinded_with}",
+  "rscrypto::EcdsaP384{SecretKey,Keypair}::{try_sign_sha256,try_sign_sha256_blinded_with}",
 ]
 features = ["ecdsa-p256", "ecdsa-p384", "getrandom", "serde-secrets"]
 targets = ["all-supported", "target-selected arithmetic backend"]
@@ -5335,7 +5337,12 @@ id = "signature.ecdsa_p256_sign"
 tier = "A"
 claim = "ct-intended"
 features = ["ecdsa-p256"]
-entrypoints = ["EcdsaP256SecretKey::try_sign_blinded_with", "EcdsaP256Keypair::try_sign_blinded_with"]
+entrypoints = [
+  "EcdsaP256SecretKey::try_sign_blinded_with",
+  "EcdsaP256Keypair::try_sign_blinded_with",
+  "EcdsaP256SecretKey::try_sign_sha384_blinded_with",
+  "EcdsaP256Keypair::try_sign_sha384_blinded_with",
+]
 secrets = ["secret_key", "nonce_material", "nonce_scalar", "private_scalar", "coordinate_blinding"]
 public = ["message", "message_length", "signature"]
 may_leak = ["message_length", "signature"]
@@ -5370,7 +5377,12 @@ id = "signature.ecdsa_p384_sign"
 tier = "A"
 claim = "ct-intended"
 features = ["ecdsa-p384"]
-entrypoints = ["EcdsaP384SecretKey::try_sign_blinded_with", "EcdsaP384Keypair::try_sign_blinded_with"]
+entrypoints = [
+  "EcdsaP384SecretKey::try_sign_blinded_with",
+  "EcdsaP384Keypair::try_sign_blinded_with",
+  "EcdsaP384SecretKey::try_sign_sha256_blinded_with",
+  "EcdsaP384Keypair::try_sign_sha256_blinded_with",
+]
 secrets = ["secret_key", "nonce_material", "nonce_scalar", "private_scalar", "coordinate_blinding"]
 public = ["message", "message_length", "signature"]
 may_leak = ["message_length", "signature"]

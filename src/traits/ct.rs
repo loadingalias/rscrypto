@@ -686,6 +686,15 @@ pub(crate) mod tests {
           Ok::<(), ()>(())
         }))
       });
+      covered("P-256/SHA-384 ECDSA signing", || {
+        core::hint::black_box(secret.try_sign_sha384(b"dit"))
+      });
+      covered("P-256/SHA-384 ECDSA blinded signing", || {
+        core::hint::black_box(secret.try_sign_sha384_blinded_with(b"dit", |blind| {
+          blind.fill(3);
+          Ok::<(), ()>(())
+        }))
+      });
       let mut der = [0; crate::EcdsaP256SecretKey::PKCS8_DER_LENGTH];
       covered("P-256 ECDSA PKCS #8 export", || secret.to_pkcs8_der_into(&mut der));
       covered("P-256 ECDSA PKCS #8 import", || {
@@ -709,6 +718,15 @@ pub(crate) mod tests {
       covered("P-384 ECDSA signing", || core::hint::black_box(secret.try_sign(b"dit")));
       covered("P-384 ECDSA blinded signing", || {
         core::hint::black_box(secret.try_sign_blinded_with(b"dit", |blind| {
+          blind.fill(3);
+          Ok::<(), ()>(())
+        }))
+      });
+      covered("P-384/SHA-256 ECDSA signing", || {
+        core::hint::black_box(secret.try_sign_sha256(b"dit"))
+      });
+      covered("P-384/SHA-256 ECDSA blinded signing", || {
+        core::hint::black_box(secret.try_sign_sha256_blinded_with(b"dit", |blind| {
           blind.fill(3);
           Ok::<(), ()>(())
         }))

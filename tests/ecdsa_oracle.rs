@@ -482,3 +482,153 @@ fn p256_spki_rejection_names_the_failing_component() {
     Err(EcdsaError::MalformedDer)
   );
 }
+
+/// Verify a DER signature with ring's and, where it builds, AWS-LC's verifier for one algorithm pair.
+#[cfg(any(feature = "ecdsa-p256", feature = "ecdsa-p384"))]
+fn verify_with_ring_and_aws_lc(
+  ring_algorithm: &'static ring::signature::EcdsaVerificationAlgorithm,
+  #[cfg(all(
+    any(unix, windows),
+    not(target_arch = "wasm32"),
+    not(any(target_arch = "s390x", target_arch = "powerpc64"))
+  ))]
+  aws_lc_algorithm: &'static aws_lc_rs::signature::EcdsaVerificationAlgorithm,
+  sec1: &[u8],
+  message: &[u8],
+  der: &[u8],
+) {
+  ring::signature::UnparsedPublicKey::new(ring_algorithm, sec1)
+    .verify(message, der)
+    .expect("ring must verify the cross-hash signature");
+  #[cfg(all(
+    any(unix, windows),
+    not(target_arch = "wasm32"),
+    not(any(target_arch = "s390x", target_arch = "powerpc64"))
+  ))]
+  aws_lc_rs::signature::UnparsedPublicKey::new(aws_lc_algorithm, sec1)
+    .verify(message, der)
+    .expect("AWS-LC must verify the cross-hash signature");
+}
+
+#[cfg(feature = "ecdsa-p256")]
+#[test]
+fn p256_sha384_signing_verifies_independently_and_is_domain_separated() {
+  use p256::ecdsa::signature::hazmat::PrehashVerifier;
+
+  let input = [0x5c; 258];
+  for scalar in [[0x11u8; 32], [0x7e; 32]] {
+    let secret = EcdsaP256SecretKey::from_bytes(scalar).expect("valid scalar");
+    let public = secret.public_key();
+    let sec1 = public.to_sec1_bytes();
+    let oracle = P256OracleSigningKey::from_slice(&scalar).expect("P-256 oracle key must parse");
+    for len in [0usize, 1, 111, 112, 127, 128, 257] {
+      let message = &input[1..len.strict_add(1)];
+      let signature = secret.try_sign_sha384(message).expect("P-256/SHA-384 signing");
+      assert_eq!(
+        signature,
+        secret.try_sign_sha384(message).expect("repeat"),
+        "deterministic"
+      );
+      let blinded = secret
+        .try_sign_sha384_blinded_with(message, |blind| {
+          blind.fill(0x3d);
+          Ok::<(), ()>(())
+        })
+        .expect("blinded P-256/SHA-384 signing");
+      assert_eq!(blinded, signature, "blinding changes no output");
+      public
+        .verify_sha384(message, &signature)
+        .expect("rscrypto verifies P-256/SHA-384");
+      public
+        .verify(message, &signature)
+        .expect_err("not a P-256/SHA-256 signature");
+      let prehash = sha2::Sha384::digest(message);
+      let oracle_signature = P256OracleSignature::from_slice(&signature.to_bytes()).expect("r||s");
+      oracle
+        .verifying_key()
+        .verify_prehash(&prehash, &oracle_signature)
+        .expect("RustCrypto verifies the leftmost 256 SHA-384 bits");
+      let mut der = [0u8; EcdsaP256Signature::DER_MAX_LENGTH];
+      verify_with_ring_and_aws_lc(
+        &ring::signature::ECDSA_P256_SHA384_ASN1,
+        #[cfg(all(
+          any(unix, windows),
+          not(target_arch = "wasm32"),
+          not(any(target_arch = "s390x", target_arch = "powerpc64"))
+        ))]
+        &aws_lc_rs::signature::ECDSA_P256_SHA384_ASN1,
+        &sec1,
+        message,
+        signature.to_der_into(&mut der),
+      );
+      // A separate nonce domain: the same message never shares a nonce with try_sign.
+      let same_curve = secret.try_sign(message).expect("P-256/SHA-256 signing");
+      assert_ne!(
+        signature.to_bytes()[..32],
+        same_curve.to_bytes()[..32],
+        "distinct nonces give distinct r"
+      );
+    }
+  }
+}
+
+#[cfg(feature = "ecdsa-p384")]
+#[test]
+fn p384_sha256_signing_verifies_independently_and_is_domain_separated() {
+  use p384::ecdsa::signature::hazmat::PrehashVerifier;
+
+  let input = [0x5c; 258];
+  for scalar in [[0x11u8; 48], [0x7e; 48]] {
+    let secret = EcdsaP384SecretKey::from_bytes(scalar).expect("valid scalar");
+    let public = secret.public_key();
+    let sec1 = public.to_sec1_bytes();
+    let oracle = P384OracleSigningKey::from_slice(&scalar).expect("P-384 oracle key must parse");
+    for len in [0usize, 1, 55, 56, 63, 64, 257] {
+      let message = &input[1..len.strict_add(1)];
+      let signature = secret.try_sign_sha256(message).expect("P-384/SHA-256 signing");
+      assert_eq!(
+        signature,
+        secret.try_sign_sha256(message).expect("repeat"),
+        "deterministic"
+      );
+      let blinded = secret
+        .try_sign_sha256_blinded_with(message, |blind| {
+          blind.fill(0x3d);
+          Ok::<(), ()>(())
+        })
+        .expect("blinded P-384/SHA-256 signing");
+      assert_eq!(blinded, signature, "blinding changes no output");
+      public
+        .verify_sha256(message, &signature)
+        .expect("rscrypto verifies P-384/SHA-256");
+      public
+        .verify(message, &signature)
+        .expect_err("not a P-384/SHA-384 signature");
+      let prehash = sha2::Sha256::digest(message);
+      let oracle_signature = P384OracleSignature::from_slice(&signature.to_bytes()).expect("r||s");
+      oracle
+        .verifying_key()
+        .verify_prehash(&prehash, &oracle_signature)
+        .expect("RustCrypto verifies the SHA-256 representative");
+      let mut der = [0u8; EcdsaP384Signature::DER_MAX_LENGTH];
+      verify_with_ring_and_aws_lc(
+        &ring::signature::ECDSA_P384_SHA256_ASN1,
+        #[cfg(all(
+          any(unix, windows),
+          not(target_arch = "wasm32"),
+          not(any(target_arch = "s390x", target_arch = "powerpc64"))
+        ))]
+        &aws_lc_rs::signature::ECDSA_P384_SHA256_ASN1,
+        &sec1,
+        message,
+        signature.to_der_into(&mut der),
+      );
+      let same_curve = secret.try_sign(message).expect("P-384/SHA-384 signing");
+      assert_ne!(
+        signature.to_bytes()[..48],
+        same_curve.to_bytes()[..48],
+        "distinct nonces give distinct r"
+      );
+    }
+  }
+}

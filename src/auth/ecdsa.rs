@@ -150,6 +150,10 @@ const P384_PKCS8_PUBLIC_KEY_HEADER: [u8; 5] = [
 ];
 const P256_NONCE_DOMAIN: &[u8] = b"rscrypto-ecdsa-p256-sha256-sign-v1";
 const P384_NONCE_DOMAIN: &[u8] = b"rscrypto-ecdsa-p384-sha384-sign-v1";
+// Cross-hash signing derives its nonces under its own domains, so a key never reuses a nonce
+// between its curve's hash and the other hash.
+const P256_SHA384_NONCE_DOMAIN: &[u8] = b"rscrypto-ecdsa-p256-sha384-sign-v1";
+const P384_SHA256_NONCE_DOMAIN: &[u8] = b"rscrypto-ecdsa-p384-sha256-sign-v1";
 const P256_PUBKEY_BLIND_DOMAIN: &[u8] = b"rscrypto-ecdsa-p256-pubkey-blind-v1";
 const P384_PUBKEY_BLIND_DOMAIN: &[u8] = b"rscrypto-ecdsa-p384-pubkey-blind-v1";
 const ECDSA_KEY_GENERATION_ATTEMPTS: usize = 32;
@@ -721,6 +725,47 @@ impl EcdsaP256SecretKey {
     sign_digest_p256_blinded(&self.0, &digest, blind.as_array()).map_err(EcdsaBlindedSigningError::Signing)
   }
 
+  /// Sign a message with P-256/SHA-384.
+  ///
+  /// Hashes `message` with SHA-384 and signs the leftmost 256 digest bits, as
+  /// ECDSA requires for P-256; [`EcdsaP256PublicKey::verify_sha384`] verifies
+  /// the result. Use it only where a protocol names the hash independently of
+  /// the curve, as TLS 1.2's `ecdsa_secp384r1_sha384` does. The deterministic
+  /// nonce is derived under a domain separate from [`Self::try_sign`]'s.
+  ///
+  /// # Errors
+  ///
+  /// Returns [`EcdsaError::SigningFailure`] if deterministic nonce derivation
+  /// produces an invalid ECDSA scalar. This is cryptographically negligible,
+  /// but the API reports it instead of panicking.
+  pub fn try_sign_sha384(&self, message: &[u8]) -> Result<EcdsaP256Signature, EcdsaError> {
+    let _dit = crate::traits::ct::DataIndependentTiming::enter();
+    let digest = Sha384::digest(message);
+    sign_digest_p256_sha384(&self.0, &digest)
+  }
+
+  /// Try to sign a message with P-256/SHA-384 and caller-supplied blinding.
+  ///
+  /// As [`Self::try_sign_sha384`], with the blinding and failure behavior of
+  /// [`Self::try_sign_blinded_with`].
+  ///
+  /// # Errors
+  ///
+  /// Returns [`EcdsaBlindedSigningError::Random`] if the blinding source fails,
+  /// or [`EcdsaBlindedSigningError::Signing`] for the existing opaque ECDSA
+  /// signing failure.
+  pub fn try_sign_sha384_blinded_with<E>(
+    &self,
+    message: &[u8],
+    fill: impl FnOnce(&mut [u8; 64]) -> Result<(), E>,
+  ) -> Result<EcdsaP256Signature, EcdsaBlindedSigningError<E>> {
+    let _dit = crate::traits::ct::DataIndependentTiming::enter();
+    let mut blind = ZeroizingBytes::zeroed();
+    fill(blind.as_mut_array()).map_err(EcdsaBlindedSigningError::Random)?;
+    let digest = Sha384::digest(message);
+    sign_digest_p256_sha384_blinded(&self.0, &digest, blind.as_array()).map_err(EcdsaBlindedSigningError::Signing)
+  }
+
   /// Returns a wrapper that displays the secret key bytes as lowercase hex.
   #[must_use]
   pub fn display_secret(&self) -> crate::hex::DisplaySecret<'_> {
@@ -979,6 +1024,47 @@ impl EcdsaP384SecretKey {
     sign_digest_p384_blinded(&self.0, &digest, blind.as_array()).map_err(EcdsaBlindedSigningError::Signing)
   }
 
+  /// Sign a message with P-384/SHA-256.
+  ///
+  /// Hashes `message` with SHA-256 and signs the complete digest as the ECDSA
+  /// message representative; [`EcdsaP384PublicKey::verify_sha256`] verifies
+  /// the result. Use it only where a protocol names the hash independently of
+  /// the curve, as TLS 1.2's `ecdsa_secp256r1_sha256` does. The deterministic
+  /// nonce is derived under a domain separate from [`Self::try_sign`]'s.
+  ///
+  /// # Errors
+  ///
+  /// Returns [`EcdsaError::SigningFailure`] if deterministic nonce derivation
+  /// produces an invalid ECDSA scalar. This is cryptographically negligible,
+  /// but the API reports it instead of panicking.
+  pub fn try_sign_sha256(&self, message: &[u8]) -> Result<EcdsaP384Signature, EcdsaError> {
+    let _dit = crate::traits::ct::DataIndependentTiming::enter();
+    let digest = Sha256::digest(message);
+    sign_digest_p384_sha256(&self.0, &digest)
+  }
+
+  /// Try to sign a message with P-384/SHA-256 and caller-supplied blinding.
+  ///
+  /// As [`Self::try_sign_sha256`], with the blinding and failure behavior of
+  /// [`Self::try_sign_blinded_with`].
+  ///
+  /// # Errors
+  ///
+  /// Returns [`EcdsaBlindedSigningError::Random`] if the blinding source fails,
+  /// or [`EcdsaBlindedSigningError::Signing`] for the existing opaque ECDSA
+  /// signing failure.
+  pub fn try_sign_sha256_blinded_with<E>(
+    &self,
+    message: &[u8],
+    fill: impl FnOnce(&mut [u8; 96]) -> Result<(), E>,
+  ) -> Result<EcdsaP384Signature, EcdsaBlindedSigningError<E>> {
+    let _dit = crate::traits::ct::DataIndependentTiming::enter();
+    let mut blind = ZeroizingBytes::zeroed();
+    fill(blind.as_mut_array()).map_err(EcdsaBlindedSigningError::Random)?;
+    let digest = Sha256::digest(message);
+    sign_digest_p384_sha256_blinded(&self.0, &digest, blind.as_array()).map_err(EcdsaBlindedSigningError::Signing)
+  }
+
   /// Returns a wrapper that displays the secret key bytes as lowercase hex.
   #[must_use]
   pub fn display_secret(&self) -> crate::hex::DisplaySecret<'_> {
@@ -1101,6 +1187,21 @@ impl EcdsaP256Keypair {
   ) -> Result<EcdsaP256Signature, EcdsaBlindedSigningError<E>> {
     self.secret.try_sign_blinded_with(message, fill)
   }
+
+  /// Sign a message with P-256/SHA-384; see [`EcdsaP256SecretKey::try_sign_sha384`].
+  pub fn try_sign_sha384(&self, message: &[u8]) -> Result<EcdsaP256Signature, EcdsaError> {
+    self.secret.try_sign_sha384(message)
+  }
+
+  /// Try to sign with P-256/SHA-384 and fallible caller-supplied blinding.
+  #[inline]
+  pub fn try_sign_sha384_blinded_with<E>(
+    &self,
+    message: &[u8],
+    fill: impl FnOnce(&mut [u8; 64]) -> Result<(), E>,
+  ) -> Result<EcdsaP256Signature, EcdsaBlindedSigningError<E>> {
+    self.secret.try_sign_sha384_blinded_with(message, fill)
+  }
 }
 
 impl crate::traits::TrySigner for EcdsaP256Keypair {
@@ -1203,6 +1304,21 @@ impl EcdsaP384Keypair {
     fill: impl FnOnce(&mut [u8; 96]) -> Result<(), E>,
   ) -> Result<EcdsaP384Signature, EcdsaBlindedSigningError<E>> {
     self.secret.try_sign_blinded_with(message, fill)
+  }
+
+  /// Sign a message with P-384/SHA-256; see [`EcdsaP384SecretKey::try_sign_sha256`].
+  pub fn try_sign_sha256(&self, message: &[u8]) -> Result<EcdsaP384Signature, EcdsaError> {
+    self.secret.try_sign_sha256(message)
+  }
+
+  /// Try to sign with P-384/SHA-256 and fallible caller-supplied blinding.
+  #[inline]
+  pub fn try_sign_sha256_blinded_with<E>(
+    &self,
+    message: &[u8],
+    fill: impl FnOnce(&mut [u8; 96]) -> Result<(), E>,
+  ) -> Result<EcdsaP384Signature, EcdsaBlindedSigningError<E>> {
+    self.secret.try_sign_sha256_blinded_with(message, fill)
   }
 }
 
@@ -2679,12 +2795,84 @@ fn sign_digest_p384_blinded(
   }
 }
 
+/// P-256 signing over a SHA-384 digest: the nonce binds the whole digest under its own domain,
+/// and the ECDSA representative is the digest's leftmost 256 bits.
+fn sign_digest_p256_sha384(secret: &[u8; 32], digest: &[u8; 48]) -> Result<EcdsaP256Signature, EcdsaError> {
+  let secret_scalar = SecretScalar::from_be_bytes(secret);
+  let mut wide = ZeroizingBytes::zeroed();
+  hmac_expand_p256_with(secret, P256_SHA384_NONCE_DOMAIN, digest, wide.as_mut_array());
+  let nonce = SecretScalar::new(reduce_wide_order_nonzero(wide.as_array(), &P256_ORDER_MODULUS));
+  match sign_digest_with_nonce(&P256, &secret_scalar, &nonce, &digest[..32]) {
+    Ok((r, s)) => assemble_p256_signature(r, s),
+    Err(error) => Err(error),
+  }
+}
+
+fn sign_digest_p256_sha384_blinded(
+  secret: &[u8; 32],
+  digest: &[u8; 48],
+  blind: &[u8; 64],
+) -> Result<EcdsaP256Signature, EcdsaError> {
+  let secret_scalar = SecretScalar::from_be_bytes(secret);
+  let mut wide = ZeroizingBytes::zeroed();
+  hmac_expand_p256_with(secret, P256_SHA384_NONCE_DOMAIN, digest, wide.as_mut_array());
+  let nonce = SecretScalar::new(reduce_wide_order_nonzero(wide.as_array(), &P256_ORDER_MODULUS));
+  let (point_blind, scalar_blind) = signing_blinds(blind, &P256_ORDER_MODULUS);
+  let result = sign_digest_with_nonce_blinded(
+    &P256,
+    &secret_scalar,
+    &nonce,
+    &point_blind,
+    &scalar_blind,
+    &digest[..32],
+  );
+  match result {
+    Ok((r, s)) => assemble_p256_signature(r, s),
+    Err(error) => Err(error),
+  }
+}
+
+/// P-384 signing over a SHA-256 digest: the nonce binds the digest under its own domain, and
+/// the whole digest is the ECDSA representative.
+fn sign_digest_p384_sha256(secret: &[u8; 48], digest: &[u8; 32]) -> Result<EcdsaP384Signature, EcdsaError> {
+  let secret_scalar = SecretScalar::from_be_bytes(secret);
+  let mut wide = ZeroizingBytes::zeroed();
+  hmac_expand_p384_with(secret, P384_SHA256_NONCE_DOMAIN, digest, wide.as_mut_array());
+  let nonce = SecretScalar::new(reduce_wide_order_nonzero(wide.as_array(), &P384_ORDER_MODULUS));
+  match sign_digest_with_nonce(&P384, &secret_scalar, &nonce, digest) {
+    Ok((r, s)) => assemble_p384_signature(r, s),
+    Err(error) => Err(error),
+  }
+}
+
+fn sign_digest_p384_sha256_blinded(
+  secret: &[u8; 48],
+  digest: &[u8; 32],
+  blind: &[u8; 96],
+) -> Result<EcdsaP384Signature, EcdsaError> {
+  let secret_scalar = SecretScalar::from_be_bytes(secret);
+  let mut wide = ZeroizingBytes::zeroed();
+  hmac_expand_p384_with(secret, P384_SHA256_NONCE_DOMAIN, digest, wide.as_mut_array());
+  let nonce = SecretScalar::new(reduce_wide_order_nonzero(wide.as_array(), &P384_ORDER_MODULUS));
+  let (point_blind, scalar_blind) = signing_blinds(blind, &P384_ORDER_MODULUS);
+  let result = sign_digest_with_nonce_blinded(&P384, &secret_scalar, &nonce, &point_blind, &scalar_blind, digest);
+  match result {
+    Ok((r, s)) => assemble_p384_signature(r, s),
+    Err(error) => Err(error),
+  }
+}
+
 fn hmac_expand_p256(secret: &[u8; 32], digest: &[u8; 32], out: &mut [u8; 64]) {
+  hmac_expand_p256_with(secret, P256_NONCE_DOMAIN, digest, out);
+}
+
+/// Expand `HMAC-SHA-256(secret, domain || block || digest)` for blocks 0 and 1 into a wide nonce.
+fn hmac_expand_p256_with(secret: &[u8; 32], domain: &[u8], digest: &[u8], out: &mut [u8; 64]) {
   let (blocks, remainder) = out.as_chunks_mut::<{ HmacSha256::TAG_SIZE }>();
   debug_assert!(remainder.is_empty());
   for (block_index, block) in [0u8, 1].into_iter().zip(blocks) {
     let mut mac = HmacSha256::new(secret);
-    mac.update(P256_NONCE_DOMAIN);
+    mac.update(domain);
     mac.update(&[block_index]);
     mac.update(digest);
     block.copy_from_slice(mac.finalize().as_bytes());
@@ -2703,11 +2891,16 @@ fn hmac_expand_p256_public_blind(secret: &[u8; 32], out: &mut [u8; 64]) {
 }
 
 fn hmac_expand_p384(secret: &[u8; 48], digest: &[u8; 48], out: &mut [u8; 96]) {
+  hmac_expand_p384_with(secret, P384_NONCE_DOMAIN, digest, out);
+}
+
+/// Expand `HMAC-SHA-384(secret, domain || block || digest)` for blocks 0 and 1 into a wide nonce.
+fn hmac_expand_p384_with(secret: &[u8; 48], domain: &[u8], digest: &[u8], out: &mut [u8; 96]) {
   let (blocks, remainder) = out.as_chunks_mut::<{ HmacSha384::TAG_SIZE }>();
   debug_assert!(remainder.is_empty());
   for (block_index, block) in [0u8, 1].into_iter().zip(blocks) {
     let mut mac = HmacSha384::new(secret);
-    mac.update(P384_NONCE_DOMAIN);
+    mac.update(domain);
     mac.update(&[block_index]);
     mac.update(digest);
     block.copy_from_slice(mac.finalize().as_bytes());
