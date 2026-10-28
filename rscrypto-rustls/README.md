@@ -261,9 +261,9 @@ perform another key exchange or supply fresh post-compromise entropy.
 
 Initial keys always use AES-128-GCM and HKDF-SHA256, even when the negotiated
 suite is ChaCha20 or AES-256. Retry uses the fixed RFC 9001 key and nonce.
-The `quinn` feature does not enable `getrandom`. Every transport random value
-comes from the caller's sources, and a failing source fails construction without
-OS fallback:
+The `quinn` feature does not enable `getrandom`. With Quinn's default Cubic or
+NewReno congestion control, every transport random value comes from the caller's
+sources, and a failing source fails construction without OS fallback:
 
 - `quinn::EndpointKeys::generate(random)` draws the 32-byte stateless-reset key,
   a 16-byte connection-ID tag key, and a 32-byte connection-ID generator seed.
@@ -285,9 +285,12 @@ OS fallback:
 
 With fixed sources and a fixed clock, including the server configuration's
 `time_source`, the endpoints are deterministic; a test replays a whole handshake,
-transfer, and key update byte for byte. The pinned quinn-proto generators are
-`rand` 0.10's `StdRng`, and quinn-proto links `getrandom` through `rand`'s
-default features; these paths never call it. Address-token roots belong to the
+transfer, and key update byte for byte. BBR is the exception: the pinned
+quinn-proto seeds each `congestion::BbrConfig` controller from `rand::rng()`, a
+thread-local generator seeded from the operating system, so a connection that
+selects BBR draws OS entropy and is not reproducible. The pinned quinn-proto
+generators are `rand` 0.10's `StdRng`, and quinn-proto links `getrandom` through
+`rand`'s default features for that BBR seed. Address-token roots belong to the
 returned server configuration; cloning it keeps outstanding tokens valid. Each
 derived token key seals once, with at most 4 KiB of plaintext.
 

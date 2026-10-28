@@ -20,11 +20,15 @@
 //!   [`EndpointKeys::endpoint_config`] draws a seed for Quinn's endpoint random
 //!   generator, which seeds each connection's generator.
 //!
-//! With these constructors, Quinn reads no other entropy on the client or
-//! server path, so an endpoint run from fixed sources and a fixed clock is
-//! deterministic. Quinn's transport generators are `rand` 0.10's `StdRng`
-//! (ChaCha12); `quinn-proto` also links `getrandom` through `rand` 0.10's
-//! default features, but these paths never call it.
+//! With these constructors and Quinn's default Cubic or NewReno congestion
+//! control, Quinn draws no other transport randomness on the client or server
+//! path, so an endpoint run from fixed sources and a fixed clock is
+//! deterministic. BBR is the exception: the pinned `quinn-proto` seeds each
+//! `congestion::BbrConfig` controller from `rand::rng()`, a thread-local
+//! generator seeded from the operating system, so a connection that selects
+//! BBR draws OS entropy for its gain cycle and is not reproducible. Quinn's
+//! transport generators are `rand` 0.10's `StdRng` (ChaCha12); `quinn-proto`
+//! links `getrandom` through `rand` 0.10's default features for that BBR seed.
 //!
 //! Initial packets and Retry always use RFC 9001 AES-128-GCM, independently of
 //! the negotiated suite. Rustls owns handshake secrets and key updates. Quinn
