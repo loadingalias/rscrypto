@@ -45,6 +45,7 @@ pub(crate) fn scrub_dead_stack<const WORDS: usize>() {
 /// The caller must ensure that AVX512F is available.
 #[cfg(all(
   target_arch = "x86_64",
+  target_feature = "sse2",
   any(
     feature = "aes-gcm",
     feature = "chacha20poly1305",
