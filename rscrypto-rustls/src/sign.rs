@@ -2,12 +2,13 @@
 //!
 //! PKCS#8 supports each enabled signing algorithm; SEC1 supports ECDSA, and
 //! PKCS#1 supports RSA. RSA signing keys have 2,048–8,192-bit moduli by default
-//! ([`RsaSigningKeySizes`] can require 3,072 bits) and public exponent 65,537.
-//! RSA keys sign RSA-PSS, and also PKCS#1 v1.5 for
-//! TLS 1.2 peers; rustls never offers PKCS#1 v1.5 in TLS 1.3. ECDSA keys sign
-//! with their curve's hash only (P-256 with SHA-256, P-384 with SHA-384), also
-//! in TLS 1.2. [`Provider::new`] takes the entropy source for key validation
-//! and signing; [`KEY_PROVIDER`] uses OS entropy and requires `getrandom`.
+//! (`RsaSigningKeySizes` can require 3,072 bits) and public exponent 65,537.
+//! RSA keys sign RSA-PSS, and also PKCS#1 v1.5 for TLS 1.2 peers; rustls never
+//! offers PKCS#1 v1.5 in TLS 1.3. ECDSA keys sign with their curve's hash (P-256
+//! with SHA-256, P-384 with SHA-384), and in TLS 1.2 with the other hash when
+//! the peer offers only that one. [`Provider::new`] takes the entropy source for
+//! key validation and signing; [`KEY_PROVIDER`] uses OS entropy and requires
+//! `getrandom`.
 
 use alloc::boxed::Box;
 use rustls::Error;
@@ -233,6 +234,37 @@ mod curve {
         Self::Ed25519(_) => SignatureScheme::ED25519,
       }
     }
+
+    /// The other ECDSA hash, which TLS 1.2 lets this key sign with: there an ECDSA scheme names
+    /// a hash, not a curve (RFC 5246 §7.4.1.4.1). TLS 1.3 binds each scheme to its curve.
+    fn tls12_other_hash(&self) -> Option<SignatureScheme> {
+      match self {
+        #[cfg(feature = "ecdsa-p256")]
+        Self::P256(..) => Some(SignatureScheme::ECDSA_NISTP384_SHA384),
+        #[cfg(feature = "ecdsa-p384")]
+        Self::P384(..) => Some(SignatureScheme::ECDSA_NISTP256_SHA256),
+        #[cfg(feature = "ed25519")]
+        Self::Ed25519(_) => None,
+      }
+    }
+  }
+
+  /// Whether `offered` can only be a TLS 1.2 offer.
+  ///
+  /// rustls removes every scheme that TLS 1.3 forbids before it asks a key to choose in TLS 1.3
+  /// (`server/hs.rs` and `client/tls13.rs` at the pinned revision), so a PKCS#1 v1.5 or SHA-1
+  /// scheme in the offer proves TLS 1.2. Without such a scheme the version is unknown.
+  fn proves_tls12(offered: &[SignatureScheme]) -> bool {
+    offered.iter().any(|scheme| {
+      matches!(
+        *scheme,
+        SignatureScheme::RSA_PKCS1_SHA1
+          | SignatureScheme::ECDSA_SHA1_Legacy
+          | SignatureScheme::RSA_PKCS1_SHA256
+          | SignatureScheme::RSA_PKCS1_SHA384
+          | SignatureScheme::RSA_PKCS1_SHA512
+      )
+    })
   }
 
   #[derive(Debug)]
@@ -243,11 +275,20 @@ mod curve {
 
   impl SigningKey for Key {
     fn choose_scheme(&self, offered: &[SignatureScheme]) -> Option<Box<dyn Signer>> {
-      offered.contains(&self.secret.scheme()).then(|| {
-        Box::new(Sign {
-          secret: Arc::clone(&self.secret),
-        }) as Box<dyn Signer>
-      })
+      // The curve's own scheme first; the other ECDSA hash only in an offer that proves TLS 1.2.
+      let own = self.secret.scheme();
+      let scheme = if offered.contains(&own) {
+        own
+      } else {
+        self
+          .secret
+          .tls12_other_hash()
+          .filter(|other| offered.contains(other) && proves_tls12(offered))?
+      };
+      Some(Box::new(Sign {
+        secret: Arc::clone(&self.secret),
+        scheme,
+      }))
     }
 
     fn public_key(&self) -> Option<SubjectPublicKeyInfoDer<'_>> {
@@ -258,17 +299,23 @@ mod curve {
   #[derive(Debug)]
   struct Sign {
     secret: Arc<Secret>,
+    scheme: SignatureScheme,
   }
 
+  /// Sign with P-256 and SHA-256, or with SHA-384 when `sha384` (TLS 1.2 only).
   #[cfg(feature = "ecdsa-p256")]
   fn sign_p256<E>(
     key: &EcdsaP256SecretKey,
     message: &[u8],
+    sha384: bool,
     fill: impl FnOnce(&mut [u8; 64]) -> Result<(), E>,
   ) -> Result<Vec<u8>, Error> {
-    let signature = key
-      .try_sign_blinded_with(message, fill)
-      .map_err(|_| super::signing_failed())?;
+    let signature = if sha384 {
+      key.try_sign_sha384_blinded_with(message, fill)
+    } else {
+      key.try_sign_blinded_with(message, fill)
+    }
+    .map_err(|_| super::signing_failed())?;
     Ok(
       signature
         .to_der_into(&mut [0; rscrypto::EcdsaP256Signature::DER_MAX_LENGTH])
@@ -276,15 +323,20 @@ mod curve {
     )
   }
 
+  /// Sign with P-384 and SHA-384, or with SHA-256 when `sha256` (TLS 1.2 only).
   #[cfg(feature = "ecdsa-p384")]
   fn sign_p384<E>(
     key: &EcdsaP384SecretKey,
     message: &[u8],
+    sha256: bool,
     fill: impl FnOnce(&mut [u8; 96]) -> Result<(), E>,
   ) -> Result<Vec<u8>, Error> {
-    let signature = key
-      .try_sign_blinded_with(message, fill)
-      .map_err(|_| super::signing_failed())?;
+    let signature = if sha256 {
+      key.try_sign_sha256_blinded_with(message, fill)
+    } else {
+      key.try_sign_blinded_with(message, fill)
+    }
+    .map_err(|_| super::signing_failed())?;
     Ok(
       signature
         .to_der_into(&mut [0; rscrypto::EcdsaP384Signature::DER_MAX_LENGTH])
@@ -296,16 +348,26 @@ mod curve {
     fn sign(self: Box<Self>, message: &[u8]) -> Result<Vec<u8>, Error> {
       match self.secret.as_ref() {
         #[cfg(feature = "ecdsa-p256")]
-        Secret::P256(key, random) => sign_p256(key, message, |out| random.fill(out)),
+        Secret::P256(key, random) => sign_p256(
+          key,
+          message,
+          self.scheme == SignatureScheme::ECDSA_NISTP384_SHA384,
+          |out| random.fill(out),
+        ),
         #[cfg(feature = "ecdsa-p384")]
-        Secret::P384(key, random) => sign_p384(key, message, |out| random.fill(out)),
+        Secret::P384(key, random) => sign_p384(
+          key,
+          message,
+          self.scheme == SignatureScheme::ECDSA_NISTP256_SHA256,
+          |out| random.fill(out),
+        ),
         #[cfg(feature = "ed25519")]
         Secret::Ed25519(key) => Ok(key.sign(message).as_bytes().to_vec()),
       }
     }
 
     fn scheme(&self) -> SignatureScheme {
-      self.secret.scheme()
+      self.scheme
     }
   }
 
@@ -317,11 +379,19 @@ mod curve {
     let p384 = EcdsaP384SecretKey::from_pkcs8_der(include_bytes!("../tests/vectors/credentials/p384-leaf-key.der"))
       .expect("fixture key");
     let errors = [
-      sign_p256(&p256, b"message", |out| {
+      sign_p256(&p256, b"message", false, |out| {
         out[..17].fill(0x42);
         Err(())
       }),
-      sign_p384(&p384, b"message", |out| {
+      sign_p256(&p256, b"message", true, |out| {
+        out[..17].fill(0x42);
+        Err(())
+      }),
+      sign_p384(&p384, b"message", false, |out| {
+        out[..17].fill(0x42);
+        Err(())
+      }),
+      sign_p384(&p384, b"message", true, |out| {
         out[..17].fill(0x42);
         Err(())
       }),

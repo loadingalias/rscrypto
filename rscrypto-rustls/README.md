@@ -233,12 +233,14 @@ handshake. QUIC rejects a provider with any TLS 1.2 suite.
 
 RSA keys sign RSA-PSS when the peer offers it and PKCS#1 v1.5 otherwise, for example
 for a TLS 1.2 server that accepts only PKCS#1 v1.5 client certificates. TLS 1.3 never
-signs PKCS#1 v1.5. ECDSA keys sign with their curve's hash only: P-256 with SHA-256
-and P-384 with SHA-384. A TLS 1.2 peer that offers only the other ECDSA hash gets no
-signature from such a key. Verification follows TLS 1.2's rule that an ECDSA scheme
-names a hash, not a curve: for example, an `ecdsa_secp384r1_sha384` signature from a
-P-256 key, which Go servers produce, verifies in TLS 1.2. TLS 1.3 verification stays
-curve-bound.
+signs PKCS#1 v1.5. ECDSA keys sign with their curve's hash when the peer offers it. In
+TLS 1.2 an ECDSA scheme names a hash, not a curve, so when the peer offers only the
+other hash a P-256 key signs with SHA-384 and a P-384 key with SHA-256. rustls does
+not tell a key the protocol version, so the key uses the other hash only when the
+offer also carries a PKCS#1 v1.5 or SHA-1 scheme, which rustls removes from every TLS
+1.3 offer; otherwise it stays curve-bound. Verification follows the same TLS 1.2 rule:
+for example, an `ecdsa_secp384r1_sha384` signature from a P-256 key, which Go servers
+produce, verifies in TLS 1.2. TLS 1.3 signing and verification stay curve-bound.
 
 Tests run both roles in memory against ring and AWS-LC: all six suites, the three
 groups, session-ID and stateless-ticket resumption, mutual authentication, PKCS#1

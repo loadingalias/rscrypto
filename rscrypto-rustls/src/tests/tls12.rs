@@ -547,3 +547,109 @@ fn quic_rejects_providers_with_tls12_suites() {
     assert!(matches!(result, Err(Error::General(message)) if message == "QUIC requires a TLS 1.3-only provider"));
   }
 }
+
+/// A peer that verifies, and so advertises, only `schemes`.
+#[cfg(all(feature = "ecdsa-p256", feature = "ecdsa-p384"))]
+fn advertising(mut provider: CryptoProvider, schemes: &[SignatureScheme]) -> CryptoProvider {
+  let mapping = provider.signature_verification_algorithms.mapping();
+  let all = mapping
+    .iter()
+    .flat_map(|(_, algorithms)| algorithms.iter().copied())
+    .collect::<Vec<_>>();
+  let kept = mapping
+    .iter()
+    .filter(|(scheme, _)| schemes.contains(scheme))
+    .copied()
+    .collect::<Vec<_>>();
+  assert_eq!(kept.len(), schemes.len());
+  provider.signature_verification_algorithms =
+    WebPkiSupportedAlgorithms::new(all.leak(), kept.leak()).expect("advertised schemes");
+  provider
+}
+
+#[cfg(all(feature = "ecdsa-p256", feature = "ecdsa-p384"))]
+#[test]
+fn ecdsa_keys_sign_the_other_hash_for_tls12_peers_that_offer_nothing_else() {
+  // Each key, the other hash, and a peer that advertises it with a PKCS#1 v1.5 scheme,
+  // which only a TLS 1.2 offer can carry.
+  let cases = [
+    (Credential::P256, SignatureScheme::ECDSA_NISTP384_SHA384),
+    (Credential::P384, SignatureScheme::ECDSA_NISTP256_SHA256),
+  ];
+  let ecdsa = CipherSuite::TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256;
+  let rsa = CipherSuite::TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256;
+  for (peer_name, peer_provider, _) in PEERS {
+    for (credential, other) in cases {
+      for ours_client in [true, false] {
+        let context = format!("{peer_name}/{credential:?}/ours_client={ours_client}");
+        let mut ours = tls12_only(ours(), ecdsa, NamedGroup::X25519);
+        let mut peer = tls12_only(peer_provider(), ecdsa, NamedGroup::X25519);
+        if !ours_client {
+          // rustls's TLS 1.2 server keeps only schemes usable by suites both sides offer, so
+          // both also offer an RSA suite, as the provider's suite list does, to keep the
+          // client's PKCS#1 v1.5 scheme in play.
+          let with_rsa = |mut provider: CryptoProvider, all: CryptoProvider| {
+            let suite = all
+              .tls12_cipher_suites
+              .iter()
+              .find(|candidate| candidate.common.suite == rsa)
+              .copied()
+              .expect("RSA suite");
+            provider.tls12_cipher_suites.to_mut().push(suite);
+            provider
+          };
+          ours = with_rsa(ours, self::ours());
+          peer = with_rsa(peer, peer_provider());
+        }
+        let peer = advertising(peer, &[other, SignatureScheme::RSA_PKCS1_SHA256]);
+        let (client, server) = if ours_client { (ours, peer) } else { (peer, ours) };
+        let (client, server) = configs(client, server, credential);
+        let (mut client, mut server) = tls::connections_from_configs(Arc::new(client), Arc::new(server));
+        tls::drive(&mut client, &mut server)
+          .map_err(|error| format!("{context}: {error}"))
+          .expect("cross-hash ECDSA handshake");
+        assert_eq!(client.protocol_version(), Some(ProtocolVersion::TLSv1_2), "{context}");
+        exercise(&mut client, &mut server);
+      }
+    }
+  }
+}
+
+#[cfg(all(feature = "ecdsa-p256", feature = "ecdsa-p384"))]
+#[test]
+fn tls13_ecdsa_keys_stay_curve_bound() {
+  let cases = [
+    (Credential::P256, SignatureScheme::ECDSA_NISTP384_SHA384),
+    (Credential::P384, SignatureScheme::ECDSA_NISTP256_SHA256),
+  ];
+  for peer in [
+    rustls_ring::DEFAULT_TLS13_PROVIDER,
+    rustls_aws_lc_rs::DEFAULT_TLS13_PROVIDER,
+  ] {
+    for (credential, other) in cases {
+      for ours_client in [true, false] {
+        // In TLS 1.3 `other` names the other curve, so this key must not claim it.
+        let peer = advertising(peer.clone(), &[other, SignatureScheme::RSA_PSS_SHA256]);
+        let (client, server) = if ours_client {
+          (tls::provider(), peer)
+        } else {
+          (peer, tls::provider())
+        };
+        let (client, server) = tls::configs(client, server, credential, true);
+        let (mut client, mut server) = tls::connections_from_configs(Arc::new(client), Arc::new(server));
+        let error = tls::drive(&mut client, &mut server).expect_err("no curve-bound scheme in common");
+        // The key refuses to sign: as a client it presents no certificate, and as a server it
+        // finds no credential, instead of sending a signature the peer would reject.
+        let refused = if ours_client {
+          matches!(error, Error::PeerMisbehaved(PeerMisbehaved::NoCertificatesPresented))
+        } else {
+          matches!(
+            error,
+            Error::PeerIncompatible(PeerIncompatible::NoSignatureSchemesInCommon)
+          )
+        };
+        assert!(refused, "{credential:?}/ours_client={ours_client}: {error}");
+      }
+    }
+  }
+}
