@@ -586,6 +586,11 @@
       "case": "mldsa65/verify/prepared-key/rscrypto",
       "diagnostic": false
     },
+    "auth/rsa2048-sign": {
+      "bench": "rsa",
+      "case": "rsa-2048-private-signing/sign-pss-sha256/cached-blinding/rscrypto",
+      "diagnostic": false
+    },
     "auth/slhdsa-sha2-128s-sign": {
       "bench": "slhdsa",
       "case": "slhdsa-sha2-128s/sign/deterministic-32/rscrypto",
