@@ -856,6 +856,48 @@ fn assert_rng_private_scratch_operations_do_not_allocate(key: &RsaPrivateKey) {
     .verify_pss(RsaPssProfile::Sha256, b"rng private scratch allocation PSS", &signature)
     .expect("the randomized PSS signature must verify");
 
+  // A cache bound to the key signs without allocation, on refresh and on reuse.
+  let mut cache = key.blinding_cache();
+  for message in [
+    b"rng blinding cache allocation refresh".as_slice(),
+    b"rng blinding cache allocation reuse",
+  ] {
+    reset_allocations();
+    key
+      .sign_signature_with_blinding_cache(
+        RsaSignatureProfile::pss(RsaPssProfile::Sha256),
+        message,
+        &mut signature,
+        &mut scratch,
+        &mut cache,
+      )
+      .expect("cached-blinding PSS signing must succeed");
+    assert_eq!(allocation_count(), 0);
+    key
+      .public_key()
+      .verify_pss(RsaPssProfile::Sha256, message, &signature)
+      .expect("the cached-blinding PSS signature must verify");
+  }
+  reset_allocations();
+  key
+    .sign_signature_with_blinding_cache(
+      RsaSignatureProfile::pkcs1v15(RsaPkcs1v15Profile::Sha256),
+      b"rng blinding cache allocation PKCS1v15",
+      &mut signature,
+      &mut scratch,
+      &mut cache,
+    )
+    .expect("cached-blinding PKCS#1 v1.5 signing must succeed");
+  assert_eq!(allocation_count(), 0);
+  key
+    .public_key()
+    .verify_pkcs1v15(
+      RsaPkcs1v15Profile::Sha256,
+      b"rng blinding cache allocation PKCS1v15",
+      &signature,
+    )
+    .expect("the cached-blinding PKCS#1 v1.5 signature must verify");
+
   let label = b"rng-private-scratch-allocation";
   let plaintext = b"rng private scratch allocation OAEP";
   let seed = [0x52; 32];

@@ -21,6 +21,7 @@ It does not prove that the compiler erases every copy it makes.
 | `P256EphemeralSecret`, `P256SharedSecret` | Not `Clone` or `Copy`. | The ephemeral scalar has no export or import API. `P256SharedSecret::expose_secret` makes an explicit `SecretBytes<32>` copy. `as_bytes` gives borrowed access. Both types redact `Debug`. |
 | `P384EphemeralSecret`, `P384SharedSecret` | Not `Clone` or `Copy`. | The ephemeral scalar has no export or import API. `P384SharedSecret::expose_secret` makes an explicit `SecretBytes<48>` copy. `as_bytes` gives borrowed access. Both types redact `Debug`. |
 | `RsaPrivateKey`, `RsaPrivateScratch` | Not `Clone` or `Copy`. | Private DER export returns `SecretVec`. `Debug` shows only public metadata. |
+| `RsaBlindingCache` | Not `Clone` or `Copy`. See [RSA blinding cache](#rsa-blinding-cache). | No export or import API. `Debug` shows only the width and the remaining use count. |
 | HMAC, HKDF, KMAC, PBKDF2, and Poly1305 state | No generic copy. | `Debug` is redacted. Keyed state is not serialized. HKDF `prk()` gives borrowed access to the PRK. `from_prk` borrows the caller's PRK and does not clear it. |
 | Keyed BLAKE2 state | `Clone` where the shared `Digest` contract needs it. | `Debug` is redacted. A clone copies the keyed state. |
 | `Blake3`, `Blake3XofReader` | `Clone`. | In keyed or derive-key mode, a clone copies secret-derived state. |
@@ -52,6 +53,16 @@ ipad and opad, SHA-256 states, inner digest, and returned 32-byte block.
 The caller clears each returned derivation block after use. The selected
 plaintext or synthetic message is copied into caller-owned `out`; its cleanup
 is the caller's responsibility. See [cleanup boundaries](secret-lifecycle.md#rsa-implicit-rejection).
+
+### RSA blinding cache
+
+`RsaBlindingCache` owns the blinding power `rᵉ mod n` and the inverse
+`r⁻¹ mod n` of its current epoch between signatures, in two modulus-width
+clearing buffers. It also holds public binding data: the bound key's modulus
+and public exponent, the remaining use count, and, on Unix with `std`, the
+process ID of the last refresh. Signing borrows the cache mutably, copies the
+pair into `RsaPrivateScratch`, and writes the next pair back. The cache never
+exposes the pair. See [cleanup boundaries](secret-lifecycle.md#rsa-blinding-cache).
 
 ### AES-128-GCM wide tables
 
@@ -131,9 +142,16 @@ The provider shares `EcdsaP256SecretKey`, `EcdsaP384SecretKey`,
 `Ed25519Keypair` (expanded once at load), `RsaPrivateKey`, and ML-DSA keys
 (prepared by default, compact with `sign::Provider::compact`) through `Arc`; their
 primitive owners clear when the last signing key or signer releases them. An RSA
-signer builds one clearing `RsaPrivateScratch` for each signature, borrows the key
-and scratch for the blinded operation, drops the scratch before returning, and
-returns only the resulting public signature.
+key shares, with its key, a mutex-guarded list of idle signing workspaces: at most
+one per available CPU, never more than 64, and none with `sign::Provider::compact`.
+Each workspace owns a clearing `RsaPrivateScratch` and an `RsaBlindingCache`. A
+signature takes an idle workspace or builds one, signs through the cache, and puts
+the workspace back on success while the list is below its limit; otherwise the
+workspace drops. Scratch is cleared after every signature. Idle caches keep their
+blinding pair between signatures (see [RSA blinding cache](#rsa-blinding-cache));
+an error, a full list, or releasing the key drops the workspace, which clears both.
+A compact key builds one workspace for each signature and drops it before returning.
+The signer returns only the resulting public signature.
 ECDSA signatures and cached SPKI are public. Key Debug formatting delegates to
 redacted primitive owners and the caller's selected entropy source; that source
 must not expose secret state through Debug. RSA signer formatting exposes only

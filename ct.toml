@@ -1370,6 +1370,20 @@ timeout_reason = "Full RSA campaign retains 2000 observations per class from the
 notes = "Exercises the production entropy-backed signing path; OS entropy acquisition is outside the CT claim."
 
 [[dudect_case]]
+name = "rsa_pkcs1v15_cached_blinding_fixed_vs_random_message"
+primitive = "rsa.private_ops"
+filter = "rsa_pkcs1v15_cached_blinding_fixed_vs_random_message"
+left_class = "fixed message through a warm RsaBlindingCache"
+right_class = "random same-length message through the same warm RsaBlindingCache"
+samples = 4000
+smoke_samples = 128
+timeout_seconds = 3600
+timeout_reason = "Full RSA campaign retains 2000 observations per class from the consolidated standalone gate."
+gate = "diagnostic"
+reason = "RsaBlindingCache signing is new; this case collects native timing for it before any evidence unit relies on it."
+notes = "Mirrors rsa_pkcs1v15_os_blinding_fixed_vs_random_message with one cache that a warm-up signature fills. Samples square the cached pair, and the public use count refreshes it from OS entropy every 32 calls in either class. OS entropy acquisition is outside the CT claim."
+
+[[dudect_case]]
 name = "rsa_pss_fixed_vs_random_message"
 primitive = "rsa.private_ops"
 filter = "rsa_pss_fixed_vs_random_message"
@@ -3534,8 +3548,8 @@ name = "x86_64-unknown-linux-gnu"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 3449
-compiler_api_sha256 = "45c96489879198ef685d719a5bb57e85ac4c229b65338fe7349506aa302295f0"
+compiler_api_item_count = 3454
+compiler_api_sha256 = "43855040352ddd9104b584ca76875cea54a21cf111fec580aebbef7a0d2b6ddb"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "required"
@@ -3545,8 +3559,8 @@ name = "aarch64-unknown-linux-gnu"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 3449
-compiler_api_sha256 = "45c96489879198ef685d719a5bb57e85ac4c229b65338fe7349506aa302295f0"
+compiler_api_item_count = 3454
+compiler_api_sha256 = "43855040352ddd9104b584ca76875cea54a21cf111fec580aebbef7a0d2b6ddb"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "required"
@@ -3579,8 +3593,8 @@ group = "win"
 backend = "llvm"
 linker = "msvc-link-unpinned"
 claim = "ct-intended"
-compiler_api_item_count = 3449
-compiler_api_sha256 = "45c96489879198ef685d719a5bb57e85ac4c229b65338fe7349506aa302295f0"
+compiler_api_item_count = 3454
+compiler_api_sha256 = "43855040352ddd9104b584ca76875cea54a21cf111fec580aebbef7a0d2b6ddb"
 physical_timing = "required"
 binsec = "unsupported"
 binsec_reason = "BINSEC PE/Windows evidence is not part of the current release evidence gate."
@@ -3601,8 +3615,8 @@ name = "aarch64-apple-darwin"
 group = "macos"
 backend = "llvm"
 linker = "apple-ld-unpinned"
-compiler_api_item_count = 3449
-compiler_api_sha256 = "45c96489879198ef685d719a5bb57e85ac4c229b65338fe7349506aa302295f0"
+compiler_api_item_count = 3454
+compiler_api_sha256 = "43855040352ddd9104b584ca76875cea54a21cf111fec580aebbef7a0d2b6ddb"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -3613,8 +3627,8 @@ name = "s390x-unknown-linux-gnu"
 group = "ibm"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 3449
-compiler_api_sha256 = "45c96489879198ef685d719a5bb57e85ac4c229b65338fe7349506aa302295f0"
+compiler_api_item_count = 3454
+compiler_api_sha256 = "43855040352ddd9104b584ca76875cea54a21cf111fec580aebbef7a0d2b6ddb"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -3625,8 +3639,8 @@ name = "powerpc64le-unknown-linux-gnu"
 group = "ibm"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 3449
-compiler_api_sha256 = "45c96489879198ef685d719a5bb57e85ac4c229b65338fe7349506aa302295f0"
+compiler_api_item_count = 3454
+compiler_api_sha256 = "43855040352ddd9104b584ca76875cea54a21cf111fec580aebbef7a0d2b6ddb"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -3637,8 +3651,8 @@ name = "riscv64gc-unknown-linux-gnu"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 3449
-compiler_api_sha256 = "45c96489879198ef685d719a5bb57e85ac4c229b65338fe7349506aa302295f0"
+compiler_api_item_count = 3454
+compiler_api_sha256 = "43855040352ddd9104b584ca76875cea54a21cf111fec580aebbef7a0d2b6ddb"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -4721,6 +4735,7 @@ limitation = "Prime generation is inherently variable-work and not a CT claim. S
 id = "rsa.private_sign_and_decrypt"
 api = [
   "rscrypto::RsaPrivateKey::{sign_signature*,sign_pkcs1v15*,sign_pss*,sign_tls13_signature_scheme*,sign_tls_certificate_signature_scheme*,decrypt_oaep*}",
+  "rscrypto::RsaPrivateKey::{blinding_cache,sign_signature_with_blinding_cache,sign_signature_with_random_fill_and_blinding_cache}",
   "rscrypto::auth::rsa::expert::RsaPkcs1v15Decrypt::decrypt_pkcs1v15*",
 ]
 features = ["rsa", "alloc", "getrandom only for OS-backed convenience APIs"]
@@ -4729,6 +4744,7 @@ secret_inputs = [
   "private exponent/components",
   "plaintext",
   "blinding factor",
+  "cached blinding power and inverse",
   "PSS salt",
   "caller-supplied entropy bytes",
   "private arithmetic scratch",
@@ -4746,11 +4762,13 @@ variable_time_components = [
   "entropy-source or caller callback latency",
   "bounded blinding-candidate rejection",
   "opaque input-shape rejection",
+  "blinding-cache refresh or squaring, selected by the public use count, key binding, and process ID",
 ]
 permitted_leakage = [
   "modulus/profile/lengths",
   "entropy request count and lengths",
   "opaque success/failure",
+  "blinding-cache refresh schedule",
 ]
 claim = "ct-intended"
 evidence = [
@@ -4760,7 +4778,7 @@ evidence = [
   "unit:rsa.private_ops.oaep_decrypt",
   "unit:rsa.private_ops.pkcs1v15_decrypt",
 ]
-limitation = "Caller-supplied entropy APIs feed the same private-operation leaf as OS-backed APIs; callback execution and bounded public-modulus blinding-candidate rejection are outside the leaf CT claim. Retained CRT exponents are normalized to the corresponding factor width before arithmetic, so canonical exponent encoding length is not a steady-state control or address input. AArch64 private exponentiation scopes FEAT_DIT when runtime or compile-time detection advertises it. Full private operations remain target-artifact/DudeCT evidence, not source-only claims."
+limitation = "Caller-supplied entropy APIs feed the same private-operation leaf as OS-backed APIs; callback execution and bounded public-modulus blinding-candidate rejection are outside the leaf CT claim. Retained CRT exponents are normalized to the corresponding factor width before arithmetic, so canonical exponent encoding length is not a steady-state control or address input. AArch64 private exponentiation scopes FEAT_DIT when runtime or compile-time detection advertises it. Full private operations remain target-artifact/DudeCT evidence, not source-only claims. RsaBlindingCache signing reuses one blinding pair for up to 32 signatures and squares it with the private modular multiplication between refreshes, so factors within an epoch are correlated by design; its native timing is the diagnostic rsa_pkcs1v15_cached_blinding_fixed_vs_random_message case, which no evidence unit relies on yet."
 
 [[operation]]
 id = "rsa.public_operations"
@@ -5361,6 +5379,8 @@ entrypoints = [
   "RsaPrivateKey::sign_pss_with_scratch",
   "RsaPrivateKey::sign_pss_with_random_fill",
   "RsaPrivateKey::sign_pss_with_random_fill_and_scratch",
+  "RsaPrivateKey::sign_signature_with_blinding_cache",
+  "RsaPrivateKey::sign_signature_with_random_fill_and_blinding_cache",
   "RsaPrivateKey::sign_tls13_signature_scheme_with_random_fill",
   "RsaPrivateKey::sign_tls13_signature_scheme_with_random_fill_and_scratch",
   "RsaPrivateKey::sign_tls_certificate_signature_scheme_with_random_fill",
@@ -5381,6 +5401,7 @@ secrets = [
   "implicit_rejection_key",
   "blinding_inverse",
   "inverse_mask",
+  "cached_blinding_pair",
 ]
 public = [
   "message",
@@ -5389,6 +5410,7 @@ public = [
   "modulus_length",
   "salt_length",
   "entropy_callback_failure",
+  "blinding_cache_use_count",
 ]
 may_leak = [
   "input_length",
@@ -5396,10 +5418,11 @@ may_leak = [
   "entropy_request_count_and_lengths",
   "opaque_success_or_failure",
   "public_entropy_failure",
+  "blinding_cache_refresh_schedule",
 ]
 must_not_leak_ref = "common_secret_data"
 required = ["tier_a"]
-notes = "Top-level OS randomness or caller entropy callbacks and public profile parsing may fail publicly. Candidate rejection uses only fresh entropy and the public modulus and is bounded before the shared private-operation leaf. Blinding inversion multiplies the factor by a fresh inverse mask, inverts the product, and multiplies the result by the mask, so the inverse never reads the factor itself. The inverse runs a public divstep count from Bernstein and Yang's bound in batches of 62 masked divsteps with fixed-width limb updates; RISC-V and s390x keep the public-width batched extended-binary-GCD schedule, whose secret-fed co-reduction products are multiplication-free and remain subject to the native timing gate. Validated CRT exponents and the CRT coefficient are retained at the corresponding factor width before steady-state private arithmetic; the stored private exponent is retained at the public modulus width. Steady-state private math and same-width padding/failure behavior are CT-critical. RSAES-PKCS1-v1_5 decryption uses draft-irtf-cfrg-rsa-guidance-10 implicit rejection: a padding failure returns a synthetic message derived with HMAC-SHA256 from the private exponent and the ciphertext, and the derivation, length selection, and output selection run the same work for every reduced ciphertext."
+notes = "Top-level OS randomness or caller entropy callbacks and public profile parsing may fail publicly. Candidate rejection uses only fresh entropy and the public modulus and is bounded before the shared private-operation leaf. Blinding inversion multiplies the factor by a fresh inverse mask, inverts the product, and multiplies the result by the mask, so the inverse never reads the factor itself. The inverse runs a public divstep count from Bernstein and Yang's bound in batches of 62 masked divsteps with fixed-width limb updates; RISC-V and s390x keep the public-width batched extended-binary-GCD schedule, whose secret-fed co-reduction products are multiplication-free and remain subject to the native timing gate. Validated CRT exponents and the CRT coefficient are retained at the corresponding factor width before steady-state private arithmetic; the stored private exponent is retained at the public modulus width. Steady-state private math and same-width padding/failure behavior are CT-critical. RSAES-PKCS1-v1_5 decryption uses draft-irtf-cfrg-rsa-guidance-10 implicit rejection: a padding failure returns a synthetic message derived with HMAC-SHA256 from the private exponent and the ciphertext, and the derivation, length selection, and output selection run the same work for every reduced ciphertext. RsaBlindingCache signing keeps the blinding power and inverse in caller-owned state: a refresh runs the uncached candidate draw, masked inverse, and public r^e, and every other signature squares both values with the private modular multiplication. The public use count, key binding, and process ID select between the two."
 [primitive.harness]
 status = "covered"
 symbols = [

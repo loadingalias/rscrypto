@@ -16,8 +16,8 @@ use rscrypto::{
   HmacSha512Tag, Kmac256, MlKem512, MlKem512Ciphertext, MlKem512DecapsulationKey, MlKem768, MlKem768Ciphertext,
   MlKem768DecapsulationKey, MlKem1024, MlKem1024Ciphertext, MlKem1024DecapsulationKey, MlKemError, P256EphemeralSecret,
   P384EphemeralSecret, Pbkdf2Sha256, Pbkdf2Sha512, RsaBlindingPair, RsaEncryptionError, RsaOaepProfile,
-  RsaPkcs1v15Profile, RsaPrivateKey, RsaPrivateScratch, RsaPssProfile, RsaPublicKeyPolicy, SecretBytes, Sha512,
-  X25519SecretKey, XChaCha20Poly1305, XChaCha20Poly1305Key,
+  RsaPkcs1v15Profile, RsaPrivateKey, RsaPrivateScratch, RsaPssProfile, RsaPublicKeyPolicy, RsaSignatureProfile,
+  SecretBytes, Sha512, X25519SecretKey, XChaCha20Poly1305, XChaCha20Poly1305Key,
   aead::{
     Nonce96, Nonce128, Nonce192, Nonce256, diag_aes_siv_cmac256_open_portable, diag_aes_siv_cmac256_s2v_portable,
     diag_aes128gcm_ctr32_be, diag_aes128gcm_ghash, diag_aes128gcm_tag_aes, diag_aes128gcmsiv_ctr32,
@@ -2584,6 +2584,50 @@ fn rsa_pkcs1v15_os_blinding_fixed_vs_random_message(runner: &mut CtRunner, rng: 
   }
 }
 
+fn rsa_pkcs1v15_cached_blinding_fixed_vs_random_message(runner: &mut CtRunner, rng: &mut BenchRng) {
+  let key = rsa_ct_fixture_key(RSA_CT_KEY_A_INDEX);
+  let sig_len = key.signature_len();
+  let cache = RefCell::new(key.blinding_cache());
+  // One signature warms the cache, so samples start inside an epoch. The
+  // public use count still refreshes it every 32 calls, in either class.
+  key
+    .sign_signature_with_blinding_cache(
+      RsaSignatureProfile::pkcs1v15(RsaPkcs1v15Profile::Sha256),
+      &[0x42; 64],
+      &mut vec![0u8; sig_len],
+      &mut key.private_scratch(),
+      &mut cache.borrow_mut(),
+    )
+    .expect("RSA cached-blinding warm-up signing must succeed");
+
+  let mut inputs = Vec::with_capacity(samples());
+  for class in balanced_classes(rng, samples()) {
+    let message = if matches!(class, Class::Left) {
+      [0x42; 64]
+    } else {
+      rand_array::<64>(rng)
+    };
+    inputs.push((class, message));
+  }
+
+  for (class, message) in inputs {
+    runner.run_one(class, || {
+      let mut out = vec![0u8; sig_len];
+      let mut scratch = key.private_scratch();
+      key
+        .sign_signature_with_blinding_cache(
+          RsaSignatureProfile::pkcs1v15(RsaPkcs1v15Profile::Sha256),
+          &message,
+          &mut out,
+          &mut scratch,
+          &mut cache.borrow_mut(),
+        )
+        .expect("RSA cached-blinding signing fixture must succeed");
+      core::hint::black_box(out[0])
+    });
+  }
+}
+
 fn rsa_pss_fixed_vs_random_message(runner: &mut CtRunner, rng: &mut BenchRng) {
   let key = rsa_ct_fixture_key(RSA_CT_KEY_A_INDEX);
   let sig_len = key.signature_len();
@@ -3972,6 +4016,10 @@ ctbench_main_with_seeds!(
   (
     rsa_pkcs1v15_os_blinding_fixed_vs_random_message,
     Some(0x7273615f6f73626c)
+  ),
+  (
+    rsa_pkcs1v15_cached_blinding_fixed_vs_random_message,
+    Some(0x7273615f63626c64)
   ),
   (rsa_pss_fixed_vs_random_message, Some(0x7273615f70737373)),
   (

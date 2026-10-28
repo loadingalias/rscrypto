@@ -97,6 +97,17 @@ Within a claimed operation, public values can affect control flow.
 These include algorithms, lengths, parameters, parsing results, resource use, and backend selection.
 One opaque authentication or verification result can also be visible.
 
+RSA private operations blind their input with a secret factor.
+The uncached signing APIs draw an independent factor for every signature.
+The opt-in `RsaBlindingCache` keeps one factor for an epoch of up to 32 signatures
+and squares it before each reuse, so the factors within an epoch are correlated,
+and the blinding state persists in caller-owned memory between signatures.
+Any signing error, a different key, or a spent epoch draws a new factor.
+On Unix targets with `std`, a changed process ID also draws a new factor, so a forked child
+does not continue its parent's sequence. That guard compares process IDs only.
+Without it, or after a copied process image such as a restored virtual-machine snapshot,
+the caller must not use one cache in two copies of a process.
+
 ### Backend and dispatch faults
 
 Accelerated Rust, SIMD, and assembly run only after their compile-time

@@ -1803,6 +1803,128 @@ fn private_key_outputs_verify_and_decrypt_with_rustcrypto_rsa() {
   }
 }
 
+/// The RSA-3072 private key of the Wycheproof RSAES-OAEP-SHA256 document, as PKCS #8 DER.
+#[cfg(feature = "getrandom")]
+fn wycheproof_rsa3072_private_key_pkcs8() -> Vec<u8> {
+  let document: serde_json::Value = serde_json::from_str(include_str!(
+    "../testdata/rsa/wycheproof/rsa_oaep_3072_sha256_mgf1sha256_test.json"
+  ))
+  .expect("the Wycheproof RSA-OAEP document must be valid JSON");
+  let group = &document["testGroups"][0];
+  assert_eq!(group["keySize"], 3072);
+  hex_to_vec(
+    group["privateKeyPkcs8"]
+      .as_str()
+      .expect("the Wycheproof private key must be a hex string"),
+  )
+}
+
+#[cfg(feature = "getrandom")]
+#[test]
+fn blinding_cache_signatures_match_rustcrypto_across_refreshes() {
+  let rustcrypto_key = rustcrypto_fixture_private_key();
+  let rustcrypto_pkcs1 =
+    EncodeRsaPrivateKey::to_pkcs1_der(&rustcrypto_key).expect("the RustCrypto fixture must encode as PKCS#1");
+  let key =
+    RsaPrivateKey::from_pkcs1_der_with_policy(rustcrypto_pkcs1.as_bytes(), &RsaPublicKeyPolicy::legacy_verification())
+      .expect("rscrypto must decode the RustCrypto private-key fixture");
+  let public_pkcs1 = key.public_key().to_pkcs1_der();
+  let oracle = RustCryptoPkcs1v15SigningKey::<rsa::sha2::Sha256>::new(rustcrypto_key);
+  let mut cache = key.blinding_cache();
+  let mut scratch = key.private_scratch();
+  let mut signature = vec![0u8; key.signature_len()];
+
+  // An epoch has 32 signatures, so signatures 1, 33, 65, and 97 refresh the
+  // cache. PKCS #1 v1.5 is deterministic: blinding must not change a byte.
+  for index in 0..97 {
+    let message = format!("rscrypto RSA blinding cache PKCS #1 v1.5 message {index}");
+    key
+      .sign_signature_with_blinding_cache(
+        RsaSignatureProfile::pkcs1v15(RsaPkcs1v15Profile::Sha256),
+        message.as_bytes(),
+        &mut signature,
+        &mut scratch,
+        &mut cache,
+      )
+      .expect("PKCS#1 v1.5 signing through the blinding cache must succeed");
+    assert_eq!(
+      signature,
+      oracle.sign(message.as_bytes()).to_vec(),
+      "signature {index} must equal RustCrypto's deterministic signature"
+    );
+  }
+
+  // PSS continues the epoch and crosses the refresh at signature 129.
+  for index in 0..33 {
+    let message = format!("rscrypto RSA blinding cache PSS message {index}");
+    key
+      .sign_signature_with_blinding_cache(
+        RsaSignatureProfile::pss(RsaPssProfile::Sha256),
+        message.as_bytes(),
+        &mut signature,
+        &mut scratch,
+        &mut cache,
+      )
+      .expect("PSS signing through the blinding cache must succeed");
+    assert_rustcrypto_pss_sha256(&public_pkcs1, message.as_bytes(), &signature, true);
+  }
+}
+
+#[cfg(feature = "getrandom")]
+#[test]
+fn blinding_cache_rebinds_to_each_signing_key() {
+  let rustcrypto_2048 = rustcrypto_fixture_private_key();
+  let pkcs1_2048 =
+    EncodeRsaPrivateKey::to_pkcs1_der(&rustcrypto_2048).expect("the RustCrypto fixture must encode as PKCS#1");
+  let key_2048 =
+    RsaPrivateKey::from_pkcs1_der_with_policy(pkcs1_2048.as_bytes(), &RsaPublicKeyPolicy::legacy_verification())
+      .expect("rscrypto must decode the RustCrypto private-key fixture");
+  let pkcs8_3072 = wycheproof_rsa3072_private_key_pkcs8();
+  let key_3072 = RsaPrivateKey::from_pkcs8_der(&pkcs8_3072).expect("rscrypto must import the RSA-3072 key");
+  let rustcrypto_3072 =
+    RustCryptoRsaPrivateKey::from_pkcs8_der(&pkcs8_3072).expect("RustCrypto must import the RSA-3072 key");
+  let oracles = [
+    RustCryptoPkcs1v15SigningKey::<rsa::sha2::Sha256>::new(rustcrypto_2048),
+    RustCryptoPkcs1v15SigningKey::<rsa::sha2::Sha256>::new(rustcrypto_3072),
+  ];
+  let keys = [&key_2048, &key_3072];
+  let mut scratches = [key_2048.private_scratch(), key_3072.private_scratch()];
+  let mut cache = key_2048.blinding_cache();
+
+  // Each binding signs twice, so every rebind replaces a pair that was
+  // already squared once. The key widths differ, so a rebind also resizes the
+  // cached pair.
+  for (round, which) in [0usize, 1, 0, 1].into_iter().enumerate() {
+    let key = keys[which];
+    let mut signature = vec![0u8; key.signature_len()];
+    for repeat in 0..2 {
+      let message = format!("rscrypto RSA blinding cache rebinding {round}.{repeat}");
+      key
+        .sign_signature_with_blinding_cache(
+          RsaSignatureProfile::pkcs1v15(RsaPkcs1v15Profile::Sha256),
+          message.as_bytes(),
+          &mut signature,
+          &mut scratches[which],
+          &mut cache,
+        )
+        .expect("signing must rebind the cache to the signing key");
+      assert_eq!(
+        signature,
+        oracles[which].sign(message.as_bytes()).to_vec(),
+        "round {round}, signature {repeat} must equal RustCrypto's deterministic signature"
+      );
+    }
+    assert_eq!(
+      format!("{cache:?}"),
+      format!(
+        "RsaBlindingCache {{ bytes: {}, remaining: 30, .. }}",
+        key.signature_len()
+      ),
+      "round {round} must start a new epoch for its key"
+    );
+  }
+}
+
 #[cfg(feature = "getrandom")]
 #[test]
 fn generated_private_key_outputs_verify_and_decrypt_with_external_oracles() {

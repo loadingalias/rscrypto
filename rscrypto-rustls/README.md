@@ -150,6 +150,14 @@ schemes match their exact curve and hash, and RSA PKCS#1 v1.5 is available for
 certificate verification only. TLS 1.2 handshake signatures follow TLS 1.2's
 rules; see [TLS 1.2](#tls-12).
 
+Each loaded RSA key keeps idle signing workspaces, at most one per available CPU
+and never more than 64. A workspace holds private-operation scratch and an
+`RsaBlindingCache`, so a signature squares the previous blinding pair instead of
+drawing, inverting, and exponentiating a new factor. The pair is redrawn every 32
+signatures and after any error, as in AWS-LC, so factors within that epoch are
+correlated. `sign::Provider::new(random).compact()` keeps no workspace; each RSA
+signature then builds scratch and draws a new factor.
+
 With `ml-dsa`, RFC 9881 PKCS#8 keys load and are prepared once. Provider tests
 cover the seed and combined seed/key forms; the expanded form also loads through
 the same rscrypto import. The prepared key keeps the transformed secrets and

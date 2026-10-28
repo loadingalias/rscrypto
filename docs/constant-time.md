@@ -737,6 +737,17 @@ The mask protects the 31-bit inverse on RISC-V and IBM Z in the same way,
 including the `MLGR` products on IBM Z.
 Native DudeCT in the Constant-Time campaign gives the timing evidence for those targets.
 
+### RSA blinding cache
+
+`RsaBlindingCache` signing changes only the source of the blinding pair.
+A refresh runs the candidate draw, masked inverse, and public `rᵉ` of the uncached path.
+Reuse squares the cached power and inverse with the modular multiplication
+that blinds and unblinds every private operation.
+The public use count, the bound public key, and the process ID choose between the two.
+The diagnostic DudeCT case `rsa_pkcs1v15_cached_blinding_fixed_vs_random_message`
+measures message dependence through a warm cache. No evidence unit relies on it yet,
+and the cache adds no timing claim.
+
 ### ML-DSA
 
 ML-DSA has a separate required boundary, `signature.mldsa.secret_kernels`.

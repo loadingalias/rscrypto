@@ -770,6 +770,9 @@ the default Bench workflow does not provision them and excludes this optional ta
   ring signs without blinding. RustCrypto and aws-lc-rs allocate their outputs inside timing.
   PKCS #1 v1.5 signing pads deterministically, so its `fresh-entropy` group draws only blinding randomness,
   and every row must produce RustCrypto's unblinded signature.
+  The rscrypto-only `cached-blinding` signing groups reuse one `RsaBlindingCache`:
+  it draws a new blinding factor every 32 signatures and squares its pair in between,
+  the schedule that aws-lc-rs uses in the `fresh-entropy` groups. PSS still draws a fresh salt in every call.
   Key generation stays outside the headline, because prime search makes its time vary widely.
 - RSA `pkcs1v15-encryption/decrypt/fresh-entropy` decrypts a valid Wycheproof RSAES-PKCS1-v1_5 vector
   with fresh blinding. ring has no RSA decryption.

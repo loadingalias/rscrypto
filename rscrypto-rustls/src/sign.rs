@@ -32,7 +32,7 @@ pub static KEY_PROVIDER: &dyn KeyProvider = &Provider::new(crate::random::SECURE
 #[derive(Debug)]
 pub struct Provider {
   random: &'static dyn rustls::crypto::SecureRandom,
-  #[cfg(feature = "ml-dsa")]
+  #[cfg(any(feature = "ml-dsa", feature = "rsa"))]
   compact: bool,
 }
 
@@ -46,20 +46,27 @@ impl Provider {
   pub const fn new(random: &'static dyn rustls::crypto::SecureRandom) -> Self {
     Self {
       random,
-      #[cfg(feature = "ml-dsa")]
+      #[cfg(any(feature = "ml-dsa", feature = "rsa"))]
       compact: false,
     }
   }
 
-  /// Keep loaded ML-DSA keys compact instead of prepared.
+  /// Keep loaded ML-DSA and RSA keys compact instead of prepared.
   ///
   /// By default each loaded ML-DSA key is prepared once and keeps its
   /// transformed secrets and public matrix: 28,800, 48,256, or 81,024 bytes
   /// for ML-DSA-44, 65, or 87, in place of the 2,560, 4,032, or 4,896-byte
   /// compact key. A compact key prepares that storage again for every
-  /// signature, which is slower and produces the same signatures. Other
-  /// algorithms are unaffected.
-  #[cfg(feature = "ml-dsa")]
+  /// signature, which is slower and produces the same signatures.
+  ///
+  /// By default each loaded RSA key also keeps idle signing workspaces, at
+  /// most one per available CPU and never more than 64. A workspace holds
+  /// private-operation scratch and a blinding pair that the next signature
+  /// squares instead of drawing, inverting, and exponentiating a new factor;
+  /// see [`rscrypto::RsaBlindingCache`]. A compact RSA key builds scratch and
+  /// draws a new blinding factor for every signature. Other algorithms are
+  /// unaffected.
+  #[cfg(any(feature = "ml-dsa", feature = "rsa"))]
   #[must_use]
   pub const fn compact(self) -> Self {
     Self { compact: true, ..self }
@@ -79,7 +86,7 @@ impl KeyProvider for Provider {
       return Ok(Box::new(key));
     }
     #[cfg(feature = "rsa")]
-    if let Some(key) = rsa::load(&key_der, _random) {
+    if let Some(key) = rsa::load(&key_der, _random, self.compact) {
       return Ok(Box::new(key));
     }
     #[cfg(any(feature = "ed25519", feature = "ecdsa-p256", feature = "ecdsa-p384"))]
@@ -296,8 +303,12 @@ mod curve {
 mod rsa {
   use alloc::{boxed::Box, sync::Arc, vec, vec::Vec};
   use core::fmt;
+  use std::sync::Mutex;
 
-  use rscrypto::{RsaPkcs1v15Profile, RsaPrivateKey, RsaPssProfile, RsaPublicKeyPolicy, RsaSignatureProfile};
+  use rscrypto::{
+    RsaBlindingCache, RsaPkcs1v15Profile, RsaPrivateKey, RsaPrivateScratch, RsaPssProfile, RsaPublicKeyPolicy,
+    RsaSignatureProfile,
+  };
   use rustls::Error;
   use rustls::crypto::SignatureScheme;
   use rustls::crypto::{Signer, SigningKey};
@@ -335,7 +346,14 @@ mod rsa {
     ),
   ];
 
-  pub(super) fn load(der: &PrivateKeyDer<'_>, random: &'static dyn rustls::crypto::SecureRandom) -> Option<Key> {
+  /// Idle signing workspaces that one loaded key keeps, at most.
+  const MAX_IDLE_WORKSPACES: usize = 64;
+
+  pub(super) fn load(
+    der: &PrivateKeyDer<'_>,
+    random: &'static dyn rustls::crypto::SecureRandom,
+    compact: bool,
+  ) -> Option<Key> {
     let policy = RsaPublicKeyPolicy::modern_verification();
     let key = match der {
       PrivateKeyDer::Pkcs1(value) => RsaPrivateKey::from_pkcs1_der_with_policy(value.secret_pkcs1_der(), &policy),
@@ -344,16 +362,79 @@ mod rsa {
     }
     .ok()?;
     let spki = key.public_key().to_spki_der();
+    let idle_limit = if compact {
+      0
+    } else {
+      std::thread::available_parallelism()
+        .map_or(1, usize::from)
+        .min(MAX_IDLE_WORKSPACES)
+    };
     Some(Key {
-      key: Arc::new(key),
+      shared: Arc::new(Shared {
+        key,
+        idle: Mutex::new(Vec::new()),
+        idle_limit,
+      }),
       spki,
       random,
     })
   }
 
+  /// Private-operation scratch and a blinding pair that signatures reuse.
+  ///
+  /// Signing clears the scratch before it returns. The cache keeps its
+  /// blinding pair between signatures and zeroizes it on error and drop.
+  struct Workspace {
+    scratch: RsaPrivateScratch,
+    cache: RsaBlindingCache,
+  }
+
+  /// A loaded key and its idle workspaces, shared by the key and its signers.
+  struct Shared {
+    key: RsaPrivateKey,
+    /// Workspaces that no signature is using; at most `idle_limit`.
+    idle: Mutex<Vec<Workspace>>,
+    /// Zero for a compact key, which keeps no workspace.
+    idle_limit: usize,
+  }
+
+  impl Shared {
+    /// Take an idle workspace, or build one.
+    fn take(&self) -> Workspace {
+      // Only `Vec::pop` and `Vec::push` run under the lock, so a poisoned
+      // lock still holds whole workspaces.
+      let idle = self
+        .idle
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .pop();
+      idle.unwrap_or_else(|| Workspace {
+        scratch: self.key.private_scratch(),
+        cache: self.key.blinding_cache(),
+      })
+    }
+
+    /// Keep `workspace` for the next signature, or drop it at the limit.
+    fn give_back(&self, workspace: Workspace) {
+      let mut idle = self.idle.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+      if idle.len() < self.idle_limit {
+        idle.push(workspace);
+      }
+    }
+  }
+
+  impl fmt::Debug for Shared {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+      f.debug_struct("RsaKey")
+        .field("key", &self.key)
+        .field("idle_limit", &self.idle_limit)
+        .finish_non_exhaustive()
+    }
+  }
+
   #[derive(Debug)]
   pub(super) struct Key {
-    key: Arc<RsaPrivateKey>,
+    shared: Arc<Shared>,
     spki: Vec<u8>,
     random: &'static dyn rustls::crypto::SecureRandom,
   }
@@ -366,9 +447,9 @@ mod rsa {
         .find(|(scheme, _)| offered.contains(scheme))
         .map(|(scheme, profile)| {
           // rustls asks for a signer on every ClientHello, including resumptions that never
-          // sign, so private scratch is built only when a signature is produced.
+          // sign, so a workspace is taken only when a signature is produced.
           Box::new(Sign {
-            key: Arc::clone(&self.key),
+            shared: Arc::clone(&self.shared),
             scheme,
             profile,
             random: self.random,
@@ -382,7 +463,7 @@ mod rsa {
   }
 
   struct Sign {
-    key: Arc<RsaPrivateKey>,
+    shared: Arc<Shared>,
     scheme: SignatureScheme,
     profile: RsaSignatureProfile,
     random: &'static dyn rustls::crypto::SecureRandom,
@@ -402,13 +483,21 @@ mod rsa {
       message: &[u8],
       fill: impl FnMut(&mut [u8]) -> Result<(), E>,
     ) -> Result<Vec<u8>, Error> {
-      // The scratch clears its secret buffers when dropped.
-      let mut scratch = self.key.private_scratch();
-      let mut signature = vec![0; self.key.signature_len()];
-      self
-        .key
-        .sign_signature_with_random_fill_and_scratch(self.profile, message, &mut signature, &mut scratch, fill)
+      let key = &self.shared.key;
+      let mut signature = vec![0; key.signature_len()];
+      let mut workspace = self.shared.take();
+      // An error clears the workspace; dropping it releases its buffers.
+      key
+        .sign_signature_with_random_fill_and_blinding_cache(
+          self.profile,
+          message,
+          &mut signature,
+          &mut workspace.scratch,
+          &mut workspace.cache,
+          fill,
+        )
         .map_err(|_| super::signing_failed())?;
+      self.shared.give_back(workspace);
       Ok(signature)
     }
   }
@@ -424,76 +513,110 @@ mod rsa {
   }
 
   #[cfg(test)]
+  fn idle_workspaces(key: &Key) -> usize {
+    key.shared.idle.lock().expect("no test panics under the lock").len()
+  }
+
+  #[cfg(test)]
   #[test]
   fn rsa_schemes_match_an_independent_signer_and_fail_closed_on_entropy() {
     use rustls::pki_types::PrivatePkcs8KeyDer;
 
     let der = include_bytes!("../tests/vectors/credentials/rsa3072-leaf-key.der");
     let public = include_bytes!("../tests/vectors/credentials/rsa3072-public.der");
-    let key = load(
-      &PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(der.to_vec())),
-      &crate::tests::RANDOM,
-    )
-    .expect("fixture key");
-    // RSA-PSS wins whenever a peer offers it: TLS 1.3 offers carry only RSA-PSS,
-    // and TLS 1.2 peers get PKCS#1 v1.5 only when they offer nothing else.
-    let preferred = key
-      .choose_scheme(&[SignatureScheme::RSA_PKCS1_SHA512, SignatureScheme::RSA_PSS_SHA256])
-      .expect("offered RSA scheme");
-    assert_eq!(preferred.scheme(), SignatureScheme::RSA_PSS_SHA256);
-    assert!(
-      key
-        .choose_scheme(&[SignatureScheme::RSA_PKCS1_SHA1, SignatureScheme::ECDSA_NISTP256_SHA256])
-        .is_none()
-    );
     let peer = rustls_ring::DEFAULT_PROVIDER;
     let peer_key = peer
       .key_provider
       .load_private_key(PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(der.to_vec())))
       .expect("independent key");
-    for &(scheme, profile) in SCHEMES {
-      let signature = key
-        .choose_scheme(&[scheme])
-        .expect("offered scheme")
-        .sign(b"message")
-        .expect("sign");
-      let verifier = peer
-        .signature_verification_algorithms
-        .mapping()
-        .iter()
-        .find(|(candidate, _)| *candidate == scheme)
-        .expect("independent verifier")
-        .1[0];
-      verifier
-        .verify_signature(public, b"message", &signature)
-        .expect("independent verification");
-      assert!(verifier.verify_signature(public, b"massage", &signature).is_err());
-      if matches!(profile, RsaSignatureProfile::Pkcs1v15(_)) {
-        // PKCS#1 v1.5 is deterministic, so the independent signer's bytes are a known answer.
-        let expected = peer_key
+    for compact in [false, true] {
+      let key = load(
+        &PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(der.to_vec())),
+        &crate::tests::RANDOM,
+        compact,
+      )
+      .expect("fixture key");
+      let kept = usize::from(!compact);
+      // RSA-PSS wins whenever a peer offers it: TLS 1.3 offers carry only RSA-PSS,
+      // and TLS 1.2 peers get PKCS#1 v1.5 only when they offer nothing else.
+      let preferred = key
+        .choose_scheme(&[SignatureScheme::RSA_PKCS1_SHA512, SignatureScheme::RSA_PSS_SHA256])
+        .expect("offered RSA scheme");
+      assert_eq!(preferred.scheme(), SignatureScheme::RSA_PSS_SHA256);
+      assert!(
+        key
+          .choose_scheme(&[SignatureScheme::RSA_PKCS1_SHA1, SignatureScheme::ECDSA_NISTP256_SHA256])
+          .is_none()
+      );
+      assert_eq!(idle_workspaces(&key), 0, "choosing a scheme takes no workspace");
+      for &(scheme, profile) in SCHEMES {
+        let signature = key
           .choose_scheme(&[scheme])
-          .expect("independent scheme")
+          .expect("offered scheme")
           .sign(b"message")
-          .expect("independent signature");
-        assert_eq!(signature, expected, "{scheme:?}");
+          .expect("sign");
+        let verifier = peer
+          .signature_verification_algorithms
+          .mapping()
+          .iter()
+          .find(|(candidate, _)| *candidate == scheme)
+          .expect("independent verifier")
+          .1[0];
+        verifier
+          .verify_signature(public, b"message", &signature)
+          .expect("independent verification");
+        assert!(verifier.verify_signature(public, b"massage", &signature).is_err());
+        if matches!(profile, RsaSignatureProfile::Pkcs1v15(_)) {
+          // PKCS#1 v1.5 is deterministic, so the independent signer's bytes are a known answer.
+          let expected = peer_key
+            .choose_scheme(&[scheme])
+            .expect("independent scheme")
+            .sign(b"message")
+            .expect("independent signature");
+          assert_eq!(signature, expected, "{scheme:?}");
+        }
+        assert_eq!(idle_workspaces(&key), kept, "{scheme:?}");
       }
-    }
-    // A failed entropy request (PSS salt or blinding) releases no partial
-    // signature, and the signer still signs afterwards.
-    for &(scheme, profile) in SCHEMES {
-      let signer = Sign {
-        key: Arc::clone(&key.key),
-        scheme,
-        profile,
-        random: &crate::tests::RANDOM,
-      };
-      let result = signer.sign_with_random_fill(b"message", |out| {
-        let partial = out.len().min(17);
-        out[..partial].fill(0x42);
-        Err(())
-      });
-      assert!(matches!(result, Err(Error::General(message)) if message == "TLS signing failed"));
-      Box::new(signer).sign(b"message").expect("sign after entropy failure");
+      // Sequential signatures reuse one workspace across blinding refreshes,
+      // which come every 32 signatures, and still give the known answer.
+      let scheme = SignatureScheme::RSA_PKCS1_SHA256;
+      let expected = peer_key
+        .choose_scheme(&[scheme])
+        .expect("independent scheme")
+        .sign(b"message")
+        .expect("independent signature");
+      for index in 0..40 {
+        let signature = key
+          .choose_scheme(&[scheme])
+          .expect("offered scheme")
+          .sign(b"message")
+          .expect("sign");
+        assert_eq!(signature, expected, "signature {index}");
+        assert_eq!(idle_workspaces(&key), kept, "signature {index}");
+      }
+      // A failed entropy request (PSS salt or blinding) releases no partial
+      // signature and drops the workspace it used, and the signer still signs
+      // afterwards. Holding the idle workspace makes each attempt build a new
+      // one, so PKCS#1 v1.5 also requests blinding entropy.
+      for &(scheme, profile) in SCHEMES {
+        let signer = Sign {
+          shared: Arc::clone(&key.shared),
+          scheme,
+          profile,
+          random: &crate::tests::RANDOM,
+        };
+        let held = signer.shared.take();
+        let result = signer.sign_with_random_fill(b"message", |out| {
+          let partial = out.len().min(17);
+          out[..partial].fill(0x42);
+          Err(())
+        });
+        assert!(matches!(result, Err(Error::General(message)) if message == "TLS signing failed"));
+        assert_eq!(idle_workspaces(&key), 0, "{scheme:?}");
+        signer.shared.give_back(held);
+        Box::new(signer).sign(b"message").expect("sign after entropy failure");
+        assert_eq!(idle_workspaces(&key), kept, "{scheme:?}");
+      }
     }
   }
 }

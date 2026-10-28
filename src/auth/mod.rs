@@ -430,11 +430,12 @@ pub use pbkdf2::{diag_pbkdf2_sha256_verify_portable, diag_pbkdf2_sha512_verify_p
 pub use poly1305::{Poly1305, Poly1305OneTimeKey, Poly1305Tag};
 #[cfg(feature = "rsa")]
 pub use rsa::{
-  RsaBlindingPair, RsaEncryptionError, RsaJwtAlgorithm, RsaJwtVerifier, RsaKeyError, RsaKeyGenerationContract,
-  RsaKeyGenerationError, RsaOaepProfile, RsaPkcs1v15Profile, RsaPrivateKey, RsaPrivateKeyParts, RsaPrivateOpError,
-  RsaPrivateScratch, RsaProtocolAlgorithmError, RsaPssProfile, RsaPublicExponent, RsaPublicExponentPolicy,
-  RsaPublicKey, RsaPublicKeyPolicy, RsaPublicOpError, RsaPublicScratch, RsaSignatureProfile, RsaSignatureSigner,
-  RsaSignatureVerifier, RsaTlsSignatureSchemes, RsaX509PublicKey, RsaX509PublicKeyAlgorithm,
+  RsaBlindingCache, RsaBlindingPair, RsaEncryptionError, RsaJwtAlgorithm, RsaJwtVerifier, RsaKeyError,
+  RsaKeyGenerationContract, RsaKeyGenerationError, RsaOaepProfile, RsaPkcs1v15Profile, RsaPrivateKey,
+  RsaPrivateKeyParts, RsaPrivateOpError, RsaPrivateScratch, RsaProtocolAlgorithmError, RsaPssProfile,
+  RsaPublicExponent, RsaPublicExponentPolicy, RsaPublicKey, RsaPublicKeyPolicy, RsaPublicOpError, RsaPublicScratch,
+  RsaSignatureProfile, RsaSignatureSigner, RsaSignatureVerifier, RsaTlsSignatureSchemes, RsaX509PublicKey,
+  RsaX509PublicKeyAlgorithm,
 };
 #[cfg(all(feature = "rsa", all(rscrypto_internal, feature = "diag")))]
 pub use rsa::{

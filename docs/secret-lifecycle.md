@@ -123,6 +123,21 @@ the [WASM SIMD128 record](../benchmark_results/OVERVIEW.md#2026-10-06-blake3-was
 - **Not claimed:** the general-purpose and vector registers that the AArch64 and x86-64
   Montgomery, IFMA, and paired NEON kernels and the AArch64 NEON window selection use.
 
+### RSA blinding cache
+
+`RsaBlindingCache` keeps its blinding power and inverse between signatures by design.
+
+- A refresh draws the factor and its inverse in `RsaPrivateScratch`, as the uncached path does,
+  and copies the power and the inverse into the cache. Reuse squares the cached pair into scratch
+  and copies it back. Every signature clears scratch before it returns.
+- Every signing error zeroizes both cached values and resets the use count, so the next
+  signature refreshes. Drop zeroizes both values.
+- Rebinding to a key of another modulus width replaces both buffers; dropping the old buffers
+  zeroizes them.
+- Signing sets the use count to zero when it takes the pair and restores a count only after the
+  signature succeeds. A panic that unwinds after that point therefore makes the next signature
+  refresh. The previous pair stays in the owner until that refresh or drop.
+
 ### RSA implicit rejection
 
 Legacy PKCS#1 v1.5 decryption hashes the stored private exponent at the public
@@ -367,15 +382,20 @@ Compiler-made moves and stack residue have not been separately qualified here.
 
 The provider's key loader uses rscrypto's bounded credential codecs and shares
 successful clearing key owners with signers. Rejected parsed keys drop before
-another format is attempted. Each RSA signature builds and drops its own clearing
-scratch; entropy failure returns no signature.
+another format is attempted. An RSA signature takes an idle workspace (scratch and
+an `RsaBlindingCache`) or builds one, and returns it on success while the key keeps
+fewer idle workspaces than its limit; a compact key keeps none. Scratch is cleared
+after every signature; an idle cache keeps its blinding pair until its next use,
+an error, or the key's release, as [RSA blinding cache](#rsa-blinding-cache)
+describes. Entropy failure returns no signature and drops the workspace.
 ECDSA and hedged ML-DSA entropy failure also return no signature. ML-DSA keys are
 prepared once by default and the compact key is dropped; a compact-mode key prepares
 temporary storage per signature. ML-DSA tests cover partial entropy failure and
 successful reuse in both forms for all three parameter sets. `rustls::crypto::Credentials::new`
 compares exported public SPKI with the certificate before use.
 
-The adapter tests cover partial entropy failure, subsequent RSA signing,
+The adapter tests cover partial entropy failure, subsequent RSA signing, workspace
+reuse across blinding refreshes with pooled and compact keys,
 malformed and oversized credential rejection, and independent signature
 verification. They do not qualify compiler-made copies or native timing.
 
