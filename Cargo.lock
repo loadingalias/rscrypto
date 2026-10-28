@@ -2119,7 +2119,7 @@ checksum = "a1d01941d82fa2ab50be1e79e6714289dd7cde78eba4c074bc5a4374f650dfe0"
 [[package]]
 name = "quinn"
 version = "0.12.0"
-source = "git+https://github.com/quinn-rs/quinn?rev=9d729c1b6b7ad30d45d40265037eeeb9d98a7420#9d729c1b6b7ad30d45d40265037eeeb9d98a7420"
+source = "git+https://github.com/quinn-rs/quinn?rev=2697de1e1314cb9f98502b7323acd5bdd836b582#2697de1e1314cb9f98502b7323acd5bdd836b582"
 dependencies = [
  "bytes",
  "cfg_aliases",
@@ -2137,7 +2137,7 @@ dependencies = [
 [[package]]
 name = "quinn-proto"
 version = "0.12.0"
-source = "git+https://github.com/quinn-rs/quinn?rev=9d729c1b6b7ad30d45d40265037eeeb9d98a7420#9d729c1b6b7ad30d45d40265037eeeb9d98a7420"
+source = "git+https://github.com/quinn-rs/quinn?rev=2697de1e1314cb9f98502b7323acd5bdd836b582#2697de1e1314cb9f98502b7323acd5bdd836b582"
 dependencies = [
  "bytes",
  "getrandom 0.4.3",
@@ -2156,13 +2156,13 @@ dependencies = [
 [[package]]
 name = "quinn-udp"
 version = "0.6.3"
-source = "git+https://github.com/quinn-rs/quinn?rev=9d729c1b6b7ad30d45d40265037eeeb9d98a7420#9d729c1b6b7ad30d45d40265037eeeb9d98a7420"
+source = "git+https://github.com/quinn-rs/quinn?rev=2697de1e1314cb9f98502b7323acd5bdd836b582#2697de1e1314cb9f98502b7323acd5bdd836b582"
 dependencies = [
  "cfg_aliases",
  "libc",
  "socket2",
  "tracing",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2467,7 +2467,7 @@ dependencies = [
 [[package]]
 name = "rustls"
 version = "0.24.0-dev.2"
-source = "git+https://github.com/rustls/rustls?rev=35a8f439137d45ed18962807d38684b0c6bc6e3f#35a8f439137d45ed18962807d38684b0c6bc6e3f"
+source = "git+https://github.com/rustls/rustls?rev=1783110b45f8e8d3cf3307383a3feebd3443735c#1783110b45f8e8d3cf3307383a3feebd3443735c"
 dependencies = [
  "rustls-pki-types",
  "rustls-webpki",
@@ -2478,7 +2478,7 @@ dependencies = [
 [[package]]
 name = "rustls-aws-lc-rs"
 version = "0.24.0-dev.2"
-source = "git+https://github.com/rustls/rustls?rev=35a8f439137d45ed18962807d38684b0c6bc6e3f#35a8f439137d45ed18962807d38684b0c6bc6e3f"
+source = "git+https://github.com/rustls/rustls?rev=1783110b45f8e8d3cf3307383a3feebd3443735c#1783110b45f8e8d3cf3307383a3feebd3443735c"
 dependencies = [
  "aws-lc-rs",
  "rustls",
@@ -2500,7 +2500,7 @@ dependencies = [
 [[package]]
 name = "rustls-ring"
 version = "0.24.0-dev.2"
-source = "git+https://github.com/rustls/rustls?rev=35a8f439137d45ed18962807d38684b0c6bc6e3f#35a8f439137d45ed18962807d38684b0c6bc6e3f"
+source = "git+https://github.com/rustls/rustls?rev=1783110b45f8e8d3cf3307383a3feebd3443735c#1783110b45f8e8d3cf3307383a3feebd3443735c"
 dependencies = [
  "ring",
  "rustls",
@@ -2512,7 +2512,7 @@ dependencies = [
 [[package]]
 name = "rustls-util"
 version = "0.24.0-dev.2"
-source = "git+https://github.com/rustls/rustls?rev=35a8f439137d45ed18962807d38684b0c6bc6e3f#35a8f439137d45ed18962807d38684b0c6bc6e3f"
+source = "git+https://github.com/rustls/rustls?rev=1783110b45f8e8d3cf3307383a3feebd3443735c#1783110b45f8e8d3cf3307383a3feebd3443735c"
 dependencies = [
  "rustls",
 ]

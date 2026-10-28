@@ -808,7 +808,7 @@ dependencies = [
 [[package]]
 name = "quinn-proto"
 version = "0.12.0"
-source = "git+https://github.com/quinn-rs/quinn?rev=9d729c1b6b7ad30d45d40265037eeeb9d98a7420#9d729c1b6b7ad30d45d40265037eeeb9d98a7420"
+source = "git+https://github.com/quinn-rs/quinn?rev=2697de1e1314cb9f98502b7323acd5bdd836b582#2697de1e1314cb9f98502b7323acd5bdd836b582"
 dependencies = [
  "bytes",
  "getrandom",
@@ -966,7 +966,7 @@ dependencies = [
 [[package]]
 name = "rustls"
 version = "0.24.0-dev.2"
-source = "git+https://github.com/rustls/rustls?rev=35a8f439137d45ed18962807d38684b0c6bc6e3f#35a8f439137d45ed18962807d38684b0c6bc6e3f"
+source = "git+https://github.com/rustls/rustls?rev=1783110b45f8e8d3cf3307383a3feebd3443735c#1783110b45f8e8d3cf3307383a3feebd3443735c"
 dependencies = [
  "rustls-pki-types",
  "rustls-webpki",
