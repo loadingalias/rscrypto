@@ -35,7 +35,7 @@ The internal AArch64 RSA reduction owns a local ten-word parameter array. It cop
 words and reduction multipliers, which can be secret during private arithmetic, and clears
 the array before returning. This local owner is separate from `RsaPrivateScratch` and key fields.
 The Linux 16-limb reduction instead keeps its running window and multipliers in integer registers
-and writes the result to caller-owned limbs; it creates no parameter-array owner.
+and normalizes through caller-owned result limbs; it creates no parameter-array owner.
 The x86-64 Montgomery kernels likewise copy multiplier limbs, reduction multipliers, and `n0` into
 a frame below the stack pointer and clear those words before releasing it.
 

@@ -121,7 +121,9 @@ the [WASM SIMD128 record](../benchmark_results/OVERVIEW.md#2026-10-06-blake3-was
   inverse words and transient reduction multipliers. Caller scratch cleanup does not own
   this stack copy. This covers both the Linux and shared non-Linux schedules.
   The Linux 16-limb path uses a register window instead of this array; caller scratch still owns
-  its input and result limbs. The register and compiler-spill limits below also apply to this path.
+  its input and result limbs. Normalization temporarily writes the unreduced residue to the result
+  limbs, then replaces it with the selected reduced value. The register and compiler-spill limits
+  below also apply to this path.
 - The x86-64 Montgomery product, square, and reduction kernels keep a 176-byte frame below
   the stack pointer. Its first 96 bytes hold copied multiplier limbs, the reduction
   multipliers, `n0`, and the carry words, which can be secret during private arithmetic.

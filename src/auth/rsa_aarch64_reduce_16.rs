@@ -2,12 +2,11 @@
 //!
 //! Each row adds the low product halves in one carry chain, then the high halves in a second.
 //! The sixteen-word running window stays in registers. Four rows rotate it by four registers;
-//! four such blocks discard the low sixteen limbs. Every row reads all sixteen modulus words
-//! twice and one upper input word, independent of their values.
+//! four such blocks discard the low sixteen limbs. Every row reads the modulus and one upper
+//! input word at fixed offsets. Normalization subtracts the modulus in registers and selects
+//! each difference or original word under the full-width borrow.
 
 use core::arch::asm;
-
-use super::super::super::subtract_modulus_if_needed;
 
 macro_rules! low {
   ($word:literal, $offset:literal, $add:literal) => {
@@ -49,7 +48,10 @@ macro_rules! row {
    $w12:literal, $w13:literal, $w14:literal, $w15:literal) => {
     concat!(
       "mov {q}, {next_q}\n",
-      low!($w0, "0", "adds"),
+      // q = w0*(-modulus[0]^-1), so the low word cancels and its carry is w0 != 0.
+      "cmp ",
+      $w0,
+      ", #1\n",
       low!($w1, "8", "adcs"),
       low!($w2, "16", "adcs"),
       low!($w3, "24", "adcs"),
@@ -102,13 +104,16 @@ macro_rules! row {
 
 pub(super) fn reduce(out: &mut [u64], wide: &mut [u64], modulus: &[u64], n0: u64) {
   assert!(out.len() == 16 && wide.len() >= 32 && modulus.len() == 16);
-  let top: u64;
   // SAFETY: The input window reads wide[0..16]. Four blocks of four rows each read one word
-  // from wide[16..32]; the final pointer is one-past and is never dereferenced. Each row reads
+  // from wide[16..32]; the final pointer is one-past and is never dereferenced. The parent
+  // supplies n0 = -modulus[0]^-1 mod 2^64 for its validated odd modulus. Each row reads
   // modulus[0..16] at fixed eight-byte offsets. The final stores write out[0..16], which the
   // distinct mutable borrows keep disjoint from wide and modulus. All pointers have u64
-  // alignment, all registers are declared, and the block uses no stack or calls. Its only
-  // branch counts four public blocks. MUL, UMULH and carry arithmetic require baseline AArch64.
+  // alignment. Normalization first initializes out[0..16], subtracts the same sixteen modulus
+  // words, then reads each initialized output pair and stores the conditional result in place.
+  // Borrow controls only CSEL, never a branch or address. All registers and flags are declared,
+  // and the block uses no stack or calls. Its only branch counts four public blocks. MUL,
+  // UMULH and carry arithmetic require baseline AArch64.
   unsafe {
     asm!(
       "ldp {w0}, {w1}, [{upper}, #-128]",
@@ -139,7 +144,8 @@ pub(super) fn reduce(out: &mut [u64], wide: &mut [u64], modulus: &[u64], n0: u64
       "mov {w12}, {q}", "mov {w13}, {product}", "mov {w14}, {m}", "mov {w15}, {low_carry}",
       "subs {blocks}, {blocks}, #1",
       "b.ne 2b",
-      "stp {w0}, {w1}, [{out}]",
+      // Retain the unnormalized words in the caller output while the borrow chain runs.
+      "stp {w0}, {w1}, [{out}, #0]",
       "stp {w2}, {w3}, [{out}, #16]",
       "stp {w4}, {w5}, [{out}, #32]",
       "stp {w6}, {w7}, [{out}, #48]",
@@ -147,11 +153,77 @@ pub(super) fn reduce(out: &mut [u64], wide: &mut [u64], modulus: &[u64], n0: u64
       "stp {w10}, {w11}, [{out}, #80]",
       "stp {w12}, {w13}, [{out}, #96]",
       "stp {w14}, {w15}, [{out}, #112]",
+      "ldr {m}, [{modulus}, #0]",
+      "subs {w0}, {w0}, {m}",
+      "ldr {m}, [{modulus}, #8]",
+      "sbcs {w1}, {w1}, {m}",
+      "ldr {m}, [{modulus}, #16]",
+      "sbcs {w2}, {w2}, {m}",
+      "ldr {m}, [{modulus}, #24]",
+      "sbcs {w3}, {w3}, {m}",
+      "ldr {m}, [{modulus}, #32]",
+      "sbcs {w4}, {w4}, {m}",
+      "ldr {m}, [{modulus}, #40]",
+      "sbcs {w5}, {w5}, {m}",
+      "ldr {m}, [{modulus}, #48]",
+      "sbcs {w6}, {w6}, {m}",
+      "ldr {m}, [{modulus}, #56]",
+      "sbcs {w7}, {w7}, {m}",
+      "ldr {m}, [{modulus}, #64]",
+      "sbcs {w8}, {w8}, {m}",
+      "ldr {m}, [{modulus}, #72]",
+      "sbcs {w9}, {w9}, {m}",
+      "ldr {m}, [{modulus}, #80]",
+      "sbcs {w10}, {w10}, {m}",
+      "ldr {m}, [{modulus}, #88]",
+      "sbcs {w11}, {w11}, {m}",
+      "ldr {m}, [{modulus}, #96]",
+      "sbcs {w12}, {w12}, {m}",
+      "ldr {m}, [{modulus}, #104]",
+      "sbcs {w13}, {w13}, {m}",
+      "ldr {m}, [{modulus}, #112]",
+      "sbcs {w14}, {w14}, {m}",
+      "ldr {m}, [{modulus}, #120]",
+      "sbcs {w15}, {w15}, {m}",
+      "sbcs {top}, {top}, xzr",
+      // Every CSEL uses the same full-width borrow. Loads and stores have fixed offsets.
+      "ldp {q}, {product}, [{out}, #0]",
+      "csel {w0}, {w0}, {q}, cs",
+      "csel {w1}, {w1}, {product}, cs",
+      "stp {w0}, {w1}, [{out}, #0]",
+      "ldp {q}, {product}, [{out}, #16]",
+      "csel {w2}, {w2}, {q}, cs",
+      "csel {w3}, {w3}, {product}, cs",
+      "stp {w2}, {w3}, [{out}, #16]",
+      "ldp {q}, {product}, [{out}, #32]",
+      "csel {w4}, {w4}, {q}, cs",
+      "csel {w5}, {w5}, {product}, cs",
+      "stp {w4}, {w5}, [{out}, #32]",
+      "ldp {q}, {product}, [{out}, #48]",
+      "csel {w6}, {w6}, {q}, cs",
+      "csel {w7}, {w7}, {product}, cs",
+      "stp {w6}, {w7}, [{out}, #48]",
+      "ldp {q}, {product}, [{out}, #64]",
+      "csel {w8}, {w8}, {q}, cs",
+      "csel {w9}, {w9}, {product}, cs",
+      "stp {w8}, {w9}, [{out}, #64]",
+      "ldp {q}, {product}, [{out}, #80]",
+      "csel {w10}, {w10}, {q}, cs",
+      "csel {w11}, {w11}, {product}, cs",
+      "stp {w10}, {w11}, [{out}, #80]",
+      "ldp {q}, {product}, [{out}, #96]",
+      "csel {w12}, {w12}, {q}, cs",
+      "csel {w13}, {w13}, {product}, cs",
+      "stp {w12}, {w13}, [{out}, #96]",
+      "ldp {q}, {product}, [{out}, #112]",
+      "csel {w14}, {w14}, {q}, cs",
+      "csel {w15}, {w15}, {product}, cs",
+      "stp {w14}, {w15}, [{out}, #112]",
       upper = inout(reg) wide[16..].as_ptr() => _,
       modulus = in(reg) modulus.as_ptr(),
       out = in(reg) out.as_mut_ptr(),
       n0 = in(reg) n0,
-      top = out(reg) top,
+      top = out(reg) _,
       blocks = out(reg) _, q = out(reg) _, next_q = out(reg) _,
       product = out(reg) _, m = out(reg) _, low_carry = out(reg) _,
       w0 = out(reg) _, w1 = out(reg) _, w2 = out(reg) _, w3 = out(reg) _,
@@ -161,5 +233,4 @@ pub(super) fn reduce(out: &mut [u64], wide: &mut [u64], modulus: &[u64], n0: u64
       options(nostack),
     );
   }
-  subtract_modulus_if_needed(out, modulus, top);
 }
