@@ -11696,7 +11696,7 @@ unsafe fn private_select_window_power_avx2(out: &mut [u64], table: &[u64], windo
   // template changes no memory, stack or flags. Keep the compare in vector lanes; otherwise
   // LLVM expands the uniform target into a scalar boolean and several broadcasts per entry.
   unsafe { core::arch::asm!("/* {0} */", inout(ymm_reg) target, options(nomem, nostack, preserves_flags)) };
-  for (chunk_index, chunk) in out.chunks_exact_mut(8).enumerate() {
+  for (chunk_index, chunk) in out.as_chunks_mut::<8>().0.iter_mut().enumerate() {
     let offset = chunk_index.strict_mul(8);
     let mut low = _mm256_setzero_si256();
     let mut high = _mm256_setzero_si256();
