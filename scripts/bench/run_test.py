@@ -233,7 +233,7 @@ if mode == 'report':
     print('The perf.data data has no samples!', file=sys.stderr)
     sys.exit(0)
   if os.environ.get('ZERO_PERF_SAMPLES'): print('# Samples: 0 of event cycles:u'); sys.exit(0)
-  print('# Samples: 5 of event cycles:u')
+  print('# Samples: ' + os.environ.get('PERF_SAMPLE_COUNT', '5') + ' of event cycles:u')
   if os.environ.get('RISCV_MAPPING_SYMBOLS'): print(' 99.00% auth auth [.] $xrv64i2p1_m2p0'); sys.exit(0)
   print(' 99.00% criterion-fixture criterion-fixture [.] rscrypto::production_frame')
   sys.exit(0)

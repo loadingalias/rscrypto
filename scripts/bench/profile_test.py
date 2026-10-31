@@ -146,6 +146,14 @@ class ProfileTests(unittest.TestCase):
         self.assertEqual(status, expected)
         self.assertTrue(cause)
 
+  def test_perf_capture_accepts_abbreviated_counts_but_rejects_zero(self):
+    # perf 7.0.14 reports the retained Graviton4 capture's 1007 samples as 1K.
+    for count, expected in (('1K', 'complete'), ('1.5K', 'complete'), ('0K', 'partial')):
+      with self.subTest(count=count):
+        _, (status, cause, _) = self.perf(PERF_SAMPLE_COUNT=count)
+        self.assertEqual(status, expected)
+        self.assertEqual(cause is None, expected == 'complete')
+
   def test_perf_capture_uses_flat_samples_when_dwarf_loses_every_sample(self):
     root, (status, cause, collector) = self.perf(POWER_DWARF_LOST='1')
     self.assertEqual((status, cause), ('complete', None))

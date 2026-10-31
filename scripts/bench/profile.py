@@ -174,8 +174,9 @@ def perf_capture(root: Path, command: list[str], env: dict) -> tuple[str, str | 
     report = execute([perf, 'report', '--stdio', '--no-inline', '--percent-limit', '0.5',
                       '--input', str(root / 'perf.data')],
                      root / 'output.txt', env=env, capture=True)
-    samples = re.search(r'^# Samples:\s+(\d+)\b', report, re.MULTILINE)
-    if samples is None or int(samples.group(1)) == 0 or not re.search(
+    # perf abbreviates large counts, such as 1007 samples displayed as 1K.
+    samples = re.search(r'^# Samples:\s+(\d+(?:\.\d+)?)[KMGTPE]?\s+of event\b', report, re.MULTILINE)
+    if samples is None or float(samples.group(1)) == 0 or not re.search(
       r'^\s+\d+(?:\.\d+)?%\s+.*\[\.\]\s+\S+', report, re.MULTILINE
     ):
       raise ProfileIncomplete('perf report produced no sampled text output')

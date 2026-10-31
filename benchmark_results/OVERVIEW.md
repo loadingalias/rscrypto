@@ -63,7 +63,56 @@ The toolchain is `nightly-2026-10-24`, rustc `48f4b0553`, LLVM 23.1.4. Raw runs,
 source and executable bindings, all prototype decisions, native code reviews, CT archives,
 validation limits and verified cloud cleanup receipts are retained in
 `rsa2048-close-20261030/`. The all-native tie-or-win objective remains open for Graviton5
-and the non-IFMA Intel boundary.
+and the non-IFMA Intel boundary. The owner paused those remaining optimizations on 2026-10-31;
+resume only on an owner request. The retained improvements and qualification remain landed.
+
+## 2026-10-30: RSA-2048 cached-blinding signing profiles
+
+CPU profiles at `60b4f3f7`, with `nightly-2026-10-24` (rustc `48f4b0553`), exercise
+`rsa-2048-private-signing/sign-pss-sha256/cached-blinding/rscrypto` through the production API.
+The benchmark reuses scratch and the blinding cache, draws a fresh PSS salt, and independently
+checks output outside the timing loop. Five-second native `perf` captures retain the compiled
+executable, source binding, raw samples, host facts and report. All recorded file hashes and source
+revisions were verified. These are CPU profiles, not new latency comparisons or speedup claims.
+
+| Native lane | Largest self CPU costs, rounded |
+| --- | --- |
+| Intel Granite Rapids (`6975P-C`) | 79% in the paired IFMA multiply, `amm_pair::<3>` |
+| AMD Zen 5 (`EPYC 9R45`) | 81% in the paired IFMA multiply, `amm_pair::<3>` |
+| Graviton5 workflow lane (`Neoverse-V3`) | 72% Montgomery squaring, 23% multiplication |
+| POWER10 | 39% portable Montgomery multiplication, 32% reduction, 22% squaring |
+| RV64 | 37% portable Montgomery reduction, 23% multiplication, 22% squaring; flat sampling |
+
+The corresponding Profile runs are [Intel](https://github.com/loadingalias/rscrypto/actions/runs/41145325966),
+[AMD](https://github.com/loadingalias/rscrypto/actions/runs/41145329036),
+[ARM64](https://github.com/loadingalias/rscrypto/actions/runs/41145332191),
+[POWER](https://github.com/loadingalias/rscrypto/actions/runs/41145334818), and
+[RISC-V](https://github.com/loadingalias/rscrypto/actions/runs/41145340645).
+[IBM Z](https://github.com/loadingalias/rscrypto/actions/runs/41145337904) reached its native runner,
+but both hardware and software sampling were denied to the runner account at
+`perf_event_paranoid=4`. Its unavailable capture and probes are retained; it is not a pass.
+
+A separate c8g.xlarge Graviton4 host captured rscrypto and AWS-LC for ten seconds each, with Samply
+and a confirming native `perf` capture. Both cases use the same executable, SHA-256
+`b07fd25394e6e4fcbb0e37fcd9605e1364897a484d879ce8b7f258446d5e9b2f`, and fixed RSA fixture.
+rscrypto spends about 71% in Montgomery squaring and 22% in multiplication; AWS-LC spends about
+71% in `__bn_sqr8x_mont` and 22% in `__bn_mul4x_mont`. The large cost is modular arithmetic in both
+implementations. This supports inspecting the owned square/multiply kernels next; it does not
+establish the cause or size of their latency difference. The Graviton4 tree includes the local
+rustls pin and collector changes; production RSA code is unchanged. Every manually allocated
+Graviton4 instance and its EBS volumes are deleted. Earlier failed setup and collection attempts
+remain recorded.
+
+The ten-second capture exposed a collector defect: `perf` displays 1007 samples as `1K`, which the
+integer-only header parser rejected. The corrected parser accepts positive abbreviated counts,
+retains the zero-sample rejection, and passes its controlled regression, the 14 profiling tests,
+the complete tooling regression suite, and the native Graviton4 captures.
+
+Retained evidence: `rsa2048-profiles-20261030/analysis.json`, `verified-captures.json`, the native
+archives and executable copies, and `graviton4-attempt4/`. Windows, Apple and AVX2-only profiles
+are not covered. RSA-2048 performance work remains open: inspect the paired IFMA and ARM64
+Montgomery arithmetic in the matching artifacts, then run a bounded production-code experiment
+and a qualified whole-signing A/B comparison before claiming an improvement.
 
 ## 2026-10-28: owned x86-64 RSA Montgomery kernels
 
