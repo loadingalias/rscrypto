@@ -128,7 +128,7 @@ the [WASM SIMD128 record](../benchmark_results/OVERVIEW.md#2026-10-06-blake3-was
   Each kernel stores zero over those words before it releases the frame. Caller scratch
   cleanup does not own this frame.
 - **Not claimed:** the general-purpose and vector registers that the AArch64 and x86-64
-  Montgomery, IFMA, and paired NEON kernels and the AArch64 NEON window selection use.
+  Montgomery, IFMA, and paired NEON kernels and the NEON and AVX2 window selection use.
 
 ### RSA blinding cache
 

@@ -11646,10 +11646,84 @@ fn private_select_window_power(out: &mut [u64], table: &[u64], window: u8) {
     }
     vector_limbs
   };
-  #[cfg(not(all(target_arch = "aarch64", not(feature = "portable-only"), not(miri))))]
+  #[cfg(all(target_arch = "x86_64", not(feature = "portable-only"), not(miri)))]
+  let vector_limbs = if crate::platform::caps().has(crate::platform::caps::x86::AVX2) {
+    let vector_limbs = limbs & !7;
+    if vector_limbs != 0 {
+      // SAFETY: AVX2 is present. The complete table holds sixteen rows of limbs words, and
+      // the output prefix fits a row. Distinct borrows keep table and output disjoint.
+      unsafe { private_select_window_power_avx2(&mut out[..vector_limbs], table, window) };
+    }
+    vector_limbs
+  } else {
+    0
+  };
+  #[cfg(not(all(
+    any(target_arch = "aarch64", target_arch = "x86_64"),
+    not(feature = "portable-only"),
+    not(miri)
+  )))]
   let vector_limbs = 0;
   if vector_limbs != limbs {
     private_select_window_power_portable(out, table, vector_limbs, window);
+  }
+}
+
+/// Scan every entry, selecting eight limbs at a time through two vector accumulators.
+///
+/// # Safety
+/// AVX2 must be present. `out.len()` must be a nonzero multiple of eight. The complete table
+/// must contain sixteen equal-width rows; the output prefix must fit one row.
+#[cfg(all(target_arch = "x86_64", not(feature = "portable-only"), not(miri)))]
+#[target_feature(enable = "avx2")]
+unsafe fn private_select_window_power_avx2(out: &mut [u64], table: &[u64], window: u8) {
+  use core::arch::x86_64::*;
+
+  let entry_limbs = table.len() / PRIVATE_FIXED_WINDOW_TABLE_ENTRIES;
+  assert!(out.len() <= entry_limbs);
+  let mut target = _mm256_set1_epi64x(i64::from(window));
+  // SAFETY: AVX2 is enabled and this initialized register is an opaque identity. The empty
+  // template changes no memory, stack or flags. Keep the compare in vector lanes; otherwise
+  // LLVM expands the uniform target into a scalar boolean and several broadcasts per entry.
+  unsafe { core::arch::asm!("/* {0} */", inout(ymm_reg) target, options(nomem, nostack, preserves_flags)) };
+  for (chunk_index, chunk) in out.chunks_exact_mut(8).enumerate() {
+    let offset = chunk_index.strict_mul(8);
+    let mut low = _mm256_setzero_si256();
+    let mut high = _mm256_setzero_si256();
+    let mut entry_vector = _mm256_setzero_si256();
+    let one = _mm256_set1_epi64x(1);
+    let mut rows = table;
+    // Keep the public scan count opaque so LLVM retains the loop instead of unrolling it
+    // and spilling its masks and table limbs. The register barriers below protect the loads.
+    for _ in 0..core::hint::black_box(PRIVATE_FIXED_WINDOW_TABLE_ENTRIES) {
+      let (row, remaining) = rows.split_at(entry_limbs);
+      rows = remaining;
+      // SAFETY: The caller provides eight initialized table limbs at this public entry and
+      // chunk offset. Both four-limb loads accept unaligned addresses. The empty register
+      // barrier touches no memory, stack or flags, and this function enables AVX2. It keeps
+      // the loads unconditional instead of letting LLVM fold them into secret-masked reads.
+      let (mut lower, mut upper) = unsafe {
+        let pointer = row.as_ptr().add(offset);
+        (
+          _mm256_loadu_si256(pointer.cast()),
+          _mm256_loadu_si256(pointer.add(4).cast()),
+        )
+      };
+      // SAFETY: These initialized vector registers are opaque identities; no other state changes.
+      unsafe {
+        core::arch::asm!("/* {0} {1} {2} */", inout(ymm_reg) lower, inout(ymm_reg) upper, inout(ymm_reg) entry_vector,
+          options(nomem, nostack, preserves_flags));
+      }
+      let mask = _mm256_cmpeq_epi64(target, entry_vector);
+      entry_vector = _mm256_add_epi64(entry_vector, one);
+      low = _mm256_or_si256(low, _mm256_and_si256(lower, mask));
+      high = _mm256_or_si256(high, _mm256_and_si256(upper, mask));
+    }
+    // SAFETY: chunk contains eight writable limbs, so both four-limb unaligned stores fit.
+    unsafe {
+      _mm256_storeu_si256(chunk.as_mut_ptr().cast(), low);
+      _mm256_storeu_si256(chunk.as_mut_ptr().add(4).cast(), high);
+    }
   }
 }
 
@@ -11832,7 +11906,8 @@ fn private_select_window_power_portable(out: &mut [u64], table: &[u64], start: u
       // 2. `u64` is `Copy`, so the volatile read does not create ownership aliasing.
       // 3. Every table limb is read unconditionally; the secret window affects only masks.
       let limb = unsafe { core::ptr::read_volatile(limb) };
-      *dst = (*dst & !mask) | (limb & mask);
+      // The output starts at zero and at most one entry matches, so no earlier value needs replacing.
+      *dst |= limb & mask;
     }
   }
 }
@@ -12988,7 +13063,9 @@ fn square_wide_portable(out: &mut [u64], value: &[u64]) {
 fn square_wide_portable_at_width<const WIDTH: usize>(out: &mut [u64], value: &[u64]) {
   let n = if WIDTH == 0 { value.len() } else { WIDTH };
   debug_assert_eq!(out.len(), n.strict_mul(2));
+  #[cfg(not(target_arch = "s390x"))]
   let value = &value[..n];
+  #[cfg(not(target_arch = "s390x"))]
   let out = &mut out[..n.strict_mul(2)];
   out.fill(0);
 
@@ -13398,7 +13475,8 @@ mod tests {
   fn rsa_miri_proof_selects_every_window_across_private_limb_and_scratch_layouts() {
     const MARKER: u64 = 0xa5a5_5a5a_c3c3_3c3c;
 
-    for limbs in rsa_miri_private_limb_widths() {
+    // Include the AVX2 prefix boundary before the supported default CRT widths and their tails.
+    for limbs in [7, 8, 9].into_iter().chain(rsa_miri_private_limb_widths()) {
       for capacity in [limbs, limbs.strict_mul(2)] {
         let mut scratch = RsaPrivateExponentScratch::new(capacity);
         rsa_miri_fill_exponent_scratch(&mut scratch, MARKER);
@@ -13438,6 +13516,14 @@ mod tests {
               workspace.selected,
               &workspace.table[start..start.strict_add(limbs)],
               "wrong fixed-window row for {limbs} limbs, capacity {capacity}, window {window}"
+            );
+          }
+          for window in [16, 31, 240, 255] {
+            workspace.selected.fill(MARKER);
+            private_select_window_power(workspace.selected, workspace.table, window);
+            assert!(
+              workspace.selected.iter().all(|&limb| limb == 0),
+              "out-of-range window {window}"
             );
           }
         }
