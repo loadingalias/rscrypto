@@ -5106,12 +5106,6 @@ impl RsaPrivateExponentScratch {
     })
   }
 
-  #[cfg(all(
-    target_arch = "aarch64",
-    target_os = "linux",
-    not(feature = "portable-only"),
-    not(miri)
-  ))]
   fn workspace_with_table_entries<const ENTRIES: usize>(
     &mut self,
     limb_count: usize,
@@ -11342,7 +11336,19 @@ fn private_exponentiate_representative_with_scratch(
     not(feature = "portable-only"),
     not(miri)
   ))]
-  let use_five_bit = rsa_aarch64_mont::supports(limbs) && scratch.table.as_slice().len() >= limbs.strict_mul(32);
+  let five_bit_supported = rsa_aarch64_mont::supports(limbs);
+  #[cfg(not(all(
+    target_arch = "aarch64",
+    target_os = "linux",
+    not(feature = "portable-only"),
+    not(miri)
+  )))]
+  let five_bit_supported = cfg!(any(
+    target_arch = "powerpc64",
+    target_arch = "s390x",
+    target_arch = "riscv64"
+  ));
+  let use_five_bit = five_bit_supported && scratch.table.as_slice().len() >= limbs.strict_mul(32);
   let RsaPrivateExponentWorkspace {
     t,
     representative,
@@ -11362,29 +11368,10 @@ fn private_exponentiate_representative_with_scratch(
       not(miri)
     ))]
       pair: _,
-  } = {
-    #[cfg(all(
-      target_arch = "aarch64",
-      target_os = "linux",
-      not(feature = "portable-only"),
-      not(miri)
-    ))]
-    {
-      if use_five_bit {
-        scratch.workspace_with_table_entries::<32>(limbs)?
-      } else {
-        scratch.workspace(limbs)?
-      }
-    }
-    #[cfg(not(all(
-      target_arch = "aarch64",
-      target_os = "linux",
-      not(feature = "portable-only"),
-      not(miri)
-    )))]
-    {
-      scratch.workspace(limbs)?
-    }
+  } = if use_five_bit {
+    scratch.workspace_with_table_entries::<32>(limbs)?
+  } else {
+    scratch.workspace(limbs)?
   };
   #[cfg(not(all(
     target_arch = "x86_64",
@@ -11440,12 +11427,6 @@ fn private_exponentiate_representative_with_scratch(
   private_mont_mul(base, representative, r2, modulus, t);
   private_mont_mul(acc, one, r2, modulus, t);
 
-  #[cfg(all(
-    target_arch = "aarch64",
-    target_os = "linux",
-    not(feature = "portable-only"),
-    not(miri)
-  ))]
   if use_five_bit {
     private_fixed_window_table_into_entries(table, base, acc, modulus, t, 32);
     private_exponentiate_five_bit(
@@ -11535,12 +11516,6 @@ fn private_fixed_window_table_into(
   }
 }
 
-#[cfg(all(
-  target_arch = "aarch64",
-  target_os = "linux",
-  not(feature = "portable-only"),
-  not(miri)
-))]
 fn private_fixed_window_table_into_entries(
   table: &mut [u64],
   base: &[u64],
@@ -11596,12 +11571,6 @@ fn private_exponentiate_window(
 
 /// Exponentiate with fixed five-bit windows, padding only the public leading partial window.
 /// All 32 table entries are scanned on every step, including zero windows.
-#[cfg(all(
-  target_arch = "aarch64",
-  target_os = "linux",
-  not(feature = "portable-only"),
-  not(miri)
-))]
 fn private_exponentiate_five_bit(
   table: &[u64],
   exponent: &[u8],
@@ -11622,12 +11591,6 @@ fn private_exponentiate_five_bit(
   }
 }
 
-#[cfg(all(
-  target_arch = "aarch64",
-  target_os = "linux",
-  not(feature = "portable-only"),
-  not(miri)
-))]
 fn private_exponentiate_window_five_bit(
   table: &[u64],
   window: u8,
@@ -12923,7 +12886,21 @@ fn mont_mac(acc: u64, a: u64, b: u64, carry: u64) -> (u64, u64) {
 /// Montgomery multiplication by CIOS: each row adds `a·b_i`, then adds `q·n` and shifts down one
 /// limb in the same pass.
 fn mont_mul_cios_portable(out: &mut [u64], a: &[u64], b: &[u64], modulus: &RsaPublicModulus, t: &mut [u64]) {
-  let n = modulus.limbs.len();
+  #[cfg(any(target_arch = "powerpc64", target_arch = "s390x", target_arch = "riscv64"))]
+  if modulus.limbs.len() == 16 {
+    return mont_mul_cios_portable_at_width::<16>(out, a, b, modulus, t);
+  }
+  mont_mul_cios_portable_at_width::<0>(out, a, b, modulus, t);
+}
+
+fn mont_mul_cios_portable_at_width<const WIDTH: usize>(
+  out: &mut [u64],
+  a: &[u64],
+  b: &[u64],
+  modulus: &RsaPublicModulus,
+  t: &mut [u64],
+) {
+  let n = if WIDTH == 0 { modulus.limbs.len() } else { WIDTH };
   debug_assert_eq!(out.len(), n);
   debug_assert_eq!(a.len(), n);
   debug_assert_eq!(b.len(), n);
@@ -12972,7 +12949,15 @@ fn mont_square_portable_in_place(value: &mut [u64], modulus: &RsaPublicModulus, 
 /// `value²` into `out` (`2n` limbs): the `n(n - 1)/2` cross products once, doubled, then the `n`
 /// diagonal squares.
 fn square_wide_portable(out: &mut [u64], value: &[u64]) {
-  let n = value.len();
+  #[cfg(any(target_arch = "powerpc64", target_arch = "s390x", target_arch = "riscv64"))]
+  if value.len() == 16 {
+    return square_wide_portable_at_width::<16>(out, value);
+  }
+  square_wide_portable_at_width::<0>(out, value);
+}
+
+fn square_wide_portable_at_width<const WIDTH: usize>(out: &mut [u64], value: &[u64]) {
+  let n = if WIDTH == 0 { value.len() } else { WIDTH };
   debug_assert_eq!(out.len(), n.strict_mul(2));
   out.fill(0);
 
@@ -13013,7 +12998,19 @@ fn square_wide_portable(out: &mut [u64], value: &[u64]) {
 /// Row i clears limb i by adding `q·n·2^(64i)`; its carry out of limb i + n waits in `top` for the
 /// next row instead of propagating through the upper limbs.
 fn mont_reduce_wide_portable(out: &mut [u64], wide: &mut [u64], modulus: &RsaPublicModulus) {
-  let n = modulus.limbs.len();
+  #[cfg(any(target_arch = "powerpc64", target_arch = "s390x", target_arch = "riscv64"))]
+  if modulus.limbs.len() == 16 {
+    return mont_reduce_wide_portable_at_width::<16>(out, wide, modulus);
+  }
+  mont_reduce_wide_portable_at_width::<0>(out, wide, modulus);
+}
+
+fn mont_reduce_wide_portable_at_width<const WIDTH: usize>(
+  out: &mut [u64],
+  wide: &mut [u64],
+  modulus: &RsaPublicModulus,
+) {
+  let n = if WIDTH == 0 { modulus.limbs.len() } else { WIDTH };
   debug_assert_eq!(out.len(), n);
   debug_assert_eq!(wide.len(), n.strict_mul(2));
   let limbs = &modulus.limbs[..n];
@@ -18306,6 +18303,20 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
           assert!(big(&out) < n, "reduce result below n for {words} limbs");
           assert_eq!(product(&out), big(&a) % &n, "reduce for {words} limbs");
 
+          if words == 16 {
+            // Exercise the production specialization on every test host. A fixed-width loop
+            // must preserve full carries and overwrite the complete wide result.
+            mont_mul_cios_portable_at_width::<16>(&mut out, &a, &b, &modulus, &mut t);
+            assert!(big(&out) < n, "fixed-width mul result below n");
+            assert_eq!(product(&out), big(&a) * big(&b) % &n, "fixed-width mul");
+            let wide = &mut t[..32];
+            square_wide_portable_at_width::<16>(wide, &a);
+            assert_eq!(big(wide), big(&a) * big(&a), "fixed-width wide square");
+            mont_reduce_wide_portable_at_width::<16>(&mut out, wide, &modulus);
+            assert!(big(&out) < n, "fixed-width square result below n");
+            assert_eq!(product(&out), big(&a) * big(&a) % &n, "fixed-width square");
+          }
+
           // The kernels for widths without CIOS.
           mont_mul(&mut out, &a, &b, &modulus, &mut t);
           assert!(big(&out) < n, "wide mul result below n for {words} limbs");
@@ -18956,11 +18967,16 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
     }
   }
 
-  #[cfg(all(
-    target_arch = "aarch64",
-    target_os = "linux",
-    not(feature = "portable-only"),
-    not(miri)
+  #[cfg(any(
+    all(
+      target_arch = "aarch64",
+      target_os = "linux",
+      not(feature = "portable-only"),
+      not(miri)
+    ),
+    target_arch = "powerpc64",
+    target_arch = "s390x",
+    target_arch = "riscv64"
   ))]
   #[test]
   fn five_bit_crt_exponentiation_matches_big_integer_power() {

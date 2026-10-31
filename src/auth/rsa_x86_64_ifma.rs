@@ -290,20 +290,26 @@ fn normalize<const V: usize>(value: &[__m512i; V]) -> [__m512i; V] {
   let mut below = _mm512_setzero_si512();
   let mut generate = 0u64;
   let mut propagate = 0u64;
-  for (index, (out, &lanes)) in sum.iter_mut().zip(value).enumerate() {
+  // The vector count is a compile-time kernel shape. Indexing that fixed range exposes it to
+  // LLVM; the zipped iterator otherwise retains its state machine and spills on every AMM.
+  for index in 0..V {
+    let lanes = value[index];
     let carries = _mm512_srli_epi64::<52>(lanes);
     // Lane j takes lane j - 1's carry; lane 0 takes the top carry of the vector below.
-    *out = _mm512_add_epi64(_mm512_and_si512(lanes, mask), _mm512_alignr_epi64::<7>(carries, below));
+    sum[index] = _mm512_add_epi64(_mm512_and_si512(lanes, mask), _mm512_alignr_epi64::<7>(carries, below));
     below = carries;
     let offset = index.strict_mul(8);
-    generate |= u64::from(_mm512_cmpgt_epu64_mask(*out, mask)) << offset;
-    propagate |= u64::from(_mm512_cmpeq_epu64_mask(*out, mask)) << offset;
+    generate |= u64::from(_mm512_cmpgt_epu64_mask(sum[index], mask)) << offset;
+    propagate |= u64::from(_mm512_cmpeq_epu64_mask(sum[index], mask)) << offset;
   }
   let carry_in = (generate << 1).wrapping_add(propagate) ^ propagate;
   let carry_lanes = carry_in.to_le_bytes();
   let one = _mm512_set1_epi64(1);
-  for (out, &carry) in sum.iter_mut().zip(&carry_lanes) {
-    *out = _mm512_and_si512(_mm512_mask_add_epi64(*out, carry, *out, one), mask);
+  for index in 0..V {
+    sum[index] = _mm512_and_si512(
+      _mm512_mask_add_epi64(sum[index], carry_lanes[index], sum[index], one),
+      mask,
+    );
   }
   sum
 }

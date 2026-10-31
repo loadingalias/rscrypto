@@ -2647,6 +2647,26 @@ fn rsa_components(c: &mut Criterion) {
 }
 
 fn main() {
+  // Qualify the production BMI2/ADX path on an IFMA host before fixtures initialize detection.
+  // The benchmark evidence records this same runtime restriction for the auth target.
+  if let Some(value) = std::env::var_os("RSCRYPTO_BENCH_DISABLE_IFMA") {
+    assert_eq!(value, "1", "RSCRYPTO_BENCH_DISABLE_IFMA must be 1");
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+      eprintln!("RSCRYPTO_BENCH_DISABLE_IFMA requires x86_64");
+      std::process::exit(2);
+    }
+    #[cfg(target_arch = "x86_64")]
+    {
+      use rscrypto::platform::{caps::x86, expert};
+
+      let mut detected = expert::detect_uncached();
+      assert!(detected.caps.has(x86::AVX2), "AVX2 benchmark requires an AVX2 host");
+      detected.caps = detected.caps.difference(x86::AVX512IFMA);
+      expert::try_set_override(Some(detected)).expect("restrict capabilities before initialization");
+      eprintln!("rscrypto-bench IFMA disabled; runtime_caps={}", detected.caps);
+    }
+  }
   bench_config::run(&[
     rsa_components,
     rsa_private_signing,

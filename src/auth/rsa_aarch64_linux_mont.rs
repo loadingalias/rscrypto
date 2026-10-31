@@ -7,9 +7,15 @@ use core::arch::asm;
 
 use super::{double_add_squares, scratch_words, supports};
 
+#[path = "rsa_aarch64_reduce_16.rs"]
+mod reduce_16;
+
 pub(super) fn reduce(out: &mut [u64], t: &mut [u64], modulus: &[u64], k: &[u64; 4]) {
   let n = modulus.len();
   assert!(supports(n) && out.len() == n && t.len() >= n.strict_mul(2));
+  if n == 16 {
+    return reduce_16::reduce(out, t, modulus, k[0]);
+  }
   // k, n, out, then the four multipliers of the next strip.
   let mut params = [k[0], k[1], k[2], k[3], n as u64, out.as_mut_ptr() as u64, 0, 0, 0, 0];
   // SAFETY: Every strip reads and writes `t[s..s + n + 4]` for `s` below `n` in steps of four,
