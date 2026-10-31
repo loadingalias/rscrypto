@@ -12875,6 +12875,35 @@ fn mont_mul_cios(out: &mut [u64], a: &[u64], b: &[u64], modulus: &RsaPublicModul
 /// wrapping operations avoid an overflow branch on secret carries.
 #[inline(always)]
 fn mont_mac(acc: u64, a: u64, b: u64, carry: u64) -> (u64, u64) {
+  #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), not(miri)))]
+  {
+    let low: u64;
+    let high: u64;
+    // SAFETY: These baseline POWER64 integer instructions compute the same full-width sum
+    // proved above. Both additions consume their carry through XER before the next ADDC
+    // replaces it; the final high word cannot overflow. All operands and the XER clobber are
+    // declared. The block has no memory accesses, stack, calls or branches.
+    unsafe {
+      core::arch::asm!(
+        "mulld {low}, {a}, {b}",
+        "mulhdu {high}, {a}, {b}",
+        "addc {low}, {low}, {acc}",
+        "addze {high}, {high}",
+        "addc {low}, {low}, {carry}",
+        "addze {high}, {high}",
+        a = in(reg) a,
+        b = in(reg) b,
+        acc = in(reg) acc,
+        carry = in(reg) carry,
+        low = out(reg) low,
+        high = out(reg) high,
+        out("xer") _,
+        options(pure, nomem, nostack),
+      );
+    }
+    (low, high)
+  }
+  #[cfg(not(all(target_arch = "powerpc64", not(feature = "portable-only"), not(miri))))]
   split_u128(
     u128::from(a)
       .strict_mul(u128::from(b))
@@ -12959,6 +12988,8 @@ fn square_wide_portable(out: &mut [u64], value: &[u64]) {
 fn square_wide_portable_at_width<const WIDTH: usize>(out: &mut [u64], value: &[u64]) {
   let n = if WIDTH == 0 { value.len() } else { WIDTH };
   debug_assert_eq!(out.len(), n.strict_mul(2));
+  let value = &value[..n];
+  let out = &mut out[..n.strict_mul(2)];
   out.fill(0);
 
   // Row i adds `v_i·v_j` for j > i at limbs 2i + 1 through i + n - 1; its carry starts limb i + n.
@@ -18241,6 +18272,23 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
     fn big(limbs: &[u64]) -> rsa::BigUint {
       let bytes: Vec<u8> = limbs.iter().flat_map(|limb| limb.to_le_bytes()).collect();
       rsa::BigUint::from_bytes_le(&bytes)
+    }
+
+    #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), not(miri)))]
+    {
+      // Exercise every combination of zero, the sign boundary and full carry words in the
+      // native multiply-accumulate. BigUint supplies the full sum independently of its XER chain.
+      let edges = [0, 1, 1u64 << 63, u64::MAX - 1, u64::MAX];
+      for acc in edges {
+        for a in edges {
+          for b in edges {
+            for carry in edges {
+              let (low, high) = mont_mac(acc, a, b, carry);
+              assert_eq!(big(&[low, high]), big(&[a]) * big(&[b]) + big(&[acc]) + big(&[carry]));
+            }
+          }
+        }
+      }
     }
 
     let mut state = 0x2545_f491_4f6c_dd1du64;
