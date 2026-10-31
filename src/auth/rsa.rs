@@ -11646,7 +11646,12 @@ fn private_select_window_power(out: &mut [u64], table: &[u64], window: u8) {
     }
     vector_limbs
   };
-  #[cfg(all(target_arch = "x86_64", not(feature = "portable-only"), not(miri)))]
+  #[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "sse2",
+    not(feature = "portable-only"),
+    not(miri)
+  ))]
   let vector_limbs = if crate::platform::caps().has(crate::platform::caps::x86::AVX2) {
     let vector_limbs = limbs & !7;
     if vector_limbs != 0 {
@@ -11659,7 +11664,7 @@ fn private_select_window_power(out: &mut [u64], table: &[u64], window: u8) {
     0
   };
   #[cfg(not(all(
-    any(target_arch = "aarch64", target_arch = "x86_64"),
+    any(target_arch = "aarch64", all(target_arch = "x86_64", target_feature = "sse2")),
     not(feature = "portable-only"),
     not(miri)
   )))]
@@ -11674,7 +11679,12 @@ fn private_select_window_power(out: &mut [u64], table: &[u64], window: u8) {
 /// # Safety
 /// AVX2 must be present. `out.len()` must be a nonzero multiple of eight. The complete table
 /// must contain sixteen equal-width rows; the output prefix must fit one row.
-#[cfg(all(target_arch = "x86_64", not(feature = "portable-only"), not(miri)))]
+#[cfg(all(
+  target_arch = "x86_64",
+  target_feature = "sse2",
+  not(feature = "portable-only"),
+  not(miri)
+))]
 #[target_feature(enable = "avx2")]
 unsafe fn private_select_window_power_avx2(out: &mut [u64], table: &[u64], window: u8) {
   use core::arch::x86_64::*;
