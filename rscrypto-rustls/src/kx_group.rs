@@ -311,10 +311,10 @@ mod implementation {
 
     /// Report an ML-KEM decapsulation failure after the share length checks.
     ///
-    /// RFC 10024, section 4.2, requires an `internal_error` alert. The QUIC adapter
-    /// sends this error as CRYPTO_ERROR `internal_error`. rustls maps no error to
-    /// that alert over TCP and sends no alert for `Error::Other`. A typed ciphertext
-    /// cannot fail decapsulation (ML-KEM rejects implicitly), so this path is unreachable.
+    /// RFC 10024, section 4.2, requires an `internal_error` alert. rustls sends
+    /// that alert over TCP, and the QUIC adapter sends the corresponding
+    /// CRYPTO_ERROR. A typed ciphertext cannot fail decapsulation (ML-KEM rejects
+    /// implicitly), so this path is unreachable.
     pub(crate) fn decapsulation_failed(error: MlKemError) -> Error {
       Error::Other(rustls::error::OtherError::new(error))
     }
@@ -374,12 +374,81 @@ mod implementation {
 
     #[cfg(test)]
     #[test]
-    fn decapsulation_failure_is_local_and_sends_no_tcp_alert() {
+    fn decapsulation_failure_is_local_and_maps_to_internal_error() {
       let error = decapsulation_failed(MlKemError::InvalidCiphertext);
       assert!(matches!(error, Error::Other(_)));
-      // Pinned rustls has no internal_error mapping. `Error::General` would send general_error;
-      // this error sends no alert over TCP, and the QUIC adapter maps it to internal_error.
-      rustls::error::AlertDescription::try_from(&error).expect_err("no TCP alert");
+      assert_eq!(
+        rustls::error::AlertDescription::try_from(&error),
+        Ok(rustls::error::AlertDescription::InternalError)
+      );
+    }
+
+    #[cfg(all(
+      feature = "hkdf",
+      any(feature = "aes-gcm", feature = "chacha20poly1305"),
+      feature = "ecdsa-p256"
+    ))]
+    #[test]
+    fn hybrid_decapsulation_failure_sends_tcp_internal_error() {
+      use crate::tests::tls;
+      use alloc::sync::Arc;
+
+      #[derive(Debug)]
+      struct FailingGroup;
+      struct FailingExchange(Box<dyn ActiveKeyExchange>);
+
+      impl SupportedKxGroup for FailingGroup {
+        fn start(&self) -> Result<StartedKeyExchange, Error> {
+          let exchange = X25519MlKem768Group::new(&crate::tests::RANDOM).start()?.into_single();
+          Ok(StartedKeyExchange::Single(Box::new(FailingExchange(exchange))))
+        }
+
+        fn name(&self) -> NamedGroup {
+          NamedGroup::X25519MLKEM768
+        }
+
+        fn ffdhe_group(&self) -> Option<FfdheGroup<'static>> {
+          None
+        }
+      }
+
+      impl ActiveKeyExchange for FailingExchange {
+        fn complete(self: Box<Self>, peer_pub_key: &[u8]) -> Result<SharedSecret, Error> {
+          // Complete the real exchange before injecting the otherwise unreachable
+          // local failure at rustls's key-exchange boundary.
+          self.0.complete(peer_pub_key)?;
+          Err(decapsulation_failed(MlKemError::InvalidCiphertext))
+        }
+
+        fn pub_key(&self) -> &[u8] {
+          self.0.pub_key()
+        }
+
+        fn group(&self) -> NamedGroup {
+          self.0.group()
+        }
+
+        fn ffdhe_group(&self) -> Option<FfdheGroup<'static>> {
+          None
+        }
+      }
+
+      let mut client_provider = tls::provider();
+      client_provider.kx_groups = vec![&FailingGroup as &dyn SupportedKxGroup].into();
+      let (client, server) = tls::configs(client_provider, tls::provider(), tls::Credential::P256, false);
+      let (mut client, mut server) = tls::connections_from_configs(Arc::new(client), Arc::new(server));
+      tls::transfer(&mut client, &mut server, |_, _| Ok(())).expect("ClientHello");
+      assert!(matches!(
+        tls::transfer(&mut server, &mut client, |_, _| Ok(())),
+        Err(Error::Other(_))
+      ));
+      // The failure precedes traffic keys, so the alert is plaintext:
+      // fatal (2), internal_error (80).
+      assert!(client.output.ends_with(&[2, 80]));
+      assert!(matches!(
+        tls::transfer(&mut client, &mut server, |_, _| Ok(())),
+        Err(Error::AlertReceived(rustls::error::AlertDescription::InternalError))
+      ));
     }
 
     #[cfg(test)]

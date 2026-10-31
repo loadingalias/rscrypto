@@ -966,7 +966,7 @@ dependencies = [
 [[package]]
 name = "rustls"
 version = "0.24.0-dev.2"
-source = "git+https://github.com/rustls/rustls?rev=1783110b45f8e8d3cf3307383a3feebd3443735c#1783110b45f8e8d3cf3307383a3feebd3443735c"
+source = "git+https://github.com/rustls/rustls?rev=0419f479ff5c99a471428ee197e899ccd1629aa8#0419f479ff5c99a471428ee197e899ccd1629aa8"
 dependencies = [
  "rustls-pki-types",
  "rustls-webpki",
