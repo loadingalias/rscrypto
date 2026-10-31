@@ -1,8 +1,8 @@
-//! Stable C ABI entrypoints for constant-time artifact generation.
+//! Stable entrypoint symbols for constant-time artifact generation.
 //!
 //! These functions are audit harnesses. They call production `rscrypto` APIs
-//! through narrow pointer/length boundaries so IR, assembly, object, and timing
-//! tools can target stable symbols without analyzing ergonomic public APIs.
+//! through narrow C pointer/length boundaries or typed Rust leaf calls so IR,
+//! assembly, object, and timing tools can target stable symbols.
 
 // C ABI harness functions must remain plain `extern "C"` symbols. Pointer validity is documented
 // on the shared helpers and each entrypoint rejects null shapes before copying fixed-size inputs.
@@ -34,6 +34,13 @@ use rscrypto::{
 
 const STATUS_ERR: u8 = 0;
 const STATUS_OK: u8 = 1;
+
+/// Retain the production eight-limb selector with its normal capability dispatch.
+#[unsafe(no_mangle)]
+#[inline(never)]
+pub fn ct_entry_rsa_private_window_select(table: &[u64; 128], window: u8) -> [u64; 8] {
+  rscrypto::auth::diag_rsa_private_select_window_power_8(table, window)
+}
 
 /// Convert a nullable C pointer/length pair into a shared byte slice.
 ///

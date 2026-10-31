@@ -11921,6 +11921,15 @@ pub fn diag_rsa_private_select_window_power_4(table: &[u64; 64], window: u8) -> 
   out
 }
 
+#[cfg(all(rscrypto_internal, feature = "diag"))]
+#[inline(always)]
+/// Run the eight-limb RSA private selector, including its native AVX2 path when available.
+pub fn diag_rsa_private_select_window_power_8(table: &[u64; 128], window: u8) -> [u64; 8] {
+  let mut out = [0u64; 8];
+  private_select_window_power(&mut out, table, window);
+  out
+}
+
 #[cfg(all(rscrypto_internal, feature = "diag", target_arch = "aarch64", not(miri)))]
 #[inline(always)]
 /// Run the four-limb AArch64 NEON RSA private fixed-window selector, which production uses on

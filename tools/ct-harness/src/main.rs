@@ -31,6 +31,8 @@ fn main() {
     rscrypto_ct_harness::ct_entry_rsa_pkcs1v15_decrypt_fixed_blinding,
   );
 
+  retain!(rscrypto_ct_harness::ct_entry_rsa_private_window_select);
+
   retain!(rscrypto_ct_harness::ct_entry_poly1305_authenticate);
 
   retain!(rscrypto_ct_harness::ct_entry_chacha20_rng_fill);

@@ -360,6 +360,7 @@ symbols = [
   "ct_entry_rsa_fixture_key_import",
   "ct_entry_rsa_fixture_key_release",
   "ct_entry_rsa_private_component_validation_32",
+  "ct_entry_rsa_private_window_select",
   "ct_entry_hkdf_sha256_derive",
   "ct_entry_hkdf_sha384_derive",
   "ct_entry_pbkdf2_sha256_derive",
@@ -1409,6 +1410,16 @@ reason = "The unrelated valid keys have different public moduli, which may leak 
 notes = "Broad whole-operation diagnostic retained for trend analysis. Required fixed-width exponent evidence uses one public modulus and representative."
 
 [[dudect_case]]
+name = "rsa_private_window_fixed_vs_random_index"
+primitive = "rsa.private_ops"
+filter = "rsa_private_window_fixed_vs_random_index"
+left_class = "fixed window index zero"
+right_class = "random valid four-bit window index"
+samples = 20000
+smoke_samples = 2000
+notes = "Production eight-limb selector with normal capability dispatch. Every IFMA-capable x86 CI host also has AVX2; this leaf reaches the fallback selector independently of the exponentiation engine. Other native targets exercise their normal NEON or scalar scan. Table generation, class balancing and index generation run outside timing."
+
+[[dudect_case]]
 name = "rsa_private_exponent_fixed_width_high_byte"
 primitive = "rsa.private_ops"
 filter = "rsa_private_exponent_fixed_width_high_byte"
@@ -2421,6 +2432,7 @@ id = "rsa.private_ops.pkcs1v15_sign"
 primitive = "rsa.private_ops"
 variant = "Pkcs1v15Sign"
 dudect = [
+  "rsa_private_window_fixed_vs_random_index",
   "rsa_pkcs1v15_fixed_vs_random_message",
   "rsa_private_exponent_fixed_width_high_byte",
   "rsa_crt_pair_fixed_vs_random_exponents",
@@ -2434,6 +2446,7 @@ id = "rsa.private_ops.pss_sign"
 primitive = "rsa.private_ops"
 variant = "PssSign"
 dudect = [
+  "rsa_private_window_fixed_vs_random_index",
   "rsa_pss_fixed_vs_random_message",
   "rsa_crt_pair_fixed_vs_random_exponents",
   "rsa_crt_pair_fixed_vs_random_inputs",
@@ -2446,6 +2459,7 @@ id = "rsa.private_ops.oaep_decrypt"
 primitive = "rsa.private_ops"
 variant = "OaepDecrypt"
 dudect = [
+  "rsa_private_window_fixed_vs_random_index",
   "rsa_oaep_decrypt_fixed_vs_random_plaintext",
   "rsa_oaep_decrypt_valid_vs_invalid",
   "rsa_crt_pair_fixed_vs_random_exponents",
@@ -2459,6 +2473,7 @@ id = "rsa.private_ops.pkcs1v15_decrypt"
 primitive = "rsa.private_ops"
 variant = "Pkcs1v15Decrypt"
 dudect = [
+  "rsa_private_window_fixed_vs_random_index",
   "rsa_pkcs1v15_decrypt_fixed_vs_random_plaintext",
   "rsa_pkcs1v15_decrypt_valid_vs_invalid_padding",
   "rsa_pkcs1v15_decrypt_invalid_padding_classes",
@@ -5491,6 +5506,7 @@ notes = "Top-level OS randomness or caller entropy callbacks and public profile 
 [primitive.harness]
 status = "covered"
 symbols = [
+  "ct_entry_rsa_private_window_select",
   "ct_entry_rsa_pkcs1v15_sign_fixed_blinding",
   "ct_entry_rsa_pss_sign_fixed_blinding",
   "ct_entry_rsa_oaep_decrypt_fixed_blinding",

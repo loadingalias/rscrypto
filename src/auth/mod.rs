@@ -442,7 +442,8 @@ pub use rsa::{
   diag_rsa_blinding_factor_inverse_with_scratch, diag_rsa_import_pkcs8_private_key_der_stage,
   diag_rsa_private_component_validation_32, diag_rsa_private_exponentiate_fixed_width,
   diag_rsa_private_exponentiate_fixed_width_with_scratch, diag_rsa_private_select_window_power_4,
-  diag_rsa_validate_pkcs8_private_key_der, diag_rsa_validate_pkcs8_private_key_der_stage,
+  diag_rsa_private_select_window_power_8, diag_rsa_validate_pkcs8_private_key_der,
+  diag_rsa_validate_pkcs8_private_key_der_stage,
 };
 #[cfg(all(
   feature = "rsa",

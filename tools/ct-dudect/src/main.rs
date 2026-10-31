@@ -2690,6 +2690,33 @@ fn rsa_pkcs1v15_full_width_vs_short_canonical_crt_exponent(runner: &mut CtRunner
   }
 }
 
+fn rsa_private_window_fixed_vs_random_index(runner: &mut CtRunner, rng: &mut BenchRng) {
+  let table: [u64; 128] = core::array::from_fn(|index| {
+    u64::try_from(index)
+      .expect("table index fits u64")
+      .wrapping_mul(0x9e37_79b9_7f4a_7c15)
+  });
+  let inputs: Vec<_> = balanced_classes(rng, samples())
+    .into_iter()
+    .map(|class| {
+      let window = if matches!(class, Class::Left) {
+        0
+      } else {
+        rng.random_range(0..16)
+      };
+      (class, window)
+    })
+    .collect();
+  for (class, window) in inputs {
+    runner.run_one(class, || {
+      rscrypto_ct_harness::ct_entry_rsa_private_window_select(
+        core::hint::black_box(&table),
+        core::hint::black_box(window),
+      )
+    });
+  }
+}
+
 fn rsa_private_exponent_fixed_width_high_byte(runner: &mut CtRunner, rng: &mut BenchRng) {
   let key = rsa_ct_fixture_key(RSA_CT_KEY_A_INDEX);
   let len = key.signature_len().div_euclid(2);
@@ -4077,6 +4104,7 @@ ctbench_main_with_seeds!(
     Some(0x7273615f6372746c)
   ),
   (rsa_private_exponent_fixed_width_high_byte, Some(0x7273615f65787068)),
+  (rsa_private_window_fixed_vs_random_index, Some(0x7273615f77696e38)),
   (rsa_crt_pair_fixed_vs_random_exponents, Some(0x7273615f70657870)),
   (rsa_crt_pair_fixed_vs_random_inputs, Some(0x7273615f70696e70)),
   (rsa_crt_pair_exponent_high_byte, Some(0x7273615f70686967)),
