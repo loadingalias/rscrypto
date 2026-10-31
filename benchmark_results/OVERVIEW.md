@@ -6,6 +6,65 @@ The dated campaign records come first.
 The 2026-08-18 Linux snapshot near the end is historical:
 its aggregate ratios are withdrawn as performance claims (see [Corrections](#corrections)).
 
+## 2026-10-31: RSA private arithmetic qualification
+
+Production changes through `ee9edf3f` expose fixed IFMA normalization counts, retain POWER
+carries in XER, specialize portable 16-limb CRT arithmetic, and scan private x86 windows with
+AVX2. Linux ARM64 reduction keeps its 16-word window and normalization inside the kernel.
+Portable fallbacks, private-operation blinding, fault checks, scratch ownership and public
+API behavior remain intact.
+
+Retained RSA-2048/SHA-256 medians below are microseconds, PSS / PKCS#1 v1.5. rscrypto uses
+cached blinding; external rows use the catalog's fresh-entropy blinded APIs with the same key
+and message. The tie-or-win bar requires external/rscrypto >= 0.97 for both operations. These are native
+lane observations, not a universal CPU ranking.
+
+| Native lane | rscrypto | Best eligible external | Result |
+| --- | ---: | ---: | --- |
+| Intel Linux, IFMA | 252.7 / 252.1 | AWS-LC 261.8 / 260.7 | win |
+| AMD Linux, IFMA | 190.6 / 193.1 | AWS-LC 197.7 / 198.5 | win / tie |
+| Intel Windows, IFMA | 252.9 / 252.5 | AWS-LC 277.5 / 275.9 | win |
+| AMD Windows, IFMA | 188.7 / 188.1 | AWS-LC 211.2 / 209.2 | win |
+| Graviton4 | 737.0–737.3 / 735.9–736.0 | AWS-LC 720.3–721.8 / 719.0–719.2 | tie |
+| Graviton5 | 539.7 / 539.1 | AWS-LC 499.4 / 498.3 | loss |
+| Apple M1 Pro, unchanged paired path | 421.7–426.1 / 423.1–425.0 | AWS-LC 502.6–507.8 / 495.5–501.1 | win |
+| POWER10 | 1422.6 / 1427.0 | AWS-LC 1959.5 / 1956.2 | win |
+| IBM Z | 3654.8 / 3657.9 | RustCrypto blinded 3739.6 / 3710.4 | tie |
+| RISC-V | 5781.9 / 5583.0 | AWS-LC 5784.5 / 5715.1 | tie |
+| Intel Linux, both libraries IFMA-disabled | 512.3–513.8 / 511.3 | AWS-LC 496.6–496.8 / 495.6–496.0 | outside tie bar |
+
+The x86 and Graviton5 rows come from [Bench 41174943131](https://github.com/loadingalias/rscrypto/actions/runs/41174943131)
+at `8612a93b`; later production changes do not affect these paths. Final-source `ee9edf3f`
+[POWER](https://github.com/loadingalias/rscrypto/actions/runs/41180943285) and
+[RISC-V](https://github.com/loadingalias/rscrypto/actions/runs/41181917207) runs retain every
+3072/4096 guard row too. [IBM Z](https://github.com/loadingalias/rscrypto/actions/runs/41168602751)
+was measured at `ef692726`; an explicit source comparison establishes that its implementation,
+build inputs and workload remain unchanged. Larger-key external losses remain, including POWER at 3072 bits,
+IBM Z, RISC-V and Graviton5; the 2048-bit results do not imply larger-key wins.
+
+Matched Graviton4 runs improve whole signing about 4.3%. The final non-IFMA measurements are
+slightly outside the tie boundary, and a further bounded row-check prototype did not resolve
+it and was rejected. Both libraries disable IFMA on Granite Rapids; this is real non-IFMA
+production dispatch, not evidence from a physical pre-IFMA CPU. Qualified Apple runs resolve
+its unchanged paired-path lead. A later final-source Apple run overlapped heavy unrelated
+host activity and is retained as diagnostic evidence without replacing those qualified runs.
+
+Full CT reports pass on all seven native target lanes. Five targets use `49e9ea92` captures
+with unchanged target code and review records at `ee9edf3f`; ARM and Apple use `ee9edf3f`.
+Reports retain their actual source identities. The ARM workflow's summary failed on the
+flattened single-artifact download layout; the native report passed, and `ffb1f9c4` fixes the
+reader without changing evidence or thresholds. Regression tests and re-reading that archive
+pass. Native CI status is recorded in [CI 41180247210](https://github.com/loadingalias/rscrypto/actions/runs/41180247210).
+Full 16-target checks, Mac native/portable tests, RSA assembly checks, independent arithmetic
+oracles, RSA-scoped native ASan/fuzzing and RSA Miri proofs pass. Full-suite ASan is blocked by
+the held Quinn RNG factory's missing `getrandom` feature; a full-suite pass is not claimed.
+
+The toolchain is `nightly-2026-10-24`, rustc `48f4b0553`, LLVM 23.1.4. Raw runs, intervals,
+source and executable bindings, all prototype decisions, native code reviews, CT archives,
+validation limits and verified cloud cleanup receipts are retained in
+`rsa2048-close-20261030/`. The all-native tie-or-win objective remains open for Graviton5
+and the non-IFMA Intel boundary.
+
 ## 2026-10-28: owned x86-64 RSA Montgomery kernels
 
 `07bf7c9c` replaced the adapted AWS-LC x86-64 RSA assembly with owned inline-assembly kernels
