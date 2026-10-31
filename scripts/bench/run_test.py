@@ -502,12 +502,12 @@ sys.exit(64)
     self.assertNotIn('max_comparison_seconds', self.plan()[0]['settings'])
 
   def test_quick_mode_has_distinct_evidence_and_no_performance_baseline(self):
-    self.ok(self.bench('sha256', 'quick=false', BENCH_QUICK='true'))
+    self.ok(self.bench('sha256', 'quick=false', BENCH_QUICK='true', RSCRYPTO_BENCH_RUN_ID='regular'))
     regular = self.runs()[0]
     original = self.plan()[0]
     self.assertNotIn('quick', original['settings'])
-    self.ok(self.bench('--quick', 'sha256', 'measure_ms=10'))
-    quick = self.plan()[0]
+    self.ok(self.bench('--quick', 'sha256', 'measure_ms=10', RSCRYPTO_BENCH_RUN_ID='quick'))
+    quick = self.plan(self.root / 'benchmark_results/criterion/quick')[0]
     self.assertTrue(quick['settings']['quick'])
     self.assertNotIn('sample_size', quick['settings'])
     self.assertNotIn('warmup_ms', quick['settings'])
