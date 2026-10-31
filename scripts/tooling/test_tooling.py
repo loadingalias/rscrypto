@@ -21,6 +21,12 @@ import update
 
 
 class Tooling(unittest.TestCase):
+    def test_nextest_version_bump_requires_matching_archive(self):
+        data = catalog.read()
+        data['cargo']['cargo-nextest'] = '0.0.0'
+        with self.assertRaisesRegex(ValueError, 'cargo-nextest archive must match'):
+            catalog.validate(data)
+
     def test_windows_x64_requires_nasm(self):
         data = catalog.read()
         del data['x86_64-win']['assets']['nasm']

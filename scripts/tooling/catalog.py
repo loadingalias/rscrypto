@@ -179,6 +179,10 @@ def validate(data):
         # Every installer starts from the pinned uv archive, which provides Python.
         if f'/{data["versions"]["uv"]}/' not in assets.get('uv', {}).get('url', ''):
             raise ValueError(f'{platform}: the uv asset must be uv {data["versions"]["uv"]}')
+        nextest = assets.get('cargo-nextest')
+        pin = data['cargo']['cargo-nextest']
+        if nextest and f'/cargo-nextest-{pin}/cargo-nextest-{pin}-{config["rust-host"]}.' not in nextest['url']:
+            raise ValueError(f'{platform}: cargo-nextest archive must match pinned {pin}')
         if platform == 'x86_64-win' and 'nasm' not in assets:
             raise ValueError(f'{platform}: missing NASM for native dependency assembly')
         if platform == 'x86_64-win' and 'strawberry-perl' not in assets:

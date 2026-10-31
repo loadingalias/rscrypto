@@ -178,8 +178,8 @@ url = "https://github.com/casey/just/releases/download/1.59.0/just-1.59.0-x86_64
 sha256 = "409044617b6f06517c1035e55ca38c8c856ff8b650e41bc2aa1ef82d5903a23e"
 
 [x86_64-linux.assets.cargo-nextest]
-url = "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.149/cargo-nextest-0.9.149-x86_64-unknown-linux-gnu.tar.gz"
-sha256 = "32d1d8c0567b7a80bee2bad8bb09125c846da96bc009b2de11ec08557290c770"
+url = "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.150/cargo-nextest-0.9.150-x86_64-unknown-linux-gnu.tar.gz"
+sha256 = "b0959bc64232974224cf9fb22c915845398c0e8668fa7831eb5b43fb1eef781f"
 
 [x86_64-linux.assets.wasmtime]
 url = "https://github.com/bytecodealliance/wasmtime/releases/download/v50.0.0/wasmtime-v50.0.0-x86_64-linux.tar.xz"
