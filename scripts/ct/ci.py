@@ -69,10 +69,13 @@ def verdict(directory, platforms_run, riscv_result):
     """
     rows = []
     for platform in platforms_run:
-        archive = directory / f'ct-{platform}-full' / f'ct-{platform}-full.tar.gz'
-        if not archive.exists():
-            rows.append((platform, 'missing', 'no retained evidence'))
+        name = f'ct-{platform}-full.tar.gz'
+        archives = [path for path in (directory / f'ct-{platform}-full' / name, directory / name)
+                    if path.is_file()]
+        if len(archives) != 1:
+            rows.append((platform, 'missing', f'{len(archives)} retained archives; expected one'))
             continue
+        archive = archives[0]
         with tarfile.open(archive) as bundle:
             reports = [member for member in bundle.getmembers()
                        if member.name.endswith('/release/ct-report.json') and member.name.startswith('ct/')]

@@ -45,6 +45,25 @@ class Verdict(unittest.TestCase):
             # A report with findings completed its evidence, and still fails the verdict.
             self.assertEqual(ci.verdict(root, ['x86_64-linux', 'powerpc64le-linux'], ''), 1)
 
+    def test_single_flat_download_preserves_the_report_verdict(self):
+        for status, failures, expected in (('pass', 0, 0), ('fail', 2, 1)):
+            with self.subTest(status=status), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                name = 'ct-aarch64-linux-full.tar.gz'
+                self.archive(root, 'aarch64-linux',
+                             {'status': status, 'failure_count': failures, 'evidence_complete': True})
+                (root / 'ct-aarch64-linux-full' / name).rename(root / name)
+                self.assertEqual(ci.verdict(root, ['aarch64-linux'], ''), expected)
+
+    def test_duplicate_archive_locations_fail_the_verdict(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            name = 'ct-aarch64-linux-full.tar.gz'
+            self.archive(root, 'aarch64-linux',
+                         {'status': 'pass', 'failure_count': 0, 'evidence_complete': True})
+            (root / name).write_bytes((root / 'ct-aarch64-linux-full' / name).read_bytes())
+            self.assertEqual(ci.verdict(root, ['aarch64-linux'], ''), 1)
+
 
 class Selection(unittest.TestCase):
     def test_mldsa_suite_uses_the_required_inventory_on_all_three_native_targets(self):
