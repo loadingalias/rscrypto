@@ -238,6 +238,20 @@ impl Default for Sha512 {
   }
 }
 
+// Initialize this owner before borrowing keyed words into it. Finalization
+// never returns the working compression state by value.
+struct SecretFinalization {
+  state: [u64; 8],
+  block: [u8; BLOCK_LEN],
+}
+
+impl Drop for SecretFinalization {
+  fn drop(&mut self) {
+    crate::traits::ct::zeroize_words(&mut self.state);
+    crate::traits::ct::zeroize(&mut self.block);
+  }
+}
+
 impl Sha512 {
   #[inline]
   pub(crate) fn checked_total_len(bytes_hashed: u128, block_len: usize, incoming_len: usize) -> u128 {
@@ -375,34 +389,46 @@ impl Sha512 {
 
   #[inline(always)]
   pub(crate) fn finalize_state_words(
-    state: [u64; 8],
-    block: [u8; BLOCK_LEN],
-    block_len: usize,
-    total_len: u128,
-    compress_blocks: CompressBlocksFn,
-  ) -> [u64; 8] {
-    Self::finalize_state_words_impl::<false>(state, block, block_len, total_len, compress_blocks)
-  }
-
-  #[inline(always)]
-  pub(crate) fn finalize_state_words_secret(
-    state: [u64; 8],
-    block: [u8; BLOCK_LEN],
-    block_len: usize,
-    total_len: u128,
-    compress_blocks: CompressBlocksFn,
-  ) -> [u64; 8] {
-    Self::finalize_state_words_impl::<true>(state, block, block_len, total_len, compress_blocks)
-  }
-
-  #[inline(always)]
-  fn finalize_state_words_impl<const ZEROIZE_BLOCK: bool>(
     mut state: [u64; 8],
     mut block: [u8; BLOCK_LEN],
+    block_len: usize,
+    total_len: u128,
+    compress_blocks: CompressBlocksFn,
+  ) -> [u64; 8] {
+    Self::finalize_state_words_in_place(&mut state, &mut block, block_len, total_len, compress_blocks);
+    state
+  }
+
+  #[inline(always)]
+  pub(crate) fn finalize_state_words_secret<const N: usize>(
+    initial_state: &[u64; 8],
+    initial_block: &[u8; BLOCK_LEN],
+    block_len: usize,
+    total_len: u128,
+    compress_blocks: CompressBlocksFn,
+    output: &mut [u8; N],
+  ) {
+    const { assert!(N == 48 || N == 64) };
+    let mut work = SecretFinalization {
+      state: [0; 8],
+      block: [0; BLOCK_LEN],
+    };
+    work.state.copy_from_slice(initial_state);
+    work.block.copy_from_slice(initial_block);
+    Self::finalize_state_words_in_place(&mut work.state, &mut work.block, block_len, total_len, compress_blocks);
+    for (chunk, word) in output.as_chunks_mut::<8>().0.iter_mut().zip(work.state.iter()) {
+      chunk.copy_from_slice(&word.to_be_bytes());
+    }
+  }
+
+  #[inline(always)]
+  fn finalize_state_words_in_place(
+    state: &mut [u64; 8],
+    block: &mut [u8; BLOCK_LEN],
     mut block_len: usize,
     total_len: u128,
     compress_blocks: CompressBlocksFn,
-  ) -> [u64; 8] {
+  ) {
     let bit_len = total_len.strict_mul(8);
 
     block[block_len] = 0x80;
@@ -410,34 +436,33 @@ impl Sha512 {
 
     if block_len > 112 {
       block[block_len..].fill(0);
-      compress_blocks(&mut state, &block);
-      block = [0u8; BLOCK_LEN];
+      compress_blocks(state, block);
+      *block = [0u8; BLOCK_LEN];
       block_len = 0;
     }
 
     block[block_len..112].fill(0);
     block[112..128].copy_from_slice(&bit_len.to_be_bytes());
-    compress_blocks(&mut state, &block);
-
-    if ZEROIZE_BLOCK {
-      crate::traits::ct::zeroize(&mut block);
-    }
-    state
+    compress_blocks(state, block);
   }
 
   #[inline(always)]
   fn finalize_inner_with<const ZEROIZE: bool>(&self, compress_blocks: CompressBlocksFn) -> [u8; 64] {
     let total_len = self.bytes_hashed.strict_add(self.block_len as u128);
-    let mut state = if ZEROIZE {
-      Self::finalize_state_words_secret(self.state, self.block, self.block_len, total_len, compress_blocks)
-    } else {
-      Self::finalize_state_words(self.state, self.block, self.block_len, total_len, compress_blocks)
-    };
-    let digest = Self::state_to_digest(&state);
     if ZEROIZE {
-      crate::traits::ct::zeroize_words(&mut state);
+      let mut output = [0u8; 64];
+      Self::finalize_state_words_secret(
+        &self.state,
+        &self.block,
+        self.block_len,
+        total_len,
+        compress_blocks,
+        &mut output,
+      );
+      return output;
     }
-    digest
+    let state = Self::finalize_state_words(self.state, self.block, self.block_len, total_len, compress_blocks);
+    Self::state_to_digest(&state)
   }
 
   #[inline]
@@ -469,23 +494,9 @@ impl Sha512 {
   }
 
   #[inline]
-  #[must_use]
   #[cfg(feature = "hmac")]
-  pub(crate) fn from_aligned_prefix(prefix: Sha512Prefix) -> Self {
-    Self {
-      state: prefix.state,
-      block: [0u8; BLOCK_LEN],
-      block_len: 0,
-      bytes_hashed: prefix.bytes_hashed,
-      compress_blocks: prefix.compress_blocks,
-      dispatch_initialized: prefix.dispatch_initialized,
-    }
-  }
-
-  #[inline]
-  #[cfg(feature = "hmac")]
-  pub(crate) fn reset_to_aligned_prefix(&mut self, prefix: Sha512Prefix) {
-    self.state = prefix.state;
+  pub(crate) fn reset_to_aligned_prefix(&mut self, prefix: &Sha512Prefix) {
+    self.state.copy_from_slice(&prefix.state);
     self.block_len = 0;
     self.bytes_hashed = prefix.bytes_hashed;
     self.compress_blocks = prefix.compress_blocks;

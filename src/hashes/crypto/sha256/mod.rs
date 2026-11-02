@@ -590,6 +590,17 @@ impl Sha256 {
     self.finalize_inner_with::<true>(self.compress_blocks)
   }
 
+  #[cfg(feature = "hmac")]
+  #[cfg_attr(feature = "diag", inline(never))]
+  #[cfg_attr(not(feature = "diag"), inline)]
+  pub(crate) fn finalize_secret_into(&self, output: &mut [u8; 32]) {
+    if kernels::COMPILE_TIME_HW {
+      self.finalize_inner_into::<true>(kernels::compile_time_best(), output);
+    } else {
+      self.finalize_inner_into::<true>(self.compress_blocks, output);
+    }
+  }
+
   #[inline(always)]
   fn compress_block(state: &mut [u32; 8], block: &[u8; BLOCK_LEN]) {
     compress_block_with(state, block, big_sigma0, big_sigma1, small_sigma0, small_sigma1);
@@ -597,6 +608,13 @@ impl Sha256 {
 
   #[inline]
   fn finalize_inner_with<const ZEROIZE: bool>(&self, compress_blocks: CompressBlocksFn) -> [u8; 32] {
+    let mut output = [0u8; 32];
+    self.finalize_inner_into::<ZEROIZE>(compress_blocks, &mut output);
+    output
+  }
+
+  #[inline]
+  fn finalize_inner_into<const ZEROIZE: bool>(&self, compress_blocks: CompressBlocksFn, output: &mut [u8; 32]) {
     let mut state = self.state;
     let mut block = self.block;
     let mut block_len = self.block_len;
@@ -618,8 +636,7 @@ impl Sha256 {
     block[56..64].copy_from_slice(&bit_len.to_be_bytes());
     compress_blocks(&mut state, &block);
 
-    let mut out = [0u8; 32];
-    for (chunk, &word) in out.as_chunks_mut::<4>().0.iter_mut().zip(state.iter()) {
+    for (chunk, &word) in output.as_chunks_mut::<4>().0.iter_mut().zip(state.iter()) {
       chunk.copy_from_slice(&word.to_be_bytes());
     }
     if ZEROIZE {
@@ -627,7 +644,6 @@ impl Sha256 {
       crate::traits::ct::zeroize_no_fence(&mut block);
       core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
     }
-    out
   }
 
   #[inline]
@@ -646,25 +662,9 @@ impl Sha256 {
   }
 
   #[inline]
-  #[must_use]
   #[cfg(feature = "hmac")]
-  pub(crate) fn from_aligned_prefix(prefix: Sha256Prefix) -> Self {
-    Self {
-      state: prefix.state,
-      block: [0u8; BLOCK_LEN],
-      block_len: 0,
-      bytes_hashed: prefix.bytes_hashed,
-      compress_blocks: prefix.compress_blocks,
-      dispatch_initialized: prefix.dispatch_initialized,
-      #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
-      update_mode: prefix.update_mode,
-    }
-  }
-
-  #[inline]
-  #[cfg(feature = "hmac")]
-  pub(crate) fn reset_to_aligned_prefix(&mut self, prefix: Sha256Prefix) {
-    self.state = prefix.state;
+  pub(crate) fn reset_to_aligned_prefix(&mut self, prefix: &Sha256Prefix) {
+    self.state.copy_from_slice(&prefix.state);
     self.block_len = 0;
     self.bytes_hashed = prefix.bytes_hashed;
     self.compress_blocks = prefix.compress_blocks;
@@ -692,13 +692,13 @@ impl Sha256 {
 
   #[inline]
   #[cfg(all(feature = "hmac", all(target_arch = "x86_64", target_feature = "sse2")))]
-  fn reset_update_mode_to_aligned_prefix(&mut self, prefix: Sha256Prefix) {
+  fn reset_update_mode_to_aligned_prefix(&mut self, prefix: &Sha256Prefix) {
     self.update_mode = prefix.update_mode;
   }
 
   #[inline]
   #[cfg(all(feature = "hmac", not(all(target_arch = "x86_64", target_feature = "sse2"))))]
-  fn reset_update_mode_to_aligned_prefix(&mut self, _prefix: Sha256Prefix) {}
+  fn reset_update_mode_to_aligned_prefix(&mut self, _prefix: &Sha256Prefix) {}
 
   #[cfg(all(
     feature = "hmac",

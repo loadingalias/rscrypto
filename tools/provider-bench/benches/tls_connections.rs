@@ -8,15 +8,27 @@ extern crate alloc;
   reason = "rows build their fixtures lazily, so they register custom routines"
 )]
 mod bench_config;
+mod key_schedule;
 
 use bench_config::checked_routine;
 use core::hint::black_box;
 use criterion::{Criterion, Throughput};
 use rscrypto_provider_bench::{
-  BACKENDS, CREDENTIALS, Fixture, GROUPS, Profile, RSA_CREDENTIALS, SUITES, Workload, supports,
+  BACKENDS, CREDENTIALS, Fixture, GROUPS, Profile, RSA_CREDENTIALS, SUITES, TLS12_CREDENTIALS, TLS12_GROUPS, Workload,
+  supports,
 };
 
-fn connection(c: &mut Criterion, name: &str, profile: Profile<'_>, workload: Workload) {
+use rustls::enums::ProtocolVersion;
+
+fn make_fixture(backend: &str, profile: Profile<'_>, workload: Workload, version: ProtocolVersion) -> Fixture {
+  if version == ProtocolVersion::TLSv1_2 {
+    Fixture::tls12(backend, profile)
+  } else {
+    Fixture::with_workload(backend, profile, workload)
+  }
+}
+
+fn connection(c: &mut Criterion, name: &str, profile: Profile<'_>, workload: Workload, version: ProtocolVersion) {
   if !bench_config::selected(name) {
     return;
   }
@@ -35,7 +47,7 @@ fn connection(c: &mut Criterion, name: &str, profile: Profile<'_>, workload: Wor
       checked_routine(
         None,
         |fixture| {
-          let checked = Fixture::with_workload(backend, profile, workload);
+          let checked = make_fixture(backend, profile, workload, version);
           drop(checked.checked_connect());
           *fixture = Some(checked);
         },
@@ -50,22 +62,38 @@ fn connection(c: &mut Criterion, name: &str, profile: Profile<'_>, workload: Wor
 }
 
 fn connections(c: &mut Criterion) {
-  for credential in CREDENTIALS {
-    for group in GROUPS {
-      for suite in SUITES {
-        for resumed in [false, true] {
-          let mode = if resumed { "resumed" } else { "full" };
-          connection(
-            c,
-            &format!("tls13/handshake/{credential}/{group}/{suite}/{mode}"),
-            Profile {
-              credential,
-              group,
-              suite,
-              resumed,
-            },
-            Workload::Mutual,
-          );
+  for (label, version, credentials, groups) in [
+    (
+      "tls12",
+      ProtocolVersion::TLSv1_2,
+      TLS12_CREDENTIALS.as_slice(),
+      TLS12_GROUPS.as_slice(),
+    ),
+    (
+      "tls13",
+      ProtocolVersion::TLSv1_3,
+      CREDENTIALS.as_slice(),
+      GROUPS.as_slice(),
+    ),
+  ] {
+    for &credential in credentials {
+      for &group in groups {
+        for suite in SUITES {
+          for resumed in [false, true] {
+            let mode = if resumed { "resumed" } else { "full" };
+            connection(
+              c,
+              &format!("{label}/handshake/{credential}/{group}/{suite}/{mode}"),
+              Profile {
+                credential,
+                group,
+                suite,
+                resumed,
+              },
+              Workload::Mutual,
+              version,
+            );
+          }
         }
       }
     }
@@ -89,6 +117,7 @@ fn expanded(c: &mut Criterion) {
           resumed: false,
         },
         workload,
+        ProtocolVersion::TLSv1_3,
       );
     }
   }
@@ -105,6 +134,7 @@ fn expanded(c: &mut Criterion) {
           resumed: true,
         },
         Workload::Stateful,
+        ProtocolVersion::TLSv1_3,
       );
     }
   }
@@ -120,6 +150,7 @@ fn expanded(c: &mut Criterion) {
           resumed: false,
         },
         Workload::Mutual,
+        ProtocolVersion::TLSv1_3,
       );
     }
   }
@@ -133,6 +164,7 @@ fn expanded(c: &mut Criterion) {
       resumed: false,
     },
     Workload::HelloRetryRequest,
+    ProtocolVersion::TLSv1_3,
   );
   connection(
     c,
@@ -144,88 +176,95 @@ fn expanded(c: &mut Criterion) {
       resumed: false,
     },
     Workload::CompactKey,
+    ProtocolVersion::TLSv1_3,
   );
 }
 
 fn traffic(c: &mut Criterion) {
-  for suite in SUITES {
-    // Small writes expose per-record overhead; 64 KiB and 1 MiB amortize it over
-    // multiple maximum-size records. Sizes are per direction for duplex rows.
-    for size in [64usize, 256, 1024, 16_384, 65_536, 1_048_576] {
-      for bidirectional in [false, true] {
-        let family = if bidirectional {
-          "traffic-bidirectional"
-        } else {
-          "traffic"
-        };
-        let name = format!("tls13/{family}/{suite}/{size}");
-        if !bench_config::selected(&name) {
-          continue;
-        }
-        let mut measured = c.benchmark_group(&name);
-        let total = size.strict_mul(if bidirectional { 2 } else { 1 });
-        measured.throughput(Throughput::Bytes(u64::try_from(total).expect("transfer size")));
-        for backend in BACKENDS {
-          if !bench_config::selected(&format!("{name}/{backend}")) {
+  for (label, version) in [("tls12", ProtocolVersion::TLSv1_2), ("tls13", ProtocolVersion::TLSv1_3)] {
+    for suite in SUITES {
+      // Small writes expose per-record overhead; 64 KiB and 1 MiB amortize it over
+      // multiple maximum-size records. Sizes are per direction for duplex rows.
+      for size in [64usize, 256, 1024, 16_384, 65_536, 1_048_576] {
+        for bidirectional in [false, true] {
+          let family = if bidirectional {
+            "traffic-bidirectional"
+          } else {
+            "traffic"
+          };
+          let name = format!("{label}/{family}/{suite}/{size}");
+          if !bench_config::selected(&name) {
             continue;
           }
-          let transfer =
-            |pair: &mut rscrypto_provider_bench::Pair, client_bytes: &[u8], server_bytes: &[u8], output: &mut [u8]| {
+          let mut measured = c.benchmark_group(&name);
+          let total = size.strict_mul(if bidirectional { 2 } else { 1 });
+          measured.throughput(Throughput::Bytes(u64::try_from(total).expect("transfer size")));
+          for backend in BACKENDS {
+            if !bench_config::selected(&format!("{name}/{backend}")) {
+              continue;
+            }
+            let transfer = |pair: &mut rscrypto_provider_bench::Pair,
+                            client_bytes: &[u8],
+                            server_bytes: &[u8],
+                            output: &mut [u8]| {
               if bidirectional {
                 pair.transfer_both(black_box(client_bytes), black_box(server_bytes), black_box(output));
               } else {
                 pair.transfer(black_box(client_bytes), black_box(output));
               }
             };
-          measured.bench_function(
-            backend,
-            checked_routine(
-              (vec![0x42; size], vec![0xa7; size], vec![0; total], None),
-              |(client_bytes, server_bytes, output, connection)| {
-                let fixture = Fixture::new(
-                  backend,
-                  Profile {
-                    credential: "p256",
-                    group: "X25519",
-                    suite,
-                    resumed: false,
-                  },
-                );
-                let mut pair = fixture.checked_connect();
-                // Change both directions between calls so replayed plaintext cannot pass.
-                for (client_fill, server_fill) in [(0x42, 0xa7), (0x53, 0xb8)] {
-                  client_bytes.fill(client_fill);
-                  server_bytes.fill(server_fill);
-                  output.fill(0);
-                  transfer(&mut pair, client_bytes, server_bytes, output);
-                  assert_eq!(
-                    client_bytes.as_slice(),
-                    &output[..size],
-                    "authenticated client-to-server transfer"
+            measured.bench_function(
+              backend,
+              checked_routine(
+                (vec![0x42; size], vec![0xa7; size], vec![0; total], None),
+                |(client_bytes, server_bytes, output, connection)| {
+                  let fixture = make_fixture(
+                    backend,
+                    Profile {
+                      credential: "p256",
+                      group: "X25519",
+                      suite,
+                      resumed: false,
+                    },
+                    Workload::Mutual,
+                    version,
                   );
-                  if bidirectional {
+                  let mut pair = fixture.checked_connect();
+                  // Change both directions between calls so replayed plaintext cannot pass.
+                  for (client_fill, server_fill) in [(0x42, 0xa7), (0x53, 0xb8)] {
+                    client_bytes.fill(client_fill);
+                    server_bytes.fill(server_fill);
+                    output.fill(0);
+                    transfer(&mut pair, client_bytes, server_bytes, output);
                     assert_eq!(
-                      server_bytes.as_slice(),
-                      &output[size..],
-                      "authenticated server-to-client transfer"
+                      client_bytes.as_slice(),
+                      &output[..size],
+                      "authenticated client-to-server transfer"
                     );
+                    if bidirectional {
+                      assert_eq!(
+                        server_bytes.as_slice(),
+                        &output[size..],
+                        "authenticated server-to-client transfer"
+                      );
+                    }
                   }
-                }
-                client_bytes.fill(0x42);
-                server_bytes.fill(0xa7);
-                *connection = Some((fixture, pair));
-              },
-              |b, (client_bytes, server_bytes, output, connection)| {
-                let (_fixture, pair) = connection.as_mut().expect("the check opens the connection");
-                b.iter(|| {
-                  transfer(pair, client_bytes, server_bytes, output);
-                  black_box(&*output);
-                });
-              },
-            ),
-          );
+                  client_bytes.fill(0x42);
+                  server_bytes.fill(0xa7);
+                  *connection = Some((fixture, pair));
+                },
+                |b, (client_bytes, server_bytes, output, connection)| {
+                  let (_fixture, pair) = connection.as_mut().expect("the check opens the connection");
+                  b.iter(|| {
+                    transfer(pair, client_bytes, server_bytes, output);
+                    black_box(&*output);
+                  });
+                },
+              ),
+            );
+          }
+          measured.finish();
         }
-        measured.finish();
       }
     }
   }
@@ -661,5 +700,13 @@ fn main() {
       serde_json::json!({"provider_bench_provenance": rscrypto_provider_bench::provenance()})
     );
   }
-  bench_config::run(&[connections, expanded, traffic, server_verifiers, record_gather, records]);
+  bench_config::run(&[
+    connections,
+    expanded,
+    traffic,
+    key_schedule::key_schedule,
+    server_verifiers,
+    record_gather,
+    records,
+  ]);
 }

@@ -32,6 +32,57 @@ impl Drop for ConstructionStackScrub {
   }
 }
 
+// Record workers allocate before reading key bytes and borrow their final
+// owner. Keep their bounded scrub separate from the existing QUIC boundary.
+#[cfg(all(target_arch = "aarch64", target_os = "linux", target_env = "gnu"))]
+struct RecordConstructionStackScrub;
+
+#[cfg(all(target_arch = "aarch64", target_os = "linux", target_env = "gnu"))]
+impl Drop for RecordConstructionStackScrub {
+  fn drop(&mut self) {
+    #[cfg(not(debug_assertions))]
+    scrub_record_construction_stack();
+    #[cfg(debug_assertions)]
+    scrub_construction_stack();
+  }
+}
+
+#[cfg(all(
+  target_arch = "aarch64",
+  target_os = "linux",
+  target_env = "gnu",
+  not(debug_assertions)
+))]
+#[inline(never)]
+fn scrub_record_construction_stack() {
+  #[repr(align(16))]
+  struct ScrubBlock([u8; 64]);
+  // Includes margin beyond the reviewed optimized record-worker call chain.
+  // Debug builds retain the full construction scrub.
+  const SCRUB_BYTES: usize = (12 * 1024usize).strict_add(64);
+  let mut scratch = [const { ScrubBlock([0u8; 64]) }; SCRUB_BYTES / 64];
+  for block in &mut scratch {
+    rscrypto::traits::ct::zeroize(&mut block.0);
+  }
+  core::hint::black_box(&mut scratch);
+}
+
+#[cfg(all(target_arch = "aarch64", target_os = "linux", target_env = "gnu"))]
+#[inline(never)]
+fn scrub_construction_stack() {
+  #[repr(align(16))]
+  struct ScrubBlock([u8; 64]);
+  // Preserve the reviewed dead-stack window when the leaf saves fewer registers.
+  const SCRUB_BYTES: usize = CONSTRUCTION_SCRUB_BYTES.strict_add(64);
+  const { assert!(SCRUB_BYTES.is_multiple_of(64)) };
+  let mut scratch = [const { ScrubBlock([0u8; 64]) }; SCRUB_BYTES / 64];
+  for block in &mut scratch {
+    rscrypto::traits::ct::zeroize(&mut block.0);
+  }
+  core::hint::black_box(&mut scratch);
+}
+
+#[cfg(not(all(target_arch = "aarch64", target_os = "linux", target_env = "gnu")))]
 #[inline(never)]
 fn scrub_construction_stack() {
   let mut scratch = [0u8; CONSTRUCTION_SCRUB_BYTES];
@@ -93,11 +144,13 @@ impl Algorithm {
 
 impl Tls13AeadAlgorithm for Algorithm {
   fn encrypter(&self, key: AeadKey, iv: Iv) -> Box<dyn RecordEncrypter> {
+    #[cfg(not(all(target_arch = "aarch64", target_os = "linux", target_env = "gnu")))]
     let _scrub = ConstructionStackScrub;
     RecordKey::boxed(*self, key.as_ref(), iv)
   }
 
   fn decrypter(&self, key: AeadKey, iv: Iv) -> Box<dyn RecordDecrypter> {
+    #[cfg(not(all(target_arch = "aarch64", target_os = "linux", target_env = "gnu")))]
     let _scrub = ConstructionStackScrub;
     RecordKey::boxed(*self, key.as_ref(), iv)
   }
@@ -157,6 +210,7 @@ impl Tls12 {
 
 impl Tls12AeadAlgorithm for Tls12 {
   fn encrypter(&self, key: AeadKey, iv: &[u8], extra: &[u8]) -> Box<dyn RecordEncrypter> {
+    #[cfg(not(all(target_arch = "aarch64", target_os = "linux", target_env = "gnu")))]
     let _scrub = ConstructionStackScrub;
     // RFC 5288 §3 leaves the explicit part to the sender but requires it to be
     // unique per key. As in rustls's other providers, it is the key block's
@@ -165,6 +219,7 @@ impl Tls12AeadAlgorithm for Tls12 {
   }
 
   fn decrypter(&self, key: AeadKey, iv: &[u8]) -> Box<dyn RecordDecrypter> {
+    #[cfg(not(all(target_arch = "aarch64", target_os = "linux", target_env = "gnu")))]
     let _scrub = ConstructionStackScrub;
     // An AES-GCM decrypter takes each record's explicit part from the wire.
     let explicit = [0; NONCE_LEN];
@@ -287,6 +342,23 @@ impl Cipher {
   }
 }
 
+// Keep allocation and capability detection outside the operation-key worker.
+#[cfg(all(target_arch = "aarch64", target_os = "linux", target_env = "gnu"))]
+fn prepare_record_construction(algorithm: Algorithm, key_len: usize) {
+  #[cfg(feature = "aes-gcm")]
+  if matches!(algorithm, Algorithm::Aes128 | Algorithm::Aes256) && key_len == algorithm.key_len() {
+    let _caps = rscrypto::platform::caps();
+  }
+  #[cfg(not(feature = "aes-gcm"))]
+  let _ = (algorithm, key_len);
+}
+
+#[cfg(all(target_arch = "aarch64", target_os = "linux", target_env = "gnu"))]
+#[inline(never)]
+fn initialize_record_cipher(destination: &mut Cipher, algorithm: Algorithm, key: &[u8]) {
+  *destination = algorithm.cipher(key);
+}
+
 struct RecordKey {
   cipher: Cipher,
   iv: Iv,
@@ -295,10 +367,26 @@ struct RecordKey {
 impl RecordKey {
   #[inline(never)]
   fn boxed(algorithm: Algorithm, key: &[u8], iv: Iv) -> Box<Self> {
-    Box::new(Self {
-      cipher: algorithm.cipher(key),
-      iv,
-    })
+    #[cfg(all(target_arch = "aarch64", target_os = "linux", target_env = "gnu"))]
+    {
+      prepare_record_construction(algorithm, key.len());
+      let mut owned = Box::new(Self {
+        cipher: Cipher::InvalidKeyMaterial,
+        iv,
+      });
+      // Declare after the owner: on unwind, clear worker frames before its
+      // heap allocation is released. The worker borrows initialized storage.
+      let _scrub = RecordConstructionStackScrub;
+      initialize_record_cipher(&mut owned.cipher, algorithm, key);
+      owned
+    }
+    #[cfg(not(all(target_arch = "aarch64", target_os = "linux", target_env = "gnu")))]
+    {
+      Box::new(Self {
+        cipher: algorithm.cipher(key),
+        iv,
+      })
+    }
   }
 }
 
@@ -367,11 +455,30 @@ struct Tls12RecordKey {
 impl Tls12RecordKey {
   #[inline(never)]
   fn boxed(algorithm: Tls12, key: &[u8], nonce: Option<[u8; NONCE_LEN]>) -> Box<Self> {
-    Box::new(Self {
-      cipher: nonce.map_or(Cipher::InvalidKeyMaterial, |_| algorithm.0.cipher(key)),
-      nonce: nonce.unwrap_or_default(),
-      explicit_nonce_len: algorithm.explicit_nonce_len(),
-    })
+    #[cfg(all(target_arch = "aarch64", target_os = "linux", target_env = "gnu"))]
+    {
+      if nonce.is_some() {
+        prepare_record_construction(algorithm.0, key.len());
+      }
+      let mut owned = Box::new(Self {
+        cipher: Cipher::InvalidKeyMaterial,
+        nonce: nonce.unwrap_or_default(),
+        explicit_nonce_len: algorithm.explicit_nonce_len(),
+      });
+      let _scrub = RecordConstructionStackScrub;
+      if nonce.is_some() {
+        initialize_record_cipher(&mut owned.cipher, algorithm.0, key);
+      }
+      owned
+    }
+    #[cfg(not(all(target_arch = "aarch64", target_os = "linux", target_env = "gnu")))]
+    {
+      Box::new(Self {
+        cipher: nonce.map_or(Cipher::InvalidKeyMaterial, |_| algorithm.0.cipher(key)),
+        nonce: nonce.unwrap_or_default(),
+        explicit_nonce_len: algorithm.explicit_nonce_len(),
+      })
+    }
   }
 
   /// The nonce base with the big-endian sequence number XORed into its last

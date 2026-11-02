@@ -48,6 +48,24 @@ def main() -> None:
       f"catalog-only={sorted(catalog_binaries - set(cargo_benches))}"
     )
 
+  # TLS 1.2 selectors keep each complete comparison together and cannot merge
+  # the session-ID workload into TLS 1.3's ticket-resumption comparison.
+  tls12 = {name: re.compile(row['filter']) for name, row in catalog['algorithms'].items()
+           if name.startswith('tls12-')}
+  for credential in ('p256', 'p384', 'ed25519', 'rsa2048', 'rsa3072'):
+    for group in ('X25519', 'secp256r1', 'secp384r1'):
+      for suite in ('AES128-GCM-SHA256', 'AES256-GCM-SHA384', 'CHACHA20-POLY1305-SHA256'):
+        for mode in ('full', 'resumed'):
+          for backend in ('rscrypto', 'rscrypto-webpki', 'aws-lc-rs', 'ring', 'openssl'):
+            case = f'tls12/handshake/{credential}/{group}/{suite}/{mode}/{backend}'
+            owners = [name for name, pattern in tls12.items() if pattern.search(case)]
+            if owners != ['tls12-handshake-' + credential]:
+              fail(f'TLS 1.2 comparison partition changed: {case} belongs to {owners}')
+            comparisons = [name for name, row in catalog['comparisons'].items()
+                           if row['bench'] == 'tls_connections' and re.fullmatch(row['cases'], case)]
+            if comparisons != ['tls12-handshakes']:
+              fail(f'TLS 1.2 handshake comparison changed: {case} belongs to {comparisons}')
+
   for name, bench in catalog["benches"].items():
     required = set(cargo_benches[(bench.get('manifest', 'Cargo.toml'), bench["binary"])].get("required-features", []))
     selected = set(bench["features"])

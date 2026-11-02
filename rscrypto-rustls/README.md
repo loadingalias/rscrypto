@@ -29,7 +29,7 @@ quinn-proto revision makes its browser-WASM `ring` dependency optional
 | --- | --- | --- |
 | Transcript hash | `Sha256`, `Sha384` | [hash](src/hash.rs) |
 | HMAC | `HmacSha256`, `HmacSha384`; each call creates a keyed state | [hash](src/hash.rs) |
-| TLS 1.2 PRF | rustls's `PrfUsingHmac` over this crate's HMAC | [hash](src/hash.rs) |
+| TLS 1.2 PRF | RFC 5246 P_hash with a local HMAC state | [hash](src/hash.rs) |
 | HKDF extract and expand | `HkdfSha256`, `HkdfSha384`; imported PRKs and multi-part info | [hash](src/hash.rs) |
 | TLS 1.3 and TLS 1.2 records, QUIC packets | `Aes128Gcm`, `Aes256Gcm`, `ChaCha20Poly1305` | [aead](src/aead.rs) |
 | QUIC header protection | `Aes128HeaderProtection`, `Aes256HeaderProtection`, `ChaCha20HeaderProtection` | [quic](src/quic.rs) |
@@ -248,6 +248,10 @@ v1.5-only peers, the downgrade marker, and a stripped extended-master-secret req
 or acknowledgement in either role with or without `require_ems`. Record tests compare
 every byte with both peers' TLS 1.2 record layers. `just test-provider-interop
 --protocol tls12` runs the suites against the pinned Go and OpenSSL peers.
+
+`just test-provider-bogo` runs the pinned runner's declared TLS 1.2/1.3 profile, including independent EMS refusal cases.
+The shim opts into TLS 1.2; provider constructors retain their TLS 1.3 defaults.
+See the [campaign scope](../scripts/README.md#test-entry-points) for exclusions and diagnostic runs.
 
 ## QUIC v1
 

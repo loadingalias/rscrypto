@@ -29,6 +29,36 @@ index 48382e4..a87ca22 100644
  		DNSNames:   []string{"public.example"},
  	}).ToCredential()
  	echLongNameCertificate := rootCA.Issue(X509Info{
+diff --git a/ssl/test/runner/ems_tests.go b/ssl/test/runner/ems_tests.go
+index 16ce0b6..d2197b0 100644
+--- a/ssl/test/runner/ems_tests.go
++++ b/ssl/test/runner/ems_tests.go
+@@ -39,7 +39,7 @@ func addExtendedMasterSecretTests() {
+ 					flags = []string{expectEMSFlag}
+ 				}
+ 
+-				testCases = append(testCases, testCase{
++				test := testCase{
+ 					testType: testType,
+ 					name:     prefix + "ExtendedMasterSecret-" + ver.name + suffix,
+ 					config: Config{
+@@ -51,7 +51,15 @@ func addExtendedMasterSecretTests() {
+ 						},
+ 					},
+ 					flags: flags,
+-				})
++				}
++				// This profile requires EMS by construction, including when the
++				// shim's optional require-ems configuration remains at its default.
++				if *requireEMSProfile && !with && ver.version == VersionTLS12 {
++					test.shouldFail = true
++					test.expectedError = ":INCOMPATIBLE:"
++					test.expectedLocalError = "remote error: handshake failure"
++				}
++				testCases = append(testCases, test)
+ 			}
+ 		}
+ 	}
 diff --git a/ssl/test/runner/handshake_server.go b/ssl/test/runner/handshake_server.go
 index ad4c174..2303132 100644
 --- a/ssl/test/runner/handshake_server.go
@@ -65,19 +95,20 @@ index c955506..ee5ad23 100644
  		KeyUsage:   x509.KeyUsageKeyEncipherment,
  	}).ToCredential()
 diff --git a/ssl/test/runner/runner.go b/ssl/test/runner/runner.go
-index f026a10..c4715ed 100644
+index f026a10..f700f1b 100644
 --- a/ssl/test/runner/runner.go
 +++ b/ssl/test/runner/runner.go
-@@ -51,6 +51,8 @@ import (
+@@ -51,6 +51,9 @@ import (
  )
  
  var (
++	requireEMSProfile  = flag.Bool("require-ems-profile", false, "Expect TLS 1.2 peers without EMS to be rejected")
 +	profileOutput      = flag.String("profile-output", "", "Write declared test protocol/version metadata as JSON and exit")
 +	rsaKeyFile         = flag.String("rsa-key-file", "", "Optional PEM RSA fixture (at least 2048 bits); default uses the embedded 2048-bit key")
  	useValgrind        = flag.Bool("valgrind", false, "If true, run code under valgrind")
  	useGDB             = flag.Bool("gdb", false, "If true, run BoringSSL code under gdb")
  	useLLDB            = flag.Bool("lldb", false, "If true, run BoringSSL code under lldb")
-@@ -141,7 +143,7 @@ var channelIDKeyPEM []byte
+@@ -141,7 +144,7 @@ var channelIDKeyPEM []byte
  
  var (
  	rsa1024Key rsa.PrivateKey
@@ -86,7 +117,7 @@ index f026a10..c4715ed 100644
  
  	ecdsaP256Key ecdsa.PrivateKey
  	ecdsaP384Key ecdsa.PrivateKey
-@@ -159,6 +161,14 @@ var (
+@@ -159,6 +162,14 @@ var (
  var channelIDKeyPath string
  
  func initKeys() {
@@ -101,7 +132,7 @@ index f026a10..c4715ed 100644
  	// Since RSA key generation is not particularly cheap, and the runner is
  	// intended to run on systems which may be resource constrained, we load
  	// keys from disk instead of dynamically generating them. We treat key
-@@ -170,7 +180,7 @@ func initKeys() {
+@@ -170,7 +181,7 @@ func initKeys() {
  		key      *rsa.PrivateKey
  	}{
  		{rsa1024KeyPEM, &rsa1024Key},
@@ -110,7 +141,7 @@ index f026a10..c4715ed 100644
  	} {
  		key, err := loadPEMKey(k.pemBytes)
  		if err != nil {
-@@ -179,6 +189,10 @@ func initKeys() {
+@@ -179,6 +190,10 @@ func initKeys() {
  		*k.key = *(key.(*rsa.PrivateKey))
  	}
  
@@ -121,7 +152,7 @@ index f026a10..c4715ed 100644
  	for _, k := range []struct {
  		pemBytes []byte
  		key      *ecdsa.PrivateKey
-@@ -257,7 +271,7 @@ func initCertificates() {
+@@ -257,7 +272,7 @@ func initCertificates() {
  		out  *Credential
  	}{
  		{"RSA-1024", &rsa1024Key, &rsa1024Certificate},
@@ -130,7 +161,7 @@ index f026a10..c4715ed 100644
  		{"ECDSA P-256", &ecdsaP256Key, &ecdsaP256Certificate},
  		{"ECDSA P-384", &ecdsaP384Key, &ecdsaP384Certificate},
  		{"ECDSA P-521", &ecdsaP521Key, &ecdsaP521Certificate},
-@@ -288,7 +302,7 @@ func initCertificates() {
+@@ -288,7 +303,7 @@ func initCertificates() {
  
  	// Make a default root CA for other test certificates.
  	rootCA = NewX509Root(X509Info{
@@ -139,7 +170,7 @@ index f026a10..c4715ed 100644
  		Name:         pkix.Name{CommonName: "Test Root"},
  		IsCA:         true,
  		SubjectKeyID: []byte("root"),
-@@ -296,12 +310,12 @@ func initCertificates() {
+@@ -296,12 +311,12 @@ func initCertificates() {
  
  	// Build a basic three cert chain for testing chain-specific things.
  	rsaChainCertificate = rootCA.Issue(X509Info{
@@ -154,7 +185,7 @@ index f026a10..c4715ed 100644
  		DNSNames:   []string{"test"},
  	}).ToCredential()
  
-@@ -310,7 +324,7 @@ func initCertificates() {
+@@ -310,7 +325,7 @@ func initCertificates() {
  	// the certificate uses id-RSASSA-PSS. We do not support id-RSASSA-PSS with
  	// TLS, so this test only exists to ensure BoringSSL does not accept it.
  	pssCertificate = rootCA.Issue(X509Info{
@@ -163,7 +194,7 @@ index f026a10..c4715ed 100644
  		DNSNames:           []string{"test"},
  		EncodeSPKIAsRSAPSS: true,
  	}).ToCredential()
-@@ -345,7 +359,7 @@ func initRawPublicKeyCredentials() {
+@@ -345,7 +360,7 @@ func initRawPublicKeyCredentials() {
  	}{
  		{&ecdsaP256Key, &rpkEcdsaP256},
  		{&ecdsaP384Key, &rpkEcdsaP384},
@@ -172,29 +203,38 @@ index f026a10..c4715ed 100644
  	} {
  		var publicKey crypto.PublicKey
  		switch def.key.(type) {
-@@ -2419,6 +2433,41 @@ func main() {
+@@ -2419,6 +2434,50 @@ func main() {
  	}
  	testCases = append(testCases, toAppend...)
  
 +	if *profileOutput != "" {
 +		type profile struct {
-+			Name                  string
-+			Protocol              string
-+			MinVersion            uint16
-+			MaxVersion            uint16
-+			ExpectedVersion       uint16
-+			ResumeMinVersion      uint16
-+			ResumeMaxVersion      uint16
-+			ResumeExpectedVersion uint16
++			Name                         string
++			Protocol                     string
++			MinVersion                   uint16
++			MaxVersion                   uint16
++			ExpectedVersion              uint16
++			ResumeMinVersion             uint16
++			ResumeMaxVersion             uint16
++			ResumeExpectedVersion        uint16
++			ShouldFail                   bool
++			ResumeSession                bool
++			NoExtendedMasterSecret       bool
++			ResumeNoExtendedMasterSecret bool
 +		}
 +		profiles := make([]profile, 0, len(testCases))
 +		for _, test := range testCases {
 +			entry := profile{Name: test.name, Protocol: test.protocol.String(),
 +				MinVersion: test.config.minVersion(), MaxVersion: test.config.maxVersion(),
-+				ExpectedVersion: test.expectations.version}
++				ExpectedVersion:              test.expectations.version,
++				ShouldFail:                   test.shouldFail,
++				ResumeSession:                test.resumeSession || test.resumeRenewedSession,
++				NoExtendedMasterSecret:       test.config.Bugs.NoExtendedMasterSecret,
++				ResumeNoExtendedMasterSecret: test.config.Bugs.NoExtendedMasterSecret}
 +			if test.resumeConfig != nil {
 +				entry.ResumeMinVersion = test.resumeConfig.minVersion()
 +				entry.ResumeMaxVersion = test.resumeConfig.maxVersion()
++				entry.ResumeNoExtendedMasterSecret = test.resumeConfig.Bugs.NoExtendedMasterSecret
 +			}
 +			if test.resumeExpectations != nil {
 +				entry.ResumeExpectedVersion = test.resumeExpectations.version

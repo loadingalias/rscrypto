@@ -2,6 +2,8 @@ use crate::{MAX_PLAINTEXT, Pipe, Profile, Workload, credentials};
 use alloc::sync::Arc;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use openssl::{
+  nid::Nid,
+  pkey::Id,
   pkey::PKey,
   ssl::{
     self, ErrorCode, Ssl, SslContext, SslContextBuilder, SslMethod, SslMode, SslOptions, SslSession,
@@ -9,7 +11,16 @@ use openssl::{
   },
   x509::X509,
 };
+use rustls::enums::ProtocolVersion;
 use std::{io::Write, sync::Mutex};
+
+fn ssl_version(version: ProtocolVersion) -> SslVersion {
+  if version == ProtocolVersion::TLSv1_2 {
+    SslVersion::TLS1_2
+  } else {
+    SslVersion::TLS1_3
+  }
+}
 
 #[expect(clippy::panic, reason = "the benchmark catalog must select known workload values")]
 fn standard_suite(name: &str) -> &'static str {
@@ -25,11 +36,17 @@ pub(crate) struct Configs {
   client: SslContext,
   server: SslContext,
   session: Arc<Mutex<Option<SslSession>>>,
+  version: ProtocolVersion,
 }
 
 impl Configs {
   #[expect(clippy::panic, reason = "the benchmark catalog must select known workload values")]
-  pub(crate) fn new(profile: Profile<'_>, workload: Workload, tickets: Arc<AtomicUsize>) -> Self {
+  pub(crate) fn new(
+    profile: Profile<'_>,
+    workload: Workload,
+    version: ProtocolVersion,
+    tickets: Arc<AtomicUsize>,
+  ) -> Self {
     assert!(
       openssl::version::version().starts_with("OpenSSL 4.0.3 "),
       "benchmark peer requires OpenSSL 4.0.3"
@@ -47,28 +64,58 @@ impl Configs {
     let context = |server: bool| {
       let mut context = SslContextBuilder::new(SslMethod::tls()).expect("TLS context");
       context
-        .set_min_proto_version(Some(SslVersion::TLS1_3))
+        .set_min_proto_version(Some(ssl_version(version)))
         .expect("TLS version");
       context
-        .set_max_proto_version(Some(SslVersion::TLS1_3))
+        .set_max_proto_version(Some(ssl_version(version)))
         .expect("TLS version");
-      context
-        .set_ciphersuites(standard_suite(profile.suite))
-        .expect("cipher suite");
-      // One configured group: a completed handshake proves which group it used.
-      assert!(!profile.group.contains(':'), "one key exchange group");
-      let groups = if !server && workload == Workload::HelloRetryRequest {
-        "*X25519:secp256r1"
+      if version == ProtocolVersion::TLSv1_2 {
+        let auth = if profile.credential.starts_with("rsa") {
+          "RSA"
+        } else {
+          "ECDSA"
+        };
+        let cipher = match profile.suite {
+          "CHACHA20-POLY1305-SHA256" => "CHACHA20-POLY1305",
+          other => other,
+        };
+        context
+          .set_cipher_list(&format!("ECDHE-{auth}-{cipher}"))
+          .expect("cipher suite");
+        context.set_options(SslOptions::NO_TICKET);
+        if server {
+          context.set_options(SslOptions::CIPHER_SERVER_PREFERENCE);
+        }
       } else {
-        profile.group
+        context
+          .set_ciphersuites(standard_suite(profile.suite))
+          .expect("cipher suite");
+      }
+      assert!(!profile.group.contains(':'), "one key exchange group");
+      let groups = if version == ProtocolVersion::TLSv1_2 {
+        // Match rustls's offer: KX first, then the ECDSA certificate's curve.
+        let certificate = match profile.credential {
+          "p256" => "secp256r1",
+          "p384" => "secp384r1",
+          _ => profile.group,
+        };
+        if certificate == profile.group {
+          profile.group.to_owned()
+        } else {
+          format!("{}:{certificate}", profile.group)
+        }
+      } else if !server && workload == Workload::HelloRetryRequest {
+        "*X25519:secp256r1".to_owned()
+      } else {
+        profile.group.to_owned()
       };
-      context.set_groups_list(groups).expect("group");
+      context.set_groups_list(&groups).expect("group");
       context
         .set_sigalgs_list(match profile.credential {
           "p256" => "ecdsa_secp256r1_sha256",
           "p384" => "ecdsa_secp384r1_sha384",
           "ed25519" => "ed25519",
-          "rsa3072" | "rsa4096" => "rsa_pss_rsae_sha256:rsa_pkcs1_sha256",
+          "rsa2048" | "rsa3072" | "rsa4096" => "rsa_pss_rsae_sha256:rsa_pkcs1_sha256",
           "rsa3072-sha384" | "rsa4096-sha384" => "rsa_pss_rsae_sha384:rsa_pkcs1_sha256",
           "rsa3072-sha512" | "rsa4096-sha512" => "rsa_pss_rsae_sha512:rsa_pkcs1_sha256",
           "mldsa44" => "mldsa44",
@@ -108,12 +155,16 @@ impl Configs {
         context
           .set_session_id_context(b"provider-bench")
           .expect("session scope");
-        // OpenSSL never issues more than one ticket after a resumption; every
-        // stack issues exactly one per resumed-workload connection.
+        // This setter controls TLS 1.3 only. Every TLS 1.3 resumed-workload
+        // connection issues one ticket; NO_TICKET above disables TLS 1.2 tickets.
         context
           .set_num_tickets(usize::from(profile.resumed))
           .expect("ticket count");
-        context.set_session_cache_mode(SslSessionCacheMode::SERVER);
+        context.set_session_cache_mode(if version == ProtocolVersion::TLSv1_2 && !profile.resumed {
+          SslSessionCacheMode::OFF
+        } else {
+          SslSessionCacheMode::SERVER
+        });
         context.set_session_cache_size(256);
         if workload == Workload::Stateful {
           // In TLS 1.3 NO_TICKET selects opaque references to the server cache.
@@ -121,13 +172,19 @@ impl Configs {
           context.set_options(SslOptions::NO_TICKET);
         }
       } else {
-        // The callback alone keeps sessions, so the client holds one ticket at a
-        // time and every accepted ticket is counted, as in the rustls store.
-        context.set_session_cache_mode(SslSessionCacheMode::CLIENT | SslSessionCacheMode::NO_INTERNAL_STORE);
+        // The callback alone keeps one session. Count TLS 1.3 ticket acceptance
+        // like the rustls store; TLS 1.2 reuses its session ID without renewal.
+        context.set_session_cache_mode(if version == ProtocolVersion::TLSv1_2 && !profile.resumed {
+          SslSessionCacheMode::OFF
+        } else {
+          SslSessionCacheMode::CLIENT | SslSessionCacheMode::NO_INTERNAL_STORE
+        });
         let sessions = session.clone();
         let tickets = tickets.clone();
         context.set_new_session_callback(move |_, ticket| {
-          tickets.fetch_add(1, Ordering::Relaxed);
+          if version == ProtocolVersion::TLSv1_3 {
+            tickets.fetch_add(1, Ordering::Relaxed);
+          }
           *sessions.lock().expect("ticket cache") = Some(ticket);
         });
       }
@@ -137,6 +194,7 @@ impl Configs {
       client: context(false),
       server: context(true),
       session,
+      version,
     }
   }
 
@@ -146,12 +204,14 @@ impl Configs {
     client.param_mut().set_host("localhost").expect("hostname verification");
     client.set_connect_state();
     if resumed {
-      let session = self
-        .session
-        .lock()
-        .expect("ticket cache")
-        .take()
-        .expect("TLS 1.3 ticket");
+      let mut cache = self.session.lock().expect("session cache");
+      // TLS 1.2 session IDs are reusable; TLS 1.3 consumes a ticket and renews it.
+      let session = if self.version == ProtocolVersion::TLSv1_2 {
+        cache.clone()
+      } else {
+        cache.take()
+      }
+      .expect("seeded session");
       // SAFETY: this session came only from this exact client SslContext's
       // callback. Its owned reference stays valid for the call; SSL retains it.
       unsafe { client.set_session(&session) }.expect("resume with same context");
@@ -229,18 +289,39 @@ impl Endpoint {
       .export_keying_material(bytes, "provider-bench", Some(b"matched"))
       .expect("exporter");
   }
-  /// The server permits one group even when the client offers two for a retry.
+  /// Verify protocol, suite, EMS, full-handshake key exchange, ALPN and identity.
   pub(crate) fn check(
     &self,
     profile: Profile<'_>,
     credential: credentials::Credential,
     authenticated: bool,
+    version: ProtocolVersion,
+    resumed: bool,
     side: &str,
   ) {
     let ssl = self.stream.ssl();
+    assert_eq!(ssl.version2(), Some(ssl_version(version)), "{side} protocol version");
+    if version == ProtocolVersion::TLSv1_2 {
+      assert_eq!(ssl.extms_support(), Some(true), "{side} EMS");
+      if !resumed && side == "client" {
+        let key = ssl.peer_tmp_key().expect("server ECDHE public key");
+        match profile.group {
+          "X25519" => assert_eq!(key.id(), Id::X25519, "selected KX"),
+          curve => assert_eq!(
+            key.ec_key().expect("ECDHE key").group().curve_name(),
+            Some(if curve == "secp256r1" {
+              Nid::X9_62_PRIME256V1
+            } else {
+              Nid::SECP384R1
+            }),
+            "selected KX",
+          ),
+        }
+      }
+    }
     assert_eq!(
-      ssl.current_cipher().and_then(|cipher| cipher.standard_name()),
-      Some(standard_suite(profile.suite)),
+      ssl.current_cipher().map(|cipher| cipher.protocol_id()),
+      Some(crate::selected_suite(profile, version).0.to_be_bytes()),
       "{side} cipher suite"
     );
     assert_eq!(ssl.selected_alpn_protocol(), Some(credentials::ALPN), "{side} ALPN");

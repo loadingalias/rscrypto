@@ -1,5 +1,5 @@
 #!/usr/bin/env -S uv run python
-"""Run the pinned BoGo TLS 1.3 profile against the rscrypto provider."""
+"""Run the pinned BoGo TLS 1.2/1.3 profile against the rscrypto provider."""
 
 import argparse
 import base64
@@ -29,8 +29,21 @@ def exclusions(profiles):
             reason = f"The TLS campaign does not test {profile['Protocol']}."
         for field in ('MaxVersion', 'ExpectedVersion', 'ResumeMaxVersion', 'ResumeExpectedVersion'):
             value = profile[field]
-            if value and value < 0x0304:
-                reason = f'Declared {field}=0x{value:04x} requires a version below TLS 1.3.'
+            if value and value < 0x0303:
+                reason = f'Declared {field}=0x{value:04x} requires a version below TLS 1.2.'
+        # A resumption case must first establish the original session. Negative
+        # full-handshake cases still run so the peer independently checks refusal.
+        initial_tls12 = any(0 < profile[field] <= 0x0303
+                            for field in ('MaxVersion', 'ExpectedVersion'))
+        if initial_tls12 and profile['NoExtendedMasterSecret'] and (
+                not profile['ShouldFail'] or profile['ResumeSession']):
+            reason = 'The initial handshake requires a legacy master secret; this provider requires EMS.'
+        resumed_versions = (profile['ResumeMaxVersion'] or profile['MaxVersion'],
+                            profile['ResumeExpectedVersion'] or profile['ExpectedVersion'])
+        resumed_tls12 = any(0 < version <= 0x0303 for version in resumed_versions)
+        if (profile['ResumeSession'] and resumed_tls12 and profile['ResumeNoExtendedMasterSecret']
+                and not profile['ShouldFail']):
+            reason = 'The resumed handshake requires a legacy master secret; this provider requires EMS.'
         if reason:
             result[profile['Name']] = reason
     return result
@@ -104,7 +117,7 @@ def main():
     rsa = output / 'rsa3072.pem'
     rsa.write_text('-----BEGIN PRIVATE KEY-----\n' + '\n'.join(
         encoded[i:i + 64] for i in range(0, len(encoded), 64)) + '\n-----END PRIVATE KEY-----\n')
-    command = [str(runner / 'runner.test'), '-shim-path', shim, '-rsa-key-file', str(rsa)]
+    command = [str(runner / 'runner.test'), '-shim-path', shim, '-rsa-key-file', str(rsa), '-require-ems-profile']
     run('profiles', [*command, '-profile-output', str(output / 'profiles.json')], runner / 'ssl/test/runner')
     disabled = exclusions(json.loads((output / 'profiles.json').read_text()))
     disabled.update(json.loads((ROOT / 'scripts/test/provider_bogo_disabled.json').read_text()))

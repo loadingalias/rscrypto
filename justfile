@@ -191,7 +191,7 @@ bench-provider-resources *args:
 bench-mldsa-tail *args:
     @scripts/lib/python.sh scripts/bench/mldsa_tail.py "$@"
 
-# Run pinned BoGo TLS 1.3 cases and retain failures as well as passes.
+# Run pinned BoGo TLS 1.2/1.3 cases and retain failures as well as passes.
 [group('tests')]
 test-provider-bogo *args:
     @scripts/lib/python.sh scripts/test/provider_bogo.py "$@"

@@ -258,7 +258,7 @@ fn tls12_inventory_and_prf_match_independent_peers() {
           (&b""[..], &b"\x01"[..]),
           (&b"key expansion"[..], &[0; 200][..]),
         ] {
-          for length in [1, 12, 48, 104, 1000] {
+          for length in [1, 12, 31, 32, 33, 47, 48, 49, 80, 97, 104, 1000] {
             let (mut actual, mut expected) = (vec![0; length], vec![0; length]);
             ours.prf(&mut actual, label, seed);
             theirs.prf(&mut expected, label, seed);
@@ -267,6 +267,44 @@ fn tls12_inventory_and_prf_match_independent_peers() {
         }
       }
     }
+  }
+}
+
+#[test]
+fn tls12_prf_shared_secret_calls_are_independent() {
+  for id in [
+    CipherSuite::TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
+    CipherSuite::TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
+  ] {
+    let ours = ALL_TLS12_CIPHER_SUITES
+      .iter()
+      .find(|suite| suite.common.suite == id)
+      .expect("profile suite");
+    let peer = rustls_aws_lc_rs::ALL_TLS12_CIPHER_SUITES
+      .iter()
+      .find(|suite| suite.common.suite == id)
+      .expect("independent suite");
+    let shared: Arc<dyn rustls::crypto::tls12::PrfSecret> = Arc::from(ours.prf_provider.new_secret(&[0x42; 48]));
+    std::thread::scope(|scope| {
+      for fill in [0x17, 0x92] {
+        let shared = shared.clone();
+        let mut expected = [0; 97];
+        peer
+          .prf_provider
+          .new_secret(&[0x42; 48])
+          .prf(&mut expected, b"key expansion", &[fill; 64]);
+        scope.spawn(move || {
+          for _ in 0..8 {
+            // Preserve the generic PRF's empty-output no-op. AWS-LC's native
+            // oracle rejects zero output bytes, so compare the next real call.
+            shared.prf(&mut [], b"", &[fill]);
+            let mut actual = [0; 97];
+            shared.prf(&mut actual, b"key expansion", &[fill; 64]);
+            assert_eq!(actual, expected);
+          }
+        });
+      }
+    });
   }
 }
 

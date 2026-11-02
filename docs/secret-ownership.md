@@ -118,20 +118,32 @@ The `rscrypto-rustls` companion owns its HMAC keys in `SecretVec` and its HKDF
 expansion state in `HkdfSha256` or `HkdfSha384`. Neither adapter is cloneable.
 HKDF imports borrow rustls's `OkmBlock`; block expansion uses a `SecretBytes`
 scratch owner before copying into rustls's clearing `OkmBlock`.
-HMAC results cross the boundary through rustls's clearing `hmac::Tag`.
+HMAC finalization writes into a private fixed-size `SecretBlock` before copying
+into rustls's clearing `hmac::Tag`. The block clears on return or unwind.
 
 Record, packet, and header-protection keys own rscrypto AEAD or header-protection
 contexts. Construction borrows rustls's clearing `AeadKey`, then creates typed
-rscrypto key owners and expanded contexts in private outlined workers. Each
-worker returns only a `Box`; a post-call guard scrubs its dead construction
-frames before the outer `AeadKey` drops. The adapters expose no key formatting
-or serialization. TLS 1.2 record keys use the same construction; an AES-GCM
+rscrypto key owners and expanded contexts in private outlined workers. GNU/Linux
+AArch64 record construction allocates an initialized final heap owner first;
+a unit-returning worker borrows its cipher field. Its guard clears the retired
+worker frames before that allocation is released on unwind. Other construction
+paths return only a `Box` and retain their post-call guard. All guards run before
+the outer `AeadKey` drops. The adapters expose no key formatting or serialization.
+TLS 1.2 record keys use the same construction; an AES-GCM
 decrypter keeps only the 4-byte salt and takes each record's explicit nonce
 from the wire. `Tls13AeadAlgorithm::extract_keys` and
 `Tls12AeadAlgorithm::extract_keys` explicitly transfer rustls-owned traffic
-secrets to the caller, as rustls requires. The TLS 1.2 PRF is rustls's
-`PrfUsingHmac`: it keys the provider's `SecretVec` HMAC owner with the
-premaster secret, then the master secret, which rustls owns.
+secrets to the caller, as rustls requires. The TLS 1.2 PRF borrows the clearing
+key-exchange result and retains the master secret in a private `SecretVec`.
+Each PRF call owns one local HMAC state and two non-copyable, clearing
+intermediate blocks. `HmacSha256::finalize_into` and
+`HmacSha384::finalize_into` write into those blocks without creating a public
+tag owner. The caller owns the PRF output and its cleanup. Retained secrets
+share no mutable state between calls.
+Secret SHA-384 and SHA-512 finalization borrows the input hasher and owns its
+64-byte working compression state and 128-byte padding block together in one
+private clearing owner. It writes the digest into caller-owned output and clears
+that workspace on return or ordinary unwind. Working words do not return by value.
 Transcript contexts can be cloned; they contain public handshake data.
 
 ### rustls key exchange

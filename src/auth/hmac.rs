@@ -193,6 +193,21 @@ impl core::fmt::Debug for HmacSha256 {
 }
 
 impl HmacSha256 {
+  /// Write the current tag into `output` without consuming or resetting the state.
+  ///
+  /// The caller owns the output, including its cleanup if it is used as secret
+  /// key material. This path avoids constructing a copyable public tag value.
+  #[inline]
+  pub fn finalize_into(&self, output: &mut [u8; SHA256_TAG_SIZE]) {
+    let mut inner_hash = self.inner.finalize_secret();
+    let mut outer = Sha256::new();
+    outer.reset_to_aligned_prefix(&self.outer_init);
+    outer.update(&inner_hash);
+    ct::zeroize(&mut inner_hash);
+    outer.finalize_secret_into(output);
+    outer.zeroize_secret_state();
+  }
+
   /// HMAC-SHA256 block size in bytes.
   pub const BLOCK_SIZE: usize = SHA256_BLOCK_SIZE;
 
@@ -465,19 +480,15 @@ impl Mac for HmacSha256 {
 
   #[inline]
   fn finalize(&self) -> Self::Tag {
-    let mut inner_hash = self.inner.finalize_secret();
-    let mut outer = Sha256::from_aligned_prefix(self.outer_init);
-    outer.update(&inner_hash);
-    ct::zeroize(&mut inner_hash);
-    let tag = outer.finalize_secret();
-    outer.zeroize_secret_state();
-    HmacSha256Tag::from_bytes(tag)
+    let mut tag = HmacSha256Tag::default();
+    self.finalize_into(&mut tag.0);
+    tag
   }
 
   #[inline]
   fn reset(&mut self) {
     self.inner.zeroize_secret_state();
-    self.inner.reset_to_aligned_prefix(self.inner_init);
+    self.inner.reset_to_aligned_prefix(&self.inner_init);
   }
 
   #[inline]
@@ -536,6 +547,21 @@ impl core::fmt::Debug for HmacSha384 {
 }
 
 impl HmacSha384 {
+  /// Write the current tag into `output` without consuming or resetting the state.
+  ///
+  /// The caller owns the output, including its cleanup if it is used as secret
+  /// key material. This path avoids constructing a copyable public tag value.
+  #[inline]
+  pub fn finalize_into(&self, output: &mut [u8; SHA384_TAG_SIZE]) {
+    let mut inner_hash = self.inner.finalize_secret();
+    let mut outer = Sha384::new();
+    outer.reset_to_aligned_prefix(&self.outer_init);
+    outer.update(&inner_hash);
+    ct::zeroize(&mut inner_hash);
+    outer.finalize_secret_into(output);
+    outer.zeroize_secret_state();
+  }
+
   /// HMAC-SHA384 block size in bytes.
   pub const BLOCK_SIZE: usize = SHA512_FAMILY_BLOCK_SIZE;
 
@@ -746,19 +772,15 @@ impl Mac for HmacSha384 {
 
   #[inline]
   fn finalize(&self) -> Self::Tag {
-    let mut inner_hash = self.inner.finalize_secret();
-    let mut outer = Sha384::from_aligned_prefix(self.outer_init);
-    outer.update(&inner_hash);
-    ct::zeroize(&mut inner_hash);
-    let tag = outer.finalize_secret();
-    outer.zeroize_secret_state();
-    HmacSha384Tag::from_bytes(tag)
+    let mut tag = HmacSha384Tag::default();
+    self.finalize_into(&mut tag.0);
+    tag
   }
 
   #[inline]
   fn reset(&mut self) {
     self.inner.zeroize_secret_state();
-    self.inner.reset_to_aligned_prefix(self.inner_init);
+    self.inner.reset_to_aligned_prefix(&self.inner_init);
   }
 
   #[inline]
@@ -1028,7 +1050,8 @@ impl Mac for HmacSha512 {
   #[inline]
   fn finalize(&self) -> Self::Tag {
     let mut inner_hash = self.inner.finalize_secret();
-    let mut outer = Sha512::from_aligned_prefix(self.outer_init);
+    let mut outer = Sha512::new();
+    outer.reset_to_aligned_prefix(&self.outer_init);
     outer.update(&inner_hash);
     ct::zeroize(&mut inner_hash);
     let tag = outer.finalize_secret();
@@ -1039,7 +1062,7 @@ impl Mac for HmacSha512 {
   #[inline]
   fn reset(&mut self) {
     self.inner.zeroize_secret_state();
-    self.inner.reset_to_aligned_prefix(self.inner_init);
+    self.inner.reset_to_aligned_prefix(&self.inner_init);
   }
 
   #[inline]

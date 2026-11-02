@@ -1,7 +1,7 @@
 # TLS and QUIC connection benchmarks
 
-This unpublished tool compares authenticated TLS 1.3 connections through rscrypto-rustls,
-rustls/AWS-LC, rustls/*ring*, and OpenSSL 4.0.3.
+This unpublished tool compares authenticated TLS 1.2
+and TLS 1.3 connections through rscrypto-rustls, rustls/AWS-LC, rustls/*ring*, and OpenSSL 4.0.3.
 It calls each library's production implementation.
 The workspace is separate so its C comparison libraries do not enter the provider's shipped graph.
 
@@ -18,6 +18,8 @@ For example:
 
 ```bash
 just bench tls-handshake-p256
+just bench tls12-handshake-p256
+just bench tls12-traffic
 just bench tls-stateful
 just bench tls-traffic-bidirectional
 just bench-provider-scorecard rscrypto mldsa65 X25519MLKEM768 AES256-GCM-SHA384 full --iterations 256 --workers 4
@@ -45,6 +47,9 @@ The expanded families vary one workload dimension:
 
 | Catalog selector | Work and comparison |
 | --- | --- |
+| `tls12-handshake-p256`, `tls12-handshake-p384`, `tls12-handshake-ed25519`, `tls12-handshake-rsa2048`, `tls12-handshake-rsa3072` | TLS 1.2 mutual authentication with EMS: three classical groups, three AEAD choices, full and session-ID-resumed handshakes, all five backends. Credentials select the ECDHE_ECDSA or ECDHE_RSA suite family, covering all six suites. Ed25519 uses ECDHE_ECDSA. |
+| `tls12-traffic`, `tls12-traffic-bidirectional` | TLS 1.2 application traffic with the same sizes, directions and timed boundaries as the corresponding TLS 1.3 rows. |
+| `tls-key-schedule` | TLS 1.2 key-expansion and Finished PRFs for each suite through rscrypto, AWS-LC and ring, with a retained master-secret owner. Also measures this provider's HMAC `sign_concat` with retained or imported keys and its TLS 1.3 Finished HMAC. These components do not include a connection. |
 | `tls-handshake-p256`, `tls-handshake-p384`, `tls-handshake-ed25519`, `tls-handshake-rsa3072`, `tls-handshake-mldsa44`, `tls-handshake-mldsa65`, `tls-handshake-mldsa87` | Original mutual-authentication matrix, split by credential. |
 | `tls-server-auth` | Each original credential, X25519/AES-128-GCM, full handshake with no client certificate or CertificateRequest. Compare with the matching original full row. |
 | `tls-intermediate` | Each original credential, X25519/AES-128-GCM, full mutual authentication; both peers send leaf plus one intermediate and omit the root. Compare with the matching direct-root row. The chain fixtures use fresh keys. |
@@ -58,11 +63,11 @@ The expanded families vary one workload dimension:
 | `tls-record` | Seal, or open, one TLS 1.3 application-data record of 64 B, 256 B, 1 KiB or 16 KiB through each production record adapter, without connection or transport work. Sealing includes framing, the content type and the tag; opening first copies the sealed body back into the record buffer, the same for every provider. Separates provider cryptography from the `tls-traffic` connection costs. |
 
 Peers use the same credentials, roots, validation time, ALPN, selected group,
-suite and CertificateVerify algorithm.
+suite and handshake signature algorithm.
 OpenSSL's automatic chain building is off.
 Early data is disabled.
 Full workloads issue no tickets.
-Resumed workloads issue exactly one ticket per connection;
+TLS 1.3 resumed workloads issue exactly one ticket per connection;
 every sample consumes a real ticket and processes its replacement.
 Stateful TLS 1.3 resumption sends an opaque cache reference in NewSessionTicket,
 rather than using TLS 1.2's session-ID exchange.
@@ -70,7 +75,7 @@ Rustls uses its 256-entry server session store with no ticketer.
 OpenSSL uses its 256-entry server cache and `SSL_OP_NO_TICKET`, which selects stateful tickets in TLS 1.3.
 See [OpenSSL's option contract](https://docs.openssl.org/4.0/man3/SSL_CTX_set_options/).
 
-Every connection, timed or not, must complete the selected handshake kind in three flights,
+Every TLS 1.3 connection, timed or not, must complete the selected handshake kind in three flights,
 or four when a ticket follows.
 The retry case must take exactly five flights and rustls must report `FullWithHelloRetryRequest`.
 Before timing, a check connection verifies accepted ticket count, equal exporters,
@@ -78,6 +83,41 @@ the selected suite, group and ALPN, and each expected peer identity.
 The server-only case requires absent client identity;
 the chain case checks exact leaf/intermediate bytes on both endpoints.
 A resumed OpenSSL session restores the peer leaf but may omit the transmitted chain.
+
+TLS 1.2 adds 450 handshake and 180 traffic cases.
+It permits only X25519, P-256 and P-384 key exchange
+and the five classical credentials listed above.
+The fixture explicitly opts into TLS 1.2 suites and disables TLS 1.3;
+provider defaults are unchanged.
+Every endpoint must negotiate EMS.
+Full rows disable client resumption, server session storage and tickets.
+Resumed rows use session IDs with a 256-entry server cache on every backend,
+without stateless tickets or ticket renewal.
+The untimed seed is a full handshake;
+every measured resumed connection must report resumption and take exactly three flights.
+Full TLS 1.2 handshakes take four flights.
+An abbreviated TLS 1.2 handshake performs no key exchange,
+so its group identifies the seed session's group.
+Checks require no negotiated group on resumed rustls endpoints.
+These rows do not measure TLS 1.2 stateless-ticket protection.
+For ECDSA credentials, every TLS 1.2 offer lists the measured group first
+and the certificate curve second if it differs, as [RFC 8422 section 5.1](https://www.rfc-editor.org/rfc/rfc8422.html#section-5.1) requires.
+Checks verify the actual group, including OpenSSL's server ephemeral public key.
+
+Key-schedule component rows check PRF bytes against another production provider
+and HMAC bytes against OpenSSL before timing, with two different inputs per retained key.
+PRF key blocks contain 48, 80 or 88 bytes for AES-128-GCM, AES-256-GCM or ChaCha20-Poly1305;
+the AES-GCM lengths include rustls's extra eight-byte explicit-nonce seed.
+Checks bind each length to every selected production suite's key-block shape.
+Finished outputs contain 12 bytes.
+PRF secret construction and output allocation are untimed.
+The HMAC reuse row excludes only the provider key's construction and destruction;
+it includes all work performed by `sign_concat` and clearing tag destruction.
+The import row includes both key construction and destruction too.
+The TLS 1.3 Finished row calls the production HKDF adapter's `hmac_sign` with a retained Finished key
+and one transcript hash.
+It includes tag destruction.
+These component rows identify costs; they do not substitute for connection measurements.
 
 Application rows verify two consecutive authenticated transfers before timing,
 using distinct bytes in each direction and changing both inputs between checks
@@ -113,8 +153,11 @@ which exchange no certificates.
 The provider prepares ML-DSA signing keys once, when it loads them,
 except in the explicit compact-key case, which prepares temporary signing storage per signature.
 Each rustls backend advertises only the credential's signature scheme.
-OpenSSL's RSA list also includes `rsa_pkcs1_sha256`, which TLS 1.3 allows only for certificate signatures;
-CertificateVerify uses the row's selected RSA-PSS digest on every stack.
+OpenSSL's RSA list puts the selected RSA-PSS digest first and also includes `rsa_pkcs1_sha256`
+for certificate signatures.
+For TLS 1.2, OpenSSL chooses the first compatible shared signature algorithm;
+TLS 1.3 permits PKCS#1 only for certificate signatures.
+The handshake uses the row's selected RSA-PSS digest on every stack.
 
 Connection allocation, handshake cryptography, certificate validation, byte transport copies,
 ticket processing, close-notify creation and destruction are timed.
@@ -125,7 +168,7 @@ Close notifications are created on destruction; their delivery is not part of th
 Every stack decrypts into a retained plaintext buffer and then copies to the caller,
 so each makes two plaintext copies.
 The rustls clients keep tickets in rustls's default 256-entry store.
-The OpenSSL client receives them through its new-session callback,
+The OpenSSL client receives sessions through its new-session callback,
 without its internal session cache.
 Record rows include both endpoints and transport copies on a reused connection.
 Size labels are plaintext bytes per direction, not wire bytes.

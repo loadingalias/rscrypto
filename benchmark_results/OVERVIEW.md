@@ -6,6 +6,185 @@ The dated campaign records come first.
 The 2026-08-18 Linux snapshot near the end is historical:
 its aggregate ratios are withdrawn as performance claims (see [Corrections](#corrections)).
 
+## 2026-11-02: TLS resumption record construction and PRF reuse
+
+The final effective source on `67c808c5` allocates GNU/Linux AArch64 record-key storage before
+operation-key work, then initializes its cipher through a borrow. The reviewed optimized worker
+chain reaches 10,416 bytes below the call SP; a 12,352-byte volatile scrub plus its public header
+writes covers that range with 1,952 bytes of low margin. Builds with debug assertions and QUIC
+retain the wider scrub. Other targets retain their existing path. The bounded compiler review
+also closes an inherited SHA-384 working-state copy by keeping SHA-384/512 secret finalization
+in one clearing 192-byte workspace. These are named-artifact results, not all-copy or all-target claims.
+
+A fresh Graviton4 c8g.xlarge comparison uses 76 production cases, five predefined pairs in
+ABBA ABBA AB order, 760 sample sets and 15,200 samples. Its baseline already contains the earlier
+local PRF reuse and aligned wipes; the comparison is separate from those historical cohorts.
+
+| P-256 credential / X25519 | Baseline us | Candidate us | Paired change |
+| --- | ---: | ---: | ---: |
+| TLS 1.2 resumed, AES-128-GCM | 17.391 | 15.543 | -10.63% |
+| TLS 1.2 resumed, AES-256-GCM | 21.899 | 20.111 | -8.16% |
+| TLS 1.2 resumed, ChaCha20-Poly1305 | 17.722 | 15.822 | -10.72% |
+| TLS 1.2 full, AES-128-GCM | 324.055 | 322.130 | -0.59% |
+| TLS 1.3 full, AES-128-GCM | 334.566 | 330.550 | -1.20% |
+| TLS 1.3 resumed, AES-128-GCM | 113.235 | 109.028 | -3.72% |
+
+Every primary TLS 1.2 resumed pair improves at least 7.50%. The final means still trail ring by
+12.3–20.7%; the 2% competitive target remains open. External handshake-control spread reaches
+2.16%, and one component control reaches 6.90%, with zero CPU steal. No process or case was removed.
+The strict 1% quiet-window gate is not met. The largest protected point-estimate increase is
+1.30% for TLS 1.2 AES-128/64-byte traffic; this window does not settle small changes or an all-host scorecard.
+
+Final checks pass: all 16 configured targets; 2,316 native and 2,276 portable Mac tests; 2,327
+GNU/Linux AArch64 release tests; 339 doctests in every full lane; provider feature/MSRV/no-C/runtime
+checks; 1,128 OpenSSL/Go connections; 1,401 BoGo passes with 798 declared/upstream skips; all
+10 examples; and the scoped cleanup review with zero current findings. One existing million-round
+ML-KEM test remains ignored. Rustls dependency pins and PRs are unchanged.
+
+The exact fresh candidate's executable code, EH/LSDA, relocations and operational data match the
+reviewed artifact byte for byte; only GNU build ID and four public OpenSSL timestamp bytes differ.
+The first four-run window is retained as incomplete diagnostic evidence, and all rejected candidates
+remain retained. [Results and limits](tls12-resumed-20261101/RESULTS.md),
+[all paired rows](tls12-resumed-20261101/paired-analysis-r4.json),
+[cleanup report](tls12-resumed-20261101/cleanup-audit/candidate-final/report/final-report.md).
+
+## 2026-11-01: TLS 1.2 cleanup and aligned wipes
+
+The final effective source on `67c808c5` removes keyed SHA-2 outer-constructor returns and writes
+provider HMAC output into a clearing fixed block. GNU/Linux AArch64 clears aligned 64-byte slices
+with four volatile `u128` writes; all other sizes/alignments and other targets keep the `u64` path.
+The 32,832-byte construction window is preserved. The bounded compiler review closes the named
+historical constructor/result images without claiming all-copy or all-target cleanup.
+
+A native c8g.xlarge Graviton4 comparison uses 59 production cases, ABBA twice, four processes per
+variant and 472 sample sets. The baseline already includes operation-local HMAC reuse, its cleanup
+repair and the covered construction scrub. These results are separate from the earlier host comparisons.
+
+| P-256 credential/X25519, TLS 1.2 resumption | Baseline | Candidate | Change |
+| --- | ---: | ---: | ---: |
+| AES-128-GCM/SHA-256 | 18.863 us | 17.369 us | -7.92% |
+| AES-256-GCM/SHA-384 | 23.462 us | 21.855 us | -6.85% |
+| ChaCha20-Poly1305/SHA-256 | 19.149 us | 17.706 us | -7.54% |
+
+PRF process means stay within -0.21% to +0.11%; HMAC/Finished increases are at most 0.33%.
+Every observed nearest resumption pair improves at least 5.8%. Matched resumption control spread
+is at most 2.73%, with zero sampled CPU steal. One ring SHA-256 PRF control has 6.72% spread;
+all data remains retained, and this window supports no precise new component ranking.
+
+The final source repairs an alignment-query Clippy error. Its native capture retained the exact
+ELFs and passed the full Linux suite, but its review gate expired before timing. The measured
+and final builds have byte-identical complete executable sections, runtime mappings and operational
+data; only GNU build IDs and OpenSSL diagnostic build timestamps differ. Existing paired measurements
+are bound to that identical final code. They are not new final-capture timing samples.
+
+Final checks pass: all 16 configured targets; 2,316 native and 2,276 portable Apple Silicon tests;
+2,327 native GNU/Linux AArch64 tests; 339 doctests in each full lane; provider feature/MSRV/no-C/runtime
+checks; forced-aligned GNU Miri canaries; and the scoped compiler cleanup review. One existing
+million-round ML-KEM test stays ignored. The general wider-word prototype and extra tag guards are rejected.
+All three owned hosts and EBS volumes are deleted. Resumption still trails ring and AWS-LC, and
+upstream review/pin integration remains open. The previous scrub profile predates this change.
+
+Evidence: [completion record](tls12-complete-20261101/RESULTS.md),
+[final source](tls12-complete-20261101/cleanup-final-r3-source.json),
+[paired raw-result analysis](tls12-complete-20261101/wide-wipe-r2-analysis.json),
+[whole-runtime code/data comparison](tls12-complete-20261101/wide-wipe-r3/final-code-equivalence.json).
+
+## 2026-11-01: TLS 1.2 local PRF reuse
+
+The TLS 1.2 PRF reuses one local HMAC state per operation, with caller-owned output and clearing
+intermediate blocks. The core adds non-consuming `HmacSha256::finalize_into` and
+`HmacSha384::finalize_into`; private SHA-2 prefix helpers borrow and reset in place.
+EMS policy, key-exchange validation, concurrent independent calls and protocol defaults are preserved.
+
+A native Graviton4 c8g.xlarge comparison builds and reviews both exact executables before the
+predefined ABBA order runs twice: 472 sample sets across 59 cases, with four processes per variant.
+Key expansion improves 31–35%. P-256/X25519 resumed means improve from 21.932 to 20.545 microseconds
+for AES-128-GCM, 28.419 to 25.028 for AES-256-GCM, and 22.729 to 20.887 for ChaCha20-Poly1305.
+The TLS 1.3 full-handshake control is unchanged. Standalone HMAC/Finished means rise 0.22–1.36%.
+External process spread reaches 3.84%; these results support the material gains, not small-gain gates
+or a universal ranking. Resumption remains slower than ring and AWS-LC.
+
+The final source passes 104 provider tests, native/portable independent HMAC tests, all 1,934
+benchmark fixtures, 1,401 BoGo cases with no unexpected result, and 1,128 OpenSSL/Go process
+connections. The scoped compiler review establishes no newly introduced cleanup blocker; it retains
+two inherited findings and does not claim all-copy or all-target cleanup. The rejected revisions,
+first capture's review-wait timeout, exact builds, raw data, validation and cleanup receipts remain
+in [the qualification record](tls12-finish-20261101/RESULTS.md).
+
+A second eight-process comparison against that PRF version improves resumption by a further 7–9%
+on GNU/Linux AArch64. AES-128-GCM means fall from 20.703 to 18.895 microseconds; the two capture
+hosts and cohorts remain separate. Fixed aligned scrub blocks clear 32,832 bytes and retain every
+byte of the previous window. An unpadded candidate was rejected before timing because its smaller
+frame lost 32 bytes of coverage. Final-source ELF comparison confirms identical machine code for
+the 11 scoped construction functions versus the measured candidate. All final checks, provider
+feature/MSRV/runtime rows, BoGo and process interoperability pass again.
+The final 10s profile still attributes 29.84% of self samples to construction scrubbing; the
+competitive resumption gap remains open. This preserves the previous clearing window and adds no
+all-copy, all-target or whole-call frame-bound claim. See the same qualification record for raw
+comparisons, final-source bindings, compiler review and remaining limits.
+
+Both rustls proposals, canonical integration and affected requalification remain open.
+
+## 2026-11-01: TLS 1.2 BoGo and development baseline; completion open
+
+The opt-in TLS 1.2/1.3 BoGo profile passes 1,401 cases with 798 declared/upstream skips
+and zero unexpected results on native macOS ARM64.
+All 736 earlier TLS 1.3 passes remain passing.
+The shim enables all six TLS 1.2 suites and tests mandatory EMS refusal independently;
+a permissive ring control fails both refusal expectations as intended.
+The provider pin remains rustls `0419f479`; the runner is `9389a4af`.
+[Campaign, exclusions and control](tls12-bogo-20261031/RESULTS.md).
+
+The benchmark harness adds 450 TLS 1.2 handshake rows,
+180 traffic rows and 24 production PRF/HMAC/Finished component rows.
+All 1,934 fixtures pass; the corrected 24 component fixtures pass again on Mac and Linux ARM64.
+Native Graviton4 c8g.xlarge captures retain 702 selected sample sets across 654 unique cases,
+with separate connection and corrected-component cohorts, exact executables and raw samples.
+The first component workload omitted rustls's extra eight AES-GCM nonce bytes;
+its replacement checks the production key-block shape and uses 48/80/88-byte outputs.
+The superseded component runs are retained and excluded from the selected baseline.
+For P-256/X25519/AES-128-GCM session-ID resumption,
+mean elapsed time is 21.872 microseconds for rscrypto, 14.670 for AWS-LC,
+12.763 for ring and 46.048 for OpenSSL 4.0.3.
+The resumption gap remains open.
+[Source, intervals, complete results, correction and cleanup](tls12-bench-20261101/RESULTS.md).
+
+A separate unsubmitted rustls fix honors Disabled TLS 1.2 resumption even with a shared session store.
+It composes with the signing API draft below: 594 API tests, 261 library tests and Clippy pass.
+[Problem, regression and retained patch](tls12-resumption-20261031/PROPOSAL.md).
+The prepared-HMAC cache prototype passed functional tests
+but failed compiler-backed secret-cleanup review and was removed from production source.
+[Rejection and exact evidence](tls12-hmac-20261031/RESULTS.md).
+Both upstream integrations, affected requalification and safe performance work remain open.
+These are development results and establish no target-wide timing or release-readiness claim.
+
+## 2026-10-31: TLS 1.2 signing API draft and Linux interoperability
+
+The committed provider at `67c808c5`, with rustls `0419f479` and `nightly-2026-10-24`,
+passes the complete OpenSSL 4.0.3 / Go 1.27.3 process matrix on native Linux ARM64 (c8g.2xlarge).
+All 180 TLS 1.2 profiles and 384 TLS 1.3 profiles pass: 1,128 full/resumed,
+mutually authenticated connections.
+TLS 1.2 covers all six suites, all three classical groups, five credentials,
+and both roles against both peers.
+The collected clean-source run has an empty source patch and 3,419 verified payload checksums.
+Earlier setup and source-copy attempts remain separate records.
+[Results, source binding, and cleanup receipts](tls12-linux-20261031/RESULTS.md).
+
+A separate, unsubmitted rustls API draft passes the negotiated protocol version to signing keys.
+Its provider follow-through removes offer-based inference and accepts an alternate ECDSA hash when
+that is the peer's only TLS 1.2 scheme.
+TLS 1.3 stays curve-bound.
+On macOS ARM64, 922 upstream tests, 103 provider tests, all feature/MSRV compilations,
+C-free dependency checks, and 22 native/portable release runtime rows pass.
+Controlled mutations show that the regressions reject the old inference, a missing TLS 1.3 guard,
+and incorrect version forwarding.
+[Proposal and retained patches](tls12-signing-version-20261031/PROPOSAL.md), [validation and limits](tls12-signing-version-20261031/RESULTS.md).
+
+The workspace dependency pins are unchanged.
+The draft still needs upstream acceptance and integration;
+TLS 1.2 BoGo and performance qualification remain open.
+These results establish no new performance, timing, or release-readiness claim.
+
 ## 2026-10-31: RSA private arithmetic qualification
 
 Production changes through `ee9edf3f` expose fixed IFMA normalization counts, retain POWER

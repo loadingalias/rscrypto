@@ -223,7 +223,19 @@ pub(crate) fn public_len_eq(left: &[u8], right: &[u8]) -> CtDecision {
 /// Call `compiler_fence(SeqCst)` once after all buffers are zeroed.
 #[inline(always)]
 pub(crate) fn zeroize_no_fence(buf: &mut [u8]) {
-  // SAFETY: align_to_mut returns valid prefix/words/suffix over the same allocation.
+  #[cfg(all(target_arch = "aarch64", target_os = "linux", target_env = "gnu"))]
+  if buf.len() == 64 && buf.as_ptr().addr().is_multiple_of(core::mem::align_of::<u128>()) {
+    // SAFETY: u128 accepts every initialized byte pattern. The public alignment
+    // check and length establish four disjoint aligned words in this allocation.
+    let (_, words, _) = unsafe { buf.align_to_mut::<u128>() };
+    for word in words {
+      // SAFETY: each word is initialized, aligned, and exclusively borrowed.
+      unsafe { core::ptr::write_volatile(word, 0) };
+    }
+    return;
+  }
+  // SAFETY: u64 accepts every initialized byte pattern; these disjoint regions
+  // remain within the same initialized, exclusively borrowed allocation.
   let (prefix, words, suffix) = unsafe { buf.align_to_mut::<u64>() };
   for byte in prefix.iter_mut() {
     // SAFETY: byte is a valid, aligned, dereferenceable pointer to initialized memory.
@@ -1041,10 +1053,20 @@ pub(crate) mod tests {
   // ── zeroize ─────────────────────────────────────────────────────────────
 
   #[test]
-  fn zeroize_clears_buffer() {
-    let mut buf = [0xFFu8; 37]; // odd size to exercise prefix/suffix
-    zeroize(&mut buf);
-    assert!(buf.iter().all(|&b| b == 0));
+  fn zeroize_clears_only_the_requested_range() {
+    // Offsets cover all u64 and u128 alignments; lengths cover prefixes, complete
+    // words, suffixes, and the empty range without permitting writes to canaries.
+    for offset in 0..32 {
+      for len in (0..=257).chain([511, 512, 513]) {
+        let mut buf = [0xA5u8; 576];
+        let start = 16 + offset;
+        let end = start + len;
+        zeroize(&mut buf[start..end]);
+        assert!(buf[..start].iter().all(|&byte| byte == 0xA5));
+        assert!(buf[start..end].iter().all(|&byte| byte == 0));
+        assert!(buf[end..].iter().all(|&byte| byte == 0xA5));
+      }
+    }
   }
 
   #[test]

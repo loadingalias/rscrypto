@@ -170,12 +170,17 @@ It does not download upstream archives.
   stay unchanged. The wrapper's base digest and image identity are retained and checked;
   it does not add preferred-address migration support.
 - `just test-provider-bogo` prepares pinned upstream rustls and runner checkouts,
-  applies the retained provider/fixture patches, and runs the declared TLS 1.3
-  profile. Scope exclusions come from protocol/version requirements and the
-  explicit profile, not observed failures. Failures remain nonzero. The shim
-  treats ML-DSA as an explicit `-verify-prefs` opt-in for the runner's default-policy
-  tests; all signature operations still use this provider. `--test` narrows the
-  campaign for diagnosis. It is not full-profile qualification.
+  applies the retained provider/fixture patches, and runs the declared TLS 1.2/1.3 profile.
+  Scope exclusions come from protocol/version requirements and the explicit profile,
+  not observed failures.
+  The shim opts into all six TLS 1.2 suites.
+  EMS rejection cases run with the provider's mandatory-EMS policy;
+  cases that need an initial successful legacy-master-secret handshake are outside that policy.
+  Failures remain nonzero.
+  The shim treats ML-DSA as an explicit `-verify-prefs` opt-in for the runner's default-policy tests;
+  all signature operations still use this provider.
+  `--test` narrows the campaign for diagnosis.
+  It is not full-profile qualification.
 - The `provider_quic_*` fuzz targets call production Retry, header, token, and
   handshake methods through hooks compiled only under `cfg(fuzzing)` or
   `cfg(rscrypto_internal_fuzzing)`. Ordinary builds omit them.

@@ -347,11 +347,34 @@ records the evidence and remaining gates.
 in the clearing owners named in the [ownership inventory](secret-ownership.md#rustls-symmetric-adapters).
 No provider expansion loop duplicates HKDF. The adapter's fixed expansion
 scratch clears on return or unwind after rustls copies the output.
-TLS record and QUIC packet/header-key construction borrow the incoming `AeadKey`
-in outlined workers and return only the final heap owner. A guard scrubs a
-32 KiB dead-stack region after construction and during ordinary unwind, then
-the outer incoming key drops. Coverage depends on the compiler's actual worker
-frames, their callees, and scrub placement. Abort exits do not run these guards.
+The TLS 1.2 PRF implements RFC 5246's P_hash with one local HMAC state,
+resetting to its keyed prefix between terms. Its two intermediate blocks clear
+on return or unwind; its retained master-secret bytes clear on drop. The
+caller owns the derived output. Non-consuming finalization preserves the buffered
+A(i) prefix while the PRF computes A(i+1), then appends the label and seed for the current
+output term. This avoids a second state reset without adding another secret owner.
+Caller-output HMAC finalization writes the outer digest directly into the destination.
+Outer SHA-2 states receive public initialization before borrowing the keyed prefix
+in place; finalization does not return a keyed outer hash constructor value.
+Secret SHA-384 and SHA-512 finalization uses one clearing owner for its 64-byte
+working state and 128-byte padding block. Compression, output serialization and
+cleanup borrow that same owner; drop clears it on return or ordinary unwind.
+The HMAC adapter clears its fixed output block after rustls copies the tag.
+Compiler-created copies and saved registers require artifact-specific review;
+source-level clearing owners alone do not establish all-copy cleanup.
+TLS record and QUIC packet/header-key construction borrow the incoming `AeadKey`.
+GNU/Linux AArch64 record construction resolves AES capabilities and allocates the final
+initialized heap owner before the worker reads operation-key bytes. The worker
+borrows the cipher field and returns no key value. Its guard runs before heap
+release on ordinary unwind. Builds without debug assertions clear
+12 KiB plus 64 bytes of dead stack; debug builds retain 32 KiB plus 64 bytes.
+The reviewed optimized call chain fits within the smaller window, including its
+alignment classes, selected cold paths and highest saved slots. This is evidence
+for the named artifact, not every compiler or feature combination.
+QUIC construction retains the 32 KiB window, with an extra 64 bytes on GNU/Linux
+AArch64. Other platforms retain 32 KiB. All guards run before the incoming key drops.
+Coverage depends on the compiler's actual worker frames, callees and scrub placement.
+Abort exits do not run these guards. No whole-register or all-copy erasure is claimed.
 
 An entropy fill error clears the entire destination, including partial writes.
 Record encryption reserves the whole record in rustls's output vector before it

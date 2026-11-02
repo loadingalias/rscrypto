@@ -1,5 +1,5 @@
 diff --git a/Cargo.toml b/Cargo.toml
-index efbf1ef6..a46574d6 100644
+index 4ef7a492..ab9319f5 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
 @@ -144,3 +144,6 @@ unused_qualifications = "warn"
@@ -10,7 +10,7 @@ index efbf1ef6..a46574d6 100644
 +[patch."https://github.com/rustls/rustls"]
 +rustls = { path = "rustls" }
 diff --git a/bogo/Cargo.toml b/bogo/Cargo.toml
-index ed6312a2..f1bc60ab 100644
+index ed6312a2..cbcfeef6 100644
 --- a/bogo/Cargo.toml
 +++ b/bogo/Cargo.toml
 @@ -13,8 +13,11 @@ rustls-ring = { path = "../rustls-ring" }
@@ -26,7 +26,7 @@ index ed6312a2..f1bc60ab 100644
  
  [lints]
 diff --git a/bogo/src/main.rs b/bogo/src/main.rs
-index c8736cf2..7ee8058d 100644
+index c8736cf2..2d062cae 100644
 --- a/bogo/src/main.rs
 +++ b/bogo/src/main.rs
 @@ -635,6 +635,8 @@ enum SelectedProvider {
@@ -38,16 +38,19 @@ index c8736cf2..7ee8058d 100644
  }
  
  impl SelectedProvider {
-@@ -655,6 +657,8 @@ impl SelectedProvider {
+@@ -655,6 +657,11 @@ impl SelectedProvider {
              }
  
              Self::Ring => rustls_ring::DEFAULT_PROVIDER,
 +            #[cfg(feature = "rscrypto")]
-+            Self::Rscrypto => rscrypto_rustls::default_provider(),
++            Self::Rscrypto => CryptoProvider {
++                tls12_cipher_suites: Cow::Borrowed(rscrypto_rustls::cipher_suite::ALL_TLS12_CIPHER_SUITES),
++                ..rscrypto_rustls::default_provider()
++            },
          }
      }
  
-@@ -662,6 +666,8 @@ impl SelectedProvider {
+@@ -662,6 +669,8 @@ impl SelectedProvider {
          match *self {
              Self::AwsLcRs | Self::AwsLcRsFips => true,
              Self::Ring => false,
@@ -56,7 +59,7 @@ index c8736cf2..7ee8058d 100644
          }
      }
  }
-@@ -745,7 +751,7 @@ fn load_root_certs(filename: &str) -> Arc<RootCertStore> {
+@@ -745,7 +754,7 @@ fn load_root_certs(filename: &str) -> Arc<RootCertStore> {
      //
      // use an unrelated cert we have lying around.
      let filename = match filename {
@@ -66,7 +69,7 @@ index c8736cf2..7ee8058d 100644
      };
  
 diff --git a/bogo/src/opts.rs b/bogo/src/opts.rs
-index 8d3b26f7..c716be59 100644
+index 8d3b26f7..951a34b3 100644
 --- a/bogo/src/opts.rs
 +++ b/bogo/src/opts.rs
 @@ -101,6 +101,8 @@ impl Options {

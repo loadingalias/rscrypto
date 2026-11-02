@@ -276,6 +276,14 @@
     "quinn-retry": { "bench": "quic_connections", "filter": "^quinn/retry/" },
     "quinn-address-token": { "bench": "quic_connections", "filter": "^quinn/address-token/" },
     "quinn-reset": { "bench": "quic_connections", "filter": "^quinn/stateless-reset/" },
+    "tls-key-schedule": { "bench": "tls_connections", "filter": "^(tls12/prf/|tls/hmac/|tls13/finished-hmac/)" },
+    "tls12-handshake-p256": { "bench": "tls_connections", "filter": "^tls12/handshake/p256/" },
+    "tls12-handshake-p384": { "bench": "tls_connections", "filter": "^tls12/handshake/p384/" },
+    "tls12-handshake-ed25519": { "bench": "tls_connections", "filter": "^tls12/handshake/ed25519/" },
+    "tls12-handshake-rsa2048": { "bench": "tls_connections", "filter": "^tls12/handshake/rsa2048/" },
+    "tls12-handshake-rsa3072": { "bench": "tls_connections", "filter": "^tls12/handshake/rsa3072/" },
+    "tls12-traffic": { "bench": "tls_connections", "filter": "^tls12/traffic/" },
+    "tls12-traffic-bidirectional": { "bench": "tls_connections", "filter": "^tls12/traffic-bidirectional/" },
     "tls-handshake-p256": { "bench": "tls_connections", "filter": "^tls13/handshake/p256/" },
     "tls-handshake-p384": { "bench": "tls_connections", "filter": "^tls13/handshake/p384/" },
     "tls-handshake-ed25519": { "bench": "tls_connections", "filter": "^tls13/handshake/ed25519/" },
@@ -467,6 +475,14 @@
     "hash-slhdsa-shake-256f": ["hash-slhdsa-shake-256f-sign", "hash-slhdsa-shake-256f-verify"],
     "quic-provider": ["quic-handshake", "quic-packet", "quic-header", "quinn-connect", "quinn-retry", "quinn-address-token", "quinn-reset"],
     "tls-provider": [
+      "tls-key-schedule",
+      "tls12-handshake-p256",
+      "tls12-handshake-p384",
+      "tls12-handshake-ed25519",
+      "tls12-handshake-rsa2048",
+      "tls12-handshake-rsa3072",
+      "tls12-traffic",
+      "tls12-traffic-bidirectional",
       "tls-handshake-p256",
       "tls-handshake-p384",
       "tls-handshake-ed25519",
@@ -797,6 +813,27 @@
       "cases": "^quinn/(?P<variant>connect|retry|address-token)/(?P<input>[^/]+/[^/]+/[^/]+/[^/]+)/(?P<implementation>[^/]+)$",
       "headline": false,
       "task": "Complete both Quinn endpoints through in-memory UDP, including allocation, immediate control traffic and destruction. TLS varies by provider; the shared adapter always uses rscrypto for Initial, Retry and token cryptography."
+    },
+    "tls12-prf": {
+      "family": "TLS",
+      "bench": "tls_connections",
+      "cases": "^tls12/(?P<variant>prf)/(?P<input>[^/]+/[^/]+)/(?P<implementation>[^/]+)$",
+      "headline": false,
+      "task": "Derive a TLS 1.2 key block or Finished value through each production PRF with a master secret prepared once and retained output capacity. Connection, key exchange and master-secret preparation are excluded."
+    },
+    "tls12-handshakes": {
+      "family": "TLS",
+      "bench": "tls_connections",
+      "cases": "^tls12/(?P<variant>handshake)/(?P<input>[^/]+/[^/]+/[^/]+/[^/]+)/(?P<implementation>[^/]+)$",
+      "headline": false,
+      "task": "Complete a mutually authenticated TLS 1.2 handshake with EMS on both endpoints, including construction, transport copies, session processing and destruction. Resumed rows use session IDs and a 256-entry server cache; full rows disable session storage and tickets. Configuration and key import are untimed."
+    },
+    "tls12-traffic": {
+      "family": "TLS",
+      "bench": "tls_connections",
+      "cases": "^tls12/(?P<variant>traffic|traffic-bidirectional)/(?P<input>[^/]+/[0-9]+)/(?P<implementation>[^/]+)$",
+      "headline": false,
+      "task": "Encrypt, transport, authenticate and copy application bytes on a reused TLS 1.2 connection; the size is per direction, and bidirectional throughput counts both directions."
     },
     "tls-handshakes": {
       "family": "TLS",

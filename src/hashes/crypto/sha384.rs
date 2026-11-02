@@ -160,30 +160,45 @@ impl Sha384 {
 
   #[inline]
   fn finalize_inner_with<const ZEROIZE: bool>(&self, compress_blocks: CompressBlocksFn) -> [u8; 48] {
-    let total_len = self.bytes_hashed.strict_add(self.block_len as u128);
-    let mut state = if ZEROIZE {
-      Sha512::finalize_state_words_secret(self.state, self.block, self.block_len, total_len, compress_blocks)
-    } else {
-      Sha512::finalize_state_words(self.state, self.block, self.block_len, total_len, compress_blocks)
-    };
+    let mut output = [0u8; 48];
+    self.finalize_inner_into::<ZEROIZE>(compress_blocks, &mut output);
+    output
+  }
 
-    let mut out = [0u8; 48];
-    out[0..8].copy_from_slice(&state[0].to_be_bytes());
-    out[8..16].copy_from_slice(&state[1].to_be_bytes());
-    out[16..24].copy_from_slice(&state[2].to_be_bytes());
-    out[24..32].copy_from_slice(&state[3].to_be_bytes());
-    out[32..40].copy_from_slice(&state[4].to_be_bytes());
-    out[40..48].copy_from_slice(&state[5].to_be_bytes());
+  #[inline]
+  fn finalize_inner_into<const ZEROIZE: bool>(&self, compress_blocks: CompressBlocksFn, output: &mut [u8; 48]) {
+    let total_len = self.bytes_hashed.strict_add(self.block_len as u128);
     if ZEROIZE {
-      crate::traits::ct::zeroize_words(&mut state);
+      Sha512::finalize_state_words_secret(
+        &self.state,
+        &self.block,
+        self.block_len,
+        total_len,
+        compress_blocks,
+        output,
+      );
+      return;
     }
-    out
+    let state = Sha512::finalize_state_words(self.state, self.block, self.block_len, total_len, compress_blocks);
+
+    output[0..8].copy_from_slice(&state[0].to_be_bytes());
+    output[8..16].copy_from_slice(&state[1].to_be_bytes());
+    output[16..24].copy_from_slice(&state[2].to_be_bytes());
+    output[24..32].copy_from_slice(&state[3].to_be_bytes());
+    output[32..40].copy_from_slice(&state[4].to_be_bytes());
+    output[40..48].copy_from_slice(&state[5].to_be_bytes());
   }
 
   #[inline]
   #[cfg(feature = "hmac")]
   pub(crate) fn finalize_secret(&self) -> [u8; 48] {
     self.finalize_inner_with::<true>(self.compress_blocks)
+  }
+
+  #[inline]
+  #[cfg(feature = "hmac")]
+  pub(crate) fn finalize_secret_into(&self, output: &mut [u8; 48]) {
+    self.finalize_inner_into::<true>(self.compress_blocks, output);
   }
 
   #[inline]
@@ -200,23 +215,9 @@ impl Sha384 {
   }
 
   #[inline]
-  #[must_use]
   #[cfg(feature = "hmac")]
-  pub(crate) fn from_aligned_prefix(prefix: Sha384Prefix) -> Self {
-    Self {
-      state: prefix.state,
-      block: [0u8; BLOCK_LEN],
-      block_len: 0,
-      bytes_hashed: prefix.bytes_hashed,
-      compress_blocks: prefix.compress_blocks,
-      dispatch_initialized: prefix.dispatch_initialized,
-    }
-  }
-
-  #[inline]
-  #[cfg(feature = "hmac")]
-  pub(crate) fn reset_to_aligned_prefix(&mut self, prefix: Sha384Prefix) {
-    self.state = prefix.state;
+  pub(crate) fn reset_to_aligned_prefix(&mut self, prefix: &Sha384Prefix) {
+    self.state.copy_from_slice(&prefix.state);
     self.block_len = 0;
     self.bytes_hashed = prefix.bytes_hashed;
     self.compress_blocks = prefix.compress_blocks;

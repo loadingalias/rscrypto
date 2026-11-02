@@ -1,4 +1,4 @@
-//! Matched TLS 1.3 connection workloads over an in-process byte transport.
+//! Matched TLS 1.2/1.3 connection workloads over an in-process byte transport.
 //!
 //! Every endpoint calls its real TLS library. Configuration and key import are
 //! outside connection timing; connection allocation, cryptography, certificate
@@ -8,7 +8,7 @@ extern crate alloc;
 
 mod openssl_peer;
 
-use alloc::{collections::VecDeque, rc::Rc, sync::Arc};
+use alloc::{borrow::Cow, collections::VecDeque, rc::Rc, sync::Arc};
 use core::cell::RefCell;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use std::io::{self, Read, Write};
@@ -16,6 +16,7 @@ use std::io::{self, Read, Write};
 use rustls::client::{ClientSessionKey, ClientSessionMemoryCache, ClientSessionStore, Resumption, Tls12Resumption};
 use rustls::crypto::kx::NamedGroup;
 use rustls::crypto::{CipherSuite, Identity};
+use rustls::enums::ProtocolVersion;
 use rustls::{ClientConfig, ClientSide, Connection, ServerConfig, ServerSide, SideData, Tcp, VecInput};
 use serde_json::{Value, json};
 
@@ -28,6 +29,8 @@ pub mod quic;
 pub use provenance::provenance;
 
 pub const CREDENTIALS: [&str; 7] = ["p256", "p384", "ed25519", "rsa3072", "mldsa44", "mldsa65", "mldsa87"];
+pub const TLS12_CREDENTIALS: [&str; 5] = ["p256", "p384", "ed25519", "rsa2048", "rsa3072"];
+pub const TLS12_GROUPS: [&str; 3] = ["X25519", "secp256r1", "secp384r1"];
 pub const RSA_CREDENTIALS: [&str; 5] = [
   "rsa3072-sha384",
   "rsa3072-sha512",
@@ -49,7 +52,7 @@ pub fn supports(backend: &str, profile: Profile<'_>) -> bool {
   backend != "ring" || !(profile.group.contains("MLKEM") || profile.credential.starts_with("mldsa"))
 }
 
-/// Largest TLS 1.3 record plaintext.
+/// Largest TLS record plaintext.
 const MAX_PLAINTEXT: usize = 16_384;
 /// Each direction's preallocated bytes. The largest catalog flight and a full
 /// record fit without reallocating, so transport growth is equal on every stack.
@@ -86,13 +89,22 @@ fn canonical(values: &[&'static str], value: &str) -> &'static str {
 }
 
 impl Profile<'_> {
-  fn canonical(self) -> Profile<'static> {
+  fn canonical(self, version: ProtocolVersion) -> Profile<'static> {
+    let credentials = if version == ProtocolVersion::TLSv1_2 {
+      TLS12_CREDENTIALS.to_vec()
+    } else {
+      CREDENTIALS.into_iter().chain(RSA_CREDENTIALS).collect()
+    };
     Profile {
-      credential: canonical(
-        &CREDENTIALS.into_iter().chain(RSA_CREDENTIALS).collect::<Vec<_>>(),
-        self.credential,
+      credential: canonical(&credentials, self.credential),
+      group: canonical(
+        if version == ProtocolVersion::TLSv1_2 {
+          &TLS12_GROUPS
+        } else {
+          &GROUPS
+        },
+        self.group,
       ),
-      group: canonical(&GROUPS, self.group),
       suite: canonical(&SUITES, self.suite),
       resumed: self.resumed,
     }
@@ -110,6 +122,23 @@ fn suite(name: &str) -> CipherSuite {
 }
 
 #[expect(clippy::panic, reason = "the benchmark catalog must select known workload values")]
+fn selected_suite(profile: Profile<'_>, version: ProtocolVersion) -> CipherSuite {
+  if version == ProtocolVersion::TLSv1_3 {
+    return suite(profile.suite);
+  }
+  // TLS 1.2 Ed25519 authentication uses the ECDHE_ECDSA suite family.
+  match (profile.credential.starts_with("rsa"), profile.suite) {
+    (false, "AES128-GCM-SHA256") => CipherSuite::TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
+    (false, "AES256-GCM-SHA384") => CipherSuite::TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
+    (false, "CHACHA20-POLY1305-SHA256") => CipherSuite::TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256,
+    (true, "AES128-GCM-SHA256") => CipherSuite::TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+    (true, "AES256-GCM-SHA384") => CipherSuite::TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+    (true, "CHACHA20-POLY1305-SHA256") => CipherSuite::TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256,
+    _ => panic!("unknown TLS 1.2 suite"),
+  }
+}
+
+#[expect(clippy::panic, reason = "the benchmark catalog must select known workload values")]
 fn group(name: &str) -> NamedGroup {
   match name {
     "X25519" => NamedGroup::X25519,
@@ -117,6 +146,14 @@ fn group(name: &str) -> NamedGroup {
     "secp384r1" => NamedGroup::secp384r1,
     "X25519MLKEM768" => NamedGroup::X25519MLKEM768,
     _ => panic!("unknown group"),
+  }
+}
+
+fn certificate_group(profile: Profile<'_>) -> Option<NamedGroup> {
+  match profile.credential {
+    "p256" => Some(NamedGroup::secp256r1),
+    "p384" => Some(NamedGroup::secp384r1),
+    _ => None,
   }
 }
 
@@ -346,24 +383,28 @@ impl<S: SideData> Endpoint<S> {
   }
   /// Check the negotiated suite, group, ALPN and the expected peer identity.
   #[expect(clippy::panic, reason = "a wrong negotiation invalidates this benchmark fixture")]
-  fn check(&self, profile: Profile<'_>, workload: Workload, side: &str) {
+  fn check(&self, profile: Profile<'_>, workload: Workload, version: ProtocolVersion, resumed: bool, side: &str) {
     let credential = credentials::der(profile.credential, workload);
     let authenticated = side == "client" || workload != Workload::ServerAuth;
     match self {
       Self::Rustls(peer) => {
         let connection = &peer.connection;
+        assert_eq!(connection.protocol_version(), Some(version), "{side} protocol version");
+        if version == ProtocolVersion::TLSv1_2 {
+          assert_eq!(connection.extended_main_secret(), Some(true), "{side} EMS");
+        }
         assert_eq!(
           connection
             .negotiated_cipher_suite()
             .map(|negotiated| negotiated.suite()),
-          Some(suite(profile.suite)),
+          Some(selected_suite(profile, version)),
           "{side} cipher suite"
         );
         assert_eq!(
           connection
             .negotiated_key_exchange_group()
             .map(|negotiated| negotiated.name()),
-          Some(group(profile.group)),
+          (!(version == ProtocolVersion::TLSv1_2 && resumed)).then(|| group(profile.group)),
           "{side} key exchange group"
         );
         assert_eq!(
@@ -386,7 +427,7 @@ impl<S: SideData> Endpoint<S> {
           _ => panic!("{side} peer certificate identity"),
         }
       }
-      Self::OpenSsl(peer) => peer.check(profile, credential, authenticated, side),
+      Self::OpenSsl(peer) => peer.check(profile, credential, authenticated, version, resumed, side),
     }
   }
   fn send(&mut self, bytes: &[u8]) {
@@ -445,8 +486,6 @@ impl Pair {
       {
         self.client.assert_kind(resumed, retry, "client");
         self.server.assert_kind(resumed, retry, "server");
-        // ClientHello, server flight, client flight, then the ticket flight
-        // when tickets are issued. A HelloRetryRequest adds two flights.
         assert_eq!(self.flights.len(), flights, "TLS flight count");
         return self;
       }
@@ -504,6 +543,7 @@ pub struct Fixture {
   configs: Configs,
   profile: Profile<'static>,
   workload: Workload,
+  version: ProtocolVersion,
   /// TLS 1.3 tickets the client has accepted, across all connections.
   tickets: Arc<AtomicUsize>,
 }
@@ -513,8 +553,17 @@ impl Fixture {
     Self::with_workload(backend, profile, Workload::Mutual)
   }
 
-  #[expect(clippy::panic, reason = "the benchmark catalog must select known workload values")]
   pub fn with_workload(backend: &str, profile: Profile<'_>, workload: Workload) -> Self {
+    Self::with_version(backend, profile, workload, ProtocolVersion::TLSv1_3)
+  }
+
+  /// TLS 1.2 mutual authentication, with session-ID resumption and no tickets.
+  pub fn tls12(backend: &str, profile: Profile<'_>) -> Self {
+    Self::with_version(backend, profile, Workload::Mutual, ProtocolVersion::TLSv1_2)
+  }
+
+  #[expect(clippy::panic, reason = "the benchmark catalog must select known workload values")]
+  fn with_version(backend: &str, profile: Profile<'_>, workload: Workload, version: ProtocolVersion) -> Self {
     assert!(supports(backend, profile), "{backend} does not implement this profile");
     assert!(
       workload != Workload::Stateful || profile.resumed,
@@ -529,34 +578,63 @@ impl Fixture {
         || (backend.starts_with("rscrypto") && profile.credential.starts_with("mldsa") && !profile.resumed),
       "compact signing is an rscrypto ML-DSA workload"
     );
-    let profile = profile.canonical();
+    let profile = profile.canonical(version);
     let tickets = Arc::new(AtomicUsize::new(0));
     let configs = if backend == "openssl" {
-      Configs::OpenSsl(openssl_peer::Configs::new(profile, workload, tickets.clone()))
+      Configs::OpenSsl(openssl_peer::Configs::new(profile, workload, version, tickets.clone()))
     } else {
-      let (mut provider, all) = match backend {
+      let (mut provider, all, tls12) = match backend {
         "rscrypto" | "rscrypto-webpki" => (
           rscrypto_rustls::default_provider(),
           rscrypto_rustls::verify::ALL_ALGORITHMS,
+          rscrypto_rustls::cipher_suite::ALL_TLS12_CIPHER_SUITES,
         ),
         "aws-lc-rs" => (
           rustls_aws_lc_rs::DEFAULT_TLS13_PROVIDER,
           rustls_aws_lc_rs::ALL_VERIFICATION_ALGS,
+          rustls_aws_lc_rs::ALL_TLS12_CIPHER_SUITES,
         ),
-        "ring" => (rustls_ring::DEFAULT_TLS13_PROVIDER, rustls_ring::ALL_VERIFICATION_ALGS),
+        "ring" => (
+          rustls_ring::DEFAULT_TLS13_PROVIDER,
+          rustls_ring::ALL_VERIFICATION_ALGS,
+          rustls_ring::ALL_TLS12_CIPHER_SUITES,
+        ),
         _ => panic!("unknown benchmark backend"),
       };
-      let (group, suite) = (group(profile.group), suite(profile.suite));
+      let (group, suite) = (group(profile.group), selected_suite(profile, version));
       let retry_group = provider
         .kx_groups
         .iter()
         .find(|entry| entry.name() == NamedGroup::X25519)
         .copied();
+      // RFC 8422 section 5.1 also uses supported_groups for certificate curves.
+      // Keep the measured KX first on both peers; verify the actual selection.
+      let certificate_group = (version == ProtocolVersion::TLSv1_2)
+        .then(|| certificate_group(profile))
+        .flatten()
+        .filter(|name| *name != group)
+        .and_then(|name| provider.kx_groups.iter().find(|entry| entry.name() == name).copied());
       provider.kx_groups.to_mut().retain(|entry| entry.name() == group);
-      provider
-        .tls13_cipher_suites
-        .to_mut()
-        .retain(|entry| entry.common.suite == suite);
+      if let Some(certificate_group) = certificate_group {
+        provider.kx_groups.to_mut().push(certificate_group);
+      }
+      if version == ProtocolVersion::TLSv1_2 {
+        provider.tls13_cipher_suites = Cow::Borrowed(&[]);
+        provider.tls12_cipher_suites = Cow::Owned(
+          tls12
+            .iter()
+            .copied()
+            .filter(|entry| entry.common.suite == suite)
+            .collect(),
+        );
+        assert_eq!(provider.tls12_cipher_suites.len(), 1);
+      } else {
+        provider
+          .tls13_cipher_suites
+          .to_mut()
+          .retain(|entry| entry.common.suite == suite);
+        assert_eq!(provider.tls13_cipher_suites.len(), 1);
+      }
       let scheme = credentials::scheme(profile.credential);
       let mapping = provider.signature_verification_algorithms.mapping();
       let index = mapping
@@ -566,8 +644,10 @@ impl Fixture {
       provider.signature_verification_algorithms =
         rustls::crypto::WebPkiSupportedAlgorithms::new(all, &mapping[index..index.strict_add(1)])
           .expect("selected signature scheme");
-      assert_eq!(provider.kx_groups.len(), 1);
-      assert_eq!(provider.tls13_cipher_suites.len(), 1);
+      assert_eq!(
+        provider.kx_groups.len(),
+        1_usize.strict_add(usize::from(certificate_group.is_some()))
+      );
       let ticketer = provider.ticketer_factory;
       if workload == Workload::CompactKey {
         #[cfg(feature = "ml-dsa")]
@@ -598,7 +678,21 @@ impl Fixture {
         inner: profile.resumed.then(|| ClientSessionMemoryCache::new(256)),
         tickets: tickets.clone(),
       }));
-      if profile.resumed {
+      if version == ProtocolVersion::TLSv1_2 {
+        client.require_ems = true;
+        server.require_ems = true;
+        client.resumption = store.tls12_resumption(if profile.resumed {
+          Tls12Resumption::SessionIdOnly
+        } else {
+          Tls12Resumption::Disabled
+        });
+        server.ticketer = None;
+        server.session_storage = if profile.resumed {
+          rustls::server::ServerSessionMemoryCache::new(256)
+        } else {
+          Arc::new(rustls::server::NoServerSessionStorage {})
+        };
+      } else if profile.resumed {
         client.resumption = store;
         // Each stack's production ticketer. OpenSSL issues at most one ticket
         // after a resumption, so every stack issues exactly one per connection.
@@ -619,17 +713,18 @@ impl Fixture {
       configs,
       profile,
       workload,
+      version,
       tickets,
     };
-    // Seed the client cache once; every timed resumed connection must consume a
-    // real ticket and process a replacement. Never time a disguised full handshake.
+    // Seed the client cache once. Every timed connection must then complete the
+    // selected handshake kind; a cache miss cannot masquerade as resumption.
     fixture.checked(false);
     fixture
   }
 
   /// Share Rustls signing keys and trust anchors with a separately seeded ticket store.
   ///
-  /// Rustls consumes a ticket for each connection and keeps a bounded number per
+  /// TLS 1.3 consumes a ticket for each connection and keeps a bounded number per
   /// origin. Concurrent resumed observations therefore need independent stores.
   /// Cloning `ClientConfig` retains its Arc-owned key resolver and verifier.
   #[expect(clippy::panic, reason = "this resource boundary observes Rustls configurations only")]
@@ -643,11 +738,16 @@ impl Fixture {
       inner: self.profile.resumed.then(|| ClientSessionMemoryCache::new(256)),
       tickets: tickets.clone(),
     }))
-    .tls12_resumption(Tls12Resumption::Disabled);
+    .tls12_resumption(if self.version == ProtocolVersion::TLSv1_2 && self.profile.resumed {
+      Tls12Resumption::SessionIdOnly
+    } else {
+      Tls12Resumption::Disabled
+    });
     let fixture = Self {
       configs: Configs::Rustls(Arc::new(client), server.clone()),
       profile: self.profile,
       workload: self.workload,
+      version: self.version,
       tickets,
     };
     if fixture.profile.resumed {
@@ -672,7 +772,7 @@ impl Fixture {
     let mut pair = self.connect_inner(resumed);
     assert_eq!(
       self.tickets.load(Ordering::Relaxed).strict_sub(before),
-      usize::from(self.profile.resumed),
+      usize::from(self.profile.resumed && self.version == ProtocolVersion::TLSv1_3),
       "TLS 1.3 tickets accepted from one connection"
     );
     assert_eq!(
@@ -680,8 +780,12 @@ impl Fixture {
       pair.server.exporter(),
       "independent endpoint exporters"
     );
-    pair.client.check(self.profile, self.workload, "client");
-    pair.server.check(self.profile, self.workload, "server");
+    pair
+      .client
+      .check(self.profile, self.workload, self.version, resumed, "client");
+    pair
+      .server
+      .check(self.profile, self.workload, self.version, resumed, "server");
     pair
   }
 
@@ -730,16 +834,20 @@ impl Fixture {
   }
 
   fn finish_inner(&self, pair: Pair, resumed: bool) -> Pair {
-    pair.handshake(
-      resumed,
-      self.workload == Workload::HelloRetryRequest,
+    // TLS 1.2 full: CH, server flight, client flight, server Finished.
+    // TLS 1.2 resumed: CH, server flight, client Finished; no KX or tickets.
+    // TLS 1.3 has three flights plus one for tickets, and two for a retry.
+    let flights = if self.version == ProtocolVersion::TLSv1_2 {
+      if resumed { 3 } else { 4 }
+    } else {
       3_usize.strict_add(usize::from(self.profile.resumed)).strict_add(
         if self.workload == Workload::HelloRetryRequest {
           2
         } else {
           0
         },
-      ),
-    )
+      )
+    };
+    pair.handshake(resumed, self.workload == Workload::HelloRetryRequest, flights)
   }
 }

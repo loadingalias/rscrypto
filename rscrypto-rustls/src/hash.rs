@@ -67,11 +67,21 @@ impl<D: Digest + Send + Sync + 'static> hash::Context for Context<D> {
 }
 
 #[cfg(any(feature = "hmac", feature = "hkdf"))]
+struct SecretBlock<const N: usize>([u8; N]);
+
+#[cfg(any(feature = "hmac", feature = "hkdf"))]
+impl<const N: usize> Drop for SecretBlock<N> {
+  fn drop(&mut self) {
+    rscrypto::traits::ct::zeroize(&mut self.0);
+  }
+}
+
+#[cfg(any(feature = "hmac", feature = "hkdf"))]
 mod hmac_adapter {
   use rscrypto::{HmacSha256, HmacSha384, Mac, SecretVec};
   use rustls::crypto::hmac;
 
-  use super::{Algorithm, Box, hash};
+  use super::{Algorithm, Box, SecretBlock, hash};
 
   impl hmac::Hmac for Algorithm {
     fn with_key(&self, key: &[u8]) -> Box<dyn hmac::Key> {
@@ -94,8 +104,12 @@ mod hmac_adapter {
   impl hmac::Key for Key {
     fn sign_concat(&self, first: &[u8], middle: &[&[u8]], last: &[u8]) -> hmac::Tag {
       match self.algorithm {
-        Algorithm::Sha256 => sign::<HmacSha256>(self.key.as_bytes(), first, middle, last),
-        Algorithm::Sha384 => sign::<HmacSha384>(self.key.as_bytes(), first, middle, last),
+        Algorithm::Sha256 => {
+          sign::<HmacSha256, 32>(self.key.as_bytes(), first, middle, last, HmacSha256::finalize_into)
+        }
+        Algorithm::Sha384 => {
+          sign::<HmacSha384, 48>(self.key.as_bytes(), first, middle, last, HmacSha384::finalize_into)
+        }
       }
     }
 
@@ -104,12 +118,21 @@ mod hmac_adapter {
     }
   }
 
-  pub(super) fn sign<M: Mac>(key: &[u8], first: &[u8], middle: &[&[u8]], last: &[u8]) -> hmac::Tag {
+  pub(super) fn sign<M: Mac, const N: usize>(
+    key: &[u8],
+    first: &[u8],
+    middle: &[&[u8]],
+    last: &[u8],
+    finish: impl Fn(&M, &mut [u8; N]),
+  ) -> hmac::Tag {
+    const { assert!(N == M::TAG_SIZE) };
     let mut state = M::new(key);
     state.update(first);
     state.update_vectored(middle);
     state.update(last);
-    hmac::Tag::new(state.finalize().as_ref())
+    let mut output = SecretBlock([0; N]);
+    finish(&state, &mut output.0);
+    hmac::Tag::new(&output.0)
   }
 }
 
@@ -120,29 +143,29 @@ pub static HMAC_SHA256: &dyn rustls::crypto::hmac::Hmac = &Algorithm::Sha256;
 #[cfg(any(feature = "hmac", feature = "hkdf"))]
 pub static HMAC_SHA384: &dyn rustls::crypto::hmac::Hmac = &Algorithm::Sha384;
 
-// The TLS 1.2 PRF (RFC 5246 §5): rustls's P_hash over this crate's HMAC.
-// rustls derives the master secret and key block through it.
+// The TLS 1.2 PRF (RFC 5246 §5). Each operation reuses one local HMAC key
+// schedule; prepared keyed states never escape the operation or get cloned.
 #[cfg(all(
   any(feature = "hmac", feature = "hkdf"),
   any(feature = "aes-gcm", feature = "chacha20poly1305")
 ))]
-pub(crate) static PRF_SHA256: &dyn rustls::crypto::tls12::Prf =
-  &tls12_prf::ExtendedMasterSecretOnly(rustls::crypto::tls12::PrfUsingHmac(&Algorithm::Sha256));
+pub(crate) static PRF_SHA256: &dyn rustls::crypto::tls12::Prf = &tls12_prf::ExtendedMasterSecretOnly(Algorithm::Sha256);
 #[cfg(all(any(feature = "hmac", feature = "hkdf"), feature = "aes-gcm"))]
-pub(crate) static PRF_SHA384: &dyn rustls::crypto::tls12::Prf =
-  &tls12_prf::ExtendedMasterSecretOnly(rustls::crypto::tls12::PrfUsingHmac(&Algorithm::Sha384));
+pub(crate) static PRF_SHA384: &dyn rustls::crypto::tls12::Prf = &tls12_prf::ExtendedMasterSecretOnly(Algorithm::Sha384);
 
 #[cfg(all(
   any(feature = "hmac", feature = "hkdf"),
   any(feature = "aes-gcm", feature = "chacha20poly1305")
 ))]
 mod tls12_prf {
+  use rscrypto::{HmacSha256, HmacSha384, Mac, SecretVec};
   use rustls::Error;
   use rustls::crypto::kx::ActiveKeyExchange;
-  use rustls::crypto::tls12::{Prf, PrfSecret, PrfUsingHmac};
+  use rustls::crypto::tls12::{Prf, PrfSecret};
+  use rustls::enums::ProtocolVersion;
   use rustls::error::PeerIncompatible;
 
-  use super::Box;
+  use super::{Algorithm, Box, SecretBlock};
 
   /// RFC 7627's label for the session-hash master secret.
   const EXTENDED_MASTER_SECRET: &[u8] = b"extended master secret";
@@ -153,7 +176,7 @@ mod tls12_prf {
   /// extension; refusing it here means no session on this provider uses the legacy
   /// derivation, whatever `require_ems` says. The refusal raises the error that
   /// `require_ems` raises, which aborts with `handshake_failure` (RFC 7627 §5.2).
-  pub(crate) struct ExtendedMasterSecretOnly(pub(crate) PrfUsingHmac<'static>);
+  pub(crate) struct ExtendedMasterSecretOnly(pub(crate) Algorithm);
 
   impl Prf for ExtendedMasterSecretOnly {
     fn for_key_exchange(
@@ -168,11 +191,71 @@ mod tls12_prf {
         // Dropping `kx` clears the ephemeral secret without completing the exchange.
         return Err(PeerIncompatible::ExtendedMainSecretExtensionRequired.into());
       }
-      self.0.for_key_exchange(output, kx, peer_pub_key, label, seed)
+      let secret = kx.complete_for_tls_version(peer_pub_key, ProtocolVersion::TLSv1_2)?;
+      derive(self.0, secret.secret_bytes(), output, label, seed);
+      Ok(())
     }
 
     fn new_secret(&self, master_secret: &[u8; 48]) -> Box<dyn PrfSecret> {
-      self.0.new_secret(master_secret)
+      Box::new(MasterSecret {
+        algorithm: self.0,
+        bytes: SecretVec::from_vec(master_secret.to_vec()),
+      })
+    }
+  }
+
+  struct MasterSecret {
+    algorithm: Algorithm,
+    bytes: SecretVec,
+  }
+
+  impl PrfSecret for MasterSecret {
+    fn prf(&self, output: &mut [u8], label: &[u8], seed: &[u8]) {
+      derive(self.algorithm, self.bytes.as_bytes(), output, label, seed);
+    }
+  }
+
+  fn derive(algorithm: Algorithm, secret: &[u8], output: &mut [u8], label: &[u8], seed: &[u8]) {
+    match algorithm {
+      Algorithm::Sha256 => p_hash::<HmacSha256, 32>(secret, output, label, seed, HmacSha256::finalize_into),
+      Algorithm::Sha384 => p_hash::<HmacSha384, 48>(secret, output, label, seed, HmacSha384::finalize_into),
+    }
+  }
+
+  // RFC 5246 section 5: A(1) = HMAC(label || seed), then each output term
+  // authenticates A(i) || label || seed. Reset restores the same keyed prefix.
+  // The MAC and both intermediate blocks clear on drop, including unwind. Only
+  // the caller's output survives; no mutable state is shared between calls.
+  fn p_hash<M: Mac, const N: usize>(
+    secret: &[u8],
+    output: &mut [u8],
+    label: &[u8],
+    seed: &[u8],
+    finish: impl Fn(&M, &mut [u8; N]),
+  ) {
+    const { assert!(N == M::TAG_SIZE) };
+    if output.is_empty() {
+      return;
+    }
+    let mut mac = M::new(secret);
+    mac.update(label);
+    mac.update(seed);
+    let mut a = SecretBlock([0; N]);
+    let mut term = SecretBlock([0; N]);
+    finish(&mac, &mut a.0);
+    let mut chunks = output.chunks_mut(N);
+    while let Some(chunk) = chunks.next() {
+      mac.reset();
+      mac.update(&a.0);
+      // Non-consuming finalization preserves the buffered A(i) prefix for
+      // this output term, so the next A value needs no second reset/update.
+      if chunks.len() != 0 {
+        finish(&mac, &mut a.0);
+      }
+      mac.update(label);
+      mac.update(seed);
+      finish(&mac, &mut term.0);
+      chunk.copy_from_slice(&term.0[..chunk.len()]);
     }
   }
 }
@@ -210,8 +293,12 @@ mod hkdf_adapter {
 
     fn hmac_sign(&self, key: &tls13::OkmBlock, message: &[u8]) -> hmac::Tag {
       match self {
-        Self::Sha256 => hmac_adapter::sign::<HmacSha256>(key.as_ref(), message, &[], &[]),
-        Self::Sha384 => hmac_adapter::sign::<HmacSha384>(key.as_ref(), message, &[], &[]),
+        Self::Sha256 => {
+          hmac_adapter::sign::<HmacSha256, 32>(key.as_ref(), message, &[], &[], HmacSha256::finalize_into)
+        }
+        Self::Sha384 => {
+          hmac_adapter::sign::<HmacSha384, 48>(key.as_ref(), message, &[], &[], HmacSha384::finalize_into)
+        }
       }
     }
   }
