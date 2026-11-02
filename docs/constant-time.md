@@ -691,6 +691,33 @@ x86-64 Linux, Windows x86-64, RISC-V and IBM Z. `just ct-renew` compared each ta
 With the renewals, all four artifact sets scan with no stale waiver and no unwaived finding. The harness insertion
 also moved 43 waiver source references into `tools/ct-harness/src/lib.rs` by 27 lines; they were shifted with it.
 
+### AES/TLS generated-code review (2026-11-02)
+
+The full Constant-Time campaign at `06f36da0` exposed stale condition reviews after the AES/TLS and earlier
+cleanup changes. The review covers the exact linked artifacts for Linux x86-64, Windows x86-64, Linux
+AArch64, POWER, IBM Z and RISC-V, plus a local Apple AArch64 build of the same source. The IBM Z artifact
+was prepared for native execution; cancellation of the campaign left its timing qualification incomplete.
+
+The review replaces 137 stale primitive/condition bindings with 141 current bindings. All are public
+conditions except the existing IBM Z RSA opaque success-or-failure disclosure, which keeps its original
+contract. No primitive claim, exclusion, sampling requirement or timing threshold changes.
+
+- The outlined SHA-256 secret finalizer has a constant-false cleanup-tail condition on x86-64 and POWER.
+  Its former `finalize_secret` bindings are retired. The corresponding Linux AArch64 sites disappeared.
+- The Linux AArch64 fixed-size clearing path changes inlined RSA cleanup. Its selectors use allocation
+  descriptors, public lengths and alignment; the reviewed clear body loads only descriptors and writes
+  literal zeros. Saved output descriptors and cleanup pointers remain disjoint from hash and output buffers.
+- PSS mask conditions compare the public output bit length with `em_bits`. The review follows their current
+  registers and protected stack slots, including changed Apple and RISC-V frames.
+- The other renewed conditions retain their reviewed public loop bounds, modulus geometry, processor DIT
+  state or existing disclosure. Complete-function checks resolve changed PLT references, consumed constants
+  and Rust source-location records against the linked images rather than nearest-symbol annotations.
+
+The review records, complete-function checks, current decisions and frozen artifacts are retained locally in
+`benchmark_results/tls-aes-closure-20261102/ci-followthrough/`. The Apple review uses fresh current reaching
+definitions; its available older baseline does not establish the current condition identities. Static acceptance
+does not substitute for a passing full native campaign on the committed manifest.
+
 ## Public decisions and exclusions
 
 Ordinary equality is allowed for public values, such as nonces, encoded public keys,
