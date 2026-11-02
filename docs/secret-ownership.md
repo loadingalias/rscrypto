@@ -86,6 +86,11 @@ data. A post-call guard overwrites a fixed dead-stack region to clear cached
 schedules and block-core spills. It owns no key, output, or allocation. Linked
 worker depth and actual overwrite placement require separate review for each target.
 
+On little-endian AArch64 macOS/Linux, each AES-GCM context retains one 16-power
+GHASH table and one packed pair table. Its four/eight-power windows and 64-bit
+middle halves borrow those owners. Drop clears both complete tables and raw H.
+Private AES-CE schedules retain exactly 176/240 initialized bytes at 16-byte alignment.
+
 Internal AArch64 GCM table descriptors borrow the context's H-power arrays. The enclosing
 `GhashAccumulator` owns the live authentication state; AAD and four-, eight-, and bulk-block
 helpers update it through a mutable borrow. These borrows add no secret owner or allocation.
@@ -124,12 +129,12 @@ into rustls's clearing `hmac::Tag`. The block clears on return or unwind.
 Record, packet, and header-protection keys own rscrypto AEAD or header-protection
 contexts. Construction borrows rustls's clearing `AeadKey`, then creates typed
 rscrypto key owners and expanded contexts in private outlined workers. GNU/Linux
-AArch64 record construction allocates an initialized final heap owner first;
-a unit-returning worker borrows its cipher field. Its guard clears the retired
-worker frames before that allocation is released on unwind. ChaCha record keys
-use their own initializer and clearing window instead of entering the AES-sized
-constructor frame. Other construction paths return only a `Box` and retain their
-post-call guard. All guards run before
+AArch64 record construction allocates the final heap owner with a vacant cipher
+first. Separate concrete AES workers initialize that storage without replacing
+an existing key. ChaCha retains its own outlined initializer. A guard clears the
+retired worker frames before the allocation is released on ordinary unwind.
+Other construction paths return only a `Box` and retain their post-call guard.
+All guards run before
 the outer `AeadKey` drops. The adapters expose no key formatting or serialization.
 TLS 1.2 record keys use the same construction; an AES-GCM
 decrypter keeps only the 4-byte salt and takes each record's explicit nonce
@@ -142,10 +147,16 @@ intermediate blocks. `HmacSha256::finalize_into` and
 `HmacSha384::finalize_into` write into those blocks without creating a public
 tag owner. The caller owns the PRF output and its cleanup. Retained secrets
 share no mutable state between calls.
-Secret SHA-384 and SHA-512 finalization borrows the input hasher and owns its
-64-byte working compression state and 128-byte padding block together in one
-private clearing owner. It writes the digest into caller-owned output and clears
-that workspace on return or ordinary unwind. Working words do not return by value.
+HMAC-SHA256 and HMAC-SHA384 write the inner digest directly into a private outer
+padding workspace. The SHA-256 workspace owns 32 bytes of state and a 64-byte
+block; SHA-384 uses SHA-512's 64-byte state and 128-byte block owner type. The
+keyed outer state is copied after inner finalization returns. Both inputs remain
+borrowed, and Drop clears the workspace on return or ordinary unwind. No separate inner-digest array
+or full outer hasher is constructed.
+Secret SHA-384/SHA-512 finalization also borrows the input hasher and initializes
+that 192-byte owner type from the complete buffered block. Output belongs to
+the caller; working words do not return by value. Compiler copies and registers
+retain their separate artifact-specific qualification limits.
 Transcript contexts can be cloned; they contain public handshake data.
 
 ### rustls key exchange
@@ -227,6 +238,11 @@ neither clones keys nor serializes them. Plaintext copies during seal/open stay
 in `SecretVec` until successful transfer to ciphertext or rustls-owned plaintext.
 The incoming borrowed plaintext and the returned plaintext belong to rustls.
 
+Optimized, non-portable little-endian GNU AArch64 construction uses an outlined
+worker and the existing construction scrub guard. The caller owns the returned
+ticket key above that worker's retired stack and drops the typed input key after
+the guard. Compiler-copy coverage remains specific to the reviewed artifact.
+
 ### rustls QUIC integration
 
 `EndpointKeys` shares a clearing `SecretBytes<32>` reset key and the
@@ -239,6 +255,11 @@ copy clears. Server configurations own a clearing `HkdfSha256`
 address-token root. Each token derives an `Aes256Gcm` context through a clearing
 `SecretBytes<32>` scratch. A derived context seals once; Quinn supplies the fresh
 128-bit derivation nonce. Incoming token buffers belong to Quinn.
+
+On that same GNU configuration, token construction uses an outlined worker that
+returns only the final `Box`. Its caller runs the construction guard before the
+typed input key drops. The HKDF root, derivation scratch and returned owner keep
+their existing lifetimes; this boundary adds no secret owner or allocation.
 
 Sessions own rustls QUIC connections, queued handshake/key-change events, and
 next-generation traffic secrets. At handshake completion, each session takes

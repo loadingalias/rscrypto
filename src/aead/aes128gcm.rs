@@ -126,8 +126,10 @@ pub struct Aes128Gcm {
   h: [u8; 16],
   /// Precomputed H powers [H^4, H^3, H^2, H] in the POLYVAL domain
   /// for 4-block wide GHASH processing.
+  #[cfg(not(all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux"))))]
   h_powers_rev: [u128; 4],
   /// Precomputed H powers [H^8, H^7, ..., H] for 8-block GHASH windows.
+  #[cfg(not(all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux"))))]
   h_powers_rev_8: [u128; 8],
   /// Precomputed H powers [H^16, H^15, ..., H] for 16-block GHASH windows.
   #[cfg(any(
@@ -141,9 +143,6 @@ pub struct Aes128Gcm {
   /// Owned 64/128-block tables; Linux vector loads stay within cache lines.
   #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   wide_powers: X86WidePowers,
-  /// Precomputed `(lo64 ^ hi64)` for each 16-block GHASH power.
-  #[cfg(all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")))]
-  h_powers_rev_16_mid: [u128; 16],
   /// Pair-packed 16-block GHASH powers for AArch64 assembly.
   #[cfg(all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")))]
   h_powers_rev_16_pair: [u128; 24],
@@ -173,6 +172,35 @@ impl Aes128Gcm {
     <Self as Aead>::new(key)
   }
 
+  // The smaller GHASH windows are suffixes of the 16-power authority on these targets.
+  #[inline]
+  fn h_powers_4(&self) -> &[u128; 4] {
+    #[cfg(all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")))]
+    {
+      &self.h_powers_rev_16.as_chunks::<4>().0[3]
+    }
+    #[cfg(not(all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux"))))]
+    {
+      &self.h_powers_rev
+    }
+  }
+
+  #[cfg(any(
+    target_arch = "aarch64",
+    all(target_arch = "powerpc64", not(feature = "portable-only"))
+  ))]
+  #[inline]
+  fn h_powers_8(&self) -> &[u128; 8] {
+    #[cfg(all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")))]
+    {
+      &self.h_powers_rev_16.as_chunks::<8>().0[1]
+    }
+    #[cfg(not(all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux"))))]
+    {
+      &self.h_powers_rev_8
+    }
+  }
+
   /// Rebuild a typed tag from raw tag bytes.
   #[inline]
   pub fn tag_from_slice(bytes: &[u8]) -> Result<Aes128GcmTag, AeadBufferError> {
@@ -183,8 +211,8 @@ impl Aes128Gcm {
   #[inline]
   fn x86_gcm_tables<'a>(&'a self) -> aes::X86GcmTables<'a> {
     aes::X86GcmTables {
-      h_polyval: self.h_powers_rev[3],
-      h_powers_rev: &self.h_powers_rev,
+      h_polyval: self.h_powers_4()[3],
+      h_powers_rev: self.h_powers_4(),
       h_powers_rev_16: &self.h_powers_rev_16,
       #[cfg(target_os = "linux")]
       h_powers_rev_32: &self.h_powers_rev_32,
@@ -318,11 +346,11 @@ pub fn diag_aes128gcm_ctr32_be(cipher: &Aes128Gcm, nonce: &Nonce96, plaintext: &
 #[inline(never)]
 #[must_use]
 pub fn diag_aes128gcm_ghash(cipher: &Aes128Gcm, aad: &[u8], ciphertext: &[u8]) -> [u8; 16] {
-  let h_polyval = cipher.h_powers_rev[3];
+  let h_polyval = cipher.h_powers_4()[3];
   let mut acc = GhashAccumulator(0);
   if should_use_wide_ghash(cipher.backend, aad.len(), ciphertext.len()) {
-    acc.0 = ghash_update_padded_wide(acc.0, h_polyval, &cipher.h_powers_rev, aad);
-    acc.0 = ghash_update_padded_wide(acc.0, h_polyval, &cipher.h_powers_rev, ciphertext);
+    acc.0 = ghash_update_padded_wide(acc.0, h_polyval, cipher.h_powers_4(), aad);
+    acc.0 = ghash_update_padded_wide(acc.0, h_polyval, cipher.h_powers_4(), ciphertext);
   } else {
     acc.0 = ghash_update_padded(acc.0, h_polyval, aad);
     acc.0 = ghash_update_padded(acc.0, h_polyval, ciphertext);
@@ -488,10 +516,9 @@ impl Aes128Gcm {
     {
       let length_block = super::seal_bit_lengths(aad.len(), out.len())?.to_be_bits_block();
       let tables = aes::Aarch64GcmTables {
-        h_powers_rev: &self.h_powers_rev,
-        h_powers_rev_8: &self.h_powers_rev_8,
+        h_powers_rev: self.h_powers_4(),
+        h_powers_rev_8: self.h_powers_8(),
         h_powers_rev_16: &self.h_powers_rev_16,
-        h_powers_rev_16_mid: &self.h_powers_rev_16_mid,
         h_powers_rev_16_pair: &self.h_powers_rev_16_pair,
       };
       let mut acc = GhashAccumulator(0);
@@ -591,9 +618,9 @@ impl Aes128Gcm {
       Ok(())
     })?;
     let tag = if should_use_wide_ghash(self.backend, aad.len(), ciphertext.len()) {
-      compute_tag_wide(&self.ek, self.h_powers_rev[3], &self.h_powers_rev, &j0, aad, ciphertext)
+      compute_tag_wide(&self.ek, self.h_powers_4()[3], self.h_powers_4(), &j0, aad, ciphertext)
     } else {
-      compute_tag(&self.ek, self.h_powers_rev[3], &j0, aad, ciphertext)
+      compute_tag(&self.ek, self.h_powers_4()[3], &j0, aad, ciphertext)
     };
     match tag {
       Ok(tag) => Ok((Aes128GcmTag::from_bytes(tag), ciphertext)),
@@ -614,6 +641,17 @@ impl Aead for Aes128Gcm {
   type Nonce = Nonce96;
   type Tag = Aes128GcmTag;
 
+  // Allow optimized GNU std callers to coalesce the returned context's storage.
+  #[cfg_attr(
+    all(
+      target_arch = "aarch64",
+      target_os = "linux",
+      target_env = "gnu",
+      feature = "std",
+      not(debug_assertions)
+    ),
+    inline(always)
+  )]
   fn new(key: &Self::Key) -> Self {
     let ek = aes::aes128_expand_key(&key.0);
 
@@ -633,7 +671,9 @@ impl Aead for Aes128Gcm {
       all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux"))
     )))]
     let powers = polyval::precompute_powers_chained::<8>(h_polyval);
+    #[cfg(not(all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux"))))]
     let h_powers_rev = [powers[3], powers[2], powers[1], powers[0]];
+    #[cfg(not(all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux"))))]
     let h_powers_rev_8 = core::array::from_fn(|i| powers[7usize.strict_sub(i)]);
     #[cfg(any(
       all(target_arch = "x86_64", target_feature = "sse2"),
@@ -647,15 +687,15 @@ impl Aead for Aes128Gcm {
     #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     let h_powers_rev_128 = core::array::from_fn(|i| powers[127usize.strict_sub(i)]);
     #[cfg(all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")))]
-    let h_powers_rev_16_mid = polyval::precompute_powers_16_mid(&h_powers_rev_16);
-    #[cfg(all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")))]
     let h_powers_rev_16_pair = polyval::precompute_powers_16_pair(&h_powers_rev_16);
     let backend = resolve_backend();
 
     Self {
       ek,
       h,
+      #[cfg(not(all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux"))))]
       h_powers_rev,
+      #[cfg(not(all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux"))))]
       h_powers_rev_8,
       #[cfg(any(
         all(target_arch = "x86_64", target_feature = "sse2"),
@@ -669,8 +709,6 @@ impl Aead for Aes128Gcm {
         h64: h_powers_rev_64,
         h128: h_powers_rev_128,
       },
-      #[cfg(all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")))]
-      h_powers_rev_16_mid,
       #[cfg(all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")))]
       h_powers_rev_16_pair,
       backend,
@@ -739,8 +777,8 @@ impl Aead for Aes128Gcm {
       && buffer.len() >= X86_AESNI_GCM_MIN_LEN
       && crate::platform::caps().has(crate::platform::caps::x86::PCLMUL_READY)
     {
-      let h_polyval = self.h_powers_rev[3];
-      let mut acc = GhashAccumulator(ghash_update_padded_wide(0, h_polyval, &self.h_powers_rev, aad));
+      let h_polyval = self.h_powers_4()[3];
+      let mut acc = GhashAccumulator(ghash_update_padded_wide(0, h_polyval, self.h_powers_4(), aad));
       // SAFETY: fused x86 AES-NI/PCLMUL sealing because:
       // 1. Backend resolution selected X86AesniPclmul only after CPUID confirmed AES-NI and PCLMULQDQ.
       // 2. The extra PCLMUL_READY check confirms SSSE3 for in-register GHASH byte reversal.
@@ -752,7 +790,7 @@ impl Aead for Aes128Gcm {
           buffer,
           acc.0,
           h_polyval,
-          &self.h_powers_rev,
+          self.h_powers_4(),
         )
       };
       acc.0 ^= u128::from_be_bytes(length_block);
@@ -768,12 +806,10 @@ impl Aead for Aes128Gcm {
       AeadBackend::Aarch64AesPmull | AeadBackend::Aarch64Sve2AesPmull
     ) {
       let tables = aes::Aarch64GcmTables {
-        h_powers_rev: &self.h_powers_rev,
-        h_powers_rev_8: &self.h_powers_rev_8,
+        h_powers_rev: self.h_powers_4(),
+        h_powers_rev_8: self.h_powers_8(),
         #[cfg(any(target_os = "macos", target_os = "linux"))]
         h_powers_rev_16: &self.h_powers_rev_16,
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
-        h_powers_rev_16_mid: &self.h_powers_rev_16_mid,
         #[cfg(any(target_os = "macos", target_os = "linux"))]
         h_powers_rev_16_pair: &self.h_powers_rev_16_pair,
       };
@@ -796,12 +832,12 @@ impl Aead for Aes128Gcm {
 
     #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
     if self.backend == AeadBackend::Power8Crypto {
-      let h_polyval = self.h_powers_rev[3];
+      let h_polyval = self.h_powers_4()[3];
       // SAFETY: POWER8 GHASH AAD path because:
       // 1. Backend resolution selected `Power8Crypto` only after runtime detection confirmed POWER8
       //    crypto.
       // 2. `aad` is a valid byte slice; padding is handled inside the helper.
-      let mut acc = GhashAccumulator(unsafe { ghash_update_padded_wide_ppc(0, h_polyval, &self.h_powers_rev, aad) });
+      let mut acc = GhashAccumulator(unsafe { ghash_update_padded_wide_ppc(0, h_polyval, self.h_powers_4(), aad) });
       // SAFETY: fused POWER AES-GCM sealing because:
       // 1. Backend resolution selected `Power8Crypto` only after runtime detection confirmed POWER8
       //    crypto.
@@ -813,8 +849,8 @@ impl Aead for Aes128Gcm {
           buffer,
           acc.0,
           h_polyval,
-          &self.h_powers_rev,
-          &self.h_powers_rev_8,
+          self.h_powers_4(),
+          self.h_powers_8(),
         )
       };
       acc.0 ^= u128::from_be_bytes(length_block);
@@ -829,18 +865,18 @@ impl Aead for Aes128Gcm {
     #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     if self.backend == AeadBackend::X86VaesVpclmul
       && let Some(tag_bytes) =
-        compute_tag_short_wide(&self.ek, self.h_powers_rev[3], &self.h_powers_rev, &j0, aad, buffer)
+        compute_tag_short_wide(&self.ek, self.h_powers_4()[3], self.h_powers_4(), &j0, aad, buffer)
           .map_err(|_| SealError::too_large())?
     {
       return Ok(Aes128GcmTag::from_bytes(tag_bytes));
     }
     if should_use_wide_ghash(self.backend, aad.len(), buffer.len()) {
-      let tag_bytes = compute_tag_wide(&self.ek, self.h_powers_rev[3], &self.h_powers_rev, &j0, aad, buffer)
+      let tag_bytes = compute_tag_wide(&self.ek, self.h_powers_4()[3], self.h_powers_4(), &j0, aad, buffer)
         .map_err(|_| SealError::too_large())?;
       return Ok(Aes128GcmTag::from_bytes(tag_bytes));
     }
     let tag_bytes =
-      compute_tag(&self.ek, self.h_powers_rev[3], &j0, aad, buffer).map_err(|_| SealError::too_large())?;
+      compute_tag(&self.ek, self.h_powers_4()[3], &j0, aad, buffer).map_err(|_| SealError::too_large())?;
     Ok(Aes128GcmTag::from_bytes(tag_bytes))
   }
 
@@ -899,8 +935,8 @@ impl Aead for Aes128Gcm {
       && buffer.len() >= X86_AESNI_GCM_MIN_LEN
       && crate::platform::caps().has(crate::platform::caps::x86::PCLMUL_READY)
     {
-      let h_polyval = self.h_powers_rev[3];
-      let mut acc = GhashAccumulator(ghash_update_padded_wide(0, h_polyval, &self.h_powers_rev, aad));
+      let h_polyval = self.h_powers_4()[3];
+      let mut acc = GhashAccumulator(ghash_update_padded_wide(0, h_polyval, self.h_powers_4(), aad));
       // SAFETY: fused x86 AES-NI/PCLMUL open because:
       // 1. Backend resolution selected X86AesniPclmul only after CPUID confirmed AES-NI and PCLMULQDQ.
       // 2. The extra PCLMUL_READY check confirms SSSE3 for in-register GHASH byte reversal.
@@ -912,7 +948,7 @@ impl Aead for Aes128Gcm {
           buffer,
           acc.0,
           h_polyval,
-          &self.h_powers_rev,
+          self.h_powers_4(),
         )
       };
       acc.0 ^= u128::from_be_bytes(length_block);
@@ -932,12 +968,10 @@ impl Aead for Aes128Gcm {
       AeadBackend::Aarch64AesPmull | AeadBackend::Aarch64Sve2AesPmull
     ) {
       let tables = aes::Aarch64GcmTables {
-        h_powers_rev: &self.h_powers_rev,
-        h_powers_rev_8: &self.h_powers_rev_8,
+        h_powers_rev: self.h_powers_4(),
+        h_powers_rev_8: self.h_powers_8(),
         #[cfg(any(target_os = "macos", target_os = "linux"))]
         h_powers_rev_16: &self.h_powers_rev_16,
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
-        h_powers_rev_16_mid: &self.h_powers_rev_16_mid,
         #[cfg(any(target_os = "macos", target_os = "linux"))]
         h_powers_rev_16_pair: &self.h_powers_rev_16_pair,
       };
@@ -964,12 +998,12 @@ impl Aead for Aes128Gcm {
 
     #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
     if self.backend == AeadBackend::Power8Crypto {
-      let h_polyval = self.h_powers_rev[3];
+      let h_polyval = self.h_powers_4()[3];
       // SAFETY: POWER8 GHASH AAD path because:
       // 1. Backend resolution selected `Power8Crypto` only after runtime detection confirmed POWER8
       //    crypto.
       // 2. `aad` is a valid byte slice; padding is handled inside the helper.
-      let mut acc = GhashAccumulator(unsafe { ghash_update_padded_wide_ppc(0, h_polyval, &self.h_powers_rev, aad) });
+      let mut acc = GhashAccumulator(unsafe { ghash_update_padded_wide_ppc(0, h_polyval, self.h_powers_4(), aad) });
       // SAFETY: fused POWER AES-GCM open because:
       // 1. Backend resolution selected `Power8Crypto` only after runtime detection confirmed POWER8
       //    crypto.
@@ -981,8 +1015,8 @@ impl Aead for Aes128Gcm {
           buffer,
           acc.0,
           h_polyval,
-          &self.h_powers_rev,
-          &self.h_powers_rev_8,
+          self.h_powers_4(),
+          self.h_powers_8(),
         )
       };
       acc.0 ^= u128::from_be_bytes(length_block);
@@ -1000,7 +1034,7 @@ impl Aead for Aes128Gcm {
     #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     if self.backend == AeadBackend::X86VaesVpclmul
       && let Some(expected) =
-        compute_tag_short_wide(&self.ek, self.h_powers_rev[3], &self.h_powers_rev, &j0, aad, buffer)
+        compute_tag_short_wide(&self.ek, self.h_powers_4()[3], self.h_powers_4(), &j0, aad, buffer)
           .map_err(|_| OpenError::too_large())?
     {
       if !ct::fixed_eq(&expected, tag.as_bytes()).declassify() {
@@ -1011,7 +1045,7 @@ impl Aead for Aes128Gcm {
       return Ok(());
     }
     if should_use_wide_ghash(self.backend, aad.len(), buffer.len()) {
-      let expected = compute_tag_wide(&self.ek, self.h_powers_rev[3], &self.h_powers_rev, &j0, aad, buffer)
+      let expected = compute_tag_wide(&self.ek, self.h_powers_4()[3], self.h_powers_4(), &j0, aad, buffer)
         .map_err(|_| OpenError::too_large())?;
       if !ct::fixed_eq(&expected, tag.as_bytes()).declassify() {
         ct::zeroize(buffer);
@@ -1020,7 +1054,7 @@ impl Aead for Aes128Gcm {
       aes::aes128_ctr32_encrypt_be(&self.ek, &ctr_block, buffer);
       return Ok(());
     }
-    let expected = compute_tag(&self.ek, self.h_powers_rev[3], &j0, aad, buffer).map_err(|_| OpenError::too_large())?;
+    let expected = compute_tag(&self.ek, self.h_powers_4()[3], &j0, aad, buffer).map_err(|_| OpenError::too_large())?;
     if !ct::fixed_eq(&expected, tag.as_bytes()).declassify() {
       ct::zeroize(buffer);
       return Err(OpenError::verification());
@@ -1034,14 +1068,20 @@ impl Aead for Aes128Gcm {
 impl Drop for Aes128Gcm {
   fn drop(&mut self) {
     ct::zeroize(&mut self.h);
-    // SAFETY: H-power byte view because:
-    // 1. `[u128; 4]` is a contiguous initialized 64-byte array.
-    // 2. `self` is mutably borrowed during drop, so no alias observes the byte view.
-    ct::zeroize(unsafe { core::slice::from_raw_parts_mut(self.h_powers_rev.as_mut_ptr().cast::<u8>(), 64) });
-    // SAFETY: H-power byte view because:
-    // 1. `[u128; 8]` is a contiguous initialized 128-byte array.
-    // 2. `self` is mutably borrowed during drop, so no alias observes the byte view.
-    ct::zeroize(unsafe { core::slice::from_raw_parts_mut(self.h_powers_rev_8.as_mut_ptr().cast::<u8>(), 128) });
+    #[cfg(not(all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux"))))]
+    {
+      // SAFETY: H-power byte view because:
+      // 1. `[u128; 4]` is a contiguous initialized 64-byte array.
+      // 2. `self` is mutably borrowed during drop, so no alias observes the byte view.
+      ct::zeroize(unsafe { core::slice::from_raw_parts_mut(self.h_powers_rev.as_mut_ptr().cast::<u8>(), 64) });
+    }
+    #[cfg(not(all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux"))))]
+    {
+      // SAFETY: H-power byte view because:
+      // 1. `[u128; 8]` is a contiguous initialized 128-byte array.
+      // 2. `self` is mutably borrowed during drop, so no alias observes the byte view.
+      ct::zeroize(unsafe { core::slice::from_raw_parts_mut(self.h_powers_rev_8.as_mut_ptr().cast::<u8>(), 128) });
+    }
     #[cfg(any(
       all(target_arch = "x86_64", target_feature = "sse2"),
       all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux"))
@@ -1069,10 +1109,6 @@ impl Drop for Aes128Gcm {
     }
     #[cfg(all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")))]
     {
-      // SAFETY: H-power byte view because:
-      // 1. `[u128; 16]` is a contiguous initialized 256-byte array.
-      // 2. `self` is mutably borrowed during drop, so no alias observes the byte view.
-      ct::zeroize(unsafe { core::slice::from_raw_parts_mut(self.h_powers_rev_16_mid.as_mut_ptr().cast::<u8>(), 256) });
       // SAFETY: H-power byte view because:
       // 1. `[u128; 24]` is a contiguous initialized 384-byte array.
       // 2. `self` is mutably borrowed during drop, so no alias observes the byte view.

@@ -354,22 +354,25 @@ caller owns the derived output. Non-consuming finalization preserves the buffere
 A(i) prefix while the PRF computes A(i+1), then appends the label and seed for the current
 output term. This avoids a second state reset without adding another secret owner.
 Caller-output HMAC finalization writes the outer digest directly into the destination.
-Outer SHA-2 states receive public initialization before borrowing the keyed prefix
-in place; finalization does not return a keyed outer hash constructor value.
-Secret SHA-384 and SHA-512 finalization uses one clearing owner for its 64-byte
-working state and 128-byte padding block. Compression, output serialization and
-cleanup borrow that same owner; drop clears it on return or ordinary unwind.
+HMAC-SHA256 and HMAC-SHA384 initialize a clearing outer-padding workspace before
+filling its digest prefix directly from inner finalization. The keyed outer
+state is copied only after that fill returns. The SHA-256 workspace owns 32 bytes
+of state and a 64-byte block; SHA-384 uses SHA-512's 64-byte state and 128-byte
+block owner type.
+Compression and serialization borrow the workspace, and Drop clears it on return
+or ordinary unwind. This removes the separate inner-digest array and outer
+hasher. Existing secret SHA-384/SHA-512 finalizers fill that owner type from their
+complete buffered block and retain the same clearing boundary.
 The HMAC adapter clears its fixed output block after rustls copies the tag.
 Compiler-created copies and saved registers require artifact-specific review;
 source-level clearing owners alone do not establish all-copy cleanup.
 TLS record and QUIC packet/header-key construction borrow the incoming `AeadKey`.
 GNU/Linux AArch64 record construction resolves AES capabilities and allocates the final
-initialized heap owner before the worker reads operation-key bytes. The worker
-borrows the cipher field and returns no key value. Its guard runs before heap
-release on ordinary unwind. ChaCha record initialization uses a separate worker
-so it does not enter the larger AES constructor frame. Without debug assertions,
-ChaCha guards clear 4 KiB plus 64 bytes of dead stack; AES guards clear 12 KiB plus
-64 bytes. Debug builds retain 32 KiB plus 64 bytes.
+heap owner with a vacant cipher before the worker reads operation-key bytes.
+Separate concrete AES workers initialize that storage and return no key value.
+Their guard runs before heap release on ordinary unwind. ChaCha retains a separate
+worker. Without debug assertions, record guards clear 4 KiB plus 64 bytes of dead
+stack for all three algorithms. Debug builds retain 32 KiB plus 64 bytes.
 The reviewed optimized call chains fit within their windows, including their
 alignment classes, selected cold paths and highest saved slots. This is evidence
 for the named artifact, not every compiler or feature combination.
@@ -510,6 +513,13 @@ configuration sharing can extend the rotator's lifetime. Tests cover independent
 AES-GCM, hostile tickets, concurrent exhaustion, entropy and clock failure,
 rotation on a simulated clock, and resumption. They do not qualify compiler-made copies or linked-code erasure.
 
+Optimized, non-portable little-endian GNU AArch64 ticket construction outlines
+the context worker below a post-call construction guard. The returned ticket
+key stays in caller-owned output above the scrub. The guard runs before the
+typed input key drops on return or ordinary unwind. Its existing 32 KiB plus
+64-byte window needs exact linked worker, copy, upper-slot and unwind coverage;
+this source boundary does not establish a whole-ticket lifecycle claim.
+
 ### rustls QUIC integration
 
 Endpoint reset, connection-ID, endpoint-seed, initial-ID, and server token-key
@@ -518,6 +528,12 @@ sealer atomically consumes its one-use permission before encryption and rejects
 plaintext above 4 KiB. Authentication failure clears the decrypted token body;
 length rejection occurs before mutation. Token buffers and authenticated
 metadata remain owned by Quinn.
+
+The same GNU configuration outlines token context construction into a worker
+that returns its final `Box`. A construction guard clears retired worker frames
+before the typed input key drops. The live Box remains outside that stack
+window. HKDF scratch, caller storage, allocator behavior, registers and complete
+token lifecycles retain their separate qualification limits.
 
 Failed TLS handshake processing is sticky. The adapter suppresses subsequent
 handshake writes, traffic-key updates, exporters, identity, and handshake data.

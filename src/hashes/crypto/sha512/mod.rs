@@ -402,7 +402,7 @@ impl Sha512 {
   #[inline(always)]
   pub(crate) fn finalize_state_words_secret<const N: usize>(
     initial_state: &[u64; 8],
-    initial_block: &[u8; BLOCK_LEN],
+    fill_block: impl FnOnce(&mut [u8; BLOCK_LEN]),
     block_len: usize,
     total_len: u128,
     compress_blocks: CompressBlocksFn,
@@ -413,8 +413,8 @@ impl Sha512 {
       state: [0; 8],
       block: [0; BLOCK_LEN],
     };
+    fill_block(&mut work.block);
     work.state.copy_from_slice(initial_state);
-    work.block.copy_from_slice(initial_block);
     Self::finalize_state_words_in_place(&mut work.state, &mut work.block, block_len, total_len, compress_blocks);
     for (chunk, word) in output.as_chunks_mut::<8>().0.iter_mut().zip(work.state.iter()) {
       chunk.copy_from_slice(&word.to_be_bytes());
@@ -453,7 +453,7 @@ impl Sha512 {
       let mut output = [0u8; 64];
       Self::finalize_state_words_secret(
         &self.state,
-        &self.block,
+        |block| block.copy_from_slice(&self.block),
         self.block_len,
         total_len,
         compress_blocks,

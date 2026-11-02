@@ -273,6 +273,36 @@ mod pmull {
     }
   }
 
+  /// Square a POLYVAL element with two PMULL products and the existing reduction.
+  ///
+  /// The two cross terms cancel in characteristic two. Both halves therefore
+  /// square independently before the same Montgomery reduction as multiplication.
+  ///
+  /// # Safety
+  ///
+  /// Caller must establish NEON and PMULL availability.
+  #[cfg(all(
+    feature = "aes-gcm",
+    target_endian = "little",
+    not(feature = "portable-only"),
+    any(
+      test,
+      all(target_os = "linux", target_env = "gnu", feature = "std", not(debug_assertions))
+    )
+  ))]
+  #[target_feature(enable = "aes,neon")]
+  pub(super) unsafe fn square128_reduce(a: u128) -> u128 {
+    // SAFETY: the caller established NEON and PMULL. Scalar halves and every
+    // intermediate vector bit pattern are valid; the block dereferences no pointers.
+    unsafe {
+      let (lo, hi) = split_u128_le(a);
+      let ll = vreinterpretq_u64_p128(vmull_p64(lo, lo));
+      let hh = vreinterpretq_u64_p128(vmull_p64(hi, hi));
+      let result = mont_reduce_neon(ll, hh);
+      (vgetq_lane_u64(result, 0) as u128) | ((vgetq_lane_u64(result, 1) as u128) << 64)
+    }
+  }
+
   /// Combined 128×128 carryless multiply + Montgomery reduce using PMULL.
   ///
   /// Uses 4 `vmull_p64` instructions for the schoolbook product, then
@@ -1832,15 +1862,56 @@ pub(super) fn precompute_powers(h: u128) -> [u128; 4] {
   [h, h2, h3, h4]
 }
 
-/// Precompute hash key powers [H, H^2, ..., H^N] in eight independent chains.
+/// Precompute hash key powers [H, H^2, ..., H^N].
 ///
-/// H through H^8 come from one serial chain. Every later power is `H^(i-8)·H^8`, so each step
-/// issues eight independent multiplications instead of one. Field multiplication is exact, so
-/// every entry equals the serial chain's.
+/// Wide tables use eight independent chains: H through H^8 are serial, and every later
+/// power is `H^(i-8)·H^8`. Eligible 16-power GNU AArch64 setup uses a balanced chain with
+/// cheaper squares. Both recurrences produce the same Montgomery-domain powers.
 #[cfg(feature = "aes-gcm")]
 pub(super) fn precompute_powers_chained<const N: usize>(h: u128) -> [u128; N] {
+  // Initialize shared multiplication before the specialized setup as well:
+  // later short GHASH operations use it while key-derived state is live.
   let clmul = CLMUL128_REDUCE_DISPATCH.get_or_init(resolve_clmul128_reduce);
   let mut powers = [0u128; N];
+  #[cfg(all(
+    target_arch = "aarch64",
+    target_endian = "little",
+    target_os = "linux",
+    target_env = "gnu",
+    feature = "std",
+    not(debug_assertions),
+    not(feature = "portable-only")
+  ))]
+  if N == 16 && current_caps().has(crate::platform::caps::aarch64::PMULL) {
+    // Even powers square H^m; odd powers multiply H^m by H^(m+1).
+    // This keeps the same Montgomery-domain powers with eight cheaper squares.
+    powers[0] = h;
+    // SAFETY: the capability gate establishes PMULL and AArch64's NEON
+    // baseline. The input is an initialized field element.
+    powers[1] = unsafe { pmull::square128_reduce(h) };
+    // Keep this small table's operand indices constant instead of testing
+    // exponent parity at every multiplication.
+    macro_rules! next_pair {
+      ($m:literal) => {{
+        let m: usize = $m;
+        let output = m.strict_mul(2);
+        // SAFETY: the same capability gate applies. Each m is 1..=7, so these
+        // operands are initialized earlier powers and both outputs fit N=16.
+        unsafe {
+          powers[output] = pmull::clmul128_reduce_core(powers[m.strict_sub(1)], powers[m]);
+          powers[output.strict_add(1)] = pmull::square128_reduce(powers[m]);
+        }
+      }};
+    }
+    next_pair!(1);
+    next_pair!(2);
+    next_pair!(3);
+    next_pair!(4);
+    next_pair!(5);
+    next_pair!(6);
+    next_pair!(7);
+    return powers;
+  }
   let serial = N.min(8);
   let mut i = 0usize;
   while i < serial {
@@ -1930,48 +2001,30 @@ pub(super) fn precompute_powers_128(h: u128) -> [u128; 128] {
   powers
 }
 
-/// Precompute `(lo64 ^ hi64)` for each 16-block GHASH power.
-#[cfg(all(
-  feature = "aes-gcm",
-  target_arch = "aarch64",
-  any(target_os = "macos", target_os = "linux")
-))]
-pub(super) fn precompute_powers_16_mid(h_powers_rev_16: &[u128; 16]) -> [u128; 16] {
-  core::array::from_fn(|i| {
-    let h = h_powers_rev_16[i];
-    let (lo, hi) = split_u128_le(h);
-    (lo ^ hi) as u128
-  })
-}
-
-/// Precompute paired `(lo0, lo1)`, `(hi0, hi1)`, and `(mid0, mid1)` tables for
-/// AArch64 16-block GHASH assembly.
+/// Pack eight pairs of GHASH powers as 16 interleaved low/high words followed
+/// by eight paired middle words. Each middle half is `lo64 ^ hi64`.
 #[cfg(all(
   feature = "aes-gcm",
   target_arch = "aarch64",
   any(target_os = "macos", target_os = "linux")
 ))]
 pub(super) fn precompute_powers_16_pair(h_powers_rev_16: &[u128; 16]) -> [u128; 24] {
-  core::array::from_fn(|i| {
-    let pair = i / 3;
-    let lane = i % 3;
-    let h0 = h_powers_rev_16[pair.strict_mul(2)];
-    let h1 = h_powers_rev_16[pair.strict_mul(2).strict_add(1)];
-    let (lo0, hi0) = split_u128_le(h0);
-    let (lo1, hi1) = split_u128_le(h1);
-
-    let low = match lane {
-      0 => lo0,
-      1 => hi0,
-      _ => lo0 ^ hi0,
-    };
-    let high = match lane {
-      0 => lo1,
-      1 => hi1,
-      _ => lo1 ^ hi1,
-    };
-    (low as u128) | ((high as u128) << 64)
-  })
+  let mut table = [0u128; 24];
+  let (halves, mids) = table.split_at_mut(16);
+  for ((pair, halves), mid) in h_powers_rev_16
+    .as_chunks::<2>()
+    .0
+    .iter()
+    .zip(halves.as_chunks_mut::<2>().0.iter_mut())
+    .zip(mids.iter_mut())
+  {
+    let (lo0, hi0) = split_u128_le(pair[0]);
+    let (lo1, hi1) = split_u128_le(pair[1]);
+    halves[0] = (lo0 as u128) | ((lo1 as u128) << 64);
+    halves[1] = (hi0 as u128) | ((hi1 as u128) << 64);
+    *mid = ((lo0 ^ hi0) as u128) | (((lo1 ^ hi1) as u128) << 64);
+  }
+  table
 }
 
 /// Process 4 blocks through the hash accumulator in one shot.
@@ -2576,6 +2629,7 @@ mod tests {
   #[test]
   fn precompute_powers_chained_matches_portable_serial_chain() {
     let keys = [
+      0,
       u128::from_le_bytes(RFC_H),
       1,
       u128::MAX,
@@ -2583,6 +2637,13 @@ mod tests {
       0x1287_3d5b_fedc_ba09_7654_3210_f0e1_d2c3,
     ];
     for h in keys {
+      #[cfg(all(target_arch = "aarch64", target_endian = "little", not(feature = "portable-only")))]
+      if current_caps().has(crate::platform::caps::aarch64::PMULL) {
+        // SAFETY: the capability check establishes PMULL and AArch64's NEON
+        // baseline. This calls the production square leaf with a field value.
+        let square = unsafe { pmull::square128_reduce(h) };
+        assert_eq!(square, clmul128_reduce_portable(h, h));
+      }
       let chained = precompute_powers_chained::<128>(h);
       let mut expected = h;
       for (index, &power) in chained.iter().enumerate() {

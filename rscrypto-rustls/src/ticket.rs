@@ -212,11 +212,35 @@ struct TicketKey {
 impl TicketKey {
   fn generate_with(fill: impl FnOnce(&mut [u8; 32]) -> Result<(), GetRandomFailed>) -> Result<Self, GetRandomFailed> {
     let secret = SecretBytes::try_fill_with(fill)?;
-    Ok(Self::from_key(&Aes256GcmKey::generate(|out| {
+    let key = Aes256GcmKey::generate(|out| {
       out.copy_from_slice(secret.as_bytes());
-    })))
+    });
+    // The worker retires before this guard clears its key-derived staging.
+    // On ordinary unwind, the guard also runs before the typed input key drops.
+    #[cfg(all(
+      target_arch = "aarch64",
+      target_endian = "little",
+      target_os = "linux",
+      target_env = "gnu",
+      not(debug_assertions),
+      not(feature = "portable-only")
+    ))]
+    let _scrub = crate::aead::ConstructionStackScrub;
+    Ok(Self::from_key(&key))
   }
 
+  // Keep construction below the caller's post-call clearing boundary.
+  #[cfg_attr(
+    all(
+      target_arch = "aarch64",
+      target_endian = "little",
+      target_os = "linux",
+      target_env = "gnu",
+      not(debug_assertions),
+      not(feature = "portable-only")
+    ),
+    inline(never)
+  )]
   fn from_key(key: &Aes256GcmKey) -> Self {
     Self {
       cipher: Aes256Gcm::new(key),

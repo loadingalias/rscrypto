@@ -199,13 +199,7 @@ impl HmacSha256 {
   /// key material. This path avoids constructing a copyable public tag value.
   #[inline]
   pub fn finalize_into(&self, output: &mut [u8; SHA256_TAG_SIZE]) {
-    let mut inner_hash = self.inner.finalize_secret();
-    let mut outer = Sha256::new();
-    outer.reset_to_aligned_prefix(&self.outer_init);
-    outer.update(&inner_hash);
-    ct::zeroize(&mut inner_hash);
-    outer.finalize_secret_into(output);
-    outer.zeroize_secret_state();
+    self.outer_init.finalize_hmac(&self.inner, output);
   }
 
   /// HMAC-SHA256 block size in bytes.
@@ -553,13 +547,7 @@ impl HmacSha384 {
   /// key material. This path avoids constructing a copyable public tag value.
   #[inline]
   pub fn finalize_into(&self, output: &mut [u8; SHA384_TAG_SIZE]) {
-    let mut inner_hash = self.inner.finalize_secret();
-    let mut outer = Sha384::new();
-    outer.reset_to_aligned_prefix(&self.outer_init);
-    outer.update(&inner_hash);
-    ct::zeroize(&mut inner_hash);
-    outer.finalize_secret_into(output);
-    outer.zeroize_secret_state();
+    self.outer_init.finalize_hmac(&self.inner, output);
   }
 
   /// HMAC-SHA384 block size in bytes.

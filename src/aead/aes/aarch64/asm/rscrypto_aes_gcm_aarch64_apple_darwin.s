@@ -350,13 +350,13 @@
         GHASH_LOAD_PREMID_PAIR \h_pair_base + 0
         AES_ROUND8 0
         GHASH_FOLD2_INTO_PREMID_LOADED v16, v17, v18, v8, v9, \with_acc
-        GHASH_LOAD_PREMID_PAIR \h_pair_base + 48
+        GHASH_LOAD_PREMID_PAIR \h_pair_base + 32
         AES_ROUND8 16
         GHASH_FOLD2_INTO_PREMID_LOADED v26, v27, v28, v10, v11, 0
-        GHASH_LOAD_PREMID_PAIR \h_pair_base + 96
+        GHASH_LOAD_PREMID_PAIR \h_pair_base + 64
         AES_ROUND8 32
         GHASH_FOLD2_INTO_PREMID_LOADED v16, v17, v18, v12, v13, 0
-        GHASH_LOAD_PREMID_PAIR \h_pair_base + 144
+        GHASH_LOAD_PREMID_PAIR \h_pair_base + 96
         AES_ROUND8 48
         GHASH_FOLD2_INTO_PREMID_LOADED v26, v27, v28, v14, v15, 0
         AES_ROUND8 64
@@ -382,13 +382,13 @@
         GHASH_LOAD_PREMID_PAIR \h_pair_base + 0
         AES_ROUND8 0
         GHASH_FOLD2_INTO_PREMID_LOADED v16, v17, v18, v8, v9, \with_acc
-        GHASH_LOAD_PREMID_PAIR \h_pair_base + 48
+        GHASH_LOAD_PREMID_PAIR \h_pair_base + 32
         AES_ROUND8 16
         GHASH_FOLD2_INTO_PREMID_LOADED v26, v27, v28, v10, v11, 0
-        GHASH_LOAD_PREMID_PAIR \h_pair_base + 96
+        GHASH_LOAD_PREMID_PAIR \h_pair_base + 64
         AES_ROUND8 32
         GHASH_FOLD2_INTO_PREMID_LOADED v16, v17, v18, v12, v13, 0
-        GHASH_LOAD_PREMID_PAIR \h_pair_base + 144
+        GHASH_LOAD_PREMID_PAIR \h_pair_base + 96
         AES_ROUND8 48
         GHASH_FOLD2_INTO_PREMID_LOADED v26, v27, v28, v14, v15, 0
         AES_ROUND8 64
@@ -414,13 +414,13 @@
         GHASH_LOAD_PREMID_PAIR \h_pair_base + 0
         AES_ROUND8 0
         GHASH_FOLD2_SET_PREMID_LOADED v16, v17, v18, v8, v9, \with_acc
-        GHASH_LOAD_PREMID_PAIR \h_pair_base + 48
+        GHASH_LOAD_PREMID_PAIR \h_pair_base + 32
         AES_ROUND8 16
         GHASH_FOLD2_SET_PREMID_LOADED v26, v27, v28, v10, v11, 0
-        GHASH_LOAD_PREMID_PAIR \h_pair_base + 96
+        GHASH_LOAD_PREMID_PAIR \h_pair_base + 64
         AES_ROUND8 32
         GHASH_FOLD2_INTO_PREMID_LOADED v16, v17, v18, v12, v13, 0
-        GHASH_LOAD_PREMID_PAIR \h_pair_base + 144
+        GHASH_LOAD_PREMID_PAIR \h_pair_base + 96
         AES_ROUND8 48
         GHASH_FOLD2_INTO_PREMID_LOADED v26, v27, v28, v14, v15, 0
         AES_ROUND8 64
@@ -471,19 +471,20 @@
         eor \hh_b, \hh_b, v22.16b
         ext v22.16b, v21.16b, v21.16b, #8
         eor v22.16b, v22.16b, v21.16b
-        ldr d23, [x13, #(\h_off)]
+        ldr d23, [x13, #((\h_off) / 2)]
         pmull v22.1q, v22.1d, v23.1d
         eor \mm_b, \mm_b, v22.16b
     .endm
 
     .macro GHASH_LOAD_PREMID h_off
         ldr q20, [x4, #(\h_off)]
-        ldr d23, [x13, #(\h_off)]
+        ldr d23, [x13, #((\h_off) / 2)]
     .endm
 
     .macro GHASH_LOAD_PREMID_PAIR pair_off
         ldp q31, q23, [x12, #(\pair_off)]
-        ldr q20, [x12, #(\pair_off + 32)]
+        // x12 holds interleaved low/high pairs; x13 holds contiguous mids.
+        ldr q20, [x13, #((\pair_off) / 2)]
     .endm
 
     .macro GHASH_FOLD_INTO_PREMID_LOADED ll_b, hh_b, mm_b, block_b, with_acc
@@ -1052,9 +1053,9 @@ _\name:
         subs x3, x3, #128
 
         .if \rounds == 14
-            AES_ENCRYPT8_GHASH_PREV_ACCUM_EOR3 \rounds, 128, 192, 0, 1, 1
+            AES_ENCRYPT8_GHASH_PREV_ACCUM_EOR3 \rounds, 128, 128, 0, 1, 1
         .else
-            AES_ENCRYPT8_GHASH_PREV_ACCUM_EOR3 \rounds, 128, 192, 0, 1, 0
+            AES_ENCRYPT8_GHASH_PREV_ACCUM_EOR3 \rounds, 128, 128, 0, 1, 0
         .endif
         SEAL_EOR3_STORE_TO_PREV_BUILD_NEXT
         add w6, w6, #8
@@ -1143,9 +1144,9 @@ _\name:
 
         LOAD_OPEN_CT8
         .if \rounds == 10
-            AES_ENCRYPT8_GHASH_OPEN_REG_ACCUM_EOR3 \rounds, 128, 192, 0, 1, 1
+            AES_ENCRYPT8_GHASH_OPEN_REG_ACCUM_EOR3 \rounds, 128, 128, 0, 1, 1
         .else
-            AES_ENCRYPT8_GHASH_OPEN_REG_ACCUM_EOR3 \rounds, 128, 192, 0, 1, 0
+            AES_ENCRYPT8_GHASH_OPEN_REG_ACCUM_EOR3 \rounds, 128, 128, 0, 1, 0
         .endif
         OPEN_STORE_REG8_EOR3_BUILD_NEXT
         add w6, w6, #8
@@ -1162,9 +1163,9 @@ _\name:
         LOAD_OPEN_CT8
         BUILD_COUNTER8 \rounds
         .if \rounds == 10
-            AES_ENCRYPT8_GHASH_OPEN_REG_ACCUM_EOR3 \rounds, 128, 192, 1, 1, 1
+            AES_ENCRYPT8_GHASH_OPEN_REG_ACCUM_EOR3 \rounds, 128, 128, 1, 1, 1
         .else
-            AES_ENCRYPT8_GHASH_OPEN_REG_ACCUM_EOR3 \rounds, 128, 192, 1, 1, 0
+            AES_ENCRYPT8_GHASH_OPEN_REG_ACCUM_EOR3 \rounds, 128, 128, 1, 1, 0
         .endif
         OPEN_STORE_REG8_EOR3
         add w6, w6, #8

@@ -375,9 +375,21 @@ pub(crate) struct Aarch64GcmTables<'a> {
   #[cfg(any(target_os = "macos", target_os = "linux"))]
   pub(crate) h_powers_rev_16: &'a [u128; 16],
   #[cfg(any(target_os = "macos", target_os = "linux"))]
-  pub(crate) h_powers_rev_16_mid: &'a [u128; 16],
-  #[cfg(any(target_os = "macos", target_os = "linux"))]
   pub(crate) h_powers_rev_16_pair: &'a [u128; 24],
+}
+
+#[cfg(all(
+  target_arch = "aarch64",
+  feature = "aes-gcm",
+  any(target_os = "macos", target_os = "linux")
+))]
+impl Aarch64GcmTables<'_> {
+  // The last eight words contain 16 contiguous initialized u64 mids on the
+  // little-endian ARM targets of the assembly backend. Both views are read-only.
+  #[inline]
+  pub(crate) fn mid_powers(&self) -> &[u128; 8] {
+    &self.h_powers_rev_16_pair.as_chunks::<8>().0[2]
+  }
 }
 
 /// Update an owned accumulator without returning H or GHASH state through the caller's registers.
@@ -5359,8 +5371,6 @@ mod tests {
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     h_powers_rev_16: [u128; 16],
     #[cfg(any(target_os = "macos", target_os = "linux"))]
-    h_powers_rev_16_mid: [u128; 16],
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
     h_powers_rev_16_pair: [u128; 24],
   }
 
@@ -5372,8 +5382,6 @@ mod tests {
         h_powers_rev_8: &self.h_powers_rev_8,
         #[cfg(any(target_os = "macos", target_os = "linux"))]
         h_powers_rev_16: &self.h_powers_rev_16,
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
-        h_powers_rev_16_mid: &self.h_powers_rev_16_mid,
         #[cfg(any(target_os = "macos", target_os = "linux"))]
         h_powers_rev_16_pair: &self.h_powers_rev_16_pair,
       }
@@ -5397,8 +5405,6 @@ mod tests {
       ]
     };
     #[cfg(any(target_os = "macos", target_os = "linux"))]
-    let h_powers_rev_16_mid = crate::aead::polyval::precompute_powers_16_mid(&h_powers_rev_16);
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
     let h_powers_rev_16_pair = crate::aead::polyval::precompute_powers_16_pair(&h_powers_rev_16);
     Aarch64GcmTestPowers {
       h_polyval,
@@ -5406,8 +5412,6 @@ mod tests {
       h_powers_rev_8,
       #[cfg(any(target_os = "macos", target_os = "linux"))]
       h_powers_rev_16,
-      #[cfg(any(target_os = "macos", target_os = "linux"))]
-      h_powers_rev_16_mid,
       #[cfg(any(target_os = "macos", target_os = "linux"))]
       h_powers_rev_16_pair,
     }

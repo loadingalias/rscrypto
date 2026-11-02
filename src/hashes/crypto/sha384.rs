@@ -72,6 +72,19 @@ pub(crate) struct Sha384Prefix {
 
 #[cfg(feature = "hmac")]
 impl Sha384Prefix {
+  #[inline]
+  pub(crate) fn finalize_hmac(&self, inner: &Sha384, output: &mut [u8; 48]) {
+    // The complete HMAC pad initialized this prefix's compression backend.
+    Sha512::finalize_state_words_secret(
+      &self.state,
+      |block| inner.finalize_secret_into(&mut block.as_chunks_mut::<48>().0[0]),
+      48,
+      self.bytes_hashed.strict_add(48),
+      self.compress_blocks,
+      output,
+    );
+  }
+
   /// Volatile-zero key-derived state to prevent lingering in memory.
   pub(crate) fn zeroize(&mut self) {
     for word in self.state.iter_mut() {
@@ -171,7 +184,7 @@ impl Sha384 {
     if ZEROIZE {
       Sha512::finalize_state_words_secret(
         &self.state,
-        &self.block,
+        |block| block.copy_from_slice(&self.block),
         self.block_len,
         total_len,
         compress_blocks,

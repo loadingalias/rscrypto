@@ -373,7 +373,48 @@ pub(crate) struct Sha256Prefix {
 }
 
 #[cfg(feature = "hmac")]
+struct SecretFinalization {
+  state: [u32; 8],
+  block: [u8; BLOCK_LEN],
+}
+
+#[cfg(feature = "hmac")]
+impl Drop for SecretFinalization {
+  fn drop(&mut self) {
+    crate::traits::ct::zeroize_words(&mut self.state);
+    crate::traits::ct::zeroize(&mut self.block);
+  }
+}
+
+#[cfg(feature = "hmac")]
 impl Sha256Prefix {
+  #[inline]
+  pub(crate) fn finalize_hmac(&self, inner: &Sha256, output: &mut [u8; 32]) {
+    let mut work = SecretFinalization {
+      state: [0; 8],
+      block: [0; BLOCK_LEN],
+    };
+    inner.finalize_secret_into(&mut work.block.as_chunks_mut::<32>().0[0]);
+    work.state.copy_from_slice(&self.state);
+    // HMAC prefixes have already compressed a full pad block. Preserve the
+    // compile-time override and the stored runtime/explicit backend.
+    let compress_blocks = if kernels::COMPILE_TIME_HW {
+      kernels::compile_time_best()
+    } else {
+      self.compress_blocks
+    };
+    Sha256::finalize_state_words_in_place(
+      &mut work.state,
+      &mut work.block,
+      32,
+      self.bytes_hashed.strict_add(32),
+      compress_blocks,
+    );
+    for (chunk, word) in output.as_chunks_mut::<4>().0.iter_mut().zip(work.state.iter()) {
+      chunk.copy_from_slice(&word.to_be_bytes());
+    }
+  }
+
   #[cfg(feature = "pbkdf2")]
   #[inline]
   pub(crate) fn pbkdf2_parts(&self) -> ([u32; 8], CompressBlocksFn) {
@@ -617,24 +658,8 @@ impl Sha256 {
   fn finalize_inner_into<const ZEROIZE: bool>(&self, compress_blocks: CompressBlocksFn, output: &mut [u8; 32]) {
     let mut state = self.state;
     let mut block = self.block;
-    let mut block_len = self.block_len;
-    let total_len = self.bytes_hashed.strict_add(block_len as u64);
-
-    block[block_len] = 0x80;
-    block_len = block_len.strict_add(1);
-
-    if block_len > 56 {
-      block[block_len..].fill(0);
-      compress_blocks(&mut state, &block);
-      block = [0u8; BLOCK_LEN];
-      block_len = 0;
-    }
-
-    block[block_len..56].fill(0);
-
-    let bit_len = total_len.strict_mul(8);
-    block[56..64].copy_from_slice(&bit_len.to_be_bytes());
-    compress_blocks(&mut state, &block);
+    let total_len = self.bytes_hashed.strict_add(self.block_len as u64);
+    Self::finalize_state_words_in_place(&mut state, &mut block, self.block_len, total_len, compress_blocks);
 
     for (chunk, &word) in output.as_chunks_mut::<4>().0.iter_mut().zip(state.iter()) {
       chunk.copy_from_slice(&word.to_be_bytes());
@@ -644,6 +669,31 @@ impl Sha256 {
       crate::traits::ct::zeroize_no_fence(&mut block);
       core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
     }
+  }
+
+  #[inline(always)]
+  fn finalize_state_words_in_place(
+    state: &mut [u32; 8],
+    block: &mut [u8; BLOCK_LEN],
+    mut block_len: usize,
+    total_len: u64,
+    compress_blocks: CompressBlocksFn,
+  ) {
+    block[block_len] = 0x80;
+    block_len = block_len.strict_add(1);
+
+    if block_len > 56 {
+      block[block_len..].fill(0);
+      compress_blocks(state, block);
+      *block = [0u8; BLOCK_LEN];
+      block_len = 0;
+    }
+
+    block[block_len..56].fill(0);
+
+    let bit_len = total_len.strict_mul(8);
+    block[56..64].copy_from_slice(&bit_len.to_be_bytes());
+    compress_blocks(state, block);
   }
 
   #[inline]

@@ -35,25 +35,15 @@ impl Drop for ConstructionStackScrub {
 // Record workers allocate before reading key bytes and borrow their final
 // owner. Keep their bounded scrub separate from the existing QUIC boundary.
 #[cfg(all(target_arch = "aarch64", target_os = "linux", target_env = "gnu"))]
-struct RecordConstructionStackScrub(Algorithm);
+struct RecordConstructionStackScrub;
 
 #[cfg(all(target_arch = "aarch64", target_os = "linux", target_env = "gnu"))]
 impl Drop for RecordConstructionStackScrub {
   fn drop(&mut self) {
     #[cfg(not(debug_assertions))]
-    match self.0 {
-      #[cfg(feature = "chacha20poly1305")]
-      Algorithm::ChaCha20 => scrub_record_construction_stack::<{ (4 * 1024usize).strict_add(64) / 64 }>(),
-      #[cfg(feature = "aes-gcm")]
-      Algorithm::Aes128 | Algorithm::Aes256 => {
-        scrub_record_construction_stack::<{ (12 * 1024usize).strict_add(64) / 64 }>();
-      }
-    }
+    scrub_record_construction_stack::<{ (4 * 1024usize).strict_add(64) / 64 }>();
     #[cfg(debug_assertions)]
-    {
-      let _algorithm = self.0;
-      scrub_construction_stack();
-    }
+    scrub_construction_stack();
   }
 }
 
@@ -122,32 +112,32 @@ impl Algorithm {
   }
 
   fn cipher(self, key: &[u8]) -> Cipher {
-    match self {
+    Cipher(match self {
       #[cfg(feature = "aes-gcm")]
       Self::Aes128 => <&[u8; 16]>::try_from(key)
         .map(|bytes| {
-          Cipher::Aes128(Aes128Gcm::new(&Aes128GcmKey::generate(|out| {
+          PrimitiveCipher::Aes128(Aes128Gcm::new(&Aes128GcmKey::generate(|out| {
             out.copy_from_slice(bytes)
           })))
         })
-        .unwrap_or(Cipher::InvalidKeyMaterial),
+        .ok(),
       #[cfg(feature = "aes-gcm")]
       Self::Aes256 => <&[u8; 32]>::try_from(key)
         .map(|bytes| {
-          Cipher::Aes256(Aes256Gcm::new(&Aes256GcmKey::generate(|out| {
+          PrimitiveCipher::Aes256(Aes256Gcm::new(&Aes256GcmKey::generate(|out| {
             out.copy_from_slice(bytes)
           })))
         })
-        .unwrap_or(Cipher::InvalidKeyMaterial),
+        .ok(),
       #[cfg(feature = "chacha20poly1305")]
       Self::ChaCha20 => <&[u8; 32]>::try_from(key)
         .map(|bytes| {
-          Cipher::ChaCha20(ChaCha20Poly1305::new(&ChaCha20Poly1305Key::generate(|out| {
+          PrimitiveCipher::ChaCha20(ChaCha20Poly1305::new(&ChaCha20Poly1305Key::generate(|out| {
             out.copy_from_slice(bytes)
           })))
         })
-        .unwrap_or(Cipher::InvalidKeyMaterial),
-    }
+        .ok(),
+    })
   }
 }
 
@@ -276,18 +266,21 @@ impl Tls12AeadAlgorithm for Tls12 {
     reason = "the enclosing rustls key is already boxed; boxing variants adds another allocation"
   )
 )]
-enum Cipher {
+enum PrimitiveCipher {
   #[cfg(feature = "aes-gcm")]
   Aes128(Aes128Gcm),
   #[cfg(feature = "aes-gcm")]
   Aes256(Aes256Gcm),
   #[cfg(feature = "chacha20poly1305")]
   ChaCha20(ChaCha20Poly1305),
-  /// Key or IV lengths that do not fit the algorithm; every record is rejected.
-  InvalidKeyMaterial,
 }
 
+// Empty storage rejects records and can be initialized without replacing a key.
+struct Cipher(Option<PrimitiveCipher>);
+
 impl Cipher {
+  const INVALID: Self = Self(None);
+
   fn seal_gather<'input>(
     &self,
     nonce: [u8; NONCE_LEN],
@@ -297,34 +290,34 @@ impl Cipher {
     out: &mut Vec<u8>,
   ) -> Result<[u8; TAG_LEN], Error> {
     let nonce = Nonce96::from_bytes(nonce);
-    match self {
+    match &self.0 {
       #[cfg(feature = "aes-gcm")]
-      Self::Aes128(key) => key
+      Some(PrimitiveCipher::Aes128(key)) => key
         .encrypt_gather_append(&nonce, aad, plaintext, plaintext_len, out)
         .map(|tag| *tag.as_bytes()),
       #[cfg(feature = "aes-gcm")]
-      Self::Aes256(key) => key
+      Some(PrimitiveCipher::Aes256(key)) => key
         .encrypt_gather_append(&nonce, aad, plaintext, plaintext_len, out)
         .map(|tag| *tag.as_bytes()),
       #[cfg(feature = "chacha20poly1305")]
-      Self::ChaCha20(key) => key
+      Some(PrimitiveCipher::ChaCha20(key)) => key
         .encrypt_gather_append(&nonce, aad, plaintext, plaintext_len, out)
         .map(|tag| *tag.as_bytes()),
-      Self::InvalidKeyMaterial => return Err(Error::EncryptError),
+      None => return Err(Error::EncryptError),
     }
     .map_err(|_| Error::EncryptError)
   }
 
   fn seal(&self, nonce: [u8; NONCE_LEN], aad: &[u8], payload: &mut [u8]) -> Result<[u8; TAG_LEN], Error> {
     let nonce = Nonce96::from_bytes(nonce);
-    match self {
+    match &self.0 {
       #[cfg(feature = "aes-gcm")]
-      Self::Aes128(key) => key.encrypt_in_place(&nonce, aad, payload).map(|tag| *tag.as_bytes()),
+      Some(PrimitiveCipher::Aes128(key)) => key.encrypt_in_place(&nonce, aad, payload).map(|tag| *tag.as_bytes()),
       #[cfg(feature = "aes-gcm")]
-      Self::Aes256(key) => key.encrypt_in_place(&nonce, aad, payload).map(|tag| *tag.as_bytes()),
+      Some(PrimitiveCipher::Aes256(key)) => key.encrypt_in_place(&nonce, aad, payload).map(|tag| *tag.as_bytes()),
       #[cfg(feature = "chacha20poly1305")]
-      Self::ChaCha20(key) => key.encrypt_in_place(&nonce, aad, payload).map(|tag| *tag.as_bytes()),
-      Self::InvalidKeyMaterial => return Err(Error::EncryptError),
+      Some(PrimitiveCipher::ChaCha20(key)) => key.encrypt_in_place(&nonce, aad, payload).map(|tag| *tag.as_bytes()),
+      None => return Err(Error::EncryptError),
     }
     .map_err(|_| Error::EncryptError)
   }
@@ -334,14 +327,16 @@ impl Cipher {
     let (body, tag) = payload.split_at_mut(plain_len);
     let tag: [u8; TAG_LEN] = (&*tag).try_into().map_err(|_| Error::DecryptError)?;
     let nonce = Nonce96::from_bytes(nonce);
-    let result = match self {
+    let result = match &self.0 {
       #[cfg(feature = "aes-gcm")]
-      Self::Aes128(key) => key.decrypt_in_place(&nonce, aad, body, &Aes128GcmTag::from_bytes(tag)),
+      Some(PrimitiveCipher::Aes128(key)) => key.decrypt_in_place(&nonce, aad, body, &Aes128GcmTag::from_bytes(tag)),
       #[cfg(feature = "aes-gcm")]
-      Self::Aes256(key) => key.decrypt_in_place(&nonce, aad, body, &Aes256GcmTag::from_bytes(tag)),
+      Some(PrimitiveCipher::Aes256(key)) => key.decrypt_in_place(&nonce, aad, body, &Aes256GcmTag::from_bytes(tag)),
       #[cfg(feature = "chacha20poly1305")]
-      Self::ChaCha20(key) => key.decrypt_in_place(&nonce, aad, body, &ChaCha20Poly1305Tag::from_bytes(tag)),
-      Self::InvalidKeyMaterial => return Err(Error::DecryptError),
+      Some(PrimitiveCipher::ChaCha20(key)) => {
+        key.decrypt_in_place(&nonce, aad, body, &ChaCha20Poly1305Tag::from_bytes(tag))
+      }
+      None => return Err(Error::DecryptError),
     };
     if result.is_err() {
       rscrypto::traits::ct::zeroize(body);
@@ -367,7 +362,9 @@ fn prepare_record_construction(algorithm: Algorithm, key_len: usize) {
 fn initialize_record_cipher(destination: &mut Cipher, algorithm: Algorithm, key: &[u8]) {
   match algorithm {
     #[cfg(feature = "aes-gcm")]
-    Algorithm::Aes128 | Algorithm::Aes256 => initialize_aes_record_cipher(destination, algorithm, key),
+    Algorithm::Aes128 => initialize_aes128_record_cipher(destination, key),
+    #[cfg(feature = "aes-gcm")]
+    Algorithm::Aes256 => initialize_aes256_record_cipher(destination, key),
     #[cfg(feature = "chacha20poly1305")]
     Algorithm::ChaCha20 => initialize_chacha_record_cipher(destination, key),
   }
@@ -380,8 +377,35 @@ fn initialize_record_cipher(destination: &mut Cipher, algorithm: Algorithm, key:
   feature = "aes-gcm"
 ))]
 #[inline(never)]
-fn initialize_aes_record_cipher(destination: &mut Cipher, algorithm: Algorithm, key: &[u8]) {
-  *destination = algorithm.cipher(key);
+fn initialize_aes128_record_cipher(destination: &mut Cipher, key: &[u8]) {
+  assert!(destination.0.is_none(), "record cipher storage must be vacant");
+  let Ok(bytes) = <&[u8; 16]>::try_from(key) else {
+    return;
+  };
+  destination.0.get_or_insert_with(|| {
+    PrimitiveCipher::Aes128(Aes128Gcm::new(&Aes128GcmKey::generate(|out| {
+      out.copy_from_slice(bytes)
+    })))
+  });
+}
+
+#[cfg(all(
+  target_arch = "aarch64",
+  target_os = "linux",
+  target_env = "gnu",
+  feature = "aes-gcm"
+))]
+#[inline(never)]
+fn initialize_aes256_record_cipher(destination: &mut Cipher, key: &[u8]) {
+  assert!(destination.0.is_none(), "record cipher storage must be vacant");
+  let Ok(bytes) = <&[u8; 32]>::try_from(key) else {
+    return;
+  };
+  destination.0.get_or_insert_with(|| {
+    PrimitiveCipher::Aes256(Aes256Gcm::new(&Aes256GcmKey::generate(|out| {
+      out.copy_from_slice(bytes)
+    })))
+  });
 }
 
 #[cfg(all(
@@ -393,13 +417,15 @@ fn initialize_aes_record_cipher(destination: &mut Cipher, algorithm: Algorithm, 
 #[inline(never)]
 fn initialize_chacha_record_cipher(destination: &mut Cipher, key: &[u8]) {
   // Keep ChaCha construction out of Algorithm::cipher's AES-sized frame.
-  *destination = <&[u8; 32]>::try_from(key)
-    .map(|bytes| {
-      Cipher::ChaCha20(ChaCha20Poly1305::new(&ChaCha20Poly1305Key::generate(|out| {
-        out.copy_from_slice(bytes)
-      })))
-    })
-    .unwrap_or(Cipher::InvalidKeyMaterial);
+  *destination = Cipher(
+    <&[u8; 32]>::try_from(key)
+      .map(|bytes| {
+        PrimitiveCipher::ChaCha20(ChaCha20Poly1305::new(&ChaCha20Poly1305Key::generate(|out| {
+          out.copy_from_slice(bytes)
+        })))
+      })
+      .ok(),
+  );
 }
 
 struct RecordKey {
@@ -414,12 +440,12 @@ impl RecordKey {
     {
       prepare_record_construction(algorithm, key.len());
       let mut owned = Box::new(Self {
-        cipher: Cipher::InvalidKeyMaterial,
+        cipher: Cipher::INVALID,
         iv,
       });
       // Declare after the owner: on unwind, clear worker frames before its
       // heap allocation is released. The worker borrows initialized storage.
-      let _scrub = RecordConstructionStackScrub(algorithm);
+      let _scrub = RecordConstructionStackScrub;
       initialize_record_cipher(&mut owned.cipher, algorithm, key);
       owned
     }
@@ -436,7 +462,7 @@ impl RecordKey {
 impl RecordEncrypter for RecordKey {
   fn encrypt(&mut self, msg: Record<OutboundPlain<'_>>, seq: u64, out: &mut Vec<u8>) -> Result<(), Error> {
     // rustls fragments records at 2^14 bytes. Reject misuse before writing.
-    if msg.payload.len() > MAX_FRAGMENT_LEN || matches!(self.cipher, Cipher::InvalidKeyMaterial) {
+    if msg.payload.len() > MAX_FRAGMENT_LEN || self.cipher.0.is_none() {
       return Err(Error::EncryptError);
     }
     let nonce = Nonce::new(&self.iv, seq).to_array().map_err(|_| Error::EncryptError)?;
@@ -504,11 +530,11 @@ impl Tls12RecordKey {
         prepare_record_construction(algorithm.0, key.len());
       }
       let mut owned = Box::new(Self {
-        cipher: Cipher::InvalidKeyMaterial,
+        cipher: Cipher::INVALID,
         nonce: nonce.unwrap_or_default(),
         explicit_nonce_len: algorithm.explicit_nonce_len(),
       });
-      let _scrub = RecordConstructionStackScrub(algorithm.0);
+      let _scrub = RecordConstructionStackScrub;
       if nonce.is_some() {
         initialize_record_cipher(&mut owned.cipher, algorithm.0, key);
       }
@@ -517,7 +543,7 @@ impl Tls12RecordKey {
     #[cfg(not(all(target_arch = "aarch64", target_os = "linux", target_env = "gnu")))]
     {
       Box::new(Self {
-        cipher: nonce.map_or(Cipher::InvalidKeyMaterial, |_| algorithm.0.cipher(key)),
+        cipher: nonce.map_or(Cipher::INVALID, |_| algorithm.0.cipher(key)),
         nonce: nonce.unwrap_or_default(),
         explicit_nonce_len: algorithm.explicit_nonce_len(),
       })
@@ -539,7 +565,7 @@ impl RecordEncrypter for Tls12RecordKey {
   fn encrypt(&mut self, msg: Record<OutboundPlain<'_>>, seq: u64, out: &mut Vec<u8>) -> Result<(), Error> {
     let plaintext_len = msg.payload.len();
     // rustls fragments records at 2^14 bytes. Reject misuse before writing.
-    if plaintext_len > MAX_FRAGMENT_LEN || matches!(self.cipher, Cipher::InvalidKeyMaterial) {
+    if plaintext_len > MAX_FRAGMENT_LEN || self.cipher.0.is_none() {
       return Err(Error::EncryptError);
     }
     let nonce = self.sequence_nonce(seq);

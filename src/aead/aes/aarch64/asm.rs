@@ -1,4 +1,9 @@
 //! AArch64 rscrypto-owned AES-GCM assembly kernels.
+//!
+//! The 16-block ABI borrows 16 raw powers, 16 contiguous 64-bit middle halves,
+//! and eight pairs of low/high vectors. The middle pointer is a read-only suffix
+//! of the 24-word pair allocation. The kernels load at most 256 raw bytes,
+//! 128 middle bytes, and 256 low/high bytes; these ARM targets are little-endian.
 
 use core::arch::global_asm;
 
@@ -85,7 +90,7 @@ unsafe extern "C" {
     data: *mut u8,
     len: usize,
     h_powers_rev_16: *const u128,
-    h_powers_rev_16_mid: *const u128,
+    h_powers_rev_16_mid: *const u64,
     h_powers_rev_16_pair: *const u128,
     state: *mut AesGcmAarch64State,
   );
@@ -97,7 +102,7 @@ unsafe extern "C" {
     data: *mut u8,
     len: usize,
     h_powers_rev_16: *const u128,
-    h_powers_rev_16_mid: *const u128,
+    h_powers_rev_16_mid: *const u64,
     h_powers_rev_16_pair: *const u128,
     state: *mut AesGcmAarch64State,
   );
@@ -129,7 +134,7 @@ unsafe extern "C" {
     data: *mut u8,
     len: usize,
     h_powers_rev_16: *const u128,
-    h_powers_rev_16_mid: *const u128,
+    h_powers_rev_16_mid: *const u64,
     h_powers_rev_16_pair: *const u128,
     state: *mut AesGcmAarch64State,
   );
@@ -141,7 +146,7 @@ unsafe extern "C" {
     data: *mut u8,
     len: usize,
     h_powers_rev_16: *const u128,
-    h_powers_rev_16_mid: *const u128,
+    h_powers_rev_16_mid: *const u64,
     h_powers_rev_16_pair: *const u128,
     state: *mut AesGcmAarch64State,
   );

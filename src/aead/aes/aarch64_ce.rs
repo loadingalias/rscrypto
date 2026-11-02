@@ -5,7 +5,7 @@ use core::arch::aarch64::*;
 mod asm;
 
 /// AES-256 round keys stored as 15 × 128-bit NEON vectors for AES-CE.
-#[repr(C, align(64))]
+#[repr(C, align(16))]
 pub(in crate::aead) struct CeRoundKeys {
   rk: [uint8x16_t; 15],
 }
@@ -1211,7 +1211,7 @@ pub(super) unsafe fn encrypt_ctr32_be_xor_ghash_128b_chunks_core(
           data.as_mut_ptr(),
           data.len(),
           tables.h_powers_rev_16.as_ptr(),
-          tables.h_powers_rev_16_mid.as_ptr(),
+          tables.mid_powers().as_ptr().cast::<u64>(),
           tables.h_powers_rev_16_pair.as_ptr(),
           &raw mut state,
         );
@@ -1301,7 +1301,7 @@ pub(super) unsafe fn decrypt_ctr32_be_xor_ghash_128b_chunks_core(
           data.as_mut_ptr(),
           data.len(),
           tables.h_powers_rev_16.as_ptr(),
-          tables.h_powers_rev_16_mid.as_ptr(),
+          tables.mid_powers().as_ptr().cast::<u64>(),
           tables.h_powers_rev_16_pair.as_ptr(),
           &raw mut state,
         );
@@ -1541,7 +1541,7 @@ pub(super) unsafe fn encrypt_block_prefix_5(keys: &CeRoundKeys, block: &[u8; 16]
 /// AES-128-GCM-SIV path in `aes128gcmsiv.rs` can hold these round keys
 /// across the `#[target_feature(enable = "aes,neon")]` scope via
 /// `aes::aarch64_expand_key_128_inline` / `aes::aarch64_encrypt_block_128_inline`.
-#[repr(C, align(64))]
+#[repr(C, align(16))]
 pub(in crate::aead) struct Ce128RoundKeys {
   rk: [uint8x16_t; 11],
 }
@@ -2265,7 +2265,7 @@ pub(super) unsafe fn encrypt_ctr32_be_xor_ghash_128b_chunks_128_core(
           data.as_mut_ptr(),
           data.len(),
           tables.h_powers_rev_16.as_ptr(),
-          tables.h_powers_rev_16_mid.as_ptr(),
+          tables.mid_powers().as_ptr().cast::<u64>(),
           tables.h_powers_rev_16_pair.as_ptr(),
           &raw mut state,
         );
@@ -2355,7 +2355,7 @@ pub(super) unsafe fn decrypt_ctr32_be_xor_ghash_128b_chunks_128_core(
           data.as_mut_ptr(),
           data.len(),
           tables.h_powers_rev_16.as_ptr(),
-          tables.h_powers_rev_16_mid.as_ptr(),
+          tables.mid_powers().as_ptr().cast::<u64>(),
           tables.h_powers_rev_16_pair.as_ptr(),
           &raw mut state,
         );
@@ -2780,7 +2780,7 @@ pub(super) unsafe fn encrypt_ctr32_be_gather_ghash_128_core<'output>(
           out.as_mut_ptr().cast(),
           plaintext.byte_len(),
           tables.h_powers_rev_16.as_ptr(),
-          tables.h_powers_rev_16_mid.as_ptr(),
+          tables.mid_powers().as_ptr().cast::<u64>(),
           tables.h_powers_rev_16_pair.as_ptr(),
           &raw mut state,
         );
@@ -2840,7 +2840,7 @@ pub(super) unsafe fn encrypt_ctr32_be_gather_ghash_core<'output>(
           out.as_mut_ptr().cast(),
           plaintext.byte_len(),
           tables.h_powers_rev_16.as_ptr(),
-          tables.h_powers_rev_16_mid.as_ptr(),
+          tables.mid_powers().as_ptr().cast::<u64>(),
           tables.h_powers_rev_16_pair.as_ptr(),
           &raw mut state,
         );

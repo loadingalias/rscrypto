@@ -1,18 +1,19 @@
 //! aarch64 FEAT_SHA512 kernels for SHA-512.
 //!
-//! Uses the SHA-512 Crypto Extension intrinsics (grouped under `sha3` in
-//! Rust): `vsha512hq_u64`, `vsha512h2q_u64`,
-//! `vsha512su0q_u64`, `vsha512su1q_u64`.
+//! Uses the SHA-512 Crypto Extension instructions (grouped under `sha3` in
+//! Rust): `sha512h`, `sha512h2`, `sha512su0`, and `sha512su1`.
 //!
 //! Available on Apple Silicon (M1+), Graviton2+, Ampere Altra, Cortex-A76+.
 
-#[cfg(target_arch = "aarch64")]
+#[cfg(all(target_arch = "aarch64", target_endian = "big"))]
 use core::arch::aarch64::*;
+#[cfg(all(target_arch = "aarch64", target_endian = "little"))]
+use core::arch::asm;
 
 #[cfg(target_arch = "aarch64")]
 use crate::hashes::util::Aligned64;
 
-/// K constants packed as 40 pairs of `[K[2i], K[2i+1]]` for `vld1q_u64` loads.
+/// K constants packed as 40 pairs of `[K[2i], K[2i+1]]` for vector loads.
 ///
 /// Cache-line aligned (64 bytes) so the 640-byte table starts at an L1 boundary.
 #[cfg(target_arch = "aarch64")]
@@ -65,7 +66,220 @@ static K_PAIRS: Aligned64<[[u64; 2]; 40]> = Aligned64([
 ///
 /// Caller must verify that `aarch64::SHA512` capability is available.
 /// `blocks.len()` must be a multiple of 128.
-#[cfg(target_arch = "aarch64")]
+#[cfg(all(target_arch = "aarch64", target_endian = "little"))]
+#[target_feature(enable = "sha3")]
+pub(crate) unsafe fn compress_blocks_aarch64_sha512(state: &mut [u64; 8], blocks: &[u8]) {
+  debug_assert_eq!(blocks.len() % 128, 0);
+  if blocks.is_empty() {
+    return;
+  }
+
+  // Four constant pairs stay live at a time. A fifth working-state register
+  // rotates through the rounds so the intermediate sum needs no extra copy.
+  // The 40 pairs restore the original state-register order. Only caller-saved
+  // SIMD registers are used; the leaf needs no stack scratch or vector saves.
+  //
+  // SAFETY: The caller established FEAT_SHA512 and a whole number of 128-byte
+  // blocks. The assembly reads each block exactly once, all 640 bytes of K_PAIRS,
+  // and the eight initialized state words; it writes only those state words.
+  // The Rust references exclude aliasing between state and the input. AArch64
+  // LD1/ST1 use byte elements for the message and native u64 elements for the
+  // state/constants, preserving lane order and endianness. These accesses
+  // accept their byte/word alignment. The cursor advances within
+  // the input through its one-past pointer. All modified registers and flags
+  // are declared; no stack memory or calls occur in the assembly.
+  unsafe {
+    let end = blocks.as_ptr().add(blocks.len());
+    asm!(
+      r#"
+      .macro rscrypto_sha512_round a, c, e, g, t, m, k
+        add v28.2d, v\m\().2d, v\k\().2d
+        ext v28.16b, v28.16b, v28.16b, #8
+        ext v29.16b, v\e\().16b, v\g\().16b, #8
+        ext v30.16b, v\c\().16b, v\e\().16b, #8
+        add v\g\().2d, v\g\().2d, v28.2d
+        sha512h q\g, q29, v30.2d
+        add v\t\().2d, v\c\().2d, v\g\().2d
+        sha512h2 q\g, q\c, v\a\().2d
+      .endm
+      .macro rscrypto_sha512_schedule m, n, p, f, h
+        sha512su0 v\m\().2d, v\n\().2d
+        ext v28.16b, v\f\().16b, v\h\().16b, #8
+        sha512su1 v\m\().2d, v\p\().2d, v28.2d
+      .endm
+
+      ld1 {{v0.2d, v1.2d, v2.2d, v3.2d}}, [{state}]
+      2:
+      mov v4.16b, v0.16b
+      mov v5.16b, v1.16b
+      mov v6.16b, v2.16b
+      mov v7.16b, v3.16b
+      mov {cursor}, {constants}
+      ld1 {{v16.16b, v17.16b, v18.16b, v19.16b}}, [{input}], #64
+      ld1 {{v20.16b, v21.16b, v22.16b, v23.16b}}, [{input}], #64
+      rev64 v16.16b, v16.16b
+      rev64 v17.16b, v17.16b
+      rev64 v18.16b, v18.16b
+      rev64 v19.16b, v19.16b
+      rev64 v20.16b, v20.16b
+      rev64 v21.16b, v21.16b
+      rev64 v22.16b, v22.16b
+      rev64 v23.16b, v23.16b
+      ld1 {{v24.2d, v25.2d}}, [{cursor}], #32
+      ld1 {{v26.2d, v27.2d}}, [{cursor}], #32
+
+      // Round pairs 0 through 7.
+      rscrypto_sha512_round 0, 1, 2, 3, 31, 16, 24
+      rscrypto_sha512_round 3, 0, 31, 2, 1, 17, 25
+      ld1 {{v24.2d, v25.2d}}, [{cursor}], #32
+      rscrypto_sha512_round 2, 3, 1, 31, 0, 18, 26
+      rscrypto_sha512_round 31, 2, 0, 1, 3, 19, 27
+      ld1 {{v26.2d, v27.2d}}, [{cursor}], #32
+      rscrypto_sha512_round 1, 31, 3, 0, 2, 20, 24
+      rscrypto_sha512_round 0, 1, 2, 3, 31, 21, 25
+      ld1 {{v24.2d, v25.2d}}, [{cursor}], #32
+      rscrypto_sha512_round 3, 0, 31, 2, 1, 22, 26
+      rscrypto_sha512_round 2, 3, 1, 31, 0, 23, 27
+      ld1 {{v26.2d, v27.2d}}, [{cursor}], #32
+
+      // Round pairs 8 through 15.
+      rscrypto_sha512_schedule 16, 17, 23, 20, 21
+      rscrypto_sha512_round 31, 2, 0, 1, 3, 16, 24
+      rscrypto_sha512_schedule 17, 18, 16, 21, 22
+      rscrypto_sha512_round 1, 31, 3, 0, 2, 17, 25
+      ld1 {{v24.2d, v25.2d}}, [{cursor}], #32
+      rscrypto_sha512_schedule 18, 19, 17, 22, 23
+      rscrypto_sha512_round 0, 1, 2, 3, 31, 18, 26
+      rscrypto_sha512_schedule 19, 20, 18, 23, 16
+      rscrypto_sha512_round 3, 0, 31, 2, 1, 19, 27
+      ld1 {{v26.2d, v27.2d}}, [{cursor}], #32
+      rscrypto_sha512_schedule 20, 21, 19, 16, 17
+      rscrypto_sha512_round 2, 3, 1, 31, 0, 20, 24
+      rscrypto_sha512_schedule 21, 22, 20, 17, 18
+      rscrypto_sha512_round 31, 2, 0, 1, 3, 21, 25
+      ld1 {{v24.2d, v25.2d}}, [{cursor}], #32
+      rscrypto_sha512_schedule 22, 23, 21, 18, 19
+      rscrypto_sha512_round 1, 31, 3, 0, 2, 22, 26
+      rscrypto_sha512_schedule 23, 16, 22, 19, 20
+      rscrypto_sha512_round 0, 1, 2, 3, 31, 23, 27
+      ld1 {{v26.2d, v27.2d}}, [{cursor}], #32
+
+      // Round pairs 16 through 23.
+      rscrypto_sha512_schedule 16, 17, 23, 20, 21
+      rscrypto_sha512_round 3, 0, 31, 2, 1, 16, 24
+      rscrypto_sha512_schedule 17, 18, 16, 21, 22
+      rscrypto_sha512_round 2, 3, 1, 31, 0, 17, 25
+      ld1 {{v24.2d, v25.2d}}, [{cursor}], #32
+      rscrypto_sha512_schedule 18, 19, 17, 22, 23
+      rscrypto_sha512_round 31, 2, 0, 1, 3, 18, 26
+      rscrypto_sha512_schedule 19, 20, 18, 23, 16
+      rscrypto_sha512_round 1, 31, 3, 0, 2, 19, 27
+      ld1 {{v26.2d, v27.2d}}, [{cursor}], #32
+      rscrypto_sha512_schedule 20, 21, 19, 16, 17
+      rscrypto_sha512_round 0, 1, 2, 3, 31, 20, 24
+      rscrypto_sha512_schedule 21, 22, 20, 17, 18
+      rscrypto_sha512_round 3, 0, 31, 2, 1, 21, 25
+      ld1 {{v24.2d, v25.2d}}, [{cursor}], #32
+      rscrypto_sha512_schedule 22, 23, 21, 18, 19
+      rscrypto_sha512_round 2, 3, 1, 31, 0, 22, 26
+      rscrypto_sha512_schedule 23, 16, 22, 19, 20
+      rscrypto_sha512_round 31, 2, 0, 1, 3, 23, 27
+      ld1 {{v26.2d, v27.2d}}, [{cursor}], #32
+
+      // Round pairs 24 through 31.
+      rscrypto_sha512_schedule 16, 17, 23, 20, 21
+      rscrypto_sha512_round 1, 31, 3, 0, 2, 16, 24
+      rscrypto_sha512_schedule 17, 18, 16, 21, 22
+      rscrypto_sha512_round 0, 1, 2, 3, 31, 17, 25
+      ld1 {{v24.2d, v25.2d}}, [{cursor}], #32
+      rscrypto_sha512_schedule 18, 19, 17, 22, 23
+      rscrypto_sha512_round 3, 0, 31, 2, 1, 18, 26
+      rscrypto_sha512_schedule 19, 20, 18, 23, 16
+      rscrypto_sha512_round 2, 3, 1, 31, 0, 19, 27
+      ld1 {{v26.2d, v27.2d}}, [{cursor}], #32
+      rscrypto_sha512_schedule 20, 21, 19, 16, 17
+      rscrypto_sha512_round 31, 2, 0, 1, 3, 20, 24
+      rscrypto_sha512_schedule 21, 22, 20, 17, 18
+      rscrypto_sha512_round 1, 31, 3, 0, 2, 21, 25
+      ld1 {{v24.2d, v25.2d}}, [{cursor}], #32
+      rscrypto_sha512_schedule 22, 23, 21, 18, 19
+      rscrypto_sha512_round 0, 1, 2, 3, 31, 22, 26
+      rscrypto_sha512_schedule 23, 16, 22, 19, 20
+      rscrypto_sha512_round 3, 0, 31, 2, 1, 23, 27
+      ld1 {{v26.2d, v27.2d}}, [{cursor}], #32
+
+      // Round pairs 32 through 39.
+      rscrypto_sha512_schedule 16, 17, 23, 20, 21
+      rscrypto_sha512_round 2, 3, 1, 31, 0, 16, 24
+      rscrypto_sha512_schedule 17, 18, 16, 21, 22
+      rscrypto_sha512_round 31, 2, 0, 1, 3, 17, 25
+      ld1 {{v24.2d, v25.2d}}, [{cursor}], #32
+      rscrypto_sha512_schedule 18, 19, 17, 22, 23
+      rscrypto_sha512_round 1, 31, 3, 0, 2, 18, 26
+      rscrypto_sha512_schedule 19, 20, 18, 23, 16
+      rscrypto_sha512_round 0, 1, 2, 3, 31, 19, 27
+      ld1 {{v26.2d, v27.2d}}, [{cursor}], #32
+      rscrypto_sha512_schedule 20, 21, 19, 16, 17
+      rscrypto_sha512_round 3, 0, 31, 2, 1, 20, 24
+      rscrypto_sha512_schedule 21, 22, 20, 17, 18
+      rscrypto_sha512_round 2, 3, 1, 31, 0, 21, 25
+      rscrypto_sha512_schedule 22, 23, 21, 18, 19
+      rscrypto_sha512_round 31, 2, 0, 1, 3, 22, 26
+      rscrypto_sha512_schedule 23, 16, 22, 19, 20
+      rscrypto_sha512_round 1, 31, 3, 0, 2, 23, 27
+
+      add v0.2d, v0.2d, v4.2d
+      add v1.2d, v1.2d, v5.2d
+      add v2.2d, v2.2d, v6.2d
+      add v3.2d, v3.2d, v7.2d
+      cmp {input}, {end}
+      b.lo 2b
+      st1 {{v0.2d, v1.2d, v2.2d, v3.2d}}, [{state}]
+      .purgem rscrypto_sha512_round
+      .purgem rscrypto_sha512_schedule
+      "#,
+      state = in(reg) state.as_mut_ptr(),
+      input = inout(reg) blocks.as_ptr() => _,
+      end = in(reg) end,
+      constants = in(reg) K_PAIRS.as_ptr(),
+      cursor = out(reg) _,
+      out("v0") _,
+      out("v1") _,
+      out("v2") _,
+      out("v3") _,
+      out("v4") _,
+      out("v5") _,
+      out("v6") _,
+      out("v7") _,
+      out("v16") _,
+      out("v17") _,
+      out("v18") _,
+      out("v19") _,
+      out("v20") _,
+      out("v21") _,
+      out("v22") _,
+      out("v23") _,
+      out("v24") _,
+      out("v25") _,
+      out("v26") _,
+      out("v27") _,
+      out("v28") _,
+      out("v29") _,
+      out("v30") _,
+      out("v31") _,
+      options(nostack),
+    );
+  }
+}
+
+// Keep the existing intrinsic lane conventions on big-endian AArch64.
+/// Compress one or more 128-byte blocks using FEAT_SHA512 instructions.
+///
+/// # Safety
+///
+/// Caller must verify that `aarch64::SHA512` capability is available.
+/// `blocks.len()` must be a multiple of 128.
+#[cfg(all(target_arch = "aarch64", target_endian = "big"))]
 #[target_feature(enable = "sha3")]
 pub(crate) unsafe fn compress_blocks_aarch64_sha512(state: &mut [u64; 8], blocks: &[u8]) {
   debug_assert_eq!(blocks.len() % 128, 0);

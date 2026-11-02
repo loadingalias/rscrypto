@@ -54,11 +54,49 @@ impl HandshakeTokenKey for TokenKey {
     })
     .expect("one SHA-256 block is a valid HKDF output");
     let key = Aes256GcmKey::generate(|out| out.copy_from_slice(key.as_bytes()));
+    #[cfg(all(
+      target_arch = "aarch64",
+      target_endian = "little",
+      target_os = "linux",
+      target_env = "gnu",
+      not(debug_assertions),
+      not(feature = "portable-only")
+    ))]
+    {
+      // Clear retired construction frames before the borrowed input key drops.
+      let _scrub = crate::aead::ConstructionStackScrub;
+      boxed_token_cipher(&key)
+    }
+    #[cfg(not(all(
+      target_arch = "aarch64",
+      target_endian = "little",
+      target_os = "linux",
+      target_env = "gnu",
+      not(debug_assertions),
+      not(feature = "portable-only")
+    )))]
     Box::new(TokenCipher {
       cipher: Aes256Gcm::new(&key),
       sealed: AtomicBool::new(false),
     })
   }
+}
+
+// Return only the final heap owner; the caller clears this retired worker.
+#[cfg(all(
+  target_arch = "aarch64",
+  target_endian = "little",
+  target_os = "linux",
+  target_env = "gnu",
+  not(debug_assertions),
+  not(feature = "portable-only")
+))]
+#[inline(never)]
+fn boxed_token_cipher(key: &Aes256GcmKey) -> Box<TokenCipher> {
+  Box::new(TokenCipher {
+    cipher: Aes256Gcm::new(key),
+    sealed: AtomicBool::new(false),
+  })
 }
 
 struct TokenCipher {
