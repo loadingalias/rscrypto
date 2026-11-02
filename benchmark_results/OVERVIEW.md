@@ -6,6 +6,45 @@ The dated campaign records come first.
 The 2026-08-18 Linux snapshot near the end is historical:
 its aggregate ratios are withdrawn as performance claims (see [Corrections](#corrections)).
 
+## 2026-11-02: separate GNU ChaCha record construction
+
+Relative to `313d8c88`, the GNU/Linux AArch64 provider initializes ChaCha record keys through
+a separate borrowed worker. Its optimized guard clears 4,160 bytes instead of 12,352 bytes.
+AES retains its existing window. Debug and QUIC keep their existing scrub widths.
+The linked normal O3 artifact's ChaCha chain reaches at most 1,648 bytes
+below the worker call SP, with 2,528 bytes of low margin. The inherited AES bound transfers
+through 28 verified component bodies, their referenced constant pages and the Once callback.
+Both factories scrub before heap release during ordinary Rust unwinding. These are bounded
+artifact results; no all-copy, whole-register, all-profile or all-target cleanup claim follows.
+
+A fixed Graviton4 c8g.xlarge comparison uses three pairs in ABBA AB order, 34 production cases,
+204 sample sets and 4,080 samples, with unchanged Criterion settings. Both ordinary O3/fat-LTO
+executables use nightly-2026-10-24 (`48f4b0553`) and the same OpenSSL 4.0.3 installation. They were
+built once and measured without rebuilding; runtime library hashes match the cleanup review.
+
+| P-256 credential / X25519 | Baseline us | Candidate us | Paired change |
+| --- | ---: | ---: | ---: |
+| TLS 1.2 resumed, AES-128-GCM | 15.239 | 15.216 | -0.15% |
+| TLS 1.2 resumed, AES-256-GCM | 19.780 | 19.819 | +0.20% |
+| TLS 1.2 resumed, ChaCha20-Poly1305 | 15.503 | 14.202 | -8.39% |
+| TLS 1.2 full, ChaCha20-Poly1305 | 322.238 | 321.253 | -0.31% |
+| TLS 1.3 full, ChaCha20-Poly1305 | 330.123 | 327.399 | -0.83% |
+| TLS 1.3 resumed, ChaCha20-Poly1305 | 107.501 | 104.389 | -2.89% |
+
+Every TLS 1.2 ChaCha resumption pair improves 7.94–9.23%. Its candidate mean is 1.66% above
+ring; the AES resumed means remain 18.33–19.02% above ring. This does not close the full competitive
+target. Maximum external control spread is 1.79% for handshakes and 2.80% for short traffic, so
+the wider 1% quiet-window gate remains open. The largest protected point increase is 0.91% for
+TLS 1.3 AES128/64-byte traffic; its ring control rises 0.84%. Small changes remain unresolved.
+All rows and processes are retained, with zero CPU steal.
+
+The builder host checked both artifacts, then ended before timing when its bounded
+cleanup-admission wait expired. Its artifacts were retained and reviewed locally. A later host
+measured those exact executables without installing a toolchain. Both hosts and their storage
+were removed. [Results and limits](tls12-resumed-20261102/RESULTS.md),
+[all paired rows](tls12-resumed-20261102/screen-analysis.json),
+[cleanup admission](tls12-resumed-20261102/cleanup/admission.json).
+
 ## 2026-11-02: TLS resumption record construction and PRF reuse
 
 The final effective source on `67c808c5` allocates GNU/Linux AArch64 record-key storage before

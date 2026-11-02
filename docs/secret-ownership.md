@@ -126,8 +126,10 @@ contexts. Construction borrows rustls's clearing `AeadKey`, then creates typed
 rscrypto key owners and expanded contexts in private outlined workers. GNU/Linux
 AArch64 record construction allocates an initialized final heap owner first;
 a unit-returning worker borrows its cipher field. Its guard clears the retired
-worker frames before that allocation is released on unwind. Other construction
-paths return only a `Box` and retain their post-call guard. All guards run before
+worker frames before that allocation is released on unwind. ChaCha record keys
+use their own initializer and clearing window instead of entering the AES-sized
+constructor frame. Other construction paths return only a `Box` and retain their
+post-call guard. All guards run before
 the outer `AeadKey` drops. The adapters expose no key formatting or serialization.
 TLS 1.2 record keys use the same construction; an AES-GCM
 decrypter keeps only the 4-byte salt and takes each record's explicit nonce

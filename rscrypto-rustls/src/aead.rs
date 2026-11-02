@@ -35,15 +35,25 @@ impl Drop for ConstructionStackScrub {
 // Record workers allocate before reading key bytes and borrow their final
 // owner. Keep their bounded scrub separate from the existing QUIC boundary.
 #[cfg(all(target_arch = "aarch64", target_os = "linux", target_env = "gnu"))]
-struct RecordConstructionStackScrub;
+struct RecordConstructionStackScrub(Algorithm);
 
 #[cfg(all(target_arch = "aarch64", target_os = "linux", target_env = "gnu"))]
 impl Drop for RecordConstructionStackScrub {
   fn drop(&mut self) {
     #[cfg(not(debug_assertions))]
-    scrub_record_construction_stack();
+    match self.0 {
+      #[cfg(feature = "chacha20poly1305")]
+      Algorithm::ChaCha20 => scrub_record_construction_stack::<{ (4 * 1024usize).strict_add(64) / 64 }>(),
+      #[cfg(feature = "aes-gcm")]
+      Algorithm::Aes128 | Algorithm::Aes256 => {
+        scrub_record_construction_stack::<{ (12 * 1024usize).strict_add(64) / 64 }>();
+      }
+    }
     #[cfg(debug_assertions)]
-    scrub_construction_stack();
+    {
+      let _algorithm = self.0;
+      scrub_construction_stack();
+    }
   }
 }
 
@@ -54,13 +64,12 @@ impl Drop for RecordConstructionStackScrub {
   not(debug_assertions)
 ))]
 #[inline(never)]
-fn scrub_record_construction_stack() {
+fn scrub_record_construction_stack<const BLOCKS: usize>() {
   #[repr(align(16))]
   struct ScrubBlock([u8; 64]);
-  // Includes margin beyond the reviewed optimized record-worker call chain.
+  // Includes margin beyond the reviewed optimized algorithm's worker chain.
   // Debug builds retain the full construction scrub.
-  const SCRUB_BYTES: usize = (12 * 1024usize).strict_add(64);
-  let mut scratch = [const { ScrubBlock([0u8; 64]) }; SCRUB_BYTES / 64];
+  let mut scratch = [const { ScrubBlock([0u8; 64]) }; BLOCKS];
   for block in &mut scratch {
     rscrypto::traits::ct::zeroize(&mut block.0);
   }
@@ -356,7 +365,41 @@ fn prepare_record_construction(algorithm: Algorithm, key_len: usize) {
 #[cfg(all(target_arch = "aarch64", target_os = "linux", target_env = "gnu"))]
 #[inline(never)]
 fn initialize_record_cipher(destination: &mut Cipher, algorithm: Algorithm, key: &[u8]) {
+  match algorithm {
+    #[cfg(feature = "aes-gcm")]
+    Algorithm::Aes128 | Algorithm::Aes256 => initialize_aes_record_cipher(destination, algorithm, key),
+    #[cfg(feature = "chacha20poly1305")]
+    Algorithm::ChaCha20 => initialize_chacha_record_cipher(destination, key),
+  }
+}
+
+#[cfg(all(
+  target_arch = "aarch64",
+  target_os = "linux",
+  target_env = "gnu",
+  feature = "aes-gcm"
+))]
+#[inline(never)]
+fn initialize_aes_record_cipher(destination: &mut Cipher, algorithm: Algorithm, key: &[u8]) {
   *destination = algorithm.cipher(key);
+}
+
+#[cfg(all(
+  target_arch = "aarch64",
+  target_os = "linux",
+  target_env = "gnu",
+  feature = "chacha20poly1305"
+))]
+#[inline(never)]
+fn initialize_chacha_record_cipher(destination: &mut Cipher, key: &[u8]) {
+  // Keep ChaCha construction out of Algorithm::cipher's AES-sized frame.
+  *destination = <&[u8; 32]>::try_from(key)
+    .map(|bytes| {
+      Cipher::ChaCha20(ChaCha20Poly1305::new(&ChaCha20Poly1305Key::generate(|out| {
+        out.copy_from_slice(bytes)
+      })))
+    })
+    .unwrap_or(Cipher::InvalidKeyMaterial);
 }
 
 struct RecordKey {
@@ -376,7 +419,7 @@ impl RecordKey {
       });
       // Declare after the owner: on unwind, clear worker frames before its
       // heap allocation is released. The worker borrows initialized storage.
-      let _scrub = RecordConstructionStackScrub;
+      let _scrub = RecordConstructionStackScrub(algorithm);
       initialize_record_cipher(&mut owned.cipher, algorithm, key);
       owned
     }
@@ -465,7 +508,7 @@ impl Tls12RecordKey {
         nonce: nonce.unwrap_or_default(),
         explicit_nonce_len: algorithm.explicit_nonce_len(),
       });
-      let _scrub = RecordConstructionStackScrub;
+      let _scrub = RecordConstructionStackScrub(algorithm.0);
       if nonce.is_some() {
         initialize_record_cipher(&mut owned.cipher, algorithm.0, key);
       }

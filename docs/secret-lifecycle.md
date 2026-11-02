@@ -366,9 +366,11 @@ TLS record and QUIC packet/header-key construction borrow the incoming `AeadKey`
 GNU/Linux AArch64 record construction resolves AES capabilities and allocates the final
 initialized heap owner before the worker reads operation-key bytes. The worker
 borrows the cipher field and returns no key value. Its guard runs before heap
-release on ordinary unwind. Builds without debug assertions clear
-12 KiB plus 64 bytes of dead stack; debug builds retain 32 KiB plus 64 bytes.
-The reviewed optimized call chain fits within the smaller window, including its
+release on ordinary unwind. ChaCha record initialization uses a separate worker
+so it does not enter the larger AES constructor frame. Without debug assertions,
+ChaCha guards clear 4 KiB plus 64 bytes of dead stack; AES guards clear 12 KiB plus
+64 bytes. Debug builds retain 32 KiB plus 64 bytes.
+The reviewed optimized call chains fit within their windows, including their
 alignment classes, selected cold paths and highest saved slots. This is evidence
 for the named artifact, not every compiler or feature combination.
 QUIC construction retains the 32 KiB window, with an extra 64 bytes on GNU/Linux
