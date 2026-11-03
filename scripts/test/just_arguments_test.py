@@ -25,6 +25,9 @@ if sys.argv[1:] == ['--print']:
   sys.exit(0)
 with open(os.environ['ARGUMENT_LOG'], 'a') as log:
   log.write(json.dumps(sys.argv[1:]) + '\\n')
+if os.environ.get('ENV_LOG'):
+  with open(os.environ['ENV_LOG'], 'a') as log:
+    log.write(json.dumps(os.environ.get('PYTHONUTF8')) + '\\n')
 ''')
     recorder.chmod(0o755)
     source = (root / "justfile").read_text()
@@ -102,6 +105,15 @@ with open(os.environ['ARGUMENT_LOG'], 'a') as log:
     run('release-check', [words[0]], [release_check])
     run('release', [words[0]], [release_check,
                               ['workflow', 'run', 'release.yml', '--ref', 'main', '-f', f'bump={words[0]}']])
+    # Benchmark and profile runners print Criterion change lines (U+2212). Windows consoles
+    # default to a legacy code page, so these recipes run every Python process in UTF-8 mode.
+    env_log = root / 'env.jsonl'
+    env['ENV_LOG'] = str(env_log)
+    for recipe in ('bench', 'bench-structural', 'profile'):
+      env_log.write_text('')
+      run(recipe, [], [prefixes[recipe]])
+      assert env_log.read_text().splitlines() == ['"1"'], (recipe, env_log.read_text())
+    env.pop('ENV_LOG')
     env.pop('HOME', None)
     run('ci-check', [], [['native']])
     covered = set(prefixes) | {'ssh', 'ssh-create', 'ssh-just', 'ssh-cargo', 'rail-cache-setup'}

@@ -352,21 +352,22 @@ test-coverage:
 # Benches
 
 # Measure Criterion cases, or discover them with --list; --diag enables diagnostics.
+# The bench and profile runners run Python in UTF-8 mode so Windows consoles can print Criterion output.
 [group('benchmarks')]
 bench *args:
-    @python="$(scripts/lib/python.sh --print)"; "$python" scripts/bench/bounded.py --bench "$@"
+    @export PYTHONUTF8=1; python="$(scripts/lib/python.sh --print)"; "$python" scripts/bench/bounded.py --bench "$@"
 
 # Stable instruction/cache-cost benchmarks. Requires gungraun-runner and Valgrind.
 [group('benchmarks')]
 bench-structural *args:
     @command -v gungraun-runner >/dev/null || { echo "error: gungraun-runner is required" >&2; exit 1; }
     @command -v valgrind >/dev/null || { echo "error: Valgrind is required" >&2; exit 1; }
-    @python="$(scripts/lib/python.sh --print)"; "$python" scripts/bench/bounded.py scripts/lib/toolchain.sh --exec cargo bench --locked --profile bench --features 'checksums,sha2,blake3' --bench structural "$@"
+    @export PYTHONUTF8=1; python="$(scripts/lib/python.sh --print)"; "$python" scripts/bench/bounded.py scripts/lib/toolchain.sh --exec cargo bench --locked --profile bench --features 'checksums,sha2,blake3' --bench structural "$@"
 
 # Record one exact case, or discover cases with --list; --diag enables diagnostics.
 [group('benchmarks')]
 profile *args:
-    @python="$(scripts/lib/python.sh --print)"; "$python" scripts/bench/bounded.py "$python" scripts/bench/runner.py profile "$@"
+    @export PYTHONUTF8=1; python="$(scripts/lib/python.sh --print)"; "$python" scripts/bench/bounded.py "$python" scripts/bench/runner.py profile "$@"
 
 # Inspect optimized code for an explicit benchmark target configuration.
 [group('benchmarks')]
