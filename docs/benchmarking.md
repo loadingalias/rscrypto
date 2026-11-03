@@ -991,13 +991,20 @@ No opt-in for expensive workloads is needed.
 
 ### Time budget
 
-`just bench` normally limits a measurement to 10 minutes: discovery, measurement, analysis,
+`just bench` runs the complete default catalog as a sequential campaign.
+Each target gets a separate measurement run and result directory.
+Unfiltered targets marked `split: algorithms` run one complete catalog operation at a time, just as they do in CI.
+The first failure stops the campaign; earlier completed results remain available.
+The campaign has no shared ten-minute deadline.
+
+Each ordinary measurement run has 10 minutes for discovery, measurement, analysis,
 and result verification.
-A native run first builds and discovers each selected target in its own invocation, as `--list` does.
-That invocation has the 30-minute `max_comparison_seconds` limit, and the measurement then finds its build current.
+Before measuring a target, the runner builds and discovers it in a separate invocation, as `--list` does.
+That invocation has the 30-minute `max_comparison_seconds` limit.
+It uses the same features and internal flags as the following measurement,
+so the measurement finds its build current.
 The cold Windows build of the `auth` target alone took longer than 10 minutes in Bench runs
-[39867778994](https://github.com/loadingalias/rscrypto/actions/runs/39867778994) and
-[39880626790](https://github.com/loadingalias/rscrypto/actions/runs/39880626790).
+[39867778994](https://github.com/loadingalias/rscrypto/actions/runs/39867778994) and [39880626790](https://github.com/loadingalias/rscrypto/actions/runs/39880626790).
 `--list` runs only the per-target invocations; a cold listing of many targets can take longer in total.
 Cross-build preparation and runs of prepared binaries keep one bounded invocation.
 `just bench-structural` and `just profile` use the same limit, including their builds.
@@ -1005,18 +1012,18 @@ The shared `max_run_seconds` setting can lower this ordinary limit; it cannot ex
 
 The catalog gives 30 minutes to the 12 complete signing comparisons for SLH-DSA
 and HashSLH-DSA with SHA-2 or SHAKE and the `128s`, `192s`, or `256s` parameter sets.
-It also gives 30 minutes to RSA-4096 key generation (`rsa-4096-keygen`): its rscrypto row alone
-ran longer than four minutes on the RISC-V runner in
-[Bench run 39463299690](https://github.com/loadingalias/rscrypto/actions/runs/39463299690),
+It also gives 30 minutes to RSA-4096 key generation (`rsa-4096-keygen`):
+its rscrypto row alone ran longer than four minutes on the RISC-V runner in [Bench run 39463299690](https://github.com/loadingalias/rscrypto/actions/runs/39463299690),
 and the comparison adds two more implementations.
 Select one operation without a filter, for example `just bench slhdsa-shake-192s-sign`.
 The runner and compiled harness use the same resolved budget and retain every implementation
 and sampling setting.
 These exceptions use the catalog algorithm's `max_run_seconds`, bounded by `max_comparison_seconds` in `.config/criterion.json`;
 there is no invocation option to raise the limit.
-Quick runs, cross-build preparation, filters,
-and local selections spanning multiple operations keep the ordinary limit.
-CI expands umbrella selectors into separate operations before resolving their budgets.
+Quick runs, cross-build preparation, and filtered selections keep the ordinary limit.
+Native campaigns and CI expand unfiltered umbrella selectors into separate operations
+before resolving their budgets.
+Filters keep the selected cases together within each target.
 
 - Shutdown starts before the deadline.
   It keeps up to five seconds to save failed-run evidence, then stops the remaining child processes.
@@ -1025,16 +1032,17 @@ CI expands umbrella selectors into separate operations before resolving their bu
 - A plan whose requested sampling windows alone use up the budget is rejected before measurement.
   Analysis and slow operations can still make a smaller plan reach the deadline.
 - Direct Cargo invocation limits each Criterion harness separately.
-  Use `just bench` to limit a selection that spans more than one harness; it also bounds each target's build.
+  Use `just bench` to run a selection across harnesses with separate build and measurement deadlines.
   Use `just bench-structural` for the structural benchmark deadline.
 - `just bench-mldsa-tail` and `just bench-provider-scorecard` are separate tools with their own timeouts:
   20 minutes per build and 60 per run for the ML-DSA tail, 10 minutes for each scorecard build and run.
 
 A planned comparison must fit within this limit, including every repetition.
 Do not split an over-budget comparison across repeated invocations to bypass it.
-A comparison is one Criterion benchmark group: one operation of one algorithm, across its implementations.
+A comparison is one Criterion benchmark group: one operation of one algorithm,
+across its implementations.
 
-A catalog target marked `"split": "algorithms"` runs in CI as one `just bench` per catalog algorithm, which never divides a group.
+A catalog target marked `"split": "algorithms"` runs one measurement per catalog algorithm, which never divides a group.
 SLH-DSA uses 72 operation selectors: key generation, signing, verification,
 and secret-key import for each pure parameter set,
 plus signing and verification for each HashSLH-DSA parameter set.
@@ -1167,6 +1175,12 @@ Target names, including unfiltered `sha2`, run without a scope override.
 The raw target results and the overview are the only performance record.
 
 ### Run files
+
+Each native campaign measurement prints its own result directory.
+When `RSCRYPTO_BENCH_RUN_ID` is set and the selection needs multiple runs,
+the runner appends the target or operation name to that ID.
+For a baseline comparison, select the corresponding target or operation
+and pass its completed result directory.
 
 - `requests.json` keeps the resolved target and filter requests and the run budget.
 - `plan.json` records, for each configuration: the selected cases, the Cargo command and artifact,

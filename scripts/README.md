@@ -630,9 +630,14 @@ selects the first message index for reproducing a discovered rejection case.
   `bench/runner.py` grants it only to one complete operation without a filter; quick runs
   and preparation keep the ordinary budget.
 - `bench/bounded.py` stops the whole benchmark or profile process tree within the budget.
-  For `--list`, and before a native measurement, it runs one runner invocation per selected target
-  that builds and discovers it within the `max_comparison_seconds` ceiling,
-  so a cold build cannot spend a measurement's budget.
+  Native campaigns measure one target at a time,
+  splitting unfiltered targets marked `split: algorithms` into their complete catalog operations.
+  Each measurement gets its own budget and result directory; the first failure stops the campaign.
+  Before measuring a target, it builds and discovers that target within the `max_comparison_seconds` ceiling.
+  Preparation and measurement select the same features and internal flags,
+  so moving between targets does not trigger rebuilds inside the measurement budget.
+  `--list` only runs those per-target preparation invocations.
+  On macOS, cleanup accepts `EPERM` only after checking that the process group has no live members.
 - `bench/runner.py` resolves filters to unique cases and records the budget in `requests.json`.
 - `bench/measure.py` runs one process for each configuration,
   passes the cases and budget to the compiled harness through `RSCRYPTO_BENCH_CASES`,

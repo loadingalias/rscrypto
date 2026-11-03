@@ -9,9 +9,9 @@ import sys
 import tempfile
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
-from bounded import main, run
+from bounded import main, run, stop
 
 
 class BudgetTests(unittest.TestCase):
@@ -30,9 +30,7 @@ class BudgetTests(unittest.TestCase):
     selector = 'slhdsa-sha2-128s-sign'
     for args, expected in (([selector], 1800), (['hash-slhdsa-shake-256s-sign'], 1800),
                            (['slhdsa-sha2-128s-verify'], 600), (['slhdsa-sha2-128f-sign'], 600),
-                           (['rsa-4096-keygen'], 1800), (['rsa-3072-keygen'], 600), (['rsa_keygen'], 600),
-                           (['slhdsa'], 600), (['slhdsa-sha2-128s'], 600),
-                           ([selector, 'slhdsa-sha2-128s-verify'], 600),
+                           (['rsa-4096-keygen'], 1800), (['rsa-3072-keygen'], 600),
                            ([selector, '--filter', 'rscrypto'], 600),
                            ([selector, '--quick'], 600),
                            ([selector, '--prepare-archive', 'fixture.tar'], 600),
@@ -40,7 +38,7 @@ class BudgetTests(unittest.TestCase):
       with self.subTest(args=args), patch.dict(os.environ, {}, clear=True), patch('bounded.run', return_value=0) as execute:
         self.assertEqual(main(['--bench', *args]), 0)
         self.assertEqual(execute.call_args.args[1], expected)
-        self.assertEqual(execute.call_args.args[0][2:], ['bench', *args])
+        self.assertEqual(execute.call_args.args[0][2:2 + len(args) + 1], ['bench', *args])
         self.assertEqual(execute.call_args.kwargs, {'maximum': 1800})
     with patch.dict(os.environ, {'BENCH_QUICK': 'true'}, clear=True), patch('bounded.run', return_value=0) as execute:
       self.assertEqual(main(['--bench', selector]), 0)
@@ -52,11 +50,13 @@ class BudgetTests(unittest.TestCase):
     with patch.dict(os.environ, {}, clear=True), patch('bounded.run', return_value=0) as execute:
       self.assertEqual(main(['--bench', *args]), 0)
     self.assertEqual([call.args[0][2:] for call in execute.call_args_list],
-                     [['bench', *args, '--list', '--list-target', name] for name in ('auth', 'sha2')]
-                     + [['bench', *args]])
+                     [['bench', *args, '--run-selector', 'hmac-sha256', '--list', '--list-target', 'auth'],
+                      ['bench', *args, '--run-selector', 'hmac-sha256', '--run-label', 'hmac-sha256'],
+                      ['bench', *args, '--run-selector', 'sha2', '--list', '--list-target', 'sha2'],
+                      ['bench', *args, '--run-selector', 'sha2', '--run-label', 'sha2']])
     # Builds take the longest bound; the measurement keeps its ordinary budget.
-    self.assertEqual([call.args[1] for call in execute.call_args_list], [1800, 1800, 600])
-    self.assertEqual([call.kwargs for call in execute.call_args_list], [{'maximum': 1800}] * 3)
+    self.assertEqual([call.args[1] for call in execute.call_args_list], [1800, 600, 1800, 600])
+    self.assertEqual([call.kwargs for call in execute.call_args_list], [{'maximum': 1800}] * 4)
     # A failed build ends the invocation before measurement.
     with patch.dict(os.environ, {}, clear=True), patch('bounded.run', side_effect=[124]) as execute:
       self.assertEqual(main(['--bench', *args]), 124)
@@ -67,6 +67,29 @@ class BudgetTests(unittest.TestCase):
           patch('bounded.run', return_value=0) as execute:
         self.assertEqual(main(['--bench', 'sha2', transfer, 'fixture.tar']), 0)
         self.assertEqual(execute.call_count, 1)
+
+  def test_default_campaign_covers_catalog_without_a_shared_deadline(self):
+    import runner
+    catalog = runner.load_catalog()
+    expected = []
+    for bench in dict.fromkeys(row['bench'] for row in runner.requests(runner.parse(['bench']), catalog)):
+      if catalog['benches'][bench].get('split') == 'algorithms':
+        expected.extend([name] for name, row in catalog['algorithms'].items() if row['bench'] == bench)
+      else:
+        expected.append([bench])
+    with patch.dict(os.environ, {}, clear=True), patch('bounded.run', return_value=0) as execute:
+      self.assertEqual(main(['--bench']), 0)
+    measurements = [call for call in execute.call_args_list if '--list' not in call.args[0]]
+    observed = [runner.parse(call.args[0][2:]) for call in measurements]
+    self.assertEqual([args.run_selector for args in observed], expected)
+    self.assertEqual(len({args.run_label for args in observed}), len(expected))
+    for call, args in zip(measurements, observed):
+      name, = args.run_selector
+      self.assertEqual(call.args[1], catalog['algorithms'].get(name, {}).get('max_run_seconds', 600))
+    # Stop the campaign at its first failed measurement, before building another target.
+    with patch.dict(os.environ, {}, clear=True), patch('bounded.run', side_effect=[0, 124]) as execute:
+      self.assertEqual(main(['--bench']), 124)
+      self.assertEqual(execute.call_count, 2)
 
   def test_listing_bounds_each_target_separately(self):
     # Listing builds every selected target, so each target's build and discovery gets the longest bound.
@@ -103,6 +126,28 @@ class BudgetTests(unittest.TestCase):
       self.assertLess(time.monotonic() - start, 1)
       time.sleep(1)
       self.assertFalse(marker.exists(), "grandchild outlived the run budget")
+
+  @unittest.skipUnless(sys.platform == 'darwin', 'Darwin returns EPERM for a zombie-only process group')
+  def test_darwin_zombie_group_is_already_stopped(self):
+    with subprocess.Popen([sys.executable, '-c', 'pass'], start_new_session=True) as process:
+      # Observe exit without reaping it, keeping the zombie's process group alive.
+      deadline = time.monotonic() + 5
+      while time.monotonic() < deadline:
+        state = subprocess.check_output(['ps', '-p', str(process.pid), '-o', 'stat='], text=True).strip()
+        if state.startswith('Z'):
+          break
+      else:
+        self.fail('child did not become a zombie')
+      stop(process, signal.SIGKILL)
+      self.assertEqual(process.wait(), 0)
+
+  @unittest.skipUnless(os.name == 'posix', 'process group permission checks require POSIX')
+  def test_darwin_cleanup_does_not_hide_live_permission_failures(self):
+    process = Mock(pid=12345)
+    with patch('bounded.sys.platform', 'darwin'), patch('bounded.os.killpg', side_effect=PermissionError(1, 'denied')), \
+         patch('bounded.subprocess.check_output', return_value='12345 Z\n12345 S\n'):
+      with self.assertRaises(PermissionError):
+        stop(process, signal.SIGKILL)
 
 
 if __name__ == "__main__":

@@ -42,6 +42,8 @@ def parse(arguments: list[str]):
   bench.add_argument("--list", action="store_true")
   # The watchdog lists one target per bounded invocation.
   bench.add_argument("--list-target", help=argparse.SUPPRESS)
+  bench.add_argument("--run-selector", action="append", help=argparse.SUPPRESS)
+  bench.add_argument("--run-label", help=argparse.SUPPRESS)
   bench.add_argument("--diag", nargs="?", const=True, type=boolean, default=False)
   bench.add_argument("--quick", nargs="?", const=True, type=boolean, default=False)
   bench.add_argument("--output-dir", default="benchmark_results")
@@ -79,7 +81,7 @@ def parse(arguments: list[str]):
       normalized.append("--" + key.replace("_", "-") + "=" + value)
     else:
       normalized.append(token)
-    value_follows = token in {"--filter", "--output-dir", "--baseline", "--prepare-archive", "--run-archive", "--target", "--warmup-ms", "--measure-ms", "--sample-size", "--list-target"}
+    value_follows = token in {"--filter", "--output-dir", "--baseline", "--prepare-archive", "--run-archive", "--target", "--warmup-ms", "--measure-ms", "--sample-size", "--list-target", "--run-selector", "--run-label"}
   if arguments[:1] in (["codegen"], ["llvm-lines"]):
     boundary = normalized.index("--") if "--" in normalized else len(normalized)
     args = parser.parse_args(normalized[:boundary])
@@ -130,7 +132,7 @@ def configuration(row: dict) -> tuple:
 def requests(args, catalog, every_architecture=False) -> list[dict]:
   """Resolve selectors to configurations that run on this host or on the transfer target."""
   names = []
-  for selector in args.selectors or ["all"]:
+  for selector in args.run_selector or args.selectors or ["all"]:
     selected = resolve_selector(catalog, selector)
     if selected is None:
       raise ValueError(f"unknown selector: {selector}")
@@ -152,6 +154,22 @@ def requests(args, catalog, every_architecture=False) -> list[dict]:
     raise ValueError("selection produced no benchmark configurations")
   return [target(catalog, name, args.diag) | {"bench": name, "scope": case_scope, "pattern": pattern}
           for name, case_scope, pattern in dict.fromkeys(rows)]
+
+
+def measurement_runs(args, catalog) -> list[list[str]]:
+  """Schedule native targets and complete catalog operations, as the CI campaign does."""
+  selected = {}
+  for row in requests(args, catalog):
+    selected.setdefault(row["bench"], set()).add(row["scope"])
+  runs = []
+  for bench, scopes in selected.items():
+    algorithms = [name for name, row in catalog["algorithms"].items()
+                  if row["bench"] == bench and ("" in scopes or row["filter"] in scopes)]
+    if catalog["benches"][bench].get("split") == "algorithms" and not args.filter:
+      runs.extend([name] for name in algorithms)
+    else:
+      runs.append([bench] if "" in scopes else algorithms)
+  return runs
 
 
 def run_budget(args, catalog, rows=None) -> int:
@@ -285,6 +303,8 @@ def bench(args, catalog) -> None:
     raise ValueError("baseline must be a completed run")
   parent = Path(args.output_dir).resolve() / "criterion"
   run_id = os.environ.get("RSCRYPTO_BENCH_RUN_ID")
+  if run_id and args.run_label:
+    run_id += "-" + args.run_label
   if run_id and (not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", run_id) or ".." in run_id):
     raise ValueError("invalid run ID")
   parent.mkdir(parents=True, exist_ok=True)

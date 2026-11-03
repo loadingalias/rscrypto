@@ -345,14 +345,18 @@ sys.exit(64)
     # Explicit run IDs avoid relying on the ordering of random suffixes within one timestamp second.
     runs = self.root / 'benchmark_results/criterion'
     self.ok(self.bench('slhdsa-sha2-128s', RSCRYPTO_BENCH_RUN_ID='pure'))
-    self.assertEqual(self.plan(runs / 'pure')[0]['cases'], [
+    pure = [self.plan(runs / f'pure-slhdsa-sha2-128s-{operation}')[0]
+            for operation in ('keygen', 'sign', 'verify', 'import')]
+    self.assertEqual([case for entry in pure for case in entry['cases']], [
       'slhdsa-sha2-128s/keygen/fixed-seeds/rscrypto',
       'slhdsa-sha2-128s/sign/deterministic-32/rscrypto', 'slhdsa-sha2-128s/sign/deterministic-32/rustcrypto',
       'slhdsa-sha2-128s/sign/deterministic-32/fips205', 'slhdsa-sha2-128s/verify/32/rscrypto',
       'slhdsa-sha2-128s/import/raw-secret/rscrypto'])
     self.ok(self.bench('hash-slhdsa-sha2-128s', RSCRYPTO_BENCH_RUN_ID='hash'))
-    self.assertEqual(self.plan(runs / 'hash')[0]['cases'], ['slhdsa-sha2-128s/hash-sign/sha256/deterministic-32/fips205',
-                                                         'slhdsa-sha2-128s/hash-verify/sha256/32/fips205'])
+    hashed = [self.plan(runs / f'hash-hash-slhdsa-sha2-128s-{operation}')[0] for operation in ('sign', 'verify')]
+    self.assertEqual([case for entry in hashed for case in entry['cases']],
+                     ['slhdsa-sha2-128s/hash-sign/sha256/deterministic-32/fips205',
+                      'slhdsa-sha2-128s/hash-verify/sha256/32/fips205'])
     self.ok(self.bench('slhdsa-sha2-128s-sign', RSCRYPTO_BENCH_RUN_ID='sign'))
     self.assertEqual(self.plan(runs / 'sign')[0]['cases'], [f'slhdsa-sha2-128s/sign/deterministic-32/{implementation}'
                                                          for implementation in ('rscrypto', 'rustcrypto', 'fips205')])
@@ -465,10 +469,16 @@ sys.exit(64)
     self.assertFalse(self.calls())
     self.ok(self.bench('crc', 'sha2'))
     self.assertEqual(len(self.calls()), 2)
-    plan = self.plan()
+    plan = [entry for root in self.runs() for entry in self.plan(root)]
     self.assertEqual(len(plan), 2)
     self.assertNotEqual(plan[0]['home'], plan[1]['home'])
     self.assertTrue(all('--no-default-features' in entry['artifact']['command'] for entry in plan))
+    # sha2 requires internal diagnostics, crc does not. Each measurement must reuse
+    # the flags of its own preparation rather than inheriting another target's flags.
+    builds = [json.loads(line) for line in (self.root / 'builds.jsonl').read_text().splitlines()][2:]
+    flags = [json.loads(line) for line in (self.root / 'build-flags.jsonl').read_text().splitlines()][2:]
+    self.assertEqual([row[row.index('--bench') + 1] for row in builds], ['crc', 'crc', 'sha2', 'sha2'])
+    self.assertEqual(['rscrypto_internal' in row for row in flags], [False, False, True, True])
 
   def test_discovery_runs_once_per_configuration(self):
     self.ok(self.bench('sha256', 'sha512', 'filter=rscrypto', 'filter=other', '--list'))

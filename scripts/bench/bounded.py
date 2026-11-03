@@ -32,6 +32,15 @@ def stop(process: subprocess.Popen, sig: int) -> None:
                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
   except ProcessLookupError:
     pass
+  except PermissionError:
+    # Darwin can return EPERM for a group containing only zombies. Do not turn
+    # successful shutdown into a permission failure, or hide a live denied process.
+    if sys.platform != "darwin":
+      raise
+    members = subprocess.check_output(["ps", "-axo", "pgid=,stat="], text=True)
+    if any(int(group) == process.pid and not state.startswith("Z")
+           for group, state in (line.split() for line in members.splitlines())):
+      raise
 
 
 def run(command: list[str], seconds: float, *, maximum: int = MAX_RUN_SECONDS) -> int:
@@ -65,9 +74,9 @@ def main(arguments: list[str]) -> int:
     args = runner.parse(["bench", *arguments[1:]])
     catalog = runner.load_catalog()
     command = [sys.executable, str(Path(runner.__file__)), "bench", *arguments[1:]]
-    # Each target's build and discovery runs alone, under the longest permitted bound: a cold build of the
-    # auth target took over 600 s on Windows (Bench 39867778994 and 39880626790). Measurement keeps its own
-    # budget and finds the build current.
+    # Build and measure each target with the same feature/internal flags before
+    # moving to the next target. Combining targets can change those flags and
+    # rebuild everything inside the measurement deadline.
     build = load()["max_comparison_seconds"]
     targets = dict.fromkeys(row["bench"] for row in runner.requests(args, catalog))
     if args.list and not args.list_target:
@@ -76,11 +85,26 @@ def main(arguments: list[str]) -> int:
         if status:
           return status
       return 0
-    if not (args.prepare_archive or args.run_archive):
-      for bench in targets:
-        status = run([*command, "--list", "--list-target", bench], build, maximum=build)
+    if not (args.list or args.list_target or args.prepare_archive or args.run_archive):
+      runs = runner.measurement_runs(args, catalog)
+      built = set()
+      for index, selectors in enumerate(runs, 1):
+        options = [value for name in selectors for value in ("--run-selector", name)]
+        selected = runner.parse(["bench", *arguments[1:], *options])
+        bench = runner.requests(selected, catalog)[0]["bench"]
+        if bench not in built:
+          status = run([*command, *options, "--list", "--list-target", bench], build, maximum=build)
+          if status:
+            return status
+          built.add(bench)
+        label = selectors[0] if len(selectors) == 1 else bench
+        budget = runner.run_budget(selected, catalog)
+        print(f"Measurement {index}/{len(runs)}: {', '.join(selectors)} ({budget}s budget)", flush=True)
+        status = run([*command, *options, *(["--run-label", label] if len(runs) > 1 else [])],
+                     budget, maximum=build)
         if status:
           return status
+      return 0
     return run(command, runner.run_budget(args, catalog), maximum=load()["max_comparison_seconds"])
   return run(arguments, load()["max_run_seconds"])
 
