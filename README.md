@@ -5,14 +5,14 @@
 [![MSRV 1.100.0](https://img.shields.io/badge/MSRV-1.100.0-blue)](Cargo.toml)
 [![License: MIT OR Apache-2.0](https://img.shields.io/crates/l/rscrypto)](#license)
 
-`rscrypto` is a Rust library of cryptographic primitives, hashes, password hashing, and checksums.
+`rscrypto` is a Rust library of cryptographic primitives, hashes, password hashing, random generation, and checksums.
 One feature model controls all of them.
 Portable Rust is the reference implementation.
 SIMD and assembly backends make it faster on supported targets.
 Production builds do not depend on C, FFI, OpenSSL, or system libraries.
 
-`rscrypto` supplies primitives only.
-It is not a TLS stack, a PKI toolkit, a key store, or a protocol implementation.
+The `rscrypto` crate supplies primitives.
+The companion [`rscrypto-rustls`](#tls-and-quic-provider) supplies TLS and QUIC cryptographic adapters.
 
 ## Install
 
@@ -73,9 +73,17 @@ X25519, ML-KEM, password hashing, and backend introspection.
 | Signatures and RSA | ECDSA P-256/P-384, Ed25519, [ML-DSA-44/65/87](docs/mldsa.md), SLH-DSA (all 12 FIPS 205 sets, pure and HashSLH-DSA), RSA signing, verification, encryption, and key generation | `signatures` or a leaf feature |
 | Key exchange and KEMs | P-256 ECDH, P-384 ECDH, X25519, ML-KEM-512/768/1024 | `key-exchange` or a leaf feature |
 | AEADs | AES-GCM, AES-GCM-SIV, AES-SIV-CMAC, ChaCha20-Poly1305, XChaCha20-Poly1305, AEGIS-256, Ascon-AEAD128 | `aead` or a leaf feature |
+| Random generation | `ChaCha20Rng` | `chacha20-rng` (included in `full`) |
+
+`ChaCha20Rng` accepts a caller-supplied seed and works without `std` or `alloc`.
+`rand_core` adds generator traits; `getrandom` adds operating-system seeding.
 
 Signature and KEM keys import and export standard DER (PKCS #8 and SubjectPublicKeyInfo)
 for ECDSA, Ed25519, RSA, ML-DSA, ML-KEM, and SLH-DSA.
+
+`AeadGather` encrypts multiple plaintext slices into one ciphertext for AES-GCM and ChaCha20-Poly1305.
+BLAKE3 supports reader, file, and batch hashing, and an expert decoder verifies sequential unkeyed Bao combined streams.
+The [feature guide](docs/features.md#capability-features) describes these APIs and their allocation and `std` requirements.
 
 The WebSocket accept digest exists only for protocol compatibility.
 It needs the `websocket-sha1` feature.
@@ -86,6 +94,25 @@ The [API compatibility notes](docs/api-compatibility.md) explain output types, c
 and retained method names.
 The [cryptographic resilience guide](docs/cryptographic-resilience.md) explains security assumptions,
 migration boundaries, and the evidence to review when choosing stronger cryptography.
+
+## TLS and QUIC provider
+
+The `rscrypto-rustls` companion connects these primitives to rustls and Quinn:
+
+| Capability | Coverage |
+| --- | --- |
+| TLS | TLS 1.3; opt-in TLS 1.2 ECDHE suites |
+| Key exchange | X25519MLKEM768 hybrid (preferred), X25519, P-256, P-384 |
+| Authentication | ECDSA P-256/P-384, Ed25519, RSA; opt-in ML-DSA-44/65/87 (`ml-dsa`) |
+| QUIC | QUIC v1 through Quinn (`quinn`, opt-in) |
+
+The provider supports mutual authentication, session resumption, stateless tickets, and caller-supplied entropy.
+rustls owns the TLS protocol, rustls-webpki validates certificate paths, and Quinn owns QUIC transport.
+
+The companion requires `std` and remains unpublished.
+Its [manifest](rscrypto-rustls/Cargo.toml) pins rustls and Quinn to upstream development revisions;
+consumers must use the same Git sources and revisions.
+See the [provider guide](rscrypto-rustls/README.md) for configuration, feature requirements, and limits.
 
 ## Platforms and dispatch
 
@@ -112,6 +139,10 @@ Missing or old evidence removes the claim; it never weakens a gate.
 - **Backends:** differential tests compare each accelerated backend with portable Rust.
   They cover lengths, alignments, tails, state transitions, dispatch,
   and fallback on native targets.
+- **TLS and QUIC:** provider tests compare with ring and AWS-LC.
+  Separate runners exercise OpenSSL and Go TLS peers, quic-go QUIC peers,
+  and a declared BoGo TLS 1.2/1.3 profile.
+  The [provider test commands](scripts/README.md#test-entry-points) document campaign scope and exclusions.
 - **Constant time:** [`ct.toml`](ct.toml) lists the exact operations under test.
   The evidence combines inspection of optimized linked binaries,
   BINSEC proofs for fixed-shape kernels, and DudeCT timing tests for end-to-end operations.
