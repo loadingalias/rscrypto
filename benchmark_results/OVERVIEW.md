@@ -6,6 +6,405 @@ The dated campaign records come first.
 The 2026-08-18 Linux snapshot near the end is historical:
 its aggregate ratios are withdrawn as performance claims (see [Corrections](#corrections)).
 
+## 2026-11-03: default catalog on CI and macOS
+
+[Bench run 41546963938, attempt 2](https://github.com/loadingalias/rscrypto/actions/runs/41546963938/attempts/2)
+and a completed local `just bench` measured the default catalog at [`6926f298`](https://github.com/loadingalias/rscrypto/commit/6926f298c16d3d6777973e6fa5d29ad86e0ca48d).
+This section replaces the October 23 campaign as the current default-catalog summary.
+It contains every completed CI measurement archive available at the extraction snapshot,
+plus every case from the new macOS run:
+**879 completed runs, 41,589 measured cases, 14,007 matched comparison points, and 130 comparison
+workloads**.
+The case total includes external libraries, diagnostics, and standalone cases;
+only catalog-declared comparisons contribute ratios.
+
+RISC-V Auth was still running at the extraction snapshot, 2026-11-03 03:34 UTC.
+Its cells and the full RISC-V headline aggregate are deliberately blank.
+The 603 available RISC-V headline points cover checksum, hashes, and AEAD.
+No result from an older campaign fills a missing cell.
+
+### Collection and coverage
+
+The 31 completed CI measurement archives contain 771 runs and 36,765 measured cases.
+Every archive's byte count and SHA-256 match the GitHub artifact metadata.
+Every retained run has `state=complete` and `exit_code=0`; its requested catalog scopes, case inventory, samples,
+and estimates passed validation.
+The CI source states are clean.
+
+The Mac's full `just bench` ran from 02:30:16 to 03:48:53 UTC on November 3 and exited successfully: 108 runs,
+4,824 cases, and 1,597 comparison points.
+A fresh `just bench --list` exactly matches its measured case inventory,
+including duplicate binary names used by distinct catalog configurations.
+The local source includes the benchmark-runner repair and its tests and documentation.
+All retained product and benchmark workload hashes match CI, including `src/`, `benches/`, the lockfile, profiles,
+toolchain, benchmark catalog, and Criterion configuration.
+
+CPUs below means the logical CPU count reported by the retained host metadata.
+"All four" means the CI job families `checksum`, `hashes`, `auth`, and `aead`.
+Points in this table include both headline and other comparisons.
+
+| Cohort | Hardware | CPUs | CI families | Runs | Cases | Points |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Intel Linux | c8i.2xlarge; Xeon 6975P-C | 8 | All four | 109 | 4,970 | 1,631 |
+| AMD Linux | c8a.2xlarge; EPYC 9R45 | 8 | All four | 109 | 4,970 | 1,631 |
+| Intel Win | c8i.2xlarge; Intel family 6, model 173 | 8 | All four | 109 | 4,970 | 1,631 |
+| AMD Win | c8a.2xlarge; AMD family 26, model 2 | 8 | All four | 109 | 4,970 | 1,631 |
+| ARM64 | c9g.2xlarge; Arm CPU part 0xd84 | 8 | All four | 108 | 4,824 | 1,597 |
+| POWER10 | POWER10; IBM 9105-22A | 24 | All four | 108 | 4,816 | 1,597 |
+| IBM Z / 4 | IBM Z machine 8562 | 4 | aead, auth, checksum | 99 | 2,310 | 816 |
+| IBM Z / 8 | IBM Z machine 8562 | 8 | hashes | 9 | 1,962 | 777 |
+| RISC-V | Native riscv64 runner | 4 | aead, checksum, hashes | 11 | 2,973 | 1,099 |
+| Apple | Apple M1 Pro; MacBookPro18,3 | 10 | All four | 108 | 4,824 | 1,597 |
+
+IBM Z's hashes ran with 8 CPUs; its checksum, Auth, and AEAD jobs reported 4 CPUs.
+The normal scorer rejects these as one host, so they remain separate cohorts throughout.
+Their 340 and 571 headline points must not be presented as one measured-host aggregate.
+The two IBM Z columns and RISC-V also have different workload coverage from the full rows.
+Do not rank their aggregate ratios against the full-catalog platforms.
+
+The CI `auth` job includes KMAC, cSHAKE, HMAC-SHA-3, Poly1305, signatures, key exchange, KDFs,
+password hashing, and RSA.
+All of those RISC-V results remain pending here.
+The default catalog does not run `tls_connections`, `quic_connections`, `openssl_primitives`, or `blake3_file`.
+Their 17 comparison definitions have no new measurements in this campaign.
+Other opt-in diagnostic targets are also outside this default run.
+The dated TLS, QUIC, OpenSSL, and file-reader campaigns below retain their own evidence.
+
+### Measurement and interpretation
+
+- Toolchain: `nightly-2026-10-24`, rustc 1.101.0-nightly (`48f4b0553`, 2026-10-23), LLVM 23.1.4.
+  Every target uses the catalog's features and `bench` profile: O3, fat LTO, one codegen unit,
+  overflow checks, and debug information.
+  The Mac additionally records `-C target-cpu=native`.
+  Target-specific and diagnostic flags remain in each retained plan.
+- Criterion: 20 samples, 100 ms warm-up, 400 ms measurement target, 10,000 resamples,
+  95% confidence, 5% significance setting, and 1% noise threshold.
+  These are the full defaults; no quick-mode result enters the tables.
+  Slow operations can exceed the target sampling time.
+- A point is one catalog workload, variant, and input.
+  Its ratio is the fastest external median divided by the canonical `rscrypto` median.
+  Above 1.00x favors `rscrypto`.
+  The fastest peer may differ by point.
+  External build variants required by the catalog are included;
+  `rscrypto-*` diagnostic variants never enter the ratios.
+- "Faster", "Tie", and "Slower" classify point estimates using the fixed 0.95x–1.05x tie band.
+  They are not statistical-significance verdicts.
+  Medians and geometric means weight each point equally;
+  families with more inputs contribute more points to the headline aggregate.
+  The [comparison rules](../docs/benchmarking.md#comparison-rules) and [pinned catalog](https://github.com/loadingalias/rscrypto/blob/6926f298c16d3d6777973e6fa5d29ad86e0ca48d/.config/benchmark-matrix.json) define the timed tasks, including construction,
+  parsing, key state, and external peers.
+
+These are single campaigns on cloud/shared CI hosts and one local Mac,
+not independent repeated process trials.
+The Mac was kept awake with `caffeinate`; it was not qualified as quiet or thermally stable.
+Script validation and CI artifact extraction overlapped part of its measurement window.
+Its small differences remain unconfirmed.
+Criterion intervals describe within-run sampling and do not account for those host effects
+or the selection of the fastest external peer.
+The October campaign used a different compiler and half-length sampling windows.
+Comparing the two summaries does not establish a regression or improvement caused by source changes.
+
+### Current headline comparisons
+
+| Platform                    |        Points | Faster |  Tie | Slower | Median | Geomean |
+| --------------------------- | ------------: | -----: | ---: | -----: | -----: | ------: |
+| Intel Linux (`c8i`)         |           914 |    426 |  227 |    261 |  1.03x |   1.28x |
+| AMD Linux (`c8a`)           |           914 |    460 |  265 |    189 |  1.05x |   1.24x |
+| Intel Windows (`c8i`)       |           914 |    477 |  249 |    188 |  1.06x |   1.32x |
+| AMD Windows (`c8a`)         |           914 |    539 |  165 |    210 |  1.08x |   1.24x |
+| ARM64 Linux (`c9g`)         |           914 |    439 |  246 |    229 |  1.04x |   1.25x |
+| POWER10 Linux               |           914 |    419 |  352 |    143 |  1.03x |   1.43x |
+| IBM Z Linux, 4 CPUs         |           571 |    500 |   17 |     54 |  2.97x |   3.58x |
+| IBM Z Linux, 8 CPUs         |           340 |    215 |   99 |     26 |  1.15x |   2.11x |
+| RISC-V Linux (Auth pending) | 603 collected |        |      |        |        |         |
+| Apple M1 Pro (local)        |           914 |    398 |  371 |    145 |  1.04x |   1.25x |
+
+The IBM Z rows cover only their named cohorts; RISC-V's empty aggregate awaits Auth.
+The complete Mac row has 398 faster, 371 tied, and 145 slower point estimates.
+
+### Current headline results by family
+
+Every cell is the geometric mean followed by its point count.
+A blank RISC-V cell awaits Auth.
+An em dash means no comparison belongs to that cohort or the comparison does not apply to
+that architecture.
+
+| Family | Intel Linux | AMD Linux | Intel Win | AMD Win | ARM64 | POWER10 | IBM Z / 4 | IBM Z / 8 | RISC-V | Apple |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| AEAD | 1.28x (186) | 1.39x (186) | 1.42x (186) | 1.38x (186) | 1.32x (186) | 1.30x (186) | 4.74x (186) | — | 0.91x (186) | 1.18x (186) |
+| Argon2 | 1.24x (10) | 0.97x (10) | 1.22x (10) | 0.97x (10) | 1.00x (10) | 0.75x (10) | 0.81x (10) | — | | 1.03x (10) |
+| Ascon | 1.06x (22) | 1.02x (22) | 1.06x (22) | 1.06x (22) | 1.04x (22) | 1.01x (22) | — | 1.01x (22) | 1.02x (22) | 1.06x (22) |
+| BLAKE2 | 0.96x (104) | 0.54x (104) | 0.93x (104) | 0.57x (104) | 0.92x (104) | 0.99x (104) | — | 1.03x (104) | 1.07x (104) | 1.03x (104) |
+| BLAKE3 | 0.95x (26) | 0.96x (26) | 0.92x (26) | 1.01x (26) | 1.02x (26) | 1.48x (26) | — | 1.36x (26) | 0.97x (26) | 0.96x (26) |
+| CRC | 7.66x (77) | 6.55x (77) | 7.85x (77) | 6.58x (77) | 4.99x (77) | 11.63x (77) | 7.47x (77) | — | 1.55x (77) | 5.49x (77) |
+| ECDH | 1.34x (6) | 1.32x (6) | 2.61x (6) | 2.73x (6) | 1.28x (6) | 1.48x (6) | 0.13x (6) | — | | 1.14x (6) |
+| ECDSA | 1.06x (24) | 0.99x (24) | 1.18x (24) | 1.12x (24) | 1.43x (24) | 2.08x (24) | 0.77x (24) | — | | 1.41x (24) |
+| Ed25519 | 0.89x (12) | 0.99x (12) | 0.97x (12) | 1.19x (12) | 0.98x (12) | 0.80x (12) | 1.03x (12) | — | | 0.99x (12) |
+| HKDF | 1.14x (16) | 1.14x (16) | 1.07x (16) | 1.17x (16) | 1.13x (16) | 1.02x (16) | 2.59x (16) | — | | 1.05x (16) |
+| HMAC-SHA-2 | 1.03x (33) | 1.06x (33) | 0.97x (33) | 1.09x (33) | 1.03x (33) | 0.97x (33) | 5.11x (33) | — | | 1.00x (33) |
+| HMAC-SHA-3 | 0.89x (44) | 1.01x (44) | 1.03x (44) | 1.15x (44) | 0.88x (44) | 1.34x (44) | 8.98x (44) | — | | 1.02x (44) |
+| KMAC | 0.96x (22) | 1.12x (22) | 1.01x (22) | 1.07x (22) | 1.00x (22) | 0.92x (22) | 3.73x (22) | — | | 1.31x (22) |
+| ML-DSA | 1.12x (15) | 1.15x (15) | 0.50x (15) | 0.40x (15) | 1.22x (15) | 1.37x (15) | 1.46x (12) | — | | 1.23x (15) |
+| ML-KEM | 1.48x (15) | 1.57x (15) | 1.75x (15) | 1.55x (15) | 1.36x (15) | 1.12x (15) | 1.53x (15) | — | | 1.13x (15) |
+| PBKDF2 | 1.19x (14) | 1.18x (14) | 1.14x (14) | 1.21x (14) | 1.09x (14) | 1.07x (14) | 2.52x (14) | — | | 0.95x (14) |
+| Poly1305 | 1.78x (7) | 1.77x (7) | 1.87x (7) | 1.79x (7) | 1.22x (7) | 1.46x (7) | 2.05x (7) | — | | 1.27x (7) |
+| RSA | 1.13x (28) | 1.27x (28) | 1.24x (28) | 1.40x (28) | 1.03x (28) | 1.02x (28) | 2.73x (28) | — | | 1.15x (28) |
+| RapidHash | 1.01x (11) | 1.05x (11) | 1.18x (11) | 1.04x (11) | 1.09x (11) | 1.19x (11) | — | 1.02x (11) | 0.80x (11) | 0.89x (11) |
+| SHA-2 | 1.06x (65) | 1.08x (65) | 1.07x (65) | 1.06x (65) | 1.08x (65) | 1.02x (65) | — | 4.71x (65) | 1.04x (65) | 1.08x (65) |
+| SHA-3 | 0.93x (52) | 1.06x (52) | 0.97x (52) | 1.08x (52) | 0.94x (52) | 1.54x (52) | — | 6.59x (52) | 1.35x (52) | 0.96x (52) |
+| SHAKE | 0.93x (26) | 1.07x (26) | 0.97x (26) | 1.08x (26) | 0.92x (26) | 1.00x (26) | — | 3.50x (26) | 1.14x (26) | 0.95x (26) |
+| SLH-DSA | 1.61x (36) | 1.69x (36) | 1.53x (36) | 1.61x (36) | 1.52x (36) | 1.49x (36) | 1.81x (36) | — | | 1.24x (36) |
+| X25519 | 1.02x (2) | 1.01x (2) | 0.89x (2) | 1.19x (2) | 1.01x (2) | 0.58x (2) | 0.79x (2) | — | | 1.01x (2) |
+| XXH3 | 0.82x (34) | 0.77x (34) | 0.83x (34) | 0.73x (34) | 0.95x (34) | 1.20x (34) | — | 1.39x (34) | 0.78x (34) | 0.98x (34) |
+| cSHAKE | 0.97x (22) | 1.13x (22) | 0.98x (22) | 1.08x (22) | 1.01x (22) | 0.95x (22) | 3.92x (22) | — | | 1.35x (22) |
+| scrypt | 0.96x (5) | 0.98x (5) | 0.92x (5) | 1.00x (5) | 1.14x (5) | 1.15x (5) | 1.38x (5) | — | | 1.13x (5) |
+
+### Current other results by family
+
+These retain streaming, batch, construction, parsing, equal-key-depth,
+and other non-headline comparisons.
+They do not enter the headline totals.
+
+| Family | Intel Linux | AMD Linux | Intel Win | AMD Win | ARM64 | POWER10 | IBM Z / 4 | IBM Z / 8 | RISC-V | Apple |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| AEAD | 0.85x (21) | 0.88x (21) | 0.91x (21) | 0.89x (21) | 1.24x (21) | 1.53x (21) | 5.08x (21) | — | 0.92x (21) | 1.27x (21) |
+| Argon2 | 1.24x (2) | 1.27x (2) | 1.29x (2) | 1.24x (2) | 0.90x (2) | 0.64x (2) | 0.81x (2) | — | | 0.93x (2) |
+| BLAKE2 | 0.96x (32) | 0.61x (32) | 0.91x (32) | 0.66x (32) | 1.01x (32) | 0.95x (32) | — | 1.02x (32) | 1.01x (32) | 1.01x (32) |
+| BLAKE3 | 1.01x (237) | 1.07x (237) | 1.02x (237) | 1.10x (237) | 0.97x (237) | 1.57x (237) | — | 1.37x (237) | 0.94x (237) | 0.95x (237) |
+| BLAKE3 multi-thread | 0.97x (54) | 0.93x (54) | 0.92x (54) | 0.98x (54) | 1.09x (54) | 1.49x (54) | — | 1.22x (54) | 0.79x (54) | 0.93x (54) |
+| CRC | 2.40x (32) | 1.75x (32) | 2.50x (32) | 1.77x (32) | 1.95x (32) | 4.81x (32) | 1.73x (32) | — | 0.79x (32) | 2.49x (32) |
+| ECDH | 1.75x (6) | 1.74x (6) | 2.58x (6) | 2.74x (6) | 2.17x (6) | 1.94x (6) | 0.07x (6) | — | | 2.40x (6) |
+| ECDSA | 1.44x (38) | 1.32x (38) | 1.96x (38) | 1.87x (38) | 1.77x (38) | 3.30x (38) | 2.14x (38) | — | | 1.57x (38) |
+| Ed25519 | 1.90x (2) | 2.46x (2) | 1.67x (2) | 1.81x (2) | 1.04x (2) | 0.99x (2) | 1.03x (2) | — | | 1.03x (2) |
+| HKDF | 1.08x (4) | 1.08x (4) | 1.06x (4) | 1.18x (4) | 1.10x (4) | 0.98x (4) | 2.18x (4) | — | | 1.19x (4) |
+| HMAC-SHA-2 | 1.02x (14) | 1.03x (14) | 0.97x (14) | 1.05x (14) | 1.02x (14) | 0.93x (14) | 3.56x (14) | — | | 0.96x (14) |
+| ML-DSA | 3.45x (54) | 4.29x (54) | 0.90x (54) | 0.93x (54) | 4.68x (54) | 2.68x (54) | 3.46x (54) | — | | 5.21x (54) |
+| ML-DSA equal key depth | 2.12x (12) | 2.34x (12) | 0.65x (12) | 0.59x (12) | 3.36x (12) | 1.89x (12) | 2.26x (12) | — | | 3.26x (12) |
+| ML-KEM | 1.52x (3) | 1.43x (3) | 1.55x (3) | 1.37x (3) | 1.64x (3) | 1.35x (3) | 1.46x (3) | — | | 1.24x (3) |
+| ML-KEM equal key depth | 1.13x (6) | 1.04x (6) | 1.16x (6) | 1.00x (6) | 1.34x (6) | 1.25x (6) | 1.29x (6) | — | | 0.88x (6) |
+| PBKDF2 | 1.27x (2) | 1.27x (2) | 1.29x (2) | 1.33x (2) | 1.07x (2) | 1.30x (2) | 3.31x (2) | — | | 0.99x (2) |
+| QUIC header protection | 0.67x (6) | 0.71x (6) | 0.65x (6) | 0.66x (6) | 1.05x (6) | 0.68x (6) | 4.46x (6) | — | 0.77x (6) | 0.83x (6) |
+| RSA | 1.98x (19) | 1.97x (19) | 2.01x (19) | 2.15x (19) | 1.55x (19) | 1.67x (19) | 1.46x (18) | — | | 1.87x (19) |
+| RapidHash | 1.00x (43) | 0.87x (43) | 0.92x (43) | 0.86x (43) | 0.92x (43) | 0.86x (43) | — | 0.98x (43) | 0.96x (43) | 0.85x (43) |
+| SHA-2 | 1.02x (10) | 1.02x (10) | 1.06x (10) | 1.01x (10) | 1.05x (10) | 1.00x (10) | — | 4.97x (10) | 1.06x (10) | 1.01x (10) |
+| SHA-3 | 0.91x (8) | 1.04x (8) | 0.97x (8) | 1.08x (8) | 0.89x (8) | 1.53x (8) | — | 7.11x (8) | 1.44x (8) | 0.98x (8) |
+| SHAKE | 0.90x (6) | 1.02x (6) | 0.98x (6) | 1.09x (6) | 0.84x (6) | 1.01x (6) | — | 1.09x (6) | 1.14x (6) | 0.93x (6) |
+| SLH-DSA | 1.93x (24) | 2.10x (24) | 1.93x (24) | 2.05x (24) | 2.96x (24) | 1.94x (24) | 2.02x (24) | — | | 4.33x (24) |
+| WebSocket SHA-1 | 1.32x (1) | 1.10x (1) | 1.20x (1) | 1.10x (1) | 1.23x (1) | 0.62x (1) | — | 1.14x (1) | 1.01x (1) | 1.01x (1) |
+| XXH3 | 0.85x (12) | 0.74x (12) | 0.82x (12) | 0.61x (12) | 0.90x (12) | 1.17x (12) | — | 1.31x (12) | 1.14x (12) | 0.94x (12) |
+| XXH3 x86-64 baseline build | 0.96x (34) | 1.07x (34) | 0.97x (34) | 1.04x (34) | 0.95x (34) | 1.20x (34) | — | 1.39x (34) | 0.78x (34) | 0.98x (34) |
+| XXH3 x86-64-v4 build | 0.89x (34) | 0.93x (34) | 0.90x (34) | 0.94x (34) | — | — | — | — | — | — |
+| scrypt | 0.96x (1) | 0.98x (1) | 0.90x (1) | 1.01x (1) | 1.17x (1) | 1.15x (1) | 1.40x (1) | — | | 1.21x (1) |
+
+### Every measured comparison workload
+
+The table includes all 130 measured catalog comparison definitions,
+including every non-headline comparison.
+Each cell aggregates that definition's variants and inputs and reports its point count.
+`H` marks headline definitions.
+Exact task boundaries come from the pinned catalog above.
+The local `comparisons-all.csv` retains all 14,007 individual points, absolute medians, selected external peers,
+and ratio bounds derived from the two median confidence intervals.
+`measurements-all.csv` retains all 41,589 measured cases, including diagnostics and external rows,
+with median and mean estimates, confidence intervals, sample counts, and paths to the raw evidence.
+Neither file drops outliers or failed-to-win cases.
+
+| Workload | Use | Intel Linux | AMD Linux | Intel Win | AMD Win | ARM64 | POWER10 | IBM Z / 4 | IBM Z / 8 | RISC-V | Apple |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `aead-construct-encrypt` | Other | 0.80x (16) | 0.83x (16) | 0.89x (16) | 0.91x (16) | 1.14x (16) | 0.92x (16) | 4.11x (16) | — | 0.87x (16) | 1.09x (16) |
+| `aead-decrypt` | H | 1.26x (88) | 1.36x (88) | 1.44x (88) | 1.40x (88) | 1.28x (88) | 1.05x (88) | 4.55x (88) | — | 0.90x (88) | 1.14x (88) |
+| `aead-encrypt` | H | 1.28x (88) | 1.39x (88) | 1.39x (88) | 1.42x (88) | 1.29x (88) | 1.20x (88) | 4.52x (88) | — | 0.87x (88) | 1.13x (88) |
+| `aes-siv` | H | 1.48x (10) | 1.51x (10) | 1.53x (10) | 0.98x (10) | 1.96x (10) | 15.96x (10) | 10.22x (10) | — | 1.39x (10) | 2.25x (10) |
+| `aes-siv-construct` | Other | 1.05x (5) | 1.07x (5) | 0.97x (5) | 0.86x (5) | 1.63x (5) | 7.82x (5) | 10.03x (5) | — | 1.09x (5) | 2.05x (5) |
+| `argon2` | H | 1.24x (10) | 0.97x (10) | 1.22x (10) | 0.97x (10) | 1.00x (10) | 0.75x (10) | 0.81x (10) | — | | 1.03x (10) |
+| `argon2-reused-memory` | Other | 1.57x (1) | 1.75x (1) | 1.55x (1) | 1.80x (1) | 0.99x (1) | 0.67x (1) | 0.85x (1) | — | | 1.00x (1) |
+| `argon2id-phc-verify` | Other | 0.98x (1) | 0.92x (1) | 1.08x (1) | 0.86x (1) | 0.81x (1) | 0.61x (1) | 0.77x (1) | — | | 0.87x (1) |
+| `ascon-hash` | H | 1.06x (22) | 1.02x (22) | 1.06x (22) | 1.06x (22) | 1.04x (22) | 1.01x (22) | — | 1.01x (22) | 1.02x (22) | 1.06x (22) |
+| `blake2` | H | 0.96x (52) | 0.54x (52) | 0.93x (52) | 0.56x (52) | 0.92x (52) | 0.98x (52) | — | 1.03x (52) | 1.06x (52) | 1.01x (52) |
+| `blake2-keyed` | H | 0.96x (52) | 0.55x (52) | 0.93x (52) | 0.57x (52) | 0.92x (52) | 0.99x (52) | — | 1.04x (52) | 1.08x (52) | 1.05x (52) |
+| `blake2-params` | Other | 1.01x (6) | 0.96x (6) | 0.97x (6) | 0.99x (6) | 1.03x (6) | 0.96x (6) | — | 1.06x (6) | 1.05x (6) | 1.04x (6) |
+| `blake2-short-keyed` | Other | 0.97x (4) | 0.55x (4) | 0.93x (4) | 0.57x (4) | 1.08x (4) | 1.01x (4) | — | 1.06x (4) | 1.11x (4) | 1.07x (4) |
+| `blake2-short-oneshot` | Other | 0.98x (4) | 0.57x (4) | 0.93x (4) | 0.61x (4) | 1.08x (4) | 1.01x (4) | — | 1.03x (4) | 1.10x (4) | 1.04x (4) |
+| `blake2-single-update` | Other | 0.94x (12) | 0.56x (12) | 0.88x (12) | 0.65x (12) | 1.01x (12) | 0.89x (12) | — | 0.99x (12) | 0.93x (12) | 0.97x (12) |
+| `blake2-streaming` | Other | 0.95x (6) | 0.52x (6) | 0.89x (6) | 0.52x (6) | 0.89x (6) | 0.98x (6) | — | 1.02x (6) | 1.02x (6) | 1.02x (6) |
+| `blake3-bao-decode` | Other | 0.83x (4) | 0.90x (4) | 0.83x (4) | 0.91x (4) | 0.77x (4) | 0.81x (4) | — | 0.87x (4) | 0.76x (4) | 0.91x (4) |
+| `blake3-batch` | Other | 4.86x (4) | 11.64x (4) | 4.60x (4) | 12.07x (4) | 1.87x (4) | 0.97x (4) | — | 0.97x (4) | 0.93x (4) | 2.00x (4) |
+| `blake3-derive-key` | Other | 0.94x (11) | 0.93x (11) | 0.93x (11) | 0.96x (11) | 1.04x (11) | 1.57x (11) | — | 1.47x (11) | 0.96x (11) | 0.98x (11) |
+| `blake3-derive-key-prepared` | Other | 1.04x (11) | 1.04x (11) | 0.99x (11) | 0.97x (11) | 1.03x (11) | 1.60x (11) | — | 1.46x (11) | 0.97x (11) | 0.95x (11) |
+| `blake3-hash` | H | 0.97x (13) | 0.98x (13) | 0.95x (13) | 1.04x (13) | 1.03x (13) | 1.55x (13) | — | 1.40x (13) | 1.01x (13) | 0.99x (13) |
+| `blake3-keyed` | H | 0.93x (13) | 0.94x (13) | 0.90x (13) | 0.98x (13) | 1.00x (13) | 1.42x (13) | — | 1.32x (13) | 0.94x (13) | 0.93x (13) |
+| `blake3-merge-level` | Other | 1.29x (3) | 2.13x (3) | 1.28x (3) | 2.11x (3) | 0.81x (3) | 1.21x (3) | — | 0.74x (3) | 0.85x (3) | 0.89x (3) |
+| `blake3-mixed-batch` | Other | 0.94x (18) | 0.98x (18) | 0.91x (18) | 0.95x (18) | 0.96x (18) | 1.16x (18) | — | 1.06x (18) | 0.90x (18) | 0.95x (18) |
+| `blake3-ordered` | Other | 0.98x (124) | 1.04x (124) | 0.98x (124) | 1.05x (124) | 0.94x (124) | 1.63x (124) | — | 1.42x (124) | 0.94x (124) | 0.92x (124) |
+| `blake3-ordered-alignment` | Other | 0.95x (36) | 1.02x (36) | 0.95x (36) | 1.01x (36) | 0.96x (36) | 1.58x (36) | — | 1.37x (36) | 0.94x (36) | 0.95x (36) |
+| `blake3-streaming` | Other | 1.00x (4) | 0.99x (4) | 0.99x (4) | 1.01x (4) | 1.06x (4) | 2.26x (4) | — | 1.84x (4) | 0.83x (4) | 0.99x (4) |
+| `blake3-subtree-update-reader` | Other | 1.03x (2) | 0.89x (2) | 1.02x (2) | 0.91x (2) | 1.10x (2) | 3.03x (2) | — | 2.17x (2) | 0.87x (2) | 0.99x (2) |
+| `blake3-update-reader` | Other | 1.15x (6) | 0.94x (6) | 1.11x (6) | 0.93x (6) | 1.11x (6) | 2.96x (6) | — | 2.23x (6) | 0.90x (6) | 1.03x (6) |
+| `blake3-xof` | Other | 1.05x (11) | 0.94x (11) | 1.03x (11) | 0.98x (11) | 1.06x (11) | 1.74x (11) | — | 1.46x (11) | 1.03x (11) | 0.98x (11) |
+| `blake3-xof-output` | Other | 1.02x (3) | 1.02x (3) | 4.98x (3) | 9.78x (3) | 1.00x (3) | 1.00x (3) | — | 1.03x (3) | 1.12x (3) | 0.99x (3) |
+| `blake3-parallel-derive-key` | Other | 0.93x (11) | 0.92x (11) | 0.88x (11) | 0.96x (11) | 1.03x (11) | 1.36x (11) | — | 1.15x (11) | 0.70x (11) | 0.89x (11) |
+| `blake3-parallel-hash` | Other | 0.96x (13) | 0.95x (13) | 0.90x (13) | 1.00x (13) | 1.03x (13) | 1.41x (13) | — | 1.14x (13) | 0.79x (13) | 0.97x (13) |
+| `blake3-parallel-keyed` | Other | 0.92x (13) | 0.93x (13) | 0.85x (13) | 0.97x (13) | 1.00x (13) | 1.24x (13) | — | 1.08x (13) | 0.71x (13) | 0.89x (13) |
+| `blake3-parallel-update-reader` | Other | 1.15x (6) | 0.94x (6) | 1.11x (6) | 0.92x (6) | 1.69x (6) | 2.96x (6) | — | 2.22x (6) | 1.25x (6) | 1.01x (6) |
+| `blake3-parallel-xof` | Other | 0.98x (11) | 0.93x (11) | 0.97x (11) | 1.01x (11) | 1.05x (11) | 1.47x (11) | — | 1.14x (11) | 0.78x (11) | 0.94x (11) |
+| `crc` | H | 7.66x (77) | 6.55x (77) | 7.85x (77) | 6.58x (77) | 4.99x (77) | 11.63x (77) | 7.47x (77) | — | 1.55x (77) | 5.49x (77) |
+| `crc-combine` | Other | 1.21x (18) | 0.82x (18) | 1.22x (18) | 0.79x (18) | 1.08x (18) | 3.69x (18) | 0.72x (18) | — | 0.59x (18) | 1.38x (18) |
+| `crc-streaming` | Other | 5.81x (14) | 4.64x (14) | 6.29x (14) | 4.97x (14) | 4.15x (14) | 6.76x (14) | 5.35x (14) | — | 1.13x (14) | 5.31x (14) |
+| `cshake` | H | 0.97x (22) | 1.13x (22) | 0.98x (22) | 1.08x (22) | 1.01x (22) | 0.95x (22) | 3.92x (22) | — | | 1.35x (22) |
+| `ecdh-agreement-encoded-peer` | H | 1.03x (2) | 1.00x (2) | 1.59x (2) | 1.61x (2) | 1.02x (2) | 1.51x (2) | 0.03x (2) | — | | 1.05x (2) |
+| `ecdh-agreement-parsed-peer` | H | 1.02x (2) | 0.99x (2) | 2.34x (2) | 2.19x (2) | 1.01x (2) | 1.51x (2) | 0.03x (2) | — | | 1.04x (2) |
+| `ecdh-key-generation` | H | 2.29x (2) | 2.33x (2) | 4.82x (2) | 5.78x (2) | 2.02x (2) | 1.42x (2) | 1.82x (2) | — | | 1.37x (2) |
+| `ecdh-parse` | Other | 1.40x (2) | 1.53x (2) | 1.58x (2) | 1.63x (2) | 1.83x (2) | 1.43x (2) | 0.03x (2) | — | | 2.00x (2) |
+| `ecdh-public-key` | Other | 2.33x (2) | 2.28x (2) | 2.36x (2) | 2.64x (2) | 2.78x (2) | 2.94x (2) | 0.09x (2) | — | | 3.33x (2) |
+| `ecdh-public-key-from-secret` | Other | 1.64x (2) | 1.51x (2) | 4.62x (2) | 4.77x (2) | 2.00x (2) | 1.74x (2) | 0.09x (2) | — | | 2.07x (2) |
+| `ecdsa-public-key` | Other | 1.48x (2) | 1.75x (2) | 1.45x (2) | 1.37x (2) | 2.69x (2) | 1.86x (2) | 0.03x (2) | — | | 2.33x (2) |
+| `ecdsa-sign` | H | 0.83x (8) | 0.85x (8) | 0.53x (8) | 0.54x (8) | 1.38x (8) | 0.92x (8) | 0.08x (8) | — | | 1.46x (8) |
+| `ecdsa-signature-der` | Other | 6.12x (4) | 6.72x (4) | 5.62x (4) | 7.18x (4) | 6.92x (4) | 6.81x (4) | 9.50x (4) | — | | 4.02x (4) |
+| `ecdsa-verify-der-cross-hash-import` | Other | 0.88x (8) | 0.78x (8) | 1.24x (8) | 1.22x (8) | 1.07x (8) | 2.30x (8) | 1.86x (8) | — | | 1.02x (8) |
+| `ecdsa-verify-der-cross-hash-reuse` | Other | 1.62x (8) | 1.43x (8) | 2.45x (8) | 2.15x (8) | 1.96x (8) | 4.28x (8) | 3.00x (8) | — | | 1.83x (8) |
+| `ecdsa-verify-der-import` | Other | 0.88x (8) | 0.78x (8) | 1.24x (8) | 1.21x (8) | 1.07x (8) | 2.29x (8) | 1.83x (8) | — | | 1.02x (8) |
+| `ecdsa-verify-der-reuse` | Other | 1.63x (8) | 1.43x (8) | 2.47x (8) | 2.14x (8) | 1.96x (8) | 4.23x (8) | 2.96x (8) | — | | 1.83x (8) |
+| `ecdsa-verify-import` | H | 0.89x (8) | 0.78x (8) | 1.25x (8) | 1.21x (8) | 1.08x (8) | 2.31x (8) | 1.87x (8) | — | | 1.03x (8) |
+| `ecdsa-verify-reuse` | H | 1.64x (8) | 1.44x (8) | 2.49x (8) | 2.16x (8) | 1.97x (8) | 4.24x (8) | 3.07x (8) | — | | 1.85x (8) |
+| `ed25519-key-derivation` | Other | 1.90x (2) | 2.46x (2) | 1.67x (2) | 1.81x (2) | 1.04x (2) | 0.99x (2) | 1.03x (2) | — | | 1.03x (2) |
+| `ed25519-sign` | H | 1.02x (4) | 1.05x (4) | 1.09x (4) | 1.20x (4) | 1.03x (4) | 0.75x (4) | 1.26x (4) | — | | 1.02x (4) |
+| `ed25519-verify-import` | H | 0.78x (4) | 0.89x (4) | 0.82x (4) | 1.10x (4) | 0.84x (4) | 0.59x (4) | 0.81x (4) | — | | 0.86x (4) |
+| `ed25519-verify-reuse` | H | 0.88x (4) | 1.03x (4) | 1.02x (4) | 1.26x (4) | 1.09x (4) | 1.15x (4) | 1.08x (4) | — | | 1.10x (4) |
+| `hkdf-expand` | H | 1.15x (12) | 1.17x (12) | 1.09x (12) | 1.18x (12) | 1.14x (12) | 1.04x (12) | 2.43x (12) | — | | 1.05x (12) |
+| `hkdf-expand-label-import` | Other | 1.08x (4) | 1.08x (4) | 1.06x (4) | 1.18x (4) | 1.10x (4) | 0.98x (4) | 2.18x (4) | — | | 1.19x (4) |
+| `hkdf-extract` | H | 1.11x (4) | 1.07x (4) | 1.00x (4) | 1.16x (4) | 1.11x (4) | 0.97x (4) | 3.11x (4) | — | | 1.06x (4) |
+| `hmac-sha2` | H | 1.03x (33) | 1.06x (33) | 0.97x (33) | 1.09x (33) | 1.03x (33) | 0.97x (33) | 5.11x (33) | — | | 1.00x (33) |
+| `hmac-sha2-streaming` | Other | 1.00x (2) | 1.00x (2) | 1.00x (2) | 1.00x (2) | 1.05x (2) | 0.99x (2) | 4.27x (2) | — | | 1.03x (2) |
+| `hmac-sha2-verify-import` | Other | 0.98x (6) | 0.99x (6) | 0.93x (6) | 1.04x (6) | 0.97x (6) | 0.88x (6) | 3.25x (6) | — | | 0.90x (6) |
+| `hmac-sha2-verify-reuse` | Other | 1.07x (6) | 1.08x (6) | 0.99x (6) | 1.08x (6) | 1.06x (6) | 0.96x (6) | 3.68x (6) | — | | 1.00x (6) |
+| `hmac-sha3` | H | 0.89x (44) | 1.01x (44) | 1.03x (44) | 1.15x (44) | 0.88x (44) | 1.34x (44) | 8.98x (44) | — | | 1.02x (44) |
+| `kmac` | H | 0.96x (22) | 1.12x (22) | 1.01x (22) | 1.07x (22) | 1.00x (22) | 0.92x (22) | 3.73x (22) | — | | 1.31x (22) |
+| `mldsa-corpus` | Other | 4.09x (48) | 5.29x (48) | 1.02x (48) | 1.09x (48) | 5.30x (48) | 3.05x (48) | 4.12x (48) | — | | 6.10x (48) |
+| `mldsa-hash-sign` | Other | 0.57x (3) | 0.51x (3) | 0.21x (3) | 0.17x (3) | 1.39x (3) | 0.77x (3) | 0.62x (3) | — | | 1.29x (3) |
+| `mldsa-hash-verify` | Other | 1.38x (3) | 1.27x (3) | 0.52x (3) | 0.43x (3) | 2.11x (3) | 1.16x (3) | 1.20x (3) | — | | 1.68x (3) |
+| `mldsa-keygen` | H | 0.31x (3) | 0.35x (3) | 0.34x (3) | 0.29x (3) | 0.43x (3) | 0.62x (3) | 0.74x (3) | — | | 0.39x (3) |
+| `mldsa-sign-deterministic` | H | 1.95x (3) | 2.00x (3) | 0.48x (3) | 0.35x (3) | 3.60x (3) | 1.70x (3) | 1.28x (3) | — | | 3.46x (3) |
+| `mldsa-sign-randomized` | H | 1.24x (3) | 1.35x (3) | 0.34x (3) | 0.25x (3) | 0.99x (3) | 1.22x (3) | — | — | | 1.07x (3) |
+| `mldsa-verify-import` | H | 0.87x (3) | 0.80x (3) | 0.52x (3) | 0.42x (3) | 0.77x (3) | 1.13x (3) | 1.19x (3) | — | | 0.79x (3) |
+| `mldsa-verify-reuse` | H | 2.65x (3) | 2.72x (3) | 1.12x (3) | 0.98x (3) | 2.28x (3) | 3.29x (3) | 4.04x (3) | — | | 2.50x (3) |
+| `mldsa-sign-encoded` | Other | 0.77x (3) | 0.70x (3) | 0.28x (3) | 0.22x (3) | 1.67x (3) | 0.90x (3) | 0.76x (3) | — | | 1.46x (3) |
+| `mldsa-sign-prepared` | Other | 4.78x (3) | 6.26x (3) | 1.06x (3) | 1.13x (3) | 6.01x (3) | 3.23x (3) | 4.05x (3) | — | | 6.99x (3) |
+| `mldsa-verify-encoded` | Other | 1.39x (3) | 1.27x (3) | 0.52x (3) | 0.43x (3) | 2.12x (3) | 1.16x (3) | 1.20x (3) | — | | 1.67x (3) |
+| `mldsa-verify-prepared` | Other | 3.97x (3) | 5.42x (3) | 1.13x (3) | 1.18x (3) | 5.97x (3) | 3.75x (3) | 7.05x (3) | — | | 6.57x (3) |
+| `mlkem-decapsulate-import` | H | 0.67x (3) | 0.86x (3) | 1.06x (3) | 0.93x (3) | 0.65x (3) | 0.71x (3) | 1.42x (3) | — | | 0.73x (3) |
+| `mlkem-decapsulate-reuse` | H | 1.45x (3) | 1.82x (3) | 2.02x (3) | 1.84x (3) | 1.05x (3) | 0.93x (3) | 1.77x (3) | — | | 1.15x (3) |
+| `mlkem-encapsulate-import` | H | 1.27x (3) | 1.17x (3) | 1.29x (3) | 1.12x (3) | 1.49x (3) | 1.27x (3) | 1.27x (3) | — | | 1.03x (3) |
+| `mlkem-encapsulate-reuse` | H | 3.44x (3) | 3.30x (3) | 3.48x (3) | 3.18x (3) | 2.71x (3) | 1.76x (3) | 2.04x (3) | — | | 2.05x (3) |
+| `mlkem-ephemeral-share` | Other | 1.52x (3) | 1.43x (3) | 1.55x (3) | 1.37x (3) | 1.64x (3) | 1.35x (3) | 1.46x (3) | — | | 1.24x (3) |
+| `mlkem-keygen` | H | 1.66x (3) | 1.55x (3) | 1.69x (3) | 1.47x (3) | 1.71x (3) | 1.17x (3) | 1.30x (3) | — | | 1.03x (3) |
+| `mlkem-reuse-encoded` | Other | 1.13x (6) | 1.04x (6) | 1.16x (6) | 1.00x (6) | 1.34x (6) | 1.25x (6) | 1.29x (6) | — | | 0.88x (6) |
+| `pbkdf2` | H | 1.19x (14) | 1.18x (14) | 1.14x (14) | 1.21x (14) | 1.09x (14) | 1.07x (14) | 2.52x (14) | — | | 0.95x (14) |
+| `pbkdf2-verify` | Other | 1.27x (2) | 1.27x (2) | 1.29x (2) | 1.33x (2) | 1.07x (2) | 1.30x (2) | 3.31x (2) | — | | 0.99x (2) |
+| `poly1305` | H | 1.78x (7) | 1.77x (7) | 1.87x (7) | 1.79x (7) | 1.22x (7) | 1.46x (7) | 2.05x (7) | — | | 1.27x (7) |
+| `header-protection-construct` | Other | 0.46x (3) | 0.49x (3) | 0.39x (3) | 0.40x (3) | 0.66x (3) | 0.33x (3) | 3.91x (3) | — | 0.64x (3) | 0.48x (3) |
+| `header-protection-mask` | Other | 0.99x (3) | 1.05x (3) | 1.10x (3) | 1.11x (3) | 1.69x (3) | 1.40x (3) | 5.09x (3) | — | 0.93x (3) | 1.44x (3) |
+| `rapidhash` | H | 1.01x (11) | 1.05x (11) | 1.18x (11) | 1.04x (11) | 1.09x (11) | 1.19x (11) | — | 1.02x (11) | 0.80x (11) | 0.89x (11) |
+| `rapidhash-buildhasher` | Other | 1.28x (11) | 1.06x (11) | 1.09x (11) | 1.02x (11) | 0.94x (11) | 0.79x (11) | — | 0.99x (11) | 0.95x (11) | 0.97x (11) |
+| `rapidhash-hash-one` | Other | 0.93x (3) | 0.79x (3) | 0.82x (3) | 0.86x (3) | 0.48x (3) | 0.98x (3) | — | 0.61x (3) | 0.79x (3) | 0.51x (3) |
+| `rapidhash-hashmap` | Other | 0.90x (3) | 0.86x (3) | 0.83x (3) | 0.80x (3) | 0.99x (3) | 0.73x (3) | — | 0.72x (3) | 0.80x (3) | 0.85x (3) |
+| `rapidhash-random-state` | Other | 0.60x (4) | 0.59x (4) | 0.63x (4) | 0.62x (4) | 0.71x (4) | 0.44x (4) | — | 1.29x (4) | 0.67x (4) | 0.53x (4) |
+| `rapidhash-stream` | Other | 0.99x (22) | 0.87x (22) | 0.94x (22) | 0.86x (22) | 1.03x (22) | 1.02x (22) | — | 1.02x (22) | 1.09x (22) | 0.92x (22) |
+| `rsa-keygen` | Other | 0.76x (3) | 0.53x (3) | 0.82x (3) | 0.71x (3) | 0.50x (3) | 0.84x (3) | 0.95x (3) | — | | 0.67x (3) |
+| `rsa-oaep-decrypt` | H | 1.03x (3) | 1.12x (3) | 1.08x (3) | 1.16x (3) | 0.87x (3) | 1.02x (3) | 0.89x (3) | — | | 1.15x (3) |
+| `rsa-oaep-encrypt` | H | 1.13x (3) | 1.31x (3) | 1.29x (3) | 1.50x (3) | 1.06x (3) | 0.98x (3) | 4.15x (3) | — | | 1.15x (3) |
+| `rsa-oaep-encrypt-caller-entropy` | Other | 13.48x (3) | 14.23x (3) | 12.52x (3) | 14.18x (3) | 12.73x (3) | 6.32x (3) | 4.17x (3) | — | | 13.74x (3) |
+| `rsa-parse-spki` | Other | 3.03x (3) | 3.22x (3) | 2.66x (3) | 2.88x (3) | 2.27x (3) | 2.43x (3) | 3.15x (3) | — | | 2.36x (3) |
+| `rsa-parse-spki-8192` | Other | 4.83x (1) | 4.48x (1) | 7.07x (1) | 9.49x (1) | 3.27x (1) | 5.21x (1) | — | — | | 2.46x (1) |
+| `rsa-pkcs1v15-decrypt` | Other | 1.03x (3) | 1.10x (3) | 1.06x (3) | 1.15x (3) | 0.87x (3) | 1.02x (3) | 0.88x (3) | — | | 1.15x (3) |
+| `rsa-sign` | H | 1.03x (6) | 1.12x (6) | 1.08x (6) | 1.17x (6) | 0.88x (6) | 1.03x (6) | 0.88x (6) | — | | 1.14x (6) |
+| `rsa-sign-cached-blinding` | Other | 1.18x (6) | 1.29x (6) | 1.22x (6) | 1.35x (6) | 0.93x (6) | 1.07x (6) | 0.93x (6) | — | | 1.26x (6) |
+| `rsa-verify-import` | H | 1.23x (8) | 1.41x (8) | 1.41x (8) | 1.61x (8) | 1.17x (8) | 1.08x (8) | 4.87x (8) | — | | 1.20x (8) |
+| `rsa-verify-reuse` | H | 1.14x (8) | 1.32x (8) | 1.25x (8) | 1.45x (8) | 1.06x (8) | 0.96x (8) | 4.70x (8) | — | | 1.11x (8) |
+| `scrypt` | H | 0.96x (5) | 0.98x (5) | 0.92x (5) | 1.00x (5) | 1.14x (5) | 1.15x (5) | 1.38x (5) | — | | 1.13x (5) |
+| `scrypt-phc-verify` | Other | 0.96x (1) | 0.98x (1) | 0.90x (1) | 1.01x (1) | 1.17x (1) | 1.15x (1) | 1.40x (1) | — | | 1.21x (1) |
+| `sha2` | H | 1.06x (65) | 1.08x (65) | 1.07x (65) | 1.06x (65) | 1.08x (65) | 1.02x (65) | — | 4.71x (65) | 1.04x (65) | 1.08x (65) |
+| `sha2-streaming` | Other | 1.02x (10) | 1.02x (10) | 1.06x (10) | 1.01x (10) | 1.05x (10) | 1.00x (10) | — | 4.97x (10) | 1.06x (10) | 1.01x (10) |
+| `sha3` | H | 0.93x (52) | 1.06x (52) | 0.97x (52) | 1.08x (52) | 0.94x (52) | 1.54x (52) | — | 6.59x (52) | 1.35x (52) | 0.96x (52) |
+| `sha3-streaming` | Other | 0.91x (8) | 1.04x (8) | 0.97x (8) | 1.08x (8) | 0.89x (8) | 1.53x (8) | — | 7.11x (8) | 1.44x (8) | 0.98x (8) |
+| `shake` | H | 0.93x (26) | 1.07x (26) | 0.97x (26) | 1.08x (26) | 0.92x (26) | 1.00x (26) | — | 3.50x (26) | 1.14x (26) | 0.95x (26) |
+| `shake-xof-output` | Other | 0.90x (6) | 1.02x (6) | 0.98x (6) | 1.09x (6) | 0.84x (6) | 1.01x (6) | — | 1.09x (6) | 1.14x (6) | 0.93x (6) |
+| `slhdsa-hash-sign` | Other | 1.94x (12) | 2.11x (12) | 1.93x (12) | 2.05x (12) | 2.95x (12) | 1.93x (12) | 2.01x (12) | — | | 4.36x (12) |
+| `slhdsa-hash-verify` | Other | 1.92x (12) | 2.09x (12) | 1.93x (12) | 2.05x (12) | 2.96x (12) | 1.95x (12) | 2.03x (12) | — | | 4.31x (12) |
+| `slhdsa-keygen` | H | 1.63x (12) | 1.72x (12) | 1.55x (12) | 1.65x (12) | 1.52x (12) | 1.95x (12) | 2.64x (12) | — | | 1.24x (12) |
+| `slhdsa-sign` | H | 1.58x (12) | 1.67x (12) | 1.52x (12) | 1.59x (12) | 1.51x (12) | 1.29x (12) | 1.48x (12) | — | | 1.23x (12) |
+| `slhdsa-verify` | H | 1.60x (12) | 1.69x (12) | 1.53x (12) | 1.60x (12) | 1.52x (12) | 1.31x (12) | 1.52x (12) | — | | 1.25x (12) |
+| `websocket-accept` | Other | 1.32x (1) | 1.10x (1) | 1.20x (1) | 1.10x (1) | 1.23x (1) | 0.62x (1) | — | 1.14x (1) | 1.01x (1) | 1.01x (1) |
+| `x25519-diffie-hellman` | H | 1.01x (1) | 1.01x (1) | 0.75x (1) | 1.12x (1) | 1.01x (1) | 0.52x (1) | 0.81x (1) | — | | 1.00x (1) |
+| `x25519-public-key` | H | 1.02x (1) | 1.01x (1) | 1.07x (1) | 1.27x (1) | 1.01x (1) | 0.65x (1) | 0.77x (1) | — | | 1.01x (1) |
+| `xxh3` | H | 0.82x (34) | 0.77x (34) | 0.83x (34) | 0.73x (34) | 0.95x (34) | 1.20x (34) | — | 1.39x (34) | 0.78x (34) | 0.98x (34) |
+| `xxh3-buildhasher` | Other | 0.83x (11) | 0.72x (11) | 0.79x (11) | 0.57x (11) | 0.87x (11) | 1.16x (11) | — | 1.33x (11) | 1.13x (11) | 0.93x (11) |
+| `xxh3-hashmap` | Other | 1.13x (1) | 1.04x (1) | 1.14x (1) | 1.17x (1) | 1.40x (1) | 1.18x (1) | — | 1.07x (1) | 1.28x (1) | 1.13x (1) |
+| `xxh3-baseline-build` | Other | 0.96x (34) | 1.07x (34) | 0.97x (34) | 1.04x (34) | 0.95x (34) | 1.20x (34) | — | 1.39x (34) | 0.78x (34) | 0.98x (34) |
+| `xxh3-v4-build` | Other | 0.89x (34) | 0.93x (34) | 0.90x (34) | 0.94x (34) | — | — | — | — | — | — |
+
+IBM Z's `rsa-parse-spki-8192` is retained as a standalone measurement, without a ratio.
+AWS-LC is the only external 8192-bit SPKI parser in this suite and is unavailable there;
+RustCrypto's parser stops at 4096 bits and ring has no public RSA SPKI parser.
+Three ML-DSA randomized-signing points are also absent from the IBM Z suite,
+which explains its 911 combined headline points versus 914 on full-catalog hosts.
+
+### Lowest headline points
+
+For visibility into absolute costs,
+these are the lowest individual headline ratios in each collected cohort,
+selected mechanically from the complete point set.
+Each bracket is that implementation's Criterion 95% median confidence interval;
+rounded endpoints may coincide.
+The RISC-V selection covers only the three collected job families.
+These observations identify follow-up workloads; they do not explain a performance cause.
+
+| Cohort | Lowest headline point | rscrypto median [95% CI] | Peer | Peer median [95% CI] | Ratio |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Intel Linux | `mldsa44/keygen/seed-encoded` | 85.4 [85.3, 85.4] µs | aws-lc | 24.4 [24.4, 24.5] µs | 0.286x |
+| AMD Linux | `mldsa44/keygen/seed-encoded` | 61.2 [61.2, 61.2] µs | aws-lc | 19.9 [19.9, 19.9] µs | 0.325x |
+| Intel Win | `ecdsa-p256/sign/32` | 84.8 [84.7, 84.8] µs | ring | 15.5 [15.5, 15.5] µs | 0.182x |
+| AMD Win | `ecdsa-p256/sign/0` | 68.5 [68.4, 68.5] µs | ring | 11.4 [11.4, 11.4] µs | 0.167x |
+| ARM64 | `mldsa44/keygen/seed-encoded` | 47.9 [47.9, 47.9] µs | aws-lc | 19.4 [19.4, 19.4] µs | 0.405x |
+| POWER10 | `rapidhash-v3-64/0` | 4.49 [4.47, 4.52] ns | rapidhash | 2.23 [2.22, 2.25] ns | 0.497x |
+| IBM Z / 4 | `p256-ecdh/agreement/parsed-peer` | 10.9 [10.8, 11.2] ms | crrl | 170 [170, 170] µs | 0.016x |
+| IBM Z / 8 | `xxh3-128/16` | 16.4 [16.4, 16.5] ns | twox-hash | 10.9 [10.9, 10.9] ns | 0.664x |
+| RISC-V | `rapidhash-v3-64/0` | 30.1 [30, 30.2] ns | rapidhash | 6.06 [6, 6.12] ns | 0.202x |
+| Apple | `mldsa44/keygen/seed-encoded` | 49 [49, 49.1] µs | aws-lc | 17.4 [17.4, 17.4] µs | 0.354x |
+
+### Retained evidence and reproduction
+
+Every CI archive is linked below.
+All links refer to this run's second attempt.
+The empty RISC-V Auth cell is intentional.
+
+| CI platform | Checksum | Hashes | Auth | AEAD |
+| --- | ---: | ---: | ---: | ---: |
+| x86_64-linux-intel | [checksum](https://github.com/loadingalias/rscrypto/actions/runs/41546963938/artifacts/13194024242) | [hashes](https://github.com/loadingalias/rscrypto/actions/runs/41546963938/artifacts/13195563147) | [auth](https://github.com/loadingalias/rscrypto/actions/runs/41546963938/artifacts/13196479689) | [aead](https://github.com/loadingalias/rscrypto/actions/runs/41546963938/artifacts/13194598922) |
+| x86_64-linux-amd | [checksum](https://github.com/loadingalias/rscrypto/actions/runs/41546963938/artifacts/13194248699) | [hashes](https://github.com/loadingalias/rscrypto/actions/runs/41546963938/artifacts/13195602781) | [auth](https://github.com/loadingalias/rscrypto/actions/runs/41546963938/artifacts/13195869404) | [aead](https://github.com/loadingalias/rscrypto/actions/runs/41546963938/artifacts/13194843588) |
+| x86_64-win-intel | [checksum](https://github.com/loadingalias/rscrypto/actions/runs/41546963938/artifacts/13194834007) | [hashes](https://github.com/loadingalias/rscrypto/actions/runs/41546963938/artifacts/13195918946) | [auth](https://github.com/loadingalias/rscrypto/actions/runs/41546963938/artifacts/13197632395) | [aead](https://github.com/loadingalias/rscrypto/actions/runs/41546963938/artifacts/13195516098) |
+| x86_64-win-amd | [checksum](https://github.com/loadingalias/rscrypto/actions/runs/41546963938/artifacts/13194389293) | [hashes](https://github.com/loadingalias/rscrypto/actions/runs/41546963938/artifacts/13196912294) | [auth](https://github.com/loadingalias/rscrypto/actions/runs/41546963938/artifacts/13197666155) | [aead](https://github.com/loadingalias/rscrypto/actions/runs/41546963938/artifacts/13195069332) |
+| aarch64-linux | [checksum](https://github.com/loadingalias/rscrypto/actions/runs/41546963938/artifacts/13194708034) | [hashes](https://github.com/loadingalias/rscrypto/actions/runs/41546963938/artifacts/13196596243) | [auth](https://github.com/loadingalias/rscrypto/actions/runs/41546963938/artifacts/13196943126) | [aead](https://github.com/loadingalias/rscrypto/actions/runs/41546963938/artifacts/13193919820) |
+| powerpc64le-linux | [checksum](https://github.com/loadingalias/rscrypto/actions/runs/41546963938/artifacts/13195167657) | [hashes](https://github.com/loadingalias/rscrypto/actions/runs/41546963938/artifacts/13196021347) | [auth](https://github.com/loadingalias/rscrypto/actions/runs/41546963938/artifacts/13197207122) | [aead](https://github.com/loadingalias/rscrypto/actions/runs/41546963938/artifacts/13195292700) |
+| s390x-linux | [checksum](https://github.com/loadingalias/rscrypto/actions/runs/41546963938/artifacts/13193839302) | [hashes](https://github.com/loadingalias/rscrypto/actions/runs/41546963938/artifacts/13195731646) | [auth](https://github.com/loadingalias/rscrypto/actions/runs/41546963938/artifacts/13198351803) | [aead](https://github.com/loadingalias/rscrypto/actions/runs/41546963938/artifacts/13195087712) |
+| riscv64-linux | [checksum](https://github.com/loadingalias/rscrypto/actions/runs/41546963938/artifacts/13194928420) | [hashes](https://github.com/loadingalias/rscrypto/actions/runs/41546963938/artifacts/13195608452) | | [aead](https://github.com/loadingalias/rscrypto/actions/runs/41546963938/artifacts/13195443416) |
+
+Local extraction and analysis are retained under `benchmark_results/bench-41546963938/`: `extraction.json` records artifact IDs, sizes, SHA-256 digests,
+and the pending job; `inventory.json` and `inventory-macos.json` enumerate the completed runs; `metadata.json` and `metadata-macos.json` preserve host, compiler, build,
+and sampling identities; `measurements-all.csv`, `comparisons-all.csv`, and `score-all.json` contain the complete exports.
+`extract.py`, `analyze.py`, `analyze_macos.py`, and `render_docs.py` retain the extraction, validation, and table-generation procedure.
+These raw local artifacts are ignored by Git; the tables in this overview are the published summary.
+
+Each cohort was scored with `just bench-compare`, passing every retained run directory for that cohort
+and writing the corresponding `score-<cohort>.json`.
+No `--partial` override was used: every included comparison is complete,
+while the missing RISC-V Auth family is explicitly absent.
+The Mac run directories use the prefix `benchmark_results/criterion/macos-e2e-20261103T023016Z-`.
+Its full log and completion receipt are retained at `benchmark_results/macos-e2e-20261103T023016Z.log` and `benchmark_results/macos-e2e-20261103T023016Z.completion.json`.
+The successful end-to-end run also verifies the repaired local scheduling:
+each target builds under its own build budget,
+then complete target/algorithm measurements receive their own catalog budget.
+The full campaign no longer shares one 600-second deadline.
+
 ## 2026-11-02: separate GNU ChaCha record construction
 
 Relative to `313d8c88`, the GNU/Linux AArch64 provider initializes ChaCha record keys through

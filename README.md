@@ -140,48 +140,45 @@ Do not open a public issue.
 
 ## Performance
 
-Bench run [#39888945058](https://github.com/loadingalias/rscrypto/actions/runs/39888945058) measured the v0.12.0 source on eight platforms on 2026-10-23,
-and the same plan ran on a local Apple M1 Pro.
-Each platform has up to 914 headline comparisons: checksums, hashes, MACs, KDFs, password hashing,
-AEADs, signatures, key exchange, ML-KEM, ML-DSA, SLH-DSA, and RSA.
-The comparisons follow [equal-task rules](docs/benchmarking.md#comparison-rules).
-Each comparison divides the median time of the fastest external crate by the median time of `rscrypto`.
-A ratio above 1.00x means `rscrypto` is faster; a tie is 0.95x through 1.05x.
+[Bench run 41546963938](https://github.com/loadingalias/rscrypto/actions/runs/41546963938), attempt 2,
+and a completed local Apple M1 Pro run measured the default catalog at `6926f298` on November 2–3, 2026.
+All collected product and benchmark workload hashes agree.
+The results cover checksums, hashes, MACs, KDFs, password hashing, AEADs, signatures, key exchange,
+ML-KEM, ML-DSA, SLH-DSA, and RSA.
+RISC-V Auth is pending; its full aggregate remains blank.
 
-| Platform                | Points | Faster |  Tie | Slower | Median | Geomean |
-| ----------------------- | -----: | -----: | ---: | -----: | -----: | ------: |
-| Intel Linux (`c8i`)     |    914 |    372 |  254 |    288 |  1.00x |   1.23x |
-| AMD Linux (`c8a`)       |    914 |    420 |  264 |    230 |  1.03x |   1.20x |
-| Intel Windows (`c8i`)   |    914 |    420 |  258 |    236 |  1.03x |   1.25x |
-| AMD Windows (`c8a`)     |    914 |    517 |  149 |    248 |  1.08x |   1.20x |
-| Graviton5 Linux (`c9g`) |    914 |    379 |  284 |    251 |  1.03x |   1.21x |
-| POWER10 Linux           |    914 |    414 |  314 |    186 |  1.03x |   1.38x |
-| IBM Z Linux             |    911 |    726 |   90 |     95 |  2.31x |   3.07x |
-| RISC-V Linux            |    914 |    406 |  276 |    232 |  1.03x |   1.08x |
-| Apple M1 Pro (local)    |    914 |    380 |  381 |    153 |  1.03x |   1.24x |
+Each point divides the fastest external median time by the `rscrypto` median for [equivalent work](docs/benchmarking.md#comparison-rules).
+Above 1.00x favors `rscrypto`; the fixed tie band is 0.95x through 1.05x.
+These classifications describe point estimates, not statistical significance.
 
-These results are from one run per platform, at half the default sampling time,
-on cloud and shared hosts.
-RISC-V's completed `auth` family was recovered from the same run on 2026-10-24;
-its row now includes all 914 headline comparisons.
-The Apple row comes from one local run whose host was not checked for load first;
-treat its small differences as unconfirmed.
-On IBM Z, `rscrypto` uses its CPACF and vector backends where they exist, and AWS-LC is absent.
-The [benchmark overview](benchmark_results/OVERVIEW.md#2026-10-23-v0120-release-benchmark-run) gives the results by family,
-TLS 1.3 and QUIC connections through `rscrypto-rustls`, the largest remaining losses, the method, and the limits.
-The [comparison contracts](docs/benchmarking.md#ml-kem-and-argon2-comparison-contracts) define equivalent ML-KEM and Argon2 workloads.
-Older summary tables mixed different workloads.
-They are historical records, not current claims.
+| Platform                    |        Points | Faster |  Tie | Slower | Median | Geomean |
+| --------------------------- | ------------: | -----: | ---: | -----: | -----: | ------: |
+| Intel Linux (`c8i`)         |           914 |    426 |  227 |    261 |  1.03x |   1.28x |
+| AMD Linux (`c8a`)           |           914 |    460 |  265 |    189 |  1.05x |   1.24x |
+| Intel Windows (`c8i`)       |           914 |    477 |  249 |    188 |  1.06x |   1.32x |
+| AMD Windows (`c8a`)         |           914 |    539 |  165 |    210 |  1.08x |   1.24x |
+| ARM64 Linux (`c9g`)         |           914 |    439 |  246 |    229 |  1.04x |   1.25x |
+| POWER10 Linux               |           914 |    419 |  352 |    143 |  1.03x |   1.43x |
+| IBM Z Linux, 4 CPUs         |           571 |    500 |   17 |     54 |  2.97x |   3.58x |
+| IBM Z Linux, 8 CPUs         |           340 |    215 |   99 |     26 |  1.15x |   2.11x |
+| RISC-V Linux (Auth pending) | 603 collected |        |      |        |        |         |
+| Apple M1 Pro (local)        |           914 |    398 |  371 |    145 |  1.04x |   1.25x |
 
-The [October 24 follow-up](benchmark_results/OVERVIEW.md) measures standalone Poly1305, BLAKE3 readers,
-and RSA import after the dependency and compiler refresh.
-Matched Apple M1 Pro comparisons against rebuilt v0.12 source show Poly1305 at 3.44–5.23x
-for the selected empty, 64 B, 1 KiB, and 16 KiB inputs,
-and RSA import at 1.44x and 1.49x for the selected 2048- and 8192-bit PSS verification cases.
-These use eight balanced prebuilt rounds;
-the overview retains the repeat spread and exact workloads.
-The matched Graviton3 cold 1 MiB BLAKE3 file reader takes about 58% longer and remains unresolved.
-This focused subset does not replace the full release catalog above or qualify its older Apple row.
+IBM Z's 4-CPU cohort covers checksum, Auth, and AEAD; its 8-CPU cohort covers hashes.
+Their different workloads and host allocations remain separate.
+The other complete rows each cover 914 headline points.
+
+These are single campaigns with 20 samples, 100 ms warm-up, and 400 ms measurement targets, using `nightly-2026-10-24`.
+Cloud/shared hosts and the Mac's overlapping validation
+and extraction work leave small differences unconfirmed.
+The Mac's full `just bench` completed all 108 runs and 4,824 cases; a fresh listing confirmed complete coverage.
+
+The [benchmark overview](benchmark_results/OVERVIEW.md#2026-11-03-default-catalog-on-ci-and-macos) reports every collected workload: 41,589 measured cases,
+14,007 matched points, all 130 measured comparison definitions, headline and other family results,
+absolute costs, hardware, provenance, and limits.
+TLS/QUIC provider, OpenSSL, and BLAKE3 file-reader targets are outside this default campaign;
+their separate dated results remain in the overview.
+Older campaigns retain their original dates and methods and do not fill missing current results.
 
 ## Project
 
