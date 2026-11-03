@@ -51,15 +51,39 @@ def checkout(output, name, url, revision):
     return directory
 
 
-def prepare(output, *, adapt_go_ecn=False):
+def ensure_image(output, name, image):
+    # A content-addressed local image is already the requested artifact. Do not
+    # make reproducibility depend on registry availability or its rate limit.
+    if '@sha256:' not in image:
+        raise ValueError('cached image reuse requires a digest')
+    if run(output, name + '-inspect', ['docker', 'image', 'inspect', image], check=False):
+        run(output, name + '-pull', ['docker', 'pull', image])
+
+
+def prepare(output, *, adapt_go_ecn=False, stock=False):
     runner = checkout(output, 'runner', 'https://github.com/quic-interop/quic-interop-runner.git', RUNNER)
     endpoint = checkout(output, 'endpoint', 'https://github.com/quinn-rs/quinn-interop.git', ENDPOINT)
     h3 = checkout(output, 'h3', 'https://github.com/hyperium/h3.git', H3)
     run(output, 'h3-patch', ['git', 'apply', '-'], cwd=h3,
         data=(ROOT / 'scripts/test/provider_h3_quinn.patch').read_bytes())
-    patch = (ROOT / 'scripts/test/provider_quinn_interop.patch').read_text()
+    patch_name = 'provider_quinn_stock.patch' if stock else 'provider_quinn_interop.patch'
+    patch = (ROOT / 'scripts/test' / patch_name).read_text()
     patch = patch.replace('@RSCRYPTO_ROOT@', str(ROOT)).replace('@H3_ROOT@', str(h3))
     run(output, 'endpoint-patch', ['git', 'apply', '-'], cwd=endpoint, data=patch.encode())
+    # One selected share makes the two stock controls and the provider's PQ
+    # flight comparable. These are harness settings, not provider defaults.
+    client = endpoint / 'quinn-interop/src/bin/client.rs'
+    source = client.read_text()
+    marker = '    if let CipherSuite::Chacha20 = suites {'
+    if source.count(marker) != 1:
+        raise RuntimeError('upstream client group insertion point changed')
+    source = source.replace(marker, '''    if let Ok(group) = std::env::var("RSCRYPTO_QUIC_GROUP") {
+        provider.kx_groups = provider.kx_groups.iter().copied()
+            .filter(|g| format!("{:?}", g.name()) == group).collect::<Vec<_>>().into();
+        anyhow::ensure!(!provider.kx_groups.is_empty(), "unavailable control group");
+    }
+''' + marker)
+    client.write_text(source)
     architecture = subprocess.check_output(['docker', 'info', '--format', '{{.Architecture}}'], text=True).strip()
     targets = {'aarch64': 'aarch64-unknown-linux-gnu', 'arm64': 'aarch64-unknown-linux-gnu',
                'x86_64': 'x86_64-unknown-linux-gnu', 'amd64': 'x86_64-unknown-linux-gnu'}
@@ -95,7 +119,7 @@ def prepare(output, *, adapt_go_ecn=False):
     driver_image = 'rscrypto-quic-runner:' + output.name.lower()
     run(output, 'driver-image', ['docker', 'build', '-t', driver_image, str(driver)])
     for name, image in (('go', GO), ('simulator', SIMULATOR)):
-        run(output, name + '-pull', ['docker', 'pull', image])
+        ensure_image(output, name, image)
     go_image = GO
     if adapt_go_ecn:
         # The pinned Go interop application omits the ECN case from its switch.
@@ -109,16 +133,11 @@ def prepare(output, *, adapt_go_ecn=False):
             'RUN chmod +x /rscrypto-ecn-entrypoint\nENTRYPOINT ["/rscrypto-ecn-entrypoint"]\n')
         go_image = 'rscrypto-quic-go-ecn:' + output.name.lower()
         run(output, 'go-ecn-image', ['docker', 'build', '-t', go_image, str(adapter)])
-    # Docker bind mounts resolve on the host daemon, not in the driver container.
-    for path in (runner / 'interop.py', runner / 'testcase.py'):
-        source = path.read_text().replace('dir="/tmp"', f'dir={str(output / "tmp")!r}')
-        path.write_text(source)
     compose = runner / 'docker-compose.yml'
     source = compose.read_text()
     source = source.replace('image: martenseemann/quic-network-simulator\n', f'image: {SIMULATOR}\n')
     compose.write_text(source)
-    (output / 'tmp').mkdir()
-    provenance = {'runner': RUNNER, 'endpoint': ENDPOINT, 'h3': H3, 'target': target,
+    provenance = {'runner': RUNNER, 'endpoint': ENDPOINT, 'h3': H3, 'target': target, 'stock': stock,
                   'endpoint_image': endpoint_image, 'driver_image': driver_image,
                   'go_image': go_image, 'go_base_image': GO,
                   'head': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()}
@@ -131,11 +150,13 @@ def prepare(output, *, adapt_go_ecn=False):
     for relative in ('Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'scripts/test/provider_quic_runner.py',
                      '.cargo/config.toml',
                      'scripts/test/provider_quic_runner_requirements.txt', 'scripts/test/provider_quinn_interop.patch',
-                     'scripts/test/provider_h3_quinn.patch'):
+                     'scripts/test/provider_h3_quinn.patch', 'scripts/test/provider_quinn_stock.patch'):
         destination = output / 'source' / relative
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(ROOT / relative, destination)
     run(output, 'images', ['docker', 'image', 'inspect', endpoint_image, driver_image, go_image, GO, SIMULATOR])
+    run(output, 'rustc', ['rustc', '-Vv'])
+    run(output, 'cargo', ['cargo', '-V'])
     return provenance
 
 
@@ -175,10 +196,65 @@ def go_image_for_bundle(provenance):
     return image
 
 
+def campaign_sources(prepared, output, seed, rng_run, credentials, group, trace):
+    """Keep each campaign's settings and retained credentials out of the reusable bundle."""
+    runner = output / 'campaign-runner'
+    shutil.copytree(prepared / 'runner', runner, ignore=shutil.ignore_patterns('.git', '__pycache__'))
+    temporary = output / 'tmp'
+    temporary.mkdir(exist_ok=True)
+    # Test subclasses also allocate credentials (notably amplificationlimit).
+    # Every bind source must exist at the same path on the Docker host. Keep
+    # each campaign independent even when it reuses an older prepared bundle.
+    for path in runner.glob('*.py'):
+        source = path.read_text().replace('dir="/tmp"', f'dir={str(temporary)!r}')
+        source = source.replace(f'dir={str(prepared / "tmp")!r}', f'dir={str(temporary)!r}')
+        path.write_text(source)
+    path = runner / 'interop.py'
+    source = path.read_text()
+    marker = ').format(test.scenario())'
+    if source.count(marker) != 1:
+        raise RuntimeError('upstream scenario insertion point changed')
+    source = source.replace(marker, f').format(test.scenario() + " --RngSeed={seed} --RngRun={rng_run}")')
+    # Keep credentials and logs even when an endpoint reports unsupported.
+    source = source.replace('if status == TestResult.FAILED or status == TestResult.SUCCEEDED:', 'if True:')
+    marker = '            shutil.copyfile(log_file.name, log_dir + "/output.txt")'
+    if source.count(marker) != 1:
+        raise RuntimeError('upstream credential-retention insertion point changed')
+    source = source.replace(marker, marker + '\n            shutil.copytree(test.certs_dir(), log_dir + "/certs")')
+    path.write_text(source)
+    if credentials:
+        retained = output / 'credentials'
+        shutil.copytree(credentials, retained)
+        path = runner / 'testcase.py'
+        source = path.read_text()
+        marker = 'def generate_cert_chain(directory: str, length: int = 1):\n'
+        if source.count(marker) != 1:
+            raise RuntimeError('upstream credential insertion point changed')
+        # Amplification's long chain must still come from its original fixture.
+        source = source.replace(marker, marker +
+            f'    if length == 1:\n        import shutil\n        shutil.copytree({str(retained)!r}, directory, dirs_exist_ok=True)\n        return\n')
+        path.write_text(source)
+    path = runner / 'docker-compose.yml'
+    environment = f'      - RSCRYPTO_QUIC_GROUP={group}\n' if group else ''
+    if trace:
+        environment += '      - RUST_LOG=quinn_proto=trace,quinn=trace,h3_quinn_interop=debug\n'
+    source = path.read_text().replace('      - ROLE=', environment + '      - ROLE=')
+    path.write_text(source)
+    return runner
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--prepared', type=Path, help='reuse the source-bound images in an earlier prepared bundle')
     parser.add_argument('--output', type=Path)
+    parser.add_argument('--stock', action='store_true', help='prepare the pinned Quinn stock rustls/AWS-LC control')
+    parser.add_argument('--prepare-only', action='store_true', help='build and retain images without starting a campaign')
+    parser.add_argument('--group', choices=('X25519MLKEM768', 'X25519'),
+                        help='restrict the Quinn client to one group; otherwise keep its defaults')
+    parser.add_argument('--seed', type=int, default=1, help='ns-3 RngSeed; TLS entropy remains independent')
+    parser.add_argument('--rng-run', type=int, default=1, help='ns-3 RngRun substream')
+    parser.add_argument('--credentials', type=Path, help='reuse retained runner credentials (except the long amplification chain)')
+    parser.add_argument('--trace', action='store_true', help='retain Quinn production transport tracing')
     parser.add_argument('--tests', default='handshake,transfer,chacha20,retry,resumption,zerortt,keyupdate')
     parser.add_argument('--budget-seconds', type=campaign_budget, default=600,
                         help='campaign wall-clock limit, at most 600 seconds (default: 600)')
@@ -188,14 +264,16 @@ def main():
     requested = args.tests.split(',')
     if not all(requested) or len(set(requested)) != len(requested):
         parser.error('--tests requires distinct, nonempty case names')
+    if not 1 <= args.seed <= 0xffffffff or not 1 <= args.rng_run <= 0xffffffffffffffff:
+        parser.error('seed/run must be nonzero uint32/uint64 values')
     output = (args.output or ROOT / 'benchmark_results' / ('provider-quic-runner-' + datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ'))).resolve()
     output.mkdir(parents=True, exist_ok=False)
     prepared = args.prepared.resolve() if args.prepared else output
     provenance = (json.loads((prepared / 'provenance.json').read_text()) if args.prepared
-                  else prepare(output, adapt_go_ecn='ecn' in requested))
+                  else prepare(output, adapt_go_ecn='ecn' in requested, stock=args.stock))
     if provenance['runner'] != RUNNER or provenance['endpoint'] != ENDPOINT:
         raise RuntimeError('prepared sources differ from the selected upstream pins')
-    # Keep the original bundle mounted at its recorded path for its temp files.
+    # Verify the endpoint and driver artifacts before using a prepared bundle.
     endpoint_image, driver_image = provenance['endpoint_image'], provenance['driver_image']
     go_image = go_image_for_bundle(provenance)
     identities = [('endpoint', endpoint_image), ('driver', driver_image)]
@@ -207,17 +285,27 @@ def main():
             raise RuntimeError(f'the prepared {role} image changed')
     run(output, 'images', ['docker', 'image', 'inspect', endpoint_image, driver_image, go_image, GO, SIMULATOR])
     (output / 'prepared.json').write_text(json.dumps({'path': str(prepared), 'provenance': provenance}, indent=2) + '\n')
+    if args.prepare_only:
+        print(f'Prepared source-bound images: {prepared}')
+        return 0
     active = subprocess.check_output(['docker', 'ps', '-aq', '--filter', 'label=com.docker.compose.project=' + PROJECT], text=True).strip()
     if active:
         raise RuntimeError('another provider runner campaign owns the Compose project')
     name = 'rscrypto-quic-driver-' + output.name.lower()
+    runner = campaign_sources(prepared, output, args.seed, args.rng_run, args.credentials,
+                              args.group, args.trace)
+    (output / 'settings.json').write_text(json.dumps({
+        'seed': args.seed, 'rng_run': args.rng_run, 'group': args.group, 'trace': args.trace,
+        'tests': requested, 'server': args.server, 'client': args.client,
+        'budget_seconds': args.budget_seconds, 'credentials': str(args.credentials),
+    }, indent=2) + '\n')
     mounts = list(dict.fromkeys((prepared, output)))
     command = ['docker', 'run', '--rm', '--name', name, '-e', 'COMPOSE_PROJECT_NAME=' + PROJECT,
                '-v', '/var/run/docker.sock:/var/run/docker.sock']
     for path in mounts:
         command += ['-v', f'{path}:{path}']
     selected = ','.join(dict.fromkeys(args.server.split(',') + args.client.split(',')))
-    command += ['-w', str(prepared / 'runner'), driver_image, 'python', 'run.py', '-d',
+    command += ['-w', str(runner), driver_image, 'python', 'run.py', '-d',
                 '-s', args.server, '-c', args.client, '-n', selected, '-r', f'quinn={endpoint_image},quic-go={go_image}',
                 '-t', args.tests, '-l', str(output / 'logs'), '-j', str(output / 'results.json')]
     began = time.monotonic()
