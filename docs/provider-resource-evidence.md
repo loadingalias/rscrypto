@@ -2,9 +2,10 @@
 
 The 2026-11-03 ML-DSA resource measurements fit the approved heap and shared-key
 caps on the measured Apple M1 Pro. Whole-call stack qualification remains open.
-The linked graph reaches library imports and indirect calls whose stack use is
-not bounded by the retained artifacts. No single-frame measurement, requested
-thread stack, or successful execution closes that gate.
+The code linked into each reviewed Linux artifact has a static owned bound, but
+the roots reach libc imports and cold capability detection whose stack use the
+artifacts cannot bound. Those edges need measured allowances. No single-frame
+measurement, requested thread stack, or successful execution closes that gate.
 
 This record covers Gap 2 in the local delivery plan. It does not restart the
 deferred performance campaign or qualify G1-D traffic.
@@ -33,6 +34,11 @@ graphs, source hashes, and reports. These cross-built artifacts were not run.
 `stack-summary.json` confirms that their binaries match those used by the
 separate cleanup review. Earlier failed parser runs remain in the evidence
 directory; the `stack-reviewed-*` reports supersede their graph analysis.
+`stack-declared-native/` and `stack-declared-portable/` retain the declared-edge
+reports, their `SHA256SUMS`, and the run logs. They come from a 2026-11-03
+rebuild with the same compiler, at `1d8dadfe` plus the declared-edge tooling, in
+another checkout. Their binaries differ by hash from the `stack-reviewed-*`
+binaries, but every full-graph frame sum and unresolved-edge count is identical.
 
 ## Production paths and storage
 
@@ -118,35 +124,86 @@ frame records; no target CPU override is supplied. As the
 explains, frame records do not include callees and can be absent for dynamic
 stack allocation. They are not whole-call bounds.
 
-| Linux target | Largest root frame, native / portable | Largest recorded-frame path sum, native / portable | Whole-call bound |
-| --- | ---: | ---: | --- |
-| x86-64 GNU | 136 / 136 B | 2,024 / 1,256 B | Unresolved |
-| AArch64 GNU | 304 / 304 B | 2,080 / 1,520 B | Unresolved |
-| POWER64LE GNU | 2,496 / 400 B | 9,920 / 1,824 B | Unresolved |
-| IBM Z GNU | 184 / 184 B | 2,008 / 1,776 B | Owned unresolved; portable borrowed subset below |
-| RISC-V 64 GNU | 224 / 224 B | 1,440 / 1,440 B | Unresolved |
+Each root has two results. The owned bound covers the code linked into the
+artifact: rscrypto and the linked parts of the Rust standard library. It stops
+at the declared libc and cold-detection edges that
+[`scripts/README.md`](../scripts/README.md#preparation-bounds) lists, and
+charges each edge only its caller's frame and call slot. `rscrypto-detection`
+is the cold `OnceLock<Detected>` initialization behind `platform::caps()`.
+`std-detect` is the standard library's feature-cache initialization, which the
+AArch64 `DataIndependentTiming` guard reaches. Each detection edge includes its
+complete subgraph. The report gives the maximum stack depth at each edge's
+entry over all paths. The whole-call bound composes the owned bound with a
+measured allowance for each reached edge.
 
-The path sums are diagnostic sums of available records, not upper bounds.
-Of 120 reviewed roots, 114 retain `whole_call_bound_bytes: null`. The six
-portable IBM Z borrowed roots are bounded: 1,416 B for preparation, or 1,600 B
-including successful prepared-key destruction, for each parameter set. These
-contain no unresolved library calls. Caller storage and enclosing worker/TLS
-frames are outside those bounds. Every owned root remains unresolved, so the
-worker qualification gate still fails. The tool continues below missing frame
-records, resolves
-identified GOT/PLT imports, distinguishes IFUNC relocations, and retains
-unresolved transfers by instruction address. Regression fixtures cover missing
-frames, allocator cleanup, IFUNCs, branch joins, register clobbers, unlabelled
-IBM Z PLT entries, and repeated assembly stack decrements.
+Largest owned bound by root, in bytes, native / portable:
+
+| Linux target | `prepare_in` | `prepare` | `prepare_in`, then drop | `prepare`, then drop |
+| --- | ---: | ---: | ---: | ---: |
+| x86-64 GNU | 1,944 / 1,224 | 1,896 / 1,096 | 1,976 / 1,256 | 1,928 / 1,128 |
+| AArch64 GNU | 2,032 / 1,472 | 1,824 / 1,184 | 2,080 / 1,520 | 1,872 / 1,232 |
+| POWER64LE GNU | 9,840 / 1,744 | 9,840 / 1,408 | 9,920 / 1,824 | 9,920 / 1,488 |
+| IBM Z GNU | 1,592 / 1,592 | 1,416 / 1,416 | 1,776 / 1,776 | 1,600 / 1,600 |
+| RISC-V 64 GNU | 1,408 / 1,408 | 1,200 / 1,200 | 1,440 / 1,440 | 1,232 / 1,232 |
+
+Largest stack depth at a declared edge's entry, in bytes, native / portable.
+A dash means that no root reaches the edge:
+
+| Linux target | `calloc` | `free` | `memcpy` | `memset` | `rscrypto-detection` | `std-detect` |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| x86-64 GNU | 184 / 184 | 40 / 40 | 1,720 / 1,000 | - / - | 1,720 / - | - / - |
+| AArch64 GNU | 352 / 352 | 48 / 48 | 1,504 / 1,360 | - / - | 1,920 / - | 352 / 352 |
+| POWER64LE GNU | 2,576 / 480 | 112 / 112 | 8,224 / 1,536 | 8,048 / 1,536 | 7,728 / - | - / - |
+| IBM Z GNU | 360 / 360 | 184 / 184 | - / - | - / - | 1,616 / - | - / - |
+| RISC-V 64 GNU | 256 / 256 | 32 / 32 | 1,184 / 1,184 | 1,184 / 1,184 | - / - | - / - |
+
+Only the `prepare_in` roots, with or without the drop, reach `calloc` and
+`free`. No root reaches `malloc`, `memmove`, `memcmp`, or `bcmp` outside a
+detection edge. Each parameter set reaches the same edges; the tables give the
+maximum over the three sets.
+
+All 120 roots have an owned bound. On every target and configuration, the
+owned graphs contain no other import, IFUNC relocation, indirect transfer,
+missing frame record, or recursion. Owned bounds are not whole-call bounds.
+No allowance has been measured, so 114 roots keep
+`whole_call_bound_bytes: null`, and both preparation reviews exit nonzero.
+The six portable IBM Z roots that call `prepare` reach no declared edge and
+keep their static whole-call bounds: 1,416 B for preparation, or 1,600 B including
+successful prepared-key destruction, for each parameter set. No root is
+claimed to fit the 8 MiB cap. Caller storage and enclosing worker/TLS frames
+are outside every bound.
+
+The full-graph traversal still descends into every declared edge and lists what
+an allowance must cover. Native x86-64, AArch64, POWER, and IBM Z reach
+`rscrypto-detection`; both AArch64 configurations reach `std-detect`. These
+subgraphs reach indirect calls, `syscall`, `_Unwind_Resume` and LLVM libunwind
+functions without frame records, `dlsym`, `dl_iterate_phdr`,
+`pthread_rwlock_*`, `__errno_location`, `abort`, `fflush`, and `fprintf` with
+`fwrite`, or POWER's `__fprintfieee128`. In `rscrypto-detection`, the
+indirect calls include those in the standard library's `Once`. On AArch64,
+`std-detect` adds `getauxval`, `open`, `read`, `close`, `realloc`, and indirect
+calls in `core::fmt::write`. Portable x86-64, portable POWER, portable IBM Z,
+and both RISC-V configurations reach no detection edge, so their roots need
+only libc allowances.
+
+The tool continues below missing frame records, resolves identified GOT/PLT
+imports, distinguishes IFUNC relocations, and retains unresolved transfers by
+instruction address. Regression fixtures cover missing frames, allocator
+cleanup, IFUNCs, branch joins, register clobbers, unlabelled IBM Z PLT entries,
+repeated assembly stack decrements, declared-edge entry depths after calls and
+tail calls, the exact detection cut, and allowance composition.
 
 The exact remaining proof needs are:
 
-- The deployment's `calloc`/`free`, memory routines, loader/IFUNC implementations,
-  and their callbacks, with final library identities. The executable's import
-  name cannot bound whichever implementation the loader selects.
-- Indirect dispatch and cold capability-detection paths, including standard
-  library callbacks and syntactically reachable cleanup/unwind paths. A warm
-  capability cache cannot silently remove the cold path from the contract.
+- A measured allowance for each reached declared edge, for each deployed libc
+  identity: `calloc`, `free`, `memcpy`, and `memset` where the table lists them,
+  and each detection edge, which also depends on the kernel. An allowance must
+  cover the edge's own frames, red zone, and callbacks. The executable's import
+  name cannot bound whichever implementation the loader or an IFUNC resolver
+  selects. A measured allowance is evidence for that deployment; it is not a
+  static proof of glibc or rustls.
+- Composition of those allowances with the owned bounds through `--allowances`.
+  A warm capability cache cannot silently remove the cold path from the contract.
 - Enclosing provider/TLS/worker frames, and native Apple/Windows stack evidence.
   The frame tool currently reviews Linux ELF only. Borrowed storage must also
   be charged to its caller when the caller places it on the stack.
@@ -234,8 +291,8 @@ just stack-frames --mldsa-preparation --portable --evidence /path/to/new-portabl
 just stack-residue --native-mldsa --output /path/to/new-residue
 ```
 
-Both preparation reviews deliberately exit nonzero while unresolved edges
-remain. The legacy scrub review passes on all ten retained artifacts; its
+Both preparation reviews deliberately exit nonzero while a root has an
+unresolved owned edge or reaches a declared edge without a measured allowance. The legacy scrub review passes on all ten retained artifacts; its
 explicit memory-leaf assumptions do not apply to the preparation gate.
 `check.log`, `test-scripts.log`, `frames-tests-final.log`, and
 `scrub-regressions/` retain the corresponding validation output.

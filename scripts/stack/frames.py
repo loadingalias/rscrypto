@@ -12,6 +12,11 @@ transfer, an unresolved external target, or recursion. Unbounded paths and
 capability detection reachable from a worker are reported, never dropped, and
 each fails the review. Panic exits are listed separately: the review artifact
 uses `panic = "abort"`, so they terminate the process instead of returning.
+
+`--mldsa-preparation` reviews whole preparation calls instead. Besides the
+whole-call traversal, it reports an owned bound that stops at declared libc
+imports and cold capability detection, with each edge's entry depth. A
+whole-call bound composes that owned bound with measured `--allowances`.
 """
 
 from __future__ import annotations
@@ -136,6 +141,24 @@ PANIC_EXIT = re.compile(
 # preparation reviews do not make this assumption: imports and IFUNC selection
 # require evidence from the actual deployed libc and loader.
 EXTERNAL_LEAVES = {"memcpy", "memmove", "memset", "memcmp", "bcmp"}
+# Preparation reviews stop at these edges and record the stack depth at their
+# entry. Each edge needs a separately measured allowance for the deployed libc
+# (or, for detection, the deployed libc and kernel); none is assumed frameless.
+# Any other import, including IFUNC relocations, remains unresolved.
+DECLARED_LIBC = {"calloc", "malloc", "free", "memcpy", "memmove", "memset", "memcmp", "bcmp"}
+# Cold first-call capability detection, keyed by the exact demangled entry.
+# In std builds `platform::caps()` initializes `STD_CACHE: OnceLock<Detected>`
+# through the first; `std::arch::is_aarch64_feature_detected!` (the AArch64
+# `DataIndependentTiming` guard) fills std's feature cache through the second.
+# Each entry's frame and entire subgraph (std `Once`, futex syscalls, auxv
+# reads, formatting, unwinding cleanup) belong to the declared edge, not to the
+# owned bound. A renamed entry is not cut, so its subgraph stays unresolved.
+COLD_DETECTION = {
+  "<std::sync::once_lock::OnceLock<rscrypto::platform::detect::Detected>>::initialize::"
+  "<<std::sync::once_lock::OnceLock<rscrypto::platform::detect::Detected>>::get_or_init"
+  "<rscrypto::platform::detect::detect_with_override>::{closure#0}, !>": "rscrypto-detection",
+  "std_detect::detect::cache::detect_and_initialize": "std-detect",
+}
 
 HEADER = re.compile(r"^([0-9a-f]+) <(.+)>:$")
 INSTRUCTION = re.compile(r"^\s*([0-9a-f]+):\s+(\S+)(?:\s+(.*))?$")
@@ -597,6 +620,15 @@ def external_name(program: Program, function: Function) -> str | None:
 
 
 @dataclass
+class Declared:
+  """The deepest entry of one declared edge, below the visited function's entry."""
+
+  kind: str  # libc or cold-detection
+  entry: int
+  sites: set[tuple[str, str, str]]  # (caller, call instruction address, callee)
+
+
+@dataclass
 class Depth:
   bytes: int
   path: list[str]
@@ -604,9 +636,38 @@ class Depth:
   detection: list[list[str]]
   panic_exits: set[str]
   assumptions: set[str]
+  declared: dict[str, Declared] = field(default_factory=dict)
 
 
-def depth_of(program: Program, root: Function, *, assume_memory_leaves: bool = True) -> Depth:
+def declare(depth: Depth, name: str, kind: str, entry: int, sites: set[tuple[str, str, str]]) -> None:
+  if (known := depth.declared.get(name)) is None:
+    depth.declared[name] = Declared(kind, entry, set(sites))
+  else:
+    known.entry = max(known.entry, entry)
+    known.sites |= sites
+
+
+def declared_callee(program: Program, callee: Function) -> tuple[str, str] | None:
+  """Return the (name, kind) of a declared edge whose entry is this function."""
+  if (imported := external_name(program, callee)) in DECLARED_LIBC:
+    return imported, "libc"
+  if (name := COLD_DETECTION.get(callee.demangled)) is not None:
+    return name, "cold-detection"
+  return None
+
+
+def depth_of(
+  program: Program, root: Function, *, assume_memory_leaves: bool = True, declared_edges: bool = False
+) -> Depth:
+  """Return the deepest stack use below `root`'s entry and every unresolved path.
+
+  With `declared_edges`, traversal stops at each declared libc import and at
+  cold capability detection. Such an edge charges only its caller's frame and
+  call slot, and its entry depth is recorded for a separately measured
+  allowance. Everything else is accounted for exactly as without it.
+  """
+  if declared_edges and assume_memory_leaves:
+    raise ValueError("declared edges replace the external-leaf assumption")
   arch = ARCHES[program.target]
   memo: dict[int, Depth] = {}
   active: list[int] = []
@@ -640,6 +701,21 @@ def depth_of(program: Program, root: Function, *, assume_memory_leaves: bool = T
       if not calls:
         result.bytes = known_frame + arch.red_zone
       for edge in function.edges:
+        stop = None  # (callee, declared edge name, kind)
+        if declared_edges and edge.kind in {"import", "import-tail"} and edge.name in DECLARED_LIBC:
+          stop = (str(edge.name), str(edge.name), "libc")
+        elif declared_edges and edge.kind in {"call", "tail"}:
+          if (declared := declared_callee(program, program.functions[edge.target])) is not None:
+            stop = (program.functions[edge.target].demangled, *declared)
+        if stop is not None:
+          # Charge only the caller's frame and call slot. The callee's own use,
+          # its red zone and callbacks included, belongs to the edge's allowance.
+          callee_name, label, kind = stop
+          base = known_frame + arch.call_slot if edge.kind in {"call", "import"} else 0
+          declare(result, label, kind, base, {(name, hex(edge.source), callee_name)})
+          if base > result.bytes:
+            result.bytes, result.path = base, [name, callee_name]
+          continue
         if edge.kind in {"import", "import-tail"}:
           if assume_memory_leaves and edge.name in EXTERNAL_LEAVES:
             result.assumptions.add(f"{edge.name}: external leaf, frame 0 + red zone")
@@ -664,6 +740,8 @@ def depth_of(program: Program, root: Function, *, assume_memory_leaves: bool = T
         result.detection.extend([name, *path] for path in child.detection)
         result.panic_exits |= child.panic_exits
         result.assumptions |= child.assumptions
+        for label, entry in child.declared.items():
+          declare(result, label, entry.kind, base + entry.entry, entry.sites)
         if DETECTION.search(callee.demangled):
           result.detection.append([name, callee.demangled])
         if base + child.bytes > result.bytes:
@@ -793,33 +871,113 @@ PREPARATION_ROOTS = [
 ]
 
 
-def review_preparation(program: Program, roots: list[str] = PREPARATION_ROOTS) -> dict[str, object]:
-  """Whole-call accounting; no imported routine is silently assumed frameless."""
+STACK_CAP = 8 * 1024 * 1024
+
+
+def load_allowances(path: Path) -> dict[str, dict[str, object]]:
+  """Read measured declared-edge allowances: target -> {libc, edges: {edge: bytes}}.
+
+  Each allowance is the stack a declared edge may use below the stack pointer
+  at its entry, red zone included, on the named deployed libc. The review only
+  composes these numbers; it cannot check how they were measured.
+  """
+  data = json.loads(path.read_text())
+  if not isinstance(data, dict):
+    raise SystemExit(f"{path}: expected an object keyed by target")
+  names = DECLARED_LIBC | set(COLD_DETECTION.values())
+  for target, entry in data.items():
+    if target not in ARCHES:
+      raise SystemExit(f"{path}: unsupported target {target}")
+    if not isinstance(entry, dict) or set(entry) - {"libc", "edges", "evidence"} or not {"libc", "edges"} <= set(entry):
+      raise SystemExit(f"{path}: {target} needs exactly libc, edges, and optional evidence")
+    if not isinstance(entry["libc"], str) or not entry["libc"].strip():
+      raise SystemExit(f"{path}: {target} needs the deployed libc identity")
+    if not isinstance(entry["edges"], dict):
+      raise SystemExit(f"{path}: {target} edges must map declared edge names to bytes")
+    for name, value in entry["edges"].items():
+      if name not in names:
+        raise SystemExit(f"{path}: {target} names {name!r}, which is not a declared edge")
+      if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        raise SystemExit(f"{path}: {target} allowance for {name} must be a non-negative integer")
+  return data
+
+
+def review_preparation(
+  program: Program, roots: list[str] = PREPARATION_ROOTS, allowances: dict[str, object] | None = None
+) -> dict[str, object]:
+  """Whole-call accounting; no imported routine is silently assumed frameless.
+
+  Each root has two traversals. The whole-call traversal descends everywhere
+  and is a bound only when nothing is unresolved. The owned traversal stops at
+  declared edges; its bound covers the artifact's own code, and the whole-call
+  bound composes it with a measured allowance for every declared edge reached.
+  """
+  arch = ARCHES[program.target]
+  edges = allowances["edges"] if allowances is not None else {}
   reports = []
   for name in roots:
     matches = program.named(re.compile(rf"^{re.escape(name)}$"))
     if len(matches) != 1:
-      reports.append({"root": name, "whole_call_bound_bytes": None, "passed": False,
+      reports.append({"root": name, "whole_call_bound_bytes": None, "owned_bound_bytes": None, "passed": False,
                       "problems": [f"expected one linked root, found {len(matches)}"]})
       continue
     root = matches[0]
     depth = depth_of(program, root, assume_memory_leaves=False)
-    recorded = depth.bytes + ARCHES[program.target].call_slot
-    bound = None if depth.unbounded else recorded
+    owned = depth_of(program, root, assume_memory_leaves=False, declared_edges=True)
+    recorded = depth.bytes + arch.call_slot
+    owned_recorded = owned.bytes + arch.call_slot
+    owned_bound = None if owned.unbounded else owned_recorded
+    declared = []
+    for label, entry in sorted(owned.declared.items()):
+      depth_at_entry = entry.entry + arch.call_slot
+      declared.append({
+        "name": label, "kind": entry.kind,
+        # An entry depth is a bound only when every path in the owned graph is.
+        "max_entry_depth_bytes": depth_at_entry if owned_bound is not None else None,
+        "recorded_entry_depth_bytes": depth_at_entry,
+        "allowance_bytes": edges.get(label),
+        "call_sites": [{"caller": caller, "address": address, "callee": callee}
+                       for caller, address, callee in sorted(entry.sites)],
+      })
+    missing = [edge["name"] for edge in declared if edge["allowance_bytes"] is None]
+    if not depth.unbounded:
+      bound, basis = recorded, "static: every frame and edge resolved"
+    elif owned_bound is not None and not missing:
+      bound = max([owned_bound, *(edge["max_entry_depth_bytes"] + edge["allowance_bytes"] for edge in declared)])
+      basis = "owned bound composed with measured declared-edge allowances"
+    else:
+      bound, basis = None, None
+    problems = []
+    if bound is None:
+      if owned_bound is None:
+        problems.append("unresolved owned call paths; the owned frame sum is not a bound")
+      if missing:
+        problems.append(f"declared edges without a measured allowance: {', '.join(missing)}")
+    elif bound > STACK_CAP:
+      problems.append("exceeds the 8 MiB worker cap")
     reports.append({
       "root": name, "address": hex(root.address), "frame_bytes": root.frame,
       "whole_call_bound_bytes": bound,
+      "whole_call_bound_basis": basis,
+      "owned_bound_bytes": owned_bound,
+      "owned_recorded_path_bytes": owned_recorded,
+      "owned_path": owned.path,
+      "owned_unresolved": owned.unbounded,
+      "declared_edges": declared,
+      "missing_allowances": missing,
       "recorded_frame_path_bytes": recorded,
       "recorded_frame_path": depth.path,
       "unresolved": depth.unbounded, "capability_detection": depth.detection,
       "panic_exits_abort": sorted(depth.panic_exits), "assumptions": sorted(depth.assumptions),
-      "passed": bound is not None and bound <= 8 * 1024 * 1024,
-      "problems": (["unresolved call paths; recorded frame sum is not a whole-call bound"] if bound is None
-                   else ["exceeds the 8 MiB worker cap"] if bound > 8 * 1024 * 1024 else []),
+      "passed": bound is not None and bound <= STACK_CAP,
+      "problems": problems,
     })
   return {
-    "target": program.target, "whole_calls": reports, "stack_cap_bytes": 8 * 1024 * 1024,
-    "scope": "Linked core preparation wrappers, including owned/borrowed destruction; not enclosing TLS, worker, signal-handler or arbitrary Allocator callbacks. All syntactically reachable return/error paths are included; abort paths are listed separately. Unknown frames never constitute a bound. Public storage supplied by the caller is outside the borrowed call's frame.",
+    "target": program.target, "whole_calls": reports, "stack_cap_bytes": STACK_CAP,
+    "declared_libc_edges": sorted(DECLARED_LIBC),
+    "cold_detection_entries": COLD_DETECTION,
+    "allowances": allowances,
+    "scope": "Linked core preparation wrappers, including owned/borrowed destruction; not enclosing TLS, worker, signal-handler or arbitrary Allocator callbacks. All syntactically reachable return/error paths are included; abort paths are listed separately. Unknown frames never constitute a bound. Public storage supplied by the caller is outside the borrowed call's frame. Owned bounds cover the artifact's own code and charge each declared libc or cold-detection edge only its caller's frame and call slot; they are not whole-call bounds until every reached declared edge has a measured allowance for the deployed libc.",
     "passed": all(item["passed"] for item in reports),
   }
 
@@ -885,13 +1043,30 @@ def build(target: str, portable: bool, rustflags: list[str]) -> Path:
 
 def markdown(report: dict[str, object]) -> str:
   lines = [f"## {report['target']}: {'pass' if report['passed'] else 'FAIL'}", ""]
+  if "whole_calls" in report:
+    allowances = report.get("allowances")
+    lines.append(f"Declared-edge allowances: {allowances['libc'] if allowances else 'none supplied'}")
+    lines.append("")
+
+  def size(value: int | None) -> str:
+    return f"{value} B" if value is not None else "UNRESOLVED"
+
   for call in report.get("whole_calls", []):
-    bound = call["whole_call_bound_bytes"]
-    lines.append(f"- `{call['root']}`: whole-call bound {str(bound) + ' B' if bound is not None else 'UNRESOLVED'}")
+    lines.append(f"- `{call['root']}`: whole-call bound {size(call['whole_call_bound_bytes'])}, "
+                 f"owned bound {size(call['owned_bound_bytes'])}")
     if "recorded_frame_path_bytes" in call:
       lines.append(f"  - recorded frame path sum: {call['recorded_frame_path_bytes']} B (not a bound when unresolved)")
-    for item in call.get("unresolved", []):
-      lines.append(f"  - {item['reason']} at {item.get('address', '?')}: {' -> '.join(item['path'])}")
+    for edge in call.get("declared_edges", []):
+      allowance = edge["allowance_bytes"]
+      lines.append(
+        f"  - declared {edge['kind']} `{edge['name']}`: entry depth {size(edge['max_entry_depth_bytes'])}"
+        f" (recorded {edge['recorded_entry_depth_bytes']} B), {len(edge['call_sites'])} call site(s), "
+        f"allowance {str(allowance) + ' B' if allowance is not None else 'not measured'}"
+      )
+    for item in call.get("owned_unresolved", []):
+      lines.append(f"  - owned {item['reason']} at {item.get('address', '?')}: {' -> '.join(item['path'])}")
+    if call.get("unresolved"):
+      lines.append(f"  - whole-call unresolved edges, declared subgraphs included: {len(call['unresolved'])} (see report.json)")
     lines.extend(f"  - problem: {problem}" for problem in call["problems"])
   for boundary in report.get("boundaries", []):
     lines.append(
@@ -936,11 +1111,16 @@ def main(argv: list[str] | None = None) -> int:
   parser.add_argument("--json", type=Path, help="write the full report as JSON")
   parser.add_argument("--mldsa-preparation", action="store_true", help="review whole preparation and destruction calls instead of scrub boundaries; unresolved paths fail")
   parser.add_argument("--evidence", type=Path, help="new directory retaining binaries, disassembly, call graphs, source identity and reports")
+  parser.add_argument("--allowances", type=Path, help="JSON of measured declared-edge allowances per target and deployed libc (with --mldsa-preparation)")
   args = parser.parse_args(argv)
 
   targets = args.target or list(ARCHES)
   if args.binary is not None and len(targets) != 1:
     parser.error("--binary requires exactly one --target")
+  if args.allowances is not None and not args.mldsa_preparation:
+    parser.error("--allowances applies only to --mldsa-preparation")
+  allowances = load_allowances(args.allowances) if args.allowances is not None else {}
+  allowance_sha256 = hashlib.sha256(args.allowances.read_bytes()).hexdigest() if args.allowances is not None else None
   if args.evidence is not None:
     args.evidence.mkdir(parents=True, exist_ok=False)
   source = source_identity()
@@ -953,7 +1133,15 @@ def main(argv: list[str] | None = None) -> int:
       shutil.copy2(binary, evidence / binary.name)
       binary = evidence / binary.name
     program = load(target, binary, evidence)
-    report = review_preparation(program) if args.mldsa_preparation else review(program, portable=args.portable)
+    if args.mldsa_preparation:
+      report = review_preparation(program, allowances=allowances.get(target))
+      report["allowances_file"] = (
+        {"path": str(args.allowances), "sha256": allowance_sha256} if args.allowances is not None else None
+      )
+      if evidence is not None and args.allowances is not None:
+        shutil.copy2(args.allowances, evidence / "allowances.json")
+    else:
+      report = review(program, portable=args.portable)
     report["binary"] = str(binary)
     report["portable"] = args.portable
     report["rustflags"] = args.rustflags

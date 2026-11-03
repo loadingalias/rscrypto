@@ -518,7 +518,7 @@ Release callers, and manual runs with no diagnostic input, keep the full require
 
 | Script             | Caller |
 | ------------------ | ------ |
-| `stack/frames.py`  | `just stack-frames [--target TARGET]... [--portable] [--rustflags FLAGS] [--json PATH]` |
+| `stack/frames.py`  | `just stack-frames [--target TARGET]... [--portable] [--rustflags FLAGS] [--json PATH] [--evidence DIR] [--mldsa-preparation [--allowances FILE]]` |
 | `stack/residue.py` | `just stack-residue [--board BOARD]... [--backend native\|portable]... [--output DIR]` |
 
 ### Frame review
@@ -554,14 +554,59 @@ The review fails when:
   cleanup edges. Reports show one shortest witness for each unresolved edge;
   the retained graph preserves alternate callers.
 
+#### Preparation bounds
+
+The preparation review reports two bounds for each root.
+
+- `owned_bound_bytes` covers the code linked into the artifact:
+  rscrypto and the linked parts of the Rust standard library.
+  Traversal stops at each declared edge.
+  A declared edge charges only its caller's frame and call slot.
+  For each edge, `declared_edges` lists the call sites and the maximum stack depth
+  at the edge's entry over all paths (`max_entry_depth_bytes`).
+- `whole_call_bound_bytes` composes the owned bound with a measured allowance for
+  each declared edge that the root reaches:
+  `max(owned bound, max over edges of (entry depth + allowance))`.
+  It is null until every reached edge has an allowance, and the review fails.
+  When a root's complete graph resolves, the static whole-call bound applies
+  without allowances. That requires a root that reaches no libc import.
+  `whole_call_bound_basis` names the rule that applied.
+
+The declared edges are a fixed set:
+
+- the libc imports `calloc`, `malloc`, `free`, `memcpy`, `memmove`, `memset`,
+  `memcmp`, and `bcmp`, named by a GOT relocation or a PLT stub;
+- `rscrypto-detection`: the exact `OnceLock<Detected>::initialize` instance
+  that `platform::caps()` uses for cold first-call detection in std builds;
+- `std-detect`: `std_detect::detect::cache::detect_and_initialize`, which fills
+  the standard library's feature cache. On AArch64 the `DataIndependentTiming`
+  guard reaches it through `is_aarch64_feature_detected!("dit")`.
+
+A detection edge includes the entry function's own frame and its complete subgraph.
+Any other import, IFUNC relocation, indirect transfer, missing frame record, or
+recursion keeps the owned bound null, and `owned_unresolved` lists it.
+An entry depth is null while the owned bound is null.
+`recorded_entry_depth_bytes` is then diagnostic information only.
+A renamed detection entry is not cut, so its subgraph stays unresolved.
+
+`--allowances FILE` supplies the measured allowances, as JSON:
+`{TARGET: {"libc": IDENTITY, "edges": {EDGE: BYTES}, "evidence": OPTIONAL}}`.
+An allowance is the stack an edge may use below the stack pointer at its entry,
+including its red zone and every callback it runs.
+It applies only to the named deployed libc, and for detection also to the kernel.
+The review rejects unknown edge names, negative or non-integer values, and a
+missing libc identity. It records the identity and the file's hash, and copies
+the file into the evidence directory. It cannot check how a value was measured.
+Without the file, every root that reaches a declared edge fails.
+
 Assumptions and limits:
 
 - libc `memcpy`, `memmove`, `memset`, `memcmp`, and `bcmp` count as frameless leaves plus the target red zone.
-  Each scrub report lists this assumption. Whole-call preparation reports make
-  no such assumption: allocator callbacks, memory imports, loader/IFUNC selection,
-  and cold capability detection require evidence from the deployment's libraries.
-  `whole_call_bound_bytes` is null whenever any edge or frame is unresolved.
-  The sum of known frames is then diagnostic information, not a stack bound.
+  Each scrub report lists this assumption. Preparation reports make no such
+  assumption. A declared edge needs a measured allowance, and every other
+  import and loader/IFUNC selection stays unresolved.
+  When the owned bound or the whole-call bound is null, the sum of known
+  frames is diagnostic information, not a stack bound.
 - Panic exits are listed but not counted, because the artifact uses `panic = "abort"`.
 - The tool does not check where the buffer sits inside the scrub frame.
   It checks only that the scrub's extent can hold the buffer.

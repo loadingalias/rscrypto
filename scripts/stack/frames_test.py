@@ -4,11 +4,21 @@
 from __future__ import annotations
 
 import dataclasses
+import json
 import re
 import tempfile
 from pathlib import Path
 
-from frames import Boundary, parse_disassembly, parse_dynamic_symbols, parse_stack_sizes, parse_symbols, review, review_preparation
+from frames import (
+  Boundary,
+  load_allowances,
+  parse_disassembly,
+  parse_dynamic_symbols,
+  parse_stack_sizes,
+  parse_symbols,
+  review,
+  review_preparation,
+)
 
 WORKER = "rscrypto::fixture::worker"
 SCRUB = "rscrypto::fixture::scrub_dead_stack"
@@ -356,10 +366,12 @@ def test_preparation_resolves_relative_calls_but_not_ifuncs_or_memory_imports() 
   dynamic = "8000 R_X86_64_RELATIVE *ABS*+0x2000"
   call = review_preparation(program("x86_64-unknown-linux-gnu", functions, dynamic), ["prepare"])["whole_calls"][0]
   assert call["whole_call_bound_bytes"] == 8 + 32 + 8 + 96 + 128, call
-  for relocation in ("8000 R_X86_64_IRELATIVE *ABS*+0x2000", "8000 R_X86_64_GLOB_DAT memcpy"):
+  assert call["whole_call_bound_basis"].startswith("static") and call["owned_bound_bytes"] == 272, call
+  for relocation, owned in (("8000 R_X86_64_IRELATIVE *ABS*+0x2000", None), ("8000 R_X86_64_GLOB_DAT memcpy", 8 + 32 + 8)):
     call = review_preparation(program("x86_64-unknown-linux-gnu", functions, relocation), ["prepare"])["whole_calls"][0]
     assert call["whole_call_bound_bytes"] is None and not call["assumptions"], call
     assert call["unresolved"][0]["reason"] == "external", call
+    assert call["owned_bound_bytes"] == owned, call
 
 
 def test_got_value_cannot_cross_an_unproved_control_flow_join() -> None:
@@ -410,6 +422,182 @@ def test_riscv_call_clobbers_an_auipc_temporary() -> None:
   assert call["whole_call_bound_bytes"] is None and call["unresolved"][0]["reason"] == "indirect", call
 
 
+DETECTION_ENTRY = (
+  "<std::sync::once_lock::OnceLock<rscrypto::platform::detect::Detected>>::initialize::"
+  "<<std::sync::once_lock::OnceLock<rscrypto::platform::detect::Detected>>::get_or_init"
+  "<rscrypto::platform::detect::detect_with_override>::{closure#0}, !>"
+)
+ALLOCATOR_IMPORTS = "8000 R_X86_64_GLOB_DAT calloc\n8008 R_X86_64_GLOB_DAT memcpy"
+
+
+def allocating_preparation() -> list[tuple[int, str, int | None, list[str]]]:
+  # prepare (32 B) calls calloc and memcpy itself, and memcpy again below helper (64 B).
+  return [
+    (0x1000, "prepare", 32, [
+      "1000: callq *0x7000(%rip) # 0x8000", "1006: callq 0x2000", "100b: callq *0x7000(%rip) # 0x8008", "1011: retq",
+    ]),
+    (0x2000, "helper", 64, ["2000: callq *0x6000(%rip) # 0x8008", "2006: retq"]),
+  ]
+
+
+def edges_by_name(call: dict) -> dict[str, dict]:
+  return {edge["name"]: edge for edge in call["declared_edges"]}
+
+
+def test_declared_libc_edges_charge_only_the_call_site() -> None:
+  call = review_preparation(program("x86_64-unknown-linux-gnu", allocating_preparation(), ALLOCATOR_IMPORTS), ["prepare"])["whole_calls"][0]
+  # Root return slot 8 + prepare 32 + call slot 8 + helper 64 + call slot 8; no callee frame or red zone.
+  assert call["owned_bound_bytes"] == 120, call
+  edges = edges_by_name(call)
+  assert set(edges) == {"calloc", "memcpy"} and {edge["kind"] for edge in edges.values()} == {"libc"}, call
+  assert edges["calloc"]["max_entry_depth_bytes"] == 8 + 32 + 8, edges
+  # memcpy is entered at 48 B from prepare and 120 B below helper; the deeper entry is its depth.
+  assert edges["memcpy"]["max_entry_depth_bytes"] == 120, edges
+  assert [(site["caller"], site["address"]) for site in edges["memcpy"]["call_sites"]] == [
+    ("helper", "0x2000"), ("prepare", "0x100b")
+  ], edges
+  # The whole-call bound stays null until both allowances are measured.
+  assert call["whole_call_bound_bytes"] is None and call["missing_allowances"] == ["calloc", "memcpy"], call
+  assert not call["passed"] and {item["path"][-1] for item in call["unresolved"]} == {"calloc", "memcpy"}, call
+
+
+def test_tail_calls_enter_declared_edges_at_the_callers_entry() -> None:
+  aarch64 = [
+    (0x1000, "prepare", 48, ["1000: bl 0x2000", "1004: add sp, sp, #0x30", "1008: b 0x9000 <free@plt>"]),
+    (0x2000, "helper", 16, ["2000: b 0x9010 <calloc@plt>"]),
+    (0x9000, "free@plt", None, ["9000: br x17"]),
+    (0x9010, "calloc@plt", None, ["9010: br x17"]),
+  ]
+  call = review_preparation(program("aarch64-unknown-linux-gnu", aarch64), ["prepare"])["whole_calls"][0]
+  edges = edges_by_name(call)
+  # prepare released its frame before branching to free; helper tail-branches to calloc.
+  assert edges["free"]["max_entry_depth_bytes"] == 0, edges
+  assert edges["calloc"]["max_entry_depth_bytes"] == 48, edges
+  assert call["owned_bound_bytes"] == 48 + 16 and not call["owned_unresolved"], call
+  x86 = [(0x1000, "prepare", 24, ["1000: jmpq *0x7000(%rip) # 0x8008"])]
+  call = review_preparation(program("x86_64-unknown-linux-gnu", x86, "8008 R_X86_64_GLOB_DAT free"), ["prepare"])["whole_calls"][0]
+  assert edges_by_name(call)["free"]["max_entry_depth_bytes"] == 8, call
+  # Without a call, prepare is a leaf and keeps its red zone, as before.
+  assert call["owned_bound_bytes"] == 8 + 24 + 128, call
+
+
+def test_undeclared_imports_keep_the_owned_bound_unresolved() -> None:
+  functions = [(0x1000, "prepare", 32, ["1000: callq *0x7000(%rip) # 0x8000", "1006: callq *0x7000(%rip) # 0x8008", "100c: retq"])]
+  for dynamic, unresolved in (
+    ("8000 R_X86_64_GLOB_DAT realloc\n8008 R_X86_64_GLOB_DAT calloc", "realloc"),
+    ("8000 R_X86_64_GLOB_DAT getauxval\n8008 R_X86_64_GLOB_DAT calloc", "getauxval"),
+    ("8000 R_X86_64_IRELATIVE *ABS*+0x2000\n8008 R_X86_64_GLOB_DAT calloc", "IFUNC resolver *ABS*+0x2000 (selected implementation unresolved)"),
+  ):
+    call = review_preparation(program("x86_64-unknown-linux-gnu", functions, dynamic), ["prepare"])["whole_calls"][0]
+    assert call["owned_bound_bytes"] is None and call["whole_call_bound_bytes"] is None, call
+    assert [(item["reason"], item["path"][-1]) for item in call["owned_unresolved"]] == [("external", unresolved)], call
+    # The declared edge is still reported, but its depth is not a bound while the owned graph is unresolved.
+    calloc = edges_by_name(call)["calloc"]
+    assert calloc["max_entry_depth_bytes"] is None and calloc["recorded_entry_depth_bytes"] == 48, calloc
+    assert any("unresolved owned call paths" in problem for problem in call["problems"]), call
+
+
+def test_cold_detection_is_cut_at_its_exact_entry() -> None:
+  def detecting(entry: str) -> dict:
+    functions = [
+      (0x1000, "prepare", 32, ["1000: callq 0x2000", "1005: retq"]),
+      (0x2000, "rscrypto::auth::mldsa::poly::Poly::ntt", 96, ["2000: callq 0x3000", "2005: retq"]),
+      (0x3000, entry, 48, ["3000: callq 0x4000", "3005: retq"]),
+      (0x4000, "<std::sys::sync::once::futex::Once>::call", None, ["4000: callq *%r14", "4003: callq *0x4000(%rip) # 0x8000"]),
+    ]
+    dynamic = "8000 R_X86_64_GLOB_DAT syscall"
+    return review_preparation(program("x86_64-unknown-linux-gnu", functions, dynamic), ["prepare"])["whole_calls"][0]
+
+  call = detecting(DETECTION_ENTRY)
+  # The detection frame (48 B) and its subgraph are outside the owned bound; the call slot into it is not.
+  assert call["owned_bound_bytes"] == 8 + 32 + 8 + 96 + 8 and not call["owned_unresolved"], call
+  detection = edges_by_name(call)["rscrypto-detection"]
+  assert detection["kind"] == "cold-detection" and detection["max_entry_depth_bytes"] == 152, detection
+  assert detection["call_sites"] == [{"caller": "rscrypto::auth::mldsa::poly::Poly::ntt", "address": "0x2000", "callee": DETECTION_ENTRY}]
+  # The whole-call traversal still descends into detection and keeps every blocker.
+  assert {(item["reason"], item["path"][-1]) for item in call["unresolved"]} == {
+    ("no frame record", "<std::sys::sync::once::futex::Once>::call"), ("indirect", "callq *%r14"), ("external", "syscall")
+  }, call
+  assert call["whole_call_bound_bytes"] is None and call["missing_allowances"] == ["rscrypto-detection"], call
+  # Another OnceLock initializer is not the declared entry; its subgraph stays owned and unresolved.
+  other = detecting(DETECTION_ENTRY.replace("platform::detect::Detected", "platform::Other"))
+  assert other["owned_bound_bytes"] is None and not other["declared_edges"], other
+  assert {item["reason"] for item in other["owned_unresolved"]} == {"no frame record", "indirect", "external"}, other
+
+
+def test_std_feature_cache_initialization_is_a_cold_detection_edge() -> None:
+  functions = [
+    (0x1000, "prepare", 64, ["1000: bl 0x3000", "1004: ret"]),
+    (0x3000, "std_detect::detect::cache::detect_and_initialize", 512, ["3000: bl 0x9000 <getauxval@plt>", "3004: blr x8"]),
+    (0x9000, "getauxval@plt", None, ["9000: br x17"]),
+  ]
+  call = review_preparation(program("aarch64-unknown-linux-gnu", functions), ["prepare"])["whole_calls"][0]
+  assert call["owned_bound_bytes"] == 64 and not call["owned_unresolved"], call
+  assert edges_by_name(call)["std-detect"]["max_entry_depth_bytes"] == 64, call
+  assert {item["path"][-1] for item in call["unresolved"]} == {"getauxval", "blr x8"}, call
+
+
+def test_owned_indirection_and_recursion_keep_the_owned_bound_null() -> None:
+  for body in (["2000: callq *%rax", "2002: retq"], ["2000: callq 0x1000", "2005: retq"]):
+    functions = [
+      (0x1000, "prepare", 32, ["1000: callq *0x7000(%rip) # 0x8000", "1006: callq 0x2000", "100b: retq"]),
+      (0x2000, "helper", 16, body),
+    ]
+    call = review_preparation(program("x86_64-unknown-linux-gnu", functions, ALLOCATOR_IMPORTS), ["prepare"])["whole_calls"][0]
+    assert call["owned_bound_bytes"] is None and call["whole_call_bound_bytes"] is None, call
+    assert [item["reason"] for item in call["owned_unresolved"]] in (["indirect"], ["recursion"]), call
+    assert edges_by_name(call)["calloc"]["max_entry_depth_bytes"] is None, call
+  # Allowances cannot compose an unresolved owned graph.
+  allowances = {"libc": "fixture libc", "edges": {"calloc": 64}}
+  call = review_preparation(program("x86_64-unknown-linux-gnu", functions, ALLOCATOR_IMPORTS), ["prepare"], allowances)["whole_calls"][0]
+  assert call["whole_call_bound_bytes"] is None and not call["passed"], call
+  missing_frame = [(0x1000, "prepare", 32, ["1000: callq 0x2000", "1005: retq"]), (0x2000, "helper", None, ["2000: retq"])]
+  call = review_preparation(program("x86_64-unknown-linux-gnu", missing_frame), ["prepare"])["whole_calls"][0]
+  assert call["owned_bound_bytes"] is None and call["owned_unresolved"][0]["reason"] == "no frame record", call
+
+
+def test_allowances_compose_the_whole_call_bound(directory: Path) -> None:
+  functions = allocating_preparation()
+
+  def compose(edges: dict[str, int]) -> dict:
+    allowances = {"libc": "fixture libc 1.0", "edges": edges}
+    return review_preparation(program("x86_64-unknown-linux-gnu", functions, ALLOCATOR_IMPORTS), ["prepare"], allowances)
+
+  # max(owned 120, calloc 48 + 1000, memcpy 120 + 10)
+  report = compose({"calloc": 1000, "memcpy": 10})
+  call = report["whole_calls"][0]
+  assert call["whole_call_bound_bytes"] == 1048 and call["passed"] and report["passed"], call
+  assert call["whole_call_bound_basis"] == "owned bound composed with measured declared-edge allowances", call
+  # A small allowance never lowers the bound below the owned frames.
+  assert compose({"calloc": 0, "memcpy": 0})["whole_calls"][0]["whole_call_bound_bytes"] == 120
+  assert compose({"calloc": 0, "memcpy": 900})["whole_calls"][0]["whole_call_bound_bytes"] == 1020
+  partial = compose({"calloc": 1000})["whole_calls"][0]
+  assert partial["whole_call_bound_bytes"] is None and partial["missing_allowances"] == ["memcpy"], partial
+  oversized = compose({"calloc": 8 * 1024 * 1024, "memcpy": 0})["whole_calls"][0]
+  assert oversized["whole_call_bound_bytes"] == 8 * 1024 * 1024 + 48 and not oversized["passed"], oversized
+
+  path = directory / "allowances.json"
+  for invalid in (
+    {"x86_64-unknown-linux-gnu": {"edges": {"calloc": 1}}},
+    {"x86_64-unknown-linux-gnu": {"libc": " ", "edges": {"calloc": 1}}},
+    {"x86_64-unknown-linux-gnu": {"libc": "glibc", "edges": {"realloc": 1}}},
+    {"x86_64-unknown-linux-gnu": {"libc": "glibc", "edges": {"calloc": -1}}},
+    {"x86_64-unknown-linux-gnu": {"libc": "glibc", "edges": {"calloc": True}}},
+    {"x86_64-unknown-linux-gnu": {"libc": "glibc", "edges": {}, "measured": "yes"}},
+    {"x86_64-apple-darwin": {"libc": "libSystem", "edges": {}}},
+  ):
+    path.write_text(json.dumps(invalid))
+    try:
+      load_allowances(path)
+    except SystemExit:
+      pass
+    else:
+      raise AssertionError(f"invalid allowances accepted: {invalid}")
+  valid = {"x86_64-unknown-linux-gnu": {"libc": "glibc 2.39", "edges": {"calloc": 1, "rscrypto-detection": 2}}}
+  path.write_text(json.dumps(valid))
+  assert load_allowances(path) == valid
+
+
 def main() -> None:
   with tempfile.TemporaryDirectory() as temporary:
     directory = Path(temporary)
@@ -433,6 +621,14 @@ def main() -> None:
   test_assembly_loop_cannot_hide_repeated_stack_growth()
   test_s390x_unlabelled_plt_keeps_allocator_edges_separate()
   test_riscv_call_clobbers_an_auipc_temporary()
+  test_declared_libc_edges_charge_only_the_call_site()
+  test_tail_calls_enter_declared_edges_at_the_callers_entry()
+  test_undeclared_imports_keep_the_owned_bound_unresolved()
+  test_cold_detection_is_cut_at_its_exact_entry()
+  test_std_feature_cache_initialization_is_a_cold_detection_edge()
+  test_owned_indirection_and_recursion_keep_the_owned_bound_null()
+  with tempfile.TemporaryDirectory() as temporary:
+    test_allowances_compose_the_whole_call_bound(Path(temporary))
   print("frames tests passed")
 
 
