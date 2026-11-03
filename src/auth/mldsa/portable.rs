@@ -15,12 +15,12 @@ fn index_byte(index: usize) -> u8 {
 }
 
 /// Expand matrix entries two streams at a time where the platform permuter runs two Keccak
-/// states together: SHA3 on AArch64 macOS and Linux, and AVX-512VL on Linux x86-64 when the CPU
+/// states together: SHA3 on AArch64 macOS and Linux, and AVX-512VL on Linux and Windows x86-64 when the CPU
 /// has it (without it the paired call runs the two permutations in turn).
 const PAIRED_MATRIX: bool = cfg!(all(
   any(
     all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
-    all(target_arch = "x86_64", target_os = "linux")
+    all(target_arch = "x86_64", any(target_os = "linux", target_os = "windows"))
   ),
   not(feature = "portable-only")
 ));
@@ -218,7 +218,7 @@ fn matrix_rows_triple_ntt<const L: usize>(
 fn quad_matrix() -> bool {
   #[cfg(all(
     target_arch = "x86_64",
-    target_os = "linux",
+    any(target_os = "linux", target_os = "windows"),
     not(miri),
     not(feature = "portable-only")
   ))]
@@ -228,7 +228,7 @@ fn quad_matrix() -> bool {
   }
   #[cfg(not(all(
     target_arch = "x86_64",
-    target_os = "linux",
+    any(target_os = "linux", target_os = "windows"),
     not(miri),
     not(feature = "portable-only")
   )))]

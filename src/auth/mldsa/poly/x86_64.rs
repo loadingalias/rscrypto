@@ -1,4 +1,4 @@
-//! Eight-lane ML-DSA arithmetic and challenge scans for Linux AVX2.
+//! Eight-lane ML-DSA arithmetic and challenge scans for Linux and Windows AVX2.
 //!
 //! Products and elementwise operations apply the portable canonical Montgomery arithmetic to
 //! lanes. The transforms use signed Montgomery multiplication with lazily reduced lanes and

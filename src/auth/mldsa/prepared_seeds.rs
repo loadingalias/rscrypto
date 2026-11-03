@@ -43,7 +43,7 @@ pub(super) fn copy(output: &mut [u8; 128], input: &[u8; 128]) {
   #[cfg(all(
     target_arch = "x86_64",
     target_feature = "sse2",
-    any(target_os = "macos", target_os = "linux"),
+    any(target_os = "macos", target_os = "linux", target_os = "windows"),
     not(feature = "portable-only"),
     not(miri)
   ))]
@@ -91,7 +91,7 @@ pub(super) fn copy(output: &mut [u8; 128], input: &[u8; 128]) {
     all(
       target_arch = "x86_64",
       target_feature = "sse2",
-      any(target_os = "macos", target_os = "linux"),
+      any(target_os = "macos", target_os = "linux", target_os = "windows"),
       not(feature = "portable-only"),
       not(miri)
     ),

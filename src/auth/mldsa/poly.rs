@@ -16,7 +16,7 @@ pub(super) mod aarch64;
 
 #[cfg(all(
   target_arch = "x86_64",
-  target_os = "linux",
+  any(target_os = "linux", target_os = "windows"),
   not(miri),
   not(feature = "portable-only")
 ))]
@@ -80,7 +80,7 @@ impl Poly {
   pub(super) fn ntt(&mut self) {
     #[cfg(all(
       target_arch = "x86_64",
-      target_os = "linux",
+      any(target_os = "linux", target_os = "windows"),
       not(miri),
       not(feature = "portable-only")
     ))]
@@ -106,7 +106,7 @@ impl Poly {
     }
     #[cfg(all(
       target_arch = "x86_64",
-      target_os = "linux",
+      any(target_os = "linux", target_os = "windows"),
       not(miri),
       not(feature = "portable-only")
     ))]
@@ -182,7 +182,7 @@ impl Poly {
   pub(super) fn inverse_ntt(&mut self) {
     #[cfg(all(
       target_arch = "x86_64",
-      target_os = "linux",
+      any(target_os = "linux", target_os = "windows"),
       not(miri),
       not(feature = "portable-only")
     ))]
@@ -208,7 +208,7 @@ impl Poly {
     }
     #[cfg(all(
       target_arch = "x86_64",
-      target_os = "linux",
+      any(target_os = "linux", target_os = "windows"),
       not(miri),
       not(feature = "portable-only")
     ))]
@@ -284,7 +284,7 @@ impl Poly {
   pub(super) fn product(&mut self, a: &Self, b: &[u32; N]) {
     #[cfg(all(
       target_arch = "x86_64",
-      target_os = "linux",
+      any(target_os = "linux", target_os = "windows"),
       not(miri),
       not(feature = "portable-only")
     ))]
@@ -349,7 +349,7 @@ impl Poly {
     }
     #[cfg(all(
       target_arch = "x86_64",
-      target_os = "linux",
+      any(target_os = "linux", target_os = "windows"),
       not(miri),
       not(feature = "portable-only")
     ))]
@@ -391,7 +391,7 @@ impl Poly {
   pub(super) fn row_product<const L: usize>(&mut self, a: &[[u32; N]; L], b: &[Self; L]) {
     #[cfg(all(
       target_arch = "x86_64",
-      target_os = "linux",
+      any(target_os = "linux", target_os = "windows"),
       not(miri),
       not(feature = "portable-only")
     ))]
@@ -430,7 +430,7 @@ impl Poly {
   pub(super) fn add_assign(&mut self, rhs: &Self) {
     #[cfg(all(
       target_arch = "x86_64",
-      target_os = "linux",
+      any(target_os = "linux", target_os = "windows"),
       not(miri),
       not(feature = "portable-only")
     ))]
@@ -470,7 +470,7 @@ impl Poly {
   pub(super) fn sub_assign(&mut self, rhs: &Self) {
     #[cfg(all(
       target_arch = "x86_64",
-      target_os = "linux",
+      any(target_os = "linux", target_os = "windows"),
       not(miri),
       not(feature = "portable-only")
     ))]
@@ -516,7 +516,7 @@ impl Poly {
   pub(super) fn high_bits_into(&self, gamma2: u32, out: &mut Self) {
     #[cfg(all(
       target_arch = "x86_64",
-      target_os = "linux",
+      any(target_os = "linux", target_os = "windows"),
       not(miri),
       not(feature = "portable-only")
     ))]
@@ -557,7 +557,7 @@ impl Poly {
   pub(super) fn low_bits_into(&self, gamma2: u32, out: &mut Self) {
     #[cfg(all(
       target_arch = "x86_64",
-      target_os = "linux",
+      any(target_os = "linux", target_os = "windows"),
       not(miri),
       not(feature = "portable-only")
     ))]
@@ -623,7 +623,7 @@ fn exceeds_bound_dispatch(a: &[u32; N], bound: u32) -> u32 {
 fn exceeds_bound_dispatch(a: &[u32; N], bound: u32) -> u32 {
   #[cfg(all(
     target_arch = "x86_64",
-    target_os = "linux",
+    any(target_os = "linux", target_os = "windows"),
     not(miri),
     not(feature = "portable-only")
   ))]
@@ -675,7 +675,7 @@ fn make_hints_dispatch(r: &mut [u32; N], t: &[u32; N], gamma2: u32) -> usize {
 fn make_hints_dispatch(r: &mut [u32; N], t: &[u32; N], gamma2: u32) -> usize {
   #[cfg(all(
     target_arch = "x86_64",
-    target_os = "linux",
+    any(target_os = "linux", target_os = "windows"),
     not(miri),
     not(feature = "portable-only")
   ))]
@@ -1106,7 +1106,7 @@ mod tests {
     ),
     all(
       target_arch = "x86_64",
-      target_os = "linux",
+      any(target_os = "linux", target_os = "windows"),
       not(miri),
       not(feature = "portable-only")
     )
@@ -1173,7 +1173,7 @@ mod tests {
     ),
     all(
       target_arch = "x86_64",
-      target_os = "linux",
+      any(target_os = "linux", target_os = "windows"),
       not(miri),
       not(feature = "portable-only")
     )
@@ -1268,7 +1268,7 @@ mod tests {
     ),
     all(
       target_arch = "x86_64",
-      target_os = "linux",
+      any(target_os = "linux", target_os = "windows"),
       not(miri),
       not(feature = "portable-only")
     )

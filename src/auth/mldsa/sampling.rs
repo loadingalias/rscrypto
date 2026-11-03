@@ -27,7 +27,7 @@ pub(super) const CHALLENGE_BYTES: usize = 221;
   test,
   all(
     target_arch = "x86_64",
-    target_os = "linux",
+    any(target_os = "linux", target_os = "windows"),
     not(miri),
     not(feature = "portable-only")
   ),
@@ -520,7 +520,7 @@ fn challenge_first_candidate(bytes: &[u8; CHALLENGE_BYTES], offset: u32, limit: 
 fn challenge_first_candidate(bytes: &[u8; CHALLENGE_BYTES], offset: u32, limit: u32) -> u32 {
   #[cfg(all(
     target_arch = "x86_64",
-    target_os = "linux",
+    any(target_os = "linux", target_os = "windows"),
     not(miri),
     not(feature = "portable-only")
   ))]
@@ -541,7 +541,7 @@ fn challenge_first_candidate(bytes: &[u8; CHALLENGE_BYTES], offset: u32, limit: 
 fn challenge_place(coefficients: &mut [u32; N], j: u32, sign: u32) -> u32 {
   #[cfg(all(
     target_arch = "x86_64",
-    target_os = "linux",
+    any(target_os = "linux", target_os = "windows"),
     not(miri),
     not(feature = "portable-only")
   ))]

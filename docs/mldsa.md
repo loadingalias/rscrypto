@@ -325,7 +325,7 @@ All paths use the same canonical coefficients and generated roots.
 | Build                                                          | Backend |
 | -------------------------------------------------------------- | ------- |
 | macOS and Linux AArch64, compile-time NEON, no `portable-only` | Original NEON transforms, products, accumulation, fused row product, matrix rejection sampling, norm checks, rounding, hint computation and application, and SampleInBall scans. |
-| Linux x86-64, no `portable-only`                               | Original AVX-512F transforms, products, and fused row product when available, with AVX2 fallbacks. AVX2 also handles accumulation, norm checks, rounding, hint computation, and SampleInBall scans, after cached CPU and OS capability detection. |
+| Linux and Windows x86-64, no `portable-only`                   | Original AVX-512F transforms, products, and fused row product when available, with AVX2 fallbacks. AVX2 also handles accumulation, norm checks, rounding, hint computation, and SampleInBall scans, after cached CPU and OS capability detection. |
 | Linux IBM Z and little-endian POWER, no `portable-only`        | Original z/Vector or POWER8 vector transforms, products, and accumulation, after cached CPU and OS capability detection. |
 | RISC-V32 and RISC-V64, compile-time M, no `portable-only`      | Original scalar Montgomery assembly within the common scalar transform schedule. No vector extension is needed. |
 | All other configurations                                       | Portable arithmetic. |
