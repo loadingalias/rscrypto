@@ -434,8 +434,10 @@ because callees may change the upper bits of `xmm6`-`xmm15`.
 
 `ct/full.py`, `ct/artifacts.sh`, `ct/validate.py`, and `ct/asm_heuristics.py` exit with status 3 when the
 evidence is complete and its findings fail the verdict. Other nonzero statuses mean missing or inconsistent evidence.
-The Constant-Time matrix jobs fail only for missing evidence, so a finding on one platform never cancels another
-platform's timing. The `verdict` job runs `ct/ci.py verdict` on every retained report and decides the run.
+The Constant-Time `evidence` matrix jobs fail only for missing evidence, so a finding on one platform never cancels
+another platform's timing. A green evidence job is not a passing report.
+After the whole matrix, one `PLATFORM verdict` job per platform runs `ct/ci.py verdict` on that platform's report,
+so each platform's status shows its findings. The `verdict` job decides the run from every report, including RISC-V.
 
 ### Transferred CT
 

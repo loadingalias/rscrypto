@@ -80,7 +80,7 @@ jobs:
         with:
           target: ${{ matrix.target }}
       # Status 3: the evidence is complete and its findings fail the verdict, which the
-      # verdict job decides from every platform's report. Other failures stop the job.
+      # platform verdict and verdict jobs decide from the reports. Other failures stop the job.
       - name: Prepare and validate exact target CT binaries
         run: |
           source "$HOME/.local/share/rscrypto-tooling/environment.sh"
@@ -104,7 +104,8 @@ jobs:
   ct:
     needs: [select, cross-build]
     if: ${{ !cancelled() && needs.select.result == 'success' && needs.select.outputs.native == 'true' && (needs.cross-build.result == 'success' || needs.cross-build.result == 'skipped') }}
-    name: ${{ matrix.platform }} (${{ inputs.diagnostic_case && 'diagnostic' || 'full' }})
+    # Success means complete evidence, not a passing report; see the platform verdict jobs.
+    name: ${{ matrix.platform }} evidence (${{ inputs.diagnostic_case && 'diagnostic' || 'full' }})
     strategy:
       fail-fast: true
       matrix: ${{ fromJSON(needs.select.outputs.matrix) }}
@@ -222,8 +223,39 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: scripts/lib/python.sh scripts/lib/dispatched_run.py cancel --state "$RUNNER_TEMP/riscv-run"
 
-  # Matrix jobs fail only for missing evidence, so a finding on one platform never
-  # cancels another platform's timing. This job decides the run from every report.
+  # Evidence jobs fail only for missing evidence, so a finding on one platform never
+  # cancels another platform's timing. These jobs start after the whole evidence
+  # matrix and give each platform a status from its own report.
+  platform-verdict:
+    needs: [select, ct]
+    if: ${{ !cancelled() && needs.select.result == 'success' && needs.select.outputs.native == 'true' && !inputs.diagnostic_case }}
+    name: ${{ matrix.platform }} verdict
+    strategy:
+      # Report every platform's verdict; none of these jobs measures anything.
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.select.outputs.matrix) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" # v7.0.1
+        with:
+          persist-credentials: false
+      # This job runs no installer; Python still runs through the catalog-pinned uv.
+      - name: Install the pinned uv
+        run: scripts/tooling/uv.sh x86_64-linux >>"$GITHUB_PATH"
+      # A missing archive is reported by the verdict step rather than failing here.
+      - name: Download this platform's CT evidence
+        continue-on-error: true
+        uses: "actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333" # v8.0.2
+        with:
+          name: ct-${{ matrix.platform }}-full
+          path: target/ct-verdict
+      - name: Decide this platform's constant-time verdict
+        env:
+          MATRIX: '{"include":[${{ toJSON(matrix) }}]}'
+        run: scripts/lib/python.sh scripts/ct/ci.py verdict target/ct-verdict
+
+  # This job decides the run from every report, including the dispatched RISC-V run.
   verdict:
     needs: [select, cross-build, ct, riscv64-linux]
     if: ${{ always() && needs.select.result == 'success' && !inputs.diagnostic_case }}

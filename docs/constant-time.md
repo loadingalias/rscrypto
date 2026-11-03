@@ -338,7 +338,8 @@ At `4a52f75c`, 12 RISC-V waivers were stale under condition identity:
 The gate also separates evidence from the verdict.
 A check whose evidence is complete but whose findings fail the verdict exits with status 3.
 Preparation, sealing, and timing continue,
-and the Constant-Time workflow's verdict job decides the run from every platform's report.
+and the Constant-Time workflow's per-platform verdict jobs report each platform's result
+after all timing ends. Its `verdict` job decides the run from every platform's report.
 A finding on one platform no longer cancels timing on the others,
 and diagnostic replays run while waivers await review.
 
