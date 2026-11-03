@@ -14,8 +14,8 @@ use bench_config::checked_routine;
 use core::hint::black_box;
 use criterion::{Criterion, Throughput};
 use rscrypto_provider_bench::{
-  BACKENDS, CREDENTIALS, Fixture, GROUPS, Profile, RSA_CREDENTIALS, SUITES, TLS12_CREDENTIALS, TLS12_GROUPS, Workload,
-  supports,
+  BACKENDS, CREDENTIALS, Fixture, GROUPS, OPT_IN_GROUPS, Profile, RSA_CREDENTIALS, SUITES, TLS12_CREDENTIALS,
+  TLS12_GROUPS, Workload, supports,
 };
 
 use rustls::enums::ProtocolVersion;
@@ -95,6 +95,30 @@ fn connections(c: &mut Criterion) {
             );
           }
         }
+      }
+    }
+  }
+}
+
+fn opt_in_groups(c: &mut Criterion) {
+  // The default groups above carry the full credential matrix. Opt-in groups
+  // hold the credential fixed so their rows compare key exchange alone.
+  for group in OPT_IN_GROUPS {
+    for suite in SUITES {
+      for resumed in [false, true] {
+        let mode = if resumed { "resumed" } else { "full" };
+        connection(
+          c,
+          &format!("tls13/handshake/p256/{group}/{suite}/{mode}"),
+          Profile {
+            credential: "p256",
+            group,
+            suite,
+            resumed,
+          },
+          Workload::Mutual,
+          ProtocolVersion::TLSv1_3,
+        );
       }
     }
   }
@@ -702,6 +726,7 @@ fn main() {
   }
   bench_config::run(&[
     connections,
+    opt_in_groups,
     expanded,
     traffic,
     key_schedule::key_schedule,

@@ -40,7 +40,7 @@ quinn-proto revision makes its browser-WASM `ring` dependency optional
 | ML-DSA authentication | Pure ML-DSA-44/65/87 with the empty TLS context; keys prepared once (or compact on request) and hedged signing | [sign](src/sign/mldsa.rs), [verify](src/verify.rs) |
 | QUIC Retry, reset, and address tokens | RFC 9001 AES-128-GCM Retry; HMAC-SHA256 reset tokens; HKDF-SHA256 and AES-256-GCM token keys | [quinn](src/quinn/) |
 | QUIC connection IDs | `ChaCha20Rng` nonces and initial IDs seeded from caller entropy; AES-128 connection-ID tags | [quinn](src/quinn/cid.rs) |
-| Key exchange | `X25519SecretKey`, `P256EphemeralSecret`, `P384EphemeralSecret`, `MlKem768` | [kx_group](src/kx_group.rs) |
+| Key exchange | `X25519SecretKey`, `P256EphemeralSecret`, `P384EphemeralSecret`, `MlKem768`, `MlKem1024` | [kx_group](src/kx_group.rs) |
 
 `cipher_suite::ALL_CIPHER_SUITES` lists enabled TLS 1.3 suites in preference order.
 AES suites need `hkdf` and `aes-gcm`; ChaCha20 needs `hkdf` and `chacha20poly1305`.
@@ -71,6 +71,29 @@ shared secret. It validates the ML-KEM encapsulation key before server key
 generation. A well-formed altered ciphertext retains ML-KEM's implicit rejection;
 the TLS Finished check rejects the resulting different secret. The classical
 component is available to rustls's fallback optimization.
+
+Four more groups are opt-in; no provider constructor offers them, so add them to
+a provider's `kx_groups` explicitly:
+
+| Group | Constant / caller-entropy type | Features | Client / server share, secret (bytes) |
+| --- | --- | --- | --- |
+| SecP256r1MLKEM768 (RFC 10024) | `SECP256R1MLKEM768` / `P256MlKem768Group` | `p256-ecdh`, `ml-kem` | 1,249 / 1,153, 64 |
+| SecP384r1MLKEM1024 (RFC 10024) | `SECP384R1MLKEM1024` / `P384MlKem1024Group` | `p384-ecdh`, `ml-kem` | 1,665 / 1,665, 80 |
+| MLKEM768 (draft-ietf-tls-mlkem-11) | `MLKEM768` / `MlKem768Group` | `ml-kem` | 1,184 / 1,088, 32 |
+| MLKEM1024 (draft-ietf-tls-mlkem-11) | `MLKEM1024` / `MlKem1024Group` | `ml-kem` | 1,568 / 1,568, 32 |
+
+Unlike X25519MLKEM768, the two NIST-curve hybrids put the uncompressed ECDHE
+share first in both shares and the ECDHE secret first in the shared secret. Each
+group checks exact share lengths, validates the encapsulation key (FIPS 203
+section 7.2) before server entropy, and validates the classical point; these
+failures are `illegal_parameter`. Pure ML-KEM offers no classical component and
+no fallback. Preference order and required-hybrid admission for these groups are
+not decided; `post_quantum_required_provider()` still offers only X25519MLKEM768.
+In-process tests agree with the pinned aws-lc-rs groups in both roles, with
+rustls's hybrid composer over aws-lc-rs and *ring* components (the only
+SecP384r1MLKEM1024 peers in the pinned rustls tree), and through full TLS 1.3
+handshakes; `just test-provider-interop --group NAME` adds OpenSSL 4.0.3 for all
+four and Go 1.27.3 for every group except MLKEM768.
 
 Malformed public shares and entropy failures never return a successful exchange.
 No new timing qualification is claimed.
@@ -181,7 +204,7 @@ whole-call stack paths. Preparation remains bound to the configuration; peer
 keys are not cached.
 
 For scoped entropy, construct caller-owned static `kx_group::X25519Group`,
-`P256Group`, `P384Group`, or `X25519MlKem768Group` values and `sign::Provider`
+`P256Group`, `P384Group`, `X25519MlKem768Group`, or opt-in group values and `sign::Provider`
 with the same `&'static dyn rustls::crypto::SecureRandom`. Assign them to the
 `CryptoProvider`'s `kx_groups` and `key_provider`, and assign that source to
 `secure_random`. Changing `secure_random` alone does not change existing groups

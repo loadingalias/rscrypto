@@ -161,14 +161,18 @@ Transcript contexts can be cloned; they contain public handshake data.
 
 ### rustls key exchange
 
-Each active exchange owns an rscrypto `X25519SecretKey`, `P256EphemeralSecret`,
-or `P384EphemeralSecret`. The hybrid also owns a boxed `MlKem768PreparedDecapsulationKey`,
-generated in prepared form directly into its allocation. Exchanges are neither cloneable nor
-formattable. Completing or abandoning an exchange drops those clearing owners.
+Each classical active exchange owns an rscrypto `X25519SecretKey`, `P256EphemeralSecret`,
+or `P384EphemeralSecret`. Each hybrid owns one of those and a boxed
+`MlKem768PreparedDecapsulationKey` (X25519MLKEM768, SecP256r1MLKEM768) or
+`MlKem1024PreparedDecapsulationKey` (SecP384r1MLKEM1024); a pure ML-KEM exchange owns only
+the boxed prepared decapsulation key. Each prepared key is generated directly into its
+allocation. Exchanges are neither cloneable nor formattable. Completing or abandoning an
+exchange drops those clearing owners.
 
 Primitive shared secrets remain in rscrypto's clearing owners until copied into
 rustls's clearing `SharedSecret`. Hybrid concatenation creates one 64-byte vector
-and moves it into that rustls owner. The borrowed component secrets clear on return.
+(80 bytes for SecP384r1MLKEM1024) and moves it into that rustls owner; pure ML-KEM copies
+its 32-byte secret. The borrowed component secrets clear on return.
 Public shares and ciphertexts carry no secret ownership obligation.
 
 ### rustls authentication

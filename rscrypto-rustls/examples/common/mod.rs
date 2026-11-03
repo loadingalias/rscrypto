@@ -43,8 +43,15 @@ pub(super) fn provider(suite: &str, groups: &str) -> Result<Arc<CryptoProvider>,
     .tls12_cipher_suites
     .to_mut()
     .retain(|item| format!("{:?}", item.common.suite) == suite);
-  // In the given order, which is the server's preference order.
-  let all = provider.kx_groups.to_vec();
+  // In the given order, which is the server's preference order. The opt-in
+  // groups are selectable by name but absent from the default list.
+  let mut all = provider.kx_groups.to_vec();
+  all.extend([
+    rscrypto_rustls::kx_group::SECP256R1MLKEM768,
+    rscrypto_rustls::kx_group::SECP384R1MLKEM1024,
+    rscrypto_rustls::kx_group::MLKEM768,
+    rscrypto_rustls::kx_group::MLKEM1024,
+  ]);
   provider.kx_groups = groups
     .iter()
     .filter_map(|name| all.iter().find(|item| format!("{:?}", item.name()) == *name).copied())

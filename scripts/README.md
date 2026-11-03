@@ -145,7 +145,9 @@ It does not download upstream archives.
   `benchmark_results/`; `--quick` selects one diagnostic profile and is not full
   qualification. `--protocol tls12` runs only the opt-in TLS 1.2 suites, with the
   classical credentials and groups and the extended master secret required;
-  `--protocol tls13` runs only the TLS 1.3 matrix. The ephemeral session files and exporter values protect only
+  `--protocol tls13` runs only the TLS 1.3 matrix. `--group NAME` (repeatable) restricts the TLS 1.3 groups,
+  including the provider's opt-in SecP256r1MLKEM768, SecP384r1MLKEM1024, MLKEM768, and MLKEM1024; Go 1.27.3 has
+  no MLKEM768, so those rows run against OpenSSL only. The ephemeral session files and exporter values protect only
   public test fixtures. The runner enforces timeouts and reaps peer processes.
 - `just test-provider-quic` runs the pinned quinn-proto and quinn 0.12 revisions through
   this provider against quic-go 0.61.0 (`579ee19d`) on Go 1.27.3. The peer builds

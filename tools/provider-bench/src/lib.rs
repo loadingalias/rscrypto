@@ -39,6 +39,9 @@ pub const RSA_CREDENTIALS: [&str; 5] = [
   "rsa4096-sha512",
 ];
 pub const GROUPS: [&str; 4] = ["X25519", "secp256r1", "secp384r1", "X25519MLKEM768"];
+/// The provider's opt-in groups. They have p256 handshake rows only; the
+/// default groups above carry the full credential matrix.
+pub const OPT_IN_GROUPS: [&str; 4] = ["secp256r1MLKEM768", "secp384r1MLKEM1024", "MLKEM768", "MLKEM1024"];
 pub const SUITES: [&str; 3] = ["AES128-GCM-SHA256", "AES256-GCM-SHA384", "CHACHA20-POLY1305-SHA256"];
 /// `rscrypto` installs the provider's prepared-anchor verifiers, its recommended
 /// configuration. `rscrypto-webpki` uses rustls's WebPKI verifiers, as `aws-lc-rs`
@@ -46,10 +49,15 @@ pub const SUITES: [&str; 3] = ["AES128-GCM-SHA256", "AES256-GCM-SHA384", "CHACHA
 pub const BACKENDS: [&str; 5] = ["rscrypto", "rscrypto-webpki", "aws-lc-rs", "ring", "openssl"];
 
 /// Whether `backend` implements every algorithm `profile` needs. *ring* has no
-/// ML-KEM or ML-DSA, so those profiles have no `ring` row rather than a substitute.
+/// ML-KEM or ML-DSA, and the pinned aws-lc-rs provider has no
+/// SecP384r1MLKEM1024, so those profiles have no row rather than a substitute.
 #[must_use]
 pub fn supports(backend: &str, profile: Profile<'_>) -> bool {
-  backend != "ring" || !(profile.group.contains("MLKEM") || profile.credential.starts_with("mldsa"))
+  match backend {
+    "ring" => !(profile.group.contains("MLKEM") || profile.credential.starts_with("mldsa")),
+    "aws-lc-rs" => profile.group != "secp384r1MLKEM1024",
+    _ => true,
+  }
 }
 
 /// Largest TLS record plaintext.
@@ -98,10 +106,10 @@ impl Profile<'_> {
     Profile {
       credential: canonical(&credentials, self.credential),
       group: canonical(
-        if version == ProtocolVersion::TLSv1_2 {
-          &TLS12_GROUPS
+        &if version == ProtocolVersion::TLSv1_2 {
+          TLS12_GROUPS.to_vec()
         } else {
-          &GROUPS
+          GROUPS.into_iter().chain(OPT_IN_GROUPS).collect()
         },
         self.group,
       ),
@@ -145,6 +153,10 @@ fn group(name: &str) -> NamedGroup {
     "secp256r1" => NamedGroup::secp256r1,
     "secp384r1" => NamedGroup::secp384r1,
     "X25519MLKEM768" => NamedGroup::X25519MLKEM768,
+    "secp256r1MLKEM768" => NamedGroup::secp256r1MLKEM768,
+    "secp384r1MLKEM1024" => NamedGroup::secp384r1MLKEM1024,
+    "MLKEM768" => NamedGroup::MLKEM768,
+    "MLKEM1024" => NamedGroup::MLKEM1024,
     _ => panic!("unknown group"),
   }
 }
@@ -601,6 +613,17 @@ impl Fixture {
         ),
         _ => panic!("unknown benchmark backend"),
       };
+      // Make each backend's opt-in groups selectable; the retain below keeps one.
+      match backend {
+        "rscrypto" | "rscrypto-webpki" => provider.kx_groups.to_mut().extend([
+          rscrypto_rustls::kx_group::SECP256R1MLKEM768,
+          rscrypto_rustls::kx_group::SECP384R1MLKEM1024,
+          rscrypto_rustls::kx_group::MLKEM768,
+          rscrypto_rustls::kx_group::MLKEM1024,
+        ]),
+        "aws-lc-rs" => provider.kx_groups = Cow::Borrowed(rustls_aws_lc_rs::ALL_KX_GROUPS),
+        _ => {}
+      }
       let (group, suite) = (group(profile.group), selected_suite(profile, version));
       let retry_group = provider
         .kx_groups

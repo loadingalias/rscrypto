@@ -56,6 +56,10 @@ def feature_matrix(root=ROOT):
             *[('kx-' + feature, ['getrandom', feature])
               for feature in ('x25519', 'p256-ecdh', 'p384-ecdh')],
             ('kx-hybrid', ['getrandom', 'x25519', 'ml-kem']),
+            # Opt-in groups: each NIST-curve hybrid and pure ML-KEM alone.
+            ('kx-p256-hybrid', ['getrandom', 'p256-ecdh', 'ml-kem']),
+            ('kx-p384-hybrid', ['getrandom', 'p384-ecdh', 'ml-kem']),
+            ('kx-mlkem', ['getrandom', 'ml-kem']),
             *[('sign-' + feature, ['getrandom', feature])
               for feature in ('ecdsa-p256', 'ecdsa-p384', 'ed25519', 'rsa', 'ml-dsa')],
             *runtime_matrix(),

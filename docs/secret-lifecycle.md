@@ -455,7 +455,9 @@ Key generation uses fallible entropy callbacks into the primitives' clearing
 scratch owners. Partial-fill failure propagates without a share. Malformed
 peer shares consume and drop the active exchange. Successful agreement copies
 the primitive result into rustls's clearing `SharedSecret`; hybrid fallback
-also drops the unused prepared ML-KEM decapsulation key. Ownership is listed in the
+also drops the unused prepared ML-KEM decapsulation key. The opt-in hybrids and
+pure ML-KEM groups follow the same paths; a failed server completion validates
+the peer encapsulation key before generating any secret. Ownership is listed in the
 [key-exchange inventory](secret-ownership.md#rustls-key-exchange).
 The adapter adds no raw private-key export or explicit secret duplication.
 Compiler-made moves and stack residue have not been separately qualified here.

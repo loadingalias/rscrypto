@@ -102,7 +102,7 @@ The `rscrypto-rustls` companion connects these primitives to rustls and Quinn:
 | Capability | Coverage |
 | --- | --- |
 | TLS | TLS 1.3; opt-in TLS 1.2 ECDHE suites |
-| Key exchange | X25519MLKEM768 hybrid (preferred), X25519, P-256, P-384 |
+| Key exchange | X25519MLKEM768 hybrid (preferred), X25519, P-256, P-384; opt-in SecP256r1MLKEM768, SecP384r1MLKEM1024, MLKEM768, MLKEM1024 |
 | Authentication | ECDSA P-256/P-384, Ed25519, RSA; opt-in ML-DSA-44/65/87 (`ml-dsa`) |
 | QUIC | QUIC v1 through Quinn (`quinn`, opt-in) |
 

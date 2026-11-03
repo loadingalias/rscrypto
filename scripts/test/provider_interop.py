@@ -24,7 +24,12 @@ import openssl_peer
 FIXTURES = ROOT / 'rscrypto-rustls/tests/vectors/credentials'
 PAYLOAD = b'rscrypto provider interoperability\n'
 SUITES = ['TLS13_AES_128_GCM_SHA256', 'TLS13_AES_256_GCM_SHA384', 'TLS13_CHACHA20_POLY1305_SHA256']
-GROUPS = {'X25519': 'X25519', 'secp256r1': 'P-256', 'secp384r1': 'P-384', 'X25519MLKEM768': 'X25519MLKEM768'}
+# rustls group names and their OpenSSL names. The last four are opt-in provider groups.
+GROUPS = {'X25519': 'X25519', 'secp256r1': 'P-256', 'secp384r1': 'P-384', 'X25519MLKEM768': 'X25519MLKEM768',
+          'secp256r1MLKEM768': 'SecP256r1MLKEM768', 'secp384r1MLKEM1024': 'SecP384r1MLKEM1024',
+          'MLKEM768': 'MLKEM768', 'MLKEM1024': 'MLKEM1024'}
+# Go 1.27 crypto/tls implements every group above except pure ML-KEM-768.
+GO_UNSUPPORTED_GROUPS = {'MLKEM768'}
 # TLS 1.2 suites and their OpenSSL names. Hybrid groups are TLS 1.3 only.
 TLS12_SUITES = {
     'TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384': 'ECDHE-ECDSA-AES256-GCM-SHA384',
@@ -143,6 +148,8 @@ def main():
     parser.add_argument('--protocol', choices=('all', 'tls13', 'tls12'), default='all',
                         help='TLS 1.2 runs only the classical credentials')
     parser.add_argument('--quick', action='store_true', help='one profile for harness diagnosis')
+    parser.add_argument('--group', action='append', choices=sorted(GROUPS),
+                        help='restrict TLS 1.3 cases to these groups; repeatable')
     parser.add_argument('--output', type=Path)
     args = parser.parse_args()
     if os.name != 'posix':
@@ -179,7 +186,7 @@ def main():
                    (MLDSA_CREDENTIALS if args.profile != 'classical' else []))
     cases = []
     if args.protocol != 'tls12':
-        cases += itertools.product(credentials, SUITES, GROUPS)
+        cases += itertools.product(credentials, SUITES, args.group or GROUPS)
     if args.protocol != 'tls13':
         cases += [(kind, suite, group) for kind in credentials if kind in CREDENTIALS
                   for suite in TLS12_SUITES if ('_RSA_' in suite) == kind.startswith('rsa')
@@ -194,6 +201,8 @@ def main():
         pem(FIXTURES / f'{kind}-leaf-key.der', converted / f'{kind}-key.pem', 'PRIVATE KEY')
     completed = []
     for peer, (kind, suite, group), ours_client in itertools.product(peers, cases, (True, False)):
+        if peer == 'go' and group in GO_UNSUPPORTED_GROUPS:
+            continue
         name = f'{peer}-{kind}-{suite}-{group}-ours-' + ('client' if ours_client else 'server')
         common = [str(FIXTURES), kind, suite, group, '2']
         curve = CERTIFICATE_CURVES.get(kind) if tls12(suite) else None
