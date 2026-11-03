@@ -718,6 +718,40 @@ The review records, complete-function checks, current decisions and frozen artif
 definitions; its available older baseline does not establish the current condition identities. Static acceptance
 does not substitute for a passing full native campaign on the committed manifest.
 
+### Full Apple qualification, 2026-11-03
+
+The local full Apple gate passes at production commit `6926f298`, with sixteen
+freshly reviewed Apple RSA condition bindings overlaid in `ct.toml`. The exact
+checkout is `/private/tmp/rscrypto-gap2-ct-6926f298`, using `nightly-2026-10-24`
+on the physical Apple M1 Pro. No production operation, claim, exclusion,
+sampling requirement, or threshold changed.
+
+All 135 required cases pass, with 4,024,528 raw samples. The largest absolute
+t-statistic is 3.803, below the unchanged threshold of 10.
+Strict artifact validation and the zeroization sentinel pass. The scan retains
+78 accepted findings, zero stale bindings, and zero blocking findings.
+The 7,242 remaining review warnings stay visible under the existing Apple
+policy; native BINSEC is unsupported for Mach-O. This is the complete configured
+Apple evidence gate, not a formal proof of every instruction.
+
+The sixteen conditions use public output lengths, alignment, fixed-pattern
+indices, PSS bit lengths, or saved PSTATE.DIT. Their reviews trace saved frame
+slots and the ranges passed to intervening callees. Historical raw artifacts
+were unavailable, so the review establishes current operands directly and makes
+no baseline-equivalence claim. `ct.toml` retains the exact condition identities
+and rationales; no waiver was added or removed.
+
+Raw artifacts, current function excerpts and slices, per-condition decisions,
+commands, hashes, source identities, and the quiet-host receipt are retained in
+`docs/tasks/evidence/gap2-20261103/apple-condition-review/` and
+`docs/tasks/evidence/gap2-20261103/apple-ct-qualified/`.
+The original complete report with sixteen stale bindings remains in `apple-ct/`;
+it was not relabelled after the manifest renewal. See the
+[resource record](provider-resource-evidence.md#cleanup-and-timing) for scope.
+Owner-confirmed green workflows were accepted without polling. ML-DSA standard
+signing retains its variable-retry exclusion; G1-D traffic qualification remains
+deferred.
+
 ## Public decisions and exclusions
 
 Ordinary equality is allowed for public values, such as nonces, encoded public keys,
