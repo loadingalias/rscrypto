@@ -218,7 +218,15 @@ payloads are counted while both are live. It conservatively forgoes production
 System allocation's possible in-place reuse. It does not hide a moving
 reallocation's temporary allocation inside `System::realloc`.
 
-The selected qualification caps are 8 MiB of requested stack per worker, 1 MiB
+`--portable` selects `portable-only` for rscrypto; the default uses production
+dispatch. ML-DSA reports separately measure public-provider key loading, one
+signature, and destruction. Loading includes the owned DER copy and its cleanup,
+SPKI, shared owners, and preparation when selected. Signing includes the consumed
+signer and returned signature allocation, plus temporary preparation in compact
+mode. An independent AWS-LC verifier checks that signature outside the allocation
+interval. These are allocation/storage observations, with no latency measurement.
+
+The selected qualification caps are 8 MiB of stack per worker, 1 MiB
 of incremental heap per endpoint, 64 admitted handshakes and 8 MiB of shared
 prepared-key storage. The observer uses the stricter 1 MiB cap for an entire
 pair and the entire configuration-construction peak for the shared-key cap.
@@ -229,6 +237,9 @@ trust-anchor verifiers. `--workload compact`, `intermediate` and `stateful` sele
 the existing catalog workloads. A cap failure retains its report and exits
 nonzero. These observations do not establish whole-call stack bounds, hostile
 input bounds, or admission control in an application.
+The requested thread stack size does not prove the stack cap. Whole-call linked
+artifact analysis and runtime stack observations are separate evidence; see
+[provider resource qualification](../../docs/provider-resource-evidence.md).
 
 Run comparisons on the same quiet native machine with the same compiler, features,
 build profile and workload.

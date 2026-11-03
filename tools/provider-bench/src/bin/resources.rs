@@ -145,6 +145,70 @@ fn invalid_argument(message: &str) -> ! {
   std::process::exit(2);
 }
 
+/// Isolate configuration-bound key import/preparation from connection storage.
+/// This calls the public provider, including owned DER cleanup and signer drop.
+#[cfg(feature = "ml-dsa")]
+fn signing_key_resources(credential: &str, compact: bool) -> serde_json::Value {
+  use rustls::{
+    crypto::{KeyProvider, SignatureScheme},
+    pki_types::PrivateKeyDer,
+  };
+
+  let (der, scheme) = match credential {
+    "mldsa44" => (
+      &include_bytes!("../../../../rscrypto-rustls/tests/vectors/credentials/mldsa44-leaf-key.der")[..],
+      SignatureScheme::ML_DSA_44,
+    ),
+    "mldsa65" => (
+      &include_bytes!("../../../../rscrypto-rustls/tests/vectors/credentials/mldsa65-leaf-key.der")[..],
+      SignatureScheme::ML_DSA_65,
+    ),
+    "mldsa87" => (
+      &include_bytes!("../../../../rscrypto-rustls/tests/vectors/credentials/mldsa87-leaf-key.der")[..],
+      SignatureScheme::ML_DSA_87,
+    ),
+    _ => return serde_json::Value::Null,
+  };
+  let provider = rscrypto_rustls::sign::Provider::new(rscrypto_rustls::random::SECURE_RANDOM);
+  let provider = if compact { provider.compact() } else { provider };
+  let load = Interval::begin();
+  let key = provider
+    .load_private_key(PrivateKeyDer::try_from(der.to_vec()).expect("fixture DER"))
+    .expect("provider key import");
+  let load = load.end();
+  let sign = Interval::begin();
+  let signature = key
+    .choose_scheme(&[scheme])
+    .expect("selected ML-DSA scheme")
+    .sign(b"resource qualification")
+    .expect("provider signature");
+  let sign = sign.end();
+  // The independent provider checks the exact measured signature, outside the
+  // allocation interval. RFC 9881's SPKI header is 22 bytes for these fixtures.
+  let public = key.public_key().expect("provider public key");
+  rustls_aws_lc_rs::DEFAULT_TLS13_PROVIDER
+    .signature_verification_algorithms
+    .mapping()
+    .iter()
+    .find(|(candidate, _)| *candidate == scheme)
+    .expect("independent ML-DSA verifier")
+    .1[0]
+    .verify_signature(&public.as_ref()[22..], b"resource qualification", &signature)
+    .expect("independent signature verification");
+  drop(signature);
+  let destruction = Interval::begin();
+  drop(key);
+  let destruction = destruction.end();
+  json!({"form": if compact { "compact" } else { "prepared" }, "load": load, "sign": sign,
+         "destruction": destruction,
+         "boundary": "Load includes owned DER allocation/import/clearing, SPKI and key owners, and preparation when selected. Sign includes signer construction/destruction, returned signature allocation, and temporary preparation in compact mode. No elapsed-time measurement; no peer-key cache."})
+}
+
+#[cfg(not(feature = "ml-dsa"))]
+fn signing_key_resources(_credential: &str, _compact: bool) -> serde_json::Value {
+  serde_json::Value::Null
+}
+
 fn main() {
   if !cfg!(any(target_os = "macos", target_os = "linux")) {
     eprintln!("resources observes System usable sizes on macOS and Linux only");
@@ -273,6 +337,8 @@ fn main() {
     Err(mpsc::TryRecvError::Empty)
   ));
 
+  let signing_key = signing_key_resources(&args[0], workload == Workload::CompactKey);
+
   let construction_peak = construction["peak_increment_bytes"]
     .as_u64()
     .expect("construction peak is unsigned bytes");
@@ -288,6 +354,8 @@ fn main() {
   let report = json!({
     "credential": args[0], "group": args[1], "suite": args[2], "mode": args[3], "workload": args[4],
     "workers": workers, "single_pair_repetitions": repetitions,
+    "backend": if cfg!(feature = "portable-only") { "portable-only" } else { "production-auto" },
+    "signing_key": signing_key,
     "admission": {"capacity": workers, "overload_rejected_before_TLS_construction": true, "permits_returned_after_destruction": workers, "owner": "caller harness bounded std channel; no provider-global connection limit"},
     "configuration_and_preparation": construction,
     "single_pair": single,

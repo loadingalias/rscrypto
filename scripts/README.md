@@ -200,6 +200,10 @@ It does not download upstream archives.
   configuration/preparation, individual-pair and concurrent live-heap peaks,
   allocation counts, source and binary identity, and cap failures. It does not
   measure latency or establish static stack or hostile-input bounds.
+  `--portable` disables accelerated rscrypto backends. ML-DSA rows also isolate
+  public-provider key loading, signing, and destruction, including owned DER,
+  retained key storage, and compact mode's per-signature preparation. The exact
+  measured signature is checked by the independent AWS-LC verifier afterward.
 - Each ChaCha20 differential test must report execution of every backend marked runnable.
   All three tests must report the same inventory and target architecture.
   The inventory includes required features and availability.
@@ -497,6 +501,11 @@ Release callers, and manual runs with no diagnostic input, keep the full require
 ### Frame review
 
 `stack/frames.py` reviews each scrubbed secret-worker boundary in a linked release binary.
+`--mldsa-preparation` instead reviews owned and borrowed ML-DSA preparation for
+all three parameter sets, with separate roots that include successful destruction.
+Both kinds include recoverable error branches. `--evidence DIR` retains the binary,
+its hash, symbol tables, relocations, disassembly, complete parsed call graph,
+source hashes, compiler identity, and reports in a new directory.
 
 - It builds `tools/frame-review` with `-Z emit-stack-sizes` and the shipping release profile.
   The binary runs every ML-DSA and ML-KEM public operation once, and AES-GCM and
@@ -518,17 +527,29 @@ The review fails when:
 - a path cannot be bounded: a function without a frame record, an indirect transfer,
   an unresolved import, or recursion.
   These paths are reported, never dropped.
+  Traversal continues below missing frame records to retain their callbacks and
+  cleanup edges. Reports show one shortest witness for each unresolved edge;
+  the retained graph preserves alternate callers.
 
 Assumptions and limits:
 
 - libc `memcpy`, `memmove`, `memset`, `memcmp`, and `bcmp` count as frameless leaves plus the target red zone.
-  Each report lists this assumption.
+  Each scrub report lists this assumption. Whole-call preparation reports make
+  no such assumption: allocator callbacks, memory imports, loader/IFUNC selection,
+  and cold capability detection require evidence from the deployment's libraries.
+  `whole_call_bound_bytes` is null whenever any edge or frame is unresolved.
+  The sum of known frames is then diagnostic information, not a stack bound.
 - Panic exits are listed but not counted, because the artifact uses `panic = "abort"`.
 - The tool does not check where the buffer sits inside the scrub frame.
   It checks only that the scrub's extent can hold the buffer.
 - The review covers x86-64, AArch64, POWER, IBM Z, and RISC-V 64 Linux ELF binaries.
 - It is static build evidence for the reviewed compiler, target, and features.
   It does not run the binary.
+  The preparation roots use `Global`; they cannot bound arbitrary caller-supplied
+  allocators, enclosing TLS/worker frames, or asynchronous signal handlers.
+  Caller-owned prepared storage is outside the borrowed preparation call's frame.
+  `--binary` reviews a supplied artifact; its build configuration and source
+  identity need separate evidence.
 
 `stack/frames_test.py` (part of `just test-scripts`) checks the parsing and failure rules on synthetic disassembly for each architecture.
 

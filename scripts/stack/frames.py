@@ -17,11 +17,15 @@ uses `panic = "abort"`, so they terminate the process instead of returning.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
+import platform
 import re
+import shutil
 import subprocess
 import sys
+from datetime import datetime, timezone
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -128,9 +132,9 @@ PANIC_EXIT = re.compile(
   r"alloc::alloc::handle_alloc_error|alloc::raw_vec::handle_error|"
   r"std::process::abort|std::sys::pal::.*::abort_internal|core::cell::panic_already_)"
 )
-# libc memory primitives are leaf routines. They have no frame records, so the
-# review counts them as frameless leaves (plus the target red zone) and lists
-# the assumption in every report.
+# Historical scrub reviews assume these libc routines are leaves. Whole-call
+# preparation reviews do not make this assumption: imports and IFUNC selection
+# require evidence from the actual deployed libc and loader.
 EXTERNAL_LEAVES = {"memcpy", "memmove", "memset", "memcmp", "bcmp"}
 
 HEADER = re.compile(r"^([0-9a-f]+) <(.+)>:$")
@@ -154,6 +158,7 @@ class Function:
   frame: int | None = None
   edges: list[Edge] = field(default_factory=list)
   instructions: list[tuple[str, str]] = field(default_factory=list)
+  instruction_addresses: set[int] = field(default_factory=set)
 
 
 @dataclass
@@ -172,7 +177,8 @@ class Program:
         high = middle
     if low == 0:
       return None
-    return self.functions[self.starts[low - 1]]
+    function = self.functions[self.starts[low - 1]]
+    return function if address in function.instruction_addresses else None
 
   def named(self, pattern: re.Pattern[str]) -> list[Function]:
     return [function for function in self.functions.values() if pattern.search(function.demangled)]
@@ -271,7 +277,7 @@ def classify(target: str, mnemonic: str, operands: str) -> str | None:
       return "indirect-call"
     if mnemonic in {"br", "bcr"} or (mnemonic.startswith("b") and mnemonic.endswith("r")):
       return None if "%r14" in operands else "indirect-jump"
-    if mnemonic.startswith("j") or mnemonic.startswith("br"):
+    if mnemonic.startswith(("j", "br", "crj", "cgrj", "cij", "cgij", "clrj", "clgrj", "clij", "clgij")):
       return "branch"
     return None
   if arch.startswith("riscv"):
@@ -312,7 +318,7 @@ def riscv_jalr(operands: str, upper: dict[str, int]) -> tuple[str, int | None]:
 
 GOT_SLOT = re.compile(r"\*0x[0-9a-f]+\(%rip\)\s+#\s+0x([0-9a-f]+)")
 GOT_LOAD = re.compile(r"^-?0x[0-9a-f]+\(%rip\),\s*(%\w+)\s+#\s+0x([0-9a-f]+)")
-X86_CALLER_SAVED = {"%rax", "%rcx", "%rdx", "%rsi", "%rdi", "%r8", "%r9", "%r10", "%r11"}
+X86_PRESERVED_IMPORTS = {"%rbx", "%rbp", "%r12", "%r13", "%r14", "%r15"}
 
 
 def x86_destination(operands: str) -> str | None:
@@ -320,6 +326,63 @@ def x86_destination(operands: str) -> str | None:
   text = operands.split("#", 1)[0].strip()
   last = text.rsplit(",", 1)[-1].strip() if text else ""
   return last if re.fullmatch(r"%\w+", last) else None
+
+
+def x86_import_calls(rows, imports: dict[int, str | int]) -> dict[int, str | int]:
+  """Prove callee-saved GOT values at calls by meeting all CFG predecessors.
+
+  Only full-width loads into the ELF ABI's callee-saved registers are tracked.
+  A branch that bypasses a load, a partial-register write, or differing incoming
+  values makes the target unknown. Calls preserve these registers by the ABI.
+  """
+  by_function = {}
+  for function, address, mnemonic, operands in rows:
+    by_function.setdefault(function.address, []).append((address, mnemonic, operands))
+  resolved = {}
+  for instructions in by_function.values():
+    positions = {row[0]: index for index, row in enumerate(instructions)}
+    states = {0: {}}
+    pending = [0]
+    while pending:
+      index = pending.pop()
+      address, mnemonic, operands = instructions[index]
+      state = dict(states[index])
+      if mnemonic.startswith(("call", "j")):
+        register = operands.strip().removeprefix("*")
+        if register in state:
+          resolved[address] = state[register]
+        else:
+          resolved.pop(address, None)
+      else:
+        destination = x86_destination(operands)
+        copied = state.get(operands.split(",", 1)[0].strip()) if mnemonic == "movq" else None
+        if destination:
+          aliases = {"%ebx": "%rbx", "%bx": "%rbx", "%bl": "%rbx", "%bh": "%rbx",
+                     "%ebp": "%rbp", "%bp": "%rbp", "%bpl": "%rbp"}
+          destination = aliases.get(destination, re.sub(r"(%r1[2-5])[dwb]$", r"\1", destination))
+          state.pop(destination, None)
+          if copied is not None and destination in X86_PRESERVED_IMPORTS:
+            state[destination] = copied
+        if mnemonic.startswith(("xchg", "xadd", "mulx", "cmpxchg", "cpuid", "leave", "enter")):
+          state.clear()  # implicit or multiple destinations; no partial proof
+        load = GOT_LOAD.match(operands)
+        if mnemonic == "movq" and load and load.group(1) in X86_PRESERVED_IMPORTS:
+          if (value := imports.get(int(load.group(2), 16))) is not None:
+            state[load.group(1)] = value
+      successors = []
+      if mnemonic.startswith("j"):
+        destination = target_address(operands)
+        if destination in positions:
+          successors.append(positions[destination])
+      if not mnemonic.startswith(("ret", "jmp", "ud2")) and index + 1 < len(instructions):
+        successors.append(index + 1)
+      for successor in successors:
+        previous = states.get(successor)
+        merged = state if previous is None else {key: value for key, value in previous.items() if state.get(key) == value}
+        if previous is None or merged != previous:
+          states[successor] = dict(merged)
+          pending.append(successor)
+  return resolved
 
 
 AARCH64_SP_SUB = re.compile(r"^sp, sp, #(0x[0-9a-f]+|\d+)$")
@@ -336,27 +399,54 @@ def assembly_frame(target: str, function: Function) -> int | None:
   if not target.startswith("aarch64") or function.edges or not function.instructions:
     return None
   frame = 0
-  for mnemonic, operands in function.instructions:
+  decrements = []
+  branches = []
+  for address, (mnemonic, operands) in zip(sorted(function.instruction_addresses), function.instructions, strict=True):
     text = ANNOTATION.sub("", operands).strip()
+    if classify(target, mnemonic, operands) == "branch":
+      destination = target_address(operands)
+      if destination is None:
+        return None
+      branches.append((address, destination))
     if mnemonic == "sub" and text.startswith("sp,"):
       match = AARCH64_SP_SUB.match(text)
       if match is None:
         return None
       frame += int(match.group(1), 0)
+      decrements.append(address)
     elif match := AARCH64_SP_PREINDEX.search(text):
       frame += int(match.group(1), 0)
-    elif text.startswith("sp,") and not (mnemonic == "add" and re.match(r"^sp, sp, #", text)):
+      decrements.append(address)
+    elif "[sp]," in text:
+      match = re.search(r"\[sp\], #(-?(?:0x[0-9a-f]+|\d+))$", text)
+      if match is None:
+        return None
+      if (change := int(match.group(1), 0)) < 0:
+        frame -= change
+        decrements.append(address)
+    elif "[sp, #-" in text:
+      return None  # access below sp without a recorded stack adjustment
+    elif text.startswith("sp,") and not (mnemonic == "add" and AARCH64_SP_SUB.fullmatch(text)):
       return None
+  if any(destination <= decrement <= address for address, destination in branches for decrement in decrements):
+    return None  # a loop can repeat a stack decrement; static sum is not a bound
   return frame
 
 
-def parse_dynamic_symbols(text: str) -> dict[int, str]:
+def parse_dynamic_symbols(text: str) -> dict[int, str | int]:
   """Map each GOT slot with a symbolic dynamic relocation to its import."""
-  slots: dict[int, str] = {}
+  slots: dict[int, str | int] = {}
   for line in text.splitlines():
     fields = line.split()
-    if len(fields) == 3 and re.fullmatch(r"[0-9a-f]+", fields[0]) and not fields[2].startswith("*ABS*"):
-      slots[int(fields[0], 16)] = fields[2].split("@", 1)[0]
+    if len(fields) != 3 or re.fullmatch(r"[0-9a-f]+", fields[0]) is None:
+      continue
+    slot, relocation, value = int(fields[0], 16), fields[1], fields[2]
+    if "IRELATIVE" in relocation:
+      slots[slot] = f"IFUNC resolver {value} (selected implementation unresolved)"
+    elif value.startswith("*ABS*+") and relocation.endswith("_RELATIVE"):
+      slots[slot] = int(value.removeprefix("*ABS*+"), 0)
+    elif not value.startswith("*ABS*"):
+      slots[slot] = value.split("@", 1)[0]
   return slots
 
 
@@ -365,7 +455,7 @@ def parse_disassembly(
   text: str,
   symbols: dict[int, tuple[str, str]],
   sizes: dict[str, int],
-  imports: dict[int, str] | None = None,
+  imports: dict[int, str | int] | None = None,
 ) -> Program:
   functions: dict[int, Function] = {}
   for address, (mangled, demangled) in symbols.items():
@@ -390,23 +480,48 @@ def parse_disassembly(
       continue
     rows.append((current, int(instruction.group(1), 16), instruction.group(2), instruction.group(3) or ""))
 
+  if target.startswith("s390x"):
+    # Some linkers emit one .plt section label, without labels per import.
+    # Split only the exact larl/lg/br sequence whose GOT slot has a symbolic
+    # relocation. Treating the entire section as one callee connects every
+    # import to every caller and loses calloc/free's actual call sites.
+    entries = {}
+    for index in range(len(rows) - 2):
+      owner, address, mnemonic, operands = rows[index]
+      if owner.name != ".plt" or mnemonic != "larl" or not operands.startswith("%r1,"):
+        continue
+      slot = target_address(operands)
+      value = imports.get(slot) if imports else None
+      following = [(row[2], row[3].strip()) for row in rows[index + 1:index + 3]]
+      if isinstance(value, str) and following == [("lg", "%r1, 0(%r1)"), ("br", "%r1")]:
+        entries[address] = Function(address, f"{value}@plt", f"{value}@plt")
+    functions.update(entries)
+    active_entry = None
+    for index, (owner, address, mnemonic, operands) in enumerate(rows):
+      if owner.name != ".plt":
+        active_entry = None
+      elif address in entries:
+        active_entry = entries[address]
+      if active_entry is not None:
+        rows[index] = (active_entry, address, mnemonic, operands)
+
   program = Program(target, functions, sorted(functions))
+  x86_calls = x86_import_calls(rows, imports or {}) if target.startswith("x86_64") else {}
+  branch_targets = set()
+  for function, address, mnemonic, operands in rows:
+    function.instruction_addresses.add(address)
+    if classify(target, mnemonic, operands) == "branch":
+      if (destination := target_address(operands)) is not None:
+        branch_targets.add(destination)
   upper: dict[str, int] = {}
-  held: dict[str, str] = {}  # x86 registers loaded from a GOT slot
   previous: Function | None = None
   for function, address, mnemonic, operands in rows:
     if function is not previous:
       upper = {}
-      held = {}
       previous = function
     function.instructions.append((mnemonic, operands))
-    if target.startswith("x86_64") and not mnemonic.startswith(("call", "j")):
-      destination_register = x86_destination(operands)
-      if destination_register is not None:
-        held.pop(destination_register, None)
-      load = GOT_LOAD.match(operands)
-      if mnemonic.startswith("mov") and load is not None and imports and int(load.group(2), 16) in imports:
-        held[load.group(1)] = imports[int(load.group(2), 16)]
+    if address in branch_targets:
+      upper.clear()
     is_riscv = target.startswith("riscv")
     if is_riscv and mnemonic == "auipc":
       register, immediate = (part.strip() for part in operands.split(","))
@@ -434,28 +549,31 @@ def parse_disassembly(
       destination = target_address(operands) if kind in {"call", "branch"} else None
     if kind is None:
       continue
+    if is_riscv:
+      upper.clear()  # branch joins and calls end the straight-line auipc proof
     if kind in {"indirect-call", "indirect-jump"}:
       # A call through a GOT slot, directly or through a register loaded from
       # one, names its import in the dynamic relocations.
       slot = GOT_SLOT.search(operands)
-      register = operands.strip().removeprefix("*")
       stub = None
       if slot is not None and imports and int(slot.group(1), 16) in imports:
         stub = imports[int(slot.group(1), 16)]
-      elif operands.strip().startswith("*%") and register in held:
-        stub = held[register]
+      elif address in x86_calls:
+        stub = x86_calls[address]
       if stub is not None:
-        function.edges.append(Edge("import" if kind == "indirect-call" else "import-tail", address, name=stub))
-        if kind == "indirect-call":
-          held = {name: value for name, value in held.items() if name not in X86_CALLER_SAVED}
+        if isinstance(stub, int):
+          if stub in program.functions:
+            function.edges.append(Edge("call" if kind == "indirect-call" else "tail", address, target=stub))
+          else:
+            function.edges.append(Edge("external", address, target=stub))
+        else:
+          function.edges.append(Edge("import" if kind == "indirect-call" else "import-tail", address, name=stub))
         continue
       function.edges.append(Edge("indirect", address, name=f"{mnemonic} {operands}".strip()))
       continue
     if destination is None:
       function.edges.append(Edge("indirect", address, name=f"{mnemonic} {operands}".strip()))
       continue
-    if target.startswith("x86_64") and kind == "call":
-      held = {name: value for name, value in held.items() if name not in X86_CALLER_SAVED}
     callee = program.containing(destination)
     annotation = ANNOTATION.search(operands)
     if callee is None:
@@ -488,7 +606,7 @@ class Depth:
   assumptions: set[str]
 
 
-def depth_of(program: Program, root: Function) -> Depth:
+def depth_of(program: Program, root: Function, *, assume_memory_leaves: bool = True) -> Depth:
   arch = ARCHES[program.target]
   memo: dict[int, Depth] = {}
   active: list[int] = []
@@ -498,43 +616,50 @@ def depth_of(program: Program, root: Function) -> Depth:
       return memo[function.address]
     if function.address in active:
       cycle = [program.functions[address].demangled for address in active[active.index(function.address) :]]
-      return Depth(0, [function.demangled], [{"reason": "recursion", "path": cycle}], [], set(), set())
+      return Depth(0, [function.demangled], [{"reason": "recursion", "path": cycle, "address": hex(function.address)}], [], set(), set())
     active.append(function.address)
     name = function.demangled
     imported = external_name(program, function)
-    if imported in EXTERNAL_LEAVES:
+    if assume_memory_leaves and imported in EXTERNAL_LEAVES:
       result = Depth(arch.red_zone, [name], [], [], set(), {f"{imported}: external leaf, frame 0 + red zone"})
-    elif function.frame is None and (derived := assembly_frame(program.target, function)) is not None:
-      result = Depth(derived + arch.red_zone, [name], [], [], set(), {f"{name}: leaf assembly frame {derived} B"})
-    elif function.frame is None:
-      reason = "external" if imported is not None else "no frame record"
-      result = Depth(0, [name], [{"reason": reason, "path": [name]}], [], set(), set())
+    elif imported is not None:
+      result = Depth(0, [name], [{"reason": "external", "path": [name, imported], "address": hex(function.address)}], [], set(), set())
     else:
-      result = Depth(function.frame, [name], [], [], set(), set())
+      frame = function.frame
+      assumptions: set[str] = set()
+      if frame is None and (derived := assembly_frame(program.target, function)) is not None:
+        frame = derived
+        assumptions.add(f"{name}: leaf assembly frame {derived} B")
+      missing = [] if frame is not None else [{"reason": "no frame record", "path": [name], "address": hex(function.address)}]
+      # Keep walking when this frame is unknown. Otherwise its allocator
+      # callbacks, indirect calls, and cleanup edges disappear from the report.
+      # The numeric sum is NOT a bound whenever any path remains unresolved.
+      known_frame = frame if frame is not None else 0
+      result = Depth(known_frame, [name], missing, [], set(), assumptions)
       calls = [edge for edge in function.edges if edge.kind in {"call", "import"}]
       if not calls:
-        result.bytes = function.frame + arch.red_zone
+        result.bytes = known_frame + arch.red_zone
       for edge in function.edges:
         if edge.kind in {"import", "import-tail"}:
-          if edge.name in EXTERNAL_LEAVES:
+          if assume_memory_leaves and edge.name in EXTERNAL_LEAVES:
             result.assumptions.add(f"{edge.name}: external leaf, frame 0 + red zone")
-            base = function.frame + arch.call_slot if edge.kind == "import" else 0
+            base = known_frame + arch.call_slot if edge.kind == "import" else 0
             result.bytes = max(result.bytes, base + arch.red_zone)
           else:
-            result.unbounded.append({"reason": "external", "path": [name, str(edge.name)]})
+            result.unbounded.append({"reason": "external", "path": [name, str(edge.name)], "address": hex(edge.source)})
           if DETECTION.search(str(edge.name)):
             result.detection.append([name, str(edge.name)])
           continue
         if edge.kind in {"indirect", "external"}:
           label = edge.name or (f"{edge.target:#x}" if edge.target is not None else "?")
-          result.unbounded.append({"reason": edge.kind, "path": [name, label]})
+          result.unbounded.append({"reason": edge.kind, "path": [name, label], "address": hex(edge.source)})
           continue
         callee = program.functions[edge.target]
         if PANIC_EXIT.search(callee.demangled):
           result.panic_exits.add(callee.demangled)
           continue
         child = visit(callee)
-        base = function.frame + arch.call_slot if edge.kind == "call" else 0
+        base = known_frame + arch.call_slot if edge.kind == "call" else 0
         result.unbounded.extend({**item, "path": [name, *item["path"]]} for item in child.unbounded)
         result.detection.extend([name, *path] for path in child.detection)
         result.panic_exits |= child.panic_exits
@@ -544,6 +669,17 @@ def depth_of(program: Program, root: Function) -> Depth:
         if base + child.bytes > result.bytes:
           result.bytes = base + child.bytes
           result.path = [name, *child.path]
+    # Keep one shortest witness to each unresolved edge. The retained graph
+    # contains every edge, so this does not discard alternate callers. Without
+    # deduplication a shared cold-detection subgraph expands into thousands of
+    # repeated paths and obscures the actual blockers.
+    witnesses = {}
+    for item in result.unbounded:
+      identity = (item["reason"], item.get("address"), item["path"][-1])
+      if identity not in witnesses or len(item["path"]) < len(witnesses[identity]["path"]):
+        witnesses[identity] = item
+    result.unbounded = list(witnesses.values())
+    result.detection = list({tuple(path): path for path in result.detection}.values())
     active.pop()
     memo[function.address] = result
     return result
@@ -650,16 +786,68 @@ def review(program: Program, boundaries: list[Boundary] = BOUNDARIES, portable: 
   return {"target": program.target, "boundaries": results, "passed": all(item["passed"] for item in results)}
 
 
-def load(target: str, binary: Path) -> Program:
+PREPARATION_ROOTS = [
+  f"rscrypto_frame_review::prepare_{parameter}_{form}"
+  for parameter in (44, 65, 87)
+  for form in ("in", "borrowed", "owned_lifecycle", "borrowed_lifecycle")
+]
+
+
+def review_preparation(program: Program, roots: list[str] = PREPARATION_ROOTS) -> dict[str, object]:
+  """Whole-call accounting; no imported routine is silently assumed frameless."""
+  reports = []
+  for name in roots:
+    matches = program.named(re.compile(rf"^{re.escape(name)}$"))
+    if len(matches) != 1:
+      reports.append({"root": name, "whole_call_bound_bytes": None, "passed": False,
+                      "problems": [f"expected one linked root, found {len(matches)}"]})
+      continue
+    root = matches[0]
+    depth = depth_of(program, root, assume_memory_leaves=False)
+    recorded = depth.bytes + ARCHES[program.target].call_slot
+    bound = None if depth.unbounded else recorded
+    reports.append({
+      "root": name, "address": hex(root.address), "frame_bytes": root.frame,
+      "whole_call_bound_bytes": bound,
+      "recorded_frame_path_bytes": recorded,
+      "recorded_frame_path": depth.path,
+      "unresolved": depth.unbounded, "capability_detection": depth.detection,
+      "panic_exits_abort": sorted(depth.panic_exits), "assumptions": sorted(depth.assumptions),
+      "passed": bound is not None and bound <= 8 * 1024 * 1024,
+      "problems": (["unresolved call paths; recorded frame sum is not a whole-call bound"] if bound is None
+                   else ["exceeds the 8 MiB worker cap"] if bound > 8 * 1024 * 1024 else []),
+    })
+  return {
+    "target": program.target, "whole_calls": reports, "stack_cap_bytes": 8 * 1024 * 1024,
+    "scope": "Linked core preparation wrappers, including owned/borrowed destruction; not enclosing TLS, worker, signal-handler or arbitrary Allocator callbacks. All syntactically reachable return/error paths are included; abort paths are listed separately. Unknown frames never constitute a bound. Public storage supplied by the caller is outside the borrowed call's frame.",
+    "passed": all(item["passed"] for item in reports),
+  }
+
+
+def load(target: str, binary: Path, evidence: Path | None = None) -> Program:
   mangled = run("llvm-nm", "--defined-only", "-n", str(binary))
   demangled = run("llvm-nm", "--defined-only", "-n", "-C", str(binary))
   symbols = parse_symbols(mangled, demangled)
-  sizes = parse_stack_sizes(run("llvm-readobj", "--stack-sizes", str(binary)))
+  stack_sizes = run("llvm-readobj", "--stack-sizes", str(binary))
+  sizes = parse_stack_sizes(stack_sizes)
   if not sizes:
     raise SystemExit(f"{binary} has no .stack_sizes records; build it with -Z emit-stack-sizes")
   disassembly = run("llvm-objdump", "-d", "--no-show-raw-insn", str(binary))
-  imports = parse_dynamic_symbols(run("llvm-objdump", "-R", str(binary)))
-  return parse_disassembly(target, disassembly, symbols, sizes, imports)
+  relocations = run("llvm-objdump", "-R", str(binary))
+  imports = parse_dynamic_symbols(relocations)
+  program = parse_disassembly(target, disassembly, symbols, sizes, imports)
+  if evidence is not None:
+    for name, content in {"symbols.txt": mangled, "symbols-demangled.txt": demangled,
+                          "stack-sizes.txt": stack_sizes, "disassembly.txt": disassembly,
+                          "dynamic-relocations.txt": relocations}.items():
+      (evidence / name).write_text(content)
+    graph = [{"address": hex(function.address), "name": function.demangled, "frame_bytes": function.frame,
+              "edges": [{"kind": edge.kind, "source": hex(edge.source),
+                         "target": hex(edge.target) if edge.target is not None else None, "name": edge.name}
+                        for edge in function.edges]}
+             for function in program.functions.values()]
+    (evidence / "call-graph.json").write_text(json.dumps(graph, indent=2) + "\n")
+  return program
 
 
 def build(target: str, portable: bool, rustflags: list[str]) -> Path:
@@ -697,7 +885,15 @@ def build(target: str, portable: bool, rustflags: list[str]) -> Path:
 
 def markdown(report: dict[str, object]) -> str:
   lines = [f"## {report['target']}: {'pass' if report['passed'] else 'FAIL'}", ""]
-  for boundary in report["boundaries"]:
+  for call in report.get("whole_calls", []):
+    bound = call["whole_call_bound_bytes"]
+    lines.append(f"- `{call['root']}`: whole-call bound {str(bound) + ' B' if bound is not None else 'UNRESOLVED'}")
+    if "recorded_frame_path_bytes" in call:
+      lines.append(f"  - recorded frame path sum: {call['recorded_frame_path_bytes']} B (not a bound when unresolved)")
+    for item in call.get("unresolved", []):
+      lines.append(f"  - {item['reason']} at {item.get('address', '?')}: {' -> '.join(item['path'])}")
+    lines.extend(f"  - problem: {problem}" for problem in call["problems"])
+  for boundary in report.get("boundaries", []):
     lines.append(
       f"### {boundary['boundary']} (scrub {boundary['bound']} B, scrub frame {boundary['scrub_frame']} B)"
     )
@@ -718,6 +914,19 @@ def markdown(report: dict[str, object]) -> str:
   return "\n".join(lines)
 
 
+def source_identity() -> dict[str, object]:
+  names = subprocess.check_output(
+    ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z", "--",
+     "Cargo.toml", "Cargo.lock", "build.rs", "rust-toolchain.toml", ".cargo", ".config",
+     "src", "tools/frame-review", "scripts/stack", "scripts/ct/zig-cc.sh"], cwd=ROOT
+  ).decode().split("\0")
+  return {
+    "commit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(),
+    "files": {name: hashlib.sha256((ROOT / name).read_bytes()).hexdigest() if (ROOT / name).is_file() else None
+              for name in sorted(set(names) - {""})},
+  }
+
+
 def main(argv: list[str] | None = None) -> int:
   parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
   parser.add_argument("--target", action="append", help="target to build and review; repeatable (default: all)")
@@ -725,20 +934,49 @@ def main(argv: list[str] | None = None) -> int:
   parser.add_argument("--rustflags", default="", help="extra rustc flags for the build, space-separated")
   parser.add_argument("--binary", type=Path, help="review an existing binary (requires one --target)")
   parser.add_argument("--json", type=Path, help="write the full report as JSON")
+  parser.add_argument("--mldsa-preparation", action="store_true", help="review whole preparation and destruction calls instead of scrub boundaries; unresolved paths fail")
+  parser.add_argument("--evidence", type=Path, help="new directory retaining binaries, disassembly, call graphs, source identity and reports")
   args = parser.parse_args(argv)
 
   targets = args.target or list(ARCHES)
   if args.binary is not None and len(targets) != 1:
     parser.error("--binary requires exactly one --target")
+  if args.evidence is not None:
+    args.evidence.mkdir(parents=True, exist_ok=False)
+  source = source_identity()
   reports = []
   for target in targets:
     binary = args.binary or build(target, args.portable, args.rustflags.split())
-    report = review(load(target, binary), portable=args.portable)
+    evidence = args.evidence / target if args.evidence is not None else None
+    if evidence is not None:
+      evidence.mkdir()
+      shutil.copy2(binary, evidence / binary.name)
+      binary = evidence / binary.name
+    program = load(target, binary, evidence)
+    report = review_preparation(program) if args.mldsa_preparation else review(program, portable=args.portable)
     report["binary"] = str(binary)
     report["portable"] = args.portable
     report["rustflags"] = args.rustflags
+    report["binary_sha256"] = hashlib.sha256(binary.read_bytes()).hexdigest()
+    report["rustc"] = subprocess.check_output(["rustc", "-Vv"], text=True).strip()
+    report["source"] = source
+    report["source_unchanged"] = source == source_identity()
+    report["host"] = platform.platform()
+    report["generated_at"] = datetime.now(timezone.utc).isoformat()
+    report["command"] = sys.argv if argv is None else [sys.argv[0], *argv]
+    report["build_flags"] = ["-Z", "emit-stack-sizes", *args.rustflags.split()] if args.binary is None else None
+    report["build_provenance"] = "built by this invocation" if args.binary is None else "caller-supplied artifact; build/source configuration requires separate evidence"
+    if not report["source_unchanged"]:
+      report["passed"] = False
     reports.append(report)
     print(markdown(report))
+    if evidence is not None:
+      (evidence / "report.json").write_text(json.dumps(report, indent=2) + "\n")
+      (evidence / "report.md").write_text(markdown(report))
+      (evidence / "SHA256SUMS").write_text("".join(
+        f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.name}\n"
+        for path in sorted(evidence.iterdir()) if path.is_file() and path.name != "SHA256SUMS"
+      ))
   if args.json is not None:
     args.json.write_text(json.dumps(reports, indent=2) + "\n")
   return 0 if all(report["passed"] for report in reports) else 1

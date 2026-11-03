@@ -8,7 +8,7 @@ import re
 import tempfile
 from pathlib import Path
 
-from frames import Boundary, parse_disassembly, parse_dynamic_symbols, parse_stack_sizes, parse_symbols, review
+from frames import Boundary, parse_disassembly, parse_dynamic_symbols, parse_stack_sizes, parse_symbols, review, review_preparation
 
 WORKER = "rscrypto::fixture::worker"
 SCRUB = "rscrypto::fixture::scrub_dead_stack"
@@ -65,7 +65,7 @@ def test_s390x_detection_is_reported_not_dropped(directory: Path) -> None:
   assert not report["passed"]
   assert worker["depth"] == 816 + 400, worker
   assert len(worker["detection"]) == 1 and "platform::detect" in worker["detection"][0][-1]
-  assert [item["reason"] for item in worker["unbounded"]] == ["no frame record"], worker["unbounded"]
+  assert [item["reason"] for item in worker["unbounded"]] == ["no frame record", "indirect"], worker["unbounded"]
   assert worker["callers"] == [CALLER]
 
 
@@ -209,7 +209,7 @@ def test_x86_got_imports_call_slots_and_red_zone(directory: Path) -> None:
 
   functions[1] = (0x2000, WORKER, 64, ["    2000:      \tcallq\t*0x7008(%rip)           # 0x9008 <write+0x9008>"])
   worker = worker_report(review(program("x86_64-unknown-linux-gnu", functions, dynamic), [boundary(directory)]))
-  assert worker["unbounded"] == [{"reason": "external", "path": [WORKER, "getauxval"]}], worker
+  assert worker["unbounded"] == [{"reason": "external", "path": [WORKER, "getauxval"], "address": "0x2000"}], worker
   assert worker["detection"] == [[WORKER, "getauxval"]], worker
 
 
@@ -233,6 +233,14 @@ def test_x86_register_held_imports(directory: Path) -> None:
   assert [item["reason"] for item in overwritten["unbounded"]] == ["indirect"], overwritten
   clobbered = worker(load.format("%rax"), "    2007:      \tcallq\t0x4000 <leaf>", "    200c:      \tcallq\t*%rax")
   assert [item["reason"] for item in clobbered["unbounded"]] == ["indirect"], clobbered
+  partial = worker(load.format("%r12"), "2007: movl %eax, %r12d", "200a: callq *%r12")
+  assert [item["reason"] for item in partial["unbounded"]] == ["indirect"], partial
+  # A load dominating the entire loop remains proved at both calls. Clearing
+  # every join would hide this real import behind an unnecessary unknown edge.
+  loop = worker(load.format("%r12"), "2007: callq *%r12", "200a: jne 0x2007", "200c: callq *%r12")
+  assert not loop["unbounded"] and loop["assumptions"] == ["memcpy: external leaf, frame 0 + red zone"], loop
+  copied = worker(load.format("%r12"), "2007: movq %r12, %r13", "200a: movl %eax, %r12d", "200d: callq *%r13")
+  assert not copied["unbounded"] and copied["assumptions"] == ["memcpy: external leaf, frame 0 + red zone"], copied
 
 
 def test_aarch64_leaf_assembly_frames(directory: Path) -> None:
@@ -322,6 +330,86 @@ def test_record_parsers() -> None:
     raise AssertionError("misaligned symbol tables must be rejected")
 
 
+def test_preparation_never_turns_unknown_frames_into_a_bound() -> None:
+  functions = [
+    (0x1000, "prepare", 32, ["1000: callq 0x2000", "1005: callq 0x3000", "100a: retq"]),
+    (0x2000, "allocator_without_frame", None, ["2000: callq *0x6000(%rip) # 0x8000", "2005: retq"]),
+    (0x3000, "cleanup", 64, ["3000: callq *0x5008(%rip) # 0x8008", "3005: retq"]),
+  ]
+  dynamic = "8000 R_X86_64_GLOB_DAT calloc\n8008 R_X86_64_GLOB_DAT free"
+  report = review_preparation(program("x86_64-unknown-linux-gnu", functions, dynamic), ["prepare"])
+  call = report["whole_calls"][0]
+  assert not report["passed"] and call["whole_call_bound_bytes"] is None, call
+  assert call["frame_bytes"] == 32 and call["recorded_frame_path_bytes"] > 32
+  assert {(item["reason"], item["path"][-1]) for item in call["unresolved"]} == {
+    ("no frame record", "allocator_without_frame"), ("external", "calloc"), ("external", "free")
+  }, call
+  assert all("address" in item for item in call["unresolved"])
+  assert not review_preparation(program("x86_64-unknown-linux-gnu", functions), ["absent"])["passed"]
+
+
+def test_preparation_resolves_relative_calls_but_not_ifuncs_or_memory_imports() -> None:
+  functions = [
+    (0x1000, "prepare", 32, ["1000: callq *0x7000(%rip) # 0x8000", "1005: retq"]),
+    (0x2000, "leaf", 96, ["2000: retq"]),
+  ]
+  dynamic = "8000 R_X86_64_RELATIVE *ABS*+0x2000"
+  call = review_preparation(program("x86_64-unknown-linux-gnu", functions, dynamic), ["prepare"])["whole_calls"][0]
+  assert call["whole_call_bound_bytes"] == 8 + 32 + 8 + 96 + 128, call
+  for relocation in ("8000 R_X86_64_IRELATIVE *ABS*+0x2000", "8000 R_X86_64_GLOB_DAT memcpy"):
+    call = review_preparation(program("x86_64-unknown-linux-gnu", functions, relocation), ["prepare"])["whole_calls"][0]
+    assert call["whole_call_bound_bytes"] is None and not call["assumptions"], call
+    assert call["unresolved"][0]["reason"] == "external", call
+
+
+def test_got_value_cannot_cross_an_unproved_control_flow_join() -> None:
+  functions = [(0x1000, "prepare", 32, [
+    "1000: jne 0x1010", "1002: movq 0x7000(%rip), %r12 # 0x8000", "1010: callq *%r12", "1013: retq",
+  ])]
+  call = review_preparation(program("x86_64-unknown-linux-gnu", functions, "8000 R_X86_64_GLOB_DAT memcpy"), ["prepare"])["whole_calls"][0]
+  assert call["unresolved"][0]["reason"] == "indirect", call
+
+
+def test_branch_beyond_last_function_is_not_a_recursive_call() -> None:
+  functions = [(0x1000, "prepare", 32, ["1000: callq 0x9000", "1005: retq"])]
+  call = review_preparation(program("x86_64-unknown-linux-gnu", functions), ["prepare"])["whole_calls"][0]
+  assert call["unresolved"][0]["reason"] == "external", call
+  assert call["unresolved"][0]["path"][-1] == "0x9000", call
+
+
+def test_assembly_loop_cannot_hide_repeated_stack_growth() -> None:
+  functions = [(0x1000, "prepare", None, [
+    "1000: sub sp, sp, #16", "1004: cbnz x0, 0x1000", "1008: ret",
+  ])]
+  call = review_preparation(program("aarch64-unknown-linux-gnu", functions), ["prepare"])["whole_calls"][0]
+  assert call["whole_call_bound_bytes"] is None, call
+  assert call["unresolved"][0]["reason"] == "no frame record", call
+
+
+def test_s390x_unlabelled_plt_keeps_allocator_edges_separate() -> None:
+  functions = [
+    (0x1000, "prepare", 160, ["1000: brasl %r14, 0x2020", "1006: br %r14"]),
+    (0x2000, ".plt", None, [
+      "2000: br %r1", "2020: larl %r1, 0x8000", "2026: lg %r1, 0(%r1)", "202c: br %r1",
+      "2040: larl %r1, 0x8008", "2046: lg %r1, 0(%r1)", "204c: br %r1",
+    ]),
+  ]
+  dynamic = "8000 R_390_JMP_SLOT calloc\n8008 R_390_JMP_SLOT free"
+  call = review_preparation(program("s390x-unknown-linux-gnu", functions, dynamic), ["prepare"])["whole_calls"][0]
+  assert call["whole_call_bound_bytes"] is None, call
+  assert [item["path"][-1] for item in call["unresolved"]] == ["calloc"], call
+
+
+def test_riscv_call_clobbers_an_auipc_temporary() -> None:
+  functions = [
+    (0x1000, "prepare", 32, ["1000: auipc t0, 0x1", "1004: jal 0x3000", "1008: jalr t0", "100c: ret"]),
+    (0x2000, "stale_target", 16, ["2000: ret"]),
+    (0x3000, "clobbers_t0", 16, ["3000: li t0, 1", "3004: ret"]),
+  ]
+  call = review_preparation(program("riscv64gc-unknown-linux-gnu", functions), ["prepare"])["whole_calls"][0]
+  assert call["whole_call_bound_bytes"] is None and call["unresolved"][0]["reason"] == "indirect", call
+
+
 def main() -> None:
   with tempfile.TemporaryDirectory() as temporary:
     directory = Path(temporary)
@@ -338,6 +426,13 @@ def main() -> None:
     test_panic_exits_are_listed_and_not_counted(directory)
     test_target_and_portable_scoped_boundaries_are_skipped(directory)
   test_record_parsers()
+  test_preparation_never_turns_unknown_frames_into_a_bound()
+  test_preparation_resolves_relative_calls_but_not_ifuncs_or_memory_imports()
+  test_got_value_cannot_cross_an_unproved_control_flow_join()
+  test_branch_beyond_last_function_is_not_a_recursive_call()
+  test_assembly_loop_cannot_hide_repeated_stack_growth()
+  test_s390x_unlabelled_plt_keeps_allocator_edges_separate()
+  test_riscv_call_clobbers_an_auipc_temporary()
   print("frames tests passed")
 
 

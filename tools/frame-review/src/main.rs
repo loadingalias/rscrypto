@@ -13,8 +13,8 @@ use core::hint::black_box;
 
 use rscrypto::aead::{Nonce96, expert::AeadWithNonce};
 use rscrypto::{
-  Aes128Gcm, Aes128GcmKey, Aes256Gcm, Aes256GcmKey, ChaCha20Poly1305, ChaCha20Poly1305Key, Kem, MlDsa44, MlDsa44PreparedSecretKey,
-  MlDsa44PreparedSecretKeyStorage, MlDsa44SecretKey, MlDsa65, MlDsa65PreparedSecretKey,
+  Aes128Gcm, Aes128GcmKey, Aes256Gcm, Aes256GcmKey, ChaCha20Poly1305, ChaCha20Poly1305Key, Kem, MlDsa44,
+  MlDsa44PreparedSecretKey, MlDsa44PreparedSecretKeyStorage, MlDsa44SecretKey, MlDsa65, MlDsa65PreparedSecretKey,
   MlDsa65PreparedSecretKeyStorage, MlDsa65SecretKey, MlDsa87, MlDsa87PreparedSecretKey,
   MlDsa87PreparedSecretKeyStorage, MlDsa87SecretKey, MlDsaError, MlKem512, MlKem768, MlKem1024,
 };
@@ -22,7 +22,7 @@ use rscrypto::{
 // These wrappers preserve the actual preparation return type and keep an
 // inspectable call boundary after LTO, including borrowed preparation.
 macro_rules! preparation_boundaries {
-  ($owned:ident, $borrowed:ident, $secret:ty, $storage:ty, $prepared:ident) => {
+  ($owned:ident, $borrowed:ident, $owned_lifecycle:ident, $borrowed_lifecycle:ident, $secret:ty, $storage:ty, $prepared:ident) => {
     #[inline(never)]
     fn $owned(key: &$secret) -> Result<$prepared<Box<$storage>>, MlDsaError> {
       key.prepare_in(Global)
@@ -32,12 +32,33 @@ macro_rules! preparation_boundaries {
     fn $borrowed<'a>(key: &$secret, storage: &'a mut $storage) -> Result<$prepared<&'a mut $storage>, MlDsaError> {
       key.prepare(storage)
     }
+
+    // Include both successful destruction and preparation's recoverable error
+    // cleanup in the reviewed call graph. Returning the prepared key alone
+    // cannot establish the depth of its later allocator deallocation callback.
+    #[inline(never)]
+    fn $owned_lifecycle(key: &$secret) -> Result<(), MlDsaError> {
+      let prepared = $owned(key)?;
+      black_box(&prepared);
+      drop(prepared);
+      Ok(())
+    }
+
+    #[inline(never)]
+    fn $borrowed_lifecycle(key: &$secret, storage: &mut $storage) -> Result<(), MlDsaError> {
+      let prepared = $borrowed(key, storage)?;
+      black_box(&prepared);
+      drop(prepared);
+      Ok(())
+    }
   };
 }
 
 preparation_boundaries!(
   prepare_44_in,
   prepare_44_borrowed,
+  prepare_44_owned_lifecycle,
+  prepare_44_borrowed_lifecycle,
   MlDsa44SecretKey,
   MlDsa44PreparedSecretKeyStorage,
   MlDsa44PreparedSecretKey
@@ -45,6 +66,8 @@ preparation_boundaries!(
 preparation_boundaries!(
   prepare_65_in,
   prepare_65_borrowed,
+  prepare_65_owned_lifecycle,
+  prepare_65_borrowed_lifecycle,
   MlDsa65SecretKey,
   MlDsa65PreparedSecretKeyStorage,
   MlDsa65PreparedSecretKey
@@ -52,13 +75,15 @@ preparation_boundaries!(
 preparation_boundaries!(
   prepare_87_in,
   prepare_87_borrowed,
+  prepare_87_owned_lifecycle,
+  prepare_87_borrowed_lifecycle,
   MlDsa87SecretKey,
   MlDsa87PreparedSecretKeyStorage,
   MlDsa87PreparedSecretKey
 );
 
 macro_rules! mldsa {
-  ($profile:ty, $storage:ty, $owned:ident, $borrowed:ident, $seed:expr) => {{
+  ($profile:ty, $storage:ty, $owned:ident, $borrowed:ident, $owned_lifecycle:ident, $borrowed_lifecycle:ident, $seed:expr) => {{
     let (public, secret) = <$profile>::keypair_from_seed(black_box($seed)).expect("ML-DSA key generation");
     let signature = secret
       .sign_deterministic(black_box(b"frame review"), b"")
@@ -77,6 +102,9 @@ macro_rules! mldsa {
     public
       .verify_with_context(b"frame review", b"", &hedged)
       .expect("ML-DSA verification");
+    drop(prepared);
+    $borrowed_lifecycle(&secret, &mut storage).expect("ML-DSA borrowed preparation lifecycle");
+    $owned_lifecycle(&secret).expect("ML-DSA owned preparation lifecycle");
     let allocated = $owned(&secret).expect("ML-DSA allocated preparation");
     let hedged = allocated
       .sign_with(b"frame review", b"", |out| {
@@ -154,6 +182,8 @@ fn main() {
     MlDsa44PreparedSecretKeyStorage,
     prepare_44_in,
     prepare_44_borrowed,
+    prepare_44_owned_lifecycle,
+    prepare_44_borrowed_lifecycle,
     &[1; 32]
   );
   mldsa!(
@@ -161,6 +191,8 @@ fn main() {
     MlDsa65PreparedSecretKeyStorage,
     prepare_65_in,
     prepare_65_borrowed,
+    prepare_65_owned_lifecycle,
+    prepare_65_borrowed_lifecycle,
     &[2; 32]
   );
   mldsa!(
@@ -168,6 +200,8 @@ fn main() {
     MlDsa87PreparedSecretKeyStorage,
     prepare_87_in,
     prepare_87_borrowed,
+    prepare_87_owned_lifecycle,
+    prepare_87_borrowed_lifecycle,
     &[3; 32]
   );
   mlkem!(MlKem512, 4);

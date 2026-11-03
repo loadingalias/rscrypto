@@ -666,6 +666,95 @@ fn allocated_prepared_keys_are_independent_and_shareable() {
   );
 }
 
+#[cfg(feature = "alloc")]
+#[test]
+fn allocated_prepared_secrets_are_cleared_before_deallocation() {
+  use alloc::alloc::Global;
+  use core::{
+    alloc::{AllocError, Allocator, Layout},
+    cell::Cell,
+    ptr::NonNull,
+  };
+
+  macro_rules! check {
+    ($profile:ident, $storage:ident, $p:ident) => {{
+      struct Observe<'a> {
+        allocations: &'a Cell<usize>,
+        deallocations: &'a Cell<usize>,
+        cleared: &'a Cell<bool>,
+      }
+
+      // SAFETY: allocations and deallocations, with their original layouts,
+      // pass through Global. This observer retains no allocation or reference.
+      unsafe impl Allocator for Observe<'_> {
+        fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
+          let allocation = Global.allocate(layout)?;
+          self.allocations.set(self.allocations.get().strict_add(1));
+          Ok(allocation)
+        }
+
+        unsafe fn deallocate(&self, pointer: NonNull<u8>, layout: Layout) {
+          assert_eq!(layout, Layout::new::<$storage>());
+          // SAFETY: this allocator is used only for Box<$storage> in
+          // prepare_in below. Its drop glue ran, but Global still owns the
+          // live allocation. The storage contains only initialized integer
+          // arrays, which remain valid after their clearing destructors.
+          // This borrow ends before the allocation is released.
+          let storage = unsafe { pointer.cast::<$storage>().as_ref() };
+          let cleared = storage.state.is_clear() && storage.seeds.as_array() == &[0; 128];
+          self.cleared.set(self.cleared.get() && cleared);
+          self.deallocations.set(self.deallocations.get().strict_add(1));
+          // SAFETY: the pointer and original layout are forwarded to the
+          // allocator that created them, after the last observation.
+          unsafe { Global.deallocate(pointer, layout) };
+        }
+      }
+
+      let allocations = Cell::new(0usize);
+      let deallocations = Cell::new(0usize);
+      let cleared = Cell::new(true);
+      let observer = Observe {
+        allocations: &allocations,
+        deallocations: &deallocations,
+        cleared: &cleared,
+      };
+      let (_, mut secret) = $profile::keypair_from_seed(&[0x5a; 32]).expect("key generation");
+      let prepared = secret.prepare_in(&observer).expect("allocated preparation");
+      assert_eq!(allocations.get(), 1, "one storage allocation per preparation");
+      assert_eq!(deallocations.get(), 0, "prepared key retains its allocation");
+      assert!(
+        !prepared.storage.state.is_clear(),
+        "observe nonzero transformed secrets"
+      );
+      assert_ne!(
+        prepared.storage.seeds.as_array(),
+        &[0; 128],
+        "observe nonzero seed fields"
+      );
+      drop(prepared);
+      assert_eq!(deallocations.get(), 1);
+      assert!(cleared.get(), "success clears secrets before allocator callback");
+
+      // Fault injection through this private test's key owner reaches the
+      // production recoverable decode failure after every polynomial was
+      // written. Public constructors reject this encoding before preparation.
+      let noise_end = 128usize.strict_add($p.eta_bits.strict_mul(32));
+      secret.bytes.as_mut_array()[128..noise_end].fill(0xff);
+      assert_eq!(
+        secret.prepare_in(&observer).map(|_| ()),
+        Err(MlDsaError::InvalidSecretKey)
+      );
+      assert_eq!(allocations.get(), 2, "failed preparation allocates storage once");
+      assert_eq!(deallocations.get(), 2, "failed preparation releases its storage");
+      assert!(cleared.get(), "failure clears secrets before allocator callback");
+    }};
+  }
+
+  check!(MlDsa44, MlDsa44PreparedSecretKeyStorage, P44);
+  check!(MlDsa65, MlDsa65PreparedSecretKeyStorage, P65);
+  check!(MlDsa87, MlDsa87PreparedSecretKeyStorage, P87);
+}
+
 #[test]
 fn signing_exhaustion_clears_output_and_preserves_reusable_state() {
   let prompt = vectors("sigGen-prompt");

@@ -269,6 +269,13 @@ erasure of every compiler-created copy, register, or spill.
   The storage clears them again on drop.
   When `prepare_in` was added (`44dfa51d`), its release frames on five Linux targets were at most
   2,240 bytes, so the storage was not built on the stack; residue of `prepare_in` is not measured.
+  The 2026-11-03 [provider resource review](provider-resource-evidence.md) retains
+  final linked preparation and destruction graphs for all three sets and both
+  dispatch configurations on those Linux targets. Allocator/library and indirect
+  edges remain unresolved, so these are not whole-call stack bounds. Its native,
+  portable, and Miri allocator regressions check that transformed secrets and all
+  128 seed bytes are zero before deallocation on success and recoverable failure.
+  The public matrix is intentionally outside that secret-clear obligation.
 - The 2026-10-16 macOS AArch64 signing-residue check found no selected secret
   windows after 240 compact/prepared, deterministic/hedged calls across all three
   parameter sets and native/portable dispatch. It includes NTT masks, rejected
@@ -277,6 +284,10 @@ erasure of every compiler-created copy, register, or spill.
   mutation validate the scanner.
   This checks the measured stack snapshots, not registers, heap residue or arbitrary
   smaller fragments. See the [qualification record](../benchmark_results/OVERVIEW.md#2026-10-16-ml-dsa-optimization-qualification).
+  A fresh 2026-11-03 run passed 192 signing calls across the same parameter,
+  key-form, mode, and dispatch dimensions, with eight message indices per row.
+  Its raw snapshots, controls, matched signatures, and limits are retained in the
+  [provider resource review](provider-resource-evidence.md#cleanup-and-timing).
 - Full target qualification is still open.
   See [ML-DSA](mldsa.md).
 

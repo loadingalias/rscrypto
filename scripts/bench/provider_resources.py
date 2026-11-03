@@ -24,6 +24,7 @@ def main():
     parser.add_argument('--workload', choices=('mutual', 'intermediate', 'compact', 'stateful'), default='mutual')
     parser.add_argument('--workers', type=int, default=64)
     parser.add_argument('--repetitions', type=int, default=8)
+    parser.add_argument('--portable', action='store_true', help='disable accelerated rscrypto backends')
     parser.add_argument('--output', type=Path)
     args = parser.parse_args()
     if not 1 <= args.workers <= 64 or not 1 <= args.repetitions <= 64:
@@ -33,7 +34,8 @@ def main():
     os.chdir(ROOT)
     build_environment()
     manifest = ROOT / 'tools/provider-bench/Cargo.toml'
-    build = ['cargo', 'build', '--locked', '--release', '--manifest-path', str(manifest), '--features', 'ml-dsa', '--bin', 'resources']
+    features = 'ml-dsa,portable-only' if args.portable else 'ml-dsa'
+    build = ['cargo', 'build', '--locked', '--release', '--manifest-path', str(manifest), '--features', features, '--bin', 'resources']
     source_evidence(output)
     with (output / 'build.log').open('wb') as log:
         subprocess.run(build, stdout=log, stderr=subprocess.STDOUT, check=True, timeout=600)

@@ -169,10 +169,16 @@ by draft-ietf-tls-mldsa-06. Pure ML-DSA and HashML-DSA remain separate; HashML-D
 keys and signatures do not enter this TLS profile. All three parameter sets
 support all-ML-DSA certificate chains. Keys are shared by `Arc`, and concurrent
 signers read the same prepared key. `sign::Provider::new(random).compact()` keeps
-compact keys (2,560, 4,032, or 4,896 bytes) instead; each signature then prepares
+compact keys instead. Their secret encodings occupy 2,560, 4,032, or 4,896 bytes;
+the compact owner also retains the public key, for 3,872, 5,984, or 7,488 bytes
+before allocator rounding and provider owners. Each signature then prepares
 temporary heap storage of the sizes above, so it expands the matrix once rather
 than in every rejection attempt, and produces the same signatures more slowly.
 Prepared secrets are cleared before their storage is freed.
+The [resource evidence](../docs/provider-resource-evidence.md) records allocation
+counts, shared and concurrent heap observations, cleanup checks, and unresolved
+whole-call stack paths. Preparation remains bound to the configuration; peer
+keys are not cached.
 
 For scoped entropy, construct caller-owned static `kx_group::X25519Group`,
 `P256Group`, `P384Group`, or `X25519MlKem768Group` values and `sign::Provider`
