@@ -57,6 +57,10 @@ every other deny rule, including wildcard checks, on the complete workspace grap
 `lib/workspace_features.py` qualifies each feature with its package name, including
 when Cargo-Rail selects only the provider. A workspace plan explicitly selects
 `--workspace`; Cargo's root-package default would omit the provider.
+Explicit `-p`/`--package` or `--exclude` runner arguments replace the wrapper's scope:
+`--exclude` alone adds `--workspace`, and the two cannot be combined. Native features
+then name only the selected packages and their workspace dependencies, which Cargo
+accepts; for example, `just test -- -p rscrypto --lib hmac` builds only the core.
 Coverage still measures core rscrypto
 and its corpus replays. Package checks and publication explicitly select rscrypto.
 

@@ -43,29 +43,51 @@ fi
 
 # Cargo feature selection belongs to this wrapper. Allowing forwarded feature
 # flags would let a command labelled native enable `portable-only` after the
-# dispatch profile was resolved.
-before_libtest=true
-for arg in "$@"; do
-  if [[ "$arg" == -- ]]; then
-    before_libtest=false
-    continue
-  fi
-  if [[ "$before_libtest" == true ]]; then
-    case "$arg" in
-      --all-features | --features | --features=* | -F | -F?*)
-        echo "Cargo feature selection must use the repository dispatch profile, not Nextest arguments: $arg" >&2
-        exit 2
-        ;;
-    esac
-  fi
+# dispatch profile was resolved. Explicit package selection is honored: the
+# wrapper then adds no --workspace, and native features name only the selected
+# packages, because Cargo rejects features of unselected packages.
+explicit_selection=()
+explicit_packages=false
+explicit_excludes=false
+explicit_workspace=false
+forwarded=("$@")
+for ((index = 0; index < ${#forwarded[@]}; index++)); do
+  arg=${forwarded[index]}
+  [[ "$arg" != -- ]] || break
+  case "$arg" in
+    --all-features | --features | --features=* | -F | -F?*)
+      echo "Cargo feature selection must use the repository dispatch profile, not Nextest arguments: $arg" >&2
+      exit 2
+      ;;
+    -p | --package | --exclude)
+      ((index + 1 < ${#forwarded[@]})) || { echo "$arg requires a package name" >&2; exit 2; }
+      index=$((index + 1))
+      if [[ "$arg" == --exclude ]]; then
+        explicit_excludes=true
+        explicit_selection+=(--exclude "${forwarded[index]}")
+      else
+        explicit_packages=true
+        explicit_selection+=(--package "${forwarded[index]}")
+      fi
+      ;;
+    -p?*) explicit_packages=true; explicit_selection+=(--package "${arg#-p}") ;;
+    --package=*) explicit_packages=true; explicit_selection+=(--package "${arg#--package=}") ;;
+    --exclude=*) explicit_excludes=true; explicit_selection+=(--exclude "${arg#--exclude=}") ;;
+    --workspace | --all) explicit_workspace=true ;;
+  esac
 done
+if [[ "$explicit_packages" == true && ( "$explicit_excludes" == true || "$explicit_workspace" == true ) ]]; then
+  echo "Select packages with --package, or the workspace with --workspace and --exclude, not both" >&2
+  exit 2
+fi
 
 if [[ "$dispatch_profile" == portable ]]; then
   feature_args=(--all-features)
   echo "Dispatch profile: portable-only (all Cargo features; accelerated dispatch disabled)"
 else
   PYTHON="$("$SCRIPT_DIR/../lib/python.sh" --print)"
-  native_features=$("$PYTHON" "$SCRIPT_DIR/../lib/workspace_features.py")
+  native_features=$("$PYTHON" "$SCRIPT_DIR/../lib/workspace_features.py" \
+    "${explicit_selection[@]:+${explicit_selection[@]}}")
   feature_args=(--no-default-features --features "$native_features")
   echo "Dispatch profile: production-auto (all feature roots except portable-only; production dispatch enabled)"
 fi
@@ -101,6 +123,14 @@ scope_status=0
 select_cargo_scope cargo.test "$force_all" || scope_status=$?
 if [[ "$scope_status" -gt 1 ]]; then
   exit "$scope_status"
+fi
+if [[ "$explicit_packages" == true || "$explicit_workspace" == true ]]; then
+  CARGO_ARGS=()
+  SCOPE_DESC="explicit packages"
+elif [[ "$explicit_excludes" == true ]]; then
+  # Cargo accepts --exclude only together with --workspace.
+  CARGO_ARGS=(--workspace)
+  SCOPE_DESC="workspace with explicit exclusions"
 fi
 
 if [[ "$scope_status" -eq 0 ]]; then

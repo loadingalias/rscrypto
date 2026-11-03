@@ -147,6 +147,34 @@ else:
       features = rows[0]['args'][rows[0]['args'].index('--features') + 1].split(',')
       assert not any(feature.endswith('/portable-only') for feature in features)
       assert {'rscrypto/hkdf', 'rscrypto-rustls/hkdf', 'rscrypto-rustls/ml-dsa'} <= set(features)
+    # Explicit package selection replaces the wrapper's workspace scope. Native
+    # features keep only selected packages and their workspace dependencies,
+    # because Cargo rejects features of packages the selection cannot reach.
+    def native(args):
+      return {feature.split('/')[0] for feature in args[args.index('--features') + 1].split(',')}
+    for args, packages in ((['--', '-p', 'rscrypto-rustls', '--lib'], {'rscrypto', 'rscrypto-rustls'}),
+                           (['--release', '--', '-p', 'rscrypto', '--lib', 'hmac_sha'], {'rscrypto'}),
+                           (['--', '-prscrypto', '--lib'], {'rscrypto'}),
+                           (['--', '--package=rscrypto', '--lib'], {'rscrypto'}),
+                           (['--all', '--release', '-p', 'rscrypto-rustls'], {'rscrypto', 'rscrypto-rustls'})):
+      result, rows = run(args)
+      assert result.returncode == 0 and len(rows) == 1, (args, result.stderr, rows)
+      assert '--workspace' not in rows[0]['args'], (args, rows)
+      assert native(rows[0]['args']) == packages, (args, rows)
+    for args in (['--', '--exclude', 'rscrypto-rustls', '--lib'], ['--', '--exclude=rscrypto-rustls']):
+      result, rows = run(args)
+      assert result.returncode == 0 and len(rows) == 1, (args, result.stderr, rows)
+      assert rows[0]['args'].count('--workspace') == 1 and native(rows[0]['args']) == {'rscrypto'}, rows
+    result, rows = run(['--', '--workspace', '--exclude', 'rscrypto-rustls'])
+    assert result.returncode == 0 and rows[0]['args'].count('--workspace') == 1, (result.stderr, rows)
+    result, rows = run(['--portable', '--', '-p', 'rscrypto', '--lib'])
+    assert result.returncode == 0 and '--workspace' not in rows[0]['args'] and '--all-features' in rows[0]['args']
+    # Arguments after libtest's separator are test filters, not package selection.
+    result, rows = run(['--', '--lib', '--', '-p'])
+    assert result.returncode == 0 and '--workspace' in rows[0]['args'], (result.stderr, rows)
+    for args in (['--', '-p', 'rscrypto', '--exclude', 'rscrypto-rustls'], ['--', '-p', 'unknown'], ['--', '-p']):
+      result, rows = run(args)
+      assert result.returncode == 2 and not rows, (args, result.stderr, rows)
     result, rows = run([])
     assert result.returncode == 0, result.stderr
     plan_rows = [row for row in rows if row['args'][:2] == ['rail', 'plan']]
