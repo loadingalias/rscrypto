@@ -68,6 +68,7 @@ mod pclmul {
   /// # Safety
   /// Caller must ensure the CPU supports PCLMULQDQ and SSE2.
   #[target_feature(enable = "pclmulqdq,sse2")]
+  #[inline]
   pub(super) unsafe fn clmul128_reduce(a: u128, b: u128) -> u128 {
     // SAFETY: target_feature gate guarantees PCLMULQDQ + SSE2.
     unsafe {
@@ -91,6 +92,33 @@ mod pclmul {
       let mut out = 0u128;
       _mm_storeu_si128(core::ptr::from_mut(&mut out).cast(), result);
       out
+    }
+  }
+
+  /// Fill `powers[i]` with `H^(i + 1)`, the operand of every GHASH window table.
+  ///
+  /// `H^(2m) = H^m · H^m` and `H^(2m + 1) = H^m · H^(m + 1)`, so each power depends only on
+  /// powers about half its exponent: the dependency depth is logarithmic instead of linear,
+  /// and every multiplication inlines here rather than calling the dispatched multiply.
+  /// Montgomery products compose (`M(H^a, H^b) = H^(a + b)` in this domain), so the results
+  /// equal the serial chain `H^(k + 1) = M(H^k, H)` exactly. Operand indices depend only on
+  /// the public table length.
+  ///
+  /// # Safety
+  /// Caller must ensure the CPU supports PCLMULQDQ and SSE2.
+  #[target_feature(enable = "pclmulqdq,sse2")]
+  pub(super) unsafe fn precompute_powers_tree<const N: usize>(h: u128, powers: &mut [u128; N]) {
+    let Some(first) = powers.first_mut() else {
+      return;
+    };
+    *first = h;
+    // Exponent k + 1 lives at index k; k >= 1 reads only indices below k.
+    for k in 1..N {
+      let exponent = k.strict_add(1);
+      let low = exponent.strict_div(2).strict_sub(1);
+      let high = exponent.strict_sub(exponent.strict_div(2)).strict_sub(1);
+      // SAFETY: the target-feature contract is this function's own; low and high are below k.
+      powers[k] = unsafe { clmul128_reduce(powers[low], powers[high]) };
     }
   }
 
@@ -1029,6 +1057,102 @@ mod rv_scalar_clmul {
 mod vpclmul {
   use core::arch::x86_64::*;
 
+  /// `mont_reduce_sse2` on each 128-bit lane.
+  ///
+  /// # Safety
+  /// Caller must ensure AVX-512F + AVX-512VL + AVX-512BW + AVX-512DQ + VPCLMULQDQ.
+  #[cfg(feature = "aes-gcm")]
+  #[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,vpclmulqdq,pclmulqdq,sse2")]
+  #[inline]
+  fn mont_reduce4(lo: __m512i, hi: __m512i) -> __m512i {
+    // Per-lane image of `pclmul::mont_reduce_sse2`: 64-bit element shifts stay within
+    // elements and the 8-byte shifts stay within each 128-bit lane.
+    let left = _mm512_xor_si512(
+      _mm512_xor_si512(_mm512_slli_epi64::<63>(lo), _mm512_slli_epi64::<62>(lo)),
+      _mm512_slli_epi64::<57>(lo),
+    );
+    let lo_folded = _mm512_xor_si512(lo, _mm512_bslli_epi128::<8>(left));
+    let right = _mm512_xor_si512(
+      _mm512_xor_si512(lo_folded, _mm512_srli_epi64::<1>(lo_folded)),
+      _mm512_xor_si512(_mm512_srli_epi64::<2>(lo_folded), _mm512_srli_epi64::<7>(lo_folded)),
+    );
+    let left2 = _mm512_xor_si512(
+      _mm512_xor_si512(_mm512_slli_epi64::<63>(lo_folded), _mm512_slli_epi64::<62>(lo_folded)),
+      _mm512_slli_epi64::<57>(lo_folded),
+    );
+    _mm512_xor_si512(_mm512_xor_si512(hi, right), _mm512_bsrli_epi128::<8>(left2))
+  }
+
+  /// Four lane-wise Montgomery products `M(a_i, b_i)`, each equal to `pclmul::clmul128_reduce`.
+  ///
+  /// # Safety
+  /// Caller must ensure AVX-512F + AVX-512VL + AVX-512BW + AVX-512DQ + VPCLMULQDQ.
+  #[cfg(feature = "aes-gcm")]
+  #[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,vpclmulqdq,pclmulqdq,sse2")]
+  #[inline]
+  fn mul4(a: __m512i, b: __m512i) -> __m512i {
+    let lo = _mm512_clmulepi64_epi128(a, b, 0x00);
+    let hi = _mm512_clmulepi64_epi128(a, b, 0x11);
+    let mid = _mm512_xor_si512(
+      _mm512_clmulepi64_epi128(a, b, 0x10),
+      _mm512_clmulepi64_epi128(a, b, 0x01),
+    );
+    let lo_128 = _mm512_xor_si512(lo, _mm512_bslli_epi128::<8>(mid));
+    let hi_128 = _mm512_xor_si512(hi, _mm512_bsrli_epi128::<8>(mid));
+    mont_reduce4(lo_128, hi_128)
+  }
+
+  /// Fill `powers[i]` with `H^(i + 1)` four lanes at a time.
+  ///
+  /// After the scalar `H .. H^4`, each step multiplies every existing group of four by
+  /// `H^k`, where `k` is the current table length, doubling the table: 31 vector products
+  /// for 128 powers, and each step's products are independent. Montgomery products compose
+  /// (`M(H^a, H^b) = H^(a + b)`), so every lane equals the serial chain exactly. All indices
+  /// depend only on the public table length.
+  ///
+  /// # Safety
+  /// Caller must ensure AVX-512F + AVX-512VL + AVX-512BW + AVX-512DQ + VPCLMULQDQ.
+  #[cfg(feature = "aes-gcm")]
+  #[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,vpclmulqdq,pclmulqdq,sse2")]
+  pub(super) fn precompute_powers<const N: usize>(h: u128, powers: &mut [u128; N]) {
+    // The caller selects this path only for N >= 4 with N a multiple of 4.
+    debug_assert!(N >= 4 && N.is_multiple_of(4));
+    // SAFETY: PCLMULQDQ and SSE2 are part of this function's target features.
+    unsafe {
+      powers[0] = h;
+      powers[1] = super::pclmul::clmul128_reduce(h, h);
+      powers[2] = super::pclmul::clmul128_reduce(powers[1], h);
+      powers[3] = super::pclmul::clmul128_reduce(powers[1], powers[1]);
+    }
+    let mut filled = 4usize;
+    while filled < N {
+      let count = filled.min(N.strict_sub(filled));
+      let (done, rest) = powers.split_at_mut(filled);
+      let factor = _mm512_broadcast_i32x4(u128_to_m128(done[filled.strict_sub(1)]));
+      for (source, target) in done[..count]
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(rest[..count].as_chunks_mut::<4>().0)
+      {
+        // SAFETY: each chunk is four initialized, contiguous u128 values (64 bytes), and
+        // unaligned loads and stores are permitted. `source` and `target` are disjoint.
+        unsafe {
+          let product = mul4(_mm512_loadu_si512(source.as_ptr().cast()), factor);
+          _mm512_storeu_si512(target.as_mut_ptr().cast(), product);
+        }
+      }
+      filled = filled.strict_add(count);
+    }
+  }
+
+  #[cfg(feature = "aes-gcm")]
+  #[inline]
+  fn u128_to_m128(value: u128) -> __m128i {
+    // SAFETY: SSE2 is the x86-64 baseline; the load reads the 16 initialized bytes of `value`.
+    unsafe { _mm_loadu_si128(core::ptr::from_ref(&value).cast()) }
+  }
+
   /// Reduce four already packed POLYVAL-domain lanes into one accumulator.
   ///
   /// # Safety
@@ -1862,11 +1986,57 @@ pub(super) fn precompute_powers(h: u128) -> [u128; 4] {
   [h, h2, h3, h4]
 }
 
+/// Number of reversed GHASH powers an x86-64 AES-GCM key keeps. Linux runs the 128-block kernels;
+/// other x86-64 targets use windows of at most 16 blocks.
+#[cfg(all(feature = "aes-gcm", target_arch = "x86_64", target_feature = "sse2"))]
+pub(super) const X86_GCM_POWERS: usize = if cfg!(target_os = "linux") { 128 } else { 16 };
+
+/// `[H^N, ..., H^2, H]` in the POLYVAL domain for x86-64 GHASH.
+///
+/// Every smaller window is a suffix of this one table, so key setup computes, stores and
+/// clears the powers once. Each suffix starts at a multiple of 64 bytes, so the alignment
+/// keeps every window's vector loads within cache lines.
+#[cfg(all(feature = "aes-gcm", target_arch = "x86_64", target_feature = "sse2"))]
+#[repr(C, align(64))]
+pub(super) struct X86GcmPowers([u128; X86_GCM_POWERS]);
+
+#[cfg(all(feature = "aes-gcm", target_arch = "x86_64", target_feature = "sse2"))]
+impl X86GcmPowers {
+  /// Precompute the table for the POLYVAL-domain hash key `h`.
+  #[inline]
+  pub(super) fn new(h: u128) -> Self {
+    let powers = precompute_powers_chained::<X86_GCM_POWERS>(h);
+    Self(core::array::from_fn(|i| {
+      powers[X86_GCM_POWERS.strict_sub(1).strict_sub(i)]
+    }))
+  }
+
+  /// `[H^K, ..., H]`, the suffix window for `K`-block GHASH.
+  #[inline]
+  pub(super) fn window<const K: usize>(&self) -> &[u128; K] {
+    const { assert!(K != 0 && K <= X86_GCM_POWERS && X86_GCM_POWERS.is_multiple_of(K)) };
+    &self.0.as_chunks::<K>().0[const { X86_GCM_POWERS / K - 1 }]
+  }
+
+  /// Clear the secret-derived powers.
+  #[inline]
+  pub(super) fn clear(&mut self) {
+    // SAFETY: H-power byte view because:
+    // 1. `[u128; X86_GCM_POWERS]` is a contiguous initialized array of `size_of_val` bytes.
+    // 2. `self` is mutably borrowed, so no alias observes the byte view.
+    crate::traits::ct::zeroize(unsafe {
+      core::slice::from_raw_parts_mut(self.0.as_mut_ptr().cast::<u8>(), core::mem::size_of_val(&self.0))
+    });
+  }
+}
+
 /// Precompute hash key powers [H, H^2, ..., H^N].
 ///
-/// Wide tables use eight independent chains: H through H^8 are serial, and every later
+/// On x86-64, a four-lane VPCLMULQDQ doubling schedule fills tables whose length is a multiple
+/// of four when AVX-512 is ready; otherwise PCLMULQDQ uses an inlined balanced recurrence.
+/// Other wide tables use eight independent chains: H through H^8 are serial, and every later
 /// power is `H^(i-8)·H^8`. Eligible 16-power GNU AArch64 setup uses a balanced chain with
-/// cheaper squares. Both recurrences produce the same Montgomery-domain powers.
+/// cheaper squares. All recurrences produce the same Montgomery-domain powers.
 #[cfg(feature = "aes-gcm")]
 pub(super) fn precompute_powers_chained<const N: usize>(h: u128) -> [u128; N] {
   // Initialize shared multiplication before the specialized setup as well:
@@ -1910,6 +2080,18 @@ pub(super) fn precompute_powers_chained<const N: usize>(h: u128) -> [u128; N] {
     next_pair!(5);
     next_pair!(6);
     next_pair!(7);
+    return powers;
+  }
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+  if N >= 4 && N.is_multiple_of(4) && current_caps().has(crate::platform::caps::x86::VPCLMUL_READY) {
+    // SAFETY: the capability gate establishes AVX-512F/VL/BW/DQ, VPCLMULQDQ and PCLMULQDQ.
+    unsafe { vpclmul::precompute_powers(h, &mut powers) };
+    return powers;
+  }
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+  if current_caps().has(crate::platform::caps::x86::PCLMULQDQ) {
+    // SAFETY: the capability gate establishes PCLMULQDQ; SSE2 is this target's baseline.
+    unsafe { pclmul::precompute_powers_tree(h, &mut powers) };
     return powers;
   }
   let serial = N.min(8);
@@ -2652,6 +2834,45 @@ mod tests {
       }
       assert_eq!(precompute_powers_chained::<16>(h)[..], chained[..16]);
       assert_eq!(precompute_powers_chained::<8>(h)[..], chained[..8]);
+    }
+  }
+
+  /// Each x86 power kernel, called directly, equals the portable serial chain. The dispatched
+  /// test above reaches only the kernel the host selects.
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm"))]
+  #[test]
+  fn x86_power_kernels_match_portable_serial_chain() {
+    use crate::platform::caps::x86;
+    let caps = current_caps();
+    for h in [
+      0,
+      1,
+      u128::MAX,
+      u128::from_le_bytes(RFC_H),
+      0x1287_3d5b_fedc_ba09_7654_3210_f0e1_d2c3,
+    ] {
+      let mut expected = [0u128; 128];
+      expected[0] = h;
+      for i in 1..128 {
+        expected[i] = clmul128_reduce_portable(expected[i - 1], h);
+      }
+      if caps.has(x86::PCLMULQDQ) {
+        let mut tree = [0u128; 128];
+        // SAFETY: the capability check establishes PCLMULQDQ; SSE2 is the target baseline.
+        unsafe { pclmul::precompute_powers_tree(h, &mut tree) };
+        assert_eq!(tree, expected, "scalar tree for H = {h:#x}");
+      }
+      if caps.has(x86::VPCLMUL_READY) {
+        let mut wide = [0u128; 128];
+        let mut short = [0u128; 16];
+        // SAFETY: the capability check establishes every feature of the four-lane kernel.
+        unsafe {
+          vpclmul::precompute_powers(h, &mut wide);
+          vpclmul::precompute_powers(h, &mut short);
+        }
+        assert_eq!(wide, expected, "four-lane kernel for H = {h:#x}");
+        assert_eq!(short[..], expected[..16]);
+      }
     }
   }
 

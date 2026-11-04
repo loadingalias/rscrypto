@@ -429,9 +429,9 @@ first span to the existing integrated seal kernel, which reads it directly. At m
 remaining plaintext is first encrypted through the stream path, and the kernel authenticates it
 as trailing ciphertext. Its `SealData` key copy follows the same tag overwrite and remaining-half
 clear.
-The AES-128-GCM context's private x86 wide-power group retains two initialized arrays,
-with no internal padding. Context drop clears their 1024 and 2048 bytes separately.
-Linux cache-line alignment changes placement, not cleanup ownership. The provider
+Each x86-64 AES-GCM context's private power table is one initialized array with no internal
+padding: 2048 bytes on Linux and 256 bytes on other x86-64 targets. Context drop clears it once.
+Its 64-byte alignment changes placement, not cleanup ownership. The provider
 construction scrub addresses copies within its reviewed stack region; construction
 through other callers, live registers, and unrelated object padding retain their
 separate qualification limits.

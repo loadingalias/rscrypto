@@ -68,12 +68,13 @@ process ID of the last refresh. Signing borrows the cache mutably, copies the
 pair into `RsaPrivateScratch`, and writes the next pair back. The cache never
 exposes the pair. See [cleanup boundaries](secret-lifecycle.md#rsa-blinding-cache).
 
-### AES-128-GCM wide tables
+### x86-64 AES-GCM power table
 
-The x86 AES-128-GCM context retains its 64- and 128-block GHASH tables in one private
-group. Linux aligns this group to 64 bytes. It contains the same two initialized arrays;
-the context retains cleanup ownership and clears both on drop. The group adds no copy,
-formatting, or export API. Compiler-created construction copies remain outside this inventory's proof.
+Each x86-64 AES-128-GCM and AES-256-GCM context retains one private, 64-byte-aligned table of
+reversed GHASH powers: 128 powers on Linux and 16 on other x86-64 targets. Every GHASH window
+borrows a suffix of this table. The context retains cleanup ownership and clears the whole table
+on drop. The table adds no copy, formatting, or export API. Compiler-created construction copies
+remain outside this inventory's proof.
 
 ### rustls symmetric adapters
 
