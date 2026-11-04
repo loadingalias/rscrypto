@@ -1993,4 +1993,120 @@ mod tests {
       }
     }
   }
+
+  /// Fills `out` from a SplitMix64 stream, so every state and message word differs.
+  fn splitmix_bytes(seed: u64, out: &mut [u8]) {
+    let mut state = seed;
+    for chunk in out.chunks_mut(8) {
+      state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+      let mut z = state;
+      z = (z ^ z.wrapping_shr(30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+      z = (z ^ z.wrapping_shr(27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+      z ^= z.wrapping_shr(31);
+      chunk.copy_from_slice(&z.to_le_bytes()[..chunk.len()]);
+    }
+  }
+
+  #[test]
+  fn blake2b_kernels_match_portable_compression() {
+    let caps = crate::platform::caps();
+    let portable = blake2b_compress_fn(Blake2bKernelId::Portable);
+    // Small counters, both sides of the low-word carry, a non-zero high word, and the maximum.
+    let counters: [u128; 6] = [
+      0,
+      128,
+      0xFFFF_FFFF_FFFF_FF80,
+      0x1_0000_0000_0000_0000,
+      0x1_0000_0000_0000_0080,
+      u128::MAX,
+    ];
+    for &id in BLAKE2B_KERNELS {
+      if !caps.has(blake2b_required_caps(id)) {
+        continue;
+      }
+      let compress = blake2b_compress_fn(id);
+      let mut seed = 0u64;
+      for &t in &counters {
+        for last in [false, true] {
+          seed = seed.wrapping_add(1);
+          let mut bytes = [0u8; 64 + 128];
+          splitmix_bytes(seed, &mut bytes);
+          let (state, block) = bytes.split_at(64);
+          let block: &[u8; 128] = block.try_into().expect("block is 128 bytes");
+          let mut h = [0u64; 8];
+          for (word, chunk) in h.iter_mut().zip(state.as_chunks::<8>().0) {
+            *word = u64::from_le_bytes(*chunk);
+          }
+          let mut expected = h;
+          portable(&mut expected, block, t, last);
+          compress(&mut h, block, t, last);
+          assert_eq!(
+            h,
+            expected,
+            "blake2b compression mismatch kernel={} t={t:#x} last={last}",
+            id.as_str()
+          );
+        }
+      }
+    }
+  }
+
+  #[test]
+  fn blake2b_kernels_match_portable_block_runs() {
+    let caps = crate::platform::caps();
+    let portable = blake2b_compress_blocks_fn(Blake2bKernelId::Portable);
+    let mut data = [0u8; 9 * 128 + 1];
+    splitmix_bytes(0xB1A4_E2B0, &mut data);
+    for &id in BLAKE2B_KERNELS {
+      if !caps.has(blake2b_required_caps(id)) {
+        continue;
+      }
+      let compress_blocks = blake2b_compress_blocks_fn(id);
+      // The second start carries into the high counter word after three blocks.
+      for start in [0u64, u64::MAX - 383] {
+        for blocks in 1..=9usize {
+          for offset in [0usize, 1] {
+            let input = &data[offset..offset.strict_add(blocks.strict_mul(128))];
+            let mut expected_t = Blake2bCounter::zero();
+            expected_t.add_len(start);
+            let mut actual_t = expected_t;
+            let mut expected_h = IV;
+            let mut actual_h = IV;
+            portable(&mut expected_h, input, &mut expected_t);
+            compress_blocks(&mut actual_h, input, &mut actual_t);
+            assert_eq!(
+              (actual_h, actual_t),
+              (expected_h, expected_t),
+              "blake2b block-run mismatch kernel={} start={start:#x} blocks={blocks} offset={offset}",
+              id.as_str()
+            );
+          }
+        }
+      }
+    }
+  }
+
+  #[test]
+  fn blake2b_kernels_match_oracle_across_lengths() {
+    let caps = crate::platform::caps();
+    let mut data = [0u8; 1100];
+    splitmix_bytes(0xB1A4_E2B1, &mut data);
+    for &id in BLAKE2B_KERNELS {
+      if !caps.has(blake2b_required_caps(id)) {
+        continue;
+      }
+      let compress = blake2b_compress_fn(id);
+      let compress_blocks = blake2b_compress_blocks_fn(id);
+      for len in 0..=data.len() {
+        let mut h = Blake2b512::new_with_compress_for_test(compress, compress_blocks);
+        h.update(&data[..len]);
+        assert_eq!(
+          h.finalize(),
+          oracle_hash_512(&data[..len]),
+          "blake2b-512 length mismatch kernel={} len={len}",
+          id.as_str()
+        );
+      }
+    }
+  }
 }

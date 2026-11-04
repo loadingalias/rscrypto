@@ -12,6 +12,7 @@ define_blake2_dispatch! {
   compress_fn: compress_fn,
   compress_blocks_fn: compress_blocks_fn,
   required_caps: super::kernels::required_caps,
+  prefers_portable: super::kernels::prefers_portable,
   candidates: [
     #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     Blake2sKernelId::X86Avx512vl,

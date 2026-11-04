@@ -259,6 +259,7 @@ macro_rules! define_blake2_dispatch {
     compress_fn: $compress_fn:path,
     compress_blocks_fn: $compress_blocks_fn:path,
     required_caps: $required_caps:path,
+    prefers_portable: $prefers_portable:path,
     candidates: [$($candidates:tt)*],
   ) => {
     #[cfg(not(all(target_arch = "aarch64", target_os = "macos")))]
@@ -278,14 +279,16 @@ macro_rules! define_blake2_dispatch {
       let caps = crate::platform::caps();
       let candidates: &[$kernel_id] = &[$($candidates)*];
 
-      for &id in candidates {
-        if caps.has($required_caps(id)) {
-          return Resolved {
-            compress: $compress_fn(id),
-            compress_blocks: $compress_blocks_fn(id),
-            #[cfg(feature = "diag")]
-            name: id.as_str(),
-          };
+      if !$prefers_portable(caps) {
+        for &id in candidates {
+          if caps.has($required_caps(id)) {
+            return Resolved {
+              compress: $compress_fn(id),
+              compress_blocks: $compress_blocks_fn(id),
+              #[cfg(feature = "diag")]
+              name: id.as_str(),
+            };
+          }
         }
       }
 
@@ -300,9 +303,6 @@ macro_rules! define_blake2_dispatch {
     #[inline]
     #[must_use]
     pub(crate) fn compress_dispatch() -> $compress_fn_ty {
-      if super::kernels::COMPILE_TIME_HW {
-        return super::kernels::compile_time_best();
-      }
       #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
       {
         $compress_fn($portable_kernel)
@@ -314,9 +314,6 @@ macro_rules! define_blake2_dispatch {
     #[inline]
     #[must_use]
     pub(crate) fn compress_blocks_dispatch() -> $compress_blocks_fn_ty {
-      if super::kernels::COMPILE_TIME_HW {
-        return super::kernels::compile_time_best_blocks();
-      }
       #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
       {
         $compress_blocks_fn($portable_kernel)
@@ -329,36 +326,12 @@ macro_rules! define_blake2_dispatch {
     #[inline]
     #[must_use]
     pub(super) fn kernel_name_for_len(_len: usize) -> &'static str {
-      if super::kernels::COMPILE_TIME_HW {
-        return compile_time_name();
-      }
       #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
       {
         $portable_kernel.as_str()
       }
       #[cfg(not(all(target_arch = "aarch64", target_os = "macos")))]
       ACTIVE.get_or_init(resolve).name
-    }
-
-    #[cfg(feature = "diag")]
-    const fn compile_time_name() -> &'static str {
-      if cfg!(all(
-        all(target_arch = "x86_64", target_feature = "sse2"),
-        target_feature = "avx512f",
-        target_feature = "avx512vl"
-      )) {
-        "x86/avx512vl"
-      } else if cfg!(all(target_arch = "x86_64", target_feature = "sse2", target_feature = "avx2")) {
-        "x86/avx2"
-      } else if cfg!(all(
-        target_arch = "aarch64",
-        target_feature = "neon",
-        not(target_os = "macos")
-      )) {
-        "aarch64/neon"
-      } else {
-        "portable"
-      }
     }
   };
 }

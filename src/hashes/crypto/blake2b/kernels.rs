@@ -48,6 +48,13 @@ impl Blake2bCounter {
     self
   }
 
+  /// Returns the low and high counter words.
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+  #[inline(always)]
+  pub(crate) const fn words(self) -> (u64, u64) {
+    (self.lo, self.hi)
+  }
+
   #[inline(always)]
   pub(crate) const fn as_u128(self) -> u128 {
     ((self.hi as u128) << 64) | self.lo as u128
@@ -136,12 +143,14 @@ fn compress_blocks_portable(h: &mut [u64; 8], blocks: &[u8], t: &mut Blake2bCoun
 
 #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 fn compress_blocks_x86_avx2(h: &mut [u64; 8], blocks: &[u8], t: &mut Blake2bCounter) {
-  compress_blocks_with(h, blocks, t, compress_x86_avx2);
+  // SAFETY: Only called when dispatch has verified AVX2 is available.
+  unsafe { super::x86_64::compress_blocks_avx2(h, blocks, t) }
 }
 
 #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 fn compress_blocks_x86_avx512vl(h: &mut [u64; 8], blocks: &[u8], t: &mut Blake2bCounter) {
-  compress_blocks_with(h, blocks, t, compress_x86_avx512vl);
+  // SAFETY: Only called when dispatch has verified AVX-512F+VL is available.
+  unsafe { super::x86_64::compress_blocks_avx512vl(h, blocks, t) }
 }
 
 #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
@@ -217,80 +226,27 @@ pub(crate) const ALL: &[Blake2bKernelId] = &[
   Blake2bKernelId::WasmSimd128,
 ];
 
-/// Whether the best Blake2b kernel is known at compile time.
-pub(crate) const COMPILE_TIME_HW: bool = cfg!(any(
-  all(
-    all(target_arch = "x86_64", target_feature = "sse2"),
-    target_feature = "avx512f",
-    target_feature = "avx512vl"
-  ),
-  all(target_arch = "x86_64", target_feature = "sse2", target_feature = "avx2"),
-));
-
-/// Returns the compile-time-best compress function.
-#[inline(always)]
-pub(crate) fn compile_time_best() -> CompressFn {
-  #[cfg(all(
-    target_arch = "x86_64",
-    target_feature = "sse2",
-    target_feature = "avx512f",
-    target_feature = "avx512vl"
-  ))]
+/// Whether runtime dispatch keeps the portable kernel although a SIMD kernel
+/// is available.
+///
+/// AMD Zen 5 runs the four-lane row kernels slower than the portable scalar
+/// kernel: one G step is a chain of dependent operations, and on Zen 5 each
+/// dependent vector operation costs about two cycles, while the scalar kernel
+/// issues them with single-cycle latency on six integer ALUs. On an EPYC 9R45
+/// the AVX-512VL kernel takes about 590 cycles per BLAKE2b block and the scalar
+/// kernel about 330.
+#[cfg(not(all(target_arch = "aarch64", target_os = "macos")))]
+#[inline]
+#[must_use]
+pub(crate) const fn prefers_portable(caps: Caps) -> bool {
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   {
-    compress_x86_avx512vl
+    caps.has(x86::AMD_ZEN5)
   }
-  #[cfg(all(
-    all(target_arch = "x86_64", target_feature = "sse2"),
-    target_feature = "avx2",
-    not(all(target_feature = "avx512f", target_feature = "avx512vl"))
-  ))]
+  #[cfg(not(all(target_arch = "x86_64", target_feature = "sse2")))]
   {
-    compress_x86_avx2
-  }
-  #[cfg(not(any(
-    all(
-      target_arch = "x86_64",
-      target_feature = "sse2",
-      target_feature = "avx512f",
-      target_feature = "avx512vl"
-    ),
-    all(target_arch = "x86_64", target_feature = "sse2", target_feature = "avx2")
-  )))]
-  {
-    compress
-  }
-}
-
-#[inline(always)]
-pub(crate) fn compile_time_best_blocks() -> CompressBlocksFn {
-  #[cfg(all(
-    target_arch = "x86_64",
-    target_feature = "sse2",
-    target_feature = "avx512f",
-    target_feature = "avx512vl"
-  ))]
-  {
-    compress_blocks_x86_avx512vl
-  }
-  #[cfg(all(
-    all(target_arch = "x86_64", target_feature = "sse2"),
-    target_feature = "avx2",
-    not(all(target_feature = "avx512f", target_feature = "avx512vl"))
-  ))]
-  {
-    compress_blocks_x86_avx2
-  }
-  #[cfg(not(any(
-    all(
-      target_arch = "x86_64",
-      target_feature = "sse2",
-      target_feature = "avx512f",
-      target_feature = "avx512vl"
-    ),
-    all(target_arch = "x86_64", target_feature = "sse2", target_feature = "avx2")
-  )))]
-  {
-    compress_blocks_portable
+    let _ = caps;
+    false
   }
 }
 
@@ -356,12 +312,12 @@ impl U64x4 {
   }
 
   #[inline(always)]
-  fn rotate_right_const(self, n: u32) -> Self {
+  fn xor_rotate_right(self, late: Self, n: u32) -> Self {
     Self(
-      self.0.rotate_right(n),
-      self.1.rotate_right(n),
-      self.2.rotate_right(n),
-      self.3.rotate_right(n),
+      xor_rotate_right(self.0, late.0, n),
+      xor_rotate_right(self.1, late.1, n),
+      xor_rotate_right(self.2, late.2, n),
+      xor_rotate_right(self.3, late.3, n),
     )
   }
 
@@ -405,12 +361,44 @@ impl core::ops::BitXor for U64x4 {
   }
 }
 
+/// Returns `(early ^ late).rotate_right(n)`.
+///
+/// On non-Apple AArch64 this is computed as `early.rotate_right(n) ^
+/// late.rotate_right(n)`. `early` is ready several operations before `late`,
+/// so its rotation leaves the dependency chain and the XOR absorbs the
+/// rotation of `late` as one shifted-register `EOR`: a G half step costs four
+/// dependent instructions instead of six. The barrier keeps LLVM from folding
+/// the expression back into a rotation of the XOR.
+#[inline(always)]
+fn xor_rotate_right(early: u64, late: u64, n: u32) -> u64 {
+  #[cfg(all(target_arch = "aarch64", not(target_vendor = "apple")))]
+  {
+    opaque(early.rotate_right(n)) ^ late.rotate_right(n)
+  }
+  #[cfg(not(all(target_arch = "aarch64", not(target_vendor = "apple"))))]
+  {
+    (early ^ late).rotate_right(n)
+  }
+}
+
+/// Returns `x` unchanged, hidden from LLVM's expression folding.
+#[cfg(all(target_arch = "aarch64", not(target_vendor = "apple")))]
+#[inline(always)]
+fn opaque(mut x: u64) -> u64 {
+  // SAFETY: the template emits no instruction. Its one operand is the general
+  // register holding `x` on entry and exit; it touches no memory, stack, or
+  // flags.
+  unsafe { core::arch::asm!("/* {0} */", inout(reg) x, options(pure, nomem, nostack, preserves_flags)) };
+  x
+}
+
 #[inline(always)]
 fn quarter_round(v: &mut [U64x4; 4], rd: u32, rb: u32, m: U64x4) {
-  v[0] = v[0].wrapping_add(v[1]).wrapping_add(m);
-  v[3] = (v[3] ^ v[0]).rotate_right_const(rd);
+  // The message word is added first: `v[0]` is ready before `v[1]`.
+  v[0] = v[0].wrapping_add(m).wrapping_add(v[1]);
+  v[3] = v[3].xor_rotate_right(v[0], rd);
   v[2] = v[2].wrapping_add(v[3]);
-  v[1] = (v[1] ^ v[2]).rotate_right_const(rb);
+  v[1] = v[1].xor_rotate_right(v[2], rb);
 }
 
 #[inline(always)]
@@ -473,7 +461,7 @@ pub(crate) fn load_msg(block: &[u8; 128]) -> [u64; 16] {
 }
 
 #[inline(always)]
-fn split_counter(counter: u128) -> (u64, u64) {
+pub(crate) fn split_counter(counter: u128) -> (u64, u64) {
   let [b0, b1, b2, b3, b4, b5, b6, b7, b8, b9, b10, b11, b12, b13, b14, b15] = counter.to_le_bytes();
   (
     u64::from_le_bytes([b0, b1, b2, b3, b4, b5, b6, b7]),
@@ -483,7 +471,6 @@ fn split_counter(counter: u128) -> (u64, u64) {
 
 /// Initialize the 16-word working vector from state, IV, counter, and finalization flag.
 #[cfg(any(
-  all(target_arch = "x86_64", target_feature = "sse2"),
   all(target_arch = "wasm32", target_feature = "simd128"),
   all(target_arch = "riscv64", not(feature = "portable-only"))
 ))]

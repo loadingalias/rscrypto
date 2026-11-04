@@ -6,6 +6,55 @@ The dated campaign records come first.
 The 2026-08-18 Linux snapshot near the end is historical:
 its aggregate ratios are withdrawn as performance claims (see [Corrections](#corrections)).
 
+## 2026-11-04: BLAKE2 kernels on Zen 5, Granite Rapids, and Graviton4
+
+Same-host A/B for the BLAKE2 kernel and dispatch change. Raw data was deleted after this summary
+was written.
+
+Hosts: `aws-linux-amd-zen5-profile` (c8a.4xlarge, EPYC 9R45), `aws-linux-intel-gnr-profile`
+(c8i.4xlarge, Xeon 6975P-C), and `aws-linux-arm64-graviton4-profile` (c8g.4xlarge, Neoverse V2).
+Baseline `8ffe0aa4`, candidate `8ffe0aa4` plus the change, `nightly-2026-10-24`, catalog `bench`
+profile and Criterion settings (20 samples, 100 ms warm-up, 400 ms measurement). Each revision had
+its own clone, target directory, and binary; the binary hashes differ. Rows: rscrypto, RustCrypto,
+dryoc, `blake2b_simd`, and `blake2s_simd` for BLAKE2b-512 and BLAKE2s-256 at 0, 64, 129, 1024,
+16384, and 1048576 B. On x86-64 an experiment-only capability restriction also forced each
+rscrypto kernel; six configurations ran in two ABBA blocks (24 processes per host). Graviton4 ran
+baseline and candidate in two ABBA blocks (8 processes). Ratios are geometric means of
+time-adjacent candidate/baseline pairs of Criterion medians; "vs fastest external" divides the
+fastest external median by rscrypto's in the same process. CPU steal: 12, 8, and 0 ticks.
+
+| Host | Row | Baseline → candidate | Change | Candidate vs fastest external |
+| --- | --- | --- | --- | --- |
+| Zen 5 | BLAKE2b-512, 1 MiB | 1315 → 604 µs | −54.1% | 1.07x (RustCrypto) |
+| Zen 5 | BLAKE2s-256, 1 MiB | 2041 → 1026 µs | −50.3% | 1.07x (RustCrypto) |
+| Zen 5 | BLAKE2b/BLAKE2s, 0–129 B | | −46% to −54% | 1.07–1.20x |
+| Granite Rapids | BLAKE2b-512, 1 MiB | 920 → 737 µs | −19.9% | 1.02x (dryoc) |
+| Granite Rapids | BLAKE2s-256, 1 MiB | 1281 → 1085 µs | −15.3% | 1.28x |
+| Granite Rapids | BLAKE2b/BLAKE2s, 0–129 B | | −12% to −20% | 1.02–1.45x |
+| Graviton4 | BLAKE2b-512, 1 MiB | 1136 → 1032 µs | −9.2% | 1.07x (dryoc) |
+| Graviton4 | BLAKE2s-256, 1 MiB | 1874 → 1721 µs | −8.2% | 1.12x |
+| Graviton4 | BLAKE2b/BLAKE2s, 0–129 B | | −7% to −10% | 1.09–1.25x |
+
+Every candidate row beats the fastest external on all three hosts; the narrowest margins are
+Granite Rapids BLAKE2b at 0 B and in bulk (1.02x). External rows varied by up to 13% across the
+24 Granite Rapids processes, mostly in one BLAKE2b peer, so those two margins are not established
+beyond that spread.
+
+Cause and kernel choice. The baseline x86-64 kernels ran the rounds as a loop whose message gathers
+compiled to `vpgatherdq`, and they diagonalized row `b`, which lies on the dependency chain. On Zen
+5 every four-lane row kernel, including the external SIMD crates, ran about twice as slow as scalar
+code: `perf stat` puts the new AVX-512VL kernel at an IPC of 1.1 (about 590 cycles per BLAKE2b
+block, two cycles per dependent vector operation), against 4.9 for the scalar kernel (about 330
+cycles). The forced-kernel runs on Zen 5 measured the new AVX-512VL kernel at 0.82x and the AVX2
+kernel at 0.95x of the baseline time, against 0.46x for scalar; dispatch now selects scalar on Zen
+5. On Granite Rapids the new AVX-512VL kernel takes about 349 cycles per BLAKE2b block (dryoc about
+356), and the scalar kernel is 3% faster than the baseline vector kernel. The portable change
+(message added before `b`) made the scalar kernel 3.4% faster on Zen 5.
+
+Not measured: Windows, Graviton5 (the CI ARM64 lane), Zen 4 and older AMD (which keep the vector
+kernels), Apple (unchanged; its AArch64 rotation change is gated off pending measurement), POWER,
+IBM Z, and RISC-V (only the message-add order changed there).
+
 ## 2026-11-03: x86-64 AES-GCM key-setup A/B
 
 Same-host A/B for the four-lane GHASH power setup (`c7d0b3af`). Raw data was deleted after this

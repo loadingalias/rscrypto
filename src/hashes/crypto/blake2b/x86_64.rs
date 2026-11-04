@@ -1,339 +1,405 @@
-//! Blake2b AVX2 and AVX-512VL accelerated compression for x86_64.
+//! Blake2b AVX2 and AVX-512VL compression for x86_64.
 //!
-//! Each row of the 4x4 u64 working matrix is packed into a single `__m256i`
-//! (4 lanes of u64). Diagonalization uses `_mm256_permute4x64_epi64`.
+//! Each row of the 4x4 `u64` working matrix lives in one `__m256i`. The twelve
+//! rounds are unrolled, so every message index is a constant and each message
+//! vector comes from four direct loads of the block.
 //!
-//! Two kernels:
-//! - **AVX2** (`compress_avx2`): rotations via shuffle/shift.
-//! - **AVX-512VL** (`compress_avx512vl`): rotations via `VPRORQ` (`_mm256_ror_epi64`), eliminating
-//!   the byte-shuffle tables entirely.
+//! The diagonal step keeps row `b` in place and rotates rows `a`, `c`, and `d`
+//! instead. Row `b` is the last row a G step writes and the first row the next
+//! step reads, so a permute of `b` would add its latency to every half round.
+//! Row `a` is final five dependent operations before `b`, which hides its
+//! permute. Lane `i` of the diagonal step therefore computes diagonal
+//! `G_{(i + 3) mod 4}`, and its message vectors are rotated to match.
+//!
+//! The AVX2 kernel rotates with byte shuffles and shifts; the AVX-512VL kernel
+//! uses `VPRORQ`. The block loop keeps the chaining value in registers.
 //!
 //! # Safety
 //!
-//! `compress_avx2` requires `avx2`. `compress_avx512vl` requires `avx512f` + `avx512vl`.
+//! The AVX2 entry points require AVX2. The AVX-512VL entry points require
+//! AVX-512F and AVX-512VL, which imply AVX2.
 
 use core::arch::x86_64::*;
 
-use super::kernels::{SIGMA, init_v, load_msg};
+use super::kernels::{Blake2bCounter, IV, SIGMA, split_counter};
 
-// AVX2 kernel
+/// Message construction and row rotations for one instruction set.
+trait Rotate {
+  /// Message words in the form `message` reads.
+  type Message: Copy;
 
-// ─── AVX2 rotation helpers ───────────────────────────────────────────────────
+  /// Loads the message words of `block`.
+  ///
+  /// # Safety
+  ///
+  /// The caller must enable the instruction set of the implementation.
+  unsafe fn load_message(block: &[u8; 128]) -> Self::Message;
 
-/// ROR 32: swap 32-bit halves within each 64-bit lane.
-///
-/// # Safety
-///
-/// Caller must ensure AVX2 is available.
-#[inline(always)]
-unsafe fn ror32_avx2(x: __m256i) -> __m256i {
-  // SAFETY: AVX2 intrinsics are available via the caller's #[target_feature] attribute.
-  // shuffle_epi32 with 0xB1 = (2,3,0,1) swaps adjacent 32-bit pairs.
-  unsafe { _mm256_shuffle_epi32(x, 0xB1) }
+  /// Builds the message vector whose lane `k` holds word `i_k` of `block`;
+  /// `m` is `load_message(block)`.
+  ///
+  /// # Safety
+  ///
+  /// The caller must enable the instruction set of the implementation.
+  unsafe fn message(block: &[u8; 128], m: &Self::Message, i0: u8, i1: u8, i2: u8, i3: u8) -> __m256i;
+
+  /// Rotates each lane right by 32 bits.
+  ///
+  /// # Safety
+  ///
+  /// The caller must enable the instruction set of the implementation.
+  unsafe fn ror32(x: __m256i) -> __m256i;
+  /// Rotates each lane right by 24 bits.
+  ///
+  /// # Safety
+  ///
+  /// The caller must enable the instruction set of the implementation.
+  unsafe fn ror24(x: __m256i) -> __m256i;
+  /// Rotates each lane right by 16 bits.
+  ///
+  /// # Safety
+  ///
+  /// The caller must enable the instruction set of the implementation.
+  unsafe fn ror16(x: __m256i) -> __m256i;
+  /// Rotates each lane right by 63 bits.
+  ///
+  /// # Safety
+  ///
+  /// The caller must enable the instruction set of the implementation.
+  unsafe fn ror63(x: __m256i) -> __m256i;
 }
 
-/// ROR 24: byte shuffle within each 128-bit lane.
-///
-/// # Safety
-///
-/// Caller must ensure AVX2 is available.
-#[inline(always)]
-unsafe fn ror24_avx2(x: __m256i) -> __m256i {
-  // Each 64-bit lane rotates its bytes right by 3 (= rotate_right(24)).
-  #[repr(align(32))]
-  struct Align32([u8; 32]);
-  static ROT24: Align32 = Align32([
-    3, 4, 5, 6, 7, 0, 1, 2, 11, 12, 13, 14, 15, 8, 9, 10, 3, 4, 5, 6, 7, 0, 1, 2, 11, 12, 13, 14, 15, 8, 9, 10,
-  ]);
-  // SAFETY: the caller provides AVX2, and `ROT24` is 32-byte aligned for the aligned load.
-  unsafe {
-    let mask = _mm256_load_si256(ROT24.0.as_ptr().cast());
-    _mm256_shuffle_epi8(x, mask)
+/// AVX2 rotations: dword and byte shuffles, and add/shift for 63.
+struct Avx2;
+
+impl Rotate for Avx2 {
+  /// The words are read from the block where they are needed.
+  type Message = ();
+
+  #[inline(always)]
+  unsafe fn load_message(_block: &[u8; 128]) {}
+
+  #[inline(always)]
+  unsafe fn message(block: &[u8; 128], (): &(), i0: u8, i1: u8, i2: u8, i3: u8) -> __m256i {
+    // SAFETY: the caller enables AVX2.
+    unsafe { _mm256_setr_epi64x(word(block, i0), word(block, i1), word(block, i2), word(block, i3)) }
+  }
+
+  #[inline(always)]
+  unsafe fn ror32(x: __m256i) -> __m256i {
+    // SAFETY: the caller enables AVX2.
+    unsafe { _mm256_shuffle_epi32(x, 0xB1) }
+  }
+
+  #[inline(always)]
+  unsafe fn ror24(x: __m256i) -> __m256i {
+    // SAFETY: the caller enables AVX2.
+    unsafe {
+      let mask = _mm256_setr_epi8(
+        3, 4, 5, 6, 7, 0, 1, 2, 11, 12, 13, 14, 15, 8, 9, 10, 3, 4, 5, 6, 7, 0, 1, 2, 11, 12, 13, 14, 15, 8, 9, 10,
+      );
+      _mm256_shuffle_epi8(x, mask)
+    }
+  }
+
+  #[inline(always)]
+  unsafe fn ror16(x: __m256i) -> __m256i {
+    // SAFETY: the caller enables AVX2.
+    unsafe {
+      let mask = _mm256_setr_epi8(
+        2, 3, 4, 5, 6, 7, 0, 1, 10, 11, 12, 13, 14, 15, 8, 9, 2, 3, 4, 5, 6, 7, 0, 1, 10, 11, 12, 13, 14, 15, 8, 9,
+      );
+      _mm256_shuffle_epi8(x, mask)
+    }
+  }
+
+  #[inline(always)]
+  unsafe fn ror63(x: __m256i) -> __m256i {
+    // SAFETY: the caller enables AVX2. Rotating right by 63 is rotating left
+    // by 1: (x + x) ^ (x >> 63).
+    unsafe { _mm256_xor_si256(_mm256_srli_epi64(x, 63), _mm256_add_epi64(x, x)) }
   }
 }
 
-/// ROR 16: byte shuffle within each 128-bit lane.
-///
-/// # Safety
-///
-/// Caller must ensure AVX2 is available.
-#[inline(always)]
-unsafe fn ror16_avx2(x: __m256i) -> __m256i {
-  // Each 64-bit lane rotates its bytes right by 2 (= rotate_right(16)).
-  #[repr(align(32))]
-  struct Align32([u8; 32]);
-  static ROT16: Align32 = Align32([
-    2, 3, 4, 5, 6, 7, 0, 1, 10, 11, 12, 13, 14, 15, 8, 9, 2, 3, 4, 5, 6, 7, 0, 1, 10, 11, 12, 13, 14, 15, 8, 9,
-  ]);
-  // SAFETY: the caller provides AVX2, and `ROT16` is 32-byte aligned for the aligned load.
-  unsafe {
-    let mask = _mm256_load_si256(ROT16.0.as_ptr().cast());
-    _mm256_shuffle_epi8(x, mask)
+/// AVX-512VL rotations: `VPRORQ` for every distance.
+struct Avx512vl;
+
+impl Rotate for Avx512vl {
+  /// Words 0–3, 4–7, 8–11, and 12–15.
+  type Message = [__m256i; 4];
+
+  #[inline(always)]
+  unsafe fn load_message(block: &[u8; 128]) -> [__m256i; 4] {
+    let (rows, _) = block.as_chunks::<32>();
+    // SAFETY: the caller enables AVX-512F and AVX-512VL; each row is 32
+    // readable bytes.
+    unsafe { core::array::from_fn(|row| _mm256_loadu_si256(rows[row].as_ptr().cast())) }
+  }
+
+  #[inline(always)]
+  unsafe fn message(_block: &[u8; 128], m: &[__m256i; 4], i0: u8, i1: u8, i2: u8, i3: u8) -> __m256i {
+    // Each two-source permute selects from eight words: rows 0 and 1 hold
+    // words 0–7 and rows 2 and 3 hold words 8–15. The blend takes lane `k`
+    // from the second permute when word `i_k` is 8 or more.
+    let high = |i: u8, bit: u8| if i >= 8 { bit } else { 0 };
+    let mask = high(i0, 1) | high(i1, 2) | high(i2, 4) | high(i3, 8);
+    // SAFETY: the caller enables AVX-512F and AVX-512VL.
+    unsafe {
+      let index = _mm256_setr_epi64x(
+        i64::from(i0 & 7),
+        i64::from(i1 & 7),
+        i64::from(i2 & 7),
+        i64::from(i3 & 7),
+      );
+      let low_words = _mm256_permutex2var_epi64(m[0], index, m[1]);
+      let high_words = _mm256_permutex2var_epi64(m[2], index, m[3]);
+      _mm256_mask_blend_epi64(mask, low_words, high_words)
+    }
+  }
+
+  #[inline(always)]
+  unsafe fn ror32(x: __m256i) -> __m256i {
+    // SAFETY: the caller enables AVX-512F and AVX-512VL.
+    unsafe { _mm256_ror_epi64(x, 32) }
+  }
+
+  #[inline(always)]
+  unsafe fn ror24(x: __m256i) -> __m256i {
+    // SAFETY: the caller enables AVX-512F and AVX-512VL.
+    unsafe { _mm256_ror_epi64(x, 24) }
+  }
+
+  #[inline(always)]
+  unsafe fn ror16(x: __m256i) -> __m256i {
+    // SAFETY: the caller enables AVX-512F and AVX-512VL.
+    unsafe { _mm256_ror_epi64(x, 16) }
+  }
+
+  #[inline(always)]
+  unsafe fn ror63(x: __m256i) -> __m256i {
+    // SAFETY: the caller enables AVX-512F and AVX-512VL.
+    unsafe { _mm256_ror_epi64(x, 63) }
   }
 }
 
-/// ROR 63: (x >> 63) | (x << 1) = (x + x) ^ (x >> 63).
-///
-/// # Safety
-///
-/// Caller must ensure AVX2 is available.
+/// Returns message word `index` of `block`.
 #[inline(always)]
-unsafe fn ror63_avx2(x: __m256i) -> __m256i {
-  // SAFETY: AVX2 intrinsics are available via the caller's #[target_feature] attribute.
-  unsafe { _mm256_xor_si256(_mm256_srli_epi64(x, 63), _mm256_add_epi64(x, x)) }
+fn word(block: &[u8; 128], index: u8) -> i64 {
+  let (words, _) = block.as_chunks::<8>();
+  i64::from_le_bytes(words[usize::from(index)])
 }
 
-// ─── AVX2 G function ─────────────────────────────────────────────────────────
-
-/// Blake2b quarter-round G on 4-wide AVX2 rows.
+/// Returns `x` unchanged, hidden from LLVM's reassociation.
+///
+/// Without it LLVM rewrites `(a + m) + b` as `(a + b) + m`, which puts the
+/// message add on the dependency chain of every half round.
 ///
 /// # Safety
 ///
-/// Caller must ensure AVX2 is available.
+/// The caller must enable AVX2.
+#[inline]
+#[target_feature(enable = "avx2")]
+unsafe fn opaque(mut x: __m256i) -> __m256i {
+  // SAFETY: the template emits no instruction. Its one operand is the vector
+  // register holding `x` on entry and exit; it touches no memory, stack, or
+  // flags.
+  unsafe { core::arch::asm!("/* {0} */", inout(ymm_reg) x, options(pure, nomem, nostack, preserves_flags)) };
+  x
+}
+
+/// Applies G to all four lanes.
+///
+/// # Safety
+///
+/// The caller must enable AVX2 and the instruction set of `R`.
 #[inline(always)]
-unsafe fn g_avx2(a: &mut __m256i, b: &mut __m256i, c: &mut __m256i, d: &mut __m256i, mx: __m256i, my: __m256i) {
-  // SAFETY: AVX2 intrinsics are available via the caller's #[target_feature] attribute.
+unsafe fn g<R: Rotate>(a: &mut __m256i, b: &mut __m256i, c: &mut __m256i, d: &mut __m256i, mx: __m256i, my: __m256i) {
+  // SAFETY: the caller enables AVX2 and the instruction set of `R`.
   unsafe {
-    // a += b + mx
-    *a = _mm256_add_epi64(_mm256_add_epi64(*a, *b), mx);
-    // d = (d ^ a) >>> 32
-    *d = ror32_avx2(_mm256_xor_si256(*d, *a));
-    // c += d
+    // The message word is added first: `a` is ready before `b`.
+    *a = _mm256_add_epi64(opaque(_mm256_add_epi64(*a, mx)), *b);
+    *d = R::ror32(_mm256_xor_si256(*d, *a));
     *c = _mm256_add_epi64(*c, *d);
-    // b = (b ^ c) >>> 24
-    *b = ror24_avx2(_mm256_xor_si256(*b, *c));
-    // a += b + my
-    *a = _mm256_add_epi64(_mm256_add_epi64(*a, *b), my);
-    // d = (d ^ a) >>> 16
-    *d = ror16_avx2(_mm256_xor_si256(*d, *a));
-    // c += d
+    *b = R::ror24(_mm256_xor_si256(*b, *c));
+    *a = _mm256_add_epi64(opaque(_mm256_add_epi64(*a, my)), *b);
+    *d = R::ror16(_mm256_xor_si256(*d, *a));
     *c = _mm256_add_epi64(*c, *d);
-    // b = (b ^ c) >>> 63
-    *b = ror63_avx2(_mm256_xor_si256(*b, *c));
+    *b = R::ror63(_mm256_xor_si256(*b, *c));
   }
 }
 
-// ─── Diagonalize / un-diagonalize ────────────────────────────────────────────
-
-/// Diagonalize: rotate B left by 1, C left by 2, D left by 3.
+/// Applies one round: the column step, then the diagonal step.
 ///
 /// # Safety
 ///
-/// Caller must ensure AVX2 is available.
+/// The caller must enable AVX2 and the instruction set of `R`.
 #[inline(always)]
-unsafe fn diagonalize(b: &mut __m256i, c: &mut __m256i, d: &mut __m256i) {
-  // SAFETY: AVX2 intrinsics are available via the caller's #[target_feature] attribute.
+unsafe fn round<R: Rotate>(
+  a: &mut __m256i,
+  b: &mut __m256i,
+  c: &mut __m256i,
+  d: &mut __m256i,
+  block: &[u8; 128],
+  m: &R::Message,
+  s: &[u8; 16],
+) {
+  // SAFETY: the caller enables AVX2 and the instruction set of `R`.
   unsafe {
-    // B: left 1 = (1,2,3,0) → imm8 = 0b_00_11_10_01 = 0x39
-    *b = _mm256_permute4x64_epi64(*b, 0x39);
-    // C: left 2 = swap pairs = (2,3,0,1) → imm8 = 0b_01_00_11_10 = 0x4E
-    *c = _mm256_permute4x64_epi64(*c, 0x4E);
-    // D: left 3 = right 1 = (3,0,1,2) → imm8 = 0b_10_01_00_11 = 0x93
-    *d = _mm256_permute4x64_epi64(*d, 0x93);
+    // Column step: lane i computes G_i.
+    let mx = R::message(block, m, s[0], s[2], s[4], s[6]);
+    let my = R::message(block, m, s[1], s[3], s[5], s[7]);
+    g::<R>(a, b, c, d, mx, my);
+
+    // Diagonal step: lane i keeps b[i] and computes G_{(i+3) mod 4}, so it
+    // needs a[i-1], c[i+1], and d[i+2].
+    *a = _mm256_permute4x64_epi64(*a, 0x93);
+    *c = _mm256_permute4x64_epi64(*c, 0x39);
+    *d = _mm256_permute4x64_epi64(*d, 0x4E);
+    let mx = R::message(block, m, s[14], s[8], s[10], s[12]);
+    let my = R::message(block, m, s[15], s[9], s[11], s[13]);
+    g::<R>(a, b, c, d, mx, my);
+    *a = _mm256_permute4x64_epi64(*a, 0x39);
+    *c = _mm256_permute4x64_epi64(*c, 0x93);
+    *d = _mm256_permute4x64_epi64(*d, 0x4E);
   }
 }
 
-/// Un-diagonalize: reverse the rotations (B right 1, C swap, D left 1).
+/// Compresses one block into the chaining value rows `(h0, h1)`.
 ///
 /// # Safety
 ///
-/// Caller must ensure AVX2 is available.
+/// The caller must enable AVX2 and the instruction set of `R`.
 #[inline(always)]
-unsafe fn undiagonalize(b: &mut __m256i, c: &mut __m256i, d: &mut __m256i) {
-  // SAFETY: AVX2 intrinsics are available via the caller's #[target_feature] attribute.
+unsafe fn compress_rows<R: Rotate>(
+  h0: __m256i,
+  h1: __m256i,
+  block: &[u8; 128],
+  t0: u64,
+  t1: u64,
+  f0: u64,
+) -> (__m256i, __m256i) {
+  // SAFETY: the caller enables AVX2 and the instruction set of `R`.
   unsafe {
-    // B: right 1 = (3,0,1,2) → imm8 = 0x93
-    *b = _mm256_permute4x64_epi64(*b, 0x93);
-    // C: swap (same as diagonalize)
-    *c = _mm256_permute4x64_epi64(*c, 0x4E);
-    // D: left 1 = (1,2,3,0) → imm8 = 0x39
-    *d = _mm256_permute4x64_epi64(*d, 0x39);
+    let m = R::load_message(block);
+    let mut a = h0;
+    let mut b = h1;
+    let mut c = _mm256_setr_epi64x(
+      IV[0].cast_signed(),
+      IV[1].cast_signed(),
+      IV[2].cast_signed(),
+      IV[3].cast_signed(),
+    );
+    let mut d = _mm256_setr_epi64x(
+      (IV[4] ^ t0).cast_signed(),
+      (IV[5] ^ t1).cast_signed(),
+      (IV[6] ^ f0).cast_signed(),
+      IV[7].cast_signed(),
+    );
+
+    round::<R>(&mut a, &mut b, &mut c, &mut d, block, &m, &SIGMA[0]);
+    round::<R>(&mut a, &mut b, &mut c, &mut d, block, &m, &SIGMA[1]);
+    round::<R>(&mut a, &mut b, &mut c, &mut d, block, &m, &SIGMA[2]);
+    round::<R>(&mut a, &mut b, &mut c, &mut d, block, &m, &SIGMA[3]);
+    round::<R>(&mut a, &mut b, &mut c, &mut d, block, &m, &SIGMA[4]);
+    round::<R>(&mut a, &mut b, &mut c, &mut d, block, &m, &SIGMA[5]);
+    round::<R>(&mut a, &mut b, &mut c, &mut d, block, &m, &SIGMA[6]);
+    round::<R>(&mut a, &mut b, &mut c, &mut d, block, &m, &SIGMA[7]);
+    round::<R>(&mut a, &mut b, &mut c, &mut d, block, &m, &SIGMA[8]);
+    round::<R>(&mut a, &mut b, &mut c, &mut d, block, &m, &SIGMA[9]);
+    round::<R>(&mut a, &mut b, &mut c, &mut d, block, &m, &SIGMA[0]);
+    round::<R>(&mut a, &mut b, &mut c, &mut d, block, &m, &SIGMA[1]);
+
+    (
+      _mm256_xor_si256(h0, _mm256_xor_si256(a, c)),
+      _mm256_xor_si256(h1, _mm256_xor_si256(b, d)),
+    )
   }
 }
 
-// ─── AVX2 compress entry point ───────────────────────────────────────────────
+/// Compresses one block into `h`.
+///
+/// # Safety
+///
+/// The caller must enable AVX2 and the instruction set of `R`.
+#[inline(always)]
+unsafe fn compress_impl<R: Rotate>(h: &mut [u64; 8], block: &[u8; 128], t: u128, last: bool) {
+  let (t0, t1) = split_counter(t);
+  let f0 = u64::from(last).wrapping_neg();
+  // SAFETY: the caller enables AVX2 and the instruction set of `R`. `h` is
+  // eight `u64` words, so both 32-byte unaligned accesses are in bounds.
+  unsafe {
+    let h0 = _mm256_loadu_si256(h.as_ptr().cast());
+    let h1 = _mm256_loadu_si256(h.as_ptr().add(4).cast());
+    let (h0, h1) = compress_rows::<R>(h0, h1, block, t0, t1, f0);
+    _mm256_storeu_si256(h.as_mut_ptr().cast(), h0);
+    _mm256_storeu_si256(h.as_mut_ptr().add(4).cast(), h1);
+  }
+}
 
-/// Blake2b AVX2-accelerated compress.
+/// Compresses whole non-final blocks into `h`, advancing `t` by 128 per block.
+///
+/// # Safety
+///
+/// The caller must enable AVX2 and the instruction set of `R`.
+#[inline(always)]
+unsafe fn compress_blocks_impl<R: Rotate>(h: &mut [u64; 8], blocks: &[u8], t: &mut Blake2bCounter) {
+  let (chunks, remainder) = blocks.as_chunks::<128>();
+  debug_assert!(remainder.is_empty());
+  // SAFETY: the caller enables AVX2 and the instruction set of `R`. `h` is
+  // eight `u64` words, so both 32-byte unaligned accesses are in bounds.
+  unsafe {
+    let mut h0 = _mm256_loadu_si256(h.as_ptr().cast());
+    let mut h1 = _mm256_loadu_si256(h.as_ptr().add(4).cast());
+    for block in chunks {
+      t.add_len(128);
+      let (t0, t1) = t.words();
+      (h0, h1) = compress_rows::<R>(h0, h1, block, t0, t1, 0);
+    }
+    _mm256_storeu_si256(h.as_mut_ptr().cast(), h0);
+    _mm256_storeu_si256(h.as_mut_ptr().add(4).cast(), h1);
+  }
+}
+
+/// Blake2b AVX2 compress of one block.
 ///
 /// # Safety
 ///
 /// Caller must ensure AVX2 is available.
 #[target_feature(enable = "avx2")]
 pub(super) unsafe fn compress_avx2(h: &mut [u64; 8], block: &[u8; 128], t: u128, last: bool) {
-  // SAFETY: AVX2 intrinsics are available via this function's #[target_feature] attribute.
-  unsafe {
-    let m = load_msg(block);
-    let v = init_v(h, t, last);
-
-    // Pack the 16-word working vector into 4 rows of __m256i
-    let mut a = _mm256_loadu_si256(v.as_ptr().cast()); // v[0..4]
-    let mut b = _mm256_loadu_si256(v.as_ptr().add(4).cast()); // v[4..8]
-    let mut c = _mm256_loadu_si256(v.as_ptr().add(8).cast()); // v[8..12]
-    let mut d = _mm256_loadu_si256(v.as_ptr().add(12).cast()); // v[12..16]
-
-    // 12 rounds of column + diagonal mixing
-    for round in 0..12u8 {
-      let s = &SIGMA[(round % 10) as usize];
-
-      // Column step: G on (0,4,8,12), (1,5,9,13), (2,6,10,14), (3,7,11,15)
-      // _mm256_set_epi64x takes args in HIGH→LOW order: lane3, lane2, lane1, lane0
-      let mx = _mm256_set_epi64x(
-        m[s[6] as usize].cast_signed(),
-        m[s[4] as usize].cast_signed(),
-        m[s[2] as usize].cast_signed(),
-        m[s[0] as usize].cast_signed(),
-      );
-      let my = _mm256_set_epi64x(
-        m[s[7] as usize].cast_signed(),
-        m[s[5] as usize].cast_signed(),
-        m[s[3] as usize].cast_signed(),
-        m[s[1] as usize].cast_signed(),
-      );
-
-      g_avx2(&mut a, &mut b, &mut c, &mut d, mx, my);
-
-      diagonalize(&mut b, &mut c, &mut d);
-
-      // Diagonal step: G on (0,5,10,15), (1,6,11,12), (2,7,8,13), (3,4,9,14)
-      let mx = _mm256_set_epi64x(
-        m[s[14] as usize].cast_signed(),
-        m[s[12] as usize].cast_signed(),
-        m[s[10] as usize].cast_signed(),
-        m[s[8] as usize].cast_signed(),
-      );
-      let my = _mm256_set_epi64x(
-        m[s[15] as usize].cast_signed(),
-        m[s[13] as usize].cast_signed(),
-        m[s[11] as usize].cast_signed(),
-        m[s[9] as usize].cast_signed(),
-      );
-
-      g_avx2(&mut a, &mut b, &mut c, &mut d, mx, my);
-
-      undiagonalize(&mut b, &mut c, &mut d);
-    }
-
-    // Finalize: h[i] ^= v[i] ^ v[i+8]
-    // a = v[0..4], b = v[4..8], c = v[8..12], d = v[12..16]
-    // h[0..4] ^= a ^ c, h[4..8] ^= b ^ d
-    let h0 = _mm256_loadu_si256(h.as_ptr().cast());
-    let h1 = _mm256_loadu_si256(h.as_ptr().add(4).cast());
-
-    _mm256_storeu_si256(h.as_mut_ptr().cast(), _mm256_xor_si256(h0, _mm256_xor_si256(a, c)));
-    _mm256_storeu_si256(
-      h.as_mut_ptr().add(4).cast(),
-      _mm256_xor_si256(h1, _mm256_xor_si256(b, d)),
-    );
-  }
+  // SAFETY: this function enables AVX2.
+  unsafe { compress_impl::<Avx2>(h, block, t, last) }
 }
 
-// AVX-512VL kernel
-
-// ─── AVX-512VL G function ────────────────────────────────────────────────────
-
-/// Blake2b quarter-round G on 4-wide AVX-512VL rows.
-///
-/// All rotations use `VPRORQ` (`_mm256_ror_epi64`) — no shuffle tables needed.
+/// Blake2b AVX2 compress of whole non-final blocks.
 ///
 /// # Safety
 ///
-/// Caller must ensure AVX-512F and AVX-512VL are available.
-#[inline(always)]
-unsafe fn g_avx512vl(a: &mut __m256i, b: &mut __m256i, c: &mut __m256i, d: &mut __m256i, mx: __m256i, my: __m256i) {
-  // SAFETY: AVX-512VL intrinsics are available via the caller's #[target_feature] attribute.
-  unsafe {
-    // a += b + mx
-    *a = _mm256_add_epi64(_mm256_add_epi64(*a, *b), mx);
-    // d = (d ^ a) >>> 32
-    *d = _mm256_ror_epi64(_mm256_xor_si256(*d, *a), 32);
-    // c += d
-    *c = _mm256_add_epi64(*c, *d);
-    // b = (b ^ c) >>> 24
-    *b = _mm256_ror_epi64(_mm256_xor_si256(*b, *c), 24);
-    // a += b + my
-    *a = _mm256_add_epi64(_mm256_add_epi64(*a, *b), my);
-    // d = (d ^ a) >>> 16
-    *d = _mm256_ror_epi64(_mm256_xor_si256(*d, *a), 16);
-    // c += d
-    *c = _mm256_add_epi64(*c, *d);
-    // b = (b ^ c) >>> 63
-    *b = _mm256_ror_epi64(_mm256_xor_si256(*b, *c), 63);
-  }
+/// Caller must ensure AVX2 is available.
+#[target_feature(enable = "avx2")]
+pub(super) unsafe fn compress_blocks_avx2(h: &mut [u64; 8], blocks: &[u8], t: &mut Blake2bCounter) {
+  // SAFETY: this function enables AVX2.
+  unsafe { compress_blocks_impl::<Avx2>(h, blocks, t) }
 }
 
-// ─── AVX-512VL compress entry point ──────────────────────────────────────────
-
-/// Blake2b AVX-512VL-accelerated compress.
-///
-/// Same structure as AVX2 but uses `VPRORQ` for all rotations, eliminating
-/// the byte-shuffle lookup tables.
+/// Blake2b AVX-512VL compress of one block.
 ///
 /// # Safety
 ///
 /// Caller must ensure AVX-512F and AVX-512VL are available.
 #[target_feature(enable = "avx512f,avx512vl")]
 pub(super) unsafe fn compress_avx512vl(h: &mut [u64; 8], block: &[u8; 128], t: u128, last: bool) {
-  // SAFETY: AVX-512VL intrinsics are available via this function's #[target_feature] attribute.
-  // diagonalize/undiagonalize use only AVX2 permutes, which are available under AVX-512VL.
-  unsafe {
-    let m = load_msg(block);
-    let v = init_v(h, t, last);
+  // SAFETY: this function enables AVX-512F and AVX-512VL, which imply AVX2.
+  unsafe { compress_impl::<Avx512vl>(h, block, t, last) }
+}
 
-    // Pack the 16-word working vector into 4 rows of __m256i
-    let mut a = _mm256_loadu_si256(v.as_ptr().cast()); // v[0..4]
-    let mut b = _mm256_loadu_si256(v.as_ptr().add(4).cast()); // v[4..8]
-    let mut c = _mm256_loadu_si256(v.as_ptr().add(8).cast()); // v[8..12]
-    let mut d = _mm256_loadu_si256(v.as_ptr().add(12).cast()); // v[12..16]
-
-    // 12 rounds of column + diagonal mixing
-    for round in 0..12u8 {
-      let s = &SIGMA[(round % 10) as usize];
-
-      // Column step
-      let mx = _mm256_set_epi64x(
-        m[s[6] as usize].cast_signed(),
-        m[s[4] as usize].cast_signed(),
-        m[s[2] as usize].cast_signed(),
-        m[s[0] as usize].cast_signed(),
-      );
-      let my = _mm256_set_epi64x(
-        m[s[7] as usize].cast_signed(),
-        m[s[5] as usize].cast_signed(),
-        m[s[3] as usize].cast_signed(),
-        m[s[1] as usize].cast_signed(),
-      );
-
-      g_avx512vl(&mut a, &mut b, &mut c, &mut d, mx, my);
-
-      diagonalize(&mut b, &mut c, &mut d);
-
-      // Diagonal step
-      let mx = _mm256_set_epi64x(
-        m[s[14] as usize].cast_signed(),
-        m[s[12] as usize].cast_signed(),
-        m[s[10] as usize].cast_signed(),
-        m[s[8] as usize].cast_signed(),
-      );
-      let my = _mm256_set_epi64x(
-        m[s[15] as usize].cast_signed(),
-        m[s[13] as usize].cast_signed(),
-        m[s[11] as usize].cast_signed(),
-        m[s[9] as usize].cast_signed(),
-      );
-
-      g_avx512vl(&mut a, &mut b, &mut c, &mut d, mx, my);
-
-      undiagonalize(&mut b, &mut c, &mut d);
-    }
-
-    // Finalize: h[i] ^= v[i] ^ v[i+8]
-    let h0 = _mm256_loadu_si256(h.as_ptr().cast());
-    let h1 = _mm256_loadu_si256(h.as_ptr().add(4).cast());
-
-    _mm256_storeu_si256(h.as_mut_ptr().cast(), _mm256_xor_si256(h0, _mm256_xor_si256(a, c)));
-    _mm256_storeu_si256(
-      h.as_mut_ptr().add(4).cast(),
-      _mm256_xor_si256(h1, _mm256_xor_si256(b, d)),
-    );
-  }
+/// Blake2b AVX-512VL compress of whole non-final blocks.
+///
+/// # Safety
+///
+/// Caller must ensure AVX-512F and AVX-512VL are available.
+#[target_feature(enable = "avx512f,avx512vl")]
+pub(super) unsafe fn compress_blocks_avx512vl(h: &mut [u64; 8], blocks: &[u8], t: &mut Blake2bCounter) {
+  // SAFETY: this function enables AVX-512F and AVX-512VL, which imply AVX2.
+  unsafe { compress_blocks_impl::<Avx512vl>(h, blocks, t) }
 }
