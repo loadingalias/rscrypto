@@ -139,7 +139,7 @@ def x86_effects(row: scanner.DecodedLine, identity: str, caller_saved: set[str] 
   constant = "<const:" in identity
   load_from_memory = bool(memory) and not constant
   address_uses = set().union(*(x86_registers(operand) for operand in memory)) if memory else set()
-  if base in {"nop", "endbr64"} or mnemonic in {"nopw", "nopl", "data16"}:
+  if x86_is_nop(mnemonic):
     return effects(set(), set())
   if mnemonic in X86_COUNT_BRANCHES:
     return effects({"rcx"}, set())
@@ -687,8 +687,16 @@ def x86_register_width(operand: str) -> int | None:
   return None
 
 
+def x86_is_nop(mnemonic: str) -> bool:
+  """A no-operation form. Multi-byte NOPs carry a memory operand only to set their length; they
+  access no memory, so assembler padding of any length has no effect on a slice."""
+  return x86_base(mnemonic) in {"nop", "endbr64"} or mnemonic in {"nopw", "nopl", "data16"}
+
+
 def x86_memory(row: scanner.DecodedLine) -> Memory:
   mnemonic = row.mnemonic
+  if x86_is_nop(mnemonic):
+    return NO_MEMORY
   # `rep stosq` decodes as mnemonic `rep` with the string operation first in its operands.
   string = next((word for word in f"{mnemonic} {row.operands}".split()[:2] if X86_STRING.match(word)), None)
   if string is not None:

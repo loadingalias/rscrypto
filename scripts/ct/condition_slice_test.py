@@ -62,6 +62,34 @@ def main() -> None:
   ], 4)
   assert partial.reasons == [] and len(partial.nodes) == 4, partial.canonical
 
+  # A multi-byte NOP is assembler padding: it accesses no memory despite its operand, so neither its
+  # presence nor its length changes a slice. The effect model already gave it no register uses, so once
+  # the frame escapes to a call the memory model saw a possible writer of the saved slot; that bound
+  # alignment into the identity (`ct_entry_p256_ecdh_agree` on x86-64 at 6926f298).
+  def padded(between: str):
+    return slice_of(target, [
+      "1000: 48 81 ec 48 01 00 00\tsubq\t$0x148, %rsp",
+      "1007: 48 89 bc 24 38 01 00 00\tmovq\t%rdi, 0x138(%rsp)",
+      "100f: 31 c0\txorl\t%eax, %eax",
+      "1011: 48 c7 84 c4 a0 00 00 00 00 00 00 00\tmovq\t$0x0, 0xa0(%rsp,%rax,8)",
+      "101d: 48 ff c0\tincq\t%rax",
+      "1020: 48 83 f8 04\tcmpq\t$0x4, %rax",
+      "1024: 75 eb\tjne\t0x1011 <f+0x11>",
+      "1026: 48 8d bc 24 00 01 00 00\tleaq\t0x100(%rsp), %rdi",
+      "102e: e8 cd 0f 00 00\tcallq\t0x2000 <g>",
+      between,
+      "103f: 48 8b 84 24 38 01 00 00\tmovq\t0x138(%rsp), %rax",
+      "1047: 48 85 c0\ttestq\t%rax, %rax",
+      "104a: 74 01\tje\t0x104d <f+0x4d>",
+      "104c: 90\tnop",
+      "104d: c3\tretq",
+    ], 13)
+  short = padded("1033: 66 2e 0f 1f 84 00 00 00 00 00\tnopw\t%cs:(%rax,%rax)")
+  long = padded("1033: 66 66 66 2e 0f 1f 84 00 00 00 00 00\tnopw\t%cs:(%rax,%rax)")
+  assert "nopw" not in short.canonical and short.canonical == long.canonical, short.canonical
+  # The real indexed frame store still reaches the reload; only the padding left the slice.
+  assert "0xa0(%rsp,%rax,8)" in short.canonical, short.canonical
+
   # A definition before a return cannot reach code that only a branch enters.
   returned = slice_of(target, [
     "1000: 48 83 ff 01\tcmpq\t$0x1, %rdi",

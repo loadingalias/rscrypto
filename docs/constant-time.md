@@ -45,6 +45,7 @@ and condition identity (`slice_sha256`): a digest of the backward slice of the c
 The slice holds every instruction whose result reaches the condition through registers, flags,
 or memory inside the function, each with the placement-independent identity described below.
 A load reaches the stores that can write the loaded bytes.
+An x86 multi-byte NOP accesses no memory, despite its operand, so assembler padding never joins a slice.
 Stack slots are tracked by their offset from the entry stack pointer,
 and fields read through an unmodified argument pointer by their offset from it.
 Any other store that can overlap a load joins its slice.
@@ -799,6 +800,15 @@ Most of the remaining staleness came from two code changes in `813111b8`, which 
 and the AArch64 DIT guard no longer folded a compile-time DIT target.
 On a same-path Apple build of `9c887998`, one waiver remained, in a function whose only change is an
 unresolved `adrp` page; its slice and open leaves are unchanged, and it was renewed by review.
+
+On x86-64, the slices of 47 Linux and 32 Windows waivers contained `nopw` padding that the memory model
+read as an access at an unknown address. With padding removed from slices, those waivers moved under the
+same rule. Against [Constant-Time 41899140228](https://github.com/loadingalias/rscrypto/actions/runs/41899140228)
+at `a0894a0d`, two waivers per x86-64 platform then had unchanged slices in changed functions:
+`ct_entry_p256_ecdh_agree` and `mont_mul_cios`. Their functions differ only in the capability-cache check,
+its cold initializer, padding, and the branch targets that the longer check shifts. Each open leaf maps to the
+same callee or import, except the initializer, which receives only the static cache. Those four waivers were
+renewed by review, with the three instruction offsets that their rationales cite updated.
 
 ## Public decisions and exclusions
 
