@@ -813,6 +813,15 @@ its cold initializer, padding, and the branch targets that the longer check shif
 same callee or import, except the initializer, which receives only the static cache. Those four waivers were
 renewed by review, with the three instruction offsets that their rationales cite updated.
 
+The lock-free capability cache calls detection directly, so `detect_uncached` is now inside the enforced
+call closure of the P-256 ECDH and RSA roots; std's `OnceLock` had reached it only through an indirect call.
+Its eight `select_branch` conditions on each x86-64 platform test CPUID leaf limits, CPUID and XCR0
+feature bits, the CPU family, and the Intel hybrid-model bitmap. With implicit register operands modeled,
+each slice ends at `cpuid`, `_xgetbv`, constants, or frame bytes stored from them; the Linux
+`ARCH_GET_XCOMP_PERM` system call writes only its own permission word. The function's only argument is
+its result pointer, which no condition reads. Each condition has a public waiver per affected primitive:
+32 waivers, bound to the slices in the `a0894a0d` CI artifacts.
+
 ## Public decisions and exclusions
 
 Ordinary equality is allowed for public values, such as nonces, encoded public keys,
