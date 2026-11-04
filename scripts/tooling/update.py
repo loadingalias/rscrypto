@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from functools import cache
 from email.utils import parsedate_to_datetime
 import hashlib
@@ -19,7 +19,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from catalog import CATALOG, MACOS, PLATFORMS, NATIVE_SOURCE_PLATFORMS, ROOT, read, rust_channel, validate
+from catalog import CATALOG, MACOS, PLATFORMS, NATIVE_SOURCE_PLATFORMS, ROOT, read, validate
 
 REPOS = {'cargo-rail': 'loadingalias/cargo-rail', 'cargo-binstall': 'cargo-bins/cargo-binstall',
          'llvm': 'llvm/llvm-project', 'cmake': 'Kitware/CMake', 'zig': None,
@@ -55,11 +55,30 @@ def semver(value):
     return tuple(map(int, match.groups())) if match else None
 
 
-def eligible_release(versions, *, rust_version=None):
+def min_publish_age():
+    """The publish-age cooldown, read from the variable that Cargo itself uses. Zero when unset.
+
+    `machine update all` sets it, so a selected release is as old as the releases `cargo update` accepts.
+    """
+    value = os.environ.get('CARGO_REGISTRY_GLOBAL_MIN_PUBLISH_AGE', '0').strip()
+    if value == '0':
+        return timedelta(0)
+    match = re.fullmatch(r'(\d+) (second|minute|hour|day|week|month)s?', value)
+    if not match:
+        raise ValueError(f'unsupported CARGO_REGISTRY_GLOBAL_MIN_PUBLISH_AGE: {value!r}')
+    count, unit = int(match.group(1)), match.group(2)
+    if unit == 'month':
+        return timedelta(days=30 * count)
+    return timedelta(**{f'{unit}s': count})
+
+
+def eligible_release(versions, *, rust_version=None, published_before=None):
     candidates = []
     for version in versions:
         number = semver(version['num'])
         if number is None or version.get('yanked'):
+            continue
+        if published_before and datetime.fromisoformat(version['created_at']) > published_before:
             continue
         required = version.get('rust_version')
         if rust_version and required:
@@ -74,8 +93,10 @@ def eligible_release(versions, *, rust_version=None):
 
 def crate_version(name, rust_version=None):
     versions = api(f'https://crates.io/api/v1/crates/{name}')['versions']
+    age = min_publish_age()
+    cutoff = datetime.now(timezone.utc) - age if age else None  # no cooldown: no filter
     try:
-        return eligible_release(versions, rust_version=rust_version)
+        return eligible_release(versions, rust_version=rust_version, published_before=cutoff)
     except ValueError as error:
         raise ValueError(f'{name}: {error}') from error
 
@@ -430,13 +451,12 @@ def nightly_manifest(date):
 
 
 def update_rust():
-    """Pin the newest nightly that is complete for every host, component, and target.
+    """Pin `UPDATE_NIGHTLY`, the shared nightly that `machine update all` selects and installs.
 
-    rust-toolchain.toml owns the one canonical compiler. Walk back from the
-    current nightly until every catalog host has the selected components and
-    every catalog target has a standard library.
+    rust-toolchain.toml owns the one canonical compiler. The nightly must have the
+    selected components for every catalog host and a standard library for every
+    catalog target; otherwise it fails and the shared move stops.
     """
-    from datetime import date as calendar_date, timedelta
     import tomlkit
     path = ROOT / 'rust-toolchain.toml'
     document = tomlkit.parse(path.read_text())
@@ -460,18 +480,15 @@ def update_rust():
                 gaps.append(f'rust-std for {target}')
         return gaps
 
-    today = calendar_date.today()
-    for age in range(15):
-        date = (today - timedelta(days=age)).isoformat()
-        try:
-            manifest = nightly_manifest(date)
-        except OSError:
-            continue  # not yet published
-        if not missing(manifest):
-            document['toolchain']['channel'] = f'nightly-{date}'
-            path.write_text(tomlkit.dumps(document))
-            return
-    raise ValueError('no complete nightly in the last 15 days')
+    requested = os.environ.get('UPDATE_NIGHTLY', '')
+    match = re.fullmatch(r'nightly-(\d{4}-\d{2}-\d{2})', requested)
+    if not match:
+        raise ValueError(f'UPDATE_NIGHTLY is not a dated nightly ({requested!r}): run `machine update all`')
+    gaps = missing(nightly_manifest(match.group(1)))
+    if gaps:
+        raise ValueError(f'{requested} is incomplete for rscrypto: {", ".join(sorted(gaps))}')
+    document['toolchain']['channel'] = requested
+    path.write_text(tomlkit.dumps(document))
 
 
 def sync_gungraun_runner():
@@ -507,12 +524,10 @@ def main():
     if len(sys.argv) != 1:
         raise ValueError('usage: just update')
 
-    # Select releases before installing anything.
+    # Select releases. `machine update all` installs the shared nightly before this runs.
     write_catalog(resolve_catalog())
     update_python()
     update_rust()
-    subprocess.run(['rustup', 'toolchain', 'install', rust_channel(), '--profile', 'minimal',
-                    '--component', 'clippy', '--component', 'rustfmt'], cwd=ROOT, check=True)
     paths = manifest_paths()
     roots = cargo_roots(paths)
     update_manifests(paths)

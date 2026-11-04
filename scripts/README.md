@@ -816,14 +816,17 @@ Workflows refer to profile names, and do not override their shapes.
 `just update` refreshes the tooling catalog, stable Rust, every Cargo manifest
 (including the standalone and fuzz support workspaces),
 the lockfiles, and the existing GitHub Action pins.
-It runs on local macOS, and it has no dependency publish-age filter.
+It runs on local macOS after `machine update all`, which installs the shared nightly.
+Release selection skips crate versions younger than `CARGO_REGISTRY_GLOBAL_MIN_PUBLISH_AGE`,
+the publish-age cooldown that Cargo itself reads; without it, no cooldown applies.
 Inspect its changes before you commit.
 
 `rust-toolchain.toml` pins the one canonical nightly for every host, target, and tool lane, including formatting, Miri,
 fuzzing, coverage, and CT evidence.
 `lib/toolchain.py` reads that pin.
 Build, check, test, and benchmark entry points use it, not an ambient `RUSTUP_TOOLCHAIN`.
-`just update` pins the newest nightly that is complete for every catalog host, component, and target.
+`just update` pins `UPDATE_NIGHTLY`, the shared nightly that `machine update all` selects.
+It fails when that nightly lacks a selected component for a catalog host or a standard library for a catalog target.
 
 The MSRV lane uses `rust-version` from `Cargo.toml`.
 While that Rust release is unpublished,

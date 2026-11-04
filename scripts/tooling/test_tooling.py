@@ -1,5 +1,6 @@
 """Offline regression checks for native provisioning and release selection."""
 import copy
+from datetime import datetime, timedelta, timezone
 import io
 import json
 from pathlib import Path
@@ -102,6 +103,22 @@ class Tooling(unittest.TestCase):
         self.assertEqual(update.eligible_release(versions, rust_version='1.91.0'), '1.0.0')
         with self.assertRaises(ValueError):
             update.eligible_release([{'num': '1.0.0', 'yanked': True}])
+
+    def test_release_selection_waits_out_the_publish_age_cooldown(self):
+        now = datetime.now(timezone.utc)
+        versions = [{'num': '2.0.0', 'created_at': (now - timedelta(days=2)).isoformat()},
+                    {'num': '1.0.0', 'created_at': (now - timedelta(days=9)).isoformat()}]
+        self.assertEqual(update.eligible_release(versions), '2.0.0')
+        self.assertEqual(update.eligible_release(versions, published_before=now - timedelta(days=7)), '1.0.0')
+        cases = {'0': timedelta(0), '7 days': timedelta(days=7), '2 weeks': timedelta(weeks=2),
+                 '12 hours': timedelta(hours=12), '1 month': timedelta(days=30)}
+        for value, expected in cases.items():
+            with patch.dict(update.os.environ, {'CARGO_REGISTRY_GLOBAL_MIN_PUBLISH_AGE': value}):
+                self.assertEqual(update.min_publish_age(), expected)
+        for value in ('7days', 'seven days', '-1 days'):
+            with patch.dict(update.os.environ, {'CARGO_REGISTRY_GLOBAL_MIN_PUBLISH_AGE': value}):
+                with self.assertRaises(ValueError):
+                    update.min_publish_age()
 
     def test_manifest_updates_preserve_structure_and_cover_dependency_tables(self):
         source = '''# preserve
@@ -213,7 +230,7 @@ alpha="=0.104.0-alpha.7"
             update.sync_gungraun_runner()
         self.assertEqual(write.call_args.args[0]['cargo']['gungraun-runner'], '0.19.4')
 
-    def test_nightly_update_pins_newest_complete_manifest(self):
+    def test_nightly_update_pins_only_the_complete_shared_nightly(self):
         data = catalog.read()
         hosts = [data[p]['rust-host'] for p in catalog.PLATFORMS] + ['aarch64-apple-darwin']
         targets = json.loads((catalog.ROOT / '.config/target-matrix.json').read_text())['targets']
@@ -225,26 +242,28 @@ alpha="=0.104.0-alpha.7"
             if not complete:
                 packages['rust-std']['target']['s390x-unknown-linux-gnu']['available'] = False
             return tomlkit.dumps({'date': 'fixture', 'pkg': packages}).encode()
-        responses = [OSError('not yet published'), (manifest(False), ''), (manifest(True), '')]
-        def fetch(url):
-            response = responses.pop(0)
-            if isinstance(response, Exception):
-                raise response
-            return response
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             (root / '.config').mkdir()
             shutil.copy2(catalog.ROOT / '.config/target-matrix.json', root / '.config/target-matrix.json')
             path = root / 'rust-toolchain.toml'
             path.write_text('[toolchain]\nchannel="nightly-2026-01-01"\ncomponents=["clippy","rustfmt","rust-src","rust-analyzer"]\n')
-            with patch.object(update, 'ROOT', root), patch.object(update, 'read', return_value=data), \
-                 patch.object(update, 'fetch', side_effect=fetch) as fetched:
-                update.update_rust()
-            urls = [c.args[0] for c in fetched.call_args_list]
-            self.assertEqual(len(urls), 3)
-            self.assertTrue(all(u.endswith('/channel-rust-nightly.toml') for u in urls))
-            third = urls[2].split('/dist/')[1].split('/')[0]
-            self.assertEqual(catalog.read(path)['toolchain']['channel'], f'nightly-{third}')
+            def pin(nightly, complete=True):
+                with patch.dict(update.os.environ, {'UPDATE_NIGHTLY': nightly}), patch.object(update, 'ROOT', root), \
+                     patch.object(update, 'read', return_value=data), \
+                     patch.object(update, 'fetch', return_value=(manifest(complete), '')) as fetched:
+                    update.update_rust()
+                return fetched
+            fetched = pin('nightly-2026-02-03')
+            self.assertEqual(fetched.call_args.args[0],
+                             'https://static.rust-lang.org/dist/2026-02-03/channel-rust-nightly.toml')
+            self.assertEqual(catalog.read(path)['toolchain']['channel'], 'nightly-2026-02-03')
+            with self.assertRaisesRegex(ValueError, 'rust-std for s390x-unknown-linux-gnu'):
+                pin('nightly-2026-02-04', complete=False)
+            for nightly in ('', '2026-02-04', 'nightly'):
+                with self.assertRaisesRegex(ValueError, 'run `machine update all`'):
+                    pin(nightly)
+            self.assertEqual(catalog.read(path)['toolchain']['channel'], 'nightly-2026-02-03')
 
     def test_nextest_recommendation_preserves_minimum_and_configuration(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -268,7 +287,6 @@ alpha="=0.104.0-alpha.7"
                  patch.object(update.sys, 'platform', 'darwin'), patch.object(update, 'resolve_catalog'), \
                  patch.object(update, 'write_catalog'), patch.object(update, 'update_python'), \
                  patch.object(update, 'update_rust'), \
-                 patch.object(update, 'rust_channel', return_value='1.98.1'), \
                  patch.object(update, 'manifest_paths', return_value=[root / 'Cargo.toml']), \
                  patch.object(update, 'cargo_roots', return_value=[root / 'Cargo.toml']), \
                  patch.object(update, 'update_manifests'), \
