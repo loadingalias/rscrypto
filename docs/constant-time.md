@@ -62,6 +62,9 @@ another instruction in the same function could depend on a secret while staying 
 Instruction identities use function-relative positions. Resolved direct transfers retain their
 instruction length, mnemonic, registers, condition, and exact destination symbol and offset instead
 of the placement-dependent displacement bytes.
+Destinations include PLT entries and versioned symbols, such as `memcpy@plt` and
+`free@@GLIBC_2.17`. A POWER call stub is named by its import, without the stub-group number that
+GNU ld prefixes to it; artifact collection checks each stub's instructions, TOC slot, and relocation.
 The same rule applies to resolved address references in the linked binary:
 x86-64 RIP-relative operands, AArch64 `adrp`, `adr`, and literal loads, RISC-V `auipc` pairs,
 POWER TOC-relative pairs and the global-entry TOC setup, and IBM Z relative-long instructions such as `larl`.
@@ -781,6 +784,21 @@ The other 471 identities, classifications, rationales, and review dates are unch
 With the re-encoded waivers, the scanner accepts all seven reviewed artifact sets and the failed `813111b8`
 RISC-V artifact with no stale waiver and no unwaived enforced finding.
 The re-encoding binds existing reviews to the same binaries; it is not a review of later source.
+
+The CT run at `27778fe7` ([41886090934](https://github.com/loadingalias/rscrypto/actions/runs/41886090934))
+then showed stale waivers on x86-64 Linux (4), Windows (4), AArch64 Linux (32), and POWER (29),
+while RISC-V and IBM Z passed. They date from `813111b8`; that commit's CT runs were cancelled
+before their verdict jobs. Two of the causes were placement: POWER calls name their PLT stub as
+`0000004f.plt_call.free@@GLIBC_2.17`, and AArch64 and POWER call versioned PLT entries, but the
+identity looked such a destination up without its version, so the call stayed byte-exact.
+The identity now resolves those destinations as described [above](#evidence-model).
+26 AArch64 Linux and 26 POWER waivers moved under the same rule as the first re-encoding,
+on the same reviewed artifacts; the other 428 identities are unchanged.
+Most of the remaining staleness came from two code changes in `813111b8`, which `a0894a0d` and
+`9c887998` remove: every inlined capability check copied the whole `Detected` value onto the stack,
+and the AArch64 DIT guard no longer folded a compile-time DIT target.
+On a same-path Apple build of `9c887998`, one waiver remained, in a function whose only change is an
+unresolved `adrp` page; its slice and open leaves are unchanged, and it was renewed by review.
 
 ## Public decisions and exclusions
 

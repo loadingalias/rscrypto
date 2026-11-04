@@ -88,6 +88,29 @@ def immediate_symbol_regressions(body: FunctionBody, known: set[str]) -> None:
     instruction_identity(target, body, added.format("other"), known)
 
 
+def linker_stub_regressions() -> None:
+  """Calls to PLT entries and POWER call stubs bind the import, not where the linker placed it.
+
+  The 2026-11-04 POWER RSA waivers went stale when `bl 0x83c0 <0000004f.plt_call.free@@GLIBC_2.17>`
+  moved to 0x8360: the lookup stripped the symbol version, so the call stayed byte-exact.
+  """
+  body = FunctionBody("caller", Path("linked.binary.disasm.txt"), 0x1000, [])
+  stubs = {"caller", "memcpy@plt", "memset@plt", "0000004f.plt_call.free@@GLIBC_2.17",
+           "00000037.plt_call.free@@GLIBC_2.17", "0000004f.plt_call.memset@@GLIBC_2.17"}
+  power = lambda line: instruction_identity("powerpc64le-unknown-linux-gnu", body, line, stubs)
+  free = power("1000: c5 e5 f7 4b\tbl 0x83c0 <0000004f.plt_call.free@@GLIBC_2.17>")
+  assert free == power("1000: e5 ef f7 4b\tbl 0x8360 <0000004f.plt_call.free@@GLIBC_2.17>")
+  assert free == power("1000: 85 ef f7 4b\tbl 0x8300 <00000037.plt_call.free@@GLIBC_2.17>")
+  assert free != power("1000: c5 e5 f7 4b\tbl 0x83c0 <0000004f.plt_call.memset@@GLIBC_2.17>")
+  assert "0000004f" not in free and "plt_call.free@@GLIBC_2.17" in free, free
+  arm = lambda line: instruction_identity("aarch64-unknown-linux-gnu", body, line, stubs)
+  memcpy = arm("1000: 94001000\tbl 0x5000 <memcpy@plt>")
+  assert memcpy == arm("1000: 94000c00\tbl 0x4000 <memcpy@plt>")
+  assert memcpy != arm("1000: 94001000\tbl 0x5000 <memset@plt>")
+  # An unknown destination stays byte-exact.
+  assert arm("1000: 94001000\tbl 0x5000 <bcmp@plt>") != arm("1000: 94000c00\tbl 0x4000 <bcmp@plt>")
+
+
 def multiply_regressions() -> None:
   # Owner decisions 2026-10-21: secret ECDSA limbs use the hardware multiplier on riscv64, and the
   # RSA blinding inverse on riscv64 and IBM Z, reviewed like ECDH and the RSA exponentiation. RV32
@@ -589,6 +612,7 @@ def main() -> None:
   assert counted == instruction_identity(target, moved, "3006: e3 01\tjrcxz\t0x3009 <caller+0x9>", known)
   assert counted != instruction_identity(target, body, "1006: e3 02\tjrcxz\t0x100a <caller+0xa>", known)
   immediate_symbol_regressions(body, known)
+  linker_stub_regressions()
   multiply_regressions()
   select_branch_regressions()
   data_reference_regressions()

@@ -1128,10 +1128,11 @@ def instruction_identity(target: str, body: FunctionBody, line: str, local_symbo
   if destination is None:
     return exact
   symbol = normalize_symbol(destination.group(1))
-  if symbol_target_base(symbol) not in local_symbols:
+  # Versioned and PLT names (`memcpy@plt`, `free@@GLIBC_2.17`) are local symbols in full.
+  if symbol not in local_symbols and symbol_target_base(symbol) not in local_symbols:
     return exact
   length = sum(len(word) // 2 for word in encoded)
-  return f"{offset:x}: {length}B {text[:destination.start()]}<{symbol}>"
+  return f"{offset:x}: {length}B {text[:destination.start()]}<{POWER_PLT_STUB_GROUP.sub('', symbol)}>"
 
 
 IDENTITY_VERSION = "rscrypto.ct.instruction-identity.v2"
@@ -1143,6 +1144,9 @@ X86_IMMEDIATE_SYMBOL = re.compile(rf"(# imm = {SIGNED_IMMEDIATE})\s+<.*>$")
 AARCH64_IMMEDIATE_SYMBOL = re.compile(rf"((?:#|// =){SIGNED_IMMEDIATE})\s+<.*>$")
 RISCV_IMMEDIATE_SYMBOL = re.compile(rf"(,\s*{SIGNED_IMMEDIATE})\s+<.*>$")
 RISCV_ABSOLUTE_IMMEDIATE_MNEMONICS = {"lui", "c.lui"}
+# GNU ld names a POWER call stub `<group>.plt_call.<import>`; the group number records where the stub
+# was placed. Artifact collection checks each stub's sequence, TOC slot, and relocation.
+POWER_PLT_STUB_GROUP = re.compile(r"^[0-9a-f]{8}\.(?=plt_call\.)")
 
 
 def without_immediate_symbol(target: str, inst: str | None, identity: str) -> str:
