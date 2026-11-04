@@ -106,6 +106,7 @@ mod pclmul {
   ///
   /// # Safety
   /// Caller must ensure the CPU supports PCLMULQDQ and SSE2.
+  #[cfg(feature = "aes-gcm")]
   #[target_feature(enable = "pclmulqdq,sse2")]
   pub(super) unsafe fn precompute_powers_tree<const N: usize>(h: u128, powers: &mut [u128; N]) {
     let Some(first) = powers.first_mut() else {
