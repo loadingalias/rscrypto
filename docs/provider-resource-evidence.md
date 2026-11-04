@@ -153,7 +153,7 @@ A dash means that no root reaches the edge:
 | Linux target | `calloc` | `free` | `memcpy` | `memset` | `getauxval` |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | x86-64 GNU | 184 / 184 | 40 / 40 | 1,720 / 1,000 | - / - | - / - |
-| AArch64 GNU | 352 / 352 | 48 / 48 | 1,504 / 1,360 | - / - | 2,080 / 384 |
+| AArch64 GNU | 352 / 352 | 48 / 48 | 1,504 / 1,360 | - / - | 2,080 / 400 |
 | POWER64LE GNU | 2,576 / 480 | 112 / 112 | 8,224 / 1,536 | 8,048 / 1,536 | 7,888 / - |
 | IBM Z GNU | 360 / 360 | 184 / 184 | - / - | - / - | 2,008 / - |
 | RISC-V 64 GNU | 256 / 256 | 32 / 32 | 1,184 / 1,184 | 1,184 / 1,184 | - / - |
@@ -197,7 +197,7 @@ with the number of roots that have one:
 | Linux target | ML-DSA signing (9 roots) | ML-KEM (12 roots) | AEAD records (6 roots) |
 | --- | ---: | ---: | ---: |
 | x86-64 GNU | 3 / 1, up to 21,688 / 16,584 B | 12 / 12, 33,976 / 33,880 B | none bounded |
-| AArch64 GNU | 9 / 9, 59,376 / 58,736 B | 12 / 12, 38,256 / 36,688 B | none bounded |
+| AArch64 GNU | 9 / 9, 59,392 / 58,720 B | 12 / 12, 38,256 / 36,688 B | none bounded |
 | POWER64LE GNU | 9 / 9, 59,360 / 59,280 B | 12 / 12, 34,416 / 34,416 B | none bounded |
 | IBM Z GNU | 2 / 1, up to 17,176 / 16,952 B | 12 / 12, 33,960 / 31,456 B | none bounded |
 | RISC-V 64 GNU | 1 / 1, 16,720 / 16,720 B | 12 / 12, 31,728 / 31,728 B | none bounded |
@@ -217,7 +217,10 @@ paths (2026-11-04). An inlined `platform::caps()` check no longer copies the
 whole `Detected` value onto the stack, so AArch64 preparation bounds drop by
 48 B and other hot frames shrink. The detected value now waits in the cold
 `initialize` frame instead, which raises the IBM Z bounds that run through
-first-call detection by 40 B and the POWER `getauxval` entry by 16 B.
+first-call detection by 40 B and the POWER `getauxval` entry by 16 B. The
+AArch64 DIT guard is a load, a zero test, and a bit test, and its probe is a
+separate cold function, which adds 16 B to the portable `getauxval` entry and
+the native signing bound.
 
 The tool continues below missing frame records, resolves identified GOT/PLT
 imports, distinguishes IFUNC relocations, and retains unresolved transfers by

@@ -421,29 +421,45 @@ fn apple_sysctl_flag(name: &core::ffi::CStr) -> bool {
   status == 0 && value != 0
 }
 
+/// The FEAT_DIT cache: zero until probed, then `DIT_KNOWN`, plus `DIT_PRESENT` when the CPU has it.
+#[cfg(all(target_arch = "aarch64", feature = "std", not(miri)))]
+static DIT_STATE: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
+#[cfg(all(target_arch = "aarch64", feature = "std", not(miri)))]
+const DIT_KNOWN: u8 = 1;
+#[cfg(all(target_arch = "aarch64", feature = "std", not(miri)))]
+const DIT_PRESENT: u8 = 2;
+
 /// Whether the CPU implements FEAT_DIT (data-independent timing), probed once per process.
 ///
 /// The `DataIndependentTiming` guard reads this. It ignores capability overrides and
 /// `portable-only`: DIT is a timing mitigation, not a backend choice. Racing first callers each
-/// run the same idempotent probe, so a relaxed byte is the whole cache.
+/// run the same idempotent probe, so a relaxed byte is the whole cache. Every probed state is
+/// nonzero, so an inlined check is one load, a zero test, and a bit test.
 #[cfg(all(target_arch = "aarch64", feature = "std", not(miri)))]
+#[inline]
 pub(crate) fn dit_supported() -> bool {
-  use core::sync::atomic::{AtomicU8, Ordering};
+  use core::sync::atomic::Ordering;
 
-  const UNKNOWN: u8 = 0;
-  const ABSENT: u8 = 1;
-  const PRESENT: u8 = 2;
-  static STATE: AtomicU8 = AtomicU8::new(UNKNOWN);
-
-  match STATE.load(Ordering::Relaxed) {
-    PRESENT => true,
-    ABSENT => false,
-    _ => {
-      let present = probe_dit();
-      STATE.store(if present { PRESENT } else { ABSENT }, Ordering::Relaxed);
-      present
-    }
+  // A compile-time DIT target (every Apple AArch64 target) needs no runtime check at all.
+  if cfg!(target_feature = "dit") {
+    return true;
   }
+  let state = DIT_STATE.load(Ordering::Relaxed);
+  if state == 0 {
+    return probe_and_cache_dit();
+  }
+  state & DIT_PRESENT != 0
+}
+
+#[cfg(all(target_arch = "aarch64", feature = "std", not(miri)))]
+#[cold]
+#[inline(never)]
+fn probe_and_cache_dit() -> bool {
+  use core::sync::atomic::Ordering;
+
+  let present = probe_dit();
+  DIT_STATE.store(DIT_KNOWN | if present { DIT_PRESENT } else { 0 }, Ordering::Relaxed);
+  present
 }
 
 /// FEAT_DIT from the same sources as `std::arch::is_aarch64_feature_detected!("dit")`.

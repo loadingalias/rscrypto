@@ -785,6 +785,24 @@ mod tests {
     assert_eq!(dit_supported(), probe_dit());
   }
 
+  /// A probed DIT state must be nonzero, or every guard would probe again, and it must record the
+  /// probe's answer. Compile-time DIT targets never touch the cache.
+  #[test]
+  #[cfg(all(target_arch = "aarch64", feature = "std", not(miri)))]
+  fn dit_cache_records_the_probe() {
+    use core::sync::atomic::Ordering;
+
+    let present = probe_dit();
+    assert_eq!(dit_supported(), present);
+    assert_eq!(dit_supported(), present);
+    let state = DIT_STATE.load(Ordering::Relaxed);
+    if cfg!(target_feature = "dit") {
+      assert_eq!(state, 0, "a compile-time DIT target must not read or write the cache");
+    } else {
+      assert_eq!(state, DIT_KNOWN | if present { DIT_PRESENT } else { 0 });
+    }
+  }
+
   /// `getauxval` must return the kernel's `AT_HWCAP` and `AT_HWCAP2` entries, read here
   /// independently from `/proc/self/auxv`.
   #[test]
