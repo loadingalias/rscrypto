@@ -1101,12 +1101,13 @@ def finding(
 def instruction_identity(target: str, body: FunctionBody, line: str, local_symbols: set[str]) -> str:
   """Bind instruction semantics without binding resolved transfers to placement.
 
-  Keep non-control operands and bytes exact. For a decoded direct transfer to
-  a known symbol, retain its length, mnemonic, registers, condition, and exact
-  symbol/offset, but omit the encoding of its layout-dependent displacement.
-  Unknown encodings and unresolved destinations stay byte-exact.
-  `address_reference_identities` applies the same rule to resolved data and
-  code address references in the linked binary.
+  Keep non-control operands and bytes exact, except the symbol name that the
+  disassembler prints for an absolute immediate (`without_immediate_symbol`).
+  For a decoded direct transfer to a known symbol, retain its length, mnemonic,
+  registers, condition, and exact symbol/offset, but omit the encoding of its
+  layout-dependent displacement. Unknown encodings and unresolved destinations
+  stay byte-exact. `address_reference_identities` applies the same rule to
+  resolved data and code address references in the linked binary.
   """
   address = INSTRUCTION_ADDRESS.match(line)
   if address is None:
@@ -1115,7 +1116,7 @@ def instruction_identity(target: str, body: FunctionBody, line: str, local_symbo
   exact = f"{offset:x}: {line[address.end():].strip()}"
   inst = mnemonic(line)
   if inst not in DIRECT_CALL_MNEMONICS | DIRECT_TAIL_MNEMONICS and not is_conditional_branch(target, inst or ""):
-    return exact
+    return without_immediate_symbol(target, inst, exact)
   fields = [part.strip() for part in line.split("\t") if part.strip()]
   if len(fields) < 2 or ":" not in fields[0]:
     return exact
@@ -1136,6 +1137,31 @@ def instruction_identity(target: str, body: FunctionBody, line: str, local_symbo
 IDENTITY_VERSION = "rscrypto.ct.instruction-identity.v2"
 COMMENT = re.compile(r"\s+(?:#\s|//|;)")
 SIGNED_IMMEDIATE = r"[-+]?(?:0x[0-9a-fA-F]+|\d+)"
+# The `<symbol+offset>` that llvm-objdump appends to an absolute immediate, located by the immediate's syntax:
+# x86-64 `# imm = 0xfffff`, AArch64 `#0xffff` or `// =0x10000`, and the operand of a RISC-V `lui`.
+X86_IMMEDIATE_SYMBOL = re.compile(rf"(# imm = {SIGNED_IMMEDIATE})\s+<.*>$")
+AARCH64_IMMEDIATE_SYMBOL = re.compile(rf"((?:#|// =){SIGNED_IMMEDIATE})\s+<.*>$")
+RISCV_IMMEDIATE_SYMBOL = re.compile(rf"(,\s*{SIGNED_IMMEDIATE})\s+<.*>$")
+RISCV_ABSOLUTE_IMMEDIATE_MNEMONICS = {"lui", "c.lui"}
+
+
+def without_immediate_symbol(target: str, inst: str | None, identity: str) -> str:
+  """Drop the symbol name that llvm-objdump appends to an absolute immediate.
+
+  llvm-objdump names the symbol whose address range contains an immediate's value, even when the value is a
+  mask or a constant: `lui a1, 0x33333 <Projective::add+0x841>`. The name changes whenever unrelated code
+  moves, and the encoding already binds the value, so it records placement, not semantics. PC-relative
+  operands keep their names because those identify real targets.
+  """
+  if target.startswith("x86_64-"):
+    pattern = X86_IMMEDIATE_SYMBOL
+  elif target.startswith("aarch64-"):
+    pattern = AARCH64_IMMEDIATE_SYMBOL
+  elif target.startswith("riscv64") and inst in RISCV_ABSOLUTE_IMMEDIATE_MNEMONICS:
+    pattern = RISCV_IMMEDIATE_SYMBOL
+  else:
+    return identity
+  return pattern.sub(r"\1", identity)
 X86_RIP_OPERAND = re.compile(rf"(?P<disp>{SIGNED_IMMEDIATE})?\(%rip\)")
 AARCH64_REGISTER = re.compile(r"\b(?:[xw](\d+)|sp|wsp|xzr|wzr|[qdsbhv]\d+(?:\.\w+)?)\b")
 AARCH64_ADDRESS = re.compile(r"^(?P<reg>[xw]\d+), 0x(?P<address>[0-9a-fA-F]+)(?: <.*>)?$")

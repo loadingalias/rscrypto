@@ -86,6 +86,11 @@ in the straight-line code that it dominates, and every later path overwrites or 
 before another read.
 Other bytes and operands remain exact, including unresolved targets, anonymous writable data,
 immediates that add an offset to an address that is already formed, and indirect transfers.
+The one exception is the symbol name that `llvm-objdump` appends to an absolute immediate:
+x86-64 `# imm = 0xfffff <…>`, AArch64 `#0xffff <…>` and `// =0x10000 <…>`, and the operand of a RISC-V `lui`.
+It names whichever symbol's address range contains the value, even when the value is a mask,
+so the name changes when unrelated code moves. The identity drops the name and keeps the encoded value.
+Names on PC-relative operands remain, because they identify real targets.
 Because the identity binds read-only contents, a changed constant also requires renewed review,
 even at an unchanged address. Different compiler or linker output can therefore require renewed review.
 The artifact hashes retain the exact binary identity.
@@ -752,6 +757,30 @@ it was not relabelled after the manifest renewal. See the
 Owner-confirmed green workflows were accepted without polling. ML-DSA standard
 signing retains its variable-retry exclusion; G1-D traffic qualification remains
 deferred.
+
+### Immediate-symbol re-encoding, 2026-11-04
+
+At `813111b8`, six RISC-V RSA waivers went stale with no change to their code.
+[Constant-Time 41775480473](https://github.com/loadingalias/rscrypto/actions/runs/41775480473)
+and its RISC-V run [41776457804](https://github.com/loadingalias/rscrypto/actions/runs/41776457804) failed on them.
+`ct_entry_rsa_pkcs1v15_decrypt_fixed_blinding` and `public_montgomery_r2_into` had the same instructions
+as in the reviewed artifact. Their identities differed only in the symbol names that `llvm-objdump`
+printed for two `lui` constants, for example `lui a1, 0x33333 <Projective::add+0x841>`,
+which became `+0x869` when unrelated code moved.
+The identity now drops those names, as described [above](#evidence-model).
+
+Nine waivers were re-encoded on the artifacts they were reviewed against:
+[Constant-Time 41534007498](https://github.com/loadingalias/rscrypto/actions/runs/41534007498) at `6926f298`,
+its RISC-V run [41535692403](https://github.com/loadingalias/rscrypto/actions/runs/41535692403),
+and the local Apple Silicon artifact from the 2026-11-03 full Apple qualification.
+Six are the stale RISC-V waivers. Three are AArch64 Linux waivers in
+`private_exponentiate_representative_with_scratch`. Their open slices bind a function whose `and` and
+`movk` constants carried such names.
+A waiver moved to its new identity only when its exact old identity named the same finding in that artifact.
+The other 471 identities, classifications, rationales, and review dates are unchanged.
+With the re-encoded waivers, the scanner accepts all seven reviewed artifact sets and the failed `813111b8`
+RISC-V artifact with no stale waiver and no unwaived enforced finding.
+The re-encoding binds existing reviews to the same binaries; it is not a review of later source.
 
 ## Public decisions and exclusions
 

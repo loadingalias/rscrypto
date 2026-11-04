@@ -44,6 +44,50 @@ def multiply_kinds(target: str, symbol: str, line: str, primitive_ids: list[str]
   return [(row["kind"], row["severity"]) for row in findings if "multiply" in row["kind"]]
 
 
+def immediate_symbol_regressions(body: FunctionBody, known: set[str]) -> None:
+  """llvm-objdump names the symbol that contains an absolute immediate's value.
+
+  Moving unrelated code renames that symbol without changing the instruction; the 2026-11-04 RISC-V
+  RSA waivers went stale only because `lui a1, 0x33333 <Projective::add+0x841>` became `+0x869`.
+  The value must stay bound, and PC-relative names, which identify real targets, must stay.
+  """
+  cases = {
+    "riscv64gc-unknown-linux-gnu": (
+      "1000: 333335b7\tlui\ta1, 0x33333 <{}>",
+      "1000: 555555b7\tlui\ta1, 0x55555 <{}>",
+      ["1000: 000080e7\tjalr\tra <{}>"],
+    ),
+    "aarch64-unknown-linux-gnu": (
+      "1000: 92403c08\tand\tx8, x0, #0xffff <{}>",
+      "1000: 92403808\tand\tx8, x0, #0x7fff <{}>",
+      ["1000: b00009c8\tadrp\tx8, 0x140000 <{}>", "1000: 82 80 00 00\t.word\t0x8082 <{}>"],
+    ),
+    "x86_64-unknown-linux-gnu": (
+      "1000: 48 81 e3 ff ff 0f 00\tandq\t$0xfffff, %rbx  # imm = 0xfffff <{}>",
+      "1000: 48 81 e3 ff ff 07 00\tandq\t$0x7ffff, %rbx  # imm = 0x7ffff <{}>",
+      ["1000: 48 8d 3d 59 ef 07 00\tleaq\t0x7ef59(%rip), %rdi  # 0x7ff60 <{}>"],
+    ),
+  }
+  for target, (immediate, other_value, pc_relative) in cases.items():
+    identity = lambda line: instruction_identity(target, body, line, known)
+    assert identity(immediate.format("callee+0x841")) == identity(immediate.format("other+0x869")), target
+    assert "<" not in identity(immediate.format("callee")), target
+    assert identity(immediate.format("callee")) != identity(other_value.format("callee")), target
+    for line in pc_relative:
+      assert identity(line.format("callee")) != identity(line.format("other")), (target, line)
+  # The shifted AArch64 form keeps the computed value objdump prints after `// =`.
+  target = "aarch64-unknown-linux-gnu"
+  shifted = "1000: 714142ff\tcmp\tw23, #0x50, lsl #12  // =0x50000 <{}>"
+  moved = instruction_identity(target, body, shifted.format("other"), known)
+  assert instruction_identity(target, body, shifted.format("callee"), known) == moved
+  assert moved.endswith("// =0x50000"), moved
+  # Only `lui` loads an absolute RISC-V immediate; other annotated forms stay exact.
+  target = "riscv64gc-unknown-linux-gnu"
+  added = "1000: 00a50513\taddi\ta0, a0, 0xa <{}>"
+  assert instruction_identity(target, body, added.format("callee"), known) != \
+    instruction_identity(target, body, added.format("other"), known)
+
+
 def multiply_regressions() -> None:
   # Owner decisions 2026-10-21: secret ECDSA limbs use the hardware multiplier on riscv64, and the
   # RSA blinding inverse on riscv64 and IBM Z, reviewed like ECDH and the RSA exponentiation. RV32
@@ -544,6 +588,7 @@ def main() -> None:
   counted = instruction_identity(target, body, "1006: e3 01\tjrcxz\t0x1009 <caller+0x9>", known)
   assert counted == instruction_identity(target, moved, "3006: e3 01\tjrcxz\t0x3009 <caller+0x9>", known)
   assert counted != instruction_identity(target, body, "1006: e3 02\tjrcxz\t0x100a <caller+0xa>", known)
+  immediate_symbol_regressions(body, known)
   multiply_regressions()
   select_branch_regressions()
   data_reference_regressions()
