@@ -56,6 +56,9 @@ If a frame address is stored, passed to a call, or used in arithmetic, every cal
   Code outside a closed slice cannot change the condition,
   so its waiver keeps matching when other code in the function or the file changes.
 - A slice is *open* when a call, an instruction of unknown effect, or an indirect jump can change a value it reads.
+  Implicit register operands count as effects: `cpuid` writes eax through edx, `cmpxchg` and one-operand
+  `imul` write rax or rdx, and `syscall` returns in rax and can write the memory its arguments address,
+  as a call does. An instruction whose implicit operands the model does not know reads and writes every register.
   An open identity also binds the complete function hash, so any change in the function requires renewed review.
 
 A count-only `asm_public_operand` rule cannot exempt a branch:

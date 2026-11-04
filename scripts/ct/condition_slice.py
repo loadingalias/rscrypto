@@ -20,6 +20,7 @@ register it names. The slice is the identity that an asm waiver binds
 
 from __future__ import annotations
 
+import dataclasses
 import functools
 import re
 from dataclasses import dataclass, field
@@ -79,6 +80,26 @@ for number in range(8, 16):
   for suffix in ("", "d", "w", "b"):
     X86_ALIASES[f"r{number}{suffix}"] = f"r{number}"
 X86_CALLER_SAVED = {"rax", "rcx", "rdx", "rsi", "rdi", "r8", "r9", "r10", "r11", "flags", *(f"v{n}" for n in range(32))}
+X86_GENERAL = {"rax", "rbx", "rcx", "rdx", "rsi", "rdi", "rbp", "rsp", *(f"r{n}" for n in range(8, 16))}
+X86_VECTORS = {f"v{n}" for n in range(32)}
+# Register operands that the disassembly does not print, as (uses, defines). An instruction without
+# printed operands that is not listed here may write any register, so it defines and reads all of them.
+X86_IMPLICIT = {
+  "cpuid": ({"rax", "rcx"}, {"rax", "rbx", "rcx", "rdx"}),
+  "xgetbv": ({"rcx"}, {"rax", "rdx"}),
+  "rdtsc": (set(), {"rax", "rdx"}),
+  "rdtscp": (set(), {"rax", "rcx", "rdx"}),
+  "lahf": ({"flags"}, {"rax"}),
+  "sahf": ({"rax"}, {"flags"}),
+  "cbtw": ({"rax"}, {"rax"}), "cwtl": ({"rax"}, {"rax"}), "cwtd": ({"rax"}, {"rdx"}),
+  "clc": (set(), {"flags"}), "stc": (set(), {"flags"}), "cmc": ({"flags"}, {"flags"}),
+  "cld": (set(), {"flags"}), "std": (set(), {"flags"}),
+  # `vzeroupper` keeps the low 128 bits and the model does not split a vector register.
+  "vzeroupper": (X86_VECTORS, X86_VECTORS), "vzeroall": (set(), X86_VECTORS),
+  # Fences and spin hints change no register; `lock` and the HLE hints prefix the next line's instruction.
+  "pause": (set(), set()), "lfence": (set(), set()), "mfence": (set(), set()), "sfence": (set(), set()),
+  "lock": (set(), set()), "xacquire": (set(), set()), "xrelease": (set(), set()),
+}
 # Win64 callees preserve rsi and rdi. They preserve only the low 128 bits of xmm6-xmm15, and the
 # model does not split a vector register, so every vector register stays call-clobbered.
 X86_WIN64_CALLER_SAVED = X86_CALLER_SAVED - {"rsi", "rdi"}
@@ -131,7 +152,22 @@ def x86_registers(operand: str) -> set[str]:
   return registers
 
 
+X86_PREFIXES = {"lock", "xacquire", "xrelease", "notrack"}
+
+
+def x86_unprefixed(row: scanner.DecodedLine) -> scanner.DecodedLine:
+  """The instruction that a prefix printed on the same line applies to, such as `lock cmpxchgq ...`.
+
+  objdump usually prints a prefix byte on a line of its own; a prefix line without operands has no effect.
+  """
+  if row.mnemonic in X86_PREFIXES and row.operands.strip():
+    inner, _, operands = row.operands.strip().partition(" ")
+    return dataclasses.replace(row, mnemonic=inner.strip(), operands=operands.strip())
+  return row
+
+
 def x86_effects(row: scanner.DecodedLine, identity: str, caller_saved: set[str] = X86_CALLER_SAVED) -> Effects:
+  row = x86_unprefixed(row)
   mnemonic = row.mnemonic
   base = x86_base(mnemonic)
   operands = split_operands(row.operands)
@@ -149,6 +185,10 @@ def x86_effects(row: scanner.DecodedLine, identity: str, caller_saved: set[str] 
     return effects({"flags"}, set())
   if mnemonic in {"call", "callq"}:
     return effects(x86_registers(row.operands) | {"rsp"}, caller_saved, call=True)
+  if mnemonic == "syscall":
+    # The Linux kernel ABI: number in rax, arguments in rdi, rsi, rdx, r10, r8, and r9, the result in rax,
+    # and rcx and r11 clobbered. Like a call, it can write the memory that its pointer arguments address.
+    return effects({"rax", "rdi", "rsi", "rdx", "r10", "r8", "r9"}, {"rax", "rcx", "r11"}, call=True)
   if mnemonic in {"ret", "retq", "jmp", "jmpq", "ud2", "int3", "hlt"}:
     return effects(x86_registers(row.operands), set())
   if not operands:
@@ -158,7 +198,12 @@ def x86_effects(row: scanner.DecodedLine, identity: str, caller_saved: set[str] 
       return effects({"rax"}, {"rax"})
     if base in {"cltd", "cdq"}:
       return effects({"rax"}, {"rdx"})
-    return effects(set(), set(), unknown=True)
+    if mnemonic in X86_IMPLICIT:
+      uses, defs = X86_IMPLICIT[mnemonic]
+      return effects(set(uses), set(defs))
+    # Implicit operands the model does not know: the instruction may read and write any register.
+    every = X86_GENERAL | X86_VECTORS | {"flags"}
+    return effects(every, every, unknown=True)
   destination = operands[-1]
   destination_registers = set() if "(" in destination else x86_registers(destination)
   # Writing an 8- or 16-bit register keeps the other bits, so the write also reads the register.
@@ -192,6 +237,14 @@ def x86_effects(row: scanner.DecodedLine, identity: str, caller_saved: set[str] 
   if base in X86_WRITE_ONLY:
     defs = destination_registers | ({"flags"} if base in X86_FLAG_SETTERS else set())
     return effects(sources | address_uses | partial, defs, load=load_from_memory and not is_store)
+  if base == "cmpxchg":
+    # Compares with rax and, when unequal, loads the destination into rax.
+    return effects({"rax"} | sources | x86_registers(destination), {"rax", "flags"} | destination_registers,
+                   load=load_from_memory)
+  if base in {"cmpxchg8b", "cmpxchg16b"}:
+    return effects({"rax", "rbx", "rcx", "rdx"} | address_uses, {"rax", "rdx", "flags"}, load=load_from_memory)
+  if base == "imul" and len(operands) == 1:
+    return effects({"rax"} | x86_registers(destination), {"rax", "rdx", "flags"}, load=load_from_memory)
   if base in X86_FLAG_SETTERS or base in {"not", "bswap"}:
     uses = sources | x86_registers(destination) | ({"flags"} if base in X86_FLAG_READERS else set())
     if base == "imul" and len(operands) == 3:
@@ -694,6 +747,7 @@ def x86_is_nop(mnemonic: str) -> bool:
 
 
 def x86_memory(row: scanner.DecodedLine) -> Memory:
+  row = x86_unprefixed(row)
   mnemonic = row.mnemonic
   if x86_is_nop(mnemonic):
     return NO_MEMORY

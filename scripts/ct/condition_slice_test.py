@@ -90,6 +90,30 @@ def main() -> None:
   # The real indexed frame store still reaches the reload; only the padding left the slice.
   assert "0xa0(%rsp,%rax,8)" in short.canonical, short.canonical
 
+  # Implicit register operands. `cpuid` writes eax-edx without printing them; before they were modeled,
+  # the slice of a CPUID feature test in `detect_uncached` reported `rdx<-entry`, a false provenance.
+  def tested(*body: str, register: str = "%edx"):
+    lines = [*body, f"1020: 85 d2\ttestl\t{register}, {register}", "1022: 74 01\tje\t0x1025 <f+0x25>",
+             "1024: 90\tnop", "1025: c3\tretq"]
+    return slice_of(target, lines, len(body) + 2)
+  cpuid = tested("1000: b8 07 00 00 00\tmovl\t$0x7, %eax", "1005: 31 c9\txorl\t%ecx, %ecx", "1007: 0f a2\tcpuid")
+  assert "entry" not in cpuid.canonical and "cpuid" in cpuid.canonical and cpuid.reasons == [], cpuid.canonical
+  assert "rax<-" in cpuid.canonical and "rcx<-" in cpuid.canonical, cpuid.canonical
+  # An operand-less instruction the model does not know may write any register: the slice stays open.
+  unknown = tested("1000: d7\txlatb", register="%eax")
+  assert any(reason.startswith("unknown register effects") for reason in unknown.reasons), unknown.reasons
+  # A system call returns in rax like a call: the slice is open at its result.
+  called = tested("1000: b8 9e 00 00 00\tmovl\t$0x9e, %eax", "1005: 0f 05\tsyscall", register="%eax")
+  assert any(reason.startswith("call result") and "syscall" in reason for reason in called.reasons), called.reasons
+  # `cmpxchg` loads the destination into rax on failure; one-operand `imul` writes rdx:rax.
+  # objdump prints the lock prefix on its own line; the one-line form applies the inner instruction.
+  for locked in (("1000: f0\tlock", "1001: 48 0f b1 0f\tcmpxchgq\t%rcx, (%rdi)"),
+                 ("1000: f0 48 0f b1 0f\tlock\t\tcmpxchgq\t%rcx, (%rdi)",)):
+    exchanged = tested(*locked, register="%eax")
+    assert "cmpxchgq" in exchanged.canonical and "rax<-entry" in exchanged.canonical, exchanged.canonical
+  multiplied = tested("1000: 48 f7 e9\timulq\t%rcx")
+  assert "imulq" in multiplied.canonical and "entry" in multiplied.canonical, multiplied.canonical
+
   # A definition before a return cannot reach code that only a branch enters.
   returned = slice_of(target, [
     "1000: 48 83 ff 01\tcmpq\t$0x1, %rdi",
