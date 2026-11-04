@@ -9,15 +9,12 @@ use core::mem;
 #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
 use core::simd::u32x4;
 
+use crate::platform::{
+  Arch, Caps,
+  caps::{aarch64, power, riscv, s390x, wasm, x86},
+};
 #[cfg(any(feature = "chacha20poly1305", feature = "xchacha20poly1305"))]
 use crate::traits::ct;
-use crate::{
-  backend::cache::OnceCache,
-  platform::{
-    Arch, Caps,
-    caps::{aarch64, power, riscv, s390x, wasm, x86},
-  },
-};
 
 pub(crate) const KEY_SIZE: usize = 32;
 pub(crate) const NONCE_SIZE: usize = 12;
@@ -28,14 +25,6 @@ pub(crate) const BLOCK_SIZE: usize = 64;
 pub(crate) const POLY1305_KEY_SIZE: usize = 32;
 
 const CONSTANTS: [u32; 4] = [0x6170_7865, 0x3320_646e, 0x7962_2d32, 0x6b20_6574];
-
-/// XOR the keystream from `initial_counter` into `buffer`.
-///
-/// Callers keep every 64-byte block of `buffer` within the u32 block-counter
-/// range and establish the kernel's capabilities.
-type XorKeystreamFn = unsafe fn(&[u8; KEY_SIZE], u32, &[u8; NONCE_SIZE], &mut [u8]);
-
-static XOR_KEYSTREAM_DISPATCH: OnceCache<XorKeystreamFn> = OnceCache::new();
 
 #[inline(always)]
 fn quarter_round(state: &mut [u32; 16], a: usize, b: usize, c: usize, d: usize) {
@@ -199,32 +188,61 @@ impl Kernel {
     }
   }
 
-  /// This class's kernel. A class this build does not compile runs the portable kernel.
-  fn function(self) -> XorKeystreamFn {
+  /// XOR this class's keystream from `initial_counter` into `buffer`. A class
+  /// this build does not compile runs the portable kernel. Each arm calls its
+  /// kernel directly.
+  ///
+  /// # Safety
+  ///
+  /// The executing CPU must provide this class's capabilities, as
+  /// [`Kernel::select`] proves, and every 64-byte block of `buffer` must stay
+  /// within the u32 block-counter range starting at `initial_counter`.
+  #[inline]
+  unsafe fn xor_keystream(
+    self,
+    key: &[u8; KEY_SIZE],
+    initial_counter: u32,
+    nonce: &[u8; NONCE_SIZE],
+    buffer: &mut [u8],
+  ) {
     match self {
       #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
-      Self::WasmSimd128 => wasm_simd128::xor_keystream,
+      // SAFETY: the caller establishes SIMD128 and the counter range.
+      Self::WasmSimd128 => unsafe { wasm_simd128::xor_keystream(key, initial_counter, nonce, buffer) },
       #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
-      Self::X86Avx512 => x86_avx512::xor_keystream,
+      // SAFETY: the caller establishes AVX-512 readiness and the counter range.
+      Self::X86Avx512 => unsafe { x86_avx512::xor_keystream(key, initial_counter, nonce, buffer) },
       #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
-      Self::X86Avx2 => x86_avx2::xor_keystream,
+      // SAFETY: the caller establishes AVX2 and the counter range.
+      Self::X86Avx2 => unsafe { x86_avx2::xor_keystream(key, initial_counter, nonce, buffer) },
       #[cfg(target_arch = "aarch64")]
-      Self::Aarch64Neon => aarch64_neon::xor_keystream,
+      // SAFETY: the caller establishes NEON and the counter range.
+      Self::Aarch64Neon => unsafe { aarch64_neon::xor_keystream(key, initial_counter, nonce, buffer) },
       #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), target_endian = "little"))]
-      Self::PowerVector => power_vsx::xor_keystream,
+      // SAFETY: the caller establishes POWER8 vector support and the counter range.
+      Self::PowerVector => unsafe { power_vsx::xor_keystream(key, initial_counter, nonce, buffer) },
       #[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
-      Self::S390xVector => s390x_vector::xor_keystream,
+      // SAFETY: the caller establishes the z/Vector facility and the counter range.
+      Self::S390xVector => unsafe { s390x_vector::xor_keystream(key, initial_counter, nonce, buffer) },
       #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
-      Self::Riscv64Vector => riscv64_vector::xor_keystream,
-      _ => xor_keystream_portable,
+      // SAFETY: the caller establishes the V extension and the counter range.
+      Self::Riscv64Vector => unsafe { riscv64_vector::xor_keystream(key, initial_counter, nonce, buffer) },
+      _ => xor_keystream_portable(key, initial_counter, nonce, buffer),
     }
   }
 }
 
-/// The host's kernel, selected once from the detected capabilities.
+/// XOR the host kernel's keystream from `initial_counter` into `buffer`.
+///
+/// # Safety
+///
+/// Every 64-byte block of `buffer` must stay within the u32 block-counter range
+/// starting at `initial_counter`.
 #[inline]
-fn kernel() -> XorKeystreamFn {
-  XOR_KEYSTREAM_DISPATCH.get_or_init(|| Kernel::select(Arch::current(), current_caps()).function())
+unsafe fn xor_keystream_host(key: &[u8; KEY_SIZE], initial_counter: u32, nonce: &[u8; NONCE_SIZE], buffer: &mut [u8]) {
+  // SAFETY: `Kernel::select` returns a class only when `current_caps` proves its capabilities; the caller
+  // establishes the counter range.
+  unsafe { Kernel::select(Arch::current(), current_caps()).xor_keystream(key, initial_counter, nonce, buffer) }
 }
 
 #[inline]
@@ -270,9 +288,8 @@ pub(crate) fn xor_keystream(
     }
   }
 
-  // SAFETY: the counter-range check above covers every 64-byte block, and `kernel` returns an accelerated kernel only
-  // when its complete capability set is available. The portable function also coerces to this unsafe fn type.
-  unsafe { kernel()(key, initial_counter, nonce, buffer) };
+  // SAFETY: the counter-range check above covers every 64-byte block.
+  unsafe { xor_keystream_host(key, initial_counter, nonce, buffer) };
   Ok(())
 }
 
@@ -283,9 +300,8 @@ pub(crate) fn xor_keystream_chunk<const N: usize>(key: &[u8; KEY_SIZE], chunk: &
     assert!(N.is_multiple_of(BLOCK_SIZE));
     assert!(N / BLOCK_SIZE <= u32::MAX as usize);
   }
-  // SAFETY: the const assertions keep all `N / 64` blocks within the u32 counter range starting at zero, and `kernel`
-  // returns an accelerated kernel only when its complete capability set is available.
-  unsafe { kernel()(key, 0, &[0; NONCE_SIZE], chunk) };
+  // SAFETY: the const assertions keep all `N / 64` blocks within the u32 counter range starting at zero.
+  unsafe { xor_keystream_host(key, 0, &[0; NONCE_SIZE], chunk) };
 }
 
 /// [`xor_keystream_chunk`] with the portable kernel regardless of host caps.

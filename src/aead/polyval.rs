@@ -14,8 +14,6 @@
 //! - **Montgomery reduction** (2-pass fold from the bottom) for modular reduction — the key
 //!   structural insight that makes POLYVAL's high-tap polynomial efficient to reduce
 
-use crate::backend::cache::OnceCache;
-
 /// POLYVAL block size in bytes (128 bits).
 #[cfg(feature = "aes-gcm-siv")]
 pub(crate) const BLOCK_SIZE: usize = 16;
@@ -1844,10 +1842,6 @@ pub(super) unsafe fn riscv_scalar_clmul128_reduce_inline(a: u128, b: u128) -> u1
 
 // Combined multiply + reduce with hardware dispatch
 
-type Clmul128ReduceFn = fn(u128, u128) -> u128;
-
-static CLMUL128_REDUCE_DISPATCH: OnceCache<Clmul128ReduceFn> = OnceCache::new();
-
 #[inline]
 fn current_caps() -> crate::platform::Caps {
   #[cfg(feature = "std")]
@@ -1866,70 +1860,40 @@ pub(super) fn clmul128_reduce_portable(a: u128, b: u128) -> u128 {
   mont_reduce(clmul128(a, b))
 }
 
-#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+/// Combined 128×128 carryless multiply + Montgomery reduce.
+///
+/// Calls the first carryless-multiply backend that the capabilities prove:
+/// PCLMULQDQ (x86-64), PMULL (AArch64), z/Vector VGFM (IBM Z), POWER8 crypto
+/// VPMSUM (POWER), then Zvbc or Zbc/Zbkc (RISC-V). Otherwise it uses the
+/// portable Pornin bmul64 + Karatsuba path. Each call tests the cached
+/// capabilities and calls its kernel directly; there is no stored function
+/// pointer.
 #[inline]
-fn clmul128_reduce_x86_pclmul(a: u128, b: u128) -> u128 {
-  // SAFETY: resolver only selects this backend after verifying PCLMULQDQ support.
-  unsafe { pclmul::clmul128_reduce(a, b) }
-}
-
-#[cfg(target_arch = "aarch64")]
-#[inline]
-fn clmul128_reduce_aarch64_pmull(a: u128, b: u128) -> u128 {
-  // SAFETY: resolver only selects this backend after verifying PMULL support.
-  unsafe { pmull::clmul128_reduce(a, b) }
-}
-
-#[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
-#[inline]
-fn clmul128_reduce_s390x_vgfm(a: u128, b: u128) -> u128 {
-  // SAFETY: resolver only selects this backend after verifying z/Vector support.
-  unsafe { s390x_vgfm::clmul128_reduce(a, b) }
-}
-
-#[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
-#[inline]
-fn clmul128_reduce_power_vpmsum(a: u128, b: u128) -> u128 {
-  // SAFETY: resolver only selects this backend after verifying POWER8 crypto support.
-  unsafe { ppc_vpmsum::clmul128_reduce(a, b) }
-}
-
-#[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
-#[inline]
-fn clmul128_reduce_riscv_vector(a: u128, b: u128) -> u128 {
-  // SAFETY: resolver only selects this backend after verifying Zvbc support.
-  unsafe { rv_clmul::clmul128_reduce(a, b) }
-}
-
-#[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
-#[inline]
-fn clmul128_reduce_riscv_scalar(a: u128, b: u128) -> u128 {
-  // SAFETY: resolver only selects this backend after verifying Zbc/Zbkc support.
-  unsafe { rv_scalar_clmul::clmul128_reduce(a, b) }
-}
-
-#[inline]
-fn resolve_clmul128_reduce() -> Clmul128ReduceFn {
+pub(super) fn clmul128_reduce(a: u128, b: u128) -> u128 {
   let _caps = current_caps();
 
   #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   if _caps.has(crate::platform::caps::x86::PCLMULQDQ) {
-    return clmul128_reduce_x86_pclmul;
+    // SAFETY: the capability test above establishes PCLMULQDQ; SSE2 is this target's baseline.
+    return unsafe { pclmul::clmul128_reduce(a, b) };
   }
 
   #[cfg(target_arch = "aarch64")]
   if _caps.has(crate::platform::caps::aarch64::PMULL) {
-    return clmul128_reduce_aarch64_pmull;
+    // SAFETY: the capability test above establishes PMULL.
+    return unsafe { pmull::clmul128_reduce(a, b) };
   }
 
   #[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
   if _caps.has(crate::platform::caps::s390x::VECTOR) {
-    return clmul128_reduce_s390x_vgfm;
+    // SAFETY: the capability test above establishes the z/Vector facility.
+    return unsafe { s390x_vgfm::clmul128_reduce(a, b) };
   }
 
   #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
   if _caps.has(crate::platform::caps::power::POWER8_CRYPTO) {
-    return clmul128_reduce_power_vpmsum;
+    // SAFETY: the capability test above establishes POWER8 crypto.
+    return unsafe { ppc_vpmsum::clmul128_reduce(a, b) };
   }
 
   #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
@@ -1937,23 +1901,16 @@ fn resolve_clmul128_reduce() -> Clmul128ReduceFn {
     use crate::platform::caps::riscv;
 
     if _caps.has(riscv::ZVBC) {
-      return clmul128_reduce_riscv_vector;
+      // SAFETY: the capability test above establishes Zvbc.
+      return unsafe { rv_clmul::clmul128_reduce(a, b) };
     }
     if _caps.has(riscv::ZBC) || _caps.has(riscv::ZBKC) {
-      return clmul128_reduce_riscv_scalar;
+      // SAFETY: the capability test above establishes Zbc or Zbkc.
+      return unsafe { rv_scalar_clmul::clmul128_reduce(a, b) };
     }
   }
 
-  clmul128_reduce_portable
-}
-
-/// Combined 128×128 carryless multiply + Montgomery reduce.
-///
-/// Dispatches to PCLMULQDQ (x86_64) or PMULL (aarch64) when available,
-/// otherwise uses the portable Pornin bmul64 + Karatsuba path.
-pub(super) fn clmul128_reduce(a: u128, b: u128) -> u128 {
-  let clmul = CLMUL128_REDUCE_DISPATCH.get_or_init(resolve_clmul128_reduce);
-  clmul(a, b)
+  clmul128_reduce_portable(a, b)
 }
 
 /// Multiplies two little-endian POLYVAL field elements with the portable
@@ -2040,9 +1997,6 @@ impl X86GcmPowers {
 /// cheaper squares. All recurrences produce the same Montgomery-domain powers.
 #[cfg(feature = "aes-gcm")]
 pub(super) fn precompute_powers_chained<const N: usize>(h: u128) -> [u128; N] {
-  // Initialize shared multiplication before the specialized setup as well:
-  // later short GHASH operations use it while key-derived state is live.
-  let clmul = CLMUL128_REDUCE_DISPATCH.get_or_init(resolve_clmul128_reduce);
   let mut powers = [0u128; N];
   #[cfg(all(
     target_arch = "aarch64",
@@ -2098,11 +2052,15 @@ pub(super) fn precompute_powers_chained<const N: usize>(h: u128) -> [u128; N] {
   let serial = N.min(8);
   let mut i = 0usize;
   while i < serial {
-    powers[i] = if i == 0 { h } else { clmul(powers[i.strict_sub(1)], h) };
+    powers[i] = if i == 0 {
+      h
+    } else {
+      clmul128_reduce(powers[i.strict_sub(1)], h)
+    };
     i = i.strict_add(1);
   }
   while i < N {
-    powers[i] = clmul(powers[i.strict_sub(8)], powers[7]);
+    powers[i] = clmul128_reduce(powers[i.strict_sub(8)], powers[7]);
     i = i.strict_add(1);
   }
   powers

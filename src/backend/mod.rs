@@ -21,12 +21,7 @@ pub(crate) mod ascon;
   ),
   feature = "blake3",
   all(feature = "ascon-hash", feature = "diag"),
-  feature = "xxh3",
-  feature = "aes-gcm",
-  feature = "aes-gcm-siv",
-  feature = "chacha20poly1305",
-  feature = "xchacha20poly1305",
-  feature = "chacha20-rng"
+  feature = "xxh3"
 ))]
 pub(crate) mod cache;
 #[cfg(any(

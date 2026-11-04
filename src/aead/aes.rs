@@ -95,21 +95,32 @@ pub(crate) use x86_short::MAX_TAIL as X86_SHORT_GCM_MAX_TAIL;
 ))]
 const X86_GCM_BATCH_MIN: usize = 512;
 
-/// The Linux VAES-512 seal or open kernels of one key size, by batch width.
+/// One Linux VAES-512 seal or open kernel.
 #[cfg(all(
   target_arch = "x86_64",
   target_feature = "sse2",
   target_os = "linux",
   feature = "aes-gcm"
 ))]
-struct X86GcmKernels {
-  x16: unsafe extern "C" fn(*const u8, *const u8, *mut u8, usize, *const u128, *mut x86_64_asm::AesGcmX86State),
-  x64: unsafe extern "C" fn(*const u8, *const u8, *mut u8, usize, *const u128, *mut x86_64_asm::AesGcmX86State),
-  x128: unsafe extern "C" fn(*const u8, *const u8, *mut u8, usize, *const u128, *mut x86_64_asm::AesGcmX86State),
+type X86GcmKernel =
+  unsafe extern "C" fn(*const u8, *const u8, *mut u8, usize, *const u128, *mut x86_64_asm::AesGcmX86State);
+
+/// The Linux VAES-512 seal or open kernels of one key size, by batch width.
+/// They are constants, so each batch calls its kernel directly.
+#[cfg(all(
+  target_arch = "x86_64",
+  target_feature = "sse2",
+  target_os = "linux",
+  feature = "aes-gcm"
+))]
+trait X86GcmKernels {
+  const X16: X86GcmKernel;
+  const X64: X86GcmKernel;
+  const X128: X86GcmKernel;
 }
 
 /// Process every whole 256-byte batch of `len` bytes from `input` into `output`
-/// with the widest applicable kernels: 128-block batches over the 2048-byte
+/// with the widest applicable kernels of `K`: 128-block batches over the 2048-byte
 /// prefix of at least 4096 bytes, then 64- or 16-block batches. Returns the
 /// bytes processed and folds their ciphertext into `acc`.
 ///
@@ -125,13 +136,8 @@ struct X86GcmKernels {
   target_os = "linux",
   feature = "aes-gcm"
 ))]
-#[expect(
-  clippy::too_many_arguments,
-  reason = "a kernel boundary: kernels, key, nonce, ranges, GHASH state and tables"
-)]
 #[inline]
-unsafe fn x86_gcm_bulk_asm(
-  kernels: &X86GcmKernels,
+unsafe fn x86_gcm_bulk_asm<K: X86GcmKernels>(
   round_keys: *const u8,
   counter_block: &[u8; BLOCK_SIZE],
   input: *const u8,
@@ -149,30 +155,32 @@ unsafe fn x86_gcm_bulk_asm(
   let mut done = 0usize;
   loop {
     let rest = len.strict_sub(done);
-    let wide = rest.strict_sub(rest.strict_rem(2048));
-    let (kernel, batch_len, powers): (_, usize, *const u128) = if wide >= 4096 {
-      (kernels.x128, wide, tables.h_powers_rev_128.as_ptr())
-    } else if rest >= 1024 {
-      (kernels.x64, rest, tables.h_powers_rev_64.as_ptr())
-    } else if rest >= 256 {
-      (kernels.x16, rest, tables.h_powers_rev_32.as_ptr())
-    } else {
+    if rest < 256 {
       break;
-    };
+    }
+    let wide = rest.strict_sub(rest.strict_rem(2048));
+    let batch_len = if wide >= 4096 { wide } else { rest };
     // SAFETY: the caller's contract covers the kernel features and the key,
     // counter, and range pointers. Bytes `done..done + batch_len` lie inside
     // both ranges. Each kernel receives its matching H-power table, processes
     // only whole batches, reports them, and restores its aligned scratch stack.
     let processed = unsafe {
       let mut state = x86_64_asm::AesGcmX86State::new(*acc, ctr, input.add(done));
-      kernel(
-        round_keys,
-        counter_block.as_ptr(),
-        output.add(done),
-        batch_len,
-        powers,
-        core::ptr::from_mut(&mut state),
-      );
+      let nonce = counter_block.as_ptr();
+      let out = output.add(done);
+      let scratch = core::ptr::from_mut(&mut state);
+      // Each width calls its kernel in its own branch; one call through a
+      // selected kernel would be an indirect call.
+      if wide >= 4096 {
+        let powers = tables.h_powers_rev_128.as_ptr();
+        (K::X128)(round_keys, nonce, out, batch_len, powers, scratch);
+      } else if rest >= 1024 {
+        let powers = tables.h_powers_rev_64.as_ptr();
+        (K::X64)(round_keys, nonce, out, batch_len, powers, scratch);
+      } else {
+        let powers = tables.h_powers_rev_32.as_ptr();
+        (K::X16)(round_keys, nonce, out, batch_len, powers, scratch);
+      }
       *acc = state.acc();
       ctr = state.ctr;
       state.processed
@@ -230,25 +238,15 @@ macro_rules! x86_gcm_message {
       let done = 0usize;
       #[cfg(target_os = "linux")]
       if src_len.strict_add(tail_len) > X86_GCM_BATCH_MIN {
-        let kernels = X86GcmKernels {
-          x16: $s16,
-          x64: $s64,
-          x128: $s128,
-        };
+        struct Seal;
+        impl X86GcmKernels for Seal {
+          const X16: X86GcmKernel = $s16;
+          const X64: X86GcmKernel = $s64;
+          const X128: X86GcmKernel = $s128;
+        }
         // SAFETY: the caller's contract covers the features and both ranges;
         // the batches cover only `src`, never the tail.
-        done = unsafe {
-          x86_gcm_bulk_asm(
-            &kernels,
-            rk.as_ptr(),
-            counter_block,
-            src,
-            dst,
-            src_len,
-            &mut acc,
-            tables,
-          )
-        };
+        done = unsafe { x86_gcm_bulk_asm::<Seal>(rk.as_ptr(), counter_block, src, dst, src_len, &mut acc, tables) };
       }
       #[cfg(not(target_os = "linux"))]
       let _ = (counter_block, tail_len);
@@ -306,13 +304,14 @@ macro_rules! x86_gcm_message {
       let done = 0usize;
       #[cfg(target_os = "linux")]
       if len > X86_GCM_BATCH_MIN {
-        let kernels = X86GcmKernels {
-          x16: $o16,
-          x64: $o64,
-          x128: $o128,
-        };
+        struct Open;
+        impl X86GcmKernels for Open {
+          const X16: X86GcmKernel = $o16;
+          const X64: X86GcmKernel = $o64;
+          const X128: X86GcmKernel = $o128;
+        }
         // SAFETY: the caller's contract covers the features and the range.
-        done = unsafe { x86_gcm_bulk_asm(&kernels, rk.as_ptr(), counter_block, data, data, len, &mut acc, tables) };
+        done = unsafe { x86_gcm_bulk_asm::<Open>(rk.as_ptr(), counter_block, data, data, len, &mut acc, tables) };
       }
       #[cfg(not(target_os = "linux"))]
       let _ = counter_block;

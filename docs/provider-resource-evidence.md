@@ -196,17 +196,40 @@ with the number of roots that have one:
 
 | Linux target | ML-DSA signing (9 roots) | ML-KEM (12 roots) | AEAD records (6 roots) |
 | --- | ---: | ---: | ---: |
-| x86-64 GNU | 3 / 1, up to 21,688 / 16,584 B | 12 / 12, 33,976 / 33,880 B | none bounded |
-| AArch64 GNU | 9 / 9, 59,392 / 58,720 B | 12 / 12, 38,256 / 36,688 B | none bounded |
-| POWER64LE GNU | 9 / 9, 59,360 / 59,280 B | 12 / 12, 34,416 / 34,416 B | none bounded |
-| IBM Z GNU | 2 / 1, up to 17,176 / 16,952 B | 12 / 12, 33,960 / 31,456 B | none bounded |
-| RISC-V 64 GNU | 1 / 1, 16,720 / 16,720 B | 12 / 12, 31,728 / 31,728 B | none bounded |
+| x86-64 GNU | 3 / 1, up to 21,688 / 16,584 B | 12 / 12, 33,976 / 33,880 B | 0 / 2, up to - / 648 B |
+| AArch64 GNU | 9 / 9, 59,392 / 58,720 B | 12 / 12, 38,256 / 36,688 B | 4 / 6, up to 8,624 / 8,624 B |
+| POWER64LE GNU | 9 / 9, 59,360 / 59,280 B | 12 / 12, 34,416 / 34,416 B | 6 / 6, 9,360 / 8,496 B |
+| IBM Z GNU | 2 / 1, up to 17,176 / 16,952 B | 12 / 12, 33,960 / 31,456 B | 6 / 6, 9,032 / 8,920 B |
+| RISC-V 64 GNU | 1 / 1, 16,720 / 16,720 B | 12 / 12, 31,728 / 31,728 B | 6 / 6, 8,384 / 8,384 B |
 
-Every AEAD record root reaches the `polyval` multiplication dispatch, a std
-`OnceLock<fn(u128, u128) -> u128>`: its cold initialization runs the standard
-library's `Once` (indirect calls, futex `syscall`, no frame records), and each
-dispatched multiplication is an indirect call through the stored pointer. The
-unresolved signing roots stop at register-indirect jumps in
+AEAD records call their kernels directly. The `polyval` multiplication, the
+Poly1305 block function, and the ChaCha20 keystream each test the cached
+capabilities and call the selected kernel; none stores a function pointer. The
+x86-64 Linux VAES-512 batch loop calls each kernel width in its own branch. No
+AEAD graph, on any target or configuration, reaches the standard library's
+`Once`, a futex, an indirect call, or unwinding. Earlier trees routed every
+AEAD root through a std `OnceLock` of function pointers, which ran `Once`
+(indirect calls, futex `syscall`, no frame records) and made each dispatched
+call indirect. The AES-GCM bounds are dominated by the fixed 8 KiB frame of
+`aes::scrub_ctr_stack`, which clears the stack below the CTR worker. The roots
+reach `memcpy` and `memset` on every target except IBM Z, and `getauxval`
+through first-call detection on native AArch64, POWER, and IBM Z. Portable IBM
+Z AEAD roots reach no declared edge and have static whole-call bounds: 8,904 B
+for AES-GCM seal, 8,920 B for AES-GCM open, and 856 B for ChaCha20-Poly1305.
+
+The unbounded AEAD roots stop at owned assembly that has no frame record, and
+`frames.py` derives assembly frames only for AArch64 leaf routines. On x86-64,
+these are the twelve Linux VAES-512 GCM kernels
+(`rscrypto_aes{128,256}_gcm_{seal,open}_{16,64,128}x_vaes512_x86_64_linux`) and
+the ChaCha20-Poly1305 seal and open assembly. The GCM kernels are leaves that
+push two registers, subtract a constant, align `rsp` to 64 bytes, and restore it
+from a saved slot. Portable builds also link them, because a key stores its
+selected backend. The AVX2 ChaCha20-Poly1305 routines and the seal trailer
+label `process_extra_in_trailer` jump back into the SSE routines, which the
+tool reads as recursion. On native AArch64, the ChaCha20-Poly1305 assembly
+branches between ELF-visible `L` labels, so no symbol is a leaf.
+
+The unresolved signing roots stop at register-indirect jumps in
 `mldsa::encoding::pack` and `unpack_raw`, which are compiler jump tables the
 tool does not yet resolve. Every ML-KEM root now has an owned bound: the tool
 follows a GOT-loaded import through full-width copies into caller-saved

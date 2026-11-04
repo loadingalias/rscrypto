@@ -1,171 +1,126 @@
-//! Lazy caching primitives for runtime dispatch.
+//! Lock-free lazy cache for runtime dispatch choices.
 //!
-//! - [`OnceCache<T>`]: Single-value lazy cache for selected dispatch entries
+//! [`OnceCache<T>`] publishes one value per process, with the pattern of the
+//! capability cache in `platform::detect`. Each first caller computes the value
+//! on its own stack before it touches shared state, so a slow or panicking
+//! initializer never blocks another thread. One compare-and-swap then elects
+//! the publisher; the other first callers wait only across its single slot
+//! store. Every caller returns the published value, even when racing
+//! initializers return different values.
 //!
-//! # Platform Behavior
+//! Racing first callers can each run the initializer, so an initializer must
+//! not have side effects that other callers depend on. It is a type parameter,
+//! not a function pointer, so the cold call is direct and statically boundable.
 //!
-//! | Platform | Implementation | Behavior |
-//! |----------|----------------|----------|
-//! | std | `OnceLock` | Thread-safe, initialized once |
-//! | no_std + atomics | Atomic state machine | Thread-safe, initialized once |
-//! | no_std - atomics | Direct call | Per-call computation |
+//! Targets without 8-bit compare-and-swap run the initializer on every call.
 
-#[cfg(any(test, all(not(feature = "std"), target_has_atomic = "ptr")))]
-use core::cell::UnsafeCell;
-#[cfg(any(test, all(not(feature = "std"), target_has_atomic = "ptr")))]
-use core::mem::MaybeUninit;
+#[cfg(target_has_atomic = "8")]
+use core::{
+  cell::UnsafeCell,
+  mem::MaybeUninit,
+  sync::atomic::{AtomicU8, Ordering},
+};
 
-#[cfg(any(test, all(not(feature = "std"), target_has_atomic = "ptr")))]
-struct AtomicOnceCache<T: Copy> {
-  state: core::sync::atomic::AtomicU8,
-  value: UnsafeCell<MaybeUninit<T>>,
-}
-
-#[cfg(any(test, all(not(feature = "std"), target_has_atomic = "ptr")))]
-struct AtomicInitGuard<'a, T: Copy> {
-  cache: &'a AtomicOnceCache<T>,
-  armed: bool,
-}
-
-#[cfg(any(test, all(not(feature = "std"), target_has_atomic = "ptr")))]
-impl<T: Copy> AtomicInitGuard<'_, T> {
-  fn disarm(&mut self) {
-    self.armed = false;
-  }
-}
-
-#[cfg(any(test, all(not(feature = "std"), target_has_atomic = "ptr")))]
-impl<T: Copy> Drop for AtomicInitGuard<'_, T> {
-  fn drop(&mut self) {
-    if self.armed {
-      self
-        .cache
-        .state
-        .store(AtomicOnceCache::<T>::UNINIT, core::sync::atomic::Ordering::Release);
-    }
-  }
-}
-
-#[cfg(any(test, all(not(feature = "std"), target_has_atomic = "ptr")))]
-// SAFETY: `get_or_init` publishes the single initialized value with a Release
-// store, and every reader observes that publication with an Acquire load.
-unsafe impl<T: Copy + Sync> Sync for AtomicOnceCache<T> {}
-
-#[cfg(any(test, all(not(feature = "std"), target_has_atomic = "ptr")))]
-impl<T: Copy> AtomicOnceCache<T> {
-  const UNINIT: u8 = 0;
-  const INITING: u8 = 1;
-  const READY: u8 = 2;
-
-  const fn new() -> Self {
-    Self {
-      state: core::sync::atomic::AtomicU8::new(Self::UNINIT),
-      value: UnsafeCell::new(MaybeUninit::uninit()),
-    }
-  }
-
-  fn get_or_init(&self, f: impl FnOnce() -> T) -> T {
-    use core::sync::atomic::Ordering;
-
-    let mut initializer = Some(f);
-
-    loop {
-      match self.state.load(Ordering::Acquire) {
-        Self::READY => {
-          // SAFETY: READY is published only after the value is initialized. The
-          // Acquire load observes the initializing thread's Release store.
-          return unsafe { (*self.value.get()).assume_init() };
-        }
-        Self::UNINIT => {
-          if self
-            .state
-            .compare_exchange(Self::UNINIT, Self::INITING, Ordering::AcqRel, Ordering::Acquire)
-            .is_err()
-          {
-            continue;
-          }
-
-          let mut guard = AtomicInitGuard {
-            cache: self,
-            armed: true,
-          };
-          let value = initializer
-            .take()
-            .expect("initializer is consumed only by the CAS winner")();
-          // SAFETY: The successful UNINIT-to-INITING transition gives this
-          // thread exclusive write access until it publishes READY.
-          unsafe {
-            (*self.value.get()).write(value);
-          }
-          self.state.store(Self::READY, Ordering::Release);
-          guard.disarm();
-          return value;
-        }
-        Self::INITING => {
-          while self.state.load(Ordering::Acquire) == Self::INITING {
-            core::hint::spin_loop();
-          }
-        }
-        _ => core::hint::spin_loop(),
-      }
-    }
-  }
-}
+#[cfg(target_has_atomic = "8")]
+const STATE_UNINIT: u8 = 0;
+#[cfg(target_has_atomic = "8")]
+const STATE_PUBLISHING: u8 = 1;
+#[cfg(target_has_atomic = "8")]
+const STATE_READY: u8 = 2;
 
 /// A lazy cache for a single `Copy` value.
 ///
-/// Building block for dispatcher caching with proper synchronization.
-/// See module documentation for platform-specific behavior.
+/// See the module documentation for the publication rule.
 pub(crate) struct OnceCache<T: Copy> {
-  #[cfg(feature = "std")]
-  inner: std::sync::OnceLock<T>,
+  #[cfg(target_has_atomic = "8")]
+  state: AtomicU8,
 
-  #[cfg(all(not(feature = "std"), target_has_atomic = "ptr"))]
-  inner: AtomicOnceCache<T>,
+  #[cfg(target_has_atomic = "8")]
+  value: UnsafeCell<MaybeUninit<T>>,
 
-  #[cfg(all(not(feature = "std"), not(target_has_atomic = "ptr")))]
+  #[cfg(not(target_has_atomic = "8"))]
   _marker: core::marker::PhantomData<T>,
 }
+
+#[cfg(target_has_atomic = "8")]
+// SAFETY: Shared access is synchronized because:
+// 1. Only the caller that moves the state from `STATE_UNINIT` to `STATE_PUBLISHING` writes the slot, once.
+// 2. Readers read the slot only after an Acquire observation of the writer's Release store of `STATE_READY`.
+// 3. `T: Send + Sync`, so a published copy may move to, and be shared by, any reading thread.
+unsafe impl<T: Copy + Send + Sync> Sync for OnceCache<T> {}
 
 impl<T: Copy> OnceCache<T> {
   /// Create a new empty cache.
   #[must_use]
   pub(crate) const fn new() -> Self {
     Self {
-      #[cfg(feature = "std")]
-      inner: std::sync::OnceLock::new(),
+      #[cfg(target_has_atomic = "8")]
+      state: AtomicU8::new(STATE_UNINIT),
 
-      #[cfg(all(not(feature = "std"), target_has_atomic = "ptr"))]
-      inner: AtomicOnceCache::new(),
+      #[cfg(target_has_atomic = "8")]
+      value: UnsafeCell::new(MaybeUninit::uninit()),
 
-      #[cfg(all(not(feature = "std"), not(target_has_atomic = "ptr")))]
+      #[cfg(not(target_has_atomic = "8"))]
       _marker: core::marker::PhantomData,
     }
   }
 
-  /// Get the cached value, initializing with `f` if not yet set.
+  /// Return the published value, publishing `f()` on the first call.
   ///
-  /// On targets with atomics, this is thread-safe and publishes one successful
-  /// initialization. A panicking initializer leaves the cache retryable. On
-  /// targets without atomics, the initializer is called on every invocation.
+  /// A panicking initializer leaves the cache unpublished. On targets without
+  /// 8-bit compare-and-swap, this calls `f` every time.
   ///
-  /// Returns the cached value by copy (since T is Copy).
+  /// Both paths end in one read of the published slot, so an inlined caller
+  /// loads only the fields it uses.
   #[inline]
-  pub(crate) fn get_or_init(&self, f: impl FnOnce() -> T) -> T {
-    #[cfg(feature = "std")]
+  pub(crate) fn get_or_init<F: FnOnce() -> T>(&self, f: F) -> T {
+    #[cfg(target_has_atomic = "8")]
     {
-      *self.inner.get_or_init(f)
+      if self.state.load(Ordering::Acquire) != STATE_READY {
+        self.initialize(f);
+      }
+      // SAFETY: Published-slot read because:
+      // 1. This thread observed `STATE_READY` with an Acquire load, here or in `initialize`, or it stored
+      //    `STATE_READY` itself after its own slot write.
+      // 2. The elected writer's one slot write happens-before its Release store of `STATE_READY`.
+      // 3. No write follows publication, so the slot holds an initialized `T`.
+      unsafe { (*self.value.get()).assume_init() }
     }
 
-    #[cfg(all(not(feature = "std"), target_has_atomic = "ptr"))]
+    #[cfg(not(target_has_atomic = "8"))]
     {
-      self.inner.get_or_init(f)
-    }
-
-    #[cfg(all(not(feature = "std"), not(target_has_atomic = "ptr")))]
-    {
-      // No atomics: compute every time on single-threaded embedded targets.
       f()
+    }
+  }
+
+  /// Publish `f()` unless another caller already did, and return once the
+  /// slot is published.
+  #[cfg(target_has_atomic = "8")]
+  #[cold]
+  #[inline(never)]
+  fn initialize<F: FnOnce() -> T>(&self, f: F) {
+    // Shared state is untouched until `f` returns: a panic leaves the cache
+    // unpublished, and no other caller waits for this initializer.
+    let value = f();
+    if self
+      .state
+      .compare_exchange(STATE_UNINIT, STATE_PUBLISHING, Ordering::Acquire, Ordering::Acquire)
+      .is_ok()
+    {
+      // SAFETY: Elected slot write because:
+      // 1. Only the caller that moves `STATE_UNINIT` to `STATE_PUBLISHING` writes, and the state never returns to
+      //    `STATE_UNINIT`, so there is exactly one writer.
+      // 2. Readers access the slot only after observing `STATE_READY`, which is stored below.
+      // 3. The Acquire exchange keeps this write after the election.
+      unsafe {
+        (*self.value.get()).write(value);
+      }
+      self.state.store(STATE_READY, Ordering::Release);
+      return;
+    }
+    // The elected caller stores one value and then publishes; wait only across that.
+    while self.state.load(Ordering::Acquire) != STATE_READY {
+      core::hint::spin_loop();
     }
   }
 }
@@ -200,8 +155,8 @@ mod tests {
 
     assert_eq!(value2, 42);
 
-    // On std/atomic targets, initializer should only be called once
-    #[cfg(any(feature = "std", target_has_atomic = "ptr"))]
+    // Without racing callers, a published value is never recomputed.
+    #[cfg(target_has_atomic = "8")]
     assert_eq!(call_count, 1);
   }
 
@@ -212,46 +167,65 @@ mod tests {
     assert_eq!(value, 123);
   }
 
-  #[cfg(feature = "std")]
+  #[cfg(all(feature = "std", target_has_atomic = "8"))]
   mod threading_tests {
-    use alloc::{boxed::Box, vec::Vec};
+    use alloc::{boxed::Box, sync::Arc, vec::Vec};
     use core::{
       panic::AssertUnwindSafe,
       sync::atomic::{AtomicUsize, Ordering},
+      time::Duration,
     };
-    use std::thread;
+    use std::{
+      sync::{Barrier, mpsc},
+      thread,
+    };
 
     use super::*;
 
+    const THREADS: usize = 10;
+
+    /// Racing first callers whose initializers disagree all return one published value.
     #[test]
-    fn test_atomic_once_cache_concurrent_init() {
+    fn test_once_cache_racing_callers_agree() {
       static CALL_COUNT: AtomicUsize = AtomicUsize::new(0);
-      static CACHE: AtomicOnceCache<u64> = AtomicOnceCache::new();
+      static CACHE: OnceCache<usize> = OnceCache::new();
 
-      let handles: Vec<thread::JoinHandle<()>> = (0..10)
-        .map(|_| {
-          thread::spawn(|| {
-            for _ in 0..100 {
-              let value = CACHE.get_or_init(|| {
+      // Every thread is spawned before any is joined: the barrier releases them together.
+      let start = Arc::new(Barrier::new(THREADS));
+      let mut handles: Vec<thread::JoinHandle<Vec<usize>>> = Vec::with_capacity(THREADS);
+      for thread_index in 0..THREADS {
+        let start = Arc::clone(&start);
+        handles.push(thread::spawn(move || {
+          start.wait();
+          (0..100)
+            .map(|_| {
+              CACHE.get_or_init(|| {
                 CALL_COUNT.fetch_add(1, Ordering::SeqCst);
-                17
-              });
-              assert_eq!(value, 17);
-            }
-          })
-        })
-        .collect();
-
-      for handle in handles {
-        handle.join().expect("cache worker thread must not panic");
+                thread_index
+              })
+            })
+            .collect()
+        }));
       }
 
-      assert_eq!(CALL_COUNT.load(Ordering::SeqCst), 1);
+      let observed: Vec<usize> = handles
+        .into_iter()
+        .flat_map(|handle| handle.join().expect("cache worker thread must not panic"))
+        .collect();
+      let published = observed[0];
+      assert!(published < THREADS, "the published value must come from an initializer");
+      assert!(
+        observed.iter().all(|&value| value == published),
+        "every caller must return the published value"
+      );
+      // Each thread runs the initializer at most once: a loser waits for publication and then only reads.
+      let calls = CALL_COUNT.load(Ordering::SeqCst);
+      assert!((1..=THREADS).contains(&calls), "initializer ran {calls} times");
     }
 
     #[test]
-    fn test_atomic_once_cache_recovers_after_initializer_panic() {
-      let cache = AtomicOnceCache::<u64>::new();
+    fn test_once_cache_recovers_after_initializer_panic() {
+      let cache = OnceCache::<u64>::new();
 
       let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
         cache.get_or_init(|| std::panic::resume_unwind(Box::new("controlled initializer panic")));
@@ -261,77 +235,43 @@ mod tests {
       assert_eq!(cache.get_or_init(|| 23), 23);
     }
 
+    /// A caller never waits for another caller's initializer: it publishes its own value while the first is
+    /// still running, and the first caller then returns that published value.
     #[test]
-    fn test_atomic_once_cache_waiter_retries_after_initializer_panic() {
-      use alloc::sync::Arc;
-      use core::time::Duration;
-      use std::sync::{Barrier, mpsc};
-
-      let cache = Arc::new(AtomicOnceCache::<u64>::new());
+    fn test_once_cache_slow_initializer_does_not_block() {
+      let cache = Arc::new(OnceCache::<u64>::new());
       let initializer_entered = Arc::new(Barrier::new(2));
       let release_initializer = Arc::new(Barrier::new(2));
 
-      let panicking_cache = Arc::clone(&cache);
-      let panicking_entered = Arc::clone(&initializer_entered);
-      let panicking_release = Arc::clone(&release_initializer);
-      let panicking = thread::spawn(move || {
-        std::panic::catch_unwind(AssertUnwindSafe(|| {
-          panicking_cache.get_or_init(|| {
-            panicking_entered.wait();
-            panicking_release.wait();
-            std::panic::resume_unwind(Box::new("controlled initializer panic"))
-          });
-        }))
+      let slow_cache = Arc::clone(&cache);
+      let slow_entered = Arc::clone(&initializer_entered);
+      let slow_release = Arc::clone(&release_initializer);
+      let slow = thread::spawn(move || {
+        slow_cache.get_or_init(|| {
+          slow_entered.wait();
+          slow_release.wait();
+          17
+        })
       });
 
       initializer_entered.wait();
-      let waiting_cache = Arc::clone(&cache);
+      let fast_cache = Arc::clone(&cache);
       let (sender, receiver) = mpsc::channel();
-      let waiting = thread::spawn(move || {
+      let fast = thread::spawn(move || {
         sender
-          .send(waiting_cache.get_or_init(|| 29))
-          .expect("cache waiter result receiver must remain connected");
+          .send(fast_cache.get_or_init(|| 29))
+          .expect("cache caller result receiver must remain connected");
       });
+      let fast_value = receiver.recv_timeout(Duration::from_secs(2));
 
       release_initializer.wait();
-      panicking
-        .join()
-        .expect("panicking cache thread must unwind only inside catch_unwind")
-        .expect_err("cache initializer must panic");
+      let slow_value = slow.join().expect("slow cache caller must not panic");
+      fast.join().expect("fast cache caller must not panic");
       assert_eq!(
-        receiver
-          .recv_timeout(Duration::from_secs(2))
-          .expect("cache waiter must publish its result before the timeout"),
+        fast_value.expect("a caller must publish while another initializer is still running"),
         29
       );
-      waiting.join().expect("cache waiter thread must not panic");
-    }
-
-    #[test]
-    fn test_once_cache_concurrent_init() {
-      static CALL_COUNT: AtomicUsize = AtomicUsize::new(0);
-      static CACHE: OnceCache<u64> = OnceCache::new();
-
-      let handles: Vec<thread::JoinHandle<()>> = (0..10)
-        .map(|_| {
-          thread::spawn(|| {
-            for _ in 0..100 {
-              let value = CACHE.get_or_init(|| {
-                CALL_COUNT.fetch_add(1, Ordering::SeqCst);
-                42u64
-              });
-              assert_eq!(value, 42);
-            }
-          })
-        })
-        .collect();
-
-      for handle in handles {
-        handle.join().expect("cache worker thread must not panic");
-      }
-
-      // Selector called exactly once
-      assert_eq!(CALL_COUNT.load(Ordering::SeqCst), 1);
+      assert_eq!(slow_value, 29, "the slow caller must return the published value");
     }
   }
 }

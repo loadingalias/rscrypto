@@ -169,9 +169,8 @@ fn config(caps: Caps) -> Crc24Config {
 pub(super) fn get() -> Crc24Config {
   #[cfg(feature = "std")]
   {
-    use std::sync::OnceLock;
-    static CACHED: OnceLock<Crc24Config> = OnceLock::new();
-    *CACHED.get_or_init(|| config(crate::platform::caps()))
+    static CACHED: crate::backend::cache::OnceCache<Crc24Config> = crate::backend::cache::OnceCache::new();
+    CACHED.get_or_init(|| config(crate::platform::caps()))
   }
 
   #[cfg(not(feature = "std"))]

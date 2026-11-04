@@ -1,7 +1,5 @@
 //! AEAD framing, dispatch, and accelerated Poly1305 backends.
 
-#[cfg(feature = "std")]
-use crate::backend::cache::OnceCache;
 use crate::{
   aead::targets::{AeadPrimitive, select_backend},
   platform::{Arch, Caps},
@@ -21,14 +19,8 @@ use crate::backend::poly1305::{FULL_BLOCK_HIBIT, LIMB_MASK, load_u32_le};
 #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
 const RISCV64_PAR4_MIN: u64 = 4096;
 
+#[cfg(test)]
 type ComputeBlockFn = fn(&mut State, &[u8; 16], bool);
-
-#[cfg(feature = "std")]
-#[cfg(feature = "xchacha20poly1305")]
-static XCHACHA20POLY1305_COMPUTE_BLOCK_DISPATCH: OnceCache<ComputeBlockFn> = OnceCache::new();
-#[cfg(feature = "std")]
-#[cfg(feature = "chacha20poly1305")]
-static CHACHA20POLY1305_COMPUTE_BLOCK_DISPATCH: OnceCache<ComputeBlockFn> = OnceCache::new();
 
 #[cfg(any(
   all(target_arch = "powerpc64", not(feature = "portable-only"), target_endian = "little"),
@@ -139,48 +131,46 @@ fn current_caps() -> Caps {
   }
 }
 
+/// Authenticate with the block backend that `select_backend` chooses. Each arm
+/// passes its block function as a type, so every block calls it directly.
 #[inline]
-fn compute_block_resolved(primitive: AeadPrimitive) -> ComputeBlockFn {
-  #[cfg(feature = "std")]
-  {
-    match primitive {
-      #[cfg(feature = "xchacha20poly1305")]
-      AeadPrimitive::XChaCha20Poly1305 => {
-        XCHACHA20POLY1305_COMPUTE_BLOCK_DISPATCH.get_or_init(|| resolve_compute_block(primitive))
-      }
-      #[cfg(feature = "chacha20poly1305")]
-      AeadPrimitive::ChaCha20Poly1305 => {
-        CHACHA20POLY1305_COMPUTE_BLOCK_DISPATCH.get_or_init(|| resolve_compute_block(primitive))
-      }
-      #[cfg(any(test, feature = "aegis256", feature = "aes-gcm", feature = "aes-gcm-siv"))]
-      _ => resolve_compute_block(primitive),
-    }
-  }
-
-  #[cfg(not(feature = "std"))]
-  {
-    resolve_compute_block(primitive)
-  }
-}
-
-#[inline]
-fn resolve_compute_block(primitive: AeadPrimitive) -> ComputeBlockFn {
+fn authenticate_aead_selected(
+  primitive: AeadPrimitive,
+  aad: &[u8],
+  ciphertext: &[u8],
+  key: &[u8; 32],
+  lengths: super::AeadByteLengths,
+) -> [u8; 16] {
   match select_backend(primitive, Arch::current(), current_caps()) {
     #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
-    crate::aead::targets::AeadBackend::WasmSimd128 => wasm_simd128::compute_block,
+    crate::aead::targets::AeadBackend::WasmSimd128 => {
+      authenticate_aead_with(aad, ciphertext, key, wasm_simd128::compute_block, lengths)
+    }
     #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
-    crate::aead::targets::AeadBackend::X86Avx512 => x86_avx512::compute_block,
+    crate::aead::targets::AeadBackend::X86Avx512 => {
+      authenticate_aead_with(aad, ciphertext, key, x86_avx512::compute_block, lengths)
+    }
     #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
-    crate::aead::targets::AeadBackend::X86Avx2 => x86_avx2::compute_block,
+    crate::aead::targets::AeadBackend::X86Avx2 => {
+      authenticate_aead_with(aad, ciphertext, key, x86_avx2::compute_block, lengths)
+    }
     #[cfg(target_arch = "aarch64")]
-    crate::aead::targets::AeadBackend::Aarch64Neon => aarch64_neon::compute_block,
+    crate::aead::targets::AeadBackend::Aarch64Neon => {
+      authenticate_aead_with(aad, ciphertext, key, aarch64_neon::compute_block, lengths)
+    }
     #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), target_endian = "little"))]
-    crate::aead::targets::AeadBackend::PowerVector => power_vsx::compute_block,
+    crate::aead::targets::AeadBackend::PowerVector => {
+      authenticate_aead_with(aad, ciphertext, key, power_vsx::compute_block, lengths)
+    }
     #[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
-    crate::aead::targets::AeadBackend::S390xVector => s390x_vector::compute_block,
+    crate::aead::targets::AeadBackend::S390xVector => {
+      authenticate_aead_with(aad, ciphertext, key, s390x_vector::compute_block, lengths)
+    }
     #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
-    crate::aead::targets::AeadBackend::Riscv64Vector => riscv64_vector::compute_block,
-    _ => State::compute_block_portable,
+    crate::aead::targets::AeadBackend::Riscv64Vector => {
+      authenticate_aead_with(aad, ciphertext, key, riscv64_vector::compute_block, lengths)
+    }
+    _ => authenticate_aead_with(aad, ciphertext, key, State::compute_block_portable, lengths),
   }
 }
 
@@ -703,7 +693,7 @@ impl State {
     compute_block(self, &block, true);
   }
 
-  fn update_padded_segment(&mut self, segment: &[u8], compute_block: ComputeBlockFn) {
+  fn update_padded_segment(&mut self, segment: &[u8], compute_block: impl Fn(&mut Self, &[u8; 16], bool)) {
     let (blocks, remainder) = segment.as_chunks::<16>();
     for block in blocks {
       compute_block(self, block, false);
@@ -758,7 +748,7 @@ pub(crate) fn authenticate_aead(primitive: AeadPrimitive, aad: &[u8], ciphertext
       return riscv64_vector::authenticate_aead_par4(aad, ciphertext, key, lengths);
     }
   }
-  authenticate_aead_with(aad, ciphertext, key, compute_block_resolved(primitive), lengths)
+  authenticate_aead_selected(primitive, aad, ciphertext, key, lengths)
 }
 
 #[cfg(any(
@@ -860,7 +850,7 @@ fn authenticate_aead_with(
   aad: &[u8],
   ciphertext: &[u8],
   key: &[u8; 32],
-  compute_block: ComputeBlockFn,
+  compute_block: impl Fn(&mut State, &[u8; 16], bool) + Copy,
   lengths: super::AeadByteLengths,
 ) -> [u8; 16] {
   let mut state = State::new(key);

@@ -11,3 +11,7 @@ and Apple AArch64 reads its `sysctl` keys directly instead of the standard libra
 First-call detection on those targets performs no file I/O or heap allocation. The AArch64
 data-independent-timing guard caches its own FEAT_DIT probe, which capability overrides and
 `portable-only` builds do not disable.
+Cached dispatch choices, including the CRC configurations, use the same lock-free cache. AES-GCM,
+AES-GCM-SIV, ChaCha20-Poly1305, XChaCha20-Poly1305, and `ChaCha20Rng` select their GHASH and
+POLYVAL multiply, Poly1305 block, and ChaCha20 keystream kernels from the cached capabilities at
+each call, then call the kernel directly instead of through a cached function pointer.
