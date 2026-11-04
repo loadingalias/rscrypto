@@ -10,6 +10,9 @@ import tempfile
 from pathlib import Path
 
 from frames import (
+  PREPARATION_ROOTS,
+  WHOLE_CALL_GROUPS,
+  whole_call_roots,
   Boundary,
   load_allowances,
   parse_disassembly,
@@ -596,6 +599,20 @@ def test_allowances_compose_the_whole_call_bound(directory: Path) -> None:
   assert load_allowances(path) == valid
 
 
+def test_whole_call_groups_select_their_roots() -> None:
+  assert whole_call_roots("mldsa-preparation") == PREPARATION_ROOTS
+  every = whole_call_roots("all")
+  assert len(every) == len(set(every)) == sum(map(len, WHOLE_CALL_GROUPS.values())), every
+  assert whole_call_roots("mlkem,mlkem") == WHOLE_CALL_GROUPS["mlkem"]
+  for invalid in ("", "mldsa", "mlkem,aead"):
+    try:
+      whole_call_roots(invalid)
+    except ValueError:
+      pass
+    else:
+      raise AssertionError(f"accepted whole-call groups {invalid!r}")
+
+
 def main() -> None:
   with tempfile.TemporaryDirectory() as temporary:
     directory = Path(temporary)
@@ -624,6 +641,7 @@ def main() -> None:
   test_undeclared_imports_keep_the_owned_bound_unresolved()
   test_cold_detection_is_cut_at_its_exact_entry()
   test_getauxval_is_a_declared_libc_edge()
+  test_whole_call_groups_select_their_roots()
   test_owned_indirection_and_recursion_keep_the_owned_bound_null()
   with tempfile.TemporaryDirectory() as temporary:
     test_allowances_compose_the_whole_call_bound(Path(temporary))

@@ -189,6 +189,30 @@ decision. Portable x86-64, portable POWER, portable IBM Z, and both RISC-V
 configurations reach no detection edge, so their roots need only libc
 allowances.
 
+`--whole-calls all` adds 27 roots per configuration beyond preparation:
+ML-DSA deterministic signing, prepared hedged signing, and verification; ML-KEM
+key generation, encapsulation, decapsulation, and prepared decapsulation; and
+in-place AEAD record seal and open. Largest owned bound, native / portable,
+with the number of roots that have one:
+
+| Linux target | ML-DSA signing (9 roots) | ML-KEM (12 roots) | AEAD records (6 roots) |
+| --- | ---: | ---: | ---: |
+| x86-64 GNU | 3 / 1, up to 21,704 / 16,584 B | 12 / 8, up to 34,088 / 33,880 B | none bounded |
+| AArch64 GNU | 9 / 9, 59,424 / 58,736 B | 12 / 12, 38,272 / 36,688 B | none bounded |
+| POWER64LE GNU | 9 / 9, 59,392 / 59,280 B | 12 / 12, 34,416 / 34,416 B | none bounded |
+| IBM Z GNU | 2 / 1, up to 17,136 / 16,952 B | 12 / 12, 33,960 / 31,456 B | none bounded |
+| RISC-V 64 GNU | 1 / 1, 16,720 / 16,720 B | 12 / 12, 31,728 / 31,728 B | none bounded |
+
+Every AEAD record root reaches the `polyval` multiplication dispatch, a std
+`OnceLock<fn(u128, u128) -> u128>`: its cold initialization runs the standard
+library's `Once` (indirect calls, futex `syscall`, no frame records), and each
+dispatched multiplication is an indirect call through the stored pointer. The
+unresolved signing roots stop at register-indirect jumps in
+`mldsa::encoding::pack` and `unpack_raw`, which are compiler jump tables the
+tool does not yet resolve. The four unbounded portable x86-64 ML-KEM roots stop
+at register-indirect calls. These results come from `25ad5250` plus the new
+frame-review boundaries.
+
 The tool continues below missing frame records, resolves identified GOT/PLT
 imports, distinguishes IFUNC relocations, and retains unresolved transfers by
 instruction address. Regression fixtures cover missing frames, allocator

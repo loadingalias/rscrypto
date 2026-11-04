@@ -11,12 +11,14 @@ extern crate alloc;
 use alloc::alloc::Global;
 use core::hint::black_box;
 
-use rscrypto::aead::{Nonce96, expert::AeadWithNonce};
+use rscrypto::aead::{Nonce96, OpenError, SealError, expert::AeadWithNonce};
 use rscrypto::{
-  Aes128Gcm, Aes128GcmKey, Aes256Gcm, Aes256GcmKey, ChaCha20Poly1305, ChaCha20Poly1305Key, Kem, MlDsa44,
-  MlDsa44PreparedSecretKey, MlDsa44PreparedSecretKeyStorage, MlDsa44SecretKey, MlDsa65, MlDsa65PreparedSecretKey,
-  MlDsa65PreparedSecretKeyStorage, MlDsa65SecretKey, MlDsa87, MlDsa87PreparedSecretKey,
-  MlDsa87PreparedSecretKeyStorage, MlDsa87SecretKey, MlDsaError, MlKem512, MlKem768, MlKem1024,
+  Aead, Aes128Gcm, Aes128GcmKey, Aes256Gcm, Aes256GcmKey, ChaCha20Poly1305, ChaCha20Poly1305Key, Kem, MlDsa44,
+  MlDsa44PreparedSecretKey, MlDsa44PreparedSecretKeyStorage, MlDsa44PublicKey, MlDsa44SecretKey, MlDsa44Signature,
+  MlDsa65, MlDsa65PreparedSecretKey, MlDsa65PreparedSecretKeyStorage, MlDsa65PublicKey, MlDsa65SecretKey,
+  MlDsa65Signature, MlDsa87, MlDsa87PreparedSecretKey, MlDsa87PreparedSecretKeyStorage, MlDsa87PublicKey,
+  MlDsa87SecretKey, MlDsa87Signature, MlDsaError, MlKem512, MlKem512PreparedDecapsulationKey, MlKem768,
+  MlKem768PreparedDecapsulationKey, MlKem1024, MlKem1024PreparedDecapsulationKey, MlKemError, VerificationError,
 };
 
 // These wrappers preserve the actual preparation return type and keep an
@@ -82,26 +84,169 @@ preparation_boundaries!(
   MlDsa87PreparedSecretKey
 );
 
-macro_rules! mldsa {
-  ($profile:ty, $storage:ty, $owned:ident, $borrowed:ident, $owned_lifecycle:ident, $borrowed_lifecycle:ident, $seed:expr) => {{
-    let (public, secret) = <$profile>::keypair_from_seed(black_box($seed)).expect("ML-DSA key generation");
-    let signature = secret
-      .sign_deterministic(black_box(b"frame review"), b"")
-      .expect("ML-DSA signing");
-    public
-      .verify_with_context(b"frame review", b"", &signature)
-      .expect("ML-DSA verification");
-    let mut storage = Box::new(<$storage>::new());
-    let prepared = $borrowed(&secret, &mut storage).expect("ML-DSA preparation");
-    let hedged = prepared
-      .sign_with(b"frame review", b"", |out| {
+// Signing, verification, ML-KEM, and AEAD record boundaries for whole-call
+// review. Each wraps one public operation with its production arguments.
+macro_rules! signing_boundaries {
+  (
+    $deterministic:ident, $prepared_sign:ident, $verify:ident,
+    $secret:ty, $public:ty, $signature:ty, $storage:ty, $prepared:ident
+  ) => {
+    #[inline(never)]
+    fn $deterministic(key: &$secret, message: &[u8]) -> Result<$signature, MlDsaError> {
+      key.sign_deterministic(message, b"")
+    }
+
+    #[inline(never)]
+    fn $prepared_sign(key: &$prepared<&mut $storage>, message: &[u8]) -> Result<$signature, MlDsaError> {
+      key.sign_with(message, b"", |out| {
         out.fill(black_box(3));
         Ok(())
       })
-      .expect("ML-DSA prepared signing");
-    public
-      .verify_with_context(b"frame review", b"", &hedged)
-      .expect("ML-DSA verification");
+    }
+
+    #[inline(never)]
+    fn $verify(key: &$public, message: &[u8], signature: &$signature) -> Result<(), VerificationError> {
+      key.verify_with_context(message, b"", signature)
+    }
+  };
+}
+
+signing_boundaries!(
+  sign_44_deterministic,
+  sign_44_prepared,
+  verify_44,
+  MlDsa44SecretKey,
+  MlDsa44PublicKey,
+  MlDsa44Signature,
+  MlDsa44PreparedSecretKeyStorage,
+  MlDsa44PreparedSecretKey
+);
+signing_boundaries!(
+  sign_65_deterministic,
+  sign_65_prepared,
+  verify_65,
+  MlDsa65SecretKey,
+  MlDsa65PublicKey,
+  MlDsa65Signature,
+  MlDsa65PreparedSecretKeyStorage,
+  MlDsa65PreparedSecretKey
+);
+signing_boundaries!(
+  sign_87_deterministic,
+  sign_87_prepared,
+  verify_87,
+  MlDsa87SecretKey,
+  MlDsa87PublicKey,
+  MlDsa87Signature,
+  MlDsa87PreparedSecretKeyStorage,
+  MlDsa87PreparedSecretKey
+);
+
+macro_rules! kem_boundaries {
+  ($profile:ty, $prepared_key:ty, $generate:ident, $encapsulate:ident, $decapsulate:ident, $prepared_decapsulate:ident) => {
+    #[inline(never)]
+    fn $generate() -> Result<(<$profile as Kem>::EncapsulationKey, <$profile as Kem>::DecapsulationKey), MlKemError> {
+      <$profile>::generate_keypair(|out: &mut [u8]| {
+        out.fill(black_box(4));
+        Ok(())
+      })
+    }
+
+    #[inline(never)]
+    fn $encapsulate(
+      key: &<$profile as Kem>::EncapsulationKey,
+    ) -> Result<(<$profile as Kem>::Ciphertext, <$profile as Kem>::SharedSecret), MlKemError> {
+      <$profile>::encapsulate(key, |out: &mut [u8]| {
+        out.fill(black_box(5));
+        Ok(())
+      })
+    }
+
+    #[inline(never)]
+    fn $decapsulate(
+      key: &<$profile as Kem>::DecapsulationKey,
+      ciphertext: &<$profile as Kem>::Ciphertext,
+    ) -> Result<<$profile as Kem>::SharedSecret, MlKemError> {
+      <$profile>::decapsulate(key, ciphertext)
+    }
+
+    #[inline(never)]
+    fn $prepared_decapsulate(
+      key: &$prepared_key,
+      ciphertext: &<$profile as Kem>::Ciphertext,
+    ) -> Result<<$profile as Kem>::SharedSecret, MlKemError> {
+      key.decapsulate(ciphertext)
+    }
+  };
+}
+
+kem_boundaries!(
+  MlKem512,
+  MlKem512PreparedDecapsulationKey,
+  mlkem_512_generate,
+  mlkem_512_encapsulate,
+  mlkem_512_decapsulate,
+  mlkem_512_prepared_decapsulate
+);
+kem_boundaries!(
+  MlKem768,
+  MlKem768PreparedDecapsulationKey,
+  mlkem_768_generate,
+  mlkem_768_encapsulate,
+  mlkem_768_decapsulate,
+  mlkem_768_prepared_decapsulate
+);
+kem_boundaries!(
+  MlKem1024,
+  MlKem1024PreparedDecapsulationKey,
+  mlkem_1024_generate,
+  mlkem_1024_encapsulate,
+  mlkem_1024_decapsulate,
+  mlkem_1024_prepared_decapsulate
+);
+
+macro_rules! record_boundaries {
+  ($cipher:ty, $seal:ident, $open:ident) => {
+    #[inline(never)]
+    fn $seal(
+      cipher: &$cipher,
+      nonce: &<$cipher as Aead>::Nonce,
+      aad: &[u8],
+      record: &mut [u8],
+    ) -> Result<<$cipher as Aead>::Tag, SealError> {
+      cipher.encrypt_in_place(nonce, aad, record)
+    }
+
+    #[inline(never)]
+    fn $open(
+      cipher: &$cipher,
+      nonce: &<$cipher as Aead>::Nonce,
+      aad: &[u8],
+      record: &mut [u8],
+      tag: &<$cipher as Aead>::Tag,
+    ) -> Result<(), OpenError> {
+      cipher.decrypt_in_place(nonce, aad, record, tag)
+    }
+  };
+}
+
+record_boundaries!(Aes128Gcm, seal_aes128gcm, open_aes128gcm);
+record_boundaries!(Aes256Gcm, seal_aes256gcm, open_aes256gcm);
+record_boundaries!(ChaCha20Poly1305, seal_chacha20poly1305, open_chacha20poly1305);
+
+macro_rules! mldsa {
+  (
+    $profile:ty, $storage:ty, $owned:ident, $borrowed:ident, $owned_lifecycle:ident, $borrowed_lifecycle:ident,
+    $deterministic:ident, $prepared_sign:ident, $verify:ident, $seed:expr
+  ) => {{
+    let (public, secret) = <$profile>::keypair_from_seed(black_box($seed)).expect("ML-DSA key generation");
+    let message = black_box(&b"frame review"[..]);
+    let signature = $deterministic(&secret, message).expect("ML-DSA signing");
+    $verify(&public, message, &signature).expect("ML-DSA verification");
+    let mut storage = Box::new(<$storage>::new());
+    let prepared = $borrowed(&secret, &mut storage).expect("ML-DSA preparation");
+    let hedged = $prepared_sign(&prepared, message).expect("ML-DSA prepared signing");
+    $verify(&public, message, &hedged).expect("ML-DSA verification");
     drop(prepared);
     $borrowed_lifecycle(&secret, &mut storage).expect("ML-DSA borrowed preparation lifecycle");
     $owned_lifecycle(&secret).expect("ML-DSA owned preparation lifecycle");
@@ -121,62 +266,55 @@ macro_rules! mldsa {
 }
 
 macro_rules! mlkem {
-  ($profile:ty, $byte:expr) => {{
-    let fill = |out: &mut [u8]| {
-      out.fill(black_box($byte));
-      Ok(())
-    };
-    let (encapsulation_key, decapsulation_key) = <$profile>::generate_keypair(fill).expect("ML-KEM key generation");
-    let (ciphertext, shared) = <$profile>::encapsulate(&encapsulation_key, fill).expect("ML-KEM encapsulation");
-    let decapsulated = <$profile>::decapsulate(&decapsulation_key, &ciphertext).expect("ML-KEM decapsulation");
+  ($profile:ty, $generate:ident, $encapsulate:ident, $decapsulate:ident, $prepared_decapsulate:ident) => {{
+    let (encapsulation_key, decapsulation_key) = $generate().expect("ML-KEM key generation");
+    let (ciphertext, shared) = $encapsulate(&encapsulation_key).expect("ML-KEM encapsulation");
+    let decapsulated = $decapsulate(&decapsulation_key, &ciphertext).expect("ML-KEM decapsulation");
     assert!(shared.ct_eq(&decapsulated).declassify());
     let prepared = <$profile>::prepare_decapsulation_key(&decapsulation_key).expect("ML-KEM preparation");
-    let again = prepared
-      .decapsulate(&ciphertext)
-      .expect("ML-KEM prepared decapsulation");
+    let again = $prepared_decapsulate(&prepared, &ciphertext).expect("ML-KEM prepared decapsulation");
     assert!(shared.ct_eq(&again).declassify());
   }};
 }
 
-macro_rules! gcm {
-  ($cipher:ty, $key:ty, $byte:expr) => {{
-    let key = <$key>::generate(|out| out.fill(black_box($byte)));
-    let cipher = <$cipher>::new(&key);
+// Lengths pass through `black_box` so every length-selected path stays linked:
+// the VAES message tails, the AVX-512 one-pass open, the row pass, and the column batches.
+macro_rules! records {
+  ($cipher:ty, $key:expr, $seal:ident, $open:ident, $byte:expr) => {{
+    let cipher = <$cipher>::new(&$key);
     let nonce = Nonce96::from_bytes(black_box([$byte; 12]));
-    let mut data = black_box([37u8; 129]);
-    let tag = cipher
-      .encrypt_in_place(&nonce, black_box(b"frame review"), &mut data)
-      .expect("AES-GCM encryption");
-    black_box(&data);
-    cipher
-      .decrypt_in_place(&nonce, black_box(b"frame review"), &mut data, &tag)
-      .expect("AES-GCM decryption");
-    black_box(data);
+    for len in [black_box(129), black_box(1029)] {
+      let mut data = vec![37u8; len];
+      let tag = $seal(&cipher, &nonce, black_box(b"frame review"), &mut data).expect("AEAD seal");
+      black_box(&data);
+      $open(&cipher, &nonce, black_box(b"frame review"), &mut data, &tag).expect("AEAD open");
+      black_box(data);
+    }
   }};
 }
 
-// Lengths pass through `black_box` so every length-selected path stays linked:
-// the AVX-512 one-pass open, the row pass, and the column batches.
-fn chacha20poly1305() {
-  let cipher = ChaCha20Poly1305::new(&ChaCha20Poly1305Key::from_bytes(black_box([9; 32])));
-  let nonce = Nonce96::from_bytes(black_box([9; 12]));
-  for len in [black_box(129), black_box(1029)] {
-    let mut data = vec![37u8; len];
-    let tag = cipher
-      .encrypt_in_place(&nonce, black_box(b"frame review"), &mut data)
-      .expect("ChaCha20-Poly1305 encryption");
-    black_box(&data);
-    cipher
-      .decrypt_in_place(&nonce, black_box(b"frame review"), &mut data, &tag)
-      .expect("ChaCha20-Poly1305 decryption");
-    black_box(data);
-  }
-}
-
 fn main() {
-  gcm!(Aes128Gcm, Aes128GcmKey, 7);
-  gcm!(Aes256Gcm, Aes256GcmKey, 8);
-  chacha20poly1305();
+  records!(
+    Aes128Gcm,
+    Aes128GcmKey::generate(|out| out.fill(black_box(7))),
+    seal_aes128gcm,
+    open_aes128gcm,
+    7
+  );
+  records!(
+    Aes256Gcm,
+    Aes256GcmKey::generate(|out| out.fill(black_box(8))),
+    seal_aes256gcm,
+    open_aes256gcm,
+    8
+  );
+  records!(
+    ChaCha20Poly1305,
+    ChaCha20Poly1305Key::from_bytes(black_box([9; 32])),
+    seal_chacha20poly1305,
+    open_chacha20poly1305,
+    9
+  );
   mldsa!(
     MlDsa44,
     MlDsa44PreparedSecretKeyStorage,
@@ -184,6 +322,9 @@ fn main() {
     prepare_44_borrowed,
     prepare_44_owned_lifecycle,
     prepare_44_borrowed_lifecycle,
+    sign_44_deterministic,
+    sign_44_prepared,
+    verify_44,
     &[1; 32]
   );
   mldsa!(
@@ -193,6 +334,9 @@ fn main() {
     prepare_65_borrowed,
     prepare_65_owned_lifecycle,
     prepare_65_borrowed_lifecycle,
+    sign_65_deterministic,
+    sign_65_prepared,
+    verify_65,
     &[2; 32]
   );
   mldsa!(
@@ -202,9 +346,30 @@ fn main() {
     prepare_87_borrowed,
     prepare_87_owned_lifecycle,
     prepare_87_borrowed_lifecycle,
+    sign_87_deterministic,
+    sign_87_prepared,
+    verify_87,
     &[3; 32]
   );
-  mlkem!(MlKem512, 4);
-  mlkem!(MlKem768, 5);
-  mlkem!(MlKem1024, 6);
+  mlkem!(
+    MlKem512,
+    mlkem_512_generate,
+    mlkem_512_encapsulate,
+    mlkem_512_decapsulate,
+    mlkem_512_prepared_decapsulate
+  );
+  mlkem!(
+    MlKem768,
+    mlkem_768_generate,
+    mlkem_768_encapsulate,
+    mlkem_768_decapsulate,
+    mlkem_768_prepared_decapsulate
+  );
+  mlkem!(
+    MlKem1024,
+    mlkem_1024_generate,
+    mlkem_1024_encapsulate,
+    mlkem_1024_decapsulate,
+    mlkem_1024_prepared_decapsulate
+  );
 }

@@ -866,6 +866,34 @@ PREPARATION_ROOTS = [
   for parameter in (44, 65, 87)
   for form in ("in", "borrowed", "owned_lifecycle", "borrowed_lifecycle")
 ]
+# Whole-call root groups: each `tools/frame-review` boundary wraps one public operation.
+WHOLE_CALL_GROUPS = {
+  "mldsa-preparation": PREPARATION_ROOTS,
+  "mldsa-signing": [
+    f"rscrypto_frame_review::{name}"
+    for parameter in (44, 65, 87)
+    for name in (f"sign_{parameter}_deterministic", f"sign_{parameter}_prepared", f"verify_{parameter}")
+  ],
+  "mlkem": [
+    f"rscrypto_frame_review::mlkem_{parameter}_{operation}"
+    for parameter in (512, 768, 1024)
+    for operation in ("generate", "encapsulate", "decapsulate", "prepared_decapsulate")
+  ],
+  "aead-records": [
+    f"rscrypto_frame_review::{operation}_{cipher}"
+    for cipher in ("aes128gcm", "aes256gcm", "chacha20poly1305")
+    for operation in ("seal", "open")
+  ],
+}
+
+
+def whole_call_roots(groups: str) -> list[str]:
+  """Return the roots of comma-separated `groups`, or of every group for `all`."""
+  names = list(WHOLE_CALL_GROUPS) if groups == "all" else groups.split(",")
+  unknown = [name for name in names if name not in WHOLE_CALL_GROUPS]
+  if unknown or not names:
+    raise ValueError(f"unknown whole-call group(s) {unknown}; choose from {', '.join(WHOLE_CALL_GROUPS)} or all")
+  return [root for name in dict.fromkeys(names) for root in WHOLE_CALL_GROUPS[name]]
 
 
 STACK_CAP = 8 * 1024 * 1024
@@ -974,7 +1002,7 @@ def review_preparation(
     "declared_libc_edges": sorted(DECLARED_LIBC),
     "cold_detection_entries": COLD_DETECTION,
     "allowances": allowances,
-    "scope": "Linked core preparation wrappers, including owned/borrowed destruction; not enclosing TLS, worker, signal-handler or arbitrary Allocator callbacks. All syntactically reachable return/error paths are included; abort paths are listed separately. Unknown frames never constitute a bound. Public storage supplied by the caller is outside the borrowed call's frame. Owned bounds cover the artifact's own code and charge each declared libc or cold-detection edge only its caller's frame and call slot; they are not whole-call bounds until every reached declared edge has a measured allowance for the deployed libc.",
+    "scope": "Linked public-operation wrappers (ML-DSA preparation including owned/borrowed destruction, ML-DSA signing and verification, ML-KEM, AEAD record seal and open); not enclosing TLS, worker, signal-handler or arbitrary Allocator callbacks. All syntactically reachable return/error paths are included; abort paths are listed separately. Unknown frames never constitute a bound. Public storage supplied by the caller is outside the borrowed call's frame. Owned bounds cover the artifact's own code and charge each declared libc or cold-detection edge only its caller's frame and call slot; they are not whole-call bounds until every reached declared edge has a measured allowance for the deployed libc.",
     "passed": all(item["passed"] for item in reports),
   }
 
@@ -1106,16 +1134,24 @@ def main(argv: list[str] | None = None) -> int:
   parser.add_argument("--rustflags", default="", help="extra rustc flags for the build, space-separated")
   parser.add_argument("--binary", type=Path, help="review an existing binary (requires one --target)")
   parser.add_argument("--json", type=Path, help="write the full report as JSON")
-  parser.add_argument("--mldsa-preparation", action="store_true", help="review whole preparation and destruction calls instead of scrub boundaries; unresolved paths fail")
+  parser.add_argument("--mldsa-preparation", action="store_true", help="shorthand for --whole-calls mldsa-preparation")
+  parser.add_argument("--whole-calls", metavar="GROUPS", help=f"review whole public calls instead of scrub boundaries; comma-separated groups from {', '.join(WHOLE_CALL_GROUPS)}, or all; unresolved paths fail")
   parser.add_argument("--evidence", type=Path, help="new directory retaining binaries, disassembly, call graphs, source identity and reports")
-  parser.add_argument("--allowances", type=Path, help="JSON of measured declared-edge allowances per target and deployed libc (with --mldsa-preparation)")
+  parser.add_argument("--allowances", type=Path, help="JSON of measured declared-edge allowances per target and deployed libc (with --whole-calls)")
   args = parser.parse_args(argv)
+  if args.mldsa_preparation and args.whole_calls is not None:
+    parser.error("--mldsa-preparation is shorthand for --whole-calls mldsa-preparation; pass one")
+  groups = "mldsa-preparation" if args.mldsa_preparation else args.whole_calls
+  try:
+    roots = whole_call_roots(groups) if groups is not None else None
+  except ValueError as error:
+    parser.error(str(error))
 
   targets = args.target or list(ARCHES)
   if args.binary is not None and len(targets) != 1:
     parser.error("--binary requires exactly one --target")
-  if args.allowances is not None and not args.mldsa_preparation:
-    parser.error("--allowances applies only to --mldsa-preparation")
+  if args.allowances is not None and roots is None:
+    parser.error("--allowances applies only to --whole-calls")
   allowances = load_allowances(args.allowances) if args.allowances is not None else {}
   allowance_sha256 = hashlib.sha256(args.allowances.read_bytes()).hexdigest() if args.allowances is not None else None
   if args.evidence is not None:
@@ -1130,8 +1166,9 @@ def main(argv: list[str] | None = None) -> int:
       shutil.copy2(binary, evidence / binary.name)
       binary = evidence / binary.name
     program = load(target, binary, evidence)
-    if args.mldsa_preparation:
-      report = review_preparation(program, allowances=allowances.get(target))
+    if roots is not None:
+      report = review_preparation(program, roots, allowances=allowances.get(target))
+      report["whole_call_groups"] = groups
       report["allowances_file"] = (
         {"path": str(args.allowances), "sha256": allowance_sha256} if args.allowances is not None else None
       )

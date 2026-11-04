@@ -518,14 +518,18 @@ Release callers, and manual runs with no diagnostic input, keep the full require
 
 | Script             | Caller |
 | ------------------ | ------ |
-| `stack/frames.py`  | `just stack-frames [--target TARGET]... [--portable] [--rustflags FLAGS] [--json PATH] [--evidence DIR] [--mldsa-preparation [--allowances FILE]]` |
+| `stack/frames.py`  | `just stack-frames [--target TARGET]... [--portable] [--rustflags FLAGS] [--json PATH] [--evidence DIR] [--whole-calls GROUPS \| --mldsa-preparation] [--allowances FILE]` |
 | `stack/residue.py` | `just stack-residue [--board BOARD]... [--backend native\|portable]... [--output DIR]` |
 
 ### Frame review
 
 `stack/frames.py` reviews each scrubbed secret-worker boundary in a linked release binary.
-`--mldsa-preparation` instead reviews owned and borrowed ML-DSA preparation for
-all three parameter sets, with separate roots that include successful destruction.
+`--whole-calls GROUPS` instead reviews whole public calls, for comma-separated groups or `all`:
+`mldsa-preparation` (owned and borrowed preparation for all three parameter sets, with separate
+roots that include successful destruction), `mldsa-signing` (deterministic, prepared hedged
+signing, and verification), `mlkem` (key generation, encapsulation, decapsulation, and prepared
+decapsulation for all three sets), and `aead-records` (in-place seal and open for AES-128-GCM,
+AES-256-GCM, and ChaCha20-Poly1305). `--mldsa-preparation` is shorthand for its first group.
 Both kinds include recoverable error branches. `--evidence DIR` retains the binary,
 its hash, symbol tables, relocations, disassembly, complete parsed call graph,
 source hashes, compiler identity, and reports in a new directory.
