@@ -595,9 +595,15 @@ mod tests {
           }
         }
 
-        for (input_offset, secret_offset, stripes, scramble_after) in
-          [(0, 0, 16, true), (1, 8, 4, false), (31, 120, 1, true)]
-        {
+        for (input_offset, secret_offset, stripes, scramble_after) in [
+          (0, 0, 16, true),
+          (1, 8, 4, false),
+          (31, 120, 1, true),
+          (63, 120, 2, false),
+          (5, 80, 7, true),
+          (0, 32, 13, false),
+          (3, 16, 15, true),
+        ] {
           // SAFETY: Every table row keeps all input stripes within `input` and
           // all secret stripes within `secret`.
           let expected = unsafe {

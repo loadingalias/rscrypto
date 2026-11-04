@@ -6,6 +6,46 @@ The dated campaign records come first.
 The 2026-08-18 Linux snapshot near the end is historical:
 its aggregate ratios are withdrawn as performance claims (see [Corrections](#corrections)).
 
+## 2026-11-04: XXH3 x86-64 long-input kernels
+
+Same-host A/B for the XXH3 AVX-512 and AVX2 accumulate change. Raw data was deleted after this
+summary was written.
+
+Hosts: `aws-linux-intel-gnr-profile` (c8i.4xlarge, Xeon 6975P-C) and `aws-linux-amd-zen5-profile`
+(c8a.4xlarge, EPYC 9R45). Baseline `25ad5250`, candidate `25ad5250` plus the change,
+`nightly-2026-10-24`, catalog `bench` profile and Criterion settings. Each revision was built twice,
+with default flags and with `-C target-cpu=x86-64-v4` (the catalog's `xxh3_v4` build), in its own
+clone and target directory; the four binary hashes differ. Rows: rscrypto, `xxhash-rust`, and
+`twox-hash` for XXH3-64 and XXH3-128 at 129, 240, 256, 1024, 4096, 16384, and 1048576 B, in two
+ABBA blocks (16 processes per host). Changes are geometric means of time-adjacent
+candidate/baseline pairs of Criterion medians; "vs fastest external" divides the fastest external
+median from either build by rscrypto's default-build median, as the headline comparison does. CPU
+steal: 4 and 7 ticks.
+
+| Host | Input | Baseline → candidate (XXH3-64) | Change (64 / 128) | vs fastest external, before → after (64 / 128) |
+| --- | --- | --- | --- | --- |
+| Granite Rapids | 1 MiB | 24.5 → 14.9 µs | −39% / −40% | 0.63 → 1.03 / 0.61 → 1.01 |
+| Granite Rapids | 16 KiB | 346 → 239 ns | −31% / −31% | 0.69 → 1.00 / 0.70 → 1.02 |
+| Granite Rapids | 4 KiB | 85.8 → 67.3 ns | −22% / −21% | 0.75 → 0.96 / 0.76 → 0.96 |
+| Granite Rapids | 1 KiB | 20.7 → 19.8 ns | −2% / −3% | 0.90 → 0.94 / 0.92 → 0.95 |
+| Zen 5 | 1 MiB | 17.7 → 8.77 µs | −51% / −53% | 0.47 → 0.95 / 0.46 → 0.96 |
+| Zen 5 | 16 KiB | 246 → 109 ns | −56% / −57% | 0.50 → 1.13 / 0.47 → 1.09 |
+| Zen 5 | 4 KiB | 46.8 → 35.6 ns | −25% / −27% | 0.73 → 0.96 / 0.68 → 0.90 |
+
+Inputs of 129 to 256 B are unchanged within noise; their kernels did not change, and XXH3-128 at
+240 B moved by ±10% between repeated campaigns. The first candidate process on Zen 5 was slow on
+every short row (256 B: 12.5 against about 6.8 ns in the other three), which skews the Zen 5 pair
+ratios at 256 B and 1 KiB; the medians there are unchanged.
+
+Cause. The baseline AVX-512 loop added each stripe's swap and product to the accumulator in two
+dependent adds and recomputed every input and secret offset with checked arithmetic. The
+candidate computes each stripe's term off the accumulator and keeps four partial sums (two per
+half for AVX2) across a block's 16 stripes, which LLVM unrolls with the secret held in registers.
+
+Still losing: Zen 5 at 1 MiB (0.95–0.96) and 4 KiB on both hosts (0.90–0.96) against the
+`xxhash-rust` x86-64-v4 build, 129–256 B on both hosts (0.56–0.98, the scalar mid-size path and
+long-path setup), and Zen 5 at 1 KiB. Not measured: Windows and non-AVX-512 x86-64.
+
 ## 2026-11-04: BLAKE2 kernels on Zen 5, Granite Rapids, and Graviton4
 
 Same-host A/B for the BLAKE2 kernel and dispatch change. Raw data was deleted after this summary

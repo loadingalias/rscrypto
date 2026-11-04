@@ -49,21 +49,20 @@ unsafe fn store_acc(acc: __m512i) -> [u64; ACC_NB] {
   }
 }
 
-/// Accumulate one 64-byte stripe — single iteration with 512-bit registers.
+/// Returns one stripe's accumulator term: `swap(data) + lo32(dk) * hi32(dk)`
+/// in each lane, with `dk = data ^ key`.
 ///
-/// Processes all 8 u64 accumulators simultaneously:
-/// 1. Load full 64 B stripe + 64 B secret in one shot
-/// 2. XOR → shift → multiply → shuffle-swap → accumulate
+/// Accumulation is lane-wise addition modulo 2^64, so callers may sum terms
+/// in any order. Keeping the term off the accumulator leaves one dependent add
+/// per stripe instead of two.
 ///
 /// # Safety
 ///
-/// The current CPU must support AVX-512F. `stripe` and `secret` must each
-/// remain valid to read 64 initialized bytes from one allocation.
-#[inline]
-#[target_feature(enable = "avx512f")]
-unsafe fn accumulate_512(acc: &mut __m512i, stripe: *const u8, secret: *const u8) {
-  // SAFETY: AVX-512F available via target_feature. Caller ensures stripe and
-  // secret point to ≥64 valid bytes.
+/// The caller must enable AVX-512F. `stripe` and `secret` must each remain
+/// valid to read 64 initialized bytes from one allocation.
+#[inline(always)]
+unsafe fn stripe_term(stripe: *const u8, secret: *const u8) -> __m512i {
+  // SAFETY: the caller enables AVX-512F and keeps both 64-byte reads in bounds.
   unsafe {
     let data_vec = _mm512_loadu_si512(stripe.cast());
     let key_vec = _mm512_loadu_si512(secret.cast());
@@ -75,8 +74,68 @@ unsafe fn accumulate_512(acc: &mut __m512i, stripe: *const u8, secret: *const u8
 
     // Swap 32-bit pairs → swaps u64 elements within each 128-bit lane
     let data_swap = _mm512_shuffle_epi32::<SWAP32>(data_vec);
-    let sum = _mm512_add_epi64(*acc, data_swap);
-    *acc = _mm512_add_epi64(product, sum);
+    _mm512_add_epi64(product, data_swap)
+  }
+}
+
+/// Returns the term of stripe `stripe`, which reads input at `input + 64 * stripe`
+/// and secret at `secret + 8 * stripe`.
+///
+/// # Safety
+///
+/// The caller must enable AVX-512F and keep both 64-byte reads in bounds.
+#[inline(always)]
+unsafe fn stripe_term_at(input: *const u8, secret: *const u8, stripe: usize) -> __m512i {
+  // SAFETY: the caller enables AVX-512F and keeps both reads in bounds.
+  unsafe {
+    stripe_term(
+      input.add(stripe.strict_mul(STRIPE_LEN)),
+      secret.add(stripe.strict_mul(SECRET_CONSUME_RATE)),
+    )
+  }
+}
+
+/// Adds the terms of `count` consecutive stripes to `acc`.
+///
+/// Stripe `k` reads input at `input + 64k` and secret at `secret + 8k`. From
+/// four stripes on, four partial sums shorten the loop-carried add chain; a
+/// constant `count` unrolls.
+///
+/// # Safety
+///
+/// The caller must enable AVX-512F, and every stripe and secret read named
+/// above must stay within its allocation.
+#[inline(always)]
+unsafe fn accumulate_stripes(acc: __m512i, input: *const u8, secret: *const u8, count: usize) -> __m512i {
+  // SAFETY: the caller enables AVX-512F and keeps every read in bounds.
+  unsafe {
+    if count < 4 {
+      // Too few stripes to pay for the partial sums.
+      let mut sum = acc;
+      let mut stripe = 0usize;
+      while stripe < count {
+        sum = _mm512_add_epi64(sum, stripe_term_at(input, secret, stripe));
+        stripe = stripe.strict_add(1);
+      }
+      return sum;
+    }
+    let mut sum0 = acc;
+    let mut sum1 = _mm512_setzero_si512();
+    let mut sum2 = _mm512_setzero_si512();
+    let mut sum3 = _mm512_setzero_si512();
+    let mut stripe = 0usize;
+    while stripe.strict_add(4) <= count {
+      sum0 = _mm512_add_epi64(sum0, stripe_term_at(input, secret, stripe));
+      sum1 = _mm512_add_epi64(sum1, stripe_term_at(input, secret, stripe.strict_add(1)));
+      sum2 = _mm512_add_epi64(sum2, stripe_term_at(input, secret, stripe.strict_add(2)));
+      sum3 = _mm512_add_epi64(sum3, stripe_term_at(input, secret, stripe.strict_add(3)));
+      stripe = stripe.strict_add(4);
+    }
+    while stripe < count {
+      sum0 = _mm512_add_epi64(sum0, stripe_term_at(input, secret, stripe));
+      stripe = stripe.strict_add(1);
+    }
+    _mm512_add_epi64(_mm512_add_epi64(sum0, sum1), _mm512_add_epi64(sum2, sum3))
   }
 }
 
@@ -138,20 +197,12 @@ unsafe fn stream_accumulate_inner(
   //    the assertions above check that contract in debug builds.
   // 3. `initial` and the returned array each contain exactly eight `u64` lanes.
   unsafe {
-    let mut acc = load_acc(&initial);
-    let mut stripe = 0usize;
-    while stripe < stripes {
-      accumulate_512(
-        &mut acc,
-        input
-          .as_ptr()
-          .add(input_offset.strict_add(stripe.strict_mul(STRIPE_LEN))),
-        secret
-          .as_ptr()
-          .add(secret_offset.strict_add(stripe.strict_mul(SECRET_CONSUME_RATE))),
-      );
-      stripe = stripe.strict_add(1);
-    }
+    let mut acc = accumulate_stripes(
+      load_acc(&initial),
+      input.as_ptr().add(input_offset),
+      secret.as_ptr().add(secret_offset),
+      stripes,
+    );
     if scramble_after {
       scramble_acc(
         &mut acc,
@@ -205,17 +256,13 @@ unsafe fn hash_long_internal_loop(input: &[u8], secret: &[u8; DEFAULT_SECRET_SIZ
     let block_len = STRIPE_LEN.strict_mul(nb_stripes);
     let nb_blocks = input.len().strict_sub(1).strict_div(block_len);
 
-    let mut block = 0usize;
-    while block < nb_blocks {
-      let mut stripe = 0usize;
-      while stripe < nb_stripes {
-        let input_off = block.strict_mul(block_len).strict_add(stripe.strict_mul(STRIPE_LEN));
-        let secret_off = stripe.strict_mul(SECRET_CONSUME_RATE);
-        accumulate_512(&mut acc, input.as_ptr().add(input_off), secret.as_ptr().add(secret_off));
-        stripe = stripe.strict_add(1);
-      }
+    // Each block pointer stays within `input`: `nb_blocks` full blocks end
+    // before its last byte.
+    let mut block = input.as_ptr();
+    for _ in 0..nb_blocks {
+      acc = accumulate_stripes(acc, block, secret.as_ptr(), nb_stripes);
       scramble_acc(&mut acc, secret.as_ptr().add(secret.len().strict_sub(STRIPE_LEN)));
-      block = block.strict_add(1);
+      block = block.add(block_len);
     }
 
     // Remaining stripes in final partial block
@@ -224,23 +271,17 @@ unsafe fn hash_long_internal_loop(input: &[u8], secret: &[u8; DEFAULT_SECRET_SIZ
       .strict_sub(1)
       .strict_sub(block_len.strict_mul(nb_blocks))
       .strict_div(STRIPE_LEN);
-    let mut stripe = 0usize;
-    while stripe < nb_stripes_final {
-      let input_off = nb_blocks
-        .strict_mul(block_len)
-        .strict_add(stripe.strict_mul(STRIPE_LEN));
-      let secret_off = stripe.strict_mul(SECRET_CONSUME_RATE);
-      accumulate_512(&mut acc, input.as_ptr().add(input_off), secret.as_ptr().add(secret_off));
-      stripe = stripe.strict_add(1);
-    }
+    acc = accumulate_stripes(acc, block, secret.as_ptr(), nb_stripes_final);
 
     // Last stripe (may overlap with previous)
-    accumulate_512(
-      &mut acc,
-      input.as_ptr().add(input.len().strict_sub(STRIPE_LEN)),
-      secret
-        .as_ptr()
-        .add(secret.len().strict_sub(STRIPE_LEN).strict_sub(SECRET_LASTACC_START)),
+    acc = _mm512_add_epi64(
+      acc,
+      stripe_term(
+        input.as_ptr().add(input.len().strict_sub(STRIPE_LEN)),
+        secret
+          .as_ptr()
+          .add(secret.len().strict_sub(STRIPE_LEN).strict_sub(SECRET_LASTACC_START)),
+      ),
     );
 
     store_acc(acc)
