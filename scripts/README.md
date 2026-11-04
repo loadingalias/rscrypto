@@ -428,6 +428,11 @@ A stale waiver fails the verdict; the evidence and timing of the run are still c
   in the same function, with their slices and identities.
   A candidate whose slice is unchanged differs only because its open slice binds the function:
   confirm its open leaves.
+- For each stale waiver, it shows the instruction identities that changed in its function, ignoring offsets.
+  Read this diff first. If it is empty, or holds only placement, such as a symbol name that moved,
+  the identity is binding placement: fix `instruction_identity` and re-encode on the reviewed artifacts,
+  as the [2026-11-04 record](../docs/constant-time.md#immediate-symbol-re-encoding-2026-11-04) did.
+  Do not renew such a waiver by review.
 - It lists every enforced `select_branch` finding that no waiver covers, with its slice and identity.
 - It writes `renewal-record.json` and `renewal-record.md` under `--out` and changes nothing.
   To renew a waiver, set its `slice_sha256` to the reviewed candidate's identity and update `reviewed_at`.

@@ -4,7 +4,7 @@
 from pathlib import Path
 
 from asm_heuristics import FunctionBody, attach_condition_identities, scan_symbol
-from renew_waivers import Slicer, candidates
+from renew_waivers import Slicer, candidates, function_changes
 
 TARGET = "x86_64-unknown-linux-gnu"
 
@@ -59,6 +59,14 @@ def main() -> None:
   shifted = candidates(open_waiver, findings(shifted_functions), open_record, Slicer(TARGET, shifted_functions, None))
   assert len(shifted) == 1 and shifted[0]["unchanged"], shifted
   assert shifted[0]["slice_sha256"] != open_waiver["slice_sha256"]
+  # The record shows what staled an open slice: here the added head instruction and the loop branch whose
+  # function-relative destination moved with it. An unchanged function has no identity changes.
+  changes = function_changes(Slicer(TARGET, open_functions, None), Slicer(TARGET, shifted_functions, None), "f")
+  assert changes is not None and "+48 89 fe\tmovq\t%rdi, %rsi" in changes["diff"], changes
+  assert changes["changed_lines"] == 3 and all(line[0] in "+-" for line in changes["diff"]), changes
+  same = function_changes(Slicer(TARGET, open_functions, None), Slicer(TARGET, open_functions, None), "f")
+  assert same == {"changed_lines": 0, "diff": []}, same
+  assert function_changes(Slicer(TARGET, open_functions, None), Slicer(TARGET, {}, None), "f") is None
   # A waived finding is not a candidate.
   assert candidates(waiver, [dict(moved, waived=True)], reviewed_record, Slicer(TARGET, reviewed_functions, None)) == []
 

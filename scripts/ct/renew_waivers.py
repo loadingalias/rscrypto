@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import collections
+import difflib
 import json
 import re
 import sys
@@ -26,7 +27,7 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import asm_heuristics as scanner
-from condition_slice import FunctionSlices
+from condition_slice import FunctionSlices, strip_offset
 from provenance import sha256_file
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -92,6 +93,28 @@ class Slicer:
     return None
 
 
+FUNCTION_CHANGE_LIMIT = 40
+
+
+def function_changes(reviewed: Slicer, new: Slicer, symbol: str) -> dict[str, Any] | None:
+  """The instruction identities that differ between the reviewed and new function, ignoring offsets.
+
+  An open slice binds its whole function, so this diff is what staled it. An empty diff, or one made only of
+  placement such as a moved symbol name, means the identity bound placement: fix the identity, not the waiver.
+  """
+  if symbol not in reviewed.functions or symbol not in new.functions:
+    return None
+
+  def lines(slicer: Slicer) -> list[str]:
+    identities = scanner.instruction_identities(slicer.target, slicer.functions[symbol], set(slicer.functions),
+                                                slicer.image)
+    return [strip_offset(identity) for identity in identities.values()]
+
+  diff = [line for line in difflib.unified_diff(lines(reviewed), lines(new), lineterm="", n=0)
+          if not line.startswith(("---", "+++", "@@"))]
+  return {"changed_lines": len(diff), "diff": diff[:FUNCTION_CHANGE_LIMIT]}
+
+
 def candidates(waiver: dict[str, Any], findings: list[dict[str, Any]], reviewed: dict[str, Any] | None,
                slicer: Slicer) -> list[dict[str, Any]]:
   """Unwaived new findings of the waiver's kind in its function; `unchanged` marks the reviewed slice."""
@@ -133,6 +156,7 @@ def main() -> int:
     waiver = configured[index]
     reviewed = reviewed_slicer.reviewed(waiver)
     rows.append({"index": index, "waiver": waiver, "reviewed": reviewed,
+                 "function_changes": function_changes(reviewed_slicer, new_slicer, waiver["symbol"]),
                  "candidates": candidates(waiver, findings, reviewed, new_slicer)})
 
   enforced = scanner.select_branch_enforced_primitives(ROOT)
@@ -147,7 +171,7 @@ def main() -> int:
     ("not in reviewed artifacts" if row["reviewed"] is None else "changed slice") for row in rows)
   record = {
     "kind": "rscrypto.ct.waiver-review",
-    "schema_version": 2,
+    "schema_version": 3,
     "generated_at_utc": datetime.now(UTC).isoformat(timespec="seconds"),
     "target": args.target,
     "identity": scanner.SLICE_IDENTITY_VERSION,
@@ -190,6 +214,14 @@ def markdown(record: dict[str, Any]) -> str:
     else:
       lines.extend(["", "Reviewed slice:", "", "```text", row["reviewed"]["canonical"], "```"])
       lines.extend(f"- Open leaf: {reason}" for reason in row["reviewed"]["reasons"])
+    changes = row["function_changes"]
+    if changes is not None and changes["changed_lines"] == 0:
+      lines.extend(["", "Function instruction identities are unchanged."])
+    elif changes is not None:
+      shown = len(changes["diff"])
+      more = f", first {shown} shown" if shown < changes["changed_lines"] else ""
+      lines.extend(["", f"Function instruction identity changes ({changes['changed_lines']} lines{more}):", "",
+                    "```diff", *changes["diff"], "```"])
     for candidate in row["candidates"]:
       state = "unchanged slice" if candidate["unchanged"] else "changed slice"
       lines.extend(["", f"Candidate +0x{candidate['offset']:x} ({state}): `{candidate['slice_sha256']}`"])
