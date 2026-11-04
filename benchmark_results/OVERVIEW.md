@@ -6,6 +6,42 @@ The dated campaign records come first.
 The 2026-08-18 Linux snapshot near the end is historical:
 its aggregate ratios are withdrawn as performance claims (see [Corrections](#corrections)).
 
+## 2026-11-03: x86-64 AES-GCM key-setup A/B
+
+Same-host A/B for the four-lane GHASH power setup (`c7d0b3af`). Raw data was deleted after this
+summary was written.
+
+`aws-linux-x64-bench` (c8i.xlarge, Xeon 6975P-C Granite Rapids), baseline `5fd67258`, candidate
+`5fd67258` plus the change, `nightly-2026-10-24`, catalog `bench` profile and Criterion settings
+(20 samples, 100 ms warm-up, 400 ms measurement), static OpenSSL 4.0.3. Each revision had its own
+clone, target directory, and binaries; the binary hashes differ. Rows: 192 `aead` rows
+(`aes-{128,256}-gcm` copy-and-encrypt, copy-and-decrypt, copy-and-construct-and-encrypt) and 120
+`tls_connections` rows (TLS 1.2 and 1.3 p256/X25519 full and resumed handshakes, 64 B and 16 KiB
+traffic), in two ABBA blocks (8 processes per binary). Ratios are the geometric mean of the four
+time-adjacent candidate/baseline pairs of Criterion medians. CPU steal rose by 3 ticks during
+measurement.
+
+| Row (rscrypto) | Baseline → candidate | Change [pair range] | Candidate vs fastest external |
+| --- | --- | --- | --- |
+| AES-128-GCM construct and encrypt, 64 B | 762 → 347 ns | −54.4% [−55.0, −52.8] | +147% vs RustCrypto |
+| AES-256-GCM construct and encrypt, 64 B | 781 → 360 ns | −53.9% [−54.2, −53.7] | +121% vs RustCrypto |
+| TLS 1.2 resumed, AES-128-GCM | 15.9 → 13.9 µs | −12.5% [−13.0, −11.9] | +30.0% vs *ring* |
+| TLS 1.2 resumed, AES-256-GCM | 23.8 → 21.6 µs | −9.4% [−9.9, −8.9] | +27.7% vs *ring* |
+| TLS 1.2 resumed, ChaCha20-Poly1305 | 13.8 → 13.5 µs | −2.2% [−2.7, −1.7] | +15.4% vs *ring* |
+| TLS 1.3 resumed, AES-128 / AES-256 | 90.7 / 125.1 → 86.4 / 120.5 µs | −4.7% / −3.7% | −4.9% / −13.0% vs aws-lc-rs |
+| TLS full handshakes | | −1.2% to +0.1% | |
+
+Steady-state `aead` rows moved −2.5% to +5.4%, plus one +8.5% reading from a single-pair spike
+that the matching *ring* row shares. External rows at the same sizes moved by similar amounts
+(1 MiB: rscrypto +1.0 to +1.6%, externals −1.1 to +2.6%; AES-256 256 B encrypt: rscrypto +5.4%,
+aws-lc-rs +5.2%), so none of these readings is attributable to the change; the bulk kernels did not
+change. TLS 64 B traffic rows read +1 to +6% for every rustls provider, including
+*ring* and aws-lc-rs, whose code did not change, and ChaCha20-Poly1305, which the change does not
+touch; the OpenSSL rows stayed within ±0.3%. That shift is relinked rustls record-layer layout,
+not the change. The external-control gate fails again: 160 of 216 external rows within 1%,
+maximum 5.21% (see G1-QUIET). The fresh-key and resumption gains are many times that spread, with
+every pair on the same side. TLS 1.2 resumption remains the largest Granite Rapids loss.
+
 ## 2026-11-03: TLS resumption A/B and Windows ML-DSA backends
 
 Two same-host A/B campaigns. Raw data was deleted after this summary was written.
