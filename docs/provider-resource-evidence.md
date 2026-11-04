@@ -142,9 +142,9 @@ Largest owned bound by root, in bytes, native / portable:
 | Linux target | `prepare_in` | `prepare` | `prepare_in`, then drop | `prepare`, then drop |
 | --- | ---: | ---: | ---: | ---: |
 | x86-64 GNU | 2,008 / 1,224 | 1,960 / 1,096 | 2,040 / 1,256 | 1,992 / 1,128 |
-| AArch64 GNU | 2,080 / 1,472 | 1,872 / 1,184 | 2,128 / 1,520 | 1,920 / 1,232 |
+| AArch64 GNU | 2,032 / 1,472 | 1,824 / 1,184 | 2,080 / 1,520 | 1,872 / 1,232 |
 | POWER64LE GNU | 9,840 / 1,744 | 9,840 / 1,408 | 9,920 / 1,824 | 9,920 / 1,488 |
-| IBM Z GNU | 1,784 / 1,592 | 1,608 / 1,416 | 1,968 / 1,776 | 1,792 / 1,600 |
+| IBM Z GNU | 1,824 / 1,592 | 1,648 / 1,416 | 2,008 / 1,776 | 1,832 / 1,600 |
 | RISC-V 64 GNU | 1,408 / 1,408 | 1,200 / 1,200 | 1,440 / 1,440 | 1,232 / 1,232 |
 
 Largest stack depth at a declared edge's entry, in bytes, native / portable.
@@ -152,10 +152,10 @@ A dash means that no root reaches the edge:
 
 | Linux target | `calloc` | `free` | `memcpy` | `memset` | `getauxval` |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| x86-64 GNU | 184 / 184 | 40 / 40 | 1,752 / 1,000 | - / - | - / - |
-| AArch64 GNU | 352 / 352 | 48 / 48 | 1,504 / 1,360 | - / - | 2,096 / 384 |
-| POWER64LE GNU | 2,576 / 480 | 112 / 112 | 8,224 / 1,536 | 8,048 / 1,536 | 7,872 / - |
-| IBM Z GNU | 360 / 360 | 184 / 184 | - / - | - / - | 1,968 / - |
+| x86-64 GNU | 184 / 184 | 40 / 40 | 1,720 / 1,000 | - / - | - / - |
+| AArch64 GNU | 352 / 352 | 48 / 48 | 1,504 / 1,360 | - / - | 2,080 / 384 |
+| POWER64LE GNU | 2,576 / 480 | 112 / 112 | 8,224 / 1,536 | 8,048 / 1,536 | 7,888 / - |
+| IBM Z GNU | 360 / 360 | 184 / 184 | - / - | - / - | 2,008 / - |
 | RISC-V 64 GNU | 256 / 256 | 32 / 32 | 1,184 / 1,184 | 1,184 / 1,184 | - / - |
 
 Only the `prepare_in` roots, with or without the drop, reach `calloc` and
@@ -196,10 +196,10 @@ with the number of roots that have one:
 
 | Linux target | ML-DSA signing (9 roots) | ML-KEM (12 roots) | AEAD records (6 roots) |
 | --- | ---: | ---: | ---: |
-| x86-64 GNU | 3 / 1, up to 21,704 / 16,584 B | 12 / 8, up to 34,088 / 33,880 B | none bounded |
-| AArch64 GNU | 9 / 9, 59,424 / 58,736 B | 12 / 12, 38,272 / 36,688 B | none bounded |
-| POWER64LE GNU | 9 / 9, 59,392 / 59,280 B | 12 / 12, 34,416 / 34,416 B | none bounded |
-| IBM Z GNU | 2 / 1, up to 17,136 / 16,952 B | 12 / 12, 33,960 / 31,456 B | none bounded |
+| x86-64 GNU | 3 / 1, up to 21,688 / 16,584 B | 12 / 12, 33,976 / 33,880 B | none bounded |
+| AArch64 GNU | 9 / 9, 59,376 / 58,736 B | 12 / 12, 38,256 / 36,688 B | none bounded |
+| POWER64LE GNU | 9 / 9, 59,360 / 59,280 B | 12 / 12, 34,416 / 34,416 B | none bounded |
+| IBM Z GNU | 2 / 1, up to 17,176 / 16,952 B | 12 / 12, 33,960 / 31,456 B | none bounded |
 | RISC-V 64 GNU | 1 / 1, 16,720 / 16,720 B | 12 / 12, 31,728 / 31,728 B | none bounded |
 
 Every AEAD record root reaches the `polyval` multiplication dispatch, a std
@@ -208,16 +208,24 @@ library's `Once` (indirect calls, futex `syscall`, no frame records), and each
 dispatched multiplication is an indirect call through the stored pointer. The
 unresolved signing roots stop at register-indirect jumps in
 `mldsa::encoding::pack` and `unpack_raw`, which are compiler jump tables the
-tool does not yet resolve. The four unbounded portable x86-64 ML-KEM roots stop
-at register-indirect calls. These results come from `25ad5250` plus the new
-frame-review boundaries.
+tool does not yet resolve. Every ML-KEM root now has an owned bound: the tool
+follows a GOT-loaded import through full-width copies into caller-saved
+registers, which calls and implicit register writers end.
+
+These results come from the tree that reads the capability cache once on both
+paths (2026-11-04). An inlined `platform::caps()` check no longer copies the
+whole `Detected` value onto the stack, so AArch64 preparation bounds drop by
+48 B and other hot frames shrink. The detected value now waits in the cold
+`initialize` frame instead, which raises the IBM Z bounds that run through
+first-call detection by 40 B and the POWER `getauxval` entry by 16 B.
 
 The tool continues below missing frame records, resolves identified GOT/PLT
 imports, distinguishes IFUNC relocations, and retains unresolved transfers by
 instruction address. Regression fixtures cover missing frames, allocator
 cleanup, IFUNCs, branch joins, register clobbers, unlabelled IBM Z PLT entries,
 repeated assembly stack decrements, declared-edge entry depths after calls and
-tail calls, the exact detection cut, and allowance composition.
+tail calls, register copies of held imports, detection without a declared edge, and
+allowance composition.
 
 The exact remaining proof needs are:
 

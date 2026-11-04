@@ -152,23 +152,31 @@ mod atomic_cache {
     /// Every caller returns the same published value, even if `detect` gives
     /// different results to racing first callers. `detect` is a type parameter,
     /// not a function pointer, so the cold call is direct and statically boundable.
+    ///
+    /// Both paths end in one read of the published slot. An inlined
+    /// `caps().has(..)` therefore loads only the bits it tests; returning the
+    /// cold path's value instead would merge the two paths in a stack copy of
+    /// the whole `Detected`.
     #[inline]
     #[cfg_attr(miri, allow(dead_code))] // Miri runs `get()` without detection.
     pub(super) fn get_or_init<F: FnOnce() -> Detected>(&self, detect: F) -> Detected {
-      if self.state.load(Ordering::Acquire) == STATE_READY {
-        // SAFETY: Published-slot read because:
-        // 1. `STATE_READY` is stored with Release only after the elected writer's one slot write.
-        // 2. This Acquire load observed it, so that write happens-before this read.
-        // 3. No write follows publication.
-        return unsafe { *self.value.0.get() };
+      if self.state.load(Ordering::Acquire) != STATE_READY {
+        self.initialize(detect);
       }
-      self.initialize(detect)
+      // SAFETY: Published-slot read because:
+      // 1. This thread observed `STATE_READY` with an Acquire load, here or in `initialize`, or it
+      //    stored `STATE_READY` itself after its own slot write.
+      // 2. The elected writer's one slot write happens-before its Release store of `STATE_READY`.
+      // 3. No write follows publication.
+      unsafe { *self.value.0.get() }
     }
 
+    /// Publish `detect()` unless another caller already did, and return once
+    /// the slot is published.
     #[cold]
     #[inline(never)]
     #[cfg_attr(miri, allow(dead_code))]
-    fn initialize<F: FnOnce() -> Detected>(&self, detect: F) -> Detected {
+    fn initialize<F: FnOnce() -> Detected>(&self, detect: F) {
       // Shared state is untouched until `detect` returns: a panic leaves the
       // cache uninitialized, and no other caller waits for this probe.
       let detected = detect();
@@ -186,17 +194,12 @@ mod atomic_cache {
           *self.value.0.get() = detected;
         }
         self.state.store(STATE_READY, Ordering::Release);
-        return detected;
+        return;
       }
       // The elected caller stores one `Detected` and then publishes; wait only across that.
       while self.state.load(Ordering::Acquire) != STATE_READY {
         core::hint::spin_loop();
       }
-      // SAFETY: Published-slot read because:
-      // 1. The loop exits only after an Acquire load observes `STATE_READY`.
-      // 2. The elected writer's slot write happens-before its Release store of `STATE_READY`.
-      // 3. No write follows publication.
-      unsafe { *self.value.0.get() }
     }
 
     fn is_uninit(&self) -> bool {
