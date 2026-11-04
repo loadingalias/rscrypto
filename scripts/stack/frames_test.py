@@ -254,6 +254,21 @@ def test_x86_register_held_imports(directory: Path) -> None:
   assert not loop["unbounded"] and loop["assumptions"] == ["memcpy: external leaf, frame 0 + red zone"], loop
   copied = worker(load.format("%r12"), "2007: movq %r12, %r13", "200a: movl %eax, %r12d", "200d: callq *%r13")
   assert not copied["unbounded"] and copied["assumptions"] == ["memcpy: external leaf, frame 0 + red zone"], copied
+  # LLVM may copy the held import into a caller-saved register for the last call
+  # (x86-64 ML-KEM key generation: `movq %rbx, %rax` ... `callq *%rax`), or load
+  # the GOT slot into one directly. Explicit-destination instructions keep it.
+  for body in (
+    (load.format("%rbx"), "2007: callq *%rbx", "2009: movq %rbx, %rax", "200c: leaq 0x7c0(%rsp), %rbx",
+     "2014: movl $0x300, %edx", "2019: xorl %esi, %esi", "201b: callq *%rax"),
+    (load.format("%r8"), "2007: leaq 0x10(%rsp), %rdi", "200c: callq *%r8"),
+  ):
+    held = worker(*body)
+    assert not held["unbounded"] and held["assumptions"] == ["memcpy: external leaf, frame 0 + red zone"], held
+  # An implicit writer, a call, or a partial write between the copy and the call ends the proof.
+  for between in ("200c: mulq %rcx", "200c: cqto", "200c: callq 0x4000 <leaf>", "200c: movl %ecx, %eax",
+                  "200c: movb $0x1, %ah"):
+    lost = worker(load.format("%rbx"), "2007: callq *%rbx", "2009: movq %rbx, %rax", between, "2011: callq *%rax")
+    assert [item["reason"] for item in lost["unbounded"]] == ["indirect"], (between, lost)
 
 
 def test_aarch64_leaf_assembly_frames(directory: Path) -> None:

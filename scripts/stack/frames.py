@@ -331,6 +331,25 @@ def riscv_jalr(operands: str, upper: dict[str, int]) -> tuple[str, int | None]:
 GOT_SLOT = re.compile(r"\*0x[0-9a-f]+\(%rip\)\s+#\s+0x([0-9a-f]+)")
 GOT_LOAD = re.compile(r"^-?0x[0-9a-f]+\(%rip\),\s*(%\w+)\s+#\s+0x([0-9a-f]+)")
 X86_PRESERVED_IMPORTS = {"%rbx", "%rbp", "%r12", "%r13", "%r14", "%r15"}
+X86_CALL_CLOBBERED = {"%rax", "%rcx", "%rdx", "%rsi", "%rdi", "%r8", "%r9", "%r10", "%r11"}
+# Instructions whose only general-register write is their explicit last operand.
+# Any other instruction may write a caller-saved register implicitly (`mul`,
+# `cqto`, string operations, `syscall`, ...), so it ends every caller-saved proof.
+X86_EXPLICIT_WRITES = {
+  "movq", "movl", "movw", "movb", "movabsq", "movzbl", "movzwl", "movzbq", "movzwq", "movsbl", "movswl",
+  "movsbq", "movswq", "movslq", "leaq", "leal", "xorl", "xorq", "addl", "addq", "subl", "subq", "andl",
+  "andq", "orl", "orq", "cmpb", "cmpw", "cmpl", "cmpq", "testb", "testw", "testl", "testq", "incl", "incq",
+  "decl", "decq", "negl", "negq", "notl", "notq", "shll", "shlq", "shrl", "shrq", "sarl", "sarq", "nop",
+  "nopl", "nopw", "pushq", "popq", "movups", "movaps", "movdqu", "movdqa", "xorps", "pxor", "vmovups",
+  "vmovaps", "vmovdqu", "vmovdqa", "vxorps", "vpxor",
+}
+X86_LEGACY_REGISTERS = {
+  "%rax": ("%eax", "%ax", "%al", "%ah"), "%rbx": ("%ebx", "%bx", "%bl", "%bh"),
+  "%rcx": ("%ecx", "%cx", "%cl", "%ch"), "%rdx": ("%edx", "%dx", "%dl", "%dh"),
+  "%rsi": ("%esi", "%si", "%sil"), "%rdi": ("%edi", "%di", "%dil"), "%rbp": ("%ebp", "%bp", "%bpl"),
+  "%rsp": ("%esp", "%sp", "%spl"),
+}
+X86_PARENT_REGISTER = {alias: parent for parent, aliases in X86_LEGACY_REGISTERS.items() for alias in aliases}
 
 
 def x86_destination(operands: str) -> str | None:
@@ -340,12 +359,19 @@ def x86_destination(operands: str) -> str | None:
   return last if re.fullmatch(r"%\w+", last) else None
 
 
-def x86_import_calls(rows, imports: dict[int, str | int]) -> dict[int, str | int]:
-  """Prove callee-saved GOT values at calls by meeting all CFG predecessors.
+def x86_parent_register(register: str) -> str:
+  """The 64-bit general register that contains `register`, or `register` itself."""
+  return X86_PARENT_REGISTER.get(register, re.sub(r"^(%r(?:[89]|1[0-5]))[dwb]$", r"\1", register))
 
-  Only full-width loads into the ELF ABI's callee-saved registers are tracked.
-  A branch that bypasses a load, a partial-register write, or differing incoming
-  values makes the target unknown. Calls preserve these registers by the ABI.
+
+def x86_import_calls(rows, imports: dict[int, str | int]) -> dict[int, str | int]:
+  """Prove GOT values in registers at calls by meeting all CFG predecessors.
+
+  Full-width GOT loads and full-width register copies are tracked. A branch
+  that bypasses a load, a partial-register write, or differing incoming values
+  makes the target unknown. Calls preserve the ELF ABI's callee-saved registers
+  and clobber the others, and any instruction outside `X86_EXPLICIT_WRITES`
+  also ends every caller-saved proof.
   """
   by_function = {}
   for function, address, mnemonic, operands in rows:
@@ -365,20 +391,22 @@ def x86_import_calls(rows, imports: dict[int, str | int]) -> dict[int, str | int
           resolved[address] = state[register]
         else:
           resolved.pop(address, None)
+        if mnemonic.startswith("call"):
+          state = {key: value for key, value in state.items() if key not in X86_CALL_CLOBBERED}
       else:
+        if mnemonic not in X86_EXPLICIT_WRITES:
+          state = {key: value for key, value in state.items() if key not in X86_CALL_CLOBBERED}
         destination = x86_destination(operands)
         copied = state.get(operands.split(",", 1)[0].strip()) if mnemonic == "movq" else None
         if destination:
-          aliases = {"%ebx": "%rbx", "%bx": "%rbx", "%bl": "%rbx", "%bh": "%rbx",
-                     "%ebp": "%rbp", "%bp": "%rbp", "%bpl": "%rbp"}
-          destination = aliases.get(destination, re.sub(r"(%r1[2-5])[dwb]$", r"\1", destination))
+          destination = x86_parent_register(destination)
           state.pop(destination, None)
-          if copied is not None and destination in X86_PRESERVED_IMPORTS:
+          if copied is not None and destination in X86_PRESERVED_IMPORTS | X86_CALL_CLOBBERED:
             state[destination] = copied
         if mnemonic.startswith(("xchg", "xadd", "mulx", "cmpxchg", "cpuid", "leave", "enter")):
           state.clear()  # implicit or multiple destinations; no partial proof
         load = GOT_LOAD.match(operands)
-        if mnemonic == "movq" and load and load.group(1) in X86_PRESERVED_IMPORTS:
+        if mnemonic == "movq" and load and load.group(1) in X86_PRESERVED_IMPORTS | X86_CALL_CLOBBERED:
           if (value := imports.get(int(load.group(2), 16))) is not None:
             state[load.group(1)] = value
       successors = []
