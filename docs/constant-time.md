@@ -831,6 +831,20 @@ argument and writes only that byte, replaces `detect_and_initialize`. Six slices
 seventh, the DIT-restore flag test is `cbz` instead of `tbz #0` on a flag that is only 0 or 1.
 The four rationales that described the old guard were rewritten from the new code, and all seven renewed by review.
 
+On POWER, against Constant-Time 41899140228 at `a0894a0d`, 19 waivers in the RSA decrypt entry, the RSA
+private exponentiation and its workspace, and P-256 ECDH agreement were stale. The merged read-only unit
+that their TOC references address, an anonymous `.data.rel.ro` `_MergedGlobals` block, lost the
+`/proc/self/auxv` string, so its size and digest changed and offsets into it moved by 16. The functions
+differ only in those constant references, and each reviewed slice differs at most in them: five are unchanged,
+and in fourteen every changed node is that unit's descriptor or an offset immediate into it.
+Read-only constants are public, the open leaves name the same callees, and no rationale cites a changed
+immediate, so all 19 were renewed by review at their reviewed branch offsets.
+On RISC-V, against that run's RISC-V run [41900798362](https://github.com/loadingalias/rscrypto/actions/runs/41900798362),
+five RSA decrypt waivers were stale because one `auipc a6` page moved; the tool keeps that high part exact
+because later calls may read `a6` as an argument. With its `addi` low part, it addresses
+`Sha256::compress_blocks_portable` in both builds; four slices are unchanged and the fifth differs only in
+that page, and the five were renewed by review.
+
 ## Public decisions and exclusions
 
 Ordinary equality is allowed for public values, such as nonces, encoded public keys,
