@@ -83,16 +83,6 @@ ssh-collect-bench target run_id destination:
 ssh-list:
     @"$DEV_MACHINE_EXECUTOR" list rscrypto
 
-# Install and prove local reuse plus any machine-authorized remote cache.
-[group('tooling')]
-rail-cache-setup *args:
-    @scripts/tooling/cache.sh "$@"
-
-# Report the effective Cargo Rail cache policy and usage.
-[group('tooling')]
-cache-status:
-    @cargo rail cache status --scope local --format json
-
 # Builds
 # Build every workspace target with every feature; accepts Cargo build arguments.
 build *args:
@@ -227,7 +217,6 @@ test-scripts:
     @scripts/lib/python.sh --group tooling scripts/test/cross_workflow_test.py
     @scripts/lib/python.sh scripts/lib/dispatched_run_test.py
     @scripts/lib/python.sh scripts/lib/openssl_peer_test.py
-    @scripts/lib/python.sh scripts/tooling/cache_test.py
     @scripts/lib/python.sh scripts/tooling/toolchain_test.py
     @scripts/lib/python.sh scripts/tooling/install_test.py
     @scripts/lib/python.sh --group tooling scripts/tooling/test_tooling.py

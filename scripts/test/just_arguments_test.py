@@ -100,7 +100,6 @@ if os.environ.get('ENV_LOG'):
     run('ssh-collect-bench', words[:3], [['just', 'rscrypto', words[0], 'bench-export', 'benchmark_results/criterion/' + words[1]],
                                       ['collect-results', 'rscrypto', words[0], 'criterion', *words[1:3]]])
     run('bench-export', [words[2]], [['scripts/bench/runner.py', 'export', words[2]]])
-    run('rail-cache-setup', words, [words])
     release_check = ['rail', 'release', 'rscrypto', '--bump', words[0], '--dry-run']
     run('release-check', [words[0]], [release_check])
     run('release', [words[0]], [release_check,
@@ -116,7 +115,7 @@ if os.environ.get('ENV_LOG'):
     env.pop('ENV_LOG')
     env.pop('HOME', None)
     run('ci-check', [], [['native']])
-    covered = set(prefixes) | {'ssh', 'ssh-create', 'ssh-just', 'ssh-cargo', 'rail-cache-setup'}
+    covered = set(prefixes) | {'ssh', 'ssh-create', 'ssh-just', 'ssh-cargo'}
     assert set(re.findall(r'^([\w-]+).*\*args:', source, re.M)) == covered
   print('Just argument forwarding regressions passed')
 

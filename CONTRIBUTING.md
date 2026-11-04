@@ -39,29 +39,13 @@ cargo rail change add rscrypto --bump patch --message "Describe the user-visible
 The release command moves it into `CHANGELOG.md`.
 Do not add unreleased work to the changelog section of a published version.
 
-## Configure compiler reuse
+## Compiler reuse
 
-Cargo Rail can reuse compiler results across Cargo, Nextest, Just, and IDE invocations.
+Local development on macOS uses no compiler cache.
 
-1. Choose a configured `rscrypto` target from `~/dev-machines/dev-machine list rscrypto`.
-1. Get a short-lived credential, and enroll this checkout in the remote cache
-   that trusted development machines and CI use:
-
-   ```bash
-   eval "$("$HOME/dev-machines/dev-machine" cache-env rscrypto <target>)"
-   just rail-cache-setup --max-size 10GiB
-   just cache-status
-   ```
-
-1. Run `cache-env` again when the lease expires.
-
-`cache-env` owns the remote URL, the credentials, and the read/write authority.
-None of them belong in repository configuration.
-Without that environment, `rail-cache-setup` installs and checks private local reuse only.
-`dev-machine ssh` and `dev-machine just` refresh the lease of the remote machine before they run.
-
-CI uses the same remote cache.
-It has read-write authority only on trusted `main` pushes.
+CI and the remote development machines use a shared Cargo Rail compiler cache.
+`dev-machine ssh` and `dev-machine just` refresh the cache lease of a remote machine before they run.
+CI has read-write authority only on trusted `main` pushes.
 Other jobs with credentials are read-only, and pull requests from forks stay cold.
 Use `CARGO_RAIL_CACHE=off` only when a check needs a cold compiler process,
 for example Miri and machine-code zeroization evidence.

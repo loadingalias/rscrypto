@@ -811,33 +811,6 @@ Workflows refer to profile names, and do not override their shapes.
 - For this public repository, RunsOn reads the catalog from the default branch.
   A new profile must be on the default branch before workflow jobs can resolve its name.
 
-#### Local compiler-cache evidence, 2026-10-05
-
-On the local Apple Silicon checkout,
-cargo-rail 0.30.1 initially reported drifted compiler components, no workspace enrollment,
-and zero recorded events.
-`just rail-cache-setup --max-size 10GiB`, with remote-cache environment settings removed, repaired the installation and passed its uncached,
-cold-miss, and verified warm-hit checks.
-The resulting profile uses physical-root identity, with no remote authority configured.
-
-Two production builds ran `cargo check --locked --lib --no-default-features --features blake3` with the same dedicated `--target-dir`,
-deleting only that probe's Cargo outputs before each build.
-Both passed.
-The first added one miss; the second added one hit.
-Neither added a bypass or failure.
-The selected profile's hit/miss/event counters were `1/1/2` after setup, `1/2/3` after the first build,
-and `2/2/4` after the second.
-This verifies private local compiler reuse for that library configuration.
-It does not establish shared R2 reuse, registry/native-library coverage, target execution, timing,
-or CT evidence.
-Workflow cache coverage is unchanged until the relevant shared profiles demonstrate hits.
-
-The probe used the dirty effective source based on `d4045559`, host `aarch64-apple-darwin`, and `nightly-2026-09-30` (`rustc 1.101.0-nightly`, commit `5c543b0b8c73c7b72bc8284ced4fb22ead15734d`).
-The SHA-256 of the sorted compact JSON mapping of `src/`, `.cargo/`, `Cargo.toml`, `Cargo.lock`,
-and `rust-toolchain.toml` paths to their file SHA-256 values was `f2a6db50d362dd32ec7cfc3b6e40fab14d0045303a0f7a3feb5ebb27c9b9ff0c`.
-Raw commands, source hashes, build logs, and cache reports remain locally in `target/workflow-cleanup-20261005/cache/`;
-these ignored artifacts are not distributed.
-
 ### Updates
 
 `just update` refreshes the tooling catalog, stable Rust, every Cargo manifest
