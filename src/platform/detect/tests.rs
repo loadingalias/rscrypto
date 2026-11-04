@@ -300,14 +300,53 @@ mod tests {
   }
 
   #[test]
+  #[cfg(not(all(target_arch = "x86_64", feature = "std")))]
+  fn hybrid_avx512_opt_in_is_unsupported_without_runtime_avx512_detection() {
+    // SAFETY: this build has no runtime AVX-512 detection, so the call cannot
+    // enable an instruction.
+    assert_eq!(unsafe { allow_hybrid_avx512() }, Err(OverrideError::Unsupported));
+  }
+
+  #[test]
   #[cfg(all(target_arch = "x86_64", feature = "std"))]
-  fn test_hybrid_avx512_override_parser() {
-    for value in [None, Some(""), Some("0"), Some("false"), Some("yes"), Some("2")] {
-      assert!(!parse_hybrid_avx512_override(value), "accepted {value:?}");
-    }
-    for value in [Some("1"), Some("true"), Some("TRUE"), Some("TrUe")] {
-      assert!(parse_hybrid_avx512_override(value), "rejected {value:?}");
-    }
+  fn x86_64_hybrid_avx512_requires_the_process_opt_in() {
+    use crate::platform::caps::x86;
+
+    // Hybrid E-cores lack every AVX-512 and AVX10 instruction but implement
+    // AVX2, VAES, VPCLMULQDQ, and GFNI, which stay on every path.
+    let shared = x86::SSE2 | x86::AVX2 | x86::VAES | x86::VPCLMULQDQ | x86::GFNI;
+    let p_core_only = [
+      x86::AVX512F,
+      x86::AVX512DQ,
+      x86::AVX512IFMA,
+      x86::AVX512CD,
+      x86::AVX512BW,
+      x86::AVX512VL,
+      x86::AVX512VBMI,
+      x86::AVX512VBMI2,
+      x86::AVX512VNNI,
+      x86::AVX512BITALG,
+      x86::AVX512VPOPCNTDQ,
+      x86::AVX512BF16,
+      x86::AVX512FP16,
+      x86::AVX512VP2INTERSECT,
+      x86::AVX10_1,
+      x86::AVX10_2,
+    ];
+    let reported = p_core_only.iter().fold(shared, |caps, &cap| caps | cap);
+
+    assert_eq!(
+      gate_x86_hybrid_avx512(reported, true, false),
+      shared,
+      "a hybrid CPU without the opt-in must lose every AVX-512 and AVX10 capability"
+    );
+    assert_eq!(gate_x86_hybrid_avx512(reported, true, true), reported);
+    assert_eq!(gate_x86_hybrid_avx512(reported, false, false), reported);
+    assert_eq!(
+      gate_x86_hybrid_avx512(shared, true, true),
+      shared,
+      "the opt-in keeps reported capabilities and never adds one"
+    );
   }
 
   #[test]

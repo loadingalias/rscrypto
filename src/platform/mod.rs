@@ -64,6 +64,11 @@ pub use detect::Detected;
 /// permission. Request it before the first cached detection if the process
 /// intends to use AMX.
 ///
+/// On Intel hybrid CPUs (Alder Lake through Arrow Lake), AVX-512 and AVX10
+/// capabilities are not reported, even when CPUID reports them, because the
+/// E-cores lack them. [`expert::allow_hybrid_avx512`] keeps them on a system
+/// where every core implements them.
+///
 /// # Examples
 ///
 /// ```
@@ -97,7 +102,8 @@ pub fn arch() -> Arch {
 /// Explicit controls and uncached detection for tests and constrained runtimes.
 ///
 /// Normal callers should use [`get()`], [`caps()`], or [`arch()`]. Overrides
-/// must be configured before the first cached detection.
+/// and [`expert::allow_hybrid_avx512`] must run before the first cached
+/// detection.
 ///
 /// ```
 /// use rscrypto::platform::{Detected, expert};
@@ -107,7 +113,7 @@ pub fn arch() -> Arch {
 /// # Ok::<(), rscrypto::platform::expert::OverrideError>(())
 /// ```
 pub mod expert {
-  pub use super::detect::{OverrideError, detect_uncached, has_override, try_set_override};
+  pub use super::detect::{OverrideError, allow_hybrid_avx512, detect_uncached, has_override, try_set_override};
 }
 
 /// Get compile-time known capabilities.

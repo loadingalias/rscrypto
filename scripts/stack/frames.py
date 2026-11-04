@@ -143,19 +143,11 @@ PANIC_EXIT = re.compile(
 EXTERNAL_LEAVES = {"memcpy", "memmove", "memset", "memcmp", "bcmp"}
 # Preparation reviews stop at these edges and record the stack depth at their
 # entry. Each edge needs a separately measured allowance for the deployed libc
-# (or, for detection, the deployed libc and kernel); none is assumed frameless.
-# `getauxval` is the AArch64, POWER, and IBM Z Linux capability read.
-# Any other import, including IFUNC relocations, remains unresolved.
+# (and, for `getauxval`, the kernel); none is assumed frameless. `getauxval` is
+# the AArch64, POWER, and IBM Z Linux capability read. Cold first-call capability
+# detection is otherwise owned code: the lock-free cache, CPUID, STFLE, and
+# RISC-V hwprobe. Any other import, including IFUNC relocations, remains unresolved.
 DECLARED_LIBC = {"calloc", "malloc", "free", "memcpy", "memmove", "memset", "memcmp", "bcmp", "getauxval"}
-# Cold first-call capability detection is owned code: the lock-free cache,
-# CPUID, `getauxval`, STFLE, and RISC-V hwprobe. The remaining std edge, keyed by
-# its exact demangled entry, is the x86-64 `RSCRYPTO_FORCE_AVX512` read:
-# `std::env::var` takes std's environment lock and allocates. Its frame and
-# entire subgraph belong to the declared edge, not to the owned bound. A renamed
-# entry is not cut, so its subgraph stays unresolved.
-COLD_DETECTION = {
-  "rscrypto::platform::detect::hybrid_avx512_override": "rscrypto-force-avx512",
-}
 
 HEADER = re.compile(r"^([0-9a-f]+) <(.+)>:$")
 INSTRUCTION = re.compile(r"^\s*([0-9a-f]+):\s+(\S+)(?:\s+(.*))?$")
@@ -620,7 +612,7 @@ def external_name(program: Program, function: Function) -> str | None:
 class Declared:
   """The deepest entry of one declared edge, below the visited function's entry."""
 
-  kind: str  # libc or cold-detection
+  kind: str  # libc
   entry: int
   sites: set[tuple[str, str, str]]  # (caller, call instruction address, callee)
 
@@ -648,8 +640,6 @@ def declared_callee(program: Program, callee: Function) -> tuple[str, str] | Non
   """Return the (name, kind) of a declared edge whose entry is this function."""
   if (imported := external_name(program, callee)) in DECLARED_LIBC:
     return imported, "libc"
-  if (name := COLD_DETECTION.get(callee.demangled)) is not None:
-    return name, "cold-detection"
   return None
 
 
@@ -658,10 +648,10 @@ def depth_of(
 ) -> Depth:
   """Return the deepest stack use below `root`'s entry and every unresolved path.
 
-  With `declared_edges`, traversal stops at each declared libc import and at
-  cold capability detection. Such an edge charges only its caller's frame and
-  call slot, and its entry depth is recorded for a separately measured
-  allowance. Everything else is accounted for exactly as without it.
+  With `declared_edges`, traversal stops at each declared libc import. Such an
+  edge charges only its caller's frame and call slot, and its entry depth is
+  recorded for a separately measured allowance. Everything else is accounted
+  for exactly as without it.
   """
   if declared_edges and assume_memory_leaves:
     raise ValueError("declared edges replace the external-leaf assumption")
@@ -746,7 +736,7 @@ def depth_of(
           result.path = [name, *child.path]
     # Keep one shortest witness to each unresolved edge. The retained graph
     # contains every edge, so this does not discard alternate callers. Without
-    # deduplication a shared cold-detection subgraph expands into thousands of
+    # deduplication a shared subgraph expands into thousands of
     # repeated paths and obscures the actual blockers.
     witnesses = {}
     for item in result.unbounded:
@@ -909,7 +899,7 @@ def load_allowances(path: Path) -> dict[str, dict[str, object]]:
   data = json.loads(path.read_text())
   if not isinstance(data, dict):
     raise SystemExit(f"{path}: expected an object keyed by target")
-  names = DECLARED_LIBC | set(COLD_DETECTION.values())
+  names = DECLARED_LIBC
   for target, entry in data.items():
     if target not in ARCHES:
       raise SystemExit(f"{path}: unsupported target {target}")
@@ -1000,9 +990,8 @@ def review_preparation(
   return {
     "target": program.target, "whole_calls": reports, "stack_cap_bytes": STACK_CAP,
     "declared_libc_edges": sorted(DECLARED_LIBC),
-    "cold_detection_entries": COLD_DETECTION,
     "allowances": allowances,
-    "scope": "Linked public-operation wrappers (ML-DSA preparation including owned/borrowed destruction, ML-DSA signing and verification, ML-KEM, AEAD record seal and open); not enclosing TLS, worker, signal-handler or arbitrary Allocator callbacks. All syntactically reachable return/error paths are included; abort paths are listed separately. Unknown frames never constitute a bound. Public storage supplied by the caller is outside the borrowed call's frame. Owned bounds cover the artifact's own code and charge each declared libc or cold-detection edge only its caller's frame and call slot; they are not whole-call bounds until every reached declared edge has a measured allowance for the deployed libc.",
+    "scope": "Linked public-operation wrappers (ML-DSA preparation including owned/borrowed destruction, ML-DSA signing and verification, ML-KEM, AEAD record seal and open); not enclosing TLS, worker, signal-handler or arbitrary Allocator callbacks. All syntactically reachable return/error paths are included; abort paths are listed separately. Unknown frames never constitute a bound. Public storage supplied by the caller is outside the borrowed call's frame. Owned bounds cover the artifact's own code and charge each declared libc edge only its caller's frame and call slot; they are not whole-call bounds until every reached declared edge has a measured allowance for the deployed libc.",
     "passed": all(item["passed"] for item in reports),
   }
 

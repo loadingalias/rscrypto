@@ -425,7 +425,6 @@ def test_riscv_call_clobbers_an_auipc_temporary() -> None:
   assert call["whole_call_bound_bytes"] is None and call["unresolved"][0]["reason"] == "indirect", call
 
 
-DETECTION_ENTRY = "rscrypto::platform::detect::hybrid_avx512_override"
 ALLOCATOR_IMPORTS = "8000 R_X86_64_GLOB_DAT calloc\n8008 R_X86_64_GLOB_DAT memcpy"
 
 
@@ -496,32 +495,21 @@ def test_undeclared_imports_keep_the_owned_bound_unresolved() -> None:
     assert any("unresolved owned call paths" in problem for problem in call["problems"]), call
 
 
-def test_cold_detection_is_cut_at_its_exact_entry() -> None:
-  def detecting(entry: str) -> dict:
-    functions = [
-      (0x1000, "prepare", 32, ["1000: callq 0x2000", "1005: retq"]),
-      (0x2000, "rscrypto::auth::mldsa::poly::Poly::ntt", 96, ["2000: callq 0x3000", "2005: retq"]),
-      (0x3000, entry, 48, ["3000: callq 0x4000", "3005: retq"]),
-      (0x4000, "<std::sys::sync::rwlock::futex::RwLock>::read_contended", None, ["4000: callq *%r14", "4003: callq *0x4000(%rip) # 0x8000"]),
-    ]
-    dynamic = "8000 R_X86_64_GLOB_DAT syscall"
-    return review_preparation(program("x86_64-unknown-linux-gnu", functions, dynamic), ["prepare"])["whole_calls"][0]
-
-  call = detecting(DETECTION_ENTRY)
-  # The detection frame (48 B) and its subgraph are outside the owned bound; the call slot into it is not.
-  assert call["owned_bound_bytes"] == 8 + 32 + 8 + 96 + 8 and not call["owned_unresolved"], call
-  detection = edges_by_name(call)["rscrypto-force-avx512"]
-  assert detection["kind"] == "cold-detection" and detection["max_entry_depth_bytes"] == 152, detection
-  assert detection["call_sites"] == [{"caller": "rscrypto::auth::mldsa::poly::Poly::ntt", "address": "0x2000", "callee": DETECTION_ENTRY}]
-  # The whole-call traversal still descends into detection and keeps every blocker.
-  assert {(item["reason"], item["path"][-1]) for item in call["unresolved"]} == {
-    ("no frame record", "<std::sys::sync::rwlock::futex::RwLock>::read_contended"), ("indirect", "callq *%r14"), ("external", "syscall")
-  }, call
-  assert call["whole_call_bound_bytes"] is None and call["missing_allowances"] == ["rscrypto-force-avx512"], call
-  # Another environment read is not the declared entry; its subgraph stays owned and unresolved.
-  other = detecting("rscrypto::platform::detect::other_environment_read")
-  assert other["owned_bound_bytes"] is None and not other["declared_edges"], other
-  assert {item["reason"] for item in other["owned_unresolved"]} == {"no frame record", "indirect", "external"}, other
+def test_detection_has_no_declared_edge() -> None:
+  # Detection is owned code. A std environment read below it, such as the removed
+  # `RSCRYPTO_FORCE_AVX512` read, is neither cut nor declared: its subgraph stays
+  # owned, so its blockers keep the root unbounded.
+  functions = [
+    (0x1000, "prepare", 32, ["1000: callq 0x2000", "1005: retq"]),
+    (0x2000, "rscrypto::auth::mldsa::poly::Poly::ntt", 96, ["2000: callq 0x3000", "2005: retq"]),
+    (0x3000, "rscrypto::platform::detect::hybrid_avx512_override", 48, ["3000: callq 0x4000", "3005: retq"]),
+    (0x4000, "<std::sys::sync::rwlock::futex::RwLock>::read_contended", None, ["4000: callq *%r14", "4003: callq *0x4000(%rip) # 0x8000"]),
+  ]
+  dynamic = "8000 R_X86_64_GLOB_DAT syscall"
+  call = review_preparation(program("x86_64-unknown-linux-gnu", functions, dynamic), ["prepare"])["whole_calls"][0]
+  assert call["owned_bound_bytes"] is None and not call["declared_edges"], call
+  assert {item["reason"] for item in call["owned_unresolved"]} == {"no frame record", "indirect", "external"}, call
+  assert call["whole_call_bound_bytes"] is None, call
 
 
 def test_getauxval_is_a_declared_libc_edge() -> None:
@@ -586,6 +574,8 @@ def test_allowances_compose_the_whole_call_bound(directory: Path) -> None:
     {"x86_64-unknown-linux-gnu": {"libc": "glibc", "edges": {"calloc": True}}},
     {"x86_64-unknown-linux-gnu": {"libc": "glibc", "edges": {}, "measured": "yes"}},
     {"x86_64-apple-darwin": {"libc": "libSystem", "edges": {}}},
+    # The environment-read edge was removed with `RSCRYPTO_FORCE_AVX512`.
+    {"x86_64-unknown-linux-gnu": {"libc": "glibc", "edges": {"rscrypto-force-avx512": 1}}},
   ):
     path.write_text(json.dumps(invalid))
     try:
@@ -594,7 +584,7 @@ def test_allowances_compose_the_whole_call_bound(directory: Path) -> None:
       pass
     else:
       raise AssertionError(f"invalid allowances accepted: {invalid}")
-  valid = {"x86_64-unknown-linux-gnu": {"libc": "glibc 2.39", "edges": {"calloc": 1, "getauxval": 2, "rscrypto-force-avx512": 3}}}
+  valid = {"x86_64-unknown-linux-gnu": {"libc": "glibc 2.39", "edges": {"calloc": 1, "getauxval": 2}}}
   path.write_text(json.dumps(valid))
   assert load_allowances(path) == valid
 
@@ -639,7 +629,7 @@ def main() -> None:
   test_declared_libc_edges_charge_only_the_call_site()
   test_tail_calls_enter_declared_edges_at_the_callers_entry()
   test_undeclared_imports_keep_the_owned_bound_unresolved()
-  test_cold_detection_is_cut_at_its_exact_entry()
+  test_detection_has_no_declared_edge()
   test_getauxval_is_a_declared_libc_edge()
   test_whole_call_groups_select_their_roots()
   test_owned_indirection_and_recursion_keep_the_owned_bound_null()

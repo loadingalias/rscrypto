@@ -19,6 +19,58 @@ pub fn try_set_override(value: Option<Detected>) -> Result<(), OverrideError> {
   }
 }
 
+/// Keep the AVX-512 capabilities that CPUID reports on Intel hybrid CPUs.
+///
+/// Detection removes every AVX-512 and AVX10 capability on Intel hybrid models
+/// (Alder Lake through Arrow Lake), even when CPUID reports them. Their E-cores
+/// lack AVX-512, so a thread that the operating system moves to an E-core
+/// during an AVX-512 kernel faults with `SIGILL`. A system can still expose
+/// AVX-512 safely, for example with the E-cores disabled in firmware. This call
+/// keeps the AVX-512 capabilities that CPUID reports on such a system.
+///
+/// It adds no capability that CPUID does not report, and it does not change
+/// detection on other CPUs. Call it before the first [`crate::platform::get()`],
+/// [`crate::platform::caps()`], or [`crate::platform::arch()`] call, and before
+/// any rscrypto operation that dispatches on them.
+///
+/// # Safety
+///
+/// Every logical processor that this process can ever run on, including after
+/// affinity changes and processor hotplug, must implement the AVX-512 and AVX10
+/// instructions that CPUID reports during detection. Otherwise rscrypto can
+/// execute an instruction that the processor does not implement, which is
+/// undefined behavior.
+///
+/// # Errors
+///
+/// - [`OverrideError::AlreadyInitialized`] when detection has started. The
+///   cached capabilities are unchanged.
+/// - [`OverrideError::Unsupported`] when this build has no runtime AVX-512
+///   detection to change: targets other than x86-64, and builds without `std`.
+///
+/// # Examples
+///
+/// ```no_run
+/// use rscrypto::platform::expert;
+///
+/// // SAFETY: this deployment disables the E-cores in firmware, so every
+/// // logical processor implements the AVX-512 that CPUID reports.
+/// unsafe { expert::allow_hybrid_avx512() }?;
+/// # Ok::<(), expert::OverrideError>(())
+/// ```
+#[cold]
+pub unsafe fn allow_hybrid_avx512() -> Result<(), OverrideError> {
+  #[cfg(all(target_arch = "x86_64", feature = "std"))]
+  {
+    atomic_cache::allow_hybrid_avx512()
+  }
+
+  #[cfg(not(all(target_arch = "x86_64", feature = "std")))]
+  {
+    Err(OverrideError::Unsupported)
+  }
+}
+
 /// Check if an override is set.
 #[inline]
 #[must_use]
@@ -200,6 +252,29 @@ mod atomic_cache {
 
   pub(super) fn has_override() -> bool {
     OVERRIDE_SET.load(Ordering::Acquire)
+  }
+
+  #[cfg(all(target_arch = "x86_64", feature = "std"))]
+  static HYBRID_AVX512_ALLOWED: AtomicBool = AtomicBool::new(false);
+
+  #[cfg(all(target_arch = "x86_64", feature = "std"))]
+  pub(super) fn allow_hybrid_avx512() -> Result<(), OverrideError> {
+    let _guard = lock_override();
+
+    // The same seal as `try_set_override`: detection seals under this lock
+    // before it reads the setting, so a later call cannot change a cached result.
+    if OVERRIDE_SEALED.load(Ordering::Relaxed) || !CACHE.is_uninit() {
+      return Err(OverrideError::AlreadyInitialized);
+    }
+    HYBRID_AVX512_ALLOWED.store(true, Ordering::Release);
+    Ok(())
+  }
+
+  /// Whether [`super::allow_hybrid_avx512`] has run. Read on every detection,
+  /// including uncached detection.
+  #[cfg(all(target_arch = "x86_64", feature = "std"))]
+  pub(super) fn hybrid_avx512_allowed() -> bool {
+    HYBRID_AVX512_ALLOWED.load(Ordering::Acquire)
   }
 
   #[cfg(not(miri))]

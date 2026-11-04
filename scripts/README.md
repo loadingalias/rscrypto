@@ -581,23 +581,18 @@ The preparation review reports two bounds for each root.
   without allowances. That requires a root that reaches no libc import.
   `whole_call_bound_basis` names the rule that applied.
 
-The declared edges are a fixed set:
-
-- the libc imports `calloc`, `malloc`, `free`, `memcpy`, `memmove`, `memset`,
-  `memcmp`, `bcmp`, and `getauxval`, named by a GOT relocation or a PLT stub.
-  `getauxval` is the AArch64, POWER, and IBM Z Linux capability read;
-- `rscrypto-force-avx512`: `rscrypto::platform::detect::hybrid_avx512_override`,
-  the x86-64 `RSCRYPTO_FORCE_AVX512` read. `std::env::var` takes the standard
-  library's environment lock and allocates.
+The declared edges are a fixed set: the libc imports `calloc`, `malloc`, `free`,
+`memcpy`, `memmove`, `memset`, `memcmp`, `bcmp`, and `getauxval`, named by a GOT
+relocation or a PLT stub. `getauxval` is the AArch64, POWER, and IBM Z Linux
+capability read.
 
 Cold first-call detection is otherwise owned code: the lock-free capability
 cache, CPUID, STFLE, RISC-V hwprobe, and the AArch64 `DataIndependentTiming` probe.
-A detection edge includes the entry function's own frame and its complete subgraph.
+Detection reads no environment variable.
 Any other import, IFUNC relocation, indirect transfer, missing frame record, or
 recursion keeps the owned bound null, and `owned_unresolved` lists it.
 An entry depth is null while the owned bound is null.
 `recorded_entry_depth_bytes` is then diagnostic information only.
-A renamed detection entry is not cut, so its subgraph stays unresolved.
 
 `--allowances FILE` supplies the measured allowances, as JSON:
 `{TARGET: {"libc": IDENTITY, "edges": {EDGE: BYTES}, "evidence": OPTIONAL}}`.

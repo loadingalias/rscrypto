@@ -1193,7 +1193,7 @@ and pass its completed result directory.
 The runner verifies all planned measurements once before it marks the run complete.
 
 The shared environment collector separates build inputs from runtime controls,
-including Rayon thread controls, CRC backend overrides, and `RSCRYPTO_FORCE_AVX512`.
+including Rayon thread controls and CRC backend overrides.
 For the `auth` benchmark on an AVX2-capable x86-64 host,
 `RSCRYPTO_BENCH_DISABLE_IFMA=1` removes IFMA from the detected capabilities before initialization.
 This measures the production AVX2 Curve25519 fallback on IFMA hosts.

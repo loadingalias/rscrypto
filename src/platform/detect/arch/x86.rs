@@ -44,41 +44,54 @@ fn detect_x86_64() -> Detected {
     caps = gate_x86_amx_permission(caps, false);
   }
 
-  // Clear AVX-512 capabilities on hybrid Intel CPUs.
-  // On hybrid Intel CPUs (Alder Lake, Raptor Lake, etc.), the P-cores have
-  // AVX-512 but E-cores don't. If a thread migrates to an E-core while
-  // executing AVX-512 code, it will SIGILL. The only safe approach is to
-  // disable AVX-512 entirely unless the user explicitly overrides.
   #[cfg(feature = "std")]
   {
-    use crate::platform::caps::x86;
-
-    if is_intel_hybrid(is_amd, family, model) && !hybrid_avx512_override() {
-      // Clear all AVX-512 related capabilities to prevent kernel selection
-      // from choosing AVX-512/VPCLMUL paths that could SIGILL on E-cores.
-      caps = caps
-        .difference(x86::AVX512F)
-        .difference(x86::AVX512DQ)
-        .difference(x86::AVX512IFMA)
-        .difference(x86::AVX512CD)
-        .difference(x86::AVX512BW)
-        .difference(x86::AVX512VL)
-        .difference(x86::AVX512VBMI)
-        .difference(x86::AVX512VBMI2)
-        .difference(x86::AVX512VNNI)
-        .difference(x86::AVX512BITALG)
-        .difference(x86::AVX512VPOPCNTDQ)
-        .difference(x86::AVX512BF16)
-        .difference(x86::AVX512FP16)
-        .difference(x86::AVX512VP2INTERSECT)
-        .difference(x86::AVX10_1)
-        .difference(x86::AVX10_2);
-    }
+    caps = gate_x86_hybrid_avx512(
+      caps,
+      is_intel_hybrid(is_amd, family, model),
+      atomic_cache::hybrid_avx512_allowed(),
+    );
   }
 
   Detected {
     caps,
     arch: Arch::X86_64,
+  }
+}
+
+/// Every AVX-512 and AVX10 capability: the instructions that Intel hybrid
+/// E-cores lack.
+#[cfg(all(target_arch = "x86_64", feature = "std"))]
+const X86_ALL_AVX512: Caps = crate::platform::caps::x86::AVX512F
+  .union(crate::platform::caps::x86::AVX512DQ)
+  .union(crate::platform::caps::x86::AVX512IFMA)
+  .union(crate::platform::caps::x86::AVX512CD)
+  .union(crate::platform::caps::x86::AVX512BW)
+  .union(crate::platform::caps::x86::AVX512VL)
+  .union(crate::platform::caps::x86::AVX512VBMI)
+  .union(crate::platform::caps::x86::AVX512VBMI2)
+  .union(crate::platform::caps::x86::AVX512VNNI)
+  .union(crate::platform::caps::x86::AVX512BITALG)
+  .union(crate::platform::caps::x86::AVX512VPOPCNTDQ)
+  .union(crate::platform::caps::x86::AVX512BF16)
+  .union(crate::platform::caps::x86::AVX512FP16)
+  .union(crate::platform::caps::x86::AVX512VP2INTERSECT)
+  .union(crate::platform::caps::x86::AVX10_1)
+  .union(crate::platform::caps::x86::AVX10_2);
+
+/// Remove AVX-512 on an Intel hybrid CPU unless the process allowed it.
+///
+/// The P-cores of a hybrid CPU implement AVX-512 and the E-cores do not, so a
+/// thread that migrates to an E-core during an AVX-512 kernel faults with
+/// `SIGILL`. [`allow_hybrid_avx512`] is the caller's assurance that every
+/// processor implements what CPUID reports; it never adds a capability.
+#[cfg(all(target_arch = "x86_64", feature = "std"))]
+#[inline]
+const fn gate_x86_hybrid_avx512(caps: Caps, hybrid: bool, allowed: bool) -> Caps {
+  if hybrid && !allowed {
+    caps.difference(X86_ALL_AVX512)
+  } else {
+    caps
   }
 }
 
@@ -568,28 +581,6 @@ fn decode_cpuid_x86_64(snapshot: CpuidSnapshot) -> CpuidBatch {
     model,
     amx_permission: snapshot.amx_permission,
   }
-}
-
-/// Check if user has explicitly enabled AVX-512 on hybrid Intel CPUs.
-///
-/// On Alder Lake and newer hybrid Intel CPUs, AVX-512 is disabled by default
-/// because E-cores don't support it. Power users who have disabled E-cores
-/// in BIOS or are using early unfused chips can set this environment variable
-/// to force AVX-512 usage.
-///
-/// # Environment Variable
-///
-/// `RSCRYPTO_FORCE_AVX512=1` enables AVX-512 on hybrid Intel CPUs.
-#[cfg(all(target_arch = "x86_64", feature = "std"))]
-#[inline(never)] // The stack review declares this std environment read as one edge.
-fn hybrid_avx512_override() -> bool {
-  let value = std::env::var("RSCRYPTO_FORCE_AVX512").ok();
-  parse_hybrid_avx512_override(value.as_deref())
-}
-
-#[cfg(all(target_arch = "x86_64", feature = "std"))]
-fn parse_hybrid_avx512_override(value: Option<&str>) -> bool {
-  matches!(value, Some("1")) || value.is_some_and(|value| value.eq_ignore_ascii_case("true"))
 }
 
 #[cfg(all(target_arch = "x86_64", feature = "std"))]

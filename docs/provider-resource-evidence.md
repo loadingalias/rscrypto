@@ -126,15 +126,14 @@ stack allocation. They are not whole-call bounds.
 
 Each root has two results. The owned bound covers the code linked into the
 artifact: rscrypto and the linked parts of the Rust standard library. It stops
-at the declared libc and cold-detection edges that
+at the declared libc edges that
 [`scripts/README.md`](../scripts/README.md#preparation-bounds) lists, and
 charges each edge only its caller's frame and call slot. Cold first-call
 capability detection is owned code and stays inside the owned bound: the
 lock-free cache behind `platform::caps()`, CPUID, STFLE, and the AArch64
-`DataIndependentTiming` probe. Its only declared edges are the libc
-`getauxval` read on AArch64, POWER, and IBM Z, and `rscrypto-force-avx512`, the
-x86-64 `RSCRYPTO_FORCE_AVX512` environment read, which includes its complete
-subgraph. The report gives the maximum stack depth at each edge's
+`DataIndependentTiming` probe. Its only declared edge is the libc
+`getauxval` read on AArch64, POWER, and IBM Z; detection reads no environment
+variable. The report gives the maximum stack depth at each edge's
 entry over all paths. The whole-call bound composes the owned bound with a
 measured allowance for each reached edge.
 
@@ -151,18 +150,17 @@ Largest owned bound by root, in bytes, native / portable:
 Largest stack depth at a declared edge's entry, in bytes, native / portable.
 A dash means that no root reaches the edge:
 
-| Linux target | `calloc` | `free` | `memcpy` | `memset` | `getauxval` | `rscrypto-force-avx512` |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| x86-64 GNU | 184 / 184 | 40 / 40 | 1,752 / 1,000 | - / - | - / - | 1,912 / - |
-| AArch64 GNU | 352 / 352 | 48 / 48 | 1,504 / 1,360 | - / - | 2,096 / 384 | - / - |
-| POWER64LE GNU | 2,576 / 480 | 112 / 112 | 8,224 / 1,536 | 8,048 / 1,536 | 7,872 / - | - / - |
-| IBM Z GNU | 360 / 360 | 184 / 184 | - / - | - / - | 1,968 / - | - / - |
-| RISC-V 64 GNU | 256 / 256 | 32 / 32 | 1,184 / 1,184 | 1,184 / 1,184 | - / - | - / - |
+| Linux target | `calloc` | `free` | `memcpy` | `memset` | `getauxval` |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| x86-64 GNU | 184 / 184 | 40 / 40 | 1,752 / 1,000 | - / - | - / - |
+| AArch64 GNU | 352 / 352 | 48 / 48 | 1,504 / 1,360 | - / - | 2,096 / 384 |
+| POWER64LE GNU | 2,576 / 480 | 112 / 112 | 8,224 / 1,536 | 8,048 / 1,536 | 7,872 / - |
+| IBM Z GNU | 360 / 360 | 184 / 184 | - / - | - / - | 1,968 / - |
+| RISC-V 64 GNU | 256 / 256 | 32 / 32 | 1,184 / 1,184 | 1,184 / 1,184 | - / - |
 
 Only the `prepare_in` roots, with or without the drop, reach `calloc` and
-`free`. No root reaches `malloc`, `memmove`, `memcmp`, or `bcmp` outside the
-`rscrypto-force-avx512` edge. Each parameter set reaches the same edges; the tables give the
-maximum over the three sets.
+`free`. No root reaches `malloc`, `memmove`, `memcmp`, or `bcmp`. Each parameter
+set reaches the same edges; the tables give the maximum over the three sets.
 
 All 120 roots have an owned bound. On every target and configuration, the
 owned graphs contain no other import, IFUNC relocation, indirect transfer,
@@ -180,14 +178,15 @@ an allowance must cover. Native AArch64, POWER, and IBM Z reach `getauxval`
 through capability detection, and portable AArch64 reaches it through the DIT
 probe; below it, the traversal finds only the libc import. No detection path
 reaches the standard library's `Once`, a futex, an indirect call, or unwinding.
-Native x86-64 reaches `rscrypto-force-avx512`, whose `std::env::var` subgraph
-reaches indirect calls, `syscall`, `_Unwind_Resume` and LLVM libunwind
-functions without frame records, `getenv`, `malloc`, `free`, `dlsym`,
-`dl_iterate_phdr`, `pthread_rwlock_*`, `abort`, `fflush`, and `fprintf` with
-`fwrite`. Replacing that read with the explicit override API is an owner
-decision. Portable x86-64, portable POWER, portable IBM Z, and both RISC-V
-configurations reach no detection edge, so their roots need only libc
-allowances.
+Native x86-64 detection is owned code with no declared edge: CPUID, the cache,
+and the in-code `platform::expert::allow_hybrid_avx512` setting, which replaced
+the `RSCRYPTO_FORCE_AVX512` environment read. That read's `std::env::var`
+subgraph reached indirect calls, `syscall`, unwinding without frame records,
+`getenv`, `malloc`, and `dlsym`, so its edge could not be bounded without a
+measured allowance. After its removal, the x86-64 reviews were repeated: every
+x86-64 bound and entry depth above is unchanged. x86-64, portable POWER,
+portable IBM Z, and both RISC-V configurations reach no detection edge, so
+their roots need only libc allowances.
 
 `--whole-calls all` adds 27 roots per configuration beyond preparation:
 ML-DSA deterministic signing, prepared hedged signing, and verification; ML-KEM
@@ -224,8 +223,7 @@ The exact remaining proof needs are:
 
 - A measured allowance for each reached declared edge, for each deployed libc
   identity: `calloc`, `free`, `memcpy`, and `memset` where the table lists them,
-  `getauxval`, and `rscrypto-force-avx512`, which also depends on the
-  environment. An allowance must
+  and `getauxval`. An allowance must
   cover the edge's own frames, red zone, and callbacks. The executable's import
   name cannot bound whichever implementation the loader or an IFUNC resolver
   selects. A measured allowance is evidence for that deployment; it is not a

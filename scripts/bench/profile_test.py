@@ -64,7 +64,7 @@ class ProfileTests(unittest.TestCase):
     self.assertFalse(self.fixture.runs())
 
   def test_exact_capture_and_shared_evidence(self):
-    controls = {'RAYON_NUM_THREADS': '3', 'RSCRYPTO_FORCE_AVX512': '1', 'RSCRYPTO_BENCH_DISABLE_IFMA': '1',
+    controls = {'RAYON_NUM_THREADS': '3', 'RSCRYPTO_BENCH_DISABLE_IFMA': '1',
                 'RSCRYPTO_BLAKE3_BENCH_ISA': 'avx2', 'AWS_LC_SYS_CMAKE_BUILDER': '0'}
     self.fixture.ok(self.fixture.bench('sha256', **controls))
     self.fixture.ok(self.profile('sha2', 'sha256/rscrypto/64', '1', **controls))

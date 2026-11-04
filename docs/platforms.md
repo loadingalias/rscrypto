@@ -28,6 +28,12 @@ Detection runs once and is cached.
 Set capability overrides, and get process permissions such as Linux AMX authorization,
 before the first `platform::caps()` call.
 
+On Intel hybrid CPUs (Alder Lake through Arrow Lake), detection removes AVX-512 and AVX10
+even when CPUID reports them.
+The E-cores lack those instructions, so a thread that moves to an E-core during an AVX-512 kernel would fault.
+If every core implements AVX-512, for example with the E-cores disabled in firmware,
+call the `unsafe` `platform::expert::allow_hybrid_avx512()` before the first `platform::caps()` call to keep them.
+
 Every accelerated path must give the same output as portable Rust for representative lengths,
 alignments, tails, and state transitions.
 Cross-compilation proves only that a target builds.
