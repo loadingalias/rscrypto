@@ -822,6 +822,15 @@ each slice ends at `cpuid`, `_xgetbv`, constants, or frame bytes stored from the
 its result pointer, which no condition reads. Each condition has a public waiver per affected primitive:
 32 waivers, bound to the slices in the `a0894a0d` CI artifacts.
 
+On AArch64 Linux, against [Constant-Time 41901417425](https://github.com/loadingalias/rscrypto/actions/runs/41901417425)
+at `9c887998`, seven waivers in `ct_entry_rsa_pkcs1v15_decrypt_fixed_blinding`,
+`private_exponentiate_representative_with_scratch`, and `P256EphemeralSecret::diffie_hellman` were stale.
+Their functions differ only in the `DataIndependentTiming` guard: the owned FEAT_DIT cache byte and its
+present bit replace std_detect's cache word and feature bit 8, and `probe_and_cache_dit`, which takes no
+argument and writes only that byte, replaces `detect_and_initialize`. Six slices are unchanged; in the
+seventh, the DIT-restore flag test is `cbz` instead of `tbz #0` on a flag that is only 0 or 1.
+The four rationales that described the old guard were rewritten from the new code, and all seven renewed by review.
+
 ## Public decisions and exclusions
 
 Ordinary equality is allowed for public values, such as nonces, encoded public keys,
