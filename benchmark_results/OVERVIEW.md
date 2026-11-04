@@ -6,6 +6,36 @@ The dated campaign records come first.
 The 2026-08-18 Linux snapshot near the end is historical:
 its aggregate ratios are withdrawn as performance claims (see [Corrections](#corrections)).
 
+## 2026-11-03: TLS resumption A/B and Windows ML-DSA backends
+
+Two same-host A/B campaigns. Raw data was deleted after this summary was written.
+
+**TLS original-to-final (G1-L).** Baseline `4b47f43e`, candidate `bd5bb735`, `nightly-2026-10-24`,
+catalog Criterion settings (20 samples, 100 ms warm-up, 400 ms measurement), static OpenSSL 4.0.3.
+Rows: {TLS 1.2, 1.3} × three suites × {full, resumed} p256/X25519 handshakes plus 64 B and 16 KiB
+traffic, × five backends = 120 rows, in four ABBA rounds (8 processes per host). CPU steal was zero
+(one tick on x86). Each revision has its own clone and build, so external rows are the same source
+relinked per revision.
+
+| Host | External-control spread (gate 1%) | rscrypto more than 2% behind the fastest external |
+| --- | --- | --- |
+| Graviton4, c8g.xlarge | 2.08% (70 of 72 rows within 1%) | AES-GCM 16 KiB traffic +6.5 to +6.9% vs OpenSSL; AES-GCM 64 B +3.6 to +6.3% vs *ring* |
+| Granite Rapids, c8i.xlarge | 3.80% | TLS 1.2 resumed +47% (AES-128), +41% (AES-256), +17% (ChaCha) vs *ring*; TLS 1.2 full +2.0 to +2.3%; ChaCha 16 KiB +1.7 to +3.3% vs OpenSSL |
+
+On Graviton4 the candidate keeps the earlier gains: TLS 1.2 AES resumed −16.5% and −16.3%, ChaCha
+−4.9%, TLS 1.3 AES resumed −5.0% and −5.8%, with TLS 1.2 resumption within 2% of *ring*. Granite
+Rapids changes stay within ±2% because the measured commits changed AArch64 paths. Neither host
+passes the 1% control gate, so these are screens, not qualification. On Granite Rapids, a symbolized
+`perf` profile puts 53% of fresh-key AES-128-GCM at 64 B in `clmul128_reduce` during key setup
+(128 GHASH powers per key).
+
+**Windows x86-64 ML-DSA backends (`5fd67258`).** `aws-windows-x64-bench` (c8i.xlarge Granite Rapids,
+Windows Server 2025), baseline `bd5bb735`, all 204 `mldsa44/65/87` rows, one run each. rscrypto rows
+take 0.22–0.75x their baseline time: about 4x faster signing, 3x faster verification, and 1.35x faster
+key generation (ML-DSA-65 prepared signing 650 → 152 µs). The 60 external rows average 1.0003
+(0.967–1.048). Against the fastest external, the Windows ML-DSA geomean moves from 0.49x to 1.46x and
+the slower workloads from 24 to 6, all key generation and encoded-key signing against libcrux.
+
 ## 2026-11-03: default catalog on CI and macOS
 
 [Bench run 41546963938, attempt 2](https://github.com/loadingalias/rscrypto/actions/runs/41546963938/attempts/2)
