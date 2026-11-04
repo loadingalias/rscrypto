@@ -25,12 +25,7 @@ fn runtime_s390x() -> Caps {
   any(target_os = "linux", target_os = "android")
 ))]
 fn runtime_s390x_linux() -> Caps {
-  use std::{fs::File, io::Read};
-
   use crate::platform::caps::s390x;
-
-  // ELF auxiliary vector type
-  const AT_HWCAP: u64 = 16;
 
   // HWCAP bit positions from Linux s390 ABI.
   const HWCAP_MSA: u64 = 1 << 3;
@@ -42,25 +37,7 @@ fn runtime_s390x_linux() -> Caps {
   const HWCAP_DFLT: u64 = 1 << 18;
   const HWCAP_NNPA: u64 = 1 << 20;
 
-  let hwcap = (|| -> Option<u64> {
-    let mut file = File::open("/proc/self/auxv").ok()?;
-    let mut buf = [0u8; 4096];
-    let n = file.read(&mut buf).ok()?;
-
-    for chunk in buf.get(..n)?.as_chunks::<16>().0 {
-      let (types, values) = chunk.as_chunks::<8>().0.split_at(1);
-      let a_type = u64::from_ne_bytes(types[0]);
-      let a_val = u64::from_ne_bytes(values[0]);
-      if a_type == AT_HWCAP {
-        return Some(a_val);
-      }
-      if a_type == 0 {
-        break;
-      }
-    }
-    None
-  })()
-  .unwrap_or(0);
+  let (hwcap, _) = linux_hwcaps();
 
   let stfle = stfle_facilities();
 

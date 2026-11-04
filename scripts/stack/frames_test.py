@@ -64,11 +64,11 @@ def test_s390x_detection_is_reported_not_dropped(directory: Path) -> None:
     (0x4000, "rscrypto::keccak::keccakf_portable", 400, ["    4000:      \tbr\t%r14"]),
     (
       0x5000,
-      "<std::sync::once_lock::OnceLock<rscrypto::platform::detect::Detected>>::initialize",
+      "<rscrypto::platform::detect::atomic_cache::Cache>::initialize::<rscrypto::platform::detect::detect_with_override>",
       192,
       ["    5000:      \tbrasl\t%r14, 0x6000", "    5006:      \tbr\t%r14"],
     ),
-    (0x6000, "<std::sys::sync::once::futex::Once>::call", None, ["    6000:      \tbasr\t%r14, %r1"]),
+    (0x6000, "<core::fmt::Formatter>::write_fmt", None, ["    6000:      \tbasr\t%r14, %r1"]),
   ]
   report = review(program("s390x-unknown-linux-gnu", functions), [boundary(directory)])
   worker = worker_report(report)
@@ -422,11 +422,7 @@ def test_riscv_call_clobbers_an_auipc_temporary() -> None:
   assert call["whole_call_bound_bytes"] is None and call["unresolved"][0]["reason"] == "indirect", call
 
 
-DETECTION_ENTRY = (
-  "<std::sync::once_lock::OnceLock<rscrypto::platform::detect::Detected>>::initialize::"
-  "<<std::sync::once_lock::OnceLock<rscrypto::platform::detect::Detected>>::get_or_init"
-  "<rscrypto::platform::detect::detect_with_override>::{closure#0}, !>"
-)
+DETECTION_ENTRY = "rscrypto::platform::detect::hybrid_avx512_override"
 ALLOCATOR_IMPORTS = "8000 R_X86_64_GLOB_DAT calloc\n8008 R_X86_64_GLOB_DAT memcpy"
 
 
@@ -485,7 +481,7 @@ def test_undeclared_imports_keep_the_owned_bound_unresolved() -> None:
   functions = [(0x1000, "prepare", 32, ["1000: callq *0x7000(%rip) # 0x8000", "1006: callq *0x7000(%rip) # 0x8008", "100c: retq"])]
   for dynamic, unresolved in (
     ("8000 R_X86_64_GLOB_DAT realloc\n8008 R_X86_64_GLOB_DAT calloc", "realloc"),
-    ("8000 R_X86_64_GLOB_DAT getauxval\n8008 R_X86_64_GLOB_DAT calloc", "getauxval"),
+    ("8000 R_X86_64_GLOB_DAT dlsym\n8008 R_X86_64_GLOB_DAT calloc", "dlsym"),
     ("8000 R_X86_64_IRELATIVE *ABS*+0x2000\n8008 R_X86_64_GLOB_DAT calloc", "IFUNC resolver *ABS*+0x2000 (selected implementation unresolved)"),
   ):
     call = review_preparation(program("x86_64-unknown-linux-gnu", functions, dynamic), ["prepare"])["whole_calls"][0]
@@ -503,7 +499,7 @@ def test_cold_detection_is_cut_at_its_exact_entry() -> None:
       (0x1000, "prepare", 32, ["1000: callq 0x2000", "1005: retq"]),
       (0x2000, "rscrypto::auth::mldsa::poly::Poly::ntt", 96, ["2000: callq 0x3000", "2005: retq"]),
       (0x3000, entry, 48, ["3000: callq 0x4000", "3005: retq"]),
-      (0x4000, "<std::sys::sync::once::futex::Once>::call", None, ["4000: callq *%r14", "4003: callq *0x4000(%rip) # 0x8000"]),
+      (0x4000, "<std::sys::sync::rwlock::futex::RwLock>::read_contended", None, ["4000: callq *%r14", "4003: callq *0x4000(%rip) # 0x8000"]),
     ]
     dynamic = "8000 R_X86_64_GLOB_DAT syscall"
     return review_preparation(program("x86_64-unknown-linux-gnu", functions, dynamic), ["prepare"])["whole_calls"][0]
@@ -511,30 +507,32 @@ def test_cold_detection_is_cut_at_its_exact_entry() -> None:
   call = detecting(DETECTION_ENTRY)
   # The detection frame (48 B) and its subgraph are outside the owned bound; the call slot into it is not.
   assert call["owned_bound_bytes"] == 8 + 32 + 8 + 96 + 8 and not call["owned_unresolved"], call
-  detection = edges_by_name(call)["rscrypto-detection"]
+  detection = edges_by_name(call)["rscrypto-force-avx512"]
   assert detection["kind"] == "cold-detection" and detection["max_entry_depth_bytes"] == 152, detection
   assert detection["call_sites"] == [{"caller": "rscrypto::auth::mldsa::poly::Poly::ntt", "address": "0x2000", "callee": DETECTION_ENTRY}]
   # The whole-call traversal still descends into detection and keeps every blocker.
   assert {(item["reason"], item["path"][-1]) for item in call["unresolved"]} == {
-    ("no frame record", "<std::sys::sync::once::futex::Once>::call"), ("indirect", "callq *%r14"), ("external", "syscall")
+    ("no frame record", "<std::sys::sync::rwlock::futex::RwLock>::read_contended"), ("indirect", "callq *%r14"), ("external", "syscall")
   }, call
-  assert call["whole_call_bound_bytes"] is None and call["missing_allowances"] == ["rscrypto-detection"], call
-  # Another OnceLock initializer is not the declared entry; its subgraph stays owned and unresolved.
-  other = detecting(DETECTION_ENTRY.replace("platform::detect::Detected", "platform::Other"))
+  assert call["whole_call_bound_bytes"] is None and call["missing_allowances"] == ["rscrypto-force-avx512"], call
+  # Another environment read is not the declared entry; its subgraph stays owned and unresolved.
+  other = detecting("rscrypto::platform::detect::other_environment_read")
   assert other["owned_bound_bytes"] is None and not other["declared_edges"], other
   assert {item["reason"] for item in other["owned_unresolved"]} == {"no frame record", "indirect", "external"}, other
 
 
-def test_std_feature_cache_initialization_is_a_cold_detection_edge() -> None:
+def test_getauxval_is_a_declared_libc_edge() -> None:
   functions = [
     (0x1000, "prepare", 64, ["1000: bl 0x3000", "1004: ret"]),
-    (0x3000, "std_detect::detect::cache::detect_and_initialize", 512, ["3000: bl 0x9000 <getauxval@plt>", "3004: blr x8"]),
+    (0x3000, "rscrypto::platform::detect::linux_hwcaps", 32, ["3000: bl 0x9000 <getauxval@plt>", "3004: ret"]),
     (0x9000, "getauxval@plt", None, ["9000: br x17"]),
   ]
   call = review_preparation(program("aarch64-unknown-linux-gnu", functions), ["prepare"])["whole_calls"][0]
-  assert call["owned_bound_bytes"] == 64 and not call["owned_unresolved"], call
-  assert edges_by_name(call)["std-detect"]["max_entry_depth_bytes"] == 64, call
-  assert {item["path"][-1] for item in call["unresolved"]} == {"getauxval", "blr x8"}, call
+  # Owned detection stays in the owned bound; only the libc read is an allowance.
+  assert call["owned_bound_bytes"] == 64 + 32 and not call["owned_unresolved"], call
+  getauxval = edges_by_name(call)["getauxval"]
+  assert getauxval["kind"] == "libc" and getauxval["max_entry_depth_bytes"] == 64 + 32, getauxval
+  assert call["missing_allowances"] == ["getauxval"], call
 
 
 def test_owned_indirection_and_recursion_keep_the_owned_bound_null() -> None:
@@ -593,7 +591,7 @@ def test_allowances_compose_the_whole_call_bound(directory: Path) -> None:
       pass
     else:
       raise AssertionError(f"invalid allowances accepted: {invalid}")
-  valid = {"x86_64-unknown-linux-gnu": {"libc": "glibc 2.39", "edges": {"calloc": 1, "rscrypto-detection": 2}}}
+  valid = {"x86_64-unknown-linux-gnu": {"libc": "glibc 2.39", "edges": {"calloc": 1, "getauxval": 2, "rscrypto-force-avx512": 3}}}
   path.write_text(json.dumps(valid))
   assert load_allowances(path) == valid
 
@@ -625,7 +623,7 @@ def main() -> None:
   test_tail_calls_enter_declared_edges_at_the_callers_entry()
   test_undeclared_imports_keep_the_owned_bound_unresolved()
   test_cold_detection_is_cut_at_its_exact_entry()
-  test_std_feature_cache_initialization_is_a_cold_detection_edge()
+  test_getauxval_is_a_declared_libc_edge()
   test_owned_indirection_and_recursion_keep_the_owned_bound_null()
   with tempfile.TemporaryDirectory() as temporary:
     test_allowances_compose_the_whole_call_bound(Path(temporary))

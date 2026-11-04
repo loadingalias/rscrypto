@@ -575,13 +575,14 @@ The preparation review reports two bounds for each root.
 The declared edges are a fixed set:
 
 - the libc imports `calloc`, `malloc`, `free`, `memcpy`, `memmove`, `memset`,
-  `memcmp`, and `bcmp`, named by a GOT relocation or a PLT stub;
-- `rscrypto-detection`: the exact `OnceLock<Detected>::initialize` instance
-  that `platform::caps()` uses for cold first-call detection in std builds;
-- `std-detect`: `std_detect::detect::cache::detect_and_initialize`, which fills
-  the standard library's feature cache. On AArch64 the `DataIndependentTiming`
-  guard reaches it through `is_aarch64_feature_detected!("dit")`.
+  `memcmp`, `bcmp`, and `getauxval`, named by a GOT relocation or a PLT stub.
+  `getauxval` is the AArch64, POWER, and IBM Z Linux capability read;
+- `rscrypto-force-avx512`: `rscrypto::platform::detect::hybrid_avx512_override`,
+  the x86-64 `RSCRYPTO_FORCE_AVX512` read. `std::env::var` takes the standard
+  library's environment lock and allocates.
 
+Cold first-call detection is otherwise owned code: the lock-free capability
+cache, CPUID, STFLE, RISC-V hwprobe, and the AArch64 `DataIndependentTiming` probe.
 A detection edge includes the entry function's own frame and its complete subgraph.
 Any other import, IFUNC relocation, indirect transfer, missing frame record, or
 recursion keeps the owned bound null, and `owned_unresolved` lists it.

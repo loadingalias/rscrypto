@@ -128,11 +128,13 @@ Each root has two results. The owned bound covers the code linked into the
 artifact: rscrypto and the linked parts of the Rust standard library. It stops
 at the declared libc and cold-detection edges that
 [`scripts/README.md`](../scripts/README.md#preparation-bounds) lists, and
-charges each edge only its caller's frame and call slot. `rscrypto-detection`
-is the cold `OnceLock<Detected>` initialization behind `platform::caps()`.
-`std-detect` is the standard library's feature-cache initialization, which the
-AArch64 `DataIndependentTiming` guard reaches. Each detection edge includes its
-complete subgraph. The report gives the maximum stack depth at each edge's
+charges each edge only its caller's frame and call slot. Cold first-call
+capability detection is owned code and stays inside the owned bound: the
+lock-free cache behind `platform::caps()`, CPUID, STFLE, and the AArch64
+`DataIndependentTiming` probe. Its only declared edges are the libc
+`getauxval` read on AArch64, POWER, and IBM Z, and `rscrypto-force-avx512`, the
+x86-64 `RSCRYPTO_FORCE_AVX512` environment read, which includes its complete
+subgraph. The report gives the maximum stack depth at each edge's
 entry over all paths. The whole-call bound composes the owned bound with a
 measured allowance for each reached edge.
 
@@ -140,26 +142,26 @@ Largest owned bound by root, in bytes, native / portable:
 
 | Linux target | `prepare_in` | `prepare` | `prepare_in`, then drop | `prepare`, then drop |
 | --- | ---: | ---: | ---: | ---: |
-| x86-64 GNU | 1,944 / 1,224 | 1,896 / 1,096 | 1,976 / 1,256 | 1,928 / 1,128 |
-| AArch64 GNU | 2,032 / 1,472 | 1,824 / 1,184 | 2,080 / 1,520 | 1,872 / 1,232 |
+| x86-64 GNU | 2,008 / 1,224 | 1,960 / 1,096 | 2,040 / 1,256 | 1,992 / 1,128 |
+| AArch64 GNU | 2,080 / 1,472 | 1,872 / 1,184 | 2,128 / 1,520 | 1,920 / 1,232 |
 | POWER64LE GNU | 9,840 / 1,744 | 9,840 / 1,408 | 9,920 / 1,824 | 9,920 / 1,488 |
-| IBM Z GNU | 1,592 / 1,592 | 1,416 / 1,416 | 1,776 / 1,776 | 1,600 / 1,600 |
+| IBM Z GNU | 1,784 / 1,592 | 1,608 / 1,416 | 1,968 / 1,776 | 1,792 / 1,600 |
 | RISC-V 64 GNU | 1,408 / 1,408 | 1,200 / 1,200 | 1,440 / 1,440 | 1,232 / 1,232 |
 
 Largest stack depth at a declared edge's entry, in bytes, native / portable.
 A dash means that no root reaches the edge:
 
-| Linux target | `calloc` | `free` | `memcpy` | `memset` | `rscrypto-detection` | `std-detect` |
+| Linux target | `calloc` | `free` | `memcpy` | `memset` | `getauxval` | `rscrypto-force-avx512` |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| x86-64 GNU | 184 / 184 | 40 / 40 | 1,720 / 1,000 | - / - | 1,720 / - | - / - |
-| AArch64 GNU | 352 / 352 | 48 / 48 | 1,504 / 1,360 | - / - | 1,920 / - | 352 / 352 |
-| POWER64LE GNU | 2,576 / 480 | 112 / 112 | 8,224 / 1,536 | 8,048 / 1,536 | 7,728 / - | - / - |
-| IBM Z GNU | 360 / 360 | 184 / 184 | - / - | - / - | 1,616 / - | - / - |
+| x86-64 GNU | 184 / 184 | 40 / 40 | 1,752 / 1,000 | - / - | - / - | 1,912 / - |
+| AArch64 GNU | 352 / 352 | 48 / 48 | 1,504 / 1,360 | - / - | 2,096 / 384 | - / - |
+| POWER64LE GNU | 2,576 / 480 | 112 / 112 | 8,224 / 1,536 | 8,048 / 1,536 | 7,872 / - | - / - |
+| IBM Z GNU | 360 / 360 | 184 / 184 | - / - | - / - | 1,968 / - | - / - |
 | RISC-V 64 GNU | 256 / 256 | 32 / 32 | 1,184 / 1,184 | 1,184 / 1,184 | - / - | - / - |
 
 Only the `prepare_in` roots, with or without the drop, reach `calloc` and
-`free`. No root reaches `malloc`, `memmove`, `memcmp`, or `bcmp` outside a
-detection edge. Each parameter set reaches the same edges; the tables give the
+`free`. No root reaches `malloc`, `memmove`, `memcmp`, or `bcmp` outside the
+`rscrypto-force-avx512` edge. Each parameter set reaches the same edges; the tables give the
 maximum over the three sets.
 
 All 120 roots have an owned bound. On every target and configuration, the
@@ -174,17 +176,18 @@ claimed to fit the 8 MiB cap. Caller storage and enclosing worker/TLS frames
 are outside every bound.
 
 The full-graph traversal still descends into every declared edge and lists what
-an allowance must cover. Native x86-64, AArch64, POWER, and IBM Z reach
-`rscrypto-detection`; both AArch64 configurations reach `std-detect`. These
-subgraphs reach indirect calls, `syscall`, `_Unwind_Resume` and LLVM libunwind
-functions without frame records, `dlsym`, `dl_iterate_phdr`,
-`pthread_rwlock_*`, `__errno_location`, `abort`, `fflush`, and `fprintf` with
-`fwrite`, or POWER's `__fprintfieee128`. In `rscrypto-detection`, the
-indirect calls include those in the standard library's `Once`. On AArch64,
-`std-detect` adds `getauxval`, `open`, `read`, `close`, `realloc`, and indirect
-calls in `core::fmt::write`. Portable x86-64, portable POWER, portable IBM Z,
-and both RISC-V configurations reach no detection edge, so their roots need
-only libc allowances.
+an allowance must cover. Native AArch64, POWER, and IBM Z reach `getauxval`
+through capability detection, and portable AArch64 reaches it through the DIT
+probe; below it, the traversal finds only the libc import. No detection path
+reaches the standard library's `Once`, a futex, an indirect call, or unwinding.
+Native x86-64 reaches `rscrypto-force-avx512`, whose `std::env::var` subgraph
+reaches indirect calls, `syscall`, `_Unwind_Resume` and LLVM libunwind
+functions without frame records, `getenv`, `malloc`, `free`, `dlsym`,
+`dl_iterate_phdr`, `pthread_rwlock_*`, `abort`, `fflush`, and `fprintf` with
+`fwrite`. Replacing that read with the explicit override API is an owner
+decision. Portable x86-64, portable POWER, portable IBM Z, and both RISC-V
+configurations reach no detection edge, so their roots need only libc
+allowances.
 
 The tool continues below missing frame records, resolves identified GOT/PLT
 imports, distinguishes IFUNC relocations, and retains unresolved transfers by
@@ -197,7 +200,8 @@ The exact remaining proof needs are:
 
 - A measured allowance for each reached declared edge, for each deployed libc
   identity: `calloc`, `free`, `memcpy`, and `memset` where the table lists them,
-  and each detection edge, which also depends on the kernel. An allowance must
+  `getauxval`, and `rscrypto-force-avx512`, which also depends on the
+  environment. An allowance must
   cover the edge's own frames, red zone, and callbacks. The executable's import
   name cannot bound whichever implementation the loader or an IFUNC resolver
   selects. A measured allowance is evidence for that deployment; it is not a

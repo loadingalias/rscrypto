@@ -112,17 +112,12 @@ pub(super) fn get() -> Detected {
   #[cfg(not(miri))]
   {
     let det = {
-      #[cfg(feature = "std")]
+      #[cfg(any(feature = "std", target_has_atomic = "64"))]
       {
-        *STD_CACHE.get_or_init(detect_with_override)
+        atomic_cache::CACHE.get_or_init(detect_with_override)
       }
 
-      #[cfg(all(not(feature = "std"), target_has_atomic = "64"))]
-      {
-        atomic_cache::get_or_init(detect_with_override)
-      }
-
-      #[cfg(all(not(feature = "std"), not(target_has_atomic = "64")))]
+      #[cfg(not(any(feature = "std", target_has_atomic = "64")))]
       {
         // Constrained targets: always call detect (no caching)
         detect_with_override()
@@ -225,6 +220,33 @@ pub fn detect_uncached() -> Detected {
   {
     Detected::portable()
   }
+}
+
+/// `AT_HWCAP` and `AT_HWCAP2` from the C library's copy of the ELF auxiliary vector.
+///
+/// Absent entries read as zero. This replaces reading `/proc/self/auxv` through `std::fs`:
+/// one libc call per entry, with no file, allocation, or formatting on the detection path.
+#[cfg(all(
+  feature = "std",
+  any(target_arch = "aarch64", target_arch = "powerpc64", target_arch = "s390x"),
+  any(target_os = "linux", target_os = "android")
+))]
+fn linux_hwcaps() -> (u64, u64) {
+  const AT_HWCAP: core::ffi::c_ulong = 16;
+  const AT_HWCAP2: core::ffi::c_ulong = 26;
+
+  // The `safe` declaration holds because:
+  // 1. The C libraries of every Linux and Android target for these architectures (glibc 2.16+,
+  //    musl 1.1+, OHOS, bionic) export `unsigned long getauxval(unsigned long type)` with the C
+  //    ABI; `c_ulong` is that type here.
+  // 2. It takes any integer, reads only the auxiliary vector saved at process start, and
+  //    returns 0 for an absent entry, so every call is defined.
+  unsafe extern "C" {
+    safe fn getauxval(entry: core::ffi::c_ulong) -> core::ffi::c_ulong;
+  }
+
+  // `c_ulong` is `u64` on every 64-bit target this gate admits.
+  (getauxval(AT_HWCAP), getauxval(AT_HWCAP2))
 }
 
 include!("detect/arch/x86.rs");

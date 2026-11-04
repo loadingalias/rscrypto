@@ -16,7 +16,7 @@ fn detect_power() -> Detected {
 
 // Power Runtime Detection
 
-/// Runtime Power detection for Linux/Android via /proc/self/auxv.
+/// Runtime Power detection for Linux/Android from `AT_HWCAP` and `AT_HWCAP2`.
 ///
 /// This avoids unstable `is_powerpc64_feature_detected!` and keeps the
 /// selection logic consistent with the x86/aarch64 batch detectors.
@@ -26,37 +26,7 @@ fn detect_power() -> Detected {
   any(target_os = "linux", target_os = "android")
 ))]
 fn runtime_power() -> Caps {
-  use std::{fs::File, io::Read};
-
-  // ELF auxiliary vector entry types
-  const AT_HWCAP: u64 = 16;
-  const AT_HWCAP2: u64 = 26;
-
-  let (hwcap, hwcap2) = (|| -> Option<(u64, u64)> {
-    let mut file = File::open("/proc/self/auxv").ok()?;
-    let mut buf = [0u8; 4096];
-    let n = file.read(&mut buf).ok()?;
-
-    let mut hwcap = 0u64;
-    let mut hwcap2 = 0u64;
-
-    for chunk in buf.get(..n)?.as_chunks::<16>().0 {
-      let (types, values) = chunk.as_chunks::<8>().0.split_at(1);
-      let a_type = u64::from_ne_bytes(types[0]);
-      let a_val = u64::from_ne_bytes(values[0]);
-
-      if a_type == AT_HWCAP {
-        hwcap = a_val;
-      } else if a_type == AT_HWCAP2 {
-        hwcap2 = a_val;
-      } else if a_type == 0 {
-        break;
-      }
-    }
-
-    Some((hwcap, hwcap2))
-  })()
-  .unwrap_or((0, 0));
+  let (hwcap, hwcap2) = linux_hwcaps();
 
   decode_power_hwcap(hwcap, hwcap2)
 }

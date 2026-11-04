@@ -637,6 +637,141 @@ mod tests {
     assert!(sme_caps.difference(owned_caps).is_empty());
   }
 
+  /// Racing first callers must agree on one published value, even when each probe returns a
+  /// different result, and a published cache must not run detection again.
+  #[test]
+  #[cfg(feature = "std")]
+  fn cache_publishes_one_result_to_concurrent_first_callers() {
+    use core::sync::atomic::{AtomicU8, Ordering};
+    use std::sync::Barrier;
+
+    static PROBES: AtomicU8 = AtomicU8::new(0);
+    fn distinct() -> Detected {
+      let probe = PROBES.fetch_add(1, Ordering::Relaxed);
+      Detected {
+        caps: Caps::bit(probe % 64),
+        arch: Arch::current(),
+      }
+    }
+
+    const THREADS: usize = 8;
+    let cache = atomic_cache::Cache::new();
+    let barrier = Barrier::new(THREADS);
+    let results: alloc::vec::Vec<Detected> = std::thread::scope(|scope| {
+      let handles: alloc::vec::Vec<_> = (0..THREADS)
+        .map(|_| {
+          scope.spawn(|| {
+            barrier.wait();
+            cache.get_or_init(distinct)
+          })
+        })
+        .collect();
+      handles
+        .into_iter()
+        .map(|handle| handle.join().expect("first caller must not panic"))
+        .collect()
+    });
+
+    let published = results[0];
+    assert!(results.iter().all(|result| *result == published), "{results:?}");
+    let probes = PROBES.load(Ordering::Relaxed);
+    assert_eq!(cache.get_or_init(distinct), published);
+    assert_eq!(PROBES.load(Ordering::Relaxed), probes, "a published cache detected again");
+  }
+
+  /// A panicking probe must leave the cache uninitialized rather than wedged, so the next
+  /// caller detects and publishes normally.
+  #[test]
+  #[cfg(all(feature = "std", panic = "unwind"))]
+  fn cache_survives_a_panicking_probe() {
+    #[expect(clippy::panic, reason = "the test needs a probe that panics")]
+    fn panics() -> Detected {
+      panic!("probe failure")
+    }
+    fn portable() -> Detected {
+      Detected::portable()
+    }
+
+    let cache = atomic_cache::Cache::new();
+    let outcome = std::panic::catch_unwind(core::panic::AssertUnwindSafe(|| cache.get_or_init(panics)));
+    let _panic = outcome.expect_err("the probe must panic");
+    assert_eq!(cache.get_or_init(portable), Detected::portable());
+  }
+
+  /// The owned sysctl reads must report exactly what the standard library's Darwin detector
+  /// reports for every capability the replaced macro calls produced.
+  #[test]
+  #[cfg(all(
+    target_arch = "aarch64",
+    feature = "std",
+    not(miri),
+    any(target_os = "macos", target_os = "ios", target_os = "tvos", target_os = "watchos")
+  ))]
+  fn apple_owned_detection_matches_std_detect() {
+    use std::arch::is_aarch64_feature_detected as std_has;
+
+    use crate::platform::caps::aarch64;
+
+    let owned = caps_static() | runtime_aarch64();
+    let expected = [
+      ("aes", aarch64::AES, std_has!("aes")),
+      ("pmull", aarch64::PMULL, std_has!("pmull")),
+      ("sha2", aarch64::SHA2, std_has!("sha2")),
+      ("sha3", aarch64::SHA3, std_has!("sha3")),
+      ("sha3 (SHA512)", aarch64::SHA512, std_has!("sha3")),
+      ("sm4 (SM3)", aarch64::SM3, std_has!("sm4")),
+      ("sm4", aarch64::SM4, std_has!("sm4")),
+      ("crc", aarch64::CRC, std_has!("crc")),
+      ("dotprod", aarch64::DOTPROD, std_has!("dotprod")),
+      ("fp16", aarch64::FP16, std_has!("fp16")),
+      ("i8mm", aarch64::I8MM, std_has!("i8mm")),
+      ("bf16", aarch64::BF16, std_has!("bf16")),
+      ("frintts", aarch64::FRINTTS, std_has!("frintts")),
+      ("sve", aarch64::SVE, std_has!("sve")),
+      ("sve2", aarch64::SVE2, std_has!("sve2")),
+      ("lse", aarch64::LSE, std_has!("lse")),
+      ("lse2", aarch64::LSE2, std_has!("lse2")),
+      ("rand", aarch64::RNG, std_has!("rand")),
+    ];
+    for (feature, cap, std_detected) in expected {
+      assert_eq!(owned.has(cap), std_detected, "{feature}");
+    }
+  }
+
+  /// The owned DIT probe behind `DataIndependentTiming` must agree with the standard library.
+  #[test]
+  #[cfg(all(target_arch = "aarch64", feature = "std", not(miri)))]
+  fn dit_probe_matches_std_detect() {
+    assert_eq!(probe_dit(), std::arch::is_aarch64_feature_detected!("dit"));
+    assert_eq!(dit_supported(), probe_dit());
+  }
+
+  /// `getauxval` must return the kernel's `AT_HWCAP` and `AT_HWCAP2` entries, read here
+  /// independently from `/proc/self/auxv`.
+  #[test]
+  #[cfg(all(
+    feature = "std",
+    not(miri),
+    any(target_arch = "aarch64", target_arch = "powerpc64", target_arch = "s390x"),
+    any(target_os = "linux", target_os = "android")
+  ))]
+  fn linux_hwcaps_match_proc_self_auxv() {
+    let auxv = std::fs::read("/proc/self/auxv").expect("the kernel exposes /proc/self/auxv");
+    let (mut hwcap, mut hwcap2) = (0u64, 0u64);
+    for entry in auxv.as_chunks::<16>().0 {
+      let (kind, value) = entry.split_at(8);
+      let value = u64::from_ne_bytes(value.try_into().expect("8-byte value"));
+      match u64::from_ne_bytes(kind.try_into().expect("8-byte type")) {
+        0 => break,
+        16 => hwcap = value,
+        26 => hwcap2 = value,
+        _ => {}
+      }
+    }
+    assert_ne!(hwcap, 0, "the auxiliary vector has no AT_HWCAP entry");
+    assert_eq!(linux_hwcaps(), (hwcap, hwcap2));
+  }
+
   #[test]
   fn test_detected_portable_constructor() {
     let det = Detected::portable();

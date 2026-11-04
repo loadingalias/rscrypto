@@ -1,39 +1,18 @@
 // Override System
 
-#[cfg(all(feature = "std", not(miri)))]
-use std::sync::OnceLock;
-
-#[cfg(all(feature = "std", not(miri)))]
-static STD_CACHE: OnceLock<Detected> = OnceLock::new();
-
 /// Try to set detection override.
 ///
 /// Contract: pre-init only. Once [`crate::platform::get`] has initialized
 /// detection state, this returns [`OverrideError::AlreadyInitialized`].
 #[cold]
 pub fn try_set_override(value: Option<Detected>) -> Result<(), OverrideError> {
-  #[cfg(any(feature = "std", all(not(feature = "std"), target_has_atomic = "64")))]
-  let value = validate_override(value)?;
-
-  #[cfg(feature = "std")]
+  #[cfg(any(feature = "std", target_has_atomic = "64"))]
   {
-    #[cfg(not(miri))]
-    {
-      atomic_cache::try_set_override(value, STD_CACHE.get().is_some())
-    }
-
-    #[cfg(miri)]
-    {
-      atomic_cache::try_set_override(value, false)
-    }
+    let value = validate_override(value)?;
+    atomic_cache::try_set_override(value)
   }
 
-  #[cfg(all(not(feature = "std"), target_has_atomic = "64"))]
-  {
-    atomic_cache::try_set_override(value, false)
-  }
-
-  #[cfg(all(not(feature = "std"), not(target_has_atomic = "64")))]
+  #[cfg(not(any(feature = "std", target_has_atomic = "64")))]
   {
     let _ = value;
     Err(OverrideError::Unsupported)
@@ -44,17 +23,12 @@ pub fn try_set_override(value: Option<Detected>) -> Result<(), OverrideError> {
 #[inline]
 #[must_use]
 pub fn has_override() -> bool {
-  #[cfg(feature = "std")]
+  #[cfg(any(feature = "std", target_has_atomic = "64"))]
   {
     atomic_cache::has_override()
   }
 
-  #[cfg(all(not(feature = "std"), target_has_atomic = "64"))]
-  {
-    atomic_cache::has_override()
-  }
-
-  #[cfg(all(not(feature = "std"), not(target_has_atomic = "64")))]
+  #[cfg(not(any(feature = "std", target_has_atomic = "64")))]
   {
     false
   }
@@ -63,14 +37,7 @@ pub fn has_override() -> bool {
 #[cold]
 #[cfg(not(miri))]
 fn detect_with_override() -> Detected {
-  #[cfg(feature = "std")]
-  {
-    if let Some(ov) = atomic_cache::seal_and_get_override() {
-      return ov;
-    }
-  }
-
-  #[cfg(all(not(feature = "std"), target_has_atomic = "64"))]
+  #[cfg(any(feature = "std", target_has_atomic = "64"))]
   {
     if let Some(ov) = atomic_cache::seal_and_get_override() {
       return ov;
@@ -80,30 +47,33 @@ fn detect_with_override() -> Detected {
   detect_uncached()
 }
 
-// Atomic Cache (no_std with 64-bit atomics)
+// Atomic Cache
+//
+// Every build with `std` or 64-bit atomics caches detection here; there is no
+// std `OnceLock`. Each first caller detects locally, before it touches shared
+// state, so a slow or panicking probe never blocks another thread. One
+// compare-and-swap then elects the publisher; the other first callers wait only
+// across its single slot store, never across detection.
 
-#[cfg(any(feature = "std", all(not(feature = "std"), target_has_atomic = "64")))]
+#[cfg(any(feature = "std", target_has_atomic = "64"))]
 mod atomic_cache {
-  #[cfg(all(not(feature = "std"), target_has_atomic = "64"))]
-  use core::sync::atomic::AtomicU8;
   use core::{
     cell::UnsafeCell,
-    sync::atomic::{AtomicBool, Ordering},
+    sync::atomic::{AtomicBool, AtomicU8, Ordering},
   };
 
   use super::*;
 
-  #[cfg(all(not(feature = "std"), target_has_atomic = "64"))]
   const STATE_UNINIT: u8 = 0;
-  #[cfg(all(not(feature = "std"), target_has_atomic = "64"))]
-  const STATE_INITING: u8 = 1;
-  #[cfg(all(not(feature = "std"), target_has_atomic = "64"))]
+  const STATE_PUBLISHING: u8 = 1;
   const STATE_READY: u8 = 2;
 
   struct Slot<T>(UnsafeCell<T>);
 
-  // SAFETY: Slot access is synchronized by explicit atomic state transitions in this module.
-  unsafe impl<T: Sync> Sync for Slot<T> {}
+  // SAFETY: Slot access is synchronized by explicit atomic state transitions in this module:
+  // one elected writer before a Release publication, and readers only after an Acquire
+  // observation of that publication (or under `OVERRIDE_LOCK` for the override payload).
+  unsafe impl<T: Send + Sync> Sync for Slot<T> {}
 
   impl<T> Slot<T> {
     const fn new(value: T) -> Self {
@@ -111,10 +81,79 @@ mod atomic_cache {
     }
   }
 
-  #[cfg(all(not(feature = "std"), target_has_atomic = "64"))]
-  static STATE: AtomicU8 = AtomicU8::new(STATE_UNINIT);
-  #[cfg(all(not(feature = "std"), target_has_atomic = "64"))]
-  static CACHED: Slot<Detected> = Slot::new(Detected::portable());
+  /// One published detection result.
+  pub(super) struct Cache {
+    state: AtomicU8,
+    value: Slot<Detected>,
+  }
+
+  impl Cache {
+    pub(super) const fn new() -> Self {
+      Self {
+        state: AtomicU8::new(STATE_UNINIT),
+        value: Slot::new(Detected::portable()),
+      }
+    }
+
+    /// Return the published result, publishing `detect()` on the first call.
+    ///
+    /// Every caller returns the same published value, even if `detect` gives
+    /// different results to racing first callers. `detect` is a type parameter,
+    /// not a function pointer, so the cold call is direct and statically boundable.
+    #[inline]
+    #[cfg_attr(miri, allow(dead_code))] // Miri runs `get()` without detection.
+    pub(super) fn get_or_init<F: FnOnce() -> Detected>(&self, detect: F) -> Detected {
+      if self.state.load(Ordering::Acquire) == STATE_READY {
+        // SAFETY: Published-slot read because:
+        // 1. `STATE_READY` is stored with Release only after the elected writer's one slot write.
+        // 2. This Acquire load observed it, so that write happens-before this read.
+        // 3. No write follows publication.
+        return unsafe { *self.value.0.get() };
+      }
+      self.initialize(detect)
+    }
+
+    #[cold]
+    #[inline(never)]
+    #[cfg_attr(miri, allow(dead_code))]
+    fn initialize<F: FnOnce() -> Detected>(&self, detect: F) -> Detected {
+      // Shared state is untouched until `detect` returns: a panic leaves the
+      // cache uninitialized, and no other caller waits for this probe.
+      let detected = detect();
+      if self
+        .state
+        .compare_exchange(STATE_UNINIT, STATE_PUBLISHING, Ordering::Acquire, Ordering::Acquire)
+        .is_ok()
+      {
+        // SAFETY: Elected slot write because:
+        // 1. Only the caller that moves `STATE_UNINIT` to `STATE_PUBLISHING` writes, and the state
+        //    never returns to `STATE_UNINIT`, so there is exactly one writer.
+        // 2. Readers access the slot only after observing `STATE_READY`, which is stored below.
+        // 3. The Acquire exchange keeps this write after the election.
+        unsafe {
+          *self.value.0.get() = detected;
+        }
+        self.state.store(STATE_READY, Ordering::Release);
+        return detected;
+      }
+      // The elected caller stores one `Detected` and then publishes; wait only across that.
+      while self.state.load(Ordering::Acquire) != STATE_READY {
+        core::hint::spin_loop();
+      }
+      // SAFETY: Published-slot read because:
+      // 1. The loop exits only after an Acquire load observes `STATE_READY`.
+      // 2. The elected writer's slot write happens-before its Release store of `STATE_READY`.
+      // 3. No write follows publication.
+      unsafe { *self.value.0.get() }
+    }
+
+    fn is_uninit(&self) -> bool {
+      self.state.load(Ordering::Acquire) == STATE_UNINIT
+    }
+  }
+
+  /// The process-wide detection cache behind [`crate::platform::get`].
+  pub(super) static CACHE: Cache = Cache::new();
 
   static OVERRIDE_LOCK: AtomicBool = AtomicBool::new(false);
   static OVERRIDE_SEALED: AtomicBool = AtomicBool::new(false);
@@ -139,57 +178,12 @@ mod atomic_cache {
     OverrideGuard
   }
 
-  #[cfg(all(not(feature = "std"), target_has_atomic = "64"))]
-  pub(super) fn get_or_init(f: fn() -> Detected) -> Detected {
-    if STATE.load(Ordering::Acquire) == STATE_READY {
-      return load_cached();
-    }
-
-    match STATE.compare_exchange(STATE_UNINIT, STATE_INITING, Ordering::AcqRel, Ordering::Acquire) {
-      Ok(_) => {
-        let result = f();
-        store_cached(&result);
-        STATE.store(STATE_READY, Ordering::Release);
-        result
-      }
-      Err(STATE_INITING) => {
-        while STATE.load(Ordering::Acquire) == STATE_INITING {
-          core::hint::spin_loop();
-        }
-        load_cached()
-      }
-      Err(_) => load_cached(),
-    }
-  }
-
-  #[cfg(all(not(feature = "std"), target_has_atomic = "64"))]
-  fn load_cached() -> Detected {
-    // SAFETY: Readers only access after STATE_READY with Acquire ordering.
-    unsafe { *CACHED.0.get() }
-  }
-
-  #[cfg(all(not(feature = "std"), target_has_atomic = "64"))]
-  fn store_cached(det: &Detected) {
-    // SAFETY: Single writer while STATE_INITING; readers are blocked until STATE_READY.
-    unsafe {
-      *CACHED.0.get() = *det;
-    }
-  }
-
-  pub(super) fn try_set_override(value: Option<Detected>, already_initialized: bool) -> Result<(), OverrideError> {
+  pub(super) fn try_set_override(value: Option<Detected>) -> Result<(), OverrideError> {
     let _guard = lock_override();
 
-    if OVERRIDE_SEALED.load(Ordering::Relaxed) {
-      return Err(OverrideError::AlreadyInitialized);
-    }
-
-    #[cfg(all(not(feature = "std"), target_has_atomic = "64"))]
-    if already_initialized || STATE.load(Ordering::Acquire) != STATE_UNINIT {
-      return Err(OverrideError::AlreadyInitialized);
-    }
-
-    #[cfg(feature = "std")]
-    if already_initialized {
+    // Every detecting caller seals before it detects, so a sealed state also
+    // covers detection that has started but not yet published.
+    if OVERRIDE_SEALED.load(Ordering::Relaxed) || !CACHE.is_uninit() {
       return Err(OverrideError::AlreadyInitialized);
     }
 

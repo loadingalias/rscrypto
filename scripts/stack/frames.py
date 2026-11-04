@@ -144,20 +144,17 @@ EXTERNAL_LEAVES = {"memcpy", "memmove", "memset", "memcmp", "bcmp"}
 # Preparation reviews stop at these edges and record the stack depth at their
 # entry. Each edge needs a separately measured allowance for the deployed libc
 # (or, for detection, the deployed libc and kernel); none is assumed frameless.
+# `getauxval` is the AArch64, POWER, and IBM Z Linux capability read.
 # Any other import, including IFUNC relocations, remains unresolved.
-DECLARED_LIBC = {"calloc", "malloc", "free", "memcpy", "memmove", "memset", "memcmp", "bcmp"}
-# Cold first-call capability detection, keyed by the exact demangled entry.
-# In std builds `platform::caps()` initializes `STD_CACHE: OnceLock<Detected>`
-# through the first; `std::arch::is_aarch64_feature_detected!` (the AArch64
-# `DataIndependentTiming` guard) fills std's feature cache through the second.
-# Each entry's frame and entire subgraph (std `Once`, futex syscalls, auxv
-# reads, formatting, unwinding cleanup) belong to the declared edge, not to the
-# owned bound. A renamed entry is not cut, so its subgraph stays unresolved.
+DECLARED_LIBC = {"calloc", "malloc", "free", "memcpy", "memmove", "memset", "memcmp", "bcmp", "getauxval"}
+# Cold first-call capability detection is owned code: the lock-free cache,
+# CPUID, `getauxval`, STFLE, and RISC-V hwprobe. The remaining std edge, keyed by
+# its exact demangled entry, is the x86-64 `RSCRYPTO_FORCE_AVX512` read:
+# `std::env::var` takes std's environment lock and allocates. Its frame and
+# entire subgraph belong to the declared edge, not to the owned bound. A renamed
+# entry is not cut, so its subgraph stays unresolved.
 COLD_DETECTION = {
-  "<std::sync::once_lock::OnceLock<rscrypto::platform::detect::Detected>>::initialize::"
-  "<<std::sync::once_lock::OnceLock<rscrypto::platform::detect::Detected>>::get_or_init"
-  "<rscrypto::platform::detect::detect_with_override>::{closure#0}, !>": "rscrypto-detection",
-  "std_detect::detect::cache::detect_and_initialize": "std-detect",
+  "rscrypto::platform::detect::hybrid_avx512_override": "rscrypto-force-avx512",
 }
 
 HEADER = re.compile(r"^([0-9a-f]+) <(.+)>:$")

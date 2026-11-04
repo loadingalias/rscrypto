@@ -14,25 +14,14 @@ fn detect_aarch64() -> Detected {
   }
 }
 
-/// Batch extraction of aarch64 features from /proc/self/auxv.
-///
-/// Reads AT_HWCAP and AT_HWCAP2 once from the ELF auxiliary vector.
-/// Pure Rust - no libc dependency.
-///
-/// Works on Linux and Android (both use procfs with ELF auxv format).
+/// Batch extraction of aarch64 features from `AT_HWCAP` and `AT_HWCAP2`.
 #[cfg(all(
   target_arch = "aarch64",
   feature = "std",
   any(target_os = "linux", target_os = "android")
 ))]
 fn hwcap_batch_aarch64() -> Caps {
-  use std::{fs::File, io::Read};
-
   use crate::platform::caps::aarch64;
-
-  // ELF auxiliary vector entry types
-  const AT_HWCAP: u64 = 16;
-  const AT_HWCAP2: u64 = 26;
 
   // HWCAP bit positions (from linux/arch/arm64/include/uapi/asm/hwcap.h)
   const HWCAP_AES: u64 = 1 << 3;
@@ -85,34 +74,7 @@ fn hwcap_batch_aarch64() -> Caps {
   const HWCAP2_SVE_B16B16: u64 = 1 << 45;
   const HWCAP2_LSE128: u64 = 1 << 47;
 
-  // Read /proc/self/auxv - format is pairs of (type: u64, value: u64)
-  let (hwcap, hwcap2) = (|| -> Option<(u64, u64)> {
-    let mut file = File::open("/proc/self/auxv").ok()?;
-    let mut buf = [0u8; 4096]; // Auxiliary vector is small
-    let n = file.read(&mut buf).ok()?;
-
-    let mut hwcap = 0u64;
-    let mut hwcap2 = 0u64;
-
-    // Parse as array of (u64, u64) pairs
-    let entries = buf.get(..n)?;
-    let (entries, _) = entries.as_chunks::<16>();
-    for chunk in entries {
-      let a_type = u64::from_ne_bytes(chunk.get(0..8)?.try_into().ok()?);
-      let a_val = u64::from_ne_bytes(chunk.get(8..16)?.try_into().ok()?);
-
-      if a_type == AT_HWCAP {
-        hwcap = a_val;
-      } else if a_type == AT_HWCAP2 {
-        hwcap2 = a_val;
-      } else if a_type == 0 {
-        // AT_NULL terminates the vector
-        break;
-      }
-    }
-    Some((hwcap, hwcap2))
-  })()
-  .unwrap_or((0, 0));
+  let (hwcap, hwcap2) = linux_hwcaps();
 
   let mut caps = Caps::NONE;
 
@@ -261,7 +223,7 @@ fn hwcap_batch_aarch64() -> Caps {
   caps
 }
 
-/// Runtime aarch64 detection for Linux/Android (batch HWCAP from /proc/self/auxv).
+/// Runtime aarch64 detection for Linux/Android (batch HWCAP from `getauxval`).
 #[cfg(all(
   target_arch = "aarch64",
   feature = "std",
@@ -271,11 +233,81 @@ fn runtime_aarch64() -> Caps {
   hwcap_batch_aarch64()
 }
 
-/// Runtime aarch64 detection for other platforms (fallback to macro calls).
+/// Runtime aarch64 detection for Apple platforms from `hw.optional` sysctl keys.
+///
+/// The keys and their combinations are those of `std::arch::is_aarch64_feature_detected!` on
+/// Darwin: its `aes` and `pmull` each need both FEAT_AES and FEAT_PMULL, `sha2` needs FEAT_SHA1,
+/// FEAT_SHA256, and AdvSIMD, and `sha3` needs FEAT_SHA512, FEAT_SHA3, and AdvSIMD. Darwin reports
+/// no SVE, SM4, or RNDR. Apple-specific SME keys follow.
 #[cfg(all(
   target_arch = "aarch64",
   feature = "std",
-  not(any(target_os = "linux", target_os = "android"))
+  any(target_os = "macos", target_os = "ios", target_os = "tvos", target_os = "watchos")
+))]
+fn runtime_aarch64() -> Caps {
+  use crate::platform::caps::aarch64;
+
+  let flag = apple_sysctl_flag;
+  let asimd = flag(c"hw.optional.AdvSIMD") || flag(c"hw.optional.arm.AdvSIMD");
+  let mut caps = Caps::NONE;
+
+  // ─── Crypto Extensions ───
+  if flag(c"hw.optional.arm.FEAT_AES") && flag(c"hw.optional.arm.FEAT_PMULL") {
+    caps |= aarch64::AES | aarch64::PMULL;
+  }
+  if asimd && flag(c"hw.optional.arm.FEAT_SHA1") && flag(c"hw.optional.arm.FEAT_SHA256") {
+    caps |= aarch64::SHA2;
+  }
+  if asimd && flag(c"hw.optional.arm.FEAT_SHA512") && flag(c"hw.optional.arm.FEAT_SHA3") {
+    caps |= aarch64::SHA3 | aarch64::SHA512;
+  }
+
+  // ─── CRC Extension ───
+  if flag(c"hw.optional.armv8_crc32") || flag(c"hw.optional.arm.FEAT_CRC32") {
+    caps |= aarch64::CRC;
+  }
+
+  // ─── Additional SIMD ───
+  for (key, cap) in [
+    (c"hw.optional.arm.FEAT_DotProd", aarch64::DOTPROD),
+    (c"hw.optional.arm.FEAT_FP16", aarch64::FP16),
+    (c"hw.optional.arm.FEAT_I8MM", aarch64::I8MM),
+    (c"hw.optional.arm.FEAT_BF16", aarch64::BF16),
+    (c"hw.optional.arm.FEAT_FRINTTS", aarch64::FRINTTS),
+    // ─── Atomics ───
+    (c"hw.optional.arm.FEAT_LSE", aarch64::LSE),
+    (c"hw.optional.arm.FEAT_LSE2", aarch64::LSE2),
+  ] {
+    if flag(key) {
+      caps |= cap;
+    }
+  }
+
+  // ─── Memory Operations ───
+  // Darwin exposes no MOPS key; compile-time detection carries it.
+  #[cfg(target_feature = "mops")]
+  {
+    caps |= aarch64::MOPS;
+  }
+
+  // ─── SME ───
+  caps |= detect_apple_sme_features();
+
+  caps
+}
+
+/// Runtime aarch64 detection for other platforms (Windows, the BSDs) through the standard library.
+#[cfg(all(
+  target_arch = "aarch64",
+  feature = "std",
+  not(any(
+    target_os = "linux",
+    target_os = "android",
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "tvos",
+    target_os = "watchos"
+  ))
 ))]
 fn runtime_aarch64() -> Caps {
   use crate::platform::caps::aarch64;
@@ -338,9 +370,8 @@ fn runtime_aarch64() -> Caps {
   }
 
   // ─── Memory Operations ───
-  // MOPS is detected on Linux via HWCAP2 in hwcap_batch_aarch64()
-  // On other platforms, compile-time detection via target_feature is used
-  #[cfg(all(target_feature = "mops", not(any(target_os = "linux", target_os = "android"))))]
+  // Compile-time detection carries MOPS on these platforms.
+  #[cfg(target_feature = "mops")]
   {
     caps |= aarch64::MOPS;
   }
@@ -350,29 +381,102 @@ fn runtime_aarch64() -> Caps {
     caps |= aarch64::RNG;
   }
 
-  // ─── SME Detection ───
-  // On macOS and other Apple platforms, use sysctl for comprehensive SME detection.
-  // std::arch::is_aarch64_feature_detected doesn't currently detect SME reliably
-  // on macOS, so we use platform-specific detection.
+  caps
+}
+
+/// Whether the Apple `sysctl` key `name` reads as a nonzero 32-bit value. A missing key is false.
+#[cfg(all(
+  target_arch = "aarch64",
+  feature = "std",
+  any(target_os = "macos", target_os = "ios", target_os = "tvos", target_os = "watchos")
+))]
+fn apple_sysctl_flag(name: &core::ffi::CStr) -> bool {
+  // libSystem, always linked on Apple platforms, exports `sysctlbyname(3)` with this C signature.
+  unsafe extern "C" {
+    fn sysctlbyname(
+      name: *const core::ffi::c_char,
+      oldp: *mut core::ffi::c_void,
+      oldlenp: *mut usize,
+      newp: *const core::ffi::c_void,
+      newlen: usize,
+    ) -> core::ffi::c_int;
+  }
+
+  let mut value: u32 = 0;
+  let mut size = core::mem::size_of::<u32>();
+  // SAFETY: `sysctlbyname` call because:
+  // 1. `name` is a NUL-terminated `CStr` that outlives the call.
+  // 2. `oldp` and `oldlenp` point to a live, initialized `u32` and its exact byte size; the kernel
+  //    writes at most `*oldlenp` bytes and updates the length.
+  // 3. A null `newp` with zero `newlen` requests a read only.
+  let status = unsafe {
+    sysctlbyname(
+      name.as_ptr(),
+      core::ptr::addr_of_mut!(value).cast(),
+      core::ptr::addr_of_mut!(size),
+      core::ptr::null(),
+      0,
+    )
+  };
+  status == 0 && value != 0
+}
+
+/// Whether the CPU implements FEAT_DIT (data-independent timing), probed once per process.
+///
+/// The `DataIndependentTiming` guard reads this. It ignores capability overrides and
+/// `portable-only`: DIT is a timing mitigation, not a backend choice. Racing first callers each
+/// run the same idempotent probe, so a relaxed byte is the whole cache.
+#[cfg(all(target_arch = "aarch64", feature = "std", not(miri)))]
+pub(crate) fn dit_supported() -> bool {
+  use core::sync::atomic::{AtomicU8, Ordering};
+
+  const UNKNOWN: u8 = 0;
+  const ABSENT: u8 = 1;
+  const PRESENT: u8 = 2;
+  static STATE: AtomicU8 = AtomicU8::new(UNKNOWN);
+
+  match STATE.load(Ordering::Relaxed) {
+    PRESENT => true,
+    ABSENT => false,
+    _ => {
+      let present = probe_dit();
+      STATE.store(if present { PRESENT } else { ABSENT }, Ordering::Relaxed);
+      present
+    }
+  }
+}
+
+/// FEAT_DIT from the same sources as `std::arch::is_aarch64_feature_detected!("dit")`.
+#[cfg(all(target_arch = "aarch64", feature = "std", not(miri)))]
+#[cold]
+fn probe_dit() -> bool {
+  if cfg!(target_feature = "dit") {
+    return true;
+  }
+
+  #[cfg(any(target_os = "linux", target_os = "android"))]
+  {
+    // linux/arch/arm64/include/uapi/asm/hwcap.h
+    const HWCAP_DIT: u64 = 1 << 24;
+    linux_hwcaps().0 & HWCAP_DIT != 0
+  }
+
   #[cfg(any(target_os = "macos", target_os = "ios", target_os = "tvos", target_os = "watchos"))]
   {
-    caps |= detect_apple_sme_features();
+    apple_sysctl_flag(c"hw.optional.arm.FEAT_DIT")
   }
 
-  // For Linux (non-Apple), fall back to is_aarch64_feature_detected for SME.
-  // Note: SME detection via std::arch is only stable on Linux; Windows ARM64 requires
-  // unstable `stdarch_aarch64_feature_detection` feature which we avoid.
-  #[cfg(target_os = "linux")]
+  #[cfg(not(any(
+    target_os = "linux",
+    target_os = "android",
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "tvos",
+    target_os = "watchos"
+  )))]
   {
-    if std::arch::is_aarch64_feature_detected!("sme") {
-      caps |= aarch64::SME;
-    }
-    if std::arch::is_aarch64_feature_detected!("sme2") {
-      caps |= aarch64::SME2;
-    }
+    std::arch::is_aarch64_feature_detected!("dit")
   }
-
-  caps
 }
 
 // Apple Silicon Detection (macOS/iOS)
@@ -467,12 +571,12 @@ fn detect_apple_silicon_gen() -> Option<AppleSiliconGen> {
   // The function signature matches Apple's sysctlbyname(3).
   unsafe extern "C" {
     fn sysctlbyname(
-      name: *const u8,
+      name: *const core::ffi::c_char,
       oldp: *mut core::ffi::c_void,
       oldlenp: *mut usize,
       newp: *const core::ffi::c_void,
       newlen: usize,
-    ) -> i32;
+    ) -> core::ffi::c_int;
   }
 
   let mut cpufamily: u32 = 0;
@@ -483,7 +587,7 @@ fn detect_apple_silicon_gen() -> Option<AppleSiliconGen> {
   // The output buffer is properly sized for u32.
   let ret = unsafe {
     sysctlbyname(
-      c"hw.cpufamily".as_ptr().cast(),
+      c"hw.cpufamily".as_ptr(),
       core::ptr::addr_of_mut!(cpufamily).cast(),
       core::ptr::addr_of_mut!(size),
       core::ptr::null(),
@@ -551,62 +655,30 @@ pub(crate) fn detect_aarch64_tune_family() -> Option<Aarch64TuneFamily> {
 fn detect_apple_sme_features() -> Caps {
   use crate::platform::caps::aarch64;
 
-  // Helper to read a u32 sysctl value (returns 0 on error or false, 1 on true)
-  fn sysctl_u32(name: &[u8]) -> u32 {
-    // Direct extern "C" linkage to libSystem's sysctlbyname
-    unsafe extern "C" {
-      fn sysctlbyname(
-        name: *const u8,
-        oldp: *mut core::ffi::c_void,
-        oldlenp: *mut usize,
-        newp: *const core::ffi::c_void,
-        newlen: usize,
-      ) -> i32;
-    }
-
-    let mut value: u32 = 0;
-    let mut size = core::mem::size_of::<u32>();
-
-    // SAFETY: sysctlbyname is safe to call with valid pointers.
-    // name is a valid null-terminated C string.
-    // The output buffer is properly sized for u32.
-    let ret = unsafe {
-      sysctlbyname(
-        name.as_ptr(),
-        core::ptr::addr_of_mut!(value).cast(),
-        core::ptr::addr_of_mut!(size),
-        core::ptr::null(),
-        0,
-      )
-    };
-
-    if ret == 0 { value } else { 0 }
-  }
-
   let mut caps = Caps::NONE;
 
   // ─── SME Base and Versions ───
-  if sysctl_u32(c"hw.optional.arm.FEAT_SME".to_bytes_with_nul()) != 0 {
+  if apple_sysctl_flag(c"hw.optional.arm.FEAT_SME") {
     caps |= aarch64::SME;
   }
-  if sysctl_u32(c"hw.optional.arm.FEAT_SME2".to_bytes_with_nul()) != 0 {
+  if apple_sysctl_flag(c"hw.optional.arm.FEAT_SME2") {
     caps |= aarch64::SME2;
   }
-  if sysctl_u32(c"hw.optional.arm.FEAT_SME2p1".to_bytes_with_nul()) != 0 {
+  if apple_sysctl_flag(c"hw.optional.arm.FEAT_SME2p1") {
     caps |= aarch64::SME2P1;
   }
 
   // ─── SME Extended Features ───
-  if sysctl_u32(c"hw.optional.arm.FEAT_SME_I16I64".to_bytes_with_nul()) != 0 {
+  if apple_sysctl_flag(c"hw.optional.arm.FEAT_SME_I16I64") {
     caps |= aarch64::SME_I16I64;
   }
-  if sysctl_u32(c"hw.optional.arm.FEAT_SME_F64F64".to_bytes_with_nul()) != 0 {
+  if apple_sysctl_flag(c"hw.optional.arm.FEAT_SME_F64F64") {
     caps |= aarch64::SME_F64F64;
   }
-  if sysctl_u32(c"hw.optional.arm.FEAT_SME_B16B16".to_bytes_with_nul()) != 0 {
+  if apple_sysctl_flag(c"hw.optional.arm.FEAT_SME_B16B16") {
     caps |= aarch64::SME_B16B16;
   }
-  if sysctl_u32(c"hw.optional.arm.FEAT_SME_F16F16".to_bytes_with_nul()) != 0 {
+  if apple_sysctl_flag(c"hw.optional.arm.FEAT_SME_F16F16") {
     caps |= aarch64::SME_F16F16;
   }
 

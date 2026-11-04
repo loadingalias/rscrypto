@@ -467,7 +467,7 @@ impl DataIndependentTiming {
   fn supported() -> bool {
     #[cfg(feature = "std")]
     {
-      std::arch::is_aarch64_feature_detected!("dit")
+      crate::platform::detect::dit_supported()
     }
     #[cfg(not(feature = "std"))]
     {

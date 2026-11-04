@@ -142,6 +142,7 @@ case "$MIRI_SCOPE" in
 
     run_miri_lib_filter "portable dispatch and checksum shadow invariants" "miri_shadow_tests"
     run_miri_lib_filter "platform detection under Miri" "platform::detect::tests::test_miri_returns_portable"
+    run_miri_lib_filter "detection cache publication and panic recovery under Miri" "platform::detect::tests::cache_"
     run_miri_lib_filter "X25519 portable path under Miri" "auth::x25519::tests::miri_uses_portable_x25519_path"
     run_miri_lib_filter "P-256 ECDH portable path under Miri" \
       "auth::p256_ecdh::tests::miri_uses_portable_p256_ecdh_path"

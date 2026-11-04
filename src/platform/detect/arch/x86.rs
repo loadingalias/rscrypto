@@ -581,6 +581,7 @@ fn decode_cpuid_x86_64(snapshot: CpuidSnapshot) -> CpuidBatch {
 ///
 /// `RSCRYPTO_FORCE_AVX512=1` enables AVX-512 on hybrid Intel CPUs.
 #[cfg(all(target_arch = "x86_64", feature = "std"))]
+#[inline(never)] // The stack review declares this std environment read as one edge.
 fn hybrid_avx512_override() -> bool {
   let value = std::env::var("RSCRYPTO_FORCE_AVX512").ok();
   parse_hybrid_avx512_override(value.as_deref())
