@@ -43,7 +43,7 @@ def main():
         with tarfile.open(archive) as source:
             source.extractall(directory, filter='data')
         package = directory / name
-        for required in ('Cargo.toml', 'src/lib.rs', 'LICENSE-APACHE', 'LICENSE-MIT', 'README.md'):
+        for required in ('Cargo.toml', 'src/lib.rs', 'LICENSE', 'README.md'):
             if not (package / required).is_file():
                 raise SystemExit('package missing ' + required)
         (output / 'contents.txt').write_text('\n'.join(sorted(str(p.relative_to(package)) for p in package.rglob('*') if p.is_file())) + '\n')

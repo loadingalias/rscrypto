@@ -5,7 +5,7 @@ version = "0.12.0"
 edition = "2024"
 rust-version = "1.100.0"
 autobenches = false
-license = "MIT OR Apache-2.0"
+license = "Apache-2.0"
 authors = ["loadingalias"]
 repository = "https://github.com/loadingalias/rscrypto"
 documentation = "https://docs.rs/rscrypto"
@@ -14,8 +14,7 @@ keywords = ["cryptography", "no-std", "aead", "blake3", "simd"]
 categories = ["cryptography", "no-std", "algorithms", "hardware-support", "embedded"]
 include = [
   "/Cargo.toml",
-  "/LICENSE-APACHE",
-  "/LICENSE-MIT",
+  "/LICENSE",
   "/README.md",
   "/SECURITY.md",
   "/THREAT_MODEL.md",

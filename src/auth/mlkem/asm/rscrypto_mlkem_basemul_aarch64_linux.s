@@ -1,5 +1,5 @@
 // Copyright (c) 2026 rscrypto contributors
-// SPDX-License-Identifier: Apache-2.0 OR MIT
+// SPDX-License-Identifier: Apache-2.0
 //
 // rscrypto-owned aarch64 ML-KEM base-multiply accumulate kernels.
 //

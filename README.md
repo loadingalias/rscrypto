@@ -3,7 +3,7 @@
 [![Crates.io](https://img.shields.io/crates/v/rscrypto.svg)](https://crates.io/crates/rscrypto)
 [![Docs.rs](https://docs.rs/rscrypto/badge.svg)](https://docs.rs/rscrypto)
 [![MSRV 1.100.0](https://img.shields.io/badge/MSRV-1.100.0-blue)](Cargo.toml)
-[![License: MIT OR Apache-2.0](https://img.shields.io/crates/l/rscrypto)](#license)
+[![License: Apache-2.0](https://img.shields.io/crates/l/rscrypto)](#license)
 
 `rscrypto` is a Rust library of cryptographic primitives, hashes, password hashing, random generation, and checksums.
 One feature model controls all of them.
@@ -221,4 +221,4 @@ Read [`CONTRIBUTING.md`](CONTRIBUTING.md) before you change code.
 
 ## License
 
-Dual-licensed under [Apache-2.0](LICENSE-APACHE) or [MIT](LICENSE-MIT), at your option.
+Licensed under [Apache-2.0](LICENSE).

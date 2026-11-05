@@ -1,5 +1,5 @@
 // Copyright (c) 2026 rscrypto contributors
-// SPDX-License-Identifier: Apache-2.0 OR MIT
+// SPDX-License-Identifier: Apache-2.0
 //
 // rscrypto-owned macOS AArch64 RSA Montgomery CIOS kernels.
 // Provenance: introduced in rscrypto local history by commit 218d15c for the

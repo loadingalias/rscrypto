@@ -1,5 +1,5 @@
 // Copyright (c) 2026 rscrypto contributors
-// SPDX-License-Identifier: Apache-2.0 OR MIT
+// SPDX-License-Identifier: Apache-2.0
 //
 // rscrypto-owned Linux AArch64 SVE2-SHA3 Keccak-f[1600] x4 kernel.
 // Provenance: introduced in rscrypto local history by commit 315cc93 for the

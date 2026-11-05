@@ -1,5 +1,5 @@
 // Copyright (c) 2026 rscrypto contributors
-// SPDX-License-Identifier: Apache-2.0 OR MIT
+// SPDX-License-Identifier: Apache-2.0
 //
 // rscrypto-owned AArch64 AES-GCM fused CTR/GHASH kernels.
 // Provenance: introduced in rscrypto local history by commit 11ebc4a for the

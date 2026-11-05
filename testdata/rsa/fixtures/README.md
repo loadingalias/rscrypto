@@ -1,7 +1,7 @@
 # RSA verification fixtures
 
 These nine project-generated fixtures were introduced on 2026-05-22 in rscrypto commit `e2996405`.
-They are covered by rscrypto's `MIT OR Apache-2.0` license and have no external retrieval source.
+They are covered by rscrypto's `Apache-2.0` license and have no external retrieval source.
 Each SPKI contains an RSA public key with public exponent 65537.
 The corresponding signatures cover `b"rscrypto RSA-PSS verification fixture"` and `b"rscrypto RSA-PKCS1-v1_5 verification fixture"` with SHA-256.
 
