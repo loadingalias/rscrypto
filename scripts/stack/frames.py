@@ -9,7 +9,9 @@ Frames come from the compiler's `.stack_sizes` records (`-Z emit-stack-sizes`).
 On x86-64 and AArch64, code without a record, such as hand-written assembly,
 gets a frame derived from its instructions when every stack-pointer change is
 provably bounded (see `assembly_region`); each derived frame is listed as an
-assumption. Calls come from the linked disassembly and are resolved by address.
+assumption. Calls come from the linked disassembly and are resolved by address;
+a checked jump table whose entries stay inside its function is resolved too
+(see `resolve_jump_tables`).
 A path is unbounded when it reaches a function without a frame record or a
 derivable frame, an indirect transfer, an unresolved external target, or
 recursion. Unbounded paths and
@@ -33,6 +35,7 @@ import os
 import platform
 import re
 import shutil
+import struct
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -161,7 +164,7 @@ ANNOTATION = re.compile(r"\s*<([^>]+)>\s*$")
 
 @dataclass
 class Edge:
-  kind: str  # call, tail, import, import-tail, indirect, external
+  kind: str  # call, tail, import, import-tail, indirect, external, jump-table
   source: int
   target: int | None = None
   name: str | None = None
@@ -745,6 +748,232 @@ def assembly_region(program: Program, function: Function) -> AssemblyRegion | No
   return AssemblyRegion(frame, frozenset(members), note)
 
 
+class ElfImage:
+  """The file-backed bytes of an ELF64 executable's loadable segments, by virtual address."""
+
+  def __init__(self, data: bytes) -> None:
+    if data[:4] != b"\x7fELF" or data[4] != 2:
+      raise ValueError("expected an ELF64 file")
+    self.data = data
+    self.endian = "<" if data[5] == 1 else ">"
+    phoff, = struct.unpack_from(self.endian + "Q", data, 0x20)
+    phentsize, phnum = struct.unpack_from(self.endian + "HH", data, 0x36)
+    self.segments = []
+    for index in range(phnum):
+      kind, _, offset, vaddr, _, filesz = struct.unpack_from(self.endian + "IIQQQQ", data, phoff + index * phentsize)
+      if kind == 1:  # PT_LOAD
+        self.segments.append((vaddr, offset, filesz))
+
+  def int32(self, address: int) -> int | None:
+    """The signed 32-bit value stored at `address`, or None outside file-backed memory."""
+    for vaddr, offset, filesz in self.segments:
+      if vaddr <= address and address + 4 <= vaddr + filesz:
+        return struct.unpack_from(self.endian + "i", self.data, offset + address - vaddr)[0]
+    return None
+
+
+# Symbolic values while following a jump-table sequence; i is the checked index, 0 <= i <= bound.
+#   ("const", c)                 c
+#   ("index", scale, bound)      scale * i
+#   ("entry", base, scale, bound) the signed 32-bit table entry at base + scale * i
+#   ("target", origin, entry)    origin + entry
+JUMP_TABLE_STEPS = 12
+RISCV_STORES = {"sd", "sw", "sh", "sb", "fsd", "fsw", "c.sd", "c.sw", "c.sdsp", "c.swsp", "c.fsd", "c.fsdsp"}
+
+
+def x86_jump_table_step(state: dict, mnemonic: str, operands: str) -> bool:
+  """Apply one x86-64 instruction of a jump-table sequence; False if it is not one."""
+  parts = x86_operands(operands)
+  if mnemonic in {"movq", "movl", "movw", "movb"} and len(parts) == 2 and parts[1].endswith(")"):
+    return True  # a store writes no register
+  if mnemonic == "leaq" and len(parts) == 2 and parts[0].endswith("(%rip)"):
+    annotated = re.search(r"#\s+0x([0-9a-f]+)", operands)
+    if annotated is None:
+      return False
+    state[parts[1]] = ("const", int(annotated.group(1), 16))
+    return True
+  memory = re.fullmatch(r"\((%\w+),(%\w+),4\)", parts[0]) if mnemonic == "movslq" and len(parts) == 2 else None
+  if memory is not None:
+    base, index = state.get(memory.group(1)), state.get(memory.group(2))
+    if base is None or base[0] != "const" or index is None or index[0] != "index" or index[1] != 1:
+      return False
+    state[parts[1]] = ("entry", base[1], 4, index[2])
+    return True
+  if mnemonic == "addq" and len(parts) == 2 and parts[0].startswith("%"):
+    return add_symbolic(state, parts[1], state.get(parts[0]), state.get(parts[1]))
+  return False
+
+
+def s390x_jump_table_step(state: dict, mnemonic: str, operands: str) -> bool:
+  """Apply one IBM Z instruction of a jump-table sequence; False if it is not one."""
+  parts = [part.strip() for part in ANNOTATION.sub("", operands).split(",")]
+  if mnemonic in {"stg", "st", "sty", "stc", "sth", "std", "ste", "stmg"}:
+    return True
+  if mnemonic == "sllg" and len(parts) == 3 and re.fullmatch(r"\d+", parts[2]):
+    source = state.get(parts[1])
+    if source is None or source[0] != "index":
+      return False
+    state[parts[0]] = ("index", source[1] << int(parts[2]), source[2])
+    return True
+  if mnemonic == "larl" and len(parts) == 2 and (address := target_address(operands)) is not None:
+    state[parts[0]] = ("const", address)
+    return True
+  if mnemonic == "agf":
+    match = re.fullmatch(r"(%r\d+), 0\((%r\d+),(%r\d+)\)", ANNOTATION.sub("", operands).strip())
+    if match is None:
+      return False
+    destination, first, second = match.groups()
+    origin = state.get(destination)
+    values = [state.get(first), state.get(second)]
+    consts = [value for value in values if value is not None and value[0] == "const"]
+    indexes = [value for value in values if value is not None and value[0] == "index"]
+    if origin is None or origin[0] != "const" or len(consts) != 1 or len(indexes) != 1:
+      return False
+    state[destination] = ("target", origin[1], ("entry", consts[0][1], indexes[0][1], indexes[0][2]))
+    return True
+  return False
+
+
+def riscv_jump_table_step(state: dict, mnemonic: str, operands: str, address: int) -> bool:
+  """Apply one RISC-V instruction of a jump-table sequence; False if it is not one."""
+  parts = [part.strip() for part in ANNOTATION.sub("", operands).split(",")]
+  if mnemonic in RISCV_STORES:
+    return True
+  if mnemonic == "auipc" and len(parts) == 2:
+    value = int(parts[1], 0) & 0xFFFFF
+    value -= (value & 0x80000) << 1
+    state[parts[0]] = ("const", (address + (value << 12)) & ((1 << 64) - 1))
+    return True
+  if mnemonic in {"addi", "c.addi"} and len(parts) == 3:
+    source = state.get(parts[1])
+    if source is None or source[0] != "const":
+      return False
+    state[parts[0]] = ("const", (source[1] + int(parts[2], 0)) & ((1 << 64) - 1))
+    return True
+  if mnemonic in {"slli", "c.slli"} and len(parts) == 3:
+    source = state.get(parts[1])
+    if source is None or source[0] != "index":
+      return False
+    state[parts[0]] = ("index", source[1] << int(parts[2], 0), source[2])
+    return True
+  if mnemonic in {"add", "c.add"} and len(parts) == 3:
+    return add_symbolic(state, parts[0], state.get(parts[1]), state.get(parts[2]))
+  if mnemonic in {"lw", "c.lw"} and len(parts) == 2:
+    match = re.fullmatch(r"0x0\((\w+)\)|0\((\w+)\)", parts[1])
+    source = state.get(match.group(1) or match.group(2)) if match else None
+    if source is None or source[0] != "address":
+      return False
+    state[parts[0]] = ("entry", source[1], source[2], source[3])
+    return True
+  return False
+
+
+def add_symbolic(state: dict, destination: str, left: tuple | None, right: tuple | None) -> bool:
+  """`destination = left + right` for the sums a jump-table sequence forms."""
+  if left is None or right is None:
+    return False
+  pair = {left[0]: left, right[0]: right}
+  if set(pair) == {"const", "index"}:
+    state[destination] = ("address", pair["const"][1], pair["index"][1], pair["index"][2])
+  elif set(pair) == {"const", "entry"}:
+    state[destination] = ("target", pair["const"][1], pair["entry"])
+  else:
+    return False
+  return True
+
+
+def jump_table_bound(target: str, rows: list[tuple[int, str, str]], position: int) -> tuple[str, int] | None:
+  """The register and inclusive bound that the unsigned check at `rows[position]` proves on its fall-through."""
+  _, mnemonic, operands = rows[position]
+  if target.startswith("x86_64") and mnemonic == "ja" and position > 0:
+    previous = x86_operands(rows[position - 1][2])
+    if rows[position - 1][1] == "cmpq" and len(previous) == 2 and (bound := x86_immediate(previous[0])) is not None:
+      return (previous[1], bound) if bound >= 0 else None
+  if target.startswith("s390x") and mnemonic == "clgijh":
+    parts = [part.strip() for part in ANNOTATION.sub("", operands).split(",")]
+    if len(parts) == 3 and re.fullmatch(r"\d+", parts[1]):
+      return (parts[0], int(parts[1]))
+  if target.startswith("riscv") and mnemonic == "bltu":
+    parts = [part.strip() for part in ANNOTATION.sub("", operands).split(",")]
+    if len(parts) != 3:
+      return None
+    # The limit register's last write must be `li`; stores and branches only read their first operand.
+    for earlier in range(position - 1, max(position - 4, 0) - 1, -1):
+      earlier_mnemonic, earlier_parts = rows[earlier][1], [part.strip() for part in rows[earlier][2].split(",")]
+      if earlier_parts[0] != parts[0] or earlier_mnemonic in RISCV_STORES or earlier_mnemonic.startswith(("b", "c.b")):
+        continue
+      if earlier_mnemonic in {"li", "c.li"} and len(earlier_parts) == 2:
+        return (parts[1], int(earlier_parts[1], 0))
+      return None
+  return None
+
+
+def jump_table_targets(program: Program, image: ElfImage, function: Function, source: int) -> list[int] | None:
+  """Every destination of the register jump at `source`, if it is a checked relative jump table.
+
+  The jump must follow an unsigned bound check of an index register within a
+  few instructions. Between the check's fall-through and the jump, every
+  instruction must be a step of the table computation or a store, and no
+  branch may enter. Each entry for indexes 0 through the bound is read from
+  the linked image; the destinations are returned only when every entry is
+  readable.
+  """
+  rows = instruction_rows(function)
+  position = next((index for index, row in enumerate(rows) if row[0] == source), None)
+  if position is None:
+    return None
+  for check in range(position - 1, max(position - JUMP_TABLE_STEPS, 0) - 1, -1):
+    if (bound := jump_table_bound(program.target, rows, check)) is None:
+      continue
+    if any(rows[index][0] in program.branch_targets for index in range(check + 1, position + 1)):
+      return None
+    state: dict = {bound[0]: ("index", 1, bound[1])}
+    for address, mnemonic, operands in rows[check + 1:position]:
+      if program.target.startswith("x86_64"):
+        stepped = x86_jump_table_step(state, mnemonic, operands)
+      elif program.target.startswith("s390x"):
+        stepped = s390x_jump_table_step(state, mnemonic, operands)
+      else:
+        stepped = riscv_jump_table_step(state, mnemonic, operands, address)
+      if not stepped:
+        return None
+    _, mnemonic, operands = rows[position]
+    if program.target.startswith("x86_64"):
+      register = operands.strip().removeprefix("*")
+    elif program.target.startswith("s390x"):
+      register = operands.strip()
+    else:
+      register = ANNOTATION.sub("", operands).split(",")[-1].strip()
+    value = state.get(register)
+    if value is None or value[0] != "target":
+      return None
+    _, origin, (_, table, scale, limit) = value
+    targets = []
+    for index in range(limit + 1):
+      entry = image.int32(table + scale * index)
+      if entry is None:
+        return None
+      targets.append((origin + entry) & ((1 << 64) - 1))
+    return targets
+  return None
+
+
+def resolve_jump_tables(program: Program, image: ElfImage) -> None:
+  """Replace register jumps through checked jump tables that stay inside their function.
+
+  Such a jump moves only between instructions of a function whose frame and
+  calls the review already counts, so it is no longer an unresolved transfer.
+  Every other register jump stays indirect.
+  """
+  for function in program.functions.values():
+    for position, edge in enumerate(function.edges):
+      if edge.kind != "indirect" or function.frame is None:
+        continue
+      targets = jump_table_targets(program, image, function, edge.source)
+      if targets is not None and all(target in function.instruction_addresses for target in targets):
+        function.edges[position] = Edge("jump-table", edge.source, name=f"{len(targets)} entries")
+
+
 def parse_dynamic_symbols(text: str) -> dict[int, str | int]:
   """Map each GOT slot with a symbolic dynamic relocation to its import."""
   slots: dict[int, str | int] = {}
@@ -1026,6 +1255,9 @@ def depth_of(
             result.unbounded.append({"reason": "external", "path": [name, str(edge.name)], "address": hex(edge.source)})
           if DETECTION.search(str(edge.name)):
             result.detection.append([name, str(edge.name)])
+          continue
+        if edge.kind == "jump-table":
+          result.assumptions.add(f"{name}: jump table at {edge.source:#x}, {edge.name} inside the function")
           continue
         if edge.kind in {"indirect", "external"}:
           label = edge.name or (f"{edge.target:#x}" if edge.target is not None else "?")
@@ -1322,6 +1554,7 @@ def load(target: str, binary: Path, evidence: Path | None = None) -> Program:
   relocations = run("llvm-objdump", "-R", str(binary))
   imports = parse_dynamic_symbols(relocations)
   program = parse_disassembly(target, disassembly, symbols, sizes, imports)
+  resolve_jump_tables(program, ElfImage(binary.read_bytes()))
   if evidence is not None:
     for name, content in {"symbols.txt": mangled, "symbols-demangled.txt": demangled,
                           "stack-sizes.txt": stack_sizes, "disassembly.txt": disassembly,

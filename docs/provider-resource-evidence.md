@@ -200,11 +200,11 @@ with the number of roots that have one:
 
 | Linux target | ML-DSA signing (9 roots) | ML-KEM (12 roots) | AEAD records (6 roots) |
 | --- | ---: | ---: | ---: |
-| x86-64 GNU | 3 / 1, up to 21,688 / 16,584 B | 12 / 12, 33,976 / 33,880 B | 6 / 6, 8,888 / 8,504 B |
+| x86-64 GNU | 9 / 9, 59,112 / 58,552 B | 12 / 12, 33,976 / 33,880 B | 6 / 6, 8,888 / 8,504 B |
 | AArch64 GNU | 9 / 9, 59,392 / 58,720 B | 12 / 12, 38,256 / 36,688 B | 6 / 6, 8,624 / 8,624 B |
 | POWER64LE GNU | 9 / 9, 59,360 / 59,280 B | 12 / 12, 34,416 / 34,416 B | 6 / 6, 9,360 / 8,496 B |
-| IBM Z GNU | 2 / 1, up to 17,176 / 16,952 B | 12 / 12, 33,960 / 31,456 B | 6 / 6, 9,032 / 8,920 B |
-| RISC-V 64 GNU | 1 / 1, 16,720 / 16,720 B | 12 / 12, 31,728 / 31,728 B | 6 / 6, 8,384 / 8,384 B |
+| IBM Z GNU | 9 / 9, 59,080 / 59,080 B | 12 / 12, 33,960 / 31,456 B | 6 / 6, 9,032 / 8,920 B |
+| RISC-V 64 GNU | 9 / 9, 58,752 / 58,752 B | 12 / 12, 31,728 / 31,728 B | 6 / 6, 8,384 / 8,384 B |
 
 AEAD records call their kernels directly. The `polyval` multiplication, the
 Poly1305 block function, and the ChaCha20 keystream each test the cached
@@ -234,9 +234,17 @@ continuations, which jump back into the SSE routines. ELF-visible labels split
 the AArch64 ChaCha20-Poly1305 routines into 151 (seal) and 28 (open) symbols;
 their frames are 112 B and 80 B.
 
-The unresolved signing roots stop at register-indirect jumps in
-`mldsa::encoding::pack` and `unpack_raw`, which are compiler jump tables the
-tool does not yet resolve. Every ML-KEM root now has an owned bound: the tool
+Every signing and verification root has an owned bound on every target and
+configuration. On x86-64, IBM Z, and RISC-V, `mldsa::encoding::pack` and
+`unpack_raw` reach their width-specific packers through compiler jump tables.
+The tool reads each table from the linked image and resolves the register jump
+only when an unsigned bound check precedes it, every instruction in between is
+a table step or a store, no branch enters that span, and every entry for every
+checked index lands on an instruction of the same function. That function's
+frame record and calls already cover every destination; each resolved table is
+listed among the assumptions. Portable IBM Z signing and verification reach no
+declared edge, so they also have static whole-call bounds, up to 59,080 B for
+ML-DSA-87 deterministic signing. Every ML-KEM root now has an owned bound: the tool
 follows a GOT-loaded import through full-width copies into caller-saved
 registers, which calls and implicit register writers end.
 
@@ -256,7 +264,7 @@ instruction address. Regression fixtures cover missing frames, allocator
 cleanup, IFUNCs, branch joins, register clobbers, unlabelled IBM Z PLT entries,
 repeated assembly stack decrements, assembly frames shared across labels and
 jump continuations, x86-64 `rsp` save-slot reloads, data after a final return,
-declared-edge entry depths after calls and tail calls, register copies of held
+checked jump tables on x86-64, IBM Z, and RISC-V, declared-edge entry depths after calls and tail calls, register copies of held
 imports, detection without a declared edge, and allowance composition.
 
 The exact remaining proof needs are:

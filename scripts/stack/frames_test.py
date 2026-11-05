@@ -6,10 +6,12 @@ from __future__ import annotations
 import dataclasses
 import json
 import re
+import struct
 import tempfile
 from pathlib import Path
 
 from frames import (
+  ElfImage,
   PREPARATION_ROOTS,
   WHOLE_CALL_GROUPS,
   whole_call_roots,
@@ -20,6 +22,7 @@ from frames import (
   parse_stack_sizes,
   parse_symbols,
   review,
+  resolve_jump_tables,
   review_preparation,
 )
 
@@ -542,6 +545,92 @@ def test_aarch64_labels_split_one_routine() -> None:
   }, looping
 
 
+def elf_image(base: int, data: bytes, big_endian: bool = False) -> ElfImage:
+  """A minimal ELF64 image with one loadable segment holding `data` at `base`."""
+  order = ">" if big_endian else "<"
+  header = bytearray(64)
+  header[:6] = b"\x7fELF" + bytes([2, 2 if big_endian else 1])
+  struct.pack_into(order + "Q", header, 0x20, 64)
+  struct.pack_into(order + "HH", header, 0x36, 56, 1)
+  segment = struct.pack(order + "IIQQQQQQ", 1, 4, 120, base, base, len(data), len(data), 0x1000)
+  return ElfImage(bytes(header) + segment + data)
+
+
+def table(base: int, targets: list[int], big_endian: bool = False) -> ElfImage:
+  """A relative jump table at `base`: each entry is its destination minus `base`."""
+  order = ">" if big_endian else "<"
+  return elf_image(base, b"".join(struct.pack(order + "i", target - base) for target in targets), big_endian)
+
+
+def jump_table_call(target: str, functions: list[tuple[int, str, int | None, list[str]]], image: ElfImage) -> dict:
+  linked = program(target, functions)
+  resolve_jump_tables(linked, image)
+  return review_preparation(linked, ["prepare"])["whole_calls"][0]
+
+
+X86_JUMP_TABLE = [
+  "2000: cmpq $0x2, %rax", "2004: ja 0x2030", "200a: leaq 0x6ff0(%rip), %rcx # 0x9000",
+  "2011: movslq (%rcx,%rax,4), %rax", "2015: addq %rcx, %rax", "2018: movq %r8, 0x28(%rsp)",
+  "201d: jmpq *%rax", "2020: callq 0x3000", "2025: retq", "2028: retq", "2030: retq",
+]
+
+
+def test_x86_checked_jump_tables_stay_inside_their_function() -> None:
+  def call(body: list[str], targets: list[int] = [0x2020, 0x2028, 0x2030]) -> dict:
+    functions = [
+      (0x1000, "prepare", 32, ["1000: callq 0x2000", "1005: retq"]),
+      (0x2000, "rscrypto::fixture::pack", 64, body),
+      (0x3000, "rscrypto::fixture::leaf", 100, ["3000: retq"]),
+    ]
+    return jump_table_call("x86_64-unknown-linux-gnu", functions, table(0x9000, targets))
+
+  # Every entry of indexes 0 through 2 lands in the function, whose frame and call edge already count.
+  resolved = call(X86_JUMP_TABLE)
+  assert resolved["owned_bound_bytes"] == 8 + 32 + 8 + 64 + 8 + 100 + 128, resolved
+  assert "rscrypto::fixture::pack: jump table at 0x201d, 3 entries inside the function" in resolved["assumptions"]
+  refused = {
+    "an entry leaves the function": (X86_JUMP_TABLE, [0x2020, 0x3000, 0x2030]),
+    "the table is shorter than the bound": (X86_JUMP_TABLE, [0x2020, 0x2028]),
+    "no bound check precedes the table": ([line.replace("cmpq $0x2", "testq %rax,") for line in X86_JUMP_TABLE], None),
+    "a branch enters past the check": ([line.replace("2028: retq", "2028: jmp 0x2011") for line in X86_JUMP_TABLE], None),
+    "a register is rewritten": ([line.replace("movq %r8, 0x28(%rsp)", "movq %rdx, %rax") for line in X86_JUMP_TABLE], None),
+    "the table is outside the image": ([line.replace("# 0x9000", "# 0xa000") for line in X86_JUMP_TABLE], None),
+  }
+  for reason, (body, targets) in refused.items():
+    unknown = call(body, targets) if targets is not None else call(body)
+    assert unknown["owned_bound_bytes"] is None, (reason, unknown)
+    assert [(item["reason"], item["address"]) for item in unknown["owned_unresolved"]] == [("indirect", "0x201d")], (
+      reason, unknown)
+
+
+def test_s390x_and_riscv_checked_jump_tables() -> None:
+  s390x = [
+    (0x1000, "prepare", 160, ["1000: brasl %r14, 0x2000", "1006: br %r14"]),
+    (0x2000, "rscrypto::fixture::pack", 160, [
+      "2000: clgijh %r1, 1, 0x2040", "2006: sllg %r1, %r1, 2", "200c: larl %r4, 0x9000",
+      "2012: agf %r4, 0(%r1,%r4)", "2018: stg %r6, 184(%r15)", "201e: br %r4",
+      "2020: br %r14", "2030: br %r14", "2040: br %r14",
+    ]),
+  ]
+  call = jump_table_call("s390x-unknown-linux-gnu", s390x, table(0x9000, [0x2020, 0x2030], big_endian=True))
+  assert call["owned_bound_bytes"] == 160 + 160, call
+  # The `li` that sets the limit may come before an unrelated write; `auipc` + `addi` form the table base.
+  riscv = [
+    "2000: li a5, 0x1", "2002: addi a4, a1, -0x3", "2006: bltu a5, a4, 0x2040", "200a: auipc a5, 0x7",
+    "200e: slli a4, a4, 0x2", "2010: addi a5, a5, -0xa", "2014: add a4, a4, a5", "2016: lw a4, 0x0(a4)",
+    "2018: add a4, a4, a5", "201a: jr a4", "2020: ret", "2030: ret", "2040: ret",
+  ]
+
+  def riscv_call(body: list[str]) -> dict:
+    functions = [(0x1000, "prepare", 16, ["1000: jal 0x2000 <pack>", "1004: ret"]), (0x2000, "rscrypto::fixture::pack", 32, body)]
+    return jump_table_call("riscv64gc-unknown-linux-gnu", functions, table(0x9000, [0x2020, 0x2030]))
+
+  assert riscv_call(riscv)["owned_bound_bytes"] == 16 + 32, riscv_call(riscv)
+  # A later write to the limit register leaves the index unchecked.
+  clobbered = riscv_call([line.replace("2002: addi a4, a1, -0x3", "2002: mv a5, a1") for line in riscv])
+  assert [item["reason"] for item in clobbered["owned_unresolved"]] == ["indirect"], clobbered
+
+
 def test_s390x_unlabelled_plt_keeps_allocator_edges_separate() -> None:
   functions = [
     (0x1000, "prepare", 160, ["1000: brasl %r14, 0x2020", "1006: br %r14"]),
@@ -771,6 +860,8 @@ def main() -> None:
   test_x86_save_slot_assembly_frame()
   test_assembly_continuations_share_one_frame()
   test_aarch64_labels_split_one_routine()
+  test_x86_checked_jump_tables_stay_inside_their_function()
+  test_s390x_and_riscv_checked_jump_tables()
   test_s390x_unlabelled_plt_keeps_allocator_edges_separate()
   test_riscv_call_clobbers_an_auipc_temporary()
   test_declared_libc_edges_charge_only_the_call_site()

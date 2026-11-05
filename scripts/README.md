@@ -562,6 +562,12 @@ source hashes, compiler identity, and reports in a new directory.
   stack-pointer write, or an access below the stack pointer beyond the red zone leaves the frame
   unknown. Calls leave the region; jumps out of it are charged below its frame.
   Each derived frame appears in the report's assumptions.
+- On x86-64, IBM Z, and RISC-V, a register jump through a compiler jump table is resolved when an
+  unsigned bound check precedes it, every instruction in between is a table step or a store, no branch
+  enters that span, and every relative entry for every checked index, read from the linked image,
+  lands on an instruction of the same function. Its destinations then add nothing beyond that
+  function's frame and calls. Each resolved table appears in the report's assumptions; any other
+  register jump stays an indirect transfer.
 
 The review fails when:
 
