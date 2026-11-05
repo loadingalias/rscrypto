@@ -208,6 +208,14 @@ compact key instead, and each signature prepares a temporary prepared key with
 `prepare_in`. A prepared key clears its transformed secret polynomials and `K`
 when it drops, and its storage clears them again before deallocation; a failed
 signature leaves a retained prepared key unchanged.
+The composite ML-DSA loader imports a composite key by value, then by default
+prepares it once with `prepare_in` and drops the imported key, which clears its
+owners. The prepared composite key owns its `MlDsa65PreparedSecretKeyStorage`
+box and an explicit `duplicate_secret` copy of the Ed25519 or P-256 key; signers
+share it through `Arc` and return public signatures. With `sign::Provider::compact`,
+the loader boxes the imported key instead, and each signature prepares a
+temporary prepared key with `prepare_in`. Hedged signing draws its randomness
+into a zeroizing owner before any secret computation.
 `PreparedServerVerifier` and `PreparedClientVerifier` retain prepared P-256, P-384,
 and ML-DSA anchor keys; their storage is public. PKCS#8 input uses rustls-pki-types' borrowed or owned
 DER containers. `Provider::load_private_key` immediately wraps the input in
