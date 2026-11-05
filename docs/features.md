@@ -24,7 +24,7 @@ Umbrella features are convenient, but they make the build larger:
 | `crypto-hashes`    | SHA-2, SHA-3, BLAKE2, BLAKE3, and Ascon-Hash |
 | `fast-hashes`      | XXH3 and RapidHash |
 | `hashes`           | Cryptographic hashes and fast hashes |
-| `macs`             | HMAC-SHA-2, HMAC-SHA-3, KMAC, and Poly1305 |
+| `macs`             | HMAC-SHA-2, HMAC-SHA-3, KMAC, Poly1305, and SipHash |
 | `kdfs`             | HKDF and PBKDF2 |
 | `password-hashing` | Argon2, scrypt, and PHC password records |
 | `signatures`       | ECDSA, Ed25519, RSA, ML-DSA, SLH-DSA, and composite ML-DSA |

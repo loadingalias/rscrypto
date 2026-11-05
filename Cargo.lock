@@ -2641,6 +2641,7 @@ dependencies = [
  "sha2 0.11.1",
  "sha3 0.12.0",
  "shake",
+ "siphasher",
  "slh-dsa",
  "tiny-keccak",
  "twox-hash",
@@ -2984,6 +2985,12 @@ dependencies = [
  "digest 0.11.3",
  "rand_core 0.10.1",
 ]
+
+[[package]]
+name = "siphasher"
+version = "1.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "33f4fe9184a62d842c9ef383018f3306d8ba224fd9d836f56d7288308847c256"
 
 [[package]]
 name = "slab"

@@ -115,6 +115,7 @@
 //! - `mldsa` - ML-DSA-44/65/87 signatures and HashML-DSA prehash profiles (FIPS 204).
 //! - `mlkem` - ML-KEM typed key, ciphertext, and shared-secret foundations.
 //! - `poly1305` - Standalone Poly1305 one-time authenticator.
+//! - `siphash` - SipHash-1-3 and SipHash-2-4 keyed hashing for flood-resistant hash tables.
 //! - `rsa` - RSA key import/export/generation, signing, verification, OAEP, and legacy
 //!   RSAES-PKCS1-v1_5.
 //! - `scrypt` - scrypt password hashing (RFC 7914).
@@ -242,6 +243,8 @@ pub mod poly1305;
 pub mod rsa;
 #[cfg(feature = "scrypt")]
 pub mod scrypt;
+#[cfg(feature = "siphash")]
+pub mod siphash;
 #[cfg(feature = "slh-dsa")]
 pub mod slhdsa;
 #[cfg(feature = "x25519")]
@@ -472,6 +475,8 @@ pub use rsa::{diag_rsa_pair_mul_square_24, diag_rsa_private_select_window_power_
 pub use scrypt::{Scrypt, ScryptBlock, ScryptError, ScryptParams};
 #[cfg(all(feature = "scrypt", feature = "phc-strings"))]
 pub use scrypt::{ScryptPassword, ScryptVerificationLimits};
+#[cfg(feature = "siphash")]
+pub use siphash::{SipHash13, SipHash24, SipHashKey, SipRandomState};
 #[cfg(feature = "slh-dsa")]
 pub use slhdsa::{
   HashSlhDsaSha2_128fWithSha256, HashSlhDsaSha2_128fWithSha256PublicKey, HashSlhDsaSha2_128fWithSha256SecretKey,

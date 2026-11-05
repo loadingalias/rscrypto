@@ -68,7 +68,7 @@ X25519, ML-KEM, password hashing, and backend introspection.
 | Checksums | CRC-16, CRC-24, CRC-32, CRC-32C, CRC-64/XZ, CRC-64/NVMe | `checksums` or a leaf feature |
 | Cryptographic hashes | SHA-2, SHA-3, SHAKE, cSHAKE, BLAKE2, BLAKE3, Ascon-Hash/XOF/CXOF | `crypto-hashes` or a leaf feature |
 | Fast hashes | XXH3-64/128, RapidHash V3-64 | `fast-hashes` or a leaf feature |
-| MACs and KDFs | HMAC-SHA-2/SHA-3, KMAC128/256, Poly1305, HKDF-SHA-2, PBKDF2-HMAC-SHA-2 | `macs`, `kdfs`, or a leaf feature |
+| MACs and KDFs | HMAC-SHA-2/SHA-3, KMAC128/256, Poly1305, SipHash-1-3/2-4 (flood-resistant hash tables), HKDF-SHA-2, PBKDF2-HMAC-SHA-2 | `macs`, `kdfs`, or a leaf feature |
 | Password hashing | Argon2d/i/id, scrypt, bounded PHC password records | `password-hashing` or a leaf feature |
 | Signatures and RSA | ECDSA P-256/P-384, Ed25519, [ML-DSA-44/65/87](docs/mldsa.md), SLH-DSA (all 12 FIPS 205 sets, pure and HashSLH-DSA), composite ML-DSA-65 with Ed25519 or ECDSA P-256 (draft-ietf-lamps-pq-composite-sigs-19), RSA signing, verification, encryption, and key generation | `signatures` or a leaf feature |
 | Key exchange and KEMs | P-256 ECDH, P-384 ECDH, X25519, ML-KEM-512/768/1024 | `key-exchange` or a leaf feature |

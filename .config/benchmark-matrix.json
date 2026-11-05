@@ -38,6 +38,13 @@
       "required": true,
       "features": ["std", "poly1305"]
     },
+    "siphash": {
+      "binary": "siphash",
+      "kind": "criterion",
+      "family": "auth",
+      "required": true,
+      "features": ["std", "siphash"]
+    },
     "crc": {
       "binary": "crc",
       "kind": "criterion",
@@ -1070,6 +1077,20 @@
       "cases": "^poly1305/authenticate/(?P<implementation>[^/]+)/(?P<input>[0-9]+)$",
       "headline": true,
       "task": "Authenticate one message with a one-time key, including key setup and finalization."
+    },
+    "siphash13": {
+      "family": "SipHash",
+      "bench": "siphash",
+      "cases": "^siphash13/(?P<implementation>[^/]+)/(?P<input>[0-9]+)$",
+      "headline": true,
+      "task": "Hash one byte string with SipHash-1-3 under a fixed key, including key setup and finalization."
+    },
+    "siphash24": {
+      "family": "SipHash",
+      "bench": "siphash",
+      "cases": "^siphash24/(?P<implementation>[^/]+)/(?P<input>[0-9]+)$",
+      "headline": true,
+      "task": "Hash one byte string with SipHash-2-4 under a fixed key, including key setup and finalization."
     },
     "websocket-accept": {
       "family": "WebSocket SHA-1",

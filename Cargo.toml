@@ -175,6 +175,7 @@ hkdf = ["hmac"]
 pbkdf2 = ["hmac"]
 kmac = ["sha3"]
 poly1305 = []
+siphash = []
 ecdsa-p256 = ["hmac"]
 ecdsa-p384 = ["hmac"]
 ecdsa = ["ecdsa-p256", "ecdsa-p384"]
@@ -209,7 +210,7 @@ checksums = ["crc16", "crc24", "crc32", "crc64"]
 crypto-hashes = ["sha2", "sha3", "blake2b", "blake2s", "blake3", "ascon-hash"]
 fast-hashes = ["xxh3", "rapidhash"]
 hashes = ["crypto-hashes", "fast-hashes"]
-macs = ["hmac", "hmac-sha3", "kmac", "poly1305"]
+macs = ["hmac", "hmac-sha3", "kmac", "poly1305", "siphash"]
 kdfs = ["hkdf", "pbkdf2"]
 password-hashing = ["argon2", "scrypt", "phc-strings"]
 signatures = ["ecdsa", "ed25519", "rsa", "ml-dsa", "slh-dsa", "mldsa65-ed25519", "mldsa65-ecdsa-p256"]
@@ -292,6 +293,7 @@ hmac = "0.13.0"
 hkdf = "0.13.0"
 chacha20poly1305 = "0.11.0"
 poly1305 = "0.9.1"
+siphasher = "1.0.4"
 chacha20 = "0.10.2"
 aes-gcm = "0.11.1"
 aes-gcm-siv = "0.12.1"
@@ -518,6 +520,11 @@ required-features = ["xxh3"]
 name = "rapidhash"
 harness = false
 required-features = ["rapidhash"]
+
+[[bench]]
+name = "siphash"
+harness = false
+required-features = ["siphash"]
 
 [[bench]]
 name = "crc"

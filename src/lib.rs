@@ -357,6 +357,7 @@ pub mod aead;
   feature = "hkdf",
   feature = "kmac",
   feature = "poly1305",
+  feature = "siphash",
   feature = "ecdsa-p256",
   feature = "ecdsa-p384",
   feature = "ed25519",
@@ -545,6 +546,8 @@ pub use auth::{
 pub use auth::{Scrypt, ScryptBlock, ScryptError, ScryptParams};
 #[cfg(all(feature = "scrypt", feature = "phc-strings"))]
 pub use auth::{ScryptPassword, ScryptVerificationLimits};
+#[cfg(feature = "siphash")]
+pub use auth::{SipHash13, SipHash24, SipHashKey, SipRandomState};
 #[cfg(feature = "x25519")]
 pub use auth::{X25519Error, X25519PublicKey, X25519SecretKey, X25519SharedSecret};
 #[cfg(feature = "crc24")]
