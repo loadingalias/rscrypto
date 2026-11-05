@@ -224,9 +224,6 @@ erasure of every compiler-created copy, register, or spill.
 - The deterministic nonce is expanded into a clearing `ZeroizingBytes` buffer and reduced into
   a clearing `SecretScalar`. The private scalar and the two signing blinds are `SecretScalar`s,
   and the caller-filled blind buffer is a clearing `ZeroizingBytes`.
-- P-256/SHA-384 and P-384/SHA-256 signing (`try_sign_sha384`, `try_sign_sha256`, and their
-  blinded forms) add no owner: they derive their nonce into those owners under their own HMAC
-  domains, so a key never shares a nonce between its curve's hash and the other hash.
 - Message digests are public and are not cleared.
 
 ### ECDSA and Ed25519 key encodings
