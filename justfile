@@ -238,6 +238,7 @@ test-scripts:
     @scripts/lib/python.sh scripts/asm/rsa_pair_test.py
     @scripts/lib/python.sh scripts/stack/frames_test.py
     @scripts/lib/python.sh scripts/stack/residue_test.py
+    @scripts/lib/python.sh scripts/stack/painted_test.py
 
 # Exercise artifact transfer and the pinned rustdoc build/run contract.
 [group('tests')]
@@ -335,6 +336,16 @@ ci-stack *args:
 [group('secret-lifecycle')]
 stack-budgets *args:
     @scripts/lib/python.sh scripts/stack/frames.py --whole-calls all --all-configurations --write-budgets .config/stack-budgets.json "$@"
+
+# Measure the declared libc edges' stack use on this Linux GNU host on a painted stack.
+[group('secret-lifecycle')]
+stack-allowances *args:
+    @scripts/lib/python.sh scripts/stack/painted.py edges "$@"
+
+# Measure the provider TLS worker's painted-stack high-water mark for every scenario.
+[group('secret-lifecycle')]
+stack-worker *args:
+    @scripts/lib/python.sh scripts/stack/painted.py worker "$@"
 
 # Measure secret residue on QEMU boards or native ML-DSA signing stacks.
 [group('secret-lifecycle')]

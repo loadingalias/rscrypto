@@ -276,6 +276,12 @@ with Path(os.environ['TRANSFER_TEST_LOG']).open('a') as log:
     log.write(json.dumps([name,*args])+'\\n')
 if name=='cargo' and args==['nextest','--version']:
     print('cargo-nextest '+os.environ['TRANSFER_NEXTEST'])
+elif name=='cargo' and args[0]=='build':
+    release = Path(args[args.index('--target-dir')+1]) / args[args.index('--target')+1] / 'release'
+    release.mkdir(parents=True, exist_ok=True)
+    for binary in ('rscrypto-stack-edges', 'rscrypto-stack-worker'):
+        (release / binary).write_bytes(b'stack-paint fixture')
+        (release / binary).chmod(0o755)
 elif name=='cargo':
     internal = 'internal-' in args[args.index('--archive-file')+1]
     flags = os.environ.get('CARGO_ENCODED_RUSTFLAGS', '').split('\\x1f')
@@ -314,6 +320,13 @@ elif name.endswith('gcc'): print('gcc pinned fixture')
                 self.assertEqual([row[i + 1] for i, value in enumerate(row) if value == '--test'],
                     ['aead_kernel_equivalence', 'argon2_kernels', 'chacha20poly1305', 'rsa_public_key', 'pbkdf2_evidence'])
             self.assertIn('--all-features', builds[3])
+            # The painted-stack binaries travel in the same sealed bundle.
+            stack = [row for row in calls if row[:2] == ['cargo', 'build']]
+            self.assertEqual(len(stack), 2)
+            self.assertTrue(all('--locked' in row and '--release' in row and row[row.index('--target') + 1] == target
+                                and row[row.index('--manifest-path') + 1].endswith('tools/stack-paint/Cargo.toml')
+                                for row in stack))
+            self.assertEqual(['--features' in row for row in stack], [False, True])
             with patch.dict(os.environ, TRANSFER_FAIL='internal'):
                 failed = self.root / 'target/failed-internal.tar.gz'
                 with self.assertRaises(subprocess.CalledProcessError): cross.prepare(target, failed)

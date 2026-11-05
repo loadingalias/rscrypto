@@ -24,6 +24,9 @@ from workspace_features import native_features
 from evidence_suite import TARGET_ARGS, validate_backend_evidence
 
 MODES = ("native", "portable", "internal-native", "internal-portable")
+# Painted-stack measurements (scripts/stack/painted.py) run from the same bundle.
+STACK_PAINT = ROOT / 'tools/stack-paint'
+STACK_BINARIES = ('rscrypto-stack-edges', 'rscrypto-stack-worker')
 
 
 def features(mode):
@@ -85,6 +88,19 @@ def prepare(target, archive):
             subprocess.run(command, cwd=ROOT, env=mode_env, check=True)
             metadata['modes'][mode] = {'command': command, 'internal': internal,
                 'encoded_rustflags': mode_env.get('CARGO_ENCODED_RUSTFLAGS')}
+        metadata['stack_paint'] = {}
+        for configuration in ('native', 'portable'):
+            build_dir = ROOT / 'target/stack-paint' / configuration
+            command = ['cargo', 'build', '--locked', '--release', '--manifest-path', str(STACK_PAINT / 'Cargo.toml'),
+                       '--target', target, '--target-dir', str(build_dir)]
+            if configuration == 'portable':
+                command += ['--features', 'portable-only']
+            subprocess.run(command, cwd=ROOT, env=env, check=True)
+            destination = out / 'stack-paint' / configuration
+            destination.mkdir(parents=True)
+            for name in STACK_BINARIES:
+                shutil.copy2(build_dir / target / 'release' / name, destination / name)
+            metadata['stack_paint'][configuration] = {'command': command}
         bundle.seal(ROOT, out, 'rscrypto.cross.tests', target, identity, metadata)
         bundle.pack(out, archive, compression='xz')
 
@@ -125,12 +141,27 @@ def execute(target, archive):
         if internal:
             results[mode]['backend_evidence'] = validate_backend_evidence((out / f'{mode}-nextest.log').read_text(),
                 'portable-only' if mode.endswith('portable') else 'production-auto')
+    # Bundles that declare painted-stack binaries must measure them on this host.
+    stack = (stack_paint(target, incoming / 'stack-paint', out / 'stack-paint')
+             if 'stack_paint' in manifest['metadata'] else None)
     # Detect accidental changes to inputs throughout execution as well as before it.
     bundle.verify(ROOT, incoming, 'rscrypto.cross.tests', target)
     (out / 'summary.json').write_text(json.dumps({'status': 'pass', 'source': manifest['source'],
         'archive_sha256': bundle.digest(archive), 'host': platform.uname()._asdict(),
-        'nextest': version, 'modes': results}, indent=2) + '\n')
+        'nextest': version, 'modes': results, 'stack_paint': stack}, indent=2) + '\n')
     print(f'{target} ordinary and internal suites passed: {out}', flush=True)
+
+
+def stack_paint(target, binaries, output):
+    """Measure the declared libc edges and the TLS worker with the bundle's binaries."""
+    script = ROOT / 'scripts/stack/painted.py'
+    runs = [['edges', '--binary-dir', str(binaries / 'native')]]
+    runs += [['worker', '--binary-dir', str(binaries / configuration), *(['--portable'] if configuration == 'portable' else [])]
+             for configuration in ('native', 'portable')]
+    for arguments in runs:
+        command = [sys.executable, '-B', str(script), *arguments, '--target', target, '--output', str(output)]
+        subprocess.run(command, cwd=ROOT, check=True)
+    return {'status': 'pass', 'reports': sorted(path.name for path in output.glob('*.json'))}
 
 
 def main():

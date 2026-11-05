@@ -169,7 +169,7 @@ jobs:
             timeout: 30
           - platform: x86_64-win
             runner: runs-on=${{ github.run_id }}/runner=x86_64-win/env=production
-            timeout: 60
+            timeout: 75
     runs-on: ${{ matrix.runner }}
     timeout-minutes: ${{ matrix.timeout }}
     steps:
@@ -256,6 +256,8 @@ jobs:
           just test --all --release --portable
           if [[ "$PLATFORM" != x86_64-linux ]]; then just test-evidence; fi
           if [[ "$PLATFORM" == x86_64-linux || "$PLATFORM" == aarch64-linux ]]; then just test-musl; fi
+          just stack-allowances --output target/stack-paint/evidence
+          just stack-worker --all-configurations --output target/stack-paint/evidence
           git diff --exit-code HEAD
 
       - name: Download cross-compiled suites from this workflow run
@@ -327,8 +329,21 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           just test-evidence
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          just stack-worker --all-configurations --output target/stack-paint/evidence
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           git diff --exit-code HEAD
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Retain painted-stack measurements
+        if: >-
+          !cancelled() && (matrix.platform == 'x86_64-linux' || matrix.platform == 'aarch64-linux' ||
+          matrix.platform == 'x86_64-win')
+        uses: "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9" # v7.0.2
+        with:
+          name: stack-paint-${{ matrix.platform }}
+          path: target/stack-paint/evidence
+          if-no-files-found: warn
+          retention-days: 30
 
       - name: Collect compiler-cache measurements
         id: cache-record

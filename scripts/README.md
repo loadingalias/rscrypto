@@ -527,6 +527,7 @@ Release callers, and manual runs with no diagnostic input, keep the full require
 | ------------------ | ------ |
 | `stack/frames.py`  | `just stack-frames [--target TARGET]... [--portable \| --all-configurations] [--rustflags FLAGS] [--json PATH] [--evidence DIR] [--whole-calls GROUPS \| --mldsa-preparation] [--allowances FILE] [--budgets FILE] [--write-budgets FILE]`, `just ci-stack`, `just stack-budgets` |
 | `stack/residue.py` | `just stack-residue [--board BOARD]... [--backend native\|portable]... [--output DIR]` |
+| `stack/painted.py` | `just stack-allowances [--check [FILE]] [--output DIR]`, `just stack-worker [--all-configurations \| --portable] [--check [FILE]] [--output DIR]`, `scripts/test/cross.py` |
 
 ### Frame review
 
@@ -663,6 +664,48 @@ Assumptions and limits:
   identity need separate evidence.
 
 `stack/frames_test.py` (part of `just test-scripts`) checks the parsing and failure rules on synthetic disassembly for each architecture.
+
+### Painted stacks
+
+`stack/painted.py` measures native stack use on a painted, guarded private stack. It builds
+`tools/stack-paint` with the shipping release profile (fat LTO, one codegen unit, overflow checks,
+panic abort, no target CPU flags), once per dispatch configuration, unless `--binary-dir` names
+prebuilt binaries.
+
+- The library maps a private stack between two inaccessible 1 MiB guards, fills it with a paint byte,
+  and runs one call on it through a small assembly wrapper for each ABI: x86-64 System V and
+  Windows, AArch64 Linux and macOS, POWER ELFv2, IBM Z, and RISC-V. On Windows the wrapper also moves
+  the TEB stack bounds to the private stack for the call. After the call, the lowest byte that lost its
+  paint gives the high-water mark. A changed lowest 4 KiB stops the run.
+- `just stack-allowances [--check [FILE]] [--write FILE --evidence NOTE] [--output DIR]` runs on a
+  Linux GNU host. It calls each declared edge of the [preparation bounds](#preparation-bounds) through
+  the symbol the executable binds: memory functions over sizes 0 to 64 MiB, alignments, overlaps,
+  and equal or different inputs; `getauxval` for every type; and `malloc`, `calloc`, and `free` in
+  first calls on fresh threads, a pseudo-random workload across every bin size and the mmap threshold,
+  bulk release, frees of other threads' chunks, and failure returns. Every call alternates two paints.
+  The allowance is the deepest use below the entry stack pointer, rounded up to 16 bytes, plus the ABI
+  red zone, then 12.5% more, rounded up to 64 bytes. The report records the libc version and package,
+  the hash of the loaded `libc.so.6`, the kernel, the CPU, and the hardware capabilities, because the
+  loader's IFUNC selection depends on them.
+- `just stack-worker [--all-configurations | --portable] [--check [FILE]] [--write-budgets [FILE]]
+  [--output DIR] [--jobs N]` runs every scenario that `rscrypto-stack-worker --list` prints, each in a
+  fresh process, on an 8 MiB painted stack. One call builds both configurations and drives the
+  connections; a second call repeats the connections. Scenarios cover every credential, group, and
+  suite, mutual and server-only authentication, intermediate chains, resumption, HelloRetryRequest,
+  compact ML-DSA keys, TLS 1.2, and each recoverable failure: bad signatures, untrusted or expired
+  certificates, corrupt records, invalid key shares, failing entropy, foreign tickets, and no common
+  group or suite. A failure scenario that completes, or a success scenario that fails, fails the run.
+- `--check` compares the measurement with `.config/stack-allowances.json` or
+  `.config/stack-worker-budgets.json`. An edge fails when its measured allowance exceeds the committed
+  one; a different libc identity is reported, not failed. A worker configuration fails when any scenario
+  fails or the deepest scenario exceeds its budget: the measured high-water plus 12.5%, rounded up to
+  1 KiB. `painted.py record REPORT...` writes those files from saved reports.
+- CI runs both measurements on the x86-64 and AArch64 Linux rows and the worker on the Windows row,
+  and retains the reports. RISC-V, POWER, and IBM Z build the binaries in the cross-build job, seal them
+  in the test bundle, and measure them after the native suites. macOS is measured locally.
+
+These are measurements of the reached paths on the measured host, not static proofs of glibc, rustls,
+or every input. They do not cover signal handlers or caller frames outside the measured call.
 
 ### Residue measurement
 
