@@ -11,7 +11,7 @@ cargo-fuzz = true
 unexpected_cfgs = { level = "deny", check-cfg = ['cfg(fuzzing)', 'cfg(rscrypto_internal_fuzzing)'] }
 
 [dependencies]
-rscrypto-rustls = { path = "../rscrypto-rustls", default-features = false, features = ["quinn", "x25519", "ecdsa-p256", "getrandom"] }
+rscrypto-rustls = { path = "../rscrypto-rustls", default-features = false, features = ["aes-gcm", "hkdf", "x25519", "ecdsa-p256", "getrandom"] }
 libfuzzer-sys = "0.4.13"
 rscrypto_fuzz = { package = "rscrypto-fuzz-support", path = "support", features = [
   "aead",

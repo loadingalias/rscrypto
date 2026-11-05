@@ -156,16 +156,6 @@ ci-provider:
 test-provider-interop *args:
     @scripts/lib/python.sh scripts/test/provider_interop.py "$@"
 
-# Exercise QUIC v1 with the pinned C-free quic-go peer and retain packet traces.
-[group('tests')]
-test-provider-quic *args:
-    @scripts/lib/python.sh scripts/test/provider_quic.py "$@"
-
-# Run the pinned QUIC Interop Runner in local Docker; each campaign has a ten-minute cap.
-[group('tests')]
-test-provider-quic-runner *args:
-    @scripts/lib/python.sh scripts/test/provider_quic_runner.py "$@"
-
 # Record individual TLS latency, CPU, bytes and process RSS for one catalog profile.
 [group('benchmarks')]
 bench-provider-scorecard *args:
@@ -230,7 +220,6 @@ test-scripts:
     @scripts/lib/python.sh scripts/check/check_runner_test.py
     @scripts/lib/python.sh scripts/check/provider_test.py
     @scripts/lib/python.sh scripts/test/provider_bogo_test.py
-    @scripts/lib/python.sh scripts/test/provider_quic_runner_test.py
     @scripts/lib/python.sh scripts/check/compat_test.py
     @scripts/lib/python.sh scripts/test/fuzz_runner_test.py
     @scripts/lib/python.sh --group tooling scripts/test/fuzz_ci_test.py

@@ -209,7 +209,7 @@ mod rand_core_traits {
     produced.extend(rest);
     assert_eq!(produced, expected);
 
-    // The Quinn RNG seam stores generators as boxed `CryptoRng` trait objects.
+    // Callers can store generators as boxed `CryptoRng` trait objects.
     let mut boxed: Box<dyn CryptoRng + Send + Sync> = Box::new(ChaCha20Rng::from_seed(seed));
     assert_eq!(trait_take(&mut boxed, expected.len()), expected);
   }

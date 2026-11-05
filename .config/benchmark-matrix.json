@@ -19,7 +19,7 @@
       "family": "tls",
       "required": false,
       "external": "OpenSSL 4.0.3",
-      "features": ["quinn"]
+      "features": ["quic"]
     },
     "tls_connections": {
       "binary": "tls_connections",
@@ -279,10 +279,6 @@
     "quic-handshake": { "bench": "quic_connections", "filter": "^quic/handshake/" },
     "quic-packet": { "bench": "quic_connections", "filter": "^quic/packet-" },
     "quic-header": { "bench": "quic_connections", "filter": "^quic/header-" },
-    "quinn-connect": { "bench": "quic_connections", "filter": "^quinn/connect/" },
-    "quinn-retry": { "bench": "quic_connections", "filter": "^quinn/retry/" },
-    "quinn-address-token": { "bench": "quic_connections", "filter": "^quinn/address-token/" },
-    "quinn-reset": { "bench": "quic_connections", "filter": "^quinn/stateless-reset/" },
     "tls-key-schedule": { "bench": "tls_connections", "filter": "^(tls12/prf/|tls/hmac/|tls13/finished-hmac/)" },
     "tls12-handshake-p256": { "bench": "tls_connections", "filter": "^tls12/handshake/p256/" },
     "tls12-handshake-p384": { "bench": "tls_connections", "filter": "^tls12/handshake/p384/" },
@@ -484,7 +480,7 @@
     "hash-slhdsa-shake-192f": ["hash-slhdsa-shake-192f-sign", "hash-slhdsa-shake-192f-verify"],
     "hash-slhdsa-shake-256s": ["hash-slhdsa-shake-256s-sign", "hash-slhdsa-shake-256s-verify"],
     "hash-slhdsa-shake-256f": ["hash-slhdsa-shake-256f-sign", "hash-slhdsa-shake-256f-verify"],
-    "quic-provider": ["quic-handshake", "quic-packet", "quic-header", "quinn-connect", "quinn-retry", "quinn-address-token", "quinn-reset"],
+    "quic-provider": ["quic-handshake", "quic-packet", "quic-header"],
     "tls-provider": [
       "tls-key-schedule",
       "tls12-handshake-p256",
@@ -819,13 +815,6 @@
       "cases": "^quic/(?P<variant>header-protect|header-unprotect)/(?P<input>[^/]+/short-pn4)/(?P<implementation>[^/]+)$",
       "headline": false,
       "task": "Apply or remove production QUIC header protection for a short header, four-byte packet number and 16-byte sample using retained keys."
-    },
-    "quinn-connections": {
-      "family": "QUIC",
-      "bench": "quic_connections",
-      "cases": "^quinn/(?P<variant>connect|retry|address-token)/(?P<input>[^/]+/[^/]+/[^/]+/[^/]+)/(?P<implementation>[^/]+)$",
-      "headline": false,
-      "task": "Complete both Quinn endpoints through in-memory UDP, including allocation, immediate control traffic and destruction. TLS varies by provider; the shared adapter always uses rscrypto for Initial, Retry and token cryptography."
     },
     "tls12-prf": {
       "family": "TLS",

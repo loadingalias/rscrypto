@@ -14,7 +14,7 @@ reproduce RSA signing or a live rustls handshake.
 
 The QUIC files contain the CRYPTO frames, unprotected headers, and complete
 protected Initial packets from A.2 and A.3. `rscrypto-rustls/src/tests/symmetric.rs`,
-`rscrypto-rustls/src/quic/tests.rs`, and `rscrypto-rustls/src/quinn/tests.rs` pad the
+and `rscrypto-rustls/src/quic/tests.rs` pad the
 client payload to the specified 1,162 bytes.
 The smaller A.4 Retry and A.5 ChaCha20 vectors are embedded directly in the `rfc9001_retry_*` and `rfc9001_chacha_*` tests.
 

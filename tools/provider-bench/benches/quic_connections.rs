@@ -1,4 +1,4 @@
-//! QUIC v1 component and complete Quinn connection workloads.
+//! QUIC v1 handshake, packet-protection, and header-protection workloads.
 
 #[path = "../../../benches/common/criterion.rs"]
 #[expect(dead_code, reason = "fixtures are registered lazily through custom routines")]
@@ -8,52 +8,31 @@ use core::hint::black_box;
 use criterion::{Criterion, Throughput};
 use rscrypto_provider_bench::{
   SUITES,
-  quic::{
-    CRYPTO_BACKENDS, CryptoFixture, HeaderFixture, NetworkFixture, NetworkMode, PacketFixture, ResetFixture,
-    TLS_BACKENDS,
-  },
+  quic::{CRYPTO_BACKENDS, CryptoFixture, HeaderFixture, PacketFixture, TLS_BACKENDS},
 };
 
 fn handshakes(c: &mut Criterion) {
   for suite in SUITES {
-    for (family, mode) in [
-      ("quic/handshake", None),
-      ("quinn/connect", Some(NetworkMode::Connect)),
-      ("quinn/retry", Some(NetworkMode::Retry)),
-      ("quinn/address-token", Some(NetworkMode::AddressToken)),
-    ] {
-      let name = format!("{family}/p256/X25519/{suite}/full");
-      if !bench_config::selected(&name) {
+    let name = format!("quic/handshake/p256/X25519/{suite}/full");
+    if !bench_config::selected(&name) {
+      continue;
+    }
+    let mut group = c.benchmark_group(&name);
+    group.throughput(Throughput::Elements(1));
+    for backend in TLS_BACKENDS {
+      if !bench_config::selected(&format!("{name}/{backend}")) {
         continue;
       }
-      let mut group = c.benchmark_group(&name);
-      group.throughput(Throughput::Elements(1));
-      for backend in TLS_BACKENDS {
-        if !bench_config::selected(&format!("{name}/{backend}")) {
-          continue;
-        }
-        if let Some(mode) = mode {
-          group.bench_function(
-            backend,
-            bench_config::checked_routine(
-              None,
-              |fixture| *fixture = Some(NetworkFixture::new(backend, suite, mode)),
-              |b, fixture| b.iter(|| drop(black_box(fixture.as_ref().expect("checked").connect()))),
-            ),
-          );
-        } else {
-          group.bench_function(
-            backend,
-            bench_config::checked_routine(
-              None,
-              |fixture| *fixture = Some(CryptoFixture::new(backend, suite)),
-              |b, fixture| b.iter(|| drop(black_box(fixture.as_ref().expect("checked").connect()))),
-            ),
-          );
-        }
-      }
-      group.finish();
+      group.bench_function(
+        backend,
+        bench_config::checked_routine(
+          None,
+          |fixture| *fixture = Some(CryptoFixture::new(backend, suite)),
+          |b, fixture| b.iter(|| drop(black_box(fixture.as_ref().expect("checked").connect()))),
+        ),
+      );
     }
+    group.finish();
   }
 }
 
@@ -126,25 +105,6 @@ fn packets(c: &mut Criterion) {
   }
 }
 
-fn resets(c: &mut Criterion) {
-  let name = "quinn/stateless-reset/emit/rscrypto";
-  if !bench_config::selected(name) {
-    return;
-  }
-  c.bench_function(
-    name,
-    bench_config::checked_routine(
-      None,
-      |fixture| *fixture = Some(ResetFixture::checked()),
-      |b, fixture| {
-        b.iter(|| {
-          black_box(fixture.as_mut().expect("checked").emit());
-        })
-      },
-    ),
-  );
-}
-
 fn main() {
   if !std::env::args().any(|arg| arg == "--list" || arg == "--rscrypto-filter-cases") {
     assert!(
@@ -156,5 +116,5 @@ fn main() {
       serde_json::json!({ "provider_bench_provenance": rscrypto_provider_bench::provenance() })
     );
   }
-  bench_config::run(&[handshakes, packets, resets]);
+  bench_config::run(&[handshakes, packets]);
 }

@@ -3,25 +3,23 @@
 This unpublished crate supplies rscrypto-backed TLS 1.3 and QUIC cryptographic
 adapters for rustls 0.24 development, including hybrid key exchange, classical
 authentication, opt-in ML-DSA authentication, and opt-in TLS 1.2 suites. The `quic` module supplies QUIC v1 endpoint
-cryptography for any transport, and the `quinn` feature adapts it to quinn-proto 0.12 development.
+cryptography for any transport; this crate contains no QUIC transport.
 
-The [manifest](Cargo.toml) pins rustls and Quinn to upstream `main` revisions.
-These are development revisions, not released rustls 0.24 or Quinn 0.12 versions.
+The [manifest](Cargo.toml) pins rustls to an upstream `main` revision.
+This is a development revision, not a released rustls 0.24 version.
 Consumers must use the same Git sources and revisions so their configuration
 types match the provider's types.
 
 The crate requires `std` and the same minimum Rust version as rscrypto.
 Each algorithm feature forwards to the corresponding rscrypto leaf feature.
 Default features enable every TLS 1.3 suite, key-exchange group, and classical
-signature algorithm; `ml-dsa`, the composite `mldsa65-ed25519` and `mldsa65-ecdsa-p256`, and `quinn` are opt-in.
+signature algorithm; `ml-dsa` and the composite `mldsa65-ed25519` and `mldsa65-ecdsa-p256` are opt-in.
 `portable-only` selects rscrypto's portable dispatch for validation.
 
 rustls provides protocol composition, rustls-webpki provides certificate path
 validation, and rustls-pki-types provides credential types. Their built-in crypto
 backends are disabled. The provider's normal and build dependency graph must
-exclude ring, AWS-LC, OpenSSL, BoringSSL, and C build tools. The pinned
-quinn-proto revision makes its browser-WASM `ring` dependency optional
-([Quinn PR #2930](https://github.com/quinn-rs/quinn/pull/2930)).
+exclude ring, AWS-LC, OpenSSL, BoringSSL, and C build tools.
 
 ## Implementation inventory
 
@@ -41,7 +39,7 @@ quinn-proto revision makes its browser-WASM `ring` dependency optional
 | Composite ML-DSA authentication | `mldsa65_ed25519_sha512` and `mldsa65_ecdsa_secp256r1_sha512` (draft-reddy-tls-composite-mldsa-12) at provisional codepoints, TLS 1.3 only; keys prepared once (or compact on request) and hedged signing | [sign](src/sign/composite.rs), [verify](src/verify.rs) |
 | QUIC Initial keys and Retry | RFC 9001 AES-128-GCM Initial keys and Retry integrity tags | [quic](src/quic/initial.rs) |
 | QUIC reset and address tokens | HMAC-SHA256 reset tokens; HKDF-SHA256 and AES-256-GCM token keys | [quic](src/quic/token.rs) |
-| QUIC connection IDs | AES-128 connection-ID tags over caller-drawn nonces | [quic](src/quic/cid.rs); Quinn's `ChaCha20Rng` nonce and initial-ID generators seeded from caller entropy in [quinn](src/quinn/cid.rs) |
+| QUIC connection IDs | AES-128 connection-ID tags over caller-drawn nonces | [quic](src/quic/cid.rs) |
 | Key exchange | `X25519SecretKey`, `P256EphemeralSecret`, `P384EphemeralSecret`, `MlKem768`, `MlKem1024` | [kx_group](src/kx_group.rs) |
 
 `cipher_suite::ALL_CIPHER_SUITES` lists enabled TLS 1.3 suites in preference order.
@@ -310,10 +308,8 @@ See the [campaign scope](../scripts/README.md#test-entry-points) for exclusions 
 
 ## QUIC v1
 
-### Any transport
-
 With `aes-gcm` and `hkdf`, the `quic` module supplies the QUIC v1 cryptography
-that rustls's QUIC API leaves to the transport, without Quinn or `getrandom`:
+that rustls's QUIC API leaves to the transport, without `getrandom`:
 
 - `quic::initial_keys(client_dst_connection_id, side)` derives Initial packet
   and header keys as rustls `quic::Keys`.
@@ -335,78 +331,6 @@ failing source fails the call, without OS fallback, and leaves caller data
 unchanged. Rustls's QUIC API supplies the handshake and the packet and header
 protection keys through this provider's `quic` algorithms.
 
-### Quinn
-
-Enable `quinn` and select only a runtime feature on the application's Quinn
-dependency. Use `quinn::EndpointKeys`, `quinn::client_config(tls)`, and
-`quinn::server_config(tls)` from this crate, or `quinn::endpoint_config()` with
-`getrandom`. Pass the resulting configuration and UDP socket to Quinn's
-`Endpoint::new`. The TLS configurations use this
-provider explicitly, require TLS 1.3, and must supply a nonempty ALPN list.
-The adapter accepts version 1 only. QUIC v2 and draft versions are excluded.
-
-`quinn::HandshakeData` reports the negotiated ALPN, cipher suite, key-exchange
-group, server name, and completed handshake kind. Quinn enforces the packet
-keys' confidentiality and integrity limits. Rustls owns the TLS handshake,
-exporters, early-data secrets, and packet-key updates. QUIC KeyUpdate does not
-perform another key exchange or supply fresh post-compromise entropy.
-
-Initial keys always use AES-128-GCM and HKDF-SHA256, even when the negotiated
-suite is ChaCha20 or AES-256. Retry uses the fixed RFC 9001 key and nonce.
-The `quinn` feature does not enable `getrandom`. With Quinn's default Cubic or
-NewReno congestion control, every transport random value comes from the caller's
-sources, and a failing source fails construction without OS fallback:
-
-- `quinn::EndpointKeys::generate(random)` draws the 32-byte stateless-reset key,
-  a 16-byte connection-ID tag key, and a 32-byte connection-ID generator seed.
-  Endpoints built from one key set authenticate each other's resets and accept
-  each other's connection IDs.
-- `EndpointKeys::endpoint_config(random)` draws a 32-byte seed for Quinn's
-  endpoint random generator, which seeds each connection's generator: token
-  nonces, path-challenge data, packet-number skips, key-update timing, and
-  grease. Build one configuration per endpoint. A clone repeats the seed, so
-  two endpoints sharing a server configuration would draw the same token nonces.
-  Quinn's `Debug` output for an endpoint configuration includes the seed.
-  `quinn::endpoint_config_with_random(random)` combines both calls.
-- Each endpoint's connection IDs are `quic::ConnectionIdKey` IDs whose nonces
-  come from the endpoint's own `ChaCha20Rng`, so Quinn can reject IDs the key
-  set never issued. They carry no counter or endpoint index.
-- `quinn::client_config(tls)` seeds the client's 20-byte initial destination
-  connection IDs from the TLS provider's `secure_random`, and
-  `quinn::server_config(tls)` draws its address-token root from it.
-
-With fixed sources and a fixed clock, including the server configuration's
-`time_source`, the endpoints are deterministic; a test replays a whole handshake,
-transfer, and key update byte for byte. BBR is the exception: the pinned
-quinn-proto seeds each `congestion::BbrConfig` controller from `rand::rng()`, a
-thread-local generator seeded from the operating system, so a connection that
-selects BBR draws OS entropy and is not reproducible. The pinned quinn-proto
-generators are `rand` 0.10's `StdRng`, and quinn-proto links `getrandom` through
-`rand`'s default features for that BBR seed. Address-token roots belong to the
-returned server configuration; cloning it keeps outstanding tokens valid. Each
-derived token key seals once, with at most 4 KiB of plaintext. The reset and
-token keys are the `quic` module's keys, so Quinn's tokens open with
-`quic::AddressTokenKey` under the same key.
-
-Early data is off by default. Opting in requires a replay-safe application
-protocol, a client with `enable_early_data`, and a server with
-`max_early_data_size = u32::MAX`. Rustls uses stateful session storage for its
-one-use early-data tickets. Rejected early requests must follow Quinn's retry
-contract; never assume that an application write has been accepted.
-
-Quinn has no client error variant for TLS initialization failure. This
-adapter returns `ConnectError::EndpointStopping` for such a failure, including
-entropy failure. It returns no usable session. TLS handshake-processing failures are terminal;
-failed sessions expose no keys, exporter output, peer identity, or handshake data.
-
-The bounded [loopback peer](examples/quic_interop.rs) shows explicit construction.
-`just test-provider-quic` exercises independent quic-go connections, including
-resumption, Retry, early data, and observed packet-key changes. The Go-server
-fixture uses bounded stateful tickets: quic-go 0.61's default stateless tickets
-make an ML-DSA-87 mutual-authentication ClientHello exceed its fixed 16 KiB
-CRYPTO-stream limit. Provider-server cases exercise the stateless ticketer.
-This is a peer configuration constraint, not a passed default-peer profile.
-
-The crate stays unpublished while it depends on unreleased rustls and Quinn revisions.
+The crate stays unpublished while it depends on an unreleased rustls revision.
 rscrypto keeps its `v<version>` tags. Once this crate can be published, its tags
 will be `rscrypto-rustls-v<version>`.

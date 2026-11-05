@@ -546,14 +546,12 @@ this source boundary does not establish a whole-ticket lifecycle claim.
 ### rustls QUIC integration
 
 The transport-neutral `quic` reset, connection-ID, and address-token keys draw
-from the caller's fallible entropy source into clearing owners, and so do the
-Quinn adapter's endpoint seed and initial IDs. Token derivation clears its intermediate key. The derived
+from the caller's fallible entropy source into clearing owners. Token derivation clears its intermediate key. The derived
 sealer atomically consumes its one-use permission before encryption and rejects
 plaintext above 4 KiB. Authentication failure clears the decrypted token body;
 length rejection occurs before mutation. `AddressTokenKey::seal` checks the
 length before drawing its nonce, so a failure leaves the plaintext unchanged.
-Token buffers and authenticated metadata remain owned by the caller, or by
-Quinn through the adapter.
+Token buffers and authenticated metadata remain owned by the caller.
 
 The same GNU configuration outlines token context construction into a worker
 that returns its final `Box`. A construction guard clears retired worker frames

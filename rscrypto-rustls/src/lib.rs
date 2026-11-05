@@ -27,8 +27,6 @@ pub mod hash;
 pub mod kx_group;
 #[cfg(any(feature = "aes-gcm", feature = "chacha20poly1305"))]
 pub mod quic;
-#[cfg(feature = "quinn")]
-pub mod quinn;
 #[cfg(feature = "getrandom")]
 pub mod random;
 pub mod sign;

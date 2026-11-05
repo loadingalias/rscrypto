@@ -31,10 +31,8 @@ def runtime_matrix():
         # The top-secret client: caller entropy, so no getrandom.
         ('tls-caller-entropy', ['sha2', 'hmac', 'hkdf', 'aes-gcm', 'chacha20poly1305', 'x25519', 'ml-kem',
                                 'p256-ecdh', 'p384-ecdh', 'ecdsa-p256', 'ecdsa-p384', 'ed25519', 'rsa']),
-        # Transport-neutral QUIC endpoint keys alone: no TLS bundle, Quinn, or getrandom.
+        # Transport-neutral QUIC endpoint keys alone: no TLS bundle or getrandom.
         ('quic-endpoint', ['aes-gcm', 'hkdf']),
-        ('quinn-x25519-p256', ['quinn', 'x25519', 'ecdsa-p256']),
-        ('quinn-hybrid-mldsa', ['quinn', 'x25519', 'ml-kem', 'ml-dsa', 'ecdsa-p256', 'chacha20poly1305']),
     ]
 
 
@@ -45,12 +43,6 @@ def feature_matrix(root=ROOT):
         raise ValueError('the provider rust-version must match rscrypto')
     graph = provider['features']
     for feature, edges in graph.items():
-        if feature == 'quinn':
-            # Caller entropy seeds the ID generators; OS entropy stays behind the getrandom feature.
-            if edges != ['dep:quinn-proto', 'dep:bytes', 'aes-gcm', 'hkdf', 'rscrypto/chacha20-rng']:
-                raise ValueError('quinn integration must retain its fixed Initial/token primitives, caller-seeded '
-                                 'ID generators, and backend-free dependencies without getrandom')
-            continue
         # OS entropy is delegated to the same getrandom crate as rscrypto.
         expected = ['rscrypto/' + feature, *(['dep:getrandom'] if feature == 'getrandom' else [])]
         if feature != 'default' and (feature not in core['features'] or edges != expected):
@@ -98,14 +90,10 @@ def no_c(features, root=ROOT):
                  or name.startswith('aws-lc-')}
     if forbidden:
         raise ValueError('provider normal/build graph contains forbidden packages: ' + ', '.join(sorted(forbidden)))
-    # OS entropy enters only through the getrandom feature. Pinned quinn-proto
-    # links rand 0.10 with its default OS generator, and getrandom directly for
-    # browser WASM; the adapter never calls either.
+    # OS entropy enters only through the getrandom feature.
     if 'getrandom' in packages and not {'default', 'getrandom'} & set(features):
-        dependents = getrandom_dependents(features, root)
-        if 'quinn' not in features or not dependents <= {'rand', 'quinn-proto'}:
-            raise ValueError('provider normal/build graph links getrandom without the getrandom feature: '
-                             + ', '.join(sorted(dependents)))
+        raise ValueError('provider normal/build graph links getrandom without the getrandom feature: '
+                         + ', '.join(sorted(getrandom_dependents(features, root))))
 
 
 def getrandom_dependents(features, root=ROOT):
@@ -160,7 +148,7 @@ def main():
                 selected = [*features, *(['portable-only'] if portable else [])]
                 run(['cargo', '+' + toolchain.channel(), 'nextest', 'run', '--locked',
                      '-p', PACKAGE, '--lib', '--release', *feature_args(selected),
-                     '-E', 'test(tests::profiles::) | test(tests::tls12::) | test(quic::) | test(quinn::)',
+                     '-E', 'test(tests::profiles::) | test(tests::tls12::) | test(quic::)',
                      '--success-output', 'final'])
         return
     if args.mode == 'lint':

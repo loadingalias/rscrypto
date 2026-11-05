@@ -13,8 +13,6 @@
 //! - [`AddressTokenKey`] seals and opens Retry and NEW_TOKEN address tokens
 //!   (RFC 9000, section 8.1).
 //!
-//! The `quinn` feature adapts these same types to Quinn.
-//!
 //! # Entropy
 //!
 //! Every random value comes from the caller's [`rustls::crypto::SecureRandom`]
@@ -236,6 +234,9 @@ pub static CHACHA20_POLY1305: &dyn rustls::quic::Algorithm = &Algorithm::ChaCha2
 
 #[cfg(all(feature = "aes-gcm", feature = "hkdf"))]
 mod cid;
+#[cfg(all(feature = "aes-gcm", feature = "hkdf", any(fuzzing, rscrypto_internal_fuzzing)))]
+#[doc(hidden)]
+pub mod fuzzing;
 #[cfg(all(feature = "aes-gcm", feature = "hkdf"))]
 mod initial;
 #[cfg(all(feature = "aes-gcm", feature = "hkdf", test))]
@@ -245,13 +246,7 @@ mod token;
 
 #[cfg(all(feature = "aes-gcm", feature = "hkdf"))]
 pub use cid::ConnectionIdKey;
-#[cfg(all(feature = "aes-gcm", feature = "hkdf", feature = "quinn"))]
-pub(crate) use cid::NONCE_LEN as CID_NONCE_LEN;
 #[cfg(all(feature = "aes-gcm", feature = "hkdf"))]
 pub use initial::{MAX_CONNECTION_ID_LEN, RETRY_INTEGRITY_TAG_LEN, initial_keys, is_valid_retry, retry_integrity_tag};
-#[cfg(all(feature = "aes-gcm", feature = "hkdf", feature = "quinn"))]
-pub(crate) use initial::{retry_tag, valid_retry};
-#[cfg(all(feature = "aes-gcm", feature = "hkdf", feature = "quinn"))]
-pub(crate) use token::TokenCipher;
 #[cfg(all(feature = "aes-gcm", feature = "hkdf"))]
 pub use token::{AddressTokenKey, StatelessResetKey};

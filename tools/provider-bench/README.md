@@ -5,7 +5,7 @@ and TLS 1.3 connections through rscrypto-rustls, rustls/AWS-LC, rustls/*ring*, a
 It calls each library's production implementation.
 The workspace is separate so its C comparison libraries do not enter the provider's shipped graph.
 
-The [QUIC and Quinn rows](#quic-and-quinn) use the same pinned rustls providers and credential policy.
+The [QUIC rows](#quic) use the same pinned rustls providers and credential policy.
 
 `just bench tls-provider --list` lists the catalog workloads without building their fixtures.
 A case builds and checks its fixture only when it runs,
@@ -332,42 +332,32 @@ The current families measure complete two-endpoint operations.
 They localize cost by controlled workload changes;
 attributing a loss to a production function requires a focused profile of that exact case.
 
-## QUIC and Quinn
+## QUIC
 
-`quic_connections` adds 103 cases, all using QUIC v1.
+`quic_connections` adds 66 cases, all using QUIC v1 through rustls's QUIC API.
 Discover them with `just bench quic-provider --list`; measure one selector at a time:
 
 ```bash
 just bench quic-handshake
 just bench quic-packet
 just bench quic-header
-just bench quinn-connect
-just bench quinn-retry
-just bench quinn-address-token
-just bench quinn-reset
 ```
 
 The target is optional and has the same OpenSSL 4.0.3 prerequisite as the TLS binary.
 OpenSSL supplies shared fixture/provenance support, not a QUIC comparison row.
 CI does not provision this target, and `just bench all` omits it.
-The `quinn` feature enables the approved pinned Quinn dependency and its production Bloom token replay log;
-it does not enable Quinn's rustls 0.23 integration.
-The rscrypto-rustls adapter connects Quinn to the pinned rustls 0.24-dev providers.
+The rows measure the provider's QUIC cryptography; this repository has no QUIC transport.
 
-| Selector              | Cases | Timed work |
-| --------------------- | ----- | ---------- |
-| `quic-handshake`      | 12    | Both rustls QUIC TLS handshakes through raw TLS events, including Handshake and 1-RTT key derivation, connection allocation, input copies and destruction. No packet protection or Quinn transport. |
-| `quic-packet`         | 36    | 1-RTT payload seal or open, 1200 or 1350 plaintext bytes, under each suite and provider. Retained keys and buffers; buffer restoration and packet-number handling are timed. |
-| `quic-header`         | 18    | Apply or remove header protection under each suite and provider: short header, four-byte packet number and a fixed 16-byte sample. Header restoration is timed; key derivation is not. |
-| `quinn-connect`       | 12    | Fresh Quinn endpoints and a full connection on both sides, datagram copies, immediate post-handshake control traffic and destruction. |
-| `quinn-retry`         | 12    | The same connection with exactly one server Retry and successful address validation before acceptance. |
-| `quinn-address-token` | 12    | A full TLS handshake consuming one real NEW_TOKEN token and processing two newly issued tokens. TLS resumption stays disabled. |
-| `quinn-reset`         | 1     | Production stateless reset emission for a previously established connection that the server has lost; input copy, rate-limit check, random padding, reset authentication token and output are timed. |
+| Selector         | Cases | Timed work |
+| ---------------- | ----- | ---------- |
+| `quic-handshake` | 12    | Both rustls QUIC TLS handshakes through raw TLS events, including Handshake and 1-RTT key derivation, connection allocation, input copies and destruction. No packet protection or transport. |
+| `quic-packet`    | 36    | 1-RTT payload seal or open, 1200 or 1350 plaintext bytes, under each suite and provider. Retained keys and buffers; buffer restoration and packet-number handling are timed. |
+| `quic-header`    | 18    | Apply or remove header protection under each suite and provider: short header, four-byte packet number and a fixed 16-byte sample. Header restoration is timed; key derivation is not. |
 
-Connection rows use P-256 server authentication, X25519 and each of the three TLS suites.
+Handshake rows use P-256 server authentication, X25519 and each of the three TLS suites.
 They compare `rscrypto`, `rscrypto-webpki`, `aws-lc-rs` and `ring` with the same certificate, validation time and ALPN as the TLS fixtures.
 There is no client certificate, early data or TLS ticket issuance.
-Configuration, private-key import, endpoint reset/token keys and token-cache seeding are untimed.
+Configuration and private-key import are untimed.
 Shared credential setup also checks an untimed TCP connection.
 The crypto handshake checks distinct authenticated transport-parameter bytes in both directions.
 
@@ -384,49 +374,16 @@ Both operations restore their input with a timed copy into retained storage.
 Throughput counts plaintext once.
 These are hot-buffer component costs; they do not represent a cold-cache network stack.
 
-The Quinn transport calls `Endpoint::connect`, `handle`, `accept` and `retry`, and drives the returned connections' events,
-transmits and timers.
-It copies one UDP datagram per send without sockets, GSO, loss or actual delay.
-One-millisecond simulated scheduler ticks advance pacing and timers without sleeping.
-The pump stops after both Connected events and delivery of all immediate datagrams;
-it does not wait out every future delayed ACK or idle timer.
-Every timed connection must take the selected Retry/token path.
-The pinned Quinn queues one token when it accepts an already validated Initial and another
-when it receives the Handshake packet.
-The untimed seed connection issues one; each timed connection issues exactly two.
-Token rows retain Quinn's one-entry `TokenMemoryCache` and its production `BloomTokenLog` across connections;
-the cache keeps the newest token and discards the other.
-Both issuance and eviction are timed.
-Quinn's default replay log starts as a hash set and converts to Bloom filters at its memory limit.
-Its growth during a row is timed; these short runs do not model a saturated replay log.
-Without Quinn's `bloom` feature, its default token log would reject every address token;
-the fixture checks accepted address validation so that fallback cannot masquerade
-as a token benchmark.
-
-The shared adapter always uses **rscrypto for Initial packets, Retry integrity, address-token
-protection, connection-ID filtering and stateless reset**.
-The negotiated TLS handshake, Handshake/1-RTT packet protection
-and header protection use the selected provider.
-Quinn comparisons therefore measure these configured stacks,
-not wholly independent QUIC implementations.
-Reset has one rscrypto row and no external comparison score.
-It retains the original endpoint keys after losing the connection,
-and advances simulated time by Quinn's default 20 ms minimum reset interval before each emission.
-The rate limit remains active; measured CPU cost does not imply that emission frequency is allowed.
-
 Each row checks its actual operation before timing.
-Connection checks cover full handshake kind, suite, group, ALPN, server identity,
-equal exporters and cross-provider interoperability in both directions.
-Crypto handshake checks also authenticate application bytes with the emitted 1-RTT keys.
+Handshake checks cover full handshake kind, suite, group, ALPN, server identity,
+equal exporters and cross-provider interoperability in both directions,
+and authenticate application bytes with the emitted 1-RTT keys.
 Packet/header checks require exact agreement with an independent provider;
 packet checks reject altered tags, headers and packet numbers.
-Retry checks require exactly one Retry; token checks require consumption,
-validation and replacement.
-A real client rejects a reset with an altered token and accepts the exact production reset.
 Criterion `--test` runs these checks without a measurement campaign:
 
 ```bash
-cargo bench --locked --manifest-path tools/provider-bench/Cargo.toml --features quinn --bench quic_connections -- --test
+cargo bench --locked --manifest-path tools/provider-bench/Cargo.toml --features quic --bench quic_connections -- --test
 ```
 
 The catalog declares complete matched comparisons for all multi-provider families.

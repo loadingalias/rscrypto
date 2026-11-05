@@ -269,30 +269,10 @@ clearing `SecretBytes<32>` scratch, and that context seals once. Connection-ID
 and token nonces are public values. Reset tokens are returned to the caller as
 plain arrays. Token buffers belong to the caller.
 
-The Quinn adapter's `EndpointKeys` shares a `StatelessResetKey` and the
-connection-ID keys: a `ConnectionIdKey` and a mutex-guarded `ChaCha20Rng` that
-seeds each endpoint's connection-ID generator. Each generator owns its own
-`ChaCha20Rng`. Each client configuration owns a `ChaCha20Rng` for initial
-destination IDs. The 32-byte endpoint seed is copied into Quinn's
-`EndpointConfig` as a plain array, which Quinn's `Debug` prints; the adapter's
-copy clears. Server configurations own an `AddressTokenKey`. Quinn supplies
-the fresh 128-bit derivation nonce for each token. Incoming token buffers
-belong to Quinn.
-
 On that same GNU configuration, token construction uses an outlined worker that
 returns only the final `Box`. Its caller runs the construction guard before the
 typed input key drops. The HKDF root, derivation scratch and returned owner keep
 their existing lifetimes; this boundary adds no secret owner or allocation.
-
-Sessions own rustls QUIC connections, queued handshake/key-change events, and
-next-generation traffic secrets. At handshake completion, each session takes
-rustls's `KeyingMaterialExporter` owner to support Quinn's repeated exporter calls.
-The move transfers ownership without exporting the secret bytes.
-Packet and header wrappers own rustls trait objects backed by the same clearing
-rscrypto contexts as the symmetric adapters. Cloning endpoint or server
-configuration extends the corresponding root-key lifetime. Exporter buffers
-and successful plaintext belong to the caller. No adapter key export, clone,
-or Debug implementation exposes these keys.
 
 ### ML-DSA storage
 

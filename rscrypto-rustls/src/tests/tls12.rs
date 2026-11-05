@@ -574,18 +574,6 @@ fn tls12_never_derives_a_master_secret_without_ems() {
   }
 }
 
-#[cfg(feature = "quinn")]
-#[test]
-fn quic_rejects_providers_with_tls12_suites() {
-  let (client, server) = tls::configs(ours(), ours(), Credential::P256, false);
-  for result in [
-    crate::quinn::client_config(client).map(drop),
-    crate::quinn::server_config(server).map(drop),
-  ] {
-    assert!(matches!(result, Err(Error::General(message)) if message == "QUIC requires a TLS 1.3-only provider"));
-  }
-}
-
 /// A peer that verifies, and so advertises, only `schemes`.
 #[cfg(all(feature = "ecdsa-p256", feature = "ecdsa-p384"))]
 fn advertising(mut provider: CryptoProvider, schemes: &[SignatureScheme]) -> CryptoProvider {

@@ -52,9 +52,6 @@ mldsa65-ed25519 = ["rscrypto/mldsa65-ed25519"]
 mldsa65-ecdsa-p256 = ["rscrypto/mldsa65-ecdsa-p256"]
 getrandom = ["rscrypto/getrandom", "dep:getrandom"]
 portable-only = ["rscrypto/portable-only"]
-# Integration support uses the same primitive leaf features as ordinary TLS.
-# The connection-ID and initial-ID generators seed rscrypto's ChaCha20Rng from caller entropy.
-quinn = ["dep:quinn-proto", "dep:bytes", "aes-gcm", "hkdf", "rscrypto/chacha20-rng"]
 
 [dependencies]
 rscrypto = { version = "0.12.0", path = "..", default-features = false, features = ["std"] }
@@ -63,21 +60,13 @@ rustls-webpki = { version = "=0.104.0-alpha.8", default-features = false, featur
 rustls-pki-types = { version = "=1.15.1", default-features = false, features = ["std"] }
 getrandom = { version = "0.4.3", optional = true }
 zeroize = { version = "1.9.1", default-features = false }
-quinn-proto = { version = "=0.12.0", git = "https://github.com/quinn-rs/quinn", rev = "2697de1e1314cb9f98502b7323acd5bdd836b582", default-features = false, optional = true }
-bytes = { version = "1.12.1", optional = true }
 
 [dev-dependencies]
 aes = "0.9.3"
 rustls-aws-lc-rs = { version = "=0.24.0-dev.2", git = "https://github.com/rustls/rustls", rev = "0419f479ff5c99a471428ee197e899ccd1629aa8" }
 rustls-ring = { version = "=0.24.0-dev.2", git = "https://github.com/rustls/rustls", rev = "0419f479ff5c99a471428ee197e899ccd1629aa8" }
 rustls-util = { version = "=0.24.0-dev.2", git = "https://github.com/rustls/rustls", rev = "0419f479ff5c99a471428ee197e899ccd1629aa8", default-features = false }
-quinn = { version = "=0.12.0", git = "https://github.com/quinn-rs/quinn", rev = "2697de1e1314cb9f98502b7323acd5bdd836b582", default-features = false, features = ["runtime-tokio"] }
-tokio = { version = "1.54.1", default-features = false, features = ["rt", "macros", "time", "io-util"] }
 
 [[example]]
 name = "interop"
 required-features = ["getrandom", "hkdf", "aes-gcm"]
-
-[[example]]
-name = "quic_interop"
-required-features = ["quinn", "getrandom"]

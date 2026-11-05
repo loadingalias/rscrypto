@@ -5,7 +5,7 @@ use rscrypto::aead::expert::header_protection::{Aes128HeaderProtection, Aes128He
 use rustls::crypto::{GetRandomFailed, SecureRandom};
 
 // Eight-byte layout: three random bytes, then a five-byte keyed tag.
-pub(crate) const NONCE_LEN: usize = 3;
+const NONCE_LEN: usize = 3;
 const TAG_LEN: usize = 5;
 const ID_LEN: usize = NONCE_LEN + TAG_LEN;
 // Fills the AES block after the nonce; the key is used for nothing else.
@@ -72,7 +72,7 @@ impl ConnectionIdKey {
   }
 
   /// The ID for `nonce`.
-  pub(crate) fn id(&self, nonce: [u8; NONCE_LEN]) -> [u8; ID_LEN] {
+  fn id(&self, nonce: [u8; NONCE_LEN]) -> [u8; ID_LEN] {
     let mut id = [0u8; ID_LEN];
     let (prefix, tag) = id.split_at_mut(NONCE_LEN);
     prefix.copy_from_slice(&nonce);

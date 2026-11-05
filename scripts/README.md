@@ -43,7 +43,7 @@ bundles also execute the connection matrix in native and portable modes:
 mutual authentication, stateful/stateless resumption where available, exporters,
 key updates, and closure against independent rustls crypto backends.
 The `quic-endpoint` bundle (`aes-gcm` and `hkdf` only) runs the transport-neutral
-QUIC key, Retry, and Initial-key tests without Quinn or `getrandom`.
+QUIC key, Retry, and Initial-key tests without `getrandom`.
 Each feature row also runs `cargo tree -p rscrypto-rustls -e normal,build --target all`.
 The gate rejects `ring`, `aws-lc-*`, `openssl-sys`, `boring-sys`, `cc`, and `cmake`.
 The all-features row contains every additive dependency feature, so its graph
@@ -151,47 +151,6 @@ It does not download upstream archives.
   including the provider's opt-in SecP256r1MLKEM768, SecP384r1MLKEM1024, MLKEM768, and MLKEM1024; Go 1.27.3 has
   no MLKEM768, so those rows run against OpenSSL only. The ephemeral session files and exporter values protect only
   public test fixtures. The runner enforces timeouts and reaps peer processes.
-- `just test-provider-quic` runs the pinned quinn-proto and quinn 0.12 revisions through
-  this provider against quic-go 0.61.0 (`579ee19d`) on Go 1.27.3. The peer builds
-  with CGO disabled. Cases cover full/resumed mutual authentication, the selected
-  classical and ML-DSA profiles, all suites/groups, Retry, explicit 0-RTT, and
-  exporter equality. Peer qlogs must show a packet-key phase change. The Go-server
-  fixture uses bounded stateful tickets because its default stateless ML-DSA-87
-  tickets exceed quic-go's 16 KiB CRYPTO limit on resumption. Provider servers
-  exercise stateless tickets in ordinary/Retry cases and stateful tickets for
-  0-RTT. Stateless-reset cases replace the server endpoint while retaining its
-  reset key, then require the independent client to authenticate the reset.
-- `just test-provider-quic-runner` builds the pinned Quinn interoperability application with this provider
-  and runs the pinned QUIC Interop Runner in local Docker.
-  The application uses h3-quinn 0.0.10 from its release tag with only its Quinn requirement moved to
-  the provider's Quinn revision.
-  Source revisions, container digests, Python dependencies, commands and packet traces are retained.
-  `--prepared PATH` reuses the exact recorded images; `--tests` selects a bounded case batch.
-  `--budget-seconds` can lower the default ten-minute cap.
-  Each campaign removes its own containers and networks on exit.
-  `--prepare-only` builds without starting a campaign.
-  `--stock` prepares the same Quinn transport with its stock rustls 0.23/AWS-LC adapter in an independent
-  control workspace; it does not change the provider's dependency graph.
-  `--group X25519MLKEM768` and `--group X25519` select the PQ and classical client controls.
-  Omitting `--group` preserves the endpoint's defaults.
-  `--seed` and `--rng-run` select ns-3's loss stream; TLS entropy and scheduling remain independent.
-  `--credentials PATH` reuses a retained runner certificate directory, except for amplificationlimit's long chain.
-  Each campaign retains its credentials and source/configuration copy in host-mounted paths,
-  including subclass fixtures.
-  `--trace` enables Quinn's production transport tracing.
-  Exact cached image digests can be reused without contacting the registry.
-  Failed, unsupported and incomplete cases remain nonzero.
-  The independent Go image contains quic-go `99c7436` built with Go 1.27.0.
-  This transport harness uses the upstream application's permissive chain verifier;
-  it tests handshake signatures and transport behavior, not certificate trust.
-  The separate loopback matrix owns mutually authenticated trust-chain evidence.
-  A newly prepared ECN campaign wraps the pinned Go image to map the application's `ecn` case to its
-  ordinary transfer path.
-  The upstream ECT and ACK-ECN trace assertions stay unchanged.
-  The wrapper's base digest and image identity are retained and checked;
-  it does not add preferred-address migration support.
-  [Transport evidence](../docs/quic-transport-evidence.md) records the bounded loss controls, pacing diagnosis, fixture repair,
-  and unsupported profiles.
 - `just test-provider-bogo` prepares pinned upstream rustls and runner checkouts,
   applies the retained provider/fixture patches, and runs the declared TLS 1.2/1.3 profile.
   Scope exclusions come from protocol/version requirements and the explicit profile,

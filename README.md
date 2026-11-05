@@ -97,21 +97,21 @@ migration boundaries, and the evidence to review when choosing stronger cryptogr
 
 ## TLS and QUIC provider
 
-The `rscrypto-rustls` companion connects these primitives to rustls and Quinn:
+The `rscrypto-rustls` companion connects these primitives to rustls:
 
 | Capability | Coverage |
 | --- | --- |
 | TLS | TLS 1.3; opt-in TLS 1.2 ECDHE suites |
 | Key exchange | X25519MLKEM768 hybrid (preferred), X25519, P-256, P-384; opt-in SecP256r1MLKEM768, SecP384r1MLKEM1024, MLKEM768, MLKEM1024 |
 | Authentication | ECDSA P-256/P-384, Ed25519, RSA; opt-in ML-DSA-44/65/87 (`ml-dsa`) and composite ML-DSA-65 with Ed25519 or ECDSA P-256 at provisional draft codepoints (`mldsa65-ed25519`, `mldsa65-ecdsa-p256`) |
-| QUIC | QUIC v1 through Quinn (`quinn`, opt-in) |
+| QUIC | QUIC v1 packet and header protection through rustls's QUIC API; Initial keys, Retry tags, connection IDs, and reset and address tokens for any transport |
 
 The provider supports mutual authentication, session resumption, stateless tickets, and caller-supplied entropy.
-rustls owns the TLS protocol, rustls-webpki validates certificate paths, and Quinn owns QUIC transport.
+rustls owns the TLS protocol and rustls-webpki validates certificate paths. The QUIC transport belongs to the application.
 
 The companion requires `std` and remains unpublished.
-Its [manifest](rscrypto-rustls/Cargo.toml) pins rustls and Quinn to upstream development revisions;
-consumers must use the same Git sources and revisions.
+Its [manifest](rscrypto-rustls/Cargo.toml) pins rustls to an upstream development revision;
+consumers must use the same Git source and revision.
 See the [provider guide](rscrypto-rustls/README.md) for configuration, feature requirements, and limits.
 
 ## Platforms and dispatch

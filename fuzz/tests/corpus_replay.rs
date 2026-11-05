@@ -610,7 +610,7 @@ fn replay_provider_quic_handshake_corpus() {
   let replayed = replay_corpus_dir(
     "provider_quic_handshake",
     corpus_dir("provider_quic_handshake"),
-    rscrypto_rustls::quinn::fuzzing::handshake,
+    rscrypto_rustls::quic::fuzzing::handshake,
   );
   assert_ne!(replayed, 0, "provider_quic_handshake corpus should not be empty");
 }
@@ -621,7 +621,7 @@ fn replay_provider_quic_header_corpus() {
   let replayed = replay_corpus_dir(
     "provider_quic_header",
     corpus_dir("provider_quic_header"),
-    rscrypto_rustls::quinn::fuzzing::header,
+    rscrypto_rustls::quic::fuzzing::header,
   );
   assert_ne!(replayed, 0, "provider_quic_header corpus should not be empty");
 }
@@ -632,7 +632,7 @@ fn replay_provider_quic_retry_corpus() {
   let replayed = replay_corpus_dir(
     "provider_quic_retry",
     corpus_dir("provider_quic_retry"),
-    rscrypto_rustls::quinn::fuzzing::retry,
+    rscrypto_rustls::quic::fuzzing::retry,
   );
   assert_ne!(replayed, 0, "provider_quic_retry corpus should not be empty");
 }
@@ -643,7 +643,7 @@ fn replay_provider_quic_token_corpus() {
   let replayed = replay_corpus_dir(
     "provider_quic_token",
     corpus_dir("provider_quic_token"),
-    rscrypto_rustls::quinn::fuzzing::token,
+    rscrypto_rustls::quic::fuzzing::token,
   );
   assert_ne!(replayed, 0, "provider_quic_token corpus should not be empty");
 }

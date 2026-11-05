@@ -42,7 +42,11 @@ pub fn initial_keys(client_dst_connection_id: &[u8], side: Side) -> Keys {
 /// [`MAX_CONNECTION_ID_LEN`] bytes.
 #[must_use]
 pub fn retry_integrity_tag(original_dst_connection_id: &[u8], retry: &[u8]) -> Option<[u8; RETRY_INTEGRITY_TAG_LEN]> {
-  retry_tag(original_dst_connection_id, retry)
+  let aad = retry_aad(original_dst_connection_id, retry)?;
+  let tag = retry_cipher()
+    .encrypt_in_place(&Nonce96::from_bytes(RETRY_NONCE), &aad, &mut [])
+    .expect("Retry has an empty plaintext");
+  Some(*tag.as_bytes())
 }
 
 /// Check the integrity tag of a received QUIC v1 Retry packet (RFC 9001, section 5.8).
@@ -56,51 +60,14 @@ pub fn retry_integrity_tag(original_dst_connection_id: &[u8], retry: &[u8]) -> O
 /// original connection ID longer than [`MAX_CONNECTION_ID_LEN`] bytes.
 #[must_use]
 pub fn is_valid_retry(original_dst_connection_id: &[u8], packet: &[u8]) -> bool {
-  valid_retry(original_dst_connection_id, &[], packet)
-}
-
-/// The Retry pseudo-packet: the original connection ID with its length, then the packet.
-fn retry_aad(cid: &[u8], header: &[u8], body: &[u8]) -> Option<Vec<u8>> {
-  if cid.len() > MAX_CONNECTION_ID_LEN {
-    return None;
-  }
-  let length = u8::try_from(cid.len()).expect("the length is at most 20");
-  let mut aad = Vec::with_capacity(
-    1usize
-      .strict_add(cid.len())
-      .strict_add(header.len())
-      .strict_add(body.len()),
-  );
-  aad.push(length);
-  aad.extend_from_slice(cid);
-  aad.extend_from_slice(header);
-  aad.extend_from_slice(body);
-  Some(aad)
-}
-
-fn retry_cipher() -> Aes128Gcm {
-  Aes128Gcm::new(&Aes128GcmKey::from_bytes(RETRY_KEY))
-}
-
-/// Tag for `packet` without its tag, under the client's original connection ID.
-pub(crate) fn retry_tag(cid: &[u8], packet: &[u8]) -> Option<[u8; RETRY_INTEGRITY_TAG_LEN]> {
-  let aad = retry_aad(cid, packet, &[])?;
-  let tag = retry_cipher()
-    .encrypt_in_place(&Nonce96::from_bytes(RETRY_NONCE), &aad, &mut [])
-    .expect("Retry has an empty plaintext");
-  Some(*tag.as_bytes())
-}
-
-/// Check a Retry split anywhere before its tag: `header` then `payload`, which ends in the tag.
-pub(crate) fn valid_retry(cid: &[u8], header: &[u8], payload: &[u8]) -> bool {
-  let Some(length) = payload.len().checked_sub(RETRY_INTEGRITY_TAG_LEN) else {
+  let Some(length) = packet.len().checked_sub(RETRY_INTEGRITY_TAG_LEN) else {
     return false;
   };
-  let (body, tag) = payload.split_at(length);
+  let (body, tag) = packet.split_at(length);
   let Ok(tag) = <[u8; RETRY_INTEGRITY_TAG_LEN]>::try_from(tag) else {
     return false;
   };
-  let Some(aad) = retry_aad(cid, header, body) else {
+  let Some(aad) = retry_aad(original_dst_connection_id, body) else {
     return false;
   };
   retry_cipher()
@@ -111,4 +78,21 @@ pub(crate) fn valid_retry(cid: &[u8], header: &[u8], payload: &[u8]) -> bool {
       &Aes128GcmTag::from_bytes(tag),
     )
     .is_ok()
+}
+
+/// The Retry pseudo-packet: the original connection ID with its length, then the packet without its tag.
+fn retry_aad(cid: &[u8], packet: &[u8]) -> Option<Vec<u8>> {
+  if cid.len() > MAX_CONNECTION_ID_LEN {
+    return None;
+  }
+  let length = u8::try_from(cid.len()).expect("the length is at most 20");
+  let mut aad = Vec::with_capacity(1usize.strict_add(cid.len()).strict_add(packet.len()));
+  aad.push(length);
+  aad.extend_from_slice(cid);
+  aad.extend_from_slice(packet);
+  Some(aad)
+}
+
+fn retry_cipher() -> Aes128Gcm {
+  Aes128Gcm::new(&Aes128GcmKey::from_bytes(RETRY_KEY))
 }

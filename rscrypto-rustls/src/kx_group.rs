@@ -52,8 +52,6 @@ pub use implementation::X25519Group;
 pub use implementation::X25519MLKEM768;
 #[cfg(all(feature = "x25519", feature = "ml-kem"))]
 pub use implementation::X25519MlKem768Group;
-#[cfg(all(test, feature = "quinn", feature = "x25519", feature = "ml-kem"))]
-pub(crate) use implementation::decapsulation_failed;
 #[cfg(all(feature = "getrandom", feature = "ml-kem"))]
 pub use implementation::{MLKEM768, MLKEM1024};
 #[cfg(feature = "ml-kem")]

@@ -48,20 +48,8 @@ impl StatelessResetKey {
   }
 
   /// The full HMAC-SHA256 of `data`.
-  pub(crate) fn mac(&self, data: &[u8]) -> HmacSha256Tag {
+  fn mac(&self, data: &[u8]) -> HmacSha256Tag {
     HmacSha256::mac(self.0.as_bytes(), data)
-  }
-
-  /// Verify a full 32-byte HMAC-SHA256 of `data` without an early exit.
-  #[cfg(feature = "quinn")]
-  pub(crate) fn verify_mac(&self, data: &[u8], signature: &[u8]) -> bool {
-    use rscrypto::Mac as _;
-    let Ok(signature) = <[u8; 32]>::try_from(signature) else {
-      return false;
-    };
-    let mut mac = HmacSha256::new(self.0.as_bytes());
-    mac.update(data);
-    mac.verify(&HmacSha256Tag::from_bytes(signature)).is_ok()
   }
 }
 
@@ -77,8 +65,7 @@ impl core::fmt::Debug for StatelessResetKey {
 /// nonce from the caller's source. HKDF-SHA256 expands this key with a fixed
 /// label and the nonce into a one-use AES-256-GCM key, which encrypts with a
 /// zero AEAD nonce. An AEAD key therefore never encrypts twice unless the
-/// source repeats a nonce. Quinn writes the same layout, so the `quinn`
-/// adapter's address tokens open here under the same key.
+/// source repeats a nonce.
 ///
 /// The caller owns the plaintext format, such as the client address, the
 /// original Destination Connection ID, and the issue time. Authenticate context
@@ -146,7 +133,7 @@ impl AddressTokenKey {
   }
 
   /// The one-use AEAD context for one token nonce.
-  pub(crate) fn cipher(&self, nonce: &[u8]) -> Box<TokenCipher> {
+  fn cipher(&self, nonce: &[u8]) -> Box<TokenCipher> {
     let key = SecretBytes::<32>::try_fill_with(|out| self.0.expand_vectored(&[TOKEN_LABEL, nonce], out))
       .expect("one SHA-256 block is a valid HKDF output");
     let key = Aes256GcmKey::generate(|out| out.copy_from_slice(key.as_bytes()));
@@ -202,14 +189,14 @@ fn boxed_token_cipher(key: &Aes256GcmKey) -> Box<TokenCipher> {
 }
 
 /// One derived token key, which seals at most once.
-pub(crate) struct TokenCipher {
+struct TokenCipher {
   cipher: Aes256Gcm,
   sealed: AtomicBool,
 }
 
 impl TokenCipher {
   /// Encrypt `data` in place and append the tag; fails for oversized input or a second seal.
-  pub(crate) fn seal_in_place(&self, data: &mut Vec<u8>, aad: &[u8]) -> Result<(), Error> {
+  fn seal_in_place(&self, data: &mut Vec<u8>, aad: &[u8]) -> Result<(), Error> {
     if data.len() > MAX_TOKEN_PLAINTEXT || self.sealed.swap(true, Ordering::Relaxed) {
       return Err(Error::EncryptError);
     }
@@ -224,7 +211,7 @@ impl TokenCipher {
   }
 
   /// Decrypt `data`, which ends in the tag, and return the plaintext prefix.
-  pub(crate) fn open_in_place<'a>(&self, data: &'a mut [u8], aad: &[u8]) -> Result<&'a mut [u8], Error> {
+  fn open_in_place<'a>(&self, data: &'a mut [u8], aad: &[u8]) -> Result<&'a mut [u8], Error> {
     if !(TOKEN_TAG_LEN..=MAX_TOKEN_PLAINTEXT.strict_add(TOKEN_TAG_LEN)).contains(&data.len()) {
       return Err(Error::DecryptError);
     }

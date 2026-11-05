@@ -23,7 +23,7 @@ use serde_json::{Value, json};
 mod credentials;
 mod provenance;
 
-#[cfg(feature = "quinn")]
+#[cfg(feature = "quic")]
 pub mod quic;
 
 pub use provenance::provenance;

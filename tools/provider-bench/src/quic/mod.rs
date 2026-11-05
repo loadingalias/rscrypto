@@ -1,10 +1,9 @@
-//! QUIC v1 workloads through the pinned production rustls and Quinn APIs.
+//! QUIC v1 workloads through the pinned production rustls QUIC API.
 //!
 //! TLS credentials and policy come from the same fixtures as the TCP rows.
-//! This module supplies transport and observations, never packet cryptography.
+//! This module supplies observations, never packet cryptography.
 
 mod crypto;
-mod network;
 
 use alloc::sync::Arc;
 
@@ -13,7 +12,6 @@ use rustls::{ClientConfig, ServerConfig};
 use crate::{Configs, Fixture, Profile, Workload};
 
 pub use crypto::{CryptoFixture, HeaderFixture, PacketFixture};
-pub use network::{NetworkFixture, NetworkMode, ResetFixture};
 
 pub const TLS_BACKENDS: [&str; 4] = ["rscrypto", "rscrypto-webpki", "aws-lc-rs", "ring"];
 pub const CRYPTO_BACKENDS: [&str; 3] = ["rscrypto", "aws-lc-rs", "ring"];
