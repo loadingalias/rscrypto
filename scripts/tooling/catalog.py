@@ -12,7 +12,9 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 import tomllib
+import urllib.error
 import urllib.request
 import zipfile
 
@@ -23,6 +25,8 @@ PROFILING_PLATFORMS = ('aarch64-linux', 'x86_64-linux')
 PLATFORMS = (*PROFILING_PLATFORMS, 'aarch64-win', 'x86_64-win', *NATIVE_SOURCE_PLATFORMS)
 # The Apple Silicon workstation pins only the uv that runs Python and the zig that cross-links review binaries.
 MACOS = 'aarch64-macos'
+# Pinned downloads retry transient server and network failures, waiting 2 s, then 4 s.
+DOWNLOAD_ATTEMPTS = 3
 
 
 def read(path=CATALOG):
@@ -34,17 +38,36 @@ def rust_channel():
     return read(ROOT / 'rust-toolchain.toml')['toolchain']['channel']
 
 
+def transient(error):
+    """Whether a failed download may succeed later: an HTTP 5xx, another URL error, or a timeout."""
+    if isinstance(error, urllib.error.HTTPError):
+        return error.code >= 500
+    return isinstance(error, (urllib.error.URLError, TimeoutError))
+
+
 def download(url, destination, checksum):
     if not url.startswith('https://') or len(checksum) != 64:
         raise ValueError(f'invalid pinned download: {url}')
     request = urllib.request.Request(url, headers={'User-Agent': 'rscrypto-tooling'})
-    with urllib.request.urlopen(request, timeout=120) as response, Path(destination).open('wb') as output:
-        if not response.url.startswith('https://'):
-            raise ValueError('download redirected away from HTTPS')
-        digest = hashlib.sha256()
-        while block := response.read(1024 * 1024):
-            digest.update(block)
-            output.write(block)
+    for attempt in range(1, DOWNLOAD_ATTEMPTS + 1):
+        try:
+            with urllib.request.urlopen(request, timeout=120) as response, Path(destination).open('wb') as output:
+                if not response.url.startswith('https://'):
+                    raise ValueError('download redirected away from HTTPS')
+                digest = hashlib.sha256()
+                while block := response.read(1024 * 1024):
+                    digest.update(block)
+                    output.write(block)
+            break
+        except OSError as error:
+            # No partial file or open error response survives a failed attempt.
+            Path(destination).unlink(missing_ok=True)
+            if isinstance(error, urllib.error.HTTPError):
+                error.close()
+            if attempt == DOWNLOAD_ATTEMPTS or not transient(error):
+                raise OSError(f'download failed after {attempt} attempt(s): {url}: {error}') from error
+            print(f'tooling: {url}: {error}; retrying ({attempt}/{DOWNLOAD_ATTEMPTS})', file=sys.stderr)
+            time.sleep(2 * attempt)
     if digest.hexdigest() != checksum.lower():
         Path(destination).unlink()
         raise ValueError(f'checksum mismatch: {url}')

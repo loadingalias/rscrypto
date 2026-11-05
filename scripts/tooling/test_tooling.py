@@ -1,5 +1,6 @@
 """Offline regression checks for native provisioning and release selection."""
 import copy
+import hashlib
 from datetime import datetime, timedelta, timezone
 import io
 import json
@@ -467,10 +468,52 @@ class Archives(unittest.TestCase):
 
     def test_bad_checksum_does_not_publish_download(self):
         response=io.BytesIO(b'bad payload');response.url='https://example.test/asset'
-        with tempfile.TemporaryDirectory() as temporary, patch.object(catalog.urllib.request,'urlopen',return_value=response):
+        with tempfile.TemporaryDirectory() as temporary, patch.object(catalog.urllib.request,'urlopen',return_value=response) as fetch:
             path=Path(temporary)/'download'
             with self.assertRaises(ValueError): catalog.download(response.url,path,'a'*64)
             self.assertFalse(path.exists())
+            self.assertEqual(fetch.call_count,1,'a checksum mismatch is not retried')
+
+    def test_download_retries_only_transient_failures_and_names_the_url(self):
+        url='https://example.test/asset'
+        payload=b'pinned payload'
+        checksum=hashlib.sha256(payload).hexdigest()
+
+        class Stalled(io.BytesIO):
+            """Delivers one short block, then times out mid-download."""
+            def read(self, size=-1):
+                if self.tell(): raise TimeoutError('read timed out')
+                return super().read(4)
+
+        def response(stalls=False):
+            stream=(Stalled if stalls else io.BytesIO)(payload);stream.url=url
+            return stream
+
+        def http(code): return catalog.urllib.error.HTTPError(url,code,'status',{},None)
+
+        cases=[
+            ('5xx then success',[http(504),response()],2,[2],None),
+            ('network and timeout then success',[catalog.urllib.error.URLError('reset'),TimeoutError('timed out'),response()],3,[2,4],None),
+            ('partial read then success',[response(stalls=True),response()],2,[2],None),
+            ('5xx exhaustion',[http(504),http(502),http(503)],3,[2,4],'after 3 attempt'),
+            ('partial reads exhaust',[response(stalls=True) for _ in range(3)],3,[2,4],'after 3 attempt'),
+            ('4xx is not retried',[http(404),response()],1,[],'after 1 attempt'),
+        ]
+        for name,effects,calls,delays,failure in cases:
+            with self.subTest(name), tempfile.TemporaryDirectory() as temporary, \
+                    patch.object(catalog.urllib.request,'urlopen',side_effect=effects) as fetch, \
+                    patch.object(catalog.time,'sleep') as sleep, patch('sys.stderr',new=io.StringIO()):
+                path=Path(temporary)/'download'
+                if failure is None:
+                    catalog.download(url,path,checksum)
+                    self.assertEqual(path.read_bytes(),payload)
+                else:
+                    with self.assertRaises(OSError) as raised: catalog.download(url,path,checksum)
+                    self.assertIn(failure,str(raised.exception))
+                    self.assertIn(url,str(raised.exception))
+                    self.assertFalse(path.exists(),'no partial download survives')
+                self.assertEqual(fetch.call_count,calls)
+                self.assertEqual([call.args[0] for call in sleep.call_args_list],delays)
 
 
 
