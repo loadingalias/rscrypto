@@ -845,6 +845,44 @@ because later calls may read `a6` as an argument. With its `addi` low part, it a
 `Sha256::compress_blocks_portable` in both builds; four slices are unchanged and the fifth differs only in
 that page, and the five were renewed by review.
 
+### Direct-dispatch closure review, 2026-11-05
+
+`9cc887eb` replaced std's `OnceLock` caches with the crate's lock-free `OnceCache` and made dispatch calls
+direct. Against [Constant-Time 41973426452](https://github.com/loadingalias/rscrypto/actions/runs/41973426452)
+at `21824d5f`, this staled waivers and widened enforced call closures.
+
+Every inlined SHA-256 dispatch check now reads the cache's state byte and compares it with 2, where std's
+state word was tested for zero (x86-64 `movzbl`/`cmpb`, AArch64 `ldarb`/`cmp`, RISC-V `lb`/`li`/`bne`).
+The longer check moves later code. For that reason 25 waivers were stale: 8 on x86-64 Linux and 5 on Windows
+(RSA OAEP decryption, PKCS #1 v1.5 signing, and PSS encoding), 6 on AArch64 Linux (OAEP decryption and PSS
+encoding), and 6 on RISC-V (`Sha256::update_impl` for five primitives, and PSS encoding). Except on IBM Z,
+each condition keeps its instructions and open leaves. Four x86-64 Linux slices, two Windows slices, and the RISC-V `update_impl`
+slice list them in a different order, and the RISC-V PSS slice also differs in two `auipc` pages whose loads
+still read the SHA-256 initial hash words. The AArch64 PSS-encoding function has a new frame and register
+allocation, so its two rationales were rewritten from the current code. On IBM Z (`lb`/`llcr`/`cijlh`), 6 waivers
+in the same three functions were stale. Three slices are unchanged; the other three reach the dispatch check
+itself, whose state byte and argument-free `OnceCache::initialize` call replace std's state word and initializer,
+while the condition's own operands are unchanged. All 31 were renewed by review, with their cited offsets
+updated.
+
+With direct calls, `detect_uncached` and `OnceCache::initialize` reach more primitives. On x86-64, the eight
+detection conditions classified on 2026-11-04 now also reach 7 more primitives on Linux and 18 on Windows;
+each received a public waiver per primitive on its reviewed slice, 56 and 144 waivers. On RISC-V and IBM Z,
+conditions are new to the closure: the SHA-256 kernel choice in `OnceCache<sha256::Entry>::initialize`
+(5 primitives each), the `riscv_hwprobe` bundle test in `detect_uncached` on RISC-V (13 primitives), and five
+`getauxval` HWCAP and STFLE facility tests in `detect_uncached` on IBM Z (16 primitives). They test only
+kernel-reported, hardware, or cached capability bits, and 103 public waivers cover them.
+With these waivers, the scanner reports no stale waiver and no unwaived enforced finding on the run's
+x86-64 Linux, Windows, AArch64 Linux, and IBM Z artifacts.
+
+On POWER, the 19 waivers renewed on 2026-11-04 were stale again for the same reason: the merged read-only
+`_MergedGlobals` unit shrank from 32,707 to 32,697 bytes, so its digest changed and offsets into it moved.
+The functions and slices differ only in that unit's descriptor and offset immediates; five slices are
+unchanged, no rationale cites a changed immediate, and the open leaves name the same callees. On RISC-V, the
+same five RSA decrypt waivers were stale because the same `auipc a6` page moved; with its `addi` low part it
+still addresses `Sha256::compress_blocks_portable`. These 24 waivers were renewed by review at their reviewed
+branch offsets, and the POWER and RISC-V artifacts then also report none. The POWER cause is CT-TOOLING (a).
+
 ## Public decisions and exclusions
 
 Ordinary equality is allowed for public values, such as nonces, encoded public keys,
