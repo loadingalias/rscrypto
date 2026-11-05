@@ -210,7 +210,8 @@ func run() error {
 	if !address.IP.IsLoopback() || count < 1 || count > 4 {
 		return fmt.Errorf("use loopback and 1–4 connections")
 	}
-	groups := map[string]tls.CurveID{"X25519": tls.X25519, "secp256r1": tls.CurveP256, "secp384r1": tls.CurveP384, "X25519MLKEM768": tls.X25519MLKEM768}
+	groups := map[string]tls.CurveID{"X25519": tls.X25519, "secp256r1": tls.CurveP256, "secp384r1": tls.CurveP384, "X25519MLKEM768": tls.X25519MLKEM768,
+		"secp256r1MLKEM768": tls.SecP256r1MLKEM768, "secp384r1MLKEM1024": tls.SecP384r1MLKEM1024, "MLKEM1024": tls.MLKEM1024}
 	suites := map[string]uint16{"TLS13_AES_128_GCM_SHA256": tls.TLS_AES_128_GCM_SHA256, "TLS13_AES_256_GCM_SHA384": tls.TLS_AES_256_GCM_SHA384, "TLS13_CHACHA20_POLY1305_SHA256": tls.TLS_CHACHA20_POLY1305_SHA256}
 	group, ok := groups[os.Args[6]]
 	if !ok {

@@ -11,7 +11,7 @@ import platform
 import shutil
 import subprocess
 
-from provider_interop import ROOT, FIXTURES, CREDENTIALS, MLDSA_CREDENTIALS, SUITES, GROUPS, ready, results
+from provider_interop import ROOT, FIXTURES, CREDENTIALS, MLDSA_CREDENTIALS, SUITES, GROUPS, GO_UNSUPPORTED_GROUPS, ready, results
 
 
 def run_case(output, binary, peer, kind, suite, group, scenario, ours_client):
@@ -104,7 +104,9 @@ def main():
     metadata = json.loads(subprocess.check_output(['cargo', 'metadata', '--no-deps', '--format-version=1'], cwd=ROOT))
     binary = Path(metadata['target_directory']) / 'release/examples/quic_interop'
     credentials = CREDENTIALS + MLDSA_CREDENTIALS
-    cases = [(kind, suite, group, 'normal') for kind, suite, group in itertools.product(credentials, SUITES, GROUPS)]
+    # quic-go is the only peer, so groups that Go's crypto/tls lacks are out of scope.
+    cases = [(kind, suite, group, 'normal') for kind, suite, group in itertools.product(credentials, SUITES, GROUPS)
+             if group not in GO_UNSUPPORTED_GROUPS]
     cases += [(kind, suite, 'X25519MLKEM768', scenario) for kind, suite, scenario in itertools.product(credentials, SUITES, ('retry', 'early'))]
     if args.quick:
         cases = [('p256', SUITES[0], 'X25519MLKEM768', scenario) for scenario in ('normal', 'retry', 'early')]
