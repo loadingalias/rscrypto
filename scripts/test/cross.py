@@ -124,6 +124,10 @@ def execute(target, archive):
         flags = (record.get('encoded_rustflags') or '').split('\x1f')
         if record.get('internal') != internal or ('rscrypto_internal' in flags) != internal:
             raise ValueError('test archive internal-build provenance differs from its suite')
+    # Bundles that declare painted-stack binaries must measure them on this host.
+    # They run first, so that a failing suite does not hide the measurements.
+    stack = (stack_paint(target, incoming / 'stack-paint', out / 'stack-paint')
+             if 'stack_paint' in manifest['metadata'] else None)
     results = {}
     for mode in MODES:
         internal = mode.startswith('internal-')
@@ -141,9 +145,6 @@ def execute(target, archive):
         if internal:
             results[mode]['backend_evidence'] = validate_backend_evidence((out / f'{mode}-nextest.log').read_text(),
                 'portable-only' if mode.endswith('portable') else 'production-auto')
-    # Bundles that declare painted-stack binaries must measure them on this host.
-    stack = (stack_paint(target, incoming / 'stack-paint', out / 'stack-paint')
-             if 'stack_paint' in manifest['metadata'] else None)
     # Detect accidental changes to inputs throughout execution as well as before it.
     bundle.verify(ROOT, incoming, 'rscrypto.cross.tests', target)
     (out / 'summary.json').write_text(json.dumps({'status': 'pass', 'source': manifest['source'],

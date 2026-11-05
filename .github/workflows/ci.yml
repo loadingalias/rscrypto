@@ -244,6 +244,9 @@ jobs:
           PLATFORM: ${{ matrix.platform }}
         run: |
           source "$HOME/.local/share/rscrypto-tooling/environment.sh"
+          # Measure first, so that a failing suite does not hide the stack evidence.
+          just stack-allowances --output target/stack-paint/evidence
+          just stack-worker --all-configurations --output target/stack-paint/evidence
           if [[ "$PLATFORM" == x86_64-linux ]]; then
             just test-scripts
             just ct-test
@@ -256,8 +259,6 @@ jobs:
           just test --all --release --portable
           if [[ "$PLATFORM" != x86_64-linux ]]; then just test-evidence; fi
           if [[ "$PLATFORM" == x86_64-linux || "$PLATFORM" == aarch64-linux ]]; then just test-musl; fi
-          just stack-allowances --output target/stack-paint/evidence
-          just stack-worker --all-configurations --output target/stack-paint/evidence
           git diff --exit-code HEAD
 
       - name: Download cross-compiled suites from this workflow run
@@ -321,6 +322,8 @@ jobs:
         run: |
           ./scripts/tooling/windows_download_test.ps1
           ./scripts/tooling/x86_64-win.ps1 -Ci
+          just stack-worker --all-configurations --output target/stack-paint/evidence
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           just ci-check
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           just test --all --release
@@ -328,8 +331,6 @@ jobs:
           just test --all --release --portable
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           just test-evidence
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          just stack-worker --all-configurations --output target/stack-paint/evidence
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           git diff --exit-code HEAD
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
