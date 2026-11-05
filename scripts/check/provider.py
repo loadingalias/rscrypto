@@ -28,6 +28,8 @@ def runtime_matrix():
         # The top-secret client: caller entropy, so no getrandom.
         ('tls-caller-entropy', ['sha2', 'hmac', 'hkdf', 'aes-gcm', 'chacha20poly1305', 'x25519', 'ml-kem',
                                 'p256-ecdh', 'p384-ecdh', 'ecdsa-p256', 'ecdsa-p384', 'ed25519', 'rsa']),
+        # Transport-neutral QUIC endpoint keys alone: no TLS bundle, Quinn, or getrandom.
+        ('quic-endpoint', ['aes-gcm', 'hkdf']),
         ('quinn-x25519-p256', ['quinn', 'x25519', 'ecdsa-p256']),
         ('quinn-hybrid-mldsa', ['quinn', 'x25519', 'ml-kem', 'ml-dsa', 'ecdsa-p256', 'chacha20poly1305']),
     ]
@@ -154,7 +156,7 @@ def main():
                 selected = [*features, *(['portable-only'] if portable else [])]
                 run(['cargo', '+' + toolchain.channel(), 'nextest', 'run', '--locked',
                      '-p', PACKAGE, '--lib', '--release', *feature_args(selected),
-                     '-E', 'test(tests::profiles::) | test(tests::tls12::) | test(quinn::)',
+                     '-E', 'test(tests::profiles::) | test(tests::tls12::) | test(quic::) | test(quinn::)',
                      '--success-output', 'final'])
         return
     if args.mode == 'lint':

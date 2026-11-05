@@ -250,16 +250,25 @@ the guard. Compiler-copy coverage remains specific to the reviewed artifact.
 
 ### rustls QUIC integration
 
-`EndpointKeys` shares a clearing `SecretBytes<32>` reset key and the
-connection-ID keys: an AES-128 tag context and a mutex-guarded `ChaCha20Rng` that
+The transport-neutral `quic` keys own the endpoint secrets. `StatelessResetKey`
+owns a clearing `SecretBytes<32>`. `ConnectionIdKey` owns a clearing AES-128 tag
+context, built from a clearing `SecretBytes<16>` draw. `AddressTokenKey` owns a
+clearing `HkdfSha256` address-token root, drawn into a clearing
+`SecretBytes<32>`. None of them is `Clone`, and their `Debug` output names only
+the type. Each token seal or open derives an `Aes256Gcm` context through a
+clearing `SecretBytes<32>` scratch, and that context seals once. Connection-ID
+and token nonces are public values. Reset tokens are returned to the caller as
+plain arrays. Token buffers belong to the caller.
+
+The Quinn adapter's `EndpointKeys` shares a `StatelessResetKey` and the
+connection-ID keys: a `ConnectionIdKey` and a mutex-guarded `ChaCha20Rng` that
 seeds each endpoint's connection-ID generator. Each generator owns its own
 `ChaCha20Rng`. Each client configuration owns a `ChaCha20Rng` for initial
 destination IDs. The 32-byte endpoint seed is copied into Quinn's
 `EndpointConfig` as a plain array, which Quinn's `Debug` prints; the adapter's
-copy clears. Server configurations own a clearing `HkdfSha256`
-address-token root. Each token derives an `Aes256Gcm` context through a clearing
-`SecretBytes<32>` scratch. A derived context seals once; Quinn supplies the fresh
-128-bit derivation nonce. Incoming token buffers belong to Quinn.
+copy clears. Server configurations own an `AddressTokenKey`. Quinn supplies
+the fresh 128-bit derivation nonce for each token. Incoming token buffers
+belong to Quinn.
 
 On that same GNU configuration, token construction uses an outlined worker that
 returns only the final `Box`. Its caller runs the construction guard before the

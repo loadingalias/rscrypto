@@ -13,6 +13,19 @@ impl SecureRandom for Random {
 
 pub(crate) static RANDOM: Random = Random;
 
+/// Fills every request with one byte, so an independent oracle can rebuild the drawn keys.
+#[cfg(all(feature = "aes-gcm", feature = "hkdf"))]
+#[derive(Debug)]
+pub(crate) struct Fixed(pub(crate) u8);
+
+#[cfg(all(feature = "aes-gcm", feature = "hkdf"))]
+impl SecureRandom for Fixed {
+  fn fill(&self, output: &mut [u8]) -> Result<(), GetRandomFailed> {
+    output.fill(self.0);
+    Ok(())
+  }
+}
+
 /// The key provider under test: [`crate::sign::KEY_PROVIDER`] with `getrandom`,
 /// otherwise the same loader over [`RANDOM`].
 #[cfg(any(
@@ -38,15 +51,9 @@ pub(crate) fn key_provider() -> &'static dyn rustls::crypto::KeyProvider {
 
 #[cfg(all(feature = "hkdf", feature = "aes-gcm", feature = "chacha20poly1305"))]
 mod symmetric;
-#[cfg(any(
-  feature = "quinn",
-  all(feature = "hkdf", feature = "aes-gcm", feature = "chacha20poly1305")
-))]
+#[cfg(all(feature = "hkdf", feature = "aes-gcm"))]
 mod vectors;
-#[cfg(any(
-  feature = "quinn",
-  all(feature = "hkdf", feature = "aes-gcm", feature = "chacha20poly1305")
-))]
+#[cfg(all(feature = "hkdf", feature = "aes-gcm"))]
 pub(crate) use vectors::{fields, hex};
 
 #[cfg(all(

@@ -42,6 +42,8 @@ the compatibility row of the existing fail-fast matrix. Usable TLS and QUIC feat
 bundles also execute the connection matrix in native and portable modes:
 mutual authentication, stateful/stateless resumption where available, exporters,
 key updates, and closure against independent rustls crypto backends.
+The `quic-endpoint` bundle (`aes-gcm` and `hkdf` only) runs the transport-neutral
+QUIC key, Retry, and Initial-key tests without Quinn or `getrandom`.
 Each feature row also runs `cargo tree -p rscrypto-rustls -e normal,build --target all`.
 The gate rejects `ring`, `aws-lc-*`, `openssl-sys`, `boring-sys`, `cc`, and `cmake`.
 The all-features row contains every additive dependency feature, so its graph

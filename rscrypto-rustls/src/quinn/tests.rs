@@ -331,3 +331,123 @@ fn hybrid_decapsulation_failure_closes_with_internal_error() {
   let error = crate::kx_group::decapsulation_failed(rscrypto::MlKemError::InvalidCiphertext);
   assert_eq!(crypto_error(&error).code, TransportErrorCode::crypto(0x50));
 }
+
+/// Quinn's production Retry and stateless reset carry bytes that the
+/// transport-neutral keys rebuild from the same entropy.
+#[cfg(all(feature = "ecdsa-p256", feature = "x25519"))]
+#[test]
+fn quinn_retry_and_reset_bytes_match_the_transport_neutral_keys() {
+  use crate::quic::{AddressTokenKey, ConnectionIdKey, StatelessResetKey};
+  use crate::tests::Fixed;
+  use core::net::SocketAddr;
+  use quinn_proto::{DatagramEvent, Endpoint};
+
+  // Every server key comes from a fixed source, so the neutral keys rebuild them.
+  static SERVER_RANDOM: Fixed = Fixed(0x5c);
+  const ENDPOINT_RANDOM: Fixed = Fixed(0x3a);
+  let mut provider = crate::tests::tls::provider();
+  provider.secure_random = &SERVER_RANDOM;
+  let (client, server) = crate::tests::tls::configs(
+    crate::tests::tls::provider(),
+    provider,
+    crate::tests::tls::Credential::P256,
+    false,
+  );
+  let keys = EndpointKeys::generate(&ENDPOINT_RANDOM).expect("server keys");
+  let mut server = Endpoint::new(
+    Arc::new(keys.endpoint_config(&crate::tests::RANDOM).expect("server endpoint")),
+    Some(Arc::new(server_config(server).expect("server configuration"))),
+    false,
+  );
+  let mut client_endpoint = Endpoint::new(
+    Arc::new(endpoint_config_with_random(&crate::tests::RANDOM).expect("client endpoint")),
+    None,
+    false,
+  );
+  let now = std::time::Instant::now();
+  let client_address: SocketAddr = "192.0.2.7:50000".parse().expect("address");
+  let (_, mut connection) = client_endpoint
+    .connect(
+      now,
+      client_config(client).expect("client configuration"),
+      "127.0.0.1:4433".parse().expect("address"),
+      "localhost",
+    )
+    .expect("connect");
+  let mut initial = Vec::new();
+  let transmit = connection.poll_transmit(now, 1, &mut initial).expect("Initial packet");
+  assert_eq!(transmit.size, initial.len());
+  // Long header: flags, version, then the destination connection ID length and value.
+  assert_eq!(initial[5], 20);
+  let original = initial[6..26].to_vec();
+
+  let mut scratch = Vec::new();
+  let incoming = match server.handle(
+    now,
+    client_address,
+    None,
+    None,
+    BytesMut::from(initial.as_slice()),
+    &mut scratch,
+  ) {
+    Some(DatagramEvent::NewConnection(incoming)) => Some(incoming),
+    _ => None,
+  }
+  .expect("the first Initial starts a connection attempt");
+  let mut retry = Vec::new();
+  assert_eq!(server.retry(incoming, &mut retry).expect("Retry").size, retry.len());
+  assert!(crate::quic::is_valid_retry(&original, &retry));
+  let source_at = 6usize.strict_add(usize::from(retry[5]));
+  let token_at = source_at.strict_add(1).strict_add(usize::from(retry[source_at]));
+  let source_id = &retry[source_at.strict_add(1)..token_at];
+  // EndpointKeys draws the reset key, then the connection-ID tag key.
+  let reset_key = StatelessResetKey::generate(&ENDPOINT_RANDOM).expect("reset key");
+  let id_key = ConnectionIdKey::generate(&ENDPOINT_RANDOM).expect("ID key");
+  assert!(id_key.validate(source_id), "Quinn issues neutral-key IDs");
+
+  let mut token = retry[token_at..retry.len().strict_sub(16)].to_vec();
+  let token_key = AddressTokenKey::generate(&SERVER_RANDOM).expect("token key");
+  let plaintext = token_key
+    .open(&mut token, &[])
+    .expect("Quinn's token opens under the neutral key");
+  // Quinn's Retry payload: type 0, IPv4 tag 0, address, port, then the length-prefixed original ID and issue time.
+  assert_eq!(plaintext[..8], [0, 0, 192, 0, 2, 7, 0xc3, 0x50]);
+  assert_eq!(usize::from(plaintext[8]), original.len());
+  assert_eq!(plaintext[9..29], original);
+  assert_eq!(plaintext.len(), 37);
+
+  // A short-header packet for an unknown ID that the key issued draws a
+  // stateless reset; an ID that it never issued draws nothing.
+  let id = id_key.issue(&crate::tests::RANDOM).expect("ID");
+  let mut packet = vec![0x40; 64];
+  packet[1..9].copy_from_slice(&id);
+  let mut forged = packet.clone();
+  forged[8] ^= 1;
+  assert!(
+    server
+      .handle(
+        now,
+        client_address,
+        None,
+        None,
+        BytesMut::from(forged.as_slice()),
+        &mut Vec::new()
+      )
+      .is_none()
+  );
+  let mut reset = Vec::new();
+  let transmit = match server.handle(
+    now,
+    client_address,
+    None,
+    None,
+    BytesMut::from(packet.as_slice()),
+    &mut reset,
+  ) {
+    Some(DatagramEvent::Response(transmit)) => Some(transmit),
+    _ => None,
+  }
+  .expect("stateless reset");
+  assert_eq!(transmit.size, reset.len());
+  assert_eq!(reset[reset.len().strict_sub(16)..], reset_key.token(&id));
+}

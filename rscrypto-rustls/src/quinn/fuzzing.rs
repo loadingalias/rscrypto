@@ -1,23 +1,43 @@
 //! Internal fuzz entry points. Absent from ordinary builds and public API docs.
 
 use super::*;
+use crate::quic::{AddressTokenKey, ConnectionIdKey};
 use quinn_proto::crypto::HandshakeTokenKey as _;
 
+/// Fixture entropy: every request is filled with one byte.
+#[derive(Debug)]
+struct Fixed(u8);
+
+impl SecureRandom for Fixed {
+  fn fill(&self, output: &mut [u8]) -> Result<(), rustls::crypto::GetRandomFailed> {
+    output.fill(self.0);
+    Ok(())
+  }
+}
+
 /// Exercise production Retry validation, with arbitrary framing and a valid-tag anchor.
+///
+/// The Quinn split and the transport-neutral whole-packet check must agree.
 pub fn retry(data: &[u8]) {
   if data.len() > 4096 {
     return;
   }
   let cid = ConnectionId::new(&[0x83, 0x94, 0xc8, 0xf0, 0x3e, 0x51, 0x57, 0x08]);
   let split = data.first().map_or(0, |byte| usize::from(*byte).min(data.len()));
-  let _accepted = valid_retry(cid, &data[..split], &data[split..]);
+  assert_eq!(
+    valid_retry(cid, &data[..split], &data[split..]),
+    crate::quic::is_valid_retry(&cid, data)
+  );
   let tag = retry_tag(cid, data);
+  assert_eq!(crate::quic::retry_integrity_tag(&cid, data), Some(tag));
   let packet = [data, &tag].concat();
   assert!(valid_retry(cid, &[], &packet));
+  assert!(crate::quic::is_valid_retry(&cid, &packet));
   let mut bad = packet;
   let index = bad.len().strict_sub(1);
   bad[index] ^= 1;
   assert!(!valid_retry(cid, &[], &bad));
+  assert!(!crate::quic::is_valid_retry(&cid, &bad));
 }
 
 /// Remove production header protection on arbitrary packets and offsets.
@@ -39,19 +59,44 @@ pub fn header(data: &[u8]) {
 }
 
 /// Open arbitrary address tokens, then check authentication failures on real seals.
+///
+/// Covers the Quinn derived-key interface and the transport-neutral token and
+/// connection-ID interfaces over the same keys.
 pub fn token(data: &[u8]) {
+  if data.len() > 4144 {
+    return;
+  }
+  let key = AddressTokenKey::generate(&Fixed(0x42)).expect("fixed fixture key");
+  let mut bytes = data.to_vec();
+  let _opened = key.open(&mut bytes, b"fuzz address context");
+  let ids = ConnectionIdKey::generate(&Fixed(0x24)).expect("fixed fixture key");
+  let _issued = ids.validate(data);
   if data.len() > 4112 {
     return;
   }
-  let key = token::TokenKey::generate_with(|out| {
-    out.fill(0x42);
-    Ok(())
-  })
-  .expect("fixed fixture key");
   let cipher = key.aead_from_hkdf(&[0x13; 16]);
   let mut bytes = data.to_vec();
   let _opened = cipher.open(&mut bytes, b"fuzz address context");
   if data.len() <= 4096 {
+    let mut token = data.to_vec();
+    key
+      .seal(&Fixed(0x13), &mut token, b"fuzz address context")
+      .expect("bounded neutral seal");
+    let (sealed, nonce) = token.split_at(token.len().strict_sub(16));
+    assert_eq!(nonce, [0x13; 16]);
+    let mut quinn = data.to_vec();
+    key
+      .aead_from_hkdf(nonce)
+      .seal(&mut quinn, b"fuzz address context")
+      .expect("bounded first seal");
+    assert_eq!(quinn, sealed, "both interfaces derive the same one-use key");
+    let mut bad = token.clone();
+    bad[0] ^= 1;
+    key.open(&mut bad, b"fuzz address context").expect_err("tampered token");
+    assert_eq!(
+      key.open(&mut token, b"fuzz address context").expect("valid token"),
+      data
+    );
     let mut sealed = data.to_vec();
     cipher
       .seal(&mut sealed, b"fuzz address context")

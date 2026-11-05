@@ -2,8 +2,8 @@
 
 This unpublished crate supplies rscrypto-backed TLS 1.3 and QUIC cryptographic
 adapters for rustls 0.24 development, including hybrid key exchange, classical
-authentication, opt-in ML-DSA authentication, and opt-in TLS 1.2 suites. The `quinn` feature supplies a QUIC v1 transport adapter for
-quinn-proto 0.12 development.
+authentication, opt-in ML-DSA authentication, and opt-in TLS 1.2 suites. The `quic` module supplies QUIC v1 endpoint
+cryptography for any transport, and the `quinn` feature adapts it to quinn-proto 0.12 development.
 
 The [manifest](Cargo.toml) pins rustls and Quinn to upstream `main` revisions.
 These are development revisions, not released rustls 0.24 or Quinn 0.12 versions.
@@ -38,8 +38,9 @@ quinn-proto revision makes its browser-WASM `ring` dependency optional
 | Certificate and handshake verification | ECDSA P-256/P-384, Ed25519, RSA-PSS and RSA PKCS#1 v1.5 | [verify](src/verify.rs) |
 | Key import and signing | rscrypto PKCS#8/SEC1/PKCS#1 codecs; blinded ECDSA, Ed25519, blinded RSA-PSS and RSA PKCS#1 v1.5 | [sign](src/sign.rs) |
 | ML-DSA authentication | Pure ML-DSA-44/65/87 with the empty TLS context; keys prepared once (or compact on request) and hedged signing | [sign](src/sign/mldsa.rs), [verify](src/verify.rs) |
-| QUIC Retry, reset, and address tokens | RFC 9001 AES-128-GCM Retry; HMAC-SHA256 reset tokens; HKDF-SHA256 and AES-256-GCM token keys | [quinn](src/quinn/) |
-| QUIC connection IDs | `ChaCha20Rng` nonces and initial IDs seeded from caller entropy; AES-128 connection-ID tags | [quinn](src/quinn/cid.rs) |
+| QUIC Initial keys and Retry | RFC 9001 AES-128-GCM Initial keys and Retry integrity tags | [quic](src/quic/initial.rs) |
+| QUIC reset and address tokens | HMAC-SHA256 reset tokens; HKDF-SHA256 and AES-256-GCM token keys | [quic](src/quic/token.rs) |
+| QUIC connection IDs | AES-128 connection-ID tags over caller-drawn nonces | [quic](src/quic/cid.rs); Quinn's `ChaCha20Rng` nonce and initial-ID generators seeded from caller entropy in [quinn](src/quinn/cid.rs) |
 | Key exchange | `X25519SecretKey`, `P256EphemeralSecret`, `P384EphemeralSecret`, `MlKem768`, `MlKem1024` | [kx_group](src/kx_group.rs) |
 
 `cipher_suite::ALL_CIPHER_SUITES` lists enabled TLS 1.3 suites in preference order.
@@ -284,6 +285,33 @@ See the [campaign scope](../scripts/README.md#test-entry-points) for exclusions 
 
 ## QUIC v1
 
+### Any transport
+
+With `aes-gcm` and `hkdf`, the `quic` module supplies the QUIC v1 cryptography
+that rustls's QUIC API leaves to the transport, without Quinn or `getrandom`:
+
+- `quic::initial_keys(client_dst_connection_id, side)` derives Initial packet
+  and header keys as rustls `quic::Keys`.
+- `quic::retry_integrity_tag` and `quic::is_valid_retry` compute and check Retry
+  integrity tags.
+- `quic::ConnectionIdKey` issues eight-byte connection IDs, a three-byte nonce
+  and a five-byte AES-128 tag, and recognizes the IDs it issued. IDs carry no
+  counter or endpoint index. The 24-bit nonce repeats after a few thousand IDs,
+  so the transport rejects an issued ID that is already in use.
+- `quic::StatelessResetKey` derives each connection ID's stateless-reset token
+  from a static HMAC-SHA256 key.
+- `quic::AddressTokenKey` seals and opens Retry and NEW_TOKEN address tokens of
+  up to 4 KiB of plaintext. Each token carries a fresh 16-byte nonce, from which
+  HKDF-SHA256 derives a one-use AES-256-GCM key. The transport owns the token
+  contents, expiry, and replay policy.
+
+Every key and nonce comes from the `SecureRandom` source passed to the call. A
+failing source fails the call, without OS fallback, and leaves caller data
+unchanged. Rustls's QUIC API supplies the handshake and the packet and header
+protection keys through this provider's `quic` algorithms.
+
+### Quinn
+
 Enable `quinn` and select only a runtime feature on the application's Quinn
 dependency. Use `quinn::EndpointKeys`, `quinn::client_config(tls)`, and
 `quinn::server_config(tls)` from this crate, or `quinn::endpoint_config()` with
@@ -315,9 +343,9 @@ sources, and a failing source fails construction without OS fallback:
   two endpoints sharing a server configuration would draw the same token nonces.
   Quinn's `Debug` output for an endpoint configuration includes the seed.
   `quinn::endpoint_config_with_random(random)` combines both calls.
-- Each endpoint's connection IDs are a three-byte nonce from its own
-  `ChaCha20Rng` and a five-byte AES-128 tag, so Quinn can reject IDs the key set
-  never issued. They carry no counter or endpoint index.
+- Each endpoint's connection IDs are `quic::ConnectionIdKey` IDs whose nonces
+  come from the endpoint's own `ChaCha20Rng`, so Quinn can reject IDs the key
+  set never issued. They carry no counter or endpoint index.
 - `quinn::client_config(tls)` seeds the client's 20-byte initial destination
   connection IDs from the TLS provider's `secure_random`, and
   `quinn::server_config(tls)` draws its address-token root from it.
@@ -331,7 +359,9 @@ selects BBR draws OS entropy and is not reproducible. The pinned quinn-proto
 generators are `rand` 0.10's `StdRng`, and quinn-proto links `getrandom` through
 `rand`'s default features for that BBR seed. Address-token roots belong to the
 returned server configuration; cloning it keeps outstanding tokens valid. Each
-derived token key seals once, with at most 4 KiB of plaintext.
+derived token key seals once, with at most 4 KiB of plaintext. The reset and
+token keys are the `quic` module's keys, so Quinn's tokens open with
+`quic::AddressTokenKey` under the same key.
 
 Early data is off by default. Opting in requires a replay-safe application
 protocol, a client with `enable_early_data`, and a server with

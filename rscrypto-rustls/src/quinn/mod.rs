@@ -30,18 +30,19 @@
 //! transport generators are `rand` 0.10's `StdRng` (ChaCha12); `quinn-proto`
 //! links `getrandom` through `rand` 0.10's default features for that BBR seed.
 //!
-//! Initial packets and Retry always use RFC 9001 AES-128-GCM, independently of
-//! the negotiated suite. Rustls owns handshake secrets and key updates. Quinn
-//! enforces the packet keys' confidentiality and integrity limits. Application
-//! policy still owns trust, ALPN, resumption, admission, and replay protection.
+//! The connection-ID, reset, and address-token keys are this crate's
+//! transport-neutral [`crate::quic`] keys; this module adapts them to Quinn's
+//! traits. Initial packets and Retry always use RFC 9001 AES-128-GCM,
+//! independently of the negotiated suite. Rustls owns handshake secrets and key
+//! updates. Quinn enforces the packet keys' confidentiality and integrity limits.
+//! Application policy still owns trust, ALPN, resumption, admission, and replay
+//! protection.
 
 use alloc::{boxed::Box, collections::VecDeque, string::String, sync::Arc, vec::Vec};
 use core::any::Any;
 use quinn_proto::crypto::{self, ExportKeyingMaterialError, KeyPair, Keys, UnsupportedVersion};
 use quinn_proto::transport_parameters::TransportParameters;
 use quinn_proto::{ConnectError, ConnectionId, ConnectionIdGenerator, Side, TransportError, TransportErrorCode};
-use rscrypto::aead::{Nonce96, expert::AeadWithNonce};
-use rscrypto::{Aes128Gcm, Aes128GcmKey, Aes128GcmTag};
 use rustls::crypto::kx::NamedGroup;
 use rustls::crypto::{CipherSuite, SecureRandom};
 use rustls::enums::ApplicationProtocol;
@@ -83,7 +84,7 @@ pub struct HandshakeData {
 /// [`Self::endpoint_config`]. The keys clear when the last owner drops.
 #[derive(Clone)]
 pub struct EndpointKeys {
-  reset: Arc<token::ResetKey>,
+  reset: Arc<crate::quic::StatelessResetKey>,
   cids: Arc<cid::CidKeys>,
 }
 
@@ -96,7 +97,7 @@ impl EndpointKeys {
   /// returns an error without fallback.
   pub fn generate(random: &dyn SecureRandom) -> Result<Self, Error> {
     Ok(Self {
-      reset: Arc::new(token::ResetKey::generate_with(|out| random.fill(out))?),
+      reset: Arc::new(crate::quic::StatelessResetKey::generate(random)?),
       cids: Arc::new(cid::CidKeys::generate(random)?),
     })
   }
@@ -197,7 +198,7 @@ pub fn server_config(tls: rustls::ServerConfig) -> Result<quinn_proto::ServerCon
   // QUIC suites, early-data limits, and maximum fragment size. No entropy is
   // requested until processing ClientHello. Preserve that invariant on upgrades.
   Connection::<ServerSide, quic::Quic>::new_quic(Arc::clone(&tls), quic::Version::V1, Vec::new())?;
-  let token_key = token::TokenKey::generate_with(|out| tls.provider().secure_random.fill(out))?;
+  let token_key = crate::quic::AddressTokenKey::generate(tls.provider().secure_random)?;
   Ok(quinn_proto::ServerConfig::new(
     Arc::new(Server(tls)),
     Arc::new(token_key),
@@ -257,63 +258,19 @@ impl crypto::ServerConfig for Server {
 }
 
 fn initial_keys(cid: ConnectionId, side: Side) -> Keys {
-  let suite = crate::cipher_suite::TLS13_AES_128_GCM_SHA256;
   let side = match side {
     Side::Client => quic::Side::Client,
     Side::Server => quic::Side::Server,
   };
-  packet::keys(quic::Keys::initial(
-    quic::Version::V1,
-    quic::Suite::try_from(suite).expect("static QUIC suite"),
-    &cid,
-    side,
-  ))
-}
-
-// RFC 9001 section 5.8: public fixed Retry key and nonce for QUIC v1.
-const RETRY_KEY: [u8; 16] = [
-  0xbe, 0x0c, 0x69, 0x0b, 0x9f, 0x66, 0x57, 0x5a, 0x1d, 0x76, 0x6b, 0x54, 0xe3, 0x68, 0xc8, 0x4e,
-];
-const RETRY_NONCE: [u8; 12] = [0x46, 0x15, 0x99, 0xd3, 0x5d, 0x63, 0x2b, 0xf2, 0x23, 0x98, 0x25, 0xbb];
-
-fn retry_aad(cid: ConnectionId, header: &[u8], body: &[u8]) -> Vec<u8> {
-  let mut aad = Vec::with_capacity(
-    1usize
-      .strict_add(cid.len())
-      .strict_add(header.len())
-      .strict_add(body.len()),
-  );
-  aad.push(u8::try_from(cid.len()).expect("QUIC connection IDs are at most 20 bytes"));
-  aad.extend_from_slice(&cid);
-  aad.extend_from_slice(header);
-  aad.extend_from_slice(body);
-  aad
+  packet::keys(crate::quic::initial_keys(&cid, side))
 }
 
 fn retry_tag(cid: ConnectionId, packet: &[u8]) -> [u8; 16] {
-  let cipher = Aes128Gcm::new(&Aes128GcmKey::from_bytes(RETRY_KEY));
-  *cipher
-    .encrypt_in_place(&Nonce96::from_bytes(RETRY_NONCE), &retry_aad(cid, packet, &[]), &mut [])
-    .expect("Retry has an empty plaintext")
-    .as_bytes()
+  crate::quic::retry_tag(&cid, packet).expect("QUIC connection IDs are at most 20 bytes")
 }
 
 fn valid_retry(cid: ConnectionId, header: &[u8], payload: &[u8]) -> bool {
-  let Some(length) = payload.len().checked_sub(16) else {
-    return false;
-  };
-  let (body, tag) = payload.split_at(length);
-  let Ok(tag) = <[u8; 16]>::try_from(tag) else {
-    return false;
-  };
-  Aes128Gcm::new(&Aes128GcmKey::from_bytes(RETRY_KEY))
-    .decrypt_in_place(
-      &Nonce96::from_bytes(RETRY_NONCE),
-      &retry_aad(cid, header, body),
-      &mut [],
-      &Aes128GcmTag::from_bytes(tag),
-    )
-    .is_ok()
+  crate::quic::valid_retry(&cid, header, payload)
 }
 
 /// Map a TLS failure to QUIC's CRYPTO_ERROR with its TLS alert (RFC 9001, section 4.8).

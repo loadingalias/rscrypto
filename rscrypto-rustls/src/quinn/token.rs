@@ -1,25 +1,13 @@
+//! Quinn's reset and token-key traits over the transport-neutral QUIC keys.
+
 use alloc::{boxed::Box, vec::Vec};
-use core::sync::atomic::{AtomicBool, Ordering};
 use quinn_proto::crypto::{AeadKey, CryptoError, HandshakeTokenKey, HmacKey};
-use rscrypto::aead::{Nonce96, expert::AeadWithNonce};
-use rscrypto::{Aes256Gcm, Aes256GcmKey, Aes256GcmTag, HkdfSha256, HmacSha256, HmacSha256Tag, Mac, SecretBytes};
-use rustls::crypto::GetRandomFailed;
 
-const MAX_TOKEN_PLAINTEXT: usize = 4096;
+use crate::quic::{AddressTokenKey, StatelessResetKey, TokenCipher};
 
-pub(super) struct ResetKey(SecretBytes<32>);
-
-impl ResetKey {
-  pub(super) fn generate_with(
-    fill: impl FnOnce(&mut [u8; 32]) -> Result<(), GetRandomFailed>,
-  ) -> Result<Self, GetRandomFailed> {
-    SecretBytes::try_fill_with(fill).map(Self)
-  }
-}
-
-impl HmacKey for ResetKey {
+impl HmacKey for StatelessResetKey {
   fn sign(&self, data: &[u8], output: &mut [u8]) {
-    output.copy_from_slice(HmacSha256::mac(self.0.as_bytes(), data).as_ref());
+    output.copy_from_slice(self.mac(data).as_bytes());
   }
 
   fn signature_len(&self) -> usize {
@@ -27,121 +15,43 @@ impl HmacKey for ResetKey {
   }
 
   fn verify(&self, data: &[u8], signature: &[u8]) -> Result<(), CryptoError> {
-    let signature = HmacSha256Tag::from_bytes(signature.try_into().map_err(|_| CryptoError)?);
-    let mut mac = HmacSha256::new(self.0.as_bytes());
-    mac.update(data);
-    mac.verify(&signature).map_err(|_| CryptoError)
-  }
-}
-
-pub(super) struct TokenKey(HkdfSha256);
-
-impl TokenKey {
-  pub(super) fn generate_with(
-    fill: impl FnOnce(&mut [u8; 32]) -> Result<(), GetRandomFailed>,
-  ) -> Result<Self, GetRandomFailed> {
-    let key = SecretBytes::try_fill_with(fill)?;
-    Ok(Self(HkdfSha256::from_prk(key.as_bytes())))
-  }
-}
-
-impl HandshakeTokenKey for TokenKey {
-  fn aead_from_hkdf(&self, random_bytes: &[u8]) -> Box<dyn AeadKey> {
-    let key = SecretBytes::<32>::try_fill_with(|out| {
-      self
-        .0
-        .expand_vectored(&[b"rscrypto-rustls QUIC token v1", random_bytes], out)
-    })
-    .expect("one SHA-256 block is a valid HKDF output");
-    let key = Aes256GcmKey::generate(|out| out.copy_from_slice(key.as_bytes()));
-    #[cfg(all(
-      target_arch = "aarch64",
-      target_endian = "little",
-      target_os = "linux",
-      target_env = "gnu",
-      not(debug_assertions),
-      not(feature = "portable-only")
-    ))]
-    {
-      // Clear retired construction frames before the borrowed input key drops.
-      let _scrub = crate::aead::ConstructionStackScrub;
-      boxed_token_cipher(&key)
+    if self.verify_mac(data, signature) {
+      Ok(())
+    } else {
+      Err(CryptoError)
     }
-    #[cfg(not(all(
-      target_arch = "aarch64",
-      target_endian = "little",
-      target_os = "linux",
-      target_env = "gnu",
-      not(debug_assertions),
-      not(feature = "portable-only")
-    )))]
-    Box::new(TokenCipher {
-      cipher: Aes256Gcm::new(&key),
-      sealed: AtomicBool::new(false),
-    })
   }
 }
 
-// Return only the final heap owner; the caller clears this retired worker.
-#[cfg(all(
-  target_arch = "aarch64",
-  target_endian = "little",
-  target_os = "linux",
-  target_env = "gnu",
-  not(debug_assertions),
-  not(feature = "portable-only")
-))]
-#[inline(never)]
-fn boxed_token_cipher(key: &Aes256GcmKey) -> Box<TokenCipher> {
-  Box::new(TokenCipher {
-    cipher: Aes256Gcm::new(key),
-    sealed: AtomicBool::new(false),
-  })
-}
-
-struct TokenCipher {
-  cipher: Aes256Gcm,
-  sealed: AtomicBool,
+impl HandshakeTokenKey for AddressTokenKey {
+  fn aead_from_hkdf(&self, random_bytes: &[u8]) -> Box<dyn AeadKey> {
+    // Quinn draws a fresh 128-bit token nonce from its seeded generator.
+    self.cipher(random_bytes)
+  }
 }
 
 impl AeadKey for TokenCipher {
   fn seal(&self, data: &mut Vec<u8>, additional_data: &[u8]) -> Result<(), CryptoError> {
-    if data.len() > MAX_TOKEN_PLAINTEXT || self.sealed.swap(true, Ordering::Relaxed) {
-      return Err(CryptoError);
-    }
-    // Quinn derives a fresh key from its random 128-bit token nonce. Each
-    // derived key seals once; the fixed AEAD nonce is therefore never reused.
-    let tag = self
-      .cipher
-      .encrypt_in_place(&Nonce96::from_bytes([0; 12]), additional_data, data)
-      .map_err(|_| CryptoError)?;
-    data.extend_from_slice(tag.as_bytes());
-    Ok(())
+    self.seal_in_place(data, additional_data).map_err(|_| CryptoError)
   }
 
   fn open<'a>(&self, data: &'a mut [u8], additional_data: &[u8]) -> Result<&'a mut [u8], CryptoError> {
-    if !(16..=MAX_TOKEN_PLAINTEXT + 16).contains(&data.len()) {
-      return Err(CryptoError);
-    }
-    let (body, tag) = data.split_at_mut(data.len().strict_sub(16));
-    let tag = Aes256GcmTag::from_bytes((&*tag).try_into().map_err(|_| CryptoError)?);
-    self
-      .cipher
-      .decrypt_in_place(&Nonce96::from_bytes([0; 12]), additional_data, body, &tag)
-      .map_err(|_| CryptoError)?;
-    Ok(body)
+    self.open_in_place(data, additional_data).map_err(|_| CryptoError)
   }
 }
 
 #[cfg(test)]
 mod tests {
   use super::*;
+  use crate::tests::Fixed;
   use rustls::crypto::cipher::{AeadKey as RustlsAeadKey, Iv};
   use rustls::crypto::tls13::OkmBlock;
 
+  const MAX_TOKEN_PLAINTEXT: usize = AddressTokenKey::MAX_PLAINTEXT_LEN;
+
   #[test]
   fn reset_mac_matches_independent_peer_and_rejects_forgery() {
-    let key = ResetKey(SecretBytes::new([0x0b; 32]));
+    let key = StatelessResetKey::generate(&Fixed(0x0b)).expect("fixed reset key");
     let mut tag = [0; 32];
     key.sign(b"Hi There", &mut tag);
     // This adapter fixes the random key length to 32 bytes; an independent
@@ -162,7 +72,7 @@ mod tests {
   #[test]
   fn token_kdf_and_aead_match_independent_peer_and_reject_reuse() {
     let root = [0x42; 32];
-    let key = TokenKey(HkdfSha256::from_prk(&root));
+    let key = AddressTokenKey::generate(&Fixed(0x42)).expect("fixed token key");
     let random = [0x13; 16];
     let peer = rustls_aws_lc_rs::cipher_suite::TLS13_AES_256_GCM_SHA384;
     let hkdf = rustls_aws_lc_rs::cipher_suite::TLS13_AES_128_GCM_SHA256.hkdf_provider;
@@ -220,11 +130,16 @@ mod tests {
 
   #[test]
   fn partial_entropy_cannot_publish_a_reset_or_token_key() {
-    fn fail(out: &mut [u8; 32]) -> Result<(), GetRandomFailed> {
-      out[..17].fill(0x42);
-      Err(GetRandomFailed)
+    use rustls::crypto::{GetRandomFailed, SecureRandom};
+    #[derive(Debug)]
+    struct Partial;
+    impl SecureRandom for Partial {
+      fn fill(&self, out: &mut [u8]) -> Result<(), GetRandomFailed> {
+        out[..17].fill(0x42);
+        Err(GetRandomFailed)
+      }
     }
-    assert!(ResetKey::generate_with(fail).is_err());
-    assert!(TokenKey::generate_with(fail).is_err());
+    StatelessResetKey::generate(&Partial).expect_err("partial entropy");
+    AddressTokenKey::generate(&Partial).expect_err("partial entropy");
   }
 }
