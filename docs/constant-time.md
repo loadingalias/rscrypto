@@ -883,6 +883,14 @@ same five RSA decrypt waivers were stale because the same `auipc a6` page moved;
 still addresses `Sha256::compress_blocks_portable`. These 24 waivers were renewed by review at their reviewed
 branch offsets, and the POWER and RISC-V artifacts then also report none. The POWER cause is CT-TOOLING (a).
 
+Constant-Time 41988218703 at c55dad7d, which adds the composite ML-DSA signatures, made 25 of these waivers
+stale again without changing any condition: 19 on POWER, where the merged read-only unit's content digest
+changed, and 6 on Windows (the IFMA `build_table` conditions), where 24-byte constants that `leaq` addresses
+changed content. Every reviewed branch kept its offset, and its slice is identical except for those constant
+descriptors. They were renewed by review; the scanner then reports no stale waiver and no unwaived enforced
+finding on all six CI platforms. Constant descriptors that hash placement-dependent bytes remain CT-TOOLING (a):
+each change to read-only data can repeat this renewal.
+
 ## Public decisions and exclusions
 
 Ordinary equality is allowed for public values, such as nonces, encoded public keys,
