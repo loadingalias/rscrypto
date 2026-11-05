@@ -891,6 +891,15 @@ descriptors. They were renewed by review; the scanner then reports no stale waiv
 finding on all six CI platforms. Constant descriptors that hash placement-dependent bytes remain CT-TOOLING (a):
 each change to read-only data can repeat this renewal.
 
+The local Apple artifact had 16 stale RSA waivers at `7cfd08f1` and the same 16 at `836f7a57`, both built
+in the main checkout. These waivers bind open slices, so each also binds its enclosing function. Since their
+2026-11-03 and 2026-11-04 reviews, those functions changed only in relocated constant addresses: the 24-byte
+`panic::Location` arguments of their panic calls and, in `encode_pss_with_mask::<Sha256>`, one data-page
+`adrp`. A `Location` holds a pointer to its file name, so its content digest moves with placement and with
+the checkout path. Fifteen slices are unchanged at their reviewed offsets. The reviewed artifact for the
+`encode_pss_with_mask::<Sha256>` waiver was not retained, so it was reviewed again: the instructions its
+rationale cites are unchanged. All 16 were renewed on 2026-11-05; the cause is CT-TOOLING (a).
+
 ## Public decisions and exclusions
 
 Ordinary equality is allowed for public values, such as nonces, encoded public keys,
