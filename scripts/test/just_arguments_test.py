@@ -75,7 +75,7 @@ if os.environ.get('ENV_LOG'):
       'ct-renew': ['scripts/ct/renew_waivers.py'],
       'stack-frames': ['scripts/stack/frames.py'],
       'ci-stack': ['scripts/stack/frames.py', '--whole-calls', 'all', '--all-configurations',
-                   '--budgets', '.config/stack-budgets.json'],
+                   '--budgets', '.config/stack-budgets.json', '--allowances', '.config/stack-allowances.json'],
       'stack-budgets': ['scripts/stack/frames.py', '--whole-calls', 'all', '--all-configurations',
                         '--write-budgets', '.config/stack-budgets.json'],
       'stack-residue': ['scripts/stack/residue.py'],

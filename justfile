@@ -327,10 +327,10 @@ ct-renew *args:
 stack-frames *args:
     @scripts/lib/python.sh scripts/stack/frames.py "$@"
 
-# Check every whole-call root's owned stack bound on every Linux target against its budget.
+# Check every whole-call root's owned stack bound against its budget and compose its whole-call bound with the measured libc allowances.
 [group('secret-lifecycle')]
 ci-stack *args:
-    @scripts/lib/python.sh scripts/stack/frames.py --whole-calls all --all-configurations --budgets .config/stack-budgets.json "$@"
+    @scripts/lib/python.sh scripts/stack/frames.py --whole-calls all --all-configurations --budgets .config/stack-budgets.json --allowances .config/stack-allowances.json "$@"
 
 # Regenerate the owned stack budgets from the current bounds after a reviewed stack change.
 [group('secret-lifecycle')]

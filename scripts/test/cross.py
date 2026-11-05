@@ -154,13 +154,16 @@ def execute(target, archive):
 
 
 def stack_paint(target, binaries, output):
-    """Measure the declared libc edges and the TLS worker with the bundle's binaries."""
+    """Measure the declared libc edges and the TLS worker with the bundle's binaries.
+
+    Both check the committed allowances and worker budgets for this target.
+    """
     script = ROOT / 'scripts/stack/painted.py'
     runs = [['edges', '--binary-dir', str(binaries / 'native')]]
     runs += [['worker', '--binary-dir', str(binaries / configuration), *(['--portable'] if configuration == 'portable' else [])]
              for configuration in ('native', 'portable')]
     for arguments in runs:
-        command = [sys.executable, '-B', str(script), *arguments, '--target', target, '--output', str(output)]
+        command = [sys.executable, '-B', str(script), *arguments, '--target', target, '--check', '--output', str(output)]
         subprocess.run(command, cwd=ROOT, check=True)
     return {'status': 'pass', 'reports': sorted(path.name for path in output.glob('*.json'))}
 

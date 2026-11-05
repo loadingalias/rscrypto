@@ -1,11 +1,13 @@
 # Provider resource qualification
 
 The 2026-11-03 ML-DSA resource measurements fit the approved heap and shared-key
-caps on the measured Apple M1 Pro. Whole-call stack qualification remains open.
-The code linked into each reviewed Linux artifact has a static owned bound, but
-the roots reach libc imports and cold capability detection whose stack use the
-artifacts cannot bound. Those edges need measured allowances. No single-frame
-measurement, requested thread stack, or successful execution closes that gate.
+caps on the measured Apple M1 Pro. On the five reviewed Linux targets, every
+whole-call root has a whole-call stack bound: its static owned bound composed
+with an allowance measured for each libc edge it reaches on the named glibc
+deployment. The provider TLS worker's painted-stack high-water mark is measured
+on every native target, Apple and Windows included
+([Measured stack use](#measured-stack-use)). Both are evidence for the measured
+hosts and paths, not static proofs of glibc or rustls.
 
 This record covers Gap 2 in the local delivery plan. It does not restart the
 deferred performance campaign or qualify G1-D traffic.
@@ -97,7 +99,7 @@ Each pair contains both TLS endpoints; its heap is never divided by two.
 | 1 MiB incremental TLS heap per connection | 400,752 B per pair | Pass for the measured rows; includes both endpoints and transport |
 | 64 simultaneous handshakes, 64 MiB aggregate connection allowance | 24,805,744 B for 64 live pairs | Pass for the measured rows |
 | 8 MiB shared prepared-key storage | 782,512 B configuration-construction peak | Pass for these configurations; includes keys, verifiers, and a warmup connection |
-| 8 MiB stack per worker | No whole-call bound | Open; the requested 8 MiB thread stack is not a measurement |
+| 8 MiB stack per worker | 56,928 B painted high-water of one TLS worker | Pass for the measured scenarios and hosts ([Measured stack use](#measured-stack-use)) |
 
 Every row rejects an extra admission before constructing TLS state and returns
 all 64 permits after destruction. This exercises the harness's caller-owned
@@ -168,14 +170,12 @@ set reaches the same edges; the tables give the maximum over the three sets.
 
 All 120 roots have an owned bound. On every target and configuration, the
 owned graphs contain no other import, IFUNC relocation, indirect transfer,
-missing frame record, or recursion. Owned bounds are not whole-call bounds.
-No allowance has been measured, so 114 roots keep
-`whole_call_bound_bytes: null`, and both preparation reviews exit nonzero.
-The six portable IBM Z roots that call `prepare` reach no declared edge and
-keep their static whole-call bounds: 1,416 B for preparation, or 1,600 B including
-successful prepared-key destruction, for each parameter set. No root is
-claimed to fit the 8 MiB cap. Caller storage and enclosing worker/TLS frames
-are outside every bound.
+missing frame record, or recursion. Owned bounds are not whole-call bounds;
+[Measured stack use](#measured-stack-use) composes them with the measured libc
+allowances. The six portable IBM Z roots that call `prepare` reach no declared
+edge and keep their static whole-call bounds: 1,416 B for preparation, or 1,600 B
+including successful prepared-key destruction, for each parameter set. Caller
+storage and enclosing worker/TLS frames are outside every whole-call bound.
 
 The full-graph traversal still descends into every declared edge and lists what
 an allowance must cover. Native AArch64, POWER, and IBM Z reach `getauxval`
@@ -275,23 +275,122 @@ jump continuations, x86-64 `rsp` save-slot reloads, data after a final return,
 checked jump tables on x86-64, IBM Z, and RISC-V, declared-edge entry depths after calls and tail calls, register copies of held
 imports, detection without a declared edge, and allowance composition.
 
-The exact remaining proof needs are:
-
-- A measured allowance for each reached declared edge, for each deployed libc
-  identity: `calloc`, `free`, `memcpy`, and `memset` where the table lists them,
-  and `getauxval`. An allowance must
-  cover the edge's own frames, red zone, and callbacks. The executable's import
-  name cannot bound whichever implementation the loader or an IFUNC resolver
-  selects. A measured allowance is evidence for that deployment; it is not a
-  static proof of glibc or rustls.
-- Composition of those allowances with the owned bounds through `--allowances`.
-  A warm capability cache cannot silently remove the cold path from the contract.
-- Enclosing provider/TLS/worker frames, and native Apple/Windows stack evidence.
-  The frame tool currently reviews Linux ELF only. Borrowed storage must also
-  be charged to its caller when the caller places it on the stack.
+The executable's import name cannot bound whichever implementation the loader
+or an IFUNC resolver selects, so each allowance is measured on its deployment,
+and a warm capability cache cannot remove the cold path from the contract: the
+composition charges every reached edge at its deepest entry. The frame tool
+reviews Linux ELF only; Apple and Windows have painted-stack worker evidence
+instead. Borrowed storage must be charged to its caller when the caller places
+it on the stack.
 
 Aborting panic/OOM exits are listed separately; normal and recoverable-error
 paths remain in the graph. No unknown callee is assigned a zero-stack bound.
+
+## Measured stack use
+
+Static owned bounds stop at the declared libc edges. `tools/stack-paint` measures
+what those edges use on the deployed libc, and what the provider TLS worker
+uses on every native target, on painted, guarded private stacks
+([scripts guide](../scripts/README.md#painted-stacks)). These are measurements of
+the reached paths on the named hosts, not static proofs of glibc, rustls, or
+every input.
+
+### libc allowances
+
+`just stack-allowances` calls each declared edge through the symbol the
+executable binds, so the loader's IFUNC selection for the host CPU applies. An
+allowance is the deepest use below the edge's entry stack pointer over the
+measured calls, rounded up to 16 bytes, plus the ABI red zone, then 12.5% more,
+rounded up to 64 bytes. [`.config/stack-allowances.json`](../.config/stack-allowances.json)
+records each target's allowances and libc identity.
+
+| Linux target | `calloc` | `malloc` | `free` | `memcpy` | `memmove` | `memset` | `memcmp` | `bcmp` | `getauxval` |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| x86-64 GNU | 576 | 576 | 576 | 192 | 192 | 192 | 192 | 192 | 192 |
+| AArch64 GNU | 640 | 576 | 512 | 0 | 0 | 0 | 0 | 0 | 64 |
+| POWER64LE GNU | 896 | 896 | 960 | 384 | 384 | 384 | 384 | 448 | 384 |
+| IBM Z GNU | 1,216 | 1,152 | 1,024 | 0 | 0 | 0 | 0 | 0 | 0 |
+| RISC-V 64 GNU | 576 | 576 | 512 | 128 | 128 | 64 | 64 | 64 | 64 |
+
+The measured deployments are Ubuntu 24.04 glibc 2.39 on the CI runners of
+CI 42061504225 at `9211e330`: x86-64 on AMD EPYC 9R14 (2.39-0ubuntu8.8),
+AArch64 on Graviton3 (2.39-0ubuntu8.8), POWER10, IBM z15, and RISC-V
+(2.39-0ubuntu8.9). For x86-64 and AArch64, the committed value is the larger
+of that run and an Ubuntu 26.04 glibc 2.43 (2.43-2ubuntu2.4) measurement on the
+Granite Rapids and Graviton4 dev machines. Each entry names its exact libc
+build hash, kernel, and CPU; `--check` reports a different identity.
+
+The memory functions and `getauxval` are frameless or nearly so on every
+measured target. The allocator edges are deepest in the pseudo-random workload
+and the first calls on a fresh thread, which create and attach an arena. Their
+failure returns, `free(NULL)`, frees of other threads' chunks, and bulk release
+are also measured. Allocator paths the workload does not reach, such as heap
+corruption reports, are not covered; they abort.
+
+### Whole-call bounds
+
+`just ci-stack` composes these allowances with the owned bounds:
+`max(owned bound, max over reached edges of (entry depth + allowance))`. Every
+`--whole-calls all` root on all five Linux targets, native and portable, now
+has a whole-call bound, and CI fails a root without one or above 8 MiB.
+
+Largest whole-call bound by root group, in bytes, native / portable:
+
+| Linux target | ML-DSA preparation | ML-DSA signing | ML-KEM | AEAD records |
+| --- | ---: | ---: | ---: | ---: |
+| x86-64 GNU | 2,040 / 1,256 | 59,112 / 58,552 | 33,976 / 33,880 | 9,080 / 8,696 |
+| AArch64 GNU | 2,144 / 1,520 | 59,456 / 58,720 | 38,288 / 36,688 | 8,624 / 8,624 |
+| POWER64LE GNU | 9,920 / 1,920 | 59,360 / 59,280 | 34,416 / 34,416 | 9,744 / 8,880 |
+| IBM Z GNU | 2,008 / 1,776 | 59,080 / 59,080 | 33,960 / 31,456 | 9,032 / 8,920 |
+| RISC-V 64 GNU | 1,440 / 1,440 | 58,752 / 58,752 | 31,728 / 31,728 | 8,448 / 8,448 |
+
+The entry depths at `memcpy` and `memset` sit inside the deepest owned frames,
+so the allowances raise only the roots whose deepest point is a libc call.
+The bounds apply to the measured libc identities and kernels only. Other glibc
+builds, musl, signal handlers, arbitrary caller-supplied allocators, and caller
+frames outside the call need their own evidence.
+
+### Provider TLS worker
+
+`just stack-worker` runs each of the 483 scenarios of
+`tools/stack-paint/src/bin/worker.rs` in a fresh process, on an 8 MiB painted
+stack, natively on each target. The first call builds both endpoint
+configurations, which loads and prepares keys and runs first-call capability
+detection, then drives the connections in memory: handshake, about 16 KB of
+application data each way, close notification, and destruction. A second call
+repeats the connections with the built configurations. Scenarios cover every
+credential, key exchange group, and suite; mutual and server-only
+authentication; prepared and WebPKI verifiers; intermediate chains; ticket and
+stateful resumption; HelloRetryRequest; compact ML-DSA keys; TLS 1.2; and each
+recoverable failure: corrupted signatures in both roles, untrusted and expired
+certificates, corrupted handshake and application records, invalid key shares
+in both directions, failing client and server entropy at each request, a
+foreign ticket key, no common group or suite, and a truncated private key.
+Every scenario ended as expected on every target.
+
+Deepest painted-stack high-water mark over all scenarios, in bytes, and its host:
+
+| Native target | Host | Scenarios | Deepest cold, native / portable | Deepest repeated, native / portable |
+| --- | --- | ---: | ---: | ---: |
+| x86-64 GNU | AMD EPYC 9R14 (CI) | 483 | 53,856 / 53,856 | 50,848 / 50,848 |
+| AArch64 GNU | Neoverse V1, Graviton3 (CI) | 483 | 54,656 / 54,288 | 51,664 / 51,296 |
+| POWER64LE GNU | POWER10 (CI) | 483 | 55,392 / 55,312 | 52,288 / 52,208 |
+| IBM Z GNU | IBM z15 T02, machine 8562 (CI) | 483 | 54,112 / 54,112 | 51,808 / 51,792 |
+| RISC-V 64 GNU | riscv64, Scaleway (CI) | 483 | 53,904 / 53,904 | 50,960 / 50,960 |
+| x86-64 Windows MSVC | AMD Zen 4 (CI) | 483 | 56,928 / 54,864 | 53,920 / 51,856 |
+| AArch64 macOS | Apple M1 Pro (local) | 483 | 54,208 / 54,032 | 51,216 / 51,040 |
+
+
+The deepest scenario everywhere is ML-DSA-87 mutual authentication, where the
+client's signature fails verification: its signing frame dominates, as in the
+static review. The measured high-water is below the static owned bound for
+ML-DSA-87 signing because the static bound takes the deepest path through
+every branch. Both are far below the 8 MiB worker cap.
+[`.config/stack-worker-budgets.json`](../.config/stack-worker-budgets.json)
+holds each configuration's budget, the measurement plus 12.5% rounded up to
+1 KiB, and CI fails a scenario that ends unexpectedly or a configuration that
+exceeds its budget. The worker frames above the provider are this harness's
+in-memory driver; an application's own frames add to them.
 
 ## Cleanup and timing
 
@@ -373,8 +472,11 @@ just stack-frames --mldsa-preparation --portable --evidence /path/to/new-portabl
 just stack-residue --native-mldsa --output /path/to/new-residue
 ```
 
-Both preparation reviews deliberately exit nonzero while a root has an
-unresolved owned edge or reaches a declared edge without a measured allowance. The legacy scrub review passes on all ten retained artifacts; its
+The preparation reviews exit nonzero while a root has an unresolved owned edge
+or reaches a declared edge without an allowance; pass
+`--allowances .config/stack-allowances.json` to compose the committed ones.
+`just stack-allowances --check` and `just stack-worker --all-configurations
+--check` repeat the measurements on a host against the committed files. The legacy scrub review passes on all ten retained artifacts; its
 explicit memory-leaf assumptions do not apply to the preparation gate.
 `check.log`, `test-scripts.log`, `frames-tests-final.log`, and
 `scrub-regressions/` retain the corresponding validation output.

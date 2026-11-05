@@ -245,8 +245,8 @@ jobs:
         run: |
           source "$HOME/.local/share/rscrypto-tooling/environment.sh"
           # Measure first, so that a failing suite does not hide the stack evidence.
-          just stack-allowances --output target/stack-paint/evidence
-          just stack-worker --all-configurations --output target/stack-paint/evidence
+          just stack-allowances --check --output target/stack-paint/evidence
+          just stack-worker --all-configurations --check --output target/stack-paint/evidence
           if [[ "$PLATFORM" == x86_64-linux ]]; then
             just test-scripts
             just ct-test
@@ -322,7 +322,7 @@ jobs:
         run: |
           ./scripts/tooling/windows_download_test.ps1
           ./scripts/tooling/x86_64-win.ps1 -Ci
-          just stack-worker --all-configurations --output target/stack-paint/evidence
+          just stack-worker --all-configurations --check --output target/stack-paint/evidence
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           just ci-check
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

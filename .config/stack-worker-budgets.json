@@ -1,0 +1,33 @@
+{
+  "rule": "Painted-stack high-water of the deepest `tools/stack-paint` TLS worker scenario, cold, 12.5% above the measurement and rounded up to 1 KiB. Regenerate with `just stack-worker --write-budgets` on each target after a reviewed change.",
+  "targets": {
+    "aarch64-apple-darwin": {
+      "native": 61440,
+      "portable": 61440
+    },
+    "aarch64-unknown-linux-gnu": {
+      "native": 62464,
+      "portable": 61440
+    },
+    "powerpc64le-unknown-linux-gnu": {
+      "native": 62464,
+      "portable": 62464
+    },
+    "riscv64gc-unknown-linux-gnu": {
+      "native": 61440,
+      "portable": 61440
+    },
+    "s390x-unknown-linux-gnu": {
+      "native": 61440,
+      "portable": 61440
+    },
+    "x86_64-pc-windows-msvc": {
+      "native": 64512,
+      "portable": 62464
+    },
+    "x86_64-unknown-linux-gnu": {
+      "native": 61440,
+      "portable": 61440
+    }
+  }
+}

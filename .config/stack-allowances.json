@@ -1,0 +1,77 @@
+{
+  "aarch64-unknown-linux-gnu": {
+    "libc": "glibc 2.39 (2.39-0ubuntu8.8), libc.so.6 sha256 6e3cc56b98887cb3; Ubuntu 24.04.4 LTS; Linux 7.0.0-1011-aws; CPU implementer 0x41, CPU part 0xd40, CPU variant 0x1; also glibc 2.43 (2.43-2ubuntu2.4), libc.so.6 sha256 7b17086ce95b1514; Ubuntu 26.04.1 LTS; Linux 7.0.0-1014-aws; CPU implementer 0x41, CPU part 0xd4f, CPU variant 0x0",
+    "edges": {
+      "calloc": 640,
+      "malloc": 576,
+      "free": 512,
+      "memcpy": 0,
+      "memmove": 0,
+      "memset": 0,
+      "memcmp": 0,
+      "bcmp": 0,
+      "getauxval": 64
+    },
+    "evidence": "just stack-allowances in CI 42061504225 at 9211e330 and on dev machines at 8bbe85d9; the larger allowance of the two"
+  },
+  "powerpc64le-unknown-linux-gnu": {
+    "libc": "glibc 2.39 (2.39-0ubuntu8.9), libc.so.6 sha256 ec84681669234eda; Ubuntu 24.04.5 LTS; Linux 6.12.0-278.el10.ppc64le; cpu POWER10 (architected), altivec supported, revision 2.0 (pvr 0080 0200)",
+    "edges": {
+      "calloc": 896,
+      "malloc": 896,
+      "free": 960,
+      "memcpy": 384,
+      "memmove": 384,
+      "memset": 384,
+      "memcmp": 384,
+      "bcmp": 448,
+      "getauxval": 384
+    },
+    "evidence": "just stack-allowances in CI 42061504225 at 9211e330"
+  },
+  "riscv64gc-unknown-linux-gnu": {
+    "libc": "glibc 2.39 (2.39-0ubuntu8.9), libc.so.6 sha256 4de978f73344b750; Ubuntu 24.04.5 LTS; Linux 5.10.113-scw1; riscv64",
+    "edges": {
+      "calloc": 576,
+      "malloc": 576,
+      "free": 512,
+      "memcpy": 128,
+      "memmove": 128,
+      "memset": 64,
+      "memcmp": 64,
+      "bcmp": 64,
+      "getauxval": 64
+    },
+    "evidence": "just stack-allowances in CI 42061504225 at 9211e330"
+  },
+  "s390x-unknown-linux-gnu": {
+    "libc": "glibc 2.39 (2.39-0ubuntu8.9), libc.so.6 sha256 1e4922a662125f1c; Ubuntu 24.04.5 LTS; Linux 6.8.0-147-generic; machine 8562",
+    "edges": {
+      "calloc": 1216,
+      "malloc": 1152,
+      "free": 1024,
+      "memcpy": 0,
+      "memmove": 0,
+      "memset": 0,
+      "memcmp": 0,
+      "bcmp": 0,
+      "getauxval": 0
+    },
+    "evidence": "just stack-allowances in CI 42061504225 at 9211e330"
+  },
+  "x86_64-unknown-linux-gnu": {
+    "libc": "glibc 2.39 (2.39-0ubuntu8.8), libc.so.6 sha256 8db37cf3f2169f59; Ubuntu 24.04.4 LTS; Linux 7.0.0-1011-aws; model name AMD EPYC 9R14; also glibc 2.43 (2.43-2ubuntu2.4), libc.so.6 sha256 305014d0b30755fc; Ubuntu 26.04.1 LTS; Linux 7.0.0-1014-aws; model name Intel(R) Xeon(R) 6975P-C",
+    "edges": {
+      "calloc": 576,
+      "malloc": 576,
+      "free": 576,
+      "memcpy": 192,
+      "memmove": 192,
+      "memset": 192,
+      "memcmp": 192,
+      "bcmp": 192,
+      "getauxval": 192
+    },
+    "evidence": "just stack-allowances in CI 42061504225 at 9211e330 and on dev machines at 8bbe85d9; the larger allowance of the two"
+  }
+}

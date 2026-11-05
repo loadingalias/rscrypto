@@ -592,8 +592,10 @@ plus 12.5%, rounded up to 1 KiB.
 
 - `just ci-stack [--target TARGET]...` reviews both builds of every target, or of the named ones,
   against the file. A root fails when its owned bound is unresolved, it has no budget, or the bound
-  exceeds the budget; a budget for a root the review no longer has also fails. The budgets alone set
-  the exit status: unmeasured declared-edge allowances remain listed but do not fail this gate.
+  exceeds the budget; a budget for a root the review no longer has also fails. The recipe also passes
+  [`.config/stack-allowances.json`](../.config/stack-allowances.json), the measured libc allowances
+  ([Painted stacks](#painted-stacks)), so a root also fails when it has no whole-call bound or its
+  whole-call bound exceeds the 8 MiB worker cap.
 - `just stack-budgets [--target TARGET]...` rewrites the reviewed entries from the current bounds and
   refuses while any bound is unresolved. Run it after a reviewed change moves a bound, and commit the
   file with that change.
@@ -695,14 +697,15 @@ prebuilt binaries.
   compact ML-DSA keys, TLS 1.2, and each recoverable failure: bad signatures, untrusted or expired
   certificates, corrupt records, invalid key shares, failing entropy, foreign tickets, and no common
   group or suite. A failure scenario that completes, or a success scenario that fails, fails the run.
-- `--check` compares the measurement with `.config/stack-allowances.json` or
-  `.config/stack-worker-budgets.json`. An edge fails when its measured allowance exceeds the committed
+- `--check` compares the measurement with [`.config/stack-allowances.json`](../.config/stack-allowances.json) or
+  [`.config/stack-worker-budgets.json`](../.config/stack-worker-budgets.json). An edge fails when its measured allowance exceeds the committed
   one; a different libc identity is reported, not failed. A worker configuration fails when any scenario
   fails or the deepest scenario exceeds its budget: the measured high-water plus 12.5%, rounded up to
   1 KiB. `painted.py record REPORT...` writes those files from saved reports.
-- CI runs both measurements on the x86-64 and AArch64 Linux rows and the worker on the Windows row,
-  and retains the reports. RISC-V, POWER, and IBM Z build the binaries in the cross-build job, seal them
-  in the test bundle, and measure them after the native suites. macOS is measured locally.
+- CI runs both measurements with `--check` on the x86-64 and AArch64 Linux rows and the worker on the
+  Windows row, and retains the reports. RISC-V, POWER, and IBM Z build the binaries in the cross-build
+  job, seal them in the test bundle, and measure them with `--check` after the native suites. macOS is
+  measured locally with `just stack-worker --all-configurations --check`.
 
 These are measurements of the reached paths on the measured host, not static proofs of glibc, rustls,
 or every input. They do not cover signal handlers or caller frames outside the measured call.
