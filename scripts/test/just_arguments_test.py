@@ -79,6 +79,8 @@ if os.environ.get('ENV_LOG'):
       'stack-budgets': ['scripts/stack/frames.py', '--whole-calls', 'all', '--all-configurations',
                         '--write-budgets', '.config/stack-budgets.json'],
       'stack-residue': ['scripts/stack/residue.py'],
+      'stack-allowances': ['scripts/stack/painted.py', 'edges'],
+      'stack-worker': ['scripts/stack/painted.py', 'worker'],
       'bench': ['scripts/bench/bounded.py', '--bench'],
       'bench-structural': ['scripts/bench/bounded.py', 'scripts/lib/toolchain.sh', '--exec', 'cargo', 'bench',
                            '--locked', '--profile', 'bench', '--features', 'checksums,sha2,blake3',
