@@ -1542,6 +1542,78 @@ def review_preparation(
   }
 
 
+ROOT_PREFIX = "rscrypto_frame_review::"
+CONFIGURATIONS = ("native", "portable")
+
+
+def stack_budget(owned: int) -> int:
+  """A root's budget: its owned bound plus 12.5%, rounded up to a whole KiB, and at least 1 KiB."""
+  return max(1024, -(-owned * 9 // (8 * 1024)) * 1024)
+
+
+def load_budgets(path: Path) -> dict[str, dict[str, dict[str, int]]]:
+  """Read per-root owned-bound budgets: {"targets": {target: {configuration: {root: bytes}}}}."""
+  data = json.loads(path.read_text())
+  targets = data.get("targets") if isinstance(data, dict) else None
+  if not isinstance(targets, dict):
+    raise SystemExit(f"{path}: expected an object with a `targets` object")
+  for target, configurations in targets.items():
+    if target not in ARCHES or not isinstance(configurations, dict) or not set(configurations) <= set(CONFIGURATIONS):
+      raise SystemExit(f"{path}: {target!r} must be a reviewed target with native and/or portable budgets")
+    for configuration, roots in configurations.items():
+      if not isinstance(roots, dict) or not all(
+        isinstance(name, str) and isinstance(value, int) and not isinstance(value, bool) and value > 0
+        for name, value in roots.items()
+      ):
+        raise SystemExit(f"{path}: {target} {configuration} budgets must map root names to positive integers")
+  return targets
+
+
+def apply_budgets(report: dict[str, object], budgets: dict, configuration: str, complete: bool) -> list[str]:
+  """Record each root's budget in `report` and return the budget problems.
+
+  A root fails when its owned bound is unresolved, it has no budget, or the
+  bound exceeds the budget. With `complete`, a budget for a root that the
+  review no longer has is also a problem.
+  """
+  expected = budgets.get(str(report["target"]), {}).get(configuration, {})
+  problems = []
+  reviewed = set()
+  for call in report["whole_calls"]:
+    name = str(call["root"]).removeprefix(ROOT_PREFIX)
+    reviewed.add(name)
+    budget = expected.get(name)
+    owned = call["owned_bound_bytes"]
+    call["owned_budget_bytes"] = budget
+    call["within_owned_budget"] = budget is not None and owned is not None and owned <= budget
+    if owned is None:
+      problems.append(f"{name}: owned bound unresolved")
+    elif budget is None:
+      problems.append(f"{name}: no budget")
+    elif owned > budget:
+      problems.append(f"{name}: owned bound {owned:,} B exceeds its {budget:,} B budget")
+  if complete:
+    problems.extend(f"{name}: budget for a root the review no longer has" for name in sorted(set(expected) - reviewed))
+  report["budget_configuration"] = configuration
+  report["budget_problems"] = problems
+  return problems
+
+
+def updated_budgets(existing: dict, reports: list[dict[str, object]], complete: bool) -> dict:
+  """Budgets from these reports' owned bounds, merged over `existing`; refuses any unresolved bound."""
+  targets = json.loads(json.dumps(existing))
+  for report in reports:
+    configuration = "portable" if report["portable"] else "native"
+    roots = {} if complete else dict(targets.get(str(report["target"]), {}).get(configuration, {}))
+    for call in report["whole_calls"]:
+      owned = call["owned_bound_bytes"]
+      if owned is None:
+        raise SystemExit(f"{report['target']} {configuration} {call['root']}: no owned bound to budget")
+      roots[str(call["root"]).removeprefix(ROOT_PREFIX)] = stack_budget(int(owned))
+    targets.setdefault(str(report["target"]), {})[configuration] = dict(sorted(roots.items()))
+  return {target: dict(sorted(targets[target].items())) for target in sorted(targets)}
+
+
 def load(target: str, binary: Path, evidence: Path | None = None) -> Program:
   mangled = run("llvm-nm", "--defined-only", "-n", str(binary))
   demangled = run("llvm-nm", "--defined-only", "-n", "-C", str(binary))
@@ -1569,6 +1641,19 @@ def load(target: str, binary: Path, evidence: Path | None = None) -> Program:
   return program
 
 
+def cross_linker(target: str) -> str:
+  """The pinned Zig when this host has it, otherwise the target's GNU cross compiler."""
+  if subprocess.run([str(ROOT / "scripts" / "tooling" / "zig.sh")], capture_output=True).returncode == 0:
+    return str(ROOT / "scripts" / "ct" / "zig-cc.sh")
+  sys.path.insert(0, str(ROOT / "scripts" / "lib"))
+  import cross_build
+
+  compiler = f"{cross_build.LINUX_TARGETS[target][1]}-gcc"
+  if shutil.which(compiler) is None:
+    raise SystemExit(f"{target} needs the pinned Zig or {compiler} to link")
+  return compiler
+
+
 def build(target: str, portable: bool, rustflags: list[str]) -> Path:
   if target not in ARCHES:
     raise SystemExit(f"unsupported target {target}; choose from {', '.join(ARCHES)}")
@@ -1581,8 +1666,8 @@ def build(target: str, portable: bool, rustflags: list[str]) -> Path:
   environment["CARGO_ENCODED_RUSTFLAGS"] = "\x1f".join(flags)
   environment.pop("RUSTFLAGS", None)
   host = subprocess.run(["rustc", "--print", "host-tuple"], check=True, capture_output=True, text=True).stdout.strip()
-  if target != host:
-    environment[f"CARGO_TARGET_{key}_LINKER"] = str(ROOT / "scripts" / "ct" / "zig-cc.sh")
+  if target != host and f"CARGO_TARGET_{key}_LINKER" not in environment:
+    environment[f"CARGO_TARGET_{key}_LINKER"] = cross_linker(target)
     environment["ZIG_CC_TARGET"] = target
   command = [
     "cargo",
@@ -1613,8 +1698,9 @@ def markdown(report: dict[str, object]) -> str:
     return f"{value} B" if value is not None else "UNRESOLVED"
 
   for call in report.get("whole_calls", []):
+    budget = f" (budget {size(call['owned_budget_bytes'])})" if "owned_budget_bytes" in call else ""
     lines.append(f"- `{call['root']}`: whole-call bound {size(call['whole_call_bound_bytes'])}, "
-                 f"owned bound {size(call['owned_bound_bytes'])}")
+                 f"owned bound {size(call['owned_bound_bytes'])}{budget}")
     if "recorded_frame_path_bytes" in call:
       lines.append(f"  - recorded frame path sum: {call['recorded_frame_path_bytes']} B (not a bound when unresolved)")
     for edge in call.get("declared_edges", []):
@@ -1674,6 +1760,9 @@ def main(argv: list[str] | None = None) -> int:
   parser.add_argument("--whole-calls", metavar="GROUPS", help=f"review whole public calls instead of scrub boundaries; comma-separated groups from {', '.join(WHOLE_CALL_GROUPS)}, or all; unresolved paths fail")
   parser.add_argument("--evidence", type=Path, help="new directory retaining binaries, disassembly, call graphs, source identity and reports")
   parser.add_argument("--allowances", type=Path, help="JSON of measured declared-edge allowances per target and deployed libc (with --whole-calls)")
+  parser.add_argument("--all-configurations", action="store_true", help="review both the native and the --portable build of each target")
+  parser.add_argument("--budgets", type=Path, help="JSON of per-root owned-bound budgets (with --whole-calls); the budgets alone decide the exit status")
+  parser.add_argument("--write-budgets", type=Path, help="write budgets from these owned bounds, 12.5%% above each and rounded up to 1 KiB, merged into the file")
   args = parser.parse_args(argv)
   if args.mldsa_preparation and args.whole_calls is not None:
     parser.error("--mldsa-preparation is shorthand for --whole-calls mldsa-preparation; pass one")
@@ -1688,15 +1777,24 @@ def main(argv: list[str] | None = None) -> int:
     parser.error("--binary requires exactly one --target")
   if args.allowances is not None and roots is None:
     parser.error("--allowances applies only to --whole-calls")
+  if (args.budgets is not None or args.write_budgets is not None) and roots is None:
+    parser.error("--budgets and --write-budgets apply only to --whole-calls")
+  if args.all_configurations and (args.portable or args.binary is not None):
+    parser.error("--all-configurations builds both configurations; omit --portable and --binary")
+  configurations = list(CONFIGURATIONS) if args.all_configurations else ["portable" if args.portable else "native"]
+  budgets = load_budgets(args.budgets) if args.budgets is not None else None
   allowances = load_allowances(args.allowances) if args.allowances is not None else {}
   allowance_sha256 = hashlib.sha256(args.allowances.read_bytes()).hexdigest() if args.allowances is not None else None
   if args.evidence is not None:
     args.evidence.mkdir(parents=True, exist_ok=False)
   source = source_identity()
   reports = []
-  for target in targets:
-    binary = args.binary or build(target, args.portable, args.rustflags.split())
+  for target, configuration in ((target, configuration) for target in targets for configuration in configurations):
+    portable = configuration == "portable"
+    binary = args.binary or build(target, portable, args.rustflags.split())
     evidence = args.evidence / target if args.evidence is not None else None
+    if evidence is not None and len(configurations) > 1:
+      evidence = args.evidence / f"{target}-{configuration}"
     if evidence is not None:
       evidence.mkdir()
       shutil.copy2(binary, evidence / binary.name)
@@ -1711,9 +1809,11 @@ def main(argv: list[str] | None = None) -> int:
       if evidence is not None and args.allowances is not None:
         shutil.copy2(args.allowances, evidence / "allowances.json")
     else:
-      report = review(program, portable=args.portable)
+      report = review(program, portable=portable)
+    if budgets is not None:
+      apply_budgets(report, budgets, configuration, complete=groups == "all")
     report["binary"] = str(binary)
-    report["portable"] = args.portable
+    report["portable"] = portable
     report["rustflags"] = args.rustflags
     report["binary_sha256"] = hashlib.sha256(binary.read_bytes()).hexdigest()
     report["rustc"] = subprocess.check_output(["rustc", "-Vv"], text=True).strip()
@@ -1737,6 +1837,25 @@ def main(argv: list[str] | None = None) -> int:
       ))
   if args.json is not None:
     args.json.write_text(json.dumps(reports, indent=2) + "\n")
+  if args.write_budgets is not None:
+    existing = load_budgets(args.write_budgets) if args.write_budgets.exists() else {}
+    document = {
+      "rule": "Owned stack bound of each `--whole-calls all` root, 12.5% above the reviewed bound and rounded up to "
+              "1 KiB. Regenerate with `just stack-budgets` after a reviewed stack change.",
+      "targets": updated_budgets(existing, reports, complete=groups == "all"),
+    }
+    args.write_budgets.write_text(json.dumps(document, indent=2) + "\n")
+    if budgets is None:
+      # Every reviewed root had an owned bound, or writing would have stopped.
+      return 0 if all(report["source_unchanged"] for report in reports) else 1
+  if budgets is not None:
+    failures = [(report["target"], report["budget_configuration"], problem)
+                for report in reports for problem in report["budget_problems"]]
+    for target, configuration, problem in failures:
+      print(f"budget failure: {target} {configuration}: {problem}")
+    if not failures:
+      print(f"Every owned bound is within its budget: {len(reports)} configuration(s).")
+    return 0 if not failures and all(report["source_unchanged"] for report in reports) else 1
   return 0 if all(report["passed"] for report in reports) else 1
 
 

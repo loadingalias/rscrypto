@@ -155,7 +155,7 @@ class LinuxInstall(unittest.TestCase):
         (root / 'commands.jsonl').touch()
         for name in ('uname', 'id', 'apt-get', 'apt-cache', 'dpkg-query', 'cargo', 'clang', 'cmake', 'make', 'nproc',
                      'patch', 'perf', 'rustc', 'rustup', 'sudo', 'tar', 'tee', 'valgrind', 'wasmtime', 'opam', 'just',
-                     'rg', 'lychee', 'rumdl', 'samply', 'gungraun-runner', 'sysctl'):
+                     'rg', 'lychee', 'rumdl', 'samply', 'gungraun-runner', 'sysctl', 'zig'):
             stub(binaries / name)
         # The pinned uv is installed, so the installer finds it by its receipt.
         uv = CATALOG[platform]['assets']['uv']['sha256']
@@ -248,6 +248,21 @@ class LinuxInstall(unittest.TestCase):
         self.assertEqual(archives, ['cargo-binstall', 'wasmtime'])
         self.assertEqual(package_installs(calls), [CATALOG['ci-compat']['packages']])
         self.assertFalse(any('--install' in c and c[0].endswith('toolchain.py') for c in python(calls)))
+
+    def test_stack_profile_installs_zig_llvm_tools_and_every_frame_target(self):
+        result, calls, _ = self.provision('x86_64-linux', profile='ci-stack')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        installs = [c[-1] for c in calls if c[0] == 'cargo' and 'binstall' in c]
+        self.assertEqual(installs, [f"just@{CATALOG['cargo']['just']}"])
+        archives = [c[-2] for c in python(calls) if 'install-archive' in c]
+        self.assertEqual(archives, ['cargo-binstall', 'zig'])
+        self.assertEqual(package_installs(calls), [CATALOG['ci-stack']['packages']])
+        channel = tomllib.loads((ROOT / 'rust-toolchain.toml').read_text())['toolchain']['channel']
+        rustup = [c for c in calls if c[:3] == ['rustup', 'toolchain', 'install']]
+        self.assertEqual([c[i + 1] for c in rustup for i, arg in enumerate(c) if arg == '--component'], ['llvm-tools'])
+        # The host target is the x86-64 runner itself; the review cross-links the other four.
+        self.assertIn(['rustup', 'target', 'add', '--toolchain', channel, *CATALOG['ci-stack']['targets']], calls)
+        self.assertIn(['zig', 'version'], calls)
 
     def test_focused_profiles_install_only_their_execution_dependencies(self):
         for platform, profile, components in (

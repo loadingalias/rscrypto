@@ -326,6 +326,16 @@ ct-renew *args:
 stack-frames *args:
     @scripts/lib/python.sh scripts/stack/frames.py "$@"
 
+# Check every whole-call root's owned stack bound on every Linux target against its budget.
+[group('secret-lifecycle')]
+ci-stack *args:
+    @scripts/lib/python.sh scripts/stack/frames.py --whole-calls all --all-configurations --budgets .config/stack-budgets.json "$@"
+
+# Regenerate the owned stack budgets from the current bounds after a reviewed stack change.
+[group('secret-lifecycle')]
+stack-budgets *args:
+    @scripts/lib/python.sh scripts/stack/frames.py --whole-calls all --all-configurations --write-budgets .config/stack-budgets.json "$@"
+
 # Measure secret residue on QEMU boards or native ML-DSA signing stacks.
 [group('secret-lifecycle')]
 stack-residue *args:

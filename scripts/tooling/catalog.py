@@ -125,6 +125,10 @@ def validate(data):
         raise ValueError('ci-compat: workers must be a positive integer')
     if any(asset not in data['x86_64-linux']['assets'] for asset in data['ci-compat']['assets']):
         raise ValueError('ci-compat: missing pinned archive')
+    if any(asset not in data['x86_64-linux']['assets'] for asset in data['ci-stack']['assets']):
+        raise ValueError('ci-stack: missing pinned archive')
+    if not data['ci-stack']['targets'] or any(not target.endswith('-unknown-linux-gnu') for target in data['ci-stack']['targets']):
+        raise ValueError('ci-stack: targets must be Linux GNU targets')
     if set(data['ci-cross-build'].get('assets', [])) != set(data['ci-cross-build']['cargo']) \
             or any(asset not in data['x86_64-linux']['assets'] for asset in data['ci-cross-build']['assets']):
         raise ValueError('ci-cross-build: every Cargo tool requires a pinned archive')
@@ -137,6 +141,7 @@ def validate(data):
                               ('ci-ct', {'just', 'cargo-nextest'}),
                               ('ci-miri', {'just'}),
                               ('ci-package', {'just', 'cargo-semver-checks'}),
+                              ('ci-stack', {'just'}),
                               ('ci-bench', {'just'})):
         if set(data[profile]['cargo']) != required:
             raise ValueError(f'{profile}: incorrect CI tool set')

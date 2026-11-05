@@ -13,7 +13,7 @@ import catalog
 # Cross-build and cross-run installations depend on a target or a transferred
 # archive, so they always converge and have no fingerprint.
 OPERATIONS = {'linux': ('dev', 'ct-proof', 'ci', 'ci-compat', 'ci-package', 'ci-fuzz', 'ci-miri', 'ci-ct',
-                        'ci-ct-full', 'ci-bench'),
+                        'ci-ct-full', 'ci-bench', 'ci-stack'),
               'win': ('dev', 'ci', 'ci-bench', 'ci-ct')}
 
 

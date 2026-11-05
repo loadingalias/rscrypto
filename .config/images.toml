@@ -9,6 +9,6 @@ ssh = ["ubuntu-x64", "ubuntu-arm64"]
 # operation its runners execute. Cross-build and cross-run installations
 # always converge, and the plan runner's 40 GB volume keeps the stock image.
 [ci]
-ubuntu24-minimal-x64 = ["ci", "ci-compat", "ci-package", "ci-fuzz", "ci-miri", "ci-ct-full", "ci-bench"]
+ubuntu24-minimal-x64 = ["ci", "ci-compat", "ci-package", "ci-fuzz", "ci-miri", "ci-ct-full", "ci-bench", "ci-stack"]
 ubuntu24-minimal-arm64 = ["ci", "ci-fuzz", "ci-ct-full", "ci-bench"]
 windows25-full-x64 = ["ci", "ci-ct", "ci-bench"]

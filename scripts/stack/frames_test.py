@@ -12,6 +12,10 @@ from pathlib import Path
 
 from frames import (
   ElfImage,
+  apply_budgets,
+  load_budgets,
+  stack_budget,
+  updated_budgets,
   PREPARATION_ROOTS,
   WHOLE_CALL_GROUPS,
   whole_call_roots,
@@ -631,6 +635,47 @@ def test_s390x_and_riscv_checked_jump_tables() -> None:
   assert [item["reason"] for item in clobbered["owned_unresolved"]] == ["indirect"], clobbered
 
 
+def budget_report(target: str, portable: bool, owned: dict[str, int | None]) -> dict:
+  calls = [{"root": f"rscrypto_frame_review::{name}", "owned_bound_bytes": value} for name, value in owned.items()]
+  return {"target": target, "portable": portable, "whole_calls": calls}
+
+
+def test_budgets_bound_each_root(directory: Path) -> None:
+  # 12.5% above the bound, rounded up to a whole KiB, never below 1 KiB.
+  assert [stack_budget(owned) for owned in (0, 8192, 8193, 59_112)] == [1024, 9216, 10_240, 66_560]
+  budgets = {"x86_64-unknown-linux-gnu": {"native": {"seal": 9216, "open": 9216, "removed": 1024}}}
+  report = budget_report("x86_64-unknown-linux-gnu", False, {"seal": 9216, "open": 9217})
+  assert apply_budgets(report, budgets, "native", complete=False) == ["open: owned bound 9,217 B exceeds its 9,216 B budget"]
+  assert [call["within_owned_budget"] for call in report["whole_calls"]] == [True, False], report
+  assert apply_budgets(report, budgets, "native", complete=True)[-1] == "removed: budget for a root the review no longer has"
+  missing = apply_budgets(budget_report("x86_64-unknown-linux-gnu", True, {"seal": 100, "sign": None}), budgets, "portable", False)
+  assert missing == ["seal: no budget", "sign: owned bound unresolved"], missing
+
+  # Writing replaces a reviewed configuration under `complete` and keeps every other one.
+  existing = {"x86_64-unknown-linux-gnu": {"native": {"stale": 1024}, "portable": {"kept": 2048}}}
+  written = updated_budgets(existing, [budget_report("x86_64-unknown-linux-gnu", False, {"seal": 8193})], complete=True)
+  assert written == {"x86_64-unknown-linux-gnu": {"native": {"seal": 10_240}, "portable": {"kept": 2048}}}, written
+  try:
+    updated_budgets({}, [budget_report("x86_64-unknown-linux-gnu", False, {"sign": None})], complete=True)
+  except SystemExit:
+    pass
+  else:
+    raise AssertionError("an unresolved bound must not receive a budget")
+
+  path = directory / "budgets.json"
+  path.write_text(json.dumps({"targets": written}))
+  assert load_budgets(path) == written
+  for invalid in ({"targets": {"x86_64-apple-darwin": {}}}, {"targets": {"x86_64-unknown-linux-gnu": {"fast": {}}}},
+                  {"targets": {"x86_64-unknown-linux-gnu": {"native": {"seal": 0}}}}, {"budgets": {}}):
+    path.write_text(json.dumps(invalid))
+    try:
+      load_budgets(path)
+    except SystemExit:
+      pass
+    else:
+      raise AssertionError(f"invalid budgets accepted: {invalid}")
+
+
 def test_s390x_unlabelled_plt_keeps_allocator_edges_separate() -> None:
   functions = [
     (0x1000, "prepare", 160, ["1000: brasl %r14, 0x2020", "1006: br %r14"]),
@@ -873,6 +918,8 @@ def main() -> None:
   test_owned_indirection_and_recursion_keep_the_owned_bound_null()
   with tempfile.TemporaryDirectory() as temporary:
     test_allowances_compose_the_whole_call_bound(Path(temporary))
+  with tempfile.TemporaryDirectory() as temporary:
+    test_budgets_bound_each_root(Path(temporary))
   print("frames tests passed")
 
 

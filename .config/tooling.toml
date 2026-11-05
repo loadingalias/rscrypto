@@ -59,6 +59,13 @@ workers = 8
 [ci-package]
 cargo = ["just", "cargo-semver-checks"]
 
+[ci-stack]
+cargo = ["just"]
+assets = ["zig"]
+components = ["llvm-tools"]
+targets = ["aarch64-unknown-linux-gnu", "powerpc64le-unknown-linux-gnu", "riscv64gc-unknown-linux-gnu", "s390x-unknown-linux-gnu"]
+packages = ["build-essential", "ca-certificates", "curl", "git"]
+
 [ci-fuzz]
 cargo = ["just", "cargo-fuzz"]
 components = ["rust-src", "llvm-tools"]

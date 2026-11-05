@@ -44,6 +44,13 @@ runners:
     image: rscrypto-ci-linux-x64
     spot: false
     volume: 150gb:gp3
+  # The stack budget gate links ten fat-LTO review binaries in sequence; more cores add little.
+  stack:
+    family: [c7a.2xlarge, c7i.2xlarge, c8a.2xlarge, c8i.2xlarge]
+    cpu: 8
+    image: rscrypto-ci-linux-x64
+    spot: false
+    volume: 100gb:gp3
   # On-Demand: the RISC-V, POWER and IBM Z rows wait on these ~20-minute builds, and
   # spot reclaims (BidEvictedEvent) cancelled them twice in CI 38298834264.
   ci-cross-build:

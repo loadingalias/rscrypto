@@ -148,6 +148,9 @@ jobs:
           - platform: package
             runner: runs-on=${{ github.run_id }}/runner=package/env=production
             timeout: 60
+          - platform: stack
+            runner: runs-on=${{ github.run_id }}/runner=stack/env=production
+            timeout: 60
           - platform: x86_64-linux
             cache: true
             runner: runs-on=${{ github.run_id }}/runner=x86_64-linux/env=production
@@ -234,7 +237,9 @@ jobs:
           root-portability: remap
           verify-remote: true
       - name: Install tooling, check, and test (Linux)
-        if: runner.os == 'Linux' && matrix.platform != 'compatibility' && matrix.platform != 'package' && !matrix.target
+        if: >-
+          runner.os == 'Linux' && matrix.platform != 'compatibility' && matrix.platform != 'package' &&
+          matrix.platform != 'stack' && !matrix.target
         env:
           PLATFORM: ${{ matrix.platform }}
         run: |
@@ -289,6 +294,14 @@ jobs:
           scripts/tooling/x86_64-linux.sh --ci-package
           source "$HOME/.local/share/rscrypto-tooling/environment.sh"
           just ci-package
+          git diff --exit-code HEAD
+
+      - name: Check owned stack bounds against their budgets
+        if: matrix.platform == 'stack'
+        run: |
+          scripts/tooling/x86_64-linux.sh --ci-stack
+          source "$HOME/.local/share/rscrypto-tooling/environment.sh"
+          just ci-stack
           git diff --exit-code HEAD
 
       - name: Compile compatibility and execute WebAssembly

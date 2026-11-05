@@ -250,6 +250,7 @@ Then add the evidence that the change reaches:
 | ----------------------------------------------- | ----------------- |
 | Parser, import, DER, PHC, hex, or hostile input | `just test-fuzz <target>` or `just test-fuzz --all` |
 | Unsafe Rust, SIMD, assembly, or dispatch        | Backend differential tests, and `just test-fuzz-asan --all` where native |
+| Stack depth of reviewed operations             | `just ci-stack`; after a reviewed change moves a bound, `just stack-budgets` and commit the budgets |
 | Portable unsafe path                            | `just test-miri`  |
 | Constant-time claim boundary                    | `just ct-full --target <triple>`; change `ct.toml` only with matching evidence |
 | Apple Silicon RSA assembly                      | `just test-rsa-macos-asm` on physical Apple Silicon |

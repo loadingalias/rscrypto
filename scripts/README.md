@@ -523,7 +523,7 @@ Release callers, and manual runs with no diagnostic input, keep the full require
 
 | Script             | Caller |
 | ------------------ | ------ |
-| `stack/frames.py`  | `just stack-frames [--target TARGET]... [--portable] [--rustflags FLAGS] [--json PATH] [--evidence DIR] [--whole-calls GROUPS \| --mldsa-preparation] [--allowances FILE]` |
+| `stack/frames.py`  | `just stack-frames [--target TARGET]... [--portable \| --all-configurations] [--rustflags FLAGS] [--json PATH] [--evidence DIR] [--whole-calls GROUPS \| --mldsa-preparation] [--allowances FILE] [--budgets FILE] [--write-budgets FILE]`, `just ci-stack`, `just stack-budgets` |
 | `stack/residue.py` | `just stack-residue [--board BOARD]... [--backend native\|portable]... [--output DIR]` |
 
 ### Frame review
@@ -580,6 +580,24 @@ The review fails when:
   Traversal continues below missing frame records to retain their callbacks and
   cleanup edges. Reports show one shortest witness for each unresolved edge;
   the retained graph preserves alternate callers.
+
+#### Stack budgets
+
+[`.config/stack-budgets.json`](../.config/stack-budgets.json) holds one owned-bound budget for every
+`--whole-calls all` root, per Linux target and per native or `--portable` build: the reviewed bound
+plus 12.5%, rounded up to 1 KiB.
+
+- `just ci-stack [--target TARGET]...` reviews both builds of every target, or of the named ones,
+  against the file. A root fails when its owned bound is unresolved, it has no budget, or the bound
+  exceeds the budget; a budget for a root the review no longer has also fails. The budgets alone set
+  the exit status: unmeasured declared-edge allowances remain listed but do not fail this gate.
+- `just stack-budgets [--target TARGET]...` rewrites the reviewed entries from the current bounds and
+  refuses while any bound is unresolved. Run it after a reviewed change moves a bound, and commit the
+  file with that change.
+- The CI `stack` row runs `x86_64-linux.sh --ci-stack`, which installs `llvm-tools`, the four other
+  Linux targets, and the catalog's Zig, then `just ci-stack`. The x86-64 build links natively and the
+  others link through `ct/zig-cc.sh`, as on the Mac. Without Zig, the review links a non-host target
+  with its GNU cross compiler when one is on `PATH`.
 
 #### Preparation bounds
 

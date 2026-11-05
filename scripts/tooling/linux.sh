@@ -16,7 +16,7 @@ fi
 # Image builders name the operation; workflows spell it as a flag.
 case "${1:-}" in
   dev) shift ;;
-  ct-proof|ci|ci-compat|ci-package|ci-fuzz|ci-miri|ci-ct|ci-ct-full|ci-bench) set -- "--$1" "${@:2}" ;;
+  ct-proof|ci|ci-compat|ci-package|ci-fuzz|ci-miri|ci-ct|ci-ct-full|ci-bench|ci-stack) set -- "--$1" "${@:2}" ;;
 esac
 # The flag names the operation, and a converged host records one fingerprint per operation.
 operation=dev
@@ -28,7 +28,7 @@ case "${1:-}" in
   --ct-proof) proof=true; shift ;;
   --ci-ct-full) ci=true; profile=ci-ct; proof=true; shift ;;
   --ci) ci=true; shift ;;
-  --ci-compat|--ci-package|--ci-fuzz|--ci-miri|--ci-ct|--ci-bench|--ci-cross-build|--ci-cross-run) ci=true; profile="${1#--}"; shift ;;
+  --ci-compat|--ci-package|--ci-fuzz|--ci-miri|--ci-ct|--ci-bench|--ci-stack|--ci-cross-build|--ci-cross-run) ci=true; profile="${1#--}"; shift ;;
 esac
 case "$profile:$platform" in
   ci-cross-run:aarch64-linux|ci-cross-run:powerpc64le-linux|ci-cross-run:riscv64-linux|ci-cross-run:s390x-linux|ci-cross-run:x86_64-linux|ci-cross-build:x86_64-linux) ;;
@@ -45,7 +45,7 @@ elif [[ "$profile" == ci-cross-run ]]; then
   tools_archive="${1:?runner tools archive is required}"
   shift
 fi
-[[ "$#" -eq 0 ]] || { echo "usage: scripts/tooling/$platform.sh [--ct-proof|--ci|--ci-compat|--ci-package|--ci-fuzz|--ci-miri|--ci-ct|--ci-ct-full|--ci-bench|--ci-cross-build TARGET|--ci-cross-run TOOLS_ARCHIVE|<operation>|fingerprint [<operation>]]" >&2; exit 64; }
+[[ "$#" -eq 0 ]] || { echo "usage: scripts/tooling/$platform.sh [--ct-proof|--ci|--ci-compat|--ci-package|--ci-fuzz|--ci-miri|--ci-ct|--ci-ct-full|--ci-bench|--ci-stack|--ci-cross-build TARGET|--ci-cross-run TOOLS_ARCHIVE|<operation>|fingerprint [<operation>]]" >&2; exit 64; }
 machine="${platform%-linux}"
 [[ "$machine" != powerpc64le ]] || machine=ppc64le
 case "$platform" in
@@ -115,7 +115,7 @@ install_archives() {
       directory="$("$python" "$SCRIPT_DIR/catalog.py" install-archive "$platform" cargo-binstall "$prefix")"
       printf 'cargo-binstall\t%s\n' "$directory" > "$temporary/archives"
     fi
-    if [[ "$profile" == ci-compat || "$profile" == ci-cross-build ]]; then
+    if [[ "$profile" == ci-compat || "$profile" == ci-cross-build || "$profile" == ci-stack ]]; then
       mapfile -t profile_assets < <(catalog_get "$profile" assets)
       for asset in "${profile_assets[@]}"; do
         directory="$("$python" "$SCRIPT_DIR/catalog.py" install-archive "$platform" "$asset" "$prefix")"
@@ -303,11 +303,15 @@ elif [[ "$profile" == ci-compat ]]; then
   "$python" "$REPO_ROOT/scripts/check/compat.py" --install
 elif [[ "$profile" == ci-package ]]; then
   "$python" "$REPO_ROOT/scripts/check/package.py" --install
-elif [[ "$profile" == ci-fuzz || "$profile" == ci-miri || "$profile" == ci-ct || "$profile" == ci-bench ]]; then
+elif [[ "$profile" == ci-fuzz || "$profile" == ci-miri || "$profile" == ci-ct || "$profile" == ci-bench || "$profile" == ci-stack ]]; then
   mapfile -t components < <(catalog_get "$profile" components)
   component_args=()
   for component in "${components[@]}"; do component_args+=(--component "$component"); done
   rustup toolchain install "$channel" --profile minimal "${component_args[@]}"
+  if [[ "$profile" == ci-stack ]]; then
+    mapfile -t stack_targets < <(catalog_get ci-stack targets)
+    rustup target add --toolchain "$channel" "${stack_targets[@]}"
+  fi
 else
   "$python" "$SCRIPT_DIR/../lib/toolchain.py" --install "${component_args[@]}"
   if [[ "$ci" == true && ( "$platform" == x86_64-linux || "$platform" == aarch64-linux ) ]]; then
@@ -384,6 +388,7 @@ fi
 if [[ "$ci" == false ]]; then cargo rail --version; fi
 case "$profile" in
   ci-compat) wasmtime --version ;;
+  ci-stack) zig version; rustc --print sysroot >/dev/null ;;
   ci-cross-run) just --version; cargo nextest --version ;;
 esac
 [[ -z "$fingerprint" ]] || printf '%s\n' "$fingerprint" > "$prefix/fingerprint.$operation"
