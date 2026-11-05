@@ -15,6 +15,7 @@ It does not prove that the compiler erases every copy it makes.
 | `ChaCha20Rng` | Not `Clone` or `Copy`; a clone would repeat the stream. | The key and unread output have no export; returned output belongs to the caller. `Debug` is redacted. See [ChaCha20 generator](#chacha20-generator). |
 | ECDSA and Ed25519 secret keys and keypairs | Explicit `duplicate_secret`. | Secret-key export is explicit. PKCS #8 export writes into a fixed-size buffer that the caller owns and clears. PKCS #8 and SEC1 import borrow the caller's input and do not clear it. Keypair `Debug` shows only public data. |
 | ML-DSA seeds, expanded secret keys, and prepared secret keys | Not `Clone` or `Copy`. See [ML-DSA storage](#ml-dsa-storage). | Raw export returns `SecretBytes`. PKCS #8 export writes into a fixed-size buffer that the caller owns and clears. Seed, key, handle, and storage `Debug` are redacted. Secret-key serialization needs `serde-secrets`; seeds have no Serde support. |
+| Composite ML-DSA secret keys and prepared secret keys (`MlDsa65Ed25519*`, `MlDsa65EcdsaP256*`) | Not `Clone` or `Copy`. See [composite ML-DSA](#composite-ml-dsa). | Raw export returns `SecretBytes`. PKCS #8 export writes into a fixed-size buffer that the caller owns and clears. Raw and PKCS #8 import borrow the caller's input and do not clear it. `Debug` is redacted. No Serde support. |
 | SLH-DSA secret keys, pure and HashSLH-DSA | Not `Clone` or `Copy`. | Raw export returns `SecretBytes`. PKCS #8 export writes into a fixed-size buffer that the caller owns and clears. Raw and PKCS #8 import borrow the caller's input and do not clear it. `Debug` is redacted. No Serde support. |
 | X25519 secrets; ML-KEM decapsulation keys and shared secrets | Explicit `duplicate_secret`. See [ML-KEM allocation](#ml-kem-allocation). | Secret export is explicit. ML-KEM decapsulation-key PKCS #8 export writes into a fixed-size buffer that the caller owns and clears. `Debug` is redacted. |
 | ML-KEM seeds | Not `Clone` or `Copy`. | Raw export returns `SecretBytes<64>`. PKCS #8 export writes into a fixed-size buffer that the caller owns and clears. `Debug` is redacted. No Serde support. |
@@ -301,6 +302,23 @@ or Debug implementation exposes these keys.
   Neither prepared key borrows the source key.
 - The prepared key clears the transformed secrets and `K` on drop and when preparation fails.
   The storage clears them again on drop, before an allocated box is freed.
+
+### Composite ML-DSA
+
+- A composite secret key holds its components in their own owners: the ML-DSA-65 seed
+  (`MlDsa65Seed`), the expanded `MlDsa65SecretKey`, and an `Ed25519Keypair` or an
+  `EcdsaP256SecretKey` with its public point. Each owner clears itself on drop; the composite adds
+  no secret storage of its own.
+- Import expands the seed and validates the traditional key into those owners. A rejected import
+  drops every owner already built. Raw and PKCS #8 import borrow the caller's input and do not clear it.
+- `expose_secret` and `to_pkcs8_der_into` assemble the raw encoding in a zeroizing owner, then
+  copy it into the returned `SecretBytes` or the caller's buffer.
+- Hedged signing draws all randomness into one zeroizing owner before any secret computation.
+  The message representative holds only public data.
+- `prepare` and `prepare_in` prepare the ML-DSA key as [ML-DSA storage](#ml-dsa-storage) describes,
+  and keep an explicit `duplicate_secret` copy of the traditional key, which the prepared key owns.
+- The constructors return by value, as ML-DSA's by-value constructors do, and leave moved-from
+  copies in the caller's frame. There are no `*_in` constructors yet.
 
 ### ML-KEM allocation
 

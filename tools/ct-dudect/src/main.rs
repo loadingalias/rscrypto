@@ -13,11 +13,12 @@ use rscrypto::{
   AsconAead128, AsconAead128Key, Blake2b256, Blake2b512, Blake2bKey, Blake2s128, Blake2s256, Blake2sKey, Blake3,
   Blake3KeyedHash, ChaCha20Poly1305, ChaCha20Poly1305Key, EcdsaP256SecretKey, EcdsaP384SecretKey, Ed25519Keypair,
   Ed25519SecretKey, HkdfSha256, HkdfSha384, HmacSha256, HmacSha256Tag, HmacSha384, HmacSha384Tag, HmacSha512,
-  HmacSha512Tag, Kmac256, MlKem512, MlKem512Ciphertext, MlKem512DecapsulationKey, MlKem768, MlKem768Ciphertext,
-  MlKem768DecapsulationKey, MlKem1024, MlKem1024Ciphertext, MlKem1024DecapsulationKey, MlKemError, P256EphemeralSecret,
-  P384EphemeralSecret, Pbkdf2Sha256, Pbkdf2Sha512, RsaBlindingPair, RsaEncryptionError, RsaOaepProfile,
-  RsaPkcs1v15Profile, RsaPrivateKey, RsaPrivateScratch, RsaPssProfile, RsaPublicKeyPolicy, RsaSignatureProfile,
-  SecretBytes, Sha512, X25519SecretKey, XChaCha20Poly1305, XChaCha20Poly1305Key,
+  HmacSha512Tag, Kmac256, MlDsa65EcdsaP256SecretKey, MlDsa65Ed25519SecretKey, MlKem512, MlKem512Ciphertext,
+  MlKem512DecapsulationKey, MlKem768, MlKem768Ciphertext, MlKem768DecapsulationKey, MlKem1024, MlKem1024Ciphertext,
+  MlKem1024DecapsulationKey, MlKemError, P256EphemeralSecret, P384EphemeralSecret, Pbkdf2Sha256, Pbkdf2Sha512,
+  RsaBlindingPair, RsaEncryptionError, RsaOaepProfile, RsaPkcs1v15Profile, RsaPrivateKey, RsaPrivateScratch,
+  RsaPssProfile, RsaPublicKeyPolicy, RsaSignatureProfile, SecretBytes, Sha512, X25519SecretKey, XChaCha20Poly1305,
+  XChaCha20Poly1305Key,
   aead::{
     Nonce96, Nonce128, Nonce192, Nonce256, diag_aes_siv_cmac256_open_portable, diag_aes_siv_cmac256_s2v_portable,
     diag_aes128gcm_ctr32_be, diag_aes128gcm_ghash, diag_aes128gcm_tag_aes, diag_aes128gcmsiv_ctr32,
@@ -2188,6 +2189,78 @@ fn ecdsa_p256_sign_fixed_vs_random_secret(runner: &mut CtRunner, rng: &mut Bench
   }
 }
 
+/// Composite ML-DSA keys for the traditional-secret cases share one ML-DSA
+/// seed, so deterministic ML-DSA signing over the fixed message does the
+/// same work in both classes and only the traditional secret differs.
+const COMPOSITE_MLDSA_SEED: [u8; 32] = [0x24; 32];
+
+fn composite_mldsa65_ed25519_sign_fixed_vs_random_traditional(runner: &mut CtRunner, rng: &mut BenchRng) {
+  let mut inputs = Vec::with_capacity(samples());
+  for class in balanced_classes(rng, samples()) {
+    let secret = if matches!(class, Class::Left) {
+      [0x42; Ed25519SecretKey::LENGTH]
+    } else {
+      rand_array::<{ Ed25519SecretKey::LENGTH }>(rng)
+    };
+    inputs.push((class, secret));
+  }
+
+  for (class, secret) in inputs {
+    let mut raw = [0u8; MlDsa65Ed25519SecretKey::LENGTH];
+    raw[..32].copy_from_slice(&COMPOSITE_MLDSA_SEED);
+    raw[32..].copy_from_slice(&secret);
+    let key = MlDsa65Ed25519SecretKey::from_bytes(&raw).expect("composite key from fixed ML-DSA seed");
+    runner.run_one(class, || {
+      core::hint::black_box(
+        key
+          .sign_deterministic(MESSAGE, b"")
+          .expect("valid composite key must sign")
+          .to_bytes(),
+      );
+    });
+  }
+}
+
+fn composite_mldsa65_ecdsa_p256_sign_fixed_vs_random_traditional(runner: &mut CtRunner, rng: &mut BenchRng) {
+  // ECPrivateKey around the scalar, as the draft encodes it.
+  const PREFIX: [u8; 7] = [0x30, 0x31, 0x02, 0x01, 0x01, 0x04, 0x20];
+  const SUFFIX: [u8; 12] = [0xa0, 0x0a, 0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07];
+  let mut inputs = Vec::with_capacity(samples());
+  for class in balanced_classes(rng, samples()) {
+    let secret = if matches!(class, Class::Left) {
+      [0x42; EcdsaP256SecretKey::LENGTH]
+    } else {
+      valid_p256_secret(rng)
+    };
+    inputs.push((class, secret, rand_array::<64>(rng)));
+  }
+
+  for (class, secret, blind) in inputs {
+    let mut raw = [0u8; MlDsa65EcdsaP256SecretKey::LENGTH];
+    raw[..32].copy_from_slice(&COMPOSITE_MLDSA_SEED);
+    raw[32..39].copy_from_slice(&PREFIX);
+    raw[39..71].copy_from_slice(&secret);
+    raw[71..].copy_from_slice(&SUFFIX);
+    let key = MlDsa65EcdsaP256SecretKey::from_bytes(&raw).expect("composite key from fixed ML-DSA seed");
+    // Fixed ML-DSA randomness keeps its signing work equal across classes;
+    // the P-256 component takes fresh blinding, as in its own case.
+    let mut random = [0u8; 96];
+    random[32..].copy_from_slice(&blind);
+    runner.run_one(class, || {
+      core::hint::black_box(
+        key
+          .sign_with(MESSAGE, b"", |out| {
+            out.copy_from_slice(&random);
+            Ok(())
+          })
+          .expect("valid composite key must sign")
+          .as_bytes()
+          .len(),
+      );
+    });
+  }
+}
+
 fn ecdsa_p384_sign_fixed_vs_random_secret(runner: &mut CtRunner, rng: &mut BenchRng) {
   let mut inputs = Vec::with_capacity(samples());
   for class in balanced_classes(rng, samples()) {
@@ -4021,6 +4094,14 @@ ctbench_main_with_seeds!(
   (ecdsa_p384_public_key_fixed_vs_random_secret, Some(0x703338345f707562)),
   (ecdsa_p256_sign_fixed_vs_random_secret, Some(0x703235365f736967)),
   (ecdsa_p384_sign_fixed_vs_random_secret, Some(0x703338345f736967)),
+  (
+    composite_mldsa65_ed25519_sign_fixed_vs_random_traditional,
+    Some(0x636d6c6473616535)
+  ),
+  (
+    composite_mldsa65_ecdsa_p256_sign_fixed_vs_random_traditional,
+    Some(0x636d6c6473617032)
+  ),
   (
     ecdsa_p256_diag_nonce_reduce_fixed_vs_random_secret,
     Some(0x703235366e6f6e63)

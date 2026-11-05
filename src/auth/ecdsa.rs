@@ -1370,6 +1370,13 @@ impl EcdsaP256PublicKey {
     parse_public_key::<p256_verify::Fe, 4>(bytes, &P256).map(Self::from_affine)
   }
 
+  /// Whether `bytes` is an uncompressed SEC1 point on P-256, as
+  /// [`Self::from_sec1_bytes`] checks, without building its verification table.
+  #[cfg(feature = "mldsa65-ecdsa-p256")]
+  pub(crate) fn is_valid_sec1(bytes: &[u8]) -> bool {
+    parse_public_key::<p256_verify::Fe, 4>(bytes, &P256).is_ok()
+  }
+
   /// Parse a P-256 SubjectPublicKeyInfo public key.
   pub fn from_spki_der(der: &[u8]) -> Result<Self, EcdsaError> {
     let public_key = parse_spki_der(der, SECP256R1_OID)?;

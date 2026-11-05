@@ -3613,8 +3613,8 @@ name = "x86_64-unknown-linux-gnu"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 3471
-compiler_api_sha256 = "4cb3cfb8f6b03e23377c6de20aa1af88ddef257d8e32c3e9cfb97694072c9652"
+compiler_api_item_count = 3569
+compiler_api_sha256 = "50155147fe984cef57a348b6c33058a4c7d331563f401ab094f2ad261c4ae1ce"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "required"
@@ -3624,8 +3624,8 @@ name = "aarch64-unknown-linux-gnu"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 3471
-compiler_api_sha256 = "4cb3cfb8f6b03e23377c6de20aa1af88ddef257d8e32c3e9cfb97694072c9652"
+compiler_api_item_count = 3569
+compiler_api_sha256 = "50155147fe984cef57a348b6c33058a4c7d331563f401ab094f2ad261c4ae1ce"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "required"
@@ -3658,8 +3658,8 @@ group = "win"
 backend = "llvm"
 linker = "msvc-link-unpinned"
 claim = "ct-intended"
-compiler_api_item_count = 3471
-compiler_api_sha256 = "4cb3cfb8f6b03e23377c6de20aa1af88ddef257d8e32c3e9cfb97694072c9652"
+compiler_api_item_count = 3569
+compiler_api_sha256 = "50155147fe984cef57a348b6c33058a4c7d331563f401ab094f2ad261c4ae1ce"
 physical_timing = "required"
 binsec = "unsupported"
 binsec_reason = "BINSEC PE/Windows evidence is not part of the current release evidence gate."
@@ -3680,8 +3680,8 @@ name = "aarch64-apple-darwin"
 group = "macos"
 backend = "llvm"
 linker = "apple-ld-unpinned"
-compiler_api_item_count = 3471
-compiler_api_sha256 = "4cb3cfb8f6b03e23377c6de20aa1af88ddef257d8e32c3e9cfb97694072c9652"
+compiler_api_item_count = 3569
+compiler_api_sha256 = "50155147fe984cef57a348b6c33058a4c7d331563f401ab094f2ad261c4ae1ce"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -3692,8 +3692,8 @@ name = "s390x-unknown-linux-gnu"
 group = "ibm"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 3471
-compiler_api_sha256 = "4cb3cfb8f6b03e23377c6de20aa1af88ddef257d8e32c3e9cfb97694072c9652"
+compiler_api_item_count = 3569
+compiler_api_sha256 = "50155147fe984cef57a348b6c33058a4c7d331563f401ab094f2ad261c4ae1ce"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -3704,8 +3704,8 @@ name = "powerpc64le-unknown-linux-gnu"
 group = "ibm"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 3471
-compiler_api_sha256 = "4cb3cfb8f6b03e23377c6de20aa1af88ddef257d8e32c3e9cfb97694072c9652"
+compiler_api_item_count = 3569
+compiler_api_sha256 = "50155147fe984cef57a348b6c33058a4c7d331563f401ab094f2ad261c4ae1ce"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -3716,8 +3716,8 @@ name = "riscv64gc-unknown-linux-gnu"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 3471
-compiler_api_sha256 = "4cb3cfb8f6b03e23377c6de20aa1af88ddef257d8e32c3e9cfb97694072c9652"
+compiler_api_item_count = 3569
+compiler_api_sha256 = "50155147fe984cef57a348b6c33058a4c7d331563f401ab094f2ad261c4ae1ce"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -5810,6 +5810,50 @@ status = "partial"
 symbols = []
 gap = "Whole signing has variable retries. Kernel roots and bounded arithmetic proofs are tracked separately; they do not prove the whole public operation."
 
+# Composite ML-DSA adds only public framing around its component owners, so
+# it inherits their claims: ML-DSA whole signing has variable retries.
+[[primitive]]
+id = "signature.composite_mldsa"
+tier = "A"
+claim = "best-effort"
+features = ["mldsa65-ed25519", "mldsa65-ecdsa-p256"]
+variants = ["id-MLDSA65-Ed25519-SHA512", "id-MLDSA65-ECDSA-P256-SHA512"]
+entrypoints = ["MlDsa65Ed25519::generate_keypair", "MlDsa65EcdsaP256::generate_keypair", "MlDsa65*SecretKey::{from_bytes,from_pkcs8_der,sign_deterministic,sign_with,sign_prehash_*}", "MlDsa65*PreparedSecretKey::sign_*"]
+secrets = ["ml_dsa_seed", "expanded_secret_key", "traditional_secret_key", "signing_randomness"]
+public = ["algorithm", "public_key", "message_representative", "message_length", "context_length", "accepted_signature"]
+may_leak = ["signing_retry_count", "opaque_success_or_failure"]
+must_not_leak_ref = "common_secret_data"
+required = []
+notes = "The composite builds the message representative from public data and calls the ML-DSA-65, Ed25519, and ECDSA P-256 signing operations; their own primitives carry their claims and evidence. Standard ML-DSA signing has variable retries, so no whole-signing timing claim is made. The DudeCT cases hold the ML-DSA seed, randomness, and message fixed and vary only the traditional secret."
+[primitive.harness]
+status = "partial"
+symbols = []
+gap = "DudeCT covers composite signing with a fixed ML-DSA key and a fixed or random traditional secret. No linked-root closure, BINSEC kernel, or key-generation and import timing case covers the composite entry points; the component roots cover the arithmetic."
+
+[[dudect_case]]
+name = "composite_mldsa65_ed25519_sign_fixed_vs_random_traditional"
+primitive = "signature.composite_mldsa"
+filter = "composite_mldsa65_ed25519_sign_fixed_vs_random_traditional"
+left_class = "composite signing with a fixed ML-DSA-65 key and a fixed Ed25519 secret"
+right_class = "composite signing with the same ML-DSA-65 key and a random Ed25519 secret"
+samples = 20000
+smoke_samples = 512
+timeout_seconds = 3600
+timeout_reason = "Each sample includes a full ML-DSA-65 signature, which physical RISC-V runs slowly."
+notes = "Deterministic signing over one message: the ML-DSA component does the same work in both classes."
+
+[[dudect_case]]
+name = "composite_mldsa65_ecdsa_p256_sign_fixed_vs_random_traditional"
+primitive = "signature.composite_mldsa"
+filter = "composite_mldsa65_ecdsa_p256_sign_fixed_vs_random_traditional"
+left_class = "composite signing with a fixed ML-DSA-65 key and a fixed P-256 secret with fresh blinding"
+right_class = "composite signing with the same ML-DSA-65 key and a random P-256 secret with fresh blinding"
+samples = 20000
+smoke_samples = 512
+timeout_seconds = 3600
+timeout_reason = "Each sample includes a full ML-DSA-65 signature, which physical RISC-V runs slowly."
+notes = "Fixed ML-DSA randomness keeps the ML-DSA component's work equal across classes; the P-256 component takes fresh blinding."
+
 # SLH-DSA registration only: no CT harness, DudeCT case, or BINSEC kernel yet.
 [[primitive]]
 id = "signature.slhdsa"
@@ -6497,6 +6541,27 @@ permitted_leakage = ["public shapes", "opaque success or failure", "caller-autho
 claim = "best-effort"
 evidence = ["primitive:signature.slhdsa"]
 limitation = "Registration only. Key generation, signing, and secret-key import have no CT harness, DudeCT case, or binary review; target qualification is open. Secret-key import regenerates the public root, so its cost equals key generation."
+
+[[operation]]
+id = "signature.composite_mldsa"
+api = [
+  "rscrypto::MlDsa65{Ed25519,EcdsaP256}::{generate_keypair,try_generate_keypair,OID,LABEL}",
+  "rscrypto::MlDsa65{Ed25519,EcdsaP256}SecretKey::{sign_deterministic,sign_with,try_sign,sign_prehash_deterministic,sign_prehash_with,prepare,prepare_in,public_key,expose_secret,from_bytes,try_from_slice,from_pkcs8_der,to_pkcs8_der_into,LENGTH,PKCS8_DER_LENGTH}",
+  "rscrypto::MlDsa65{Ed25519,EcdsaP256}PreparedSecretKey::{sign_deterministic,sign_with,try_sign,sign_prehash_deterministic,sign_prehash_with}",
+  "rscrypto::MlDsa65{Ed25519,EcdsaP256}PublicKey::{verify,verify_with_context,verify_prehash,from_bytes,try_from_slice,to_bytes,from_spki_der,to_spki_der,LENGTH,SPKI_DER_LENGTH}",
+  "rscrypto::MlDsa65{Ed25519,EcdsaP256}Signature::{as_bytes,to_bytes,try_from_slice,LENGTH,MAX_LENGTH}",
+  "rscrypto::MlDsa65{Ed25519,EcdsaP256}*::{Debug,Clone,Default,PartialEq,AsRef,Verifier}",
+  "rscrypto::CompositeMlDsa{Error,KeyError}",
+]
+features = ["mldsa65-ed25519", "mldsa65-ecdsa-p256", "getrandom"]
+targets = ["all-supported", "portable implementation"]
+secret_inputs = ["ML-DSA-65 seed and expanded secret key", "Ed25519 seed or P-256 scalar", "raw and PKCS #8 private-key contents", "signing randomness"]
+public_inputs = ["algorithm", "message and context lengths", "message representative", "public key", "signature", "PKCS #8 container structure"]
+variable_time_components = ["standard first-accepted ML-DSA signing retries", "public matrix rejection sampling", "public parsing and verification", "public PKCS #8 structure parsing", "accepted signature encoding"]
+permitted_leakage = ["public shapes", "opaque success or failure", "standard signing retry count", "caller-authorized secret exposure"]
+claim = "best-effort"
+evidence = ["primitive:signature.composite_mldsa", "dudect:composite_mldsa65_ed25519_sign_fixed_vs_random_traditional", "dudect:composite_mldsa65_ecdsa_p256_sign_fixed_vs_random_traditional", "primitive:signature.mldsa", "primitive:signature.ed25519_sign", "primitive:signature.ecdsa_p256_sign"]
+limitation = "The composite inherits its components' boundaries: ML-DSA whole signing has variable retries and no strict CT claim, and the Ed25519 and P-256 claims cover only their own operations. Key generation and secret-key import have no composite timing case. Deterministic signing can reveal message information through timing; callers needing randomized signing must use sign_with or try_sign."
 
 # Exact P-256 public-condition reviews; a changed condition requires renewed review.
 [[asm_waiver]]

@@ -55,7 +55,7 @@ pub(crate) const SEED_HEADER_LENGTH: usize = 22;
 #[cfg(any(feature = "ml-dsa", feature = "ml-kem"))]
 pub(crate) const EXPANDED_HEADER_LENGTH: usize = 28;
 /// Bytes in an AlgorithmIdentifier with one 9-byte OID and no parameters.
-#[cfg(any(feature = "ml-dsa", feature = "ml-kem", feature = "slh-dsa"))]
+#[cfg(feature = "slh-dsa")]
 const IDENTIFIER_LENGTH: usize = 13;
 
 /// Key-import failures that each family maps onto its own public error.
@@ -108,12 +108,19 @@ impl Algorithm {
 }
 
 /// SPKI header length for a `key_len`-byte raw public key.
-#[cfg(any(feature = "ml-dsa", feature = "ml-kem", feature = "slh-dsa"))]
+#[cfg(feature = "slh-dsa")]
 pub(crate) const fn spki_header_length(key_len: usize) -> usize {
+  spki_header_length_for(IDENTIFIER_LENGTH, key_len)
+}
+
+/// SPKI header length for an `identifier_len`-byte AlgorithmIdentifier
+/// element and a `key_len`-byte raw public key.
+#[cfg(any(feature = "ml-dsa", feature = "ml-kem", feature = "slh-dsa"))]
+pub(crate) const fn spki_header_length_for(identifier_len: usize, key_len: usize) -> usize {
   let bit_string = key_len.strict_add(1);
   1usize
-    .strict_add(length_octets(spki_contents_length(key_len)))
-    .strict_add(IDENTIFIER_LENGTH)
+    .strict_add(length_octets(spki_contents_length(identifier_len, key_len)))
+    .strict_add(identifier_len)
     .strict_add(1)
     .strict_add(length_octets(bit_string))
     // No unused bits.
@@ -122,9 +129,9 @@ pub(crate) const fn spki_header_length(key_len: usize) -> usize {
 
 /// SPKI SEQUENCE contents: the AlgorithmIdentifier and the BIT STRING element.
 #[cfg(any(feature = "ml-dsa", feature = "ml-kem", feature = "slh-dsa"))]
-const fn spki_contents_length(key_len: usize) -> usize {
+const fn spki_contents_length(identifier_len: usize, key_len: usize) -> usize {
   let bit_string = key_len.strict_add(1);
-  IDENTIFIER_LENGTH
+  identifier_len
     .strict_add(1)
     .strict_add(length_octets(bit_string))
     .strict_add(bit_string)
@@ -133,11 +140,21 @@ const fn spki_contents_length(key_len: usize) -> usize {
 /// SPKI header for `algorithm` and a `key_len`-byte raw public key.
 #[cfg(any(feature = "ml-dsa", feature = "ml-kem", feature = "slh-dsa"))]
 pub(crate) const fn spki_header<const H: usize>(algorithm: Algorithm, key_len: usize) -> [u8; H] {
-  assert!(H == spki_header_length(key_len), "an SPKI header for this key length");
+  spki_header_for(&algorithm.identifier(), key_len)
+}
+
+/// SPKI header for the complete AlgorithmIdentifier element `identifier`
+/// and a `key_len`-byte raw public key.
+#[cfg(any(feature = "ml-dsa", feature = "ml-kem", feature = "slh-dsa"))]
+pub(crate) const fn spki_header_for<const H: usize>(identifier: &[u8], key_len: usize) -> [u8; H] {
+  assert!(
+    H == spki_header_length_for(identifier.len(), key_len),
+    "an SPKI header for this identifier and key length"
+  );
   let mut out = [0; H];
   out[0] = TAG_SEQUENCE;
-  let mut at = put_length(&mut out, 1, spki_contents_length(key_len));
-  at = put(&mut out, at, &algorithm.identifier());
+  let mut at = put_length(&mut out, 1, spki_contents_length(identifier.len(), key_len));
+  at = put(&mut out, at, identifier);
   out[at] = TAG_BIT_STRING;
   at = put_length(&mut out, at.strict_add(1), key_len.strict_add(1));
   // No unused bits.
@@ -261,11 +278,17 @@ pub(crate) fn decode_pkcs8_raw<E: KeyError, const SK: usize, const PK: usize>(
   der: &[u8],
   algorithm: Algorithm,
 ) -> Result<(&[u8; SK], Option<&[u8; PK]>), E> {
-  decode_one_asymmetric_key(
-    der,
-    |identifier| oid_without_parameters(identifier, &algorithm.oid()),
-    fixed,
-  )
+  decode_pkcs8_raw_oid(der, &algorithm.oid())
+}
+
+/// Like [`decode_pkcs8_raw`], for the algorithm with OID contents `oid` and
+/// absent parameters.
+#[cfg(any(feature = "slh-dsa", feature = "mldsa65-ed25519", feature = "mldsa65-ecdsa-p256"))]
+pub(crate) fn decode_pkcs8_raw_oid<'a, E: KeyError, const SK: usize, const PK: usize>(
+  der: &'a [u8],
+  oid: &[u8],
+) -> Result<(&'a [u8; SK], Option<&'a [u8; PK]>), E> {
+  decode_one_asymmetric_key(der, |identifier| oid_without_parameters(identifier, oid), fixed)
 }
 
 /// Parse a OneAsymmetricKey for `oid`, with absent parameters, whose
@@ -512,20 +535,27 @@ pub(crate) const fn expanded_header(algorithm: Algorithm, key_len: usize) -> [u8
 /// Version 1 header length before a `key_len`-byte raw private key.
 #[cfg(feature = "slh-dsa")]
 pub(crate) const fn raw_pkcs8_header_length(key_len: usize) -> usize {
+  raw_pkcs8_header_length_for(IDENTIFIER_LENGTH, key_len)
+}
+
+/// Version 1 header length for an `identifier_len`-byte AlgorithmIdentifier
+/// element and a `key_len`-byte raw private key.
+#[cfg(any(feature = "slh-dsa", feature = "mldsa65-ed25519", feature = "mldsa65-ecdsa-p256"))]
+pub(crate) const fn raw_pkcs8_header_length_for(identifier_len: usize, key_len: usize) -> usize {
   1usize
-    .strict_add(length_octets(raw_pkcs8_contents_length(key_len)))
+    .strict_add(length_octets(raw_pkcs8_contents_length(identifier_len, key_len)))
     .strict_add(3)
-    .strict_add(IDENTIFIER_LENGTH)
+    .strict_add(identifier_len)
     .strict_add(1)
     .strict_add(length_octets(key_len))
 }
 
 /// OneAsymmetricKey contents: the version, the AlgorithmIdentifier, and the
 /// `privateKey` element.
-#[cfg(feature = "slh-dsa")]
-const fn raw_pkcs8_contents_length(key_len: usize) -> usize {
+#[cfg(any(feature = "slh-dsa", feature = "mldsa65-ed25519", feature = "mldsa65-ecdsa-p256"))]
+const fn raw_pkcs8_contents_length(identifier_len: usize, key_len: usize) -> usize {
   3usize
-    .strict_add(IDENTIFIER_LENGTH)
+    .strict_add(identifier_len)
     .strict_add(1)
     .strict_add(length_octets(key_len))
     .strict_add(key_len)
@@ -534,15 +564,22 @@ const fn raw_pkcs8_contents_length(key_len: usize) -> usize {
 /// Version 1 header for `algorithm` and a `key_len`-byte raw private key.
 #[cfg(feature = "slh-dsa")]
 pub(crate) const fn raw_pkcs8_header<const H: usize>(algorithm: Algorithm, key_len: usize) -> [u8; H] {
+  raw_pkcs8_header_for(&algorithm.identifier(), key_len)
+}
+
+/// Version 1 header for the complete AlgorithmIdentifier element
+/// `identifier` and a `key_len`-byte raw private key.
+#[cfg(any(feature = "slh-dsa", feature = "mldsa65-ed25519", feature = "mldsa65-ecdsa-p256"))]
+pub(crate) const fn raw_pkcs8_header_for<const H: usize>(identifier: &[u8], key_len: usize) -> [u8; H] {
   assert!(
-    H == raw_pkcs8_header_length(key_len),
-    "a PKCS #8 header for this key length"
+    H == raw_pkcs8_header_length_for(identifier.len(), key_len),
+    "a PKCS #8 header for this identifier and key length"
   );
   let mut out = [0; H];
   out[0] = TAG_SEQUENCE;
-  let mut at = put_length(&mut out, 1, raw_pkcs8_contents_length(key_len));
+  let mut at = put_length(&mut out, 1, raw_pkcs8_contents_length(identifier.len(), key_len));
   at = put(&mut out, at, &[TAG_INTEGER, 0x01, 0x00]);
-  at = put(&mut out, at, &algorithm.identifier());
+  at = put(&mut out, at, identifier);
   out[at] = TAG_OCTET_STRING;
   at = put_length(&mut out, at.strict_add(1), key_len);
   assert!(at == H, "the header ends before the key");

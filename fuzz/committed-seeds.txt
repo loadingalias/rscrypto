@@ -62,6 +62,16 @@ fuzz/corpus/aead_xchacha20poly1305/seed-basic
 fuzz/corpus/auth_argon2d/seed-basic
 fuzz/corpus/auth_argon2i/seed-basic
 fuzz/corpus/auth_argon2id/seed-basic
+fuzz/corpus/auth_composite_mldsa/seed-ecdsa-p256-message
+fuzz/corpus/auth_composite_mldsa/seed-ecdsa-p256-pkcs8
+fuzz/corpus/auth_composite_mldsa/seed-ecdsa-p256-public-key
+fuzz/corpus/auth_composite_mldsa/seed-ecdsa-p256-secret-key
+fuzz/corpus/auth_composite_mldsa/seed-ecdsa-p256-signature
+fuzz/corpus/auth_composite_mldsa/seed-ed25519-message
+fuzz/corpus/auth_composite_mldsa/seed-ed25519-pkcs8
+fuzz/corpus/auth_composite_mldsa/seed-ed25519-public-key
+fuzz/corpus/auth_composite_mldsa/seed-ed25519-secret-key
+fuzz/corpus/auth_composite_mldsa/seed-ed25519-signature
 fuzz/corpus/auth_ecdsa_sign/seed-basic
 fuzz/corpus/auth_ecdsa_sign/seed-p256
 fuzz/corpus/auth_ecdsa_sign/seed-p384

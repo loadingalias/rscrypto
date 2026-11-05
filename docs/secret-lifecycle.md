@@ -101,6 +101,7 @@ the [WASM SIMD128 record](../benchmark_results/OVERVIEW.md#2026-10-06-blake3-was
 | Ed25519 and X25519 private work | Secret owners and staging are cleared; arithmetic temporaries have a narrower boundary. See [Ed25519 and X25519](#ed25519-and-x25519). |
 | ECDSA and Ed25519 key encodings | See [ECDSA and Ed25519 key encodings](#ecdsa-and-ed25519-key-encodings). |
 | ML-DSA private work | See [ML-DSA](#ml-dsa). |
+| Composite ML-DSA private work | See [Composite ML-DSA](#composite-ml-dsa). |
 | SLH-DSA private work | See [SLH-DSA](#slh-dsa). |
 | Argon2 and scrypt | See [Argon2 and scrypt](#argon2-and-scrypt). |
 | Secret parsing and generation | RAII owners cover success, parse failure, entropy failure, and early return. |
@@ -290,6 +291,18 @@ erasure of every compiler-created copy, register, or spill.
   [provider resource review](provider-resource-evidence.md#cleanup-and-timing).
 - Full target qualification is still open.
   See [ML-DSA](mldsa.md).
+
+### Composite ML-DSA
+
+- The composite layer owns no secret arithmetic. It reaches ML-DSA-65, Ed25519, and ECDSA P-256
+  only through their public operations, so each component's cleanup boundary above applies unchanged.
+- Hedged signing fills one zeroizing randomness owner (32 bytes with Ed25519, 96 with P-256)
+  before any secret computation, and drops it on every return path. A random-source failure
+  returns before signing and leaves the key usable.
+- Raw and PKCS #8 export assemble the encoding in a zeroizing owner. A rejected import drops the
+  component owners already built.
+- By-value constructors leave moved-from copies of the ML-DSA expanded key and the traditional key
+  in the caller's frame, as the by-value ML-DSA constructors do. Residue is not yet measured.
 
 ### SLH-DSA
 

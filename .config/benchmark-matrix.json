@@ -152,6 +152,13 @@
       "required": true,
       "features": ["std", "ml-dsa"]
     },
+    "composite_mldsa": {
+      "binary": "composite_mldsa",
+      "kind": "criterion",
+      "family": "auth",
+      "required": true,
+      "features": ["std", "mldsa65-ed25519", "mldsa65-ecdsa-p256"]
+    },
     "slhdsa_portable": {
       "binary": "slhdsa",
       "kind": "criterion",
@@ -351,6 +358,8 @@
     "mldsa44": { "bench": "mldsa", "filter": "^mldsa44/" },
     "mldsa65": { "bench": "mldsa", "filter": "^mldsa65/" },
     "mldsa87": { "bench": "mldsa", "filter": "^mldsa87/" },
+    "mldsa65-ed25519": { "bench": "composite_mldsa", "filter": "^mldsa65-ed25519/" },
+    "mldsa65-ecdsa-p256": { "bench": "composite_mldsa", "filter": "^mldsa65-ecdsa-p256/" },
     "slhdsa-sha2-128s-keygen": { "bench": "slhdsa", "filter": "^slhdsa-sha2-128s/keygen/" },
     "slhdsa-sha2-128s-sign": { "bench": "slhdsa", "filter": "^slhdsa-sha2-128s/sign/", "max_run_seconds": 1800 },
     "slhdsa-sha2-128s-verify": { "bench": "slhdsa", "filter": "^slhdsa-sha2-128s/verify/" },
@@ -1495,6 +1504,41 @@
       "cases": "^(?P<variant>mldsa(?:44|65|87))/hash-verify/shake128/(?P<input>encoded-key)/(?P<implementation>[^/]+)$",
       "headline": false,
       "task": "HashML-DSA with SHAKE128: verify with a key decoded in each call."
+    },
+    "composite-mldsa-keygen": {
+      "family": "Composite ML-DSA",
+      "bench": "composite_mldsa",
+      "cases": "^(?P<variant>mldsa65-ed25519)/keygen/(?P<input>seed-encoded)/(?P<implementation>[^/]+)$",
+      "headline": true,
+      "task": "Expand both component seeds of a composite private key and encode its public key."
+    },
+    "composite-mldsa-sign-deterministic": {
+      "family": "Composite ML-DSA",
+      "bench": "composite_mldsa",
+      "cases": "^(?P<variant>mldsa65-ed25519)/sign/(?P<input>reuse-key-deterministic)/(?P<implementation>[^/]+)$",
+      "headline": true,
+      "task": "Sign a 32-byte message deterministically with an empty context and each library's best reused key."
+    },
+    "composite-mldsa-sign-randomized": {
+      "family": "Composite ML-DSA",
+      "bench": "composite_mldsa",
+      "cases": "^(?P<variant>mldsa65-ecdsa-p256)/sign/(?P<input>reuse-key-randomized)/(?P<implementation>[^/]+)$",
+      "headline": true,
+      "task": "Sign a 32-byte message with fresh randomness, an empty context, and each library's best reused key."
+    },
+    "composite-mldsa-verify-reuse": {
+      "family": "Composite ML-DSA",
+      "bench": "composite_mldsa",
+      "cases": "^(?P<variant>mldsa65-(?:ed25519|ecdsa-p256))/verify/(?P<input>reuse-key)/(?P<implementation>[^/]+)$",
+      "headline": true,
+      "task": "Parse and verify one signature with an empty context and a parsed public key."
+    },
+    "composite-mldsa-verify-import": {
+      "family": "Composite ML-DSA",
+      "bench": "composite_mldsa",
+      "cases": "^(?P<variant>mldsa65-(?:ed25519|ecdsa-p256))/verify/(?P<input>import-key)/(?P<implementation>[^/]+)$",
+      "headline": true,
+      "task": "Import identical public-key bytes, then parse and verify one signature with an empty context."
     },
     "rsa-verify-reuse": {
       "family": "RSA",

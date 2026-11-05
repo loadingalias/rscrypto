@@ -361,6 +361,11 @@ path = "fuzz_targets/auth_mldsa.rs"
 doc = false
 
 [[bin]]
+name = "auth_composite_mldsa"
+path = "fuzz_targets/auth_composite_mldsa.rs"
+doc = false
+
+[[bin]]
 name = "auth_slhdsa"
 path = "fuzz_targets/auth_slhdsa.rs"
 doc = false

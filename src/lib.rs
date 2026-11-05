@@ -449,6 +449,8 @@ pub use auth::HkdfOutputLengthError;
 pub use auth::{Argon2Block, Argon2Context, Argon2Error, Argon2Params, Argon2d, Argon2i, Argon2id};
 #[cfg(all(feature = "argon2", feature = "phc-strings"))]
 pub use auth::{Argon2VerificationLimits, Argon2idPassword};
+#[cfg(any(feature = "mldsa65-ed25519", feature = "mldsa65-ecdsa-p256"))]
+pub use auth::{CompositeMlDsaError, CompositeMlDsaKeyError};
 #[cfg(any(feature = "ecdsa-p256", feature = "ecdsa-p384"))]
 pub use auth::{EcdsaBlindedSigningError, EcdsaError, EcdsaKeyGenerationError};
 #[cfg(feature = "ecdsa-p256")]
@@ -500,6 +502,16 @@ pub use auth::{
   MlDsa65PublicKey, MlDsa65SecretKey, MlDsa65Seed, MlDsa65Signature, MlDsa87, MlDsa87PreparedPublicKey,
   MlDsa87PreparedPublicKeyStorage, MlDsa87PreparedSecretKey, MlDsa87PreparedSecretKeyStorage, MlDsa87PublicKey,
   MlDsa87SecretKey, MlDsa87Seed, MlDsa87Signature, MlDsaError, MlDsaKeyError, MlDsaPrehash, MlDsaPrehashAlgorithm,
+};
+#[cfg(feature = "mldsa65-ecdsa-p256")]
+pub use auth::{
+  MlDsa65EcdsaP256, MlDsa65EcdsaP256PreparedSecretKey, MlDsa65EcdsaP256PublicKey, MlDsa65EcdsaP256SecretKey,
+  MlDsa65EcdsaP256Signature,
+};
+#[cfg(feature = "mldsa65-ed25519")]
+pub use auth::{
+  MlDsa65Ed25519, MlDsa65Ed25519PreparedSecretKey, MlDsa65Ed25519PublicKey, MlDsa65Ed25519SecretKey,
+  MlDsa65Ed25519Signature,
 };
 #[cfg(feature = "ml-kem")]
 pub use auth::{

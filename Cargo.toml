@@ -186,6 +186,10 @@ x25519 = []
 ml-kem = ["sha3"]
 ml-dsa = ["sha3"]
 slh-dsa = ["hmac", "sha3"]
+# Composite ML-DSA (draft-ietf-lamps-pq-composite-sigs-19): ML-DSA-65 with a
+# traditional signature. Each composite is its own leaf.
+mldsa65-ed25519 = ["ml-dsa", "ed25519", "sha2"]
+mldsa65-ecdsa-p256 = ["ml-dsa", "ecdsa-p256", "sha2"]
 
 phc-strings = ["alloc"]
 argon2 = ["blake2b", "alloc"]
@@ -208,7 +212,7 @@ hashes = ["crypto-hashes", "fast-hashes"]
 macs = ["hmac", "hmac-sha3", "kmac", "poly1305"]
 kdfs = ["hkdf", "pbkdf2"]
 password-hashing = ["argon2", "scrypt", "phc-strings"]
-signatures = ["ecdsa", "ed25519", "rsa", "ml-dsa", "slh-dsa"]
+signatures = ["ecdsa", "ed25519", "rsa", "ml-dsa", "slh-dsa", "mldsa65-ed25519", "mldsa65-ecdsa-p256"]
 key-exchange = ["x25519", "p256-ecdh", "p384-ecdh", "ml-kem"]
 auth = ["macs", "kdfs", "password-hashing", "signatures", "key-exchange"]
 aead = ["aes-gcm", "aes-gcm-siv", "aes-siv", "chacha20poly1305", "xchacha20poly1305", "aegis256", "ascon-aead"]
@@ -302,6 +306,11 @@ dryoc = "2.0.0"
 rustcrypto-ml-dsa = { version = "=0.1.1", package = "ml-dsa", default-features = false, features = ["alloc", "pkcs8", "zeroize"] }
 rustcrypto-slh-dsa = { version = "=0.2.0-rc.5", package = "slh-dsa" }
 fips205 = "=0.5.0"
+# Independent composite ML-DSA comparators (draft-ietf-lamps-pq-composite-sigs):
+# darkbio-crypto implements id-MLDSA65-Ed25519-SHA512 with the draft's encodings;
+# kryptering implements the same combiner for ML-DSA-65 + P-256 with JOSE encodings.
+darkbio-crypto = { version = "=0.20.1", default-features = false, features = ["xdsa"] }
+kryptering = { version = "=0.7.0", default-features = false, features = ["rustcrypto", "post-quantum"] }
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 # Explicit collection boundaries avoid ARM Callgrind return-heuristic leakage.
@@ -464,6 +473,11 @@ required-features = ["std", "ascon-hash"]
 name = "mldsa"
 harness = false
 required-features = ["ml-dsa"]
+
+[[bench]]
+name = "composite_mldsa"
+harness = false
+required-features = ["mldsa65-ed25519", "mldsa65-ecdsa-p256"]
 
 [[bench]]
 name = "slhdsa"

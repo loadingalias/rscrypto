@@ -104,6 +104,8 @@
 //! # Modules
 //!
 //! - `argon2` - Argon2d/Argon2i/Argon2id password hashing (RFC 9106).
+//! - `composite_mldsa` - composite ML-DSA-65 with Ed25519 or ECDSA P-256
+//!   (draft-ietf-lamps-pq-composite-sigs-19).
 //! - `ecdsa` - ECDSA P-256/SHA-256 and P-384/SHA-384 signing; SHA-256/SHA-384 verification on either curve.
 //! - `ed25519` - Ed25519 key and signature types.
 //! - `hmac` - HMAC-based authentication.
@@ -123,6 +125,8 @@
 
 #[cfg(feature = "argon2")]
 pub mod argon2;
+#[cfg(any(feature = "mldsa65-ed25519", feature = "mldsa65-ecdsa-p256"))]
+pub mod composite_mldsa;
 #[cfg(any(
   feature = "ed25519",
   all(
@@ -308,6 +312,18 @@ where
 pub use argon2::{Argon2Block, Argon2Context, Argon2Error, Argon2Params, Argon2d, Argon2i, Argon2id};
 #[cfg(all(feature = "argon2", feature = "phc-strings"))]
 pub use argon2::{Argon2VerificationLimits, Argon2idPassword};
+#[cfg(any(feature = "mldsa65-ed25519", feature = "mldsa65-ecdsa-p256"))]
+pub use composite_mldsa::{CompositeMlDsaError, CompositeMlDsaKeyError};
+#[cfg(feature = "mldsa65-ecdsa-p256")]
+pub use composite_mldsa::{
+  MlDsa65EcdsaP256, MlDsa65EcdsaP256PreparedSecretKey, MlDsa65EcdsaP256PublicKey, MlDsa65EcdsaP256SecretKey,
+  MlDsa65EcdsaP256Signature,
+};
+#[cfg(feature = "mldsa65-ed25519")]
+pub use composite_mldsa::{
+  MlDsa65Ed25519, MlDsa65Ed25519PreparedSecretKey, MlDsa65Ed25519PublicKey, MlDsa65Ed25519SecretKey,
+  MlDsa65Ed25519Signature,
+};
 #[cfg(all(rscrypto_internal, feature = "diag", feature = "ed25519"))]
 pub use curve25519_edwards::diag_ed25519_select_basepoint_cached_limb_digest;
 #[cfg(all(rscrypto_internal, feature = "diag", feature = "ed25519", target_arch = "x86_64"))]
