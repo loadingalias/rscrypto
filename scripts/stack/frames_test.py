@@ -650,6 +650,15 @@ def test_budgets_bound_each_root(directory: Path) -> None:
   assert apply_budgets(report, budgets, "native", complete=True)[-1] == "removed: budget for a root the review no longer has"
   missing = apply_budgets(budget_report("x86_64-unknown-linux-gnu", True, {"seal": 100, "sign": None}), budgets, "portable", False)
   assert missing == ["seal: no budget", "sign: owned bound unresolved"], missing
+  # With allowances, a root also needs a whole-call bound within the worker cap.
+  whole = budget_report("x86_64-unknown-linux-gnu", False, {"seal": 9216, "open": 9216})
+  whole["whole_calls"][0].update(whole_call_bound_bytes=None, missing_allowances=["memcpy"])
+  whole["whole_calls"][1].update(whole_call_bound_bytes=8 * 1024 * 1024 + 1)
+  assert apply_budgets(whole, budgets, "native", False) == [], whole
+  assert apply_budgets(whole, budgets, "native", False, whole_calls=True) == [
+    "seal: no whole-call bound; declared edges without an allowance: memcpy",
+    "open: whole-call bound 8,388,609 B exceeds the 8 MiB worker cap",
+  ], whole
 
   # Writing replaces a reviewed configuration under `complete` and keeps every other one.
   existing = {"x86_64-unknown-linux-gnu": {"native": {"stale": 1024}, "portable": {"kept": 2048}}}

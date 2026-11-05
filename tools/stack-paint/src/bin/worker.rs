@@ -101,6 +101,8 @@ enum Fault {
   TicketMismatch,
   NoCommonGroup,
   NoCommonSuite,
+  /// The server's PKCS#8 private key is truncated by one byte.
+  InvalidKey,
 }
 
 impl Fault {
@@ -121,6 +123,7 @@ impl Fault {
       ("ticket-mismatch", Self::TicketMismatch),
       ("no-common-group", Self::NoCommonGroup),
       ("no-common-suite", Self::NoCommonSuite),
+      ("invalid-key", Self::InvalidKey),
       ("server-entropy-key", Self::ServerKeyEntropy),
     ];
     if let Some((_, fault)) = simple.iter().find(|(label, _)| *label == name) {
@@ -368,6 +371,9 @@ fn catalog() -> Vec<String> {
     "no-common-suite",
     "prepared",
   );
+  for credential in CREDENTIALS {
+    push(credential, base_group, base_suite, "mutual", "invalid-key", "prepared");
+  }
   names
 }
 
@@ -701,10 +707,13 @@ fn configs(scenario: &Scenario<'_>) -> Result<Configs, Error> {
   } else {
     server.with_no_client_auth()
   };
-  let mut server = server.with_single_cert(
-    identity,
-    PrivateKeyDer::try_from(key.to_vec()).map_err(|error| Error::General(error.into()))?,
-  )?;
+  let server_key = if fault == Fault::InvalidKey {
+    // The provider's key parser rejects the truncated encoding.
+    PrivateKeyDer::Pkcs8(key[..key.len().strict_sub(1)].to_vec().into())
+  } else {
+    PrivateKeyDer::try_from(key.to_vec()).map_err(|error| Error::General(error.into()))?
+  };
+  let mut server = server.with_single_cert(identity, server_key)?;
   client.alpn_protocols = vec![b"provider-test".to_vec().into()];
   server.alpn_protocols = client.alpn_protocols.clone();
   let cache = || Resumption::store(Arc::new(ClientSessionMemoryCache::new(256)));

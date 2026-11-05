@@ -1569,12 +1569,16 @@ def load_budgets(path: Path) -> dict[str, dict[str, dict[str, int]]]:
   return targets
 
 
-def apply_budgets(report: dict[str, object], budgets: dict, configuration: str, complete: bool) -> list[str]:
+def apply_budgets(
+  report: dict[str, object], budgets: dict, configuration: str, complete: bool, whole_calls: bool = False
+) -> list[str]:
   """Record each root's budget in `report` and return the budget problems.
 
   A root fails when its owned bound is unresolved, it has no budget, or the
   bound exceeds the budget. With `complete`, a budget for a root that the
-  review no longer has is also a problem.
+  review no longer has is also a problem. With `whole_calls` (allowances were
+  supplied), a root also fails when it has no whole-call bound or the bound
+  exceeds the 8 MiB worker cap.
   """
   expected = budgets.get(str(report["target"]), {}).get(configuration, {})
   problems = []
@@ -1592,6 +1596,12 @@ def apply_budgets(report: dict[str, object], budgets: dict, configuration: str, 
       problems.append(f"{name}: no budget")
     elif owned > budget:
       problems.append(f"{name}: owned bound {owned:,} B exceeds its {budget:,} B budget")
+    whole = call.get("whole_call_bound_bytes")
+    if whole_calls and owned is not None and whole is None:
+      missing = ", ".join(call.get("missing_allowances", [])) or "unresolved"
+      problems.append(f"{name}: no whole-call bound; declared edges without an allowance: {missing}")
+    elif whole_calls and whole is not None and whole > STACK_CAP:
+      problems.append(f"{name}: whole-call bound {whole:,} B exceeds the 8 MiB worker cap")
   if complete:
     problems.extend(f"{name}: budget for a root the review no longer has" for name in sorted(set(expected) - reviewed))
   report["budget_configuration"] = configuration
@@ -1811,7 +1821,7 @@ def main(argv: list[str] | None = None) -> int:
     else:
       report = review(program, portable=portable)
     if budgets is not None:
-      apply_budgets(report, budgets, configuration, complete=groups == "all")
+      apply_budgets(report, budgets, configuration, complete=groups == "all", whole_calls=args.allowances is not None)
     report["binary"] = str(binary)
     report["portable"] = portable
     report["rustflags"] = args.rustflags

@@ -84,6 +84,8 @@ def cpu_identity() -> str:
                ("uarch", "isa"), ("machine",), ("vendor_id",)):
     if all(key in fields for key in keys):
       return ", ".join(f"{key} {fields[key]}" for key in keys)
+  if platform.system() == "Darwin":
+    return command_output(["sysctl", "-n", "machdep.cpu.brand_string"]) or platform.machine()
   return platform.processor() or platform.machine()
 
 
