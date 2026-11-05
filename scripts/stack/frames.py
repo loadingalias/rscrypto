@@ -6,9 +6,13 @@ overwrites a fixed region of that dead stack. This review proves, for one
 linked binary, that every worker path fits inside the scrub region.
 
 Frames come from the compiler's `.stack_sizes` records (`-Z emit-stack-sizes`).
-Calls come from the linked disassembly and are resolved by address. A path is
-unbounded when it reaches a function without a frame record, an indirect
-transfer, an unresolved external target, or recursion. Unbounded paths and
+On x86-64 and AArch64, code without a record, such as hand-written assembly,
+gets a frame derived from its instructions when every stack-pointer change is
+provably bounded (see `assembly_region`); each derived frame is listed as an
+assumption. Calls come from the linked disassembly and are resolved by address.
+A path is unbounded when it reaches a function without a frame record or a
+derivable frame, an indirect transfer, an unresolved external target, or
+recursion. Unbounded paths and
 capability detection reachable from a worker are reported, never dropped, and
 each fails the review. Panic exits are listed separately: the review artifact
 uses `panic = "abort"`, so they terminate the process instead of returning.
@@ -22,6 +26,7 @@ whole-call bound composes that owned bound with measured `--allowances`.
 from __future__ import annotations
 
 import argparse
+import bisect
 import hashlib
 import json
 import os
@@ -178,6 +183,8 @@ class Program:
   target: str
   functions: dict[int, Function]
   starts: list[int]
+  # Every resolved direct branch destination in the binary.
+  branch_targets: set[int] = field(default_factory=set)
 
   def containing(self, address: int) -> Function | None:
     low, high = 0, len(self.starts)
@@ -427,50 +434,315 @@ def x86_import_calls(rows, imports: dict[int, str | int]) -> dict[int, str | int
 
 AARCH64_SP_SUB = re.compile(r"^sp, sp, #(0x[0-9a-f]+|\d+)$")
 AARCH64_SP_PREINDEX = re.compile(r"\[sp, #-(0x[0-9a-f]+|\d+)\]!")
+X86_STACK_POINTER = re.compile(r"%(?:rsp|esp|spl|sp)\b")
+X86_STACK_POINTER_NAMES = {"%rsp", "%esp", "%sp", "%spl"}
+# `disp(%rsp)` with an optional index; group 1 is the displacement, group 2 the index part.
+X86_RSP_MEMORY = re.compile(r"(-?0x[0-9a-f]+|-?\d+)?\(%rsp(,[^)]*)?\)")
+X86_IMMEDIATE = re.compile(r"^\$(-?0x[0-9a-f]+|-?\d+)$")
+X86_TERMINATORS = {"jmp", "jmpq", "ret", "retq", "ud2", "hlt"}
+AARCH64_TERMINATORS = {"b", "br", "braa", "brab", "braaz", "brabz", "ret", "retaa", "retab", "brk", "udf", "hlt"}
+ALIGNMENT_PADDING = re.compile(r"^(?:nop[a-z]*|int3)$")
+# objdump prints constant tables in a code section as data directives.
+DATA_DIRECTIVE = re.compile(r"(?:^|\s)\.(?:byte|short|hword|word|long|quad|xword)\b")
+# Store widths, in bytes, of the moves that the save-slot check understands.
+X86_STORE_WIDTHS = {"movq": 8, "movl": 4, "movw": 2, "movb": 1, "movdqa": 16, "movdqu": 16, "movaps": 16, "movups": 16}
+X86_VECTOR_MOVES = re.compile(r"^vmov(?:dq[au](?:8|16|32|64)?|ap[sd]|up[sd])$")
+X86_VECTOR_WIDTHS = {"zmm": 64, "ymm": 32, "xmm": 16}
 
 
-def assembly_frame(target: str, function: Function) -> int | None:
-  """Derive the frame of a leaf assembly routine that has no compiler record.
+@dataclass(frozen=True)
+class AssemblyRegion:
+  """Frameless assembly symbols that share one stack frame, and that frame's bound."""
 
-  Only AArch64 is supported: every stack-pointer decrement must be an
-  immediate `sub sp, sp, #N` or a pre-indexed `[sp, #-N]!` store, and any other
-  write to `sp` (other than `add sp, sp, #N`) makes the frame unknown.
+  frame: int
+  members: frozenset[int]
+  note: str
+
+
+def instruction_rows(function: Function) -> list[tuple[int, str, str]]:
+  return [
+    (address, mnemonic, operands)
+    for address, (mnemonic, operands) in zip(sorted(function.instruction_addresses), function.instructions, strict=True)
+  ]
+
+
+def frameless_assembly(program: Program, function: Function) -> bool:
+  """A defined function without a compiler frame record: hand-written assembly."""
+  return function.frame is None and external_name(program, function) is None and bool(function.instructions)
+
+
+def falls_through(program: Program, function: Function) -> bool:
+  """Whether execution can run off the end of `function` into the next symbol.
+
+  Alignment padding and data after the final terminator are skipped unless a
+  branch targets them.
   """
-  if not target.startswith("aarch64") or function.edges or not function.instructions:
+  rows = instruction_rows(function)
+  while rows and rows[-1][0] not in program.branch_targets and (
+    ALIGNMENT_PADDING.match(rows[-1][1]) or DATA_DIRECTIVE.search(rows[-1][2])
+  ):
+    rows.pop()
+  if not rows:
+    return True
+  _, mnemonic, operands = rows[-1]
+  if program.target.startswith("x86_64"):
+    return not (mnemonic in X86_TERMINATORS or (mnemonic == "rep" and operands.strip().startswith("ret")))
+  return mnemonic not in AARCH64_TERMINATORS
+
+
+def x86_operands(operands: str) -> list[str]:
+  """Split AT&T operands at top-level commas, without annotations or comments."""
+  text = ANNOTATION.sub("", operands).split("#", 1)[0].strip()
+  parts, depth, current = [], 0, ""
+  for character in text:
+    if character == "," and depth == 0:
+      parts.append(current.strip())
+      current = ""
+      continue
+    depth += {"(": 1, ")": -1}.get(character, 0)
+    current += character
+  if current.strip():
+    parts.append(current.strip())
+  return parts
+
+
+def x86_immediate(operand: str) -> int | None:
+  match = X86_IMMEDIATE.match(operand)
+  return int(match.group(1), 0) if match else None
+
+
+def x86_stack_effect(mnemonic: str, operands: str, red_zone: int) -> tuple[str, int] | None:
+  """Classify one x86-64 instruction's effect on `rsp`; None when it cannot be bounded.
+
+  Kinds: `grow` (a decrement of N bytes), `align` (`and $-N, %rsp`), `restore`
+  (`movq N(%rsp), %rsp`), `copy` (the stack address escapes into another
+  register), and `none`.
+  """
+  parts = x86_operands(operands)
+  text = ", ".join(parts)
+  if mnemonic in {"pushq", "pushfq"}:
+    return ("grow", 8)
+  if mnemonic in {"popq", "popfq"}:
+    return None if parts and parts[-1] in X86_STACK_POINTER_NAMES else ("none", 0)
+  if mnemonic.startswith(("push", "pop", "enter", "leave")):
+    return None  # other widths and frame-pointer forms are not modeled
+  if X86_STACK_POINTER.search(text) is None:
+    return ("none", 0)
+  if mnemonic.startswith(("xchg", "cmpxchg", "xadd")):
+    return None  # writes every operand
+  for memory in X86_RSP_MEMORY.finditer(text):
+    if memory.group(2):
+      return None  # an indexed stack address has no static offset
+    if int(memory.group(1) or "0", 0) < -red_zone:
+      return None  # access below the stack pointer, beyond any red zone
+  destination, source = parts[-1], parts[0]
+  if destination in X86_STACK_POINTER_NAMES:
+    immediate = x86_immediate(source) if len(parts) == 2 else None
+    if mnemonic == "subq" and immediate is not None:
+      return ("grow", immediate) if immediate >= 0 else ("none", 0)
+    if mnemonic == "addq" and immediate is not None:
+      return ("grow", -immediate) if immediate < 0 else ("none", 0)
+    if mnemonic == "andq" and immediate is not None and immediate < 0 and (-immediate) & (-immediate - 1) == 0:
+      return ("align", -immediate)
+    memory = X86_RSP_MEMORY.fullmatch(source) if len(parts) == 2 else None
+    if mnemonic == "leaq" and memory is not None:
+      displacement = int(memory.group(1) or "0", 0)
+      return ("grow", -displacement) if displacement < 0 else ("none", 0)
+    if mnemonic == "movq" and memory is not None:
+      return ("restore", int(memory.group(1) or "0", 0))
     return None
-  frame = 0
-  decrements = []
-  branches = []
-  for address, (mnemonic, operands) in zip(sorted(function.instruction_addresses), function.instructions, strict=True):
-    text = ANNOTATION.sub("", operands).strip()
-    if classify(target, mnemonic, operands) == "branch":
+  if mnemonic.startswith("lea") or any(part in X86_STACK_POINTER_NAMES for part in parts):
+    return ("copy", 0)
+  return ("none", 0)
+
+
+def aarch64_stack_effect(mnemonic: str, operands: str) -> tuple[str, int] | None:
+  """Classify one AArch64 instruction's effect on `sp`; None when it cannot be bounded.
+
+  Decrements are an immediate `sub sp, sp, #N`, a pre-indexed `[sp, #-N]!`
+  access, or a negative post-index. Any other write to `sp` (other than
+  `add sp, sp, #N`), and any access below `sp`, makes the frame unknown:
+  Linux AArch64 has no red zone.
+  """
+  text = ANNOTATION.sub("", operands).split("//", 1)[0].strip()
+  if mnemonic == "sub" and text.startswith("sp,"):
+    match = AARCH64_SP_SUB.match(text)
+    return ("grow", int(match.group(1), 0)) if match else None
+  if match := AARCH64_SP_PREINDEX.search(text):
+    return ("grow", int(match.group(1), 0))
+  if "[sp]," in text:
+    match = re.search(r"\[sp\], #(-?(?:0x[0-9a-f]+|\d+))$", text)
+    if match is None:
+      return None
+    change = int(match.group(1), 0)
+    return ("grow", -change) if change < 0 else ("none", 0)
+  if "[sp, #-" in text:
+    return None  # access below sp without a recorded stack adjustment
+  if text.startswith("sp,") and not (mnemonic == "add" and AARCH64_SP_SUB.fullmatch(text)):
+    return None
+  return ("none", 0)
+
+
+def x86_store_width(mnemonic: str, parts: list[str]) -> int | None:
+  if mnemonic in X86_STORE_WIDTHS:
+    return X86_STORE_WIDTHS[mnemonic]
+  if X86_VECTOR_MOVES.match(mnemonic) and parts:
+    register = re.match(r"%([xyz]mm)\d+", parts[0])
+    return X86_VECTOR_WIDTHS[register.group(1)] if register else None
+  return None
+
+
+def x86_restore_is_verified(
+  program: Program, rows: list[tuple[int, str, str]], restore: int, offset: int, sources: dict[int, set[int]]
+) -> int | None:
+  """Prove that `movq OFFSET(%rsp), %rsp` at row `restore` reloads an earlier `rsp`.
+
+  The accepted idiom is `movq %rsp, %R`, then only immediate `sub`/`and`
+  stack decrements, then `movq %R, OFFSET(%rsp)`, where the slot lies inside
+  the bytes those subtractions allocate. Nothing may branch into the save
+  sequence after its first instruction. Between the slot store and the
+  restore: `rsp` does not change, its address does not escape, no call runs,
+  no store through `rsp` overlaps the slot, and every branch into that span
+  starts inside it. The restored value is then one that `rsp` held on every
+  path that reaches the restore. Returns the row of the save, or None. The
+  caller also rejects any other escape of the stack address in the region.
+  """
+  store = next(
+    (
+      index for index in range(restore - 1, -1, -1)
+      if rows[index][1] == "movq" and x86_operands(rows[index][2])[1:] == [f"{offset:#x}(%rsp)" if offset else "(%rsp)"]
+    ),
+    None,
+  )
+  general = (set(X86_LEGACY_REGISTERS) - {"%rsp"}) | {f"%r{n}" for n in range(8, 16)}
+  if store is None or x86_operands(rows[store][2])[0] not in general:
+    return None
+  saved = x86_operands(rows[store][2])[0]
+  save, allocated = store - 1, 0
+  while save >= 0 and x86_operands(rows[save][2]) != ["%rsp", saved]:
+    effect = x86_stack_effect(rows[save][1], rows[save][2], 0)
+    if rows[save][1] not in {"subq", "andq"} or effect is None or effect[0] not in {"grow", "align"}:
+      return None
+    allocated += effect[1] if effect[0] == "grow" else 0
+    save -= 1
+  if save < 0 or rows[save][1] != "movq" or not 0 <= offset <= allocated - 8:
+    return None  # the slot must be memory that this save sequence allocated
+  if any(rows[index][0] in program.branch_targets for index in range(save + 1, store + 1)):
+    return None
+  low, high = rows[store][0], rows[restore][0]
+  for index in range(store + 1, restore):
+    address, mnemonic, operands = rows[index]
+    effect = x86_stack_effect(mnemonic, operands, 0)
+    if effect is None or effect[0] != "none" or mnemonic.startswith("call"):
+      return None
+    parts = x86_operands(operands)
+    if parts and (memory := X86_RSP_MEMORY.fullmatch(parts[-1])) is not None and len(parts) > 1:
+      width = x86_store_width(mnemonic, parts)
+      start = int(memory.group(1) or "0", 0)
+      if width is None or (start < offset + 8 and offset < start + width):
+        return None
+  for target in range(low + 1, high + 1):
+    if target in sources and any(not low <= source < high for source in sources[target]):
+      return None
+  return save
+
+
+def assembly_region(program: Program, function: Function) -> AssemblyRegion | None:
+  """Bound the frame of hand-written assembly that has no compiler record.
+
+  The region is `function` and every frameless symbol it reaches by a direct
+  jump or by running off its end. ELF-visible labels split one routine into
+  such symbols, and a continuation reached by `jmp` still uses the frame of
+  the code that jumped. Calls leave the region. The frame is the sum of every
+  stack decrement in the region; on x86-64, `and $-N, %rsp` adds `N - 8`
+  because the ABI keeps `rsp` 8-byte aligned. The sum bounds the region only
+  when no decrement can repeat: a backward branch that spans a decrement, an
+  unresolved jump, an unmodeled stack-pointer write, an access below the
+  stack pointer beyond the red zone, or an unverified `rsp` reload makes the
+  frame unknown. Supported on x86-64 and AArch64.
+  """
+  arch = program.target.split("-", 1)[0]
+  if arch not in {"x86_64", "aarch64"} or not frameless_assembly(program, function):
+    return None
+  members = {function.address}
+  pending = [function]
+  while pending:
+    current = pending.pop()
+    successors = [(edge.target, False) for edge in current.edges if edge.kind == "tail"]
+    if falls_through(program, current):
+      index = bisect.bisect_right(program.starts, current.address)
+      if index >= len(program.starts):
+        return None
+      successors.append((program.starts[index], True))
+    for address, fallthrough in successors:
+      if address in members:
+        continue
+      successor = program.functions[address]
+      if not frameless_assembly(program, successor):
+        if fallthrough:
+          return None  # runs into code whose frame this region cannot own
+        continue  # a tail call out of the region; the traversal charges it
+      members.add(address)
+      pending.append(successor)
+  rows = sorted(row for address in members for row in instruction_rows(program.functions[address]))
+  sources: dict[int, set[int]] = {}
+  frame, decrements, branches, alignments, restores, copies, multiple_of_eight = 0, [], [], [], [], [], True
+  for index, (address, mnemonic, operands) in enumerate(rows):
+    kind = classify(program.target, mnemonic, operands)
+    if kind == "indirect-jump":
+      return None
+    if kind == "branch":
       destination = target_address(operands)
       if destination is None:
         return None
       branches.append((address, destination))
-    if mnemonic == "sub" and text.startswith("sp,"):
-      match = AARCH64_SP_SUB.match(text)
-      if match is None:
-        return None
-      frame += int(match.group(1), 0)
-      decrements.append(address)
-    elif match := AARCH64_SP_PREINDEX.search(text):
-      frame += int(match.group(1), 0)
-      decrements.append(address)
-    elif "[sp]," in text:
-      match = re.search(r"\[sp\], #(-?(?:0x[0-9a-f]+|\d+))$", text)
-      if match is None:
-        return None
-      if (change := int(match.group(1), 0)) < 0:
-        frame -= change
-        decrements.append(address)
-    elif "[sp, #-" in text:
-      return None  # access below sp without a recorded stack adjustment
-    elif text.startswith("sp,") and not (mnemonic == "add" and AARCH64_SP_SUB.fullmatch(text)):
+    if arch == "x86_64":
+      effect = x86_stack_effect(mnemonic, operands, ARCHES[program.target].red_zone)
+    else:
+      effect = aarch64_stack_effect(mnemonic, operands)
+    if effect is None:
       return None
-  if any(destination <= decrement <= address for address, destination in branches for decrement in decrements):
+    if effect[0] == "grow":
+      frame += effect[1]
+      multiple_of_eight = multiple_of_eight and effect[1] % 8 == 0
+      decrements.append(address)
+    elif effect[0] == "align":
+      alignments.append(effect[1])
+      decrements.append(address)
+    elif effect[0] == "restore":
+      restores.append((index, effect[1]))
+    elif effect[0] == "copy":
+      copies.append(index)
+  if any(destination <= decrement <= source for source, destination in branches for decrement in decrements):
     return None  # a loop can repeat a stack decrement; static sum is not a bound
-  return frame
+  if restores:
+    # Every direct branch into the region: its own, and jumps from other symbols.
+    for source, destination in branches:
+      sources.setdefault(destination, set()).add(source)
+    for other in program.functions.values():
+      for edge in other.edges:
+        if edge.kind == "tail" and edge.target is not None:
+          sources.setdefault(edge.target, set()).add(edge.source)
+  saves = set()
+  for index, offset in restores:
+    if (save := x86_restore_is_verified(program, rows, index, offset, sources)) is None:
+      return None
+    saves.add(save)
+  if restores and not set(copies) <= saves:
+    return None  # another register holds a stack address that could reach the save slot
+  frame += sum(alignment - 8 if multiple_of_eight else alignment - 1 for alignment in alignments)
+  name = function.demangled
+  leaf = not any(edge.kind in {"call", "import"} for address in members for edge in program.functions[address].edges)
+  if len(members) == 1 and leaf and not alignments and not restores:
+    note = f"{name}: leaf assembly frame {frame} B"
+  else:
+    details = [f"{len(members)} symbol(s)"]
+    if alignments:
+      details.append("rsp 8-byte aligned at entry")
+    if restores:
+      details.append("rsp reloaded from a verified save slot")
+    note = f"{name}: assembly frame {frame} B ({', '.join(details)})"
+  return AssemblyRegion(frame, frozenset(members), note)
 
 
 def parse_dynamic_symbols(text: str) -> dict[int, str | int]:
@@ -553,6 +825,7 @@ def parse_disassembly(
     if classify(target, mnemonic, operands) == "branch":
       if (destination := target_address(operands)) is not None:
         branch_targets.add(destination)
+  program.branch_targets = branch_targets
   upper: dict[str, int] = {}
   previous: Function | None = None
   for function, address, mnemonic, operands in rows:
@@ -703,19 +976,32 @@ def depth_of(
     else:
       frame = function.frame
       assumptions: set[str] = set()
-      if frame is None and (derived := assembly_frame(program.target, function)) is not None:
-        frame = derived
-        assumptions.add(f"{name}: leaf assembly frame {derived} B")
+      region = assembly_region(program, function) if frame is None else None
+      edges = function.edges
+      # Tail edges of compiled code follow the epilogue, so they enter at this
+      # function's entry depth. An assembly jump may keep its frame allocated.
+      tail_base = 0
+      if region is not None:
+        frame = region.frame
+        assumptions.add(region.note)
+        tail_base = frame
+        edges = [
+          edge
+          for address in sorted(region.members)
+          for edge in program.functions[address].edges
+          if not (edge.kind == "tail" and edge.target in region.members)
+        ]
       missing = [] if frame is not None else [{"reason": "no frame record", "path": [name], "address": hex(function.address)}]
       # Keep walking when this frame is unknown. Otherwise its allocator
       # callbacks, indirect calls, and cleanup edges disappear from the report.
       # The numeric sum is NOT a bound whenever any path remains unresolved.
       known_frame = frame if frame is not None else 0
       result = Depth(known_frame, [name], missing, [], set(), assumptions)
-      calls = [edge for edge in function.edges if edge.kind in {"call", "import"}]
-      if not calls:
+      calls = [edge for edge in edges if edge.kind in {"call", "import"}]
+      if not calls or region is not None:
+        # Assembly may use the red zone between its calls.
         result.bytes = known_frame + arch.red_zone
-      for edge in function.edges:
+      for edge in edges:
         stop = None  # (callee, declared edge name, kind)
         if declared_edges and edge.kind in {"import", "import-tail"} and edge.name in DECLARED_LIBC:
           stop = (str(edge.name), str(edge.name), "libc")
@@ -726,7 +1012,7 @@ def depth_of(
           # Charge only the caller's frame and call slot. The callee's own use,
           # its red zone and callbacks included, belongs to the edge's allowance.
           callee_name, label, kind = stop
-          base = known_frame + arch.call_slot if edge.kind in {"call", "import"} else 0
+          base = known_frame + arch.call_slot if edge.kind in {"call", "import"} else tail_base
           declare(result, label, kind, base, {(name, hex(edge.source), callee_name)})
           if base > result.bytes:
             result.bytes, result.path = base, [name, callee_name]
@@ -734,7 +1020,7 @@ def depth_of(
         if edge.kind in {"import", "import-tail"}:
           if assume_memory_leaves and edge.name in EXTERNAL_LEAVES:
             result.assumptions.add(f"{edge.name}: external leaf, frame 0 + red zone")
-            base = known_frame + arch.call_slot if edge.kind == "import" else 0
+            base = known_frame + arch.call_slot if edge.kind == "import" else tail_base
             result.bytes = max(result.bytes, base + arch.red_zone)
           else:
             result.unbounded.append({"reason": "external", "path": [name, str(edge.name)], "address": hex(edge.source)})
@@ -750,7 +1036,7 @@ def depth_of(
           result.panic_exits.add(callee.demangled)
           continue
         child = visit(callee)
-        base = known_frame + arch.call_slot if edge.kind == "call" else 0
+        base = known_frame + arch.call_slot if edge.kind == "call" else tail_base
         result.unbounded.extend({**item, "path": [name, *item["path"]]} for item in child.unbounded)
         result.detection.extend([name, *path] for path in child.detection)
         result.panic_exits |= child.panic_exits

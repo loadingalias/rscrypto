@@ -122,7 +122,11 @@ one codegen unit, overflow checks, and panic abort. `-Z emit-stack-sizes` adds
 frame records; no target CPU override is supplied. As the
 [Rust compiler documentation](https://doc.rust-lang.org/nightly/unstable-book/compiler-flags/emit-stack-sizes.html)
 explains, frame records do not include callees and can be absent for dynamic
-stack allocation. They are not whole-call bounds.
+stack allocation. They are not whole-call bounds. On x86-64 and AArch64, code
+without a record, such as hand-written assembly, gets a frame derived from its
+instructions only when every stack-pointer change is bounded; each derived
+frame is listed as an assumption, and any other recordless code stays
+unresolved.
 
 Each root has two results. The owned bound covers the code linked into the
 artifact: rscrypto and the linked parts of the Rust standard library. It stops
@@ -196,8 +200,8 @@ with the number of roots that have one:
 
 | Linux target | ML-DSA signing (9 roots) | ML-KEM (12 roots) | AEAD records (6 roots) |
 | --- | ---: | ---: | ---: |
-| x86-64 GNU | 3 / 1, up to 21,688 / 16,584 B | 12 / 12, 33,976 / 33,880 B | 0 / 2, up to - / 648 B |
-| AArch64 GNU | 9 / 9, 59,392 / 58,720 B | 12 / 12, 38,256 / 36,688 B | 4 / 6, up to 8,624 / 8,624 B |
+| x86-64 GNU | 3 / 1, up to 21,688 / 16,584 B | 12 / 12, 33,976 / 33,880 B | 6 / 6, 8,888 / 8,504 B |
+| AArch64 GNU | 9 / 9, 59,392 / 58,720 B | 12 / 12, 38,256 / 36,688 B | 6 / 6, 8,624 / 8,624 B |
 | POWER64LE GNU | 9 / 9, 59,360 / 59,280 B | 12 / 12, 34,416 / 34,416 B | 6 / 6, 9,360 / 8,496 B |
 | IBM Z GNU | 2 / 1, up to 17,176 / 16,952 B | 12 / 12, 33,960 / 31,456 B | 6 / 6, 9,032 / 8,920 B |
 | RISC-V 64 GNU | 1 / 1, 16,720 / 16,720 B | 12 / 12, 31,728 / 31,728 B | 6 / 6, 8,384 / 8,384 B |
@@ -217,17 +221,18 @@ through first-call detection on native AArch64, POWER, and IBM Z. Portable IBM
 Z AEAD roots reach no declared edge and have static whole-call bounds: 8,904 B
 for AES-GCM seal, 8,920 B for AES-GCM open, and 856 B for ChaCha20-Poly1305.
 
-The unbounded AEAD roots stop at owned assembly that has no frame record, and
-`frames.py` derives assembly frames only for AArch64 leaf routines. On x86-64,
-these are the twelve Linux VAES-512 GCM kernels
-(`rscrypto_aes{128,256}_gcm_{seal,open}_{16,64,128}x_vaes512_x86_64_linux`) and
-the ChaCha20-Poly1305 seal and open assembly. The GCM kernels are leaves that
-push two registers, subtract a constant, align `rsp` to 64 bytes, and restore it
-from a saved slot. Portable builds also link them, because a key stores its
-selected backend. The AVX2 ChaCha20-Poly1305 routines and the seal trailer
-label `process_extra_in_trailer` jump back into the SSE routines, which the
-tool reads as recursion. On native AArch64, the ChaCha20-Poly1305 assembly
-branches between ELF-visible `L` labels, so no symbol is a leaf.
+Every AEAD root has an owned bound on every target and configuration. Owned
+assembly has no compiler frame record, so the tool derives its frames from the
+instructions and lists each one among the report's assumptions (scripts guide,
+"Frame review"). The twelve x86-64 Linux VAES-512 GCM kernels are leaves of
+648, 1,160, and 2,184 B for 16-, 64-, and 128-block batches: two pushes, a
+constant subtraction, at most 56 B to align `rsp` to 64 bytes, and a reload of
+`rsp` from the slot that saved it. Portable builds link them too, because a key
+stores its selected backend. The x86-64 ChaCha20-Poly1305 seal and open
+routines share one 376 B frame, seven pushes and 320 B, with their AVX2
+continuations, which jump back into the SSE routines. ELF-visible labels split
+the AArch64 ChaCha20-Poly1305 routines into 151 (seal) and 28 (open) symbols;
+their frames are 112 B and 80 B.
 
 The unresolved signing roots stop at register-indirect jumps in
 `mldsa::encoding::pack` and `unpack_raw`, which are compiler jump tables the
@@ -249,9 +254,10 @@ The tool continues below missing frame records, resolves identified GOT/PLT
 imports, distinguishes IFUNC relocations, and retains unresolved transfers by
 instruction address. Regression fixtures cover missing frames, allocator
 cleanup, IFUNCs, branch joins, register clobbers, unlabelled IBM Z PLT entries,
-repeated assembly stack decrements, declared-edge entry depths after calls and
-tail calls, register copies of held imports, detection without a declared edge, and
-allowance composition.
+repeated assembly stack decrements, assembly frames shared across labels and
+jump continuations, x86-64 `rsp` save-slot reloads, data after a final return,
+declared-edge entry depths after calls and tail calls, register copies of held
+imports, detection without a declared edge, and allowance composition.
 
 The exact remaining proof needs are:
 

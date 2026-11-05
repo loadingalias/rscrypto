@@ -361,7 +361,10 @@ def test_record_parsers() -> None:
 def test_preparation_never_turns_unknown_frames_into_a_bound() -> None:
   functions = [
     (0x1000, "prepare", 32, ["1000: callq 0x2000", "1005: callq 0x3000", "100a: retq"]),
-    (0x2000, "allocator_without_frame", None, ["2000: callq *0x6000(%rip) # 0x8000", "2005: retq"]),
+    # A dynamic stack allocation: no frame record, and no frame derivable from the instructions.
+    (0x2000, "allocator_without_frame", None, [
+      "2000: subq %rdi, %rsp", "2003: callq *0x6000(%rip) # 0x8000", "2009: retq",
+    ]),
     (0x3000, "cleanup", 64, ["3000: callq *0x5008(%rip) # 0x8008", "3005: retq"]),
   ]
   dynamic = "8000 R_X86_64_GLOB_DAT calloc\n8008 R_X86_64_GLOB_DAT free"
@@ -414,6 +417,129 @@ def test_assembly_loop_cannot_hide_repeated_stack_growth() -> None:
   call = review_preparation(program("aarch64-unknown-linux-gnu", functions), ["prepare"])["whole_calls"][0]
   assert call["whole_call_bound_bytes"] is None, call
   assert call["unresolved"][0]["reason"] == "no frame record", call
+
+
+def whole_call(target: str, functions: list[tuple[int, str, int | None, list[str]]]) -> dict:
+  return review_preparation(program(target, functions), ["prepare"])["whole_calls"][0]
+
+
+# A VAES-style leaf: two pushes, then `rsp` saved, lowered, aligned to 64, stored at +0x200, and reloaded.
+SAVE_SLOT_KERNEL = [
+  "2000: pushq %r12", "2002: pushq %r13", "2004: cmpq $0x100, %rcx", "200b: jae 0x2019",
+  "200d: popq %r13", "200f: popq %r12", "2011: movq $0x0, -0x10(%rsp)", "2018: retq",
+  "2019: movq %rsp, %rax", "201c: subq $0x240, %rsp # imm = 0x240", "2023: andq $-0x40, %rsp",
+  "2027: movq %rax, 0x200(%rsp)", "202f: vmovdqu64 %zmm20, 0x1c0(%rsp)", "2037: cmpq $0x1, %rdx",
+  "203b: jne 0x202f", "203d: movq 0x200(%rsp), %rsp", "2045: popq %r13", "2047: popq %r12", "2049: retq",
+]
+
+
+def test_x86_save_slot_assembly_frame() -> None:
+  def call(body: list[str]) -> dict:
+    functions = [
+      (0x1000, "prepare", 32, ["1000: callq 0x2000", "1005: retq"]),
+      (0x2000, "rscrypto_fixture_gcm_kernel", None, body),
+      (0x3000, "rscrypto::fixture::leaf", 0, ["3000: retq"]),
+    ]
+    return whole_call("x86_64-unknown-linux-gnu", functions)
+
+  # The root's return address and frame, the call's return address, then 16 B of pushes, 0x240, at most 56 B of
+  # alignment, and the 128-byte red zone of a leaf.
+  bounded = call(SAVE_SLOT_KERNEL)
+  assert bounded["owned_bound_bytes"] == 8 + 32 + 8 + 16 + 0x240 + 56 + 128, bounded
+  assert bounded["assumptions"] == [
+    "rscrypto_fixture_gcm_kernel: assembly frame 648 B "
+    "(1 symbol(s), rsp 8-byte aligned at entry, rsp reloaded from a verified save slot)"
+  ], bounded
+  refused = {
+    "a store overlaps the save slot": ("202f: vmovdqu64 %zmm20, 0x1c0(%rsp)", "202f: vmovdqu64 %zmm20, 0x1c8(%rsp)"),
+    "a branch enters the span past the store": ("200b: jae 0x2019", "200b: jae 0x2037"),
+    "the stack address escapes": ("2037: cmpq $0x1, %rdx", "2037: leaq 0x10(%rsp), %rdi"),
+    "a call runs inside the span": ("2037: cmpq $0x1, %rdx", "2037: callq 0x3000"),
+    "the reload reads another slot": ("203d: movq 0x200(%rsp), %rsp", "203d: movq 0x1f8(%rsp), %rsp"),
+    "rsp comes from a register": ("203d: movq 0x200(%rsp), %rsp", "203d: movq %rax, %rsp"),
+    "an access falls below the red zone": ("2011: movq $0x0, -0x10(%rsp)", "2011: movq $0x0, -0x100(%rsp)"),
+    "the alignment repeats in a loop": ("203b: jne 0x202f", "203b: jne 0x2023"),
+    "the slot lies outside the allocation": ("201c: subq $0x240, %rsp # imm = 0x240", "201c: subq $0x200, %rsp"),
+    "the stack address escapes before the save": ("2004: cmpq $0x100, %rcx", "2004: leaq 0x8(%rsp), %rdi"),
+  }
+  for reason, (old, new) in refused.items():
+    assert old in SAVE_SLOT_KERNEL, reason
+    unknown = call([new if line == old else line for line in SAVE_SLOT_KERNEL])
+    assert unknown["owned_bound_bytes"] is None, (reason, unknown)
+    assert [(item["reason"], item["path"][-1]) for item in unknown["owned_unresolved"]] == [
+      ("no frame record", "rscrypto_fixture_gcm_kernel")
+    ], (reason, unknown)
+
+
+def test_assembly_continuations_share_one_frame() -> None:
+  def call(seal: list[str], avx2: list[str], poly: list[str]) -> dict:
+    functions = [
+      (0x1000, "prepare", 32, ["1000: callq 0x2000", "1005: retq"]),
+      (0x2000, "rscrypto_fixture_seal", None, seal),
+      (0x3000, "rscrypto_fixture_seal_avx2", None, avx2),
+      (0x4000, "rscrypto_fixture_poly", None, poly),
+      (0x5000, "rscrypto::fixture::compiled", 4096, ["5000: retq"]),
+    ]
+    return whole_call("x86_64-unknown-linux-gnu", functions)
+
+  seal = [
+    "2000: pushq %rbx", "2001: pushq %rbp", "2002: subq $0x20, %rsp", "2006: callq 0x4000",
+    "200b: testq %rdi, %rdi", "200e: je 0x3000", "2014: addq $0x20, %rsp", "2018: popq %rbp",
+    "2019: popq %rbx", "201a: retq", "201b: nopl (%rax,%rax)",
+  ]
+  avx2 = ["3000: callq 0x4000", "3005: jmp 0x2014"]
+  poly = ["4000: rep retq", "4002: nopl (%rax,%rax)"]
+  # The AVX2 continuation jumps back into the SSE routine inside the same 48-byte frame: no recursion, one frame.
+  # Each call adds the 8-byte return address and the leaf's 0 B frame plus its red zone.
+  shared = call(seal, avx2, poly)
+  assert shared["owned_bound_bytes"] == 8 + 32 + 8 + 48 + 8 + 128, shared
+  assert shared["assumptions"] == [
+    "rscrypto_fixture_poly: leaf assembly frame 0 B", "rscrypto_fixture_seal: assembly frame 48 B (2 symbol(s))",
+  ], shared
+  # A jump back to the decrement can repeat it.
+  looping = call(seal, ["3000: callq 0x4000", "3005: jmp 0x2002"], poly)
+  assert looping["owned_bound_bytes"] is None, looping
+  assert ("no frame record", "rscrypto_fixture_seal") in {
+    (item["reason"], item["path"][-1]) for item in looping["owned_unresolved"]
+  }, looping
+  # Without a final terminator, the helper runs into compiled code whose frame it cannot own.
+  falling = call(seal, avx2, ["4000: addq %rax, %rbx"])
+  assert falling["owned_bound_bytes"] is None, falling
+  assert any(item["path"][-1] == "rscrypto_fixture_poly" for item in falling["owned_unresolved"]), falling
+  # An assembly tail jump may keep its frame: the compiled leaf it jumps to, red zone included, is charged
+  # below that frame (charging it at the region's entry would give 4,272 B).
+  tail = call(seal[:-2] + ["201a: jmp 0x5000"], avx2, poly)
+  assert tail["owned_bound_bytes"] == 8 + 32 + 8 + 48 + 4096 + 128, tail
+
+
+def test_aarch64_labels_split_one_routine() -> None:
+  def call(entry: str, ready: list[str]) -> dict:
+    functions = [
+      (0x1000, "prepare", 32, [f"1000: bl {entry}", "1004: ret"]),
+      (0x2000, "rscrypto_fixture_seal_aarch64", None, ["2000: mov x6, #0x0", "2004: b 0x2010", "2008: nop"]),
+      (0x200c, "rscrypto_fixture_seal_gather_aarch64", None, ["200c: mov x6, x1"]),
+      (0x2010, "Lseal_entry", None, [
+        "2010: stp x29, x30, [sp, #-0x70]!", "2014: cbz x19, 0x2020", "2018: ldp x1, x20, [x19], #0x10",
+      ]),
+      (0x2020, "Lseal_input_ready", None, ready),
+      # A constant table after the final `ret` is data, not a path into the compiled code that follows.
+      (0x3000, "Lpoly_hash_ad_internal", None, [
+        "3000: ret", "3004: 01 00 00 80 \t.word\t0x80000001", "3008: 00 00 00 00 \t.word\t0x00000000",
+      ]),
+      (0x3010, "rscrypto::fixture::compiled", 16, ["3010: ret"]),
+    ]
+    return whole_call("aarch64-unknown-linux-gnu", functions)
+
+  ready = ["2020: bl 0x3000", "2024: ldp x29, x30, [sp], #0x70", "2028: ret"]
+  # Both entries reach one 112-byte frame: one through `b`, one by running off its end.
+  for entry in ("0x2000", "0x200c"):
+    shared = call(entry, ready)
+    assert shared["owned_bound_bytes"] == 32 + 0x70, (entry, shared)
+  looping = call("0x2000", ["2020: bl 0x3000", "2024: cbnz x0, 0x2010", "2028: ret"])
+  assert looping["owned_bound_bytes"] is None, looping
+  assert ("no frame record", "rscrypto_fixture_seal_aarch64") in {
+    (item["reason"], item["path"][-1]) for item in looping["owned_unresolved"]
+  }, looping
 
 
 def test_s390x_unlabelled_plt_keeps_allocator_edges_separate() -> None:
@@ -555,7 +681,10 @@ def test_owned_indirection_and_recursion_keep_the_owned_bound_null() -> None:
   allowances = {"libc": "fixture libc", "edges": {"calloc": 64}}
   call = review_preparation(program("x86_64-unknown-linux-gnu", functions, ALLOCATOR_IMPORTS), ["prepare"], allowances)["whole_calls"][0]
   assert call["whole_call_bound_bytes"] is None and not call["passed"], call
-  missing_frame = [(0x1000, "prepare", 32, ["1000: callq 0x2000", "1005: retq"]), (0x2000, "helper", None, ["2000: retq"])]
+  missing_frame = [
+    (0x1000, "prepare", 32, ["1000: callq 0x2000", "1005: retq"]),
+    (0x2000, "helper", None, ["2000: subq %rdi, %rsp", "2003: retq"]),
+  ]
   call = review_preparation(program("x86_64-unknown-linux-gnu", missing_frame), ["prepare"])["whole_calls"][0]
   assert call["owned_bound_bytes"] is None and call["owned_unresolved"][0]["reason"] == "no frame record", call
 
@@ -639,6 +768,9 @@ def main() -> None:
   test_got_value_cannot_cross_an_unproved_control_flow_join()
   test_branch_beyond_last_function_is_not_a_recursive_call()
   test_assembly_loop_cannot_hide_repeated_stack_growth()
+  test_x86_save_slot_assembly_frame()
+  test_assembly_continuations_share_one_frame()
+  test_aarch64_labels_split_one_routine()
   test_s390x_unlabelled_plt_keeps_allocator_edges_separate()
   test_riscv_call_clobbers_an_auipc_temporary()
   test_declared_libc_edges_charge_only_the_call_site()

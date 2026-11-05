@@ -550,13 +550,25 @@ source hashes, compiler identity, and reports in a new directory.
   The linked binaries are reviewed, never run.
 - Frame sizes come from the compiler's `.stack_sizes` records.
   Calls come from the linked disassembly, resolved by address.
+- On x86-64 and AArch64, code without a record, such as hand-written assembly, gets a frame from
+  its instructions. One region covers the symbols that a routine reaches by direct jumps or by running
+  off its end, because ELF-visible labels split a routine and a jump keeps its frame. The frame is the
+  sum of the region's stack decrements: pushes, immediate subtractions, and on x86-64
+  `and $-N, %rsp`, counted as `N - 8` because the ABI keeps `rsp` 8-byte aligned.
+  On x86-64, `movq OFF(%rsp), %rsp` is accepted only after `movq %rsp, %R`, decrements,
+  and `movq %R, OFF(%rsp)` into bytes those decrements allocated, with no branch, call, address
+  escape, or overlapping store between the store and the reload, and no other stack-address
+  escape in the region. A decrement inside a backward branch, an unresolved jump, any other
+  stack-pointer write, or an access below the stack pointer beyond the red zone leaves the frame
+  unknown. Calls leave the region; jumps out of it are charged below its frame.
+  Each derived frame appears in the report's assumptions.
 
 The review fails when:
 
 - a worker's depth below its caller is larger than the scrub buffer;
 - a worker reaches capability detection;
 - a caller of a worker does not also call the scrub;
-- a path cannot be bounded: a function without a frame record, an indirect transfer,
+- a path cannot be bounded: a function without a frame record or derivable frame, an indirect transfer,
   an unresolved import, or recursion.
   These paths are reported, never dropped.
   Traversal continues below missing frame records to retain their callbacks and
