@@ -5,8 +5,8 @@
 //! fixtures are built here deterministically: fixed key seeds and
 //! deterministic composite signatures over minimal DER certificates.
 //! `credential_fixtures_are_reproducible` regenerates them and requires the
-//! checked-in files to match; set `RSCRYPTO_WRITE_COMPOSITE_CREDENTIALS=1` to
-//! rewrite them.
+//! embedded checked-in files to match; run it with
+//! `RSCRYPTO_WRITE_COMPOSITE_CREDENTIALS=1` from the source tree to rewrite them.
 
 use alloc::sync::Arc;
 use alloc::vec::Vec;
@@ -292,18 +292,48 @@ fn credential_files(kind: Kind) -> Vec<(String, Vec<u8>)> {
   ]
 }
 
+/// The checked-in fixtures, embedded at compile time so the comparison does
+/// not depend on where a cross-built test archive runs.
+macro_rules! checked_in {
+  ($($name:literal),* $(,)?) => {
+    [$(($name, include_bytes!(concat!("../../tests/vectors/credentials/", $name)) as &[u8])),*]
+  };
+}
+const CHECKED_IN: [(&str, &[u8]); 12] = checked_in!(
+  "mldsa65-ed25519-root.der",
+  "mldsa65-ed25519-leaf.der",
+  "mldsa65-ed25519-leaf-key.der",
+  "mldsa65-ed25519-chain-intermediate.der",
+  "mldsa65-ed25519-chain-leaf.der",
+  "mldsa65-ed25519-chain-leaf-key.der",
+  "mldsa65-ecdsa-p256-root.der",
+  "mldsa65-ecdsa-p256-leaf.der",
+  "mldsa65-ecdsa-p256-leaf-key.der",
+  "mldsa65-ecdsa-p256-chain-intermediate.der",
+  "mldsa65-ecdsa-p256-chain-leaf.der",
+  "mldsa65-ecdsa-p256-chain-leaf-key.der",
+);
+
 #[test]
 fn credential_fixtures_are_reproducible() {
-  let directory = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/vectors/credentials");
-  let write = std::env::var_os("RSCRYPTO_WRITE_COMPOSITE_CREDENTIALS").is_some();
-  for kind in Kind::ALL {
-    for (name, expected) in credential_files(kind) {
-      let path = format!("{directory}/{name}");
-      if write {
-        std::fs::write(&path, &expected).expect("write fixture");
-      }
-      assert_eq!(std::fs::read(&path).expect("checked-in fixture"), expected, "{name}");
+  let generated: Vec<_> = Kind::ALL.into_iter().flat_map(credential_files).collect();
+  assert_eq!(
+    generated.iter().map(|(name, _)| name.as_str()).collect::<Vec<_>>(),
+    CHECKED_IN.map(|(name, _)| name).to_vec(),
+    "the generator and the embedded fixture list name the same files"
+  );
+  // Rewriting needs the source tree, so it resolves the package directory at
+  // run time rather than from the build host's compile-time path.
+  if std::env::var_os("RSCRYPTO_WRITE_COMPOSITE_CREDENTIALS").is_some() {
+    let package = std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR names the package to rewrite");
+    let directory = std::path::Path::new(&package).join("tests/vectors/credentials");
+    for (name, data) in &generated {
+      std::fs::write(directory.join(name), data).expect("write fixture");
     }
+    return;
+  }
+  for ((name, expected), (_, checked_in)) in generated.iter().zip(CHECKED_IN) {
+    assert_eq!(checked_in, expected.as_slice(), "{name}");
   }
 }
 
