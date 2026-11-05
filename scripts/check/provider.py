@@ -25,6 +25,9 @@ def runtime_matrix():
         ('tls-hybrid-ed25519-chacha', ['getrandom', 'hkdf', 'chacha20poly1305', 'x25519', 'ml-kem', 'ed25519']),
         ('tls-hybrid-mldsa-aes', ['getrandom', 'hkdf', 'aes-gcm', 'x25519', 'ml-kem', 'ml-dsa']),
         ('tls-x25519-mldsa-chacha', ['getrandom', 'hkdf', 'chacha20poly1305', 'x25519', 'ml-dsa']),
+        # Composite ML-DSA alone, without stand-alone ML-DSA or a traditional signature feature.
+        ('tls-hybrid-composite-aes', ['getrandom', 'hkdf', 'aes-gcm', 'x25519', 'ml-kem', 'mldsa65-ed25519',
+                                      'mldsa65-ecdsa-p256']),
         # The top-secret client: caller entropy, so no getrandom.
         ('tls-caller-entropy', ['sha2', 'hmac', 'hkdf', 'aes-gcm', 'chacha20poly1305', 'x25519', 'ml-kem',
                                 'p256-ecdh', 'p384-ecdh', 'ecdsa-p256', 'ecdsa-p384', 'ed25519', 'rsa']),
@@ -63,7 +66,8 @@ def feature_matrix(root=ROOT):
             ('kx-p384-hybrid', ['getrandom', 'p384-ecdh', 'ml-kem']),
             ('kx-mlkem', ['getrandom', 'ml-kem']),
             *[('sign-' + feature, ['getrandom', feature])
-              for feature in ('ecdsa-p256', 'ecdsa-p384', 'ed25519', 'rsa', 'ml-dsa')],
+              for feature in ('ecdsa-p256', 'ecdsa-p384', 'ed25519', 'rsa', 'ml-dsa', 'mldsa65-ed25519',
+                              'mldsa65-ecdsa-p256')],
             *runtime_matrix(),
             *[(feature, [feature]) for feature in sorted(set(graph) - {'default'})]]
 

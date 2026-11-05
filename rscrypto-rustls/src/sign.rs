@@ -16,6 +16,8 @@ use rustls::crypto::KeyProvider;
 use rustls::crypto::SigningKey;
 use rustls::pki_types::PrivateKeyDer;
 
+#[cfg(any(feature = "mldsa65-ed25519", feature = "mldsa65-ecdsa-p256"))]
+mod composite;
 #[cfg(feature = "ml-dsa")]
 mod mldsa;
 
@@ -34,7 +36,12 @@ pub static KEY_PROVIDER: &dyn KeyProvider = &Provider::new(crate::random::SECURE
 #[derive(Debug)]
 pub struct Provider {
   random: &'static dyn rustls::crypto::SecureRandom,
-  #[cfg(any(feature = "ml-dsa", feature = "rsa"))]
+  #[cfg(any(
+    feature = "ml-dsa",
+    feature = "rsa",
+    feature = "mldsa65-ed25519",
+    feature = "mldsa65-ecdsa-p256"
+  ))]
   compact: bool,
   #[cfg(feature = "rsa")]
   rsa_sizes: RsaSigningKeySizes,
@@ -65,7 +72,12 @@ impl Provider {
   pub const fn new(random: &'static dyn rustls::crypto::SecureRandom) -> Self {
     Self {
       random,
-      #[cfg(any(feature = "ml-dsa", feature = "rsa"))]
+      #[cfg(any(
+        feature = "ml-dsa",
+        feature = "rsa",
+        feature = "mldsa65-ed25519",
+        feature = "mldsa65-ecdsa-p256"
+      ))]
       compact: false,
       #[cfg(feature = "rsa")]
       rsa_sizes: RsaSigningKeySizes::Bits2048To8192,
@@ -100,7 +112,12 @@ impl Provider {
   /// see [`rscrypto::RsaBlindingCache`]. A compact RSA key builds scratch and
   /// draws a new blinding factor for every signature. Other algorithms are
   /// unaffected.
-  #[cfg(any(feature = "ml-dsa", feature = "rsa"))]
+  #[cfg(any(
+    feature = "ml-dsa",
+    feature = "rsa",
+    feature = "mldsa65-ed25519",
+    feature = "mldsa65-ecdsa-p256"
+  ))]
   #[must_use]
   pub const fn compact(self) -> Self {
     Self { compact: true, ..self }
@@ -115,6 +132,10 @@ impl KeyProvider for Provider {
       return Err(key_rejected());
     }
     let _random = self.random;
+    #[cfg(any(feature = "mldsa65-ed25519", feature = "mldsa65-ecdsa-p256"))]
+    if let Some(key) = composite::load(&key_der, _random, self.compact) {
+      return Ok(Box::new(key));
+    }
     #[cfg(feature = "ml-dsa")]
     if let Some(key) = mldsa::load(&key_der, _random, self.compact) {
       return Ok(Box::new(key));
@@ -135,7 +156,14 @@ fn key_rejected() -> Error {
   Error::General("invalid or unsupported TLS private key".into())
 }
 
-#[cfg(any(feature = "ecdsa-p256", feature = "ecdsa-p384", feature = "rsa", feature = "ml-dsa"))]
+#[cfg(any(
+  feature = "ecdsa-p256",
+  feature = "ecdsa-p384",
+  feature = "rsa",
+  feature = "ml-dsa",
+  feature = "mldsa65-ed25519",
+  feature = "mldsa65-ecdsa-p256"
+))]
 fn signing_failed() -> Error {
   Error::General("TLS signing failed".into())
 }

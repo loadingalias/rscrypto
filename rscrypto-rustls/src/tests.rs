@@ -110,6 +110,19 @@ mod profiles;
 mod mldsa;
 
 #[cfg(all(
+  feature = "mldsa65-ed25519",
+  feature = "mldsa65-ecdsa-p256",
+  feature = "ml-dsa",
+  feature = "ed25519",
+  feature = "ecdsa-p256",
+  feature = "hkdf",
+  feature = "aes-gcm",
+  feature = "x25519",
+  feature = "p256-ecdh"
+))]
+mod composite;
+
+#[cfg(all(
   feature = "hkdf",
   feature = "aes-gcm",
   feature = "chacha20poly1305",

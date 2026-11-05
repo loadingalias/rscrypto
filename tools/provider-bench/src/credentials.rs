@@ -23,6 +23,10 @@ pub(crate) fn scheme(name: &str) -> rustls::crypto::SignatureScheme {
     "mldsa44" => SignatureScheme::ML_DSA_44,
     "mldsa65" => SignatureScheme::ML_DSA_65,
     "mldsa87" => SignatureScheme::ML_DSA_87,
+    #[cfg(feature = "mldsa65-ed25519")]
+    "mldsa65-ed25519" => rscrypto_rustls::verify::MLDSA65_ED25519_SHA512,
+    #[cfg(feature = "mldsa65-ecdsa-p256")]
+    "mldsa65-ecdsa-p256" => rscrypto_rustls::verify::MLDSA65_ECDSA_SECP256R1_SHA512,
     _ => panic!("unknown credential"),
   }
 }
@@ -96,6 +100,8 @@ pub(crate) fn der(name: &str, workload: Workload) -> Credential {
     "mldsa44" => files!("mldsa44"),
     "mldsa65" => files!("mldsa65"),
     "mldsa87" => files!("mldsa87"),
+    "mldsa65-ed25519" => files!("mldsa65-ed25519"),
+    "mldsa65-ecdsa-p256" => files!("mldsa65-ecdsa-p256"),
     _ => panic!("unknown credential"),
   }
 }

@@ -17,7 +17,9 @@ pub mod cipher_suite;
   feature = "ecdsa-p384",
   feature = "ed25519",
   feature = "rsa",
-  feature = "ml-dsa"
+  feature = "ml-dsa",
+  feature = "mldsa65-ed25519",
+  feature = "mldsa65-ecdsa-p256"
 ))]
 mod client;
 #[cfg(any(feature = "sha2", feature = "hmac", feature = "hkdf"))]
@@ -39,7 +41,9 @@ pub mod verify;
   feature = "ecdsa-p384",
   feature = "ed25519",
   feature = "rsa",
-  feature = "ml-dsa"
+  feature = "ml-dsa",
+  feature = "mldsa65-ed25519",
+  feature = "mldsa65-ecdsa-p256"
 ))]
 pub use client::ClientProvider;
 
@@ -57,7 +61,9 @@ pub use client::ClientProvider;
     feature = "ecdsa-p384",
     feature = "ed25519",
     feature = "rsa",
-    feature = "ml-dsa"
+    feature = "ml-dsa",
+    feature = "mldsa65-ed25519",
+    feature = "mldsa65-ecdsa-p256"
   )
 ))]
 pub const DEFAULT_PROVIDER: rustls::crypto::CryptoProvider = rustls::crypto::CryptoProvider {
@@ -98,7 +104,9 @@ pub const DEFAULT_PROVIDER: rustls::crypto::CryptoProvider = rustls::crypto::Cry
     feature = "ecdsa-p384",
     feature = "ed25519",
     feature = "rsa",
-    feature = "ml-dsa"
+    feature = "ml-dsa",
+    feature = "mldsa65-ed25519",
+    feature = "mldsa65-ecdsa-p256"
   )
 ))]
 #[must_use]
@@ -119,7 +127,9 @@ pub fn default_provider() -> rustls::crypto::CryptoProvider {
     feature = "ecdsa-p384",
     feature = "ed25519",
     feature = "rsa",
-    feature = "ml-dsa"
+    feature = "ml-dsa",
+    feature = "mldsa65-ed25519",
+    feature = "mldsa65-ecdsa-p256"
   )
 ))]
 #[must_use]
@@ -139,7 +149,9 @@ pub fn post_quantum_required_provider() -> rustls::crypto::CryptoProvider {
     feature = "ecdsa-p384",
     feature = "ed25519",
     feature = "rsa",
-    feature = "ml-dsa"
+    feature = "ml-dsa",
+    feature = "mldsa65-ed25519",
+    feature = "mldsa65-ecdsa-p256"
   )
 ))]
 #[derive(Debug)]
@@ -152,7 +164,9 @@ struct TicketerFactory;
     feature = "ecdsa-p384",
     feature = "ed25519",
     feature = "rsa",
-    feature = "ml-dsa"
+    feature = "ml-dsa",
+    feature = "mldsa65-ed25519",
+    feature = "mldsa65-ecdsa-p256"
   )
 ))]
 impl rustls::crypto::TicketerFactory for TicketerFactory {

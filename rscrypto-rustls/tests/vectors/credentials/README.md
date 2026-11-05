@@ -22,6 +22,16 @@ signatures that RSA-3072 has. They exercise the provider's default 2,048-bit sig
 the stricter 3,072-bit policy. The earlier RSA-2048 key, public key, and PSS signature had no
 certificate and were replaced.
 
+The `mldsa65-ed25519-*` and `mldsa65-ecdsa-p256-*` composite ML-DSA fixtures
+(draft-ietf-lamps-pq-composite-sigs-19) were added on 2026-11-05. OpenSSL 4.0.3 has no composite
+algorithms, so rscrypto generated them: fixed key seeds, deterministic composite signatures, and
+minimal DER certificates with the same validity interval, `localhost` name, key usages, and
+root → leaf and root → intermediate → leaf shapes as the other fixtures. The keys are composite
+PKCS#8. `rscrypto-rustls/src/tests/composite.rs` rebuilds every file and requires byte equality;
+`RSCRYPTO_WRITE_COMPOSITE_CREDENTIALS=1` rewrites them. They are not independent signatures. The
+independent composite evidence is the draft's own certificates, which that test verifies and uses
+for client authentication.
+
 The private keys are intentionally public and must never protect real traffic.
 `SHA256SUMS` pins every payload.
 Root private keys are not shipped.

@@ -14,8 +14,8 @@ use bench_config::checked_routine;
 use core::hint::black_box;
 use criterion::{Criterion, Throughput};
 use rscrypto_provider_bench::{
-  BACKENDS, CREDENTIALS, Fixture, GROUPS, OPT_IN_GROUPS, Profile, RSA_CREDENTIALS, SUITES, TLS12_CREDENTIALS,
-  TLS12_GROUPS, Workload, supports,
+  BACKENDS, COMPOSITE_CREDENTIALS, CREDENTIALS, Fixture, GROUPS, OPT_IN_GROUPS, Profile, RSA_CREDENTIALS, SUITES,
+  TLS12_CREDENTIALS, TLS12_GROUPS, Workload, supports,
 };
 
 use rustls::enums::ProtocolVersion;
@@ -95,6 +95,31 @@ fn connections(c: &mut Criterion) {
             );
           }
         }
+      }
+    }
+  }
+}
+
+/// Composite ML-DSA handshakes. Only rscrypto implements these schemes, so
+/// the rows are standalone measurements outside the handshake comparisons;
+/// `tls13/handshake/mldsa65/...` is the stand-alone ML-DSA-65 reference.
+fn composite_connections(c: &mut Criterion) {
+  for credential in COMPOSITE_CREDENTIALS {
+    for group in ["X25519MLKEM768", "X25519"] {
+      for resumed in [false, true] {
+        let mode = if resumed { "resumed" } else { "full" };
+        connection(
+          c,
+          &format!("tls13/composite-handshake/{credential}/{group}/AES128-GCM-SHA256/{mode}"),
+          Profile {
+            credential,
+            group,
+            suite: "AES128-GCM-SHA256",
+            resumed,
+          },
+          Workload::Mutual,
+          ProtocolVersion::TLSv1_3,
+        );
       }
     }
   }
@@ -726,6 +751,7 @@ fn main() {
   }
   bench_config::run(&[
     connections,
+    composite_connections,
     opt_in_groups,
     expanded,
     traffic,

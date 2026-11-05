@@ -29,7 +29,7 @@
       "family": "tls",
       "required": false,
       "external": "OpenSSL 4.0.3",
-      "features": ["ml-dsa"]
+      "features": ["ml-dsa", "mldsa65-ed25519", "mldsa65-ecdsa-p256"]
     },
     "poly1305": {
       "binary": "poly1305",
@@ -298,6 +298,8 @@
     "tls-handshake-mldsa44": { "bench": "tls_connections", "filter": "^tls13/handshake/mldsa44/" },
     "tls-handshake-mldsa65": { "bench": "tls_connections", "filter": "^tls13/handshake/mldsa65/" },
     "tls-handshake-mldsa87": { "bench": "tls_connections", "filter": "^tls13/handshake/mldsa87/" },
+    "tls-handshake-mldsa65-ed25519": { "bench": "tls_connections", "filter": "^tls13/composite-handshake/mldsa65-ed25519/" },
+    "tls-handshake-mldsa65-ecdsa-p256": { "bench": "tls_connections", "filter": "^tls13/composite-handshake/mldsa65-ecdsa-p256/" },
     "tls-server-auth": { "bench": "tls_connections", "filter": "^tls13/server-auth/" },
     "tls-intermediate": { "bench": "tls_connections", "filter": "^tls13/intermediate/" },
     "tls-stateful": { "bench": "tls_connections", "filter": "^tls13/stateful/" },
@@ -499,6 +501,8 @@
       "tls-handshake-mldsa44",
       "tls-handshake-mldsa65",
       "tls-handshake-mldsa87",
+      "tls-handshake-mldsa65-ed25519",
+      "tls-handshake-mldsa65-ecdsa-p256",
       "tls-server-auth",
       "tls-intermediate",
       "tls-stateful",

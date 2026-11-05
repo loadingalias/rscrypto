@@ -11,6 +11,8 @@ autobenches = false
 
 [features]
 ml-dsa = ["rscrypto-rustls/ml-dsa"]
+mldsa65-ed25519 = ["rscrypto-rustls/mldsa65-ed25519"]
+mldsa65-ecdsa-p256 = ["rscrypto-rustls/mldsa65-ecdsa-p256"]
 quinn = ["rscrypto-rustls/quinn", "dep:quinn-proto", "dep:bytes"]
 primitives = ["dep:rscrypto"]
 portable-only = ["rscrypto-rustls/portable-only"]

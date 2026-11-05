@@ -38,6 +38,10 @@ pub(crate) enum Credential {
   MlDsa65,
   #[cfg(feature = "ml-dsa")]
   MlDsa87,
+  #[cfg(feature = "mldsa65-ed25519")]
+  MlDsa65Ed25519,
+  #[cfg(feature = "mldsa65-ecdsa-p256")]
+  MlDsa65EcdsaP256,
 }
 
 impl Credential {
@@ -57,6 +61,10 @@ impl Credential {
       Self::MlDsa65 => rustls::crypto::SignatureScheme::ML_DSA_65,
       #[cfg(feature = "ml-dsa")]
       Self::MlDsa87 => rustls::crypto::SignatureScheme::ML_DSA_87,
+      #[cfg(feature = "mldsa65-ed25519")]
+      Self::MlDsa65Ed25519 => crate::verify::MLDSA65_ED25519_SHA512,
+      #[cfg(feature = "mldsa65-ecdsa-p256")]
+      Self::MlDsa65EcdsaP256 => crate::verify::MLDSA65_ECDSA_SECP256R1_SHA512,
     }
   }
 }
@@ -88,6 +96,10 @@ pub(crate) fn credentials(kind: Credential) -> (&'static [u8], &'static [u8], &'
     Credential::MlDsa65 => files!("mldsa65"),
     #[cfg(feature = "ml-dsa")]
     Credential::MlDsa87 => files!("mldsa87"),
+    #[cfg(feature = "mldsa65-ed25519")]
+    Credential::MlDsa65Ed25519 => files!("mldsa65-ed25519"),
+    #[cfg(feature = "mldsa65-ecdsa-p256")]
+    Credential::MlDsa65EcdsaP256 => files!("mldsa65-ecdsa-p256"),
   }
 }
 

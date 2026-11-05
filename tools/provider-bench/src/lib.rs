@@ -48,11 +48,18 @@ pub const SUITES: [&str; 3] = ["AES128-GCM-SHA256", "AES256-GCM-SHA384", "CHACHA
 /// and `ring` do.
 pub const BACKENDS: [&str; 5] = ["rscrypto", "rscrypto-webpki", "aws-lc-rs", "ring", "openssl"];
 
+/// Composite ML-DSA credentials (draft-reddy-tls-composite-mldsa-12). No
+/// other backend implements these schemes, so only the rscrypto backends run them.
+pub const COMPOSITE_CREDENTIALS: [&str; 2] = ["mldsa65-ed25519", "mldsa65-ecdsa-p256"];
+
 /// Whether `backend` implements every algorithm `profile` needs. *ring* has no
 /// ML-KEM or ML-DSA, and the pinned aws-lc-rs provider has no
 /// SecP384r1MLKEM1024, so those profiles have no row rather than a substitute.
 #[must_use]
 pub fn supports(backend: &str, profile: Profile<'_>) -> bool {
+  if COMPOSITE_CREDENTIALS.contains(&profile.credential) {
+    return backend.starts_with("rscrypto");
+  }
   match backend {
     "ring" => !(profile.group.contains("MLKEM") || profile.credential.starts_with("mldsa")),
     "aws-lc-rs" => profile.group != "secp384r1MLKEM1024",
@@ -101,7 +108,11 @@ impl Profile<'_> {
     let credentials = if version == ProtocolVersion::TLSv1_2 {
       TLS12_CREDENTIALS.to_vec()
     } else {
-      CREDENTIALS.into_iter().chain(RSA_CREDENTIALS).collect()
+      CREDENTIALS
+        .into_iter()
+        .chain(RSA_CREDENTIALS)
+        .chain(COMPOSITE_CREDENTIALS)
+        .collect()
     };
     Profile {
       credential: canonical(&credentials, self.credential),

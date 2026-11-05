@@ -191,7 +191,13 @@ fn ecdsa_and_mldsa_anchor_keys_are_retained() {
       }
       // Ed25519, RSA, ML-DSA-44 and ML-DSA-87 anchors are not in `CREDENTIALS`
       // or are not prepared.
-      #[cfg(any(feature = "ed25519", feature = "rsa", feature = "ml-dsa"))]
+      #[cfg(any(
+        feature = "ed25519",
+        feature = "rsa",
+        feature = "ml-dsa",
+        feature = "mldsa65-ed25519",
+        feature = "mldsa65-ecdsa-p256"
+      ))]
       _ => 0,
     };
     let server = PreparedServerVerifier::new(roots(kind)).expect("prepared verifier");

@@ -13,7 +13,7 @@ types match the provider's types.
 The crate requires `std` and the same minimum Rust version as rscrypto.
 Each algorithm feature forwards to the corresponding rscrypto leaf feature.
 Default features enable every TLS 1.3 suite, key-exchange group, and classical
-signature algorithm; `ml-dsa` and `quinn` are opt-in.
+signature algorithm; `ml-dsa`, the composite `mldsa65-ed25519` and `mldsa65-ecdsa-p256`, and `quinn` are opt-in.
 `portable-only` selects rscrypto's portable dispatch for validation.
 
 rustls provides protocol composition, rustls-webpki provides certificate path
@@ -38,6 +38,7 @@ quinn-proto revision makes its browser-WASM `ring` dependency optional
 | Certificate and handshake verification | ECDSA P-256/P-384, Ed25519, RSA-PSS and RSA PKCS#1 v1.5 | [verify](src/verify.rs) |
 | Key import and signing | rscrypto PKCS#8/SEC1/PKCS#1 codecs; blinded ECDSA, Ed25519, blinded RSA-PSS and RSA PKCS#1 v1.5 | [sign](src/sign.rs) |
 | ML-DSA authentication | Pure ML-DSA-44/65/87 with the empty TLS context; keys prepared once (or compact on request) and hedged signing | [sign](src/sign/mldsa.rs), [verify](src/verify.rs) |
+| Composite ML-DSA authentication | `mldsa65_ed25519_sha512` and `mldsa65_ecdsa_secp256r1_sha512` (draft-reddy-tls-composite-mldsa-12) at provisional codepoints, TLS 1.3 only; keys prepared once (or compact on request) and hedged signing | [sign](src/sign/composite.rs), [verify](src/verify.rs) |
 | QUIC Initial keys and Retry | RFC 9001 AES-128-GCM Initial keys and Retry integrity tags | [quic](src/quic/initial.rs) |
 | QUIC reset and address tokens | HMAC-SHA256 reset tokens; HKDF-SHA256 and AES-256-GCM token keys | [quic](src/quic/token.rs) |
 | QUIC connection IDs | AES-128 connection-ID tags over caller-drawn nonces | [quic](src/quic/cid.rs); Quinn's `ChaCha20Rng` nonce and initial-ID generators seeded from caller entropy in [quinn](src/quinn/cid.rs) |
@@ -230,6 +231,32 @@ Process restart replaces ticket keys. A missing time reading, encryption failure
 or failed rotation suppresses tickets without failing TLS; after a failed
 rotation the previous key still opens its tickets. Early data remains off unless
 the caller explicitly enables it.
+
+## Composite ML-DSA
+
+With `mldsa65-ed25519` or `mldsa65-ecdsa-p256`, the provider signs and verifies the
+composite ML-DSA schemes of draft-reddy-tls-composite-mldsa-12: `id-MLDSA65-Ed25519-SHA512`
+and `id-MLDSA65-ECDSA-P256-SHA512` from draft-ietf-lamps-pq-composite-sigs-19 (RFC-to-be 10073),
+for CertificateVerify and for certificate signatures in a webpki chain. Both component signatures
+must verify. TLS uses the empty composite context; ML-DSA signing is hedged.
+
+IANA has not assigned the codepoints, so they are provisional:
+`verify::MLDSA65_ED25519_SHA512` is 0x090B, the value of draft revisions -00 through -05 that
+deployed draft implementations use, and `verify::MLDSA65_ECDSA_SECP256R1_SHA512` is 0xFE40 in the
+private-use range, because no draft assigned that composite a value. Both will change when IANA
+assigns codepoints. Neither codepoint is a TLS 1.2 signature algorithm, so TLS 1.2 never
+negotiates them, as section 2 of the draft requires.
+
+Composite PKCS#8 keys load and are prepared once, keeping the prepared ML-DSA-65 key (48,256
+bytes) and the traditional key; `sign::Provider::new(random).compact()` keeps the compact key and
+prepares temporary storage per signature. A composite key signs only its composite scheme, never a
+component scheme. A relying party that must not accept stand-alone ML-DSA or a traditional
+signature installs `verify::COMPOSITE_ALGORITHMS` as its signature verification algorithms.
+
+Provider tests verify the draft's reference-signed certificates, authenticate a client with one
+through webpki, run server and mutual authentication and root → intermediate → leaf chains for
+both composites, and check TLS 1.2 refusal, component-scheme refusal, and composite-only relying
+parties.
 
 ## TLS 1.2
 

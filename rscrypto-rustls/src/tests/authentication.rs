@@ -185,11 +185,22 @@ fn all_fourteen_verifiers_accept_independent_signatures_and_reject_corruption() 
   assert_eq!(
     verify::ALL_ALGORITHMS.len(),
     14 + if cfg!(feature = "ml-dsa") { 3 } else { 0 }
+      + usize::from(cfg!(feature = "mldsa65-ed25519"))
+      + usize::from(cfg!(feature = "mldsa65-ecdsa-p256"))
   );
   let mut exercised = 0_usize;
   for algorithm in verify::ALL_ALGORITHMS {
     if [alg_id::ML_DSA_44, alg_id::ML_DSA_65, alg_id::ML_DSA_87].contains(&algorithm.public_key_alg_id()) {
       continue; // The independent ML-DSA fixtures are exercised in tests::mldsa.
+    }
+    // Composite ML-DSA OIDs, 1.3.6.1.5.5.7.6.*: the draft's certificates are
+    // exercised in tests::composite; ring has no composite algorithms.
+    if algorithm
+      .public_key_alg_id()
+      .as_ref()
+      .starts_with(&[0x06, 0x08, 0x2b, 0x06, 0x01, 0x05, 0x05, 0x07, 0x06])
+    {
+      continue;
     }
     let signature_algorithm = algorithm.signature_alg_id();
     let signature_id = signature_algorithm.as_ref();

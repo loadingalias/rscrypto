@@ -6,7 +6,9 @@
   feature = "ecdsa-p384",
   feature = "ed25519",
   feature = "rsa",
-  feature = "ml-dsa"
+  feature = "ml-dsa",
+  feature = "mldsa65-ed25519",
+  feature = "mldsa65-ecdsa-p256"
 ))]
 pub const SUPPORTED_ALGORITHMS: rustls::crypto::WebPkiSupportedAlgorithms = implementation::ALGORITHMS;
 
@@ -19,15 +21,46 @@ pub const SUPPORTED_ALGORITHMS: rustls::crypto::WebPkiSupportedAlgorithms = impl
   feature = "ecdsa-p384",
   feature = "ed25519",
   feature = "rsa",
-  feature = "ml-dsa"
+  feature = "ml-dsa",
+  feature = "mldsa65-ed25519",
+  feature = "mldsa65-ecdsa-p256"
 ))]
 pub const ALL_ALGORITHMS: &[&dyn rustls::pki_types::SignatureVerificationAlgorithm] = implementation::ALL;
+
+/// Provisional `SignatureScheme` for `mldsa65_ed25519_sha512`
+/// (draft-reddy-tls-composite-mldsa-12, `id-MLDSA65-Ed25519-SHA512`).
+///
+/// IANA has not assigned the composite codepoints. 0x090B is the value that
+/// draft revisions -00 through -05 gave this composite and that deployed draft
+/// implementations use, so peers that implement the draft interoperate. It
+/// will change if IANA assigns another value.
+#[cfg(feature = "mldsa65-ed25519")]
+pub const MLDSA65_ED25519_SHA512: rustls::crypto::SignatureScheme = rustls::crypto::SignatureScheme(0x090b);
+
+/// Provisional `SignatureScheme` for `mldsa65_ecdsa_secp256r1_sha512`
+/// (draft-reddy-tls-composite-mldsa-12, `id-MLDSA65-ECDSA-P256-SHA512`).
+///
+/// IANA has not assigned the composite codepoints, and no earlier draft gave
+/// this composite one. 0xFE40 lies in the private-use range of RFC 8446 and
+/// is used by no known implementation; it will change when IANA assigns one.
+#[cfg(feature = "mldsa65-ecdsa-p256")]
+pub const MLDSA65_ECDSA_SECP256R1_SHA512: rustls::crypto::SignatureScheme = rustls::crypto::SignatureScheme(0xfe40);
+
+/// Only the enabled composite ML-DSA schemes and certificate algorithms.
+///
+/// A relying party that installs this catalog accepts neither stand-alone
+/// ML-DSA nor a traditional signature, so a peer cannot downgrade it to one
+/// component, as section 5 of draft-reddy-tls-composite-mldsa-12 warns.
+#[cfg(any(feature = "mldsa65-ed25519", feature = "mldsa65-ecdsa-p256"))]
+pub const COMPOSITE_ALGORITHMS: rustls::crypto::WebPkiSupportedAlgorithms = implementation::COMPOSITE;
 #[cfg(any(
   feature = "ecdsa-p256",
   feature = "ecdsa-p384",
   feature = "ed25519",
   feature = "rsa",
-  feature = "ml-dsa"
+  feature = "ml-dsa",
+  feature = "mldsa65-ed25519",
+  feature = "mldsa65-ecdsa-p256"
 ))]
 pub use verifiers::{PreparedClientVerifier, PreparedServerVerifier};
 
@@ -36,7 +69,9 @@ pub use verifiers::{PreparedClientVerifier, PreparedServerVerifier};
   feature = "ecdsa-p384",
   feature = "ed25519",
   feature = "rsa",
-  feature = "ml-dsa"
+  feature = "ml-dsa",
+  feature = "mldsa65-ed25519",
+  feature = "mldsa65-ecdsa-p256"
 ))]
 mod verifiers {
   //! Certificate verifiers that prepare operator-configured trust anchors once.
@@ -314,7 +349,9 @@ mod verifiers {
   feature = "ecdsa-p384",
   feature = "ed25519",
   feature = "rsa",
-  feature = "ml-dsa"
+  feature = "ml-dsa",
+  feature = "mldsa65-ed25519",
+  feature = "mldsa65-ecdsa-p256"
 ))]
 mod implementation {
 
@@ -334,12 +371,24 @@ mod implementation {
     MlDsa44PreparedPublicKey, MlDsa44PreparedPublicKeyStorage, MlDsa65PreparedPublicKey,
     MlDsa65PreparedPublicKeyStorage, MlDsa87PreparedPublicKey, MlDsa87PreparedPublicKeyStorage,
   };
+  #[cfg(feature = "mldsa65-ecdsa-p256")]
+  use rscrypto::{MlDsa65EcdsaP256PublicKey, MlDsa65EcdsaP256Signature};
+  #[cfg(feature = "mldsa65-ed25519")]
+  use rscrypto::{MlDsa65Ed25519PublicKey, MlDsa65Ed25519Signature};
   #[cfg(feature = "rsa")]
   use rscrypto::{RsaPublicKey, RsaPublicKeyPolicy, RsaSignatureProfile};
   use rustls::RootCertStore;
   use rustls::crypto::SignatureScheme;
   use rustls::crypto::WebPkiSupportedAlgorithms;
-  use rustls::pki_types::{AlgorithmIdentifier, InvalidSignature, SignatureVerificationAlgorithm, alg_id};
+  #[cfg(any(
+    feature = "ecdsa-p256",
+    feature = "ecdsa-p384",
+    feature = "ed25519",
+    feature = "rsa",
+    feature = "ml-dsa"
+  ))]
+  use rustls::pki_types::alg_id;
+  use rustls::pki_types::{AlgorithmIdentifier, InvalidSignature, SignatureVerificationAlgorithm};
   #[cfg(any(feature = "ecdsa-p256", feature = "ecdsa-p384", feature = "ml-dsa"))]
   use std::collections::HashMap;
   #[derive(Clone, Copy, Debug)]
@@ -358,6 +407,10 @@ mod implementation {
     Rsa(SignatureScheme),
     #[cfg(feature = "ml-dsa")]
     MlDsa(SignatureScheme),
+    #[cfg(feature = "mldsa65-ed25519")]
+    MlDsa65Ed25519,
+    #[cfg(feature = "mldsa65-ecdsa-p256")]
+    MlDsa65EcdsaP256,
   }
 
   #[derive(Clone, Copy, Debug)]
@@ -439,6 +492,22 @@ mod implementation {
           SignatureScheme::ML_DSA_65 => verify!(MlDsa65PublicKey, MlDsa65Signature, ml_dsa_65),
           _ => verify!(MlDsa87PublicKey, MlDsa87Signature, ml_dsa_87),
         }
+      }
+      // Composite ML-DSA uses the empty context in TLS. Peer and anchor keys
+      // import per signature; both components must verify.
+      #[cfg(feature = "mldsa65-ed25519")]
+      Operation::MlDsa65Ed25519 => {
+        let signature = MlDsa65Ed25519Signature::try_from_slice(signature).map_err(|_| InvalidSignature)?;
+        MlDsa65Ed25519PublicKey::try_from_slice(key)
+          .map_err(|_| InvalidSignature)?
+          .verify(message, &signature)
+      }
+      #[cfg(feature = "mldsa65-ecdsa-p256")]
+      Operation::MlDsa65EcdsaP256 => {
+        let signature = MlDsa65EcdsaP256Signature::try_from_slice(signature).map_err(|_| InvalidSignature)?;
+        MlDsa65EcdsaP256PublicKey::try_from_slice(key)
+          .map_err(|_| InvalidSignature)?
+          .verify(message, &signature)
       }
       #[cfg(feature = "rsa")]
       Operation::Rsa(scheme) => {
@@ -706,6 +775,28 @@ mod implementation {
     operation: Operation::MlDsa(SignatureScheme::ML_DSA_87),
   };
 
+  /// AlgorithmIdentifier contents for 1.3.6.1.5.5.7.6.48 with absent parameters.
+  #[cfg(feature = "mldsa65-ed25519")]
+  const MLDSA65_ED25519_ID: AlgorithmIdentifier =
+    AlgorithmIdentifier::from_slice(&[0x06, 0x08, 0x2b, 0x06, 0x01, 0x05, 0x05, 0x07, 0x06, 0x30]);
+  /// AlgorithmIdentifier contents for 1.3.6.1.5.5.7.6.45 with absent parameters.
+  #[cfg(feature = "mldsa65-ecdsa-p256")]
+  const MLDSA65_ECDSA_P256_ID: AlgorithmIdentifier =
+    AlgorithmIdentifier::from_slice(&[0x06, 0x08, 0x2b, 0x06, 0x01, 0x05, 0x05, 0x07, 0x06, 0x2d]);
+
+  #[cfg(feature = "mldsa65-ed25519")]
+  static MLDSA65_ED25519: Algorithm = Algorithm {
+    public_key: MLDSA65_ED25519_ID,
+    signature: MLDSA65_ED25519_ID,
+    operation: Operation::MlDsa65Ed25519,
+  };
+  #[cfg(feature = "mldsa65-ecdsa-p256")]
+  static MLDSA65_ECDSA_P256: Algorithm = Algorithm {
+    public_key: MLDSA65_ECDSA_P256_ID,
+    signature: MLDSA65_ECDSA_P256_ID,
+    operation: Operation::MlDsa65EcdsaP256,
+  };
+
   // One list defines both the certificate algorithms and their concrete
   // operations, so the prepared verifiers cover exactly the same set.
   macro_rules! algorithms {
@@ -715,6 +806,10 @@ mod implementation {
     };
   }
   algorithms!(
+    #[cfg(feature = "mldsa65-ed25519")]
+    MLDSA65_ED25519,
+    #[cfg(feature = "mldsa65-ecdsa-p256")]
+    MLDSA65_ECDSA_P256,
     #[cfg(feature = "ml-dsa")]
     ML_DSA_44,
     #[cfg(feature = "ml-dsa")]
@@ -752,6 +847,10 @@ mod implementation {
   );
   pub(super) const ALGORITHMS: WebPkiSupportedAlgorithms = {
     const MAPPING: &[(SignatureScheme, &[&dyn SignatureVerificationAlgorithm])] = &[
+      #[cfg(feature = "mldsa65-ed25519")]
+      (super::MLDSA65_ED25519_SHA512, &[&MLDSA65_ED25519]),
+      #[cfg(feature = "mldsa65-ecdsa-p256")]
+      (super::MLDSA65_ECDSA_SECP256R1_SHA512, &[&MLDSA65_ECDSA_P256]),
       #[cfg(feature = "ml-dsa")]
       (SignatureScheme::ML_DSA_87, &[&ML_DSA_87]),
       #[cfg(feature = "ml-dsa")]
@@ -799,6 +898,26 @@ mod implementation {
     match WebPkiSupportedAlgorithms::new(ALL, MAPPING) {
       Ok(algorithms) => algorithms,
       Err(_) => panic!("enabled signature mappings are nonempty"),
+    }
+  };
+
+  #[cfg(any(feature = "mldsa65-ed25519", feature = "mldsa65-ecdsa-p256"))]
+  pub(super) const COMPOSITE: WebPkiSupportedAlgorithms = {
+    const ALL: &[&dyn SignatureVerificationAlgorithm] = &[
+      #[cfg(feature = "mldsa65-ed25519")]
+      &MLDSA65_ED25519,
+      #[cfg(feature = "mldsa65-ecdsa-p256")]
+      &MLDSA65_ECDSA_P256,
+    ];
+    const MAPPING: &[(SignatureScheme, &[&dyn SignatureVerificationAlgorithm])] = &[
+      #[cfg(feature = "mldsa65-ed25519")]
+      (super::MLDSA65_ED25519_SHA512, &[&MLDSA65_ED25519]),
+      #[cfg(feature = "mldsa65-ecdsa-p256")]
+      (super::MLDSA65_ECDSA_SECP256R1_SHA512, &[&MLDSA65_ECDSA_P256]),
+    ];
+    match WebPkiSupportedAlgorithms::new(ALL, MAPPING) {
+      Ok(algorithms) => algorithms,
+      Err(_) => panic!("enabled composite mappings are nonempty"),
     }
   };
 }
