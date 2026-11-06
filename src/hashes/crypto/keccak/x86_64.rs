@@ -1,12 +1,13 @@
-//! Keccak-f[1600] x86_64 AVX-512 two-state kernel.
+//! Keccak-f[1600] x86_64 kernels: one state with BMI1/BMI2, and two or four
+//! states with AVX-512VL.
 //!
-//! This path packs two independent Keccak states lane-wise in 128-bit vectors:
+//! The multi-state paths pack independent Keccak states lane-wise in vectors:
 //! state A in lane 0, state B in lane 1. AVX-512VL gives us VPROLQ for the
 //! rotation-heavy rho step and VPTERNLOGQ for chi.
 //!
 //! # Safety
 //!
-//! All functions require `avx512f,avx512vl,sse4.1`.
+//! Each function states the CPU features it requires.
 
 #[cfg(target_arch = "x86_64")]
 use core::arch::x86_64::*;
@@ -39,6 +40,20 @@ macro_rules! rol4 {
 #[cfg(all(target_arch = "x86_64", any(feature = "ml-kem", feature = "ml-dsa")))]
 macro_rules! chi4 {
   ($a:expr, $b:expr, $c:expr) => {{ _mm256_ternarylogic_epi64($a, $b, $c, 0xD2) }};
+}
+
+/// Applies Keccak-f[1600] to one state with BMI1 and BMI2.
+///
+/// These are the portable rounds. With BMI2, `RORX` rotates a lane while it
+/// loads the lane into a new register, so ρ needs no separate move or load;
+/// BMI1 adds `ANDN`.
+///
+/// # Safety
+///
+/// Caller must ensure the `bmi1` and `bmi2` CPU features are available.
+#[target_feature(enable = "bmi1,bmi2")]
+pub(crate) unsafe fn keccakf_x86_bmi(state: &mut [u64; 25]) {
+  super::keccakf_rounds(state);
 }
 
 /// Apply Keccak-f[1600] to two independent states using AVX-512VL.

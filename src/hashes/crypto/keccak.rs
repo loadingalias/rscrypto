@@ -76,6 +76,14 @@ const RC: [u64; KECCAKF_ROUNDS] = [
 #[cfg(not(target_arch = "aarch64"))]
 #[inline]
 pub(crate) fn keccakf_portable(state: &mut [u64; 25]) {
+  keccakf_rounds(state);
+}
+
+/// The rounds of [`keccakf_portable`]. They inline into each caller, so the
+/// x86-64 BMI1/BMI2 kernel compiles these same rounds.
+#[cfg(not(target_arch = "aarch64"))]
+#[inline(always)]
+fn keccakf_rounds(state: &mut [u64; 25]) {
   // ρ+π chain: swap state[PI] with rotated last, hardcoded for constant folding.
   macro_rules! rho_pi {
     ($state:ident, $last:ident, ($pi:expr, $rho:expr) $(,)?) => {
@@ -545,9 +553,10 @@ fn keccakf_absorb_aarch64_scalar<const RATE: usize>(state: &mut [u64; 25], block
 // platform gets a concrete `Permuter` that calls the best kernel directly,
 // allowing LLVM to inline the permutation into the absorb loop.
 //
-// - x86_64: `X86Permuter` → `keccakf_portable` for single-state, AVX-512VL two-state `permute_x2`
-//   when available. A single state does not fill both lanes, while the paired path maps one
-//   independent public XOF stream to each lane. The two-state path has different economics: each
+// - x86_64: `X86Permuter` → the portable rounds compiled with BMI1/BMI2 for single-state when
+//   available, otherwise `keccakf_portable`; AVX-512VL two-state `permute_x2` when available.
+//   A single state does not fill both lanes, while the paired path maps one independent public
+//   XOF stream to each lane. The two-state path has different economics: each
 //   vector lane carries an independent public XOF stream, so VPROLQ/VPTERNLOGQ reduce the paired
 //   permutation work instead of duplicating one state.
 // - generic: `InlinePermuter` → `keccakf_portable`.
@@ -637,11 +646,12 @@ impl Permuter for InlinePermuter {
   }
 }
 
-/// x86_64 permuter: portable single-state Keccak, AVX-512VL two-state Keccak
-/// when available.
+/// x86_64 permuter: the portable single-state rounds compiled with BMI1 and
+/// BMI2 when available, AVX-512VL two-state Keccak when available.
 #[cfg(all(target_arch = "x86_64", target_feature = "sse2", not(miri)))]
 #[derive(Clone, Copy)]
 pub(crate) struct X86Permuter {
+  has_bmi: bool,
   has_avx512_x2: bool,
 }
 
@@ -649,11 +659,11 @@ pub(crate) struct X86Permuter {
 impl Default for X86Permuter {
   #[inline]
   fn default() -> Self {
+    use crate::platform::caps::x86;
+    let caps = crate::platform::caps();
     Self {
-      has_avx512_x2: {
-        use crate::platform::caps::x86;
-        crate::platform::caps().has(x86::AVX512F.union(x86::AVX512VL).union(x86::SSE41))
-      },
+      has_bmi: caps.has(x86::BMI1.union(x86::BMI2)),
+      has_avx512_x2: caps.has(x86::AVX512F.union(x86::AVX512VL).union(x86::SSE41)),
     }
   }
 }
@@ -662,7 +672,12 @@ impl Default for X86Permuter {
 impl Permuter for X86Permuter {
   #[inline(always)]
   fn permute(self, state: &mut [u64; 25], _len_hint: usize) {
-    keccakf_portable(state);
+    if self.has_bmi {
+      // SAFETY: `has_bmi` is set only when runtime caps contain BMI1 and BMI2.
+      unsafe { x86_64::keccakf_x86_bmi(state) };
+    } else {
+      keccakf_portable(state);
+    }
   }
 
   #[inline(always)]
