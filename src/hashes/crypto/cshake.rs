@@ -2,12 +2,9 @@
 
 use super::{
   keccak::{KeccakCore, KeccakXof},
-  sp800185::{RATE_128, RATE_256, absorb_bytepad, encoded_string_len, left_encode},
+  sp800185::{RATE_128, RATE_256, cshake_core},
 };
 use crate::traits::Xof;
-
-const SHAKE_PAD: u8 = 0x1F;
-const CSHAKE_PAD: u8 = 0x04;
 
 macro_rules! define_cshake {
   ($name:ident, $reader:ident, $rate:expr, $bits:literal) => {
@@ -31,36 +28,12 @@ macro_rules! define_cshake {
       #[inline]
       #[must_use]
       pub fn new(function_name: &[u8], customization: &[u8]) -> Self {
-        if function_name.is_empty() && customization.is_empty() {
-          let core = KeccakCore::<$rate>::default();
-          return Self {
-            core: core.clone(),
-            initial_state: core,
-            pad: SHAKE_PAD,
-          };
-        }
-
-        let mut core = KeccakCore::<$rate>::default();
-        let (function_prefix, function_prefix_len) = left_encode((function_name.len() as u64).strict_mul(8));
-        let (custom_prefix, custom_prefix_len) = left_encode((customization.len() as u64).strict_mul(8));
-        let fn_len = encoded_string_len(function_name);
-        let custom_len = encoded_string_len(customization);
-        absorb_bytepad::<$rate>(
-          &mut core,
-          &[
-            &function_prefix[..function_prefix_len],
-            function_name,
-            &custom_prefix[..custom_prefix_len],
-            customization,
-          ],
-          fn_len.strict_add(custom_len),
-        );
-
+        let (core, pad) = cshake_core::<$rate>(function_name, customization);
         let initial_state = core.clone();
         Self {
           core,
           initial_state,
-          pad: CSHAKE_PAD,
+          pad,
         }
       }
 
@@ -68,21 +41,17 @@ macro_rules! define_cshake {
       #[inline]
       #[must_use]
       pub fn xof(function_name: &[u8], customization: &[u8], data: &[u8]) -> $reader {
-        let mut hasher = Self::new(function_name, customization);
-        hasher.update(data);
-        hasher.finalize_xof()
+        let (mut core, pad) = cshake_core::<$rate>(function_name, customization);
+        core.update(data);
+        $reader {
+          inner: core.finalize_xof(pad),
+        }
       }
 
       /// Absorb additional message bytes.
       #[inline]
       pub fn update(&mut self, data: &[u8]) {
         self.core.update(data);
-      }
-
-      #[cfg(feature = "kmac")]
-      #[inline]
-      pub(crate) fn absorb_bytepad_segments(&mut self, segments: &[&[u8]], payload_len: usize) {
-        absorb_bytepad(&mut self.core, segments, payload_len);
       }
 
       /// Finalize into an extendable-output reader.
@@ -103,7 +72,9 @@ macro_rules! define_cshake {
       /// Fill `out` in one shot.
       #[inline]
       pub fn hash_into(function_name: &[u8], customization: &[u8], data: &[u8], out: &mut [u8]) {
-        Self::xof(function_name, customization, data).squeeze(out);
+        let (mut core, pad) = cshake_core::<$rate>(function_name, customization);
+        core.update(data);
+        core.finalize_xof_into(pad, out);
       }
     }
 

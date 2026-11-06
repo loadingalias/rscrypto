@@ -1120,6 +1120,21 @@ impl<const RATE: usize, P: Permuter, const ZEROIZE: bool> KeccakCoreImpl<RATE, P
     }
   }
 
+  /// Absorbs `len` zero bytes. XOR with zero leaves the state unchanged, so
+  /// only the position advances, with a permutation at each filled block.
+  pub(crate) fn absorb_zeros(&mut self, mut len: usize) {
+    loop {
+      let remaining = RATE.strict_sub(self.buf_len);
+      if len < remaining {
+        self.buf_len = self.buf_len.strict_add(len);
+        return;
+      }
+      self.permuter.permute(&mut self.state, RATE);
+      self.buf_len = 0;
+      len = len.strict_sub(remaining);
+    }
+  }
+
   #[inline(always)]
   fn finalize_state(&self, ds: u8) -> [u64; 25] {
     let permuter = self.permuter;
@@ -1163,7 +1178,6 @@ impl<const RATE: usize, P: Permuter, const ZEROIZE: bool> KeccakCoreImpl<RATE, P
   }
 }
 
-#[cfg(any(feature = "ml-kem", feature = "ml-dsa"))]
 impl<const RATE: usize, P: Permuter> KeccakCoreImpl<RATE, P, true> {
   pub(crate) fn finalize_xof_into(&self, ds: u8, out: &mut [u8]) {
     // Initialize the cleanup owner before copying secret state. Finalize and
@@ -1183,6 +1197,39 @@ impl<const RATE: usize, P: Permuter> KeccakCoreImpl<RATE, P, true> {
     pad_absorbed_state::<RATE>(&mut reader.state, self.buf_len, ds);
     reader.permuter.permute(&mut reader.state, 0);
     reader.squeeze_into(out);
+  }
+
+  /// Finalizes a copy of this state after absorbing `suffix`, and passes the
+  /// reader to `squeeze`. The copy lives only in that cleanup owner, which
+  /// clears it on return.
+  #[cfg(feature = "kmac")]
+  pub(crate) fn with_suffixed_xof<R>(
+    &self,
+    suffix: &[u8],
+    ds: u8,
+    squeeze: impl FnOnce(&mut KeccakXofImpl<RATE, P, true>) -> R,
+  ) -> R {
+    debug_assert!(suffix.len() < RATE);
+    let mut reader = KeccakXofImpl::<RATE, P, true> {
+      state: [0; 25],
+      pos: 0,
+      permuter: self.permuter,
+    };
+    reader.state.copy_from_slice(&self.state);
+
+    let mut pos = self.buf_len;
+    let take = core::cmp::min(RATE.strict_sub(pos), suffix.len());
+    xor_bytes_into_state::<RATE>(&mut reader.state, pos, &suffix[..take]);
+    pos = pos.strict_add(take);
+    if pos == RATE {
+      reader.permuter.permute(&mut reader.state, RATE);
+      let rest = &suffix[take..];
+      xor_bytes_into_state::<RATE>(&mut reader.state, 0, rest);
+      pos = rest.len();
+    }
+    pad_absorbed_state::<RATE>(&mut reader.state, pos, ds);
+    reader.permuter.permute(&mut reader.state, 0);
+    squeeze(&mut reader)
   }
 }
 
@@ -1261,32 +1308,43 @@ fn xor_block_into<const RATE: usize>(state: &mut [u64; 25], block: &[u8; RATE]) 
 }
 
 /// XOR a partial rate segment into the Keccak state at byte `offset`.
+///
+/// A lane that the segment covers only in part is assembled in a register and
+/// XORed once, so short segments cost one state update per lane.
 #[inline(always)]
-fn xor_bytes_into_state<const RATE: usize>(state: &mut [u64; 25], mut offset: usize, mut data: &[u8]) {
+fn xor_bytes_into_state<const RATE: usize>(state: &mut [u64; 25], offset: usize, mut data: &[u8]) {
   debug_assert_eq!(RATE % 8, 0);
   debug_assert!(offset <= RATE);
   debug_assert!(data.len() <= RATE.strict_sub(offset));
 
-  while !data.is_empty() && (offset & 7) != 0 {
-    state[offset / 8] ^= (data[0] as u64) << ((offset & 7).strict_mul(8));
-    offset = offset.strict_add(1);
-    data = &data[1..];
-  }
-
   let mut lane = offset / 8;
-  while data.len() >= 8 {
-    // SAFETY: `data.len() >= 8`, so this unaligned 8-byte read is in-bounds.
-    let word = unsafe { core::ptr::read_unaligned(data.as_ptr().cast::<u64>()) };
-    state[lane] ^= u64::from_le(word);
+  let shift = offset % 8;
+  if shift != 0 && !data.is_empty() {
+    let take = core::cmp::min(8usize.strict_sub(shift), data.len());
+    state[lane] ^= partial_lane(&data[..take]) << shift.strict_mul(8);
+    data = &data[take..];
     lane = lane.strict_add(1);
-    offset = offset.strict_add(8);
-    data = &data[8..];
   }
 
-  for &byte in data {
-    state[offset / 8] ^= (byte as u64) << ((offset & 7).strict_mul(8));
-    offset = offset.strict_add(1);
+  let (words, tail) = data.as_chunks::<8>();
+  for word in words {
+    state[lane] ^= u64::from_le_bytes(*word);
+    lane = lane.strict_add(1);
   }
+  if !tail.is_empty() {
+    state[lane] ^= partial_lane(tail);
+  }
+}
+
+/// Little-endian value of at most eight bytes.
+#[inline(always)]
+fn partial_lane(bytes: &[u8]) -> u64 {
+  debug_assert!(bytes.len() <= 8);
+  let mut word = 0u64;
+  for (i, &byte) in bytes.iter().enumerate() {
+    word |= u64::from(byte) << i.strict_mul(8);
+  }
+  word
 }
 
 /// Apply Keccak domain separation and pad10*1 to a state with already-absorbed partial bytes.

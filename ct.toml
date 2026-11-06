@@ -76,7 +76,7 @@ roots = ["ct_entry_kmac256_verify"]
 symbol = "<rscrypto::auth::kmac::Kmac256>::verify_tag"
 kind = "variable_latency_division"
 max_count = 1
-source = "src/auth/kmac.rs:149"
+source = "src/auth/kmac.rs:154"
 rationale = "LLVM's scalable-vector loop partition divides the caller-visible expected-tag length by the target's public vector length. Tag contents do not feed the operands."
 
 [[asm_public_operand]]

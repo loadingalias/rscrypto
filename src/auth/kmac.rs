@@ -4,20 +4,20 @@ use core::fmt;
 
 use crate::{
   hashes::crypto::{
-    Cshake128, Cshake256,
-    sp800185::{left_encode, right_encode},
+    keccak::KeccakCore,
+    sp800185::{CSHAKE_PAD, RATE_128, RATE_256, absorb_bytepad, cshake_core, left_encode, right_encode},
   },
-  traits::{VerificationError, Xof, ct},
+  traits::{VerificationError, ct},
 };
 
 macro_rules! define_kmac {
-  ($name:ident, $cshake:ident, $bits:literal, $min_auth_tag_size:literal) => {
+  ($name:ident, $rate:expr, $bits:literal, $min_auth_tag_size:literal) => {
     #[doc = concat!("KMAC", $bits, " keyed state.")]
     /// KMAC is a variable-output MAC/PRF. It intentionally does not implement
     /// [`crate::traits::Mac`], which assumes a fixed-size tag.
     pub struct $name {
-      state: $cshake,
-      initial_state: $cshake,
+      state: KeccakCore<$rate>,
+      initial_state: KeccakCore<$rate>,
     }
 
     impl fmt::Debug for $name {
@@ -40,25 +40,31 @@ macro_rules! define_kmac {
       /// `customization`.
       #[must_use]
       pub fn new(key: &[u8], customization: &[u8]) -> Self {
-        let mut state = $cshake::new(b"KMAC", customization);
-        Self::absorb_key(&mut state, key);
+        let state = Self::keyed_core(key, customization);
         let initial_state = state.clone();
         Self { state, initial_state }
       }
 
+      /// The cSHAKE sponge after the `KMAC` prefix and the padded key.
       #[inline]
-      fn absorb_key(state: &mut $cshake, key: &[u8]) {
+      fn keyed_core(key: &[u8], customization: &[u8]) -> KeccakCore<$rate> {
+        let (mut state, _) = cshake_core::<$rate>(b"KMAC", customization);
         let (key_prefix, key_prefix_len) = left_encode(crate::bytes_to_bits(key.len()));
         let payload_len = key_prefix_len.strict_add(key.len());
-        state.absorb_bytepad_segments(&[&key_prefix[..key_prefix_len], key], payload_len);
+        absorb_bytepad::<$rate>(&mut state, &[&key_prefix[..key_prefix_len], key], payload_len);
+        state
       }
 
+      /// Finalizes a copy of `state` for `output_len` bytes and passes its
+      /// reader to `squeeze`.
       #[inline]
-      fn finalize_reader(&self, output_len: usize) -> impl Xof {
-        let mut state = self.state.clone();
+      fn with_reader<R>(
+        state: &KeccakCore<$rate>,
+        output_len: usize,
+        squeeze: impl FnOnce(&mut crate::hashes::crypto::keccak::KeccakXof<$rate>) -> R,
+      ) -> R {
         let (suffix, suffix_len) = right_encode(crate::bytes_to_bits(output_len));
-        state.update(&suffix[..suffix_len]);
-        state.finalize_xof()
+        state.with_suffixed_xof(&suffix[..suffix_len], CSHAKE_PAD, squeeze)
       }
 
       /// Absorb more message bytes.
@@ -70,8 +76,7 @@ macro_rules! define_kmac {
       /// Finalize into `out`.
       #[inline]
       pub fn finalize_into(&self, out: &mut [u8]) {
-        let mut reader = self.finalize_reader(out.len());
-        reader.squeeze(out);
+        Self::with_reader(&self.state, out.len(), |reader| reader.squeeze_into(out));
       }
 
       /// Reset back to the keyed initial state.
@@ -83,9 +88,9 @@ macro_rules! define_kmac {
       #[doc = concat!("Compute a one-shot KMAC", $bits, " output into `out`.")]
       #[inline]
       pub fn mac_into(key: &[u8], customization: &[u8], data: &[u8], out: &mut [u8]) {
-        let mut state = Self::new(key, customization);
+        let mut state = Self::keyed_core(key, customization);
         state.update(data);
-        state.finalize_into(out);
+        Self::with_reader(&state, out.len(), |reader| reader.squeeze_into(out));
       }
 
       #[doc = concat!("Compute a one-shot KMAC", $bits, " output into a fixed-size array.")]
@@ -162,14 +167,15 @@ macro_rules! define_kmac {
         if expected.is_empty() {
           return Err(VerificationError::new());
         }
-        let mut reader = self.finalize_reader(expected.len());
         let mut diff = 0u8;
         let mut block = [0u8; 64];
 
-        for chunk in expected.chunks(block.len()) {
-          reader.squeeze(&mut block[..chunk.len()]);
-          diff |= (!ct::public_len_eq(&block[..chunk.len()], chunk)).into_u8();
-        }
+        Self::with_reader(&self.state, expected.len(), |reader| {
+          for chunk in expected.chunks(block.len()) {
+            reader.squeeze_into(&mut block[..chunk.len()]);
+            diff |= (!ct::public_len_eq(&block[..chunk.len()], chunk)).into_u8();
+          }
+        });
 
         ct::zeroize(&mut block);
         if core::hint::black_box(diff) == 0 {
@@ -182,8 +188,8 @@ macro_rules! define_kmac {
   };
 }
 
-define_kmac!(Kmac128, Cshake128, "128", 16);
-define_kmac!(Kmac256, Cshake256, "256", 32);
+define_kmac!(Kmac128, RATE_128, "128", 16);
+define_kmac!(Kmac256, RATE_256, "256", 32);
 
 #[cfg(test)]
 mod tests {

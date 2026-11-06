@@ -2,6 +2,12 @@
 
 use super::keccak::KeccakCore;
 
+/// SHAKE domain and padding byte: cSHAKE with empty function name and customization.
+pub(crate) const SHAKE_PAD: u8 = 0x1F;
+
+/// cSHAKE domain and padding byte.
+pub(crate) const CSHAKE_PAD: u8 = 0x04;
+
 /// cSHAKE128 / KMAC128 bitrate in bytes.
 pub(crate) const RATE_128: usize = 168;
 
@@ -56,6 +62,30 @@ pub(crate) fn absorb_bytepad<const RATE: usize>(core: &mut KeccakCore<RATE>, seg
   let total_len = prefix_len.strict_add(payload_len);
   let rem = total_len.strict_rem(RATE);
   if rem != 0 {
-    core.update(&[0u8; RATE][..RATE.strict_sub(rem)]);
+    core.absorb_zeros(RATE.strict_sub(rem));
   }
+}
+
+/// Starts a cSHAKE sponge for `function_name` and `customization`, and returns
+/// it with its padding byte. With both strings empty, cSHAKE is SHAKE.
+pub(crate) fn cshake_core<const RATE: usize>(function_name: &[u8], customization: &[u8]) -> (KeccakCore<RATE>, u8) {
+  let mut core = KeccakCore::<RATE>::default();
+  if function_name.is_empty() && customization.is_empty() {
+    return (core, SHAKE_PAD);
+  }
+
+  let (function_prefix, function_prefix_len) = left_encode(crate::bytes_to_bits(function_name.len()));
+  let (custom_prefix, custom_prefix_len) = left_encode(crate::bytes_to_bits(customization.len()));
+  let payload_len = encoded_string_len(function_name).strict_add(encoded_string_len(customization));
+  absorb_bytepad::<RATE>(
+    &mut core,
+    &[
+      &function_prefix[..function_prefix_len],
+      function_name,
+      &custom_prefix[..custom_prefix_len],
+      customization,
+    ],
+    payload_len,
+  );
+  (core, CSHAKE_PAD)
 }
