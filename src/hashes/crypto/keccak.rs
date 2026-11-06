@@ -15,6 +15,8 @@ pub(crate) mod dispatch_tables;
 pub(crate) mod kernel_test;
 #[cfg(any(test, feature = "diag"))]
 pub(crate) mod kernels;
+#[cfg(any(test, all(target_arch = "aarch64", not(miri))))]
+mod lazy_rotation;
 #[cfg(all(target_arch = "s390x", not(miri)))]
 pub(crate) mod s390x;
 #[cfg(any(feature = "ml-kem", feature = "ml-dsa"))]
@@ -513,6 +515,30 @@ fn keccakf_absorb_portable<const RATE: usize>(state: &mut [u64; 25], block: &[u8
   state[24] = a24;
 }
 
+/// Scalar single-state permutation on AArch64: lazy lane rotations, except on
+/// Apple, where the portable rounds remain until Apple timing is measured.
+#[cfg(all(target_arch = "aarch64", not(miri)))]
+#[inline(always)]
+fn keccakf_aarch64_scalar(state: &mut [u64; 25]) {
+  if cfg!(target_vendor = "apple") {
+    keccakf_portable(state);
+  } else {
+    lazy_rotation::keccakf(state);
+  }
+}
+
+/// Absorbs one rate block and permutes with [`keccakf_aarch64_scalar`].
+#[cfg(all(target_arch = "aarch64", not(miri)))]
+#[inline(always)]
+fn keccakf_absorb_aarch64_scalar<const RATE: usize>(state: &mut [u64; 25], block: &[u8; RATE]) {
+  if cfg!(target_vendor = "apple") {
+    keccakf_absorb_portable::<RATE>(state, block);
+  } else {
+    xor_block_into::<RATE>(state, block);
+    lazy_rotation::keccakf(state);
+  }
+}
+
 // Permuter trait + platform-specific implementations
 //
 // Direct-call permuters replace the old function-pointer dispatch. Each
@@ -714,7 +740,7 @@ impl Permuter for Aarch64Permuter {
     if cfg!(target_vendor = "apple") {
       aarch64::keccakf_aarch64_sha3_single(state);
     } else {
-      keccakf_portable(state);
+      keccakf_aarch64_scalar(state);
     }
   }
 
@@ -728,7 +754,7 @@ impl Permuter for Aarch64Permuter {
         aarch64::keccakf_aarch64_sha3_single(state);
       }
     } else {
-      keccakf_absorb_portable::<RATE>(state, block);
+      keccakf_absorb_aarch64_scalar::<RATE>(state, block);
     }
   }
 
@@ -787,7 +813,7 @@ impl Permuter for Aarch64Permuter {
     ))]
     {
       aarch64::keccakf_aarch64_sha3_x3_hybrid(state_a, state_b, state_c);
-      keccakf_portable(state_d);
+      keccakf_aarch64_scalar(state_d);
     }
 
     #[cfg(not(all(
@@ -826,7 +852,7 @@ impl Permuter for Aarch64Permuter {
     if cfg!(target_vendor = "apple") && self.has_sha3 {
       aarch64::keccakf_aarch64_sha3_single(state);
     } else {
-      keccakf_portable(state);
+      keccakf_aarch64_scalar(state);
     }
   }
 
@@ -840,7 +866,7 @@ impl Permuter for Aarch64Permuter {
         aarch64::keccakf_aarch64_sha3_single(state);
       }
     } else {
-      keccakf_absorb_portable::<RATE>(state, block);
+      keccakf_absorb_aarch64_scalar::<RATE>(state, block);
     }
   }
 
@@ -894,7 +920,7 @@ impl Permuter for Aarch64Permuter {
     ))]
     if self.has_sha3 {
       aarch64::keccakf_aarch64_sha3_x3_hybrid(state_a, state_b, state_c);
-      keccakf_portable(state_d);
+      keccakf_aarch64_scalar(state_d);
       return;
     }
 
