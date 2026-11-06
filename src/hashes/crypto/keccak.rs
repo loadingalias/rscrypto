@@ -553,12 +553,10 @@ fn keccakf_absorb_aarch64_scalar<const RATE: usize>(state: &mut [u64; 25], block
 // platform gets a concrete `Permuter` that calls the best kernel directly,
 // allowing LLVM to inline the permutation into the absorb loop.
 //
-// - x86_64: `X86Permuter` → the portable rounds compiled with BMI1/BMI2 for single-state when
-//   available, otherwise `keccakf_portable`; AVX-512VL two-state `permute_x2` when available.
-//   A single state does not fill both lanes, while the paired path maps one independent public
-//   XOF stream to each lane. The two-state path has different economics: each
-//   vector lane carries an independent public XOF stream, so VPROLQ/VPTERNLOGQ reduce the paired
-//   permutation work instead of duplicating one state.
+// - x86_64: `X86Permuter` → the AVX-512 single-state kernel on Intel CPUs with AVX-512, which also
+//   absorbs complete blocks with the state held in registers; otherwise the portable rounds
+//   compiled with BMI1/BMI2 when available, otherwise `keccakf_portable`. AVX-512VL two- and
+//   four-state paths map one independent state to each vector lane.
 // - generic: `InlinePermuter` → `keccakf_portable`.
 // - aarch64: `Aarch64Permuter` uses the selected scalar single-state path and SHA3 CE for the
 //   2-state interleaved path (`digest_pair`).
@@ -646,13 +644,20 @@ impl Permuter for InlinePermuter {
   }
 }
 
-/// x86_64 permuter: the portable single-state rounds compiled with BMI1 and
-/// BMI2 when available, AVX-512VL two-state Keccak when available.
+/// x86_64 permuter: the AVX-512 single-state rounds on Intel CPUs with
+/// AVX-512, otherwise the portable rounds compiled with BMI1 and BMI2 when
+/// available; AVX-512VL two- and four-state Keccak when available.
+///
+/// The single-state AVX-512 kernel spends about 19 shuffles per round on one
+/// port. It is faster than the BMI rounds on Granite Rapids and Sapphire
+/// Rapids and 25–31% slower on AMD Zen 4 and Zen 5, so AMD keeps the BMI
+/// rounds for one state.
 #[cfg(all(target_arch = "x86_64", target_feature = "sse2", not(miri)))]
 #[derive(Clone, Copy)]
 pub(crate) struct X86Permuter {
   has_bmi: bool,
-  has_avx512_x2: bool,
+  has_avx512: bool,
+  single_avx512: bool,
 }
 
 #[cfg(all(target_arch = "x86_64", target_feature = "sse2", not(miri)))]
@@ -661,9 +666,11 @@ impl Default for X86Permuter {
   fn default() -> Self {
     use crate::platform::caps::x86;
     let caps = crate::platform::caps();
+    let has_avx512 = caps.has(x86::AVX512F.union(x86::AVX512VL).union(x86::SSE41));
     Self {
       has_bmi: caps.has(x86::BMI1.union(x86::BMI2)),
-      has_avx512_x2: caps.has(x86::AVX512F.union(x86::AVX512VL).union(x86::SSE41)),
+      has_avx512,
+      single_avx512: has_avx512 && !caps.has(x86::AMD),
     }
   }
 }
@@ -672,7 +679,10 @@ impl Default for X86Permuter {
 impl Permuter for X86Permuter {
   #[inline(always)]
   fn permute(self, state: &mut [u64; 25], _len_hint: usize) {
-    if self.has_bmi {
+    if self.single_avx512 {
+      // SAFETY: `single_avx512` is set only when runtime caps contain AVX512F.
+      unsafe { x86_64::keccakf_x86_avx512_single(state) };
+    } else if self.has_bmi {
       // SAFETY: `has_bmi` is set only when runtime caps contain BMI1 and BMI2.
       unsafe { x86_64::keccakf_x86_bmi(state) };
     } else {
@@ -680,11 +690,37 @@ impl Permuter for X86Permuter {
     }
   }
 
+  /// Absorbs complete blocks with the state held in AVX-512 registers from
+  /// the first block to the last.
+  #[inline(always)]
+  fn try_absorb_blocks(self, state: &mut [u64; 25], blocks: &[u8], rate: usize) -> bool {
+    if !self.single_avx512 {
+      return false;
+    }
+    macro_rules! absorb {
+      ($rate:literal) => {{
+        let (chunks, rest) = blocks.as_chunks::<$rate>();
+        debug_assert!(rest.is_empty(), "callers pass complete rate blocks");
+        // SAFETY: `single_avx512` is set only when runtime caps contain AVX512F.
+        unsafe { x86_64::absorb_blocks_x86_avx512::<$rate>(state, chunks) }
+      }};
+    }
+    match rate {
+      72 => absorb!(72),
+      104 => absorb!(104),
+      136 => absorb!(136),
+      144 => absorb!(144),
+      168 => absorb!(168),
+      _ => return false,
+    }
+    true
+  }
+
   #[inline(always)]
   fn permute_x2(self, state_a: &mut [u64; 25], state_b: &mut [u64; 25], len_hint: usize) {
-    if self.has_avx512_x2 {
+    if self.has_avx512 {
       // SAFETY: AVX-512 x2 dispatch because:
-      // 1. `has_avx512_x2` is constructed only when runtime caps contain AVX512F, AVX512VL, and SSE4.1.
+      // 1. `has_avx512` is constructed only when runtime caps contain AVX512F, AVX512VL, and SSE4.1.
       // 2. `state_a` and `state_b` are distinct mutable references to initialized 25-lane Keccak states.
       unsafe { x86_64::keccakf_x86_avx512_x2(state_a, state_b) };
     } else {
@@ -703,9 +739,9 @@ impl Permuter for X86Permuter {
     state_d: &mut [u64; 25],
     len_hint: usize,
   ) {
-    if self.has_avx512_x2 {
+    if self.has_avx512 {
       // SAFETY: AVX-512 x4 dispatch because:
-      // 1. `has_avx512_x2` is constructed only when runtime caps contain AVX512F, AVX512VL, and SSE4.1.
+      // 1. `has_avx512` is constructed only when runtime caps contain AVX512F, AVX512VL, and SSE4.1.
       // 2. All four mutable references point to initialized, distinct 25-lane Keccak states.
       unsafe { x86_64::keccakf_x86_avx512_x4(state_a, state_b, state_c, state_d) };
     } else {

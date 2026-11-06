@@ -191,6 +191,43 @@ mod tests {
     }
   }
 
+  /// Verify the AVX-512 absorb loop matches block-by-block absorption with the
+  /// portable rounds, for every rate, across several blocks, from a nonzero
+  /// state.
+  #[test]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2", not(miri)))]
+  fn keccakf1600_avx512_absorb_blocks_matches_portable() {
+    if !crate::platform::caps().has(crate::platform::caps::x86::AVX512F) {
+      return; // AVX512F not available on this hardware
+    }
+
+    fn assert_rate<const RATE: usize>() {
+      let mut data = Vec::with_capacity(RATE.strict_mul(3));
+      for i in 0..RATE.strict_mul(3) {
+        data.push(i.strict_mul(37).strict_add(RATE).to_le_bytes()[0]);
+      }
+      let (blocks, rest) = data.as_chunks::<RATE>();
+      assert!(rest.is_empty());
+
+      let initial = state_from_bytes(b"avx512-absorb-reference-state");
+      let mut expected = initial;
+      for block in blocks {
+        super::super::xor_block_into::<RATE>(&mut expected, block);
+        super::super::keccakf_portable(&mut expected);
+      }
+      let mut actual = initial;
+      // SAFETY: AVX512F was established at the top of the test.
+      unsafe { super::super::x86_64::absorb_blocks_x86_avx512::<RATE>(&mut actual, blocks) };
+      assert_eq!(actual, expected, "AVX-512 absorb mismatch for RATE={RATE}");
+    }
+
+    assert_rate::<72>();
+    assert_rate::<104>();
+    assert_rate::<136>();
+    assert_rate::<144>();
+    assert_rate::<168>();
+  }
+
   /// Verify the SHA3 single-state assembly kernel matches the portable rounds
   /// on states that differ in every lane, across repeated permutations.
   #[test]

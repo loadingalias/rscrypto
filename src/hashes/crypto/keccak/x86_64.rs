@@ -1,5 +1,5 @@
-//! Keccak-f[1600] x86_64 kernels: one state with BMI1/BMI2, and two or four
-//! states with AVX-512VL.
+//! Keccak-f[1600] x86_64 kernels: one state with AVX-512F or with BMI1/BMI2,
+//! and two or four states with AVX-512VL.
 //!
 //! The multi-state paths pack independent Keccak states lane-wise in vectors:
 //! state A in lane 0, state B in lane 1. AVX-512VL gives us VPROLQ for the
@@ -54,6 +54,217 @@ macro_rules! chi4 {
 #[target_feature(enable = "bmi1,bmi2")]
 pub(crate) unsafe fn keccakf_x86_bmi(state: &mut [u64; 25]) {
   super::keccakf_rounds(state);
+}
+
+/// Index vectors and rotation counts for [`keccakf_x86_avx512_single`].
+///
+/// Plane `y` holds `A[x][y]` in qword `x`, and column `x` holds `A[x][y]` in
+/// qword `y`. Qwords 5..=7 carry don't-care values that no index selects into
+/// qwords 0..=4.
+#[derive(Clone, Copy)]
+struct Avx512SingleConsts {
+  /// θ: qword `x` takes `C[x - 1]`.
+  prev: __m512i,
+  /// θ: qword `x` takes `C[x + 1]`.
+  next: __m512i,
+  /// ρ: plane `y`, qword `x` rotates left by `RHO[x + 5y]`.
+  rho: [__m512i; 5],
+  /// π: column `y` of the permuted state takes plane `y`, qword `(3y' + y) mod 5`, at qword `y'`.
+  pi: [__m512i; 5],
+  /// Transpose: interleave qwords 0..=3 of two columns.
+  zip: __m512i,
+  /// Transpose: plane `y` qwords 0..=3 from the interleaved column pairs.
+  row: [__m512i; 4],
+  /// Transpose: qword 4 of columns 0 and 1 to qwords 0 and 1.
+  hi01: __m512i,
+  /// Transpose: qword 4 of columns 2 and 3 to qwords 2 and 3.
+  hi23: __m512i,
+  /// Transpose: every qword selects index `y`.
+  bcast: [__m512i; 5],
+}
+
+/// Builds [`Avx512SingleConsts`] inside a function that enables AVX512F.
+macro_rules! avx512_single_consts {
+  () => {
+    Avx512SingleConsts {
+      prev: _mm512_setr_epi64(4, 0, 1, 2, 3, 5, 6, 7),
+      next: _mm512_setr_epi64(1, 2, 3, 4, 0, 5, 6, 7),
+      rho: [
+        _mm512_setr_epi64(0, 1, 62, 28, 27, 0, 0, 0),
+        _mm512_setr_epi64(36, 44, 6, 55, 20, 0, 0, 0),
+        _mm512_setr_epi64(3, 10, 43, 25, 39, 0, 0, 0),
+        _mm512_setr_epi64(41, 45, 15, 21, 8, 0, 0, 0),
+        _mm512_setr_epi64(18, 2, 61, 56, 14, 0, 0, 0),
+      ],
+      pi: [
+        _mm512_setr_epi64(0, 3, 1, 4, 2, 5, 6, 7),
+        _mm512_setr_epi64(1, 4, 2, 0, 3, 5, 6, 7),
+        _mm512_setr_epi64(2, 0, 3, 1, 4, 5, 6, 7),
+        _mm512_setr_epi64(3, 1, 4, 2, 0, 5, 6, 7),
+        _mm512_setr_epi64(4, 2, 0, 3, 1, 5, 6, 7),
+      ],
+      zip: _mm512_setr_epi64(0, 8, 1, 9, 2, 10, 3, 11),
+      row: [
+        _mm512_setr_epi64(0, 1, 8, 9, 4, 5, 6, 7),
+        _mm512_setr_epi64(2, 3, 10, 11, 4, 5, 6, 7),
+        _mm512_setr_epi64(4, 5, 12, 13, 4, 5, 6, 7),
+        _mm512_setr_epi64(6, 7, 14, 15, 4, 5, 6, 7),
+      ],
+      hi01: _mm512_setr_epi64(4, 12, 4, 12, 4, 5, 6, 7),
+      hi23: _mm512_setr_epi64(4, 12, 4, 12, 4, 5, 6, 7),
+      bcast: [
+        _mm512_set1_epi64(0),
+        _mm512_set1_epi64(1),
+        _mm512_set1_epi64(2),
+        _mm512_set1_epi64(3),
+        _mm512_set1_epi64(4),
+      ],
+    }
+  };
+}
+
+/// One Keccak-f[1600] round on five plane registers; see
+/// [`keccakf_x86_avx512_single`].
+macro_rules! avx512_single_round {
+  ($k:ident, $p0:ident, $p1:ident, $p2:ident, $p3:ident, $p4:ident, $rc:expr) => {{
+    // θ: column parity of the planes, then D[x] = C[x - 1] ^ ROL(C[x + 1], 1).
+    let c = _mm512_ternarylogic_epi64::<0x96>(_mm512_ternarylogic_epi64::<0x96>($p0, $p1, $p2), $p3, $p4);
+    let c_prev = _mm512_permutexvar_epi64($k.prev, c);
+    let c_next = _mm512_rol_epi64::<1>(_mm512_permutexvar_epi64($k.next, c));
+
+    // θ XOR-back, ρ, and π: plane y becomes column y of B.
+    macro_rules! plane_to_column {
+      ($p:ident, $y:literal) => {
+        _mm512_permutexvar_epi64(
+          $k.pi[$y],
+          _mm512_rolv_epi64(_mm512_ternarylogic_epi64::<0x96>($p, c_prev, c_next), $k.rho[$y]),
+        )
+      };
+    }
+    let b0 = plane_to_column!($p0, 0);
+    let b1 = plane_to_column!($p1, 1);
+    let b2 = plane_to_column!($p2, 2);
+    let b3 = plane_to_column!($p3, 3);
+    let b4 = plane_to_column!($p4, 4);
+
+    // χ on columns: A[x] = B[x] ^ (!B[x + 1] & B[x + 2]); ι on lane (0, 0).
+    let rc = _mm512_zextsi128_si512(_mm_cvtsi64_si128(u64_to_i64_bits($rc)));
+    let q0 = _mm512_xor_si512(_mm512_ternarylogic_epi64::<0xD2>(b0, b1, b2), rc);
+    let q1 = _mm512_ternarylogic_epi64::<0xD2>(b1, b2, b3);
+    let q2 = _mm512_ternarylogic_epi64::<0xD2>(b2, b3, b4);
+    let q3 = _mm512_ternarylogic_epi64::<0xD2>(b3, b4, b0);
+    let q4 = _mm512_ternarylogic_epi64::<0xD2>(b4, b0, b1);
+
+    // Transpose the columns back to planes: plane y takes qword y of every column.
+    let u01 = _mm512_permutex2var_epi64(q0, $k.zip, q1);
+    let u23 = _mm512_permutex2var_epi64(q2, $k.zip, q3);
+    $p0 = _mm512_mask_permutexvar_epi64(_mm512_permutex2var_epi64(u01, $k.row[0], u23), 0x10, $k.bcast[0], q4);
+    $p1 = _mm512_mask_permutexvar_epi64(_mm512_permutex2var_epi64(u01, $k.row[1], u23), 0x10, $k.bcast[1], q4);
+    $p2 = _mm512_mask_permutexvar_epi64(_mm512_permutex2var_epi64(u01, $k.row[2], u23), 0x10, $k.bcast[2], q4);
+    $p3 = _mm512_mask_permutexvar_epi64(_mm512_permutex2var_epi64(u01, $k.row[3], u23), 0x10, $k.bcast[3], q4);
+    let v01 = _mm512_permutex2var_epi64(q0, $k.hi01, q1);
+    let v23 = _mm512_permutex2var_epi64(q2, $k.hi23, q3);
+    $p4 = _mm512_mask_permutexvar_epi64(_mm512_mask_blend_epi64(0b1100, v01, v23), 0x10, $k.bcast[4], q4);
+  }};
+}
+
+/// Applies Keccak-f[1600] to one state with AVX-512F.
+///
+/// θ runs on five plane registers (`A[x][y]` in qword `x` of plane `y`), so
+/// the column parity is a vertical XOR. π sends plane `y` to column `y` of
+/// the permuted state with one in-register permutation, so χ runs on column
+/// registers as a vertical ternary-logic operation. A 5×5 transpose returns
+/// the columns to planes for the next θ.
+///
+/// # Safety
+///
+/// Caller must ensure the `avx512f` CPU feature is available.
+#[target_feature(enable = "avx512f")]
+pub(crate) unsafe fn keccakf_x86_avx512_single(state: &mut [u64; 25]) {
+  const PLANE: __mmask8 = 0b1_1111;
+  let k = avx512_single_consts!();
+  let base = state.as_mut_ptr().cast::<i64>();
+  // SAFETY: Each masked load reads qwords `5y..5y + 5` of the 25-qword state
+  // for y < 5; masked-off qwords are not accessed.
+  let (mut p0, mut p1, mut p2, mut p3, mut p4) = unsafe {
+    (
+      _mm512_maskz_loadu_epi64(PLANE, base),
+      _mm512_maskz_loadu_epi64(PLANE, base.add(5)),
+      _mm512_maskz_loadu_epi64(PLANE, base.add(10)),
+      _mm512_maskz_loadu_epi64(PLANE, base.add(15)),
+      _mm512_maskz_loadu_epi64(PLANE, base.add(20)),
+    )
+  };
+  for &rc in &super::RC {
+    avx512_single_round!(k, p0, p1, p2, p3, p4, rc);
+  }
+  // SAFETY: Each masked store writes qwords `5y..5y + 5` of the 25-qword
+  // state for y < 5; masked-off qwords are not accessed.
+  unsafe {
+    _mm512_mask_storeu_epi64(base, PLANE, p0);
+    _mm512_mask_storeu_epi64(base.add(5), PLANE, p1);
+    _mm512_mask_storeu_epi64(base.add(10), PLANE, p2);
+    _mm512_mask_storeu_epi64(base.add(15), PLANE, p3);
+    _mm512_mask_storeu_epi64(base.add(20), PLANE, p4);
+  }
+}
+
+/// Absorbs complete `RATE`-byte blocks and permutes after each with the
+/// AVX-512F single-state rounds. The state stays in five registers from the
+/// first block to the last; each block's rate lanes enter through masked
+/// loads, plane by plane.
+///
+/// # Safety
+///
+/// Caller must ensure the `avx512f` CPU feature is available.
+#[target_feature(enable = "avx512f")]
+pub(crate) unsafe fn absorb_blocks_x86_avx512<const RATE: usize>(state: &mut [u64; 25], blocks: &[[u8; RATE]]) {
+  const PLANE: __mmask8 = 0b1_1111;
+  // Plane `y` takes the rate lanes `5y..` below `RATE / 8`: the low
+  // `min(RATE / 8 - 5y, 5)` qwords, as a mask.
+  const LOW_QWORDS: [__mmask8; 6] = [0, 0b1, 0b11, 0b111, 0b1111, 0b1_1111];
+  let rate_mask = |y: usize| LOW_QWORDS[(RATE / 8).saturating_sub(y.strict_mul(5)).min(5)];
+  let m = [rate_mask(0), rate_mask(1), rate_mask(2), rate_mask(3), rate_mask(4)];
+  let k = avx512_single_consts!();
+  let base = state.as_mut_ptr().cast::<i64>();
+  // SAFETY: Each masked load reads qwords `5y..5y + 5` of the 25-qword state
+  // for y < 5; masked-off qwords are not accessed.
+  let (mut p0, mut p1, mut p2, mut p3, mut p4) = unsafe {
+    (
+      _mm512_maskz_loadu_epi64(PLANE, base),
+      _mm512_maskz_loadu_epi64(PLANE, base.add(5)),
+      _mm512_maskz_loadu_epi64(PLANE, base.add(10)),
+      _mm512_maskz_loadu_epi64(PLANE, base.add(15)),
+      _mm512_maskz_loadu_epi64(PLANE, base.add(20)),
+    )
+  };
+  for block in blocks {
+    #[expect(clippy::cast_ptr_alignment, reason = "the masked loads below are unaligned")]
+    let lanes = block.as_ptr().cast::<i64>();
+    // SAFETY: Plane `y` reads block lanes `5y + x` only where `m[y]` selects
+    // them, that is where `5y + x < RATE / 8`; masked-off lanes are not
+    // accessed, so every read lies inside the `RATE`-byte block. Offsets of
+    // planes past the rate use `wrapping_add` and are never dereferenced.
+    unsafe {
+      p0 = _mm512_xor_si512(p0, _mm512_maskz_loadu_epi64(m[0], lanes));
+      p1 = _mm512_xor_si512(p1, _mm512_maskz_loadu_epi64(m[1], lanes.wrapping_add(5)));
+      p2 = _mm512_xor_si512(p2, _mm512_maskz_loadu_epi64(m[2], lanes.wrapping_add(10)));
+      p3 = _mm512_xor_si512(p3, _mm512_maskz_loadu_epi64(m[3], lanes.wrapping_add(15)));
+      p4 = _mm512_xor_si512(p4, _mm512_maskz_loadu_epi64(m[4], lanes.wrapping_add(20)));
+    }
+    for &rc in &super::RC {
+      avx512_single_round!(k, p0, p1, p2, p3, p4, rc);
+    }
+  }
+  // SAFETY: Each masked store writes qwords `5y..5y + 5` of the 25-qword
+  // state for y < 5; masked-off qwords are not accessed.
+  unsafe {
+    _mm512_mask_storeu_epi64(base, PLANE, p0);
+    _mm512_mask_storeu_epi64(base.add(5), PLANE, p1);
+    _mm512_mask_storeu_epi64(base.add(10), PLANE, p2);
+    _mm512_mask_storeu_epi64(base.add(15), PLANE, p3);
+    _mm512_mask_storeu_epi64(base.add(20), PLANE, p4);
+  }
 }
 
 /// Apply Keccak-f[1600] to two independent states using AVX-512VL.
