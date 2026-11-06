@@ -33,7 +33,7 @@ from provenance import sha256_file
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def linked_functions(artifact_dir: Path) -> tuple[dict[str, scanner.FunctionBody], Any, Path]:
+def linked_functions(artifact_dir: Path, target: str) -> tuple[dict[str, scanner.FunctionBody], Any, Path]:
   paths = sorted(artifact_dir.glob("*.binary.disasm.txt"))
   if len(paths) != 1:
     raise SystemExit(f"expected one linked disassembly in {artifact_dir}, found {len(paths)}")
@@ -41,7 +41,7 @@ def linked_functions(artifact_dir: Path) -> tuple[dict[str, scanner.FunctionBody
   image = scanner.load_linked_image(artifact_dir)
   if image is None:
     raise SystemExit(f"cannot read the linked binary in {artifact_dir}")
-  image.set_functions(scanner.function_ranges(functions))
+  scanner.prepare_linked_image(target, functions, image)
   return functions, image, paths[0]
 
 
@@ -146,8 +146,8 @@ def main() -> int:
       print(error)
     return 2
   findings, stale = scan_new(args.target, args.artifacts)
-  old_functions, old_image, old_disassembly = linked_functions(args.reviewed_artifacts)
-  new_functions, new_image, new_disassembly = linked_functions(args.artifacts)
+  old_functions, old_image, old_disassembly = linked_functions(args.reviewed_artifacts, args.target)
+  new_functions, new_image, new_disassembly = linked_functions(args.artifacts, args.target)
   reviewed_slicer = Slicer(args.target, old_functions, old_image)
   new_slicer = Slicer(args.target, new_functions, new_image)
 

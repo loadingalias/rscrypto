@@ -5,6 +5,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from asm_heuristics import (
+  prepare_linked_image,
   FunctionBody,
   function_identity,
   instruction_identities,
@@ -23,7 +24,7 @@ from asm_heuristics import (
   scan_symbol,
   unreachable_symbol_errors,
 )
-from linked_image import LinkedImage, Section, Slot
+from linked_image import MERGED, LinkedImage, Section, Slot
 from symbolize_linked_binary import demangle_table
 
 
@@ -374,6 +375,172 @@ def data_reference_regressions() -> None:
   assert fixture_hash(target, branching(0x10000, 0x30000)) != fixture_hash(target, branching(0x50000, 0x91000))
 
 
+def location_bytes(line: int, column: int, path: bytes) -> bytes:
+  """A 64-bit little-endian `core::panic::Location` with an unrelocated name pointer."""
+  return bytes(8) + len(path).to_bytes(8, "little") + line.to_bytes(4, "little") + column.to_bytes(4, "little")
+
+
+def placement_regressions() -> None:
+  """Identities bind what an address designates, never where the linker or the source tree put it."""
+  target = "x86_64-unknown-linux-gnu"
+
+  # A panic location describes as `loc`: its file, checkout path, and line record source placement.
+  def location(text: int, rodata: int, path: bytes, line: int):
+    strings = rodata + 0x100
+    displacement = rodata - (text + 7)
+    return linked_fixture(text, [
+      f"{text:x}: 48 8d 3d {displacement.to_bytes(4, 'little').hex(' ')}\tleaq\t0x{displacement:x}(%rip), %rdi",
+      f"{text + 7:x}: c3\tretq",
+    ], {rodata: location_bytes(line, 9, path), strings: path + b"\0"},
+      units=[(rodata, rodata + 24, None), (strings, strings + len(path), None)], slots={rodata: Slot(address=strings)})
+
+  original = fixture_hash(target, location(0x10000, 0x30000, b"/home/runner/work/rscrypto/src/auth/rsa.rs", 7))
+  assert fixture_hash(target, location(0x50000, 0x92000, b"/Users/someone/rscrypto/src/auth/rsa.rs", 7)) == original
+  assert fixture_hash(target, location(0x10000, 0x30000, b"/home/runner/work/rscrypto/src/auth/rsa.rs", 9)) == original
+  body, image = location(0x10000, 0x30000, b"src/auth/rsa.rs", 7)
+  assert "<loc>" in "\n".join(instruction_identities(target, body, {body.symbol}, image).values())
+  # Text that is not a Rust source path is data, so it still binds.
+  assert fixture_hash(target, location(0x10000, 0x30000, b"src/auth/rsa.txt", 7)) != fixture_hash(
+    target, location(0x10000, 0x30000, b"src/auth/rsa.txt", 9))
+
+  # Inside other read-only contents a location is `<loc>` too, so only the surrounding bytes bind.
+  def table(text: int, rodata: int, line: int, tag: int):
+    strings = rodata + 0x100
+    displacement = rodata - (text + 7)
+    contents = bytes([tag] * 8) + location_bytes(line, 3, b"src/lib.rs")
+    return linked_fixture(text, [
+      f"{text:x}: 48 8d 3d {displacement.to_bytes(4, 'little').hex(' ')}\tleaq\t0x{displacement:x}(%rip), %rdi",
+      f"{text + 7:x}: c3\tretq",
+    ], {rodata: contents, strings: b"src/lib.rs"},
+      units=[(rodata, rodata + 32, None), (strings, strings + 10, None)], slots={rodata + 8: Slot(address=strings)})
+
+  assert fixture_hash(target, table(0x10000, 0x30000, 7, 1)) == fixture_hash(target, table(0x50000, 0x91000, 70, 1))
+  assert fixture_hash(target, table(0x10000, 0x30000, 7, 1)) != fixture_hash(target, table(0x10000, 0x30000, 7, 2))
+
+  # Without map sizes (PE), trailing zero bytes before the next object may be alignment padding.
+  def padded(text: int, rodata: int, contents: bytes, padding: int, slot: bool = False):
+    following = rodata + len(contents) + padding
+    displacement = rodata - (text + 7)
+    body = FunctionBody("rscrypto::fixture", Path("fixture.binary.disasm.txt"), text, list(enumerate([
+      f"{text:x}: 48 8d 05 {displacement.to_bytes(4, 'little').hex(' ')}\tleaq\t0x{displacement:x}(%rip), %rax",
+      f"{text + 7:x}: c3\tretq",
+    ], start=1)))
+    data = contents + bytes(padding) + b"next"
+    image = LinkedImage(data, [Section(".text", text, 0x100, None, True, False),
+                               Section(".rdata", rodata, len(data), 0, False, False)], True,
+                        starts={rodata: None, following: None}, bounded_by_starts=True,
+                        slots={rodata: Slot(symbol="HeapFree")} if slot else {})
+    image.set_functions([(text, text + 0x100, body.symbol)])
+    return body, image
+
+  constant = b"\x01\x02\x03"
+  assert fixture_hash(target, padded(0x10000, 0x30000, constant, 5)) == fixture_hash(
+    target, padded(0x50000, 0x91000, constant, 13))
+  assert fixture_hash(target, padded(0x10000, 0x30000, constant, 5)) != fixture_hash(
+    target, padded(0x10000, 0x30000, b"\x01\x02\x04", 5))
+  # An import slot is never cut by the padding bound, so it describes by its import: the raw
+  # entry (a placement-dependent RVA whose high bytes are zero) and the padding after it are free.
+  assert fixture_hash(target, padded(0x10000, 0x30000, (0x1234).to_bytes(8, "little"), 0, slot=True)) == fixture_hash(
+    target, padded(0x50000, 0x91000, (0x5678).to_bytes(8, "little"), 8, slot=True))
+
+  # A small extent that starts inside a larger one (a TLS template offset) does not hide the larger one.
+  image = LinkedImage(bytes(64), [Section(".data.rel.ro", 0x1000, 64, 0, False, False)], True,
+                      extents=[(0x1000, 0x1040, None), (0x1008, 0x1010, None)])
+  assert image.region(0x1020)[:2] == (0x1000, 0x1040)
+
+  power_merged_regressions()
+  riscv_live_high_part_regression()
+
+
+def power_fixture(text: int, unit: int, members: list[bytes], lines: list[str], spill: bool = False):
+  """A POWER function that addresses a global-merge unit; `lines` follow the TOC setup and base pair.
+
+  `members` are laid out in order; the last one is a `Location` whose name lives elsewhere.
+  `{base}` in `lines` is the register holding the unit's start, and `{offset[i]}` is member i's offset.
+  """
+  toc = unit + 0x10000 + (text >> 4)
+  high = (toc - text + 0x8000) >> 16
+  low = toc - text - (high << 16)
+  delta = unit - toc
+  data_high = (delta + 0x8000) >> 16
+  data_low = delta - (data_high << 16)
+  offsets, contents = [], bytearray()
+  for member in members:
+    while member is members[-1] and len(contents) % 8:
+      contents.append(0)
+    offsets.append(len(contents))
+    contents.extend(member)
+  strings = unit + 0x1000
+  rows = [f"addis 2, 12, {high}", f"addi 2, 2, {low}", f"addis 3, 2, {data_high}", f"addi 3, 3, {data_low}"]
+  rows += [line.format(offset=offsets, base=3) for line in lines]
+  rows += ["blr"]
+  body_lines = [f"{text + 4 * index:x}: 60000000\t{row}" for index, row in enumerate(rows)]
+  body = FunctionBody("rscrypto::fixture", Path("fixture.binary.disasm.txt"), text, list(enumerate(body_lines, start=1)))
+  path = b"src/auth/rsa.rs"
+  data = bytes(contents)
+  sections = [Section(".text", text, 0x100, None, True, False), Section(".data.rel.ro", unit, len(data), 0, False, False),
+              Section(".rodata", strings, len(path), len(data), False, False)]
+  image = LinkedImage(data + path, sections, True, extents=[(unit, unit + len(data), MERGED), (strings, strings + len(path), None)],
+                      slots={unit + offsets[-1]: Slot(address=strings)}, toc_base=toc)
+  prepare_linked_image("powerpc64le-unknown-linux-gnu", {body.symbol: body}, image)
+  return body, image
+
+
+def power_merged_regressions() -> None:
+  """A global-merge member binds itself, not its offset or the other constants merged with it."""
+  target = "powerpc64le-unknown-linux-gnu"
+  message = b"index out of range"
+  location = location_bytes(41, 7, b"src/auth/rsa.rs")
+  short, long = [b"ab", message, location], [b"a different, longer neighbor", message, location]
+  changed = [b"ab", b"index out of rangf", location]
+
+  def hashed(fixture):
+    return function_identity(instruction_identities(target, fixture[0], {fixture[0].symbol}, fixture[1]))
+
+  # The panic message and location are formed from the base, which the call no longer sees.
+  formed = ["addi 4, {base}, {offset[1]}", "addi 3, {base}, {offset[2]}", "bl 0x10000 <rscrypto::fixture>"]
+  original = hashed(power_fixture(0x10000, 0x30000, short, formed))
+  # Another member changes size, so the offsets move; the referenced members are the same.
+  assert hashed(power_fixture(0x50000, 0x91000, long, formed)) == original
+  assert hashed(power_fixture(0x10000, 0x30000, changed, formed)) != original
+  identities = "\n".join(instruction_identities(target, *(lambda f: (f[0], {f[0].symbol}, f[1]))(
+    power_fixture(0x10000, 0x30000, short, formed))).values())
+  assert "merged-base" in identities and "<loc>" in identities and "merged:" not in identities
+
+  # An index constant that only selects a member is layout; the member it selects binds.
+  # A constant still live in an argument register at a call may be an argument, so it would stay exact.
+  indexed = ["li 11, {offset[1]}", "lxvd2x 1, {base}, 11", "li 3, 0", "bl 0x10000 <rscrypto::fixture>"]
+  original = hashed(power_fixture(0x10000, 0x30000, short, indexed))
+  assert hashed(power_fixture(0x50000, 0x91000, long, indexed)) == original
+  assert hashed(power_fixture(0x10000, 0x30000, changed, indexed)) != original
+
+  # A spilled and reloaded base is still the same base.
+  spilled = ["std {base}, 40(1)", "li 3, 0", "ld 6, 40(1)", "li 4, {offset[1]}", "lxvd2x 1, 6, 4"]
+  original = hashed(power_fixture(0x10000, 0x30000, short, spilled))
+  assert hashed(power_fixture(0x50000, 0x91000, long, spilled)) == original
+
+  # A raw base that escapes into a call can reach any member, so the whole unit binds.
+  escaping = ["bl 0x10000 <rscrypto::fixture>"]
+  assert hashed(power_fixture(0x10000, 0x30000, short, escaping)) != hashed(
+    power_fixture(0x10000, 0x30000, [b"ac", message, location], escaping))
+
+
+def riscv_live_high_part_regression() -> None:
+  """A high part whose low part resolves is described even when a call may read its register."""
+  target = "riscv64gc-unknown-linux-gnu"
+  table = bytes(range(32))
+
+  def build(text: int, rodata: int):
+    return linked_fixture(text, [
+      f"{text:x}: 00020817\tauipc\ta6, 0x{(rodata - text) >> 12:x}",
+      f"{text + 4:x}: 01080513\taddi\ta0, a6, 0x10",
+      f"{text + 8:x}: 000000ef\tjal\tra, 0x{text:x} <rscrypto::fixture>",
+      f"{text + 0xc:x}: 00008067\tret",
+    ], {rodata: table}, units=[(rodata, rodata + 32, None)])
+
+  assert fixture_hash(target, build(0x10000, 0x30000)) == fixture_hash(target, build(0x50000, 0x91000))
+
+
 def main() -> None:
   relocation = "0000000000000060:  R_RISCV_CALL_PLT\trscrypto::auth::ecdsa::sign_digest_p256_blinded"
   assert is_call_relocation(relocation)
@@ -616,6 +783,7 @@ def main() -> None:
   multiply_regressions()
   select_branch_regressions()
   data_reference_regressions()
+  placement_regressions()
 
 
 if __name__ == "__main__":

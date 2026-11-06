@@ -1177,9 +1177,14 @@ RISCV_MEMORY = re.compile(rf"(?P<imm>{SIGNED_IMMEDIATE})?\((?P<base>\w+)\)")
 RISCV_STORES = {"sb", "sh", "sw", "sd", "fsw", "fsd", "c.sw", "c.sd", "c.fsd", "c.swsp", "c.sdsp"}
 POWER_ADD_IMMEDIATE = re.compile(rf"^(?P<dst>\d+), (?P<src>\d+), (?P<imm>{SIGNED_IMMEDIATE})$")
 POWER_DISPLACEMENT = re.compile(rf"^(?P<reg>\d+), (?P<imm>{SIGNED_IMMEDIATE})\((?P<base>\d+)\)$")
+# D-form and DS-form loads and stores, with the bytes each accesses.
 POWER_DISPLACEMENT_FORMS = {
-  "lbz", "lha", "lhz", "lwa", "lwz", "ld", "lfs", "lfd", "lxsd", "lxssp", "lxv",
-  "stb", "sth", "stw", "std", "stfs", "stfd", "stxsd", "stxssp", "stxv",
+  "lbz": 1, "lha": 2, "lhz": 2, "lwa": 4, "lwz": 4, "ld": 8, "lfs": 4, "lfd": 8, "lxsd": 8, "lxssp": 4, "lxv": 16,
+  "stb": 1, "sth": 2, "stw": 4, "std": 8, "stfs": 4, "stfd": 8, "stxsd": 8, "stxssp": 4, "stxv": 16,
+}
+RISCV_ACCESS_WIDTH = {
+  "lb": 1, "lbu": 1, "lh": 2, "lhu": 2, "lw": 4, "lwu": 4, "ld": 8, "flw": 4, "fld": 8,
+  "c.lw": 4, "c.ld": 8, "c.flw": 4, "c.fld": 8,
 }
 S390X_RELATIVE_LONG = {
   "larl", "lgrl", "lrl", "lgfrl", "llgfrl", "lghrl", "llghrl", "lhrl", "llhrl", "stgrl", "strl", "sthrl",
@@ -1235,11 +1240,36 @@ def code_target_descriptor(image: LinkedImage, body: FunctionBody, target_addres
   return f"{descriptor}#{contents.hex()}" if contents is not None else descriptor
 
 
-def describe_reference(image: LinkedImage, body: FunctionBody, target_address: int) -> str | None:
-  descriptor = image.describe(target_address)
+def describe_reference(image: LinkedImage, body: FunctionBody, target_address: int, width: int = 0) -> str | None:
+  """Describe a resolved reference that reads `width` bytes, or 0 for an address that is only formed."""
+  sink = getattr(image, "reference_sink", None)
+  if sink is not None:
+    sink.add(target_address)
+    return "reference"
+  descriptor = image.describe(target_address, minimum_end=target_address + width if width else 0)
   if descriptor is not None and descriptor.startswith("code:"):
     descriptor = code_target_descriptor(image, body, target_address, descriptor)
   return descriptor
+
+
+def prepare_linked_image(target: str, functions: dict[str, FunctionBody], image: LinkedImage) -> None:
+  """Give the image its function ranges and the member starts of its global-merge units.
+
+  A member starts at every address that some function forms into a global-merge
+  unit, so the image resolves the references of every function once before any
+  descriptor is made.
+  """
+  image.set_functions(function_ranges(functions))
+  if not image.merged_unit_count():
+    return
+  sink: set[int] = set()
+  image.reference_sink = sink
+  try:
+    for body in functions.values():
+      address_reference_identities(target, body, image)
+  finally:
+    image.reference_sink = None
+  image.add_member_starts(sink)
 
 
 def local_branch_targets(body: FunctionBody) -> set[int]:
@@ -1339,17 +1369,28 @@ def page_pair_identities(
   consumer: Any,
   classify: Any,
   page_name: str,
+  defer_merged: bool = False,
 ) -> dict[int, str]:
   """Resolve two-instruction address formation such as `adrp` or `auipc` pairs.
 
   `base(row)` returns the high-part register and address. `consumer(row,
-  register, high)` returns a low-part target and replacement operands.
+  register, high)` returns `(address, render, formed, width)`: the low-part
+  target, replacement operands, the register that now holds the full address
+  (or None for an access), and the bytes an access reads (0 for an address).
   `classify(row, register, consumed)` returns "read", "dead", or None.
 
   Consumers count only in the straight-line code that the high part
-  dominates. The high part itself is normalized only when every path from it
-  overwrites or clobbers the register before any other read, so no
-  unresolved use can depend on its placement-dependent value.
+  dominates. The high part is described by its resolved targets: its value is
+  a placement-dependent public address, so a later read of the register, such
+  as an argument register at a call, cannot depend on anything else.
+
+  A low part that forms the start of a global-merge unit is a base for member
+  references (`addi rX, rBase, imm`, `ld rX, imm(rBase)`). Each such reference
+  is described by the member it designates. When every read of the base is
+  such a reference, the base binds no contents; otherwise the base escapes and
+  binds the whole unit. With `defer_merged`, the caller resolves member
+  references by dataflow instead, and a base's identity holds the placeholder
+  `merged-base@ADDRESS` for that caller to settle.
   """
   identities = {}
   labels = local_branch_targets(body)
@@ -1375,12 +1416,9 @@ def page_pair_identities(
       pending.extend(following)
     return True
 
-  for index, row in enumerate(rows):
-    high = base(row)
-    if high is None:
-      continue
-    register, high_address = high
-    targets = []
+  def resolve(index: int, register: str, address: int, members: bool) -> tuple[list[str], bool]:
+    """Describe the consumers of `register`, which holds `address`, after rows[index]."""
+    targets: list[str] = []
     dead = False
     position = index + 1
     while position < len(rows):
@@ -1388,12 +1426,23 @@ def page_pair_identities(
       if following.offset in labels:
         dead = dead_on_all_paths([position], register)
         break
-      result = consumer(following, register, high_address)
+      result = consumer(following, register, address)
       if result is not None:
-        descriptor = describe_reference(image, body, result[0])
+        target_address, render, formed, width = result
+        unit = image.merged_unit(target_address) if formed is not None and not members else None
+        if unit is not None and unit[0] == target_address and defer_merged:
+          descriptor = f"merged-base@{target_address:x}"
+        elif unit is not None and unit[0] == target_address:
+          derived, consumed = resolve(position, formed, target_address, True)
+          if getattr(image, "reference_sink", None) is not None:
+            descriptor = describe_reference(image, body, target_address)
+          else:
+            descriptor = "merged-base" if derived and consumed else image.describe_unit(target_address)
+        else:
+          descriptor = describe_reference(image, body, target_address, width)
         if descriptor is None:
           break
-        identities[following.number] = reference_identity(following, result[1](descriptor))
+        identities[following.number] = reference_identity(following, render(descriptor))
         targets.append(descriptor)
       state = classify(following, register, result is not None)
       if state is not None:
@@ -1403,9 +1452,31 @@ def page_pair_identities(
         dead = successors[position] is not None and dead_on_all_paths(successors[position], register)
         break
       position += 1
-    if dead and targets:
+    return targets, dead
+
+  for index, row in enumerate(rows):
+    high = base(row)
+    if high is None:
+      continue
+    register, high_address = high
+    targets, _ = resolve(index, register, high_address, False)
+    if targets:
       identities[row.number] = reference_identity(row, f"{register}, <{page_name}:{','.join(targets)}>")
   return identities
+
+
+def aarch64_access_width(row: DecodedLine) -> int:
+  """The bytes a load or store at a resolved address accesses."""
+  data = AARCH64_REGISTER.findall(row.operands.split("[", 1)[0])
+  first = re.match(r"\s*([xwqdshb])\d", row.operands)
+  width = {"x": 8, "w": 4, "q": 16, "d": 8, "s": 4, "h": 2, "b": 1}.get(first.group(1), 16) if first else 16
+  if row.mnemonic in {"ldrb", "ldrsb", "strb"}:
+    width = 1
+  elif row.mnemonic in {"ldrh", "ldrsh", "strh"}:
+    width = 2
+  elif row.mnemonic == "ldrsw":
+    width = 4
+  return width * (2 if row.mnemonic.startswith(("ldp", "stp", "ldnp", "stnp")) and len(data) >= 2 else 1)
 
 
 def aarch64_reference_identities(
@@ -1432,7 +1503,7 @@ def aarch64_reference_identities(
 
   def consumer(row: DecodedLine, register: str, page: int):
     if row.mnemonic == "add" and (match := AARCH64_ADD.match(row.operands)) and match.group("src") == register:
-      return page + int(match.group("imm"), 0), lambda d: f"{match.group('dst')}, {register}, <{d}>"
+      return page + int(match.group("imm"), 0), lambda d: f"{match.group('dst')}, {register}, <{d}>", match.group("dst"), 0
     memory = [match for match in AARCH64_MEMORY.finditer(row.operands) if match.group("base") == register]
     if len(memory) != 1 or memory[0].group("writeback") or row.operands[memory[0].end() :].strip():
       return None
@@ -1442,7 +1513,7 @@ def aarch64_reference_identities(
       return None
     match = memory[0]
     return (page + (int(match.group("imm"), 0) if match.group("imm") else 0),
-            lambda d: f"{row.operands[: match.start()]}[{register}, <{d}>]")
+            lambda d: f"{row.operands[: match.start()]}[{register}, <{d}>]", None, aarch64_access_width(row))
 
   def classify(row: DecodedLine, register: str, consumed: bool) -> str | None:
     value = number(register)
@@ -1494,7 +1565,7 @@ def riscv_reference_identities(
   def consumer(row: DecodedLine, register: str, high: int):
     operands = without_annotation(row.operands)
     if row.mnemonic in {"addi", "c.addi"} and (match := RISCV_ADDI.match(operands)) and match.group("src") == register:
-      return high + int(match.group("imm"), 0), lambda d: f"{match.group('dst')}, {register}, <{d}>"
+      return high + int(match.group("imm"), 0), lambda d: f"{match.group('dst')}, {register}, <{d}>", match.group("dst"), 0
     memory = [match for match in RISCV_MEMORY.finditer(operands) if match.group("base") == register]
     if len(memory) != 1 or operands[memory[0].end() :].strip():
       return None
@@ -1503,7 +1574,7 @@ def riscv_reference_identities(
       return None
     match = memory[0]
     return (high + (int(match.group("imm"), 0) if match.group("imm") else 0),
-            lambda d: f"{data}<{d}>({register})")
+            lambda d: f"{data}<{d}>({register})", None, RISCV_ACCESS_WIDTH.get(row.mnemonic, 8))
 
   def classify(row: DecodedLine, register: str, consumed: bool) -> str | None:
     operands = without_annotation(row.operands)
@@ -1554,18 +1625,24 @@ def power_reference_identities(
 
   def consumer(row: DecodedLine, register: str, high: int):
     if row.mnemonic == "addi" and (match := POWER_ADD_IMMEDIATE.match(row.operands)) and match.group("src") == register:
-      return high + int(match.group("imm"), 0), lambda d: f"{match.group('dst')}, {register}, <{d}>"
+      return high + int(match.group("imm"), 0), lambda d: f"{match.group('dst')}, {register}, <{d}>", match.group("dst"), 0
     if row.mnemonic in POWER_DISPLACEMENT_FORMS and (match := POWER_DISPLACEMENT.match(row.operands)) and match.group("base") == register:
       if row.mnemonic.startswith("st") and match.group("reg") == register:
         return None
-      return high + int(match.group("imm"), 0), lambda d: f"{match.group('reg')}, <{d}>({register})"
+      return (high + int(match.group("imm"), 0), lambda d: f"{match.group('reg')}, <{d}>({register})", None,
+              POWER_DISPLACEMENT_FORMS[row.mnemonic])
     return None
 
   for row in rows:
     if row.number in identities:
       continue
     single = consumer(row, "2", toc)
-    if single is not None and (descriptor := describe_reference(image, body, single[0])) is not None:
+    if single is None:
+      continue
+    unit = image.merged_unit(single[0]) if single[2] is not None else None
+    if unit is not None and unit[0] == single[0]:
+      identities[row.number] = reference_identity(row, single[1](f"merged-base@{single[0]:x}"))
+    elif (descriptor := describe_reference(image, body, single[0], single[3])) is not None:
       identities[row.number] = reference_identity(row, single[1](descriptor))
 
   def base(row: DecodedLine) -> tuple[str, int] | None:
@@ -1596,9 +1673,289 @@ def power_reference_identities(
       return "read" if 3 <= index <= 10 or index >= 14 else "dead"
     return None
 
-  identities.update(page_pair_identities(target, rows, body, image, base=base,
-                                         consumer=consumer, classify=classify, page_name="toc-high"))
+  identities.update(page_pair_identities(target, rows, body, image, base=base, consumer=consumer,
+                                         classify=classify, page_name="toc-high", defer_merged=True))
+  if image.merged_unit_count():
+    identities.update(power_member_identities(target, rows, body, image, identities))
   return identities
+
+
+# X-form loads, `T, RA, RB` with EA = (RA|0) + RB, and the bytes each reads.
+POWER_INDEXED_LOADS = {
+  "lbzx": 1, "lhzx": 2, "lhax": 2, "lwzx": 4, "lwax": 4, "ldx": 8, "lfsx": 4, "lfdx": 8, "lxsdx": 8,
+  "lxsiwzx": 4, "lxsiwax": 4, "lxsspx": 4, "lxvd2x": 16, "lxvw4x": 16, "lxvx": 16, "lxvdsx": 8, "lvx": 16,
+}
+# D-form vector and floating-point loads, `T, D(RA)`.
+POWER_VECTOR_DISPLACEMENT_LOADS = {"lxv": 16, "lxsd": 8, "lxssp": 4, "lfd": 8, "lfs": 4}
+MERGED_BASE = re.compile(r"merged-base@([0-9a-f]+)")
+
+
+# POWER instructions with implicit general-register operands: load and store multiple, string moves, `sc`.
+POWER_IMPLICIT_REGISTERS = {"lmw", "stmw", "lswi", "lswx", "stswi", "stswx", "sc", "scv"}
+
+
+def power_member_identities(
+  target: str, rows: list[DecodedLine], body: FunctionBody, image: LinkedImage, identities: dict[int, str],
+) -> dict[int, str]:
+  """Describe POWER references to global-merge members by forward dataflow.
+
+  Register values are `("T", address)` for a TOC-relative partial address (r2,
+  `addis rX, 2, hi`), `("A", unit, address)` for an address inside a global-merge
+  unit, and `("C", value, rows)` for a constant with the rows that defined it.
+  Every instruction that can produce a unit's start is recognized: a TOC-relative
+  `addi` or `ld` from a slot that targets the start, in any block. That start, a
+  raw base, is a compiler artifact that can reach any member.
+
+  A load or an address formed from an `A` value plus constant offsets designates
+  one member, so it is described by that member; a constant used only as such an
+  offset (`li 7, 20440` before `lxvd2x 1, 23, 7`) is merged-unit layout, so its
+  immediate is dropped. An interior `A` value designates the member described
+  where it was formed. A raw base escapes, and binds its whole unit, when it
+  reaches any use other than a resolved access or a copy. Its spill to a stack
+  slot and the reload keep the value, because a spill slot belongs to this
+  function alone; a store to the frame at an unknown offset drops tracked slots
+  and escapes their bases. An access through an `A` value with an unknown index
+  also escapes its unit.
+  Returns replacement identities, including the settled `merged-base` placeholders.
+  """
+  from condition_slice import power_effects
+
+  toc = image.toc_base
+  successors = row_successors(target, body, rows)
+  value_forms = {"li", "lis", "addi", "addis", "mr", "add", "ld"}
+  number = re.compile(r"(?<![\w.])-?\d+(?![\w.])")
+
+  def gpr(text: str) -> str | None:
+    return None if text == "0" else f"r{text}"
+
+  def numbers_of(row: DecodedLine) -> list[str]:
+    return number.findall(re.sub(r"\s+<.*>$", "", row.operands))
+
+  def row_effect(row: DecodedLine) -> tuple[set[str], set[str], bool]:
+    """(uses, defs, all registers) for one row."""
+    effect = power_effects(row, identities.get(row.number, ""))
+    if not effect.unknown:
+      return set(effect.uses), set(effect.defs), False
+    if row.mnemonic.rstrip(".") in POWER_IMPLICIT_REGISTERS:
+      return set(), set(), True
+    named = {f"r{text}" for text in numbers_of(row)}
+    return named, named, False
+
+  def raw(value: tuple | None) -> bool:
+    return value is not None and value[0] == "A" and value[1] == value[2]
+
+  def located(address: int) -> tuple | None:
+    """The value of an address: a unit start or member, or None for anything else."""
+    unit = image.merged_unit(address)
+    return ("A", unit[0], address) if unit is not None else None
+
+  def store_slot(row: DecodedLine) -> tuple[str, int, int] | None:
+    """(stored register, r1 displacement, width) for a D-form store to the frame."""
+    match = POWER_DISPLACEMENT.match(row.operands)
+    if row.mnemonic in POWER_DISPLACEMENT_FORMS and row.mnemonic.startswith("st") and match and match.group("base") == "1":
+      return f"r{match.group('reg')}", int(match.group("imm"), 0), POWER_DISPLACEMENT_FORMS[row.mnemonic]
+    return None
+
+  def frame_store(row: DecodedLine, numbers: list[str]) -> bool:
+    """Whether a store other than a D-form spill can write the frame through r1."""
+    if "(" in row.operands:
+      match = re.search(r"\((\d+)\)", row.operands)
+      return match is not None and match.group(1) == "1"
+    return "1" in numbers[1:3]
+
+  def produced(index: int, state: dict[str, tuple]) -> tuple[str, tuple] | None:
+    """The tracked value that rows[index] writes, as (register, value)."""
+    row = rows[index]
+    numbers = numbers_of(row)
+    plain = row.mnemonic
+    if plain not in value_forms or not numbers:
+      return None
+    destination = f"r{numbers[0]}"
+    if plain in {"li", "lis"} and len(numbers) == 2:
+      return destination, ("C", int(numbers[1], 0) << (16 if plain == "lis" else 0), frozenset({index}))
+    if plain in {"addi", "addis"} and len(numbers) == 3:
+      source = state.get(gpr(numbers[1]) or "") if numbers[1] != "0" else ("C", 0, frozenset())
+      immediate = int(numbers[2], 0) << (16 if plain == "addis" else 0)
+      if source is None:
+        return None
+      if source[0] == "T":
+        return (destination, ("T", source[1] + immediate)) if plain == "addis" else (
+          (destination, value) if (value := located(source[1] + immediate)) else None)
+      if source[0] == "A":
+        return destination, ("A", source[1], source[2] + immediate)
+      return destination, ("C", source[1] + immediate, source[2] | {index})
+    if plain == "mr" and len(numbers) == 2:
+      value = state.get(f"r{numbers[1]}")
+      return (destination, value) if value is not None else None
+    if plain == "add" and len(numbers) == 3:
+      left, right = state.get(f"r{numbers[1]}"), state.get(f"r{numbers[2]}")
+      if left and right and {left[0], right[0]} == {"A", "C"}:
+        pointer, offset = (left, right) if left[0] == "A" else (right, left)
+        return destination, ("A", pointer[1], pointer[2] + offset[1])
+      if left and right and left[0] == right[0] == "C":
+        return destination, ("C", left[1] + right[1], left[2] | right[2] | {index})
+      return None
+    if plain == "ld" and (match := POWER_DISPLACEMENT.match(row.operands)):
+      source = state.get(f"r{match.group('base')}")
+      if match.group("base") == "1" and (spilled := state.get(f"s{int(match.group('imm'), 0)}")) is not None:
+        return destination, spilled
+      if source is not None and source[0] == "T":
+        slot = image.slots.get(source[1] + int(match.group("imm"), 0))
+        if slot is not None and slot.address is not None and (value := located(slot.address)):
+          return destination, value
+    return None
+
+  def transfer(index: int, state: dict[str, tuple]) -> tuple[dict[str, tuple], set[int]]:
+    row = rows[index]
+    after = dict(state)
+    lost: set[int] = set()
+    uses, defs, everything = row_effect(row)
+    slots = {key: value for key, value in state.items() if key.startswith("s")}
+    if everything:
+      return {"r2": ("T", toc)}, {value[1] for value in state.values() if value[0] == "A"}
+    value = produced(index, state)
+    for register in defs:
+      after.pop(register, None)
+    if "r1" in defs:
+      numbers = numbers_of(row)
+      epilogue = (row.mnemonic == "addi" and numbers[:2] == ["1", "1"]) or (
+        row.mnemonic == "ld" and row.operands.replace(" ", "") == "1,0(1)")
+      for key, slot_value in slots.items():
+        after.pop(key, None)
+        if not epilogue:
+          lost.add(slot_value[1])
+    stored = store_slot(row)
+    if stored is not None:
+      register, displacement, width = stored
+      for key in slots:
+        offset = int(key[1:])
+        if offset < displacement + width and displacement < offset + 8:
+          after.pop(key, None)
+      if width == 8 and raw(state.get(register)):
+        after[f"s{displacement}"] = state[register]
+    elif row.mnemonic.startswith("st") and slots and frame_store(row, numbers_of(row)):
+      for key, slot_value in slots.items():
+        after.pop(key, None)
+        lost.add(slot_value[1])
+    if value is not None:
+      after[value[0]] = value[1]
+    after["r2"] = ("T", toc)
+    return after, lost
+
+  if not rows or toc is None:
+    return {}
+  states: list[dict[str, tuple] | None] = [None] * len(rows)
+  states[0] = {"r2": ("T", toc)}
+  escaped: set[int] = set()
+  pending = [0]
+  while pending:
+    index = pending.pop()
+    after, lost = transfer(index, states[index] or {})
+    escaped |= lost
+    for successor in successors[index] or []:
+      if successor >= len(rows):
+        continue
+      current = states[successor]
+      merged = after if current is None else {
+        key: value for key, value in current.items() if after.get(key) == value}
+      if merged != current:
+        states[successor] = merged
+        pending.append(successor)
+
+  replacements: dict[int, str] = {}
+  index_uses: set[int] = set()
+  other_uses: set[int] = set()
+  for index, row in enumerate(rows):
+    state = states[index]
+    if state is None:
+      continue
+    uses, _defs, everything = row_effect(row)
+    value = produced(index, state)
+    numbers = numbers_of(row)
+    plain = row.mnemonic
+    if value is not None and raw(value[1]):
+      # A copy or a spill reload keeps its exact identity. A TOC-relative formation of the base
+      # describes it by a placeholder, also where it is not a straight-line pair.
+      source = state.get(f"r{numbers[1]}") if plain == "addi" else (
+        state.get(f"r{match.group('base')}") if plain == "ld" and (match := POWER_DISPLACEMENT.match(row.operands)) else None)
+      if source is not None and source[0] == "T" and "merged-base@" not in identities.get(row.number, ""):
+        placeholder = f"merged-base@{value[1][1]:x}"
+        operands = (f"{numbers[0]}, {numbers[1]}, <{placeholder}>" if plain == "addi"
+                    else f"{numbers[0]}, <{placeholder}>({numbers[-1]})")
+        replacements[row.number] = reference_identity(row, operands)
+      continue
+    held = {key: tracked for key, tracked in state.items()
+            if key != "r2" and not key.startswith("s") and (everything or key in uses)}
+    pointers = {register: tracked for register, tracked in held.items() if tracked[0] == "A"}
+    constants = {register: tracked for register, tracked in held.items() if tracked[0] == "C"}
+    resolved: tuple[int, str, set[str], int] | None = None
+    stored = store_slot(row)
+    if not pointers:
+      pass
+    elif everything:
+      escaped.update(tracked[1] for tracked in pointers.values())
+    elif plain in POWER_INDEXED_LOADS and len(numbers) == 3:
+      left, right = gpr(numbers[1]), gpr(numbers[2])
+      pointer = next((register for register in (left, right) if register in pointers), None)
+      other = right if pointer == left else left
+      if pointer is not None and (other is None or other in constants):
+        offset = constants[other][1] if other is not None else 0
+        resolved = (pointers[pointer][2] + offset, f"{row.operands}, <{{}}>",
+                    {other} if other is not None else set(), POWER_INDEXED_LOADS[plain])
+      else:
+        escaped.update(tracked[1] for tracked in pointers.values())
+    elif (plain in POWER_DISPLACEMENT_FORMS and not plain.startswith("st")) or plain in POWER_VECTOR_DISPLACEMENT_LOADS:
+      match = POWER_DISPLACEMENT.match(row.operands)
+      base_register = f"r{match.group('base')}" if match else None
+      if match and base_register in pointers and set(pointers) == {base_register}:
+        width = POWER_DISPLACEMENT_FORMS.get(plain) or POWER_VECTOR_DISPLACEMENT_LOADS[plain]
+        resolved = (pointers[base_register][2] + int(match.group("imm"), 0),
+                    f"{match.group('reg')}, <{{}}>({match.group('base')})", set(), width)
+      else:
+        escaped.update(tracked[1] for tracked in pointers.values())
+    elif stored is not None and set(pointers) == {stored[0]}:
+      # Storing a pointer is not an access through it; a raw base may only be spilled whole.
+      if raw(pointers[stored[0]]) and stored[2] != 8:
+        escaped.add(pointers[stored[0]][1])
+    elif plain == "addi" and len(numbers) == 3 and f"r{numbers[1]}" in pointers:
+      resolved = (pointers[f"r{numbers[1]}"][2] + int(numbers[2], 0), f"{numbers[0]}, {numbers[1]}, <{{}}>", set(), 0)
+    elif plain == "add" and len(numbers) == 3 and len(pointers) == 1 and len(constants) == 1:
+      pointer = next(iter(pointers.values()))
+      resolved = (pointer[2] + next(iter(constants.values()))[1], f"{row.operands}, <{{}}>", set(constants), 0)
+    elif plain == "mr":
+      pass
+    else:
+      # An interior pointer designates the member described where it was formed; a raw base does not.
+      escaped.update(tracked[1] for tracked in pointers.values() if raw(tracked))
+    if resolved is not None:
+      address, render, used_constants, width = resolved
+      descriptor = describe_reference(image, body, address, width)
+      if descriptor is None:
+        escaped.update(tracked[1] for tracked in pointers.values())
+      else:
+        replacements[row.number] = reference_identity(row, render.format(descriptor))
+        for register in used_constants:
+          index_uses.update(constants[register][2])
+        for register, tracked in constants.items():
+          if register not in used_constants:
+            other_uses.update(tracked[2])
+      continue
+    if value is None or value[1][0] != "C":
+      for tracked in constants.values():
+        other_uses.update(tracked[2])
+
+  for index in index_uses - other_uses:
+    row = rows[index]
+    numbers = numbers_of(row)
+    if row.number not in replacements and numbers:
+      replacements[row.number] = reference_identity(row, f"{', '.join(numbers[:-1])}, <member-offset>")
+
+  for line, identity in {**identities, **replacements}.items():
+    if "merged-base@" in identity:
+      replacements[line] = MERGED_BASE.sub(
+        lambda match: (image.describe_unit(int(match.group(1), 16)) or "merged-unresolved")
+        if int(match.group(1), 16) in escaped else "merged-base", identity)
+  return replacements
 
 
 def s390x_reference_identities(rows: list[DecodedLine], body: FunctionBody, image: LinkedImage) -> dict[int, str]:
@@ -2202,7 +2559,7 @@ def main() -> int:
   if image is None:
     print("cannot read the linked binary for placement-independent instruction identities")
     return 2
-  image.set_functions(function_ranges(final_functions))
+  prepare_linked_image(args.target, final_functions, image)
   final_path = final_disassembly_files[0]
 
   call_graph = build_call_graph(functions)

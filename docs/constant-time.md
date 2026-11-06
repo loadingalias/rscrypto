@@ -76,23 +76,34 @@ Each keeps its length, mnemonic, and registers, and replaces the displacement wi
 
 - code: the containing function and offset, plus the 16 target bytes for an interior of another function;
 - writable data: the containing symbol and offset, only when that symbol has a stable name;
-- read-only data: the stable name, if any, the offset, the size, and a digest of the complete allocation unit;
+- a `core::panic::Location`: `loc`, without its file, line, or column;
+- other read-only data: the stable name, if any, the offset, the size, and a digest of the allocation unit;
 - a slot that the loader fills, such as a GOT, TOC, or import-table entry: the imported symbol or the described target.
 
+A location is a pointer to a `.rs` path, that path's length, a line, and a column.
+Only the panic it is passed to reads it, so moving source lines or building in another checkout
+changes no behavior of the reviewed code. The panic call and its condition stay bound.
 Inside read-only data, each pointer that the loader relocates is replaced by the description of its target,
-up to three levels deep, so moved targets with unchanged contents keep the digest.
+up to three levels deep, and each location by `loc`, so moved targets with unchanged contents keep the digest.
 ELF allocation units are linker-map input sections, and Mach-O units are ld64 map atoms.
 Merged string and literal sections bind only the referenced literal.
-On PE, a unit runs from the nearest known object start to the next one;
-x86-64 code generation does not merge globals.
-Mach-O artifacts without an ld64 map, such as the `543fa738` baseline, use the same bound.
-A merged unit, such as an LLVM `_MergedGlobals` block on POWER, binds all of its bytes,
-so a change anywhere in it requires renewed review.
-A high part (`adrp`, `auipc`, or `addis`) is described only when its uses are resolved low parts
-in the straight-line code that it dominates, and every later path overwrites or clobbers the register
-before another read.
+On PE, and in Mach-O artifacts without an ld64 map such as the `543fa738` baseline,
+a unit runs from the nearest known object start to the next one, without its trailing zero bytes,
+which may be alignment padding. The bound never cuts a pointer slot or a location.
+A read-only LLVM global-merge unit (`_MergedGlobals`, on POWER) holds many objects.
+It splits into members at every address that code forms into it and every relocated pointer or location
+in it or pointing into it, and a reference binds the member it designates.
+On POWER, a forward dataflow follows the unit's start, the raw base, through copies, constant offsets,
+constant indices, and spills to the function's own stack slots. Each load or address formed from it binds
+its member. A constant used only as such an index loses its immediate, which is merged-unit layout.
+A raw base that reaches any other use, an access with an unknown index, or an instruction of unknown effect
+can reach any member, so it binds the whole unit. A writable merge unit binds its symbol like other writable data.
+A high part (`adrp`, `auipc`, or `addis`) is described by the targets of its resolved low parts
+in the straight-line code that it dominates. Its own value is a placement-dependent public address,
+so a later read of its register, such as an argument register at a call, cannot depend on anything else.
 Other bytes and operands remain exact, including unresolved targets, anonymous writable data,
-immediates that add an offset to an address that is already formed, and indirect transfers.
+immediates that add an offset to an address that is already formed (except member offsets into a
+global-merge unit, as above), and indirect transfers.
 The one exception is the symbol name that `llvm-objdump` appends to an absolute immediate:
 x86-64 `# imm = 0xfffff <…>`, AArch64 `#0xffff <…>` and `// =0x10000 <…>`, and the operand of a RISC-V `lui`.
 It names whichever symbol's address range contains the value, even when the value is a mask,
@@ -106,8 +117,8 @@ A waiver that matches no finding fails the verdict, but evidence collection and 
 see [the renewal workflow](../scripts/README.md#waiver-renewal).
 The retained Linux and Windows reviews use the workflow checkout path, pinned
 compiler, target flags, and native or GNU cross linker recorded with each artifact.
-A Mac/Zig build or another checkout path can change embedded source locations,
-data placement, and function hashes, and with them the identities of open slices.
+A Mac/Zig build can change code and function hashes, and with them the identities of open slices.
+Panic locations and data placement no longer bind, so a different checkout path alone does not.
 Reclassify those exact artifacts before rebinding a waiver; the review does not grant a portable hash exemption.
 Artifact builds require the configured `rust-src` component and record its
 source root and `std/src/lib.rs` digest. Rustc can translate standard-library
@@ -899,6 +910,50 @@ in the main checkout. These waivers bind open slices, so each also binds its enc
 the checkout path. Fifteen slices are unchanged at their reviewed offsets. The reviewed artifact for the
 `encode_pss_with_mask::<Sha256>` waiver was not retained, so it was reviewed again: the instructions its
 rationale cites are unchanged. All 16 were renewed on 2026-11-05; the cause is CT-TOOLING (a).
+
+### Placement-independent data identity, 2026-11-06
+
+[Constant-Time 42163391026](https://github.com/loadingalias/rscrypto/actions/runs/42163391026) at `ed0c66a7`
+failed on Windows: six `rsa_x86_64_ifma::build_table` waivers were stale, with unchanged slices.
+Their functions differed only in three 24-byte `panic::Location` constants. The file name that each
+location points to was byte-identical; only the alignment padding after it changed, from 3 to 4 zero bytes,
+because a PE unit ran to the next object start. These waivers had been renewed by review twice before for
+the same cause, and the POWER, Apple, and RISC-V renewals of 2026-11-04 and 2026-11-05 had causes of the
+same kind: the merged-unit digest and its offsets, location contents, and an `auipc` page kept exact.
+This record removes that cause, recorded above as CT-TOOLING (a).
+
+The identity now follows the rules [above](#evidence-model): locations describe as `loc`, inferred bounds
+drop trailing padding, read-only global-merge units split into members (with a POWER dataflow for bases,
+indices, and spills), and resolved high parts are described. Two latent defects are also fixed. Thread-local
+template extents (`.tbss`, `.tdata`) and relocation input sections overlap ordinary data addresses and could
+hide the extent that contains an address; they no longer form data extents, and the lookup searches back for
+the containing extent. Writable merge units, such as AArch64 `.bss._MergedGlobals`, bind their symbol.
+
+All 815 waivers were re-encoded on the artifacts they were reviewed against:
+[Constant-Time 42110522557](https://github.com/loadingalias/rscrypto/actions/runs/42110522557) at `836f7a57`,
+its RISC-V run [42112117336](https://github.com/loadingalias/rscrypto/actions/runs/42112117336),
+and the local Apple artifact of `836f7a57`.
+A waiver moved to its new identity only when its exact old identity named the same finding, by function,
+kind, and offset, in that artifact. 145 identities changed: x86-64 Linux 37, IBM Z 22, Windows 20, POWER 19,
+RISC-V 17, Apple 16, and AArch64 Linux 14. Classifications, rationales, and review dates are unchanged.
+The re-encoding binds existing reviews to the same binaries; it is not a review of later source.
+
+With the re-encoded waivers, every waiver matches a finding in each retained artifact set where the old
+identity matched, and in each set where it went stale only through placement:
+
+- POWER at `21824d5f` ([Constant-Time 41973426452](https://github.com/loadingalias/rscrypto/actions/runs/41973426452)):
+  72 of 72, where 19 were stale.
+- Windows at `21824d5f` and at `ed0c66a7`: 252 of 252, where 6 were stale.
+- Apple at `9c887998`: 71 of 71, where 16 were stale.
+- RISC-V at `a0894a0d` ([run 41900798362](https://github.com/loadingalias/rscrypto/actions/runs/41900798362)):
+  the five RSA decrypt waivers that a moved `auipc a6` page staled now match. The 11 that still differ follow
+  real code changes in `9cc887eb`, the `OnceCache` dispatch check.
+- All six CI platforms at `64dc4b97` and `836f7a57`; POWER, Windows, and RISC-V at `c55dad7d`;
+  x86-64 Linux and AArch64 Linux at `ed0c66a7`; and a local Apple build at `ed0c66a7`: every waiver matches.
+
+The gate scanner reports no stale waiver and no unwaived enforced finding on the `ed0c66a7` x86-64 Linux,
+Windows, and AArch64 Linux artifacts, on the `836f7a57` POWER, IBM Z, and RISC-V artifacts, and on the local
+Apple build.
 
 ## Public decisions and exclusions
 

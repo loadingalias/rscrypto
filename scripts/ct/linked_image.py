@@ -13,15 +13,23 @@ This module resolves such a target address against the linked binary itself:
 - pointer slots inside read-only contents resolve recursively, so a moved
   pointer target with unchanged contents keeps the same digest.
 
-A read-only digest covers a whole allocation unit, because code can address
-one object from the start of another object that the compiler merged with it.
-ELF units are linker-map input sections; Mach-O units are ld64 map atoms.
-Without a map, a PE or Mach-O unit runs from the nearest known object start to
-the next one. x86-64 code generation does not merge globals; a Mach-O artifact
-without an ld64 map relies on its symbol table alone.
-Merged string and literal sections bind only the referenced literal. Any
-address the binary cannot explain stays unresolved, and the caller keeps the
-exact, placement-dependent instruction bytes.
+A read-only digest covers one allocation unit. ELF units are linker-map input
+sections; Mach-O units are ld64 map atoms. Without a map, a PE or Mach-O unit
+runs from the nearest known object start to the next one, and its trailing zero
+bytes are not part of it: alignment padding before the next object depends on
+where the linker placed both. Merged string and literal sections bind only the
+referenced literal. An LLVM global-merge unit (`_MergedGlobals`) is split into
+members at every address the binary forms into it or stores a pointer to
+(`add_member_starts`), so a reference binds the member it designates instead of
+every other constant the compiler merged with it.
+
+A `core::panic::Location` (a pointer to a `.rs` path, the path's length, a line,
+and a column) describes as `loc`, also inside other contents. A location is
+read only by the panic it is passed to, so its file, checkout path, and line
+record placement in the source tree, not behavior of the code under review.
+
+Any address the binary cannot explain stays unresolved, and the caller keeps
+the exact, placement-dependent instruction bytes.
 """
 
 from __future__ import annotations
@@ -37,6 +45,14 @@ POINTER_SIZE = 8
 # Pointer chains in read-only data are followed this far before the digest
 # falls back to the raw, placement-dependent target address.
 MAX_DESCRIPTOR_DEPTH = 3
+# Extent element marker for an LLVM global-merge unit, which holds many objects.
+MERGED = -1
+# `core::panic::Location<'static>` on a 64-bit target: `&str` (pointer, length), line, column.
+LOCATION_SIZE = 3 * POINTER_SIZE
+# Longest source path accepted as a `Location` file name.
+MAX_LOCATION_PATH = 4096
+# Extents checked before an address that no later-starting extent contains.
+EXTENT_SEARCH = 16
 
 ELF_RELATIVE = {62: {8, 37}, 183: {1027, 1032}, 243: {3, 58}, 21: {22, 248}, 22: {12, 61}}
 ELF_SYMBOLIC = {62: {1, 6, 7}, 183: {257, 1025, 1026}, 243: {2, 5}, 21: {20, 21, 38}, 22: {10, 11, 22}}
@@ -87,7 +103,7 @@ class LinkedImage:
   starts: dict[int, str | None] = field(default_factory=dict)
   # Allocation units from a linker map: (start, end, element size). The
   # element size is 0 for merged NUL-terminated strings, N for merged N-byte
-  # constants, and None for one allocation.
+  # constants, MERGED for an LLVM global-merge unit, and None for one allocation.
   extents: list[tuple[int, int, int | None]] = field(default_factory=list)
   slots: dict[int, Slot] = field(default_factory=dict)
   # Function code ranges from the linked disassembly: (start, end, name).
@@ -95,6 +111,8 @@ class LinkedImage:
   toc_base: int | None = None
   # Without map units, bound an object by the surrounding known starts.
   bounded_by_starts: bool = False
+  # While set, the scanner records resolved reference addresses here instead of describing them.
+  reference_sink: set[int] | None = None
 
   def __post_init__(self) -> None:
     self.sections.sort(key=lambda section: section.address)
@@ -105,6 +123,20 @@ class LinkedImage:
     self._slot_addresses = sorted(self.slots)
     self.set_functions(self.functions)
     self._digests: dict[tuple[int, int, int], str] = {}
+    self._locations: dict[int, bool] = {}
+    self._merged = [(start, end) for start, end, element in self.extents if element == MERGED]
+    self._merged_starts = [start for start, _ in self._merged]
+    members: set[int] = set()
+    for start, end in self._merged:
+      members.add(start)
+      first = bisect.bisect_left(self._slot_addresses, start)
+      for slot_address in self._slot_addresses[first : bisect.bisect_left(self._slot_addresses, end)]:
+        if self.location_at(slot_address):
+          members.update((slot_address, slot_address + LOCATION_SIZE))
+    for slot in self.slots.values():
+      if slot.address is not None and self.merged_unit(slot.address) is not None:
+        members.add(slot.address)
+    self._member_starts = sorted(members)
 
   def set_functions(self, functions: list[tuple[int, int, str]]) -> None:
     self.functions = sorted(functions)
@@ -133,25 +165,69 @@ class LinkedImage:
     start = section.offset + address - section.address
     return self.data[start : start + size] if start + size <= len(self.data) else None
 
-  def region(self, address: int) -> tuple[int, int, str | None] | None:
-    """Return the allocation unit, or the merged literal, that contains `address`."""
+  def merged_unit_count(self) -> int:
+    return len(self._merged)
+
+  def merged_unit(self, address: int) -> tuple[int, int] | None:
+    """Return the LLVM global-merge unit that contains `address`."""
+    index = bisect.bisect_right(self._merged_starts, address) - 1
+    if index >= 0 and self._merged[index][0] <= address < self._merged[index][1]:
+      return self._merged[index]
+    return None
+
+  def add_member_starts(self, addresses: set[int]) -> None:
+    """Split global-merge units at addresses that code forms into them."""
+    members = {address for address in addresses if self.merged_unit(address) is not None}
+    if not members <= set(self._member_starts):
+      self._member_starts = sorted(set(self._member_starts) | members)
+      self._digests.clear()
+
+  def without_padding(self, start: int, end: int, address: int, minimum_end: int) -> int:
+    """End an inferred bound before trailing zero bytes, which may be padding.
+
+    The bound never cuts a pointer slot or a `Location`, whose high bytes are often zero.
+    """
+    contents = self.read(start, end - start)
+    if contents is None:
+      return max(end, address + 1, minimum_end)
+    trimmed = start + len(contents.rstrip(b"\0"))
+    first = bisect.bisect_left(self._slot_addresses, start)
+    for slot_address in self._slot_addresses[first : bisect.bisect_left(self._slot_addresses, end)]:
+      size = LOCATION_SIZE if self.location_at(slot_address) else POINTER_SIZE
+      if slot_address + POINTER_SIZE <= end:
+        trimmed = max(trimmed, min(slot_address + size, end))
+    return max(trimmed, address + 1, minimum_end)
+
+  def region(self, address: int, minimum_end: int = 0) -> tuple[int, int, str | None] | None:
+    """Return the allocation unit, merged member, or merged literal that contains `address`.
+
+    `minimum_end` keeps an inferred bound over every byte that the referencing access reads.
+    """
     section = self.section_at(address)
     if section is None:
       return None
     unit: tuple[int, int, int | None] | None = None
     index = bisect.bisect_right(self._extent_starts, address) - 1
-    if index >= 0:
-      start, end, element = self.extents[index]
+    # A small extent can start inside a larger one, so search back for the extent that contains `address`.
+    for candidate in range(index, max(index - EXTENT_SEARCH, -1), -1):
+      start, end, element = self.extents[candidate]
       if start <= address < end and section.address <= start and end <= section.end:
         unit = (start, end, element)
+        break
     if unit is None and self.bounded_by_starts:
       index = bisect.bisect_right(self._object_starts, address) - 1
       start = max(self._object_starts[index] if index >= 0 else section.address, section.address)
       following = self._object_starts[index + 1] if index + 1 < len(self._object_starts) else section.end
-      unit = (start, min(following, section.end), None)
+      end = self.without_padding(start, min(following, section.end), address, minimum_end)
+      return (start, min(end, section.end), self.starts.get(start))
     if unit is None:
       return None
     start, end, element = unit
+    if element == MERGED:
+      index = bisect.bisect_right(self._member_starts, address) - 1
+      member = max(self._member_starts[index], start) if index >= 0 else start
+      following = self._member_starts[index + 1] if index + 1 < len(self._member_starts) else end
+      return (member, min(self.without_padding(member, min(following, end), address, minimum_end), end), None)
     element = section.element if element is None else element
     if element is not None:
       return self.element_region(address, start, end, element)
@@ -168,7 +244,38 @@ class LinkedImage:
     first = start + (address - start) // element * element
     return (first, min(first + element, end), None)
 
-  def describe(self, address: int, depth: int = 0) -> str | None:
+  def location_at(self, address: int) -> bool:
+    """Whether `address` starts a `core::panic::Location` in read-only data.
+
+    A location is a pointer to its file name, the name's length, a line, and a
+    column. The pointer must be one the loader relocates (when the image has
+    relocations), and it must address exactly that many bytes of read-only
+    UTF-8 text ending in `.rs`.
+    """
+    if address in self._locations:
+      return self._locations[address]
+    found = False
+    section = self.section_at(address)
+    raw = self.read(address, LOCATION_SIZE) if section is not None and not section.writable else None
+    if raw is not None:
+      pointer, length, line, column = struct.unpack(("<" if self.little_endian else ">") + "QQII", raw)
+      slot = self.slots.get(address)
+      if self.slots:
+        pointer = slot.address if slot is not None and slot.address is not None else None
+      target = self.section_at(pointer) if pointer is not None else None
+      if (target is not None and not target.executable and not target.writable and line >= 1 and column >= 1
+          and 0 < length <= MAX_LOCATION_PATH):
+        name = self.read(pointer, length)
+        if name is not None and name.endswith(b".rs") and b"\0" not in name:
+          try:
+            name.decode("utf-8")
+            found = True
+          except UnicodeDecodeError:
+            pass
+    self._locations[address] = found
+    return found
+
+  def describe(self, address: int, depth: int = 0, minimum_end: int = 0) -> str | None:
     """Return a placement-independent descriptor, or None when unexplained."""
     if function := self.function_at(address):
       return f"code:{function[2]}+0x{address - function[0]:x}"
@@ -178,7 +285,9 @@ class LinkedImage:
     if section.slot_table:
       slot = self.slots.get(address)
       return f"slot:{self.describe_slot(slot, depth)}" if slot is not None else None
-    region = self.region(address)
+    if not section.writable and self.location_at(address):
+      return "loc"
+    region = self.region(address, minimum_end)
     if region is None:
       return None
     start, end, name = region
@@ -187,6 +296,13 @@ class LinkedImage:
       return f"data:{name}+0x{offset:x}" if name else None
     digest = self.digest(start, end, depth)
     return f"const:{name or '-'}+0x{offset:x}/{end - start}:{digest}"
+
+  def describe_unit(self, address: int) -> str | None:
+    """Describe the whole global-merge unit that starts at `address`, for a base that escapes."""
+    unit = self.merged_unit(address)
+    if unit is None or unit[0] != address:
+      return None
+    return f"merged:{unit[1] - unit[0]}:{self.digest(unit[0], unit[1], 0)}"
 
   def describe_slot(self, slot: Slot, depth: int) -> str:
     if slot.symbol is not None:
@@ -214,6 +330,10 @@ class LinkedImage:
           # A slot straddling the extent edge keeps its raw bytes.
           continue
         parts.append(contents[position - start : slot_address - start].hex())
+        if slot_address + LOCATION_SIZE <= end and self.location_at(slot_address):
+          parts.append("<loc>")
+          position = slot_address + LOCATION_SIZE
+          continue
         parts.append(f"<{self.describe_slot(self.slots[slot_address], depth)}>")
         position = slot_address + POINTER_SIZE
       parts.append(contents[position - start :].hex())
@@ -247,7 +367,9 @@ def stable_name(names: list[str]) -> str | None:
 
 
 def merged_element(input_section: str) -> int | None:
-  """Return the literal size of an ELF merge section, 0 for strings."""
+  """Return the literal size of an ELF merge section, 0 for strings, or MERGED for a global-merge unit."""
+  if "_MergedGlobals" in input_section:
+    return MERGED
   if re.fullmatch(r"\.rodata\.str\d+\.\d+", input_section):
     return 0
   if match := re.fullmatch(r"\.rodata\.cst(\d+)", input_section):
@@ -374,11 +496,17 @@ def load_elf(data: bytes, artifact_dir: Path, binary: Path) -> LinkedImage:
       name = stable_name(demangled.get(value, [])) if not is_anonymous(raw) else None
       starts[value] = starts.get(value) or name
   for start, size, input_section in link_map_extents(artifact_dir / f"{binary.name}.link-map.txt"):
+    # Thread-local templates use offsets that overlap ordinary data, and relocation input sections
+    # take the names of the sections they relocate; neither is an object that code addresses.
+    if input_section.startswith((".tbss", ".tdata", ".rela", ".rel.")):
+      continue
     section = next((row for row in sections if row.address <= start < row.end), None)
     if section is None or section.executable:
       continue
     starts.setdefault(start, None)
-    extents.append((start, start + size, merged_element(input_section)))
+    element = merged_element(input_section)
+    # Writable data binds its symbol, not its contents, so only read-only merge units split into members.
+    extents.append((start, start + size, None if element == MERGED and section.writable else element))
 
   slots: dict[int, Slot] = {}
   for header in headers:
