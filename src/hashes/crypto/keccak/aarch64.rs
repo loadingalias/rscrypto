@@ -23,13 +23,12 @@ use core::arch::aarch64::*;
 #[cfg(all(target_arch = "aarch64", target_os = "linux", not(miri), feature = "ml-kem"))]
 core::arch::global_asm!(include_str!("aarch64_sve2_sha3.S"), options(raw));
 
-// Shared NEON round macro (used by both 1-state and 2-state kernels)
+// Shared NEON round macro (2-state and hybrid kernels)
 
 /// One round of Keccak-f[1600] using full-width SHA3 CE on uint64x2_t.
 ///
-/// All instructions (EOR3, RAX1, XAR, BCAX, EOR) are lane-wise on uint64x2_t.
-/// For the 1-state kernel, only lane 0 carries meaningful data (lane 1 is
-/// don't-care). For the 2-state kernel, lane 0 = state A, lane 1 = state B.
+/// All instructions (EOR3, RAX1, XAR, BCAX, EOR) are lane-wise on uint64x2_t:
+/// lane 0 = state A, lane 1 = state B.
 #[cfg(target_arch = "aarch64")]
 macro_rules! keccakf_sha3_neon_round {
   ($a0:ident, $a1:ident, $a2:ident, $a3:ident, $a4:ident,
@@ -237,331 +236,176 @@ macro_rules! keccakf_scalar_round {
   }};
 }
 
-// 1-state full NEON kernel
-
-/// Single-state Keccak-f[1600] using full-width SHA3 CE NEON instructions.
+/// One Keccak-f[1600] round on lanes `v0..=v24` with SHA3 instructions.
 ///
-/// Lane 0 carries the real state; lane 1 is zero padding. The array-backed
-/// representation keeps register pressure lower than a 25-local vector form on
-/// Apple Silicon.
+/// Register contract: lane `i` of the state is in `v{i}` before and after the
+/// round. `{rc}` points at the round constant and advances by 8 bytes.
+/// `v25..=v31` are scratch. θ puts the column parities in `v25..=v29`
+/// (`a0` enters `c0` last, because the previous round's ι made it the latest
+/// lane), then `d0..=d4` in `v30, v31, v26, v27, v29`. ρ and π walk the single
+/// 24-lane π cycle in place: each XAR writes the register that the previous
+/// XAR read, and `b10` waits in `v25`. χ computes each row's first two lanes
+/// into `v26`/`v27`, which then replace the row's registers; ι joins that
+/// replacement for lane 0.
+#[cfg(target_arch = "aarch64")]
+macro_rules! keccakf_sha3_asm_round {
+  () => {
+    concat!(
+      "eor3 v25.16b, v5.16b, v10.16b, v15.16b\n",
+      "eor3 v26.16b, v1.16b, v6.16b, v11.16b\n",
+      "eor3 v27.16b, v2.16b, v7.16b, v12.16b\n",
+      "eor3 v28.16b, v3.16b, v8.16b, v13.16b\n",
+      "eor3 v29.16b, v4.16b, v9.16b, v14.16b\n",
+      "eor3 v25.16b, v25.16b, v20.16b, v0.16b\n",
+      "eor3 v26.16b, v26.16b, v16.16b, v21.16b\n",
+      "eor3 v27.16b, v27.16b, v17.16b, v22.16b\n",
+      "eor3 v28.16b, v28.16b, v18.16b, v23.16b\n",
+      "eor3 v29.16b, v29.16b, v19.16b, v24.16b\n",
+      "rax1 v30.2d, v29.2d, v26.2d\n",
+      "rax1 v31.2d, v25.2d, v27.2d\n",
+      "rax1 v26.2d, v26.2d, v28.2d\n",
+      "rax1 v27.2d, v27.2d, v29.2d\n",
+      "rax1 v29.2d, v28.2d, v25.2d\n",
+      "ld1r {{v28.2d}}, [{rc}], #8\n",
+      "eor v0.16b, v0.16b, v30.16b\n",
+      "xar v25.2d, v1.2d, v31.2d, #63\n",
+      "xar v1.2d, v6.2d, v31.2d, #20\n",
+      "xar v6.2d, v9.2d, v29.2d, #44\n",
+      "xar v9.2d, v22.2d, v26.2d, #3\n",
+      "xar v22.2d, v14.2d, v29.2d, #25\n",
+      "xar v14.2d, v20.2d, v30.2d, #46\n",
+      "xar v20.2d, v2.2d, v26.2d, #2\n",
+      "xar v2.2d, v12.2d, v26.2d, #21\n",
+      "xar v12.2d, v13.2d, v27.2d, #39\n",
+      "xar v13.2d, v19.2d, v29.2d, #56\n",
+      "xar v19.2d, v23.2d, v27.2d, #8\n",
+      "xar v23.2d, v15.2d, v30.2d, #23\n",
+      "xar v15.2d, v4.2d, v29.2d, #37\n",
+      "xar v4.2d, v24.2d, v29.2d, #50\n",
+      "xar v24.2d, v21.2d, v31.2d, #62\n",
+      "xar v21.2d, v8.2d, v27.2d, #9\n",
+      "xar v8.2d, v16.2d, v31.2d, #19\n",
+      "xar v16.2d, v5.2d, v30.2d, #28\n",
+      "xar v5.2d, v3.2d, v27.2d, #36\n",
+      "xar v3.2d, v18.2d, v27.2d, #43\n",
+      "xar v18.2d, v17.2d, v26.2d, #49\n",
+      "xar v17.2d, v11.2d, v31.2d, #54\n",
+      "xar v11.2d, v7.2d, v26.2d, #58\n",
+      "xar v7.2d, v10.2d, v30.2d, #61\n",
+      "bcax v26.16b, v0.16b, v2.16b, v1.16b\n",
+      "bcax v27.16b, v1.16b, v3.16b, v2.16b\n",
+      "bcax v2.16b, v2.16b, v4.16b, v3.16b\n",
+      "bcax v3.16b, v3.16b, v0.16b, v4.16b\n",
+      "bcax v4.16b, v4.16b, v1.16b, v0.16b\n",
+      "eor v0.16b, v26.16b, v28.16b\n",
+      "mov v1.16b, v27.16b\n",
+      "bcax v26.16b, v5.16b, v7.16b, v6.16b\n",
+      "bcax v27.16b, v6.16b, v8.16b, v7.16b\n",
+      "bcax v7.16b, v7.16b, v9.16b, v8.16b\n",
+      "bcax v8.16b, v8.16b, v5.16b, v9.16b\n",
+      "bcax v9.16b, v9.16b, v6.16b, v5.16b\n",
+      "mov v5.16b, v26.16b\n",
+      "mov v6.16b, v27.16b\n",
+      "bcax v10.16b, v25.16b, v12.16b, v11.16b\n",
+      "bcax v26.16b, v11.16b, v13.16b, v12.16b\n",
+      "bcax v12.16b, v12.16b, v14.16b, v13.16b\n",
+      "bcax v13.16b, v13.16b, v25.16b, v14.16b\n",
+      "bcax v14.16b, v14.16b, v11.16b, v25.16b\n",
+      "mov v11.16b, v26.16b\n",
+      "bcax v26.16b, v15.16b, v17.16b, v16.16b\n",
+      "bcax v27.16b, v16.16b, v18.16b, v17.16b\n",
+      "bcax v17.16b, v17.16b, v19.16b, v18.16b\n",
+      "bcax v18.16b, v18.16b, v15.16b, v19.16b\n",
+      "bcax v19.16b, v19.16b, v16.16b, v15.16b\n",
+      "mov v15.16b, v26.16b\n",
+      "mov v16.16b, v27.16b\n",
+      "bcax v26.16b, v20.16b, v22.16b, v21.16b\n",
+      "bcax v27.16b, v21.16b, v23.16b, v22.16b\n",
+      "bcax v22.16b, v22.16b, v24.16b, v23.16b\n",
+      "bcax v23.16b, v23.16b, v20.16b, v24.16b\n",
+      "bcax v24.16b, v24.16b, v21.16b, v20.16b\n",
+      "mov v20.16b, v26.16b\n",
+      "mov v21.16b, v27.16b\n",
+    )
+  };
+}
+
+// 1-state kernel
+
+/// Single-state Keccak-f[1600] with SHA3 instructions and a fixed register
+/// allocation: lane `i` stays in `v{i}` for all 24 rounds.
+///
+/// Inline assembly fixes the allocation. Compiled from intrinsics, this
+/// round needs 33 vector registers at its peak, and LLVM spilled a lane on
+/// the θ critical path in a different place in each inlined copy.
 ///
 /// # Safety
 ///
-/// Caller must ensure `sha3` target feature is available.
+/// Caller must ensure the `sha3` target feature is available.
 #[cfg(target_arch = "aarch64")]
 #[target_feature(enable = "sha3")]
 unsafe fn keccakf_sha3_single_impl(state: &mut [u64; 25]) {
-  let z = vcreate_u64(0);
-  let mut a0 = vcombine_u64(vcreate_u64(state[0]), z);
-  let mut a1 = vcombine_u64(vcreate_u64(state[1]), z);
-  let mut a2 = vcombine_u64(vcreate_u64(state[2]), z);
-  let mut a3 = vcombine_u64(vcreate_u64(state[3]), z);
-  let mut a4 = vcombine_u64(vcreate_u64(state[4]), z);
-  let mut a5 = vcombine_u64(vcreate_u64(state[5]), z);
-  let mut a6 = vcombine_u64(vcreate_u64(state[6]), z);
-  let mut a7 = vcombine_u64(vcreate_u64(state[7]), z);
-  let mut a8 = vcombine_u64(vcreate_u64(state[8]), z);
-  let mut a9 = vcombine_u64(vcreate_u64(state[9]), z);
-  let mut a10 = vcombine_u64(vcreate_u64(state[10]), z);
-  let mut a11 = vcombine_u64(vcreate_u64(state[11]), z);
-  let mut a12 = vcombine_u64(vcreate_u64(state[12]), z);
-  let mut a13 = vcombine_u64(vcreate_u64(state[13]), z);
-  let mut a14 = vcombine_u64(vcreate_u64(state[14]), z);
-  let mut a15 = vcombine_u64(vcreate_u64(state[15]), z);
-  let mut a16 = vcombine_u64(vcreate_u64(state[16]), z);
-  let mut a17 = vcombine_u64(vcreate_u64(state[17]), z);
-  let mut a18 = vcombine_u64(vcreate_u64(state[18]), z);
-  let mut a19 = vcombine_u64(vcreate_u64(state[19]), z);
-  let mut a20 = vcombine_u64(vcreate_u64(state[20]), z);
-  let mut a21 = vcombine_u64(vcreate_u64(state[21]), z);
-  let mut a22 = vcombine_u64(vcreate_u64(state[22]), z);
-  let mut a23 = vcombine_u64(vcreate_u64(state[23]), z);
-  let mut a24 = vcombine_u64(vcreate_u64(state[24]), z);
-
-  for &rc in &super::RC {
-    keccakf_sha3_neon_round!(
-      a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17, a18, a19, a20, a21, a22, a23,
-      a24, rc
+  // SAFETY: Single-state SHA3 permutation because:
+  // 1. The caller guarantees the SHA3 instructions.
+  // 2. `{s}` addresses the 200 bytes of `state`; the loads and stores use offsets 0..=192 with 8-byte lanes.
+  // 3. `{rc}` starts at `RC` and advances 8 bytes per round for `{n}` = 24 rounds, so it reads each of the 24
+  //    constants once.
+  // 4. Every vector register is declared clobbered, so the compiler preserves `d8..=d15` per AAPCS64.
+  // 5. The block does not touch the stack, and `subs` clobbers only the flags, which `asm!` assumes by default.
+  unsafe {
+    core::arch::asm!(
+      "ldp d0, d1, [{s}]",
+      "ldp d2, d3, [{s}, #16]",
+      "ldp d4, d5, [{s}, #32]",
+      "ldp d6, d7, [{s}, #48]",
+      "ldp d8, d9, [{s}, #64]",
+      "ldp d10, d11, [{s}, #80]",
+      "ldp d12, d13, [{s}, #96]",
+      "ldp d14, d15, [{s}, #112]",
+      "ldp d16, d17, [{s}, #128]",
+      "ldp d18, d19, [{s}, #144]",
+      "ldp d20, d21, [{s}, #160]",
+      "ldp d22, d23, [{s}, #176]",
+      "ldr d24, [{s}, #192]",
+      "2:",
+      keccakf_sha3_asm_round!(),
+      "subs {n}, {n}, #1",
+      "b.ne 2b",
+      "stp d0, d1, [{s}]",
+      "stp d2, d3, [{s}, #16]",
+      "stp d4, d5, [{s}, #32]",
+      "stp d6, d7, [{s}, #48]",
+      "stp d8, d9, [{s}, #64]",
+      "stp d10, d11, [{s}, #80]",
+      "stp d12, d13, [{s}, #96]",
+      "stp d14, d15, [{s}, #112]",
+      "stp d16, d17, [{s}, #128]",
+      "stp d18, d19, [{s}, #144]",
+      "stp d20, d21, [{s}, #160]",
+      "stp d22, d23, [{s}, #176]",
+      "str d24, [{s}, #192]",
+      s = in(reg) state.as_mut_ptr(),
+      rc = inout(reg) super::RC.as_ptr() => _,
+      n = inout(reg) super::KECCAKF_ROUNDS => _,
+      out("v0") _, out("v1") _, out("v2") _, out("v3") _, out("v4") _, out("v5") _, out("v6") _, out("v7") _,
+      out("v8") _, out("v9") _, out("v10") _, out("v11") _, out("v12") _, out("v13") _, out("v14") _, out("v15") _,
+      out("v16") _, out("v17") _, out("v18") _, out("v19") _, out("v20") _, out("v21") _, out("v22") _, out("v23") _,
+      out("v24") _, out("v25") _, out("v26") _, out("v27") _, out("v28") _, out("v29") _, out("v30") _, out("v31") _,
+      options(nostack),
     );
   }
-
-  state[0] = vgetq_lane_u64(a0, 0);
-  state[1] = vgetq_lane_u64(a1, 0);
-  state[2] = vgetq_lane_u64(a2, 0);
-  state[3] = vgetq_lane_u64(a3, 0);
-  state[4] = vgetq_lane_u64(a4, 0);
-  state[5] = vgetq_lane_u64(a5, 0);
-  state[6] = vgetq_lane_u64(a6, 0);
-  state[7] = vgetq_lane_u64(a7, 0);
-  state[8] = vgetq_lane_u64(a8, 0);
-  state[9] = vgetq_lane_u64(a9, 0);
-  state[10] = vgetq_lane_u64(a10, 0);
-  state[11] = vgetq_lane_u64(a11, 0);
-  state[12] = vgetq_lane_u64(a12, 0);
-  state[13] = vgetq_lane_u64(a13, 0);
-  state[14] = vgetq_lane_u64(a14, 0);
-  state[15] = vgetq_lane_u64(a15, 0);
-  state[16] = vgetq_lane_u64(a16, 0);
-  state[17] = vgetq_lane_u64(a17, 0);
-  state[18] = vgetq_lane_u64(a18, 0);
-  state[19] = vgetq_lane_u64(a19, 0);
-  state[20] = vgetq_lane_u64(a20, 0);
-  state[21] = vgetq_lane_u64(a21, 0);
-  state[22] = vgetq_lane_u64(a22, 0);
-  state[23] = vgetq_lane_u64(a23, 0);
-  state[24] = vgetq_lane_u64(a24, 0);
 }
 
 /// Permute a single Keccak-f[1600] state using SHA3 Crypto Extensions.
 ///
 /// Requires `aarch64::SHA3` capability (verified by dispatch before calling).
 /// Used for Apple single-state dispatch; non-Apple aarch64 keeps the scalar
-/// fused-absorb path for single-state workloads.
+/// lazy-rotation path for single-state workloads.
 #[cfg(target_arch = "aarch64")]
 #[inline]
 pub(crate) fn keccakf_aarch64_sha3_single(state: &mut [u64; 25]) {
   // SAFETY: Dispatch verifies aarch64::SHA3 capability before calling.
   unsafe { keccakf_sha3_single_impl(state) }
-}
-
-/// Absorb one complete rate block and permute using SHA3 Crypto Extensions.
-///
-/// This fuses `state[i] ^= block_lane[i]` into the initial lane load, avoiding
-/// a separate state read/write pass before the permutation.
-///
-/// Requires `aarch64::SHA3` capability (verified by dispatch before calling).
-///
-/// # Safety
-///
-/// The caller must ensure the current CPU supports the AArch64 SHA3 extension.
-#[cfg(target_arch = "aarch64")]
-#[target_feature(enable = "sha3")]
-unsafe fn keccakf_sha3_absorb_single_impl<const RATE: usize>(state: &mut [u64; 25], block: &[u8; RATE]) {
-  debug_assert_eq!(RATE % 8, 0);
-  let lanes = RATE / 8;
-  let ptr = block.as_ptr();
-
-  macro_rules! lane {
-    ($i:expr) => {{
-      if $i < lanes {
-        // SAFETY: `$i < lanes == RATE / 8`, so this read is within `block`;
-        // `read_unaligned` supports the 1-byte alignment of `[u8; RATE]`.
-        state[$i] ^ u64::from_le(unsafe { core::ptr::read_unaligned(ptr.add($i * 8).cast::<u64>()) })
-      } else {
-        state[$i]
-      }
-    }};
-  }
-
-  let z = vcreate_u64(0);
-  let mut a0 = vcombine_u64(vcreate_u64(lane!(0)), z);
-  let mut a1 = vcombine_u64(vcreate_u64(lane!(1)), z);
-  let mut a2 = vcombine_u64(vcreate_u64(lane!(2)), z);
-  let mut a3 = vcombine_u64(vcreate_u64(lane!(3)), z);
-  let mut a4 = vcombine_u64(vcreate_u64(lane!(4)), z);
-  let mut a5 = vcombine_u64(vcreate_u64(lane!(5)), z);
-  let mut a6 = vcombine_u64(vcreate_u64(lane!(6)), z);
-  let mut a7 = vcombine_u64(vcreate_u64(lane!(7)), z);
-  let mut a8 = vcombine_u64(vcreate_u64(lane!(8)), z);
-  let mut a9 = vcombine_u64(vcreate_u64(lane!(9)), z);
-  let mut a10 = vcombine_u64(vcreate_u64(lane!(10)), z);
-  let mut a11 = vcombine_u64(vcreate_u64(lane!(11)), z);
-  let mut a12 = vcombine_u64(vcreate_u64(lane!(12)), z);
-  let mut a13 = vcombine_u64(vcreate_u64(lane!(13)), z);
-  let mut a14 = vcombine_u64(vcreate_u64(lane!(14)), z);
-  let mut a15 = vcombine_u64(vcreate_u64(lane!(15)), z);
-  let mut a16 = vcombine_u64(vcreate_u64(lane!(16)), z);
-  let mut a17 = vcombine_u64(vcreate_u64(lane!(17)), z);
-  let mut a18 = vcombine_u64(vcreate_u64(lane!(18)), z);
-  let mut a19 = vcombine_u64(vcreate_u64(lane!(19)), z);
-  let mut a20 = vcombine_u64(vcreate_u64(lane!(20)), z);
-  let mut a21 = vcombine_u64(vcreate_u64(lane!(21)), z);
-  let mut a22 = vcombine_u64(vcreate_u64(lane!(22)), z);
-  let mut a23 = vcombine_u64(vcreate_u64(lane!(23)), z);
-  let mut a24 = vcombine_u64(vcreate_u64(lane!(24)), z);
-
-  for &rc in &super::RC {
-    keccakf_sha3_neon_round!(
-      a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17, a18, a19, a20, a21, a22, a23,
-      a24, rc
-    );
-  }
-
-  state[0] = vgetq_lane_u64(a0, 0);
-  state[1] = vgetq_lane_u64(a1, 0);
-  state[2] = vgetq_lane_u64(a2, 0);
-  state[3] = vgetq_lane_u64(a3, 0);
-  state[4] = vgetq_lane_u64(a4, 0);
-  state[5] = vgetq_lane_u64(a5, 0);
-  state[6] = vgetq_lane_u64(a6, 0);
-  state[7] = vgetq_lane_u64(a7, 0);
-  state[8] = vgetq_lane_u64(a8, 0);
-  state[9] = vgetq_lane_u64(a9, 0);
-  state[10] = vgetq_lane_u64(a10, 0);
-  state[11] = vgetq_lane_u64(a11, 0);
-  state[12] = vgetq_lane_u64(a12, 0);
-  state[13] = vgetq_lane_u64(a13, 0);
-  state[14] = vgetq_lane_u64(a14, 0);
-  state[15] = vgetq_lane_u64(a15, 0);
-  state[16] = vgetq_lane_u64(a16, 0);
-  state[17] = vgetq_lane_u64(a17, 0);
-  state[18] = vgetq_lane_u64(a18, 0);
-  state[19] = vgetq_lane_u64(a19, 0);
-  state[20] = vgetq_lane_u64(a20, 0);
-  state[21] = vgetq_lane_u64(a21, 0);
-  state[22] = vgetq_lane_u64(a22, 0);
-  state[23] = vgetq_lane_u64(a23, 0);
-  state[24] = vgetq_lane_u64(a24, 0);
-}
-
-/// Absorb one complete rate block and permute using SHA3 Crypto Extensions.
-#[cfg(target_arch = "aarch64")]
-#[inline]
-pub(crate) fn keccakf_aarch64_sha3_absorb_single<const RATE: usize>(state: &mut [u64; 25], block: &[u8; RATE]) {
-  // SAFETY: Dispatch verifies aarch64::SHA3 capability before calling.
-  unsafe { keccakf_sha3_absorb_single_impl::<RATE>(state, block) }
-}
-
-/// Absorb complete rate blocks and permute after each block.
-///
-/// This keeps the Keccak state resident in NEON registers across the block
-/// loop, avoiding the per-block load/store boundary in the single-block entry
-/// point. It is intended for Apple single-state SHA3/SHAKE absorb workloads.
-///
-/// # Safety
-///
-/// Caller must ensure `sha3` target feature is available and `blocks.len()` is
-/// a multiple of `RATE`.
-#[cfg(target_arch = "aarch64")]
-#[target_feature(enable = "sha3")]
-unsafe fn keccakf_sha3_absorb_blocks_impl<const RATE: usize>(state: &mut [u64; 25], blocks: &[u8]) {
-  debug_assert_eq!(RATE % 8, 0);
-  debug_assert!(blocks.len().is_multiple_of(RATE));
-  let lanes = RATE / 8;
-  let z = vcreate_u64(0);
-
-  let mut a0 = vcombine_u64(vcreate_u64(state[0]), z);
-  let mut a1 = vcombine_u64(vcreate_u64(state[1]), z);
-  let mut a2 = vcombine_u64(vcreate_u64(state[2]), z);
-  let mut a3 = vcombine_u64(vcreate_u64(state[3]), z);
-  let mut a4 = vcombine_u64(vcreate_u64(state[4]), z);
-  let mut a5 = vcombine_u64(vcreate_u64(state[5]), z);
-  let mut a6 = vcombine_u64(vcreate_u64(state[6]), z);
-  let mut a7 = vcombine_u64(vcreate_u64(state[7]), z);
-  let mut a8 = vcombine_u64(vcreate_u64(state[8]), z);
-  let mut a9 = vcombine_u64(vcreate_u64(state[9]), z);
-  let mut a10 = vcombine_u64(vcreate_u64(state[10]), z);
-  let mut a11 = vcombine_u64(vcreate_u64(state[11]), z);
-  let mut a12 = vcombine_u64(vcreate_u64(state[12]), z);
-  let mut a13 = vcombine_u64(vcreate_u64(state[13]), z);
-  let mut a14 = vcombine_u64(vcreate_u64(state[14]), z);
-  let mut a15 = vcombine_u64(vcreate_u64(state[15]), z);
-  let mut a16 = vcombine_u64(vcreate_u64(state[16]), z);
-  let mut a17 = vcombine_u64(vcreate_u64(state[17]), z);
-  let mut a18 = vcombine_u64(vcreate_u64(state[18]), z);
-  let mut a19 = vcombine_u64(vcreate_u64(state[19]), z);
-  let mut a20 = vcombine_u64(vcreate_u64(state[20]), z);
-  let mut a21 = vcombine_u64(vcreate_u64(state[21]), z);
-  let mut a22 = vcombine_u64(vcreate_u64(state[22]), z);
-  let mut a23 = vcombine_u64(vcreate_u64(state[23]), z);
-  let mut a24 = vcombine_u64(vcreate_u64(state[24]), z);
-
-  let mut offset = 0usize;
-  while offset < blocks.len() {
-    let ptr = blocks.as_ptr().wrapping_add(offset);
-
-    macro_rules! absorb_lane {
-      ($a:ident, $i:expr) => {{
-        if $i < lanes {
-          // SAFETY: `blocks.len()` is a multiple of `RATE`, `offset` advances
-          // by `RATE`, and `$i < RATE / 8`; the unaligned 8-byte read stays
-          // inside the current complete block.
-          let word = u64::from_le(unsafe { core::ptr::read_unaligned(ptr.add($i * 8).cast::<u64>()) });
-          $a = veorq_u64($a, vcombine_u64(vcreate_u64(word), z));
-        }
-      }};
-    }
-
-    absorb_lane!(a0, 0);
-    absorb_lane!(a1, 1);
-    absorb_lane!(a2, 2);
-    absorb_lane!(a3, 3);
-    absorb_lane!(a4, 4);
-    absorb_lane!(a5, 5);
-    absorb_lane!(a6, 6);
-    absorb_lane!(a7, 7);
-    absorb_lane!(a8, 8);
-    absorb_lane!(a9, 9);
-    absorb_lane!(a10, 10);
-    absorb_lane!(a11, 11);
-    absorb_lane!(a12, 12);
-    absorb_lane!(a13, 13);
-    absorb_lane!(a14, 14);
-    absorb_lane!(a15, 15);
-    absorb_lane!(a16, 16);
-    absorb_lane!(a17, 17);
-    absorb_lane!(a18, 18);
-    absorb_lane!(a19, 19);
-    absorb_lane!(a20, 20);
-    absorb_lane!(a21, 21);
-    absorb_lane!(a22, 22);
-    absorb_lane!(a23, 23);
-    absorb_lane!(a24, 24);
-
-    for &rc in &super::RC {
-      keccakf_sha3_neon_round!(
-        a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17, a18, a19, a20, a21, a22, a23,
-        a24, rc
-      );
-    }
-
-    offset = offset.strict_add(RATE);
-  }
-
-  state[0] = vgetq_lane_u64(a0, 0);
-  state[1] = vgetq_lane_u64(a1, 0);
-  state[2] = vgetq_lane_u64(a2, 0);
-  state[3] = vgetq_lane_u64(a3, 0);
-  state[4] = vgetq_lane_u64(a4, 0);
-  state[5] = vgetq_lane_u64(a5, 0);
-  state[6] = vgetq_lane_u64(a6, 0);
-  state[7] = vgetq_lane_u64(a7, 0);
-  state[8] = vgetq_lane_u64(a8, 0);
-  state[9] = vgetq_lane_u64(a9, 0);
-  state[10] = vgetq_lane_u64(a10, 0);
-  state[11] = vgetq_lane_u64(a11, 0);
-  state[12] = vgetq_lane_u64(a12, 0);
-  state[13] = vgetq_lane_u64(a13, 0);
-  state[14] = vgetq_lane_u64(a14, 0);
-  state[15] = vgetq_lane_u64(a15, 0);
-  state[16] = vgetq_lane_u64(a16, 0);
-  state[17] = vgetq_lane_u64(a17, 0);
-  state[18] = vgetq_lane_u64(a18, 0);
-  state[19] = vgetq_lane_u64(a19, 0);
-  state[20] = vgetq_lane_u64(a20, 0);
-  state[21] = vgetq_lane_u64(a21, 0);
-  state[22] = vgetq_lane_u64(a22, 0);
-  state[23] = vgetq_lane_u64(a23, 0);
-  state[24] = vgetq_lane_u64(a24, 0);
-}
-
-/// Absorb complete rate blocks and permute after each block using SHA3 Crypto
-/// Extensions.
-#[cfg(target_arch = "aarch64")]
-#[inline]
-pub(crate) fn keccakf_aarch64_sha3_absorb_blocks<const RATE: usize>(state: &mut [u64; 25], blocks: &[u8]) {
-  assert!(
-    RATE != 0 && RATE.is_multiple_of(8),
-    "Keccak rate must be a positive whole number of lanes"
-  );
-  assert!(
-    blocks.len().is_multiple_of(RATE),
-    "Keccak batch must contain complete rate blocks"
-  );
-
-  // SAFETY: Dispatch verifies aarch64::SHA3 capability before calling. The assertions above establish the nonzero,
-  // whole-lane rate and complete-block partition required by the pointer loop.
-  unsafe { keccakf_sha3_absorb_blocks_impl::<RATE>(state, blocks) }
 }
 
 // 2-state interleaved kernel (lane 0 = state A, lane 1 = state B)

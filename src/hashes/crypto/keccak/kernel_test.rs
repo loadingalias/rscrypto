@@ -191,6 +191,34 @@ mod tests {
     }
   }
 
+  /// Verify the SHA3 single-state assembly kernel matches the portable rounds
+  /// on states that differ in every lane, across repeated permutations.
+  #[test]
+  #[cfg(all(target_arch = "aarch64", not(miri)))]
+  fn keccakf1600_sha3_single_matches_portable() {
+    let caps = crate::platform::caps();
+    if !caps.has(crate::platform::caps::aarch64::SHA3) {
+      return; // SHA3 CE not available on this hardware
+    }
+
+    for seed in 0u64..16 {
+      let mut actual = [0u64; 25];
+      for (lane, word) in actual.iter_mut().enumerate() {
+        let lane = u64::try_from(lane).expect("lane index fits in u64");
+        *word = seed.wrapping_mul(0x9e37_79b9_7f4a_7c15) ^ lane.wrapping_mul(0xd1b5_4a32_d192_ed03);
+      }
+      let mut expected = actual;
+      for round in 0..3 {
+        super::super::keccakf_portable(&mut expected);
+        super::super::aarch64::keccakf_aarch64_sha3_single(&mut actual);
+        assert_eq!(
+          actual, expected,
+          "SHA3 single-state mismatch for seed={seed}, permutation={round}"
+        );
+      }
+    }
+  }
+
   /// Verify 2-state interleaved kernel matches two independent single-state runs.
   #[test]
   #[cfg(all(target_arch = "aarch64", not(miri)))]
@@ -316,59 +344,5 @@ mod tests {
     assert_eq!(state_b, expected_b, "SVE2-SHA3 x4 state_b mismatch");
     assert_eq!(state_c, expected_c, "SVE2-SHA3 x4 state_c mismatch");
     assert_eq!(state_d, expected_d, "SVE2-SHA3 x4 state_d mismatch");
-  }
-
-  /// Verify batched full-block absorb matches repeated single-block absorb.
-  #[test]
-  #[cfg(all(target_arch = "aarch64", not(miri)))]
-  fn keccakf1600_absorb_blocks_matches_single_absorb() {
-    let caps = crate::platform::caps();
-    if !caps.has(crate::platform::caps::aarch64::SHA3) {
-      return; // SHA3 CE not available on this hardware
-    }
-
-    fn assert_rate<const RATE: usize>() {
-      let len = RATE.strict_mul(4);
-      let mut blocks = Vec::with_capacity(len);
-      for i in 0..len {
-        blocks.push(i.strict_mul(37).strict_add(11).to_le_bytes()[0]);
-      }
-
-      let mut expected = state_from_bytes(b"batch-absorb-reference-state");
-      let mut actual = expected;
-      let (chunks, rem) = blocks.as_chunks::<RATE>();
-      debug_assert!(rem.is_empty());
-      for block in chunks {
-        super::super::xor_block_into::<RATE>(&mut expected, block);
-        super::super::aarch64::keccakf_aarch64_sha3_single(&mut expected);
-      }
-
-      super::super::aarch64::keccakf_aarch64_sha3_absorb_blocks::<RATE>(&mut actual, &blocks);
-
-      assert_eq!(actual, expected, "batched absorb mismatch for RATE={RATE}");
-    }
-
-    assert_rate::<72>();
-    assert_rate::<104>();
-    assert_rate::<136>();
-    assert_rate::<144>();
-    assert_rate::<168>();
-  }
-
-  #[test]
-  #[cfg(all(target_arch = "aarch64", not(miri)))]
-  #[should_panic(expected = "Keccak rate must be a positive whole number of lanes")]
-  fn keccakf1600_absorb_blocks_rejects_zero_rate() {
-    let mut state = [0u64; 25];
-    super::super::aarch64::keccakf_aarch64_sha3_absorb_blocks::<0>(&mut state, &[]);
-  }
-
-  #[test]
-  #[cfg(all(target_arch = "aarch64", not(miri)))]
-  #[should_panic(expected = "Keccak batch must contain complete rate blocks")]
-  fn keccakf1600_absorb_blocks_rejects_partial_block() {
-    let mut state = [0u64; 25];
-    let blocks = [0u8; 73];
-    super::super::aarch64::keccakf_aarch64_sha3_absorb_blocks::<72>(&mut state, &blocks);
   }
 }

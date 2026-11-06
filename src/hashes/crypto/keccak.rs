@@ -762,12 +762,8 @@ impl Permuter for Aarch64Permuter {
   #[inline(always)]
   fn absorb_block<const RATE: usize>(self, state: &mut [u64; 25], block: &[u8; RATE]) {
     if cfg!(target_vendor = "apple") {
-      if RATE <= 144 {
-        aarch64::keccakf_aarch64_sha3_absorb_single::<RATE>(state, block);
-      } else {
-        xor_block_into::<RATE>(state, block);
-        aarch64::keccakf_aarch64_sha3_single(state);
-      }
+      xor_block_into::<RATE>(state, block);
+      aarch64::keccakf_aarch64_sha3_single(state);
     } else {
       keccakf_absorb_aarch64_scalar::<RATE>(state, block);
     }
@@ -841,23 +837,6 @@ impl Permuter for Aarch64Permuter {
       self.permute_x2(state_c, state_d, _len_hint);
     }
   }
-
-  #[inline(always)]
-  fn try_absorb_blocks(self, state: &mut [u64; 25], blocks: &[u8], rate: usize) -> bool {
-    if !cfg!(target_vendor = "apple") {
-      return false;
-    }
-
-    match rate {
-      72 => aarch64::keccakf_aarch64_sha3_absorb_blocks::<72>(state, blocks),
-      104 => aarch64::keccakf_aarch64_sha3_absorb_blocks::<104>(state, blocks),
-      136 => aarch64::keccakf_aarch64_sha3_absorb_blocks::<136>(state, blocks),
-      144 => aarch64::keccakf_aarch64_sha3_absorb_blocks::<144>(state, blocks),
-      168 => aarch64::keccakf_aarch64_sha3_absorb_blocks::<168>(state, blocks),
-      _ => return false,
-    }
-    true
-  }
 }
 
 #[cfg(all(target_arch = "aarch64", not(target_feature = "sha3"), not(miri)))]
@@ -874,12 +853,8 @@ impl Permuter for Aarch64Permuter {
   #[inline(always)]
   fn absorb_block<const RATE: usize>(self, state: &mut [u64; 25], block: &[u8; RATE]) {
     if cfg!(target_vendor = "apple") && self.has_sha3 {
-      if RATE <= 144 {
-        aarch64::keccakf_aarch64_sha3_absorb_single::<RATE>(state, block);
-      } else {
-        xor_block_into::<RATE>(state, block);
-        aarch64::keccakf_aarch64_sha3_single(state);
-      }
+      xor_block_into::<RATE>(state, block);
+      aarch64::keccakf_aarch64_sha3_single(state);
     } else {
       keccakf_absorb_aarch64_scalar::<RATE>(state, block);
     }
@@ -941,23 +916,6 @@ impl Permuter for Aarch64Permuter {
 
     self.permute_x2(state_a, state_b, len_hint);
     self.permute_x2(state_c, state_d, len_hint);
-  }
-
-  #[inline(always)]
-  fn try_absorb_blocks(self, state: &mut [u64; 25], blocks: &[u8], rate: usize) -> bool {
-    if !cfg!(target_vendor = "apple") || !self.has_sha3 {
-      return false;
-    }
-
-    match rate {
-      72 => aarch64::keccakf_aarch64_sha3_absorb_blocks::<72>(state, blocks),
-      104 => aarch64::keccakf_aarch64_sha3_absorb_blocks::<104>(state, blocks),
-      136 => aarch64::keccakf_aarch64_sha3_absorb_blocks::<136>(state, blocks),
-      144 => aarch64::keccakf_aarch64_sha3_absorb_blocks::<144>(state, blocks),
-      168 => aarch64::keccakf_aarch64_sha3_absorb_blocks::<168>(state, blocks),
-      _ => return false,
-    }
-    true
   }
 }
 
