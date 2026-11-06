@@ -6,6 +6,56 @@ The dated campaign records come first.
 The 2026-08-18 Linux snapshot near the end is historical:
 its aggregate ratios are withdrawn as performance claims (see [Corrections](#corrections)).
 
+## 2026-11-06: Keccak one-shot, KMAC, and single-state kernels (L9)
+
+Same-host A/B for `e9b6187d` (one-shot KMAC and cSHAKE), `6a49c7be` (Apple single-state assembly),
+and `6886d9b7` (Intel AVX-512 single-state kernel). Raw data was deleted after this summary
+was written.
+
+Method: a minimum-of-N harness over the public one-shot APIs (`Sha3_*::digest`, `Shake*::hash_into`,
+`Kmac*::mac_array`, `Cshake128::hash_into`) and the same calls in RustCrypto `sha3` 0.12,
+`tiny-keccak` 2.0.2, and `aws-lc-rs`; 120 batches of 2000 calls below 4 KiB, fewer above, with the
+fastest batch kept. Not the Criterion catalog. Each host built baseline `0d683723` (from
+`git archive`) and the candidate in separate trees and target directories, `nightly-2026-10-24`,
+fat LTO, and ran them in three alternating rounds; tables give medians of the three. On x86-64 an
+experiment-only switch in the candidate binary forced the AVX-512 kernel for the AMD and Sapphire
+Rapids comparison. Hosts: `aws-linux-intel-gnr-profile` (Xeon 6975P-C), `aws-linux-intel-spr-profile`
+(Xeon Platinum 8488C), `aws-linux-amd-zen4-profile` (EPYC 9R14), `aws-linux-amd-zen5-profile`
+(EPYC 9R45), `aws-linux-arm64-graviton4-profile` (Neoverse V2), and a local M1 Pro under
+background load (minimum-of-N only).
+
+| Host | Row | Baseline | Candidate | Note |
+| --- | --- | --- | --- | --- |
+| Granite Rapids | SHA3-256, 1 MiB | 1.958 ms (0.96x AWS-LC) | 1.760 ms (1.07x) | AVX-512 kernel |
+| Granite Rapids | SHA3-256/384/512, 1 KiB | 0.97–0.99x AWS-LC | 1.07–1.09x | |
+| Granite Rapids | SHA3-*, 0 B | 1.20–1.21x AWS-LC | 1.24–1.25x | |
+| Granite Rapids | KMAC128, 0 B / 1 MiB | 0.99x / 1.05x tiny-keccak | 1.14x / 1.18x | |
+| Sapphire Rapids | SHA3-*, 1 MiB | 1.02–1.04x AWS-LC | 1.05–1.07x | forced AVX-512 |
+| Zen 4 / Zen 5 | SHA3-256, 1 MiB, AVX-512 forced | 2.25 / 1.61 ms (BMI) | 3.08 / 2.15 ms | AMD keeps BMI |
+| Zen 5 | KMAC128, 0 B | 1.07x tiny-keccak | 1.17x | portable change |
+| Graviton4 | KMAC128, 0 B | 1.11x tiny-keccak | 1.24x | portable change |
+| M1 Pro | SHA3-224/256/384/512, 0–135 B | 170–211 ns | 151–157 ns | RustCrypto 150–158 ns |
+| M1 Pro | KMAC128 / cSHAKE128, 0 B | 661 / 407 ns | 578 / 365 ns | tiny-keccak 750 / 500 ns |
+
+Causes. On Granite Rapids one-shot and streaming SHA3-256 took the same time at 1 MiB (1.972 and
+1.971 ms), so the one-shot path was not the gap: the BMI rounds run at an IPC of about 5, and each
+block call stored the state and reloaded it for the next XOR (`ld_blocks.store_forward` about 2
+million per 1 MiB run). The AVX-512 kernel issues a quarter of the instructions but is
+latency-bound at about 37 cycles per round, with 19 shuffles per round on one port. On M1 the
+compiled SHA3-instruction round needed 33 vector registers and spilled a lane on the theta critical
+path, differently in each inlined copy; M1's SHA3 instructions measure 2-cycle latency at four per
+cycle, and the fixed-allocation round runs at about 19 cycles. A one-shot KMAC held four Keccak
+sponges and cleared seven 200-byte copies per call; POWER10 (bench 41546963938 at `6926f298`)
+ties tiny-keccak at 1 MiB, so its cSHAKE and KMAC losses (0.84x–0.93x) were this per-call
+overhead.
+
+Rejected: an intrinsics-fused Apple one-shot (slower, more spills); forcing the Apple assembly
+kernel on Graviton4 (552 ns per permutation against 239 ns for the lazy scalar rounds); the lazy
+scalar rounds on M1 (336 ns against 241 ns portable and 159 ns assembly); a BMI-fused x86-64
+one-shot (2–3% on Granite Rapids, superseded by the AVX-512 absorb loop).
+
+Not measured: POWER10 and Graviton5 (the CI ARM64 lane) after the change, Windows, IBM Z, RISC-V.
+
 ## 2026-11-04: XXH3 x86-64 long-input kernels
 
 Same-host A/B for the XXH3 AVX-512 and AVX2 accumulate change. Raw data was deleted after this
