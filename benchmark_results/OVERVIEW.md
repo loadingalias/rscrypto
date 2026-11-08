@@ -6,6 +6,44 @@ The dated campaign records come first.
 The 2026-08-18 Linux snapshot near the end is historical:
 its aggregate ratios are withdrawn as performance claims (see [Corrections](#corrections)).
 
+## 2026-11-07: POWER10 cSHAKE and KMAC framing (L9)
+
+Catalog Bench runs of `sha3,kmac_cshake` at the CI Criterion settings: baseline 42346828720 at
+`81de3d41` (POWER10, Graviton5) and candidate 42447394019 at `5191d8f3` (POWER10, Graviton5, Linux
+x86-64 Intel and AMD). Ratios compare rscrypto with the fastest external row; a ratio below 0.97x is a
+loss. Raw data is in the run artifacts.
+
+| Lane | Keccak headline losses, `81de3d41` | `5191d8f3` | Lowest point, `5191d8f3` |
+| --- | --- | --- | --- |
+| POWER10 | 26 | 7, all SHAKE | 0.913x |
+| Graviton5 | 0 | 0 | 1.019x |
+| x86-64 Intel | not run | 8, all HMAC-SHA3 | 0.946x |
+| x86-64 AMD | not run | 0 | 0.983x |
+
+| POWER10 row | `81de3d41` | `5191d8f3` | tiny-keccak at `5191d8f3` |
+| --- | --- | --- | --- |
+| cSHAKE128, 0 B | 732 ns (0.89x) | 647 ns (1.00x) | 646 ns |
+| cSHAKE256, 64 B | 760 ns (0.86x) | 636 ns (1.02x) | 650 ns |
+| KMAC128, 0 B | 1120 ns (0.89x) | 1006 ns (0.99x) | 995 ns |
+| KMAC256, 32 B | 1111 ns (0.90x) | 940 ns (1.06x) | 994 ns |
+| KMAC128, 256 B | 1393 ns (0.93x) | 1229 ns (1.05x) | 1293 ns |
+
+All 19 POWER10 cSHAKE and KMAC losses closed: every point from 0 B to 1 KiB is now 0.99x–1.07x
+(lowest cSHAKE128 at 64 B, 0.988x).
+
+Cause. The permutation already beat tiny-keccak at 1 MiB, so the loss was outside the rounds. In a
+POWER release build, one-shot cSHAKE made about 15 calls: six calls to the out-of-line `update`,
+each saving 18 registers even for 0–14 bytes; two 208-byte moves of the returned sponge; a 200-byte
+copy into a reader; and `memcpy` calls for variable-length `left_encode` slices. `5191d8f3` leaves 4
+calls and no state copy; KMAC goes from about 14 calls to 5. Inlined into the framing, the
+zero-padding permutation reloaded 15 spilled values per round instead of 10, so it stays out of line.
+
+Open. POWER10 SHAKE one-shot, 7 points: SHAKE128 at 0–168 B is 0.91x–0.95x and SHAKE256 at 135 B is
+0.965x. That path makes no calls; the finalize permutation's inlined copy reloads 12–13 spilled
+values per round against 10 in the SHA-3 one-shot. Intel HMAC-SHA3-384/512 at 0–64 B is 0.946x–0.963x against
+AWS-LC; at `6926f298` (bench 41546963938) every HMAC-SHA3 row there was 0.89x–0.92x. HMAC-SHA3
+compiles to the same x86-64 code at `81de3d41` and `5191d8f3`, so this commit does not affect it.
+
 ## 2026-11-06: Keccak one-shot, KMAC, and single-state kernels (L9)
 
 Same-host A/B for `e9b6187d` (one-shot KMAC and cSHAKE), `6a49c7be` (Apple single-state assembly),
