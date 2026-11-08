@@ -1114,8 +1114,26 @@ impl<const RATE: usize, P: Permuter, const ZEROIZE: bool> KeccakCoreImpl<RATE, P
     }
   }
 
+  /// [`Self::update`] with the input that stays inside the current block
+  /// absorbed inline. Framing code absorbs several short encoded strings per
+  /// call; this spares each one a call to the full absorb path.
+  #[inline(always)]
+  pub(crate) fn update_short(&mut self, data: &[u8]) {
+    let remaining = RATE.strict_sub(self.buf_len);
+    if data.len() < remaining {
+      xor_bytes_into_state::<RATE>(&mut self.state, self.buf_len, data);
+      self.buf_len = self.buf_len.strict_add(data.len());
+    } else {
+      self.update(data);
+    }
+  }
+
   /// Absorbs `len` zero bytes. XOR with zero leaves the state unchanged, so
   /// only the position advances, with a permutation at each filled block.
+  ///
+  /// Kept out of line: inlined into the framing code that calls it, its
+  /// rounds spilled more lanes on POWER.
+  #[inline(never)]
   pub(crate) fn absorb_zeros(&mut self, mut len: usize) {
     loop {
       let remaining = RATE.strict_sub(self.buf_len);
@@ -1173,6 +1191,7 @@ impl<const RATE: usize, P: Permuter, const ZEROIZE: bool> KeccakCoreImpl<RATE, P
 }
 
 impl<const RATE: usize, P: Permuter> KeccakCoreImpl<RATE, P, true> {
+  #[cfg(any(feature = "ml-kem", feature = "ml-dsa"))]
   pub(crate) fn finalize_xof_into(&self, ds: u8, out: &mut [u8]) {
     // Initialize the cleanup owner before copying secret state. Finalize and
     // squeeze in that owner to avoid returning a secret-valued state or reader.
@@ -1224,6 +1243,36 @@ impl<const RATE: usize, P: Permuter> KeccakCoreImpl<RATE, P, true> {
     pad_absorbed_state::<RATE>(&mut reader.state, pos, ds);
     reader.permuter.permute(&mut reader.state, 0);
     squeeze(&mut reader)
+  }
+}
+
+impl<const RATE: usize> KeccakCoreImpl<RATE, PlatformPermuter, true> {
+  /// Computes a one-shot XOF output. `absorb` fills a new sponge and returns
+  /// its padding byte; `suffix` follows it. The sponge is then finalized in
+  /// place into `out`. It never leaves this frame, so no move copies it, and
+  /// its drop clears it. Output that fits in one block needs no reader copy.
+  #[inline(always)]
+  pub(crate) fn oneshot_xof_into(absorb: impl FnOnce(&mut Self) -> u8, suffix: &[u8], out: &mut [u8]) {
+    debug_assert!(suffix.len() < RATE);
+    let mut sponge = Self::default();
+    let ds = absorb(&mut sponge);
+    sponge.update_short(suffix);
+    pad_absorbed_state::<RATE>(&mut sponge.state, sponge.buf_len, ds);
+    sponge.permuter.permute(&mut sponge.state, 0);
+    if out.len() <= RATE {
+      KeccakXofImpl::<RATE, PlatformPermuter, true>::copy_state_prefix(&sponge.state, out);
+    } else {
+      // Longer output squeezes through a reader, which clears its own copy.
+      // The reader exists before the copy, so no secret state lives outside
+      // a cleanup owner.
+      let mut reader = KeccakXofImpl::<RATE, PlatformPermuter, true> {
+        state: [0; 25],
+        pos: 0,
+        permuter: sponge.permuter,
+      };
+      reader.state.copy_from_slice(&sponge.state);
+      reader.squeeze_into(out);
+    }
   }
 }
 

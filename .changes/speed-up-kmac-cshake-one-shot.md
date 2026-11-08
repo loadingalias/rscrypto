@@ -6,3 +6,5 @@ Speed up one-shot KMAC and cSHAKE for short messages on every target: 9–14% fo
 on Apple M1 Pro, and 9–10% for KMAC and 4–6% for cSHAKE on Intel Granite Rapids. One-shot calls now build a
 single sponge instead of cloning reset states, `bytepad` skips its zero padding instead of absorbing it, and
 partial input lanes are assembled in a register. A KMAC state now holds two Keccak sponges instead of four.
+One-shot calls also finalize that sponge in place instead of copying it into a reader, and absorb the SP 800-185
+length encodings without a separate call each.

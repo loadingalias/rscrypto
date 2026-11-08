@@ -2,7 +2,7 @@
 
 use super::{
   keccak::{KeccakCore, KeccakXof},
-  sp800185::{RATE_128, RATE_256, cshake_core},
+  sp800185::{RATE_128, RATE_256, absorb_cshake_prefix},
 };
 use crate::traits::Xof;
 
@@ -28,7 +28,8 @@ macro_rules! define_cshake {
       #[inline]
       #[must_use]
       pub fn new(function_name: &[u8], customization: &[u8]) -> Self {
-        let (core, pad) = cshake_core::<$rate>(function_name, customization);
+        let mut core = KeccakCore::<$rate>::default();
+        let pad = absorb_cshake_prefix(&mut core, function_name, customization);
         let initial_state = core.clone();
         Self {
           core,
@@ -41,7 +42,8 @@ macro_rules! define_cshake {
       #[inline]
       #[must_use]
       pub fn xof(function_name: &[u8], customization: &[u8], data: &[u8]) -> $reader {
-        let (mut core, pad) = cshake_core::<$rate>(function_name, customization);
+        let mut core = KeccakCore::<$rate>::default();
+        let pad = absorb_cshake_prefix(&mut core, function_name, customization);
         core.update(data);
         $reader {
           inner: core.finalize_xof(pad),
@@ -72,9 +74,15 @@ macro_rules! define_cshake {
       /// Fill `out` in one shot.
       #[inline]
       pub fn hash_into(function_name: &[u8], customization: &[u8], data: &[u8], out: &mut [u8]) {
-        let (mut core, pad) = cshake_core::<$rate>(function_name, customization);
-        core.update(data);
-        core.finalize_xof_into(pad, out);
+        KeccakCore::<$rate>::oneshot_xof_into(
+          |core| {
+            let pad = absorb_cshake_prefix(core, function_name, customization);
+            core.update(data);
+            pad
+          },
+          &[],
+          out,
+        );
       }
     }
 

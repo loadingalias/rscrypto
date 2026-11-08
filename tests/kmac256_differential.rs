@@ -116,3 +116,25 @@ fn kmac256_exact_rate_key_bytepad_matches_openssl() {
   Kmac256::mac_into(&key, b"", b"", &mut actual);
   assert_eq!(actual, expected);
 }
+
+#[test]
+fn kmac256_one_shot_block_boundaries_match_tiny_keccak() {
+  // The key and prefix bytepads each fill whole blocks, so the message length
+  // alone places right_encode(L). Lengths 132..=137 and 268..=273 move that
+  // two- or three-byte suffix across a block end; outputs above 136 bytes
+  // need a second squeeze block.
+  let key = [0x5a; 32];
+  let customization = b"boundary";
+  assert!(!bytepad_is_aligned(136, &[4, customization.len()]));
+  assert!(!bytepad_is_aligned(136, &[key.len()]));
+  let data = [0xa5; 273];
+  for len in (132..=137).chain(268..=273) {
+    for out_len in [1, 32, 136, 137, 273] {
+      let mut expected = vec![0u8; out_len];
+      kmac256_ref(&key, customization, &data[..len], &mut expected);
+      let mut actual = vec![0u8; out_len];
+      Kmac256::mac_into(&key, customization, &data[..len], &mut actual);
+      assert_eq!(actual, expected, "message {len} bytes, output {out_len} bytes");
+    }
+  }
+}

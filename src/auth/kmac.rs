@@ -5,7 +5,7 @@ use core::fmt;
 use crate::{
   hashes::crypto::{
     keccak::KeccakCore,
-    sp800185::{CSHAKE_PAD, RATE_128, RATE_256, absorb_bytepad, cshake_core, left_encode, right_encode},
+    sp800185::{CSHAKE_PAD, RATE_128, RATE_256, absorb_bytepad, absorb_cshake_prefix, left_encode, right_encode},
   },
   traits::{VerificationError, ct},
 };
@@ -40,19 +40,20 @@ macro_rules! define_kmac {
       /// `customization`.
       #[must_use]
       pub fn new(key: &[u8], customization: &[u8]) -> Self {
-        let state = Self::keyed_core(key, customization);
+        let mut state = KeccakCore::<$rate>::default();
+        Self::absorb_key(&mut state, key, customization);
         let initial_state = state.clone();
         Self { state, initial_state }
       }
 
-      /// The cSHAKE sponge after the `KMAC` prefix and the padded key.
+      /// Absorbs the `KMAC` cSHAKE prefix and the padded key into `state`, a
+      /// new empty sponge. Its padding byte is [`CSHAKE_PAD`].
       #[inline]
-      fn keyed_core(key: &[u8], customization: &[u8]) -> KeccakCore<$rate> {
-        let (mut state, _) = cshake_core::<$rate>(b"KMAC", customization);
+      fn absorb_key(state: &mut KeccakCore<$rate>, key: &[u8], customization: &[u8]) {
+        absorb_cshake_prefix::<$rate>(state, b"KMAC", customization);
         let (key_prefix, key_prefix_len) = left_encode(crate::bytes_to_bits(key.len()));
         let payload_len = key_prefix_len.strict_add(key.len());
-        absorb_bytepad::<$rate>(&mut state, &[&key_prefix[..key_prefix_len], key], payload_len);
-        state
+        absorb_bytepad::<$rate>(state, &[&key_prefix[..key_prefix_len], key], payload_len);
       }
 
       /// Finalizes a copy of `state` for `output_len` bytes and passes its
@@ -88,9 +89,16 @@ macro_rules! define_kmac {
       #[doc = concat!("Compute a one-shot KMAC", $bits, " output into `out`.")]
       #[inline]
       pub fn mac_into(key: &[u8], customization: &[u8], data: &[u8], out: &mut [u8]) {
-        let mut state = Self::keyed_core(key, customization);
-        state.update(data);
-        Self::with_reader(&state, out.len(), |reader| reader.squeeze_into(out));
+        let (suffix, suffix_len) = right_encode(crate::bytes_to_bits(out.len()));
+        KeccakCore::<$rate>::oneshot_xof_into(
+          |state| {
+            Self::absorb_key(state, key, customization);
+            state.update(data);
+            CSHAKE_PAD
+          },
+          &suffix[..suffix_len],
+          out,
+        );
       }
 
       #[doc = concat!("Compute a one-shot KMAC", $bits, " output into a fixed-size array.")]
