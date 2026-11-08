@@ -2,8 +2,6 @@
 
 use core::fmt;
 
-#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
-use super::polyval::{accumulate_padded_x86, precompute_powers, precompute_powers_16};
 #[cfg(any(
   target_arch = "aarch64",
   all(target_arch = "powerpc64", not(feature = "portable-only")),
@@ -543,27 +541,12 @@ fn decrypt_riscv(
   Ok(())
 }
 
-#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
-#[inline]
-fn collect_short_polyval_blocks(blocks: &mut [u128; 4], index: &mut usize, data: &[u8]) {
-  let (full_blocks, remainder) = data.as_chunks::<16>();
-  for block in full_blocks {
-    blocks[*index] = u128::from_le_bytes(*block);
-    *index = (*index).strict_add(1);
-  }
-  if !remainder.is_empty() {
-    let mut block = [0u8; 16];
-    block[..remainder.len()].copy_from_slice(remainder);
-    blocks[*index] = u128::from_le_bytes(block);
-    *index = (*index).strict_add(1);
-  }
-}
-
-/// Seal a short message through one x86 VAES/PCLMUL target-feature scope.
+/// Seal one message through one x86 VAES/VPCLMULQDQ target-feature scope: the per-nonce key
+/// derivation, the encryption-key schedule, POLYVAL, and CTR. The derived keys and their schedule
+/// are cleared before return.
 ///
-/// Returns `None` without modifying `buffer` when the padded AAD, plaintext, and length
-/// transcript needs more than four POLYVAL blocks or the cached master schedule does not match
-/// the selected x86 backend.
+/// Returns `None` without modifying `buffer` when the cached master schedule does not use the
+/// AES-NI layout of the selected x86 backend.
 ///
 /// # Safety
 ///
@@ -572,134 +555,71 @@ fn collect_short_polyval_blocks(blocks: &mut [u128; 4], index: &mut usize, data:
 /// validated backend selection before entering this function.
 #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 #[target_feature(enable = "aes,sse2,ssse3,avx512f,avx512vl,avx512bw,avx512dq,vaes,pclmulqdq,vpclmulqdq")]
-unsafe fn encrypt_short_fused_x86(
+unsafe fn seal_x86(
   master_ek: &aes::Aes128EncKey,
   nonce: &Nonce96,
   aad: &[u8],
   buffer: &mut [u8],
 ) -> Option<[u8; TAG_SIZE]> {
-  let aad_blocks = aad.len().strict_add(15).strict_div(16);
-  let plaintext_blocks = buffer.len().strict_add(15).strict_div(16);
-  let block_count = aad_blocks.strict_add(plaintext_blocks).strict_add(1);
-  if block_count > 4 {
-    return None;
-  }
-
   // SAFETY: fused x86 AES-128-GCM-SIV encryption because:
-  // 1. This function enables every target feature required by the direct AES and POLYVAL helpers.
-  // 2. The caller selects this function only for `X86VaesVpclmul`, which guarantees the cached
-  //    master schedule uses AES-NI layout.
-  // 3. The block-count check above proves the CTR helper receives at most 48 plaintext bytes.
-  // 4. All fixed-width casts below cover fully initialized local arrays for their exact byte size.
+  // 1. This function enables every target feature required by the AES and POLYVAL helpers.
+  // 2. The KDF helper returns `None` unless `master_ek` holds AES-NI round keys.
+  // 3. The CTR helper accepts any buffer length.
   unsafe {
-    let (mut auth_key, mut enc_key_bytes) = aes::x86_gcmsiv_derive_keys_128_inline(master_ek, nonce.as_bytes())?;
-    let enc_ek = aes::x86_expand_key_128_inline(&enc_key_bytes);
-    ct::zeroize(&mut enc_key_bytes);
+    let (mut auth_key, mut enc_key) = aes::x86_gcmsiv_derive_keys_128_inline(master_ek, nonce.as_bytes())?;
+    let enc_ek = aes::x86_expand_key_128_inline(&enc_key);
+    ct::zeroize(&mut enc_key);
 
-    let mut h = u128::from_le_bytes(auth_key);
-    ct::zeroize(&mut auth_key);
-    let h2 = polyval::x86_clmul128_reduce_inline(h, h);
-    let h3 = polyval::x86_clmul128_reduce_inline(h2, h);
-    let h4 = polyval::x86_clmul128_reduce_inline(h3, h);
-    let mut h_powers_rev = [h4, h3, h2, h];
-
-    let mut blocks = [0u128; 4];
-    let mut index = 4usize.strict_sub(block_count);
-    collect_short_polyval_blocks(&mut blocks, &mut index, aad);
-    collect_short_polyval_blocks(&mut blocks, &mut index, buffer);
-    let length_block = super::AeadByteLengths::from_usize(aad.len(), buffer.len()).to_le_bits_block();
-    blocks[index] = u128::from_le_bytes(length_block);
-
-    let mut acc = polyval::x86_aggregate_4blocks_le_bytes_inline(0, &h_powers_rev, blocks.as_ptr().cast::<u8>());
-    ct::zeroize(core::slice::from_raw_parts_mut(
-      blocks.as_mut_ptr().cast::<u8>(),
-      core::mem::size_of_val(&blocks),
-    ));
-    ct::zeroize(core::slice::from_raw_parts_mut(
-      h_powers_rev.as_mut_ptr().cast::<u8>(),
-      core::mem::size_of_val(&h_powers_rev),
-    ));
-    ct::zeroize(core::slice::from_raw_parts_mut(
-      core::ptr::from_mut(&mut h).cast::<u8>(),
-      core::mem::size_of::<u128>(),
-    ));
-
-    let nonce_bytes = nonce.as_bytes();
-    let nonce_word = u128::from(u64::from_le_bytes([
-      nonce_bytes[0],
-      nonce_bytes[1],
-      nonce_bytes[2],
-      nonce_bytes[3],
-      nonce_bytes[4],
-      nonce_bytes[5],
-      nonce_bytes[6],
-      nonce_bytes[7],
-    ]))
-      | (u128::from(u32::from_le_bytes([
-        nonce_bytes[8],
-        nonce_bytes[9],
-        nonce_bytes[10],
-        nonce_bytes[11],
-      ]))
-        << 64);
-    let mut tag = (acc ^ nonce_word).to_le_bytes();
-    ct::zeroize(core::slice::from_raw_parts_mut(
-      core::ptr::from_mut(&mut acc).cast::<u8>(),
-      core::mem::size_of::<u128>(),
-    ));
-    tag[15] &= 0x7f;
+    let mut tag = polyval::x86_gcmsiv_tag_input(&mut auth_key, nonce.as_bytes(), aad, buffer);
     aes::x86_encrypt_block_128_inline(&enc_ek, &mut tag);
 
-    if !buffer.is_empty() {
-      let mut counter_block = tag;
-      counter_block[15] |= 0x80;
-      aes::x86_ctr32_le_xor_short_128_inline(&enc_ek, &counter_block, buffer);
-    }
-
+    let mut counter_block = tag;
+    counter_block[15] |= 0x80;
+    aes::x86_ctr32_le_xor_128(&enc_ek, &counter_block, buffer);
     Some(tag)
   }
 }
 
-/// Compute the POLYVAL-based authentication tag using 4-block wide processing.
+/// Open one message through one x86 VAES/VPCLMULQDQ target-feature scope. It decrypts first, as
+/// SIV requires, then verifies the tag over the recovered plaintext, and clears `buffer` when
+/// verification fails. The derived keys and their schedule are cleared before return.
+///
+/// Returns `None` without modifying `buffer` when the cached master schedule does not use the
+/// AES-NI layout of the selected x86 backend.
+///
+/// # Safety
+///
+/// Same contract as [`seal_x86`].
 #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
-#[inline]
-fn compute_tag_wide(
-  auth_key: &[u8; 16],
-  enc_ek: &aes::Aes128EncKey,
+#[target_feature(enable = "aes,sse2,ssse3,avx512f,avx512vl,avx512bw,avx512dq,vaes,pclmulqdq,vpclmulqdq")]
+unsafe fn open_x86(
+  master_ek: &aes::Aes128EncKey,
   nonce: &Nonce96,
   aad: &[u8],
-  plaintext: &[u8],
-) -> [u8; TAG_SIZE] {
-  let h = u128::from_le_bytes(*auth_key);
-  let (h_powers_rev, h_powers_rev_16) = if aad.len() >= 256 || plaintext.len() >= 256 {
-    let powers_16 = precompute_powers_16(h);
-    (
-      [powers_16[3], powers_16[2], powers_16[1], powers_16[0]],
-      Some(core::array::from_fn(|i| powers_16[15usize.strict_sub(i)])),
-    )
-  } else {
-    let powers = precompute_powers(h);
-    ([powers[3], powers[2], powers[1], powers[0]], None)
-  };
+  buffer: &mut [u8],
+  tag: &Aes128GcmSivTag,
+) -> Option<Result<(), OpenError>> {
+  // SAFETY: fused x86 AES-128-GCM-SIV decryption because:
+  // 1. This function enables every target feature required by the AES and POLYVAL helpers.
+  // 2. The KDF helper returns `None` unless `master_ek` holds AES-NI round keys.
+  // 3. The CTR helper accepts any buffer length.
+  unsafe {
+    let (mut auth_key, mut enc_key) = aes::x86_gcmsiv_derive_keys_128_inline(master_ek, nonce.as_bytes())?;
+    let enc_ek = aes::x86_expand_key_128_inline(&enc_key);
+    ct::zeroize(&mut enc_key);
 
-  let mut acc: u128 = 0;
-  acc = accumulate_padded_x86(acc, h, &h_powers_rev, h_powers_rev_16.as_ref(), aad);
-  acc = accumulate_padded_x86(acc, h, &h_powers_rev, h_powers_rev_16.as_ref(), plaintext);
+    let mut counter_block = tag.0;
+    counter_block[15] |= 0x80;
+    aes::x86_ctr32_le_xor_128(&enc_ek, &counter_block, buffer);
 
-  let length_block = super::AeadByteLengths::from_usize(aad.len(), plaintext.len()).to_le_bits_block();
-  acc ^= u128::from_le_bytes(length_block);
-  acc = polyval::clmul128_reduce(acc, h);
-
-  let mut s = acc.to_le_bytes();
-  let nonce_bytes = nonce.as_bytes();
-  let mut j = 0usize;
-  while j < 12 {
-    s[j] ^= nonce_bytes[j];
-    j = j.strict_add(1);
+    let mut expected = polyval::x86_gcmsiv_tag_input(&mut auth_key, nonce.as_bytes(), aad, buffer);
+    aes::x86_encrypt_block_128_inline(&enc_ek, &mut expected);
+    if !ct::fixed_eq(&expected, tag.as_bytes()).declassify() {
+      ct::zeroize(buffer);
+      return Some(Err(OpenError::verification()));
+    }
+    Some(Ok(()))
   }
-  s[15] &= 0x7f;
-  aes::aes128_encrypt_block(enc_ek, &mut s);
-  s
 }
 
 // aarch64 fused encrypt/decrypt (single #[target_feature] scope)
@@ -1605,25 +1525,13 @@ impl Aead for Aes128GcmSiv {
     super::seal_bounded_length_as_u64(buffer.len(), MAX_INPUT_LEN)?;
     super::seal_bit_lengths(aad.len(), buffer.len())?;
 
-    // Wide path: VPCLMULQDQ POLYVAL + VAES-512 CTR when available.
     #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     if self.backend == AeadBackend::X86VaesVpclmul {
       // SAFETY: backend resolution selected this variant only after CPUID and OS-state checks
       // confirmed AES-NI, VAES, PCLMULQDQ, VPCLMULQDQ, and the required AVX-512 features.
-      if let Some(tag_bytes) = unsafe { encrypt_short_fused_x86(&self.master_ek, nonce, aad, buffer) } {
+      if let Some(tag_bytes) = unsafe { seal_x86(&self.master_ek, nonce, aad, buffer) } {
         return Ok(Aes128GcmSivTag::from_bytes(tag_bytes));
       }
-
-      let (mut auth_key, mut enc_key) = derive_keys(&self.master_ek, nonce);
-      let ek = aes::aes128_expand_key(&enc_key);
-      let tag_bytes = compute_tag_wide(&auth_key, &ek, nonce, aad, buffer);
-      let mut counter_block = tag_bytes;
-      counter_block[15] |= 0x80;
-      // SAFETY: VAES availability verified during backend resolution.
-      unsafe { aes::aes128_ctr32_encrypt_wide(&ek, &counter_block, buffer) };
-      ct::zeroize(&mut auth_key);
-      ct::zeroize(&mut enc_key);
-      return Ok(Aes128GcmSivTag::from_bytes(tag_bytes));
     }
 
     // Fused path: entire encrypt in a single #[target_feature] scope.
@@ -1697,26 +1605,13 @@ impl Aead for Aes128GcmSiv {
     super::open_bounded_length_as_u64(buffer.len(), MAX_INPUT_LEN)?;
     super::open_bit_lengths(aad.len(), buffer.len())?;
 
-    // Wide path: VAES-512 CTR + VPCLMULQDQ POLYVAL when available.
     #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     if self.backend == AeadBackend::X86VaesVpclmul {
-      let (mut auth_key, mut enc_key) = derive_keys(&self.master_ek, nonce);
-      let ek = aes::aes128_expand_key(&enc_key);
-      // Decrypt first (SIV pattern).
-      let mut counter_block = tag.0;
-      counter_block[15] |= 0x80;
-      // SAFETY: VAES availability verified during backend resolution.
-      unsafe { aes::aes128_ctr32_encrypt_wide(&ek, &counter_block, buffer) };
-
-      // Verify tag over decrypted plaintext.
-      let expected = compute_tag_wide(&auth_key, &ek, nonce, aad, buffer);
-      ct::zeroize(&mut auth_key);
-      ct::zeroize(&mut enc_key);
-      if !ct::fixed_eq(&expected, tag.as_bytes()).declassify() {
-        ct::zeroize(buffer);
-        return Err(OpenError::verification());
+      // SAFETY: backend resolution selected this variant only after CPUID and OS-state checks
+      // confirmed AES-NI, VAES, PCLMULQDQ, VPCLMULQDQ, and the required AVX-512 features.
+      if let Some(result) = unsafe { open_x86(&self.master_ek, nonce, aad, buffer, tag) } {
+        return result;
       }
-      return Ok(());
     }
 
     // Fused path: entire decrypt in a single #[target_feature] scope.

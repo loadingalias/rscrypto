@@ -127,7 +127,7 @@ mod pclmul {
   ///
   /// # Safety
   /// Caller must ensure PCLMULQDQ and SSE2 are available.
-  #[cfg(any(feature = "aes-gcm", feature = "aes-gcm-siv"))]
+  #[cfg(any(feature = "aes-gcm", test))]
   #[target_feature(enable = "pclmulqdq,sse2")]
   pub(super) unsafe fn aggregate_4blocks(acc: u128, h_powers_rev: &[u128; 4], blocks: &[u128; 4]) -> u128 {
     // SAFETY: target_feature gate guarantees PCLMULQDQ + SSE2; all loads read initialized
@@ -185,6 +185,7 @@ mod pclmul {
 
   /// # Safety
   /// Caller must ensure PCLMULQDQ and SSE2 are available.
+  #[cfg(any(feature = "aes-gcm", test))]
   #[target_feature(enable = "pclmulqdq,sse2")]
   #[inline]
   unsafe fn aggregate_xmms(data: [__m128i; 4], h: [__m128i; 4]) -> u128 {
@@ -1060,7 +1061,7 @@ mod vpclmul {
   ///
   /// # Safety
   /// Caller must ensure AVX-512F + AVX-512VL + AVX-512BW + AVX-512DQ + VPCLMULQDQ.
-  #[cfg(feature = "aes-gcm")]
+  #[cfg(any(feature = "aes-gcm", feature = "aes-gcm-siv"))]
   #[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,vpclmulqdq,pclmulqdq,sse2")]
   #[inline]
   fn mont_reduce4(lo: __m512i, hi: __m512i) -> __m512i {
@@ -1086,7 +1087,7 @@ mod vpclmul {
   ///
   /// # Safety
   /// Caller must ensure AVX-512F + AVX-512VL + AVX-512BW + AVX-512DQ + VPCLMULQDQ.
-  #[cfg(feature = "aes-gcm")]
+  #[cfg(any(feature = "aes-gcm", feature = "aes-gcm-siv"))]
   #[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,vpclmulqdq,pclmulqdq,sse2")]
   #[inline]
   fn mul4(a: __m512i, b: __m512i) -> __m512i {
@@ -1111,7 +1112,7 @@ mod vpclmul {
   ///
   /// # Safety
   /// Caller must ensure AVX-512F + AVX-512VL + AVX-512BW + AVX-512DQ + VPCLMULQDQ.
-  #[cfg(feature = "aes-gcm")]
+  #[cfg(any(feature = "aes-gcm", feature = "aes-gcm-siv"))]
   #[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,vpclmulqdq,pclmulqdq,sse2")]
   pub(super) fn precompute_powers<const N: usize>(h: u128, powers: &mut [u128; N]) {
     // The caller selects this path only for N >= 4 with N a multiple of 4.
@@ -1145,7 +1146,7 @@ mod vpclmul {
     }
   }
 
-  #[cfg(feature = "aes-gcm")]
+  #[cfg(any(feature = "aes-gcm", feature = "aes-gcm-siv"))]
   #[inline]
   fn u128_to_m128(value: u128) -> __m128i {
     // SAFETY: SSE2 is the x86-64 baseline; the load reads the 16 initialized bytes of `value`.
@@ -1337,7 +1338,7 @@ mod vpclmul {
   /// # Safety
   /// Caller must ensure AVX-512F + AVX-512VL + AVX-512BW + AVX-512DQ +
   /// VPCLMULQDQ + PCLMULQDQ + SSE2.
-  #[cfg(any(feature = "aes-gcm", feature = "aes-gcm-siv"))]
+  #[cfg(any(feature = "aes-gcm", test))]
   #[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,vpclmulqdq,pclmulqdq,sse2")]
   pub(super) unsafe fn aggregate_4blocks(
     acc: u128,
@@ -1353,33 +1354,6 @@ mod vpclmul {
       block_data[0] ^= acc;
       let data = _mm512_loadu_si512(block_data.as_ptr().cast());
       aggregate_lanes(data, h_powers_rev)
-    }
-  }
-
-  /// Process 16 POLYVAL-domain blocks using VPCLMULQDQ and one shared reduction.
-  ///
-  /// # Safety
-  /// Caller must ensure AVX-512F + AVX-512VL + AVX-512BW + AVX-512DQ +
-  /// VPCLMULQDQ + PCLMULQDQ + SSE2.
-  #[cfg(any(feature = "aes-gcm-siv", test))]
-  #[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,vpclmulqdq,pclmulqdq,sse2")]
-  pub(super) unsafe fn aggregate_16blocks(acc: u128, h_powers_rev: &[u128; 16], blocks: &[u128; 16]) -> u128 {
-    // SAFETY: x86 VPCLMUL aggregation because:
-    // 1. This function's caller guarantees all required target features.
-    // 2. `blocks` and `h_powers_rev` are fixed 16-lane initialized arrays.
-    // 3. The accumulator is folded into the first lane, matching sequential GHASH/POLYVAL.
-    unsafe {
-      let mut block_data = *blocks;
-      block_data[0] ^= acc;
-      aggregate_16_lanes(
-        [
-          _mm512_loadu_si512(block_data.as_ptr().cast()),
-          _mm512_loadu_si512(block_data.as_ptr().add(4).cast()),
-          _mm512_loadu_si512(block_data.as_ptr().add(8).cast()),
-          _mm512_loadu_si512(block_data.as_ptr().add(12).cast()),
-        ],
-        h_powers_rev,
-      )
     }
   }
 
@@ -1541,11 +1515,7 @@ mod vpclmul {
 ///
 /// # Safety
 /// Caller must ensure PCLMULQDQ and SSE2 are available.
-#[cfg(all(
-  target_arch = "x86_64",
-  target_feature = "sse2",
-  any(feature = "aes-gcm", feature = "aes-gcm-siv")
-))]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm"))]
 #[target_feature(enable = "pclmulqdq,sse2")]
 #[inline]
 pub(super) unsafe fn x86_clmul128_reduce_inline(a: u128, b: u128) -> u128 {
@@ -1559,11 +1529,7 @@ pub(super) unsafe fn x86_clmul128_reduce_inline(a: u128, b: u128) -> u128 {
 ///
 /// # Safety
 /// Caller must ensure PCLMULQDQ and SSE2 are available.
-#[cfg(all(
-  target_arch = "x86_64",
-  target_feature = "sse2",
-  any(feature = "aes-gcm", feature = "aes-gcm-siv")
-))]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2", any(feature = "aes-gcm", test)))]
 #[target_feature(enable = "pclmulqdq,sse2")]
 #[inline]
 pub(super) unsafe fn x86_pclmul_aggregate_4blocks_inline(
@@ -1583,41 +1549,12 @@ pub(super) unsafe fn x86_pclmul_aggregate_4blocks_inline(
 /// Caller must ensure AVX-512F + AVX-512VL + AVX-512BW + AVX-512DQ +
 /// VPCLMULQDQ + PCLMULQDQ + SSE2 are available, and `block_ptr` points at
 /// at least 64 initialized bytes.
-#[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm-siv"))]
-#[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,vpclmulqdq,pclmulqdq,sse2")]
-#[inline]
-pub(super) unsafe fn x86_aggregate_4blocks_le_bytes_inline(
-  acc: u128,
-  h_powers_rev: &[u128; 4],
-  block_ptr: *const u8,
-) -> u128 {
-  // SAFETY: direct-byte VPCLMUL POLYVAL aggregation because:
-  // 1. Caller guarantees all required x86 target features.
-  // 2. `block_ptr` points at four initialized 16-byte POLYVAL blocks.
-  unsafe { vpclmul::aggregate_4blocks_le_bytes(acc, h_powers_rev, block_ptr) }
-}
-
 /// 16-block VPCLMULQDQ aggregate helper for little-endian POLYVAL bytes.
 ///
 /// # Safety
 /// Caller must ensure AVX-512F + AVX-512VL + AVX-512BW + AVX-512DQ +
 /// VPCLMULQDQ + PCLMULQDQ + SSE2 are available, and `block_ptr` points at
 /// at least 256 initialized bytes.
-#[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm-siv"))]
-#[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,vpclmulqdq,pclmulqdq,sse2")]
-#[inline]
-pub(super) unsafe fn x86_aggregate_16blocks_le_bytes_inline(
-  acc: u128,
-  h_powers_rev: &[u128; 16],
-  block_ptr: *const u8,
-) -> u128 {
-  // SAFETY: direct-byte VPCLMUL POLYVAL aggregation because:
-  // 1. Caller guarantees all required x86 target features.
-  // 2. `block_ptr` points at sixteen initialized 16-byte POLYVAL blocks.
-  // 3. The helper folds the incoming accumulator only into the first lane.
-  unsafe { vpclmul::aggregate_16blocks_le_bytes(acc, h_powers_rev, block_ptr) }
-}
-
 /// PCLMULQDQ 4-block aggregate helper for big-endian GHASH bytes already in XMM registers.
 ///
 /// # Safety
@@ -1930,7 +1867,6 @@ pub fn diag_polyval_reduce_portable(a: &[u8; 16], b: &[u8; 16]) -> [u8; 16] {
   all(
     feature = "aes-gcm-siv",
     any(
-      all(target_arch = "x86_64", target_feature = "sse2"),
       target_arch = "aarch64",
       all(target_arch = "powerpc64", not(feature = "portable-only")),
       all(target_arch = "s390x", not(feature = "portable-only"))
@@ -2080,10 +2016,7 @@ pub(super) fn precompute_powers_8(h: u128) -> [u128; 8] {
 }
 
 /// Precompute hash key powers [H, H^2, ..., H^16] for 16-block GHASH/POLYVAL windows.
-#[cfg(any(
-  all(feature = "aes-gcm-siv", all(target_arch = "x86_64", target_feature = "sse2")),
-  test
-))]
+#[cfg(test)]
 pub(super) fn precompute_powers_16(h: u128) -> [u128; 16] {
   let mut powers = [0u128; 16];
   powers[0] = h;
@@ -2174,12 +2107,7 @@ pub(super) fn precompute_powers_16_pair(h_powers_rev_16: &[u128; 16]) -> [u128; 
 ///
 /// Dispatches to a target carryless-multiply aggregate when available,
 /// otherwise falls back to 4 sequential `clmul128_reduce` calls.
-#[cfg(any(
-  feature = "aes-gcm",
-  all(feature = "aes-gcm-siv", all(target_arch = "x86_64", target_feature = "sse2")),
-  all(target_arch = "x86_64", target_feature = "sse2"),
-  test
-))]
+#[cfg(any(feature = "aes-gcm", test))]
 pub(super) fn accumulate_4blocks(
   acc: u128,
   h: u128,
@@ -2247,112 +2175,189 @@ pub(super) fn accumulate_4blocks(
   clmul128_reduce(a, h)
 }
 
-/// Process 16 blocks through the hash accumulator in one shot.
-///
-/// Computes `(acc ^ b0) * H^16 ^ b1 * H^15 ^ ... ^ b15 * H`.
-#[cfg(any(
-  all(feature = "aes-gcm-siv", all(target_arch = "x86_64", target_feature = "sse2")),
-  test
-))]
-pub(super) fn accumulate_16blocks(acc: u128, h: u128, h_powers_rev: &[u128; 16], blocks: &[u128; 16]) -> u128 {
-  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
-  {
-    if crate::platform::caps().has(crate::platform::caps::x86::VPCLMUL_READY) {
-      // SAFETY: VPCLMUL aggregate call because:
-      // 1. Runtime caps confirmed AVX-512 + VPCLMUL support before entering the target-feature helper.
-      // 2. `h_powers_rev` and `blocks` are fixed 16-lane arrays, matching the helper contract.
-      return unsafe { vpclmul::aggregate_16blocks(acc, h_powers_rev, blocks) };
-    }
-  }
-
-  let _ = h;
-
-  let mut a = clmul128_reduce(acc ^ blocks[0], h_powers_rev[0]);
-  let mut i = 1usize;
-  while i < blocks.len() {
-    a ^= clmul128_reduce(blocks[i], h_powers_rev[i]);
-    i = i.strict_add(1);
-  }
-  a
-}
-
-/// Process padded GCM-SIV POLYVAL input using x86 wide windows.
-///
-/// Full 16-byte blocks are folded with 16-block VPCLMUL windows when the caller
-/// provides H powers through H^16, then 4-block windows, then scalar tails.
-/// A final partial block is zero-padded as required by RFC 8452.
+/// Messages whose AAD or plaintext reaches this many bytes use 16-block POLYVAL windows; shorter
+/// ones use 4-block windows, which need three H powers instead of fifteen.
 #[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm-siv"))]
-pub(super) fn accumulate_padded_x86(
+const X86_GCMSIV_WIDE_POLYVAL_BYTES: usize = 1024;
+
+/// Absorb `data` into a GCM-SIV POLYVAL accumulator: 16-block VPCLMUL windows when
+/// `h_powers_rev_16` is given, then 4-block windows, then single blocks. A final partial block is
+/// zero-padded as RFC 8452 requires.
+///
+/// # Safety
+/// Caller must ensure AVX-512F + AVX-512VL + AVX-512BW + AVX-512DQ + VPCLMULQDQ + PCLMULQDQ +
+/// SSE2, and must supply `h_powers_rev` whenever `data` holds 64 bytes or more.
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm-siv"))]
+#[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,vpclmulqdq,pclmulqdq,sse2")]
+#[inline]
+unsafe fn x86_absorb_padded(
   mut acc: u128,
   h: u128,
   h_powers_rev: &[u128; 4],
   h_powers_rev_16: Option<&[u128; 16]>,
   data: &[u8],
 ) -> u128 {
-  let mut offset = 0usize;
-  let has_vpclmul = crate::platform::caps().has(crate::platform::caps::x86::VPCLMUL_READY);
-
-  if let Some(h16) = h_powers_rev_16 {
-    while offset.strict_add(256) <= data.len() {
-      if has_vpclmul {
-        // SAFETY: x86 VPCLMUL byte aggregation because:
-        // 1. Runtime caps confirmed AVX-512 + VPCLMUL support before entering the target-feature helper.
-        // 2. `offset + 256 <= data.len()` proves the helper can read sixteen initialized blocks.
-        acc = unsafe { x86_aggregate_16blocks_le_bytes_inline(acc, h16, data.as_ptr().add(offset)) };
-      } else {
-        let mut blocks = [0u128; 16];
-        let mut i = 0usize;
-        while i < 16 {
-          let base = offset.strict_add(i.strict_mul(16));
-          let mut block = [0u8; 16];
-          block.copy_from_slice(&data[base..base.strict_add(16)]);
-          blocks[i] = u128::from_le_bytes(block);
-          i = i.strict_add(1);
-        }
-        acc = accumulate_16blocks(acc, h, h16, &blocks);
+  // SAFETY: POLYVAL absorption because:
+  // 1. The caller guarantees every target feature of the window and multiply helpers.
+  // 2. Each window helper reads 256 or 64 bytes at `data[offset..]`, which the loop bounds
+  //    establish before the call.
+  unsafe {
+    let mut offset = 0usize;
+    if let Some(h16) = h_powers_rev_16 {
+      while offset.strict_add(256) <= data.len() {
+        acc = vpclmul::aggregate_16blocks_le_bytes(acc, h16, data.as_ptr().add(offset));
+        offset = offset.strict_add(256);
       }
-      offset = offset.strict_add(256);
     }
+    while offset.strict_add(64) <= data.len() {
+      acc = vpclmul::aggregate_4blocks_le_bytes(acc, h_powers_rev, data.as_ptr().add(offset));
+      offset = offset.strict_add(64);
+    }
+
+    let (blocks, tail) = data[offset..].as_chunks::<16>();
+    for block in blocks {
+      acc = pclmul::clmul128_reduce(acc ^ u128::from_le_bytes(*block), h);
+    }
+    if !tail.is_empty() {
+      let mut block = [0u8; 16];
+      block[..tail.len()].copy_from_slice(tail);
+      acc = pclmul::clmul128_reduce(acc ^ u128::from_le_bytes(block), h);
+    }
+    acc
+  }
+}
+
+/// The RFC 8452 section 5 tag input before its encryption: POLYVAL of the padded AAD, the padded
+/// message, and the length block, XORed with the nonce, with the top bit cleared. Clears the
+/// authentication key and the H powers it derives.
+///
+/// # Safety
+/// Caller must ensure AVX-512F + AVX-512VL + AVX-512BW + AVX-512DQ + VPCLMULQDQ + PCLMULQDQ +
+/// SSE2.
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm-siv"))]
+#[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,vpclmulqdq,pclmulqdq,sse2")]
+#[inline]
+pub(super) unsafe fn x86_gcmsiv_tag_input(
+  auth_key: &mut [u8; 16],
+  nonce: &[u8; 12],
+  aad: &[u8],
+  message: &[u8],
+) -> [u8; 16] {
+  let mut h = [u128::from_le_bytes(*auth_key)];
+  crate::traits::ct::zeroize(auth_key);
+
+  // The window width depends only on the public lengths. Each branch derives and clears only
+  // the H powers its windows use; inputs below 64 bytes need none.
+  let longest = aad.len().max(message.len());
+
+  let total_blocks = aad
+    .len()
+    .div_ceil(16)
+    .strict_add(message.len().div_ceil(16))
+    .strict_add(1);
+  if total_blocks <= 4 {
+    // SAFETY: the target features above cover the power and window helpers.
+    return unsafe { x86_gcmsiv_tag_input_short(&mut h, nonce, aad, message, total_blocks) };
   }
 
-  while offset.strict_add(64) <= data.len() {
-    if has_vpclmul {
-      // SAFETY: x86 VPCLMUL byte aggregation because:
-      // 1. Runtime caps confirmed AVX-512 + VPCLMUL support before entering the target-feature helper.
-      // 2. `offset + 64 <= data.len()` proves the helper can read four initialized blocks.
-      acc = unsafe { x86_aggregate_4blocks_le_bytes_inline(acc, h_powers_rev, data.as_ptr().add(offset)) };
+  // SAFETY: GCM-SIV POLYVAL because:
+  // 1. This function's target features are exactly those of the power, window, and multiply
+  //    helpers.
+  // 2. Each branch supplies H^4..H^1 whenever an input reaches 64 bytes, and H^16..H^1 when it
+  //    requests 16-block windows.
+  let acc = unsafe {
+    if longest >= X86_GCMSIV_WIDE_POLYVAL_BYTES {
+      let mut powers = [0u128; 16];
+      vpclmul::precompute_powers(h[0], &mut powers);
+      let mut rev_16: [u128; 16] = core::array::from_fn(|i| powers[15usize.strict_sub(i)]);
+      let mut rev_4 = [powers[3], powers[2], powers[1], powers[0]];
+      let acc = x86_absorb_padded(0, h[0], &rev_4, Some(&rev_16), aad);
+      let acc = x86_absorb_padded(acc, h[0], &rev_4, Some(&rev_16), message);
+      crate::traits::ct::zeroize_words(&mut powers);
+      crate::traits::ct::zeroize_words(&mut rev_16);
+      crate::traits::ct::zeroize_words(&mut rev_4);
+      acc
+    } else if longest >= 64 {
+      let mut powers = [0u128; 4];
+      vpclmul::precompute_powers(h[0], &mut powers);
+      let mut rev_4 = [powers[3], powers[2], powers[1], powers[0]];
+      let acc = x86_absorb_padded(0, h[0], &rev_4, None, aad);
+      let acc = x86_absorb_padded(acc, h[0], &rev_4, None, message);
+      crate::traits::ct::zeroize_words(&mut powers);
+      crate::traits::ct::zeroize_words(&mut rev_4);
+      acc
     } else {
-      let mut blocks = [0u128; 4];
-      let mut i = 0usize;
-      while i < 4 {
-        let base = offset.strict_add(i.strict_mul(16));
-        let mut block = [0u8; 16];
-        block.copy_from_slice(&data[base..base.strict_add(16)]);
-        blocks[i] = u128::from_le_bytes(block);
-        i = i.strict_add(1);
-      }
-      acc = accumulate_4blocks(acc, h, h_powers_rev, &blocks);
+      let acc = x86_absorb_padded(0, h[0], &[0; 4], None, aad);
+      x86_absorb_padded(acc, h[0], &[0; 4], None, message)
     }
-    offset = offset.strict_add(64);
-  }
+  };
+  let lengths = super::AeadByteLengths::from_usize(aad.len(), message.len()).to_le_bits_block();
+  // SAFETY: PCLMULQDQ and SSE2 are among this function's target features.
+  let mut acc = [unsafe { pclmul::clmul128_reduce(acc ^ u128::from_le_bytes(lengths), h[0]) }];
 
-  while offset.strict_add(16) <= data.len() {
-    let mut block = [0u8; 16];
-    block.copy_from_slice(&data[offset..offset.strict_add(16)]);
-    acc ^= u128::from_le_bytes(block);
-    acc = clmul128_reduce(acc, h);
-    offset = offset.strict_add(16);
+  let mut input = acc[0].to_le_bytes();
+  for (byte, nonce_byte) in input.iter_mut().zip(nonce) {
+    *byte ^= nonce_byte;
   }
+  input[15] &= 0x7f;
 
-  let remaining = data.len().strict_sub(offset);
-  if remaining > 0 {
-    let mut block = [0u8; 16];
-    block[..remaining].copy_from_slice(&data[offset..]);
-    acc ^= u128::from_le_bytes(block);
-    acc = clmul128_reduce(acc, h);
+  crate::traits::ct::zeroize_words(&mut h);
+  crate::traits::ct::zeroize_words(&mut acc);
+  input
+}
+
+/// [`x86_gcmsiv_tag_input`] for transcripts of at most four blocks: the padded AAD, the padded
+/// message, and the length block, right-aligned behind zero blocks and absorbed in one 4-block
+/// window. The powers H^2..H^4 depend only on H, so they are computed off the message's critical
+/// path; leading zero blocks add nothing because the accumulator starts at zero. Clears `h`, the
+/// powers, and the transcript copy.
+///
+/// # Safety
+/// Caller must ensure AVX-512F + AVX-512VL + AVX-512BW + AVX-512DQ + VPCLMULQDQ + PCLMULQDQ +
+/// SSE2, and `total_blocks` must be the transcript's block count, at most four.
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm-siv"))]
+#[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,vpclmulqdq,pclmulqdq,sse2")]
+#[inline]
+unsafe fn x86_gcmsiv_tag_input_short(
+  h: &mut [u128; 1],
+  nonce: &[u8; 12],
+  aad: &[u8],
+  message: &[u8],
+  total_blocks: usize,
+) -> [u8; 16] {
+  debug_assert!(total_blocks <= 4);
+  let mut transcript = [0u8; 64];
+  let mut offset = 4usize.strict_sub(total_blocks).strict_mul(16);
+  for part in [aad, message] {
+    transcript[offset..offset.strict_add(part.len())].copy_from_slice(part);
+    offset = offset.strict_add(part.len().div_ceil(16).strict_mul(16));
   }
+  let lengths = super::AeadByteLengths::from_usize(aad.len(), message.len()).to_le_bits_block();
+  transcript[48..].copy_from_slice(&lengths);
 
-  acc
+  let mut powers = [0u128; 4];
+  // SAFETY: GCM-SIV POLYVAL because:
+  // 1. This function's target features are exactly those of the power and window helpers.
+  // 2. `transcript` holds 64 initialized bytes, and `powers` holds H^1..H^4 before the window.
+  let mut acc = unsafe {
+    vpclmul::precompute_powers(h[0], &mut powers);
+    let mut rev_4 = [powers[3], powers[2], powers[1], powers[0]];
+    let acc = [vpclmul::aggregate_4blocks_le_bytes(0, &rev_4, transcript.as_ptr())];
+    crate::traits::ct::zeroize_words(&mut rev_4);
+    acc
+  };
+
+  let mut input = acc[0].to_le_bytes();
+  for (byte, nonce_byte) in input.iter_mut().zip(nonce) {
+    *byte ^= nonce_byte;
+  }
+  input[15] &= 0x7f;
+
+  crate::traits::ct::zeroize_words(h);
+  crate::traits::ct::zeroize_words(&mut acc);
+  crate::traits::ct::zeroize_words(&mut powers);
+  crate::traits::ct::zeroize(&mut transcript);
+  input
 }
 
 /// POLYVAL accumulator state.
@@ -2866,39 +2871,14 @@ mod tests {
     assert_eq!(wide, seq, "4-block aggregate must match sequential processing");
   }
 
-  /// Verify accumulate_16blocks matches sequential block-by-block processing.
-  #[test]
-  fn accumulate_16blocks_matches_sequential() {
-    let h = u128::from_le_bytes(RFC_H);
-    let powers = precompute_powers_16(h);
-    let h_powers_rev = core::array::from_fn(|i| powers[15usize.strict_sub(i)]);
-    let mut blocks = [0u128; 16];
-    let mut lane = 1u128;
-    let mut rotation = 0u32;
-    for block in &mut blocks {
-      *block = 0x4f4f_9566_8c83_dfb6_4017_62bb_2d01_a262u128.wrapping_mul(lane)
-        ^ 0xd1a2_4ddd_2721_d006_bbe4_5f20_d3c9_f362u128.rotate_left(rotation);
-      lane = lane.wrapping_add(1);
-      rotation = rotation.strict_add(1);
-    }
-    let acc = 0x42u128;
-
-    let mut seq = acc;
-    let mut i = 0usize;
-    while i < blocks.len() {
-      seq ^= blocks[i];
-      seq = clmul128_reduce(seq, h);
-      i = i.strict_add(1);
-    }
-
-    let wide = accumulate_16blocks(acc, h, &h_powers_rev, &blocks);
-    assert_eq!(wide, seq, "16-block aggregate must match sequential processing");
-  }
-
-  /// Verify the x86 padded wide path matches scalar POLYVAL over boundary sizes.
+  /// Verify the x86 GCM-SIV absorb matches serial POLYVAL over window and tail boundaries,
+  /// with and without 16-block windows.
   #[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm-siv"))]
   #[test]
-  fn accumulate_padded_x86_matches_sequential_boundaries() {
+  fn x86_absorb_padded_matches_sequential_boundaries() {
+    if !crate::platform::caps().has(crate::platform::caps::x86::VPCLMUL_READY) {
+      return;
+    }
     let h = u128::from_le_bytes(RFC_H);
     let powers = precompute_powers_16(h);
     let h_powers_rev = [powers[3], powers[2], powers[1], powers[0]];
@@ -2932,8 +2912,17 @@ mod tests {
         expected = clmul128_reduce(expected, h);
       }
 
-      let wide = accumulate_padded_x86(acc, h, &h_powers_rev, Some(&h_powers_rev_16), &data[..len]);
-      assert_eq!(wide, expected, "padded x86 aggregate mismatch at len {len}");
+      for window_16 in [Some(&h_powers_rev_16), None] {
+        // SAFETY: the capability check above established AVX-512 and VPCLMULQDQ, and both power
+        // tables are supplied.
+        let wide = unsafe { x86_absorb_padded(acc, h, &h_powers_rev, window_16, &data[..len]) };
+        assert_eq!(
+          wide,
+          expected,
+          "x86 absorb mismatch at len {len}, 16-block windows {}",
+          window_16.is_some()
+        );
+      }
     }
   }
 

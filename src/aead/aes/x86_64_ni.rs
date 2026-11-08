@@ -2,7 +2,7 @@ use core::arch::x86_64::*;
 
 /// AES-256 round keys stored as 15 × 128-bit values for AES-NI.
 #[repr(C, align(16))]
-pub(super) struct NiRoundKeys {
+pub(in crate::aead) struct NiRoundKeys {
   rk: [__m128i; 15],
 }
 
@@ -409,63 +409,128 @@ pub(super) unsafe fn gcmsiv_derive_keys_128(keys: &Ni128RoundKeys, nonce: &[u8; 
 #[target_feature(enable = "aes,sse2,avx512f,avx512vl,vaes")]
 #[inline]
 pub(super) unsafe fn ctr32_le_xor_short_128(keys: &Ni128RoundKeys, initial_counter: &[u8; 16], data: &mut [u8]) {
+  // SAFETY: the target features above cover the counter, AES, and XOR helpers, and the caller
+  // bounds `data` to four blocks.
+  unsafe { xor_keystream_lanes(encrypt_4blocks_128(keys, gcmsiv_counter_lanes(initial_counter)), data) }
+}
+
+/// XOR at most four AES-256-GCM-SIV CTR blocks in one VAES operation.
+///
+/// # Safety
+/// Caller must ensure AVX-512F + AVX-512VL + VAES + AES + SSE2 and `data.len() <= 64`.
+#[cfg(feature = "aes-gcm-siv")]
+#[target_feature(enable = "aes,sse2,avx512f,avx512vl,vaes")]
+#[inline]
+pub(super) unsafe fn ctr32_le_xor_short_256(keys: &NiRoundKeys, initial_counter: &[u8; 16], data: &mut [u8]) {
+  // SAFETY: the target features above cover the counter, AES, and XOR helpers, and the caller
+  // bounds `data` to four blocks.
+  unsafe { xor_keystream_lanes(encrypt_4blocks(keys, gcmsiv_counter_lanes(initial_counter)), data) }
+}
+
+/// The four GCM-SIV counter blocks that start at `initial_counter`: its little-endian 32-bit
+/// counter word incremented per lane, and its remaining twelve bytes unchanged.
+///
+/// # Safety
+/// Caller must ensure AVX-512F + AVX-512VL + SSE2.
+#[cfg(feature = "aes-gcm-siv")]
+#[target_feature(enable = "sse2,avx512f,avx512vl")]
+#[inline]
+unsafe fn gcmsiv_counter_lanes(initial_counter: &[u8; 16]) -> __m512i {
+  let word = |i: usize| {
+    u32::from_le_bytes([
+      initial_counter[i],
+      initial_counter[i.strict_add(1)],
+      initial_counter[i.strict_add(2)],
+      initial_counter[i.strict_add(3)],
+    ])
+  };
+  // SAFETY: the target features above cover the counter-lane construction.
+  unsafe { super::x86_gcmsiv_ctr_blocks_le_4([word(4), word(8), word(12)], word(0)) }
+}
+
+/// XOR the first `data.len()` bytes of four keystream lanes into `data`.
+///
+/// # Safety
+/// Caller must ensure AVX-512F + AVX-512VL + SSE2 and `data.len() <= 64`.
+#[cfg(feature = "aes-gcm-siv")]
+#[target_feature(enable = "sse2,avx512f,avx512vl")]
+#[inline]
+unsafe fn xor_keystream_lanes(keystream: __m512i, data: &mut [u8]) {
   debug_assert!(data.len() <= 64);
 
-  // SAFETY: short AES-128-GCM-SIV CTR because:
+  // SAFETY: keystream XOR because:
   // 1. This function's target features enable every instruction used below.
-  // 2. The counter helper constructs four initialized counter lanes from `initial_counter`.
-  // 3. Complete-block SIMD loads and stores use fixed `[u8; 16]` references from `data`.
-  // 4. The partial tail uses a local initialized lane buffer and writes only `tail.len()` bytes.
+  // 2. Complete-block SIMD loads and stores use fixed `[u8; 16]` references from `data`.
+  // 3. The partial tail uses a local initialized lane buffer and writes only `tail.len()` bytes.
   unsafe {
-    let counter = u32::from_le_bytes([
-      initial_counter[0],
-      initial_counter[1],
-      initial_counter[2],
-      initial_counter[3],
-    ]);
-    let suffix_words = [
-      u32::from_le_bytes([
-        initial_counter[4],
-        initial_counter[5],
-        initial_counter[6],
-        initial_counter[7],
-      ]),
-      u32::from_le_bytes([
-        initial_counter[8],
-        initial_counter[9],
-        initial_counter[10],
-        initial_counter[11],
-      ]),
-      u32::from_le_bytes([
-        initial_counter[12],
-        initial_counter[13],
-        initial_counter[14],
-        initial_counter[15],
-      ]),
-    ];
-    let input = super::x86_gcmsiv_ctr_blocks_le_4(suffix_words, counter);
-    let output = encrypt_4blocks_128(keys, input);
     let lanes = [
-      _mm512_castsi512_si128(output),
-      _mm512_extracti32x4_epi32::<1>(output),
-      _mm512_extracti32x4_epi32::<2>(output),
-      _mm512_extracti32x4_epi32::<3>(output),
+      _mm512_castsi512_si128(keystream),
+      _mm512_extracti32x4_epi32::<1>(keystream),
+      _mm512_extracti32x4_epi32::<2>(keystream),
+      _mm512_extracti32x4_epi32::<3>(keystream),
     ];
 
     let (blocks, tail) = data.as_chunks_mut::<16>();
-    for (block, keystream) in blocks.iter_mut().zip(lanes) {
-      let plaintext = _mm_loadu_si128(block.as_ptr().cast());
-      _mm_storeu_si128(block.as_mut_ptr().cast(), _mm_xor_si128(plaintext, keystream));
+    for (block, lane) in blocks.iter_mut().zip(lanes) {
+      let input = _mm_loadu_si128(block.as_ptr().cast());
+      _mm_storeu_si128(block.as_mut_ptr().cast(), _mm_xor_si128(input, lane));
     }
 
     if !tail.is_empty() {
-      let mut keystream = [0u8; 16];
-      _mm_storeu_si128(keystream.as_mut_ptr().cast(), lanes[blocks.len()]);
-      for (byte, mask) in tail.iter_mut().zip(keystream) {
+      let mut lane = [0u8; 16];
+      _mm_storeu_si128(lane.as_mut_ptr().cast(), lanes[blocks.len()]);
+      for (byte, mask) in tail.iter_mut().zip(lane) {
         *byte ^= mask;
       }
-      crate::traits::ct::zeroize(&mut keystream);
+      crate::traits::ct::zeroize(&mut lane);
     }
+  }
+}
+
+/// Derive AES-256-GCM-SIV per-message keys in two four-lane VAES operations.
+///
+/// RFC 8452 section 4 encrypts six counter blocks: the low eight bytes of blocks 0 and 1 form the
+/// authentication key, and those of blocks 2 to 5 form the encryption key.
+///
+/// # Safety
+/// Caller must ensure AVX-512F + AVX-512VL + VAES + AES + SSE2.
+#[cfg(feature = "aes-gcm-siv")]
+#[target_feature(enable = "aes,sse2,avx512f,avx512vl,vaes")]
+#[inline]
+pub(super) unsafe fn gcmsiv_derive_keys_256(keys: &NiRoundKeys, nonce: &[u8; 12]) -> ([u8; 16], [u8; 32]) {
+  // SAFETY: AES-256-GCM-SIV KDF because:
+  // 1. This function's target features enable every instruction used below.
+  // 2. The counter helper constructs counter blocks 0 to 7; lanes 6 and 7 are unused.
+  // 3. The low 64 bits extracted from each used lane are exactly the RFC 8452 subkey words.
+  unsafe {
+    let suffix_words = [
+      u32::from_le_bytes([nonce[0], nonce[1], nonce[2], nonce[3]]),
+      u32::from_le_bytes([nonce[4], nonce[5], nonce[6], nonce[7]]),
+      u32::from_le_bytes([nonce[8], nonce[9], nonce[10], nonce[11]]),
+    ];
+    let low = encrypt_4blocks(keys, super::x86_gcmsiv_ctr_blocks_le_4(suffix_words, 0));
+    let high = encrypt_4blocks(keys, super::x86_gcmsiv_ctr_blocks_le_4(suffix_words, 4));
+    let words = [
+      _mm_cvtsi128_si64(_mm512_castsi512_si128(low)),
+      _mm_cvtsi128_si64(_mm512_extracti32x4_epi32::<1>(low)),
+      _mm_cvtsi128_si64(_mm512_extracti32x4_epi32::<2>(low)),
+      _mm_cvtsi128_si64(_mm512_extracti32x4_epi32::<3>(low)),
+      _mm_cvtsi128_si64(_mm512_castsi512_si128(high)),
+      _mm_cvtsi128_si64(_mm512_extracti32x4_epi32::<1>(high)),
+    ];
+
+    let mut auth_key = [0u8; 16];
+    let mut enc_key = [0u8; 32];
+    for (chunk, word) in auth_key
+      .as_chunks_mut::<8>()
+      .0
+      .iter_mut()
+      .chain(enc_key.as_chunks_mut::<8>().0.iter_mut())
+      .zip(words)
+    {
+      *chunk = word.cast_unsigned().to_le_bytes();
+    }
+    (auth_key, enc_key)
   }
 }
 

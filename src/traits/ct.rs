@@ -273,6 +273,7 @@ pub fn zeroize(buf: &mut [u8]) {
 
 #[cfg(any(
   feature = "aes-gcm",
+  all(feature = "aes-gcm-siv", target_arch = "x86_64"),
   feature = "ascon-aead",
   feature = "blake2b",
   feature = "blake2s",
@@ -318,6 +319,7 @@ mod word_zero_sealed {
 
 #[cfg(any(
   feature = "aes-gcm",
+  all(feature = "aes-gcm-siv", target_arch = "x86_64"),
   feature = "ascon-aead",
   feature = "blake2b",
   feature = "blake2s",
@@ -341,6 +343,7 @@ pub(crate) use word_zero_sealed::WordZero;
 /// zeroizations.
 #[cfg(any(
   feature = "aes-gcm",
+  all(feature = "aes-gcm-siv", target_arch = "x86_64"),
   feature = "ascon-aead",
   feature = "blake2b",
   feature = "blake2s",
@@ -382,6 +385,7 @@ pub(crate) fn zeroize_fence() {
 /// Volatile-zero a slice of `WordZero` integers and emit a compiler fence.
 #[cfg(any(
   feature = "aes-gcm",
+  all(feature = "aes-gcm-siv", target_arch = "x86_64"),
   feature = "ascon-aead",
   feature = "blake3",
   feature = "p256-ecdh",

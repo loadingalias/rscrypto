@@ -117,6 +117,24 @@ fn aes128gcmsiv_oracle_aad_size_sweep() {
 }
 
 #[test]
+fn aes128gcmsiv_oracle_window_and_counter_boundaries() {
+  let key = [0x3cu8; 16];
+  let nonce = [0x5au8; 12];
+  // Message lengths straddle the CTR seams (the 256-byte block loop, then 64-byte blocks, then
+  // a short tail) and, with the AAD lengths, the 1024-byte switch to 16-block POLYVAL windows
+  // followed by 4-block windows, single blocks, and a partial block.
+  for len in [
+    255usize, 256, 257, 300, 319, 320, 321, 335, 1023, 1024, 1025, 1040, 1279, 1280, 1281,
+  ] {
+    let plaintext: Vec<u8> = (0..len).map(|i| i.to_le_bytes()[0].wrapping_mul(31)).collect();
+    for aad_len in [0usize, 14, 1023, 1024, 1025, 1281] {
+      let aad: Vec<u8> = (0..aad_len).map(|i| i.to_le_bytes()[0].wrapping_add(7)).collect();
+      assert_matches_oracle(&key, &nonce, &aad, &plaintext);
+    }
+  }
+}
+
+#[test]
 fn aes128gcmsiv_is_deterministic_under_nonce_reuse() {
   let key = Aes128GcmSivKey::from_bytes([0x5Au8; 16]);
   let nonce = Nonce96::from_bytes([0xC3u8; 12]);

@@ -1121,6 +1121,54 @@ pub(super) unsafe fn x86_expand_key_128_inline(key: &[u8; KEY_SIZE_128]) -> ni::
   unsafe { ni::expand_key_128(key) }
 }
 
+/// Derive the AES-256-GCM-SIV per-message keys from an AES-NI master schedule.
+///
+/// Returns `None` if `master_ek` does not contain the AES-NI schedule required by the
+/// `X86VaesVpclmul` backend.
+///
+/// # Safety
+/// Caller must ensure AVX-512F + AVX-512VL + VAES + AES + SSE2.
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm-siv"))]
+#[target_feature(enable = "aes,sse2,avx512f,avx512vl,vaes")]
+#[inline]
+pub(super) unsafe fn x86_gcmsiv_derive_keys_256_inline(
+  master_ek: &Aes256EncKey,
+  nonce: &[u8; 12],
+) -> Option<([u8; 16], [u8; KEY_SIZE])> {
+  let KeyInner::X86AesNi(ni_rk) = &master_ek.inner else {
+    return None;
+  };
+  // SAFETY: direct x86 AES-256-GCM-SIV KDF because:
+  // 1. This function's caller guarantees every required x86 feature.
+  // 2. The matched key variant proves the master schedule uses AES-NI round-key layout.
+  // 3. `nonce` is exactly the 96-bit GCM-SIV nonce.
+  Some(unsafe { ni::gcmsiv_derive_keys_256(ni_rk, nonce) })
+}
+
+/// Expand one AES-256 key directly into the AES-NI round-key representation.
+///
+/// # Safety
+/// Caller must ensure AES-NI and SSE2 are available.
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm-siv"))]
+#[target_feature(enable = "aes,sse2")]
+#[inline]
+pub(super) unsafe fn x86_expand_key_256_inline(key: &[u8; KEY_SIZE]) -> ni::NiRoundKeys {
+  // SAFETY: the function's target features and caller contract establish AES-NI + SSE2.
+  unsafe { ni::expand_key(key) }
+}
+
+/// Encrypt one AES-256 block directly with an AES-NI round-key schedule.
+///
+/// # Safety
+/// Caller must ensure AES-NI and SSE2 are available.
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm-siv"))]
+#[target_feature(enable = "aes,sse2")]
+#[inline]
+pub(super) unsafe fn x86_encrypt_block_256_inline(keys: &ni::NiRoundKeys, block: &mut [u8; BLOCK_SIZE]) {
+  // SAFETY: the function's target features and fixed-size block satisfy the AES-NI helper.
+  unsafe { ni::encrypt_block(keys, block) }
+}
+
 /// Encrypt one AES-128 block directly with an AES-NI round-key schedule.
 ///
 /// # Safety
@@ -1131,23 +1179,6 @@ pub(super) unsafe fn x86_expand_key_128_inline(key: &[u8; KEY_SIZE_128]) -> ni::
 pub(super) unsafe fn x86_encrypt_block_128_inline(keys: &ni::Ni128RoundKeys, block: &mut [u8; BLOCK_SIZE]) {
   // SAFETY: the function's target features and fixed-size block satisfy the AES-NI helper.
   unsafe { ni::encrypt_block_128(keys, block) }
-}
-
-/// XOR at most four AES-128-GCM-SIV CTR blocks with four-lane VAES.
-///
-/// # Safety
-/// Caller must ensure AVX-512F + AVX-512VL + VAES + AES + SSE2 and `data.len() <= 64`.
-#[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm-siv"))]
-#[target_feature(enable = "aes,sse2,avx512f,avx512vl,vaes")]
-#[inline]
-pub(super) unsafe fn x86_ctr32_le_xor_short_128_inline(
-  keys: &ni::Ni128RoundKeys,
-  initial_counter: &[u8; BLOCK_SIZE],
-  data: &mut [u8],
-) {
-  // SAFETY: the caller establishes the target features and short-buffer bound required by the
-  // direct VAES helper.
-  unsafe { ni::ctr32_le_xor_short_128(keys, initial_counter, data) }
 }
 
 // aarch64: inline helpers for fused paths (#[target_feature] + #[inline(always)])
@@ -4561,272 +4592,100 @@ const fn usize_low_u32(value: usize) -> u32 {
   u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
 }
 
-/// AES-256 CTR encryption using VAES-512 for the bulk, AES-NI for the tail.
-///
-/// GCM-SIV variant: counter occupies bytes 0..3 (little-endian).
-///
-/// # Safety
-/// Caller must ensure AES-NI, SSE2, AVX-512F, AVX-512VL, and VAES are available.
-#[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm-siv"))]
-#[target_feature(enable = "aes,sse2,avx512f,avx512vl,vaes")]
-pub(crate) unsafe fn aes256_ctr32_encrypt_wide(ek: &Aes256EncKey, initial_counter: &[u8; BLOCK_SIZE], data: &mut [u8]) {
-  use core::arch::x86_64::*;
+/// Defines a GCM-SIV CTR function over AES-NI round keys: the 16-block assembly loop on Linux,
+/// then 16-block and 4-block VAES loops, then one four-lane VAES operation for the last 1 to 63
+/// bytes. The counter occupies bytes 0..4, little-endian (RFC 8452 section 4).
+macro_rules! define_x86_gcmsiv_ctr {
+  ($(#[$doc:meta])* $name:ident, $keys:ty, $asm:ident, $encrypt_16:ident, $encrypt_4:ident, $short:ident) => {
+    $(#[$doc])*
+    ///
+    /// # Safety
+    /// Caller must ensure AES-NI, SSE2, AVX-512F, AVX-512VL, and VAES are available.
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm-siv"))]
+    #[target_feature(enable = "aes,sse2,avx512f,avx512vl,vaes")]
+    #[inline]
+    pub(super) unsafe fn $name(ni_rk: &$keys, initial_counter: &[u8; BLOCK_SIZE], data: &mut [u8]) {
+      use core::arch::x86_64::*;
 
-  // SAFETY: AesNi variant is guaranteed by caller; target_feature gate
-  // ensures VAES + AVX-512 instructions are available.
-  unsafe {
-    let ni_rk = match &ek.inner {
-      KeyInner::X86AesNi(rk) => rk,
-      _ => {
-        aes256_ctr32_encrypt(ek, initial_counter, data);
-        return;
-      }
-    };
+      // SAFETY: GCM-SIV CTR because:
+      // 1. The target features above enable every VAES, AES-NI, and AVX-512 instruction used.
+      // 2. Every 512-bit load and store covers 64 bytes inside `data[offset..]`, which the loop
+      //    bounds establish before each access.
+      // 3. The assembly kernel reads the round keys and counter, and writes only whole blocks of
+      //    `data`, returning the number of bytes it processed.
+      // 4. The final short operation receives at most 63 bytes.
+      unsafe {
+        let suffix_words = [
+          u32::from_le_bytes([initial_counter[4], initial_counter[5], initial_counter[6], initial_counter[7]]),
+          u32::from_le_bytes([initial_counter[8], initial_counter[9], initial_counter[10], initial_counter[11]]),
+          u32::from_le_bytes([initial_counter[12], initial_counter[13], initial_counter[14], initial_counter[15]]),
+        ];
+        let mut ctr = u32::from_le_bytes([
+          initial_counter[0],
+          initial_counter[1],
+          initial_counter[2],
+          initial_counter[3],
+        ]);
+        let mut offset = 0usize;
 
-    let iv_suffix: [u8; 12] = {
-      let mut buf = [0u8; 12];
-      buf.copy_from_slice(&initial_counter[4..16]);
-      buf
-    };
-    let suffix_words = [
-      u32::from_le_bytes([iv_suffix[0], iv_suffix[1], iv_suffix[2], iv_suffix[3]]),
-      u32::from_le_bytes([iv_suffix[4], iv_suffix[5], iv_suffix[6], iv_suffix[7]]),
-      u32::from_le_bytes([iv_suffix[8], iv_suffix[9], iv_suffix[10], iv_suffix[11]]),
-    ];
-    let mut ctr = u32::from_le_bytes([
-      initial_counter[0],
-      initial_counter[1],
-      initial_counter[2],
-      initial_counter[3],
-    ]);
-    let mut offset = 0usize;
-
-    #[cfg(target_os = "linux")]
-    if data.len() >= 256 {
-      // SAFETY: external x86-64 VAES-512 AES-256-GCM-SIV CTR kernel because:
-      // 1. This target-feature function is only entered after VAES, AVX-512, AES-NI, and SSE2 were
-      //    selected by runtime/backend dispatch.
-      // 2. `ni_rk.as_ptr()` addresses 15 initialized 128-bit AES-256 round keys.
-      // 3. `initial_counter` points to the full 16-byte GCM-SIV counter block, and `data` is valid for
-      //    `data.len()` mutable bytes.
-      // 4. The kernel only processes complete 256-byte chunks and returns the processed byte count so the
-      //    Rust fallback below handles every remaining full/partial tail.
-      let processed = x86_64_asm::rscrypto_aes256_gcmsiv_ctr_16x_vaes512_x86_64_linux(
-        ni_rk.as_ptr(),
-        initial_counter.as_ptr(),
-        data.as_mut_ptr(),
-        data.len(),
-      );
-      ctr = ctr.wrapping_add(usize_low_u32(processed.strict_div(BLOCK_SIZE)));
-      offset = processed;
-    }
-
-    while offset.strict_add(256) <= data.len() {
-      let ctr0 = x86_gcmsiv_ctr_blocks_le_4(suffix_words, ctr);
-      let ctr1 = x86_gcmsiv_ctr_blocks_le_4(suffix_words, ctr.wrapping_add(4));
-      let ctr2 = x86_gcmsiv_ctr_blocks_le_4(suffix_words, ctr.wrapping_add(8));
-      let ctr3 = x86_gcmsiv_ctr_blocks_le_4(suffix_words, ctr.wrapping_add(12));
-      let (ks0, ks1, ks2, ks3) = ni::encrypt_16blocks(ni_rk, ctr0, ctr1, ctr2, ctr3);
-
-      let p0 = _mm512_loadu_si512(data.as_ptr().add(offset).cast());
-      _mm512_storeu_si512(data.as_mut_ptr().add(offset).cast(), _mm512_xor_si512(p0, ks0));
-
-      let p1 = _mm512_loadu_si512(data.as_ptr().add(offset.strict_add(64)).cast());
-      _mm512_storeu_si512(
-        data.as_mut_ptr().add(offset.strict_add(64)).cast(),
-        _mm512_xor_si512(p1, ks1),
-      );
-
-      let p2 = _mm512_loadu_si512(data.as_ptr().add(offset.strict_add(128)).cast());
-      _mm512_storeu_si512(
-        data.as_mut_ptr().add(offset.strict_add(128)).cast(),
-        _mm512_xor_si512(p2, ks2),
-      );
-
-      let p3 = _mm512_loadu_si512(data.as_ptr().add(offset.strict_add(192)).cast());
-      _mm512_storeu_si512(
-        data.as_mut_ptr().add(offset.strict_add(192)).cast(),
-        _mm512_xor_si512(p3, ks3),
-      );
-
-      ctr = ctr.wrapping_add(16);
-      offset = offset.strict_add(256);
-    }
-
-    while offset.strict_add(64) <= data.len() {
-      let ctr_vec = x86_gcmsiv_ctr_blocks_le_4(suffix_words, ctr);
-      let keystream = ni::encrypt_4blocks(ni_rk, ctr_vec);
-      let plaintext = _mm512_loadu_si512(data.as_ptr().add(offset).cast());
-      let ciphertext = _mm512_xor_si512(plaintext, keystream);
-      _mm512_storeu_si512(data.as_mut_ptr().add(offset).cast(), ciphertext);
-
-      ctr = ctr.wrapping_add(4);
-      offset = offset.strict_add(64);
-    }
-
-    // Tail: 0-3 remaining blocks via single-block AES-NI.
-    while offset < data.len() {
-      let mut counter_block = [0u8; 16];
-      counter_block[0..4].copy_from_slice(&ctr.to_le_bytes());
-      counter_block[4..16].copy_from_slice(&iv_suffix);
-
-      let mut keystream = counter_block;
-      ni::encrypt_block(ni_rk, &mut keystream);
-
-      let remaining = data.len().strict_sub(offset);
-      if remaining >= BLOCK_SIZE {
-        let ks = u128::from_ne_bytes(keystream);
-        let mut d = [0u8; BLOCK_SIZE];
-        d.copy_from_slice(&data[offset..offset.strict_add(BLOCK_SIZE)]);
-        let xored = u128::from_ne_bytes(d) ^ ks;
-        data[offset..offset.strict_add(BLOCK_SIZE)].copy_from_slice(&xored.to_ne_bytes());
-        offset = offset.strict_add(BLOCK_SIZE);
-      } else {
-        let mut i = 0usize;
-        while i < remaining {
-          data[offset.strict_add(i)] ^= keystream[i];
-          i = i.strict_add(1);
+        #[cfg(target_os = "linux")]
+        if data.len() >= 256 {
+          let processed = x86_64_asm::$asm(ni_rk.as_ptr(), initial_counter.as_ptr(), data.as_mut_ptr(), data.len());
+          ctr = ctr.wrapping_add(usize_low_u32(processed.strict_div(BLOCK_SIZE)));
+          offset = processed;
         }
-        offset = offset.strict_add(remaining);
+
+        while offset.strict_add(256) <= data.len() {
+          let ctr0 = x86_gcmsiv_ctr_blocks_le_4(suffix_words, ctr);
+          let ctr1 = x86_gcmsiv_ctr_blocks_le_4(suffix_words, ctr.wrapping_add(4));
+          let ctr2 = x86_gcmsiv_ctr_blocks_le_4(suffix_words, ctr.wrapping_add(8));
+          let ctr3 = x86_gcmsiv_ctr_blocks_le_4(suffix_words, ctr.wrapping_add(12));
+          let keystream = ni::$encrypt_16(ni_rk, ctr0, ctr1, ctr2, ctr3);
+          for (lane, ks) in [keystream.0, keystream.1, keystream.2, keystream.3].into_iter().enumerate() {
+            let at = data.as_mut_ptr().add(offset.strict_add(lane.strict_mul(64)));
+            _mm512_storeu_si512(at.cast(), _mm512_xor_si512(_mm512_loadu_si512(at.cast()), ks));
+          }
+          ctr = ctr.wrapping_add(16);
+          offset = offset.strict_add(256);
+        }
+
+        while offset.strict_add(64) <= data.len() {
+          let keystream = ni::$encrypt_4(ni_rk, x86_gcmsiv_ctr_blocks_le_4(suffix_words, ctr));
+          let at = data.as_mut_ptr().add(offset);
+          _mm512_storeu_si512(at.cast(), _mm512_xor_si512(_mm512_loadu_si512(at.cast()), keystream));
+          ctr = ctr.wrapping_add(4);
+          offset = offset.strict_add(64);
+        }
+
+        if offset < data.len() {
+          let mut counter_block = *initial_counter;
+          counter_block[0..4].copy_from_slice(&ctr.to_le_bytes());
+          ni::$short(ni_rk, &counter_block, &mut data[offset..]);
+        }
       }
-      ctr = ctr.wrapping_add(1);
     }
-  }
+  };
 }
 
-/// AES-128 CTR encryption using VAES-512 for the bulk, AES-NI for the tail.
-///
-/// Mirrors [`aes256_ctr32_encrypt_wide`] but runs the AES-128 round
-/// schedule (10 rounds). GCM-SIV variant: counter occupies bytes 0..3
-/// (little-endian) per RFC 8452 §4.
-///
-/// # Safety
-/// Caller must ensure AVX-512F + AVX-512VL + VAES + AES + SSE2.
-#[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm-siv"))]
-#[target_feature(enable = "aes,sse2,avx512f,avx512vl,vaes")]
-pub(crate) unsafe fn aes128_ctr32_encrypt_wide(ek: &Aes128EncKey, initial_counter: &[u8; BLOCK_SIZE], data: &mut [u8]) {
-  use core::arch::x86_64::*;
+define_x86_gcmsiv_ctr!(
+  /// AES-128-GCM-SIV CTR over AES-NI round keys, for any length.
+  x86_ctr32_le_xor_128,
+  ni::Ni128RoundKeys,
+  rscrypto_aes128_gcmsiv_ctr_16x_vaes512_x86_64_linux,
+  encrypt_16blocks_128,
+  encrypt_4blocks_128,
+  ctr32_le_xor_short_128
+);
 
-  // SAFETY: X86AesNi variant guaranteed by caller; target_feature gate
-  // ensures VAES + AVX-512 instructions are available.
-  unsafe {
-    let ni_rk = match &ek.inner {
-      Key128Inner::X86AesNi(rk) => rk,
-      _ => {
-        aes128_ctr32_encrypt(ek, initial_counter, data);
-        return;
-      }
-    };
-
-    let iv_suffix: [u8; 12] = {
-      let mut buf = [0u8; 12];
-      buf.copy_from_slice(&initial_counter[4..16]);
-      buf
-    };
-    let suffix_words = [
-      u32::from_le_bytes([iv_suffix[0], iv_suffix[1], iv_suffix[2], iv_suffix[3]]),
-      u32::from_le_bytes([iv_suffix[4], iv_suffix[5], iv_suffix[6], iv_suffix[7]]),
-      u32::from_le_bytes([iv_suffix[8], iv_suffix[9], iv_suffix[10], iv_suffix[11]]),
-    ];
-    let mut ctr = u32::from_le_bytes([
-      initial_counter[0],
-      initial_counter[1],
-      initial_counter[2],
-      initial_counter[3],
-    ]);
-    let mut offset = 0usize;
-
-    #[cfg(target_os = "linux")]
-    if data.len() >= 256 {
-      // SAFETY: external x86-64 VAES-512 AES-128-GCM-SIV CTR kernel because:
-      // 1. This target-feature function is only entered after VAES, AVX-512, AES-NI, and SSE2 were
-      //    selected by runtime/backend dispatch.
-      // 2. `ni_rk.as_ptr()` addresses 11 initialized 128-bit AES-128 round keys.
-      // 3. `initial_counter` points to the full 16-byte GCM-SIV counter block, and `data` is valid for
-      //    `data.len()` mutable bytes.
-      // 4. The kernel only processes complete 256-byte chunks and returns the processed byte count so the
-      //    Rust fallback below handles every remaining full/partial tail.
-      let processed = x86_64_asm::rscrypto_aes128_gcmsiv_ctr_16x_vaes512_x86_64_linux(
-        ni_rk.as_ptr(),
-        initial_counter.as_ptr(),
-        data.as_mut_ptr(),
-        data.len(),
-      );
-      ctr = ctr.wrapping_add(usize_low_u32(processed.strict_div(BLOCK_SIZE)));
-      offset = processed;
-    }
-
-    while offset.strict_add(256) <= data.len() {
-      let ctr0 = x86_gcmsiv_ctr_blocks_le_4(suffix_words, ctr);
-      let ctr1 = x86_gcmsiv_ctr_blocks_le_4(suffix_words, ctr.wrapping_add(4));
-      let ctr2 = x86_gcmsiv_ctr_blocks_le_4(suffix_words, ctr.wrapping_add(8));
-      let ctr3 = x86_gcmsiv_ctr_blocks_le_4(suffix_words, ctr.wrapping_add(12));
-      let (ks0, ks1, ks2, ks3) = ni::encrypt_16blocks_128(ni_rk, ctr0, ctr1, ctr2, ctr3);
-
-      let p0 = _mm512_loadu_si512(data.as_ptr().add(offset).cast());
-      _mm512_storeu_si512(data.as_mut_ptr().add(offset).cast(), _mm512_xor_si512(p0, ks0));
-
-      let p1 = _mm512_loadu_si512(data.as_ptr().add(offset.strict_add(64)).cast());
-      _mm512_storeu_si512(
-        data.as_mut_ptr().add(offset.strict_add(64)).cast(),
-        _mm512_xor_si512(p1, ks1),
-      );
-
-      let p2 = _mm512_loadu_si512(data.as_ptr().add(offset.strict_add(128)).cast());
-      _mm512_storeu_si512(
-        data.as_mut_ptr().add(offset.strict_add(128)).cast(),
-        _mm512_xor_si512(p2, ks2),
-      );
-
-      let p3 = _mm512_loadu_si512(data.as_ptr().add(offset.strict_add(192)).cast());
-      _mm512_storeu_si512(
-        data.as_mut_ptr().add(offset.strict_add(192)).cast(),
-        _mm512_xor_si512(p3, ks3),
-      );
-
-      ctr = ctr.wrapping_add(16);
-      offset = offset.strict_add(256);
-    }
-
-    while offset.strict_add(64) <= data.len() {
-      let ctr_vec = x86_gcmsiv_ctr_blocks_le_4(suffix_words, ctr);
-      let keystream = ni::encrypt_4blocks_128(ni_rk, ctr_vec);
-      let plaintext = _mm512_loadu_si512(data.as_ptr().add(offset).cast());
-      let ciphertext = _mm512_xor_si512(plaintext, keystream);
-      _mm512_storeu_si512(data.as_mut_ptr().add(offset).cast(), ciphertext);
-
-      ctr = ctr.wrapping_add(4);
-      offset = offset.strict_add(64);
-    }
-
-    while offset < data.len() {
-      let mut counter_block = [0u8; 16];
-      counter_block[0..4].copy_from_slice(&ctr.to_le_bytes());
-      counter_block[4..16].copy_from_slice(&iv_suffix);
-
-      let mut keystream = counter_block;
-      ni::encrypt_block_128(ni_rk, &mut keystream);
-
-      let remaining = data.len().strict_sub(offset);
-      if remaining >= BLOCK_SIZE {
-        let ks = u128::from_ne_bytes(keystream);
-        let mut d = [0u8; BLOCK_SIZE];
-        d.copy_from_slice(&data[offset..offset.strict_add(BLOCK_SIZE)]);
-        let xored = u128::from_ne_bytes(d) ^ ks;
-        data[offset..offset.strict_add(BLOCK_SIZE)].copy_from_slice(&xored.to_ne_bytes());
-        offset = offset.strict_add(BLOCK_SIZE);
-      } else {
-        let mut i = 0usize;
-        while i < remaining {
-          data[offset.strict_add(i)] ^= keystream[i];
-          i = i.strict_add(1);
-        }
-        offset = offset.strict_add(remaining);
-      }
-      ctr = ctr.wrapping_add(1);
-    }
-  }
-}
+define_x86_gcmsiv_ctr!(
+  /// AES-256-GCM-SIV CTR over AES-NI round keys, for any length.
+  x86_ctr32_le_xor_256,
+  ni::NiRoundKeys,
+  rscrypto_aes256_gcmsiv_ctr_16x_vaes512_x86_64_linux,
+  encrypt_16blocks,
+  encrypt_4blocks,
+  ctr32_le_xor_short_256
+);
 
 // Tests
 
