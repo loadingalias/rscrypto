@@ -38,11 +38,17 @@ copy into a reader; and `memcpy` calls for variable-length `left_encode` slices.
 calls and no state copy; KMAC goes from about 14 calls to 5. Inlined into the framing, the
 zero-padding permutation reloaded 15 spilled values per round instead of 10, so it stays out of line.
 
-Open. POWER10 SHAKE one-shot, 7 points: SHAKE128 at 0–168 B is 0.91x–0.95x and SHAKE256 at 135 B is
-0.965x. That path makes no calls; the finalize permutation's inlined copy reloads 12–13 spilled
-values per round against 10 in the SHA-3 one-shot. Intel HMAC-SHA3-384/512 at 0–64 B is 0.946x–0.963x against
-AWS-LC; at `6926f298` (bench 41546963938) every HMAC-SHA3 row there was 0.89x–0.92x. HMAC-SHA3
-compiles to the same x86-64 code at `81de3d41` and `5191d8f3`, so this commit does not affect it.
+L9 closed on 2026-11-08 (owner) with 15 losses left and not worked:
+
+- POWER10 SHAKE one-shot, 7 points: SHAKE128 at 0–168 B is 0.91x–0.95x and SHAKE256 at 135 B is
+  0.965x against tiny-keccak. That path makes no calls; the finalize permutation's inlined copy
+  reloads 12–13 spilled values per round against 10 in the SHA-3 one-shot.
+- Intel HMAC-SHA3-384/512 at 0–64 B, 8 points: 0.946x–0.963x against AWS-LC. At `6926f298` (bench
+  41546963938) every HMAC-SHA3 row there was 0.89x–0.92x. HMAC-SHA3 compiles to the same x86-64 code
+  at `81de3d41` and `5191d8f3`, so `5191d8f3` does not affect it. The cause was not profiled.
+
+Also left: POWER10 SHAKE XOF output at 1 KiB–1 MiB is 0.93x–0.94x against tiny-keccak (outside the
+headline); the squeeze loop permutes through memory per block.
 
 ## 2026-11-06: Keccak one-shot, KMAC, and single-state kernels (L9)
 
@@ -92,7 +98,7 @@ kernel on Graviton4 (552 ns per permutation against 239 ns for the lazy scalar r
 scalar rounds on M1 (336 ns against 241 ns portable and 159 ns assembly); a BMI-fused x86-64
 one-shot (2–3% on Granite Rapids, superseded by the AVX-512 absorb loop).
 
-Not measured: POWER10 and Graviton5 (the CI ARM64 lane) after the change, Windows, IBM Z, RISC-V.
+Not measured: Windows, IBM Z, and RISC-V. POWER10 and Graviton5 are in the 2026-11-07 record.
 
 ## 2026-11-04: XXH3 x86-64 long-input kernels
 
