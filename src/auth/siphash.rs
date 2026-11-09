@@ -160,15 +160,15 @@ impl<const C: usize, const D: usize> Sip<C, D> {
   #[inline(always)]
   fn round(&mut self) {
     self.v0 = self.v0.wrapping_add(self.v1);
-    self.v1 = self.v1.rotate_left(13) ^ self.v0;
-    self.v0 = self.v0.rotate_left(32);
+    self.v1 = rotl::<13>(self.v1) ^ self.v0;
+    self.v0 = rotl::<32>(self.v0);
     self.v2 = self.v2.wrapping_add(self.v3);
-    self.v3 = self.v3.rotate_left(16) ^ self.v2;
+    self.v3 = rotl::<16>(self.v3) ^ self.v2;
     self.v0 = self.v0.wrapping_add(self.v3);
-    self.v3 = self.v3.rotate_left(21) ^ self.v0;
+    self.v3 = rotl::<21>(self.v3) ^ self.v0;
     self.v2 = self.v2.wrapping_add(self.v1);
-    self.v1 = self.v1.rotate_left(17) ^ self.v2;
-    self.v2 = self.v2.rotate_left(32);
+    self.v1 = rotl::<17>(self.v1) ^ self.v2;
+    self.v2 = rotl::<32>(self.v2);
   }
 
   #[inline(always)]
@@ -257,6 +257,41 @@ impl<const C: usize, const D: usize> Sip<C, D> {
     }
     self.v0 ^ self.v1 ^ self.v2 ^ self.v3
   }
+}
+
+/// `x.rotate_left(N)`, as its own instruction on AArch64.
+///
+/// LLVM folds a rotation and the XOR that consumes it into one shifted-register
+/// `eor`, which waits for both inputs and takes 2 cycles on Apple and Neoverse
+/// cores. Each rotated SipHash word is ready before the word it meets, so the
+/// folded form puts the rotation on the critical path; a separate `ror` runs
+/// while the other word is still being computed. `portable-only` and Miri keep
+/// the portable rotation.
+#[inline(always)]
+fn rotl<const N: u32>(x: u64) -> u64 {
+  const { assert!(N > 0 && N < 64) };
+  #[cfg(all(target_arch = "aarch64", not(feature = "portable-only"), not(miri)))]
+  {
+    let out: u64;
+    // SAFETY: `ror` by an immediate (an alias of `extr`) is a base A64
+    // instruction, so every target this cfg admits has it. It reads the
+    // general register holding `x` and writes `out`, and touches no memory,
+    // stack, or flags; it cannot fault or unwind. The assertion above puts
+    // `64 - N` in 1..=63, an encodable immediate, and a right rotation by
+    // `64 - N` is a left rotation by `N`.
+    unsafe {
+      core::arch::asm!(
+        "ror {out}, {x}, #{shift}",
+        out = lateout(reg) out,
+        x = in(reg) x,
+        shift = const 64u32.strict_sub(N),
+        options(pure, nomem, nostack, preserves_flags)
+      );
+    }
+    out
+  }
+  #[cfg(not(all(target_arch = "aarch64", not(feature = "portable-only"), not(miri))))]
+  x.rotate_left(N)
 }
 
 /// The bit length of a tail of `rest` bytes, `rest` below 8.
