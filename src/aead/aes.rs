@@ -1574,6 +1574,99 @@ unsafe fn ppc_encrypt_blocks_inline(keys: &ppc::PpcRoundKeys, blocks: &mut [[u8;
   }
 }
 
+/// XOR an AES-GCM-SIV keystream into `data`, four counter blocks per batch.
+///
+/// The counter is the little-endian word in bytes 0..4 of `initial_counter`
+/// and wraps modulo 2^32 (RFC 8452 section 4). `encrypt4` encrypts four
+/// blocks in place. One keystream owner serves the whole call and is cleared
+/// on return.
+#[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), feature = "aes-gcm-siv"))]
+#[inline(always)]
+fn ctr32_le_xor_four_block_batches(
+  initial_counter: &[u8; BLOCK_SIZE],
+  data: &mut [u8],
+  mut encrypt4: impl FnMut(&mut [[u8; BLOCK_SIZE]; 4]),
+) {
+  let mut ctr = u32::from_le_bytes([
+    initial_counter[0],
+    initial_counter[1],
+    initial_counter[2],
+    initial_counter[3],
+  ]);
+  let mut keystream_storage = crate::secret::ZeroizingBytes::<{ 4 * BLOCK_SIZE }>::zeroed();
+  let keystream = keystream_storage
+    .as_mut_array()
+    .as_chunks_mut::<BLOCK_SIZE>()
+    .0
+    .first_chunk_mut::<4>()
+    .expect("four AES counter blocks");
+  let (chunks, tail) = data.as_chunks_mut::<{ 4 * BLOCK_SIZE }>();
+  for chunk in chunks {
+    fill_ctr32_le_blocks(keystream, initial_counter, ctr);
+    encrypt4(keystream);
+    for (block, stream) in chunk.as_chunks_mut::<BLOCK_SIZE>().0.iter_mut().zip(keystream.iter()) {
+      *block = (u128::from_ne_bytes(*block) ^ u128::from_ne_bytes(*stream)).to_ne_bytes();
+    }
+    ctr = ctr.wrapping_add(4);
+  }
+  if !tail.is_empty() {
+    fill_ctr32_le_blocks(keystream, initial_counter, ctr);
+    encrypt4(keystream);
+    for (byte, stream) in tail.iter_mut().zip(keystream.as_flattened()) {
+      *byte ^= *stream;
+    }
+  }
+}
+
+#[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), feature = "aes-gcm-siv"))]
+#[inline(always)]
+fn fill_ctr32_le_blocks(blocks: &mut [[u8; BLOCK_SIZE]; 4], initial_counter: &[u8; BLOCK_SIZE], ctr: u32) {
+  let mut lane = 0u32;
+  for block in blocks {
+    *block = *initial_counter;
+    block[..4].copy_from_slice(&ctr.wrapping_add(lane).to_le_bytes());
+    lane = lane.strict_add(1);
+  }
+}
+
+/// [`ctr32_le_xor_four_block_batches`] with POWER AES-256.
+///
+/// # Safety
+/// Caller must ensure POWER8 crypto is available.
+#[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), feature = "aes-gcm-siv"))]
+#[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
+#[inline]
+pub(super) unsafe fn ppc_ctr32_le_xor_inline(
+  keys: &ppc::PpcRoundKeys,
+  initial_counter: &[u8; BLOCK_SIZE],
+  data: &mut [u8],
+) {
+  ctr32_le_xor_four_block_batches(initial_counter, data, |blocks| {
+    // SAFETY: this function's caller guarantees POWER8 crypto, and `blocks`
+    // is a live mutable reference to four initialized AES blocks.
+    unsafe { ppc::encrypt_4blocks_core(keys, blocks) }
+  });
+}
+
+/// [`ctr32_le_xor_four_block_batches`] with POWER AES-128.
+///
+/// # Safety
+/// Caller must ensure POWER8 crypto is available.
+#[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), feature = "aes-gcm-siv"))]
+#[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
+#[inline]
+pub(super) unsafe fn ppc_ctr32_le_xor_128_inline(
+  keys: &ppc::Ppc128RoundKeys,
+  initial_counter: &[u8; BLOCK_SIZE],
+  data: &mut [u8],
+) {
+  ctr32_le_xor_four_block_batches(initial_counter, data, |blocks| {
+    // SAFETY: this function's caller guarantees POWER8 crypto, and `blocks`
+    // is a live mutable reference to four initialized AES blocks.
+    unsafe { ppc::encrypt_4blocks_128_core(keys, blocks) }
+  });
+}
+
 /// Expand AES-128 key directly to POWER round keys.
 ///
 /// AES-128 sibling of [`ppc_expand_key_inline`]. Used by the fused
