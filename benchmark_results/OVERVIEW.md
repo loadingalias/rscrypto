@@ -6,6 +6,68 @@ The dated campaign records come first.
 The 2026-08-18 Linux snapshot near the end is historical:
 its aggregate ratios are withdrawn as performance claims (see [Corrections](#corrections)).
 
+## 2026-11-08: x86-64 AES-GCM-SIV and AEGIS-256 (L10)
+
+Bench 42509294107 at `b2cc51a5` re-baselined the `aead` catalog on five Linux lanes: 239 headline
+losses (RISC-V 106, POWER10 53, AMD 34, Intel 30, ARM64 16) and 61 non-headline construction rows.
+x86-64 AES-GCM-SIV lost 21 points on each x86 lane at 0.46x–0.88x against aws-lc-rs.
+
+`f9bf6e25` runs x86 AES-GCM-SIV with VAES and VPCLMULQDQ in one fused path for every length. A/B against
+`b2cc51a5` on `aws-linux-intel-gnr-profile` (Xeon 6975P-C) and `aws-linux-amd-zen5-profile` (EPYC 9R45):
+the production `aead` bench, each revision built in its own target directory with
+`nightly-2026-10-24`, three alternating rounds of 30 samples (0.5 s warm-up, 1.5 s measurement);
+medians of the three. Ratios are against aws-lc-rs on the same host.
+
+| Host | Row | `b2cc51a5` | `f9bf6e25` |
+| --- | --- | --- | --- |
+| Granite Rapids | 128-bit seal, 0 B | 64 ns (1.10x) | 62 ns (1.13x) |
+| Granite Rapids | 128-bit seal, 64 B | 179 ns (0.58x) | 92 ns (1.13x) |
+| Granite Rapids | 128-bit open, 32 B | 198 ns (0.54x) | 80 ns (1.34x) |
+| Granite Rapids | 128-bit open, 1 KiB | 387 ns (0.68x) | 215 ns (1.22x) |
+| Granite Rapids | 256-bit seal, 0 B | 169 ns (0.46x) | 81 ns (0.97x) |
+| Granite Rapids | 256-bit seal, 256 B | 320 ns (0.54x) | 164 ns (1.05x) |
+| Granite Rapids | 256-bit open, 64 B | 194 ns (0.74x) | 123 ns (1.16x) |
+| Granite Rapids | 256-bit open, 64 KiB | 8446 ns (1.40x) | 7801 ns (1.52x) |
+| Zen 5 | 128-bit seal, 0 B | 50 ns (1.42x) | 53 ns (1.34x) |
+| Zen 5 | 128-bit seal, 64 B | 168 ns (0.64x) | 87 ns (1.25x) |
+| Zen 5 | 128-bit open, 32 B | 190 ns (0.64x) | 69 ns (1.75x) |
+| Zen 5 | 128-bit open, 1 KiB | 369 ns (0.77x) | 191 ns (1.48x) |
+| Zen 5 | 256-bit seal, 0 B | 148 ns (0.54x) | 62 ns (1.29x) |
+| Zen 5 | 256-bit seal, 256 B | 305 ns (0.56x) | 155 ns (1.10x) |
+| Zen 5 | 256-bit open, 64 B | 176 ns (0.84x) | 106 ns (1.39x) |
+| Zen 5 | 256-bit open, 64 KiB | 6782 ns (1.66x) | 6105 ns (1.84x) |
+
+Every measured row (0 B–64 KiB, both key sizes, sealing and opening) is 0.97x or better against
+aws-lc-rs on both hosts. AES-128 sealing below 64 B, which already had a fused short path, stays within
+9% of it (Zen 5 at 32 B: 60 ns against 65 ns).
+
+Cause. Outside that short path, each call derived the message keys through the generic ECB call,
+expanded the key through the generic schedule, built a 16-power POLYVAL table from 256 B, and
+dispatched each POLYVAL multiply. Two intermediate candidates were rejected: the first zero-filled and
+cleared 36 power words on every call (AES-128 sealing at 0–32 B lost 35–50 ns); the second absorbed
+short transcripts serially (32 B opening stayed at 0.83x–0.96x). The kept version absorbs transcripts
+of at most four blocks in one 4-block window, with the powers computed off the critical path.
+
+Not measured: the CI x86 lanes themselves (next x86 AEAD Bench), Windows, and x86 CPUs without
+VAES, which keep the scalar path.
+
+AEGIS-256, Bench 42549143067 at `9ab23903` (`aegis-256`, POWER10 + RISC-V), against the re-baseline:
+
+| Lane | Row | `b2cc51a5` | `9ab23903` |
+| --- | --- | --- | --- |
+| RISC-V | seal, 0 B | 33.5 µs (0.51x) | 15.5 µs (1.11x) |
+| RISC-V | seal, 1 KiB | 145.2 µs (0.47x) | 65.0 µs (1.06x) |
+| RISC-V | open, 16 KiB | 1.86 ms (0.46x) | 0.80 ms (1.08x) |
+| RISC-V | seal, 1 MiB | 134.1 ms (0.45x) | 51.0 ms (1.16x) |
+| POWER10 | seal, 0 B | 70.4 ns (0.85x) | 68.6 ns (0.86x) |
+| POWER10 | seal, 1 MiB | 202.5 µs (0.93x) | 194.8 µs (0.96x) |
+| POWER10 | open, 256 B | 134.7 ns (0.89x) | 132.8 ns (0.89x) |
+
+Ratios are against the `aegis` crate. RISC-V (no AES extensions on the runner): `d6bee637` removed the
+12 `memcpy` and 3 `memset` calls that each fixslice update made around its two round calls (about 41%
+of profile 42535565373). Every RISC-V AEGIS-256 row is now a win; the 22 losses are closed. POWER10:
+`9ab23903` marked the `vcipher` asm `pure`, which is 1–4% faster at every size; its 21 losses remain.
+
 ## 2026-11-07: POWER10 cSHAKE and KMAC framing (L9)
 
 Catalog Bench runs of `sha3,kmac_cshake` at the CI Criterion settings: baseline 42346828720 at
