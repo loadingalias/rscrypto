@@ -835,6 +835,13 @@ impl Aead for Aes256Gcm {
 
     #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
     if self.backend == AeadBackend::Power8Crypto {
+      // SAFETY: backend resolution selected `Power8Crypto` only after runtime detection confirmed
+      // POWER8 crypto; the helper leaves `buffer` unchanged when it declines the message shape.
+      let short =
+        unsafe { aes::aes256_gcm_short_ppc::<false>(&self.ek, &j0, aad, buffer, &length_block, self.h_powers_4()) };
+      if let Some(tag_bytes) = short {
+        return Ok(Aes256GcmTag::from_bytes(tag_bytes));
+      }
       let h_polyval = self.h_powers_4()[3];
       // SAFETY: POWER8 GHASH AAD path because:
       // 1. Backend resolution selected `Power8Crypto` only after runtime detection confirmed POWER8
@@ -1000,6 +1007,17 @@ impl Aead for Aes256Gcm {
 
     #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
     if self.backend == AeadBackend::Power8Crypto {
+      // SAFETY: backend resolution selected `Power8Crypto` only after runtime detection confirmed
+      // POWER8 crypto; the helper leaves `buffer` unchanged when it declines the message shape.
+      let short =
+        unsafe { aes::aes256_gcm_short_ppc::<true>(&self.ek, &j0, aad, buffer, &length_block, self.h_powers_4()) };
+      if let Some(expected) = short {
+        if !ct::fixed_eq(&expected, tag.as_bytes()).declassify() {
+          ct::zeroize(buffer);
+          return Err(OpenError::verification());
+        }
+        return Ok(());
+      }
       let h_polyval = self.h_powers_4()[3];
       // SAFETY: POWER8 GHASH AAD path because:
       // 1. Backend resolution selected `Power8Crypto` only after runtime detection confirmed POWER8

@@ -2006,6 +2006,145 @@ pub(crate) unsafe fn aes256_ctr32_decrypt_be_ppc_ghash(
   }
 }
 
+/// Seal (`OPEN = false`) or decrypt (`OPEN = true`) a short POWER AES-GCM message in place and
+/// return the tag over its ciphertext.
+///
+/// It applies when the ciphertext has at most three blocks and the GHASH transcript (padded AAD,
+/// padded ciphertext, and length block) at most four. One four-lane AES call then computes the
+/// counter blocks and E(J0), and one aggregate absorbs the transcript, right-aligned behind zero
+/// blocks from a zero accumulator. Returns `None` with `data` unchanged for other shapes. The
+/// keystream owner is cleared on return.
+#[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), feature = "aes-gcm"))]
+#[inline(always)]
+fn gcm_short_ppc<const OPEN: bool>(
+  j0: &[u8; BLOCK_SIZE],
+  aad: &[u8],
+  data: &mut [u8],
+  length_block: &[u8; BLOCK_SIZE],
+  mut encrypt4: impl FnMut(&mut [[u8; BLOCK_SIZE]; 4]),
+  aggregate: impl FnOnce(&[u128; 4]) -> u128,
+) -> Option<[u8; BLOCK_SIZE]> {
+  let data_blocks = data.len().div_ceil(BLOCK_SIZE);
+  let aad_blocks = aad.len().div_ceil(BLOCK_SIZE);
+  if data_blocks > 3 || aad_blocks.strict_add(data_blocks) > 3 {
+    return None;
+  }
+
+  let mut keystream_storage = crate::secret::ZeroizingBytes::<{ 4 * BLOCK_SIZE }>::zeroed();
+  let keystream = keystream_storage
+    .as_mut_array()
+    .as_chunks_mut::<BLOCK_SIZE>()
+    .0
+    .first_chunk_mut::<4>()
+    .expect("four AES counter blocks");
+  let j0_counter = u32::from_be_bytes([j0[12], j0[13], j0[14], j0[15]]);
+  let mut counter = 1u32;
+  for block in &mut keystream[..data_blocks] {
+    *block = *j0;
+    block[12..].copy_from_slice(&j0_counter.wrapping_add(counter).to_be_bytes());
+    counter = counter.strict_add(1);
+  }
+  keystream[3] = *j0;
+  encrypt4(keystream);
+
+  let mut transcript = [0u128; 4];
+  let mut index = 3usize.strict_sub(aad_blocks.strict_add(data_blocks));
+  let mut absorb = |part: &[u8], index: &mut usize| {
+    for chunk in part.chunks(BLOCK_SIZE) {
+      let mut block = [0u8; BLOCK_SIZE];
+      block[..chunk.len()].copy_from_slice(chunk);
+      transcript[*index] = u128::from_be_bytes(block);
+      *index = index.strict_add(1);
+    }
+  };
+  absorb(aad, &mut index);
+  if OPEN {
+    absorb(data, &mut index);
+  }
+  for (byte, stream) in data.iter_mut().zip(keystream.as_flattened()) {
+    *byte ^= *stream;
+  }
+  if !OPEN {
+    absorb(data, &mut index);
+  }
+  transcript[3] = u128::from_be_bytes(*length_block);
+
+  let mut acc = [aggregate(&transcript)];
+  let tag = (acc[0] ^ u128::from_be_bytes(keystream[3])).to_be_bytes();
+  crate::traits::ct::zeroize_words(&mut acc);
+  Some(tag)
+}
+
+/// [`gcm_short_ppc`] with POWER AES-128 and VPMSUMD.
+///
+/// # Safety
+/// Caller must ensure POWER8 crypto is available.
+#[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), feature = "aes-gcm"))]
+#[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
+pub(crate) unsafe fn aes128_gcm_short_ppc<const OPEN: bool>(
+  ek: &Aes128EncKey,
+  j0: &[u8; BLOCK_SIZE],
+  aad: &[u8],
+  data: &mut [u8],
+  length_block: &[u8; BLOCK_SIZE],
+  h_powers_rev: &[u128; 4],
+) -> Option<[u8; BLOCK_SIZE]> {
+  let Key128Inner::Power8Crypto(ppc_rk) = &ek.inner else {
+    return None;
+  };
+  gcm_short_ppc::<OPEN>(
+    j0,
+    aad,
+    data,
+    length_block,
+    |blocks| {
+      // SAFETY: this function's caller guarantees POWER8 crypto, and `blocks`
+      // is a live mutable reference to four initialized AES blocks.
+      unsafe { ppc::encrypt_4blocks_128_core(ppc_rk, blocks) }
+    },
+    |transcript| {
+      // SAFETY: this function's caller guarantees POWER8 crypto (VPMSUMD), and both arrays hold
+      // four initialized field elements.
+      unsafe { super::polyval::ppc_aggregate_4blocks_inline(0, h_powers_rev, transcript) }
+    },
+  )
+}
+
+/// [`gcm_short_ppc`] with POWER AES-256 and VPMSUMD.
+///
+/// # Safety
+/// Caller must ensure POWER8 crypto is available.
+#[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), feature = "aes-gcm"))]
+#[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
+pub(crate) unsafe fn aes256_gcm_short_ppc<const OPEN: bool>(
+  ek: &Aes256EncKey,
+  j0: &[u8; BLOCK_SIZE],
+  aad: &[u8],
+  data: &mut [u8],
+  length_block: &[u8; BLOCK_SIZE],
+  h_powers_rev: &[u128; 4],
+) -> Option<[u8; BLOCK_SIZE]> {
+  let KeyInner::Power8Crypto(ppc_rk) = &ek.inner else {
+    return None;
+  };
+  gcm_short_ppc::<OPEN>(
+    j0,
+    aad,
+    data,
+    length_block,
+    |blocks| {
+      // SAFETY: this function's caller guarantees POWER8 crypto, and `blocks`
+      // is a live mutable reference to four initialized AES blocks.
+      unsafe { ppc::encrypt_4blocks_core(ppc_rk, blocks) }
+    },
+    |transcript| {
+      // SAFETY: this function's caller guarantees POWER8 crypto (VPMSUMD), and both arrays hold
+      // four initialized field elements.
+      unsafe { super::polyval::ppc_aggregate_4blocks_inline(0, h_powers_rev, transcript) }
+    },
+  )
+}
+
 /// AES-128 CTR encryption fused with POWER VPMSUMD GHASH accumulation for GCM sealing.
 ///
 /// # Safety
