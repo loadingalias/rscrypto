@@ -307,6 +307,7 @@ symbols = [
   "ct_entry_owner_eq_3168",
   "ct_entry_secret_bytes32_debug_masked",
   "ct_entry_poly1305_authenticate",
+  "ct_entry_siphash_hash",
   "ct_entry_chacha20_rng_fill",
   "ct_entry_hmac_sha256_verify",
   "ct_entry_hmac_sha256_verify_truncated_64",
@@ -433,6 +434,24 @@ primitive = "mac.poly1305_authenticate"
 filter = "poly1305_bulk_fixed_vs_random_key"
 left_class = "16 KiB standalone authentication with zero one-time key"
 right_class = "same public message with random one-time key"
+samples = 20000
+smoke_samples = 2000
+
+[[dudect_case]]
+name = "siphash_short_fixed_vs_random_key"
+primitive = "keyed_hash.siphash"
+filter = "siphash_short_fixed_vs_random_key"
+left_class = "20-byte table key hashed by SipRandomState and SipHash-2-4 with zero key"
+right_class = "same public key bytes with random SipHash key"
+samples = 20000
+smoke_samples = 2000
+
+[[dudect_case]]
+name = "siphash_bulk_fixed_vs_random_key"
+primitive = "keyed_hash.siphash"
+filter = "siphash_bulk_fixed_vs_random_key"
+left_class = "16 KiB message hashed by SipRandomState and SipHash-2-4 with zero key"
+right_class = "same public message with random SipHash key"
 samples = 20000
 smoke_samples = 2000
 
@@ -2131,6 +2150,12 @@ id = "mac.poly1305_authenticate.standalone"
 primitive = "mac.poly1305_authenticate"
 variant = "Poly1305"
 dudect = ["poly1305_short_fixed_vs_random_key", "poly1305_bulk_fixed_vs_random_key"]
+
+[[evidence_unit]]
+id = "keyed_hash.siphash.table_and_one_shot"
+primitive = "keyed_hash.siphash"
+variant = "SipHash"
+dudect = ["siphash_short_fixed_vs_random_key", "siphash_bulk_fixed_vs_random_key"]
 
 [[evidence_unit]]
 id = "mac.hmac_verify.sha256"
@@ -4889,7 +4914,8 @@ public_inputs = ["data", "data length"]
 variable_time_components = ["public-length block loop", "public-length tail load", "entropy-source latency"]
 permitted_leakage = ["data length", "hash output to the caller"]
 claim = "best-effort"
-limitation = "SipHash is fixed-width ARX on 64-bit words: the source has no branch or memory index that depends on the key or data bytes, and the tail load branches only on the public length. No harness, DudeCT, or BINSEC evidence covers it. A hash table that places entries by the output can reveal bucket structure through its own timing; flood resistance rests on the key staying secret, not on hiding table timing."
+evidence = ["primitive:keyed_hash.siphash", "unit:keyed_hash.siphash.table_and_one_shot", "harness:ct_entry_siphash_hash"]
+limitation = "SipHash is fixed-width ARX on 64-bit words: the source has no branch or memory index that depends on the key or data bytes, and the tail load branches only on the public length. The short and bulk native cases compare zero and random keys on one fixed public message per length, through the SipRandomState table path and the SipHash-2-4 one-shot; they do not establish a general constant-time claim, symbolic proof, or arbitrary secret-message timing. A hash table that places entries by the output can reveal bucket structure through its own timing; flood resistance rests on the key staying secret, not on hiding table timing."
 
 [[operation]]
 id = "public.hash_checksum_and_xof"
@@ -5030,6 +5056,23 @@ notes = "Required short and bulk native timing cases reach the standalone produc
 [primitive.harness]
 status = "covered"
 symbols = ["ct_entry_poly1305_authenticate"]
+
+[[primitive]]
+id = "keyed_hash.siphash"
+tier = "A"
+claim = "best-effort"
+features = ["siphash"]
+variants = ["SipHash"]
+entrypoints = ["SipRandomState::new", "SipRandomState::build_hasher", "SipHash13 Hasher", "SipHash24::hash"]
+secrets = ["key", "keyed_state"]
+public = ["data", "data_length"]
+may_leak = ["input_length", "returned_hash"]
+must_not_leak_ref = "common_secret_data"
+required = ["tier_a"]
+notes = "Required short and bulk native timing cases reach the table hasher that SipRandomState builds, hashing a length-prefixed byte key, and the SipHash-2-4 one-shot, including the AArch64 `ror` rotation where selected. Zero versus random keys probe the keyed state. This adds evidence to the best-effort inventory; it does not promote a constant-time claim."
+[primitive.harness]
+status = "covered"
+symbols = ["ct_entry_siphash_hash"]
 
 [[primitive]]
 id = "mac.hmac_verify"
