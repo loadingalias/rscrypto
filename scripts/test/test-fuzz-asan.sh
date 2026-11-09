@@ -91,9 +91,13 @@ for package_dir in "${SELECTED_FUZZ_PACKAGES[@]:+${SELECTED_FUZZ_PACKAGES[@]}}";
   fi
 
   echo "ASan corpus replay package: $(fuzz_package_label "$package_dir")"
+  # The library under test builds at opt-level 1, the usual level for ASan. Unoptimized, the
+  # unrolled AArch64 Keccak rounds keep every temporary in memory, and the SLH-DSA replay alone
+  # exceeded the CI job limit. Debug assertions and overflow checks stay on.
   cargo_test=(cargo test
     --locked
     -Zbuild-std
+    --config 'profile.test.package.rscrypto.opt-level=1'
     --target "$(fuzz_host_target)"
     --manifest-path "$package_dir/Cargo.toml"
     --all-features
