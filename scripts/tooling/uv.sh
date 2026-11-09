@@ -16,7 +16,8 @@ directory="$HOME/.local/share/rscrypto-tooling/uv/${sha:0:16}"
 if [[ ! -f "$directory/.rscrypto-installed" ]]; then
   temporary="$(mktemp -d)"
   trap 'rm -rf -- "$temporary"' EXIT
-  curl --proto '=https' --tlsv1.2 -fsSL --retry 3 -o "$temporary/uv.tar.gz" "$(asset url)"
+  # curl doubles its wait from 1 s, so six retries span about a minute of upstream errors.
+  curl --proto '=https' --tlsv1.2 -fsSL --retry 6 -o "$temporary/uv.tar.gz" "$(asset url)"
   if [[ "$(uname -s)" == Darwin ]]; then
     shasum -a 256 --check --quiet <<<"$sha  $temporary/uv.tar.gz"
   else

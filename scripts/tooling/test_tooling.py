@@ -495,8 +495,8 @@ class Archives(unittest.TestCase):
             ('5xx then success',[http(504),response()],2,[2],None),
             ('network and timeout then success',[catalog.urllib.error.URLError('reset'),TimeoutError('timed out'),response()],3,[2,4],None),
             ('partial read then success',[response(stalls=True),response()],2,[2],None),
-            ('5xx exhaustion',[http(504),http(502),http(503)],3,[2,4],'after 3 attempt'),
-            ('partial reads exhaust',[response(stalls=True) for _ in range(3)],3,[2,4],'after 3 attempt'),
+            ('5xx exhaustion',[http(504),http(502),http(503),http(504),http(500),http(504)],6,[2,4,8,16,32],'after 6 attempt'),
+            ('partial reads exhaust',[response(stalls=True) for _ in range(6)],6,[2,4,8,16,32],'after 6 attempt'),
             ('4xx is not retried',[http(404),response()],1,[],'after 1 attempt'),
         ]
         for name,effects,calls,delays,failure in cases:

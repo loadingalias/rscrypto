@@ -25,8 +25,9 @@ PROFILING_PLATFORMS = ('aarch64-linux', 'x86_64-linux')
 PLATFORMS = (*PROFILING_PLATFORMS, 'aarch64-win', 'x86_64-win', *NATIVE_SOURCE_PLATFORMS)
 # The Apple Silicon workstation pins only the uv that runs Python and the zig that cross-links review binaries.
 MACOS = 'aarch64-macos'
-# Pinned downloads retry transient server and network failures, waiting 2 s, then 4 s.
-DOWNLOAD_ATTEMPTS = 3
+# Pinned downloads retry transient server and network failures, waiting 2 s and doubling up to 32 s,
+# so an intermittent upstream outage gets about a minute before the job fails.
+DOWNLOAD_ATTEMPTS = 6
 
 
 def read(path=CATALOG):
@@ -67,7 +68,7 @@ def download(url, destination, checksum):
             if attempt == DOWNLOAD_ATTEMPTS or not transient(error):
                 raise OSError(f'download failed after {attempt} attempt(s): {url}: {error}') from error
             print(f'tooling: {url}: {error}; retrying ({attempt}/{DOWNLOAD_ATTEMPTS})', file=sys.stderr)
-            time.sleep(2 * attempt)
+            time.sleep(2**attempt)
     if digest.hexdigest() != checksum.lower():
         Path(destination).unlink()
         raise ValueError(f'checksum mismatch: {url}')
