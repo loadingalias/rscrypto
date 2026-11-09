@@ -85,22 +85,7 @@ fn aes_round(block: &Block, round_key: &Block) -> Block {
 #[cfg(any(target_arch = "riscv64", all(test, not(target_arch = "s390x"))))]
 #[inline]
 fn update_riscv_fixslice(s: &mut State, m: &Block) {
-  let tmp = s[5];
-
-  let mut first = [s[4], s[3], s[2], s[1]];
-  let first_keys = [s[5], s[4], s[3], s[2]];
-  super::aes_fixslice_round::cipher_round_4(&mut first, &first_keys);
-
-  let mut second = [s[0], tmp, zero_block(), zero_block()];
-  let second_keys = [s[1], s[0], zero_block(), zero_block()];
-  super::aes_fixslice_round::cipher_round_4(&mut second, &second_keys);
-
-  s[5] = first[0];
-  s[4] = first[1];
-  s[3] = first[2];
-  s[2] = first[3];
-  s[1] = second[0];
-  s[0] = xor_block(&second[1], m);
+  super::aes_fixslice_round::aegis256_update(s, m);
 }
 
 /// AEGIS-256 Update function: absorb one 128-bit message block into the state.

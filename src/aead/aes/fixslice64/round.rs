@@ -11,21 +11,32 @@ pub(in crate::aead) type State = [u64; 8];
   feature = "aegis256",
   any(target_arch = "riscv64", all(test, not(target_arch = "s390x")))
 ))]
-pub(in crate::aead) fn cipher_round_4(blocks: &mut [[u8; BLOCK_SIZE]; 4], round_keys: &[[u8; BLOCK_SIZE]; 4]) {
-  let mut state = State::default();
-  bitslice(&mut state, &blocks[0], &blocks[1], &blocks[2], &blocks[3]);
-  sub_bytes(&mut state);
-  sub_bytes_nots(&mut state);
-  shift_rows_1(&mut state);
-  mix_columns_0(&mut state);
-
-  let mut out = inv_bitslice(&state);
-  let mut lane = 0usize;
-  while lane < 4 {
-    xor_block(&mut out[lane], &round_keys[lane]);
-    lane = lane.strict_add(1);
+/// One AEGIS-256 state update: state word `i - 1` passes through one AES round and is XORed into
+/// word `i`, and the message block is XORed into the new word 0. The six rounds run as two
+/// 4-lane bitsliced batches read straight from the state; the second batch repeats its two inputs
+/// in the spare lanes, so no block is copied or zero-filled.
+pub(in crate::aead) fn aegis256_update(s: &mut [[u8; BLOCK_SIZE]; 6], m: &[u8; BLOCK_SIZE]) {
+  let mut first = State::default();
+  bitslice(&mut first, &s[4], &s[3], &s[2], &s[1]);
+  let mut second = State::default();
+  bitslice(&mut second, &s[0], &s[5], &s[0], &s[5]);
+  for state in [&mut first, &mut second] {
+    sub_bytes(state);
+    sub_bytes_nots(state);
+    shift_rows_1(state);
+    mix_columns_0(state);
   }
-  *blocks = out;
+
+  // Every round input was read above, so each word can now take its round output in place.
+  let rounds = inv_bitslice(&first);
+  xor_block(&mut s[5], &rounds[0]);
+  xor_block(&mut s[4], &rounds[1]);
+  xor_block(&mut s[3], &rounds[2]);
+  xor_block(&mut s[2], &rounds[3]);
+  let rounds = inv_bitslice(&second);
+  xor_block(&mut s[1], &rounds[0]);
+  xor_block(&mut s[0], &rounds[1]);
+  xor_block(&mut s[0], m);
 }
 
 /// Bitsliced implementation of the AES S-box by Boyar, Peralta and Calik.
@@ -354,10 +365,8 @@ pub(in crate::aead) fn inv_bitslice(input: &[u64]) -> [[u8; BLOCK_SIZE]; 4] {
   any(target_arch = "riscv64", all(test, not(target_arch = "s390x")))
 ))]
 fn xor_block(dst: &mut [u8; BLOCK_SIZE], src: &[u8; BLOCK_SIZE]) {
-  let mut i = 0usize;
-  while i < BLOCK_SIZE {
-    dst[i] ^= src[i];
-    i = i.strict_add(1);
+  for (d, s) in dst.as_chunks_mut::<8>().0.iter_mut().zip(src.as_chunks::<8>().0) {
+    *d = (u64::from_ne_bytes(*d) ^ u64::from_ne_bytes(*s)).to_ne_bytes();
   }
 }
 
