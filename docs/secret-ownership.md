@@ -25,7 +25,7 @@ It does not prove that the compiler erases every copy it makes.
 | `RsaBlindingCache` | Not `Clone` or `Copy`. See [RSA blinding cache](#rsa-blinding-cache). | No export or import API. `Debug` shows only the width and the remaining use count. |
 | HMAC, HKDF, KMAC, PBKDF2, and Poly1305 state | No generic copy. | `Debug` is redacted. Keyed state is not serialized. HKDF `prk()` gives borrowed access to the PRK. `from_prk` borrows the caller's PRK and does not clear it. |
 | Keyed BLAKE2 state | `Clone` where the shared `Digest` contract needs it. | `Debug` is redacted. A clone copies the keyed state. |
-| `SipHashKey`, `SipRandomState` | `Clone`, so a `HashMap` can be cloned. Each copy clears its key bytes on drop. | `Debug` is redacted. No export or Serde support. `SipHash13` and `SipHash24` hashers hold key-derived state for one hash, redact `Debug`, and do not clear on drop. |
+| `SipHashKey`, `SipRandomState` | `Clone`, so a `HashMap` can be cloned. Each copy clears its key material on drop: `SipHashKey` its key bytes, `SipRandomState` the keyed starting words, which are equivalent to the key. | `Debug` is redacted. No export or Serde support. `SipHash13` and `SipHash24` hashers hold key-derived state for one hash, redact `Debug`, and do not clear on drop. |
 | `Blake3`, `Blake3XofReader` | `Clone`. | In keyed or derive-key mode, a clone copies secret-derived state. |
 | `Blake3Tree`, `Blake3Subtree`, `Blake3ChainingValue` (`hashes::expert::blake3_tree`) | `Clone`. | See [BLAKE3 trees](#blake3-trees). |
 | Password-hashing state and work memory | Borrowed contexts can be `Copy`. Owned state is not. See [password-hashing memory](#password-hashing-memory). | Block `Debug` is redacted. |

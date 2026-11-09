@@ -138,6 +138,118 @@ fn both_variants_match_independent_implementations_in_one_shot_and_streamed() {
   }
 }
 
+/// One `Hasher` write: a byte string or an integer method.
+#[derive(Clone, Copy, Debug)]
+enum Write<'a> {
+  Bytes(&'a [u8]),
+  U8(u8),
+  U16(u16),
+  U32(u32),
+  U64(u64),
+  U128(u128),
+  Usize(usize),
+  I32(i32),
+  Isize(isize),
+}
+
+impl Write<'_> {
+  fn apply(self, hasher: &mut impl Hasher) {
+    match self {
+      Self::Bytes(bytes) => hasher.write(bytes),
+      Self::U8(i) => hasher.write_u8(i),
+      Self::U16(i) => hasher.write_u16(i),
+      Self::U32(i) => hasher.write_u32(i),
+      Self::U64(i) => hasher.write_u64(i),
+      Self::U128(i) => hasher.write_u128(i),
+      Self::Usize(i) => hasher.write_usize(i),
+      Self::I32(i) => hasher.write_i32(i),
+      Self::Isize(i) => hasher.write_isize(i),
+    }
+  }
+
+  /// The bytes the write hashes, as `Hasher`'s default methods define them.
+  fn bytes(self) -> Vec<u8> {
+    match self {
+      Self::Bytes(bytes) => bytes.to_vec(),
+      Self::U8(i) => i.to_ne_bytes().to_vec(),
+      Self::U16(i) => i.to_ne_bytes().to_vec(),
+      Self::U32(i) => i.to_ne_bytes().to_vec(),
+      Self::U64(i) => i.to_ne_bytes().to_vec(),
+      Self::U128(i) => i.to_ne_bytes().to_vec(),
+      Self::Usize(i) => i.to_ne_bytes().to_vec(),
+      Self::I32(i) => i.to_ne_bytes().to_vec(),
+      Self::Isize(i) => i.to_ne_bytes().to_vec(),
+    }
+  }
+}
+
+/// Integer methods hash the bytes of `to_ne_bytes`, at every pending offset
+/// and for every mix with byte strings. The oracle is `siphasher` fed the same
+/// bytes in one write, so it shares no buffering logic with rscrypto.
+#[test]
+fn integer_and_byte_writes_hash_their_byte_stream_at_every_offset() {
+  let key_bytes: [u8; 16] = core::array::from_fn(|i| u8::try_from(i).expect("small").wrapping_mul(17));
+  let key = SipHashKey::from_bytes(key_bytes);
+  let data = message(40);
+  let integers = [
+    Write::U8(0xa5),
+    Write::U16(0xbeef),
+    Write::U32(0x0123_4567),
+    Write::U64(0x0123_4567_89ab_cdef),
+    Write::U128(0x0011_2233_4455_6677_8899_aabb_ccdd_eeff),
+    Write::Usize(usize::MAX - 2),
+    Write::I32(-7),
+    Write::Isize(isize::MIN + 3),
+  ];
+  let oracle = |stream: &[u8]| {
+    let mut hasher13 = siphasher::sip::SipHasher13::new_with_key(&key_bytes);
+    let mut hasher24 = siphasher::sip::SipHasher24::new_with_key(&key_bytes);
+    hasher13.write(stream);
+    hasher24.write(stream);
+    (hasher13.finish(), hasher24.finish())
+  };
+  // A prefix of each length 0..=8 puts every write at every pending offset;
+  // the byte strings after each write cross one or more word boundaries.
+  for prefix in 0..=8 {
+    for first in integers {
+      for second in integers {
+        for suffix in [0, 1, 7, 8, 9, 23, 40] {
+          let writes = [
+            Write::Bytes(&data[..prefix]),
+            first,
+            Write::Bytes(&data[prefix..prefix + suffix.min(40 - prefix)]),
+            second,
+            Write::Bytes(&data[..suffix]),
+          ];
+          let stream: Vec<u8> = writes.iter().flat_map(|write| write.bytes()).collect();
+          let mut hasher13 = SipHash13::new(&key);
+          let mut hasher24 = SipHash24::new(&key);
+          for write in writes {
+            write.apply(&mut hasher13);
+            write.apply(&mut hasher24);
+          }
+          assert_eq!((hasher13.finish(), hasher24.finish()), oracle(&stream), "{writes:?}");
+          assert_eq!(SipHash13::hash(&key, &stream), oracle(&stream).0, "one-shot {writes:?}");
+        }
+      }
+    }
+  }
+}
+
+/// `finish` reads the state without consuming it: later writes continue the
+/// same input.
+#[test]
+fn finish_does_not_end_the_input() {
+  let key = SipHashKey::from_bytes(reference_key());
+  let data = message(37);
+  let mut hasher = SipHash24::new(&key);
+  for (index, byte) in data.iter().enumerate() {
+    assert_eq!(hasher.finish(), REFERENCE_24[index], "after {index} bytes");
+    hasher.write_u8(*byte);
+  }
+  assert_eq!(hasher.finish(), REFERENCE_24[37]);
+}
+
 #[test]
 fn random_state_keys_sip13_and_fails_closed() {
   let state = SipRandomState::try_new_with(|key| {

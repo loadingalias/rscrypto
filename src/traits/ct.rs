@@ -287,6 +287,7 @@ pub fn zeroize(buf: &mut [u8]) {
   feature = "poly1305",
   feature = "sha2",
   feature = "sha3",
+  feature = "siphash",
   feature = "xchacha20poly1305"
 ))]
 mod word_zero_sealed {
@@ -336,6 +337,7 @@ mod word_zero_sealed {
   feature = "poly1305",
   feature = "sha2",
   feature = "sha3",
+  feature = "siphash",
   feature = "xchacha20poly1305"
 ))]
 pub(crate) use word_zero_sealed::WordZero;
@@ -363,6 +365,7 @@ pub(crate) use word_zero_sealed::WordZero;
   feature = "poly1305",
   feature = "sha2",
   feature = "sha3",
+  feature = "siphash",
   feature = "xchacha20poly1305"
 ))]
 #[inline(always)]
@@ -403,7 +406,8 @@ pub(crate) fn zeroize_fence() {
   feature = "p256-ecdh",
   feature = "p384-ecdh",
   feature = "sha2",
-  feature = "sha3"
+  feature = "sha3",
+  feature = "siphash"
 ))]
 #[inline(always)]
 pub(crate) fn zeroize_words<T: WordZero>(words: &mut [T]) {
