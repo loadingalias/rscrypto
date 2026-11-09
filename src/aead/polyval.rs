@@ -2593,7 +2593,7 @@ pub(super) fn mont_reduce(v: [u64; 4]) -> u128 {
 /// high half, and their XOR (the Karatsuba middle operand), then of the bit
 /// reversals of those three.
 #[cfg(any(
-  test,
+  all(test, feature = "aes-gcm"),
   all(
     target_arch = "riscv64",
     any(feature = "aes-gcm", all(feature = "aes-gcm-siv", not(feature = "portable-only")))
@@ -2609,7 +2609,7 @@ type PortablePowerOperands = [[u64; 4]; 6];
 /// costs two operand reversals instead of the nine of
 /// [`clmul128_reduce_portable`]. The owner clears its operands on drop.
 #[cfg(any(
-  test,
+  all(test, feature = "aes-gcm"),
   all(
     target_arch = "riscv64",
     any(feature = "aes-gcm", all(feature = "aes-gcm-siv", not(feature = "portable-only")))
@@ -2618,7 +2618,7 @@ type PortablePowerOperands = [[u64; 4]; 6];
 pub(super) struct PortablePowers([PortablePowerOperands; 4]);
 
 #[cfg(any(
-  test,
+  all(test, feature = "aes-gcm"),
   all(
     target_arch = "riscv64",
     any(feature = "aes-gcm", all(feature = "aes-gcm-siv", not(feature = "portable-only")))
@@ -2670,7 +2670,7 @@ impl PortablePowers {
 }
 
 #[cfg(any(
-  test,
+  all(test, feature = "aes-gcm"),
   all(
     target_arch = "riscv64",
     any(feature = "aes-gcm", all(feature = "aes-gcm-siv", not(feature = "portable-only")))
@@ -2690,7 +2690,7 @@ impl Drop for PortablePowers {
 /// It equals one [`clmul128_reduce_portable`] update per block. Every four
 /// blocks of the transcript share one reduction.
 #[cfg(any(
-  test,
+  all(test, feature = "aes-gcm"),
   all(
     target_arch = "riscv64",
     any(feature = "aes-gcm", all(feature = "aes-gcm-siv", not(feature = "portable-only")))
@@ -2721,7 +2721,7 @@ pub(super) fn portable_transcript<const BIG_ENDIAN: bool>(
 }
 
 #[cfg(any(
-  test,
+  all(test, feature = "aes-gcm"),
   all(
     target_arch = "riscv64",
     any(feature = "aes-gcm", all(feature = "aes-gcm-siv", not(feature = "portable-only")))
@@ -2733,7 +2733,7 @@ const BLOCK: usize = 16;
 /// reduction. AES-GCM-SIV hashes its plaintext, so the pending blocks and the
 /// accumulator are cleared on drop.
 #[cfg(any(
-  test,
+  all(test, feature = "aes-gcm"),
   all(
     target_arch = "riscv64",
     any(feature = "aes-gcm", all(feature = "aes-gcm-siv", not(feature = "portable-only")))
@@ -2747,7 +2747,7 @@ struct PortableTranscript<'a, const BIG_ENDIAN: bool> {
 }
 
 #[cfg(any(
-  test,
+  all(test, feature = "aes-gcm"),
   all(
     target_arch = "riscv64",
     any(feature = "aes-gcm", all(feature = "aes-gcm-siv", not(feature = "portable-only")))
@@ -2813,7 +2813,7 @@ impl<const BIG_ENDIAN: bool> PortableTranscript<'_, BIG_ENDIAN> {
 }
 
 #[cfg(any(
-  test,
+  all(test, feature = "aes-gcm"),
   all(
     target_arch = "riscv64",
     any(feature = "aes-gcm", all(feature = "aes-gcm-siv", not(feature = "portable-only")))
@@ -2831,9 +2831,12 @@ impl<const BIG_ENDIAN: bool> Drop for PortableTranscript<'_, BIG_ENDIAN> {
 ///
 /// Returns `None` below 16 transcript blocks, where computing H^2 to H^4 for
 /// this per-message key costs more than the shared reductions save.
-#[cfg(any(
-  test,
-  all(target_arch = "riscv64", not(feature = "portable-only"), feature = "aes-gcm-siv")
+#[cfg(all(
+  feature = "aes-gcm-siv",
+  any(
+    all(test, feature = "aes-gcm"),
+    all(target_arch = "riscv64", not(feature = "portable-only"))
+  )
 ))]
 pub(super) fn polyval_portable_wide(h: u128, aad: &[u8], message: &[u8]) -> Option<u128> {
   const MIN_BLOCKS: usize = 16;
@@ -2931,6 +2934,7 @@ mod tests {
   /// Each `PortablePowers` window must equal that many sequential portable
   /// updates, also when only the last powers are prepared. A swapped power
   /// order, a dropped accumulator, or a skipped high-half reversal fails.
+  #[cfg(feature = "aes-gcm")]
   #[test]
   fn portable_powers_absorb_matches_sequential_updates() {
     let values = [
@@ -2977,7 +2981,7 @@ mod tests {
   /// `polyval_portable_wide` must equal streaming POLYVAL of the padded AAD,
   /// the padded message, and the length block, and must decline transcripts
   /// below its 16-block threshold.
-  #[cfg(feature = "aes-gcm-siv")]
+  #[cfg(all(feature = "aes-gcm", feature = "aes-gcm-siv"))]
   #[test]
   fn polyval_portable_wide_matches_streaming() {
     let input: [u8; 400] = core::array::from_fn(|i| i.to_le_bytes()[0].wrapping_mul(13).wrapping_add(7));
