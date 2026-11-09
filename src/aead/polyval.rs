@@ -1210,7 +1210,7 @@ mod vpclmul {
   /// # Safety
   /// Caller must ensure AVX-512F + AVX-512VL + AVX-512BW + AVX-512DQ +
   /// VPCLMULQDQ + PCLMULQDQ + SSE2.
-  #[cfg(any(feature = "aes-gcm-siv", test))]
+  #[cfg(feature = "aes-gcm-siv")]
   #[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,vpclmulqdq,pclmulqdq,sse2")]
   #[inline]
   unsafe fn aggregate_16_lanes(data: [__m512i; 4], h_powers_rev: &[u128; 16]) -> u128 {
