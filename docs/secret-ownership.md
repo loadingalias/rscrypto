@@ -90,6 +90,13 @@ schedules and block-core spills. It owns no key, output, or allocation.
 `just stack-frames` checks that the linked worker depth fits in that region on each
 reviewed Linux target; actual overwrite placement on other targets requires separate review.
 
+On RISC-V hosts without carryless-multiply extensions, the generic AES-GCM tag path and
+AES-GCM-SIV messages of at least 16 POLYVAL blocks absorb four blocks per reduction. The
+operation-local `PortablePowers` owner holds bit-split copies of H to H^4 and clears them on
+drop. The transcript owner clears its accumulator, the blocks that wait for a four-block
+window, and the padded final block; AES-GCM-SIV hashes plaintext, so these copies are secret.
+AES-GCM-SIV also clears its per-message power array and digest copy.
+
 On little-endian AArch64 macOS/Linux, each AES-GCM context retains one 16-power
 GHASH table and one packed pair table. Its four/eight-power windows and 64-bit
 middle halves borrow those owners. Drop clears both complete tables and raw H.

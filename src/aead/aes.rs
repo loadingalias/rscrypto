@@ -2951,10 +2951,9 @@ const fn mix_column(col: [u8; 4]) -> u32 {
   (r0 as u32) << 24 | (r1 as u32) << 16 | (r2 as u32) << 8 | r3 as u32
 }
 
-#[cfg(all(
-  target_arch = "s390x",
-  not(feature = "portable-only"),
-  any(feature = "aes-gcm", feature = "aes-gcm-siv")
+#[cfg(any(
+  all(feature = "aes-gcm", any(target_arch = "riscv64", target_arch = "s390x")),
+  all(target_arch = "s390x", not(feature = "portable-only"), feature = "aes-gcm-siv")
 ))]
 #[inline]
 pub(super) fn ctr_tail_block_count(remaining: usize) -> usize {
@@ -2963,10 +2962,9 @@ pub(super) fn ctr_tail_block_count(remaining: usize) -> usize {
   full_blocks.strict_add(tail_block).min(4)
 }
 
-#[cfg(all(
-  target_arch = "s390x",
-  not(feature = "portable-only"),
-  any(feature = "aes-gcm", feature = "aes-gcm-siv")
+#[cfg(any(
+  all(feature = "aes-gcm", any(target_arch = "riscv64", target_arch = "s390x")),
+  all(target_arch = "s390x", not(feature = "portable-only"), feature = "aes-gcm-siv")
 ))]
 #[inline]
 pub(super) fn xor_keystream_tail(
@@ -3384,6 +3382,31 @@ fn aes256_ctr32_encrypt_be_worker(ek: &Aes256EncKey, initial_counter: &[u8; BLOC
     }
 
     counter_block[..12].copy_from_slice(&iv_prefix);
+  }
+
+  // A fixslice call always computes four blocks, so the last one to three
+  // blocks share one call instead of taking one call each.
+  #[cfg(any(target_arch = "riscv64", target_arch = "s390x"))]
+  if matches!(&ek.inner, KeyInner::Fixslice(_)) && offset < data.len() {
+    let block_count = ctr_tail_block_count(data.len().strict_sub(offset));
+    let mut keystream_storage = crate::secret::ZeroizingBytes::<{ 4 * BLOCK_SIZE }>::zeroed();
+    let keystream = keystream_storage
+      .as_mut_array()
+      .as_chunks_mut::<BLOCK_SIZE>()
+      .0
+      .first_chunk_mut::<4>()
+      .expect("four AES counter blocks");
+    let mut i = 0u32;
+    while (i as usize) < block_count {
+      keystream[i as usize][..12].copy_from_slice(&counter_block[..12]);
+      keystream[i as usize][12..16].copy_from_slice(&ctr.wrapping_add(i).to_be_bytes());
+      i = i.strict_add(1);
+    }
+
+    aes256_encrypt_blocks_ecb(ek, &mut keystream[..block_count]);
+    let processed = xor_keystream_tail(data, offset, keystream, block_count);
+    offset = offset.strict_add(processed);
+    ctr = ctr.wrapping_add(u32::from(block_count.to_le_bytes()[0]));
   }
 
   #[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
@@ -4081,6 +4104,31 @@ fn aes128_ctr32_encrypt_be_worker(ek: &Aes128EncKey, initial_counter: &[u8; BLOC
     }
 
     counter_block[..12].copy_from_slice(&iv_prefix);
+  }
+
+  // A fixslice call always computes four blocks, so the last one to three
+  // blocks share one call instead of taking one call each.
+  #[cfg(any(target_arch = "riscv64", target_arch = "s390x"))]
+  if matches!(&ek.inner, Key128Inner::Fixslice(_)) && offset < data.len() {
+    let block_count = ctr_tail_block_count(data.len().strict_sub(offset));
+    let mut keystream_storage = crate::secret::ZeroizingBytes::<{ 4 * BLOCK_SIZE }>::zeroed();
+    let keystream = keystream_storage
+      .as_mut_array()
+      .as_chunks_mut::<BLOCK_SIZE>()
+      .0
+      .first_chunk_mut::<4>()
+      .expect("four AES counter blocks");
+    let mut i = 0u32;
+    while (i as usize) < block_count {
+      keystream[i as usize][..12].copy_from_slice(&counter_block[..12]);
+      keystream[i as usize][12..16].copy_from_slice(&ctr.wrapping_add(i).to_be_bytes());
+      i = i.strict_add(1);
+    }
+
+    aes128_encrypt_blocks_ecb(ek, &mut keystream[..block_count]);
+    let processed = xor_keystream_tail(data, offset, keystream, block_count);
+    offset = offset.strict_add(processed);
+    ctr = ctr.wrapping_add(u32::from(block_count.to_le_bytes()[0]));
   }
 
   #[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]

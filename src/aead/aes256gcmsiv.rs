@@ -403,7 +403,13 @@ fn compute_tag_riscv_with_reduce(
   let length_block = super::AeadByteLengths::from_usize(aad.len(), plaintext.len()).to_le_bits_block();
   acc ^= u128::from_le_bytes(length_block);
   acc = reduce(acc, h);
+  finish_tag_riscv(acc, enc_ek, nonce)
+}
 
+/// Turn the POLYVAL digest into the tag (RFC 8452 section 4, steps 4 to 6).
+#[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
+#[inline]
+fn finish_tag_riscv(acc: u128, enc_ek: &aes::Aes256EncKey, nonce: &Nonce96) -> [u8; TAG_SIZE] {
   let mut s = acc.to_le_bytes();
   let nonce_bytes = nonce.as_bytes();
   let mut j = 0usize;
@@ -479,7 +485,14 @@ fn compute_tag_riscv(
 ) -> [u8; TAG_SIZE] {
   match riscv_polyval_backend(backend) {
     RiscvPolyvalBackend::Portable => {
-      compute_tag_riscv_with_reduce(auth_key, enc_ek, nonce, aad, plaintext, reduce_riscv_portable)
+      match polyval::polyval_portable_wide(u128::from_le_bytes(*auth_key), aad, plaintext) {
+        Some(mut acc) => {
+          let tag = finish_tag_riscv(acc, enc_ek, nonce);
+          ct::zeroize_words(core::slice::from_mut(&mut acc));
+          tag
+        }
+        None => compute_tag_riscv_with_reduce(auth_key, enc_ek, nonce, aad, plaintext, reduce_riscv_portable),
+      }
     }
     RiscvPolyvalBackend::Scalar => {
       compute_tag_riscv_with_reduce(auth_key, enc_ek, nonce, aad, plaintext, reduce_riscv_scalar)

@@ -1850,6 +1850,23 @@ pub(super) fn clmul128_reduce(a: u128, b: u128) -> u128 {
   clmul128_reduce_portable(a, b)
 }
 
+/// Whether [`clmul128_reduce`] reaches its portable multiply on this RISC-V
+/// host. It mirrors the RISC-V capability tests of that dispatch.
+#[cfg(all(target_arch = "riscv64", feature = "aes-gcm"))]
+#[inline]
+pub(super) fn clmul128_reduce_is_portable() -> bool {
+  #[cfg(not(feature = "portable-only"))]
+  {
+    use crate::platform::caps::riscv;
+
+    let caps = current_caps();
+    if caps.has(riscv::ZVBC) || caps.has(riscv::ZBC) || caps.has(riscv::ZBKC) {
+      return false;
+    }
+  }
+  true
+}
+
 /// Multiplies two little-endian POLYVAL field elements with the portable
 /// carryless-multiply and reduction implementation.
 #[cfg(all(rscrypto_internal, feature = "diag", feature = "aes-gcm-siv"))]
@@ -2453,15 +2470,25 @@ impl Drop for Polyval {
 /// evidence questions.
 #[inline]
 fn bmul64(x: u64, y: u64) -> u64 {
-  let x0 = x & 0x1111_1111_1111_1111;
-  let x1 = x & 0x2222_2222_2222_2222;
-  let x2 = x & 0x4444_4444_4444_4444;
-  let x3 = x & 0x8888_8888_8888_8888;
+  bmul64_strided(x, &bmul64_strides(y))
+}
 
-  let y0 = y & 0x1111_1111_1111_1111;
-  let y1 = y & 0x2222_2222_2222_2222;
-  let y2 = y & 0x4444_4444_4444_4444;
-  let y3 = y & 0x8888_8888_8888_8888;
+/// The four interleaved bit strides of a `bmul64` operand, every 4th bit from
+/// bit 0, 1, 2, and 3.
+#[inline(always)]
+fn bmul64_strides(y: u64) -> [u64; 4] {
+  [
+    y & 0x1111_1111_1111_1111,
+    y & 0x2222_2222_2222_2222,
+    y & 0x4444_4444_4444_4444,
+    y & 0x8888_8888_8888_8888,
+  ]
+}
+
+/// [`bmul64`] with the second operand already split by [`bmul64_strides`].
+#[inline(always)]
+fn bmul64_strided(x: u64, &[y0, y1, y2, y3]: &[u64; 4]) -> u64 {
+  let [x0, x1, x2, x3] = bmul64_strides(x);
 
   // Cyclic convolution mod x^4 + 1 in GF(2).
   let mut z0 = (x0.wrapping_mul(y0)) ^ (x1.wrapping_mul(y3)) ^ (x2.wrapping_mul(y2)) ^ (x3.wrapping_mul(y1));
@@ -2560,6 +2587,274 @@ pub(super) fn mont_reduce(v: [u64; 4]) -> u128 {
   (v2 as u128) | ((v3 as u128) << 64)
 }
 
+// Portable four-block aggregation
+
+/// `bmul64` operands of one hash-key power: the strides of its low half, its
+/// high half, and their XOR (the Karatsuba middle operand), then of the bit
+/// reversals of those three.
+#[cfg(any(
+  test,
+  all(
+    target_arch = "riscv64",
+    any(feature = "aes-gcm", all(feature = "aes-gcm-siv", not(feature = "portable-only")))
+  )
+))]
+type PortablePowerOperands = [[u64; 4]; 6];
+
+/// Hash-key powers `[H^4, H^3, H^2, H]` split for the portable multiply.
+///
+/// [`Self::absorb`] multiplies up to four blocks by these powers and reduces
+/// their sum once. Carryless products are linear, so it also sums the
+/// bit-reversed high-half products before it reverses them. Each block then
+/// costs two operand reversals instead of the nine of
+/// [`clmul128_reduce_portable`]. The owner clears its operands on drop.
+#[cfg(any(
+  test,
+  all(
+    target_arch = "riscv64",
+    any(feature = "aes-gcm", all(feature = "aes-gcm-siv", not(feature = "portable-only")))
+  )
+))]
+pub(super) struct PortablePowers([PortablePowerOperands; 4]);
+
+#[cfg(any(
+  test,
+  all(
+    target_arch = "riscv64",
+    any(feature = "aes-gcm", all(feature = "aes-gcm-siv", not(feature = "portable-only")))
+  )
+))]
+impl PortablePowers {
+  /// Splits the last `count` powers of `h_powers_rev` (`[H^4, H^3, H^2, H]`).
+  /// [`Self::absorb`] accepts at most `count` blocks per call.
+  #[inline]
+  pub(super) fn new(h_powers_rev: &[u128; 4], count: usize) -> Self {
+    let first = 4usize.strict_sub(count.min(4));
+    let mut operands = [[[0u64; 4]; 6]; 4];
+    for (slot, &power) in operands[first..].iter_mut().zip(&h_powers_rev[first..]) {
+      let (b0, b1) = split_u128_le(power);
+      let b0r = b0.reverse_bits();
+      let b1r = b1.reverse_bits();
+      *slot = [b0, b1, b0 ^ b1, b0r, b1r, b0r ^ b1r].map(bmul64_strides);
+    }
+    Self(operands)
+  }
+
+  /// Returns `(acc ^ blocks[0]) * H^N ^ blocks[1] * H^(N-1) ^ ... ^ blocks[N-1] * H`,
+  /// the value of `N` sequential [`clmul128_reduce_portable`] updates.
+  #[inline]
+  pub(super) fn absorb<const N: usize>(&self, acc: u128, blocks: &[u128; N]) -> u128 {
+    const { assert!(N >= 1 && N <= 4) };
+    let mut sums = [0u64; 6];
+    for (index, (&block, power)) in blocks.iter().zip(&self.0[4usize.strict_sub(N)..]).enumerate() {
+      let x = if index == 0 { acc ^ block } else { block };
+      let (a0, a1) = split_u128_le(x);
+      let a0r = a0.reverse_bits();
+      let a1r = a1.reverse_bits();
+      let operands = [a0, a1, a0 ^ a1, a0r, a1r, a0r ^ a1r];
+      for ((sum, operand), strides) in sums.iter_mut().zip(operands).zip(power) {
+        *sum ^= bmul64_strided(operand, strides);
+      }
+    }
+
+    // The Karatsuba recombination of `clmul128`, once for the whole sum.
+    let [z0, z1, mut z2, r0, r1, r2] = sums;
+    let mut z0h = r0.reverse_bits() >> 1;
+    let z1h = r1.reverse_bits() >> 1;
+    let mut z2h = r2.reverse_bits() >> 1;
+    z2 ^= z0 ^ z1;
+    z2h ^= z0h ^ z1h;
+    z0h ^= z2;
+    mont_reduce([z0, z0h, z1 ^ z2h, z1h])
+  }
+}
+
+#[cfg(any(
+  test,
+  all(
+    target_arch = "riscv64",
+    any(feature = "aes-gcm", all(feature = "aes-gcm-siv", not(feature = "portable-only")))
+  )
+))]
+impl Drop for PortablePowers {
+  fn drop(&mut self) {
+    crate::traits::ct::zeroize_words(self.0.as_flattened_mut().as_flattened_mut());
+  }
+}
+
+/// The portable hash of the padded `first`, the padded `second`, and
+/// `length_block` from a zero accumulator, with `h_powers_rev` holding
+/// `[H^4, H^3, H^2, H]`. `BIG_ENDIAN` selects the block load: big-endian for
+/// GHASH, little-endian for POLYVAL.
+///
+/// It equals one [`clmul128_reduce_portable`] update per block. Every four
+/// blocks of the transcript share one reduction.
+#[cfg(any(
+  test,
+  all(
+    target_arch = "riscv64",
+    any(feature = "aes-gcm", all(feature = "aes-gcm-siv", not(feature = "portable-only")))
+  )
+))]
+pub(super) fn portable_transcript<const BIG_ENDIAN: bool>(
+  h_powers_rev: &[u128; 4],
+  first: &[u8],
+  second: &[u8],
+  length_block: u128,
+) -> u128 {
+  let blocks = first
+    .len()
+    .div_ceil(BLOCK)
+    .strict_add(second.len().div_ceil(BLOCK))
+    .strict_add(1);
+  let powers = PortablePowers::new(h_powers_rev, blocks);
+  let mut transcript = PortableTranscript::<BIG_ENDIAN> {
+    powers: &powers,
+    acc: 0,
+    pending: [0; 4],
+    count: 0,
+  };
+  transcript.absorb_padded(first);
+  transcript.absorb_padded(second);
+  transcript.push(length_block);
+  transcript.finish()
+}
+
+#[cfg(any(
+  test,
+  all(
+    target_arch = "riscv64",
+    any(feature = "aes-gcm", all(feature = "aes-gcm-siv", not(feature = "portable-only")))
+  )
+))]
+const BLOCK: usize = 16;
+
+/// Up to three transcript blocks wait in `pending` until four can share one
+/// reduction. AES-GCM-SIV hashes its plaintext, so the pending blocks and the
+/// accumulator are cleared on drop.
+#[cfg(any(
+  test,
+  all(
+    target_arch = "riscv64",
+    any(feature = "aes-gcm", all(feature = "aes-gcm-siv", not(feature = "portable-only")))
+  )
+))]
+struct PortableTranscript<'a, const BIG_ENDIAN: bool> {
+  powers: &'a PortablePowers,
+  acc: u128,
+  pending: [u128; 4],
+  count: usize,
+}
+
+#[cfg(any(
+  test,
+  all(
+    target_arch = "riscv64",
+    any(feature = "aes-gcm", all(feature = "aes-gcm-siv", not(feature = "portable-only")))
+  )
+))]
+impl<const BIG_ENDIAN: bool> PortableTranscript<'_, BIG_ENDIAN> {
+  #[inline(always)]
+  fn load(block: [u8; BLOCK]) -> u128 {
+    if BIG_ENDIAN {
+      u128::from_be_bytes(block)
+    } else {
+      u128::from_le_bytes(block)
+    }
+  }
+
+  #[inline]
+  fn push(&mut self, block: u128) {
+    self.pending[self.count] = block;
+    self.count = self.count.strict_add(1);
+    if self.count == 4 {
+      self.acc = self.powers.absorb(self.acc, &self.pending);
+      self.count = 0;
+    }
+  }
+
+  #[inline]
+  fn absorb_padded(&mut self, data: &[u8]) {
+    let (mut blocks, remainder) = data.as_chunks::<BLOCK>();
+    while self.count != 0
+      && let Some((first, rest)) = blocks.split_first()
+    {
+      self.push(Self::load(*first));
+      blocks = rest;
+    }
+
+    let (chunks, tail) = blocks.as_chunks::<4>();
+    for chunk in chunks {
+      self.acc = self.powers.absorb(self.acc, &chunk.map(Self::load));
+    }
+    for block in tail {
+      self.push(Self::load(*block));
+    }
+
+    if !remainder.is_empty() {
+      let mut block = [0u8; BLOCK];
+      block[..remainder.len()].copy_from_slice(remainder);
+      self.push(Self::load(block));
+      crate::traits::ct::zeroize(&mut block);
+    }
+  }
+
+  #[inline]
+  fn finish(mut self) -> u128 {
+    let [b0, b1, b2, _] = self.pending;
+    let acc = core::mem::take(&mut self.acc);
+    match self.count {
+      0 => acc,
+      1 => self.powers.absorb(acc, &[b0]),
+      2 => self.powers.absorb(acc, &[b0, b1]),
+      _ => self.powers.absorb(acc, &[b0, b1, b2]),
+    }
+  }
+}
+
+#[cfg(any(
+  test,
+  all(
+    target_arch = "riscv64",
+    any(feature = "aes-gcm", all(feature = "aes-gcm-siv", not(feature = "portable-only")))
+  )
+))]
+impl<const BIG_ENDIAN: bool> Drop for PortableTranscript<'_, BIG_ENDIAN> {
+  fn drop(&mut self) {
+    crate::traits::ct::zeroize_words_no_fence(core::slice::from_mut(&mut self.acc));
+    crate::traits::ct::zeroize_words(&mut self.pending);
+  }
+}
+
+/// POLYVAL under `h` of the padded `aad`, the padded `message`, and their
+/// length block, four blocks per reduction.
+///
+/// Returns `None` below 16 transcript blocks, where computing H^2 to H^4 for
+/// this per-message key costs more than the shared reductions save.
+#[cfg(any(
+  test,
+  all(target_arch = "riscv64", not(feature = "portable-only"), feature = "aes-gcm-siv")
+))]
+pub(super) fn polyval_portable_wide(h: u128, aad: &[u8], message: &[u8]) -> Option<u128> {
+  const MIN_BLOCKS: usize = 16;
+
+  let blocks = aad
+    .len()
+    .div_ceil(BLOCK)
+    .strict_add(message.len().div_ceil(BLOCK))
+    .strict_add(1);
+  if blocks < MIN_BLOCKS {
+    return None;
+  }
+  let h2 = clmul128_reduce_portable(h, h);
+  let h3 = clmul128_reduce_portable(h2, h);
+  let mut powers = [clmul128_reduce_portable(h3, h), h3, h2, h];
+  let length_block = super::AeadByteLengths::from_usize(aad.len(), message.len()).to_le_bits_block();
+  let acc = portable_transcript::<false>(&powers, aad, message, u128::from_le_bytes(length_block));
+  crate::traits::ct::zeroize_words(&mut powers);
+  Some(acc)
+}
+
 // Tests
 
 #[cfg(test)]
@@ -2631,6 +2926,80 @@ mod tests {
     let padded_result = padded.finalize();
 
     assert_eq!(manual_result, padded_result);
+  }
+
+  /// Each `PortablePowers` window must equal that many sequential portable
+  /// updates, also when only the last powers are prepared. A swapped power
+  /// order, a dropped accumulator, or a skipped high-half reversal fails.
+  #[test]
+  fn portable_powers_absorb_matches_sequential_updates() {
+    let values = [
+      0u128,
+      1,
+      u128::MAX,
+      1 << 127,
+      u128::from_le_bytes(RFC_X1),
+      u128::from_le_bytes(RFC_X2),
+      u128::from_le_bytes(AGGREGATE_X3),
+      u128::from_le_bytes(AGGREGATE_X4),
+    ];
+    for h in [u128::from_le_bytes(RFC_H), u128::MAX, 1 << 127, 3] {
+      let h2 = clmul128_reduce_portable(h, h);
+      let h3 = clmul128_reduce_portable(h2, h);
+      let h4 = clmul128_reduce_portable(h3, h);
+      let reversed = [h4, h3, h2, h];
+      for (index, &acc) in values.iter().enumerate() {
+        let blocks: [u128; 4] =
+          core::array::from_fn(|lane| values[index.strict_add(lane).strict_add(1).strict_rem(values.len())]);
+        let sequential = |count: usize| {
+          blocks[..count]
+            .iter()
+            .fold(acc, |a, &block| clmul128_reduce_portable(a ^ block, h))
+        };
+        let [b0, b1, b2, _] = blocks;
+        for prepared in 1..=4 {
+          let powers = PortablePowers::new(&reversed, prepared);
+          assert_eq!(powers.absorb(acc, &[b0]), sequential(1));
+          if prepared >= 2 {
+            assert_eq!(powers.absorb(acc, &[b0, b1]), sequential(2));
+          }
+          if prepared >= 3 {
+            assert_eq!(powers.absorb(acc, &[b0, b1, b2]), sequential(3));
+          }
+          if prepared == 4 {
+            assert_eq!(powers.absorb(acc, &blocks), sequential(4));
+          }
+        }
+      }
+    }
+  }
+
+  /// `polyval_portable_wide` must equal streaming POLYVAL of the padded AAD,
+  /// the padded message, and the length block, and must decline transcripts
+  /// below its 16-block threshold.
+  #[cfg(feature = "aes-gcm-siv")]
+  #[test]
+  fn polyval_portable_wide_matches_streaming() {
+    let input: [u8; 400] = core::array::from_fn(|i| i.to_le_bytes()[0].wrapping_mul(13).wrapping_add(7));
+    let h = u128::from_le_bytes(RFC_H);
+    for aad_len in [0usize, 1, 14, 16, 33, 64] {
+      for message_len in [0usize, 1, 200, 223, 224, 225, 240, 255, 256, 257, 300] {
+        let aad = &input[..aad_len];
+        let message = &input[aad_len..aad_len.strict_add(message_len)];
+        let mut streaming = Polyval::new(&RFC_H);
+        streaming.update_padded(aad);
+        streaming.update_padded(message);
+        streaming.update_block(&super::super::AeadByteLengths::from_usize(aad_len, message_len).to_le_bits_block());
+        let expected = u128::from_le_bytes(streaming.finalize());
+        let blocks = aad_len.div_ceil(16).strict_add(message_len.div_ceil(16)).strict_add(1);
+        let actual = polyval_portable_wide(h, aad, message);
+        if blocks < 16 {
+          assert_eq!(actual, None, "aad={aad_len} message={message_len}");
+        } else {
+          assert_eq!(actual, Some(expected), "aad={aad_len} message={message_len}");
+        }
+      }
+    }
   }
 
   /// bmul64 spot checks.

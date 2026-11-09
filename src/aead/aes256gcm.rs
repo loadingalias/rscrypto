@@ -266,16 +266,23 @@ fn make_j0_and_ctr(nonce: &Nonce96) -> ([u8; 16], [u8; 16]) {
 #[inline]
 fn compute_tag(
   ek: &aes::Aes256EncKey,
-  h_polyval: u128,
+  h_powers_rev: &[u128; 4],
   j0: &[u8; 16],
   aad: &[u8],
   ciphertext: &[u8],
 ) -> Result<[u8; TAG_SIZE], LengthOverflow> {
+  let h_polyval = h_powers_rev[3];
+  let length_block = super::AeadByteLengths::try_new_bit_lengths(aad.len(), ciphertext.len())?.to_be_bits_block();
   let mut acc = GhashAccumulator(0);
+
+  #[cfg(target_arch = "riscv64")]
+  if polyval::clmul128_reduce_is_portable() {
+    acc.0 = super::ghash::ghash_transcript_portable(h_powers_rev, aad, ciphertext, u128::from_be_bytes(length_block));
+    return Ok(encrypt_j0_tag(ek, j0, acc.0));
+  }
+
   acc.0 = ghash_update_padded(acc.0, h_polyval, aad);
   acc.0 = ghash_update_padded(acc.0, h_polyval, ciphertext);
-
-  let length_block = super::AeadByteLengths::try_new_bit_lengths(aad.len(), ciphertext.len())?.to_be_bits_block();
   acc.0 ^= u128::from_be_bytes(length_block);
   acc.0 = polyval::clmul128_reduce(acc.0, h_polyval);
 
@@ -620,7 +627,7 @@ impl Aes256Gcm {
     let tag = if should_use_wide_ghash(self.backend, aad.len(), ciphertext.len()) {
       compute_tag_wide(&self.ek, self.h_powers_4()[3], self.h_powers_4(), &j0, aad, ciphertext)
     } else {
-      compute_tag(&self.ek, self.h_powers_4()[3], &j0, aad, ciphertext)
+      compute_tag(&self.ek, self.h_powers_4(), &j0, aad, ciphertext)
     };
     match tag {
       Ok(tag) => Ok((Aes256GcmTag::from_bytes(tag), ciphertext)),
@@ -871,8 +878,7 @@ impl Aead for Aes256Gcm {
         .map_err(|_| SealError::too_large())?;
       return Ok(Aes256GcmTag::from_bytes(tag_bytes));
     }
-    let tag_bytes =
-      compute_tag(&self.ek, self.h_powers_4()[3], &j0, aad, buffer).map_err(|_| SealError::too_large())?;
+    let tag_bytes = compute_tag(&self.ek, self.h_powers_4(), &j0, aad, buffer).map_err(|_| SealError::too_large())?;
     Ok(Aes256GcmTag::from_bytes(tag_bytes))
   }
 
@@ -1050,7 +1056,7 @@ impl Aead for Aes256Gcm {
       aes::aes256_ctr32_encrypt_be(&self.ek, &ctr_block, buffer);
       return Ok(());
     }
-    let expected = compute_tag(&self.ek, self.h_powers_4()[3], &j0, aad, buffer).map_err(|_| OpenError::too_large())?;
+    let expected = compute_tag(&self.ek, self.h_powers_4(), &j0, aad, buffer).map_err(|_| OpenError::too_large())?;
     if !ct::fixed_eq(&expected, tag.as_bytes()).declassify() {
       ct::zeroize(buffer);
       return Err(OpenError::verification());

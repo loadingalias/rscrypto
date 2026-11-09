@@ -109,6 +109,23 @@ pub(super) fn ghash_update_padded_wide(mut acc: u128, h_polyval: u128, h_powers_
   acc
 }
 
+/// Portable GHASH of the padded `aad`, the padded `ciphertext`, and
+/// `length_block`, from a zero accumulator.
+///
+/// It returns the value of [`ghash_update_padded`] over `aad` and `ciphertext`
+/// followed by one `length_block` update, on a host whose `clmul128_reduce` is
+/// portable. Every four blocks of the transcript share one reduction.
+#[cfg(any(test, all(target_arch = "riscv64", feature = "aes-gcm")))]
+#[inline]
+pub(super) fn ghash_transcript_portable(
+  h_powers_rev: &[u128; 4],
+  aad: &[u8],
+  ciphertext: &[u8],
+  length_block: u128,
+) -> u128 {
+  polyval::portable_transcript::<true>(h_powers_rev, aad, ciphertext, length_block)
+}
+
 #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 #[inline]
 pub(super) fn ghash_collect_padded_block(blocks: &mut [u128; 4], block_count: &mut usize, block: u128) -> bool {
@@ -359,6 +376,36 @@ mod tests {
             let actual = unsafe { ghash_update_padded_wide_ppc(initial, h, &reversed, data) };
             assert_eq!(actual, expected, "power len={len} offset={offset}");
           }
+        }
+      }
+    }
+  }
+
+  /// The aggregated portable transcript must equal per-block GHASH updates of
+  /// the padded AAD, the padded ciphertext, and the length block for every way
+  /// those parts fall across four-block windows.
+  #[test]
+  fn portable_transcript_matches_block_updates() {
+    let input: [u8; 160] = core::array::from_fn(|i| i.to_le_bytes()[0].wrapping_mul(29).wrapping_add(3));
+    for h_bytes in [TEST_H, [0xff; 16], [0x80; 16]] {
+      let h = h_to_polyval(&h_bytes);
+      let powers = polyval::precompute_powers(h);
+      let reversed = [powers[3], powers[2], powers[1], powers[0]];
+      for aad_len in [0usize, 1, 14, 16, 17, 32, 47, 48, 49, 64, 80] {
+        for ciphertext_len in [0usize, 1, 15, 16, 31, 32, 33, 48, 63, 64, 65, 79, 80] {
+          let aad = &input[..aad_len];
+          let ciphertext = &input[aad_len..aad_len.strict_add(ciphertext_len)];
+          let length_block = 0x0123_4567_89ab_cdef_fedc_ba98_7654_3210u128
+            ^ u128::from(aad_len.to_le_bytes()[0]) << 64
+            ^ u128::from(ciphertext_len.to_le_bytes()[0]);
+          let mut expected = ghash_update_padded(0, h, aad);
+          expected = ghash_update_padded(expected, h, ciphertext);
+          expected = polyval::clmul128_reduce_portable(expected ^ length_block, h);
+          assert_eq!(
+            ghash_transcript_portable(&reversed, aad, ciphertext, length_block),
+            expected,
+            "aad={aad_len} ciphertext={ciphertext_len}"
+          );
         }
       }
     }
