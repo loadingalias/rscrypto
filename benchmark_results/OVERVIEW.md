@@ -6,6 +6,49 @@ The dated campaign records come first.
 The 2026-08-18 Linux snapshot near the end is historical:
 its aggregate ratios are withdrawn as performance claims (see [Corrections](#corrections)).
 
+## 2026-11-09: RISC-V and POWER10 AES-GCM and AES-GCM-SIV (L10)
+
+Bench 42570998853 at `ce3d4f2a` (`aes-128-gcm,aes-256-gcm,aes-128-gcm-siv,aes-256-gcm-siv`, RISC-V +
+POWER10), then Bench 42575637056 at `b26a58d6` (the two GCM-SIV algorithms, POWER10), against the
+re-baseline 42509294107 at `b2cc51a5`. Every row matched RustCrypto's ciphertext and tag before timing.
+
+| Lane | Row | `b2cc51a5` | Now |
+| --- | --- | --- | --- |
+| RISC-V | AES-128-GCM seal, 0 B | 4.39 µs (0.44x) | 3.00 µs (0.66x) |
+| RISC-V | AES-128-GCM seal, 32 B | 7.27 µs (0.70x) | 5.02 µs (1.02x) |
+| RISC-V | AES-128-GCM seal, 4 KiB | 181.2 µs (0.84x) | 146.7 µs (1.03x) |
+| RISC-V | AES-256-GCM open, 1 MiB | 59.8 ms (0.78x) | 42.7 ms (1.09x) |
+| RISC-V | AES-128-GCM-SIV seal, 16 KiB | 645.3 µs (0.90x) | 554.6 µs (1.04x) |
+| POWER10 | AES-128-GCM seal, 32 B | 179 ns (0.67x) | 109 ns (1.05x) |
+| POWER10 | AES-256-GCM open, 1 B | 149 ns (0.83x) | 106 ns (1.27x) |
+| POWER10 | AES-128-GCM-SIV open, 4 KiB | 7.41 µs (0.84x) | 3.24 µs (1.95x) |
+| POWER10 | AES-256-GCM-SIV open, 1 MiB | 2.07 ms (0.87x) | 0.81 ms (2.19x) |
+| POWER10 | AES-128-GCM-SIV seal, 1 MiB | 0.59 ms (2.57x) | 0.59 ms (2.57x) |
+
+Ratios are against the fastest external row (RustCrypto on RISC-V; aws-lc-rs on POWER10). Headline
+losses in these four algorithms: RISC-V 60 to 14, POWER10 26 to 4.
+
+RISC-V (T-Head C910, no AES, CLMUL, or Zbb). Each CTR call cleared its stack with an 8 KiB `memset`
+followed by 8 KiB of volatile stores, about 2.6 µs per message; `07f0a397` clears 3 KiB once, above the
+deepest linked worker (2336 B on x86-64, 592 B on RISC-V, `just stack-frames`). Each portable GHASH block
+paid nine 64-bit bit reversals and a reduction; `bd08a195` multiplies four blocks by prepared powers,
+reverses the summed high halves once, and reduces once. POLYVAL does the same for AES-GCM-SIV
+transcripts of 16 blocks or more, and fixslice CTR tails of one to three blocks share one call. AES-GCM
+takes 12–42% less time at every size and AES-GCM-SIV 2–17% less from 1 KiB. Still losing: AES-GCM at
+0, 1, 64, and 256 B (0.66x–0.95x), about 1 µs per call above RustCrypto.
+
+POWER10. Opening AES-GCM-SIV ran each counter block as its own `vcipher` chain and took three times as
+long as sealing, whose identical loop overlapped. `e13e6d37` batched four blocks in both directions:
+opening became 2.0–2.2x faster than aws-lc-rs from 1 KiB, but sealing 1 MiB slowed from 0.59 ms to
+1.28 ms and short messages lost up to 20%. `b26a58d6` restored the one-block seal loop and batches only
+openings of 64 B and more. `1ef815bf` seals and opens AES-GCM messages of up to three blocks with one
+four-lane AES call for the counter blocks and E(J0) and one four-block GHASH aggregate: 1 B and 32 B
+take 16–40% less time. Still losing: AES-128-GCM-SIV open at 0 B and 32 B (0.94x, 0.89x), AES-128-GCM
+seal at 0 B (0.95x), and open at 64 B (0.92x).
+
+Not measured: the x86-64, AArch64, IBM Z, and Windows lanes, which take none of these paths except the
+smaller CTR scrub on portable fallbacks.
+
 ## 2026-11-08: x86-64 AES-GCM-SIV and AEGIS-256 (L10)
 
 Bench 42509294107 at `b2cc51a5` re-baselined the `aead` catalog on five Linux lanes: 239 headline
