@@ -27,6 +27,7 @@ fuzz-packages/auth-p384-ecdh/corpus/auth_p384_ecdh/seed-basic
 fuzz-packages/auth-pbkdf2/corpus/auth_pbkdf2/seed-basic
 fuzz-packages/auth-phc/corpus/auth_phc/seed-basic
 fuzz-packages/auth-scrypt/corpus/auth_scrypt/seed-basic
+fuzz-packages/auth-siphash/corpus/auth_siphash/seed-basic
 fuzz-packages/auth-x25519/corpus/auth_x25519/seed-basic
 fuzz-packages/checksums-crc16/corpus/checksum_crc16/seed-basic
 fuzz-packages/checksums-crc24/corpus/checksum_crc24/seed-basic
@@ -523,6 +524,7 @@ fuzz/corpus/auth_rsa_verify/seed-basic
 fuzz/corpus/auth_rsa_verify/valid-pkcs1v15
 fuzz/corpus/auth_rsa_verify/valid-pss
 fuzz/corpus/auth_scrypt/seed-basic
+fuzz/corpus/auth_siphash/seed-basic
 fuzz/corpus/auth_slhdsa/seed-profile-00
 fuzz/corpus/auth_slhdsa/seed-profile-01
 fuzz/corpus/auth_slhdsa/seed-profile-02

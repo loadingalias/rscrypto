@@ -120,6 +120,9 @@ mod auth_rsa_verify;
 #[path = "../target_impls/auth_scrypt.rs"]
 mod auth_scrypt;
 
+#[path = "../target_impls/auth_siphash.rs"]
+mod auth_siphash;
+
 #[path = "../target_impls/auth_x25519.rs"]
 mod auth_x25519;
 
@@ -452,6 +455,12 @@ fn replay_auth_rsa_verify_corpus() {
 fn replay_auth_scrypt_corpus() {
   let replayed = replay_corpus_dir("auth_scrypt", corpus_dir("auth_scrypt"), auth_scrypt::run);
   assert_ne!(replayed, 0, "auth_scrypt corpus should not be empty");
+}
+
+#[test]
+fn replay_auth_siphash_corpus() {
+  let replayed = replay_corpus_dir("auth_siphash", corpus_dir("auth_siphash"), auth_siphash::run);
+  assert_ne!(replayed, 0, "auth_siphash corpus should not be empty");
 }
 
 #[test]
