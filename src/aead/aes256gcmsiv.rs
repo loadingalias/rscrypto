@@ -1087,7 +1087,30 @@ unsafe fn encrypt_fused_ppc(
     // --- 5. AES-CTR encryption ---
     let mut counter_block = tag;
     counter_block[15] |= 0x80;
-    aes::ppc_ctr32_le_xor_inline(&enc_ek, &counter_block, buffer);
+    let mut ctr = u32::from_le_bytes([counter_block[0], counter_block[1], counter_block[2], counter_block[3]]);
+    offset = 0;
+    while offset < buffer.len() {
+      counter_block[0..4].copy_from_slice(&ctr.to_le_bytes());
+      let mut keystream = counter_block;
+      aes::ppc_encrypt_block_inline(&enc_ek, &mut keystream);
+
+      let remaining = buffer.len().strict_sub(offset);
+      if remaining >= 16 {
+        let mut d = [0u8; 16];
+        d.copy_from_slice(&buffer[offset..offset.strict_add(16)]);
+        let xored = u128::from_ne_bytes(d) ^ u128::from_ne_bytes(keystream);
+        buffer[offset..offset.strict_add(16)].copy_from_slice(&xored.to_ne_bytes());
+        offset = offset.strict_add(16);
+      } else {
+        let mut i = 0usize;
+        while i < remaining {
+          buffer[offset.strict_add(i)] ^= keystream[i];
+          i = i.strict_add(1);
+        }
+        offset = offset.strict_add(remaining);
+      }
+      ctr = ctr.wrapping_add(1);
+    }
 
     tag
   }
@@ -1122,7 +1145,36 @@ unsafe fn decrypt_fused_ppc(
     // --- 2. AES-CTR decryption (SIV: decrypt before verify) ---
     let mut counter_block = tag.0;
     counter_block[15] |= 0x80;
-    aes::ppc_ctr32_le_xor_inline(&enc_ek, &counter_block, buffer);
+    // One-block chains overlap well below four blocks; longer messages need the explicit
+    // four-block interleave (opening 1 MiB took three times as long as sealing without it).
+    if buffer.len() >= 64 {
+      aes::ppc_ctr32_le_xor_inline(&enc_ek, &counter_block, buffer);
+    } else {
+      let mut ctr = u32::from_le_bytes([counter_block[0], counter_block[1], counter_block[2], counter_block[3]]);
+      let mut offset = 0usize;
+      while offset < buffer.len() {
+        counter_block[0..4].copy_from_slice(&ctr.to_le_bytes());
+        let mut keystream = counter_block;
+        aes::ppc_encrypt_block_inline(&enc_ek, &mut keystream);
+
+        let remaining = buffer.len().strict_sub(offset);
+        if remaining >= 16 {
+          let mut d = [0u8; 16];
+          d.copy_from_slice(&buffer[offset..offset.strict_add(16)]);
+          let xored = u128::from_ne_bytes(d) ^ u128::from_ne_bytes(keystream);
+          buffer[offset..offset.strict_add(16)].copy_from_slice(&xored.to_ne_bytes());
+          offset = offset.strict_add(16);
+        } else {
+          let mut i = 0usize;
+          while i < remaining {
+            buffer[offset.strict_add(i)] ^= keystream[i];
+            i = i.strict_add(1);
+          }
+          offset = offset.strict_add(remaining);
+        }
+        ctr = ctr.wrapping_add(1);
+      }
+    }
 
     // --- 3. POLYVAL tag computation over decrypted plaintext ---
     let h = u128::from_le_bytes(*auth_key);
