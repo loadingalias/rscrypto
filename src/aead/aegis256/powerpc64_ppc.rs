@@ -43,14 +43,16 @@ fn store_be(v: i64x2, out: &mut [u8; 16]) {
 /// Caller must ensure POWER8 vector crypto support is available.
 unsafe fn aes_round(block: i64x2, round_key: i64x2) -> i64x2 {
   let out: i64x2;
-  // SAFETY: the caller guarantees POWER8 vector crypto support; the instruction only reads its register operands.
+  // SAFETY: the caller guarantees POWER8 vector crypto support. `vcipher` reads only its register
+  // operands and writes only `out`, so the block is `pure`: LLVM may schedule it with the
+  // surrounding state XORs instead of keeping every round in program order.
   unsafe {
     asm!(
       "vcipher {out}, {block}, {rk}",
       out = lateout(vreg) out,
       block = in(vreg) block,
       rk = in(vreg) round_key,
-      options(nomem, nostack),
+      options(nomem, nostack, pure),
     )
   };
   out
