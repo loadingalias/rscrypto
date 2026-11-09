@@ -3976,9 +3976,11 @@ pub(crate) fn aes128_ctr32_encrypt_be(ek: &Aes128EncKey, initial_counter: &[u8; 
 // A block dispatch can cache expanded round keys and spill intermediate state
 // outside the named keystream owner. Keep that work below a borrowed-only
 // boundary, then overwrite its dead frame, including the portable block core.
-// The linked worker depth and scrub placement require target-specific review.
+// `just stack-frames` checks that the linked worker depth fits in this scrub on
+// each reviewed target; the deepest worker measured 2336 B (x86-64) on
+// 2026-11-08, so 3 KiB keeps a margin above it.
 #[cfg(feature = "aes-gcm")]
-const CTR_STACK_SCRUB_WORDS: usize = 1024;
+const CTR_STACK_SCRUB_WORDS: usize = 384;
 
 #[cfg(feature = "aes-gcm")]
 struct CtrStackScrub;
@@ -3986,16 +3988,8 @@ struct CtrStackScrub;
 #[cfg(feature = "aes-gcm")]
 impl Drop for CtrStackScrub {
   fn drop(&mut self) {
-    scrub_ctr_stack();
+    crate::backend::stack::scrub_dead_stack::<CTR_STACK_SCRUB_WORDS>();
   }
-}
-
-#[cfg(feature = "aes-gcm")]
-#[inline(never)]
-fn scrub_ctr_stack() {
-  let mut scratch = [0u64; CTR_STACK_SCRUB_WORDS];
-  crate::traits::ct::zeroize_words(&mut scratch);
-  core::hint::black_box(&mut scratch);
 }
 
 #[inline(never)]

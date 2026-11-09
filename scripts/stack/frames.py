@@ -102,7 +102,7 @@ BOUNDARIES = [
   Boundary(
     name="AES-GCM generic CTR compiler spills",
     workers=re.compile(r"^rscrypto::aead::aes::aes(?:128|256)_ctr32_encrypt_be_worker$"),
-    scrub=re.compile(r"^rscrypto::aead::aes::scrub_ctr_stack$"),
+    scrub=re.compile(r"^rscrypto::backend::stack::scrub_dead_stack::<384>$"),
     source=ROOT / "src" / "aead" / "aes.rs",
     constant="CTR_STACK_SCRUB_WORDS",
   ),

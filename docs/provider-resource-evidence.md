@@ -200,11 +200,11 @@ with the number of roots that have one:
 
 | Linux target | ML-DSA signing (9 roots) | ML-KEM (12 roots) | AEAD records (6 roots) |
 | --- | ---: | ---: | ---: |
-| x86-64 GNU | 9 / 9, 59,112 / 58,552 B | 12 / 12, 33,976 / 33,880 B | 6 / 6, 8,888 / 8,504 B |
-| AArch64 GNU | 9 / 9, 59,392 / 58,720 B | 12 / 12, 38,256 / 36,688 B | 6 / 6, 8,624 / 8,624 B |
-| POWER64LE GNU | 9 / 9, 59,360 / 59,280 B | 12 / 12, 34,416 / 34,416 B | 6 / 6, 9,360 / 8,496 B |
-| IBM Z GNU | 9 / 9, 59,080 / 59,080 B | 12 / 12, 33,960 / 31,456 B | 6 / 6, 9,032 / 8,920 B |
-| RISC-V 64 GNU | 9 / 9, 58,752 / 58,752 B | 12 / 12, 31,728 / 31,728 B | 6 / 6, 8,384 / 8,384 B |
+| x86-64 GNU | 9 / 9, 59,112 / 58,552 B | 12 / 12, 33,976 / 33,880 B | 6 / 6, 3,736 / 3,352 B |
+| AArch64 GNU | 9 / 9, 59,392 / 58,720 B | 12 / 12, 38,256 / 36,688 B | 6 / 6, 3,472 / 3,472 B |
+| POWER64LE GNU | 9 / 9, 59,360 / 59,280 B | 12 / 12, 34,416 / 34,416 B | 6 / 6, 4,496 / 3,632 B |
+| IBM Z GNU | 9 / 9, 59,080 / 59,080 B | 12 / 12, 33,960 / 31,456 B | 6 / 6, 3,888 / 3,776 B |
+| RISC-V 64 GNU | 9 / 9, 58,752 / 58,752 B | 12 / 12, 31,728 / 31,728 B | 6 / 6, 3,232 / 3,280 B |
 
 AEAD records call their kernels directly. The `polyval` multiplication, the
 Poly1305 block function, and the ChaCha20 keystream each test the cached
@@ -214,12 +214,15 @@ AEAD graph, on any target or configuration, reaches the standard library's
 `Once`, a futex, an indirect call, or unwinding. Earlier trees routed every
 AEAD root through a std `OnceLock` of function pointers, which ran `Once`
 (indirect calls, futex `syscall`, no frame records) and made each dispatched
-call indirect. The AES-GCM bounds are dominated by the fixed 8 KiB frame of
-`aes::scrub_ctr_stack`, which clears the stack below the CTR worker. The roots
+call indirect. The AES-GCM bounds are dominated by the fixed 3 KiB frame of
+the CTR scrub, `backend::stack::scrub_dead_stack::<384>`, which clears the stack
+below the CTR worker. The AEAD columns of both tables come from `just ci-stack`
+on 2026-11-09, after that scrub shrank from 8 KiB; the other columns keep their
+earlier reviews. The roots
 reach `memcpy` and `memset` on every target except IBM Z, and `getauxval`
 through first-call detection on native AArch64, POWER, and IBM Z. Portable IBM
-Z AEAD roots reach no declared edge and have static whole-call bounds: 8,904 B
-for AES-GCM seal, 8,920 B for AES-GCM open, and 856 B for ChaCha20-Poly1305.
+Z AEAD roots reach no declared edge and have static whole-call bounds: 3,760 B
+for AES-GCM seal, 3,776 B for AES-GCM open, and 856 B for ChaCha20-Poly1305.
 
 CI enforces these owned bounds. Its `stack` row reviews all 39 whole-call roots
 of both builds on the five Linux targets and fails when a bound is unresolved
@@ -338,11 +341,11 @@ Largest whole-call bound by root group, in bytes, native / portable:
 
 | Linux target | ML-DSA preparation | ML-DSA signing | ML-KEM | AEAD records |
 | --- | ---: | ---: | ---: | ---: |
-| x86-64 GNU | 2,040 / 1,256 | 59,112 / 58,552 | 33,976 / 33,880 | 9,080 / 8,696 |
-| AArch64 GNU | 2,144 / 1,520 | 59,456 / 58,720 | 38,288 / 36,688 | 8,624 / 8,624 |
-| POWER64LE GNU | 9,920 / 1,920 | 59,360 / 59,280 | 34,416 / 34,416 | 9,744 / 8,880 |
-| IBM Z GNU | 2,008 / 1,776 | 59,080 / 59,080 | 33,960 / 31,456 | 9,032 / 8,920 |
-| RISC-V 64 GNU | 1,440 / 1,440 | 58,752 / 58,752 | 31,728 / 31,728 | 8,448 / 8,448 |
+| x86-64 GNU | 2,040 / 1,256 | 59,112 / 58,552 | 33,976 / 33,880 | 3,736 / 3,352 |
+| AArch64 GNU | 2,144 / 1,520 | 59,456 / 58,720 | 38,288 / 36,688 | 3,472 / 3,472 |
+| POWER64LE GNU | 9,920 / 1,920 | 59,360 / 59,280 | 34,416 / 34,416 | 4,496 / 3,632 |
+| IBM Z GNU | 2,008 / 1,776 | 59,080 / 59,080 | 33,960 / 31,456 | 3,888 / 3,776 |
+| RISC-V 64 GNU | 1,440 / 1,440 | 58,752 / 58,752 | 31,728 / 31,728 | 3,232 / 3,280 |
 
 The entry depths at `memcpy` and `memset` sit inside the deepest owned frames,
 so the allowances raise only the roots whose deepest point is a libc call.

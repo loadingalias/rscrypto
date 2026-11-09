@@ -8,7 +8,7 @@
 //! fits within its scrub.
 
 /// Overwrite `WORDS` eight-byte words of dead stack below the caller's frame.
-#[cfg(any(feature = "ml-kem", feature = "ml-dsa"))]
+#[cfg(any(feature = "ml-kem", feature = "ml-dsa", feature = "aes-gcm"))]
 #[inline(never)]
 pub(crate) fn scrub_dead_stack<const WORDS: usize>() {
   const { assert!(WORDS.is_multiple_of(4)) };

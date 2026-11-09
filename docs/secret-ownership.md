@@ -85,9 +85,10 @@ keystream in the existing private `ZeroizingBytes` owner. They borrow its storag
 AES output and XOR, then clear it on scope exit or unwind. Counters remain public;
 compiler-created copies and registers require separate artifact evidence.
 The generic CTR dispatch runs inside an outlined worker that borrows its key and
-data. A post-call guard overwrites a fixed dead-stack region to clear cached
-schedules and block-core spills. It owns no key, output, or allocation. Linked
-worker depth and actual overwrite placement require separate review for each target.
+data. A post-call guard overwrites a fixed 3 KiB dead-stack region to clear cached
+schedules and block-core spills. It owns no key, output, or allocation.
+`just stack-frames` checks that the linked worker depth fits in that region on each
+reviewed Linux target; actual overwrite placement on other targets requires separate review.
 
 On little-endian AArch64 macOS/Linux, each AES-GCM context retains one 16-power
 GHASH table and one packed pair table. Its four/eight-power windows and 64-bit

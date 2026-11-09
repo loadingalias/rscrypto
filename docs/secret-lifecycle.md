@@ -350,7 +350,7 @@ AES-GCM's scalar, batched and fused native tail paths keep their named 16-byte o
 scratch with volatile writes and a compiler fence on normal return or unwind.
 This source boundary does not establish clearing of every register or compiler-made copy.
 The generic CTR functions also isolate block dispatch in borrowed-only workers
-and scrub an 8 KiB dead-stack region on return or ordinary unwind. The linked
+and scrub a 3 KiB dead-stack region on return or ordinary unwind. The linked
 depth check covers their transitive crypto calls; buffer placement and saved
 slots need artifact review as well. This boundary covers stack copies within
 the reviewed region, without promising that every live register is erased.
@@ -424,7 +424,7 @@ encrypted J0 in registers. The finishing open compares the tag before it writes 
 zeroes its range on a mismatch; the caller clears the batches before it. The generated code
 still spills some round keys and H powers, so the finishing pass runs in an out-of-line worker,
 and a 320-byte volatile scrub of its dead stack follows from the same frame.
-These paths do not reach the generic CTR workers or their 8 KiB scrub.
+These paths do not reach the generic CTR workers or their 3 KiB scrub.
 x86-64 ChaCha20-Poly1305 with AVX-512 follows the same shape: one pass XORs the keystream from
 block 1 with masked loads and stores and writes the Poly1305 key from block 0 directly into a
 32-byte array that is cleared after the tag. Opens of at most 448 bytes keep the keystream in
