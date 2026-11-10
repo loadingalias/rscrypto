@@ -8,50 +8,57 @@ its aggregate ratios are withdrawn as performance claims (see [Corrections](#cor
 
 ## 2026-11-10: SipHash table path and one-shot (KEYED-HASH)
 
-Bench 42714992134 at `92676e6e` (`siphash`, all eight lanes), then Bench 42726020458 at `5da76353` and
-Bench 42730899951 at `6cc79c40`. Toolchain nightly-2026-10-24, default target CPU on every lane. The
-one-shot rows hash one byte string under a fixed key; the collection rows time `BuildHasher::hash_one`
-and a 4096-key `HashMap` lookup of mixed 8- and 20-byte connection IDs. Every state reads its key at
-run time; std's `BuildHasherDefault<DefaultHasher>` would compile the zero key in and fold the first
-rounds, so std uses `RandomState`. rscrypto and `siphasher` rows match the `siphasher` result before
-timing.
+Five `siphash` Bench runs on all eight lanes between `92676e6e` and `44a65c86`, toolchain
+nightly-2026-10-24, default target CPU. The final source is `96a23143`; each lane's row below comes
+from the run that measured that lane's final code: Bench 42752317058 (`44a65c86`) for x86-64 and
+Graviton4, and Bench 42730899951 (`6cc79c40`) for POWER10, IBM Z, and RISC-V, whose code `96a23143`
+restores. The one-shot rows hash one byte string under a fixed key; the collection rows time
+`BuildHasher::hash_one` and a 4096-key `HashMap` lookup of mixed 8- and 20-byte connection IDs. Every
+state reads its key at run time: std's `BuildHasherDefault<DefaultHasher>` would compile the zero key
+in and fold the first rounds, so std uses `RandomState`. rscrypto and `siphasher` rows match the
+`siphasher` result before timing.
 
 | Lane | `buildhasher` 20 B | `hash_one` CID | `hash_one` IPv6 address | lookup | 1-3 20 B | 1-3 1 MiB | 2-4 20 B | 2-4 1 MiB | losses |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| AMD Linux | 1.01x | 0.96x | 1.24x | 1.01x | 1.34x | 1.00x | 1.21x | 1.00x | 0/46 |
-| Intel Linux | 1.02x | 0.96x | 1.15x | 1.05x | 1.15x | 1.03x | 1.03x | 0.92x | 6/46 |
-| AMD Windows | 0.90x | 1.01x | 1.25x | 1.02x | 1.35x | 1.00x | 1.20x | 1.00x | 8/46 |
-| Intel Windows | 1.08x | 0.90x | 1.16x | 1.12x | 1.14x | 1.03x | 1.04x | 0.92x | 7/46 |
-| Graviton4 | 1.30x | 1.12x | 1.27x | 1.05x | 1.07x | 0.95x | 1.00x | 1.02x | 6/46 |
+| AMD Linux | 1.00x | 0.97x | 1.25x | 1.01x | 1.34x | 1.00x | 1.21x | 1.00x | 0/46 |
+| Intel Linux | 1.03x | 0.98x | 1.15x | 1.06x | 1.15x | 1.03x | 1.03x | 0.92x | 6/46 |
+| AMD Windows | 0.89x | 1.00x | 1.27x | 1.02x | 1.35x | 1.00x | 1.20x | 1.00x | 8/46 |
+| Intel Windows | 1.08x | 0.85x | 1.19x | 1.11x | 1.14x | 1.03x | 1.01x | 0.92x | 7/46 |
+| Graviton4 | 1.25x | 1.17x | 1.33x | 1.05x | 1.09x | 1.05x | 1.01x | 0.99x | 0/46 |
 | POWER10 | 1.56x | 1.22x | 1.29x | 1.21x | 1.15x | 1.01x | 0.97x | 1.00x | 0/46 |
 | IBM Z | 0.96x | 0.91x | 0.91x | 0.98x | 1.14x | 1.03x | 0.94x | 0.88x | 15/46 |
 | RISC-V | 1.20x | 1.29x | 1.55x | 1.12x | 0.97x | 1.16x | 0.91x | 1.03x | 7/46 |
 
-Ratios at `6cc79c40` are against the fastest external row (`siphasher`, or std's `RandomState` and
-deprecated `SipHasher`). Points classed slower fell from 96 to 61 to 49 of 368 across the three runs.
+Ratios are against the fastest external row (`siphasher`, or std's `RandomState` and deprecated
+`SipHasher`). Points classed slower: 96 of 368 at the first run, 43 for the final code. Apple was
+measured locally only (M1 Pro): every collection row 1.05–1.38x, one-shot SipHash-1-3 at 20 B 0.95x.
 
-Causes found and fixed. The one-shot path was at parity, but the table path was not: integer writes went
-through the byte-string path, and an out-of-line `write` passed the state through memory, so a 4096-key
-lookup on an M1 Pro took 101 µs against 56 µs for `siphasher`. Integers now merge into the pending word,
-the aligned byte-string write is always inlined (a string that starts mid-word takes a separate path),
-the pending count comes from the length, and `SipRandomState` keeps the keyed starting words. On Zen 5
-the out-of-line write had cost a fixed 1.7 ns per `buildhasher` row. LLVM folds each rotation into a
-shifted-register `eor` on AArch64, which takes 2 cycles on Apple cores and puts the early word's rotation
-on the critical path; a separate `ror` makes SipHash-1-3 at 1 MiB 1.31x faster than `siphasher` on an M1
-Pro (248 against 325 µs) and chained connection-ID hashes 17–23% faster. Neoverse V2 runs the folded
-form at full speed, so a Graviton4 host A/B measured the separate `ror` 20% slower at 0–20 bytes; it is
-Apple-only. Writing the `v2`/`v3` half-round first makes x86-64 issue the injected word first, and the
-index loop gives IBM Z one compare-and-branch: Intel SipHash-2-4 at 1 MiB went from 0.90x to 0.92x std;
-IBM Z did not improve (0.89x, 0.91x, and 0.88x in the three runs). Skipping an empty tail load made
-RISC-V SipHash-2-4 1.03–1.07x from 256 bytes, but the short rows stayed behind.
+Causes found and fixed. The one-shot path had been at parity, but the table path was not: integer
+writes went through the byte-string path, and an out-of-line `write` passed the state through memory,
+so a 4096-key lookup on an M1 Pro took 101 µs against 56 µs for `siphasher`. Integers now merge into the
+pending word, the aligned byte-string write is always inlined (a string that starts mid-word takes a
+separate path), the pending count comes from the length, and `SipRandomState` keeps the keyed starting
+words. On Zen 5 the out-of-line write had cost a fixed 1.7 ns per `buildhasher` row. LLVM folds each
+rotation into a shifted-register `eor` on AArch64, which takes 2 cycles on Apple cores and puts the
+early word's rotation on the critical path; a separate `ror` makes SipHash-1-3 at 1 MiB 1.31x faster
+than `siphasher` on an M1 Pro and chained connection-ID hashes 17–23% faster. Neoverse V2 runs the
+folded form at full speed (a Graviton4 host A/B measured the separate `ror` 20% slower at 0–20 bytes),
+so it is Apple-only; a two-word loop instead took Graviton4 SipHash-1-3 from 0.96x to 1.08–1.10x from
+1 KiB. Issuing the `v2`/`v3` half-round first, which carries the injected word, moved Intel SipHash-2-4
+at 1 MiB from 0.90x to 0.92x std and IBM Z from 26 to 15 losses; restoring the specified order to
+shorten the IBM Z loop measured worse (27 losses) and was reverted. Skipping an empty tail load made
+RISC-V SipHash-2-4 1.03–1.07x from 256 bytes.
 
-Still losing: SipHash-2-4 at 256 B and more on Intel (0.91–0.94x std) and IBM Z (0.87–0.89x std),
-whose loops match std's instructions in a different schedule; IBM Z `hash_one` (0.91–0.94x std), where
-the benchmark's `black_box` copy of the key is reloaded at once by the inlined hash; RISC-V SipHash-2-4
-at 0–20 bytes (0.83–0.91x `siphasher`); Graviton4 SipHash-1-3 from 1 KiB (0.93–0.95x); AMD Windows
-`buildhasher` (0.86–0.93x, while AMD Linux has none); and Intel Windows `hash_one` of the connection ID
-(0.90x). Apple was measured locally only (M1 Pro): every collection row 1.06–1.40x, one-shot 1-3 at
-20 B 0.96x.
+Still losing: IBM Z SipHash-2-4 from 20 bytes (0.87–0.94x std) and table path (0.85–0.94x std), where the
+benchmark's `black_box` copy of the key is reloaded at once by the inlined hash; Intel SipHash-2-4 from
+1 KiB (0.91–0.93x std), where every source loop shape tried keeps LLVM's schedule, so std's order needs
+an x86-64 assembly loop; AMD Windows `buildhasher` (0.86–0.93x, while AMD Linux has none: Win64's two
+fewer volatile registers make the inlined hash save three, and the rest of the cause needs a Windows
+profile); Intel Windows connection-ID `hash_one` (0.85x); RISC-V SipHash-2-4 at 0–20 bytes
+(0.83–0.94x `siphasher`), cause not profiled. WASM, rsnetwork's other table-path target, was not
+measured.
+
+## 2026-11-09: RISC-V and POWER10 AES-GCM and AES-GCM-SIV (L10)
 
 Bench 42570998853 at `ce3d4f2a` (`aes-128-gcm,aes-256-gcm,aes-128-gcm-siv,aes-256-gcm-siv`, RISC-V +
 POWER10), then Bench 42575637056 at `b26a58d6` (the two GCM-SIV algorithms, POWER10), against the
