@@ -159,13 +159,28 @@ impl<const C: usize, const D: usize> Sip<C, D> {
 
   #[inline(always)]
   fn round(&mut self) {
-    // The two half-rounds are independent until `v0 += v3`; the `v2`/`v3`
-    // half goes first because it carries the word just injected into `v3`.
-    self.v2 = self.v2.wrapping_add(self.v3);
-    self.v3 = rotl::<16>(self.v3) ^ self.v2;
-    self.v0 = self.v0.wrapping_add(self.v1);
-    self.v1 = rotl::<13>(self.v1) ^ self.v0;
-    self.v0 = rotl::<32>(self.v0);
+    // The two half-rounds are independent until `v0 += v3`, so their order
+    // changes only the instruction schedule. On x86-64 the `v2`/`v3` half goes
+    // first: it carries the word just injected into `v3`, and issuing it first
+    // keeps that chain ahead of the other half's rotates, which share two
+    // ports. Targets whose rotate-and-XOR overwrites an input, such as IBM Z
+    // `rxsbg`, need fewer register copies in the specified order.
+    #[cfg(target_arch = "x86_64")]
+    {
+      self.v2 = self.v2.wrapping_add(self.v3);
+      self.v3 = rotl::<16>(self.v3) ^ self.v2;
+      self.v0 = self.v0.wrapping_add(self.v1);
+      self.v1 = rotl::<13>(self.v1) ^ self.v0;
+      self.v0 = rotl::<32>(self.v0);
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+      self.v0 = self.v0.wrapping_add(self.v1);
+      self.v1 = rotl::<13>(self.v1) ^ self.v0;
+      self.v0 = rotl::<32>(self.v0);
+      self.v2 = self.v2.wrapping_add(self.v3);
+      self.v3 = rotl::<16>(self.v3) ^ self.v2;
+    }
     self.v0 = self.v0.wrapping_add(self.v3);
     self.v3 = rotl::<21>(self.v3) ^ self.v0;
     self.v2 = self.v2.wrapping_add(self.v1);
