@@ -344,13 +344,18 @@ const fn tail_bits(rest: usize) -> u32 {
 /// Load the last `rest_bits / 8` bytes of `bytes` as a little-endian word.
 ///
 /// `rest_bits` is the bit length of the bytes after the last whole 8-byte
-/// word. A string of 8 bytes or more takes one 8-byte load that ends with it
-/// and drops the bytes before its tail.
+/// word. An empty tail loads nothing: targets without fast unaligned loads
+/// assemble an 8-byte load from single bytes. Otherwise a string of 8 bytes or
+/// more takes one 8-byte load that ends with it and drops the bytes before its
+/// tail.
 #[inline(always)]
 fn load_tail(bytes: &[u8], rest_bits: u32) -> u64 {
+  if rest_bits == 0 {
+    return 0;
+  }
   match bytes.last_chunk::<8>() {
-    // `rest_bits` is below 64, so the shift is 8 to 64 bits.
-    Some(last) => u64::from_le_bytes(*last).unbounded_shr(64u32.strict_sub(rest_bits)),
+    // `rest_bits` is 8 to 56, so the shift is 8 to 56 bits.
+    Some(last) => u64::from_le_bytes(*last) >> 64u32.strict_sub(rest_bits),
     None => load_partial(bytes),
   }
 }
