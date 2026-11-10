@@ -1173,6 +1173,7 @@ AARCH64_ADD = re.compile(rf"^(?P<dst>[xw]\d+|sp), (?P<src>x\d+|sp), #(?P<imm>{SI
 AARCH64_MEMORY = re.compile(rf"\[(?P<base>x\d+|sp)(?:, #(?P<imm>{SIGNED_IMMEDIATE}))?\](?P<writeback>!?)")
 RISCV_REGISTER = re.compile(r"\b(zero|ra|sp|gp|tp|fp|t[0-6]|s(?:1[01]|[0-9])|a[0-7]|f(?:t(?:1[01]|[0-9])|s(?:1[01]|[0-9])|a[0-7]))\b")
 RISCV_ADDI = re.compile(rf"^(?P<dst>\w+), (?P<src>\w+), (?P<imm>{SIGNED_IMMEDIATE})$")
+RISCV_MOVE = re.compile(r"^(?P<dst>\w+), (?P<src>\w+)$")
 RISCV_MEMORY = re.compile(rf"(?P<imm>{SIGNED_IMMEDIATE})?\((?P<base>\w+)\)")
 RISCV_STORES = {"sb", "sh", "sw", "sd", "fsw", "fsd", "c.sw", "c.sd", "c.fsd", "c.swsp", "c.sdsp"}
 POWER_ADD_IMMEDIATE = re.compile(rf"^(?P<dst>\d+), (?P<src>\d+), (?P<imm>{SIGNED_IMMEDIATE})$")
@@ -1227,8 +1228,8 @@ def decode_lines(body: FunctionBody) -> list[DecodedLine]:
   return decoded
 
 
-def reference_identity(row: DecodedLine, operands: str) -> str:
-  return f"{row.offset:x}: {row.length}B {row.mnemonic} {operands}".rstrip()
+def reference_identity(row: DecodedLine, operands: str, mnemonic: str | None = None) -> str:
+  return f"{row.offset:x}: {row.length}B {mnemonic or row.mnemonic} {operands}".rstrip()
 
 
 def code_target_descriptor(image: LinkedImage, body: FunctionBody, target_address: int, descriptor: str) -> str:
@@ -1442,7 +1443,10 @@ def page_pair_identities(
           descriptor = describe_reference(image, body, target_address, width)
         if descriptor is None:
           break
-        identities[following.number] = reference_identity(following, render(descriptor))
+        # A consumer may name the encoded instruction when the disassembler printed an alias.
+        rendered = render(descriptor)
+        mnemonic, operands = rendered if isinstance(rendered, tuple) else (None, rendered)
+        identities[following.number] = reference_identity(following, operands, mnemonic)
         targets.append(descriptor)
       state = classify(following, register, result is not None)
       if state is not None:
@@ -1566,6 +1570,10 @@ def riscv_reference_identities(
     operands = without_annotation(row.operands)
     if row.mnemonic in {"addi", "c.addi"} and (match := RISCV_ADDI.match(operands)) and match.group("src") == register:
       return high + int(match.group("imm"), 0), lambda d: f"{match.group('dst')}, {register}, <{d}>", match.group("dst"), 0
+    # A 4-byte `mv rd, rs` is `addi rd, rs, 0`, which the disassembler prints as the alias when the
+    # placement leaves the low part zero. It is the same low part, so it keeps the `addi` identity.
+    if row.mnemonic == "mv" and row.length == 4 and (match := RISCV_MOVE.match(operands)) and match.group("src") == register:
+      return high, lambda d: ("addi", f"{match.group('dst')}, {register}, <{d}>"), match.group("dst"), 0
     memory = [match for match in RISCV_MEMORY.finditer(operands) if match.group("base") == register]
     if len(memory) != 1 or operands[memory[0].end() :].strip():
       return None

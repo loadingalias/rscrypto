@@ -450,6 +450,7 @@ def placement_regressions() -> None:
 
   power_merged_regressions()
   riscv_live_high_part_regression()
+  riscv_zero_low_part_regression()
 
 
 def power_fixture(text: int, unit: int, members: list[bytes], lines: list[str], spill: bool = False):
@@ -539,6 +540,29 @@ def riscv_live_high_part_regression() -> None:
     ], {rodata: table}, units=[(rodata, rodata + 32, None)])
 
   assert fixture_hash(target, build(0x10000, 0x30000)) == fixture_hash(target, build(0x50000, 0x91000))
+
+
+def riscv_zero_low_part_regression() -> None:
+  """A low part that relinking leaves at offset zero, printed as `mv`, keeps its `addi` identity."""
+  target = "riscv64gc-unknown-linux-gnu"
+  table = bytes(range(32))
+
+  def build(text: int, rodata: int):
+    referenced = rodata + 0x10
+    low = referenced & 0xFFF
+    second = (f"{text + 4:x}: 00050513\tmv\ta0, a0" if low == 0 else
+              f"{text + 4:x}: 01050513\taddi\ta0, a0, 0x{low:x}")
+    return linked_fixture(text, [
+      f"{text:x}: 00020517\tauipc\ta0, 0x{(referenced - text) >> 12:x}",
+      second,
+      f"{text + 8:x}: 00008067\tret",
+    ], {rodata: table}, units=[(rodata, rodata + 32, None)])
+
+  # 0x30010 and 0x91000: the same table member, with a nonzero and a zero low part.
+  assert fixture_hash(target, build(0x10000, 0x30000)) == fixture_hash(target, build(0x50000, 0x90ff0))
+  # The identity names the encoded `addi`, not the alias.
+  body, image = build(0x50000, 0x90ff0)
+  assert "mv" not in "\n".join(instruction_identities(target, body, {body.symbol}, image).values())
 
 
 def main() -> None:
