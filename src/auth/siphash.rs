@@ -244,12 +244,30 @@ impl<const C: usize, const D: usize> Sip<C, D> {
   }
 
   /// Compress whole input words in order.
+  ///
+  /// AArch64 targets other than Apple take two words per loop iteration: the
+  /// longer body gives the scheduler more independent work around the serial
+  /// rounds. x86-64 and Apple cores run the one-word loop as fast or faster.
   #[inline(always)]
   fn absorb_words(&mut self, words: &[[u8; 8]]) {
-    let mut index = 0;
-    while index < words.len() {
-      self.compress(u64::from_le_bytes(words[index]));
-      index = index.strict_add(1);
+    #[cfg(all(target_arch = "aarch64", not(target_vendor = "apple")))]
+    {
+      let (pairs, last) = words.as_chunks::<2>();
+      for [first, second] in pairs {
+        self.compress(u64::from_le_bytes(*first));
+        self.compress(u64::from_le_bytes(*second));
+      }
+      if let [word] = last {
+        self.compress(u64::from_le_bytes(*word));
+      }
+    }
+    #[cfg(not(all(target_arch = "aarch64", not(target_vendor = "apple"))))]
+    {
+      let mut index = 0;
+      while index < words.len() {
+        self.compress(u64::from_le_bytes(words[index]));
+        index = index.strict_add(1);
+      }
     }
   }
 
