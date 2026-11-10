@@ -259,18 +259,25 @@ impl<const C: usize, const D: usize> Sip<C, D> {
   }
 }
 
-/// `x.rotate_left(N)`, as its own instruction on AArch64.
+/// `x.rotate_left(N)`, as its own instruction on Apple AArch64 targets.
 ///
 /// LLVM folds a rotation and the XOR that consumes it into one shifted-register
-/// `eor`, which waits for both inputs and takes 2 cycles on Apple and Neoverse
-/// cores. Each rotated SipHash word is ready before the word it meets, so the
-/// folded form puts the rotation on the critical path; a separate `ror` runs
-/// while the other word is still being computed. `portable-only` and Miri keep
-/// the portable rotation.
+/// `eor`, which waits for both inputs and takes 2 cycles on Apple cores. Each
+/// rotated SipHash word is ready before the word it meets, so the folded form
+/// puts the rotation on the critical path; a separate `ror` runs while the
+/// other word is still being computed. Neoverse V2 runs the folded form without
+/// that cost, so there the separate `ror` only adds instructions, and other
+/// AArch64 targets keep the folded form. `portable-only` and Miri keep the
+/// portable rotation.
 #[inline(always)]
 fn rotl<const N: u32>(x: u64) -> u64 {
   const { assert!(N > 0 && N < 64) };
-  #[cfg(all(target_arch = "aarch64", not(feature = "portable-only"), not(miri)))]
+  #[cfg(all(
+    target_arch = "aarch64",
+    target_vendor = "apple",
+    not(feature = "portable-only"),
+    not(miri)
+  ))]
   {
     let out: u64;
     // SAFETY: `ror` by an immediate (an alias of `extr`) is a base A64
@@ -290,7 +297,12 @@ fn rotl<const N: u32>(x: u64) -> u64 {
     }
     out
   }
-  #[cfg(not(all(target_arch = "aarch64", not(feature = "portable-only"), not(miri))))]
+  #[cfg(not(all(
+    target_arch = "aarch64",
+    target_vendor = "apple",
+    not(feature = "portable-only"),
+    not(miri)
+  )))]
   x.rotate_left(N)
 }
 
