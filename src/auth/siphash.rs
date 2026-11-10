@@ -209,27 +209,46 @@ impl<const C: usize, const D: usize> Sip<C, D> {
     self.merge(little_endian, used, BYTES.strict_mul(8));
   }
 
-  #[inline]
-  fn write(&mut self, mut bytes: &[u8]) {
-    let used = self.used_bits();
+  /// Append a byte string.
+  ///
+  /// Inlined so that the state stays in registers: a call would pass it
+  /// through memory and reload it. A string that starts mid-word, after an
+  /// integer narrower than 8 bytes, takes [`Self::write_unaligned`]; after a
+  /// whole integer or a length prefix the compiler drops that branch.
+  #[inline(always)]
+  fn write(&mut self, bytes: &[u8]) {
+    if self.used_bits() != 0 {
+      self.write_unaligned(bytes);
+      return;
+    }
     // SipHash encodes the input length modulo 256; the counter wraps by specification.
     self.length = self.length.wrapping_add(bytes.len() as u64);
-    if used != 0 {
-      // Complete the pending word first. After a whole integer or a length
-      // prefix, `used` is 0 and the compiler drops this step.
-      let open = 8usize.strict_sub((used / 8) as usize);
-      let (first, rest) = bytes.split_at(open.min(bytes.len()));
-      self.merge(load_partial(first), used, tail_bits(first.len()));
-      if rest.is_empty() {
-        return;
-      }
-      bytes = rest;
-    }
+    self.absorb_aligned(bytes);
+  }
+
+  /// Absorb `bytes` when no input is pending.
+  #[inline(always)]
+  fn absorb_aligned(&mut self, bytes: &[u8]) {
     let (words, rest) = bytes.as_chunks::<8>();
     for word in words {
       self.compress(u64::from_le_bytes(*word));
     }
     self.tail = load_tail(bytes, tail_bits(rest.len()));
+  }
+
+  /// Append a byte string that starts mid-word: complete the pending word,
+  /// then absorb the rest from a word boundary.
+  #[inline(never)]
+  fn write_unaligned(&mut self, bytes: &[u8]) {
+    let used = self.used_bits();
+    // SipHash encodes the input length modulo 256; the counter wraps by specification.
+    self.length = self.length.wrapping_add(bytes.len() as u64);
+    let open = 8usize.strict_sub((used / 8) as usize);
+    let (first, rest) = bytes.split_at(open.min(bytes.len()));
+    self.merge(load_partial(first), used, tail_bits(first.len()));
+    if !rest.is_empty() {
+      self.absorb_aligned(rest);
+    }
   }
 
   #[inline]
@@ -379,7 +398,7 @@ macro_rules! sip_hasher {
     // methods do, without the byte-string path. Signed integers reach them
     // through the default `write_i*` methods.
     impl Hasher for $name {
-      #[inline]
+      #[inline(always)]
       fn write(&mut self, bytes: &[u8]) {
         self.0.write(bytes);
       }
