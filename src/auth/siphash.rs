@@ -159,11 +159,13 @@ impl<const C: usize, const D: usize> Sip<C, D> {
 
   #[inline(always)]
   fn round(&mut self) {
+    // The two half-rounds are independent until `v0 += v3`; the `v2`/`v3`
+    // half goes first because it carries the word just injected into `v3`.
+    self.v2 = self.v2.wrapping_add(self.v3);
+    self.v3 = rotl::<16>(self.v3) ^ self.v2;
     self.v0 = self.v0.wrapping_add(self.v1);
     self.v1 = rotl::<13>(self.v1) ^ self.v0;
     self.v0 = rotl::<32>(self.v0);
-    self.v2 = self.v2.wrapping_add(self.v3);
-    self.v3 = rotl::<16>(self.v3) ^ self.v2;
     self.v0 = self.v0.wrapping_add(self.v3);
     self.v3 = rotl::<21>(self.v3) ^ self.v0;
     self.v2 = self.v2.wrapping_add(self.v1);
@@ -226,13 +228,21 @@ impl<const C: usize, const D: usize> Sip<C, D> {
     self.absorb_aligned(bytes);
   }
 
+  /// Compress whole input words in order.
+  #[inline(always)]
+  fn absorb_words(&mut self, words: &[[u8; 8]]) {
+    let mut index = 0;
+    while index < words.len() {
+      self.compress(u64::from_le_bytes(words[index]));
+      index = index.strict_add(1);
+    }
+  }
+
   /// Absorb `bytes` when no input is pending.
   #[inline(always)]
   fn absorb_aligned(&mut self, bytes: &[u8]) {
     let (words, rest) = bytes.as_chunks::<8>();
-    for word in words {
-      self.compress(u64::from_le_bytes(*word));
-    }
+    self.absorb_words(words);
     self.tail = load_tail(bytes, tail_bits(rest.len()));
   }
 
@@ -260,9 +270,7 @@ impl<const C: usize, const D: usize> Sip<C, D> {
   #[inline]
   fn hash(mut self, data: &[u8]) -> u64 {
     let (words, rest) = data.as_chunks::<8>();
-    for word in words {
-      self.compress(u64::from_le_bytes(*word));
-    }
+    self.absorb_words(words);
     // The final block encodes the length modulo 256.
     self.finalize(((data.len() as u64) << 56) | load_tail(data, tail_bits(rest.len())))
   }
