@@ -95,6 +95,7 @@ auxiliary_cargo_manifests = [
   "tools/provider-bench/Cargo.toml",
   "tools/provider-size/Cargo.toml",
   "tools/residue-harness/Cargo.toml",
+  "tools/stack-paint/Cargo.toml",
   "tools/wasm-runtime-vectors/Cargo.toml",
 ]
 
