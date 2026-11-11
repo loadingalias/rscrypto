@@ -1,4 +1,4 @@
-//! Composite ML-DSA signing (draft-reddy-tls-composite-mldsa-12) with the
+//! Composite ML-DSA signing (draft-ietf-tls-composite-mldsa-00) with the
 //! empty composite context that TLS requires and hedged ML-DSA.
 
 use alloc::{alloc::Global, boxed::Box, sync::Arc, vec::Vec};

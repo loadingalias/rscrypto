@@ -48,7 +48,7 @@ pub const SUITES: [&str; 3] = ["AES128-GCM-SHA256", "AES256-GCM-SHA384", "CHACHA
 /// and `ring` do.
 pub const BACKENDS: [&str; 5] = ["rscrypto", "rscrypto-webpki", "aws-lc-rs", "ring", "openssl"];
 
-/// Composite ML-DSA credentials (draft-reddy-tls-composite-mldsa-12). No
+/// Composite ML-DSA credentials (draft-ietf-tls-composite-mldsa-00). No
 /// other backend implements these schemes, so only the rscrypto backends run them.
 pub const COMPOSITE_CREDENTIALS: [&str; 2] = ["mldsa65-ed25519", "mldsa65-ecdsa-p256"];
 

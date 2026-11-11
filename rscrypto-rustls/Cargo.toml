@@ -46,7 +46,7 @@ ecdsa-p384 = ["rscrypto/ecdsa-p384"]
 ed25519 = ["rscrypto/ed25519"]
 rsa = ["rscrypto/rsa"]
 ml-dsa = ["rscrypto/ml-dsa"]
-# Composite ML-DSA (draft-reddy-tls-composite-mldsa-12) with provisional,
+# Composite ML-DSA (draft-ietf-tls-composite-mldsa-00) with provisional,
 # IANA-unassigned SignatureScheme codepoints; see `verify::MLDSA65_ED25519_SHA512`.
 mldsa65-ed25519 = ["rscrypto/mldsa65-ed25519"]
 mldsa65-ecdsa-p256 = ["rscrypto/mldsa65-ecdsa-p256"]

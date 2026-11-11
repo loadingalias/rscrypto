@@ -28,17 +28,19 @@ pub const SUPPORTED_ALGORITHMS: rustls::crypto::WebPkiSupportedAlgorithms = impl
 pub const ALL_ALGORITHMS: &[&dyn rustls::pki_types::SignatureVerificationAlgorithm] = implementation::ALL;
 
 /// Provisional `SignatureScheme` for `mldsa65_ed25519_sha512`
-/// (draft-reddy-tls-composite-mldsa-12, `id-MLDSA65-Ed25519-SHA512`).
+/// (draft-ietf-tls-composite-mldsa-00, `id-MLDSA65-Ed25519-SHA512`).
 ///
-/// IANA has not assigned the composite codepoints. 0x090B is the value that
-/// draft revisions -00 through -05 gave this composite and that deployed draft
-/// implementations use, so peers that implement the draft interoperate. It
-/// will change if IANA assigns another value.
+/// IANA has not assigned the composite codepoints. 0xFE41 lies in the
+/// private-use range of RFC 8446, so the provider advertises no unassigned
+/// value. The earlier individual draft (draft-reddy-tls-composite-mldsa,
+/// revisions -00 through -05) gave this composite 0x090B, which IANA lists as
+/// unassigned; this provider neither offers nor accepts it. The value will
+/// change when IANA assigns one.
 #[cfg(feature = "mldsa65-ed25519")]
-pub const MLDSA65_ED25519_SHA512: rustls::crypto::SignatureScheme = rustls::crypto::SignatureScheme(0x090b);
+pub const MLDSA65_ED25519_SHA512: rustls::crypto::SignatureScheme = rustls::crypto::SignatureScheme(0xfe41);
 
 /// Provisional `SignatureScheme` for `mldsa65_ecdsa_secp256r1_sha512`
-/// (draft-reddy-tls-composite-mldsa-12, `id-MLDSA65-ECDSA-P256-SHA512`).
+/// (draft-ietf-tls-composite-mldsa-00, `id-MLDSA65-ECDSA-P256-SHA512`).
 ///
 /// IANA has not assigned the composite codepoints, and no earlier draft gave
 /// this composite one. 0xFE40 lies in the private-use range of RFC 8446 and
@@ -50,7 +52,7 @@ pub const MLDSA65_ECDSA_SECP256R1_SHA512: rustls::crypto::SignatureScheme = rust
 ///
 /// A relying party that installs this catalog accepts neither stand-alone
 /// ML-DSA nor a traditional signature, so a peer cannot downgrade it to one
-/// component, as section 5 of draft-reddy-tls-composite-mldsa-12 warns.
+/// component, as section 5 of draft-ietf-tls-composite-mldsa-00 warns.
 #[cfg(any(feature = "mldsa65-ed25519", feature = "mldsa65-ecdsa-p256"))]
 pub const COMPOSITE_ALGORITHMS: rustls::crypto::WebPkiSupportedAlgorithms = implementation::COMPOSITE;
 #[cfg(any(

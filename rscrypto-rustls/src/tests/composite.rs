@@ -1,4 +1,4 @@
-//! Composite ML-DSA TLS signature schemes (draft-reddy-tls-composite-mldsa-12).
+//! Composite ML-DSA TLS signature schemes (draft-ietf-tls-composite-mldsa-00).
 //!
 //! The draft's Appendix E certificates come from the LAMPS reference
 //! implementation and authenticate a client through webpki. The handshake
@@ -573,7 +573,7 @@ fn servers_without_a_composite_offer_refuse_composite_keys() {
 
 #[test]
 fn composite_schemes_stay_out_of_tls12() {
-  // draft-reddy-tls-composite-mldsa-12 section 2 forbids these schemes in
+  // draft-ietf-tls-composite-mldsa-00 section 2 forbids these schemes in
   // TLS 1.2. Neither codepoint names a TLS 1.2 signature algorithm, so a
   // TLS 1.2-only server with a composite key has no usable signature.
   let mut tls12 = provider();
@@ -596,6 +596,6 @@ fn composite_schemes_stay_out_of_tls12() {
       kind.name()
     );
   }
-  assert_eq!(verify::MLDSA65_ED25519_SHA512, SignatureScheme(0x090b));
+  assert_eq!(verify::MLDSA65_ED25519_SHA512, SignatureScheme(0xfe41));
   assert_eq!(verify::MLDSA65_ECDSA_SECP256R1_SHA512, SignatureScheme(0xfe40));
 }
