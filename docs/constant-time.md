@@ -766,11 +766,13 @@ no baseline-equivalence claim. `ct.toml` retains the exact condition identities
 and rationales; no waiver was added or removed.
 
 Raw artifacts, current function excerpts and slices, per-condition decisions,
-commands, hashes, source identities, and the quiet-host receipt are retained in
+commands, hashes, source identities, and the quiet-host receipt were kept in the
+untracked local directories
 `docs/tasks/evidence/gap2-20261103/apple-condition-review/` and
-`docs/tasks/evidence/gap2-20261103/apple-ct-qualified/`.
-The original complete report with sixteen stale bindings remains in `apple-ct/`;
-it was not relabelled after the manifest renewal. See the
+`docs/tasks/evidence/gap2-20261103/apple-ct-qualified/`, beside the original
+complete report with sixteen stale bindings in `apple-ct/`. Those directories
+were deleted on 2026-11-10; regenerate the evidence before a claim relies on it.
+See the
 [resource record](provider-resource-evidence.md#cleanup-and-timing) for scope.
 Owner-confirmed green workflows were accepted without polling. ML-DSA standard
 signing retains its variable-retry exclusion; G1-D traffic qualification remains

@@ -25,18 +25,20 @@ The compiler is `nightly-2026-10-24`, rustc
 Resource builds use the provider benchmark release profile and
 `-C target-cpu=native`, with `ml-dsa`, then `ml-dsa,portable-only`.
 
-Raw evidence is retained locally in
-`docs/tasks/evidence/gap2-20261103/`. Each resource row retains its command,
+Raw evidence was kept in the untracked local directory
+`docs/tasks/evidence/gap2-20261103/`, which was deleted on 2026-11-10. The file
+names in this record identify what it held; regenerate the evidence before a
+claim relies on it. Each resource row kept its command,
 source file hashes, compiler/host identity, executable and hash, raw JSON,
-stderr, build log, exit code, and `SHA256SUMS`. `resource-runs.json` lists the
-42 invocations; `resource-summary.json` indexes their results and hashes.
-`stack-reviewed-native/` and `stack-reviewed-portable/` retain ten linked Linux
+stderr, build log, exit code, and `SHA256SUMS`. `resource-runs.json` listed the
+42 invocations; `resource-summary.json` indexed their results and hashes.
+`stack-reviewed-native/` and `stack-reviewed-portable/` kept ten linked Linux
 artifacts, disassemblies, relocations, symbol/frame tables, complete parsed call
 graphs, source hashes, and reports. These cross-built artifacts were not run.
-`stack-summary.json` confirms that their binaries match those used by the
-separate cleanup review. Earlier failed parser runs remain in the evidence
+`stack-summary.json` confirmed that their binaries match those used by the
+separate cleanup review. Earlier failed parser runs were in the same evidence
 directory; the `stack-reviewed-*` reports supersede their graph analysis.
-`stack-declared-native/` and `stack-declared-portable/` retain the declared-edge
+`stack-declared-native/` and `stack-declared-portable/` kept the declared-edge
 reports, their `SHA256SUMS`, and the run logs. They come from a 2026-11-03
 rebuild with the same compiler, at `1d8dadfe` plus the declared-edge tooling, in
 another checkout. Their binaries differ by hash from the `stack-reviewed-*`
@@ -426,13 +428,13 @@ fragment. Raw snapshots and capture/build identities are in `residue/`.
 
 The separate full Apple CT report passes all 135 required cases, with
 4,024,528 samples and a largest absolute t-statistic of 3.803
-against the unchanged threshold of 10. `apple-ct-qualified/` retains the complete
-report, raw samples, binaries, and provenance; `apple-condition-review/` retains
+against the unchanged threshold of 10. `apple-ct-qualified/` kept the complete
+report, raw samples, binaries, and provenance; `apple-condition-review/` kept
 the fresh review of sixteen existing public RSA conditions. Only those exact
 condition bindings changed in `ct.toml`. The run uses the production commit above
 plus that manifest overlay in `/private/tmp/rscrypto-gap2-ct-6926f298`; its path
 and compiler are part of the artifact identity. The original report with stale
-bindings remains unchanged in `apple-ct/`.
+bindings was kept unchanged in `apple-ct/`.
 
 Artifact compilation overlapped an unrelated build. The CT orchestrator was
 paused before timing until that project's full gate ended; the host-window
@@ -451,19 +453,19 @@ in `cleanup/tests/`. The final import-only test correction uses the same allocat
 types through their defining `core::alloc` module; its exact equivalence receipt
 is retained there.
 
-To reproduce the resource matrix, copy the retained `run-resources.py` into a
-new evidence directory and execute that copy from the repository root. It writes
-beside itself; `resource-runs.json` records each invocation. The individual
+The matrix script `run-resources.py` was deleted with the evidence directory;
+it wrote beside itself, and `resource-runs.json` recorded each invocation. The
 front door is `just bench-provider-resources`; `--help` describes the supported
 credentials, modes, workloads, repetition limits, and output option.
-The retained `resource-runs.json` identifies the two valid rows reused by the
-matrix script instead of measuring them twice.
+`resource-runs.json` identified the two valid rows reused by the matrix script
+instead of measuring them twice.
 
 The full Apple command is `CARGO_RAIL_CACHE=off just ct-full --target
 aarch64-apple-darwin`. `run-apple-qualified.py` records its exact checkout and
 manifest overlay. Reproducing its exact artifact identity requires production
-commit `6926f298c16d3d6777973e6fa5d29ad86e0ca48d`, the retained `ct-after.toml`,
-the pinned compiler, and the recorded checkout path. Use a quiet host and retain
+commit `6926f298c16d3d6777973e6fa5d29ad86e0ca48d`, the deleted `ct-after.toml`
+(regenerate it from the sixteen condition bindings in `ct.toml`), the pinned
+compiler, and the recorded checkout path. Use a quiet host and retain
 a fresh output bundle; a changed path or compiler may require another condition
 review. `apple-ct-summary.json` binds the passing report and timing binary hashes.
 
