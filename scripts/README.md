@@ -976,10 +976,18 @@ with the operations each RunsOn image runs.
 ### Workflows
 
 **`ci.yml`** also runs `--ci-package` provisioning and `just ci-package` on an independent runner.
-It runs the examples, verifies the publishable Cargo archive, and runs external `std`, `core`,
-and `alloc` consumers against the unpacked crate on the canonical and MSRV toolchains.
+It runs the examples, then packages `rscrypto` and the unpublished `rscrypto-rustls` in one `cargo package`
+call, so Cargo verifies the provider archive against the packaged `rscrypto`. It runs external `std`, `core`,
+and `alloc` consumers against the unpacked `rscrypto` on the canonical and MSRV toolchains.
 `core` and `alloc` also compile on the existing Thumb sentinel.
-No package is published.
+Each file of the provider archive must equal its `rscrypto-rustls/` source, apart from the files that Cargo
+writes, and the provider's library tests build and run from the unpacked archive on the canonical toolchain.
+Packaging keeps only a dependency's version. While the provider pins a crate by Git revision, the lane
+patches that crate back to the pinned revision with `--config patch.crates-io`, derived from
+`rscrypto-rustls/Cargo.toml`. So today the lane proves that the provider archive is complete and works with
+the packaged `rscrypto` and the pinned rustls revision, not with a crates.io rustls. When the pins become
+registry versions, no patch remains, and the same run verifies the archive against the crates.io releases.
+`publish = false` does not stop `cargo package`. No package is published.
 
 **`fuzz.yml`** uses `--ci-fuzz` for ASan corpus replay and bounded live fuzzing.
 
