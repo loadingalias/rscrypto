@@ -3422,11 +3422,12 @@ mod tests {
   #[test]
   #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
   fn test_riscv64_short_thresholds_keep_crc64_portable_at_64b() {
-    let crc_names = RISCV64_ZVBC_TABLE.select_names(64);
     #[cfg(feature = "crc32")]
-    assert_eq!(crc_names.crc32_ieee_name, "riscv64/zvbc");
-    #[cfg(feature = "crc32")]
-    assert_eq!(crc_names.crc32c_name, "riscv64/zvbc");
+    {
+      let crc_names = RISCV64_ZVBC_TABLE.select_names(64);
+      assert_eq!(crc_names.crc32_ieee_name, "riscv64/zvbc");
+      assert_eq!(crc_names.crc32c_name, "riscv64/zvbc");
+    }
 
     #[cfg(feature = "crc64")]
     {
