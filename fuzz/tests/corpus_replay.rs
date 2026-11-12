@@ -131,6 +131,9 @@ mod auth_p256_ecdh;
 #[path = "../target_impls/auth_p384_ecdh.rs"]
 mod auth_p384_ecdh;
 
+#[path = "../target_impls/checksum_adler32.rs"]
+mod checksum_adler32;
+
 #[path = "../target_impls/checksum_crc.rs"]
 mod checksum_crc;
 
@@ -485,6 +488,16 @@ fn replay_auth_p256_ecdh_corpus() {
 fn replay_auth_p384_ecdh_corpus() {
   let replayed = replay_corpus_dir("auth_p384_ecdh", corpus_dir("auth_p384_ecdh"), auth_p384_ecdh::run);
   assert_ne!(replayed, 0, "auth_p384_ecdh corpus should not be empty");
+}
+
+#[test]
+fn replay_checksum_adler32_corpus() {
+  let replayed = replay_corpus_dir(
+    "checksum_adler32",
+    corpus_dir("checksum_adler32"),
+    checksum_adler32::run,
+  );
+  assert_ne!(replayed, 0, "checksum_adler32 corpus should not be empty");
 }
 
 #[test]

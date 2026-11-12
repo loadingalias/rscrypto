@@ -29,6 +29,7 @@ fuzz-packages/auth-phc/corpus/auth_phc/seed-basic
 fuzz-packages/auth-scrypt/corpus/auth_scrypt/seed-basic
 fuzz-packages/auth-siphash/corpus/auth_siphash/seed-basic
 fuzz-packages/auth-x25519/corpus/auth_x25519/seed-basic
+fuzz-packages/checksums-adler32/corpus/checksum_adler32/seed-basic
 fuzz-packages/checksums-crc16/corpus/checksum_crc16/seed-basic
 fuzz-packages/checksums-crc24/corpus/checksum_crc24/seed-basic
 fuzz-packages/checksums-crc32/corpus/checksum_crc32/seed-basic
@@ -554,6 +555,7 @@ fuzz/corpus/auth_slhdsa/seed-profile-23
 fuzz/corpus/auth_slhdsa/seed-rfc9909-pkcs8
 fuzz/corpus/auth_slhdsa/seed-rfc9909-spki
 fuzz/corpus/auth_x25519/seed-basic
+fuzz/corpus/checksum_adler32/seed-basic
 fuzz/corpus/checksum_crc/seed-basic
 fuzz/corpus/fast_rapidhash/seed-basic
 fuzz/corpus/fast_xxh3/seed-basic

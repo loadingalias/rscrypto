@@ -72,6 +72,7 @@ auxiliary_cargo_manifests = [
   "fuzz-packages/auth-scrypt/Cargo.toml",
   "fuzz-packages/auth-siphash/Cargo.toml",
   "fuzz-packages/auth-x25519/Cargo.toml",
+  "fuzz-packages/checksums-adler32/Cargo.toml",
   "fuzz-packages/checksums-crc16/Cargo.toml",
   "fuzz-packages/checksums-crc24/Cargo.toml",
   "fuzz-packages/checksums-crc32/Cargo.toml",

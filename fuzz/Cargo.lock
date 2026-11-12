@@ -825,6 +825,7 @@ dependencies = [
  "sha1",
  "sha2",
  "sha3",
+ "simd-adler32",
  "siphasher",
  "tiny-keccak",
  "x25519-dalek",
@@ -1024,6 +1025,12 @@ dependencies = [
  "digest",
  "rand_core",
 ]
+
+[[package]]
+name = "simd-adler32"
+version = "0.3.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3a219298ac11a56ea9a6d2120044824d6f01aeb034955e7af7bc16858527deea"
 
 [[package]]
 name = "siphasher"

@@ -78,6 +78,7 @@ xxhash-rust = { version = "0.8.19", features = ["xxh3", "xxh32", "xxh64"] }
 
 # Checksums
 crc = "3.4.0"
+simd-adler32 = "0.3.10"
 
 # Isolate from parent workspace
 [workspace]
@@ -345,6 +346,11 @@ doc = false
 [[bin]]
 name = "checksum_crc"
 path = "fuzz_targets/checksum_crc.rs"
+doc = false
+
+[[bin]]
+name = "checksum_adler32"
+path = "fuzz_targets/checksum_adler32.rs"
 doc = false
 
 [[bin]]
