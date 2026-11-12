@@ -957,6 +957,43 @@ The gate scanner reports no stale waiver and no unwaived enforced finding on the
 Windows, and AArch64 Linux artifacts, on the `836f7a57` POWER, IBM Z, and RISC-V artifacts, and on the local
 Apple build.
 
+### x86-64 capability-closure review, 2026-11-12
+
+`18609448` made x86-64 detection report a capability only with every feature that it implies.
+It changed `decode_cpuid_x86_64`, which is inlined into `detect_uncached`.
+Constant-Time 43164583905 at `22206ab9` and
+[Constant-Time 43179492617](https://github.com/loadingalias/rscrypto/actions/runs/43179492617) at `b19e75e7`
+then failed on x86-64 Linux and Windows.
+Of the eight detection conditions reviewed on each target, seven changed, and ten new conditions had no waiver.
+Thus 63 waivers were stale on Linux (9 primitives each) and 140 on Windows (20 primitives each).
+The extended-leaf gate kept its closed slice and still matches.
+
+Both reports failed only at these findings. Their DudeCT cases passed, and BINSEC passed on Linux.
+`just ct-renew` compared each target with the artifacts of
+[Constant-Time 42756022942](https://github.com/loadingalias/rscrypto/actions/runs/42756022942) at `64b1d5fc`.
+Every stale slice changed, so no waiver was renewed with its old rationale.
+The ten new conditions on each target were reviewed in the `b19e75e7` linked binaries:
+
+- the AVX10 leaf gate and the leaf-7 snapshot selector;
+- the family-6 model decode and the OSXSAVE gate;
+- the AVX and AVX-512F gates, which combine CPUID feature bits with XCR0, and the AMX state gate;
+- the Zen 5 family check and the Intel hybrid-model bitmap;
+- the implication filter of `close_x86_implications`, which tests the decoded capabilities against the read-only
+  `IMPLIED` table.
+
+Each slice ends at `cpuid` results, XCR0 from `_xgetbv`, the Linux `ARCH_GET_XCOMP_PERM` result, immediates,
+or the `IMPLIED` table. Frame bytes in a slice hold only these values.
+On Linux, possible aliasing also puts stack stores and entry registers in the filter slice.
+Its load address is the table base, a loop counter of at most 0x700, and a displacement of 0x60.
+So the load reads only the table.
+`detect_uncached` takes only its result pointer, which no condition reads.
+
+The stale waivers were deleted.
+Each new condition received a public waiver per affected primitive: 90 on Linux and 200 on Windows.
+Each rationale cites its instructions and its `x86.rs` lines. The waiver set now has 902 entries.
+With them, the scanner reports no stale waiver and no unwaived enforced finding on the x86-64 Linux and Windows
+artifacts of that run.
+
 ## Public decisions and exclusions
 
 Ordinary equality is allowed for public values, such as nonces, encoded public keys,
