@@ -188,17 +188,55 @@ fn assert_xxh32_xxh64_match_xxhsum() {
   }
 }
 
-/// CPython `zlib.adler32(b"\xff" * 139269)`. The input crosses the 128 KiB
-/// reduction chunk with every partial sum at its largest value; the weighted
-/// sum of that chunk passes 2^32, so a 32-bit `usize` would overflow.
+/// CPython `zlib.adler32(b"\xff" * 139269)`, and the same from both sums at
+/// 65520 (`0xfff0fff0`). All-0xff input from the largest sums drives every
+/// partial sum of the portable and SIMD128 kernels to the largest value that
+/// their reduction bounds allow, across many reductions.
 fn assert_adler32_matches_zlib_across_reduction_boundaries() {
   let data = vec![0xff; 139_269];
   assert_eq!(Adler32::checksum(&data), 0x49e1_04be);
-  let mut hasher = Adler32::new();
-  for chunk in data.chunks(4093) {
-    hasher.update(chunk);
+  for (start, expected) in [(1, 0x49e1_04be), (0xfff0_fff0, 0x099a_04bc)] {
+    let mut hasher = Adler32::resume(start);
+    hasher.update(&data);
+    assert_eq!(hasher.finalize(), expected, "start={start:#x}");
+    let mut hasher = Adler32::resume(start);
+    for chunk in data.chunks(4093) {
+      hasher.update(chunk);
+    }
+    assert_eq!(hasher.finalize(), expected, "start={start:#x}, streamed");
   }
-  assert_eq!(hasher.finalize(), 0x49e1_04be);
+}
+
+/// Fold of `zlib.adler32` (CPython 3.14.8, zlib 1.2.12) results: each step
+/// multiplies the 64-bit digest by 0x100000001b3 and XORs in one checksum.
+fn fold_checksum(digest: u64, checksum: u32) -> u64 {
+  digest.wrapping_mul(0x0100_0000_01b3) ^ u64::from(checksum)
+}
+
+/// Every length from 0 to 640 at every offset from 0 to 63, of `patterned_bytes` and of
+/// 0xff bytes, and 20,000 patterned bytes streamed in chunks across the 16-byte vector and
+/// 64-byte block sizes. The scalar build runs the portable kernel and the SIMD128 build
+/// runs the SIMD128 kernel against the same CPython values.
+fn assert_adler32_matches_zlib_at_every_length_offset_and_chunk() {
+  let mut digest = 0;
+  for buffer in [patterned_bytes(704), vec![0xff; 704]] {
+    for len in 0..=640 {
+      for offset in 0..64_usize {
+        digest = fold_checksum(digest, Adler32::checksum(&buffer[offset..offset.strict_add(len)]));
+      }
+    }
+  }
+  assert_eq!(digest, 0x08f7_b012_31f9_48c9);
+
+  let data = patterned_bytes(20_000);
+  assert_eq!(Adler32::checksum(&data), 0x6885_eaab);
+  for chunk in [1, 15, 16, 17, 63, 64, 65, 255, 256, 257, 4093] {
+    let mut hasher = Adler32::new();
+    for part in data.chunks(chunk) {
+      hasher.update(part);
+    }
+    assert_eq!(hasher.finalize(), 0x6885_eaab, "chunk={chunk}");
+  }
 }
 
 fn assert_blake3_portable_differentials_and_official_vectors() {
@@ -717,6 +755,7 @@ fn run_vectors() {
   assert_streaming_hashes_match_oneshot_across_block_boundaries();
   assert_xxh32_xxh64_match_xxhsum();
   assert_adler32_matches_zlib_across_reduction_boundaries();
+  assert_adler32_matches_zlib_at_every_length_offset_and_chunk();
   assert_blake3_portable_differentials_and_official_vectors();
   assert_rsa_caller_random_signing_roundtrips();
   assert_websocket_accept_digest_matches_rfc_6455();

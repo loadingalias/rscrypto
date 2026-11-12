@@ -7,11 +7,14 @@
 //! - Portable Rust on every target, the sole semantic authority.
 //! - aarch64: NEON, and NEON with the dot-product extension where the CPU has it.
 //! - x86-64: SSSE3, AVX2, and AVX-512 VNNI, the fastest that the CPU has.
+//! - wasm32: SIMD128 when the artifact requires it.
 
 #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
 pub(in crate::checksum) mod aarch64;
 pub(crate) mod config;
 pub(in crate::checksum) mod portable;
+#[cfg(all(target_arch = "wasm32", target_feature = "simd128", not(feature = "portable-only")))]
+pub(in crate::checksum) mod wasm32;
 #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 pub(in crate::checksum) mod x86_64;
 
@@ -88,8 +91,8 @@ fn adler32_dispatch_neon_dotprod_vectored(adler: u32, bufs: &[&[u8]]) -> u32 {
 /// The kernel that automatic selection runs on this CPU, resolved once into the dispatch cache.
 ///
 /// It applies the selection of `kernel_table::adler32`: the x86-64 kernel that cached detection
-/// allows, the aarch64 dot-product kernel when detection reports `FEAT_DotProd`, and otherwise
-/// the kernel table's row. Every Adler-32 kernel handles every length, and each kernel table
+/// allows, the aarch64 dot-product kernel when detection reports `FEAT_DotProd`, the wasm32
+/// SIMD128 kernel when the artifact requires SIMD128, and otherwise the kernel table's row. Every Adler-32 kernel handles every length, and each kernel table
 /// names one Adler-32 kernel for all of its size classes, so one kernel serves every call.
 #[cfg(feature = "std")]
 #[inline]
@@ -102,6 +105,10 @@ fn adler32_auto_kernel() -> Adler32DispatchFn {
   #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
   if caps.has(crate::platform::caps::aarch64::DOTPROD) {
     return adler32_dispatch_neon_dotprod;
+  }
+  #[cfg(all(target_arch = "wasm32", target_feature = "simd128", not(feature = "portable-only")))]
+  if caps.has(crate::platform::caps::wasm::SIMD128) {
+    return wasm32::update;
   }
   let _ = caps;
   crate::checksum::kernel_table::active_table()
@@ -374,8 +381,15 @@ fn adler32_buffered_threshold() -> usize {
   adler32_buffered_threshold_impl()
 }
 
-/// The NEON kernels run 64-byte blocks; shorter updates take 16-byte vectors and the byte tail.
-#[cfg(all(feature = "alloc", target_arch = "aarch64", target_feature = "neon"))]
+/// The NEON and SIMD128 kernels run 64-byte blocks; shorter updates take 16-byte vectors and
+/// the byte tail.
+#[cfg(all(
+  feature = "alloc",
+  any(
+    all(target_arch = "aarch64", target_feature = "neon"),
+    all(target_arch = "wasm32", target_feature = "simd128", not(feature = "portable-only"))
+  )
+))]
 #[inline]
 #[must_use]
 fn adler32_buffered_threshold_impl() -> usize {
@@ -384,7 +398,13 @@ fn adler32_buffered_threshold_impl() -> usize {
 }
 
 /// The portable kernel runs 16-byte steps; shorter updates take the byte tail.
-#[cfg(all(feature = "alloc", not(all(target_arch = "aarch64", target_feature = "neon"))))]
+#[cfg(all(
+  feature = "alloc",
+  not(any(
+    all(target_arch = "aarch64", target_feature = "neon"),
+    all(target_arch = "wasm32", target_feature = "simd128", not(feature = "portable-only"))
+  ))
+))]
 #[inline]
 #[must_use]
 fn adler32_buffered_threshold_impl() -> usize {

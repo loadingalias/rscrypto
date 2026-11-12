@@ -260,6 +260,12 @@ pub(crate) fn adler32(table: &KernelTable, adler: u32, data: &[u8]) -> u32 {
   if let Some(kernel) = crate::checksum::adler32::x86_64::select(crate::platform::caps()) {
     return (kernel.update)(adler, data);
   }
+  // wasm32 has no kernel table. SIMD128 is a compile-time requirement of the artifact, and the
+  // capability check keeps a portable detection override in effect.
+  #[cfg(all(target_arch = "wasm32", target_feature = "simd128", not(feature = "portable-only")))]
+  if crate::platform::caps().has(crate::platform::caps::wasm::SIMD128) {
+    return crate::checksum::adler32::wasm32::update(adler, data);
+  }
   let kernel = table.select_fns(data.len()).adler32;
   kernel(adler, data)
 }
@@ -275,6 +281,10 @@ pub(crate) fn adler32_name(table: &KernelTable, len: usize) -> &'static str {
   #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   if let Some(kernel) = crate::checksum::adler32::x86_64::select(crate::platform::caps()) {
     return kernel.name;
+  }
+  #[cfg(all(target_arch = "wasm32", target_feature = "simd128", not(feature = "portable-only")))]
+  if crate::platform::caps().has(crate::platform::caps::wasm::SIMD128) {
+    return crate::checksum::adler32::wasm32::KERNEL_NAME;
   }
   table.select_names(len).adler32_name
 }

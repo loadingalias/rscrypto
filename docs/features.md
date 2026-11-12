@@ -49,7 +49,7 @@ and in the header for a preset dictionary.
 It is non-cryptographic: it detects accidental corruption and gives no authentication.
 `Adler32` implements `Checksum` and `ChecksumCombine`, with zlib's `adler32_combine` semantics.
 It needs neither `alloc` nor `std` and keeps no input in its state.
-It has a portable Rust kernel and NEON kernels on AArch64; see [`platforms.md`](platforms.md).
+It has a portable Rust kernel and per-architecture kernels; [`platforms.md`](platforms.md) lists them.
 `rscrypto` has no zlib parser or inflate; a codec reads the checksum fields and compares them.
 
 `xxh32` and `xxh64` give XXH32 and XXH64 from the
