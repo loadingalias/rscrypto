@@ -12,7 +12,7 @@ It does not prove that the compiler erases every copy it makes.
 | `SecretBytes<N>`, `SecretVec`, `SecretString` | Not `Clone` or `Copy`. | A consuming export moves the bytes or UTF-8 text to the caller, and the caller becomes responsible for cleanup. |
 | AEAD keys and contexts | Keys copy only through explicit `duplicate_secret`. Contexts do not copy. | Key export is explicit. `Debug` is redacted. |
 | Header-protection keys and contexts | No generic copy. | No public export. `Debug` is redacted. |
-| `ChaCha20Rng` | Not `Clone` or `Copy`; a clone would repeat the stream. | The key and unread output have no export; returned output belongs to the caller. `Debug` is redacted. See [ChaCha20 generator](#chacha20-generator). |
+| `ChaCha20Rng` | Not `Clone` or `Copy`; a clone would repeat the stream. | The key, the branch key, and unread output have no export; returned output and child generators belong to the caller. `Debug` is redacted. See [ChaCha20 generator](#chacha20-generator). |
 | ECDSA and Ed25519 secret keys and keypairs | Explicit `duplicate_secret`. | Secret-key export is explicit. PKCS #8 export writes into a fixed-size buffer that the caller owns and clears. PKCS #8 and SEC1 import borrow the caller's input and do not clear it. Keypair `Debug` shows only public data. |
 | ML-DSA seeds, expanded secret keys, and prepared secret keys | Not `Clone` or `Copy`. See [ML-DSA storage](#ml-dsa-storage). | Raw export returns `SecretBytes`. PKCS #8 export writes into a fixed-size buffer that the caller owns and clears. Seed, key, handle, and storage `Debug` are redacted. Secret-key serialization needs `serde-secrets`; seeds have no Serde support. |
 | Composite ML-DSA secret keys and prepared secret keys (`MlDsa65Ed25519*`, `MlDsa65EcdsaP256*`) | Not `Clone` or `Copy`. See [composite ML-DSA](#composite-ml-dsa). | Raw export returns `SecretBytes`. PKCS #8 export writes into a fixed-size buffer that the caller owns and clears. Raw and PKCS #8 import borrow the caller's input and do not clear it. `Debug` is redacted. No Serde support. |
@@ -239,15 +239,20 @@ key provider that loads no key: it wraps the owned input in the same
 
 ### ChaCha20 generator
 
-`ChaCha20Rng` owns its current ChaCha20 key and one 512-byte keystream chunk.
-`from_seed` clears its parameter copy, and `try_generate_with` fills the key in
-place, clearing a partial seed on failure. With `rand_core`, `SeedableRng::from_rng`
-and `try_from_rng` (and so `fork` and `try_fork`) also write the seed directly
-into the key, so no seed copy is left in their frames; `seed_from_u64` panics
-before building any state. The trait read methods call the inherent ones. Each
-read clears the output bytes it returns, and each refill erases the previous
-key; drop clears the key and chunk. Rust moves copy the state, and only the
-final location clears.
+`ChaCha20Rng` owns its current ChaCha20 key, its branch key, and one 512-byte
+keystream chunk. The branch key is derived from the seed at construction and
+keys only child seeds. `from_seed` clears its parameter copy, and
+`try_generate_with` fills the key in place, clearing a partial seed on failure.
+The 64-byte block that derives a branch key or a child seed is cleared after its
+first 32 bytes are copied out. The working state of the block function stays on
+the stack, as it does in a portable refill. `child` passes the child seed to
+`from_seed`. With `rand_core`, `SeedableRng::from_rng` and `try_from_rng` (and
+so `fork` and `try_fork`) also write the seed directly into the key, so no seed
+copy is left in their frames; `seed_from_u64` panics before building any state.
+The trait read methods call the inherent ones. Each read clears the output bytes
+it returns, and each refill erases the previous key; drop clears the key, the
+branch key, and the chunk. `Debug` shows no field. Rust moves copy the state,
+and only the final location clears.
 
 ### rustls session tickets
 

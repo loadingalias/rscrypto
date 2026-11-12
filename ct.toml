@@ -3467,7 +3467,7 @@ sse_depth = 20000
 secrets = [{ name = "CT_BINSEC_KEY_32", kind = "global", bytes = 32 }]
 public = [{ name = "OUTPUT_LEN", kind = "const", value = 32 }]
 assumptions = []
-notes = "Bounded production ChaCha20Rng leaf: seeding, the first refill (eight portable ChaCha20 blocks), key replacement, output copy and clear, and drop."
+notes = "Bounded production ChaCha20Rng leaf: seeding (one portable ChaCha20 block for the branch key), the first refill (eight portable ChaCha20 blocks), key replacement, output copy and clear, and drop."
 claim = "ct-intended"
 
 [[binsec_kernel]]
@@ -3638,8 +3638,8 @@ name = "x86_64-unknown-linux-gnu"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 3606
-compiler_api_sha256 = "86987d1f5eb9bf62704d43e6acd098b751158ba4dc34b4610a5bf0a28c81f9aa"
+compiler_api_item_count = 3607
+compiler_api_sha256 = "88935406607d71ff80c8a4ccd4caa7085204b86b43dc6c67675b87a0a8ea5124"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "required"
@@ -3649,8 +3649,8 @@ name = "aarch64-unknown-linux-gnu"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 3606
-compiler_api_sha256 = "86987d1f5eb9bf62704d43e6acd098b751158ba4dc34b4610a5bf0a28c81f9aa"
+compiler_api_item_count = 3607
+compiler_api_sha256 = "88935406607d71ff80c8a4ccd4caa7085204b86b43dc6c67675b87a0a8ea5124"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "required"
@@ -3683,8 +3683,8 @@ group = "win"
 backend = "llvm"
 linker = "msvc-link-unpinned"
 claim = "ct-intended"
-compiler_api_item_count = 3606
-compiler_api_sha256 = "86987d1f5eb9bf62704d43e6acd098b751158ba4dc34b4610a5bf0a28c81f9aa"
+compiler_api_item_count = 3607
+compiler_api_sha256 = "88935406607d71ff80c8a4ccd4caa7085204b86b43dc6c67675b87a0a8ea5124"
 physical_timing = "required"
 binsec = "unsupported"
 binsec_reason = "BINSEC PE/Windows evidence is not part of the current release evidence gate."
@@ -3705,8 +3705,8 @@ name = "aarch64-apple-darwin"
 group = "macos"
 backend = "llvm"
 linker = "apple-ld-unpinned"
-compiler_api_item_count = 3606
-compiler_api_sha256 = "86987d1f5eb9bf62704d43e6acd098b751158ba4dc34b4610a5bf0a28c81f9aa"
+compiler_api_item_count = 3607
+compiler_api_sha256 = "88935406607d71ff80c8a4ccd4caa7085204b86b43dc6c67675b87a0a8ea5124"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -3717,8 +3717,8 @@ name = "s390x-unknown-linux-gnu"
 group = "ibm"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 3606
-compiler_api_sha256 = "86987d1f5eb9bf62704d43e6acd098b751158ba4dc34b4610a5bf0a28c81f9aa"
+compiler_api_item_count = 3607
+compiler_api_sha256 = "88935406607d71ff80c8a4ccd4caa7085204b86b43dc6c67675b87a0a8ea5124"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -3729,8 +3729,8 @@ name = "powerpc64le-unknown-linux-gnu"
 group = "ibm"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 3606
-compiler_api_sha256 = "86987d1f5eb9bf62704d43e6acd098b751158ba4dc34b4610a5bf0a28c81f9aa"
+compiler_api_item_count = 3607
+compiler_api_sha256 = "88935406607d71ff80c8a4ccd4caa7085204b86b43dc6c67675b87a0a8ea5124"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -3741,8 +3741,8 @@ name = "riscv64gc-unknown-linux-gnu"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 3606
-compiler_api_sha256 = "86987d1f5eb9bf62704d43e6acd098b751158ba4dc34b4610a5bf0a28c81f9aa"
+compiler_api_item_count = 3607
+compiler_api_sha256 = "88935406607d71ff80c8a4ccd4caa7085204b86b43dc6c67675b87a0a8ea5124"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -3970,18 +3970,18 @@ limitation = "DudeCT covers complete key construction and mask generation. AES r
 [[operation]]
 id = "rng.chacha20_generate"
 api = [
-  "rscrypto::ChaCha20Rng::{from_seed,try_generate_with,try_generate,fill_bytes,next_u32,next_u64}",
+  "rscrypto::ChaCha20Rng::{from_seed,try_generate_with,try_generate,child,fill_bytes,next_u32,next_u64}",
   "<rscrypto::ChaCha20Rng as rand_core::{TryRng,SeedableRng}>::{try_next_u32,try_next_u64,try_fill_bytes,from_seed,seed_from_u64,from_rng,try_from_rng}",
 ]
 features = ["chacha20-rng", "getrandom for try_generate", "rand_core for the rand_core traits"]
 targets = ["all-supported", "ChaCha20 kernel selected by public target capabilities"]
-secret_inputs = ["seed", "generator key", "unread output", "keystream chunk"]
-public_inputs = ["request lengths", "call sequence", "backend capabilities"]
+secret_inputs = ["seed", "generator key", "branch key", "unread output", "keystream chunk"]
+public_inputs = ["request lengths", "call sequence", "child label and index", "backend capabilities"]
 variable_time_components = ["public-length copy and clear loops", "refill at public stream positions", "public backend dispatch", "entropy-source or source-generator latency for seeding"]
 permitted_leakage = ["algorithm", "request lengths and call sequence", "backend", "seeding success/failure"]
 claim = "ct-intended"
 evidence = ["primitive:rng.chacha20", "unit:rng.chacha20.chacha20_rng"]
-limitation = "The rand_core trait methods call the inherent methods; from_rng and try_from_rng write the seed straight into the generator key, as try_generate_with does. seed_from_u64 always panics before touching state. DudeCT covers seeding, two refills, and drop. The linked-image harness entry ct_entry_chacha20_rng_fill runs construction, fill, and drop through the dispatched kernel; the BINSEC leaf runs the same state machine over the portable kernel, because symbolic execution does not model runtime dispatch. The accelerated kernels are covered by the AEAD evidence. Rust moves copy the generator state; only its final location clears on drop."
+limitation = "The rand_core trait methods call the inherent methods; from_rng and try_from_rng write the seed straight into the generator key, as try_generate_with does. seed_from_u64 always panics before touching state. Seeding computes the branch key with one portable ChaCha20 block. child computes the child seed with one portable block under the branch key, then seeds through from_seed. No DudeCT case or harness entry calls child directly. DudeCT covers seeding, two refills, and drop. The linked-image harness entry ct_entry_chacha20_rng_fill runs construction, fill, and drop through the dispatched kernel; the BINSEC leaf runs the same state machine over the portable kernel, because symbolic execution does not model runtime dispatch. The accelerated kernels are covered by the AEAD evidence. Rust moves copy the generator state; only its final location clears on drop."
 
 [[operation]]
 id = "aead.open_and_authenticate"
@@ -5778,12 +5778,13 @@ components = ["ChaCha20"]
 entrypoints = [
   "ChaCha20Rng::from_seed",
   "ChaCha20Rng::try_generate_with",
+  "ChaCha20Rng::child",
   "ChaCha20Rng::fill_bytes",
   "ChaCha20Rng::next_u32",
   "ChaCha20Rng::next_u64",
 ]
-secrets = ["seed", "generator key", "unread output", "keystream chunk"]
-public = ["request lengths", "call sequence", "backend_caps"]
+secrets = ["seed", "generator key", "branch key", "unread output", "keystream chunk"]
+public = ["request lengths", "call sequence", "child label and index", "backend_caps"]
 may_leak = ["input_length", "public_backend_dispatch"]
 must_not_leak_ref = "common_secret_data"
 required = ["tier_b"]

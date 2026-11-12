@@ -137,6 +137,87 @@ fn distinct_seeds_produce_distinct_streams() {
   }
 }
 
+/// `(label, index)` steps from a parent to a descendant generator.
+type ChildPath = &'static [([u8; 8], u64)];
+
+/// A path of `(label, index)` steps from the root seed `00 01 … 1f`, and the first 64 output bytes of its generator.
+///
+/// RustCrypto `chacha20` gives the expected bytes. The branch key is the first 32 bytes of the block at counter 0
+/// with nonce `rscrypto-rng`. Let `x` be the label and the little-endian index. A child seed is the first 32 bytes of
+/// the block under the branch key at counter `le32(x[0..4])` with nonce `x[4..16]`. OpenSSL 4.1's `chacha20` gives
+/// the same bytes.
+const CHILD_VECTORS: [(ChildPath, &str); 5] = [
+  (
+    &[(*b"rsasync\0", 0)],
+    "7435f7b65c7fe3797d8a47eedf8edca942c2a9a78735b64516bf7a13652036765f36d64721eaf502fa0c3dfa5240382a6462bce7fb3fe23ca3ce03ff371d6255",
+  ),
+  (
+    &[(*b"rsasync\0", 1)],
+    "8f707dc3edfe049e33c436e871ecae768158c7934c214ee2092e8738c163d9dc63f30bed9bdbb37e5f881080185598f770ec23c1d391004fea0fb84de4fde4e1",
+  ),
+  (
+    &[(*b"rsasync\0", u64::MAX)],
+    "687d7baf7e25df512d3aef30ee34a1320c939612ac41b5045f2cedcec0f5cc5bc735c71a04f761c33783d2001374136af01d13175ed280d0d9cc0c1b52004b55",
+  ),
+  (
+    &[(*b"rsnet\0\0\0", 0)],
+    "77eebe7c31b22c9c50847e98a8c70be65a4fbbfa03a5476924a90b0365585f2e1e653f32ad97304f561994d95fce387d2f74ed3e3be10e8d5fc9da6127bccbec",
+  ),
+  (
+    &[(*b"rsasync\0", 0), (*b"worker\0\0", 3)],
+    "9046af4ab6b5aea49e72610ec95baf88dd72df532076fcde227f71f459920b549fd513ff76c723b649047ec72669e6ee25042a0685a0822d0111820295952fba",
+  ),
+];
+
+fn child_root() -> [u8; 32] {
+  core::array::from_fn(|index| u8::try_from(index).expect("seed index"))
+}
+
+/// Walk `path` from `parent` with `ChaCha20Rng::child`, and return the first 64 output bytes of its generator.
+fn child_output(parent: &ChaCha20Rng, path: ChildPath) -> Vec<u8> {
+  let ((label, index), rest) = path.split_first().expect("non-empty path");
+  let mut rng = parent.child(label, *index);
+  for (label, index) in rest {
+    rng = rng.child(label, *index);
+  }
+  take(&mut rng, 64)
+}
+
+fn assert_child_vectors(parent: &ChaCha20Rng, context: &str) {
+  for (path, expected) in CHILD_VECTORS {
+    assert_eq!(
+      child_output(parent, path),
+      decode_hex(expected),
+      "{context}: path {path:?}"
+    );
+  }
+}
+
+#[test]
+fn child_derivation_matches_independent_chacha20() {
+  assert_child_vectors(&ChaCha20Rng::from_seed(child_root()), "fresh parent");
+}
+
+#[test]
+fn children_do_not_depend_on_parent_draws() {
+  // A fresh parent (zero draws) is `child_derivation_matches_independent_chacha20`.
+  for draws in [1, OUTPUT - 1, OUTPUT, OUTPUT + 1, 4096] {
+    let mut parent = ChaCha20Rng::from_seed(child_root());
+    take(&mut parent, draws);
+    assert_child_vectors(&parent, &format!("after {draws} parent bytes"));
+  }
+}
+
+#[test]
+fn children_do_not_depend_on_the_parent_constructor() {
+  let parent = ChaCha20Rng::try_generate_with(|seed| {
+    seed.copy_from_slice(&child_root());
+    Ok::<(), ()>(())
+  })
+  .expect("complete fill");
+  assert_child_vectors(&parent, "try_generate_with parent");
+}
+
 #[derive(Clone, Debug)]
 enum Request {
   Bytes(usize),

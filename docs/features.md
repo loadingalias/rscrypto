@@ -35,9 +35,11 @@ Umbrella features are convenient, but they make the build larger:
 
 In libraries and constrained builds, use leaf features such as `sha2`, `blake3`, `aes-gcm`, `ed25519`, `p256-ecdh`, `p384-ecdh`, `ml-dsa`, `mldsa65-ed25519`, `slh-dsa`, or `ml-kem`.
 
-`chacha20-rng` gives `ChaCha20Rng`, a ChaCha20 random generator seeded by the caller.
-It reads no operating-system entropy, works without `alloc`, and its output stream
-is a stable function of the seed. `ChaCha20Rng::try_generate` seeds it from the
+`chacha20-rng` gives `ChaCha20Rng`, a ChaCha20 random generator seeded by the
+caller. It reads no operating-system entropy, works without `alloc`, and its
+output stream is a stable function of the seed. `ChaCha20Rng::child` derives a
+generator from the seed, an 8-byte label, and an index, so one recorded root
+seed replays every owner's stream. `ChaCha20Rng::try_generate` seeds it from the
 operating system and also needs `getrandom`. With `rand_core`, it implements the
 `rand_core` 0.10 generator traits, so `rand` and other `rand_core` consumers can
 use it directly.

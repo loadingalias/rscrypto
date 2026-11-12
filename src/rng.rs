@@ -21,12 +21,26 @@
 //! assert_eq!(nonce, again);
 //! assert_eq!(skip, replay.next_u32());
 //! ```
+//!
+//! # Run seeds
+//!
+//! To make a run replayable, record one 32-byte root seed as 64 lowercase
+//! hexadecimal digits, and record each owner's path: its `(label, index)` pairs
+//! from the root. The root owner uses [`ChaCha20Rng::from_seed`], and every other
+//! owner gets [`ChaCha20Rng::child`] of its parent. Owners pass `ChaCha20Rng`
+//! values. A replay rebuilds the generator of any owner from the root seed and
+//! the owner's path.
+//!
+//! `rand_core`'s `SeedableRng::seed_from_u64` panics, because 64 bits are not a
+//! 256-bit seed. A test that needs a fixed seed writes all 32 bytes.
 
-use core::fmt;
+use core::{convert::Infallible, fmt};
 
 use crate::{backend::chacha20, traits::ct};
 
 const SEED_SIZE: usize = chacha20::KEY_SIZE;
+/// Nonce of the block that derives the branch key from the seed.
+const BRANCH_NONCE: &[u8; chacha20::NONCE_SIZE] = b"rscrypto-rng";
 /// Keystream bytes per refill: eight ChaCha20 blocks.
 const CHUNK_SIZE: usize = 512;
 /// Output bytes per refill. The final 32 keystream bytes become the next key.
@@ -54,17 +68,47 @@ const OUTPUT_SIZE: usize = CHUNK_SIZE - SEED_SIZE;
 /// stream differs from generators that only advance a block counter, such as
 /// `rand_chacha::ChaCha20Rng`.
 ///
+/// # Child generators
+///
+/// [`child`](Self::child) creates a generator from this one's seed, an 8-byte
+/// label, and a 64-bit index. In this notation, `block(k, c, n)` is the RFC 8439
+/// block function with key `k`, block counter `c`, and nonce `n`. `first32`
+/// keeps the first 32 bytes of a block, as RFC 8439 section 2.6 does for the
+/// Poly1305 key.
+///
+/// - At construction, the generator computes its branch key
+///   `first32(block(seed, 0, n))`, where `n` is the 12 ASCII bytes
+///   `rscrypto-rng`. The branch key keys only child seeds.
+/// - `child(label, index)` is `from_seed(first32(block(branch, c, n)))`. Let
+///   `x` be the 8 label bytes followed by the 8 little-endian bytes of `index`.
+///   Then `c` is the little-endian `u32` in `x[0..4]`, and `n` is `x[4..16]`.
+///
+/// A child depends only on its parent's seed, the label, and the index. It does
+/// not depend on how much output the parent returned, or on how the parent was
+/// built. So `root.child(a, i).child(b, j)` names one generator, and a replay
+/// that walks the same path from the same root seed gets the same stream. Each
+/// `(label, index)` pair under one parent must have one owner, because a second
+/// derivation repeats the child's stream.
+///
+/// Child seeds rest on the same assumption as the stream: the keyed ChaCha20
+/// block function is a pseudorandom function of its counter and nonce. The
+/// seed keys the stream blocks with an all-zero nonce and the branch block with
+/// a different nonce, so their block inputs never coincide.
+///
 /// # Security
 ///
 /// - Seed it with 32 secret, uniformly random bytes. Generators with the same
 ///   seed return the same stream, so a seed must have one owner. To create an
-///   independent generator, seed it from this generator's output.
+///   independent generator, use [`child`](Self::child).
 /// - The generator clears each output byte from its state as it returns it, and
 ///   each refill erases the previous key. A copy of the state taken later does
 ///   not reveal output that was already returned.
 /// - It never reseeds itself. Anyone who learns its state can compute all of its
 ///   later output. To recover from a compromise, replace it with a generator
 ///   built from a fresh seed. Dropping a generator clears its state.
+/// - Anyone who learns its state also learns its branch key, and so the seed of
+///   every child, earlier or later. Output that the generator already returned
+///   stays protected, because the branch key does not reveal the seed.
 /// - It does not implement `Clone`, because a clone would repeat the stream.
 /// - Operation timing depends on the requested lengths and the call sequence,
 ///   not on the seed or the generator state.
@@ -78,10 +122,13 @@ const OUTPUT_SIZE: usize = CHUNK_SIZE - SEED_SIZE;
 /// `CryptoRng` too), and `SeedableRng` with a 32-byte seed. The trait methods
 /// return the same stream as the inherent methods. `SeedableRng::from_rng` and
 /// `try_from_rng` write the seed directly into the new generator, so `fork`
-/// creates an independent generator from this one's output.
+/// creates an independent generator from this one's output. Unlike a child, a
+/// forked generator depends on how much output this one returned before.
 /// `SeedableRng::seed_from_u64` panics: a 64-bit value is not a 256-bit secret.
 pub struct ChaCha20Rng {
   key: [u8; SEED_SIZE],
+  /// Keys the child seeds and nothing else. It is set once from the seed.
+  branch: [u8; SEED_SIZE],
   /// `chunk[position..OUTPUT_SIZE]` is unread output. Every other byte is zero
   /// between calls, so a refill can XOR the keystream into the zeroed chunk.
   chunk: [u8; CHUNK_SIZE],
@@ -99,11 +146,10 @@ impl ChaCha20Rng {
   #[inline]
   #[must_use]
   pub fn from_seed(mut seed: [u8; SEED_SIZE]) -> Self {
-    let rng = Self {
-      key: seed,
-      chunk: [0; CHUNK_SIZE],
-      position: OUTPUT_SIZE,
-    };
+    let Ok(rng) = Self::try_generate_with(|key| {
+      key.copy_from_slice(&seed);
+      Ok::<(), Infallible>(())
+    });
     ct::zeroize(&mut seed);
     rng
   }
@@ -119,9 +165,15 @@ impl ChaCha20Rng {
   /// Returns the error from `fill`.
   #[inline]
   pub fn try_generate_with<E>(mut fill: impl FnMut(&mut [u8]) -> Result<(), E>) -> Result<Self, E> {
-    let mut rng = Self::from_seed([0; SEED_SIZE]);
+    let mut rng = Self {
+      key: [0; SEED_SIZE],
+      branch: [0; SEED_SIZE],
+      chunk: [0; CHUNK_SIZE],
+      position: OUTPUT_SIZE,
+    };
     // On an error, dropping `rng` clears the partial seed.
     fill(&mut rng.key)?;
+    rng.branch = block_key(&rng.key, 0, BRANCH_NONCE);
     Ok(rng)
   }
 
@@ -135,6 +187,38 @@ impl ChaCha20Rng {
   #[inline]
   pub fn try_generate() -> Result<Self, getrandom::Error> {
     Self::try_generate_with(getrandom::fill)
+  }
+
+  /// Create the child generator that `label` and `index` name under this one.
+  ///
+  /// The child's seed is `first32(block(branch, c, n))`. Here `c` is the
+  /// little-endian `u32` in `label[0..4]`, and `n` is `label[4..8]` followed by
+  /// the little-endian bytes of `index`. See
+  /// [Child generators](Self#child-generators).
+  ///
+  /// The child depends only on this generator's seed, `label`, and `index`. It
+  /// reads no output, so draws from this generator do not change it.
+  ///
+  /// ```rust
+  /// use rscrypto::ChaCha20Rng;
+  ///
+  /// // Draw the root seed from a cryptographically secure source in real use.
+  /// let root = [0x5a; ChaCha20Rng::SEED_SIZE];
+  /// let mut parent = ChaCha20Rng::from_seed(root);
+  /// let mut worker = parent.child(b"worker\0\0", 3);
+  /// parent.fill_bytes(&mut [0; 100]);
+  ///
+  /// // A replay walks the same path from the same root seed.
+  /// let mut replay = ChaCha20Rng::from_seed(root).child(b"worker\0\0", 3);
+  /// assert_eq!(worker.next_u64(), replay.next_u64());
+  /// ```
+  #[inline]
+  #[must_use]
+  pub fn child(&self, label: &[u8; 8], index: u64) -> Self {
+    let [c0, c1, c2, c3, l4, l5, l6, l7] = *label;
+    let [i0, i1, i2, i3, i4, i5, i6, i7] = index.to_le_bytes();
+    let nonce = [l4, l5, l6, l7, i0, i1, i2, i3, i4, i5, i6, i7];
+    Self::from_seed(block_key(&self.branch, u32::from_le_bytes([c0, c1, c2, c3]), &nonce))
   }
 
   /// Fill `output` with the next bytes of the stream.
@@ -195,6 +279,16 @@ impl ChaCha20Rng {
   }
 }
 
+/// `first32(block(key, counter, nonce))`: the first 32 bytes of one RFC 8439
+/// block, as RFC 8439 section 2.6 derives a Poly1305 key.
+fn block_key(key: &[u8; SEED_SIZE], counter: u32, nonce: &[u8; chacha20::NONCE_SIZE]) -> [u8; SEED_SIZE] {
+  let mut block = chacha20::block(key, counter, nonce);
+  let mut derived = [0; SEED_SIZE];
+  derived.copy_from_slice(&block[..SEED_SIZE]);
+  ct::zeroize(&mut block);
+  derived
+}
+
 #[cfg(feature = "rand_core")]
 #[cfg_attr(docsrs, doc(cfg(feature = "rand_core")))]
 impl rand_core::TryRng for ChaCha20Rng {
@@ -253,8 +347,7 @@ impl rand_core::SeedableRng for ChaCha20Rng {
   /// The seed is written directly into the new generator.
   #[inline]
   fn from_rng<R: rand_core::Rng + ?Sized>(rng: &mut R) -> Self {
-    let mut new = Self::from_seed([0; SEED_SIZE]);
-    rng.fill_bytes(&mut new.key);
+    let Ok(new) = Self::try_from_rng(rng);
     new
   }
 
@@ -284,6 +377,7 @@ impl Drop for ChaCha20Rng {
   #[inline]
   fn drop(&mut self) {
     ct::zeroize(&mut self.key);
+    ct::zeroize(&mut self.branch);
     ct::zeroize(&mut self.chunk);
   }
 }

@@ -516,14 +516,17 @@ ECDSA import, every signing family, and recovery through the same signer.
 
 ### ChaCha20 generator
 
-Seeding through `try_generate_with`, or through `rand_core`'s `try_from_rng`, clears
-a partial seed on failure; `from_rng` writes its seed straight into the key. Returned
-output bytes are cleared from the generator as they are read, and each refill
-replaces the key with fresh keystream before clearing that copy, so a later state
-capture does not reveal returned output. Drop clears the key and chunk. The
-generator never reseeds; replacing it is the only recovery from a compromised
-state. Unit tests check the cleared-state invariant after every read; they do
-not qualify compiler-made copies or linked-code erasure.
+Seeding through `try_generate_with`, or through `rand_core`'s `try_from_rng`,
+clears a partial seed on failure; `from_rng` writes its seed straight into the
+key. Returned output bytes are cleared from the generator as they are read, and
+each refill replaces the key with fresh keystream before clearing that copy, so
+a later state capture does not reveal returned output. The branch key is set
+once from the seed and never changes, so a state capture reveals the seed of
+every child, earlier or later, but not the seed or returned output. Drop clears
+the key, the branch key, and the chunk. The generator never reseeds; replacing
+it is the only recovery from a compromised state. Unit tests check the
+cleared-state invariant after every read; they do not qualify compiler-made
+copies or linked-code erasure.
 
 ### rustls session tickets
 
