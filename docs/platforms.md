@@ -55,12 +55,14 @@ Runtime behavior needs execution on the target.
   - POWER selects an AltiVec kernel (`vmsumubm`) through the checksum kernel tables, which all
     require AltiVec. IBM Z selects a vector-facility kernel through its tables for z13 and later,
     which all require the vector facility; earlier IBM Z CPUs use the portable kernel.
+  - riscv64 selects an RVV kernel when cached runtime detection reports the V extension. It runs
+    on every vector length and uses at most 256 lanes of 32 bits per row.
   - wasm32 selects a SIMD128 kernel when the artifact is built with `simd128`, unless `portable-only`
     is set. Builds without `simd128` use the portable kernel.
   - `portable-only` and Miri select the portable kernel.
   - `RSCRYPTO_ADLER32_FORCE` (`portable`, `neon`, `neon-dotprod`, `ssse3`, `avx2`, `avx512-vnni`,
-    `vmsum`, or `vsum`) forces a kernel, as the CRC force variables do; a kernel that the CPU
-    lacks falls back to automatic selection.
+    `vmsum`, `vsum`, or `rvv`) forces a kernel, as the CRC force variables do; a kernel that
+    the CPU lacks falls back to automatic selection.
     `Adler32::config()` reports the request and the effective choice.
   - Other targets use the portable kernel.
 - **XXH32 and XXH64** are portable Rust on every target, with no accelerated backend or dispatch.

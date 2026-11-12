@@ -231,6 +231,7 @@ assert!(
     target_arch = "riscv64",
     not(feature = "portable-only"),
     any(
+      feature = "adler32",
       feature = "crc16",
       feature = "crc24",
       feature = "crc32",
@@ -253,6 +254,7 @@ assert!(
     target_arch = "riscv64",
     not(feature = "portable-only"),
     any(
+      feature = "adler32",
       feature = "crc16",
       feature = "crc24",
       feature = "crc32",

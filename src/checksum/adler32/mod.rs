@@ -8,6 +8,7 @@
 //! - aarch64: NEON, and NEON with the dot-product extension where the CPU has it.
 //! - x86-64: SSSE3, AVX2, and AVX-512 VNNI, the fastest that the CPU has.
 //! - POWER: AltiVec `vmsumubm`. IBM Z: the vector facility, where the CPU has it.
+//! - riscv64: RVV where the CPU has the V extension.
 //! - wasm32: SIMD128 when the artifact requires it.
 
 #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
@@ -22,6 +23,8 @@ pub(crate) mod config;
 pub(in crate::checksum) mod portable;
 #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
 pub(in crate::checksum) mod power;
+#[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
+pub(in crate::checksum) mod riscv64;
 #[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
 pub(in crate::checksum) mod s390x;
 #[cfg(all(target_arch = "wasm32", target_feature = "simd128", not(feature = "portable-only")))]
@@ -82,6 +85,20 @@ const VSUM: Kernel = Kernel {
   name: s390x::KERNEL_NAME,
 };
 
+#[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
+const RVV: Kernel = Kernel {
+  update: adler32_rvv,
+  name: riscv64::KERNEL_NAME,
+};
+
+#[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
+fn adler32_rvv(adler: u32, data: &[u8]) -> u32 {
+  // SAFETY: Only `select` returns this function, and only when cached detection reports the V
+  // extension: automatic selection checks it, and `config::get()` keeps `Adler32Force::Rvv`
+  // only then.
+  unsafe { riscv64::update(adler, data) }
+}
+
 #[cfg(all(target_arch = "wasm32", target_feature = "simd128", not(feature = "portable-only")))]
 const WASM_SIMD128: Kernel = Kernel {
   update: wasm32::update,
@@ -111,16 +128,19 @@ fn select(force: Adler32Force) -> Kernel {
     Adler32Force::Vmsum => VMSUM,
     #[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
     Adler32Force::Vsum => VSUM,
+    #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
+    Adler32Force::Rvv => RVV,
     _ => select_auto(),
   }
 }
 
 /// Automatic selection: the x86-64 kernel that cached detection allows, the aarch64 dot-product
-/// kernel when detection reports `FEAT_DotProd`, the wasm32 SIMD128 kernel when the artifact
-/// requires SIMD128, and otherwise the active kernel table's row, which holds the POWER and
-/// IBM Z kernels. The SIMD128 check keeps a portable detection override in effect. Every
-/// Adler-32 kernel handles every length, and each kernel table names one Adler-32 kernel for
-/// all of its size classes, so one kernel serves every call.
+/// kernel when detection reports `FEAT_DotProd`, the riscv64 RVV kernel when detection reports
+/// V, the wasm32 SIMD128 kernel when the artifact requires SIMD128, and otherwise the active
+/// kernel table's row, which holds the POWER and IBM Z kernels. The SIMD128 check keeps a
+/// portable detection override in effect. Every Adler-32 kernel handles every length, and each
+/// kernel table names one Adler-32 kernel for all of its size classes, so one kernel serves
+/// every call.
 fn select_auto() -> Kernel {
   let caps = crate::platform::caps();
   #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
@@ -133,6 +153,10 @@ fn select_auto() -> Kernel {
   #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
   if caps.has(crate::platform::caps::aarch64::DOTPROD) {
     return NEON_DOTPROD;
+  }
+  #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
+  if caps.has(crate::platform::caps::riscv::V) {
+    return RVV;
   }
   #[cfg(all(target_arch = "wasm32", target_feature = "simd128", not(feature = "portable-only")))]
   if caps.has(crate::platform::caps::wasm::SIMD128) {
@@ -421,6 +445,8 @@ fn automatic_selection_runs_the_kernel_that_the_capabilities_call_for() {
     (crate::platform::caps::power::ALTIVEC, "power/vmsum"),
     #[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
     (crate::platform::caps::s390x::VECTOR, "s390x/vsum"),
+    #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
+    (crate::platform::caps::riscv::V, "riscv64/v"),
     #[cfg(all(target_arch = "wasm32", target_feature = "simd128", not(feature = "portable-only")))]
     (crate::platform::caps::wasm::SIMD128, "wasm32/simd128"),
   ];
@@ -444,14 +470,26 @@ fn automatic_selection_runs_the_kernel_that_the_capabilities_call_for() {
   }
 }
 
-#[cfg(all(test, target_arch = "aarch64", target_feature = "neon", not(miri)))]
+#[cfg(all(
+  test,
+  not(miri),
+  any(
+    all(target_arch = "aarch64", target_feature = "neon"),
+    all(target_arch = "riscv64", not(feature = "portable-only"))
+  )
+))]
 mod tests {
   use alloc::{vec, vec::Vec};
 
-  use super::{aarch64, portable};
+  #[cfg(target_arch = "aarch64")]
+  use super::aarch64;
+  use super::portable;
+  #[cfg(target_arch = "riscv64")]
+  use super::riscv64;
   use crate::checksum::dispatchers::Adler32Fn;
 
   /// The aarch64 kernels that this CPU can run, with their names.
+  #[cfg(target_arch = "aarch64")]
   fn kernels() -> Vec<(&'static str, Adler32Fn)> {
     let mut kernels: Vec<(&'static str, Adler32Fn)> = vec![(aarch64::KERNEL_NAME, aarch64::update_safe)];
     if crate::platform::caps().has(crate::platform::caps::aarch64::DOTPROD) {
@@ -464,9 +502,23 @@ mod tests {
     kernels
   }
 
+  /// The riscv64 kernel, with its name. The RISC-V test host must have the V extension, so a
+  /// host without it fails here rather than testing only the portable kernel.
+  #[cfg(target_arch = "riscv64")]
+  fn kernels() -> Vec<(&'static str, Adler32Fn)> {
+    assert!(
+      crate::platform::caps().has(crate::platform::caps::riscv::V),
+      "the RISC-V test host must have the V extension"
+    );
+    vec![(riscv64::KERNEL_NAME, |adler, data| {
+      // SAFETY: The assertion above establishes the V extension.
+      unsafe { riscv64::update(adler, data) }
+    })]
+  }
+
   /// Lengths that end on and around every block, vector, and tail size of the kernels, the
-  /// 5,552-byte portable and the 16 KiB NEON reduction lengths, and 8 KiB and 128 KiB, a few
-  /// times over.
+  /// 5,552-byte portable and the 16 KiB NEON reduction lengths, the RVV reduction lengths of
+  /// 1,024 rows of 16 to 256 bytes, and 8 KiB, a few times over.
   fn lengths() -> Vec<usize> {
     let mut lengths: Vec<usize> = (0..=640).collect();
     for base in [5552usize, 8192, 16_384, 131_072] {
@@ -499,7 +551,7 @@ mod tests {
   /// All-0xff input drives every lane sum to its bound; all-zero input keeps every sum at its
   /// starting value.
   #[test]
-  fn aarch64_kernels_match_portable_for_every_length_alignment_and_start() {
+  fn kernels_match_portable_for_every_length_alignment_and_start() {
     let longest = *lengths().last().expect("lengths are not empty");
     let all: Vec<usize> = (0..64).collect();
     for fill in [None, Some(0xff), Some(0)] {
@@ -529,7 +581,7 @@ mod tests {
 
   /// Writes that straddle the 16 KiB NEON reduction length or span several reductions.
   #[test]
-  fn chunked_aarch64_writes_match_portable_one_shot() {
+  fn chunked_kernel_writes_match_portable_one_shot() {
     for fill in [Some(0xff), None] {
       let data = match fill {
         Some(byte) => vec![byte; 3 * 131_072 + 17],

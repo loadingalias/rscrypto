@@ -31,6 +31,8 @@ pub enum Adler32Force {
   Vmsum,
   /// Force the IBM Z vector-facility kernel (if supported).
   Vsum,
+  /// Force the riscv64 RVV kernel (if supported).
+  Rvv,
 }
 
 impl Adler32Force {
@@ -47,6 +49,7 @@ impl Adler32Force {
       Self::Avx512Vnni => "avx512-vnni",
       Self::Vmsum => "vmsum",
       Self::Vsum => "vsum",
+      Self::Rvv => "rvv",
     }
   }
 }
@@ -79,6 +82,7 @@ fn parse_force_env() -> Adler32Force {
     Adler32Force::Avx512Vnni,
     Adler32Force::Vmsum,
     Adler32Force::Vsum,
+    Adler32Force::Rvv,
   ] {
     if value.eq_ignore_ascii_case(force.as_str()) {
       return force;
@@ -95,7 +99,8 @@ fn clamp_force_to_caps(requested: Adler32Force, caps: Caps) -> Adler32Force {
     all(target_arch = "aarch64", target_feature = "neon"),
     all(target_arch = "x86_64", target_feature = "sse2"),
     all(target_arch = "powerpc64", not(feature = "portable-only")),
-    all(target_arch = "s390x", not(feature = "portable-only"))
+    all(target_arch = "s390x", not(feature = "portable-only")),
+    all(target_arch = "riscv64", not(feature = "portable-only"))
   )))]
   let _ = caps;
 
@@ -145,6 +150,15 @@ fn clamp_force_to_caps(requested: Adler32Force, caps: Caps) -> Adler32Force {
       {
         if caps.has(crate::platform::caps::s390x::VECTOR) {
           return Adler32Force::Vsum;
+        }
+      }
+      Adler32Force::Auto
+    }
+    Adler32Force::Rvv => {
+      #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
+      {
+        if caps.has(crate::platform::caps::riscv::V) {
+          return Adler32Force::Rvv;
         }
       }
       Adler32Force::Auto
@@ -217,6 +231,7 @@ mod tests {
       Adler32Force::Avx512Vnni,
       Adler32Force::Vmsum,
       Adler32Force::Vsum,
+      Adler32Force::Rvv,
     ] {
       assert_eq!(
         clamp_force_to_caps(force, Caps::NONE),
