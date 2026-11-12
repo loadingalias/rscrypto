@@ -14,30 +14,33 @@ const SHORT_ANSWERS: [(&[u8], u32); 5] = [
   (b"Wikipedia", 0x11e6_0398),
 ];
 
-/// `zlib.adler32(bytes(n))` and `zlib.adler32(b"\xff" * n)`. The lengths sit at
-/// the 32-byte block, 5,552-byte classic deferred-reduction, 8 KiB sub-chunk,
-/// and 128 KiB chunk boundaries, and past several chunks. All-0xff input drives
-/// every lane sum to its largest value: 8,192 bytes fill one sub-chunk and
-/// 131,072 bytes one chunk, so a lane that passes the bound that the kernel's
-/// `SUB_SUMS_FIT` or `CHUNK_SUMS_FIT` asserts makes these values wrong.
-const LONG_ANSWERS: [(usize, u32, u32); 16] = [
-  (1, 0x0001_0001, 0x0100_0100),
-  (31, 0x001f_0001, 0xee3e_1ee2),
-  (32, 0x0020_0001, 0x0e2e_1fe1),
-  (33, 0x0021_0001, 0x2f0e_20e0),
-  (5551, 0x15af_0001, 0x5603_9a8d),
-  (5552, 0x15b0_0001, 0xf18f_9b8c),
-  (5553, 0x15b1_0001, 0x8e29_9c8b),
-  (8191, 0x1fff_0001, 0x12d1_e0d3),
-  (8192, 0x2000_0001, 0xf4a3_e1d2),
-  (8193, 0x2001_0001, 0xd783_e2d1),
-  (131_071, 0x001d_0001, 0xb179_1ce4),
-  (131_072, 0x001e_0001, 0xcf5c_1de3),
-  (131_073, 0x001f_0001, 0xee3e_1ee2),
-  (139_269, 0x2023_0001, 0x49e1_04be),
-  (524_319, 0x0097_0001, 0xaa57_966a),
-  (1_048_589, 0x00fd_0001, 0x0dcd_fc04),
+/// `zlib.adler32(bytes(n))`, `zlib.adler32(b"\xff" * n)`, and
+/// `zlib.adler32(b"\xff" * n, MAX_START)`. The lengths sit at the 16-byte step
+/// and at one, two, and three times the 5,552-byte reduction distance (zlib's
+/// NMAX), and past many reductions. All-0xff input from `MAX_START` drives both
+/// sums to the largest values that the portable kernel's `NMAX_FITS` bounds, so
+/// a reduction distance past that bound makes the last column wrong.
+const LONG_ANSWERS: [(usize, u32, u32, u32); 16] = [
+  (1, 0x0001_0001, 0x0100_0100, 0x00fd_00fe),
+  (15, 0x000f_0001, 0x7797_0ef2, 0x7778_0ef0),
+  (16, 0x0010_0001, 0x8788_0ff1, 0x8767_0fef),
+  (17, 0x0011_0001, 0x9878_10f0, 0x9855_10ee),
+  (5551, 0x15af_0001, 0x5603_9a8d, 0x2aa4_9a8b),
+  (5552, 0x15b0_0001, 0xf18f_9b8c, 0xc62e_9b8a),
+  (5553, 0x15b1_0001, 0x8e29_9c8b, 0x62c6_9c89),
+  (11_103, 0x2b5f_0001, 0xc849_3627, 0x718a_3625),
+  (11_104, 0x2b60_0001, 0xff6f_3726, 0xa8ae_3724),
+  (11_105, 0x2b61_0001, 0x37a3_3825, 0xe0d1_3823),
+  (16_655, 0x410f_0001, 0x56e0_d1b2, 0xd4b2_d1b0),
+  (16_656, 0x4110_0001, 0x29a0_d2b1, 0xa770_d2af),
+  (16_657, 0x4111_0001, 0xfd50_d3b0, 0x7b2d_d3ae),
+  (139_269, 0x2023_0001, 0x49e1_04be, 0x099a_04bc),
+  (524_319, 0x0097_0001, 0xaa57_966a, 0xa928_9668),
+  (1_048_589, 0x00fd_0001, 0x0dcd_fc04, 0x0bd2_fc02),
 ];
+
+/// Both sums at 65520, the largest reduced value.
+const MAX_START: u32 = 0xfff0_fff0;
 
 fn oracle(data: &[u8]) -> u32 {
   let mut hasher = simd_adler32::Adler32::new();
@@ -56,9 +59,13 @@ fn checksums_match_zlib_for_short_and_long_input() {
   for (data, expected) in SHORT_ANSWERS {
     assert_eq!(Adler32::checksum(data), expected, "input={data:?}");
   }
-  for (len, zeros, ones) in LONG_ANSWERS {
+  for (len, zeros, ones, ones_from_max) in LONG_ANSWERS {
+    let data = vec![0xff; len];
     assert_eq!(Adler32::checksum(&vec![0; len]), zeros, "{len} zero bytes");
-    assert_eq!(Adler32::checksum(&vec![0xff; len]), ones, "{len} 0xff bytes");
+    assert_eq!(Adler32::checksum(&data), ones, "{len} 0xff bytes");
+    let mut hasher = Adler32::resume(MAX_START);
+    hasher.update(&data);
+    assert_eq!(hasher.finalize(), ones_from_max, "{len} 0xff bytes from MAX_START");
   }
 }
 
@@ -66,12 +73,12 @@ fn checksums_match_zlib_for_short_and_long_input() {
 /// hashing uses must give zlib's value.
 #[test]
 fn long_streams_match_zlib_at_every_chunk_size() {
-  let (len, _, expected) = LONG_ANSWERS
+  let (len, _, expected, _) = LONG_ANSWERS
     .into_iter()
     .find(|&(len, ..)| len == 139_269)
     .expect("the table holds 139,269 bytes");
   let data = vec![0xff; len];
-  for chunk in [1, 31, 33, 4093, 8192, 65_543] {
+  for chunk in [1, 15, 17, 5551, 5553, 65_543] {
     let mut hasher = Adler32::new();
     for part in data.chunks(chunk) {
       hasher.update(part);
@@ -147,14 +154,14 @@ fn combine_takes_a_length_past_2_pow_32_exactly() {
 }
 
 /// Coalescing short writes must not change the checksum: writes around the
-/// 32- and 64-byte flush thresholds and the 512-byte buffer, against the
+/// 16- and 64-byte flush thresholds and the 512-byte buffer, against the
 /// unbuffered checksum of the whole input.
 #[cfg(feature = "alloc")]
 #[test]
 fn buffered_writes_match_the_unbuffered_checksum() {
   let data = patterned(3000);
   let expected = oracle(&data);
-  for size in [1, 3, 31, 32, 33, 63, 64, 65, 511, 512, 513, 3000] {
+  for size in [1, 3, 15, 16, 17, 63, 64, 65, 511, 512, 513, 3000] {
     let mut buffered = Adler32::buffered();
     for part in data.chunks(size) {
       buffered.update(part);

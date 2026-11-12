@@ -300,12 +300,12 @@ fn adler32_buffered_threshold_impl() -> usize {
   THRESHOLD
 }
 
-/// The portable kernel runs 32-byte blocks; shorter updates take the byte tail.
+/// The portable kernel runs 16-byte steps; shorter updates take the byte tail.
 #[cfg(all(feature = "alloc", not(all(target_arch = "aarch64", target_feature = "neon"))))]
 #[inline]
 #[must_use]
 fn adler32_buffered_threshold_impl() -> usize {
-  const THRESHOLD: usize = 32;
+  const THRESHOLD: usize = 16;
   THRESHOLD
 }
 
@@ -363,8 +363,8 @@ mod tests {
   }
 
   /// Lengths that end on and around every block, vector, and tail size of the kernels, the
-  /// 5,552-byte classic reduction length, the 16 KiB NEON and the 8 KiB and 128 KiB portable
-  /// reduction lengths, a few times over.
+  /// 5,552-byte portable and the 16 KiB NEON reduction lengths, and 8 KiB and 128 KiB, a few
+  /// times over.
   fn lengths() -> Vec<usize> {
     let mut lengths: Vec<usize> = (0..=640).collect();
     for base in [5552usize, 8192, 16_384, 131_072] {
@@ -425,7 +425,7 @@ mod tests {
     }
   }
 
-  /// Writes that straddle the 16 KiB NEON and the 128 KiB portable reduction lengths.
+  /// Writes that straddle the 16 KiB NEON reduction length or span several reductions.
   #[test]
   fn chunked_aarch64_writes_match_portable_one_shot() {
     for fill in [Some(0xff), None] {

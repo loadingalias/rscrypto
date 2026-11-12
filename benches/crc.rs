@@ -240,8 +240,8 @@ fn adler32(c: &mut Criterion) {
   if !bench_config::selected("adler32/") {
     return;
   }
-  // 31 bytes is the longest input that skips the 32-byte block loop.
-  let inputs = common::comp_sizes(&[31]);
+  // 15 bytes is the longest input that skips the 16-byte step.
+  let inputs = common::comp_sizes(&[15, 16]);
   let mut g = c.benchmark_group("adler32");
 
   for (len, data) in &inputs {
