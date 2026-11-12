@@ -2660,7 +2660,6 @@ dependencies = [
  "rustls-aws-lc-rs",
  "rustls-pki-types",
  "rustls-ring",
- "rustls-util",
  "rustls-webpki",
  "zeroize",
 ]
@@ -2735,14 +2734,6 @@ dependencies = [
  "rustls-pki-types",
  "subtle",
  "zeroize",
-]
-
-[[package]]
-name = "rustls-util"
-version = "0.24.0-dev.2"
-source = "git+https://github.com/rustls/rustls?rev=0419f479ff5c99a471428ee197e899ccd1629aa8#0419f479ff5c99a471428ee197e899ccd1629aa8"
-dependencies = [
- "rustls",
 ]
 
 [[package]]

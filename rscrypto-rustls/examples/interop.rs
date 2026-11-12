@@ -6,14 +6,13 @@ use alloc::sync::Arc;
 use core::error::Error;
 use core::net::SocketAddr;
 use core::time::Duration;
-use std::io::{self, Read, Write};
+use std::io::{self, Write};
 use std::net::{Shutdown, TcpListener, TcpStream};
 use std::path::Path;
 use std::time::Instant;
 
 use rustls::pki_types::ServerName;
-use rustls::{ClientConfig, Connection, ServerConfig, SideData, Tcp};
-use rustls_util::StreamOwned;
+use rustls::{ClientConfig, Connection, ServerConfig, SideData, Tcp, VecInput};
 
 mod common;
 use common::{credentials, provider};
@@ -23,6 +22,40 @@ const TIMEOUT: Duration = Duration::from_secs(10);
 
 fn invalid(message: &str) -> io::Error {
   io::Error::new(io::ErrorKind::InvalidInput, message)
+}
+
+/// One TLS connection over a blocking socket, with its record buffers.
+struct Stream<S: SideData> {
+  conn: Connection<S, Tcp>,
+  sock: TcpStream,
+  input: VecInput,
+  output: Vec<u8>,
+  plaintext: Vec<u8>,
+}
+
+impl<S: SideData> Stream<S> {
+  /// Sends every queued TLS record.
+  fn flush(&mut self) -> io::Result<()> {
+    self.sock.write_all(&self.output)?;
+    self.output.clear();
+    Ok(())
+  }
+
+  /// Reads once from the socket, processes every complete record, and sends
+  /// what processing queued: a handshake flight, a KeyUpdate reply, or the
+  /// alert for a TLS failure. A TLS failure outranks a failed send.
+  fn receive(&mut self) -> Result<(), Box<dyn Error>> {
+    if self.input.read(&mut self.sock)? == 0 {
+      return Err(io::Error::from(io::ErrorKind::UnexpectedEof).into());
+    }
+    let processed = self
+      .conn
+      .read_tls(&mut self.input, &mut self.output)
+      .handle_all(&mut self.plaintext);
+    let sent = self.flush();
+    processed?;
+    Ok(sent?)
+  }
 }
 
 fn exchange(
@@ -36,34 +69,37 @@ fn exchange(
   socket.set_nonblocking(false)?;
   socket.set_read_timeout(Some(TIMEOUT))?;
   socket.set_write_timeout(Some(TIMEOUT))?;
-  let mut stream = StreamOwned::new(connection, socket, output);
-  rustls_util::complete_io(
-    &mut stream.sock,
-    &mut stream.input,
-    &mut stream.received_plaintext,
-    &mut stream.output,
-    &mut stream.conn,
-  )?;
-  if stream.conn.is_handshaking() || stream.conn.alpn_protocol().map(AsRef::as_ref) != Some(b"provider-test".as_slice())
-  {
-    return Err(invalid("handshake or ALPN mismatch").into());
+  let mut stream = Stream {
+    conn: connection,
+    sock: socket,
+    input: VecInput::default(),
+    output,
+    plaintext: Vec::new(),
+  };
+  stream.flush()?;
+  while stream.conn.is_handshaking() {
+    stream.receive()?;
+  }
+  if stream.conn.alpn_protocol().map(AsRef::as_ref) != Some(b"provider-test".as_slice()) {
+    return Err(invalid("ALPN mismatch").into());
   }
   for round in 0..2 {
     if client {
-      stream.write_all(PAYLOAD)?;
+      stream.conn.write(PAYLOAD.into(), &mut stream.output)?;
       stream.flush()?;
     }
-    let mut received = vec![0; PAYLOAD.len()];
-    stream.read_exact(&mut received)?;
+    while stream.plaintext.len() < PAYLOAD.len() {
+      stream.receive()?;
+    }
     let mut expected = PAYLOAD.to_vec();
     if reverse {
       expected[..PAYLOAD.len().strict_sub(1)].reverse();
     }
-    if received != expected {
+    if stream.plaintext.drain(..PAYLOAD.len()).as_slice() != expected {
       return Err(invalid("peer payload mismatch").into());
     }
     if !client {
-      stream.write_all(PAYLOAD)?;
+      stream.conn.write(PAYLOAD.into(), &mut stream.output)?;
     }
     // TLS 1.2 has no KeyUpdate.
     if round == 0 && stream.conn.protocol_version() == Some(rustls::enums::ProtocolVersion::TLSv1_3) {
