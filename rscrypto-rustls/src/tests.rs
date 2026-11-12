@@ -95,7 +95,7 @@ mod client;
 #[cfg(all(
   feature = "chacha20-rng",
   feature = "hkdf",
-  any(feature = "aes-gcm", feature = "chacha20poly1305"),
+  feature = "aes-gcm",
   feature = "x25519",
   feature = "ed25519"
 ))]
