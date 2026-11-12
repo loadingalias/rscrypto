@@ -140,6 +140,12 @@ mod fast_rapidhash;
 #[path = "../target_impls/fast_xxh3.rs"]
 mod fast_xxh3;
 
+#[path = "../target_impls/fast_xxh32.rs"]
+mod fast_xxh32;
+
+#[path = "../target_impls/fast_xxh64.rs"]
+mod fast_xxh64;
+
 #[path = "../target_impls/hash_ascon.rs"]
 mod hash_ascon;
 
@@ -497,6 +503,18 @@ fn replay_fast_rapidhash_corpus() {
 fn replay_fast_xxh3_corpus() {
   let replayed = replay_corpus_dir("fast_xxh3", corpus_dir("fast_xxh3"), fast_xxh3::run);
   assert_ne!(replayed, 0, "fast_xxh3 corpus should not be empty");
+}
+
+#[test]
+fn replay_fast_xxh32_corpus() {
+  let replayed = replay_corpus_dir("fast_xxh32", corpus_dir("fast_xxh32"), fast_xxh32::run);
+  assert_ne!(replayed, 0, "fast_xxh32 corpus should not be empty");
+}
+
+#[test]
+fn replay_fast_xxh64_corpus() {
+  let replayed = replay_corpus_dir("fast_xxh64", corpus_dir("fast_xxh64"), fast_xxh64::run);
+  assert_ne!(replayed, 0, "fast_xxh64 corpus should not be empty");
 }
 
 #[test]

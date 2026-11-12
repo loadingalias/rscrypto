@@ -74,7 +74,7 @@ siphasher = "1.0.4"
 
 # Fast hashes
 rapidhash = "=4.5.1"
-xxhash-rust = { version = "0.8.19", features = ["xxh3"] }
+xxhash-rust = { version = "0.8.19", features = ["xxh3", "xxh32", "xxh64"] }
 
 # Checksums
 crc = "3.4.0"
@@ -361,6 +361,16 @@ doc = false
 [[bin]]
 name = "fast_rapidhash"
 path = "fuzz_targets/fast_rapidhash.rs"
+doc = false
+
+[[bin]]
+name = "fast_xxh32"
+path = "fuzz_targets/fast_xxh32.rs"
+doc = false
+
+[[bin]]
+name = "fast_xxh64"
+path = "fuzz_targets/fast_xxh64.rs"
 doc = false
 
 [[bin]]

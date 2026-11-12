@@ -1,0 +1,22 @@
+[package]
+name = "rscrypto-fuzz-fast-xxh32"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4.13"
+rscrypto = { path = "../..", features = ["std", "xxh32"] }
+rscrypto_fuzz = { package = "rscrypto-fuzz-support", path = "../../fuzz/support" }
+xxhash-rust = { version = "0.8.19", features = ["xxh32"] }
+
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "fast_xxh32"
+path = "fuzz_targets/fast_xxh32.rs"
+doc = false

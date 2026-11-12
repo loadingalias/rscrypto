@@ -78,6 +78,8 @@ auxiliary_cargo_manifests = [
   "fuzz-packages/checksums-crc64/Cargo.toml",
   "fuzz-packages/fast-rapidhash/Cargo.toml",
   "fuzz-packages/fast-xxh3/Cargo.toml",
+  "fuzz-packages/fast-xxh32/Cargo.toml",
+  "fuzz-packages/fast-xxh64/Cargo.toml",
   "fuzz-packages/hash-ascon/Cargo.toml",
   "fuzz-packages/hash-blake2/Cargo.toml",
   "fuzz-packages/hash-blake3/Cargo.toml",
