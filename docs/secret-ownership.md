@@ -302,20 +302,27 @@ their existing lifetimes; this boundary adds no secret owner or allocation.
 
 ### Composite ML-DSA
 
-- A composite secret key holds its components in their own owners: the ML-DSA-65 seed
-  (`MlDsa65Seed`), the expanded `MlDsa65SecretKey`, and an `Ed25519Keypair` or an
-  `EcdsaP256SecretKey` with its public point. Each owner clears itself on drop; the composite adds
-  no secret storage of its own.
-- Import expands the seed and validates the traditional key into those owners. A rejected import
-  drops every owner already built. Raw and PKCS #8 import borrow the caller's input and do not clear it.
+- A composite secret key holds its components in their own owners: a 32-byte zeroizing owner for
+  the ML-DSA-65 seed, the expanded `MlDsa65SecretKey`, and an `Ed25519Keypair` or an
+  `EcdsaP256SecretKey` with its public point. Each owner clears itself on drop.
+- Every constructor starts from a zero-filled key and fills each owner in place: import validates
+  the traditional key, then copies and expands the seed; generation fills and expands the seed,
+  then generates the traditional key. A rejected import or a failed generation drops the
+  partly filled key, which clears every owner. Raw and PKCS #8 import borrow the caller's input
+  and do not clear it.
 - `expose_secret` and `to_pkcs8_der_into` assemble the raw encoding in a zeroizing owner, then
   copy it into the returned `SecretBytes` or the caller's buffer.
 - Hedged signing draws all randomness into one zeroizing owner before any secret computation.
   The message representative holds only public data.
 - `prepare` and `prepare_in` prepare the ML-DSA key as [ML-DSA storage](#ml-dsa-storage) describes,
   and keep an explicit `duplicate_secret` copy of the traditional key, which the prepared key owns.
-- The constructors return by value, as ML-DSA's by-value constructors do, and leave moved-from
-  copies in the caller's frame. There are no `*_in` constructors yet.
+- With `alloc`, `generate_keypair_in`, `try_generate_keypair_in`, `SecretKey::try_from_slice_in`,
+  and `SecretKey::from_pkcs8_der_in` fill the key in an allocation from a caller-selected
+  `Allocator` and return `Box<SecretKey, A>`. Signing through the box reads the key in place.
+  A wrong length and malformed PKCS #8 are rejected before allocating; a later rejection clears
+  and frees the box before returning.
+- The by-value constructors fill the key on the stack the same way, then return it by value, as
+  ML-DSA's by-value constructors do, and leave moved-from copies in the caller's frame.
 
 ### ML-KEM allocation
 

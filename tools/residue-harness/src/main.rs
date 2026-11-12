@@ -886,6 +886,171 @@ hkdf!(hkdf_sha256, HkdfSha256, u32, 64, SHA256_H0, compress256);
 hkdf!(hkdf_sha384, HkdfSha384, u64, 128, SHA384_H0, compress512);
 hkdf!(hkdf_sha512, HkdfSha512, u64, 128, SHA512_H0, compress512);
 
+/// A xorshift stream from `seed`, so the ML-DSA-65 seed and the traditional
+/// key are distinct, non-repeating needles. A repeated byte would also equal
+/// its own limb form and match any run of that byte.
+fn composite_fill(seed: u32) -> impl FnMut(&mut [u8]) -> Result<(), rscrypto::CompositeMlDsaError> {
+  let mut state = seed;
+  move |out| {
+    for byte in out.iter_mut() {
+      state ^= state << 13;
+      state ^= state >> 17;
+      state ^= state << 5;
+      *byte = black_box(state.to_le_bytes()[1]);
+    }
+    Ok(())
+  }
+}
+
+/// Hedged composite signing randomness (32 bytes with Ed25519, 96 with P-256),
+/// also a needle.
+const COMPOSITE_RANDOM: [u8; 96] = {
+  let mut bytes = [0u8; 96];
+  let mut state = 0x2545_F491_u32;
+  let mut index = 0;
+  while index < bytes.len() {
+    state ^= state << 13;
+    state ^= state >> 17;
+    state ^= state << 5;
+    bytes[index] = state.to_le_bytes()[2];
+    index += 1;
+  }
+  bytes
+};
+const COMPOSITE_MESSAGE: &[u8] = b"rscrypto composite ML-DSA residue";
+
+/// The Ed25519 seed and its SHA-512 expansion: the clamped scalar and the nonce prefix.
+fn ed25519_needles(seed: &[u8]) {
+  use sha2::Digest as _;
+  let digest = sha2::Sha512::digest(seed);
+  let mut scalar = [0u8; 32];
+  scalar.copy_from_slice(&digest[..32]);
+  scalar[0] &= 248;
+  scalar[31] &= 127;
+  scalar[31] |= 64;
+  needle("ed25519_seed", seed);
+  needle("ed25519_scalar", &scalar);
+  needle("ed25519_prefix", &digest[32..]);
+}
+
+/// The P-256 scalar of the draft's `ECPrivateKey` form, after its 7-byte
+/// header, and the scalar as signing holds it: little-endian 64-bit limbs,
+/// which on these little-endian boards are the reversed big-endian bytes.
+fn p256_needles(ec_private_key: &[u8]) {
+  let scalar = &ec_private_key[7..39];
+  let mut limbs = [0u8; 32];
+  limbs.copy_from_slice(scalar);
+  limbs.reverse();
+  needle("p256_scalar", scalar);
+  needle("p256_scalar_limbs", &limbs);
+}
+
+macro_rules! composite {
+  ($module:ident, $profile:ident, $secret:ident, $seed:literal, $random:literal, $traditional:path) => {
+    mod $module {
+      use super::*;
+      use rscrypto::{$profile, $secret};
+
+      static SECRET: KeyCell<$secret> = KeyCell::new();
+
+      pub(super) fn keygen() {
+        let keys = $profile::generate_keypair(composite_fill($seed)).expect("key generation");
+        black_box(&keys);
+      }
+
+      pub(super) fn keygen_in() {
+        let keys = $profile::generate_keypair_in(composite_fill($seed), &ARENA).expect("key generation");
+        black_box(&keys);
+      }
+
+      pub(super) fn prepare_import() {
+        let (_, key) = $profile::generate_keypair_in(composite_fill($seed), &HEAP).expect("key generation");
+        key_input_mut::<{ $secret::LENGTH }>().copy_from_slice(key.expose_secret().as_bytes());
+      }
+
+      pub(super) fn import() {
+        let key = $secret::try_from_slice(key_input($secret::LENGTH)).expect("import");
+        black_box(&key);
+      }
+
+      pub(super) fn import_in() {
+        let key = $secret::try_from_slice_in(key_input($secret::LENGTH), &ARENA).expect("import");
+        black_box(&key);
+      }
+
+      pub(super) fn prepare_pkcs8() {
+        let (_, key) = $profile::generate_keypair_in(composite_fill($seed), &HEAP).expect("key generation");
+        key.to_pkcs8_der_into(key_input_mut());
+      }
+
+      pub(super) fn pkcs8() {
+        let key = $secret::from_pkcs8_der(key_input($secret::PKCS8_DER_LENGTH)).expect("import");
+        black_box(&key);
+      }
+
+      pub(super) fn pkcs8_in() {
+        let key = $secret::from_pkcs8_der_in(key_input($secret::PKCS8_DER_LENGTH), &ARENA).expect("import");
+        black_box(&key);
+      }
+
+      /// The key lives outside every scanned region, as a boxed key does.
+      pub(super) fn prepare_sign() {
+        let (_, key) = $profile::generate_keypair(composite_fill($seed)).expect("key generation");
+        SECRET.set(key);
+      }
+
+      pub(super) fn sign() {
+        let signature = SECRET.get().sign_deterministic(black_box(COMPOSITE_MESSAGE), b"");
+        black_box(&signature).as_ref().expect("signature");
+      }
+
+      pub(super) fn sign_hedged() {
+        let signature = SECRET.get().sign_with(black_box(COMPOSITE_MESSAGE), b"", |out| {
+          out.copy_from_slice(black_box(&COMPOSITE_RANDOM[..$random]));
+          Ok(())
+        });
+        black_box(&signature).as_ref().expect("signature");
+      }
+
+      pub(super) fn needles() {
+        let (_, key) = $profile::generate_keypair_in(composite_fill($seed), &HEAP).expect("key generation");
+        let raw = key.expose_secret();
+        let (seed, traditional) = raw.as_bytes().split_at(32);
+        needle("mldsa_seed", seed);
+        let (_, expanded) =
+          MlDsa65::keypair_from_seed_in(seed.try_into().expect("seed"), &HEAP).expect("key generation");
+        let expanded = expanded.expose_secret();
+        // sk = rho || K || tr || s1 || s2 || t0; rho and tr are public.
+        needle("mldsa_K", &expanded.as_bytes()[32..64]);
+        needle("mldsa_s1_s2_t0", &expanded.as_bytes()[128..]);
+        $traditional(traditional);
+      }
+
+      pub(super) fn hedged_needles() {
+        needles();
+        needle("random", &COMPOSITE_RANDOM[..$random]);
+      }
+    }
+  };
+}
+
+composite!(
+  composite_ed25519,
+  MlDsa65Ed25519,
+  MlDsa65Ed25519SecretKey,
+  0x6E25_5190,
+  32,
+  ed25519_needles
+);
+composite!(
+  composite_p256,
+  MlDsa65EcdsaP256,
+  MlDsa65EcdsaP256SecretKey,
+  0x0256_ECD5,
+  96,
+  p256_needles
+);
+
 macro_rules! scenario {
   ($name:literal, $expect:literal, $run:path, $needles:path) => {
     scenario!($name, $expect, nothing, $run, $needles)
@@ -1468,9 +1633,132 @@ const SCENARIOS: &[Scenario] = &[
     slhdsa_shake_256f::verify,
     slhdsa_shake_256f::needles
   ),
-  scenario!("hkdf-sha256-extract", "none", hkdf_sha256::extract, hkdf_sha256::needles),
-  scenario!("hkdf-sha384-extract", "none", hkdf_sha384::extract, hkdf_sha384::needles),
-  scenario!("hkdf-sha512-extract", "none", hkdf_sha512::extract, hkdf_sha512::needles),
+  scenario!(
+    "hkdf-sha256-extract",
+    "none",
+    hkdf_sha256::extract,
+    hkdf_sha256::needles
+  ),
+  scenario!(
+    "hkdf-sha384-extract",
+    "none",
+    hkdf_sha384::extract,
+    hkdf_sha384::needles
+  ),
+  scenario!(
+    "hkdf-sha512-extract",
+    "none",
+    hkdf_sha512::extract,
+    hkdf_sha512::needles
+  ),
+  scenario!(
+    "mldsa65-ed25519-keygen",
+    "report",
+    composite_ed25519::keygen,
+    composite_ed25519::needles
+  ),
+  scenario!(
+    "mldsa65-ed25519-keygen-in",
+    "none",
+    composite_ed25519::keygen_in,
+    composite_ed25519::needles
+  ),
+  scenario!(
+    "mldsa65-ed25519-import",
+    "report",
+    composite_ed25519::prepare_import,
+    composite_ed25519::import,
+    composite_ed25519::needles
+  ),
+  scenario!(
+    "mldsa65-ed25519-import-in",
+    "none",
+    composite_ed25519::prepare_import,
+    composite_ed25519::import_in,
+    composite_ed25519::needles
+  ),
+  scenario!(
+    "mldsa65-ed25519-pkcs8",
+    "report",
+    composite_ed25519::prepare_pkcs8,
+    composite_ed25519::pkcs8,
+    composite_ed25519::needles
+  ),
+  scenario!(
+    "mldsa65-ed25519-pkcs8-in",
+    "none",
+    composite_ed25519::prepare_pkcs8,
+    composite_ed25519::pkcs8_in,
+    composite_ed25519::needles
+  ),
+  scenario!(
+    "mldsa65-ed25519-sign",
+    "none",
+    composite_ed25519::prepare_sign,
+    composite_ed25519::sign,
+    composite_ed25519::needles
+  ),
+  scenario!(
+    "mldsa65-ed25519-sign-hedged",
+    "none",
+    composite_ed25519::prepare_sign,
+    composite_ed25519::sign_hedged,
+    composite_ed25519::hedged_needles
+  ),
+  scenario!(
+    "mldsa65-ecdsa-p256-keygen",
+    "report",
+    composite_p256::keygen,
+    composite_p256::needles
+  ),
+  scenario!(
+    "mldsa65-ecdsa-p256-keygen-in",
+    "none",
+    composite_p256::keygen_in,
+    composite_p256::needles
+  ),
+  scenario!(
+    "mldsa65-ecdsa-p256-import",
+    "report",
+    composite_p256::prepare_import,
+    composite_p256::import,
+    composite_p256::needles
+  ),
+  scenario!(
+    "mldsa65-ecdsa-p256-import-in",
+    "none",
+    composite_p256::prepare_import,
+    composite_p256::import_in,
+    composite_p256::needles
+  ),
+  scenario!(
+    "mldsa65-ecdsa-p256-pkcs8",
+    "report",
+    composite_p256::prepare_pkcs8,
+    composite_p256::pkcs8,
+    composite_p256::needles
+  ),
+  scenario!(
+    "mldsa65-ecdsa-p256-pkcs8-in",
+    "none",
+    composite_p256::prepare_pkcs8,
+    composite_p256::pkcs8_in,
+    composite_p256::needles
+  ),
+  scenario!(
+    "mldsa65-ecdsa-p256-sign",
+    "none",
+    composite_p256::prepare_sign,
+    composite_p256::sign,
+    composite_p256::needles
+  ),
+  scenario!(
+    "mldsa65-ecdsa-p256-sign-hedged",
+    "none",
+    composite_p256::prepare_sign,
+    composite_p256::sign_hedged,
+    composite_p256::hedged_needles
+  ),
 ];
 
 #[unsafe(no_mangle)]

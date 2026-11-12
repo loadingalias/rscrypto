@@ -442,14 +442,9 @@ macro_rules! parameter_set {
       /// Use a fresh cryptographically random seed in production. The caller owns
       /// cleanup of the borrowed seed. Internal sampler exhaustion returns an error.
       pub fn keypair_from_seed(seed: &[u8; 32]) -> Result<($public, $secret), MlDsaError> {
-        let mut public = $public([0; $pk]);
-        let mut bytes = ZeroizingBytes::<$sk>::zeroed();
-        portable::keygen::<$k, $l>(seed, $p, &mut public.0, bytes.as_mut_array())?;
-        let secret = $secret {
-          bytes: ZeroizingBytes::new(*bytes.as_array()),
-          public: public.clone(),
-        };
-        Ok((public, secret))
+        let mut secret = $secret::zeroed();
+        secret.expand_seed_into(seed)?;
+        Ok((secret.public.clone(), secret))
       }
 
       /// Generate keys using 32 bytes from `fill_random`.
@@ -481,7 +476,7 @@ macro_rules! parameter_set {
         alloc: A,
       ) -> Result<($public, Box<$secret, A>), MlDsaError> {
         let mut secret = Box::new_in($secret::zeroed(), alloc);
-        portable::keygen::<$k, $l>(seed, $p, &mut secret.public.0, secret.bytes.as_mut_array())?;
+        secret.expand_seed_into(seed)?;
         Ok((secret.public.clone(), secret))
       }
 
@@ -671,13 +666,18 @@ macro_rules! parameter_set {
         Ok(secret)
       }
 
-      /// Zero-filled owner that an allocation is filled from; never returned.
-      #[cfg(feature = "alloc")]
-      const fn zeroed() -> Self {
+      /// Zero-filled owner that a constructor fills in place; never returned unfilled.
+      pub(crate) const fn zeroed() -> Self {
         Self {
           bytes: ZeroizingBytes::zeroed(),
           public: $public([0; $pk]),
         }
+      }
+
+      /// Expand `seed` into this owner in place. On failure the owner holds
+      /// partial key material, which it clears on drop.
+      pub(crate) fn expand_seed_into(&mut self, seed: &[u8; 32]) -> Result<(), MlDsaError> {
+        portable::keygen::<$k, $l>(seed, $p, &mut self.public.0, self.bytes.as_mut_array())
       }
 
       /// DER length of this key as an RFC 9881 expanded-form PKCS #8 private key.

@@ -591,7 +591,9 @@ impl Ed25519Keypair {
   /// Try to generate a keypair by filling secret-key bytes from the provided closure.
   #[inline]
   pub fn try_generate_with<E>(fill: impl FnMut(&mut [u8]) -> Result<(), E>) -> Result<Self, E> {
-    Ed25519SecretKey::try_generate_with(fill).map(Self::from_secret_key)
+    let mut keypair = Self::zeroed();
+    keypair.generate_into(fill)?;
+    Ok(keypair)
   }
 
   /// Try to generate a keypair from the platform entropy source.
@@ -609,14 +611,49 @@ impl Ed25519Keypair {
   /// Derive a keypair from a secret key.
   #[must_use]
   pub fn from_secret_key(secret: Ed25519SecretKey) -> Self {
-    let _dit = crate::traits::ct::DataIndependentTiming::enter();
-    let expanded = hash::ExpandedSecret::from_secret_key(&secret);
-    let public = public_key_from_scalar(expanded.scalar_bytes());
-    Self {
+    let mut keypair = Self {
       secret,
-      public,
-      expanded,
+      ..Self::zeroed()
+    };
+    keypair.derive_in_place();
+    keypair
+  }
+
+  /// Zero-filled keypair that the in-place constructors fill; never returned unfilled.
+  pub(crate) const fn zeroed() -> Self {
+    Self {
+      secret: Ed25519SecretKey([0; SECRET_KEY_LENGTH]),
+      public: Ed25519PublicKey {
+        bytes: [0; PUBLIC_KEY_LENGTH],
+        point: None,
+        small_order: false,
+      },
+      expanded: hash::ExpandedSecret::zeroed(),
     }
+  }
+
+  /// Import the secret key `bytes` into this keypair in place, as
+  /// [`Self::from_secret_key`] does.
+  #[cfg(feature = "mldsa65-ed25519")]
+  pub(crate) fn import_into(&mut self, bytes: &[u8; SECRET_KEY_LENGTH]) {
+    self.secret.0.copy_from_slice(bytes);
+    self.derive_in_place();
+  }
+
+  /// Generate into this keypair in place, as [`Self::try_generate_with`] does.
+  /// `fill` is called once; on its error the keypair holds a partial secret,
+  /// which it clears on drop.
+  pub(crate) fn generate_into<E>(&mut self, mut fill: impl FnMut(&mut [u8]) -> Result<(), E>) -> Result<(), E> {
+    fill(&mut self.secret.0)?;
+    self.derive_in_place();
+    Ok(())
+  }
+
+  /// Derive the expansion and the public key from `self.secret` in place.
+  fn derive_in_place(&mut self) {
+    let _dit = crate::traits::ct::DataIndependentTiming::enter();
+    self.expanded.expand_into(&self.secret);
+    self.public = public_key_from_scalar(self.expanded.scalar_bytes());
   }
 
   /// Borrow the secret key.

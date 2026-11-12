@@ -497,7 +497,50 @@ impl EcdsaP256SecretKey {
 
   /// Parse a P-256 secret scalar.
   pub fn from_bytes(bytes: [u8; Self::LENGTH]) -> Result<Self, EcdsaError> {
-    Self::from_zeroizing_bytes(ZeroizingBytes::new(bytes))
+    let bytes = ZeroizingBytes::new(bytes);
+    let mut key = Self::zeroed();
+    key.import_into(bytes.as_array())?;
+    Ok(key)
+  }
+
+  /// Zero-filled owner that the in-place constructors fill; never returned unfilled.
+  pub(crate) const fn zeroed() -> Self {
+    Self([0; Self::LENGTH])
+  }
+
+  /// Import the scalar `bytes` into this owner in place, as [`Self::from_bytes`]
+  /// does. A rejected scalar stays in the owner, which clears it on drop.
+  pub(crate) fn import_into(&mut self, bytes: &[u8; Self::LENGTH]) -> Result<(), EcdsaError> {
+    self.0.copy_from_slice(bytes);
+    self.validate()
+  }
+
+  /// Generate into this owner in place, as [`Self::try_generate_with`] does:
+  /// each candidate is written here, and a rejected one is cleared before
+  /// the next fill.
+  pub(crate) fn generate_into<E>(
+    &mut self,
+    mut fill: impl FnMut(&mut [u8]) -> Result<(), E>,
+  ) -> Result<(), EcdsaKeyGenerationError<E>> {
+    for _ in 0..ECDSA_KEY_GENERATION_ATTEMPTS {
+      ct::zeroize(&mut self.0);
+      fill(&mut self.0).map_err(EcdsaKeyGenerationError::Random)?;
+      match self.validate() {
+        Ok(()) => return Ok(()),
+        Err(EcdsaError::InvalidSecretKey) => continue,
+        Err(_) => return Err(EcdsaKeyGenerationError::InvalidSecretKey),
+      }
+    }
+
+    Err(EcdsaKeyGenerationError::InvalidSecretKey)
+  }
+
+  /// Reject a zero or out-of-range scalar.
+  fn validate(&self) -> Result<(), EcdsaError> {
+    if !secret_scalar_is_valid::<4, { Self::LENGTH }>(&self.0, P256_ORDER) {
+      return Err(EcdsaError::InvalidSecretKey);
+    }
+    Ok(())
   }
 
   /// Length of [`Self::to_pkcs8_der_into`]'s encoding in bytes.
@@ -585,19 +628,11 @@ impl EcdsaP256SecretKey {
   /// curve order. The retry budget is bounded so a broken deterministic filler
   /// cannot spin forever.
   pub fn try_generate_with<E>(
-    mut fill: impl FnMut(&mut [u8]) -> Result<(), E>,
+    fill: impl FnMut(&mut [u8]) -> Result<(), E>,
   ) -> Result<Self, EcdsaKeyGenerationError<E>> {
-    for _ in 0..ECDSA_KEY_GENERATION_ATTEMPTS {
-      let mut bytes = ZeroizingBytes::zeroed();
-      fill(bytes.as_mut_array()).map_err(EcdsaKeyGenerationError::Random)?;
-      match Self::from_zeroizing_bytes(bytes) {
-        Ok(key) => return Ok(key),
-        Err(EcdsaError::InvalidSecretKey) => continue,
-        Err(_) => return Err(EcdsaKeyGenerationError::InvalidSecretKey),
-      }
-    }
-
-    Err(EcdsaKeyGenerationError::InvalidSecretKey)
+    let mut key = Self::zeroed();
+    key.generate_into(fill)?;
+    Ok(key)
   }
 
   /// Try to generate a P-256 secret key from the platform entropy source.
@@ -619,17 +654,10 @@ impl EcdsaP256SecretKey {
   /// [`Self::try_generate_with`] when the entropy source can fail; this method
   /// remains supported until the newer name has shipped for one release.
   pub fn generate(fill: impl FnOnce(&mut [u8; Self::LENGTH])) -> Result<Self, EcdsaError> {
-    let mut bytes = ZeroizingBytes::zeroed();
-    fill(bytes.as_mut_array());
-    Self::from_zeroizing_bytes(bytes)
-  }
-
-  fn from_zeroizing_bytes(bytes: ZeroizingBytes<{ Self::LENGTH }>) -> Result<Self, EcdsaError> {
-    if !secret_scalar_is_valid::<4, { Self::LENGTH }>(bytes.as_array(), P256_ORDER) {
-      return Err(EcdsaError::InvalidSecretKey);
-    }
-
-    Ok(Self(*bytes.as_array()))
+    let mut key = Self::zeroed();
+    fill(&mut key.0);
+    key.validate()?;
+    Ok(key)
   }
 
   /// Explicitly extract the secret key bytes into a zeroizing wrapper.

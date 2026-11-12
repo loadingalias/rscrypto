@@ -26,30 +26,33 @@ impl ExpandedSecret {
   /// Expand a 32-byte Ed25519 secret key into clamped scalar bytes and nonce prefix.
   #[must_use]
   pub(crate) fn from_secret_key(secret: &Ed25519SecretKey) -> Self {
+    let mut expanded = Self::zeroed();
+    expanded.expand_into(secret);
+    expanded
+  }
+
+  /// Zero-filled owner that [`Self::expand_into`] fills in place.
+  pub(crate) const fn zeroed() -> Self {
+    Self {
+      scalar_bytes: [0; SECRET_KEY_LENGTH],
+      nonce_prefix: [0; SECRET_KEY_LENGTH],
+    }
+  }
+
+  /// Expand `secret` into this owner in place, as [`Self::from_secret_key`] does.
+  pub(crate) fn expand_into(&mut self, secret: &Ed25519SecretKey) {
     let mut digest = Sha512::digest_secret(secret.as_bytes());
     let (scalar_source, prefix_source) = digest.as_slice().split_at(SECRET_KEY_LENGTH);
 
-    let mut scalar_bytes = [0u8; SECRET_KEY_LENGTH];
-    let mut nonce_prefix = [0u8; SECRET_KEY_LENGTH];
-
-    for (dst, src) in scalar_bytes.iter_mut().zip(scalar_source.iter().copied()) {
+    for (dst, src) in self.scalar_bytes.iter_mut().zip(scalar_source.iter().copied()) {
       *dst = src;
     }
-    for (dst, src) in nonce_prefix.iter_mut().zip(prefix_source.iter().copied()) {
+    for (dst, src) in self.nonce_prefix.iter_mut().zip(prefix_source.iter().copied()) {
       *dst = src;
     }
 
     ct::zeroize(&mut digest);
-    clamp_secret_scalar(&mut scalar_bytes);
-
-    let expanded = Self {
-      scalar_bytes,
-      nonce_prefix,
-    };
-    ct::zeroize_no_fence(&mut scalar_bytes);
-    ct::zeroize_no_fence(&mut nonce_prefix);
-    core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
-    expanded
+    clamp_secret_scalar(&mut self.scalar_bytes);
   }
 
   /// Return the clamped scalar bytes.

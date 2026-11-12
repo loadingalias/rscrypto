@@ -20,7 +20,7 @@ strip = false
 panic = "abort"
 
 [dependencies]
-rscrypto = { path = "../..", default-features = false, features = ["alloc", "hkdf", "ml-dsa", "ml-kem", "slh-dsa"] }
+rscrypto = { path = "../..", default-features = false, features = ["alloc", "hkdf", "ml-dsa", "ml-kem", "mldsa65-ecdsa-p256", "mldsa65-ed25519", "slh-dsa"] }
 sha2 = { version = "=0.11.1", default-features = false }
 
 [features]

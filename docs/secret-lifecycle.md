@@ -298,8 +298,14 @@ erasure of every compiler-created copy, register, or spill.
   returns before signing and leaves the key usable.
 - Raw and PKCS #8 export assemble the encoding in a zeroizing owner. A rejected import drops the
   component owners already built.
-- By-value constructors leave moved-from copies of the ML-DSA expanded key and the traditional key
-  in the caller's frame, as the by-value ML-DSA constructors do. Residue is not yet measured.
+- Every constructor fills a zero-filled key in place: the ML-DSA-65 seed owner, the expanded key
+  through `expand_seed_into`, and the Ed25519 keypair or the P-256 scalar and its point. The `*_in`
+  constructors do this inside the box. The by-value constructors do it on the stack and then
+  return the key by value, which leaves moved-from copies in the caller's frame, as the by-value
+  ML-DSA constructors do. A failed `*_in` call clears and frees the box before it returns.
+- In the measured RV32 and Cortex-M runs, the `*_in` constructors and signing through a key held in
+  place leave no copies; the by-value constructors leave one to three. See
+  [the residue results](#optimized-evidence).
 
 ### SLH-DSA
 
@@ -664,10 +670,32 @@ on `nightly-2026-10-14` and QEMU 11.1.2. Each scenario searches for the PRK and 
   The scenarios now require this.
 - Raw results: `benchmark_results/hkdf-extract-residue-20261016/` (local).
 
+On 2026-11-12 the harness measured composite ML-DSA with `just stack-residue`, at `af2f10d3` plus
+the change that adds these scenarios, on `nightly-2026-10-24` (rustc 1.101.0-nightly `48f4b0553`)
+and QEMU 11.1.3, on both boards with both backends. Each scenario searches for the ML-DSA-65 seed,
+`K`, and the encoded `s1`, `s2`, and `t0`, and for the Ed25519 seed, clamped scalar, and nonce
+prefix, or the P-256 scalar in its encoding and in its 64-bit limb form. The key bytes are distinct
+and non-repeating:
+
+- `generate_keypair_in`, `try_from_slice_in`, and `from_pkcs8_der_in` leave none of these bytes on
+  the stack or in the freed allocation, for both composites, both boards, and both backends.
+- Deterministic and hedged signing from a key held outside the scanned regions, as a boxed key is,
+  leave none of these bytes or of the hedging randomness. The scenarios now require both.
+- The by-value constructors leave the moved-from copies that the `*_in` constructors exist to
+  avoid: key generation leaves three whole copies of every component secret; raw and PKCS #8 import
+  leave two and three with Ed25519, and with P-256 one and two of `K`, `s1`, `s2`, `t0`, and the
+  scalar, and 16 bytes of the ML-DSA seed (one whole copy on Cortex-M3 after PKCS #8 import).
+  These scenarios report and do not judge. No limb-form copy of the P-256 scalar was found.
+- Limits: the boards are emulated RV32 and Cortex-M3, not the native targets; the scans cover the
+  dead stack and two allocator arenas, not registers; and the needles are the component secrets
+  and the hedging randomness, not transient signing values such as nonces.
+- The raw logs were not retained; their `report.json` had SHA-256
+  `a13984817207221360c4008b86cc9b2f193c2bae21ac4f3be9ec76cf3059cfc6`.
+
 An earlier campaign, whose harness was removed on 2026-09-28,
 also found 4.2–6.4 KiB of prepared ML-KEM state after import, preparation, and decapsulation.
-The rebuilt harness does not measure prepared state, decapsulation, or the Ed25519, X25519,
-and ECDSA owners yet.
+The rebuilt harness does not measure prepared state, decapsulation, the X25519 owners, or the
+Ed25519 and ECDSA owners outside composite keys yet.
 
 ## Redaction
 

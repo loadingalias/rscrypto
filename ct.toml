@@ -3638,8 +3638,8 @@ name = "x86_64-unknown-linux-gnu"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 3598
-compiler_api_sha256 = "609d4e9cc135d3477710ebfdf11514c936fb3474e09922a219a7fea22e0269ee"
+compiler_api_item_count = 3606
+compiler_api_sha256 = "86987d1f5eb9bf62704d43e6acd098b751158ba4dc34b4610a5bf0a28c81f9aa"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "required"
@@ -3649,8 +3649,8 @@ name = "aarch64-unknown-linux-gnu"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 3598
-compiler_api_sha256 = "609d4e9cc135d3477710ebfdf11514c936fb3474e09922a219a7fea22e0269ee"
+compiler_api_item_count = 3606
+compiler_api_sha256 = "86987d1f5eb9bf62704d43e6acd098b751158ba4dc34b4610a5bf0a28c81f9aa"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "required"
@@ -3683,8 +3683,8 @@ group = "win"
 backend = "llvm"
 linker = "msvc-link-unpinned"
 claim = "ct-intended"
-compiler_api_item_count = 3598
-compiler_api_sha256 = "609d4e9cc135d3477710ebfdf11514c936fb3474e09922a219a7fea22e0269ee"
+compiler_api_item_count = 3606
+compiler_api_sha256 = "86987d1f5eb9bf62704d43e6acd098b751158ba4dc34b4610a5bf0a28c81f9aa"
 physical_timing = "required"
 binsec = "unsupported"
 binsec_reason = "BINSEC PE/Windows evidence is not part of the current release evidence gate."
@@ -3705,8 +3705,8 @@ name = "aarch64-apple-darwin"
 group = "macos"
 backend = "llvm"
 linker = "apple-ld-unpinned"
-compiler_api_item_count = 3598
-compiler_api_sha256 = "609d4e9cc135d3477710ebfdf11514c936fb3474e09922a219a7fea22e0269ee"
+compiler_api_item_count = 3606
+compiler_api_sha256 = "86987d1f5eb9bf62704d43e6acd098b751158ba4dc34b4610a5bf0a28c81f9aa"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -3717,8 +3717,8 @@ name = "s390x-unknown-linux-gnu"
 group = "ibm"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 3598
-compiler_api_sha256 = "609d4e9cc135d3477710ebfdf11514c936fb3474e09922a219a7fea22e0269ee"
+compiler_api_item_count = 3606
+compiler_api_sha256 = "86987d1f5eb9bf62704d43e6acd098b751158ba4dc34b4610a5bf0a28c81f9aa"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -3729,8 +3729,8 @@ name = "powerpc64le-unknown-linux-gnu"
 group = "ibm"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 3598
-compiler_api_sha256 = "609d4e9cc135d3477710ebfdf11514c936fb3474e09922a219a7fea22e0269ee"
+compiler_api_item_count = 3606
+compiler_api_sha256 = "86987d1f5eb9bf62704d43e6acd098b751158ba4dc34b4610a5bf0a28c81f9aa"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -3741,8 +3741,8 @@ name = "riscv64gc-unknown-linux-gnu"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 3598
-compiler_api_sha256 = "609d4e9cc135d3477710ebfdf11514c936fb3474e09922a219a7fea22e0269ee"
+compiler_api_item_count = 3606
+compiler_api_sha256 = "86987d1f5eb9bf62704d43e6acd098b751158ba4dc34b4610a5bf0a28c81f9aa"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -6591,8 +6591,8 @@ limitation = "Registration only. Key generation, signing, and secret-key import 
 [[operation]]
 id = "signature.composite_mldsa"
 api = [
-  "rscrypto::MlDsa65{Ed25519,EcdsaP256}::{generate_keypair,try_generate_keypair,OID,LABEL}",
-  "rscrypto::MlDsa65{Ed25519,EcdsaP256}SecretKey::{sign_deterministic,sign_with,try_sign,sign_prehash_deterministic,sign_prehash_with,prepare,prepare_in,public_key,expose_secret,from_bytes,try_from_slice,from_pkcs8_der,to_pkcs8_der_into,LENGTH,PKCS8_DER_LENGTH}",
+  "rscrypto::MlDsa65{Ed25519,EcdsaP256}::{generate_keypair,try_generate_keypair,generate_keypair_in,try_generate_keypair_in,OID,LABEL}",
+  "rscrypto::MlDsa65{Ed25519,EcdsaP256}SecretKey::{sign_deterministic,sign_with,try_sign,sign_prehash_deterministic,sign_prehash_with,prepare,prepare_in,public_key,expose_secret,from_bytes,try_from_slice,try_from_slice_in,from_pkcs8_der,from_pkcs8_der_in,to_pkcs8_der_into,LENGTH,PKCS8_DER_LENGTH}",
   "rscrypto::MlDsa65{Ed25519,EcdsaP256}PreparedSecretKey::{sign_deterministic,sign_with,try_sign,sign_prehash_deterministic,sign_prehash_with}",
   "rscrypto::MlDsa65{Ed25519,EcdsaP256}PublicKey::{verify,verify_with_context,verify_prehash,from_bytes,try_from_slice,to_bytes,from_spki_der,to_spki_der,LENGTH,SPKI_DER_LENGTH}",
   "rscrypto::MlDsa65{Ed25519,EcdsaP256}Signature::{as_bytes,to_bytes,try_from_slice,LENGTH,MAX_LENGTH}",

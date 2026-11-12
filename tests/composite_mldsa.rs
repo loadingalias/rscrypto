@@ -4,8 +4,42 @@
 
 extern crate alloc;
 
+use alloc::alloc::Global;
+use core::alloc::{AllocError, Allocator, Layout};
+use core::cell::Cell;
+use core::ptr::NonNull;
+
 use rscrypto::*;
 use serde_json::Value;
+
+/// Counts allocations and deallocations that pass through to `Global`.
+#[derive(Default)]
+struct Live {
+  allocations: Cell<usize>,
+  deallocations: Cell<usize>,
+}
+
+impl Live {
+  fn outstanding(&self) -> usize {
+    self.allocations.get().strict_sub(self.deallocations.get())
+  }
+}
+
+// SAFETY: every allocation and deallocation, with its original layout, passes
+// through to Global unchanged; this allocator only counts them.
+unsafe impl Allocator for &Live {
+  fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
+    let allocation = Global.allocate(layout)?;
+    self.allocations.set(self.allocations.get().strict_add(1));
+    Ok(allocation)
+  }
+
+  unsafe fn deallocate(&self, pointer: NonNull<u8>, layout: Layout) {
+    self.deallocations.set(self.deallocations.get().strict_add(1));
+    // SAFETY: Global made this allocation with this layout in `allocate`.
+    unsafe { Global.deallocate(pointer, layout) };
+  }
+}
 
 const VECTORS: &str = include_str!("../testdata/composite_mldsa/draft19/vectors.json");
 
@@ -457,17 +491,14 @@ macro_rules! composite_tests {
         );
       }
 
-      #[test]
-      fn hostile_pkcs8_is_rejected() {
-        let (vectors, public, _) = case();
+      /// Hostile PKCS #8 encodings of the vector key, with the error each must return.
+      fn hostile_pkcs8(vectors: &Vectors, public: &$public) -> [(Vec<u8>, CompositeMlDsaKeyError); 7] {
         let sk = &vectors.$case.sk;
         let oid = composite_oid($arc);
-        assert_eq!(pkcs8(0, &oid, sk, &[]), vectors.$case.sk_pkcs8);
         let public_field = tlv(0x81, &[&[0][..], &public.to_bytes()].concat());
         let (other, _) = $profile::generate_keypair(fixed_fill(0x11)).expect("generate");
         let wrong_public = tlv(0x81, &[&[0][..], &other.to_bytes()].concat());
-        $secret::from_pkcs8_der(&pkcs8(1, &oid, sk, &[&public_field])).expect("version 2 with its own public key");
-        let cases: [(Vec<u8>, CompositeMlDsaKeyError); 7] = [
+        [
           (
             pkcs8(0, &composite_oid(39), sk, &[]),
             CompositeMlDsaKeyError::UnsupportedAlgorithm,
@@ -490,8 +521,18 @@ macro_rules! composite_tests {
             [pkcs8(0, &oid, sk, &[]), vec![0]].concat(),
             CompositeMlDsaKeyError::MalformedDer,
           ),
-        ];
-        for (index, (der, expected)) in cases.iter().enumerate() {
+        ]
+      }
+
+      #[test]
+      fn hostile_pkcs8_is_rejected() {
+        let (vectors, public, _) = case();
+        let sk = &vectors.$case.sk;
+        let oid = composite_oid($arc);
+        assert_eq!(pkcs8(0, &oid, sk, &[]), vectors.$case.sk_pkcs8);
+        let public_field = tlv(0x81, &[&[0][..], &public.to_bytes()].concat());
+        $secret::from_pkcs8_der(&pkcs8(1, &oid, sk, &[&public_field])).expect("version 2 with its own public key");
+        for (index, (der, expected)) in hostile_pkcs8(&vectors, &public).iter().enumerate() {
           assert_eq!(
             $secret::from_pkcs8_der(der).expect_err("rejected"),
             *expected,
@@ -502,6 +543,70 @@ macro_rules! composite_tests {
           $secret::try_from_slice(&sk[1..]).expect_err("rejected"),
           CompositeMlDsaKeyError::InvalidSecretKey
         );
+      }
+
+      #[test]
+      fn allocated_constructors_match_by_value_keys() {
+        // A boxed key must hold the same key, and sign byte for byte like the
+        // by-value key, for the draft's key in both of its encodings.
+        let (vectors, public, secret) = case();
+        let case = &vectors.$case;
+        let expected = secret
+          .sign_deterministic(&vectors.message, &vectors.context)
+          .expect("sign");
+        let hedged = secret
+          .sign_with(&vectors.message, &vectors.context, fixed_fill(9))
+          .expect("sign");
+        let raw = $secret::try_from_slice_in(&case.sk, Global).expect("allocated raw import");
+        let der = $secret::from_pkcs8_der_in(&case.sk_pkcs8, Global).expect("allocated PKCS #8 import");
+        for boxed in [raw, der] {
+          assert_eq!(boxed.expose_secret().as_bytes(), secret.expose_secret().as_bytes());
+          assert_eq!(boxed.public_key(), public);
+          assert_eq!(
+            boxed
+              .sign_deterministic(&vectors.message, &vectors.context)
+              .expect("sign"),
+            expected
+          );
+          assert_eq!(
+            boxed
+              .sign_with(&vectors.message, &vectors.context, fixed_fill(9))
+              .expect("sign"),
+            hedged
+          );
+        }
+        let (generated_public, generated) = $profile::generate_keypair(fixed_fill(0x07)).expect("generate");
+        let (boxed_public, boxed) =
+          $profile::generate_keypair_in(fixed_fill(0x07), Global).expect("allocated generate");
+        assert_eq!(boxed_public, generated_public);
+        assert_eq!(boxed.expose_secret().as_bytes(), generated.expose_secret().as_bytes());
+      }
+
+      #[test]
+      fn rejected_allocated_imports_match_by_value_errors_and_free_their_box() {
+        // A failed `*_in` call must return the by-value error and leave no
+        // allocation behind, including after it has filled its box.
+        let (vectors, public, _) = case();
+        let live = Live::default();
+        for (index, (der, expected)) in hostile_pkcs8(&vectors, &public).iter().enumerate() {
+          assert_eq!(
+            $secret::from_pkcs8_der_in(der, &live).expect_err("rejected"),
+            *expected,
+            "case {index}"
+          );
+          assert_eq!(live.outstanding(), 0, "case {index}");
+        }
+        assert!(
+          live.allocations.get() > 0,
+          "a public-key mismatch fails after allocating"
+        );
+        assert_eq!(
+          $secret::try_from_slice_in(&vectors.$case.sk[1..], &live).expect_err("rejected"),
+          CompositeMlDsaKeyError::InvalidSecretKey
+        );
+        let failed = $profile::generate_keypair_in(|_| Err(CompositeMlDsaError::RandomGenerationFailed), &live);
+        assert_eq!(failed.err(), Some(CompositeMlDsaError::RandomGenerationFailed));
+        assert_eq!(live.outstanding(), 0);
       }
 
       #[test]
@@ -605,12 +710,24 @@ fn ecdsa_private_key_must_use_the_draft_encoding() {
   zero[scalar..scalar + 32].fill(0);
   let mut order = sk.clone();
   order[scalar..scalar + 32].fill(0xff);
+  let live = Live::default();
   for altered in [zero, order] {
     assert_eq!(
       MlDsa65EcdsaP256SecretKey::try_from_slice(&altered).expect_err("rejected"),
       CompositeMlDsaKeyError::InvalidSecretKey
     );
+    // The scalar is checked inside the box, which must then be freed.
+    assert_eq!(
+      MlDsa65EcdsaP256SecretKey::try_from_slice_in(&altered, &live).expect_err("rejected"),
+      CompositeMlDsaKeyError::InvalidSecretKey
+    );
+    assert_eq!(live.outstanding(), 0);
   }
+  assert_eq!(
+    live.allocations.get(),
+    2,
+    "each rejected scalar was checked in an allocation"
+  );
   // The general RFC 5915 form with a public key is a valid key in another
   // encoding, and the composite length rejects it first.
   let secret = MlDsa65EcdsaP256SecretKey::try_from_slice(sk).expect("vector key");

@@ -73,8 +73,8 @@ use crate::hashes::crypto::Sha512;
 use crate::secret::ZeroizingBytes;
 use crate::traits::ct::DataIndependentTiming;
 use crate::{
-  MlDsa65PreparedSecretKey, MlDsa65PreparedSecretKeyStorage, MlDsa65PublicKey, MlDsa65SecretKey, MlDsa65Seed,
-  MlDsa65Signature, MlDsaError, SecretBytes, VerificationError, Verifier,
+  MlDsa65PreparedSecretKey, MlDsa65PreparedSecretKeyStorage, MlDsa65PublicKey, MlDsa65SecretKey, MlDsa65Signature,
+  MlDsaError, SecretBytes, VerificationError, Verifier,
 };
 
 /// Composite signing or key-generation failure.
@@ -219,30 +219,37 @@ fn seed_expansion_error(error: MlDsaError) -> CompositeMlDsaKeyError {
 /// ML-DSA-65 key material in a composite secret key: the seed that the
 /// private-key encoding carries and the expanded key that signing uses.
 struct MlDsaPart {
-  seed: MlDsa65Seed,
+  seed: ZeroizingBytes<ML_DSA_SEED_LENGTH>,
   secret: MlDsa65SecretKey,
 }
 
 impl MlDsaPart {
-  fn from_seed(seed: &[u8; ML_DSA_SEED_LENGTH]) -> Result<Self, CompositeMlDsaKeyError> {
-    let seed = MlDsa65Seed::from_bytes(*seed);
-    let (_, secret) = seed.keypair().map_err(seed_expansion_error)?;
-    Ok(Self { seed, secret })
+  const fn zeroed() -> Self {
+    Self {
+      seed: ZeroizingBytes::zeroed(),
+      secret: MlDsa65SecretKey::zeroed(),
+    }
   }
 
-  fn generate(
+  /// Store `seed` and expand it in place.
+  fn import_into(&mut self, seed: &[u8; ML_DSA_SEED_LENGTH]) -> Result<(), CompositeMlDsaKeyError> {
+    self.seed.as_mut_array().copy_from_slice(seed);
+    self
+      .secret
+      .expand_seed_into(self.seed.as_array())
+      .map_err(seed_expansion_error)
+  }
+
+  /// Fill the seed from `fill_random` and expand it in place.
+  fn generate_into(
+    &mut self,
     fill_random: &mut impl FnMut(&mut [u8]) -> Result<(), CompositeMlDsaError>,
-  ) -> Result<Self, CompositeMlDsaError> {
-    let mut error = None;
-    let seed = MlDsa65Seed::generate(|out| {
-      fill_random(out).map_err(|e| {
-        error = Some(e);
-        MlDsaError::RandomGenerationFailed
-      })
-    })
-    .map_err(|_| error.unwrap_or(CompositeMlDsaError::RandomGenerationFailed))?;
-    let (_, secret) = seed.keypair().map_err(|_| CompositeMlDsaError::KeyGenerationFailed)?;
-    Ok(Self { seed, secret })
+  ) -> Result<(), CompositeMlDsaError> {
+    fill_random(self.seed.as_mut_array())?;
+    self
+      .secret
+      .expand_seed_into(self.seed.as_array())
+      .map_err(|_| CompositeMlDsaError::KeyGenerationFailed)
   }
 }
 
@@ -313,9 +320,8 @@ macro_rules! composite {
       pub fn generate_keypair(
         mut fill_random: impl FnMut(&mut [u8]) -> Result<(), CompositeMlDsaError>,
       ) -> Result<($public, $secret), CompositeMlDsaError> {
-        let _dit = DataIndependentTiming::enter();
-        let ml_dsa = MlDsaPart::generate(&mut fill_random)?;
-        let secret = $secret::from_parts(ml_dsa, $secret::generate_traditional(&mut fill_random)?);
+        let mut secret = $secret::zeroed();
+        secret.generate_into(&mut fill_random)?;
         Ok((secret.public_key(), secret))
       }
 
@@ -323,6 +329,33 @@ macro_rules! composite {
       #[cfg(feature = "getrandom")]
       pub fn try_generate_keypair() -> Result<($public, $secret), CompositeMlDsaError> {
         Self::generate_keypair(|out| getrandom::fill(out).map_err(|_| CompositeMlDsaError::RandomGenerationFailed))
+      }
+
+      /// Like [`Self::generate_keypair`], with the secret key in memory from `alloc`.
+      ///
+      /// Both component keys are generated directly into the allocation, so
+      /// moving the box moves only a pointer and no by-value copy of the key
+      /// is left behind. The box clears the key on drop; failure clears it
+      /// before returning. Allocation failure is handled as by [`Box::new_in`].
+      #[cfg(feature = "alloc")]
+      pub fn generate_keypair_in<A: Allocator>(
+        mut fill_random: impl FnMut(&mut [u8]) -> Result<(), CompositeMlDsaError>,
+        alloc: A,
+      ) -> Result<($public, Box<$secret, A>), CompositeMlDsaError> {
+        let mut secret = Box::new_in($secret::zeroed(), alloc);
+        secret.generate_into(&mut fill_random)?;
+        Ok((secret.public_key(), secret))
+      }
+
+      /// Like [`Self::try_generate_keypair`], with the secret key in memory from `alloc`.
+      #[cfg(all(feature = "alloc", feature = "getrandom"))]
+      pub fn try_generate_keypair_in<A: Allocator>(
+        alloc: A,
+      ) -> Result<($public, Box<$secret, A>), CompositeMlDsaError> {
+        Self::generate_keypair_in(
+          |out| getrandom::fill(out).map_err(|_| CompositeMlDsaError::RandomGenerationFailed),
+          alloc,
+        )
       }
     }
 
@@ -476,8 +509,40 @@ macro_rules! composite {
       const PKCS8_HEADER: [u8; pkix::raw_pkcs8_header_length_for(IDENTIFIER_LENGTH, Self::LENGTH)] =
         pkix::raw_pkcs8_header_for(&$profile::IDENTIFIER, Self::LENGTH);
 
-      fn from_parts(ml_dsa: MlDsaPart, trad: Traditional) -> Self {
-        Self { ml_dsa, trad }
+      /// Zero-filled owner that the constructors fill in place; never returned unfilled.
+      const fn zeroed() -> Self {
+        Self {
+          ml_dsa: MlDsaPart::zeroed(),
+          trad: Traditional::zeroed(),
+        }
+      }
+
+      /// Import the raw encoding into this owner in place: the traditional
+      /// key first, then the ML-DSA-65 seed.
+      fn import_into(&mut self, input: &[u8; Self::LENGTH]) -> Result<(), CompositeMlDsaKeyError> {
+        let _dit = DataIndependentTiming::enter();
+        let (seed, trad) = input.split_first_chunk::<ML_DSA_SEED_LENGTH>().expect("fixed length");
+        self.trad.import_into(trad.try_into().expect("fixed length"))?;
+        self.ml_dsa.import_into(seed)
+      }
+
+      /// Generate into this owner in place: the ML-DSA-65 key first, then the
+      /// traditional key.
+      fn generate_into(
+        &mut self,
+        fill_random: &mut impl FnMut(&mut [u8]) -> Result<(), CompositeMlDsaError>,
+      ) -> Result<(), CompositeMlDsaError> {
+        let _dit = DataIndependentTiming::enter();
+        self.ml_dsa.generate_into(fill_random)?;
+        self.trad.generate_into(fill_random)
+      }
+
+      /// Reject a carried public key that is not this key's own.
+      fn check_public(&self, public: Option<&[u8; $public::LENGTH]>) -> Result<(), CompositeMlDsaKeyError> {
+        if public.is_some_and(|public| *public != self.public_key().to_bytes()) {
+          return Err(CompositeMlDsaKeyError::InvalidSecretKey);
+        }
+        Ok(())
       }
 
       /// Import the raw composite private-key encoding.
@@ -500,10 +565,24 @@ macro_rules! composite {
       /// Import the fixed-length raw composite private-key encoding, as by
       /// [`Self::try_from_slice`].
       pub fn from_bytes(input: &[u8; Self::LENGTH]) -> Result<Self, CompositeMlDsaKeyError> {
-        let _dit = DataIndependentTiming::enter();
-        let (seed, trad) = input.split_first_chunk::<ML_DSA_SEED_LENGTH>().expect("fixed length");
-        let trad = Self::import_traditional(trad.try_into().expect("fixed length"))?;
-        Ok(Self::from_parts(MlDsaPart::from_seed(seed)?, trad))
+        let mut secret = Self::zeroed();
+        secret.import_into(input)?;
+        Ok(secret)
+      }
+
+      /// Like [`Self::try_from_slice`], with the key imported into memory from `alloc`.
+      ///
+      /// The components are written directly into the allocation, so moving
+      /// the box moves only a pointer. The box clears the key on drop; a
+      /// rejected key is cleared before returning. A wrong length is rejected
+      /// before allocating. Allocation failure is handled as by
+      /// [`Box::new_in`]. The caller retains responsibility for clearing `input`.
+      #[cfg(feature = "alloc")]
+      pub fn try_from_slice_in<A: Allocator>(input: &[u8], alloc: A) -> Result<Box<Self, A>, CompositeMlDsaKeyError> {
+        let input: &[u8; Self::LENGTH] = input.try_into().map_err(|_| CompositeMlDsaKeyError::InvalidSecretKey)?;
+        let mut secret = Box::new_in(Self::zeroed(), alloc);
+        secret.import_into(input)?;
+        Ok(secret)
       }
 
       /// Import a private key from RFC 5958 OneAsymmetricKey (PKCS #8) DER.
@@ -531,9 +610,27 @@ macro_rules! composite {
           &$profile::OID_CONTENTS,
         )?;
         let secret = Self::from_bytes(key)?;
-        if public.is_some_and(|public| *public != secret.public_key().to_bytes()) {
-          return Err(CompositeMlDsaKeyError::InvalidSecretKey);
-        }
+        secret.check_public(public)?;
+        Ok(secret)
+      }
+
+      /// Like [`Self::from_pkcs8_der`], with the key in memory from `alloc`.
+      ///
+      /// The DER is decoded first, so malformed DER allocates nothing. The key
+      /// is then written directly into its allocation, as by
+      /// [`Self::try_from_slice_in`]. The box clears the key on drop; a
+      /// rejected key is cleared before returning. Allocation failure is
+      /// handled as by [`Box::new_in`].
+      #[cfg(feature = "alloc")]
+      pub fn from_pkcs8_der_in<A: Allocator>(der: &[u8], alloc: A) -> Result<Box<Self, A>, CompositeMlDsaKeyError> {
+        let _dit = DataIndependentTiming::enter();
+        let (key, public) = pkix::decode_pkcs8_raw_oid::<CompositeMlDsaKeyError, { Self::LENGTH }, { $public::LENGTH }>(
+          der,
+          &$profile::OID_CONTENTS,
+        )?;
+        let mut secret = Box::new_in(Self::zeroed(), alloc);
+        secret.import_into(key)?;
+        secret.check_public(public)?;
         Ok(secret)
       }
 
@@ -552,7 +649,7 @@ macro_rules! composite {
       pub fn expose_secret(&self) -> SecretBytes<{ Self::LENGTH }> {
         let mut raw = ZeroizingBytes::<{ Self::LENGTH }>::zeroed();
         let (seed, trad) = raw.as_mut_array().split_at_mut(ML_DSA_SEED_LENGTH);
-        seed.copy_from_slice(self.ml_dsa.seed.expose_secret().as_bytes());
+        seed.copy_from_slice(self.ml_dsa.seed.as_array());
         self.export_traditional(trad.try_into().expect("fixed length"));
         SecretBytes::new(*raw.as_array())
       }
@@ -772,6 +869,23 @@ mod ed25519_composite {
   struct Traditional(Ed25519Keypair);
 
   impl Traditional {
+    const fn zeroed() -> Self {
+      Self(Ed25519Keypair::zeroed())
+    }
+
+    /// Every 32-byte string is an Ed25519 secret key.
+    fn import_into(&mut self, seed: &[u8; Ed25519SecretKey::LENGTH]) -> Result<(), CompositeMlDsaKeyError> {
+      self.0.import_into(seed);
+      Ok(())
+    }
+
+    fn generate_into(
+      &mut self,
+      fill_random: &mut impl FnMut(&mut [u8]) -> Result<(), CompositeMlDsaError>,
+    ) -> Result<(), CompositeMlDsaError> {
+      self.0.generate_into(fill_random)
+    }
+
     fn public_bytes(&self) -> [u8; Ed25519PublicKey::LENGTH] {
       self.0.public_key().to_bytes()
     }
@@ -812,18 +926,6 @@ mod ed25519_composite {
   }
 
   impl MlDsa65Ed25519SecretKey {
-    fn generate_traditional(
-      fill_random: &mut impl FnMut(&mut [u8]) -> Result<(), CompositeMlDsaError>,
-    ) -> Result<Traditional, CompositeMlDsaError> {
-      Ed25519Keypair::try_generate_with(fill_random).map(Traditional)
-    }
-
-    fn import_traditional(seed: &[u8; Ed25519SecretKey::LENGTH]) -> Result<Traditional, CompositeMlDsaKeyError> {
-      Ok(Traditional(Ed25519Keypair::from_secret_key(
-        Ed25519SecretKey::from_bytes(*seed),
-      )))
-    }
-
     fn export_traditional(&self, out: &mut [u8; Ed25519SecretKey::LENGTH]) {
       out.copy_from_slice(self.trad.0.secret_key().as_bytes());
     }
@@ -935,9 +1037,57 @@ mod ecdsa_p256_composite {
   }
 
   impl Traditional {
-    fn new(secret: EcdsaP256SecretKey) -> Self {
-      let public = secret.public_key().to_sec1_bytes();
-      Self { secret, public }
+    const fn zeroed() -> Self {
+      Self {
+        secret: EcdsaP256SecretKey::zeroed(),
+        public: [0; EcdsaP256PublicKey::SEC1_LENGTH],
+      }
+    }
+
+    /// Accept exactly the `ECPrivateKey` form of section 4; classify any
+    /// other input with the general RFC 5915 parser.
+    fn import_into(&mut self, input: &[u8; EC_PRIVATE_KEY_LENGTH]) -> Result<(), CompositeMlDsaKeyError> {
+      let (prefix, rest) = input
+        .split_first_chunk::<{ EC_PRIVATE_KEY_PREFIX.len() }>()
+        .expect("fixed length");
+      let (scalar, suffix) = rest
+        .split_first_chunk::<{ EcdsaP256SecretKey::LENGTH }>()
+        .expect("fixed length");
+      if *prefix != EC_PRIVATE_KEY_PREFIX || *suffix != EC_PRIVATE_KEY_SUFFIX {
+        return Err(
+          match pkix::decode_ec_private_key::<
+            CompositeMlDsaKeyError,
+            { EcdsaP256SecretKey::LENGTH },
+            { EcdsaP256PublicKey::SEC1_LENGTH },
+          >(input, &SECP256R1_OID)
+          {
+            Ok(_) => CompositeMlDsaKeyError::UnsupportedEncoding,
+            Err(error) => error,
+          },
+        );
+      }
+      self
+        .secret
+        .import_into(scalar)
+        .map_err(|_| CompositeMlDsaKeyError::InvalidSecretKey)?;
+      self.derive_public();
+      Ok(())
+    }
+
+    fn generate_into(
+      &mut self,
+      fill_random: &mut impl FnMut(&mut [u8]) -> Result<(), CompositeMlDsaError>,
+    ) -> Result<(), CompositeMlDsaError> {
+      self.secret.generate_into(fill_random).map_err(|error| match error {
+        crate::EcdsaKeyGenerationError::Random(error) => error,
+        _ => CompositeMlDsaError::KeyGenerationFailed,
+      })?;
+      self.derive_public();
+      Ok(())
+    }
+
+    fn derive_public(&mut self) {
+      self.public = self.secret.public_key().to_sec1_bytes();
     }
 
     fn public_bytes(&self) -> [u8; EcdsaP256PublicKey::SEC1_LENGTH] {
@@ -982,43 +1132,6 @@ mod ecdsa_p256_composite {
   }
 
   impl MlDsa65EcdsaP256SecretKey {
-    fn generate_traditional(
-      fill_random: &mut impl FnMut(&mut [u8]) -> Result<(), CompositeMlDsaError>,
-    ) -> Result<Traditional, CompositeMlDsaError> {
-      EcdsaP256SecretKey::try_generate_with(fill_random)
-        .map(Traditional::new)
-        .map_err(|error| match error {
-          crate::EcdsaKeyGenerationError::Random(error) => error,
-          _ => CompositeMlDsaError::KeyGenerationFailed,
-        })
-    }
-
-    /// Accept exactly the `ECPrivateKey` form of section 4; classify any
-    /// other input with the general RFC 5915 parser.
-    fn import_traditional(input: &[u8; EC_PRIVATE_KEY_LENGTH]) -> Result<Traditional, CompositeMlDsaKeyError> {
-      let (prefix, rest) = input
-        .split_first_chunk::<{ EC_PRIVATE_KEY_PREFIX.len() }>()
-        .expect("fixed length");
-      let (scalar, suffix) = rest
-        .split_first_chunk::<{ EcdsaP256SecretKey::LENGTH }>()
-        .expect("fixed length");
-      if *prefix != EC_PRIVATE_KEY_PREFIX || *suffix != EC_PRIVATE_KEY_SUFFIX {
-        return Err(
-          match pkix::decode_ec_private_key::<
-            CompositeMlDsaKeyError,
-            { EcdsaP256SecretKey::LENGTH },
-            { EcdsaP256PublicKey::SEC1_LENGTH },
-          >(input, &SECP256R1_OID)
-          {
-            Ok(_) => CompositeMlDsaKeyError::UnsupportedEncoding,
-            Err(error) => error,
-          },
-        );
-      }
-      let secret = EcdsaP256SecretKey::from_bytes(*scalar).map_err(|_| CompositeMlDsaKeyError::InvalidSecretKey)?;
-      Ok(Traditional::new(secret))
-    }
-
     fn export_traditional(&self, out: &mut [u8; EC_PRIVATE_KEY_LENGTH]) {
       let (prefix, rest) = out.split_at_mut(EC_PRIVATE_KEY_PREFIX.len());
       let (scalar, suffix) = rest.split_at_mut(EcdsaP256SecretKey::LENGTH);
