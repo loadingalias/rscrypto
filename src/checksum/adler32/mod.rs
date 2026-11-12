@@ -5,12 +5,133 @@
 //! # Kernels
 //!
 //! - Portable Rust on every target, the sole semantic authority.
+//! - aarch64: NEON, and NEON with the dot-product extension where the CPU has it.
 
-pub(crate) mod portable;
+#[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
+pub(in crate::checksum) mod aarch64;
+pub(crate) mod config;
+pub(in crate::checksum) mod portable;
+
+pub use config::{Adler32Config, Adler32Force};
+use portable::{MOD, MOD64};
 
 use crate::traits::{Checksum, ChecksumCombine};
 
-use portable::{MOD, MOD64};
+// Dispatch
+
+type Adler32DispatchFn = crate::checksum::dispatchers::Adler32Fn;
+#[cfg(feature = "std")]
+type Adler32DispatchVectoredFn = fn(u32, &[&[u8]]) -> u32;
+
+#[inline]
+fn adler32_apply_kernel_vectored(mut adler: u32, bufs: &[&[u8]], kernel: Adler32DispatchFn) -> u32 {
+  for &buf in bufs {
+    if !buf.is_empty() {
+      adler = kernel(adler, buf);
+    }
+  }
+  adler
+}
+
+#[inline]
+fn adler32_dispatch_auto(adler: u32, data: &[u8]) -> u32 {
+  crate::checksum::kernel_table::adler32(crate::checksum::kernel_table::active_table(), adler, data)
+}
+
+#[inline]
+fn adler32_dispatch_auto_vectored(adler: u32, bufs: &[&[u8]]) -> u32 {
+  adler32_apply_kernel_vectored(adler, bufs, adler32_dispatch_auto)
+}
+
+#[cfg(feature = "std")]
+#[inline]
+fn adler32_dispatch_portable(adler: u32, data: &[u8]) -> u32 {
+  portable::update(adler, data)
+}
+
+#[cfg(feature = "std")]
+#[inline]
+fn adler32_dispatch_portable_vectored(adler: u32, bufs: &[&[u8]]) -> u32 {
+  adler32_apply_kernel_vectored(adler, bufs, portable::update)
+}
+
+#[cfg(all(feature = "std", target_arch = "aarch64", target_feature = "neon"))]
+#[inline]
+fn adler32_dispatch_neon(adler: u32, data: &[u8]) -> u32 {
+  aarch64::update_safe(adler, data)
+}
+
+#[cfg(all(feature = "std", target_arch = "aarch64", target_feature = "neon"))]
+#[inline]
+fn adler32_dispatch_neon_vectored(adler: u32, bufs: &[&[u8]]) -> u32 {
+  adler32_apply_kernel_vectored(adler, bufs, aarch64::update_safe)
+}
+
+#[cfg(all(feature = "std", target_arch = "aarch64", target_feature = "neon"))]
+#[inline]
+fn adler32_dispatch_neon_dotprod(adler: u32, data: &[u8]) -> u32 {
+  // SAFETY: `Adler32Force::NeonDotprod` survives `config::get()` only when cached detection
+  // reports NEON and the dot-product extension, and only that force selects this wrapper.
+  unsafe { aarch64::update_dotprod(adler, data) }
+}
+
+#[cfg(all(feature = "std", target_arch = "aarch64", target_feature = "neon"))]
+#[inline]
+fn adler32_dispatch_neon_dotprod_vectored(adler: u32, bufs: &[&[u8]]) -> u32 {
+  adler32_apply_kernel_vectored(adler, bufs, adler32_dispatch_neon_dotprod)
+}
+
+define_crc_dispatch! {
+  word_ty: u32,
+  dispatch_fn_ty: Adler32DispatchFn,
+  dispatch_vectored_fn_ty: Adler32DispatchVectoredFn,
+  auto_force: Adler32Force::Auto,
+  force_expr: config::get().effective_force,
+  active_table: crate::checksum::kernel_table::active_table(),
+  auto_dispatch: adler32_dispatch_auto,
+  auto_vectored_dispatch: adler32_dispatch_auto_vectored,
+  dispatch_cache: ADLER32_DISPATCH,
+  dispatch_vectored_cache: ADLER32_DISPATCH_VECTORED,
+  resolve_dispatch: resolve_adler32_dispatch,
+  resolve_dispatch_vectored: resolve_adler32_dispatch_vectored,
+  dispatch: adler32_dispatch,
+  dispatch_vectored: adler32_dispatch_vectored,
+  resolved_dispatch: adler32_resolved_dispatch,
+  runtime_paths: adler32_runtime_paths,
+  resolve_match: {
+    Adler32Force::Portable => adler32_dispatch_portable,
+    #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
+    Adler32Force::Neon => adler32_dispatch_neon,
+    #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
+    Adler32Force::NeonDotprod => adler32_dispatch_neon_dotprod,
+    _ => adler32_dispatch_auto,
+  },
+  resolve_vectored_match: {
+    Adler32Force::Portable => adler32_dispatch_portable_vectored,
+    #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
+    Adler32Force::Neon => adler32_dispatch_neon_vectored,
+    #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
+    Adler32Force::NeonDotprod => adler32_dispatch_neon_dotprod_vectored,
+    _ => adler32_dispatch_auto_vectored,
+  }
+}
+
+// Kernel Name Introspection
+
+/// Get the name of the kernel that would be selected for a given buffer length.
+#[inline]
+#[must_use]
+fn adler32_selected_kernel_name(len: usize) -> &'static str {
+  match config::get().effective_force {
+    Adler32Force::Portable => return portable::KERNEL_NAME,
+    #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
+    Adler32Force::Neon => return aarch64::KERNEL_NAME,
+    #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
+    Adler32Force::NeonDotprod => return aarch64::DOTPROD_KERNEL_NAME,
+    _ => {}
+  }
+  crate::checksum::kernel_table::adler32_name(crate::checksum::kernel_table::active_table(), len)
+}
 
 /// Adler-32 checksum from [RFC 1950](https://www.rfc-editor.org/rfc/rfc1950.html) (**NOT CRYPTO**).
 ///
@@ -34,18 +155,38 @@ use portable::{MOD, MOD64};
 /// let combined = Adler32::combine(Adler32::checksum(a), Adler32::checksum(b), b.len());
 /// assert_eq!(combined, 0x11E6_0398);
 /// ```
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 pub struct Adler32 {
   state: u32,
+  dispatch: Adler32DispatchFn,
+  auto_table: Option<&'static crate::checksum::kernel_table::KernelTable>,
 }
 
 impl Adler32 {
   const INIT: u32 = 1;
 
+  /// Create a hasher to resume from a previous Adler-32 value.
+  #[inline]
+  #[must_use]
+  pub const fn resume(adler: u32) -> Self {
+    Self {
+      state: (((adler >> 16) % MOD) << 16) | ((adler & 0xffff) % MOD),
+      // `resume` is const, so keep runtime force semantics via wrapper dispatch.
+      dispatch: adler32_dispatch,
+      auto_table: None,
+    }
+  }
+
+  /// Get the effective Adler-32 configuration.
+  #[must_use]
+  pub fn config() -> Adler32Config {
+    config::get()
+  }
+
   /// Returns the kernel name that the selector would choose for `len`.
   #[must_use]
-  pub fn kernel_name_for_len(_len: usize) -> &'static str {
-    portable::KERNEL_NAME
+  pub fn kernel_name_for_len(len: usize) -> &'static str {
+    adler32_selected_kernel_name(len)
   }
 }
 
@@ -55,18 +196,36 @@ impl Checksum for Adler32 {
 
   #[inline]
   fn new() -> Self {
-    Self { state: Self::INIT }
+    let (dispatch, auto_table) = adler32_runtime_paths();
+    Self {
+      state: Self::INIT,
+      dispatch,
+      auto_table,
+    }
   }
 
   #[inline]
   fn with_initial(initial: u32) -> Self {
     let (a, b) = sums(initial);
-    Self { state: (b << 16) | a }
+    let (dispatch, auto_table) = adler32_runtime_paths();
+    Self {
+      state: (b << 16) | a,
+      dispatch,
+      auto_table,
+    }
   }
 
   #[inline]
   fn update(&mut self, data: &[u8]) {
-    self.state = portable::update(self.state, data);
+    self.state = match self.auto_table {
+      Some(table) => crate::checksum::kernel_table::adler32(table, self.state, data),
+      None => (self.dispatch)(self.state, data),
+    };
+  }
+
+  #[inline]
+  fn update_vectored(&mut self, bufs: &[&[u8]]) {
+    self.state = adler32_dispatch_vectored(self.state, bufs);
   }
 
   #[inline]
@@ -77,6 +236,12 @@ impl Checksum for Adler32 {
   #[inline]
   fn reset(&mut self) {
     self.state = Self::INIT;
+  }
+}
+
+impl core::fmt::Debug for Adler32 {
+  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    f.debug_struct("Adler32").finish_non_exhaustive()
   }
 }
 
@@ -112,11 +277,169 @@ fn sums(value: u32) -> (u32, u32) {
   ((value & 0xffff) % MOD, (value >> 16) % MOD)
 }
 
+// Buffered Wrapper
+
+// Buffered wrappers use this to decide when to flush/process in larger chunks.
+//
+// Each threshold is the shortest update that reaches the selected kernel's block loop, so the
+// block setup and the reduction at its end pay back. They come from the kernels' structure:
+// local timing on a loaded host could not confirm the crossover, which needs a quiet host.
+#[cfg(feature = "alloc")]
+#[inline]
+#[must_use]
+fn adler32_buffered_threshold() -> usize {
+  adler32_buffered_threshold_impl()
+}
+
+/// The NEON kernels run 64-byte blocks; shorter updates take 16-byte vectors and the byte tail.
+#[cfg(all(feature = "alloc", target_arch = "aarch64", target_feature = "neon"))]
+#[inline]
+#[must_use]
+fn adler32_buffered_threshold_impl() -> usize {
+  const THRESHOLD: usize = 64;
+  THRESHOLD
+}
+
+/// The portable kernel runs 32-byte blocks; shorter updates take the byte tail.
+#[cfg(all(feature = "alloc", not(all(target_arch = "aarch64", target_feature = "neon"))))]
+#[inline]
+#[must_use]
+fn adler32_buffered_threshold_impl() -> usize {
+  const THRESHOLD: usize = 32;
+  THRESHOLD
+}
+
+/// Large enough to clear any warmup threshold, small enough to stay cache-friendly.
+#[cfg(feature = "alloc")]
+const BUFFERED_ADLER32_BUFFER_SIZE: usize = 512;
+
+#[cfg(feature = "alloc")]
+define_buffered_crc! {
+  /// A buffering wrapper around [`Adler32`] for streaming small chunks.
+  pub struct BufferedAdler32<Adler32> {
+    buffer_size: BUFFERED_ADLER32_BUFFER_SIZE,
+    threshold_fn: adler32_buffered_threshold,
+  }
+}
+
+#[cfg(feature = "alloc")]
+impl Adler32 {
+  /// Creates a buffering wrapper that coalesces short updates before Adler-32 dispatch.
+  #[must_use]
+  pub fn buffered() -> BufferedAdler32 {
+    BufferedAdler32::new()
+  }
+}
+
+impl_std_io_write_for_checksum!(Adler32);
+
 // Kernel Introspection
 
 #[cfg(feature = "diag")]
 impl crate::checksum::introspect::KernelIntrospect for Adler32 {
   fn kernel_name_for_len(len: usize) -> &'static str {
     Self::kernel_name_for_len(len)
+  }
+}
+
+#[cfg(all(test, target_arch = "aarch64", target_feature = "neon", not(miri)))]
+mod tests {
+  use alloc::{vec, vec::Vec};
+
+  use super::{aarch64, portable};
+  use crate::checksum::dispatchers::Adler32Fn;
+
+  /// The aarch64 kernels that this CPU can run, with their names.
+  fn kernels() -> Vec<(&'static str, Adler32Fn)> {
+    let mut kernels: Vec<(&'static str, Adler32Fn)> = vec![(aarch64::KERNEL_NAME, aarch64::update_safe)];
+    if crate::platform::caps().has(crate::platform::caps::aarch64::DOTPROD) {
+      kernels.push((aarch64::DOTPROD_KERNEL_NAME, |adler, data| {
+        // SAFETY: NEON is enabled at compile time, and the capability check above establishes
+        // the dot-product extension.
+        unsafe { aarch64::update_dotprod(adler, data) }
+      }));
+    }
+    kernels
+  }
+
+  /// Lengths that end on and around every block, vector, and tail size of the kernels, the
+  /// 5,552-byte classic reduction length, the 16 KiB NEON and the 8 KiB and 128 KiB portable
+  /// reduction lengths, a few times over.
+  fn lengths() -> Vec<usize> {
+    let mut lengths: Vec<usize> = (0..=640).collect();
+    for base in [5552usize, 8192, 16_384, 131_072] {
+      for multiple in 1..=3 {
+        let at = base.strict_mul(multiple);
+        lengths.extend([
+          at.strict_sub(65),
+          at.strict_sub(1),
+          at,
+          at.strict_add(1),
+          at.strict_add(15),
+          at.strict_add(63),
+        ]);
+      }
+    }
+    lengths.sort_unstable();
+    lengths.dedup();
+    lengths
+  }
+
+  fn patterned(len: usize) -> Vec<u8> {
+    (0..len)
+      .map(|i| i.wrapping_mul(131).wrapping_add(i >> 9).to_le_bytes()[0])
+      .collect()
+  }
+
+  /// Starting values with reduced sums near 0 and near 65520.
+  const STARTS: [u32; 3] = [1, 0xfff0_fff0, 0x0001_fff0];
+
+  /// All-0xff input drives every lane sum to its bound; all-zero input keeps every sum at its
+  /// starting value.
+  #[test]
+  fn aarch64_kernels_match_portable_for_every_length_alignment_and_start() {
+    let longest = *lengths().last().expect("lengths are not empty");
+    let all: Vec<usize> = (0..64).collect();
+    for fill in [None, Some(0xff), Some(0)] {
+      let buffer = match fill {
+        Some(byte) => vec![byte; longest + 64],
+        None => patterned(longest + 64),
+      };
+      for len in lengths() {
+        // Every alignment for the short lengths; a spread for the long ones keeps the test fast.
+        let offsets: &[usize] = if len <= 640 { &all } else { &[0, 1, 31, 63] };
+        for &offset in offsets {
+          let data = &buffer[offset..offset + len];
+          for start in STARTS {
+            let expected = portable::update(start, data);
+            for (name, kernel) in kernels() {
+              assert_eq!(
+                kernel(start, data),
+                expected,
+                "{name}: fill={fill:?}, len={len}, offset={offset}, start={start:#x}"
+              );
+            }
+          }
+        }
+      }
+    }
+  }
+
+  /// Writes that straddle the 16 KiB NEON and the 128 KiB portable reduction lengths.
+  #[test]
+  fn chunked_aarch64_writes_match_portable_one_shot() {
+    for fill in [Some(0xff), None] {
+      let data = match fill {
+        Some(byte) => vec![byte; 3 * 131_072 + 17],
+        None => patterned(3 * 131_072 + 17),
+      };
+      let expected = portable::update(1, &data);
+      for (name, kernel) in kernels() {
+        for chunk in [1, 63, 64, 65, 16_383, 16_385, 131_071, 131_073] {
+          let streamed = data.chunks(chunk).fold(1, kernel);
+          assert_eq!(streamed, expected, "{name}: fill={fill:?}, chunk={chunk}");
+        }
+      }
+    }
   }
 }

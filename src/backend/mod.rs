@@ -11,6 +11,7 @@ pub(crate) mod ascon;
   feature = "crc24",
   feature = "crc32",
   feature = "crc64",
+  feature = "adler32",
   feature = "argon2",
   feature = "sha2",
   feature = "websocket-sha1",

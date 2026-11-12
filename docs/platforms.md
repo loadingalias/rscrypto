@@ -44,8 +44,15 @@ Runtime behavior needs execution on the target.
 - **SHA-224 and SHA-256** use the same SHA-256 compression capability policy.
   The x86-64 SHA-NI backend needs both `sha` and `sse4.1`.
   Other CPUs use the portable fallback.
-- **Adler-32** is portable Rust on every target, with no accelerated backend or dispatch.
-  Its block loop is written so that the compiler can vectorize it.
+- **Adler-32** has a portable Rust kernel on every target, written so that the compiler can
+  vectorize its block loop.
+  - AArch64 selects a NEON kernel through the checksum kernel tables, and a NEON kernel with the
+    dot-product extension (`UDOT`) when cached runtime detection reports `FEAT_DotProd`.
+    `portable-only` and Miri select the portable kernel.
+  - `RSCRYPTO_ADLER32_FORCE` (`portable`, `neon`, or `neon-dotprod`) forces a kernel, as the CRC
+    force variables do; a kernel that the CPU lacks falls back to automatic selection.
+    `Adler32::config()` reports the request and the effective choice.
+  - Other targets use the portable kernel.
 - **XXH32 and XXH64** are portable Rust on every target, with no accelerated backend or dispatch.
   They read input words little-endian on every target, as the specification requires.
 - **Scalar WebAssembly:** when `simd128` is disabled, hash, AEAD, and Argon2 dispatch exclude SIMD backends.

@@ -45,6 +45,7 @@ export RSCRYPTO_CRC16_IBM_FORCE=portable
 export RSCRYPTO_CRC24_FORCE=portable
 export RSCRYPTO_CRC32_FORCE=portable
 export RSCRYPTO_CRC64_FORCE=portable
+export RSCRYPTO_ADLER32_FORCE=portable
 
 # Single-crate layout: run Miri on the whole rscrypto crate.
 # The #[cfg(miri)] guards in dispatch/SIMD modules ensure portable code is used.

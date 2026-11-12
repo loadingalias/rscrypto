@@ -1555,6 +1555,8 @@ mod send_sync_assertions {
 
     // Adler-32
     assert_send_sync::<Adler32>();
+    assert_send_sync::<checksum::config::Adler32Force>();
+    assert_send_sync::<checksum::config::Adler32Config>();
 
     #[cfg(feature = "diag")]
     {
@@ -1577,6 +1579,7 @@ mod send_sync_assertions {
     assert_send_sync::<checksum::buffered::BufferedCrc32C>();
     assert_send_sync::<checksum::buffered::BufferedCrc64>();
     assert_send_sync::<checksum::buffered::BufferedCrc64Nvme>();
+    assert_send_sync::<checksum::buffered::BufferedAdler32>();
   }
 
   #[test]
@@ -1702,6 +1705,10 @@ mod send_sync_assertions {
     assert_debug::<checksum::config::Crc64Config>();
     assert_clone::<Adler32>();
     assert_debug::<Adler32>();
+    assert_clone::<checksum::config::Adler32Force>();
+    assert_clone::<checksum::config::Adler32Config>();
+    assert_debug::<checksum::config::Adler32Force>();
+    assert_debug::<checksum::config::Adler32Config>();
     #[cfg(feature = "diag")]
     {
       assert_clone::<checksum::introspect::DispatchInfo>();
@@ -1719,6 +1726,7 @@ mod send_sync_assertions {
     assert_debug::<checksum::buffered::BufferedCrc32C>();
     assert_debug::<checksum::buffered::BufferedCrc64>();
     assert_debug::<checksum::buffered::BufferedCrc64Nvme>();
+    assert_debug::<checksum::buffered::BufferedAdler32>();
   }
 
   #[test]

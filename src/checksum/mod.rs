@@ -81,17 +81,23 @@
 //! rscrypto = { version = "0.10", default-features = false, features = ["crc32"] }
 //! ```
 
-#[cfg(feature = "adler32")]
-mod adler32;
 // The CRC families share this support; Adler-32 needs none of it.
 #[cfg(any(feature = "crc16", feature = "crc24", feature = "crc32", feature = "crc64"))]
 mod common;
 
 // Internal macros must be declared before modules that use them.
-#[cfg(any(feature = "crc16", feature = "crc24", feature = "crc32", feature = "crc64"))]
+#[cfg(any(
+  feature = "crc16",
+  feature = "crc24",
+  feature = "crc32",
+  feature = "crc64",
+  feature = "adler32"
+))]
 #[macro_use]
 mod macros;
 
+#[cfg(feature = "adler32")]
+mod adler32;
 #[cfg(feature = "crc16")]
 mod crc16;
 #[cfg(feature = "crc24")]
@@ -105,19 +111,33 @@ mod crc64;
   any(feature = "crc16", feature = "crc24", feature = "crc32", feature = "crc64")
 ))]
 pub mod diag;
-#[cfg(any(feature = "crc16", feature = "crc24", feature = "crc32", feature = "crc64"))]
+#[cfg(any(
+  feature = "crc16",
+  feature = "crc24",
+  feature = "crc32",
+  feature = "crc64",
+  feature = "adler32"
+))]
 #[doc(hidden)]
 pub(crate) mod dispatchers;
 #[cfg(feature = "diag")]
 pub mod introspect;
 #[cfg(feature = "std")]
 pub mod io;
-#[cfg(any(feature = "crc16", feature = "crc24", feature = "crc32", feature = "crc64"))]
+#[cfg(any(
+  feature = "crc16",
+  feature = "crc24",
+  feature = "crc32",
+  feature = "crc64",
+  feature = "adler32"
+))]
 #[doc(hidden)]
 pub(crate) mod kernel_table;
 #[cfg(feature = "alloc")]
 /// Buffered checksum adapters for workloads composed of many short updates.
 pub mod buffered {
+  #[cfg(feature = "adler32")]
+  pub use crate::checksum::adler32::BufferedAdler32;
   #[cfg(feature = "crc16")]
   pub use crate::checksum::crc16::{BufferedCrc16Ccitt, BufferedCrc16Ibm};
   #[cfg(feature = "crc24")]
@@ -130,6 +150,8 @@ pub mod buffered {
 
 /// Advanced checksum configuration and force-mode controls.
 pub mod config {
+  #[cfg(feature = "adler32")]
+  pub use crate::checksum::adler32::{Adler32Config, Adler32Force};
   #[cfg(feature = "crc16")]
   pub use crate::checksum::crc16::{Crc16Config, Crc16Force};
   #[cfg(feature = "crc24")]

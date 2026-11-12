@@ -95,6 +95,9 @@ fn every_split_resume_and_combine_matches_simd_adler32() {
       let mut resumed = Adler32::with_initial(oracle(head));
       resumed.update(tail);
       assert_eq!(resumed.finalize(), expected, "len={len}, resumed at {at}");
+      let mut resumed = Adler32::resume(oracle(head));
+      resumed.update(tail);
+      assert_eq!(resumed.finalize(), expected, "len={len}, const resume at {at}");
       assert_eq!(
         Adler32::combine(oracle(head), oracle(tail), tail.len()),
         expected,
@@ -141,6 +144,31 @@ fn combine_takes_a_length_past_2_pow_32_exactly() {
   let len = (1usize << 32).strict_add(7);
   let combined = Adler32::combine(Adler32::checksum(b"Wikipedia"), 0x317b_e719, len);
   assert_eq!(combined, 0x8466_eab0);
+}
+
+/// Coalescing short writes must not change the checksum: writes around the
+/// 32- and 64-byte flush thresholds and the 512-byte buffer, against the
+/// unbuffered checksum of the whole input.
+#[cfg(feature = "alloc")]
+#[test]
+fn buffered_writes_match_the_unbuffered_checksum() {
+  let data = patterned(3000);
+  let expected = oracle(&data);
+  for size in [1, 3, 31, 32, 33, 63, 64, 65, 511, 512, 513, 3000] {
+    let mut buffered = Adler32::buffered();
+    for part in data.chunks(size) {
+      buffered.update(part);
+    }
+    assert_eq!(buffered.finalize(), expected, "chunk={size}");
+    assert_eq!(
+      buffered.finalize(),
+      expected,
+      "finalize keeps the buffered state, chunk={size}"
+    );
+    buffered.reset();
+    buffered.update(&data[..100]);
+    assert_eq!(buffered.finalize(), oracle(&data[..100]), "reset, chunk={size}");
+  }
 }
 
 #[test]

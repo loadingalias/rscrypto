@@ -34,7 +34,13 @@ macro_rules! define_unit_error {
   };
 }
 
-#[cfg(any(feature = "crc16", feature = "crc24", feature = "crc32", feature = "crc64"))]
+#[cfg(any(
+  feature = "crc16",
+  feature = "crc24",
+  feature = "crc32",
+  feature = "crc64",
+  feature = "adler32"
+))]
 macro_rules! impl_std_io_write_for_checksum {
   ($type:ty) => {
     #[cfg(feature = "std")]

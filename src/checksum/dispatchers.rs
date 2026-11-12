@@ -1,4 +1,4 @@
-//! CRC kernel function type definitions.
+//! Checksum kernel function type definitions.
 //!
 //! This module provides the function signature types used by kernel dispatch tables.
 
@@ -85,3 +85,18 @@ pub(in crate::checksum) type Crc32Fn = fn(u32, &[u8]) -> u32;
 /// Updated CRC state after processing the input data.
 #[cfg(feature = "crc64")]
 pub(in crate::checksum) type Crc64Fn = fn(u64, &[u8]) -> u64;
+
+// Adler-32 Kernel Function Type
+
+/// Function signature for Adler-32 kernels.
+///
+/// # Arguments
+///
+/// * `adler` - Current Adler-32 value, with both 16-bit sums reduced (initially 1)
+/// * `data` - Input data to process
+///
+/// # Returns
+///
+/// Updated Adler-32 value, with both sums reduced.
+#[cfg(feature = "adler32")]
+pub(in crate::checksum) type Adler32Fn = fn(u32, &[u8]) -> u32;

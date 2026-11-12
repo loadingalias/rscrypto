@@ -5,7 +5,7 @@ pub(super) const MOD: u32 = 65_521;
 pub(super) const MOD64: u64 = 65_521;
 
 /// Canonical name of the portable kernel.
-pub(super) const KERNEL_NAME: &str = "portable/block32";
+pub(in crate::checksum) const KERNEL_NAME: &str = "portable/block32";
 
 /// Bytes per block of the inner loop, which keeps one column sum per byte position.
 const BLOCK: usize = 32;
@@ -26,7 +26,7 @@ const SUB_SUMS_FIT: () = assert!(255 * SUB_BLOCKS <= u16::MAX as usize);
 /// `i` and the running total of that column sum after each block. Those are
 /// independent lane additions that the compiler can vectorize; the weighted sum
 /// follows from them once per chunk.
-pub(super) fn update(adler: u32, data: &[u8]) -> u32 {
+pub(in crate::checksum) fn update(adler: u32, data: &[u8]) -> u32 {
   let mut a = adler & 0xffff;
   let mut b = adler >> 16;
   let (blocks, tail) = data.as_chunks::<BLOCK>();

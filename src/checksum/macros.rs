@@ -12,6 +12,7 @@
 /// `$field` is the [`KernelFnSet`] field name (e.g. `crc64_xz`).
 /// `$bufs` must yield items that deref to `&[u8]` (supports `&[&[u8]]`,
 /// `&[IoSlice]`, etc.).
+#[cfg(any(feature = "crc16", feature = "crc24", feature = "crc32", feature = "crc64"))]
 macro_rules! crc_vectored_dispatch {
   ($table:expr, $init:expr, $field:ident, $bufs:expr) => {{
     let table = $table;
@@ -42,7 +43,7 @@ macro_rules! crc_vectored_dispatch {
 /// This covers the repeated "resolve once under std, otherwise use auto"
 /// pattern shared by CRC-16/32/64 variants while leaving the actual kernel
 /// wrappers and force-specific architecture helpers local to each module.
-#[cfg(any(feature = "crc16", feature = "crc32", feature = "crc64"))]
+#[cfg(any(feature = "crc16", feature = "crc32", feature = "crc64", feature = "adler32"))]
 macro_rules! define_crc_dispatch {
   (
     word_ty: $word_ty:ty,
@@ -156,7 +157,16 @@ macro_rules! define_crc_dispatch {
 /// - `$inner`: The inner CRC type (e.g., `Crc64`)
 /// - `$buffer_size`: The buffer size constant
 /// - `$threshold_fn`: Function that returns the SIMD threshold
-#[cfg(feature = "alloc")]
+#[cfg(all(
+  feature = "alloc",
+  any(
+    feature = "crc16",
+    feature = "crc24",
+    feature = "crc32",
+    feature = "crc64",
+    feature = "adler32"
+  )
+))]
 macro_rules! define_buffered_crc {
   (
     $(#[$outer:meta])*
