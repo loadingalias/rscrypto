@@ -1,5 +1,5 @@
 #!/usr/bin/env -S uv run python
-"""Check provider features and its own normal/build dependency graph."""
+"""Check provider features, its own normal/build dependency graph, and the tools' rustls pins."""
 
 import argparse
 import json
@@ -13,6 +13,8 @@ sys.path.insert(0, str(ROOT / 'scripts/lib'))
 import toolchain
 
 PACKAGE = 'rscrypto-rustls'
+# The keys that choose a dependency's source and version; features may differ per tool.
+PIN_KEYS = ('version', 'git', 'rev', 'branch', 'tag', 'path', 'registry')
 
 
 def runtime_matrix():
@@ -62,6 +64,36 @@ def feature_matrix(root=ROOT):
                               'mldsa65-ecdsa-p256')],
             *runtime_matrix(),
             *[(feature, [feature]) for feature in sorted(set(graph) - {'default'})]]
+
+
+def rustls_pins(manifest):
+    """Map each `rustls` or `rustls-*` crate that `manifest` names to its pin keys."""
+    data = tomllib.loads(manifest.read_text())
+    pins = {}
+    for table in (data, *data.get('target', {}).values()):
+        for kind in ('dependencies', 'dev-dependencies', 'build-dependencies'):
+            for key, dependency in table.get(kind, {}).items():
+                if isinstance(dependency, str):
+                    dependency = {'version': dependency}
+                name = dependency.get('package', key)
+                if name == 'rustls' or name.startswith('rustls-'):
+                    pins[name] = {field: dependency[field] for field in PIN_KEYS if field in dependency}
+    return pins
+
+
+def check_tool_pins(root=ROOT):
+    """Require each independent tool workspace to pin rustls crates exactly as the provider does.
+
+    Each tool has its own lockfile, so Cargo cannot share the provider's pin with it.
+    """
+    provider = rustls_pins(root / PACKAGE / 'Cargo.toml')
+    for manifest in sorted((root / 'tools').glob('*/Cargo.toml')):
+        path = manifest.relative_to(root)
+        for name, pin in rustls_pins(manifest).items():
+            if name not in provider:
+                raise ValueError(f'{path} pins {name}, which {PACKAGE} does not pin')
+            if pin != provider[name]:
+                raise ValueError(f'{path} pins {name} as {pin}; {PACKAGE} pins it as {provider[name]}')
 
 
 def feature_args(features):
@@ -126,6 +158,7 @@ def main():
     parser.add_argument('--list', action='store_true')
     args = parser.parse_args()
     matrix = feature_matrix()
+    check_tool_pins()
     if args.list:
         print(json.dumps(matrix, indent=2))
         return

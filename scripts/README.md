@@ -50,6 +50,12 @@ The all-features row contains every additive dependency feature, so its graph
 covers arbitrary feature combinations as well as the compiled rows.
 The shared lockfile is not the gate: it includes rscrypto's dev-only crypto oracles.
 
+Every `check/provider.py` mode, so `just ci-check` as well as `just ci-provider`, also requires each
+`tools/*/Cargo.toml` to pin each `rustls` or `rustls-*` crate that it names with the same version and source
+keys as `rscrypto-rustls/Cargo.toml`; features may differ. A tool may not name a rustls crate that the provider
+does not pin. Each tool has its own lockfile, so a pin change, such as the swap from the Git pins to a rustls
+release, makes the same edit in the provider and in each tool manifest, then refreshes each lockfile.
+
 Dependency policy checks duplicate versions without dev edges, matching the
 existing exclusion of dev-only duplicates. This keeps oracle-only features on
 shared dependencies from appearing as production duplicates. A second pass keeps

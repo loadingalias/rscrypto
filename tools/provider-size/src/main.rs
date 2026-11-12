@@ -1,19 +1,19 @@
 //! Minimal HTTPS client whose linked size compares the provider constructors.
 //!
 //! Usage: `rscrypto-provider-size HOST ROOTS.pem`. It verifies HOST's chain
-//! against the PEM bundle, requests `/`, and prints the response length.
+//! against the PEM bundle, requests `/`, reads until the server's
+//! close_notify, and prints the response length.
 
 extern crate alloc;
 
 use alloc::sync::Arc;
 use core::error::Error;
-use std::io::{Read, Write};
+use std::io::{self, Write};
 use std::net::TcpStream;
 
 use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, ServerName};
-use rustls::{ClientConfig, RootCertStore};
-use rustls_util::StreamOwned;
+use rustls::{ClientConfig, RootCertStore, VecInput};
 
 #[cfg(not(feature = "default-provider"))]
 fn provider() -> rustls::crypto::CryptoProvider {
@@ -38,14 +38,30 @@ fn main() -> Result<(), Box<dyn Error>> {
     .with_root_certificates(roots)
     .with_no_client_auth()?;
   let mut output = Vec::new();
-  let connection = Arc::new(config)
+  let mut connection = Arc::new(config)
     .connect(ServerName::try_from(host.clone())?)
     .build(&mut output)?;
-  let socket = TcpStream::connect((host.as_str(), 443))?;
-  let mut stream = StreamOwned::new(connection, socket, output);
-  write!(stream, "GET / HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n")?;
+  let mut socket = TcpStream::connect((host.as_str(), 443))?;
+  let mut input = VecInput::default();
+  let mut request = Some(format!("GET / HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n"));
   let mut response = Vec::new();
-  stream.read_to_end(&mut response)?;
+  loop {
+    socket.write_all(&output)?;
+    output.clear();
+    if !connection.is_handshaking()
+      && let Some(request) = request.take()
+    {
+      connection.write(request.as_bytes().into(), &mut output)?;
+      continue;
+    }
+    if input.read(&mut socket)? == 0 {
+      return Err(io::Error::from(io::ErrorKind::UnexpectedEof).into());
+    }
+    let state = connection.read_tls(&mut input, &mut output).handle_all(&mut response)?;
+    if state.peer_has_closed() {
+      break;
+    }
+  }
   println!("{} response bytes", response.len());
   Ok(())
 }

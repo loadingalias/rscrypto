@@ -75,5 +75,43 @@ class Provider(unittest.TestCase):
                         provider.no_c(features, root)
 
 
+GIT = 'version = "=0.24.0-dev.2", git = "https://github.com/rustls/rustls", rev = "0419f479ff5c99a471428ee197e899ccd1629aa8"'
+
+
+class ToolPins(unittest.TestCase):
+    def tool(self, edit):
+        """Write a provider and a passing tool fixture, then apply `edit` to the tool manifest."""
+        root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        (root / 'rscrypto-rustls').mkdir()
+        (root / 'rscrypto-rustls/Cargo.toml').write_text(
+            f'[dependencies]\nrustls = {{ {GIT}, default-features = false, features = ["webpki"] }}\n'
+            'rustls-webpki = { version = "=0.104.0-alpha.8", default-features = false }\n'
+            f'[dev-dependencies]\nrustls-ring = {{ {GIT} }}\n')
+        # Features, renames, and target tables may differ from the provider's.
+        valid = (f'[dependencies]\nrustls = {{ {GIT}, features = ["webpki", "std"] }}\n'
+                 f"[target.'cfg(unix)'.dev-dependencies]\nrustls-ring = {{ {GIT} }}\n"
+                 'webpki = { package = "rustls-webpki", version = "=0.104.0-alpha.8" }\n')
+        (root / 'tools/bench').mkdir(parents=True)
+        (root / 'tools/bench/Cargo.toml').write_text(valid)
+        provider.check_tool_pins(root)
+        (root / 'tools/bench/Cargo.toml').write_text(edit(valid))
+        return root
+
+    def test_a_tool_on_another_rustls_revision_fails(self):
+        root = self.tool(lambda valid: valid.replace('rev = "0419f479', 'rev = "e7506724', 1))
+        with self.assertRaisesRegex(ValueError, r'tools/bench/Cargo\.toml pins rustls as'):
+            provider.check_tool_pins(root)
+
+    def test_a_tool_on_another_registry_version_fails(self):
+        root = self.tool(lambda valid: valid.replace('=0.104.0-alpha.8', '=0.104.0-alpha.7'))
+        with self.assertRaisesRegex(ValueError, r'tools/bench/Cargo\.toml pins rustls-webpki as'):
+            provider.check_tool_pins(root)
+
+    def test_a_rustls_crate_that_the_provider_does_not_pin_fails(self):
+        root = self.tool(lambda valid: valid + f'rustls-util = {{ {GIT} }}\n')
+        with self.assertRaisesRegex(ValueError, r'tools/bench/Cargo\.toml pins rustls-util, which'):
+            provider.check_tool_pins(root)
+
+
 if __name__ == '__main__':
     unittest.main()

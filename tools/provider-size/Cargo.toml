@@ -30,7 +30,6 @@ rscrypto-rustls = { path = "../../rscrypto-rustls", default-features = false, fe
   "rsa",
 ] }
 rustls = { version = "=0.24.0-dev.2", git = "https://github.com/rustls/rustls", rev = "0419f479ff5c99a471428ee197e899ccd1629aa8", default-features = false, features = ["webpki"] }
-rustls-util = { version = "=0.24.0-dev.2", git = "https://github.com/rustls/rustls", rev = "0419f479ff5c99a471428ee197e899ccd1629aa8", default-features = false }
 
 # The release profile of top-secret.
 [profile.release]
