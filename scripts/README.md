@@ -531,9 +531,12 @@ source hashes, compiler identity, and reports in a new directory.
   On x86-64, `movq OFF(%rsp), %rsp` is accepted only after `movq %rsp, %R`, decrements,
   and `movq %R, OFF(%rsp)` into bytes those decrements allocated, with no branch, call, address
   escape, or overlapping store between the store and the reload, and no other stack-address
-  escape in the region. A decrement inside a backward branch, an unresolved jump, any other
-  stack-pointer write, or an access below the stack pointer beyond the red zone leaves the frame
-  unknown. Calls leave the region; jumps out of it are charged below its frame.
+  escape in the region. An indexed stack operand, such as `(%rsp,%rax,8)`, is accepted only as
+  the source of a `mov`, `movz`, or `movs` load into a register other than `rsp`. A load writes
+  no stack memory. A decrement inside a backward branch, an unresolved jump, any other indexed
+  stack access, any other stack-pointer write, or an access below the stack pointer beyond the
+  red zone leaves the frame unknown. Calls leave the region; jumps out of it are charged below
+  its frame.
   Each derived frame appears in the report's assumptions.
 - On x86-64, IBM Z, and RISC-V, a register jump through a compiler jump table is resolved when an
   unsigned bound check precedes it, every instruction in between is a table step or a store, no branch

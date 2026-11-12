@@ -514,6 +514,21 @@ def x86_immediate(operand: str) -> int | None:
   return int(match.group(1), 0) if match else None
 
 
+# Loads that read their memory source and write only their register destination.
+X86_REGISTER_LOADS = {
+  "movq", "movl", "movw", "movb", "movzbl", "movzbw", "movzbq", "movzwl", "movzwq",
+  "movsbl", "movsbw", "movsbq", "movswl", "movswq", "movslq",
+}
+
+
+def x86_register_load(mnemonic: str, parts: list[str]) -> bool:
+  """Whether the instruction loads its memory source into a register other than `rsp`."""
+  return (
+    mnemonic in X86_REGISTER_LOADS and len(parts) == 2 and X86_RSP_MEMORY.fullmatch(parts[0]) is not None
+    and re.fullmatch(r"%[a-z0-9]+", parts[1]) is not None and parts[1] not in X86_STACK_POINTER_NAMES
+  )
+
+
 def x86_stack_effect(mnemonic: str, operands: str, red_zone: int) -> tuple[str, int] | None:
   """Classify one x86-64 instruction's effect on `rsp`; None when it cannot be bounded.
 
@@ -535,7 +550,9 @@ def x86_stack_effect(mnemonic: str, operands: str, red_zone: int) -> tuple[str, 
     return None  # writes every operand
   for memory in X86_RSP_MEMORY.finditer(text):
     if memory.group(2):
-      return None  # an indexed stack address has no static offset
+      if x86_register_load(mnemonic, parts):
+        continue  # reads the stack and writes only a register
+      return None  # any other indexed stack access has no static offset
     if int(memory.group(1) or "0", 0) < -red_zone:
       return None  # access below the stack pointer, beyond any red zone
   destination, source = parts[-1], parts[0]

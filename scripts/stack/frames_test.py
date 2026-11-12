@@ -440,6 +440,25 @@ SAVE_SLOT_KERNEL = [
 ]
 
 
+def test_x86_indexed_stack_load_keeps_the_frame() -> None:
+  # The Ed25519 base-point routines select a table word with `movq (%rsp,%rax,8), %rax`.
+  def call(access: str) -> dict:
+    functions = [
+      (0x1000, "prepare", 32, ["1000: callq 0x2000", "1005: retq"]),
+      (0x2000, "rscrypto_fixture_select", None, [
+        "2000: pushq %rbx", "2001: subq $0x20, %rsp", access, "200a: addq $0x20, %rsp", "200e: popq %rbx", "200f: retq",
+      ]),
+    ]
+    return whole_call("x86_64-unknown-linux-gnu", functions)
+
+  # The root's return address and frame, the call's return address, 8 + 0x20 B, and the red zone of a leaf.
+  bounded = call("2005: movq (%rsp,%rax,8), %rax")
+  assert bounded["owned_bound_bytes"] == 8 + 32 + 8 + 8 + 0x20 + 128, bounded
+  assert bounded["assumptions"] == ["rscrypto_fixture_select: leaf assembly frame 40 B"], bounded
+  for access in ("2005: movq %rax, (%rsp,%rax,8)", "2005: xchgq %rax, (%rsp,%rax,8)", "2005: movq (%rsp,%rax,8), %rsp"):
+    assert call(access)["owned_bound_bytes"] is None, access
+
+
 def test_x86_save_slot_assembly_frame() -> None:
   def call(body: list[str]) -> dict:
     functions = [
@@ -911,6 +930,7 @@ def main() -> None:
   test_got_value_cannot_cross_an_unproved_control_flow_join()
   test_branch_beyond_last_function_is_not_a_recursive_call()
   test_assembly_loop_cannot_hide_repeated_stack_growth()
+  test_x86_indexed_stack_load_keeps_the_frame()
   test_x86_save_slot_assembly_frame()
   test_assembly_continuations_share_one_frame()
   test_aarch64_labels_split_one_routine()
