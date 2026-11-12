@@ -268,6 +268,27 @@ def fixture_hash(target: str, fixture: tuple[FunctionBody, LinkedImage]) -> str:
   return function_identity(instruction_identities(target, body, {body.symbol}, image))
 
 
+def exrl_template_regressions() -> None:
+  """IBM Z `exrl` binds the instruction that it executes, not where its template sits."""
+  target = "s390x-unknown-linux-gnu"
+  mvc = bytes.fromhex("d20030008000")
+  xc = bytes.fromhex("d700e000e000")
+
+  def build(offset: int, template: bytes, after: bytes):
+    text, island = 0x10000, 0x30000
+    encoded = "c6 10 " + ((island + offset - text) // 2).to_bytes(4, "big").hex(" ")
+    return linked_fixture(text, [
+      f"{text:x}: {encoded}\texrl\t%r1, 0x{island + offset:x}",
+      f"{text + 6:x}: 07 fe\tbr\t%r14",
+    ], {island: bytes(offset) + template + after})
+
+  original = fixture_hash(target, build(0x142, mvc, xc))
+  # The template island moved by 6 bytes, and another template follows it: the identity stays.
+  assert fixture_hash(target, build(0x148, mvc, mvc)) == original
+  # A different template is a different instruction.
+  assert fixture_hash(target, build(0x142, xc, xc)) != original
+
+
 def data_reference_regressions() -> None:
   """Data references bind the referenced object, not its distance from the code."""
   table = bytes(range(32))
@@ -807,6 +828,7 @@ def main() -> None:
   multiply_regressions()
   select_branch_regressions()
   data_reference_regressions()
+  exrl_template_regressions()
   placement_regressions()
 
 

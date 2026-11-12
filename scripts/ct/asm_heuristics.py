@@ -1966,6 +1966,20 @@ def power_member_identities(
   return replacements
 
 
+def executed_instruction_descriptor(image: LinkedImage, address: int) -> str | None:
+  """Describe the IBM Z instruction that `exrl` executes by its own bytes.
+
+  `exrl` templates sit in an unnamed island of code, so their offset from the
+  nearest symbol, and the bytes after them, change when unrelated code moves.
+  The two high bits of the first opcode byte give the instruction length: 2, 4, 4, or 6 bytes.
+  """
+  first = image.read(address, 1)
+  if first is None:
+    return None
+  contents = image.read(address, (2, 4, 4, 6)[first[0] >> 6])
+  return f"exec:{contents.hex()}" if contents is not None else None
+
+
 def s390x_reference_identities(rows: list[DecodedLine], body: FunctionBody, image: LinkedImage) -> dict[int, str]:
   identities = {}
   for row in rows:
@@ -1980,7 +1994,11 @@ def s390x_reference_identities(rows: list[DecodedLine], body: FunctionBody, imag
     target_address = int(match.group(2), 16)
     if row.address + 2 * displacement != target_address:
       continue
-    if (descriptor := describe_reference(image, body, target_address)) is not None:
+    if row.mnemonic == "exrl":
+      descriptor = executed_instruction_descriptor(image, target_address)
+    else:
+      descriptor = describe_reference(image, body, target_address)
+    if descriptor is not None:
       identities[row.number] = reference_identity(row, f"{match.group(1)}, <{descriptor}>")
   return identities
 

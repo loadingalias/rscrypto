@@ -75,6 +75,7 @@ POWER TOC-relative pairs and the global-entry TOC setup, and IBM Z relative-long
 Each keeps its length, mnemonic, and registers, and replaces the displacement with a description of the target:
 
 - code: the containing function and offset, plus the 16 target bytes for an interior of another function;
+- the template of an IBM Z `exrl`: only the bytes of the instruction that it executes;
 - writable data: the containing symbol and offset, only when that symbol has a stable name;
 - a `core::panic::Location`: `loc`, without its file, line, or column;
 - other read-only data: the stable name, if any, the offset, the size, and a digest of the allocation unit;
@@ -993,6 +994,30 @@ Each new condition received a public waiver per affected primitive: 90 on Linux 
 Each rationale cites its instructions and its `x86.rs` lines. The waiver set now has 902 entries.
 With them, the scanner reports no stale waiver and no unwaived enforced finding on the x86-64 Linux and Windows
 artifacts of that run.
+
+### IBM Z `exrl` template identity, 2026-11-12
+
+[Constant-Time 43187023831](https://github.com/loadingalias/rscrypto/actions/runs/43187023831) at `4fc3a822`
+failed on IBM Z: 21 `rsa.private_ops` waivers were stale, and 22 enforced findings had no waiver.
+They are in eight RSA functions: OAEP and PKCS #1 v1.5 decryption, PKCS #1 v1.5 and PSS signing,
+PSS encoding, and three exponentiation kernels.
+
+`just ct-renew` compared the run with the artifacts of
+[Constant-Time 42756022942](https://github.com/loadingalias/rscrypto/actions/runs/42756022942).
+In every function and slice, only `exrl` target descriptors changed.
+The templates that `exrl` executes sit in an unnamed island of code after `frame_dummy`, which moved by 6 bytes.
+The descriptor bound the template's offset from `frame_dummy` and 16 bytes from the template onward.
+Each executed `mvc` or `xc` template was byte-identical. In two descriptors, the bytes after it differed.
+The 22nd finding shares a slice with a waiver that covered both branches in the reviewed artifacts.
+
+The descriptor bound placement, so the waivers were not renewed by review.
+An `exrl` target now binds only the instruction that it executes, over the length that its opcode gives.
+The 131 IBM Z waivers were re-encoded on the `42756022942` artifacts.
+A waiver moved to its new identity only when its old identity named the same finding, by function, kind,
+and offset. 21 identities changed, each in a slice or an open slice's function that holds an `exrl`.
+Classifications, rationales, and review dates are unchanged, and no other target's identities change.
+With them, the scanner reports no stale waiver and no unwaived enforced finding on the IBM Z artifacts
+of both runs.
 
 ## Public decisions and exclusions
 
