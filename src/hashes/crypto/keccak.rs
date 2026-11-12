@@ -1162,7 +1162,18 @@ impl<const RATE: usize, P: Permuter, const ZEROIZE: bool> KeccakCoreImpl<RATE, P
 
   pub(crate) fn finalize_into_fixed<const OUT: usize>(&self, ds: u8, out: &mut [u8; OUT]) {
     debug_assert!(OUT <= RATE);
-    let mut state = self.finalize_state(ds);
+    debug_assert!(
+      self.buf_len < RATE,
+      "buf_len={} should be < RATE={}",
+      self.buf_len,
+      RATE
+    );
+    // Pad and permute this one local in place, then clear it. Taking a
+    // permuted copy from `finalize_state` left the padded absorbed state,
+    // which can hold a key, in a dead stack slot that nothing cleared.
+    let mut state = self.state;
+    pad_absorbed_state::<RATE>(&mut state, self.buf_len, ds);
+    self.permuter.permute(&mut state, 0);
 
     let (chunks, rem) = out.as_chunks_mut::<8>();
     for (chunk, &word) in chunks.iter_mut().zip(state.iter()) {

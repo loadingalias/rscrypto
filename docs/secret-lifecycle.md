@@ -314,7 +314,8 @@ erasure of every compiler-created copy, register, or spill.
   clears every owner already built.
 - Hedged signing keeps `addrnd` in a zeroizing owner.
   Every PRF and F call, which may hold SK.seed, a WOTS+ chain value, or a FORS leaf secret,
-  clears its hash block and state copies before it returns.
+  clears its hash block and state copies before it returns. With SHAKE, the sponge's fixed-output
+  finalize pads, permutes, and clears one local copy of the state in place.
   The HMAC and SHAKE state of PRF_msg clears on drop.
   Signing and verification clear the message digest after use.
 - WOTS+ chain values advance in place in the caller's signature buffer to their revealed positions.
@@ -658,6 +659,21 @@ SLH-DSA code instantiation:
 - By-value key generation and PKCS #8 import leave three whole copies of SK.seed and SK.prf
   on RV32, and two or three on Cortex-M3; raw import leaves two on RV32, and one or two on Cortex-M3.
 - Raw results: `benchmark_results/slhdsa-residue-20261010-final/` (local; `SHA256SUMS` inside).
+
+On 2026-11-12, with `just stack-residue` on `nightly-2026-10-24` and QEMU 11.1.3, SHAKE-192f
+pre-hash signing left all 24 bytes of SK.seed on the stack, on both boards and both backends, also at
+`a4dddd98` with no other change. The copy was the padded absorbed state of a WOTS+ PRF call:
+PK.seed, the address, SK.seed, and the SHAKE pad byte. Keccak's fixed-output finalize permuted a copy
+of the sponge state and returned it, and cleared only the returned copy, so the padded copy stayed in
+a dead stack slot; in the other scenarios later frames happened to overwrite it. The same finalize
+serves HMAC-SHA3 and the SHA-3 hashers.
+
+- The finalize now pads, permutes, and clears one local in place. At `84537f5f` plus this fix
+  (and the next commit's ML-KEM scenario seeds), every scenario passes on both boards and both
+  backends, including deterministic, hedged, and pre-hash signing for every SLH-DSA set.
+- Limits: emulated RV32 and Cortex-M3, the dead stack and two allocator arenas, not registers.
+- The raw logs were not retained; their `report.json` had SHA-256
+  `c4fcca0ffc69d925431c2cc89d634ab90fe9b029cf3779d09c41a50339dfa173`.
 
 On 2026-10-16 the harness measured HKDF-SHA256, HKDF-SHA384, and HKDF-SHA512 extract,
 on `nightly-2026-10-14` and QEMU 11.1.2. Each scenario searches for the PRK and both HMAC prefix states:
