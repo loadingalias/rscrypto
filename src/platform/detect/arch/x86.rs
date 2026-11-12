@@ -377,16 +377,10 @@ fn decode_cpuid_x86_64(snapshot: CpuidSnapshot) -> CpuidBatch {
     osxsave && (snapshot.xcr0 & XCR0_AMX_MASK) == XCR0_AMX_MASK && snapshot.amx_permission;
   let os_apx = osxsave && (snapshot.xcr0 & XCR0_APX_MASK) == XCR0_APX_MASK;
 
-  let has_avx = cpuid1.ecx & (1 << 28) != 0;
-  let has_avx2 = cpuid7.ebx & (1 << 5) != 0;
-  let has_avx512f = cpuid7.ebx & (1 << 16) != 0;
-  let has_avx512bw = cpuid7.ebx & (1 << 30) != 0;
-  let has_fma = cpuid1.ecx & (1 << 12) != 0;
-  let has_f16c = cpuid1.ecx & (1 << 29) != 0;
-  let has_aes = cpuid1.ecx & (1 << 25) != 0;
-  let has_pclmul = cpuid1.ecx & (1 << 1) != 0;
-  let rust_avx = os_avx && has_avx;
-  let rust_avx512 = os_avx512 && rust_avx && has_avx512f && has_fma && has_f16c;
+  // OS state gates the first feature of each register class. `close_x86_implications` then
+  // removes every feature whose implied features are absent, AVX2 without AVX among them.
+  let rust_avx = os_avx && cpuid1.ecx & (1 << 28) != 0;
+  let rust_avx512 = os_avx512 && cpuid7.ebx & (1 << 16) != 0;
 
   // ECX features (leaf 1) - SSE/basic features (no OS gating needed)
   if cpuid1.ecx & (1 << 0) != 0 {
@@ -404,10 +398,10 @@ fn decode_cpuid_x86_64(snapshot: CpuidSnapshot) -> CpuidBatch {
   if cpuid1.ecx & (1 << 23) != 0 {
     caps |= x86::POPCNT;
   }
-  if has_aes {
+  if cpuid1.ecx & (1 << 25) != 0 {
     caps |= x86::AESNI;
   }
-  if has_pclmul {
+  if cpuid1.ecx & (1 << 1) != 0 {
     caps |= x86::PCLMULQDQ;
   }
   if cpuid1.ecx & (1 << 30) != 0 {
@@ -417,10 +411,10 @@ fn decode_cpuid_x86_64(snapshot: CpuidSnapshot) -> CpuidBatch {
   // AVX-class features (require OS AVX support via XCR0)
   if rust_avx {
     caps |= x86::AVX;
-    if has_fma {
+    if cpuid1.ecx & (1 << 12) != 0 {
       caps |= x86::FMA;
     }
-    if has_f16c {
+    if cpuid1.ecx & (1 << 29) != 0 {
       caps |= x86::F16C;
     }
   }
@@ -439,12 +433,10 @@ fn decode_cpuid_x86_64(snapshot: CpuidSnapshot) -> CpuidBatch {
     caps |= x86::SHA;
   }
 
-  // AVX2 (requires OS AVX support for YMM registers)
-  if rust_avx && has_avx2 {
+  if cpuid7.ebx & (1 << 5) != 0 {
     caps |= x86::AVX2;
   }
 
-  // Rust AVX-512 target features also imply FMA and F16C.
   if rust_avx512 {
     caps |= x86::AVX512F;
     if cpuid7.ebx & (1 << 17) != 0 {
@@ -482,10 +474,10 @@ fn decode_cpuid_x86_64(snapshot: CpuidSnapshot) -> CpuidBatch {
     if cpuid7.edx & (1 << 8) != 0 {
       caps |= x86::AVX512VP2INTERSECT;
     }
-    if has_avx512bw && cpuid7.edx & (1 << 23) != 0 {
+    if cpuid7.edx & (1 << 23) != 0 {
       caps |= x86::AVX512FP16;
     }
-    if has_avx512bw && cpuid7_1.eax & (1 << 5) != 0 {
+    if cpuid7_1.eax & (1 << 5) != 0 {
       caps |= x86::AVX512BF16;
     }
 
@@ -503,10 +495,10 @@ fn decode_cpuid_x86_64(snapshot: CpuidSnapshot) -> CpuidBatch {
   if cpuid7.ecx & (1 << 8) != 0 {
     caps |= x86::GFNI;
   }
-  if rust_avx && has_avx2 && has_aes && cpuid7.ecx & (1 << 9) != 0 {
+  if cpuid7.ecx & (1 << 9) != 0 {
     caps |= x86::VAES;
   }
-  if rust_avx && has_pclmul && cpuid7.ecx & (1 << 10) != 0 {
+  if cpuid7.ecx & (1 << 10) != 0 {
     caps |= x86::VPCLMULQDQ;
   }
 
@@ -575,12 +567,89 @@ fn decode_cpuid_x86_64(snapshot: CpuidSnapshot) -> CpuidBatch {
   }
 
   CpuidBatch {
-    caps,
+    caps: close_x86_implications(caps),
     is_amd,
     family,
     model,
     amx_permission: snapshot.amx_permission,
   }
+}
+
+/// Remove each capability whose implied capabilities are not all present.
+///
+/// A `#[target_feature(enable = "...")]` function may execute the instructions of
+/// every feature that its features imply, so detection may report a feature only
+/// with all of them. Each entry pairs a capability with the capabilities of the
+/// features that rustc enables with it: `rustc --print cfg --target
+/// x86_64-unknown-linux-gnu -C target-feature=+<feature>` on the pinned toolchain
+/// (1.101.0-nightly, 48f4b0553 2026-10-23), less the x86-64 baseline (`x87`,
+/// `fxsr`, `sse`, `sse2`). The sets are transitive, so one comparison against the
+/// decoded capabilities suffices. The features that imply no other feature have
+/// no entry: `sse3`, `aes`, `pclmulqdq`, `sha`, `gfni`, `bmi1`, `bmi2`, `popcnt`,
+/// `lzcnt`, `adx`, `amx-tile`, `movdiri`, `movdir64b`, `serialize`, `rdrand`,
+/// `rdseed`, and `apxf`. Rust's `avx10.2` also implies AVX-VNNI, AVX-VNNI-INT8,
+/// and AVX-VNNI-INT16, which `Caps` does not model, so runtime detection never
+/// reports AVX10_2.
+#[cfg(all(target_arch = "x86_64", feature = "std"))]
+fn close_x86_implications(caps: Caps) -> Caps {
+  use crate::platform::caps::x86;
+
+  const THROUGH_SSE42: Caps = x86::SSE3.union(x86::SSSE3).union(x86::SSE41).union(x86::SSE42);
+  const THROUGH_AVX: Caps = THROUGH_SSE42.union(x86::AVX);
+  const THROUGH_AVX2: Caps = THROUGH_AVX.union(x86::AVX2);
+  const THROUGH_AVX512F: Caps = THROUGH_AVX2.union(x86::FMA).union(x86::F16C).union(x86::AVX512F);
+  const THROUGH_AVX512BW: Caps = THROUGH_AVX512F.union(x86::AVX512BW);
+  const IMPLIED: [(Caps, Caps); 30] = [
+    (x86::SSSE3, x86::SSE3),
+    (x86::SSE41, x86::SSE3.union(x86::SSSE3)),
+    (x86::SSE42, x86::SSE3.union(x86::SSSE3).union(x86::SSE41)),
+    (x86::SSE4A, x86::SSE3),
+    (x86::AVX, THROUGH_SSE42),
+    (x86::AVX2, THROUGH_AVX),
+    (x86::FMA, THROUGH_AVX),
+    (x86::F16C, THROUGH_AVX),
+    (x86::SHA512, THROUGH_AVX2),
+    (x86::VPCLMULQDQ, THROUGH_AVX.union(x86::PCLMULQDQ)),
+    (x86::VAES, THROUGH_AVX2.union(x86::AESNI)),
+    (x86::AVX512F, THROUGH_AVX2.union(x86::FMA).union(x86::F16C)),
+    (x86::AVX512VL, THROUGH_AVX512F),
+    (x86::AVX512BW, THROUGH_AVX512F),
+    (x86::AVX512DQ, THROUGH_AVX512F),
+    (x86::AVX512CD, THROUGH_AVX512F),
+    (x86::AVX512IFMA, THROUGH_AVX512F),
+    (x86::AVX512VNNI, THROUGH_AVX512F),
+    (x86::AVX512VPOPCNTDQ, THROUGH_AVX512F),
+    (x86::AVX512VP2INTERSECT, THROUGH_AVX512F),
+    (x86::AVX512VBMI, THROUGH_AVX512BW),
+    (x86::AVX512VBMI2, THROUGH_AVX512BW),
+    (x86::AVX512BITALG, THROUGH_AVX512BW),
+    (x86::AVX512FP16, THROUGH_AVX512BW),
+    (x86::AVX512BF16, THROUGH_AVX512BW),
+    (
+      x86::AVX10_1,
+      THROUGH_AVX512BW
+        .union(x86::AVX512BF16)
+        .union(x86::AVX512BITALG)
+        .union(x86::AVX512CD)
+        .union(x86::AVX512DQ)
+        .union(x86::AVX512FP16)
+        .union(x86::AVX512IFMA)
+        .union(x86::AVX512VBMI)
+        .union(x86::AVX512VBMI2)
+        .union(x86::AVX512VL)
+        .union(x86::AVX512VNNI)
+        .union(x86::AVX512VPOPCNTDQ),
+    ),
+    (x86::AMX_BF16, x86::AMX_TILE),
+    (x86::AMX_INT8, x86::AMX_TILE),
+    (x86::AMX_FP16, x86::AMX_TILE),
+    (x86::AMX_COMPLEX, x86::AMX_TILE),
+  ];
+
+  IMPLIED
+    .iter()
+    .filter(|&&(_, implied)| !caps.has(implied))
+    .fold(caps, |closed, &(feature, _)| closed.difference(feature))
 }
 
 #[cfg(all(target_arch = "x86_64", feature = "std"))]

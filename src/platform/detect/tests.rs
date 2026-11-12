@@ -383,30 +383,58 @@ mod tests {
     }
   }
 
+  /// SSE3, SSSE3, SSE4.1, and SSE4.2, which Rust's `avx` implies.
+  #[cfg(all(target_arch = "x86_64", feature = "std"))]
+  fn enable_sse42(snapshot: &mut CpuidSnapshot) {
+    snapshot.leaf1.ecx |= (1 << 0) | (1 << 9) | (1 << 19) | (1 << 20);
+  }
+
   #[cfg(all(target_arch = "x86_64", feature = "std"))]
   fn enable_avx(snapshot: &mut CpuidSnapshot) {
+    enable_sse42(snapshot);
     snapshot.leaf1.ecx |= 1 << 28;
   }
 
   #[cfg(all(target_arch = "x86_64", feature = "std"))]
-  fn enable_avx512(snapshot: &mut CpuidSnapshot) {
+  fn enable_avx2(snapshot: &mut CpuidSnapshot) {
     enable_avx(snapshot);
+    snapshot.leaf7_0.ebx |= 1 << 5;
+  }
+
+  /// AVX-512F with AVX2, FMA, and F16C, which Rust's `avx512f` implies.
+  #[cfg(all(target_arch = "x86_64", feature = "std"))]
+  fn enable_avx512(snapshot: &mut CpuidSnapshot) {
+    enable_avx2(snapshot);
     snapshot.leaf1.ecx |= (1 << 12) | (1 << 29);
     snapshot.leaf7_0.ebx |= 1 << 16;
+  }
+
+  #[cfg(all(target_arch = "x86_64", feature = "std"))]
+  fn sse42_caps() -> Caps {
+    use crate::platform::caps::x86;
+
+    x86::SSE3 | x86::SSSE3 | x86::SSE41 | x86::SSE42
   }
 
   #[cfg(all(target_arch = "x86_64", feature = "std"))]
   fn avx_caps() -> Caps {
     use crate::platform::caps::x86;
 
-    x86::AVX
+    sse42_caps() | x86::AVX
+  }
+
+  #[cfg(all(target_arch = "x86_64", feature = "std"))]
+  fn avx2_caps() -> Caps {
+    use crate::platform::caps::x86;
+
+    avx_caps() | x86::AVX2
   }
 
   #[cfg(all(target_arch = "x86_64", feature = "std"))]
   fn avx512_caps() -> Caps {
     use crate::platform::caps::x86;
 
-    x86::AVX | x86::FMA | x86::F16C | x86::AVX512F
+    avx2_caps() | x86::FMA | x86::F16C | x86::AVX512F
   }
 
   #[test]
@@ -428,9 +456,6 @@ mod tests {
 
     feature_case!(x86::SSE3, leaf1, ecx, 0);
     feature_case!(x86::PCLMULQDQ, leaf1, ecx, 1);
-    feature_case!(x86::SSSE3, leaf1, ecx, 9);
-    feature_case!(x86::SSE41, leaf1, ecx, 19);
-    feature_case!(x86::SSE42, leaf1, ecx, 20);
     feature_case!(x86::POPCNT, leaf1, ecx, 23);
     feature_case!(x86::AESNI, leaf1, ecx, 25);
     feature_case!(x86::RDRAND, leaf1, ecx, 30);
@@ -442,32 +467,52 @@ mod tests {
     feature_case!(x86::SHA, leaf7_0, ebx, 29);
 
     feature_case!(x86::GFNI, leaf7_0, ecx, 8);
-    feature_case!(x86::AMX_BF16, leaf7_0, edx, 22);
     feature_case!(x86::AMX_TILE, leaf7_0, edx, 24);
-    feature_case!(x86::AMX_INT8, leaf7_0, edx, 25);
-    feature_case!(x86::SHA512, leaf7_1, eax, 0);
-    feature_case!(x86::AMX_FP16, leaf7_1, eax, 21);
-    feature_case!(x86::AMX_COMPLEX, leaf7_1, edx, 8);
     feature_case!(x86::MOVDIRI, leaf7_0, ecx, 27);
     feature_case!(x86::MOVDIR64B, leaf7_0, ecx, 28);
     feature_case!(x86::SERIALIZE, leaf7_0, edx, 14);
 
     feature_case!(x86::LZCNT, extended_leaf1, ecx, 5);
-    feature_case!(x86::SSE4A, extended_leaf1, ecx, 6);
+
+    // Each feature below also needs the features that Rust's target feature implies.
+    assert_feature(x86::SSE3 | x86::SSSE3, |snapshot| snapshot.leaf1.ecx |= (1 << 0) | (1 << 9));
+    assert_feature(x86::SSE3 | x86::SSSE3 | x86::SSE41, |snapshot| {
+      snapshot.leaf1.ecx |= (1 << 0) | (1 << 9) | (1 << 19);
+    });
+    assert_feature(sse42_caps(), enable_sse42);
+    assert_feature(x86::SSE3 | x86::SSE4A, |snapshot| {
+      snapshot.leaf1.ecx |= 1 << 0;
+      snapshot.extended_leaf1.ecx |= 1 << 6;
+    });
+    for (feature, edx, eax) in [
+      (x86::AMX_BF16, 1 << 22, 0),
+      (x86::AMX_INT8, 1 << 25, 0),
+      (x86::AMX_FP16, 0, 1 << 21),
+    ] {
+      assert_feature(x86::AMX_TILE | feature, |snapshot| {
+        snapshot.leaf7_0.edx |= (1 << 24) | edx;
+        snapshot.leaf7_1.eax |= eax;
+      });
+    }
+    assert_feature(x86::AMX_TILE | x86::AMX_COMPLEX, |snapshot| {
+      snapshot.leaf7_0.edx |= 1 << 24;
+      snapshot.leaf7_1.edx |= 1 << 8;
+    });
+    assert_feature(avx2_caps() | x86::SHA512, |snapshot| {
+      enable_avx2(snapshot);
+      snapshot.leaf7_1.eax |= 1 << 0;
+    });
 
     assert_feature(avx_caps(), enable_avx);
-    assert_feature(x86::AVX | x86::FMA, |snapshot| {
+    assert_feature(avx_caps() | x86::FMA, |snapshot| {
       enable_avx(snapshot);
       snapshot.leaf1.ecx |= 1 << 12;
     });
-    assert_feature(x86::AVX | x86::F16C, |snapshot| {
+    assert_feature(avx_caps() | x86::F16C, |snapshot| {
       enable_avx(snapshot);
       snapshot.leaf1.ecx |= 1 << 29;
     });
-    assert_feature(x86::AVX | x86::AVX2, |snapshot| {
-      enable_avx(snapshot);
-      snapshot.leaf7_0.ebx |= 1 << 5;
-    });
+    assert_feature(avx2_caps(), enable_avx2);
 
     enum Leaf7Register {
       Ebx,
@@ -480,10 +525,7 @@ mod tests {
       (x86::AVX512CD, Leaf7Register::Ebx, 28),
       (x86::AVX512BW, Leaf7Register::Ebx, 30),
       (x86::AVX512VL, Leaf7Register::Ebx, 31),
-      (x86::AVX512VBMI, Leaf7Register::Ecx, 1),
-      (x86::AVX512VBMI2, Leaf7Register::Ecx, 6),
       (x86::AVX512VNNI, Leaf7Register::Ecx, 11),
-      (x86::AVX512BITALG, Leaf7Register::Ecx, 12),
       (x86::AVX512VPOPCNTDQ, Leaf7Register::Ecx, 14),
       (x86::AVX512VP2INTERSECT, Leaf7Register::Edx, 8),
     ];
@@ -500,6 +542,17 @@ mod tests {
     assert_feature(avx512_caps(), enable_avx512);
 
     let avx512_bw_caps = avx512_caps() | x86::AVX512BW;
+    for (feature, bit) in [
+      (x86::AVX512VBMI, 1),
+      (x86::AVX512VBMI2, 6),
+      (x86::AVX512BITALG, 12),
+    ] {
+      assert_feature(avx512_bw_caps | feature, |snapshot| {
+        enable_avx512(snapshot);
+        snapshot.leaf7_0.ebx |= 1 << 30;
+        snapshot.leaf7_0.ecx |= 1 << bit;
+      });
+    }
     assert_feature(avx512_bw_caps | x86::AVX512FP16, |snapshot| {
       enable_avx512(snapshot);
       snapshot.leaf7_0.ebx |= 1 << 30;
@@ -511,28 +564,114 @@ mod tests {
       snapshot.leaf7_1.eax |= 1 << 5;
     });
 
-    assert_feature(x86::AVX | x86::AVX2 | x86::AESNI | x86::VAES, |snapshot| {
-      enable_avx(snapshot);
+    assert_feature(avx2_caps() | x86::AESNI | x86::VAES, |snapshot| {
+      enable_avx2(snapshot);
       snapshot.leaf1.ecx |= 1 << 25;
-      snapshot.leaf7_0.ebx |= 1 << 5;
       snapshot.leaf7_0.ecx |= 1 << 9;
     });
-    assert_feature(x86::AVX | x86::PCLMULQDQ | x86::VPCLMULQDQ, |snapshot| {
+    assert_feature(avx_caps() | x86::PCLMULQDQ | x86::VPCLMULQDQ, |snapshot| {
       enable_avx(snapshot);
       snapshot.leaf1.ecx |= 1 << 1;
       snapshot.leaf7_0.ecx |= 1 << 10;
     });
     assert_feature(x86::APX, |snapshot| snapshot.leaf7_1.edx |= 1 << 21);
-    assert_feature(avx512_caps() | x86::AVX10_1, |snapshot| {
-      enable_avx512(snapshot);
-      snapshot.leaf7_1.edx |= 1 << 19;
-      snapshot.leaf24_0.ebx = 1;
+    for version in [1, 2] {
+      assert_feature(avx10_1_caps(), |snapshot| {
+        enable_avx10_1(snapshot);
+        snapshot.leaf24_0.ebx = version;
+      });
+    }
+  }
+
+  /// AVX10.1 with the AVX-512 features that Rust's `avx10.1` implies.
+  #[cfg(all(target_arch = "x86_64", feature = "std"))]
+  fn enable_avx10_1(snapshot: &mut CpuidSnapshot) {
+    enable_avx512(snapshot);
+    // BW, CD, DQ, IFMA, and VL; VBMI, VBMI2, VNNI, BITALG, and VPOPCNTDQ; FP16; BF16.
+    snapshot.leaf7_0.ebx |= (1 << 17) | (1 << 21) | (1 << 28) | (1 << 30) | (1 << 31);
+    snapshot.leaf7_0.ecx |= (1 << 1) | (1 << 6) | (1 << 11) | (1 << 12) | (1 << 14);
+    snapshot.leaf7_0.edx |= 1 << 23;
+    snapshot.leaf7_1.eax |= 1 << 5;
+    snapshot.leaf7_1.edx |= 1 << 19;
+    snapshot.leaf24_0.ebx = 1;
+  }
+
+  #[cfg(all(target_arch = "x86_64", feature = "std"))]
+  fn avx10_1_caps() -> Caps {
+    use crate::platform::caps::x86;
+
+    avx512_caps()
+      | x86::AVX512BW
+      | x86::AVX512CD
+      | x86::AVX512DQ
+      | x86::AVX512IFMA
+      | x86::AVX512VL
+      | x86::AVX512VBMI
+      | x86::AVX512VBMI2
+      | x86::AVX512VNNI
+      | x86::AVX512BITALG
+      | x86::AVX512VPOPCNTDQ
+      | x86::AVX512FP16
+      | x86::AVX512BF16
+      | x86::AVX10_1
+  }
+
+  /// A `#[target_feature]` kernel may execute the instructions of every feature that its
+  /// features imply in Rust, so a CPUID that omits an implied feature, as a hypervisor's
+  /// CPUID mask can, must not report the feature that implies it.
+  #[test]
+  #[cfg(all(target_arch = "x86_64", feature = "std"))]
+  fn x86_cpuid_decoder_drops_features_whose_implied_features_are_missing() {
+    use crate::platform::caps::x86;
+
+    fn decode_without(configure: fn(&mut CpuidSnapshot), clear: impl FnOnce(&mut CpuidSnapshot)) -> Caps {
+      let mut snapshot = cpuid_feature_snapshot();
+      configure(&mut snapshot);
+      clear(&mut snapshot);
+      decode_cpuid_x86_64(snapshot).caps
+    }
+
+    // AVX-512F without AVX2: no AVX-512 capability at all.
+    let caps = decode_without(enable_avx10_1, |snapshot| snapshot.leaf7_0.ebx &= !(1 << 5));
+    assert!(!caps.has(x86::AVX2));
+    let all_avx512 = avx10_1_caps().difference(avx2_caps().union(x86::FMA).union(x86::F16C));
+    assert!(caps.intersection(all_avx512).is_empty(), "AVX-512 without AVX2");
+
+    // AVX-512BW's dependents without AVX-512BW.
+    let caps = decode_without(enable_avx10_1, |snapshot| snapshot.leaf7_0.ebx &= !(1 << 30));
+    let bw_dependents =
+      x86::AVX512VBMI | x86::AVX512VBMI2 | x86::AVX512BITALG | x86::AVX512FP16 | x86::AVX512BF16 | x86::AVX10_1;
+    assert!(caps.intersection(bw_dependents).is_empty(), "AVX-512BW dependents");
+    assert!(caps.has(x86::AVX512F | x86::AVX512VL | x86::AVX512VNNI));
+
+    // AVX10.1 without one AVX-512 feature that it implies.
+    let caps = decode_without(enable_avx10_1, |snapshot| snapshot.leaf7_0.ecx &= !(1 << 11));
+    assert!(!caps.has(x86::AVX10_1), "AVX10.1 without AVX-512 VNNI");
+
+    // The SSE chain under AVX: SSE4.2 without SSE4.1 removes SSE4.2 and every AVX feature.
+    let caps = decode_without(enable_avx512, |snapshot| snapshot.leaf1.ecx &= !(1 << 19));
+    assert_eq!(caps, x86::SSE3 | x86::SSSE3);
+    let caps = decode_without(enable_sse42, |snapshot| snapshot.leaf1.ecx &= !(1 << 0));
+    assert!(caps.is_empty(), "SSSE3, SSE4.1, and SSE4.2 without SSE3");
+
+    // SHA512 and VAES without AVX2.
+    let caps = decode_without(enable_avx, |snapshot| {
+      snapshot.leaf1.ecx |= 1 << 25;
+      snapshot.leaf7_0.ecx |= 1 << 9;
+      snapshot.leaf7_1.eax |= 1 << 0;
     });
-    assert_feature(avx512_caps() | x86::AVX10_1, |snapshot| {
-      enable_avx512(snapshot);
-      snapshot.leaf7_1.edx |= 1 << 19;
-      snapshot.leaf24_0.ebx = 2;
-    });
+    assert_eq!(caps, avx_caps() | x86::AESNI);
+
+    // The AMX extensions without AMX-TILE.
+    let caps = decode_without(
+      |snapshot| {
+        snapshot.leaf7_0.edx |= (1 << 22) | (1 << 25);
+        snapshot.leaf7_1.eax |= 1 << 21;
+        snapshot.leaf7_1.edx |= 1 << 8;
+      },
+      |_| {},
+    );
+    assert!(caps.is_empty(), "AMX extensions without AMX-TILE");
   }
 
   #[test]
