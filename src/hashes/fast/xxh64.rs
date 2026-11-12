@@ -210,7 +210,10 @@ impl Hasher for Xxh64Hasher {
     }
     let (stripes, tail) = input.as_chunks::<STRIPE_LEN>();
     self.lanes = consume(self.lanes, stripes);
-    self.buffer[..tail.len()].copy_from_slice(tail);
+    // Skip the out-of-line `memcpy` call that an empty copy still makes.
+    if !tail.is_empty() {
+      self.buffer[..tail.len()].copy_from_slice(tail);
+    }
     self.buffered = tail.len();
   }
 
