@@ -243,52 +243,6 @@ pub(crate) fn crc24_openpgp(data: &[u8]) -> u32 {
   kernel(INIT, data) & MASK
 }
 
-/// Internal Adler-32 auto-dispatch helper used by the trait impl.
-#[cfg(feature = "adler32")]
-#[inline(always)]
-pub(crate) fn adler32(table: &KernelTable, adler: u32, data: &[u8]) -> u32 {
-  // aarch64: the dot-product kernel needs a capability that no kernel table requires, so it
-  // dispatches here, ahead of the table, as the CRC-32 one-shot helpers do.
-  #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
-  if crate::platform::caps().has(crate::platform::caps::aarch64::DOTPROD) {
-    // SAFETY: NEON is enabled at compile time, and the runtime capability check above
-    // establishes the dot-product extension.
-    return unsafe { crate::checksum::adler32::aarch64::update_dotprod(adler, data) };
-  }
-  // x86-64: the SIMD kernels need capabilities that no kernel table requires.
-  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
-  if let Some(kernel) = crate::checksum::adler32::x86_64::select(crate::platform::caps()) {
-    return (kernel.update)(adler, data);
-  }
-  // wasm32 has no kernel table. SIMD128 is a compile-time requirement of the artifact, and the
-  // capability check keeps a portable detection override in effect.
-  #[cfg(all(target_arch = "wasm32", target_feature = "simd128", not(feature = "portable-only")))]
-  if crate::platform::caps().has(crate::platform::caps::wasm::SIMD128) {
-    return crate::checksum::adler32::wasm32::update(adler, data);
-  }
-  let kernel = table.select_fns(data.len()).adler32;
-  kernel(adler, data)
-}
-
-/// Name of the kernel that [`adler32`] selects for `len` bytes.
-#[cfg(feature = "adler32")]
-#[inline]
-pub(crate) fn adler32_name(table: &KernelTable, len: usize) -> &'static str {
-  #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
-  if crate::platform::caps().has(crate::platform::caps::aarch64::DOTPROD) {
-    return crate::checksum::adler32::aarch64::DOTPROD_KERNEL_NAME;
-  }
-  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
-  if let Some(kernel) = crate::checksum::adler32::x86_64::select(crate::platform::caps()) {
-    return kernel.name;
-  }
-  #[cfg(all(target_arch = "wasm32", target_feature = "simd128", not(feature = "portable-only")))]
-  if crate::platform::caps().has(crate::platform::caps::wasm::SIMD128) {
-    return crate::checksum::adler32::wasm32::KERNEL_NAME;
-  }
-  table.select_names(len).adler32_name
-}
-
 // Data Structures
 
 /// Hot-path kernel function pointers for one size class (64 bytes, fits one cache line).

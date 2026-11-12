@@ -43,7 +43,7 @@ macro_rules! crc_vectored_dispatch {
 /// This covers the repeated "resolve once under std, otherwise use auto"
 /// pattern shared by CRC-16/32/64 variants while leaving the actual kernel
 /// wrappers and force-specific architecture helpers local to each module.
-#[cfg(any(feature = "crc16", feature = "crc32", feature = "crc64", feature = "adler32"))]
+#[cfg(any(feature = "crc16", feature = "crc32", feature = "crc64"))]
 macro_rules! define_crc_dispatch {
   (
     word_ty: $word_ty:ty,

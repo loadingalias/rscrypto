@@ -37,214 +37,125 @@ use crate::traits::{Checksum, ChecksumCombine};
 // Dispatch
 
 type Adler32DispatchFn = crate::checksum::dispatchers::Adler32Fn;
-#[cfg(feature = "std")]
-type Adler32DispatchVectoredFn = fn(u32, &[&[u8]]) -> u32;
 
-#[inline]
-fn adler32_apply_kernel_vectored(mut adler: u32, bufs: &[&[u8]], kernel: Adler32DispatchFn) -> u32 {
-  for &buf in bufs {
-    if !buf.is_empty() {
-      adler = kernel(adler, buf);
-    }
-  }
-  adler
+/// One Adler-32 kernel: its entry point and its canonical name.
+#[derive(Clone, Copy)]
+struct Kernel {
+  update: Adler32DispatchFn,
+  name: &'static str,
 }
 
-#[inline]
-fn adler32_dispatch_auto(adler: u32, data: &[u8]) -> u32 {
-  crate::checksum::kernel_table::adler32(crate::checksum::kernel_table::active_table(), adler, data)
-}
+const PORTABLE: Kernel = Kernel {
+  update: portable::update,
+  name: portable::KERNEL_NAME,
+};
 
-#[inline]
-fn adler32_dispatch_auto_vectored(adler: u32, bufs: &[&[u8]]) -> u32 {
-  adler32_apply_kernel_vectored(adler, bufs, adler32_dispatch_auto)
-}
+#[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
+const NEON: Kernel = Kernel {
+  update: aarch64::update_safe,
+  name: aarch64::KERNEL_NAME,
+};
 
-#[cfg(feature = "std")]
-#[inline]
-fn adler32_dispatch_portable(adler: u32, data: &[u8]) -> u32 {
-  portable::update(adler, data)
-}
+#[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
+const NEON_DOTPROD: Kernel = Kernel {
+  update: adler32_neon_dotprod,
+  name: aarch64::DOTPROD_KERNEL_NAME,
+};
 
-#[cfg(feature = "std")]
-#[inline]
-fn adler32_dispatch_portable_vectored(adler: u32, bufs: &[&[u8]]) -> u32 {
-  adler32_apply_kernel_vectored(adler, bufs, portable::update)
-}
-
-#[cfg(all(feature = "std", target_arch = "aarch64", target_feature = "neon"))]
-#[inline]
-fn adler32_dispatch_neon(adler: u32, data: &[u8]) -> u32 {
-  aarch64::update_safe(adler, data)
-}
-
-#[cfg(all(feature = "std", target_arch = "aarch64", target_feature = "neon"))]
-#[inline]
-fn adler32_dispatch_neon_vectored(adler: u32, bufs: &[&[u8]]) -> u32 {
-  adler32_apply_kernel_vectored(adler, bufs, aarch64::update_safe)
-}
-
-#[cfg(all(feature = "std", target_arch = "aarch64", target_feature = "neon"))]
-#[inline]
-fn adler32_dispatch_neon_dotprod(adler: u32, data: &[u8]) -> u32 {
-  // SAFETY: NEON is enabled at compile time. Two paths select this wrapper, and both establish
-  // the dot-product extension: `Adler32Force::NeonDotprod`, which survives `config::get()` only
-  // when cached detection reports it, and `adler32_auto_kernel`, which checks it.
+#[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
+fn adler32_neon_dotprod(adler: u32, data: &[u8]) -> u32 {
+  // SAFETY: NEON is enabled at compile time. Only `select` returns this function, and only when
+  // cached detection reports the dot-product extension: automatic selection checks it, and
+  // `config::get()` keeps `Adler32Force::NeonDotprod` only then.
   unsafe { aarch64::update_dotprod(adler, data) }
 }
 
-#[cfg(all(feature = "std", target_arch = "aarch64", target_feature = "neon"))]
-#[inline]
-fn adler32_dispatch_neon_dotprod_vectored(adler: u32, bufs: &[&[u8]]) -> u32 {
-  adler32_apply_kernel_vectored(adler, bufs, adler32_dispatch_neon_dotprod)
+#[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
+const VMSUM: Kernel = Kernel {
+  update: power::update_safe,
+  name: power::KERNEL_NAME,
+};
+
+#[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
+const VSUM: Kernel = Kernel {
+  update: s390x::update_safe,
+  name: s390x::KERNEL_NAME,
+};
+
+#[cfg(all(target_arch = "wasm32", target_feature = "simd128", not(feature = "portable-only")))]
+const WASM_SIMD128: Kernel = Kernel {
+  update: wasm32::update,
+  name: wasm32::KERNEL_NAME,
+};
+
+/// The kernel for `force`, which comes from `config::get()`: a forced kernel survives it only
+/// when cached detection reports every capability that the kernel needs.
+///
+/// This is the only kernel selection of Adler-32. [`kernel`] caches its result, and updates and
+/// kernel names both read that cache, so a reported name is the kernel that runs.
+fn select(force: Adler32Force) -> Kernel {
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+  if let Some(kernel) = x86_64::KERNELS.iter().find(|kernel| kernel.force == force) {
+    return Kernel {
+      update: kernel.update,
+      name: kernel.name,
+    };
+  }
+  match force {
+    Adler32Force::Portable => PORTABLE,
+    #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
+    Adler32Force::Neon => NEON,
+    #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
+    Adler32Force::NeonDotprod => NEON_DOTPROD,
+    #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
+    Adler32Force::Vmsum => VMSUM,
+    #[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
+    Adler32Force::Vsum => VSUM,
+    _ => select_auto(),
+  }
 }
 
-/// The kernel that automatic selection runs on this CPU, resolved once into the dispatch cache.
-///
-/// It applies the selection of `kernel_table::adler32`: the x86-64 kernel that cached detection
-/// allows, the aarch64 dot-product kernel when detection reports `FEAT_DotProd`, the wasm32
-/// SIMD128 kernel when the artifact requires SIMD128, and otherwise the kernel table's row. Every Adler-32 kernel handles every length, and each kernel table
-/// names one Adler-32 kernel for all of its size classes, so one kernel serves every call.
-#[cfg(feature = "std")]
-#[inline]
-fn adler32_auto_kernel() -> Adler32DispatchFn {
+/// Automatic selection: the x86-64 kernel that cached detection allows, the aarch64 dot-product
+/// kernel when detection reports `FEAT_DotProd`, the wasm32 SIMD128 kernel when the artifact
+/// requires SIMD128, and otherwise the active kernel table's row, which holds the POWER and
+/// IBM Z kernels. The SIMD128 check keeps a portable detection override in effect. Every
+/// Adler-32 kernel handles every length, and each kernel table names one Adler-32 kernel for
+/// all of its size classes, so one kernel serves every call.
+fn select_auto() -> Kernel {
   let caps = crate::platform::caps();
   #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   if let Some(kernel) = x86_64::select(caps) {
-    return kernel.update;
+    return Kernel {
+      update: kernel.update,
+      name: kernel.name,
+    };
   }
   #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
   if caps.has(crate::platform::caps::aarch64::DOTPROD) {
-    return adler32_dispatch_neon_dotprod;
+    return NEON_DOTPROD;
   }
   #[cfg(all(target_arch = "wasm32", target_feature = "simd128", not(feature = "portable-only")))]
   if caps.has(crate::platform::caps::wasm::SIMD128) {
-    return wasm32::update;
+    return WASM_SIMD128;
   }
   let _ = caps;
-  crate::checksum::kernel_table::active_table()
-    .select_fns(usize::MAX)
-    .adler32
-}
-
-// x86-64: a forced kernel survives `config::get()` only when cached detection reports every
-// capability in its `x86_64::KERNELS` entry, and only that force selects its kernel here.
-
-#[cfg(all(feature = "std", target_arch = "x86_64", target_feature = "sse2"))]
-#[inline]
-fn adler32_dispatch_ssse3_vectored(adler: u32, bufs: &[&[u8]]) -> u32 {
-  adler32_apply_kernel_vectored(adler, bufs, x86_64::adler32_ssse3_safe)
-}
-
-#[cfg(all(feature = "std", target_arch = "x86_64", target_feature = "sse2"))]
-#[inline]
-fn adler32_dispatch_avx2_vectored(adler: u32, bufs: &[&[u8]]) -> u32 {
-  adler32_apply_kernel_vectored(adler, bufs, x86_64::adler32_avx2_safe)
-}
-
-#[cfg(all(feature = "std", target_arch = "x86_64", target_feature = "sse2"))]
-#[inline]
-fn adler32_dispatch_avx512_vnni_vectored(adler: u32, bufs: &[&[u8]]) -> u32 {
-  adler32_apply_kernel_vectored(adler, bufs, x86_64::adler32_avx512_vnni_safe)
-}
-
-// POWER and IBM Z: a forced kernel survives `config::get()` only when cached detection reports
-// AltiVec or the vector facility, and only that force selects its kernel here.
-
-#[cfg(all(feature = "std", target_arch = "powerpc64", not(feature = "portable-only")))]
-#[inline]
-fn adler32_dispatch_vmsum_vectored(adler: u32, bufs: &[&[u8]]) -> u32 {
-  adler32_apply_kernel_vectored(adler, bufs, power::update_safe)
-}
-
-#[cfg(all(feature = "std", target_arch = "s390x", not(feature = "portable-only")))]
-#[inline]
-fn adler32_dispatch_vsum_vectored(adler: u32, bufs: &[&[u8]]) -> u32 {
-  adler32_apply_kernel_vectored(adler, bufs, s390x::update_safe)
-}
-
-define_crc_dispatch! {
-  word_ty: u32,
-  dispatch_fn_ty: Adler32DispatchFn,
-  dispatch_vectored_fn_ty: Adler32DispatchVectoredFn,
-  auto_force: Adler32Force::Auto,
-  force_expr: config::get().effective_force,
-  active_table: crate::checksum::kernel_table::active_table(),
-  auto_dispatch: adler32_dispatch_auto,
-  auto_vectored_dispatch: adler32_dispatch_auto_vectored,
-  dispatch_cache: ADLER32_DISPATCH,
-  dispatch_vectored_cache: ADLER32_DISPATCH_VECTORED,
-  resolve_dispatch: resolve_adler32_dispatch,
-  resolve_dispatch_vectored: resolve_adler32_dispatch_vectored,
-  dispatch: adler32_dispatch,
-  dispatch_vectored: adler32_dispatch_vectored,
-  resolved_dispatch: adler32_resolved_dispatch,
-  runtime_paths: adler32_runtime_paths,
-  resolve_match: {
-    Adler32Force::Portable => adler32_dispatch_portable,
-    Adler32Force::Auto => adler32_auto_kernel(),
-    #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
-    Adler32Force::Neon => adler32_dispatch_neon,
-    #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
-    Adler32Force::NeonDotprod => adler32_dispatch_neon_dotprod,
-    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
-    Adler32Force::Ssse3 => x86_64::adler32_ssse3_safe,
-    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
-    Adler32Force::Avx2 => x86_64::adler32_avx2_safe,
-    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
-    Adler32Force::Avx512Vnni => x86_64::adler32_avx512_vnni_safe,
-    #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
-    Adler32Force::Vmsum => power::update_safe,
-    #[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
-    Adler32Force::Vsum => s390x::update_safe,
-    _ => adler32_dispatch_auto,
-  },
-  resolve_vectored_match: {
-    Adler32Force::Portable => adler32_dispatch_portable_vectored,
-    #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
-    Adler32Force::Neon => adler32_dispatch_neon_vectored,
-    #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
-    Adler32Force::NeonDotprod => adler32_dispatch_neon_dotprod_vectored,
-    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
-    Adler32Force::Ssse3 => adler32_dispatch_ssse3_vectored,
-    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
-    Adler32Force::Avx2 => adler32_dispatch_avx2_vectored,
-    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
-    Adler32Force::Avx512Vnni => adler32_dispatch_avx512_vnni_vectored,
-    #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
-    Adler32Force::Vmsum => adler32_dispatch_vmsum_vectored,
-    #[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
-    Adler32Force::Vsum => adler32_dispatch_vsum_vectored,
-    _ => adler32_dispatch_auto_vectored,
+  let table = crate::checksum::kernel_table::active_table();
+  Kernel {
+    update: table.select_fns(usize::MAX).adler32,
+    name: table.select_names(usize::MAX).adler32_name,
   }
 }
 
-// Kernel Name Introspection
-
-/// Get the name of the kernel that would be selected for a given buffer length.
+/// The kernel of this process, selected once for the effective force.
 #[inline]
-#[must_use]
-fn adler32_selected_kernel_name(len: usize) -> &'static str {
-  match config::get().effective_force {
-    Adler32Force::Portable => return portable::KERNEL_NAME,
-    #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
-    Adler32Force::Neon => return aarch64::KERNEL_NAME,
-    #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
-    Adler32Force::NeonDotprod => return aarch64::DOTPROD_KERNEL_NAME,
-    #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
-    Adler32Force::Vmsum => return power::KERNEL_NAME,
-    #[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
-    Adler32Force::Vsum => return s390x::KERNEL_NAME,
-    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
-    force => {
-      if let Some(kernel) = x86_64::KERNELS.iter().find(|kernel| kernel.force == force) {
-        return kernel.name;
-      }
-    }
-    #[cfg(not(all(target_arch = "x86_64", target_feature = "sse2")))]
-    _ => {}
-  }
-  crate::checksum::kernel_table::adler32_name(crate::checksum::kernel_table::active_table(), len)
+fn kernel() -> Kernel {
+  static KERNEL: crate::backend::cache::OnceCache<Kernel> = crate::backend::cache::OnceCache::new();
+  KERNEL.get_or_init(|| select(config::get().effective_force))
+}
+
+/// Adler-32 through [`kernel`], for a hasher that `const` construction cannot resolve.
+fn adler32_dispatch(adler: u32, data: &[u8]) -> u32 {
+  (kernel().update)(adler, data)
 }
 
 /// Adler-32 checksum from [RFC 1950](https://www.rfc-editor.org/rfc/rfc1950.html) (**NOT CRYPTO**).
@@ -273,7 +184,6 @@ fn adler32_selected_kernel_name(len: usize) -> &'static str {
 pub struct Adler32 {
   state: u32,
   dispatch: Adler32DispatchFn,
-  auto_table: Option<&'static crate::checksum::kernel_table::KernelTable>,
 }
 
 impl Adler32 {
@@ -285,9 +195,8 @@ impl Adler32 {
   pub const fn resume(adler: u32) -> Self {
     Self {
       state: (((adler >> 16) % MOD) << 16) | ((adler & 0xffff) % MOD),
-      // `resume` is const, so keep runtime force semantics via wrapper dispatch.
+      // `resume` is const, so the kernel resolves at the first update.
       dispatch: adler32_dispatch,
-      auto_table: None,
     }
   }
 
@@ -298,23 +207,11 @@ impl Adler32 {
   }
 
   /// Returns the kernel name that the selector would choose for `len`.
+  ///
+  /// Every length runs the same kernel.
   #[must_use]
-  pub fn kernel_name_for_len(len: usize) -> &'static str {
-    adler32_selected_kernel_name(len)
-  }
-}
-
-/// The dispatch of a new hasher. With `std`, every force, automatic selection included,
-/// resolves once into the dispatch cache, so a call pays one cached load and one indirect call.
-#[inline]
-fn adler32_paths() -> (
-  Adler32DispatchFn,
-  Option<&'static crate::checksum::kernel_table::KernelTable>,
-) {
-  if cfg!(feature = "std") {
-    (adler32_resolved_dispatch(), None)
-  } else {
-    adler32_runtime_paths()
+  pub fn kernel_name_for_len(_len: usize) -> &'static str {
+    kernel().name
   }
 }
 
@@ -324,36 +221,33 @@ impl Checksum for Adler32 {
 
   #[inline]
   fn new() -> Self {
-    let (dispatch, auto_table) = adler32_paths();
     Self {
       state: Self::INIT,
-      dispatch,
-      auto_table,
+      dispatch: kernel().update,
     }
   }
 
   #[inline]
   fn with_initial(initial: u32) -> Self {
     let (a, b) = sums(initial);
-    let (dispatch, auto_table) = adler32_paths();
     Self {
       state: (b << 16) | a,
-      dispatch,
-      auto_table,
+      dispatch: kernel().update,
     }
   }
 
   #[inline]
   fn update(&mut self, data: &[u8]) {
-    self.state = match self.auto_table {
-      Some(table) => crate::checksum::kernel_table::adler32(table, self.state, data),
-      None => (self.dispatch)(self.state, data),
-    };
+    self.state = (self.dispatch)(self.state, data);
   }
 
   #[inline]
   fn update_vectored(&mut self, bufs: &[&[u8]]) {
-    self.state = adler32_dispatch_vectored(self.state, bufs);
+    for &buf in bufs {
+      if !buf.is_empty() {
+        self.state = (self.dispatch)(self.state, buf);
+      }
+    }
   }
 
   #[inline]
@@ -492,6 +386,61 @@ fn the_active_table_names_one_adler32_kernel_for_every_size_class() {
   let largest = table.select_names(usize::MAX).adler32_name;
   for len in [0, 1, 64, 65, 256, 4096, 65_536, 1 << 20] {
     assert_eq!(table.select_names(len).adler32_name, largest, "len={len}");
+  }
+}
+
+/// Automatic selection runs, and names, the fastest kernel that the host's capabilities allow.
+/// The list below states that policy apart from `select_auto`, so on its native host a reported
+/// capability that does not select its kernel fails here. The kernel must also match the
+/// portable kernel through the public API.
+#[cfg(all(test, not(miri)))]
+#[test]
+fn automatic_selection_runs_the_kernel_that_the_capabilities_call_for() {
+  use crate::platform::Caps;
+
+  if config::get().effective_force != Adler32Force::Auto {
+    return;
+  }
+  let policy: &[(Caps, &str)] = &[
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+    (
+      crate::platform::caps::x86::AVX512F
+        .union(crate::platform::caps::x86::AVX512BW)
+        .union(crate::platform::caps::x86::AVX512VNNI),
+      "x86_64/avx512-vnni",
+    ),
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+    (crate::platform::caps::x86::AVX2, "x86_64/avx2"),
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+    (crate::platform::caps::x86::SSSE3, "x86_64/ssse3"),
+    #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
+    (crate::platform::caps::aarch64::DOTPROD, "aarch64/neon-dotprod"),
+    #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
+    (crate::platform::caps::aarch64::NEON, "aarch64/neon"),
+    #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
+    (crate::platform::caps::power::ALTIVEC, "power/vmsum"),
+    #[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
+    (crate::platform::caps::s390x::VECTOR, "s390x/vsum"),
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128", not(feature = "portable-only")))]
+    (crate::platform::caps::wasm::SIMD128, "wasm32/simd128"),
+  ];
+  let host = crate::platform::caps();
+  let expected = policy
+    .iter()
+    .find(|&&(needs, _)| host.has(needs))
+    .map_or("portable/unroll16", |&(_, name)| name);
+  assert_eq!(Adler32::kernel_name_for_len(0), expected);
+
+  let data: alloc::vec::Vec<u8> = (0..70_000u32)
+    .map(|i| (i.wrapping_mul(131) >> 3).to_le_bytes()[0])
+    .collect();
+  for len in [0, 1, 15, 16, 63, 64, 65, 255, 256, 5553, 16_385, 70_000] {
+    let input = &data[..len];
+    assert_eq!(
+      Adler32::checksum(input),
+      portable::update(1, input),
+      "{expected}: len={len}"
+    );
   }
 }
 
