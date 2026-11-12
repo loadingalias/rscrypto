@@ -397,11 +397,27 @@ fn control_needles() {
 
 fn nothing() {}
 
-fn fill(byte: u8) -> impl FnMut(&mut [u8]) -> Result<(), MlKemError> {
+/// Key generation randomness from a xorshift stream: distinct, non-repeating
+/// bytes, so every needle derived from it is specific. A repeated byte would
+/// equal its own limb form and match any run of that byte.
+fn stream_fill<E>(seed: u32) -> impl FnMut(&mut [u8]) -> Result<(), E> {
+  let mut state = seed;
   move |out| {
-    out.fill(black_box(byte));
+    for byte in out.iter_mut() {
+      state ^= state << 13;
+      state ^= state >> 17;
+      state ^= state << 5;
+      *byte = black_box(state.to_le_bytes()[1]);
+    }
     Ok(())
   }
+}
+
+/// The 64-byte d || z that `stream_fill(seed)` gives ML-KEM key generation.
+fn mlkem_seed(seed: u32) -> [u8; 64] {
+  let mut bytes = [0; 64];
+  stream_fill::<MlKemError>(seed)(&mut bytes).expect("the stream cannot fail");
+  bytes
 }
 
 /// Encoded key input for import scenarios, outside every scanned region.
@@ -427,17 +443,17 @@ fn key_input_mut<const N: usize>() -> &'static mut [u8; N] {
 }
 
 macro_rules! mlkem {
-  ($module:ident, $profile:ty, $key:ty, $seed:ty, $byte:literal) => {
+  ($module:ident, $profile:ty, $key:ty, $seed:ty, $stream:literal) => {
     mod $module {
       use super::*;
 
       pub(super) fn keygen() {
-        let keys = <$profile>::generate_keypair(fill($byte)).expect("key generation");
+        let keys = <$profile>::generate_keypair(stream_fill($stream)).expect("key generation");
         black_box(&keys);
       }
 
       pub(super) fn keygen_in() {
-        let keys = <$profile>::generate_keypair_in(fill($byte), &ARENA).expect("key generation");
+        let keys = <$profile>::generate_keypair_in(stream_fill($stream), &ARENA).expect("key generation");
         black_box(&keys);
       }
 
@@ -452,18 +468,18 @@ macro_rules! mlkem {
       }
 
       pub(super) fn prepare() {
-        let (_, key) = <$profile>::generate_keypair_in(fill($byte), &HEAP).expect("key generation");
+        let (_, key) = <$profile>::generate_keypair_in(stream_fill($stream), &HEAP).expect("key generation");
         let secret = key.expose_secret();
         // SAFETY: no reference into KEY_INPUT is live while it is written.
         unsafe { (&mut *KEY_INPUT.0.get())[..<$key>::LENGTH].copy_from_slice(secret.as_bytes()) };
       }
 
       pub(super) fn prepare_pkcs8_seed() {
-        <$seed>::from_bytes([$byte; 64]).to_pkcs8_der_into(key_input_mut());
+        <$seed>::from_bytes(mlkem_seed($stream)).to_pkcs8_der_into(key_input_mut());
       }
 
       pub(super) fn prepare_pkcs8_expanded() {
-        let (_, key) = <$profile>::generate_keypair_in(fill($byte), &HEAP).expect("key generation");
+        let (_, key) = <$profile>::generate_keypair_in(stream_fill($stream), &HEAP).expect("key generation");
         key.to_pkcs8_der_into(key_input_mut());
       }
 
@@ -488,7 +504,7 @@ macro_rules! mlkem {
       }
 
       pub(super) fn needles() {
-        let (_, key) = <$profile>::generate_keypair_in(fill($byte), &HEAP).expect("key generation");
+        let (_, key) = <$profile>::generate_keypair_in(stream_fill($stream), &HEAP).expect("key generation");
         let secret = key.expose_secret();
         let bytes = secret.as_bytes();
         // dk = dk_pke || ek || H(ek) || z, where ek = 384k + 32 bytes and
@@ -501,9 +517,15 @@ macro_rules! mlkem {
   };
 }
 
-mlkem!(mlkem512, MlKem512, MlKem512DecapsulationKey, MlKem512Seed, 0x51);
-mlkem!(mlkem768, MlKem768, MlKem768DecapsulationKey, MlKem768Seed, 0x76);
-mlkem!(mlkem1024, MlKem1024, MlKem1024DecapsulationKey, MlKem1024Seed, 0x10);
+mlkem!(mlkem512, MlKem512, MlKem512DecapsulationKey, MlKem512Seed, 0x0512_3A5D);
+mlkem!(mlkem768, MlKem768, MlKem768DecapsulationKey, MlKem768Seed, 0x0768_C1E7);
+mlkem!(
+  mlkem1024,
+  MlKem1024,
+  MlKem1024DecapsulationKey,
+  MlKem1024Seed,
+  0x1024_7F3B
+);
 
 const MLDSA_SEED: [u8; 32] = [0x3d; 32];
 
@@ -886,22 +908,6 @@ hkdf!(hkdf_sha256, HkdfSha256, u32, 64, SHA256_H0, compress256);
 hkdf!(hkdf_sha384, HkdfSha384, u64, 128, SHA384_H0, compress512);
 hkdf!(hkdf_sha512, HkdfSha512, u64, 128, SHA512_H0, compress512);
 
-/// A xorshift stream from `seed`, so the ML-DSA-65 seed and the traditional
-/// key are distinct, non-repeating needles. A repeated byte would also equal
-/// its own limb form and match any run of that byte.
-fn composite_fill(seed: u32) -> impl FnMut(&mut [u8]) -> Result<(), rscrypto::CompositeMlDsaError> {
-  let mut state = seed;
-  move |out| {
-    for byte in out.iter_mut() {
-      state ^= state << 13;
-      state ^= state >> 17;
-      state ^= state << 5;
-      *byte = black_box(state.to_le_bytes()[1]);
-    }
-    Ok(())
-  }
-}
-
 /// Hedged composite signing randomness (32 bytes with Ed25519, 96 with P-256),
 /// also a needle.
 const COMPOSITE_RANDOM: [u8; 96] = {
@@ -954,17 +960,17 @@ macro_rules! composite {
       static SECRET: KeyCell<$secret> = KeyCell::new();
 
       pub(super) fn keygen() {
-        let keys = $profile::generate_keypair(composite_fill($seed)).expect("key generation");
+        let keys = $profile::generate_keypair(stream_fill($seed)).expect("key generation");
         black_box(&keys);
       }
 
       pub(super) fn keygen_in() {
-        let keys = $profile::generate_keypair_in(composite_fill($seed), &ARENA).expect("key generation");
+        let keys = $profile::generate_keypair_in(stream_fill($seed), &ARENA).expect("key generation");
         black_box(&keys);
       }
 
       pub(super) fn prepare_import() {
-        let (_, key) = $profile::generate_keypair_in(composite_fill($seed), &HEAP).expect("key generation");
+        let (_, key) = $profile::generate_keypair_in(stream_fill($seed), &HEAP).expect("key generation");
         key_input_mut::<{ $secret::LENGTH }>().copy_from_slice(key.expose_secret().as_bytes());
       }
 
@@ -979,7 +985,7 @@ macro_rules! composite {
       }
 
       pub(super) fn prepare_pkcs8() {
-        let (_, key) = $profile::generate_keypair_in(composite_fill($seed), &HEAP).expect("key generation");
+        let (_, key) = $profile::generate_keypair_in(stream_fill($seed), &HEAP).expect("key generation");
         key.to_pkcs8_der_into(key_input_mut());
       }
 
@@ -995,7 +1001,7 @@ macro_rules! composite {
 
       /// The key lives outside every scanned region, as a boxed key does.
       pub(super) fn prepare_sign() {
-        let (_, key) = $profile::generate_keypair(composite_fill($seed)).expect("key generation");
+        let (_, key) = $profile::generate_keypair(stream_fill($seed)).expect("key generation");
         SECRET.set(key);
       }
 
@@ -1013,7 +1019,7 @@ macro_rules! composite {
       }
 
       pub(super) fn needles() {
-        let (_, key) = $profile::generate_keypair_in(composite_fill($seed), &HEAP).expect("key generation");
+        let (_, key) = $profile::generate_keypair_in(stream_fill($seed), &HEAP).expect("key generation");
         let raw = key.expose_secret();
         let (seed, traditional) = raw.as_bytes().split_at(32);
         needle("mldsa_seed", seed);

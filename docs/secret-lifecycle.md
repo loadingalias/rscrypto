@@ -650,6 +650,13 @@ The ML-KEM PKCS #8 scenarios ran the same way:
 - `Seed::from_pkcs8_der` returns its owner by value and leaves copies of the seed.
 - Raw results: `benchmark_results/mlkem-pkix-residue-20261009/` (local).
 
+On 2026-11-12 the ML-KEM scenarios moved from constant-byte seeds to a non-repeating stream, so the
+`z` needle no longer matches any run of one byte. In the run that checked the SHAKE fix below, the
+`*_in` paths still leave no `dk_pke` or `z` bytes for every parameter set, board, and backend. The
+by-value forms leave the copies that the `*_in` forms avoid: key generation one whole `dk_pke` and one
+(RV32) or two (Cortex-M3) of `z`; raw import all of `dk_pke` but one 16-byte window, and one of `z`;
+expanded PKCS #8 import one `dk_pke` and two or three of `z`; the seed owner two of `z`.
+
 On 2026-10-10 the harness measured SLH-DSA at `1805bcdd` plus its uncommitted scenarios,
 on `nightly-2026-09-30` and QEMU 11.1.2, for SHA2-128s and the six fast sets, which cover every
 SLH-DSA code instantiation:
