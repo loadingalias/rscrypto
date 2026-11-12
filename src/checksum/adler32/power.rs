@@ -12,8 +12,9 @@
 //!
 //! # Safety
 //!
-//! [`update_safe`] relies on the kernel tables: every POWER table requires AltiVec, and only those
-//! tables and an AltiVec-clamped force select it.
+//! [`update_safe`] relies on Adler-32's `select`, which returns it only when cached detection
+//! reports AltiVec: for automatic selection and for the force that `config::get()` keeps only
+//! then. The POWER kernel tables, which also name it, all require AltiVec.
 
 use core::{
   arch::asm,
@@ -128,8 +129,8 @@ fn update(mut adler: u32, data: &[u8]) -> u32 {
 /// Safe wrapper for the kernel.
 #[inline]
 pub(in crate::checksum) fn update_safe(adler: u32, data: &[u8]) -> u32 {
-  // SAFETY: Only the POWER kernel tables, which all require AltiVec, and a force that cached
-  // detection of AltiVec keeps select this kernel.
+  // SAFETY: Only `select`, when cached detection reports AltiVec, and the POWER kernel tables,
+  // which all require AltiVec, select this kernel.
   unsafe { update(adler, data) }
 }
 

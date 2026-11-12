@@ -52,9 +52,9 @@ Runtime behavior needs execution on the target.
     AVX-512 VNNI (with AVX-512F and AVX-512BW), AVX2, and SSSE3. Below 256 bytes, the AVX2 and VNNI
     kernels share one short AVX2 path. AVX-512 without VNNI uses the AVX2 kernel: no measured host selects a
     512-bit kernel without VNNI, and such CPUs can lower their clock for 512-bit code.
-  - POWER selects an AltiVec kernel (`vmsumubm`) through the checksum kernel tables, which all
-    require AltiVec. IBM Z selects a vector-facility kernel through its tables for z13 and later,
-    which all require the vector facility; earlier IBM Z CPUs use the portable kernel.
+  - POWER selects an AltiVec kernel (`vmsumubm`) when cached runtime detection reports AltiVec.
+    IBM Z selects a vector-facility kernel when detection reports the vector facility, from z13.
+    Earlier IBM Z CPUs use the portable kernel.
   - riscv64 selects an RVV kernel when cached runtime detection reports the V extension. It runs
     on every vector length and uses at most 256 lanes of 32 bits per row.
   - wasm32 selects a SIMD128 kernel when the artifact is built with `simd128`, unless `portable-only`

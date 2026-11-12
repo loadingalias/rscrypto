@@ -8,8 +8,9 @@
 //!
 //! # Safety
 //!
-//! [`update_safe`] relies on the kernel tables: every IBM Z table that selects it requires the
-//! vector facility, and only those tables and a force that detection keeps select it.
+//! [`update_safe`] relies on Adler-32's `select`, which returns it only when cached detection
+//! reports the vector facility: for automatic selection and for the force that `config::get()`
+//! keeps only then. The IBM Z kernel tables that name it all require the vector facility.
 
 use core::arch::s390x::{
   vec_add, vec_mule, vec_mulo, vec_sum4, vec_xl, vector_unsigned_char, vector_unsigned_int, vector_unsigned_short,
@@ -86,8 +87,8 @@ fn update(mut adler: u32, data: &[u8]) -> u32 {
 /// Safe wrapper for the kernel.
 #[inline]
 pub(in crate::checksum) fn update_safe(adler: u32, data: &[u8]) -> u32 {
-  // SAFETY: Only the IBM Z kernel tables, which all require the vector facility, and a force that
-  // cached detection of the vector facility keeps select this kernel.
+  // SAFETY: Only `select`, when cached detection reports the vector facility, and the IBM Z
+  // kernel tables, which all require it, select this kernel.
   unsafe { update(adler, data) }
 }
 

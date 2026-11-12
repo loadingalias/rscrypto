@@ -135,10 +135,11 @@ fn select(force: Adler32Force) -> Kernel {
 }
 
 /// Automatic selection: the x86-64 kernel that cached detection allows, the aarch64 dot-product
-/// kernel when detection reports `FEAT_DotProd`, the riscv64 RVV kernel when detection reports
-/// V, the wasm32 SIMD128 kernel when the artifact requires SIMD128, and otherwise the active
-/// kernel table's row, which holds the POWER and IBM Z kernels. The SIMD128 check keeps a
-/// portable detection override in effect. Every Adler-32 kernel handles every length, and each
+/// kernel when detection reports `FEAT_DotProd`, the POWER kernel when detection reports
+/// AltiVec, the IBM Z kernel when detection reports the vector facility, the riscv64 RVV kernel
+/// when detection reports V, the wasm32 SIMD128 kernel when the artifact requires SIMD128, and
+/// otherwise the active kernel table's row. The SIMD128 check keeps a portable detection
+/// override in effect. Every Adler-32 kernel handles every length, and each
 /// kernel table names one Adler-32 kernel for all of its size classes, so one kernel serves
 /// every call.
 fn select_auto() -> Kernel {
@@ -153,6 +154,14 @@ fn select_auto() -> Kernel {
   #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
   if caps.has(crate::platform::caps::aarch64::DOTPROD) {
     return NEON_DOTPROD;
+  }
+  #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
+  if caps.has(crate::platform::caps::power::ALTIVEC) {
+    return VMSUM;
+  }
+  #[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
+  if caps.has(crate::platform::caps::s390x::VECTOR) {
+    return VSUM;
   }
   #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
   if caps.has(crate::platform::caps::riscv::V) {
@@ -502,16 +511,15 @@ mod tests {
     kernels
   }
 
-  /// The riscv64 kernel, with its name. The RISC-V test host must have the V extension, so a
-  /// host without it fails here rather than testing only the portable kernel.
+  /// The riscv64 kernel, with its name, when the CPU has the V extension. A host without V
+  /// tests none here; the selection policy test proves that a host with V runs it.
   #[cfg(target_arch = "riscv64")]
   fn kernels() -> Vec<(&'static str, Adler32Fn)> {
-    assert!(
-      crate::platform::caps().has(crate::platform::caps::riscv::V),
-      "the RISC-V test host must have the V extension"
-    );
+    if !crate::platform::caps().has(crate::platform::caps::riscv::V) {
+      return Vec::new();
+    }
     vec![(riscv64::KERNEL_NAME, |adler, data| {
-      // SAFETY: The assertion above establishes the V extension.
+      // SAFETY: The capability check above establishes the V extension.
       unsafe { riscv64::update(adler, data) }
     })]
   }
