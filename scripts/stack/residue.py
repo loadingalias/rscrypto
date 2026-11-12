@@ -73,13 +73,35 @@ class Run:
 
 
 HEADER = re.compile(r"^residue 1 board=(\S+) backend=(\S+) scenarios=(\d+)$")
+# The harness writes 32 bytes per hex row; only a block's last row is shorter.
+ROW = re.compile(r"(?:[0-9a-f]{2}){1,32}")
+
+
+def hex_rows(lines, length: int, *, until_endregion: bool) -> bytes:
+  """Read one block of hex rows, rejecting a damaged UART line by its number and content."""
+  data = bytearray()
+  short: tuple[int, str] | None = None
+  for number, raw in lines:
+    row = raw.strip()
+    if until_endregion and row == "endregion":
+      return bytes(data)
+    if short is not None:
+      raise ValueError(f"damaged UART line {short[0]}: {short[1]!r} is short but not last")
+    if not ROW.fullmatch(row):
+      raise ValueError(f"damaged UART line {number}: {row!r}")
+    data += bytes.fromhex(row)
+    if len(row) < 64:
+      short = (number, row)
+    if not until_endregion and len(data) >= length:
+      return bytes(data)
+  return bytes(data)
 
 
 def parse(text: str) -> Run:
-  lines = iter(text.splitlines())
+  lines = iter(enumerate(text.splitlines(), 1))
   run: Run | None = None
   current: Scenario | None = None
-  for line in lines:
+  for _, line in lines:
     line = line.strip()
     if match := HEADER.match(line):
       run = Run(match.group(1), match.group(2), int(match.group(3)), [], False, None)
@@ -97,20 +119,13 @@ def parse(text: str) -> Run:
       run.scenarios.append(current)
     elif line.startswith("region ") and current is not None:
       _, name, base, length = line.split()
-      data = bytearray()
-      for row in lines:
-        row = row.strip()
-        if row == "endregion":
-          break
-        data += bytes.fromhex(row)
+      data = hex_rows(lines, int(length, 16), until_endregion=True)
       if len(data) != int(length, 16):
         raise ValueError(f"{current.name} {name}: expected {int(length, 16)} bytes, read {len(data)}")
       current.regions[name] = (int(base, 16), bytes(data))
     elif line.startswith("needle ") and current is not None:
       _, name, length = line.split()
-      data = bytearray()
-      while len(data) < int(length):
-        data += bytes.fromhex(next(lines).strip())
+      data = hex_rows(lines, int(length), until_endregion=False)
       if len(data) != int(length):
         raise ValueError(f"{current.name} needle {name}: expected {length} bytes, read {len(data)}")
       current.needles[name] = bytes(data)

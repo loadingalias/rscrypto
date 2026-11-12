@@ -91,6 +91,21 @@ def test_incomplete_runs_fail() -> None:
     raise AssertionError("an unknown expectation must be rejected")
 
 
+def test_damaged_uart_line_is_named() -> None:
+  # A garbled serial row must fail at its line, not as a byte-count mismatch later.
+  clean = log(scenario("a", "none", b"\xa5" * 64))
+  row = (b"\xa5" * 32).hex()
+  for damaged in (row + "00" * 9, row[:50], row[:63] + "g"):
+    text = clean.replace(row, damaged, 1)
+    number = text.splitlines().index(damaged) + 1
+    try:
+      parse(text)
+    except ValueError as error:
+      assert f"damaged UART line {number}" in str(error) and damaged in str(error), error
+    else:
+      raise AssertionError(f"accepted a damaged row: {damaged!r}")
+
+
 def test_native_sparse_hint_windows() -> None:
   # Cleared slots must not be mistaken for zero-valued hint coefficients.
   assert native_windows(bytes(1024), True) == []
@@ -172,6 +187,7 @@ def main() -> None:
   test_partial_and_scattered_residue()
   test_expectations()
   test_incomplete_runs_fail()
+  test_damaged_uart_line_is_named()
   test_native_sparse_hint_windows()
   test_native_capture_completeness_and_injected_residue()
   print("residue tests passed")
