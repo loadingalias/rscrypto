@@ -15,6 +15,8 @@ Each algorithm feature forwards to the corresponding rscrypto leaf feature.
 Default features enable every TLS 1.3 suite, key-exchange group, and classical
 signature algorithm; `ml-dsa` and the composite `mldsa65-ed25519` and `mldsa65-ecdsa-p256` are opt-in.
 `portable-only` selects rscrypto's portable dispatch for validation.
+`chacha20-rng` adds `replay`, which gives each connection its own rscrypto
+`ChaCha20Rng` stream, so a recorded root seed replays every handshake.
 
 rustls provides protocol composition, rustls-webpki provides certificate path
 validation, and rustls-pki-types provides credential types. Their built-in crypto
@@ -32,7 +34,7 @@ exclude ring, AWS-LC, OpenSSL, BoringSSL, and C build tools.
 | TLS 1.3 and TLS 1.2 records, QUIC packets | `Aes128Gcm`, `Aes256Gcm`, `ChaCha20Poly1305` | [aead](src/aead.rs) |
 | QUIC header protection | `Aes128HeaderProtection`, `Aes256HeaderProtection`, `ChaCha20HeaderProtection` | [quic](src/quic.rs) |
 | Stateless tickets | `Aes256Gcm`, fresh process-local keys, atomic counter nonces; rotation on a monotonic or caller clock | [ticket](src/ticket.rs) |
-| Entropy | OS entropy through `getrandom::fill` with the `getrandom` feature, or a caller-selected `SecureRandom` without it; partial primitive inputs clear on failure | [random](src/random.rs), [kx_group](src/kx_group.rs), [sign](src/sign.rs), [client](src/client.rs) |
+| Entropy | OS entropy through `getrandom::fill` with the `getrandom` feature, or a caller-selected `SecureRandom` without it; with `chacha20-rng`, one scoped `ChaCha20Rng` stream for each connection; partial primitive inputs clear on failure | [random](src/random.rs), [replay](src/replay.rs), [kx_group](src/kx_group.rs), [sign](src/sign.rs), [client](src/client.rs) |
 | Certificate and handshake verification | ECDSA P-256/P-384, Ed25519, RSA-PSS and RSA PKCS#1 v1.5 | [verify](src/verify.rs) |
 | Key import and signing | rscrypto PKCS#8/SEC1/PKCS#1 codecs; blinded ECDSA, Ed25519, blinded RSA-PSS and RSA PKCS#1 v1.5 | [sign](src/sign.rs) |
 | ML-DSA authentication | Pure ML-DSA-44/65/87 with the empty TLS context; keys prepared once (or compact on request) and hedged signing | [sign](src/sign/mldsa.rs), [verify](src/verify.rs) |
@@ -213,6 +215,19 @@ failures without OS fallback. The source must be cryptographically secure;
 deterministic test sources are unsuitable for production. These constructors
 need only their primitive features; without `getrandom`, the provider links no
 OS entropy source.
+
+With `chacha20-rng`, `replay::ScopedRandom` is a stateless `SecureRandom` for
+these constructors and for `ClientProvider::new`. It draws from the
+`replay::Stream` of the innermost `replay::scope` on the calling thread. Give
+each connection its own stream, such as a `ChaCha20Rng::child` of the endpoint's
+generator. Run each rustls call of that connection inside its scope: the call
+that builds the connection and each call that processes peer data. A replay that
+rebuilds the same generators sends the same handshake bytes. Outside a scope,
+`fill` returns `GetRandomFailed`, so a missed scope fails the handshake and
+never draws from the stream of another connection. Shared values, such as
+session-ticket keys, draw from the scope in which they are built or rotated. In
+production, seed the root generator with 32 secret bytes from the operating
+system.
 
 `ticket::ticketer_with(random, time)` supplies stateless session tickets with
 keys from a caller-selected `SecureRandom` and rotation timed by a caller's rustls

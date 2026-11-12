@@ -553,6 +553,14 @@ typed input key drops on return or ordinary unwind. Its existing 32 KiB plus
 64-byte window needs exact linked worker, copy, upper-slot and unwind coverage;
 this source boundary does not establish a whole-ticket lifecycle claim.
 
+### rustls replay streams
+
+A `replay::Stream` clears its generator when the stream and every scope that
+holds it have ended. `ScopedRandom` writes only to the rustls output buffer. It
+fails before it writes when no scope is active or the stream's lock is poisoned.
+Unit tests check that nested scopes and an unwinding scope restore the previous
+stream. They do not qualify compiler-made copies.
+
 ### rustls QUIC integration
 
 The transport-neutral `quic` reset, connection-ID, and address-token keys draw

@@ -93,6 +93,15 @@ pub(crate) mod tls;
 mod client;
 
 #[cfg(all(
+  feature = "chacha20-rng",
+  feature = "hkdf",
+  any(feature = "aes-gcm", feature = "chacha20poly1305"),
+  feature = "x25519",
+  feature = "ed25519"
+))]
+mod replay;
+
+#[cfg(all(
   feature = "hkdf",
   any(feature = "aes-gcm", feature = "chacha20poly1305"),
   any(feature = "x25519", feature = "p256-ecdh", feature = "p384-ecdh"),

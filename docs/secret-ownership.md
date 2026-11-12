@@ -271,6 +271,16 @@ worker and the existing construction scrub guard. The caller owns the returned
 ticket key above that worker's retired stack and drops the typed input key after
 the guard. Compiler-copy coverage remains specific to the reviewed artifact.
 
+### rustls replay streams
+
+`replay::Stream` owns one `ChaCha20Rng` in an `Arc<Mutex<_>>` allocation for its
+whole life. It is not `Clone`, and its derived `Debug` shows only the generator's
+redacted `Debug`. `Stream::new` moves the generator into the allocation, and that
+move copies the state once. `replay::scope` puts only an `Arc` clone in a
+thread-local slot, and it restores the previous slot when it returns or unwinds.
+So a scope copies no generator state. The generator clears when the last `Arc`
+drops. `ScopedRandom` holds no state.
+
 ### rustls QUIC integration
 
 The transport-neutral `quic` keys own the endpoint secrets. `StatelessResetKey`

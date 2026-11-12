@@ -192,7 +192,7 @@ pub(crate) struct Peer<S: SideData> {
 }
 
 impl<S: SideData> Peer<S> {
-  fn new(connection: Connection<S, Tcp>, output: Vec<u8>) -> Self {
+  pub(crate) fn new(connection: Connection<S, Tcp>, output: Vec<u8>) -> Self {
     Self {
       connection,
       input: VecInput::default(),

@@ -29,6 +29,8 @@ pub mod kx_group;
 pub mod quic;
 #[cfg(feature = "getrandom")]
 pub mod random;
+#[cfg(feature = "chacha20-rng")]
+pub mod replay;
 pub mod sign;
 #[cfg(feature = "aes-gcm")]
 pub mod ticket;

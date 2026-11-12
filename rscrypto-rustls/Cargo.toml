@@ -51,6 +51,7 @@ ml-dsa = ["rscrypto/ml-dsa"]
 mldsa65-ed25519 = ["rscrypto/mldsa65-ed25519"]
 mldsa65-ecdsa-p256 = ["rscrypto/mldsa65-ecdsa-p256"]
 getrandom = ["rscrypto/getrandom", "dep:getrandom"]
+chacha20-rng = ["rscrypto/chacha20-rng"]
 portable-only = ["rscrypto/portable-only"]
 
 [dependencies]
