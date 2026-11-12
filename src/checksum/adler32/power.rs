@@ -14,7 +14,7 @@
 //!
 //! [`update_safe`] relies on Adler-32's `select`, which returns it only when cached detection
 //! reports AltiVec: for automatic selection and for the force that `config::get()` keeps only
-//! then. The POWER kernel tables, which also name it, all require AltiVec.
+//! then.
 
 use core::{
   arch::asm,
@@ -129,8 +129,7 @@ fn update(mut adler: u32, data: &[u8]) -> u32 {
 /// Safe wrapper for the kernel.
 #[inline]
 pub(in crate::checksum) fn update_safe(adler: u32, data: &[u8]) -> u32 {
-  // SAFETY: Only `select`, when cached detection reports AltiVec, and the POWER kernel tables,
-  // which all require AltiVec, select this kernel.
+  // SAFETY: Only `select` returns this kernel, and only when cached detection reports AltiVec.
   unsafe { update(adler, data) }
 }
 

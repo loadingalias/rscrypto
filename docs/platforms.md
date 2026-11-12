@@ -46,8 +46,8 @@ Runtime behavior needs execution on the target.
   Other CPUs use the portable fallback.
 - **Adler-32** has a portable Rust kernel on every target: zlib's scalar loop, which reduces both
   sums once per 5,552 bytes.
-  - AArch64 selects a NEON kernel through the checksum kernel tables, and a NEON kernel with the
-    dot-product extension (`UDOT`) when cached runtime detection reports `FEAT_DotProd`.
+  - AArch64 selects a NEON kernel when cached runtime detection reports NEON, and a NEON kernel
+    with the dot-product extension (`UDOT`) when it reports `FEAT_DotProd`.
   - x86-64 selects, by cached runtime detection, the first kernel that the CPU supports among
     AVX-512 VNNI (with AVX-512F and AVX-512BW), AVX2, and SSSE3. Below 256 bytes, the AVX2 and VNNI
     kernels share one short AVX2 path. AVX-512 without VNNI uses the AVX2 kernel: no measured host selects a

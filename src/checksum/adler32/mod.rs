@@ -135,13 +135,12 @@ fn select(force: Adler32Force) -> Kernel {
 }
 
 /// Automatic selection: the x86-64 kernel that cached detection allows, the aarch64 dot-product
-/// kernel when detection reports `FEAT_DotProd`, the POWER kernel when detection reports
-/// AltiVec, the IBM Z kernel when detection reports the vector facility, the riscv64 RVV kernel
-/// when detection reports V, the wasm32 SIMD128 kernel when the artifact requires SIMD128, and
-/// otherwise the active kernel table's row. The SIMD128 check keeps a portable detection
-/// override in effect. Every Adler-32 kernel handles every length, and each
-/// kernel table names one Adler-32 kernel for all of its size classes, so one kernel serves
-/// every call.
+/// kernel when detection reports `FEAT_DotProd` and the NEON kernel when it reports NEON, the
+/// POWER kernel when detection reports AltiVec, the IBM Z kernel when detection reports the
+/// vector facility, the riscv64 RVV kernel when detection reports V, the wasm32 SIMD128 kernel
+/// when the artifact requires SIMD128, and otherwise the portable kernel. `portable-only`, Miri,
+/// and a portable detection override report no capability, so they select the portable kernel.
+/// Every Adler-32 kernel handles every length, so one kernel serves every call.
 fn select_auto() -> Kernel {
   let caps = crate::platform::caps();
   #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
@@ -154,6 +153,10 @@ fn select_auto() -> Kernel {
   #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
   if caps.has(crate::platform::caps::aarch64::DOTPROD) {
     return NEON_DOTPROD;
+  }
+  #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
+  if caps.has(crate::platform::caps::aarch64::NEON) {
+    return NEON;
   }
   #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
   if caps.has(crate::platform::caps::power::ALTIVEC) {
@@ -172,11 +175,7 @@ fn select_auto() -> Kernel {
     return WASM_SIMD128;
   }
   let _ = caps;
-  let table = crate::checksum::kernel_table::active_table();
-  Kernel {
-    update: table.select_fns(usize::MAX).adler32,
-    name: table.select_names(usize::MAX).adler32_name,
-  }
+  PORTABLE
 }
 
 /// The kernel of this process, selected once for the effective force.
@@ -407,18 +406,6 @@ impl_std_io_write_for_checksum!(Adler32);
 impl crate::checksum::introspect::KernelIntrospect for Adler32 {
   fn kernel_name_for_len(len: usize) -> &'static str {
     Self::kernel_name_for_len(len)
-  }
-}
-
-/// Automatic selection resolves one kernel for every length, which holds only while the active
-/// kernel table names one Adler-32 kernel for all of its size classes.
-#[cfg(all(test, feature = "std"))]
-#[test]
-fn the_active_table_names_one_adler32_kernel_for_every_size_class() {
-  let table = crate::checksum::kernel_table::active_table();
-  let largest = table.select_names(usize::MAX).adler32_name;
-  for len in [0, 1, 64, 65, 256, 4096, 65_536, 1 << 20] {
-    assert_eq!(table.select_names(len).adler32_name, largest, "len={len}");
   }
 }
 

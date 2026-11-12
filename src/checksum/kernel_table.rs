@@ -2,8 +2,6 @@
 //!
 //! Table-driven selection with manually maintained kernel choices.
 
-#[cfg(feature = "adler32")]
-use crate::checksum::dispatchers::Adler32Fn;
 #[cfg(feature = "crc16")]
 use crate::checksum::dispatchers::Crc16Fn;
 #[cfg(feature = "crc24")]
@@ -19,13 +17,7 @@ use crate::platform::Caps;
 /// Global cached kernel table, resolved once on first use.
 ///
 /// Platform detection runs once; subsequent CRC calls reuse the selected table.
-#[cfg(any(
-  feature = "crc16",
-  feature = "crc24",
-  feature = "crc32",
-  feature = "adler32",
-  any(test, feature = "diag")
-))]
+#[cfg(any(feature = "crc16", feature = "crc24", feature = "crc32", any(test, feature = "diag")))]
 static ACTIVE_TABLE: crate::backend::cache::OnceCache<&'static KernelTable> = crate::backend::cache::OnceCache::new();
 #[cfg(feature = "crc64")]
 static ACTIVE_CRC64_TABLE: crate::backend::cache::OnceCache<&'static KernelTable> =
@@ -33,13 +25,7 @@ static ACTIVE_CRC64_TABLE: crate::backend::cache::OnceCache<&'static KernelTable
 
 /// Get the active kernel table for this platform.
 #[inline]
-#[cfg(any(
-  feature = "crc16",
-  feature = "crc24",
-  feature = "crc32",
-  feature = "adler32",
-  any(test, feature = "diag")
-))]
+#[cfg(any(feature = "crc16", feature = "crc24", feature = "crc32", any(test, feature = "diag")))]
 pub(crate) fn active_table() -> &'static KernelTable {
   ACTIVE_TABLE.get_or_init(|| select_table(crate::platform::caps()))
 }
@@ -270,9 +256,6 @@ pub(crate) struct KernelFnSet {
   pub crc64_xz: Crc64Fn,
   #[cfg(feature = "crc64")]
   pub crc64_nvme: Crc64Fn,
-  // Adler-32
-  #[cfg(feature = "adler32")]
-  pub adler32: Adler32Fn,
 }
 
 const _: () = assert!(core::mem::size_of::<KernelFnSet>() <= 64);
@@ -302,9 +285,6 @@ pub(crate) struct KernelNameSet {
   pub crc64_xz_name: &'static str,
   #[cfg(feature = "crc64")]
   pub crc64_nvme_name: &'static str,
-  // Adler-32
-  #[cfg(feature = "adler32")]
-  pub adler32_name: &'static str,
 }
 
 /// Combined kernel definition for convenient table construction.
@@ -346,11 +326,6 @@ pub(crate) struct KernelSet {
   pub crc64_nvme: Crc64Fn,
   #[cfg(feature = "crc64")]
   pub crc64_nvme_name: &'static str,
-  // Adler-32
-  #[cfg(feature = "adler32")]
-  pub adler32: Adler32Fn,
-  #[cfg(feature = "adler32")]
-  pub adler32_name: &'static str,
 }
 
 impl KernelSet {
@@ -372,8 +347,6 @@ impl KernelSet {
       crc64_xz: self.crc64_xz,
       #[cfg(feature = "crc64")]
       crc64_nvme: self.crc64_nvme,
-      #[cfg(feature = "adler32")]
-      adler32: self.adler32,
     }
   }
 
@@ -395,8 +368,6 @@ impl KernelSet {
       crc64_xz_name: self.crc64_xz_name,
       #[cfg(feature = "crc64")]
       crc64_nvme_name: self.crc64_nvme_name,
-      #[cfg(feature = "adler32")]
-      adler32_name: self.adler32_name,
     }
   }
 }
@@ -537,13 +508,7 @@ pub fn is_hardware_accelerated() -> bool {
 /// 1. **Capability match**: Conservative defaults based on CPU features
 /// 2. **Portable fallback**: No SIMD, table-based only
 #[inline]
-#[cfg(any(
-  feature = "crc16",
-  feature = "crc24",
-  feature = "crc32",
-  feature = "adler32",
-  any(test, feature = "diag")
-))]
+#[cfg(any(feature = "crc16", feature = "crc24", feature = "crc32", any(test, feature = "diag")))]
 pub(crate) fn select_table(caps: Caps) -> &'static KernelTable {
   if let Some(table) = capability_match(caps) {
     debug_assert!(caps.has(table.requires), "capability_match returned an unsafe table");
@@ -746,10 +711,6 @@ const PORTABLE_SET: KernelSet = KernelSet {
   crc64_nvme: crate::checksum::crc64::portable::crc64_slice16_nvme,
   #[cfg(feature = "crc64")]
   crc64_nvme_name: "portable/slice16",
-  #[cfg(feature = "adler32")]
-  adler32: crate::checksum::adler32::portable::update,
-  #[cfg(feature = "adler32")]
-  adler32_name: crate::checksum::adler32::portable::KERNEL_NAME,
 };
 
 static PORTABLE_TABLE: KernelTable = KernelTable::from_sets(
@@ -859,10 +820,6 @@ mod aarch64_tables {
       crc64_nvme: crc64_k::NVME_PMULL_SMALL,
       #[cfg(feature = "crc64")]
       crc64_nvme_name: "aarch64/pmull-small",
-      #[cfg(feature = "adler32")]
-      adler32: crate::checksum::adler32::aarch64::update_safe,
-      #[cfg(feature = "adler32")]
-      adler32_name: crate::checksum::adler32::aarch64::KERNEL_NAME,
     },
 
     s: KernelSet {
@@ -894,10 +851,6 @@ mod aarch64_tables {
       crc64_nvme: crc64_k::NVME_PMULL[0],
       #[cfg(feature = "crc64")]
       crc64_nvme_name: "aarch64/pmull",
-      #[cfg(feature = "adler32")]
-      adler32: crate::checksum::adler32::aarch64::update_safe,
-      #[cfg(feature = "adler32")]
-      adler32_name: crate::checksum::adler32::aarch64::KERNEL_NAME,
     },
 
     m: KernelSet {
@@ -929,10 +882,6 @@ mod aarch64_tables {
       crc64_nvme: crc64_k::NVME_PMULL_EOR3[0],
       #[cfg(feature = "crc64")]
       crc64_nvme_name: "aarch64/pmull-eor3",
-      #[cfg(feature = "adler32")]
-      adler32: crate::checksum::adler32::aarch64::update_safe,
-      #[cfg(feature = "adler32")]
-      adler32_name: crate::checksum::adler32::aarch64::KERNEL_NAME,
     },
 
     l: KernelSet {
@@ -964,10 +913,6 @@ mod aarch64_tables {
       crc64_nvme: crc64_k::NVME_PMULL[1],
       #[cfg(feature = "crc64")]
       crc64_nvme_name: "aarch64/pmull-2way",
-      #[cfg(feature = "adler32")]
-      adler32: crate::checksum::adler32::aarch64::update_safe,
-      #[cfg(feature = "adler32")]
-      adler32_name: crate::checksum::adler32::aarch64::KERNEL_NAME,
     },
   };
 
@@ -1008,10 +953,6 @@ mod aarch64_tables {
       crc64_nvme: crc64_k::NVME_PMULL_SMALL,
       #[cfg(feature = "crc64")]
       crc64_nvme_name: "aarch64/pmull-small",
-      #[cfg(feature = "adler32")]
-      adler32: crate::checksum::adler32::aarch64::update_safe,
-      #[cfg(feature = "adler32")]
-      adler32_name: crate::checksum::adler32::aarch64::KERNEL_NAME,
     },
 
     s: KernelSet {
@@ -1043,10 +984,6 @@ mod aarch64_tables {
       crc64_nvme: crc64_k::NVME_PMULL[0],
       #[cfg(feature = "crc64")]
       crc64_nvme_name: "aarch64/pmull",
-      #[cfg(feature = "adler32")]
-      adler32: crate::checksum::adler32::aarch64::update_safe,
-      #[cfg(feature = "adler32")]
-      adler32_name: crate::checksum::adler32::aarch64::KERNEL_NAME,
     },
 
     m: KernelSet {
@@ -1078,10 +1015,6 @@ mod aarch64_tables {
       crc64_nvme: crc64_k::NVME_PMULL[0],
       #[cfg(feature = "crc64")]
       crc64_nvme_name: "aarch64/pmull",
-      #[cfg(feature = "adler32")]
-      adler32: crate::checksum::adler32::aarch64::update_safe,
-      #[cfg(feature = "adler32")]
-      adler32_name: crate::checksum::adler32::aarch64::KERNEL_NAME,
     },
 
     l: KernelSet {
@@ -1113,10 +1046,6 @@ mod aarch64_tables {
       crc64_nvme: crc64_k::NVME_PMULL[0],
       #[cfg(feature = "crc64")]
       crc64_nvme_name: "aarch64/pmull",
-      #[cfg(feature = "adler32")]
-      adler32: crate::checksum::adler32::aarch64::update_safe,
-      #[cfg(feature = "adler32")]
-      adler32_name: crate::checksum::adler32::aarch64::KERNEL_NAME,
     },
   };
 
@@ -1153,10 +1082,6 @@ mod aarch64_tables {
     crc64_nvme: crc64_k::NVME_PMULL_SMALL,
     #[cfg(feature = "crc64")]
     crc64_nvme_name: "aarch64/pmull-small",
-    #[cfg(feature = "adler32")]
-    adler32: crate::checksum::adler32::aarch64::update_safe,
-    #[cfg(feature = "adler32")]
-    adler32_name: crate::checksum::adler32::aarch64::KERNEL_NAME,
   };
 
   #[cfg(all(feature = "std", not(miri), any(target_os = "linux", target_os = "android")))]
@@ -1189,10 +1114,6 @@ mod aarch64_tables {
     crc64_nvme: crc64_k::NVME_PMULL[0],
     #[cfg(feature = "crc64")]
     crc64_nvme_name: "aarch64/pmull",
-    #[cfg(feature = "adler32")]
-    adler32: crate::checksum::adler32::aarch64::update_safe,
-    #[cfg(feature = "adler32")]
-    adler32_name: crate::checksum::adler32::aarch64::KERNEL_NAME,
   };
 
   #[cfg(all(feature = "std", not(miri), any(target_os = "linux", target_os = "android")))]
@@ -1225,10 +1146,6 @@ mod aarch64_tables {
     crc64_nvme: crc64_k::NVME_PMULL[1],
     #[cfg(feature = "crc64")]
     crc64_nvme_name: "aarch64/pmull-2way",
-    #[cfg(feature = "adler32")]
-    adler32: crate::checksum::adler32::aarch64::update_safe,
-    #[cfg(feature = "adler32")]
-    adler32_name: crate::checksum::adler32::aarch64::KERNEL_NAME,
   };
 
   #[cfg(all(feature = "std", not(miri), any(target_os = "linux", target_os = "android")))]
@@ -1261,10 +1178,6 @@ mod aarch64_tables {
     crc64_nvme: crc64_k::NVME_PMULL_EOR3[0],
     #[cfg(feature = "crc64")]
     crc64_nvme_name: "aarch64/pmull-eor3",
-    #[cfg(feature = "adler32")]
-    adler32: crate::checksum::adler32::aarch64::update_safe,
-    #[cfg(feature = "adler32")]
-    adler32_name: crate::checksum::adler32::aarch64::KERNEL_NAME,
   };
 
   #[cfg(all(feature = "std", not(miri), any(target_os = "linux", target_os = "android")))]
@@ -1315,10 +1228,6 @@ mod aarch64_tables {
       crc64_nvme: crc64_k::NVME_PMULL[1],
       #[cfg(feature = "crc64")]
       crc64_nvme_name: "aarch64/pmull-2way",
-      #[cfg(feature = "adler32")]
-      adler32: crate::checksum::adler32::aarch64::update_safe,
-      #[cfg(feature = "adler32")]
-      adler32_name: crate::checksum::adler32::aarch64::KERNEL_NAME,
     },
     KernelSet {
       #[cfg(feature = "crc16")]
@@ -1349,10 +1258,6 @@ mod aarch64_tables {
       crc64_nvme: crc64_k::NVME_PMULL_EOR3[0],
       #[cfg(feature = "crc64")]
       crc64_nvme_name: "aarch64/pmull-eor3",
-      #[cfg(feature = "adler32")]
-      adler32: crate::checksum::adler32::aarch64::update_safe,
-      #[cfg(feature = "adler32")]
-      adler32_name: crate::checksum::adler32::aarch64::KERNEL_NAME,
     },
   );
 
@@ -1398,10 +1303,6 @@ mod aarch64_tables {
       crc64_nvme: crc64_k::NVME_PMULL_SMALL,
       #[cfg(feature = "crc64")]
       crc64_nvme_name: "aarch64/pmull-small",
-      #[cfg(feature = "adler32")]
-      adler32: crate::checksum::adler32::aarch64::update_safe,
-      #[cfg(feature = "adler32")]
-      adler32_name: crate::checksum::adler32::aarch64::KERNEL_NAME,
     },
 
     s: KernelSet {
@@ -1433,10 +1334,6 @@ mod aarch64_tables {
       crc64_nvme: crc64_k::NVME_PMULL[0],
       #[cfg(feature = "crc64")]
       crc64_nvme_name: "aarch64/pmull",
-      #[cfg(feature = "adler32")]
-      adler32: crate::checksum::adler32::aarch64::update_safe,
-      #[cfg(feature = "adler32")]
-      adler32_name: crate::checksum::adler32::aarch64::KERNEL_NAME,
     },
 
     m: KernelSet {
@@ -1468,10 +1365,6 @@ mod aarch64_tables {
       crc64_nvme: crc64_k::NVME_PMULL[0],
       #[cfg(feature = "crc64")]
       crc64_nvme_name: "aarch64/pmull",
-      #[cfg(feature = "adler32")]
-      adler32: crate::checksum::adler32::aarch64::update_safe,
-      #[cfg(feature = "adler32")]
-      adler32_name: crate::checksum::adler32::aarch64::KERNEL_NAME,
     },
 
     l: KernelSet {
@@ -1503,10 +1396,6 @@ mod aarch64_tables {
       crc64_nvme: crc64_k::NVME_PMULL[0],
       #[cfg(feature = "crc64")]
       crc64_nvme_name: "aarch64/pmull",
-      #[cfg(feature = "adler32")]
-      adler32: crate::checksum::adler32::aarch64::update_safe,
-      #[cfg(feature = "adler32")]
-      adler32_name: crate::checksum::adler32::aarch64::KERNEL_NAME,
     },
   };
 
@@ -1544,10 +1433,6 @@ mod aarch64_tables {
       crc64_nvme: crc64_k::NVME_PMULL_SMALL,
       #[cfg(feature = "crc64")]
       crc64_nvme_name: "aarch64/pmull-small",
-      #[cfg(feature = "adler32")]
-      adler32: crate::checksum::adler32::aarch64::update_safe,
-      #[cfg(feature = "adler32")]
-      adler32_name: crate::checksum::adler32::aarch64::KERNEL_NAME,
     },
 
     s: KernelSet {
@@ -1579,10 +1464,6 @@ mod aarch64_tables {
       crc64_nvme: crc64_k::NVME_PMULL[0],
       #[cfg(feature = "crc64")]
       crc64_nvme_name: "aarch64/pmull",
-      #[cfg(feature = "adler32")]
-      adler32: crate::checksum::adler32::aarch64::update_safe,
-      #[cfg(feature = "adler32")]
-      adler32_name: crate::checksum::adler32::aarch64::KERNEL_NAME,
     },
 
     m: KernelSet {
@@ -1614,10 +1495,6 @@ mod aarch64_tables {
       crc64_nvme: crc64_k::NVME_PMULL[0],
       #[cfg(feature = "crc64")]
       crc64_nvme_name: "aarch64/pmull",
-      #[cfg(feature = "adler32")]
-      adler32: crate::checksum::adler32::aarch64::update_safe,
-      #[cfg(feature = "adler32")]
-      adler32_name: crate::checksum::adler32::aarch64::KERNEL_NAME,
     },
 
     l: KernelSet {
@@ -1649,10 +1526,6 @@ mod aarch64_tables {
       crc64_nvme: crc64_k::NVME_PMULL[0],
       #[cfg(feature = "crc64")]
       crc64_nvme_name: "aarch64/pmull",
-      #[cfg(feature = "adler32")]
-      adler32: crate::checksum::adler32::aarch64::update_safe,
-      #[cfg(feature = "adler32")]
-      adler32_name: crate::checksum::adler32::aarch64::KERNEL_NAME,
     },
   };
 
@@ -1690,10 +1563,6 @@ mod aarch64_tables {
       crc64_nvme: crate::checksum::crc64::portable::crc64_slice16_nvme,
       #[cfg(feature = "crc64")]
       crc64_nvme_name: "portable/slice16",
-      #[cfg(feature = "adler32")]
-      adler32: crate::checksum::adler32::aarch64::update_safe,
-      #[cfg(feature = "adler32")]
-      adler32_name: crate::checksum::adler32::aarch64::KERNEL_NAME,
     },
 
     s: KernelSet {
@@ -1725,10 +1594,6 @@ mod aarch64_tables {
       crc64_nvme: crate::checksum::crc64::portable::crc64_slice16_nvme,
       #[cfg(feature = "crc64")]
       crc64_nvme_name: "portable/slice16",
-      #[cfg(feature = "adler32")]
-      adler32: crate::checksum::adler32::aarch64::update_safe,
-      #[cfg(feature = "adler32")]
-      adler32_name: crate::checksum::adler32::aarch64::KERNEL_NAME,
     },
 
     m: KernelSet {
@@ -1760,10 +1625,6 @@ mod aarch64_tables {
       crc64_nvme: crate::checksum::crc64::portable::crc64_slice16_nvme,
       #[cfg(feature = "crc64")]
       crc64_nvme_name: "portable/slice16",
-      #[cfg(feature = "adler32")]
-      adler32: crate::checksum::adler32::aarch64::update_safe,
-      #[cfg(feature = "adler32")]
-      adler32_name: crate::checksum::adler32::aarch64::KERNEL_NAME,
     },
 
     l: KernelSet {
@@ -1795,10 +1656,6 @@ mod aarch64_tables {
       crc64_nvme: crate::checksum::crc64::portable::crc64_slice16_nvme,
       #[cfg(feature = "crc64")]
       crc64_nvme_name: "portable/slice16",
-      #[cfg(feature = "adler32")]
-      adler32: crate::checksum::adler32::aarch64::update_safe,
-      #[cfg(feature = "adler32")]
-      adler32_name: crate::checksum::adler32::aarch64::KERNEL_NAME,
     },
   };
 }
@@ -1872,10 +1729,6 @@ mod x86_64_tables {
       crc64_nvme: crc64_k::NVME_PCLMUL_SMALL,
       #[cfg(feature = "crc64")]
       crc64_nvme_name: "x86_64/pclmul-small",
-      #[cfg(feature = "adler32")]
-      adler32: crate::checksum::adler32::portable::update,
-      #[cfg(feature = "adler32")]
-      adler32_name: crate::checksum::adler32::portable::KERNEL_NAME,
     },
 
     s: KernelSet {
@@ -1907,10 +1760,6 @@ mod x86_64_tables {
       crc64_nvme: crc64_k::NVME_VPCLMUL[0],
       #[cfg(feature = "crc64")]
       crc64_nvme_name: "x86_64/vpclmul",
-      #[cfg(feature = "adler32")]
-      adler32: crate::checksum::adler32::portable::update,
-      #[cfg(feature = "adler32")]
-      adler32_name: crate::checksum::adler32::portable::KERNEL_NAME,
     },
 
     m: KernelSet {
@@ -1942,10 +1791,6 @@ mod x86_64_tables {
       crc64_nvme: crc64_k::NVME_VPCLMUL[1],
       #[cfg(feature = "crc64")]
       crc64_nvme_name: "x86_64/vpclmul-2way",
-      #[cfg(feature = "adler32")]
-      adler32: crate::checksum::adler32::portable::update,
-      #[cfg(feature = "adler32")]
-      adler32_name: crate::checksum::adler32::portable::KERNEL_NAME,
     },
 
     l: KernelSet {
@@ -1977,10 +1822,6 @@ mod x86_64_tables {
       crc64_nvme: crc64_k::NVME_VPCLMUL[1], // 2-way edges out 4-way at l/xl in latest comp+kernels
       #[cfg(feature = "crc64")]
       crc64_nvme_name: "x86_64/vpclmul-2way",
-      #[cfg(feature = "adler32")]
-      adler32: crate::checksum::adler32::portable::update,
-      #[cfg(feature = "adler32")]
-      adler32_name: crate::checksum::adler32::portable::KERNEL_NAME,
     },
   };
 
@@ -2026,10 +1867,6 @@ mod x86_64_tables {
       crc64_nvme: crc64_k::NVME_PCLMUL_SMALL,
       #[cfg(feature = "crc64")]
       crc64_nvme_name: "x86_64/pclmul-small",
-      #[cfg(feature = "adler32")]
-      adler32: crate::checksum::adler32::portable::update,
-      #[cfg(feature = "adler32")]
-      adler32_name: crate::checksum::adler32::portable::KERNEL_NAME,
     },
 
     s: KernelSet {
@@ -2061,10 +1898,6 @@ mod x86_64_tables {
       crc64_nvme: crc64_k::NVME_VPCLMUL[0],
       #[cfg(feature = "crc64")]
       crc64_nvme_name: "x86_64/vpclmul",
-      #[cfg(feature = "adler32")]
-      adler32: crate::checksum::adler32::portable::update,
-      #[cfg(feature = "adler32")]
-      adler32_name: crate::checksum::adler32::portable::KERNEL_NAME,
     },
 
     m: KernelSet {
@@ -2096,10 +1929,6 @@ mod x86_64_tables {
       crc64_nvme: crc64_k::NVME_VPCLMUL[1],
       #[cfg(feature = "crc64")]
       crc64_nvme_name: "x86_64/vpclmul-2way",
-      #[cfg(feature = "adler32")]
-      adler32: crate::checksum::adler32::portable::update,
-      #[cfg(feature = "adler32")]
-      adler32_name: crate::checksum::adler32::portable::KERNEL_NAME,
     },
 
     l: KernelSet {
@@ -2131,10 +1960,6 @@ mod x86_64_tables {
       crc64_nvme: crc64_k::NVME_VPCLMUL[2],
       #[cfg(feature = "crc64")]
       crc64_nvme_name: "x86_64/vpclmul-4way",
-      #[cfg(feature = "adler32")]
-      adler32: crate::checksum::adler32::portable::update,
-      #[cfg(feature = "adler32")]
-      adler32_name: crate::checksum::adler32::portable::KERNEL_NAME,
     },
   };
 
@@ -2174,10 +1999,6 @@ mod x86_64_tables {
       crc64_nvme: crc64_k::NVME_PCLMUL_SMALL,
       #[cfg(feature = "crc64")]
       crc64_nvme_name: "x86_64/pclmul-small",
-      #[cfg(feature = "adler32")]
-      adler32: crate::checksum::adler32::portable::update,
-      #[cfg(feature = "adler32")]
-      adler32_name: crate::checksum::adler32::portable::KERNEL_NAME,
     },
 
     s: KernelSet {
@@ -2209,10 +2030,6 @@ mod x86_64_tables {
       crc64_nvme: crc64_k::NVME_PCLMUL_SMALL,
       #[cfg(feature = "crc64")]
       crc64_nvme_name: "x86_64/pclmul-small",
-      #[cfg(feature = "adler32")]
-      adler32: crate::checksum::adler32::portable::update,
-      #[cfg(feature = "adler32")]
-      adler32_name: crate::checksum::adler32::portable::KERNEL_NAME,
     },
 
     m: KernelSet {
@@ -2244,10 +2061,6 @@ mod x86_64_tables {
       crc64_nvme: crc64_k::NVME_PCLMUL[1], // 2-way
       #[cfg(feature = "crc64")]
       crc64_nvme_name: "x86_64/pclmul-2way",
-      #[cfg(feature = "adler32")]
-      adler32: crate::checksum::adler32::portable::update,
-      #[cfg(feature = "adler32")]
-      adler32_name: crate::checksum::adler32::portable::KERNEL_NAME,
     },
 
     l: KernelSet {
@@ -2279,10 +2092,6 @@ mod x86_64_tables {
       crc64_nvme: crc64_k::NVME_PCLMUL[1], // 2-way
       #[cfg(feature = "crc64")]
       crc64_nvme_name: "x86_64/pclmul-2way",
-      #[cfg(feature = "adler32")]
-      adler32: crate::checksum::adler32::portable::update,
-      #[cfg(feature = "adler32")]
-      adler32_name: crate::checksum::adler32::portable::KERNEL_NAME,
     },
   };
 
@@ -2322,10 +2131,6 @@ mod x86_64_tables {
       crc64_nvme: crc64_k::NVME_PCLMUL_SMALL,
       #[cfg(feature = "crc64")]
       crc64_nvme_name: "x86_64/pclmul-small",
-      #[cfg(feature = "adler32")]
-      adler32: crate::checksum::adler32::portable::update,
-      #[cfg(feature = "adler32")]
-      adler32_name: crate::checksum::adler32::portable::KERNEL_NAME,
     },
 
     s: KernelSet {
@@ -2357,10 +2162,6 @@ mod x86_64_tables {
       crc64_nvme: crc64_k::NVME_PCLMUL_SMALL,
       #[cfg(feature = "crc64")]
       crc64_nvme_name: "x86_64/pclmul-small",
-      #[cfg(feature = "adler32")]
-      adler32: crate::checksum::adler32::portable::update,
-      #[cfg(feature = "adler32")]
-      adler32_name: crate::checksum::adler32::portable::KERNEL_NAME,
     },
 
     m: KernelSet {
@@ -2392,10 +2193,6 @@ mod x86_64_tables {
       crc64_nvme: crc64_k::NVME_PCLMUL[1],
       #[cfg(feature = "crc64")]
       crc64_nvme_name: "x86_64/pclmul-2way",
-      #[cfg(feature = "adler32")]
-      adler32: crate::checksum::adler32::portable::update,
-      #[cfg(feature = "adler32")]
-      adler32_name: crate::checksum::adler32::portable::KERNEL_NAME,
     },
 
     l: KernelSet {
@@ -2427,10 +2224,6 @@ mod x86_64_tables {
       crc64_nvme: crc64_k::NVME_PCLMUL[1],
       #[cfg(feature = "crc64")]
       crc64_nvme_name: "x86_64/pclmul-2way",
-      #[cfg(feature = "adler32")]
-      adler32: crate::checksum::adler32::portable::update,
-      #[cfg(feature = "adler32")]
-      adler32_name: crate::checksum::adler32::portable::KERNEL_NAME,
     },
   };
 
@@ -2468,10 +2261,6 @@ mod x86_64_tables {
       crc64_nvme: crate::checksum::crc64::portable::crc64_slice16_nvme,
       #[cfg(feature = "crc64")]
       crc64_nvme_name: "portable/slice16",
-      #[cfg(feature = "adler32")]
-      adler32: crate::checksum::adler32::portable::update,
-      #[cfg(feature = "adler32")]
-      adler32_name: crate::checksum::adler32::portable::KERNEL_NAME,
     },
 
     s: KernelSet {
@@ -2503,10 +2292,6 @@ mod x86_64_tables {
       crc64_nvme: crate::checksum::crc64::portable::crc64_slice16_nvme,
       #[cfg(feature = "crc64")]
       crc64_nvme_name: "portable/slice16",
-      #[cfg(feature = "adler32")]
-      adler32: crate::checksum::adler32::portable::update,
-      #[cfg(feature = "adler32")]
-      adler32_name: crate::checksum::adler32::portable::KERNEL_NAME,
     },
 
     m: KernelSet {
@@ -2538,10 +2323,6 @@ mod x86_64_tables {
       crc64_nvme: crate::checksum::crc64::portable::crc64_slice16_nvme,
       #[cfg(feature = "crc64")]
       crc64_nvme_name: "portable/slice16",
-      #[cfg(feature = "adler32")]
-      adler32: crate::checksum::adler32::portable::update,
-      #[cfg(feature = "adler32")]
-      adler32_name: crate::checksum::adler32::portable::KERNEL_NAME,
     },
 
     l: KernelSet {
@@ -2573,10 +2354,6 @@ mod x86_64_tables {
       crc64_nvme: crate::checksum::crc64::portable::crc64_slice16_nvme,
       #[cfg(feature = "crc64")]
       crc64_nvme_name: "portable/slice16",
-      #[cfg(feature = "adler32")]
-      adler32: crate::checksum::adler32::portable::update,
-      #[cfg(feature = "adler32")]
-      adler32_name: crate::checksum::adler32::portable::KERNEL_NAME,
     },
   };
 }
@@ -2598,27 +2375,11 @@ mod s390x_tables {
   #[cfg(feature = "crc64")]
   use crate::checksum::crc64::kernels::s390x as crc64_k;
 
-  /// The portable CRC kernels of the small size classes, with the IBM Z Adler-32 kernel, which
-  /// serves every length.
-  const SMALL_SET: KernelSet = {
-    #[cfg_attr(
-      not(feature = "adler32"),
-      expect(unused_mut, reason = "only Adler-32 changes the set")
-    )]
-    let mut set = PORTABLE_SET;
-    #[cfg(feature = "adler32")]
-    {
-      set.adler32 = crate::checksum::adler32::s390x::update_safe;
-      set.adler32_name = crate::checksum::adler32::s390x::KERNEL_NAME;
-    }
-    set
-  };
-
   pub(super) static S390X_Z13_TABLE: KernelTable = kernel_table! {
     requires: crate::platform::caps::s390x::Z13_READY,
     boundaries: [64, 256, 4096],
-    xs: SMALL_SET,
-    s: SMALL_SET,
+    xs: PORTABLE_SET,
+    s: PORTABLE_SET,
     m: KernelSet {
       #[cfg(feature = "crc16")]
       crc16_ccitt: crc16_k::CCITT_VGFM[0],
@@ -2648,10 +2409,6 @@ mod s390x_tables {
       crc64_nvme: crc64_k::NVME_VGFM[0],
       #[cfg(feature = "crc64")]
       crc64_nvme_name: "s390x/vgfm",
-      #[cfg(feature = "adler32")]
-      adler32: crate::checksum::adler32::s390x::update_safe,
-      #[cfg(feature = "adler32")]
-      adler32_name: crate::checksum::adler32::s390x::KERNEL_NAME,
     },
     l: KernelSet {
       #[cfg(feature = "crc16")]
@@ -2682,18 +2439,14 @@ mod s390x_tables {
       crc64_nvme: crc64_k::NVME_VGFM[1],
       #[cfg(feature = "crc64")]
       crc64_nvme_name: "s390x/vgfm-2way",
-      #[cfg(feature = "adler32")]
-      adler32: crate::checksum::adler32::s390x::update_safe,
-      #[cfg(feature = "adler32")]
-      adler32_name: crate::checksum::adler32::s390x::KERNEL_NAME,
     },
   };
 
   pub(super) static S390X_Z14_TABLE: KernelTable = kernel_table! {
     requires: crate::platform::caps::s390x::Z13_READY,
     boundaries: [64, 128, 4096],
-    xs: SMALL_SET,
-    s: SMALL_SET,
+    xs: PORTABLE_SET,
+    s: PORTABLE_SET,
     m: KernelSet {
       #[cfg(feature = "crc16")]
       crc16_ccitt: crc16_k::CCITT_VGFM[0],
@@ -2723,10 +2476,6 @@ mod s390x_tables {
       crc64_nvme: crc64_k::NVME_VGFM[0],
       #[cfg(feature = "crc64")]
       crc64_nvme_name: "s390x/vgfm",
-      #[cfg(feature = "adler32")]
-      adler32: crate::checksum::adler32::s390x::update_safe,
-      #[cfg(feature = "adler32")]
-      adler32_name: crate::checksum::adler32::s390x::KERNEL_NAME,
     },
     l: KernelSet {
       #[cfg(feature = "crc16")]
@@ -2757,18 +2506,14 @@ mod s390x_tables {
       crc64_nvme: crc64_k::NVME_VGFM[1],
       #[cfg(feature = "crc64")]
       crc64_nvme_name: "s390x/vgfm-2way",
-      #[cfg(feature = "adler32")]
-      adler32: crate::checksum::adler32::s390x::update_safe,
-      #[cfg(feature = "adler32")]
-      adler32_name: crate::checksum::adler32::s390x::KERNEL_NAME,
     },
   };
 
   pub(super) static S390X_Z15_TABLE: KernelTable = kernel_table! {
     requires: crate::platform::caps::s390x::Z13_READY,
     boundaries: [63, 63, 4096],
-    xs: SMALL_SET,
-    s: SMALL_SET,
+    xs: PORTABLE_SET,
+    s: PORTABLE_SET,
     m: KernelSet {
       #[cfg(feature = "crc16")]
       crc16_ccitt: crc16_k::CCITT_VGFM[0],
@@ -2798,10 +2543,6 @@ mod s390x_tables {
       crc64_nvme: crc64_k::NVME_VGFM[0],
       #[cfg(feature = "crc64")]
       crc64_nvme_name: "s390x/vgfm",
-      #[cfg(feature = "adler32")]
-      adler32: crate::checksum::adler32::s390x::update_safe,
-      #[cfg(feature = "adler32")]
-      adler32_name: crate::checksum::adler32::s390x::KERNEL_NAME,
     },
     l: KernelSet {
       #[cfg(feature = "crc16")]
@@ -2832,10 +2573,6 @@ mod s390x_tables {
       crc64_nvme: crc64_k::NVME_VGFM[1],
       #[cfg(feature = "crc64")]
       crc64_nvme_name: "s390x/vgfm-2way",
-      #[cfg(feature = "adler32")]
-      adler32: crate::checksum::adler32::s390x::update_safe,
-      #[cfg(feature = "adler32")]
-      adler32_name: crate::checksum::adler32::s390x::KERNEL_NAME,
     },
   };
 }
@@ -2857,27 +2594,11 @@ mod power_tables {
   #[cfg(feature = "crc64")]
   use crate::checksum::crc64::kernels::power as crc64_k;
 
-  /// The portable CRC kernels of the small size classes, with the POWER Adler-32 kernel, which
-  /// serves every length.
-  const SMALL_SET: KernelSet = {
-    #[cfg_attr(
-      not(feature = "adler32"),
-      expect(unused_mut, reason = "only Adler-32 changes the set")
-    )]
-    let mut set = PORTABLE_SET;
-    #[cfg(feature = "adler32")]
-    {
-      set.adler32 = crate::checksum::adler32::power::update_safe;
-      set.adler32_name = crate::checksum::adler32::power::KERNEL_NAME;
-    }
-    set
-  };
-
   pub(super) static POWER8_TABLE: KernelTable = kernel_table! {
     requires: crate::platform::caps::power::VPMSUM_READY,
     boundaries: [64, 128, 4096],
-    xs: SMALL_SET,
-    s: SMALL_SET,
+    xs: PORTABLE_SET,
+    s: PORTABLE_SET,
     m: KernelSet {
       #[cfg(feature = "crc16")]
       crc16_ccitt: crc16_k::CCITT_VPMSUM[0],
@@ -2907,10 +2628,6 @@ mod power_tables {
       crc64_nvme: crc64_k::NVME_VPMSUM[0],
       #[cfg(feature = "crc64")]
       crc64_nvme_name: "power/vpmsum",
-      #[cfg(feature = "adler32")]
-      adler32: crate::checksum::adler32::power::update_safe,
-      #[cfg(feature = "adler32")]
-      adler32_name: crate::checksum::adler32::power::KERNEL_NAME,
     },
     l: KernelSet {
       #[cfg(feature = "crc16")]
@@ -2941,18 +2658,14 @@ mod power_tables {
       crc64_nvme: crc64_k::NVME_VPMSUM[1],
       #[cfg(feature = "crc64")]
       crc64_nvme_name: "power/vpmsum-2way",
-      #[cfg(feature = "adler32")]
-      adler32: crate::checksum::adler32::power::update_safe,
-      #[cfg(feature = "adler32")]
-      adler32_name: crate::checksum::adler32::power::KERNEL_NAME,
     },
   };
 
   pub(super) static POWER9_TABLE: KernelTable = kernel_table! {
     requires: crate::platform::caps::power::VPMSUM_READY,
     boundaries: [64, 64, 4096],
-    xs: SMALL_SET,
-    s: SMALL_SET,
+    xs: PORTABLE_SET,
+    s: PORTABLE_SET,
     m: KernelSet {
       #[cfg(feature = "crc16")]
       crc16_ccitt: crc16_k::CCITT_VPMSUM[0],
@@ -2982,10 +2695,6 @@ mod power_tables {
       crc64_nvme: crc64_k::NVME_VPMSUM[0],
       #[cfg(feature = "crc64")]
       crc64_nvme_name: "power/vpmsum",
-      #[cfg(feature = "adler32")]
-      adler32: crate::checksum::adler32::power::update_safe,
-      #[cfg(feature = "adler32")]
-      adler32_name: crate::checksum::adler32::power::KERNEL_NAME,
     },
     l: KernelSet {
       #[cfg(feature = "crc16")]
@@ -3016,18 +2725,14 @@ mod power_tables {
       crc64_nvme: crc64_k::NVME_VPMSUM[2],
       #[cfg(feature = "crc64")]
       crc64_nvme_name: "power/vpmsum-4way",
-      #[cfg(feature = "adler32")]
-      adler32: crate::checksum::adler32::power::update_safe,
-      #[cfg(feature = "adler32")]
-      adler32_name: crate::checksum::adler32::power::KERNEL_NAME,
     },
   };
 
   pub(super) static POWER10_TABLE: KernelTable = kernel_table! {
     requires: crate::platform::caps::power::VPMSUM_READY,
     boundaries: [63, 63, 4096],
-    xs: SMALL_SET,
-    s: SMALL_SET,
+    xs: PORTABLE_SET,
+    s: PORTABLE_SET,
     m: KernelSet {
       #[cfg(feature = "crc16")]
       crc16_ccitt: crc16_k::CCITT_VPMSUM[0],
@@ -3057,10 +2762,6 @@ mod power_tables {
       crc64_nvme: crc64_k::NVME_VPMSUM[0],
       #[cfg(feature = "crc64")]
       crc64_nvme_name: "power/vpmsum",
-      #[cfg(feature = "adler32")]
-      adler32: crate::checksum::adler32::power::update_safe,
-      #[cfg(feature = "adler32")]
-      adler32_name: crate::checksum::adler32::power::KERNEL_NAME,
     },
     l: KernelSet {
       #[cfg(feature = "crc16")]
@@ -3091,10 +2792,6 @@ mod power_tables {
       crc64_nvme: crc64_k::NVME_VPMSUM[2],
       #[cfg(feature = "crc64")]
       crc64_nvme_name: "power/vpmsum-4way",
-      #[cfg(feature = "adler32")]
-      adler32: crate::checksum::adler32::power::update_safe,
-      #[cfg(feature = "adler32")]
-      adler32_name: crate::checksum::adler32::power::KERNEL_NAME,
     },
   };
 }
@@ -3150,10 +2847,6 @@ mod riscv64_tables {
       crc64_nvme: crate::checksum::crc64::portable::crc64_slice16_nvme,
       #[cfg(feature = "crc64")]
       crc64_nvme_name: "portable/slice16",
-      #[cfg(feature = "adler32")]
-      adler32: crate::checksum::adler32::portable::update,
-      #[cfg(feature = "adler32")]
-      adler32_name: crate::checksum::adler32::portable::KERNEL_NAME,
     },
     m: KernelSet {
       #[cfg(feature = "crc16")]
@@ -3184,10 +2877,6 @@ mod riscv64_tables {
       crc64_nvme: crate::checksum::crc64::portable::crc64_slice16_nvme,
       #[cfg(feature = "crc64")]
       crc64_nvme_name: "portable/slice16",
-      #[cfg(feature = "adler32")]
-      adler32: crate::checksum::adler32::portable::update,
-      #[cfg(feature = "adler32")]
-      adler32_name: crate::checksum::adler32::portable::KERNEL_NAME,
     },
     l: KernelSet {
       #[cfg(feature = "crc16")]
@@ -3218,10 +2907,6 @@ mod riscv64_tables {
       crc64_nvme: crate::checksum::crc64::portable::crc64_slice16_nvme,
       #[cfg(feature = "crc64")]
       crc64_nvme_name: "portable/slice16",
-      #[cfg(feature = "adler32")]
-      adler32: crate::checksum::adler32::portable::update,
-      #[cfg(feature = "adler32")]
-      adler32_name: crate::checksum::adler32::portable::KERNEL_NAME,
     },
   };
 
@@ -3258,10 +2943,6 @@ mod riscv64_tables {
       crc64_nvme: crate::checksum::crc64::portable::crc64_slice16_nvme,
       #[cfg(feature = "crc64")]
       crc64_nvme_name: "portable/slice16",
-      #[cfg(feature = "adler32")]
-      adler32: crate::checksum::adler32::portable::update,
-      #[cfg(feature = "adler32")]
-      adler32_name: crate::checksum::adler32::portable::KERNEL_NAME,
     },
     m: KernelSet {
       #[cfg(feature = "crc16")]
@@ -3292,10 +2973,6 @@ mod riscv64_tables {
       crc64_nvme: crate::checksum::crc64::portable::crc64_slice16_nvme,
       #[cfg(feature = "crc64")]
       crc64_nvme_name: "portable/slice16",
-      #[cfg(feature = "adler32")]
-      adler32: crate::checksum::adler32::portable::update,
-      #[cfg(feature = "adler32")]
-      adler32_name: crate::checksum::adler32::portable::KERNEL_NAME,
     },
     l: KernelSet {
       #[cfg(feature = "crc16")]
@@ -3326,10 +3003,6 @@ mod riscv64_tables {
       crc64_nvme: crate::checksum::crc64::portable::crc64_slice16_nvme,
       #[cfg(feature = "crc64")]
       crc64_nvme_name: "portable/slice16",
-      #[cfg(feature = "adler32")]
-      adler32: crate::checksum::adler32::portable::update,
-      #[cfg(feature = "adler32")]
-      adler32_name: crate::checksum::adler32::portable::KERNEL_NAME,
     },
   };
 }
@@ -3399,8 +3072,6 @@ mod tests {
   #[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
   fn test_s390x_z15_uses_vgfm_at_64b() {
     let names = S390X_Z15_TABLE.select_names(64);
-    #[cfg(feature = "adler32")]
-    assert_eq!(names.adler32_name, "s390x/vsum");
     #[cfg(feature = "crc32")]
     assert_eq!(names.crc32_ieee_name, "s390x/vgfm");
     #[cfg(feature = "crc64")]
@@ -3411,8 +3082,6 @@ mod tests {
   #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
   fn test_power10_uses_vpmsum_at_64b() {
     let names = POWER10_TABLE.select_names(64);
-    #[cfg(feature = "adler32")]
-    assert_eq!(names.adler32_name, "power/vmsum");
     #[cfg(feature = "crc32")]
     assert_eq!(names.crc32_ieee_name, "power/vpmsum");
     #[cfg(feature = "crc64")]
@@ -3557,10 +3226,6 @@ mod tests {
     #[cfg(feature = "crc64")]
     {
       expected_fields += 2;
-    }
-    #[cfg(feature = "adler32")]
-    {
-      expected_fields += 1;
     }
 
     let expected_size = expected_fields * core::mem::size_of::<usize>();

@@ -507,8 +507,7 @@ fn probe_dit() -> bool {
     feature = "crc16",
     feature = "crc24",
     feature = "crc32",
-    feature = "crc64",
-    feature = "adler32"
+    feature = "crc64"
   ),
   any(target_os = "macos", target_os = "ios", target_os = "tvos", target_os = "watchos")
 ))]
@@ -536,8 +535,7 @@ enum AppleSiliconGen {
     feature = "crc16",
     feature = "crc24",
     feature = "crc32",
-    feature = "crc64",
-    feature = "adler32"
+    feature = "crc64"
   )
 ))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -569,8 +567,7 @@ pub(crate) enum Aarch64TuneFamily {
     feature = "crc16",
     feature = "crc24",
     feature = "crc32",
-    feature = "crc64",
-    feature = "adler32"
+    feature = "crc64"
   ),
   any(target_os = "macos", target_os = "ios", target_os = "tvos", target_os = "watchos")
 ))]
@@ -658,8 +655,7 @@ fn detect_apple_silicon_gen() -> Option<AppleSiliconGen> {
     feature = "crc16",
     feature = "crc24",
     feature = "crc32",
-    feature = "crc64",
-    feature = "adler32"
+    feature = "crc64"
   )
 ))]
 #[must_use]
@@ -738,8 +734,7 @@ fn detect_apple_sme_features() -> Caps {
     feature = "crc16",
     feature = "crc24",
     feature = "crc32",
-    feature = "crc64",
-    feature = "adler32"
+    feature = "crc64"
   )
 ))]
 const MIDR_IMPLEMENTER_SHIFT: u32 = 24;
@@ -752,8 +747,7 @@ const MIDR_IMPLEMENTER_SHIFT: u32 = 24;
     feature = "crc16",
     feature = "crc24",
     feature = "crc32",
-    feature = "crc64",
-    feature = "adler32"
+    feature = "crc64"
   )
 ))]
 const MIDR_PARTNUM_SHIFT: u32 = 4;
@@ -767,8 +761,7 @@ const MIDR_PARTNUM_SHIFT: u32 = 4;
     feature = "crc16",
     feature = "crc24",
     feature = "crc32",
-    feature = "crc64",
-    feature = "adler32"
+    feature = "crc64"
   )
 ))]
 const ARM_CPU_IMP_ARM: u32 = 0x41;
@@ -781,8 +774,7 @@ const ARM_CPU_IMP_ARM: u32 = 0x41;
     feature = "crc16",
     feature = "crc24",
     feature = "crc32",
-    feature = "crc64",
-    feature = "adler32"
+    feature = "crc64"
   )
 ))]
 const ARM_CPU_PART_NEOVERSE_N1: u32 = 0xD0C;
@@ -795,8 +787,7 @@ const ARM_CPU_PART_NEOVERSE_N1: u32 = 0xD0C;
     feature = "crc16",
     feature = "crc24",
     feature = "crc32",
-    feature = "crc64",
-    feature = "adler32"
+    feature = "crc64"
   )
 ))]
 const ARM_CPU_PART_NEOVERSE_V1: u32 = 0xD40;
@@ -809,8 +800,7 @@ const ARM_CPU_PART_NEOVERSE_V1: u32 = 0xD40;
     feature = "crc16",
     feature = "crc24",
     feature = "crc32",
-    feature = "crc64",
-    feature = "adler32"
+    feature = "crc64"
   )
 ))]
 const ARM_CPU_PART_NEOVERSE_V2: u32 = 0xD4F;
@@ -824,8 +814,7 @@ const ARM_CPU_PART_NEOVERSE_V2: u32 = 0xD4F;
     feature = "crc16",
     feature = "crc24",
     feature = "crc32",
-    feature = "crc64",
-    feature = "adler32"
+    feature = "crc64"
   )
 ))]
 #[inline]
@@ -842,8 +831,7 @@ fn midr_implementer(midr: u32) -> u32 {
     feature = "crc16",
     feature = "crc24",
     feature = "crc32",
-    feature = "crc64",
-    feature = "adler32"
+    feature = "crc64"
   )
 ))]
 #[inline]
@@ -860,8 +848,7 @@ fn midr_partnum(midr: u32) -> u32 {
     feature = "crc16",
     feature = "crc24",
     feature = "crc32",
-    feature = "crc64",
-    feature = "adler32"
+    feature = "crc64"
   )
 ))]
 fn parse_u32_auto_radix(value: &str) -> Option<u32> {
@@ -885,8 +872,7 @@ fn parse_u32_auto_radix(value: &str) -> Option<u32> {
     feature = "crc16",
     feature = "crc24",
     feature = "crc32",
-    feature = "crc64",
-    feature = "adler32"
+    feature = "crc64"
   )
 ))]
 fn read_linux_midr_sysfs() -> Option<u32> {
@@ -915,8 +901,7 @@ fn read_linux_midr_sysfs() -> Option<u32> {
     feature = "crc16",
     feature = "crc24",
     feature = "crc32",
-    feature = "crc64",
-    feature = "adler32"
+    feature = "crc64"
   )
 ))]
 fn read_linux_midr_cpuinfo() -> Option<u32> {
@@ -954,8 +939,7 @@ fn read_linux_midr_cpuinfo() -> Option<u32> {
     feature = "crc16",
     feature = "crc24",
     feature = "crc32",
-    feature = "crc64",
-    feature = "adler32"
+    feature = "crc64"
   )
 ))]
 #[inline]
@@ -981,8 +965,7 @@ fn map_linux_midr_to_tune_family(midr: u32) -> Option<Aarch64TuneFamily> {
     feature = "crc16",
     feature = "crc24",
     feature = "crc32",
-    feature = "crc64",
-    feature = "adler32"
+    feature = "crc64"
   )
 ))]
 fn detect_linux_aarch64_tune_family() -> Option<Aarch64TuneFamily> {

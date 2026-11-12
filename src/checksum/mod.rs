@@ -124,13 +124,7 @@ pub(crate) mod dispatchers;
 pub mod introspect;
 #[cfg(feature = "std")]
 pub mod io;
-#[cfg(any(
-  feature = "crc16",
-  feature = "crc24",
-  feature = "crc32",
-  feature = "crc64",
-  feature = "adler32"
-))]
+#[cfg(any(feature = "crc16", feature = "crc24", feature = "crc32", feature = "crc64"))]
 #[doc(hidden)]
 pub(crate) mod kernel_table;
 #[cfg(feature = "alloc")]
