@@ -693,6 +693,25 @@ on `nightly-2026-10-14` and QEMU 11.1.2. Each scenario searches for the PRK and 
   The scenarios now require this.
 - Raw results: `benchmark_results/hkdf-extract-residue-20261016/` (local).
 
+On 2026-11-12 the harness added BLAKE3 keyed hashing and key derivation, and HMAC with keys longer
+than the block, at `22206ab9` plus these scenarios, on `nightly-2026-10-24` and QEMU 11.1.3:
+
+- `Blake3::keyed_digest` and `Blake3::derive_key` over four 1-KiB chunks, which run two parent
+  compressions below the root, leave no bytes of the key, of the key material's first block, or of the
+  first chunk's chaining value. The chaining-value needles come from the reference `blake3` crate's
+  `hazmat` API; merging its four chunk values reproduces that crate's keyed hash and derived key.
+- `HmacSha256::mac` with a 100-byte key and `HmacSha512::mac` with a 200-byte key leave no bytes of
+  the key or of its digest, which the `sha2` crate computes.
+- This holds on both boards and both backends, and the scenarios now require it. Like the SHAKE
+  copy above, a clean scan is an observation of these builds: BLAKE3 still returns chaining values by
+  value, and `digest_secret` still returns the long-key digest by value, and no proof says those
+  slots are always overwritten.
+- The raw logs were not retained. Their `report.json` SHA-256 values were
+  `8763d4bda575baad5e1f7ab7b76e70e4bf02f101352310e1413ef7dc134a8337` (riscv32-virt native),
+  `dbfe24f97d6646d310c24d5a14c5d54064e5338afaffd366f1b307a4e06e7572` (riscv32-virt portable), and
+  `d51233380d6940d63fdcc67baab65cad8dd35b435dc073209a76834e8f61667a` (thumb-mps2-an385, both
+  backends).
+
 On 2026-11-12 the harness measured composite ML-DSA with `just stack-residue`, at `af2f10d3` plus
 the change that adds these scenarios, on `nightly-2026-10-24` (rustc 1.101.0-nightly `48f4b0553`)
 and QEMU 11.1.3, on both boards with both backends. Each scenario searches for the ML-DSA-65 seed,

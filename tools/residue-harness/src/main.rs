@@ -1057,6 +1057,95 @@ composite!(
   p256_needles
 );
 
+/// `N` distinct, non-repeating bytes from a xorshift stream, for needles that
+/// live outside every scanned region.
+const fn stream_bytes<const N: usize>(seed: u32) -> [u8; N] {
+  let mut bytes = [0u8; N];
+  let mut state = seed;
+  let mut index = 0;
+  while index < N {
+    state ^= state << 13;
+    state ^= state >> 17;
+    state ^= state << 5;
+    bytes[index] = state.to_le_bytes()[1];
+    index = index.strict_add(1);
+  }
+  bytes
+}
+
+/// BLAKE3 key and four 1-KiB chunks of input, so hashing runs two parent
+/// compressions below the root. The derive-key scenario treats the input as
+/// key material.
+const BLAKE3_KEY: [u8; 32] = stream_bytes(0xB1A3_E001);
+static BLAKE3_INPUT: [u8; 4096] = stream_bytes(0xB1A3_E002);
+const BLAKE3_CONTEXT: &str = "rscrypto residue harness BLAKE3 derive_key";
+
+mod blake3_keyed {
+  use super::*;
+  use blake3::hazmat::HasherExt as _;
+
+  pub(super) fn keyed_hash() {
+    let hash = rscrypto::Blake3::keyed_digest(black_box(&BLAKE3_KEY), black_box(&BLAKE3_INPUT));
+    black_box(&hash);
+  }
+
+  pub(super) fn derive_key() {
+    let key = rscrypto::Blake3::derive_key(black_box(BLAKE3_CONTEXT), black_box(&BLAKE3_INPUT));
+    black_box(&key);
+  }
+
+  /// The first chunk's chaining value, from the reference implementation.
+  fn first_chunk_cv(mut hasher: blake3::Hasher) -> [u8; 32] {
+    hasher.set_input_offset(0);
+    hasher.update(&BLAKE3_INPUT[..1024]);
+    hasher.finalize_non_root()
+  }
+
+  pub(super) fn keyed_needles() {
+    needle("key", &BLAKE3_KEY);
+    needle("chunk0_cv", &first_chunk_cv(blake3::Hasher::new_keyed(&BLAKE3_KEY)));
+  }
+
+  pub(super) fn derive_key_needles() {
+    let context_key = blake3::hazmat::hash_derive_key_context(BLAKE3_CONTEXT);
+    needle("key_material_block0", &BLAKE3_INPUT[..64]);
+    needle(
+      "chunk0_cv",
+      &first_chunk_cv(blake3::Hasher::new_from_context_key(&context_key)),
+    );
+  }
+}
+
+/// HMAC keys longer than the block (64 bytes for SHA-256, 128 for SHA-512),
+/// which HMAC hashes into its key block first.
+static HMAC_LONG_KEY: [u8; 200] = stream_bytes(0x4D4A_C001);
+const HMAC_MESSAGE: &[u8] = b"rscrypto HMAC long-key residue";
+
+mod hmac_long_key {
+  use super::*;
+  use sha2::Digest as _;
+
+  pub(super) fn sha256() {
+    let tag = rscrypto::HmacSha256::mac(black_box(&HMAC_LONG_KEY[..100]), black_box(HMAC_MESSAGE));
+    black_box(&tag);
+  }
+
+  pub(super) fn sha512() {
+    let tag = rscrypto::HmacSha512::mac(black_box(&HMAC_LONG_KEY), black_box(HMAC_MESSAGE));
+    black_box(&tag);
+  }
+
+  pub(super) fn sha256_needles() {
+    needle("key", &HMAC_LONG_KEY[..100]);
+    needle("key_digest", &sha2::Sha256::digest(&HMAC_LONG_KEY[..100]));
+  }
+
+  pub(super) fn sha512_needles() {
+    needle("key", &HMAC_LONG_KEY);
+    needle("key_digest", &sha2::Sha512::digest(HMAC_LONG_KEY));
+  }
+}
+
 macro_rules! scenario {
   ($name:literal, $expect:literal, $run:path, $needles:path) => {
     scenario!($name, $expect, nothing, $run, $needles)
@@ -1656,6 +1745,30 @@ const SCENARIOS: &[Scenario] = &[
     "none",
     hkdf_sha512::extract,
     hkdf_sha512::needles
+  ),
+  scenario!(
+    "blake3-keyed-hash",
+    "none",
+    blake3_keyed::keyed_hash,
+    blake3_keyed::keyed_needles
+  ),
+  scenario!(
+    "blake3-derive-key",
+    "none",
+    blake3_keyed::derive_key,
+    blake3_keyed::derive_key_needles
+  ),
+  scenario!(
+    "hmac-sha256-long-key",
+    "none",
+    hmac_long_key::sha256,
+    hmac_long_key::sha256_needles
+  ),
+  scenario!(
+    "hmac-sha512-long-key",
+    "none",
+    hmac_long_key::sha512,
+    hmac_long_key::sha512_needles
   ),
   scenario!(
     "mldsa65-ed25519-keygen",
