@@ -2644,11 +2644,27 @@ mod s390x_tables {
   #[cfg(feature = "crc64")]
   use crate::checksum::crc64::kernels::s390x as crc64_k;
 
+  /// The portable CRC kernels of the small size classes, with the IBM Z Adler-32 kernel, which
+  /// serves every length.
+  const SMALL_SET: KernelSet = {
+    #[cfg_attr(
+      not(feature = "adler32"),
+      expect(unused_mut, reason = "only Adler-32 changes the set")
+    )]
+    let mut set = PORTABLE_SET;
+    #[cfg(feature = "adler32")]
+    {
+      set.adler32 = crate::checksum::adler32::s390x::update_safe;
+      set.adler32_name = crate::checksum::adler32::s390x::KERNEL_NAME;
+    }
+    set
+  };
+
   pub(super) static S390X_Z13_TABLE: KernelTable = kernel_table! {
     requires: crate::platform::caps::s390x::Z13_READY,
     boundaries: [64, 256, 4096],
-    xs: PORTABLE_SET,
-    s: PORTABLE_SET,
+    xs: SMALL_SET,
+    s: SMALL_SET,
     m: KernelSet {
       #[cfg(feature = "crc16")]
       crc16_ccitt: crc16_k::CCITT_VGFM[0],
@@ -2679,9 +2695,9 @@ mod s390x_tables {
       #[cfg(feature = "crc64")]
       crc64_nvme_name: "s390x/vgfm",
       #[cfg(feature = "adler32")]
-      adler32: crate::checksum::adler32::portable::update,
+      adler32: crate::checksum::adler32::s390x::update_safe,
       #[cfg(feature = "adler32")]
-      adler32_name: crate::checksum::adler32::portable::KERNEL_NAME,
+      adler32_name: crate::checksum::adler32::s390x::KERNEL_NAME,
     },
     l: KernelSet {
       #[cfg(feature = "crc16")]
@@ -2713,17 +2729,17 @@ mod s390x_tables {
       #[cfg(feature = "crc64")]
       crc64_nvme_name: "s390x/vgfm-2way",
       #[cfg(feature = "adler32")]
-      adler32: crate::checksum::adler32::portable::update,
+      adler32: crate::checksum::adler32::s390x::update_safe,
       #[cfg(feature = "adler32")]
-      adler32_name: crate::checksum::adler32::portable::KERNEL_NAME,
+      adler32_name: crate::checksum::adler32::s390x::KERNEL_NAME,
     },
   };
 
   pub(super) static S390X_Z14_TABLE: KernelTable = kernel_table! {
     requires: crate::platform::caps::s390x::Z13_READY,
     boundaries: [64, 128, 4096],
-    xs: PORTABLE_SET,
-    s: PORTABLE_SET,
+    xs: SMALL_SET,
+    s: SMALL_SET,
     m: KernelSet {
       #[cfg(feature = "crc16")]
       crc16_ccitt: crc16_k::CCITT_VGFM[0],
@@ -2754,9 +2770,9 @@ mod s390x_tables {
       #[cfg(feature = "crc64")]
       crc64_nvme_name: "s390x/vgfm",
       #[cfg(feature = "adler32")]
-      adler32: crate::checksum::adler32::portable::update,
+      adler32: crate::checksum::adler32::s390x::update_safe,
       #[cfg(feature = "adler32")]
-      adler32_name: crate::checksum::adler32::portable::KERNEL_NAME,
+      adler32_name: crate::checksum::adler32::s390x::KERNEL_NAME,
     },
     l: KernelSet {
       #[cfg(feature = "crc16")]
@@ -2788,17 +2804,17 @@ mod s390x_tables {
       #[cfg(feature = "crc64")]
       crc64_nvme_name: "s390x/vgfm-2way",
       #[cfg(feature = "adler32")]
-      adler32: crate::checksum::adler32::portable::update,
+      adler32: crate::checksum::adler32::s390x::update_safe,
       #[cfg(feature = "adler32")]
-      adler32_name: crate::checksum::adler32::portable::KERNEL_NAME,
+      adler32_name: crate::checksum::adler32::s390x::KERNEL_NAME,
     },
   };
 
   pub(super) static S390X_Z15_TABLE: KernelTable = kernel_table! {
     requires: crate::platform::caps::s390x::Z13_READY,
     boundaries: [63, 63, 4096],
-    xs: PORTABLE_SET,
-    s: PORTABLE_SET,
+    xs: SMALL_SET,
+    s: SMALL_SET,
     m: KernelSet {
       #[cfg(feature = "crc16")]
       crc16_ccitt: crc16_k::CCITT_VGFM[0],
@@ -2829,9 +2845,9 @@ mod s390x_tables {
       #[cfg(feature = "crc64")]
       crc64_nvme_name: "s390x/vgfm",
       #[cfg(feature = "adler32")]
-      adler32: crate::checksum::adler32::portable::update,
+      adler32: crate::checksum::adler32::s390x::update_safe,
       #[cfg(feature = "adler32")]
-      adler32_name: crate::checksum::adler32::portable::KERNEL_NAME,
+      adler32_name: crate::checksum::adler32::s390x::KERNEL_NAME,
     },
     l: KernelSet {
       #[cfg(feature = "crc16")]
@@ -2863,9 +2879,9 @@ mod s390x_tables {
       #[cfg(feature = "crc64")]
       crc64_nvme_name: "s390x/vgfm-2way",
       #[cfg(feature = "adler32")]
-      adler32: crate::checksum::adler32::portable::update,
+      adler32: crate::checksum::adler32::s390x::update_safe,
       #[cfg(feature = "adler32")]
-      adler32_name: crate::checksum::adler32::portable::KERNEL_NAME,
+      adler32_name: crate::checksum::adler32::s390x::KERNEL_NAME,
     },
   };
 }
@@ -2887,11 +2903,27 @@ mod power_tables {
   #[cfg(feature = "crc64")]
   use crate::checksum::crc64::kernels::power as crc64_k;
 
+  /// The portable CRC kernels of the small size classes, with the POWER Adler-32 kernel, which
+  /// serves every length.
+  const SMALL_SET: KernelSet = {
+    #[cfg_attr(
+      not(feature = "adler32"),
+      expect(unused_mut, reason = "only Adler-32 changes the set")
+    )]
+    let mut set = PORTABLE_SET;
+    #[cfg(feature = "adler32")]
+    {
+      set.adler32 = crate::checksum::adler32::power::update_safe;
+      set.adler32_name = crate::checksum::adler32::power::KERNEL_NAME;
+    }
+    set
+  };
+
   pub(super) static POWER8_TABLE: KernelTable = kernel_table! {
     requires: crate::platform::caps::power::VPMSUM_READY,
     boundaries: [64, 128, 4096],
-    xs: PORTABLE_SET,
-    s: PORTABLE_SET,
+    xs: SMALL_SET,
+    s: SMALL_SET,
     m: KernelSet {
       #[cfg(feature = "crc16")]
       crc16_ccitt: crc16_k::CCITT_VPMSUM[0],
@@ -2922,9 +2954,9 @@ mod power_tables {
       #[cfg(feature = "crc64")]
       crc64_nvme_name: "power/vpmsum",
       #[cfg(feature = "adler32")]
-      adler32: crate::checksum::adler32::portable::update,
+      adler32: crate::checksum::adler32::power::update_safe,
       #[cfg(feature = "adler32")]
-      adler32_name: crate::checksum::adler32::portable::KERNEL_NAME,
+      adler32_name: crate::checksum::adler32::power::KERNEL_NAME,
     },
     l: KernelSet {
       #[cfg(feature = "crc16")]
@@ -2956,17 +2988,17 @@ mod power_tables {
       #[cfg(feature = "crc64")]
       crc64_nvme_name: "power/vpmsum-2way",
       #[cfg(feature = "adler32")]
-      adler32: crate::checksum::adler32::portable::update,
+      adler32: crate::checksum::adler32::power::update_safe,
       #[cfg(feature = "adler32")]
-      adler32_name: crate::checksum::adler32::portable::KERNEL_NAME,
+      adler32_name: crate::checksum::adler32::power::KERNEL_NAME,
     },
   };
 
   pub(super) static POWER9_TABLE: KernelTable = kernel_table! {
     requires: crate::platform::caps::power::VPMSUM_READY,
     boundaries: [64, 64, 4096],
-    xs: PORTABLE_SET,
-    s: PORTABLE_SET,
+    xs: SMALL_SET,
+    s: SMALL_SET,
     m: KernelSet {
       #[cfg(feature = "crc16")]
       crc16_ccitt: crc16_k::CCITT_VPMSUM[0],
@@ -2997,9 +3029,9 @@ mod power_tables {
       #[cfg(feature = "crc64")]
       crc64_nvme_name: "power/vpmsum",
       #[cfg(feature = "adler32")]
-      adler32: crate::checksum::adler32::portable::update,
+      adler32: crate::checksum::adler32::power::update_safe,
       #[cfg(feature = "adler32")]
-      adler32_name: crate::checksum::adler32::portable::KERNEL_NAME,
+      adler32_name: crate::checksum::adler32::power::KERNEL_NAME,
     },
     l: KernelSet {
       #[cfg(feature = "crc16")]
@@ -3031,17 +3063,17 @@ mod power_tables {
       #[cfg(feature = "crc64")]
       crc64_nvme_name: "power/vpmsum-4way",
       #[cfg(feature = "adler32")]
-      adler32: crate::checksum::adler32::portable::update,
+      adler32: crate::checksum::adler32::power::update_safe,
       #[cfg(feature = "adler32")]
-      adler32_name: crate::checksum::adler32::portable::KERNEL_NAME,
+      adler32_name: crate::checksum::adler32::power::KERNEL_NAME,
     },
   };
 
   pub(super) static POWER10_TABLE: KernelTable = kernel_table! {
     requires: crate::platform::caps::power::VPMSUM_READY,
     boundaries: [63, 63, 4096],
-    xs: PORTABLE_SET,
-    s: PORTABLE_SET,
+    xs: SMALL_SET,
+    s: SMALL_SET,
     m: KernelSet {
       #[cfg(feature = "crc16")]
       crc16_ccitt: crc16_k::CCITT_VPMSUM[0],
@@ -3072,9 +3104,9 @@ mod power_tables {
       #[cfg(feature = "crc64")]
       crc64_nvme_name: "power/vpmsum",
       #[cfg(feature = "adler32")]
-      adler32: crate::checksum::adler32::portable::update,
+      adler32: crate::checksum::adler32::power::update_safe,
       #[cfg(feature = "adler32")]
-      adler32_name: crate::checksum::adler32::portable::KERNEL_NAME,
+      adler32_name: crate::checksum::adler32::power::KERNEL_NAME,
     },
     l: KernelSet {
       #[cfg(feature = "crc16")]
@@ -3106,9 +3138,9 @@ mod power_tables {
       #[cfg(feature = "crc64")]
       crc64_nvme_name: "power/vpmsum-4way",
       #[cfg(feature = "adler32")]
-      adler32: crate::checksum::adler32::portable::update,
+      adler32: crate::checksum::adler32::power::update_safe,
       #[cfg(feature = "adler32")]
-      adler32_name: crate::checksum::adler32::portable::KERNEL_NAME,
+      adler32_name: crate::checksum::adler32::power::KERNEL_NAME,
     },
   };
 }
@@ -3413,6 +3445,8 @@ mod tests {
   #[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
   fn test_s390x_z15_uses_vgfm_at_64b() {
     let names = S390X_Z15_TABLE.select_names(64);
+    #[cfg(feature = "adler32")]
+    assert_eq!(names.adler32_name, "s390x/vsum");
     #[cfg(feature = "crc32")]
     assert_eq!(names.crc32_ieee_name, "s390x/vgfm");
     #[cfg(feature = "crc64")]
@@ -3423,6 +3457,8 @@ mod tests {
   #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
   fn test_power10_uses_vpmsum_at_64b() {
     let names = POWER10_TABLE.select_names(64);
+    #[cfg(feature = "adler32")]
+    assert_eq!(names.adler32_name, "power/vmsum");
     #[cfg(feature = "crc32")]
     assert_eq!(names.crc32_ieee_name, "power/vpmsum");
     #[cfg(feature = "crc64")]

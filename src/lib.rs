@@ -145,6 +145,7 @@ assert!(
       feature = "crc24",
       feature = "crc32",
       feature = "crc64",
+      feature = "adler32",
       feature = "aes-gcm",
       feature = "aes-gcm-siv",
       feature = "aes-siv",
@@ -212,11 +213,12 @@ assert!(
   ),
   feature(portable_simd)
 )]
-// NIGHTLY: ML-KEM and ML-DSA use s390x vector intrinsics for explicit modular arithmetic.
+// NIGHTLY: ML-KEM and ML-DSA use s390x vector intrinsics for explicit modular arithmetic, and
+// Adler-32 for its byte sums and products.
 #![cfg_attr(
   all(
     target_arch = "s390x",
-    any(feature = "ml-kem", feature = "ml-dsa"),
+    any(feature = "ml-kem", feature = "ml-dsa", feature = "adler32"),
     not(feature = "portable-only"),
     not(miri)
   ),

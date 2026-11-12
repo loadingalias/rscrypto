@@ -7,12 +7,23 @@
 //! - Portable Rust on every target, the sole semantic authority.
 //! - aarch64: NEON, and NEON with the dot-product extension where the CPU has it.
 //! - x86-64: SSSE3, AVX2, and AVX-512 VNNI, the fastest that the CPU has.
+//! - POWER: AltiVec `vmsumubm`. IBM Z: the vector facility, where the CPU has it.
 //! - wasm32: SIMD128 when the artifact requires it.
 
 #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
 pub(in crate::checksum) mod aarch64;
+#[cfg(any(
+  all(target_arch = "x86_64", target_feature = "sse2"),
+  all(target_arch = "powerpc64", not(feature = "portable-only")),
+  all(target_arch = "s390x", not(feature = "portable-only"))
+))]
+mod blocks;
 pub(crate) mod config;
 pub(in crate::checksum) mod portable;
+#[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
+pub(in crate::checksum) mod power;
+#[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
+pub(in crate::checksum) mod s390x;
 #[cfg(all(target_arch = "wasm32", target_feature = "simd128", not(feature = "portable-only")))]
 pub(in crate::checksum) mod wasm32;
 #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
@@ -137,6 +148,21 @@ fn adler32_dispatch_avx512_vnni_vectored(adler: u32, bufs: &[&[u8]]) -> u32 {
   adler32_apply_kernel_vectored(adler, bufs, x86_64::adler32_avx512_vnni_safe)
 }
 
+// POWER and IBM Z: a forced kernel survives `config::get()` only when cached detection reports
+// AltiVec or the vector facility, and only that force selects its kernel here.
+
+#[cfg(all(feature = "std", target_arch = "powerpc64", not(feature = "portable-only")))]
+#[inline]
+fn adler32_dispatch_vmsum_vectored(adler: u32, bufs: &[&[u8]]) -> u32 {
+  adler32_apply_kernel_vectored(adler, bufs, power::update_safe)
+}
+
+#[cfg(all(feature = "std", target_arch = "s390x", not(feature = "portable-only")))]
+#[inline]
+fn adler32_dispatch_vsum_vectored(adler: u32, bufs: &[&[u8]]) -> u32 {
+  adler32_apply_kernel_vectored(adler, bufs, s390x::update_safe)
+}
+
 define_crc_dispatch! {
   word_ty: u32,
   dispatch_fn_ty: Adler32DispatchFn,
@@ -167,6 +193,10 @@ define_crc_dispatch! {
     Adler32Force::Avx2 => x86_64::adler32_avx2_safe,
     #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     Adler32Force::Avx512Vnni => x86_64::adler32_avx512_vnni_safe,
+    #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
+    Adler32Force::Vmsum => power::update_safe,
+    #[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
+    Adler32Force::Vsum => s390x::update_safe,
     _ => adler32_dispatch_auto,
   },
   resolve_vectored_match: {
@@ -181,6 +211,10 @@ define_crc_dispatch! {
     Adler32Force::Avx2 => adler32_dispatch_avx2_vectored,
     #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     Adler32Force::Avx512Vnni => adler32_dispatch_avx512_vnni_vectored,
+    #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
+    Adler32Force::Vmsum => adler32_dispatch_vmsum_vectored,
+    #[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
+    Adler32Force::Vsum => adler32_dispatch_vsum_vectored,
     _ => adler32_dispatch_auto_vectored,
   }
 }
@@ -197,6 +231,10 @@ fn adler32_selected_kernel_name(len: usize) -> &'static str {
     Adler32Force::Neon => return aarch64::KERNEL_NAME,
     #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
     Adler32Force::NeonDotprod => return aarch64::DOTPROD_KERNEL_NAME,
+    #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
+    Adler32Force::Vmsum => return power::KERNEL_NAME,
+    #[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
+    Adler32Force::Vsum => return s390x::KERNEL_NAME,
     #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     force => {
       if let Some(kernel) = x86_64::KERNELS.iter().find(|kernel| kernel.force == force) {

@@ -1,17 +1,7 @@
 //! x86-64 Adler-32 kernels: SSSE3, AVX2, and AVX-512 VNNI.
 //!
-//! Every kernel sums 64-byte blocks in vector lanes. Over a chunk of blocks `x[0..n)`, starting
-//! from the reduced sums `(a, b)`, Adler-32 gives `a + Σ x[j]` and `b + n·a + Σ (n - j)·x[j]`.
-//! Writing byte `i` of block `t` among `k` blocks as `x[t][i]`, its weight `n - j` is
-//! `64·(k - 1 - t) + (64 - i)`. The lanes therefore keep three sums:
-//!
-//! - `bytes`: `Σ x`, from `psadbw`;
-//! - `prefix`: before each block, the `bytes` of the earlier blocks, so it ends at
-//!   `Σ_t (k - 1 - t)·Σ_i x[t][i]`;
-//! - `weighted`: `Σ_t Σ_i (64 - i)·x[t][i]`, from `pmaddubsw` and `pmaddwd`, or from `vpdpbusd`.
-//!
-//! A chunk of [`CHUNK_BLOCKS`] blocks then folds into `(a, b)` once, modulo 65521. Bytes after the
-//! last whole block go to the portable kernel.
+//! Every kernel keeps the block sums of [`super::blocks`] in vector lanes: `bytes` from `psadbw`,
+//! and `weighted` from `pmaddubsw` and `pmaddwd`, or from `vpdpbusd`.
 //!
 //! # Safety
 //!
@@ -21,7 +11,11 @@
 
 use core::arch::x86_64::*;
 
-use super::{config::Adler32Force, portable};
+use super::{
+  blocks::{BLOCK, CHUNK_BLOCKS, WEIGHTS, finish, fold},
+  config::Adler32Force,
+  portable,
+};
 use crate::{
   checksum::dispatchers::Adler32Fn,
   platform::{Caps, caps::x86},
@@ -66,15 +60,10 @@ pub(in crate::checksum) fn select(caps: Caps) -> Option<&'static Kernel> {
   KERNELS.iter().find(|kernel| caps.has(kernel.requires))
 }
 
-/// Bytes per block. The block's weights, 64 down to 1, fit in an `i8`, and `pmaddubsw` adds two
-/// adjacent products of at most `255·(64 + 63) = 32385`, below `i16::MAX`.
-const BLOCK: usize = 64;
-/// Blocks per chunk, between two reductions modulo 65521.
-///
 /// The `bytes` and `prefix` lanes are 64-bit and cannot overflow. A 32-bit `weighted` lane gains
 /// at most `255·616` per block: SSSE3 adds four products of a 16-byte vector to each lane, whose
-/// largest weights are 64 to 61, 48 to 45, 32 to 29, and 16 to 13, which total 616.
-const CHUNK_BLOCKS: usize = 1024;
+/// largest weights are 64 to 61, 48 to 45, 32 to 29, and 16 to 13, which total 616. `pmaddubsw`
+/// adds two adjacent products of at most `255·(64 + 63) = 32385`, below `i16::MAX`.
 const _: () = assert!(255 * 616 * CHUNK_BLOCKS <= i32::MAX as usize);
 
 /// Inputs below this length take [`adler32_avx2_short`] on every AVX2 and VNNI CPU. It folds its
@@ -83,61 +72,14 @@ const _: () = assert!(255 * 616 * CHUNK_BLOCKS <= i32::MAX as usize);
 /// The 256-bit and 512-bit chunk setup and reductions cost more than these few blocks.
 const SHORT_LEN: usize = 4 * BLOCK;
 
-/// The weight of each byte of a block: 64 for its first byte, down to 1 for its last.
-static WEIGHTS: [i8; BLOCK] = {
-  let mut weights = [0; BLOCK];
-  let mut weight: i8 = 64;
-  let mut i = 0;
-  while i < BLOCK {
-    weights[i] = weight;
-    weight = weight.strict_sub(1);
-    i = i.strict_add(1);
-  }
-  weights
-};
-
 /// The halves of [`WEIGHTS`] for 32-byte vectors.
-fn weight_halves() -> &'static [[i8; 32]] {
+fn weight_halves() -> &'static [[u8; 32]] {
   WEIGHTS.as_chunks::<32>().0
 }
 
 /// The quarters of [`WEIGHTS`] for 16-byte vectors.
-fn weight_quarters() -> &'static [[i8; 16]] {
+fn weight_quarters() -> &'static [[u8; 16]] {
   WEIGHTS.as_chunks::<16>().0
-}
-
-/// Fold one chunk of `len` bytes into the reduced Adler-32 value `adler`.
-///
-/// `bytes` is the chunk's byte sum, and `weighted` is `64·prefix + weighted` from the lanes, in
-/// the notation of the module documentation.
-#[inline(always)]
-fn fold(adler: u32, len: usize, (bytes, weighted): (u64, u64)) -> u32 {
-  // A chunk adds at most 255 per byte to `a`, so `a` stays below 2^25.
-  let a = u32::try_from(bytes)
-    .expect("a chunk's byte sum fits in 32 bits")
-    .strict_add(adler & 0xffff);
-  // `len` is at most 64 KiB and the old `a` below 2^16, so `len·a` stays below 2^32; `weighted` is
-  // at most `255·Σ (n - j)` over the chunk, below 2^40. A short input keeps `b` below 2^32, where
-  // a 32-bit remainder costs less than a 64-bit one.
-  let b = u64::from(adler >> 16)
-    .strict_add((len as u64).strict_mul(u64::from(adler & 0xffff)))
-    .strict_add(weighted);
-  let b = match u32::try_from(b) {
-    Ok(b) => b % portable::MOD,
-    Err(_) => portable::reduce(b),
-  };
-  (b << 16) | (a % portable::MOD)
-}
-
-/// Add the bytes after the last whole block, which no vector holds.
-#[inline(always)]
-fn finish(adler: u32, tail: &[u8]) -> u32 {
-  // The portable kernel ends with two reductions, which an empty tail does not need.
-  if tail.is_empty() {
-    adler
-  } else {
-    portable::update(adler, tail)
-  }
 }
 
 // SSSE3
@@ -155,7 +97,7 @@ fn load128(bytes: &[u8; 16]) -> __m128i {
 /// Calling outside an SSSE3-enabled function requires SSSE3 support.
 #[inline]
 #[target_feature(enable = "ssse3")]
-fn load_weights128(weights: &[i8; 16]) -> __m128i {
+fn load_weights128(weights: &[u8; 16]) -> __m128i {
   // SAFETY: `weights` is 16 readable bytes, and this load has no alignment requirement.
   unsafe { _mm_loadu_si128(weights.as_ptr().cast()) }
 }
@@ -241,7 +183,7 @@ fn load256(bytes: &[u8; 32]) -> __m256i {
 /// Calling outside an AVX2-enabled function requires AVX2 support.
 #[inline]
 #[target_feature(enable = "avx2")]
-fn load_weights256(weights: &[i8; 32]) -> __m256i {
+fn load_weights256(weights: &[u8; 32]) -> __m256i {
   // SAFETY: `weights` is 32 readable bytes, and this load has no alignment requirement.
   unsafe { _mm256_loadu_si256(weights.as_ptr().cast()) }
 }
@@ -488,153 +430,32 @@ pub(in crate::checksum) fn adler32_avx512_vnni_safe(adler: u32, data: &[u8]) -> 
 mod tests {
   extern crate std;
 
-  use alloc::{vec, vec::Vec};
+  use super::KERNELS;
+  use crate::checksum::adler32::blocks::checks;
 
-  use super::*;
-
-  /// Bytes per chunk, the span of one deferred reduction.
-  const CHUNK: usize = BLOCK * CHUNK_BLOCKS;
-
-  type Kernel = fn(u32, &[u8]) -> u32;
-
-  /// Each kernel that this CPU can run, with its name.
-  fn kernels() -> Vec<(&'static str, Kernel)> {
-    let mut kernels: Vec<(&'static str, Kernel)> = Vec::new();
+  #[test]
+  fn kernels_match_portable() {
     if cfg!(miri) {
-      return kernels;
+      return;
     }
     if std::arch::is_x86_feature_detected!("ssse3") {
-      kernels.push(("ssse3", adler32_ssse3_safe));
+      checks::assert_matches_portable("ssse3", super::adler32_ssse3_safe);
     }
     if std::arch::is_x86_feature_detected!("avx2") {
-      kernels.push(("avx2", adler32_avx2_safe));
+      checks::assert_matches_portable("avx2", super::adler32_avx2_safe);
     }
     if std::arch::is_x86_feature_detected!("avx512f")
       && std::arch::is_x86_feature_detected!("avx512bw")
       && std::arch::is_x86_feature_detected!("avx512vnni")
     {
-      kernels.push(("avx512-vnni", adler32_avx512_vnni_safe));
-    }
-    kernels
-  }
-
-  /// Deterministic pseudo-random bytes from a 64-bit xorshift generator.
-  fn random_bytes(len: usize) -> Vec<u8> {
-    let mut state: u64 = 0x9e37_79b9_7f4a_7c15;
-    (0..len)
-      .map(|_| {
-        state ^= state << 13;
-        state ^= state >> 7;
-        state ^= state << 17;
-        state.to_le_bytes()[0]
-      })
-      .collect()
-  }
-
-  /// Starting values: the initial value, and the largest reduced sums.
-  const STARTS: [u32; 2] = [1, (65_520 << 16) | 65_520];
-
-  /// Every length to 320 bytes covers each tail after zero to five blocks. The rest sit at
-  /// multiples of zlib's 5552-byte reduction span and at the kernels' chunk boundaries.
-  fn lengths() -> impl Iterator<Item = usize> {
-    (0..=320).chain([
-      5551,
-      5552,
-      5553,
-      4 * 5552 + 1,
-      CHUNK - 1,
-      CHUNK,
-      CHUNK + 1,
-      CHUNK + BLOCK - 1,
-      2 * CHUNK + 33,
-      3 * CHUNK + 4093,
-    ])
-  }
-
-  #[test]
-  fn kernels_match_portable_at_every_length_and_alignment() {
-    let data = random_bytes(3 * CHUNK + 4093 + BLOCK);
-    for (name, kernel) in kernels() {
-      for len in lengths() {
-        for offset in 0..BLOCK {
-          let input = &data[offset..offset + len];
-          for start in STARTS {
-            assert_eq!(
-              kernel(start, input),
-              portable::update(start, input),
-              "{name}: len={len}, offset={offset}, start={start:#010x}"
-            );
-          }
-        }
-      }
+      checks::assert_matches_portable("avx512-vnni", super::adler32_avx512_vnni_safe);
     }
   }
 
-  #[test]
-  fn kernels_match_portable_when_streamed_across_reductions() {
-    let data = random_bytes(3 * CHUNK + 4093);
-    let expected = portable::update(1, &data);
-    for (name, kernel) in kernels() {
-      for split in [63, 64, 65, 5552, CHUNK - 1, CHUNK, CHUNK + 1, 2 * CHUNK - 65] {
-        let (head, tail) = data.split_at(split);
-        assert_eq!(kernel(kernel(1, head), tail), expected, "{name}: split={split}");
-      }
-      for size in [1, 63, 4093, CHUNK + 7] {
-        let streamed = data.chunks(size).fold(1, kernel);
-        assert_eq!(streamed, expected, "{name}: chunk={size}");
-      }
-    }
-  }
-
-  /// All-0xff input makes every lane sum its largest; a full chunk is the longest span that a
-  /// 32-bit `weighted` lane accumulates before a reduction.
-  #[test]
-  fn kernels_match_portable_for_all_0xff_at_the_longest_span() {
-    for len in [CHUNK, CHUNK + 1, 2 * CHUNK, 2 * CHUNK + BLOCK + 31] {
-      let data = vec![0xff; len];
-      for start in STARTS {
-        let expected = portable::update(start, &data);
-        for (name, kernel) in kernels() {
-          assert_eq!(kernel(start, &data), expected, "{name}: len={len}, start={start:#010x}");
-        }
-      }
-    }
-  }
-
-  /// With `RSCRYPTO_ADLER32_FORCE` naming an x86-64 tier, the public API must run that tier.
-  /// The effective force must equal the request, so a host that lacks the tier fails here
-  /// instead of falling back to automatic selection.
   #[test]
   fn the_forced_tier_runs_through_the_public_api() {
-    use crate::{checksum::Adler32, traits::Checksum};
-
-    let Ok(requested) = std::env::var("RSCRYPTO_ADLER32_FORCE") else {
-      return;
-    };
-    let Some(kernel) = KERNELS
-      .iter()
-      .find(|kernel| requested.trim().eq_ignore_ascii_case(kernel.force.as_str()))
-    else {
-      return;
-    };
-    assert_eq!(
-      Adler32::config().effective_force,
-      kernel.force,
-      "this CPU cannot run {}",
-      kernel.name
-    );
-    assert_eq!(Adler32::kernel_name_for_len(CHUNK), kernel.name);
-
-    let data = random_bytes(3 * CHUNK + 4093);
-    for len in lengths() {
-      let input = &data[..len];
-      let expected = portable::update(1, input);
-      assert_eq!(Adler32::checksum(input), expected, "{}: len={len}", kernel.name);
-      let mut streamed = Adler32::new();
-      for part in input.chunks(4093) {
-        streamed.update(part);
-      }
-      assert_eq!(streamed.finalize(), expected, "{}: streamed len={len}", kernel.name);
+    for kernel in &KERNELS {
+      checks::assert_forced_kernel_runs(kernel.force, kernel.name);
     }
   }
 }

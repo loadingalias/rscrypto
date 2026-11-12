@@ -52,12 +52,15 @@ Runtime behavior needs execution on the target.
     AVX-512 VNNI (with AVX-512F and AVX-512BW), AVX2, and SSSE3. Below 256 bytes, the AVX2 and VNNI
     kernels share one short AVX2 path. AVX-512 without VNNI uses the AVX2 kernel: no measured host selects a
     512-bit kernel without VNNI, and such CPUs can lower their clock for 512-bit code.
+  - POWER selects an AltiVec kernel (`vmsumubm`) through the checksum kernel tables, which all
+    require AltiVec. IBM Z selects a vector-facility kernel through its tables for z13 and later,
+    which all require the vector facility; earlier IBM Z CPUs use the portable kernel.
   - wasm32 selects a SIMD128 kernel when the artifact is built with `simd128`, unless `portable-only`
     is set. Builds without `simd128` use the portable kernel.
   - `portable-only` and Miri select the portable kernel.
-  - `RSCRYPTO_ADLER32_FORCE` (`portable`, `neon`, `neon-dotprod`, `ssse3`, `avx2`, or
-    `avx512-vnni`) forces a kernel, as the CRC force variables do; a kernel that the CPU lacks
-    falls back to automatic selection.
+  - `RSCRYPTO_ADLER32_FORCE` (`portable`, `neon`, `neon-dotprod`, `ssse3`, `avx2`, `avx512-vnni`,
+    `vmsum`, or `vsum`) forces a kernel, as the CRC force variables do; a kernel that the CPU
+    lacks falls back to automatic selection.
     `Adler32::config()` reports the request and the effective choice.
   - Other targets use the portable kernel.
 - **XXH32 and XXH64** are portable Rust on every target, with no accelerated backend or dispatch.
