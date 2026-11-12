@@ -9,15 +9,57 @@ import json
 import os
 from pathlib import Path
 import platform
+import re
 import shutil
 import subprocess
 import tempfile
 import tomllib
 
 ROOT = Path(__file__).resolve().parents[2]
-RUSTLS_DEPENDENCY = tomllib.loads((ROOT / 'rscrypto-rustls/Cargo.toml').read_text())['dependencies']['rustls']
-RUSTLS = RUSTLS_DEPENDENCY['rev']
 BORINGSSL = '9389a4af2c6c47a59ec39bfb51e4da2fe971d1bc'
+
+
+def registry_version(dependency):
+    """Return None for a Git pin, or the version of an exact registry pin.
+
+    The shim must build from the rustls source that the provider links, so a Git
+    pin needs a `rev`, a registry pin needs one `=X.Y.Z` version, and every other
+    form is refused before anything is fetched or built.
+    """
+    if isinstance(dependency, str):
+        dependency = {'version': dependency}
+    if 'path' in dependency:
+        raise ValueError('rustls is a path dependency, which names no upstream commit')
+    if 'git' in dependency:
+        if 'rev' not in dependency:
+            raise ValueError('the rustls Git pin has no `rev`; a branch or tag can move')
+        return None
+    if 'version' not in dependency:
+        raise ValueError('rustls has no version')
+    exact = re.fullmatch(r'=\s*(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)', dependency['version'])
+    if exact is None:
+        raise ValueError(f"rustls version {dependency['version']!r} is a range; pin one version as `=X.Y.Z`")
+    return exact[1]
+
+
+def linked_rustls(metadata):
+    """Return the rustls package that `cargo metadata` resolves for the provider."""
+    packages = {package['id']: package for package in metadata['packages']}
+    provider = next(node for node in metadata['resolve']['nodes'] if packages[node['id']]['name'] == 'rscrypto-rustls')
+    return packages[next(dependency['pkg'] for dependency in provider['deps'] if dependency['name'] == 'rustls')]
+
+
+def vcs_commit(crate):
+    """Return the commit that Cargo recorded when it packaged the registry crate in `crate`."""
+    record = crate / '.cargo_vcs_info.json'
+    if not record.is_file():
+        raise ValueError(f'{record} is missing: the published crate records no source commit')
+    git = json.loads(record.read_text()).get('git', {})
+    if git.get('dirty'):
+        raise ValueError(f'{record}: the crate was packaged from a modified checkout, so no commit holds its source')
+    if not re.fullmatch('[0-9a-f]{40}', git.get('sha1', '')):
+        raise ValueError(f'{record} records no Git commit')
+    return git['sha1']
 
 
 def exclusions(profiles):
@@ -55,6 +97,15 @@ def main():
     parser.add_argument('--work', type=Path, help='new directory for the upstream checkouts')
     parser.add_argument('--test', default='*', help='case pattern; default is the full profile')
     args = parser.parse_args()
+    dependency = tomllib.loads((ROOT / 'rscrypto-rustls/Cargo.toml').read_text())['dependencies']['rustls']
+    version = registry_version(dependency)
+    if version is None:
+        pin = {'rustls': dependency['rev'], 'rustls_repository': dependency['git']}
+    else:
+        package = linked_rustls(json.loads(subprocess.check_output(
+            ['cargo', 'metadata', '--locked', '--format-version=1'], cwd=ROOT)))
+        pin = {'rustls': vcs_commit(Path(package['manifest_path']).parent),
+               'rustls_repository': package['repository'], 'rustls_version': version}
     stamp = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')
     output = (args.output or ROOT / 'benchmark_results' / f'provider-bogo-{stamp}').resolve()
     output.mkdir(parents=True, exist_ok=False)
@@ -78,7 +129,7 @@ def main():
 
     versions = {'host': platform.platform(), 'source': subprocess.check_output(
         ['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip(),
-        'rustls': RUSTLS, 'rustls_repository': RUSTLS_DEPENDENCY['git'], 'boringssl': BORINGSSL, 'test': args.test, 'work': str(work)}
+        **pin, 'boringssl': BORINGSSL, 'test': args.test, 'work': str(work)}
     for tool, arguments in (('go', ['version']), ('rustc', ['-Vv'])):
         versions[tool] = subprocess.check_output([tool, *arguments], cwd=ROOT, text=True).strip()
     if not versions['go'].startswith('go version go1.27.3 '):
@@ -93,7 +144,7 @@ def main():
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(ROOT / path, destination)
     for name, repository, revision, directory in (
-        ('rustls', RUSTLS_DEPENDENCY['git'], RUSTLS, rustls),
+        ('rustls', pin['rustls_repository'], pin['rustls'], rustls),
         ('runner', 'https://github.com/rustls/boringssl.git', BORINGSSL, runner),
     ):
         run(name + '-init', ['git', 'init', str(directory)])

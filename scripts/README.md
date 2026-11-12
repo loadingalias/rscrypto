@@ -154,6 +154,10 @@ It does not download upstream archives.
   public test fixtures. The runner enforces timeouts and reaps peer processes.
 - `just test-provider-bogo` prepares pinned upstream rustls and runner checkouts,
   applies the retained provider/fixture patches, and runs the declared TLS 1.2/1.3 profile.
+  The rustls checkout is the commit of the provider's `rustls` pin: the `rev` of a Git pin, or, for one
+  registry version (`=X.Y.Z`), the `git.sha1` that Cargo packaged in that crate's `.cargo_vcs_info.json`.
+  The evidence records the version and the commit. Any other pin form, or a crate packaged without a clean
+  VCS record, fails before the checkouts.
   Scope exclusions come from protocol/version requirements and the explicit profile,
   not observed failures.
   The shim opts into all six TLS 1.2 suites.
