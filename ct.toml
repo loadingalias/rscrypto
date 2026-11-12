@@ -4921,7 +4921,7 @@ limitation = "SipHash is fixed-width ARX on 64-bit words: the source has no bran
 id = "public.hash_checksum_and_xof"
 api = [
   "rscrypto::{Digest,Xof,Checksum,ChecksumCombine,FastHash}::*",
-  "rscrypto::{Sha*,Blake*,AsconHash*,Shake*,Cshake*,Crc*,Xxh*,RapidHash*}::*",
+  "rscrypto::{Sha*,Blake*,AsconHash*,Shake*,Cshake*,Crc*,Adler32*,Xxh*,RapidHash*}::*",
 ]
 features = ["hash/checksum algorithm feature", "std/alloc for I/O wrappers"]
 targets = ["all-supported", "backend selected by public target capabilities"]

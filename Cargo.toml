@@ -155,6 +155,7 @@ crc16 = []
 crc24 = []
 crc32 = []
 crc64 = []
+adler32 = []
 
 sha2 = []
 sha3 = []
@@ -208,7 +209,7 @@ ascon-aead = []
 
 chacha20-rng = []
 
-checksums = ["crc16", "crc24", "crc32", "crc64"]
+checksums = ["crc16", "crc24", "crc32", "crc64", "adler32"]
 crypto-hashes = ["sha2", "sha3", "blake2b", "blake2s", "blake3", "ascon-hash"]
 fast-hashes = ["xxh3", "xxh32", "xxh64", "rapidhash"]
 hashes = ["crypto-hashes", "fast-hashes"]
@@ -257,6 +258,8 @@ crc = "3.4.0"
 crc-fast = { version = "1.10.0", default-features = false, features = ["std"] }
 crc32c = "0.6.8"
 crc32fast = "1.5.3"
+simd-adler32 = "0.3.10"
+zlib-rs = { version = "0.6.8", default-features = false, features = ["rust-allocator"] }
 crc64fast = "1.1.0"
 ascon-hash = "0.4.0"
 argon2 = { version = "0.6.0", default-features = false, features = ["alloc", "password-hash"] }

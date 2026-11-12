@@ -75,7 +75,7 @@ def main() -> None:
   defaults = [name for name, bench in catalog["benches"].items() if bench["kind"] == "criterion" and bench["required"]]
   expected = {
     "all": ",".join(defaults),
-    "checksums": "crc16-ccitt,crc16-ibm,crc24-openpgp,crc32-ieee,crc32c,crc64-xz,crc64-nvme",
+    "checksums": "crc16-ccitt,crc16-ibm,crc24-openpgp,crc32-ieee,crc32c,crc64-xz,crc64-nvme,adler32",
     "mlkem": "mlkem512,mlkem768,mlkem1024",
     "sha512-256": "sha512-256",
     "SHA512_256": "sha512-256",

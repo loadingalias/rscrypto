@@ -7,10 +7,10 @@ use rscrypto::aead::expert::header_protection::{
 use rscrypto::hashes::legacy::WebSocketAcceptDigest;
 use rscrypto::traits::Xof as _;
 use rscrypto::{
-  AesSivCmac256, AesSivCmac256Key, AesSivCmac256Nonce, Blake2b512, Blake3, Digest, EcdsaP256SecretKey,
-  EcdsaP384SecretKey, FastHash as _, P256EphemeralSecret, P256PublicKey, P384EphemeralSecret, P384PublicKey,
-  RsaPrivateKey, RsaPrivateOpError, RsaPssProfile, RsaPublicKeyPolicy, Sha256, Sha512, Xxh32, Xxh32Hasher, Xxh64,
-  Xxh64Hasher,
+  Adler32, AesSivCmac256, AesSivCmac256Key, AesSivCmac256Nonce, Blake2b512, Blake3, Checksum as _, Digest,
+  EcdsaP256SecretKey, EcdsaP384SecretKey, FastHash as _, P256EphemeralSecret, P256PublicKey, P384EphemeralSecret,
+  P384PublicKey, RsaPrivateKey, RsaPrivateOpError, RsaPssProfile, RsaPublicKeyPolicy, Sha256, Sha512, Xxh32,
+  Xxh32Hasher, Xxh64, Xxh64Hasher,
 };
 
 const RSA_PRIVATE_KEY_PEM: &str = include_str!("../fixtures/rsa2048_private_pkcs1.txt");
@@ -186,6 +186,19 @@ fn assert_xxh32_xxh64_match_xxhsum() {
     }
     assert_eq!(hasher.finish(), expected);
   }
+}
+
+/// CPython `zlib.adler32(b"\xff" * 139269)`. The input crosses the 128 KiB
+/// reduction chunk with every partial sum at its largest value; the weighted
+/// sum of that chunk passes 2^32, so a 32-bit `usize` would overflow.
+fn assert_adler32_matches_zlib_across_reduction_boundaries() {
+  let data = vec![0xff; 139_269];
+  assert_eq!(Adler32::checksum(&data), 0x49e1_04be);
+  let mut hasher = Adler32::new();
+  for chunk in data.chunks(4093) {
+    hasher.update(chunk);
+  }
+  assert_eq!(hasher.finalize(), 0x49e1_04be);
 }
 
 fn assert_blake3_portable_differentials_and_official_vectors() {
@@ -703,6 +716,7 @@ fn run_vectors() {
   assert_core_hash_vectors_match_known_outputs();
   assert_streaming_hashes_match_oneshot_across_block_boundaries();
   assert_xxh32_xxh64_match_xxhsum();
+  assert_adler32_matches_zlib_across_reduction_boundaries();
   assert_blake3_portable_differentials_and_official_vectors();
   assert_rsa_caller_random_signing_roundtrips();
   assert_websocket_accept_digest_matches_rfc_6455();

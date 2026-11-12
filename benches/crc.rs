@@ -1,4 +1,4 @@
-//! CRC comparison benchmarks: rscrypto vs competitor crates.
+//! CRC and Adler-32 comparison benchmarks: rscrypto vs competitor crates.
 //!
 //! Before timing, every row must return the reference crate's checksum for its input. Combination rows must return
 //! the reference crate's checksum of both parts concatenated.
@@ -229,6 +229,48 @@ fn crc24(c: &mut Criterion) {
   g.finish();
 }
 
+/// simd-adler32's one-shot Adler-32, the reference for the Adler-32 rows.
+fn simd_adler32(data: &[u8]) -> u32 {
+  let mut hasher = simd_adler32::Adler32::new();
+  hasher.write(data);
+  hasher.finish()
+}
+
+fn adler32(c: &mut Criterion) {
+  if !bench_config::selected("adler32/") {
+    return;
+  }
+  // 31 bytes is the longest input that skips the 32-byte block loop.
+  let inputs = common::comp_sizes(&[31]);
+  let mut g = c.benchmark_group("adler32");
+
+  for (len, data) in &inputs {
+    common::set_throughput(&mut g, *len);
+    let expected = simd_adler32(data);
+
+    g.bench_function(
+      BenchmarkId::new("rscrypto", len),
+      checked(
+        || rscrypto::Adler32::checksum(black_box(data)),
+        |out| assert_eq!(out, expected),
+      ),
+    );
+    g.bench_function(
+      BenchmarkId::new("simd-adler32", len),
+      checked(|| simd_adler32(black_box(data)), |out| assert_eq!(out, expected)),
+    );
+    g.bench_function(
+      BenchmarkId::new("zlib-rs", len),
+      checked(
+        || zlib_rs::adler32::adler32(1, black_box(data)),
+        |out| assert_eq!(out, expected),
+      ),
+    );
+  }
+
+  g.finish();
+}
+
 /// Streaming input length and update sizes: 1 MiB through updates of one cache line or one page.
 const STREAM_LEN: usize = 1 << 20;
 const STREAM_CHUNKS: [usize; 2] = [64, 4096];
@@ -431,6 +473,26 @@ fn crc_streaming(c: &mut Criterion) {
   );
   streaming_group(
     c,
+    "adler32/streaming",
+    simd_adler32,
+    &[
+      ("rscrypto", &rscrypto_stream::<rscrypto::Adler32>),
+      ("simd-adler32", &|data, chunk_size| {
+        let mut hasher = simd_adler32::Adler32::new();
+        for chunk in data.chunks(chunk_size) {
+          hasher.write(black_box(chunk));
+        }
+        hasher.finish()
+      }),
+      ("zlib-rs", &|data, chunk_size| {
+        data
+          .chunks(chunk_size)
+          .fold(1, |adler, chunk| zlib_rs::adler32::adler32(adler, black_box(chunk)))
+      }),
+    ],
+  );
+  streaming_group(
+    c,
     "crc24-openpgp/streaming",
     |data| crc24.checksum(data),
     &[
@@ -466,6 +528,18 @@ fn crc_combine(c: &mut Criterion) {
     digest.sum64()
   };
 
+  combine_group(
+    c,
+    "adler32/combine",
+    simd_adler32,
+    &[
+      ("rscrypto", &rscrypto::Adler32::combine),
+      ("zlib-rs", &|adler_a, adler_b, len_b| {
+        let len_b = u64::try_from(len_b).expect("combination lengths fit u64");
+        zlib_rs::adler32::adler32_combine(adler_a, adler_b, len_b)
+      }),
+    ],
+  );
   combine_group(
     c,
     "crc32/combine",
@@ -558,6 +632,7 @@ fn main() {
     crc16,
     crc16_ibm,
     crc24,
+    adler32,
     crc_streaming,
     crc_combine,
   ]);

@@ -99,7 +99,7 @@ assert!(
 )]
 //! # Feature Groups
 //!
-//! - `checksums`: CRC families.
+//! - `checksums`: CRC families and Adler-32.
 //! - `hashes`: SHA-2, SHA-3, BLAKE2, BLAKE3, Ascon, XXH3, XXH32, XXH64, RapidHash.
 //! - `auth`: MACs, KDFs, password hashing, ECDSA signing/verification, Ed25519, RSA
 //!   signing/verification/OAEP, ML-DSA, SLH-DSA, P-256 and P-384 ECDH, X25519, ML-KEM.
@@ -380,7 +380,13 @@ pub mod platform;
 pub mod rng;
 pub mod traits;
 
-#[cfg(any(feature = "crc16", feature = "crc24", feature = "crc32", feature = "crc64"))]
+#[cfg(any(
+  feature = "crc16",
+  feature = "crc24",
+  feature = "crc32",
+  feature = "crc64",
+  feature = "adler32"
+))]
 pub mod checksum;
 
 /// Implement [`std::io::Read`] for an [`Xof`](crate::traits::Xof) type by
@@ -552,6 +558,8 @@ pub use auth::{ScryptPassword, ScryptVerificationLimits};
 pub use auth::{SipHash13, SipHash24, SipHashKey, SipRandomState};
 #[cfg(feature = "x25519")]
 pub use auth::{X25519Error, X25519PublicKey, X25519SecretKey, X25519SharedSecret};
+#[cfg(feature = "adler32")]
+pub use checksum::Adler32;
 #[cfg(feature = "crc24")]
 pub use checksum::Crc24OpenPgp;
 #[cfg(feature = "crc16")]
@@ -1545,6 +1553,9 @@ mod send_sync_assertions {
     assert_send_sync::<checksum::config::Crc64Force>();
     assert_send_sync::<checksum::config::Crc64Config>();
 
+    // Adler-32
+    assert_send_sync::<Adler32>();
+
     #[cfg(feature = "diag")]
     {
       assert_send_sync::<checksum::introspect::DispatchInfo>();
@@ -1689,6 +1700,8 @@ mod send_sync_assertions {
     assert_debug::<checksum::config::Crc32Config>();
     assert_debug::<checksum::config::Crc64Force>();
     assert_debug::<checksum::config::Crc64Config>();
+    assert_clone::<Adler32>();
+    assert_debug::<Adler32>();
     #[cfg(feature = "diag")]
     {
       assert_clone::<checksum::introspect::DispatchInfo>();

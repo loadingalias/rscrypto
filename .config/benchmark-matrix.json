@@ -328,6 +328,7 @@
     "crc32c": { "bench": "crc", "filter": "crc32c" },
     "crc64-xz": { "bench": "crc", "filter": "crc64-xz" },
     "crc64-nvme": { "bench": "crc", "filter": "crc64-nvme" },
+    "adler32": { "bench": "crc", "filter": "^adler32/" },
     "sha224": { "bench": "sha2", "filter": "sha224" },
     "sha256": { "bench": "sha2", "filter": "sha256" },
     "sha384": { "bench": "sha2", "filter": "sha384" },
@@ -532,7 +533,8 @@
       "crc32-ieee",
       "crc32c",
       "crc64-xz",
-      "crc64-nvme"
+      "crc64-nvme",
+      "adler32"
     ],
     "crc16": ["crc16-ccitt", "crc16-ibm"],
     "crc32": ["crc32-ieee", "crc32c"],
@@ -879,6 +881,27 @@
       "cases": "^(?P<variant>crc16-ccitt|crc16-ibm|crc24-openpgp|crc32|crc32c|crc64-xz|crc64-nvme)/streaming/(?P<implementation>[^/]+)/(?P<input>[0-9]+B)$",
       "headline": false,
       "task": "Checksum 1 MiB through updates of the named chunk size."
+    },
+    "adler32": {
+      "family": "Adler-32",
+      "bench": "crc",
+      "cases": "^adler32/(?P<implementation>[^/]+)/(?P<input>[0-9]+)$",
+      "headline": true,
+      "task": "Checksum one buffer in one call."
+    },
+    "adler32-streaming": {
+      "family": "Adler-32",
+      "bench": "crc",
+      "cases": "^adler32/streaming/(?P<implementation>[^/]+)/(?P<input>[0-9]+B)$",
+      "headline": false,
+      "task": "Checksum 1 MiB through updates of the named chunk size."
+    },
+    "adler32-combine": {
+      "family": "Adler-32",
+      "bench": "crc",
+      "cases": "^adler32/combine/(?P<implementation>[^/]+)/(?P<input>[0-9]+)$",
+      "headline": false,
+      "task": "Combine the checksums of two parts, given the length of the second part."
     },
     "crc-combine": {
       "family": "CRC",

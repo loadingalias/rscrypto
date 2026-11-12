@@ -20,7 +20,7 @@ Umbrella features are convenient, but they make the build larger:
 
 | Feature            | Includes |
 | ------------------ | -------- |
-| `checksums`        | CRC-16, CRC-24, CRC-32, and CRC-64 |
+| `checksums`        | CRC-16, CRC-24, CRC-32, CRC-64, and Adler-32 |
 | `crypto-hashes`    | SHA-2, SHA-3, BLAKE2, BLAKE3, and Ascon-Hash |
 | `fast-hashes`      | XXH3, XXH32, XXH64, and RapidHash |
 | `hashes`           | Cryptographic hashes and fast hashes |
@@ -41,6 +41,15 @@ is a stable function of the seed. `ChaCha20Rng::try_generate` seeds it from the
 operating system and also needs `getrandom`. With `rand_core`, it implements the
 `rand_core` 0.10 generator traits, so `rand` and other `rand_core` consumers can
 use it directly.
+
+`adler32` gives Adler-32 from [RFC 1950](https://www.rfc-editor.org/rfc/rfc1950.html),
+the checksum of zlib streams and of HTTP `deflate`.
+zlib stores it big-endian: after the compressed data for the uncompressed bytes,
+and in the header for a preset dictionary.
+It is non-cryptographic: it detects accidental corruption and gives no authentication.
+`Adler32` implements `Checksum` and `ChecksumCombine`, with zlib's `adler32_combine` semantics.
+It is portable Rust, needs neither `alloc` nor `std`, and keeps no input in its state.
+`rscrypto` has no zlib parser or inflate; a codec reads the checksum fields and compares them.
 
 `xxh32` and `xxh64` give XXH32 and XXH64 from the
 [xxHash specification](https://github.com/Cyan4973/xxHash/blob/dev/doc/xxhash_spec.md), not XXH3.

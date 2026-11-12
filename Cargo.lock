@@ -2641,12 +2641,14 @@ dependencies = [
  "sha2 0.11.1",
  "sha3 0.12.0",
  "shake",
+ "simd-adler32",
  "siphasher",
  "slh-dsa",
  "tiny-keccak",
  "twox-hash",
  "x25519-dalek",
  "xxhash-rust",
+ "zlib-rs",
 ]
 
 [[package]]
@@ -2976,6 +2978,12 @@ dependencies = [
  "digest 0.11.3",
  "rand_core 0.10.1",
 ]
+
+[[package]]
+name = "simd-adler32"
+version = "0.3.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3a219298ac11a56ea9a6d2120044824d6f01aeb034955e7af7bc16858527deea"
 
 [[package]]
 name = "siphasher"
@@ -3613,6 +3621,12 @@ dependencies = [
  "quote",
  "syn 2.0.119",
 ]
+
+[[package]]
+name = "zlib-rs"
+version = "0.6.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b268e58e7c693d7c271f93ffc4ba3b380412554231c85bf61ca7af91042a4112"
 
 [[package]]
 name = "zmij"

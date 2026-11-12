@@ -1,7 +1,8 @@
-//! High-performance CRC checksums.
+//! High-performance CRC and Adler-32 checksums (**NOT CRYPTO**).
 //!
 //! This module provides implementations of common CRC algorithms with automatic
-//! hardware acceleration on supported platforms.
+//! hardware acceleration on supported platforms, and portable Adler-32.
+//! Checksums detect accidental corruption only; they give no authentication.
 //!
 //! # Supported Algorithms
 //!
@@ -14,6 +15,7 @@
 //! | `Crc32C` | 0x1EDC6F41 | `u32` | iSCSI, SCTP, ext4, Btrfs |
 //! | `Crc64` | 0x42F0E1EBA9EA3693 | `u64` | XZ Utils, 7-Zip |
 //! | `Crc64Nvme` | 0xAD93D23594C93659 | `u64` | NVMe specification |
+//! | `Adler32` | none (sums modulo 65521) | `u32` | zlib (RFC 1950), HTTP `deflate` |
 //!
 //! # Examples
 //!
@@ -58,8 +60,8 @@
 //! - All checksum types implement [`crate::traits::Checksum`] with `new` / `update` / `finalize` /
 //!   `reset`.
 //! - One-shot checksum entry points use `Type::checksum(data)`.
-//! - CRC families that support parallel folding also implement [`crate::traits::ChecksumCombine`]
-//!   with `Type::combine(left, right, right_len)`.
+//! - The CRC families and Adler-32 also implement [`crate::traits::ChecksumCombine`] with
+//!   `Type::combine(left, right, right_len)`.
 //!
 //! # Advanced
 //!
@@ -79,9 +81,14 @@
 //! rscrypto = { version = "0.10", default-features = false, features = ["crc32"] }
 //! ```
 
+#[cfg(feature = "adler32")]
+mod adler32;
+// The CRC families share this support; Adler-32 needs none of it.
+#[cfg(any(feature = "crc16", feature = "crc24", feature = "crc32", feature = "crc64"))]
 mod common;
 
 // Internal macros must be declared before modules that use them.
+#[cfg(any(feature = "crc16", feature = "crc24", feature = "crc32", feature = "crc64"))]
 #[macro_use]
 mod macros;
 
@@ -93,14 +100,19 @@ mod crc24;
 mod crc32;
 #[cfg(feature = "crc64")]
 mod crc64;
-#[cfg(feature = "diag")]
+#[cfg(all(
+  feature = "diag",
+  any(feature = "crc16", feature = "crc24", feature = "crc32", feature = "crc64")
+))]
 pub mod diag;
+#[cfg(any(feature = "crc16", feature = "crc24", feature = "crc32", feature = "crc64"))]
 #[doc(hidden)]
 pub(crate) mod dispatchers;
 #[cfg(feature = "diag")]
 pub mod introspect;
 #[cfg(feature = "std")]
 pub mod io;
+#[cfg(any(feature = "crc16", feature = "crc24", feature = "crc32", feature = "crc64"))]
 #[doc(hidden)]
 pub(crate) mod kernel_table;
 #[cfg(feature = "alloc")]
@@ -129,6 +141,8 @@ pub mod config {
 }
 
 // Re-export public types
+#[cfg(feature = "adler32")]
+pub use adler32::Adler32;
 #[cfg(feature = "crc16")]
 pub use crc16::{Crc16Ccitt, Crc16Ibm};
 #[cfg(feature = "crc24")]

@@ -65,7 +65,7 @@ X25519, ML-KEM, password hashing, and backend introspection.
 
 | Family | Primitives | Feature |
 | --- | --- | --- |
-| Checksums | CRC-16, CRC-24, CRC-32, CRC-32C, CRC-64/XZ, CRC-64/NVMe | `checksums` or a leaf feature |
+| Checksums | CRC-16, CRC-24, CRC-32, CRC-32C, CRC-64/XZ, CRC-64/NVMe, Adler-32 | `checksums` or a leaf feature |
 | Cryptographic hashes | SHA-2, SHA-3, SHAKE, cSHAKE, BLAKE2, BLAKE3, Ascon-Hash/XOF/CXOF | `crypto-hashes` or a leaf feature |
 | Fast hashes | XXH3-64/128, XXH32, XXH64, RapidHash V3-64 | `fast-hashes` or a leaf feature |
 | MACs and KDFs | HMAC-SHA-2/SHA-3, KMAC128/256, Poly1305, SipHash-1-3/2-4 (flood-resistant hash tables), HKDF-SHA-2, PBKDF2-HMAC-SHA-2 | `macs`, `kdfs`, or a leaf feature |
