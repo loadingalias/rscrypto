@@ -94,7 +94,7 @@ pub(crate) mod common;
   feature = "ascon-hash"
 ))]
 pub mod crypto;
-#[cfg(any(feature = "xxh3", feature = "rapidhash"))]
+#[cfg(any(feature = "xxh3", feature = "xxh32", feature = "xxh64", feature = "rapidhash"))]
 pub mod fast;
 #[cfg(feature = "diag")]
 pub mod introspect;

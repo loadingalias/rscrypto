@@ -614,6 +614,8 @@ An added comparator is a candidate for measurement, not a claim that it wins on 
   Both time hasher construction, every update and finalization.
   Keep the `xxhash-rust` comparison and the explicit x86-64-v4 build;
   runtime dispatch and a build that assumes AVX-512 are distinct deployment choices.
+- XXH32 and XXH64 compare with the portable Rust `xxhash-rust` and `twox-hash` crates, with seed zero.
+  The `chunk-64` streaming rows write 64-byte slices and include construction and the digest.
 - AWS-LC's POWER64LE GNU dependency was restored for ML-DSA in `ecde7e65`.
   The other benchmarks retained older gates and silently omitted their AWS-LC rows.
   All AWS-LC benchmark gates now share [one target definition](../benches/common/aws_lc.rs),
@@ -649,6 +651,7 @@ the default Bench workflow does not provision them and excludes this optional ta
     SHA-384, SHA-512, and SHA-512/256: 111 and 112.
   - SHA-3 and SHAKE: one byte below the rate, and the rate (143/144, 135/136, 103/104, 71/72, 167/168).
   - XXH3-64 and XXH3-128: 16/17, 128/129, and 240/241, where the short-input algorithm changes.
+  - XXH32: 15/16. XXH64: 31/32. The longer input fills one stripe.
   - BLAKE2: 65 and 129, one byte past each block size. BLAKE3 `hash` and `keyed`: 65 and 1,025, one byte past a block
     and a chunk.
 - Ed25519 and ECDSA verification has two tasks.

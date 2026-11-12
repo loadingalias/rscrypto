@@ -44,6 +44,8 @@ Runtime behavior needs execution on the target.
 - **SHA-224 and SHA-256** use the same SHA-256 compression capability policy.
   The x86-64 SHA-NI backend needs both `sha` and `sse4.1`.
   Other CPUs use the portable fallback.
+- **XXH32 and XXH64** are portable Rust on every target, with no accelerated backend or dispatch.
+  They read input words little-endian on every target, as the specification requires.
 - **Scalar WebAssembly:** when `simd128` is disabled, hash, AEAD, and Argon2 dispatch exclude SIMD backends.
   This compile-time boundary is separate from `portable-only` runtime dispatch.
 - **BLAKE3 wasm32:** `simd128` enables four-lane chunk hashing, parent reduction, and equal-length

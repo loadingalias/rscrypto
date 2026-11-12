@@ -163,6 +163,8 @@ blake2s = []
 blake3 = []
 ascon-hash = []
 xxh3 = []
+xxh32 = []
+xxh64 = []
 rapidhash = []
 
 # Compatibility-only WebSocket handshake capability. Deliberately excluded
@@ -208,7 +210,7 @@ chacha20-rng = []
 
 checksums = ["crc16", "crc24", "crc32", "crc64"]
 crypto-hashes = ["sha2", "sha3", "blake2b", "blake2s", "blake3", "ascon-hash"]
-fast-hashes = ["xxh3", "rapidhash"]
+fast-hashes = ["xxh3", "xxh32", "xxh64", "rapidhash"]
 hashes = ["crypto-hashes", "fast-hashes"]
 macs = ["hmac", "hmac-sha3", "kmac", "poly1305", "siphash"]
 kdfs = ["hkdf", "pbkdf2"]
@@ -270,8 +272,8 @@ sha3 = "0.12.0"
 shake = "0.1.0"
 sha1 = { version = "0.11.0", default-features = false }
 keccak = "0.2.2"
-xxhash-rust = { version = "0.8.19", features = ["xxh3"] }
-twox-hash = { version = "2.1.5", default-features = false, features = ["std", "xxhash3_64", "xxhash3_128"] }
+xxhash-rust = { version = "0.8.19", features = ["xxh3", "xxh32", "xxh64"] }
+twox-hash = { version = "2.1.5", default-features = false, features = ["std", "xxhash32", "xxhash64", "xxhash3_64", "xxhash3_128"] }
 rapidhash = "=4.5.1"
 tiny-keccak = { version = "2.0.2", features = ["kmac", "shake"] }
 digest = { version = "0.11.3", features = ["dev"] }
@@ -520,6 +522,11 @@ required-features = ["xxh3"]
 name = "rapidhash"
 harness = false
 required-features = ["rapidhash"]
+
+[[bench]]
+name = "xxhash"
+harness = false
+required-features = ["xxh32", "xxh64"]
 
 [[bench]]
 name = "siphash"

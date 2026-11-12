@@ -100,7 +100,7 @@ assert!(
 //! # Feature Groups
 //!
 //! - `checksums`: CRC families.
-//! - `hashes`: SHA-2, SHA-3, BLAKE2, BLAKE3, Ascon, XXH3, RapidHash.
+//! - `hashes`: SHA-2, SHA-3, BLAKE2, BLAKE3, Ascon, XXH3, XXH32, XXH64, RapidHash.
 //! - `auth`: MACs, KDFs, password hashing, ECDSA signing/verification, Ed25519, RSA
 //!   signing/verification/OAEP, ML-DSA, SLH-DSA, P-256 and P-384 ECDH, X25519, ML-KEM.
 //! - `aead`: AES-GCM, AES-GCM-SIV, ChaCha20-Poly1305, XChaCha20-Poly1305, AEGIS-256, Ascon-AEAD128.
@@ -409,6 +409,8 @@ mod secret;
   feature = "blake3",
   feature = "ascon-hash",
   feature = "xxh3",
+  feature = "xxh32",
+  feature = "xxh64",
   feature = "rapidhash",
   feature = "websocket-sha1"
 ))]
@@ -584,6 +586,10 @@ pub use hashes::fast::{RapidHash64, RapidHasher, RapidRandomState, RapidSeededSt
 pub use hashes::fast::{Xxh3, Xxh3_128};
 #[cfg(feature = "xxh3")]
 pub use hashes::fast::{Xxh3_128Hasher, Xxh3BuildHasher, Xxh3Hasher};
+#[cfg(feature = "xxh32")]
+pub use hashes::fast::{Xxh32, Xxh32Hasher};
+#[cfg(feature = "xxh64")]
+pub use hashes::fast::{Xxh64, Xxh64Hasher};
 #[cfg(feature = "chacha20-rng")]
 pub use rng::ChaCha20Rng;
 // Hex re-exports.
@@ -623,6 +629,8 @@ pub use traits::{Checksum, ChecksumCombine, Kem, Mac, TrySigner, TrySignerInto, 
   feature = "blake3",
   feature = "ascon-hash",
   feature = "xxh3",
+  feature = "xxh32",
+  feature = "xxh64",
   feature = "rapidhash"
 ))]
 pub use traits::{Digest, FastHash, Xof};
@@ -1608,6 +1616,10 @@ mod send_sync_assertions {
     assert_send_sync::<RapidRandomState>();
     assert_send_sync::<RapidHasher>();
     assert_send_sync::<RapidStreamHasher>();
+    assert_send_sync::<Xxh32>();
+    assert_send_sync::<Xxh32Hasher>();
+    assert_send_sync::<Xxh64>();
+    assert_send_sync::<Xxh64Hasher>();
   }
 
   #[test]
@@ -1768,6 +1780,14 @@ mod send_sync_assertions {
     assert_debug::<RapidRandomState>();
     assert_debug::<RapidHasher>();
     assert_debug::<RapidStreamHasher>();
+    assert_clone::<Xxh32>();
+    assert_clone::<Xxh32Hasher>();
+    assert_clone::<Xxh64>();
+    assert_clone::<Xxh64Hasher>();
+    assert_debug::<Xxh32>();
+    assert_debug::<Xxh32Hasher>();
+    assert_debug::<Xxh64>();
+    assert_debug::<Xxh64Hasher>();
   }
 
   #[test]

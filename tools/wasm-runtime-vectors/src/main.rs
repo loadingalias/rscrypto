@@ -1,3 +1,5 @@
+use core::hash::Hasher as _;
+
 use rscrypto::aead::expert::header_protection::{
   Aes128HeaderProtection, Aes128HeaderProtectionKey, Aes256HeaderProtection, Aes256HeaderProtectionKey,
   ChaCha20HeaderProtection, ChaCha20HeaderProtectionKey,
@@ -6,8 +8,9 @@ use rscrypto::hashes::legacy::WebSocketAcceptDigest;
 use rscrypto::traits::Xof as _;
 use rscrypto::{
   AesSivCmac256, AesSivCmac256Key, AesSivCmac256Nonce, Blake2b512, Blake3, Digest, EcdsaP256SecretKey,
-  EcdsaP384SecretKey, P256EphemeralSecret, P256PublicKey, P384EphemeralSecret, P384PublicKey, RsaPrivateKey,
-  RsaPrivateOpError, RsaPssProfile, RsaPublicKeyPolicy, Sha256, Sha512,
+  EcdsaP384SecretKey, FastHash as _, P256EphemeralSecret, P256PublicKey, P384EphemeralSecret, P384PublicKey,
+  RsaPrivateKey, RsaPrivateOpError, RsaPssProfile, RsaPublicKeyPolicy, Sha256, Sha512, Xxh32, Xxh32Hasher, Xxh64,
+  Xxh64Hasher,
 };
 
 const RSA_PRIVATE_KEY_PEM: &str = include_str!("../fixtures/rsa2048_private_pkcs1.txt");
@@ -157,6 +160,32 @@ fn assert_streaming_hashes_match_oneshot_across_block_boundaries() {
     blake3.update(chunk);
   }
   assert_eq!(blake3.finalize(), blake3_oneshot);
+}
+
+/// xxhsum 0.8.4 values for `patterned_bytes(4109)`, which ends in a 13-byte
+/// tail after the last XXH32 and XXH64 stripe: `xxhsum -H0`,
+/// `xxhsum -H0 -s2654435761`, `xxhsum -H1`, and `xxhsum -H1 -s11400714785074694791`.
+fn assert_xxh32_xxh64_match_xxhsum() {
+  let data = patterned_bytes(4109);
+  for (seed, expected) in [(0, 0x7f25_f791), (0x9e37_79b1, 0x0404_3614)] {
+    assert_eq!(Xxh32::hash_with_seed(seed, &data), expected);
+    let mut hasher = Xxh32Hasher::with_seed(seed);
+    for chunk in data.chunks(61) {
+      hasher.write(chunk);
+    }
+    assert_eq!(hasher.finish(), expected);
+  }
+  for (seed, expected) in [
+    (0, 0xf6d6_de5a_697e_e4fc),
+    (0x9e37_79b1_85eb_ca87, 0xa041_0b5c_7145_f681),
+  ] {
+    assert_eq!(Xxh64::hash_with_seed(seed, &data), expected);
+    let mut hasher = Xxh64Hasher::with_seed(seed);
+    for chunk in data.chunks(61) {
+      hasher.write(chunk);
+    }
+    assert_eq!(hasher.finish(), expected);
+  }
 }
 
 fn assert_blake3_portable_differentials_and_official_vectors() {
@@ -673,6 +702,7 @@ fn run_vectors() {
   assert_argon2id_rfc9106();
   assert_core_hash_vectors_match_known_outputs();
   assert_streaming_hashes_match_oneshot_across_block_boundaries();
+  assert_xxh32_xxh64_match_xxhsum();
   assert_blake3_portable_differentials_and_official_vectors();
   assert_rsa_caller_random_signing_roundtrips();
   assert_websocket_accept_digest_matches_rfc_6455();

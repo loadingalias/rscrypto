@@ -22,7 +22,7 @@ Umbrella features are convenient, but they make the build larger:
 | ------------------ | -------- |
 | `checksums`        | CRC-16, CRC-24, CRC-32, and CRC-64 |
 | `crypto-hashes`    | SHA-2, SHA-3, BLAKE2, BLAKE3, and Ascon-Hash |
-| `fast-hashes`      | XXH3 and RapidHash |
+| `fast-hashes`      | XXH3, XXH32, XXH64, and RapidHash |
 | `hashes`           | Cryptographic hashes and fast hashes |
 | `macs`             | HMAC-SHA-2, HMAC-SHA-3, KMAC, Poly1305, and SipHash |
 | `kdfs`             | HKDF and PBKDF2 |
@@ -41,6 +41,16 @@ is a stable function of the seed. `ChaCha20Rng::try_generate` seeds it from the
 operating system and also needs `getrandom`. With `rand_core`, it implements the
 `rand_core` 0.10 generator traits, so `rand` and other `rand_core` consumers can
 use it directly.
+
+`xxh32` and `xxh64` give XXH32 and XXH64 from the
+[xxHash specification](https://github.com/Cyan4973/xxHash/blob/dev/doc/xxhash_spec.md), not XXH3.
+LZ4 frames use seed-zero XXH32 for their descriptor, block, and content checksums.
+Zstandard frames store the low 32 bits of the seed-zero XXH64 of the content.
+Both are non-cryptographic: a frame checksum detects accidental corruption,
+but gives no authentication and no resistance to chosen collisions or hash flooding.
+Both are portable Rust and need neither `alloc` nor `std`.
+`Xxh32Hasher` and `Xxh64Hasher` hash incrementally in a fixed-size state that keeps at most one partial stripe of input.
+`rscrypto` has no frame parser; a codec reads the checksum fields and compares them.
 
 `websocket-sha1` gives only the compatibility digest for WebSocket handshakes.
 No umbrella feature enables it, including `full`.

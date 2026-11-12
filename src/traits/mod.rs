@@ -14,7 +14,7 @@
 //! | [`Kem`] | Key encapsulation mechanisms | ML-KEM |
 //! | [`Mac`] | Message authentication codes | HMAC-SHA256 |
 //! | [`Xof`] | Extendable-output functions | BLAKE3 XOF |
-//! | [`FastHash`] | Fast non-cryptographic hashes (**NOT CRYPTO**) | XXH3, rapidhash |
+//! | [`FastHash`] | Fast non-cryptographic hashes (**NOT CRYPTO**) | XXH3, XXH32, XXH64, rapidhash |
 //!
 //! These traits deliberately share a small set of repeated patterns:
 //! streaming `new`/`update`/`finalize`/`reset` for stateful algorithms,
