@@ -259,7 +259,7 @@ crc-fast = { version = "1.10.0", default-features = false, features = ["std"] }
 crc32c = "0.6.8"
 crc32fast = "1.5.3"
 simd-adler32 = "0.3.10"
-zlib-rs = { version = "0.6.8", default-features = false, features = ["rust-allocator"] }
+zlib-rs = { version = "0.6.8", default-features = false, features = ["std"] }
 crc64fast = "1.1.0"
 ascon-hash = "0.4.0"
 argon2 = { version = "0.6.0", default-features = false, features = ["alloc", "password-hash"] }

@@ -240,8 +240,9 @@ fn adler32(c: &mut Criterion) {
   if !bench_config::selected("adler32/") {
     return;
   }
-  // 15 bytes is the longest input that skips the 16-byte step.
-  let inputs = common::comp_sizes(&[15, 16]);
+  // 15 bytes is the longest input that skips the portable kernel's 16-byte step; 128 and 512
+  // bytes bracket the x86-64 kernels' 256-byte switch to their chunked loops.
+  let inputs = common::comp_sizes(&[15, 16, 128, 512]);
   let mut g = c.benchmark_group("adler32");
 
   for (len, data) in &inputs {

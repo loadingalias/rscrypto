@@ -255,6 +255,11 @@ pub(crate) fn adler32(table: &KernelTable, adler: u32, data: &[u8]) -> u32 {
     // establishes the dot-product extension.
     return unsafe { crate::checksum::adler32::aarch64::update_dotprod(adler, data) };
   }
+  // x86-64: the SIMD kernels need capabilities that no kernel table requires.
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+  if let Some(kernel) = crate::checksum::adler32::x86_64::select(crate::platform::caps()) {
+    return (kernel.update)(adler, data);
+  }
   let kernel = table.select_fns(data.len()).adler32;
   kernel(adler, data)
 }
@@ -266,6 +271,10 @@ pub(crate) fn adler32_name(table: &KernelTable, len: usize) -> &'static str {
   #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
   if crate::platform::caps().has(crate::platform::caps::aarch64::DOTPROD) {
     return crate::checksum::adler32::aarch64::DOTPROD_KERNEL_NAME;
+  }
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+  if let Some(kernel) = crate::checksum::adler32::x86_64::select(crate::platform::caps()) {
+    return kernel.name;
   }
   table.select_names(len).adler32_name
 }

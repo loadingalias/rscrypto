@@ -21,6 +21,12 @@ pub enum Adler32Force {
   Neon,
   /// Force the aarch64 NEON kernel with the dot-product extension (if supported).
   NeonDotprod,
+  /// Force the x86-64 SSSE3 kernel (if supported).
+  Ssse3,
+  /// Force the x86-64 AVX2 kernel (if supported).
+  Avx2,
+  /// Force the x86-64 AVX-512 VNNI kernel (if supported).
+  Avx512Vnni,
 }
 
 impl Adler32Force {
@@ -32,6 +38,9 @@ impl Adler32Force {
       Self::Portable => "portable",
       Self::Neon => "neon",
       Self::NeonDotprod => "neon-dotprod",
+      Self::Ssse3 => "ssse3",
+      Self::Avx2 => "avx2",
+      Self::Avx512Vnni => "avx512-vnni",
     }
   }
 }
@@ -58,6 +67,11 @@ fn parse_force_env() -> Adler32Force {
   if value.eq_ignore_ascii_case("neon-dotprod") || value.eq_ignore_ascii_case("dotprod") {
     return Adler32Force::NeonDotprod;
   }
+  for force in [Adler32Force::Ssse3, Adler32Force::Avx2, Adler32Force::Avx512Vnni] {
+    if value.eq_ignore_ascii_case(force.as_str()) {
+      return force;
+    }
+  }
 
   Adler32Force::Auto
 }
@@ -65,7 +79,10 @@ fn parse_force_env() -> Adler32Force {
 #[inline]
 #[must_use]
 fn clamp_force_to_caps(requested: Adler32Force, caps: Caps) -> Adler32Force {
-  #[cfg(not(all(target_arch = "aarch64", target_feature = "neon")))]
+  #[cfg(not(any(
+    all(target_arch = "aarch64", target_feature = "neon"),
+    all(target_arch = "x86_64", target_feature = "sse2")
+  )))]
   let _ = caps;
 
   match requested {
@@ -84,6 +101,18 @@ fn clamp_force_to_caps(requested: Adler32Force, caps: Caps) -> Adler32Force {
       {
         if caps.has(crate::platform::caps::aarch64::NEON) && caps.has(crate::platform::caps::aarch64::DOTPROD) {
           return Adler32Force::NeonDotprod;
+        }
+      }
+      Adler32Force::Auto
+    }
+    Adler32Force::Ssse3 | Adler32Force::Avx2 | Adler32Force::Avx512Vnni => {
+      #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+      {
+        if super::x86_64::KERNELS
+          .iter()
+          .any(|kernel| kernel.force == requested && caps.has(kernel.requires))
+        {
+          return requested;
         }
       }
       Adler32Force::Auto
@@ -148,7 +177,13 @@ mod tests {
   /// never select a kernel whose instructions would fault.
   #[test]
   fn forced_kernels_without_their_capabilities_fall_back_to_auto() {
-    for force in [Adler32Force::Neon, Adler32Force::NeonDotprod] {
+    for force in [
+      Adler32Force::Neon,
+      Adler32Force::NeonDotprod,
+      Adler32Force::Ssse3,
+      Adler32Force::Avx2,
+      Adler32Force::Avx512Vnni,
+    ] {
       assert_eq!(
         clamp_force_to_caps(force, Caps::NONE),
         Adler32Force::Auto,
@@ -173,5 +208,32 @@ mod tests {
       clamp_force_to_caps(Adler32Force::NeonDotprod, dotprod),
       Adler32Force::NeonDotprod
     );
+  }
+
+  /// Each x86-64 force needs every feature that its kernel's `#[target_feature]` enables.
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+  #[test]
+  fn each_x86_force_needs_every_feature_of_its_kernel() {
+    use crate::platform::caps::x86;
+
+    for (force, features) in [
+      (Adler32Force::Ssse3, &[x86::SSSE3][..]),
+      (Adler32Force::Avx2, &[x86::AVX2]),
+      (
+        Adler32Force::Avx512Vnni,
+        &[x86::AVX512F, x86::AVX512BW, x86::AVX512VNNI],
+      ),
+    ] {
+      let all = features.iter().fold(Caps::NONE, |caps, &feature| caps.union(feature));
+      assert_eq!(clamp_force_to_caps(force, all), force, "{}", force.as_str());
+      for &missing in features {
+        assert_eq!(
+          clamp_force_to_caps(force, all.difference(missing)),
+          Adler32Force::Auto,
+          "{}",
+          force.as_str()
+        );
+      }
+    }
   }
 }

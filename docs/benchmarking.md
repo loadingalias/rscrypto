@@ -657,7 +657,8 @@ the default Bench workflow does not provision them and excludes this optional ta
   - SHA-3 and SHAKE: one byte below the rate, and the rate (143/144, 135/136, 103/104, 71/72, 167/168).
   - XXH3-64 and XXH3-128: 16/17, 128/129, and 240/241, where the short-input algorithm changes.
   - XXH32: 15/16. XXH64: 31/32. The longer input fills one stripe.
-  - Adler-32: 15/16, where the 16-byte step starts.
+  - Adler-32: 15/16, where the portable 16-byte step starts, and 128 and 512, either side of the
+    x86-64 kernels' 256-byte switch to their chunked loops.
   - BLAKE2: 65 and 129, one byte past each block size. BLAKE3 `hash` and `keyed`: 65 and 1,025, one byte past a block
     and a chunk.
 - Ed25519 and ECDSA verification has two tasks.
