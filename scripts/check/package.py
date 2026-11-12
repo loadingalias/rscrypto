@@ -41,7 +41,7 @@ def check_contents(package, source):
             continue
         origin = source / ('Cargo.toml' if name == 'Cargo.toml.orig' else name)
         if not origin.is_file() or origin.read_bytes() != path.read_bytes():
-            raise SystemExit(f'{package.name} holds {name}, which is not {origin.relative_to(ROOT)}')
+            raise SystemExit(f'{package.name} holds {name}, which is not {origin.relative_to(source.parent)}')
 
 
 def main():

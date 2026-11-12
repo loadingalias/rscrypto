@@ -221,6 +221,7 @@ test-scripts:
     @scripts/lib/python.sh scripts/check/provider_test.py
     @scripts/lib/python.sh scripts/test/provider_bogo_test.py
     @scripts/lib/python.sh scripts/check/compat_test.py
+    @scripts/lib/python.sh scripts/check/package_test.py
     @scripts/lib/python.sh scripts/test/fuzz_runner_test.py
     @scripts/lib/python.sh --group tooling scripts/test/fuzz_ci_test.py
     @scripts/lib/python.sh scripts/asm/p384_test.py
