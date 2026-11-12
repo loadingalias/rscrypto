@@ -160,6 +160,11 @@ impl ChaCha20Rng {
   /// return an error. The seed is written directly into the generator. On an
   /// error, any partial seed is cleared and the error is returned.
   ///
+  /// A caller that cannot link `getrandom`, such as a WASM host or a system
+  /// with its own entropy interface, passes its own operating-system read as
+  /// `fill`. The seed then comes from the operating system, as with
+  /// `try_generate`, and rscrypto reads no entropy by itself.
+  ///
   /// # Errors
   ///
   /// Returns the error from `fill`.

@@ -40,9 +40,10 @@ caller. It reads no operating-system entropy, works without `alloc`, and its
 output stream is a stable function of the seed. `ChaCha20Rng::child` derives a
 generator from the seed, an 8-byte label, and an index, so one recorded root
 seed replays every owner's stream. `ChaCha20Rng::try_generate` seeds it from the
-operating system and also needs `getrandom`. With `rand_core`, it implements the
-`rand_core` 0.10 generator traits, so `rand` and other `rand_core` consumers can
-use it directly.
+operating system and also needs `getrandom`. Without `getrandom`,
+`try_generate_with` takes the caller's own operating-system read as its seed
+source. With `rand_core`, it implements the `rand_core` 0.10 generator traits,
+so `rand` and other `rand_core` consumers can use it directly.
 
 `adler32` gives Adler-32 from [RFC 1950](https://www.rfc-editor.org/rfc/rfc1950.html),
 the checksum of zlib streams and of HTTP `deflate`.

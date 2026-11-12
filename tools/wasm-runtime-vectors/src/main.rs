@@ -7,7 +7,7 @@ use rscrypto::aead::expert::header_protection::{
 use rscrypto::hashes::legacy::WebSocketAcceptDigest;
 use rscrypto::traits::Xof as _;
 use rscrypto::{
-  Adler32, AesSivCmac256, AesSivCmac256Key, AesSivCmac256Nonce, Blake2b512, Blake3, Checksum as _, Digest,
+  Adler32, AesSivCmac256, AesSivCmac256Key, AesSivCmac256Nonce, Blake2b512, Blake3, ChaCha20Rng, Checksum as _, Digest,
   EcdsaP256SecretKey, EcdsaP384SecretKey, FastHash as _, P256EphemeralSecret, P256PublicKey, P384EphemeralSecret,
   P384PublicKey, RsaPrivateKey, RsaPrivateOpError, RsaPssProfile, RsaPublicKeyPolicy, Sha256, Sha512, Xxh32,
   Xxh32Hasher, Xxh64, Xxh64Hasher,
@@ -327,6 +327,34 @@ fn assert_rsa_caller_random_signing_roundtrips() {
     .expect_err("caller entropy failure must fail closed");
   assert_eq!(error, RsaPrivateOpError::EntropyUnavailable);
   assert!(signature.iter().all(|&byte| byte == 0));
+}
+
+fn assert_chacha20_rng_rfc_8439_stream_and_child() {
+  // RFC 8439 Appendix A.1, test vectors 1 and 2: all-zero key and nonce, block counters 0 and 1.
+  let mut zero = ChaCha20Rng::from_seed([0; ChaCha20Rng::SEED_SIZE]);
+  let mut stream = [0u8; 128];
+  zero.fill_bytes(&mut stream);
+  assert_hex(
+    &stream,
+    "\
+76b8e0ada0f13d90405d6ae55386bd28bdd219b8a08ded1aa836efcc8b770dc7\
+da41597c5157488d7724e03fb8d84a376a43b8f41518a11cc387b669b2ee6586\
+9f07e7be5551387a98ba977c732d080dcb0f29a048e3656912c6533e32ee7aed\
+29b721769ce64e43d57133b074d839d531ed1f28510afb45ace10a1f4b794d6f",
+  );
+
+  // Child `(b"rsasync\0", u64::MAX)` of the root seed `00 01 .. 1f`, from RustCrypto `chacha20` as in
+  // `tests/chacha20_rng.rs`. The index uses all 64 bits on this 32-bit target.
+  let root = core::array::from_fn(|index| u8::try_from(index).expect("seed index"));
+  let mut child = ChaCha20Rng::from_seed(root).child(b"rsasync\0", u64::MAX);
+  let mut output = [0u8; 64];
+  child.fill_bytes(&mut output);
+  assert_hex(
+    &output,
+    "\
+687d7baf7e25df512d3aef30ee34a1320c939612ac41b5045f2cedcec0f5cc5b\
+c735c71a04f761c33783d2001374136af01d13175ed280d0d9cc0c1b52004b55",
+  );
 }
 
 fn assert_websocket_accept_digest_matches_rfc_6455() {
@@ -759,6 +787,7 @@ fn run_vectors() {
   assert_blake3_portable_differentials_and_official_vectors();
   assert_rsa_caller_random_signing_roundtrips();
   assert_websocket_accept_digest_matches_rfc_6455();
+  assert_chacha20_rng_rfc_8439_stream_and_child();
   assert_header_protection_vectors_match_known_outputs();
   assert_aes_siv_runtime_vector_and_failed_open_cleanup();
   assert_ecdsa_portable_signing_roundtrips();
