@@ -23,8 +23,6 @@ use rustls::{ClientConfig, RootCertStore, ServerConfig};
 use super::tls::{Credential, FixtureTime, configs, connections_from_configs, drive, provider};
 use crate::verify;
 
-const VECTORS: &str = include_str!("../../../testdata/composite_mldsa/draft19/vectors.json");
-
 /// DER contents of 1.3.6.1.5.5.7.6.`arc`.
 fn oid(arc: u8) -> [u8; 8] {
   [0x2b, 0x06, 0x01, 0x05, 0x05, 0x07, 0x06, arc]
@@ -42,23 +40,6 @@ fn tlv(tag: u8, contents: &[u8]) -> Vec<u8> {
     out.extend(u16::try_from(len).expect("two-octet length").to_be_bytes());
   }
   out.extend_from_slice(contents);
-  out
-}
-
-fn base64(input: &str) -> Vec<u8> {
-  const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-  let digits: Vec<u32> = input
-    .bytes()
-    .filter(|&byte| byte != b'=')
-    .map(|byte| u32::try_from(ALPHABET.iter().position(|&c| c == byte).expect("base64 digit")).expect("digit"))
-    .collect();
-  let mut out = Vec::new();
-  for chunk in digits.chunks(4) {
-    let word = chunk.iter().enumerate().fold(0u32, |word, (i, &digit)| {
-      word | digit << 18usize.strict_sub(i.strict_mul(6))
-    });
-    out.extend_from_slice(&word.to_be_bytes()[1..chunk.len()]);
-  }
   out
 }
 
@@ -115,10 +96,18 @@ impl Kind {
     }
   }
 
-  fn test_case(self) -> &'static str {
+  /// The draft test case's self-signed certificate (`x5c`) and composite
+  /// PKCS #8 key (`sk_pkcs8`).
+  fn draft_case(self) -> (&'static [u8], &'static [u8]) {
     match self {
-      Self::Ed25519 => "id-MLDSA65-Ed25519-SHA512",
-      Self::EcdsaP256 => "id-MLDSA65-ECDSA-P256-SHA512",
+      Self::Ed25519 => (
+        include_bytes!("../../tests/vectors/composite_mldsa/draft19/id-MLDSA65-Ed25519-SHA512-x5c.der"),
+        include_bytes!("../../tests/vectors/composite_mldsa/draft19/id-MLDSA65-Ed25519-SHA512-sk_pkcs8.der"),
+      ),
+      Self::EcdsaP256 => (
+        include_bytes!("../../tests/vectors/composite_mldsa/draft19/id-MLDSA65-ECDSA-P256-SHA512-x5c.der"),
+        include_bytes!("../../tests/vectors/composite_mldsa/draft19/id-MLDSA65-ECDSA-P256-SHA512-sk_pkcs8.der"),
+      ),
     }
   }
 
@@ -337,20 +326,6 @@ fn credential_fixtures_are_reproducible() {
   }
 }
 
-fn draft_case(kind: Kind) -> (Vec<u8>, Vec<u8>) {
-  // The fixture is indented JSON with one string field per line.
-  let case = VECTORS
-    .split("\"tcId\": ")
-    .find(|case| case.starts_with(&format!("\"{}\"", kind.test_case())))
-    .expect("test case");
-  let field = |name: &str| {
-    let (_, rest) = case.split_once(&format!("\"{name}\": \"")).expect("field");
-    let (value, _) = rest.split_once('"').expect("string end");
-    base64(value)
-  };
-  (field("x5c"), field("sk_pkcs8"))
-}
-
 fn algorithm(kind: Kind) -> &'static dyn SignatureVerificationAlgorithm {
   let algorithms = verify::SUPPORTED_ALGORITHMS
     .mapping()
@@ -374,8 +349,8 @@ fn draft_certificate_signatures_verify_through_the_provider() {
         .any(|candidate| candidate.public_key_alg_id() == kind.algorithm_id())
     );
     // Certificate ::= SEQUENCE { tbsCertificate, signatureAlgorithm, signature }.
-    let (x5c, _) = draft_case(kind);
-    let (certificate, _) = element(&x5c);
+    let (x5c, _) = kind.draft_case();
+    let (certificate, _) = element(x5c);
     let (_, after_tbs) = element(certificate);
     let tbs = &certificate[..certificate.len().strict_sub(after_tbs.len())];
     let (_, after_algorithm) = element(after_tbs);
@@ -474,13 +449,13 @@ fn draft_certificate_authenticates_a_client() {
   // It has no subjectAltName, so it serves as a client certificate, which
   // webpki checks without a name.
   for kind in Kind::ALL {
-    let (x5c, pkcs8) = draft_case(kind);
+    let (x5c, pkcs8) = kind.draft_case();
     let (root, leaf, key) = super::tls::credentials(kind.credential());
     let mut client_roots = RootCertStore::empty();
     client_roots.add(CertificateDer::from(root.to_vec())).expect("root");
     let mut client_cert_roots = RootCertStore::empty();
     client_cert_roots
-      .add(CertificateDer::from(x5c.clone()))
+      .add(CertificateDer::from(x5c))
       .expect("draft certificate");
     let server_provider = Arc::new(provider());
     let verifier = rustls::server::WebPkiClientVerifier::builder(Arc::new(client_cert_roots), &server_provider)
@@ -509,7 +484,7 @@ fn draft_certificate_authenticates_a_client() {
 #[test]
 fn composite_keys_never_sign_with_a_component_scheme() {
   for kind in Kind::ALL {
-    let (_, pkcs8) = draft_case(kind);
+    let (_, pkcs8) = kind.draft_case();
     let key = super::key_provider()
       .load_private_key(PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(pkcs8)))
       .expect("draft key");

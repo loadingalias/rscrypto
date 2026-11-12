@@ -29,8 +29,9 @@ minimal DER certificates with the same validity interval, `localhost` name, key 
 root → leaf and root → intermediate → leaf shapes as the other fixtures. The keys are composite
 PKCS#8. `rscrypto-rustls/src/tests/composite.rs` rebuilds every file and requires byte equality;
 `RSCRYPTO_WRITE_COMPOSITE_CREDENTIALS=1` rewrites them. They are not independent signatures. The
-independent composite evidence is the draft's own certificates, which that test verifies and uses
-for client authentication.
+independent composite evidence is the draft's own certificates
+([provenance](../composite_mldsa/draft19/README.md)), which that test verifies and uses for client
+authentication.
 
 The private keys are intentionally public and must never protect real traffic.
 `SHA256SUMS` pins every payload.
