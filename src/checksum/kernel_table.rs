@@ -1658,6 +1658,54 @@ mod aarch64_tables {
       crc64_nvme_name: "portable/slice16",
     },
   };
+  /// Only a Graviton3 host selects the two CRC-16 wrappers of its table, and CI
+  /// runs no Graviton3 host. Each wrapper runs the 2-way PMULL+EOR3 kernel up to
+  /// its length threshold and the 1-way kernel above it. Both sides must match
+  /// the portable kernel.
+  #[cfg(all(
+    test,
+    feature = "crc16",
+    feature = "std",
+    not(miri),
+    any(target_os = "linux", target_os = "android")
+  ))]
+  #[test]
+  fn graviton3_crc16_wrappers_match_portable_across_their_threshold() {
+    use crate::checksum::crc16::portable::{crc16_ccitt_slice8, crc16_ibm_slice8};
+
+    if !crate::platform::caps().has(crate::platform::caps::aarch64::PMULL_EOR3_READY) {
+      return;
+    }
+    const MAX: usize = G3_CRC16_PMULL_EOR3_2WAY_MAX_LEN;
+    let data: alloc::vec::Vec<u8> = (0..MAX.strict_add(4097))
+      .map(|i| (i.wrapping_mul(131) >> 3).to_le_bytes()[0])
+      .collect();
+    for len in [
+      0,
+      1,
+      255,
+      256,
+      4096,
+      MAX.strict_sub(1),
+      MAX,
+      MAX.strict_add(1),
+      MAX.strict_add(4097),
+    ] {
+      let input = &data[..len];
+      for crc in [0, 0xffff, 0x1d0f] {
+        assert_eq!(
+          g3_crc16_ccitt_l_hybrid(crc, input),
+          crc16_ccitt_slice8(crc, input),
+          "CCITT, len={len}"
+        );
+        assert_eq!(
+          g3_crc16_ibm_l_hybrid(crc, input),
+          crc16_ibm_slice8(crc, input),
+          "IBM, len={len}"
+        );
+      }
+    }
+  }
 }
 
 // x86_64 Platform Tables

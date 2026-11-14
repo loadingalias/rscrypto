@@ -84,8 +84,11 @@ runners:
     volume: 150gb:gp3
   # On-Demand: a spot reclaim (BidEvictedEvent 01:09:38Z) cancelled this native row of
   # CI 38326665335 during its test suites.
+  # Graviton4 only, so the SVE2 kernel tests run in every CI run. The AWS Graviton guide
+  # lists SVE2 and SVE cryptography for Graviton4, no SVE2 for Graviton3, and no SVE
+  # cryptography for Graviton5. RSCRYPTO_REQUIRE_SVE2 in ci.yml fails a row without them.
   aarch64-linux:
-    family: [c7g.4xlarge, c8g.4xlarge, c9g.4xlarge]
+    family: [c8g.4xlarge]
     cpu: 16
     image: rscrypto-ci-linux-arm64
     spot: false

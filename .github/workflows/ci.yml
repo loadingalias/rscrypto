@@ -244,6 +244,8 @@ jobs:
           PLATFORM: ${{ matrix.platform }}
         run: |
           source "$HOME/.local/share/rscrypto-tooling/environment.sh"
+          # The Graviton4 row must run the SVE2 kernels. tests/platform_sve2.rs checks it.
+          if [[ "$PLATFORM" == aarch64-linux ]]; then export RSCRYPTO_REQUIRE_SVE2=1; fi
           # Measure first, so that a failing suite does not hide the stack evidence.
           just stack-allowances --check --output target/stack-paint/evidence
           just stack-worker --all-configurations --check --output target/stack-paint/evidence
