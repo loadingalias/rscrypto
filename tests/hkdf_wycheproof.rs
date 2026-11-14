@@ -1,6 +1,6 @@
 #![cfg(feature = "hkdf")]
 
-use rscrypto::{HkdfSha256, HkdfSha384, auth::HkdfOutputLengthError};
+use rscrypto::{HkdfSha256, HkdfSha384, HkdfSha512, auth::HkdfOutputLengthError};
 use serde_json::Value;
 
 mod common;
@@ -8,6 +8,7 @@ use common::decode_hex_vec;
 
 const HKDF_SHA256: &str = include_str!("../testdata/auth/wycheproof/hkdf_sha256_test.json");
 const HKDF_SHA384: &str = include_str!("../testdata/auth/wycheproof/hkdf_sha384_test.json");
+const HKDF_SHA512: &str = include_str!("../testdata/auth/wycheproof/hkdf_sha512_test.json");
 
 #[derive(Debug, PartialEq, Eq)]
 struct Counts {
@@ -97,6 +98,16 @@ fn hkdf_sha384_wycheproof_vectors() {
     HKDF_SHA384,
     "HKDF-SHA384",
     HkdfSha384::derive,
+    Counts { valid: 80, invalid: 3 },
+  );
+}
+
+#[test]
+fn hkdf_sha512_wycheproof_vectors() {
+  run_hkdf_suite(
+    HKDF_SHA512,
+    "HKDF-SHA512",
+    |salt, ikm, info, okm| HkdfSha512::new(salt, ikm).expand(info, okm),
     Counts { valid: 80, invalid: 3 },
   );
 }
