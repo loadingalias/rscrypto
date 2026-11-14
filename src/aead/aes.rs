@@ -6017,6 +6017,77 @@ mod tests {
     aes256_gcm_open_x86
   );
 
+  /// The AES-NI/PCLMUL CTR and GHASH functions, which seal and open GCM
+  /// messages of 64 bytes or more on x86-64 hosts without VAES, against the
+  /// block CTR keystream and the serial GHASH. The lengths reach the four-block
+  /// loop, the one-block loop, and the partial tail. From the second start
+  /// counter, a four-block batch crosses the 32-bit counter wrap.
+  #[cfg(all(all(target_arch = "x86_64", target_feature = "sse2"), feature = "aes-gcm"))]
+  macro_rules! x86_aesni_gcm_kernel_test {
+    ($name:ident, $key:expr, $expand:ident, $ctr:ident, $seal:ident, $open:ident) => {
+      #[test]
+      fn $name() {
+        if !crate::platform::caps().has(crate::platform::caps::x86::AESNI | crate::platform::caps::x86::PCLMUL_READY) {
+          return;
+        }
+        let ek = $expand(&$key);
+        let powers = x86_gcm_test_powers_16();
+        let seed_acc = 0x0f1e_2d3c_4b5a_6978_8796_a5b4_c3d2_e1f0u128;
+        for start in [2u32, u32::MAX.strict_sub(1)] {
+          let mut counter = [0u8; BLOCK_SIZE];
+          counter[..12].copy_from_slice(b"aes-ni ctr!!");
+          counter[12..].copy_from_slice(&start.to_be_bytes());
+          for len in [
+            0usize, 1, 15, 16, 17, 47, 48, 63, 64, 65, 79, 80, 127, 128, 129, 255, 256, 257, 1023, 1024, 1025, 4097,
+          ] {
+            let mut plaintext = std::vec![0u8; len];
+            fill_x86_gcm_test_plaintext(&mut plaintext);
+            let mut expected = plaintext.clone();
+            $ctr(&ek, &counter, &mut expected);
+            let expected_acc = ghash_ciphertext_fallback(seed_acc, powers.h_polyval, &expected);
+
+            let mut sealed = plaintext.clone();
+            // SAFETY: runtime caps above confirmed AES-NI, PCLMULQDQ, and SSSE3; SSE2 is the target baseline.
+            let acc = unsafe { $seal(&ek, &counter, &mut sealed, seed_acc, powers.h_polyval, &powers.h_powers_rev) };
+            assert_eq!(
+              (sealed.as_slice(), acc),
+              (expected.as_slice(), expected_acc),
+              "seal, start={start:#x}, len={len}"
+            );
+
+            let mut opened = expected.clone();
+            // SAFETY: as above.
+            let acc = unsafe { $open(&ek, &counter, &mut opened, seed_acc, powers.h_polyval, &powers.h_powers_rev) };
+            assert_eq!(
+              (opened.as_slice(), acc),
+              (plaintext.as_slice(), expected_acc),
+              "open, start={start:#x}, len={len}"
+            );
+          }
+        }
+      }
+    };
+  }
+
+  #[cfg(all(all(target_arch = "x86_64", target_feature = "sse2"), feature = "aes-gcm"))]
+  x86_aesni_gcm_kernel_test!(
+    x86_aes128_aesni_gcm_kernels_match_scalar,
+    [0x17u8; KEY_SIZE_128],
+    aes128_expand_key,
+    aes128_ctr32_encrypt_be,
+    aes128_ctr32_encrypt_be_aesni_pclmul_ghash,
+    aes128_ctr32_decrypt_be_aesni_pclmul_ghash
+  );
+  #[cfg(all(all(target_arch = "x86_64", target_feature = "sse2"), feature = "aes-gcm"))]
+  x86_aesni_gcm_kernel_test!(
+    x86_aes256_aesni_gcm_kernels_match_scalar,
+    [0x29u8; KEY_SIZE],
+    aes256_expand_key,
+    aes256_ctr32_encrypt_be,
+    aes256_ctr32_encrypt_be_aesni_pclmul_ghash,
+    aes256_ctr32_decrypt_be_aesni_pclmul_ghash
+  );
+
   #[test]
   fn aes128_encrypt_blocks_ecb_matches_scalar_dispatch() {
     let key = [0xC3u8; KEY_SIZE_128];
