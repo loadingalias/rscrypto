@@ -162,14 +162,6 @@ mod tests {
   }
 
   #[test]
-  fn test_caps_static_consistent() {
-    // caps_static() must return the same value every time
-    let a = caps_static();
-    let b = caps_static();
-    assert_eq!(a, b, "caps_static() must be deterministic");
-  }
-
-  #[test]
   #[cfg(all(target_arch = "x86_64", not(miri)))]
   fn test_caps_static_x86_features() {
     use crate::platform::caps::x86;

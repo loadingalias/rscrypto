@@ -154,10 +154,16 @@ mod rapidhash_rng {
 mod ecdsa_p256_rng {
   use rscrypto::EcdsaP256SecretKey;
 
+  /// Every valid scalar is nonzero, so only a second key shows that the source is not constant.
   #[test]
   fn secret_key_try_generate() {
-    let secret = EcdsaP256SecretKey::try_generate().expect("OS entropy must generate a P-256 secret key");
-    assert!(secret.as_bytes().iter().any(|&b| b != 0));
+    let first = EcdsaP256SecretKey::try_generate().expect("OS entropy must generate a P-256 secret key");
+    let second = EcdsaP256SecretKey::try_generate().expect("OS entropy must generate a second P-256 secret key");
+    assert_ne!(
+      first.as_bytes(),
+      second.as_bytes(),
+      "two generated P-256 keys are equal"
+    );
   }
 }
 
@@ -165,10 +171,16 @@ mod ecdsa_p256_rng {
 mod ecdsa_p384_rng {
   use rscrypto::EcdsaP384SecretKey;
 
+  /// Every valid scalar is nonzero, so only a second key shows that the source is not constant.
   #[test]
   fn secret_key_try_generate() {
-    let secret = EcdsaP384SecretKey::try_generate().expect("OS entropy must generate a P-384 secret key");
-    assert!(secret.as_bytes().iter().any(|&b| b != 0));
+    let first = EcdsaP384SecretKey::try_generate().expect("OS entropy must generate a P-384 secret key");
+    let second = EcdsaP384SecretKey::try_generate().expect("OS entropy must generate a second P-384 secret key");
+    assert_ne!(
+      first.as_bytes(),
+      second.as_bytes(),
+      "two generated P-384 keys are equal"
+    );
   }
 }
 
@@ -176,17 +188,24 @@ mod ecdsa_p384_rng {
 mod mlkem_rng {
   use rscrypto::{MlKem512, MlKem768, MlKem1024};
 
+  /// Keys from any seed, even all zeros, have nonzero bytes, so only a second
+  /// keypair shows that the source is not constant.
   #[test]
   fn keypair_try_generate() {
-    let (ek512, dk512) = MlKem512::try_generate_keypair().expect("OS entropy must generate an ML-KEM-512 keypair");
-    let (ek768, dk768) = MlKem768::try_generate_keypair().expect("OS entropy must generate an ML-KEM-768 keypair");
-    let (ek1024, dk1024) = MlKem1024::try_generate_keypair().expect("OS entropy must generate an ML-KEM-1024 keypair");
-
-    assert!(ek512.as_bytes().iter().any(|&b| b != 0));
-    assert!(dk512.as_bytes().iter().any(|&b| b != 0));
-    assert!(ek768.as_bytes().iter().any(|&b| b != 0));
-    assert!(dk768.as_bytes().iter().any(|&b| b != 0));
-    assert!(ek1024.as_bytes().iter().any(|&b| b != 0));
-    assert!(dk1024.as_bytes().iter().any(|&b| b != 0));
+    macro_rules! distinct {
+      ($kem:ty) => {{
+        let (first, _) = <$kem>::try_generate_keypair().expect("OS entropy must generate a keypair");
+        let (second, _) = <$kem>::try_generate_keypair().expect("OS entropy must generate a second keypair");
+        assert_ne!(
+          first.as_bytes(),
+          second.as_bytes(),
+          "two generated {} keys are equal",
+          stringify!($kem)
+        );
+      }};
+    }
+    distinct!(MlKem512);
+    distinct!(MlKem768);
+    distinct!(MlKem1024);
   }
 }

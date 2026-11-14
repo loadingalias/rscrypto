@@ -350,7 +350,7 @@ class NativeArchive(unittest.TestCase):
                 '#[test] fn reads_fixture() { assert_eq!(std::fs::read_to_string("fixture.txt").unwrap(), "oracle"); }\n'
                 '#[test] fn emits_backend_evidence_fixture() {\n'
                 '  let portable = cfg!(feature = "portable-only");\n'
-                '  for test in ["counter-zero", "arbitrary-counters", "self-inverse"] {\n'
+                '  for test in ["counter-zero", "arbitrary-counters"] {\n'
                 '    if !portable {\n'
                 '      eprintln!("RSCRYPTO_BACKEND_EVIDENCE={{\\"schema\\":1,\\"kind\\":\\"rscrypto.backend-execution\\",\\"primitive\\":\\"chacha20\\",\\"test\\":\\"{test}\\",\\"dispatch\\":\\"production-auto\\",\\"target_arch\\":\\"fixture\\",\\"compiled\\":[{{\\"id\\":\\"fixture-accelerated\\",\\"required_features\\":[\\"fixture\\"],\\"runtime_available\\":true}}],\\"executed_backend_ids\\":[\\"fixture-accelerated\\"],\\"executed_case_count\\":1,\\"kernel_call_count\\":1,\\"result\\":\\"pass\\"}}");\n'
                 '    } else {\n'

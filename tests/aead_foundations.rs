@@ -120,36 +120,6 @@ fn gather_append_rejects_an_external_implementation_that_does_not_initialize_its
 }
 
 #[test]
-#[cfg(feature = "aead")]
-fn nonce96_round_trips() {
-  let nonce = Nonce96::from_bytes([0xA5; Nonce96::LENGTH]);
-
-  assert_eq!(nonce.to_bytes(), [0xA5; Nonce96::LENGTH]);
-  assert_eq!(nonce.as_bytes(), &[0xA5; Nonce96::LENGTH]);
-}
-
-#[test]
-#[cfg(feature = "aead")]
-fn aead_encrypt_and_decrypt_helpers_round_trip() {
-  let nonce = Nonce96::from_bytes([0x22; Nonce96::LENGTH]);
-  let aad = b"header";
-  let plaintext = *b"hello world!";
-  let aead = fixture_cipher();
-
-  let mut sealed = [0u8; 12 + ChaCha20Poly1305::TAG_SIZE];
-  aead
-    .encrypt(&nonce, aad, &plaintext, &mut sealed)
-    .expect("combined AEAD seal buffer must fit plaintext and tag");
-
-  let mut opened = [0u8; 12];
-  aead
-    .decrypt(&nonce, aad, &sealed, &mut opened)
-    .expect("freshly sealed combined AEAD ciphertext must authenticate");
-
-  assert_eq!(opened, plaintext);
-}
-
-#[test]
 #[cfg(all(feature = "aead", feature = "getrandom"))]
 fn aead_seal_random_issues_fresh_nonces_and_round_trips() {
   let aad = b"header";

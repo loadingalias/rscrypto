@@ -18,7 +18,7 @@ def records(dispatch="production-auto", availability=(True, True)):
              "test": name, "dispatch": dispatch, "target_arch": "x86_64", "compiled": copy.deepcopy(compiled),
              "executed_backend_ids": executed.copy(), "executed_case_count": len(executed),
              "kernel_call_count": len(executed) * calls, "result": result}
-            for name, calls in (("counter-zero", 1), ("arbitrary-counters", 1), ("self-inverse", 2))]
+            for name, calls in (("counter-zero", 1), ("arbitrary-counters", 1))]
 
 
 def validate(rows, dispatch="production-auto"):
@@ -87,7 +87,7 @@ class BackendEvidenceTests(unittest.TestCase):
             validate(rows)
 
     def test_reject_missing_tests_and_false_status(self):
-        for rows in (records()[:2], [records()[0]] * 3):
+        for rows in (records()[:1], [records()[0]] * 2):
             with self.assertRaises(ValueError):
                 validate(rows)
         rows = records(availability=(False, False))

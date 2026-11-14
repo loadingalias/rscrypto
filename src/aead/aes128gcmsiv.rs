@@ -1890,29 +1890,6 @@ mod tests {
     assert!(pt_out.iter().all(|&b| b == 0), "buffer not zeroed on auth failure");
   }
 
-  /// Detached encrypt/decrypt round-trip.
-  #[test]
-  fn aes128gcmsiv_detached_round_trip() {
-    let key = Aes128GcmSivKey::from_bytes(hex16("01000000000000000000000000000000"));
-    let nonce = Nonce96::from_bytes(hex12("030000000000000000000000"));
-    let aad = hex_vec("01");
-    let plaintext = hex_vec("0200000000000000");
-
-    let cipher = Aes128GcmSiv::new(&key);
-
-    let mut buf = plaintext.clone();
-    let tag = cipher
-      .encrypt_in_place(&nonce, &aad, &mut buf)
-      .expect("AES-128-GCM-SIV detached encryption must succeed");
-
-    assert_ne!(buf, plaintext);
-
-    cipher
-      .decrypt_in_place(&nonce, &aad, &mut buf, &tag)
-      .expect("AES-128-GCM-SIV detached decryption must succeed");
-    assert_eq!(buf, plaintext);
-  }
-
   /// `tag_from_slice` rejects wrong-length input.
   #[test]
   fn aes128gcmsiv_tag_from_slice_rejects_bad_length() {

@@ -35,7 +35,7 @@ if not os.environ.get('NO_BACKEND_EVIDENCE'):
                'runtime_available': None if portable else not unavailable}]
   if os.environ.get('BACKEND_PARTIAL_EXECUTION') and not portable:
     compiled.append({'id': 'fixture/omitted', 'required_features': ['omitted'], 'runtime_available': True})
-  for test in ('counter-zero', 'arbitrary-counters', 'self-inverse'):
+  for test in ('counter-zero', 'arbitrary-counters'):
     print('RSCRYPTO_BACKEND_EVIDENCE=' + json.dumps({
       'schema': 1,
       'kind': 'rscrypto.backend-execution',

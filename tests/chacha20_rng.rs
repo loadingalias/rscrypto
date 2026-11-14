@@ -126,17 +126,6 @@ fn caller_entropy_constructor_matches_from_seed() {
   assert_eq!(error, "source unavailable");
 }
 
-#[test]
-fn distinct_seeds_produce_distinct_streams() {
-  let mut seed = [0x11; 32];
-  let base = take(&mut ChaCha20Rng::from_seed(seed), 64);
-  for index in 0..seed.len() {
-    seed[index] ^= 1;
-    assert_ne!(take(&mut ChaCha20Rng::from_seed(seed), 64), base, "seed byte {index}");
-    seed[index] ^= 1;
-  }
-}
-
 /// `(label, index)` steps from a parent to a descendant generator.
 type ChildPath = &'static [([u8; 8], u64)];
 

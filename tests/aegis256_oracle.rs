@@ -88,7 +88,10 @@ fn aegis256_oracle_varied_sizes() {
   let aad = b"sizes";
 
   // AEGIS-256 operates on 16-byte blocks internally.
-  for size in [1, 7, 15, 16, 17, 31, 32, 33, 48, 63, 64, 65, 128, 256] {
+  // 80, 96, and 112 leave one to three whole blocks after the four-block loop.
+  for size in [
+    1, 7, 15, 16, 17, 31, 32, 33, 48, 63, 64, 65, 80, 96, 112, 128, 256, 1024, 4096,
+  ] {
     let plaintext = vec![0xABu8; size];
     assert_matches_oracle(&key, &nonce, aad, &plaintext);
   }

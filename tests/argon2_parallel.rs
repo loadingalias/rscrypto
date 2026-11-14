@@ -50,11 +50,16 @@ fn argon2id_p8_matches_oracle() {
   let out_len = 32usize;
 
   let params = rs_params(m, t, p);
-  let mut actual = vec![0u8; out_len];
-  Argon2id::derive(&params, PASSWORD, SALT, &mut actual).expect("Argon2id p=8 derivation must succeed");
-
   let expected = oracle_hash(argon2::Algorithm::Argon2id, PASSWORD, SALT, m, t, p, out_len);
-  assert_eq!(actual, expected, "argon2id p=8 mismatch vs RustCrypto oracle");
+  // Rayon may interleave the lane tasks differently on each run, so a race can show on one run only.
+  for trial in 0..16 {
+    let mut actual = vec![0u8; out_len];
+    Argon2id::derive(&params, PASSWORD, SALT, &mut actual).expect("Argon2id p=8 derivation must succeed");
+    assert_eq!(
+      actual, expected,
+      "argon2id p=8 mismatch vs RustCrypto oracle on trial {trial}"
+    );
+  }
 }
 
 #[test]
@@ -65,11 +70,16 @@ fn argon2d_p8_matches_oracle() {
   let out_len = 32usize;
 
   let params = rs_params(m, t, p);
-  let mut actual = vec![0u8; out_len];
-  Argon2d::derive(&params, PASSWORD, SALT, &mut actual).expect("Argon2d p=8 derivation must succeed");
-
   let expected = oracle_hash(argon2::Algorithm::Argon2d, PASSWORD, SALT, m, t, p, out_len);
-  assert_eq!(actual, expected, "argon2d p=8 mismatch vs RustCrypto oracle");
+  // Rayon may interleave the lane tasks differently on each run, so a race can show on one run only.
+  for trial in 0..16 {
+    let mut actual = vec![0u8; out_len];
+    Argon2d::derive(&params, PASSWORD, SALT, &mut actual).expect("Argon2d p=8 derivation must succeed");
+    assert_eq!(
+      actual, expected,
+      "argon2d p=8 mismatch vs RustCrypto oracle on trial {trial}"
+    );
+  }
 }
 
 #[test]
@@ -100,39 +110,6 @@ fn argon2id_p16_matches_oracle() {
 
   let expected = oracle_hash(argon2::Algorithm::Argon2id, PASSWORD, SALT, m, t, p, out_len);
   assert_eq!(actual, expected, "argon2id p=16 mismatch vs RustCrypto oracle");
-}
-
-/// Hash the same inputs many times in a row at high parallelism. Rayon's
-/// scheduler may interleave the lane tasks differently across runs; the
-/// fill order must be irrelevant to the output, so every iteration must
-/// produce the same tag. Any non-determinism would indicate a data race.
-#[test]
-fn argon2id_parallel_is_deterministic() {
-  let params = rs_params(1024, 2, 8);
-
-  let mut reference = [0u8; 32];
-  Argon2id::derive(&params, PASSWORD, SALT, &mut reference)
-    .expect("reference Argon2id parallel derivation must succeed");
-
-  for trial in 0..16 {
-    let mut out = [0u8; 32];
-    Argon2id::derive(&params, PASSWORD, SALT, &mut out).expect("repeated Argon2id derivation must succeed");
-    assert_eq!(out, reference, "non-deterministic output on trial {trial}");
-  }
-}
-
-#[test]
-fn argon2d_parallel_is_deterministic() {
-  let params = rs_params(1024, 2, 8);
-
-  let mut reference = [0u8; 32];
-  Argon2d::derive(&params, PASSWORD, SALT, &mut reference).expect("reference Argon2d parallel derivation must succeed");
-
-  for trial in 0..16 {
-    let mut out = [0u8; 32];
-    Argon2d::derive(&params, PASSWORD, SALT, &mut out).expect("repeated Argon2d derivation must succeed");
-    assert_eq!(out, reference, "non-deterministic output on trial {trial}");
-  }
 }
 
 /// With `parallel` on but `p = 1`, the dispatcher must skip rayon and run

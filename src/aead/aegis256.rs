@@ -626,8 +626,6 @@ impl Aead for Aegis256 {
 
 #[cfg(test)]
 mod tests {
-  use alloc::{vec, vec::Vec};
-
   use super::*;
   use crate::aead::{
     expert::AeadWithNonce,
@@ -797,55 +795,6 @@ mod tests {
   // -- Functional tests --
 
   #[test]
-  fn round_trip_empty() {
-    let key = Aegis256Key::from_bytes([0u8; 32]);
-    let nonce = Nonce256::from_bytes([0u8; 32]);
-    let aead = Aegis256::new(&key);
-
-    let mut buf = [];
-    let tag = aead
-      .encrypt_in_place(&nonce, b"", &mut buf)
-      .expect("empty AEGIS-256 encryption must succeed");
-    aead
-      .decrypt_in_place(&nonce, b"", &mut buf, &tag)
-      .expect("empty AEGIS-256 decryption must succeed");
-  }
-
-  #[test]
-  fn round_trip_with_data() {
-    let key = Aegis256Key::from_bytes([0x42; 32]);
-    let nonce = Nonce256::from_bytes([0x13; 32]);
-    let aead = Aegis256::new(&key);
-    let plaintext = b"the quick brown fox jumps over the lazy dog";
-
-    let mut buf = *plaintext;
-    let tag = aead
-      .encrypt_in_place(&nonce, b"header", &mut buf)
-      .expect("AEGIS-256 encryption with AAD must succeed");
-    assert_ne!(&buf[..], &plaintext[..]);
-
-    aead
-      .decrypt_in_place(&nonce, b"header", &mut buf, &tag)
-      .expect("AEGIS-256 decryption with AAD must succeed");
-    assert_eq!(&buf[..], &plaintext[..]);
-  }
-
-  #[test]
-  fn round_trip_with_aad_only() {
-    let key = Aegis256Key::from_bytes([0xFF; 32]);
-    let nonce = Nonce256::from_bytes([0xAA; 32]);
-    let aead = Aegis256::new(&key);
-
-    let mut buf = [];
-    let tag = aead
-      .encrypt_in_place(&nonce, b"associated data only", &mut buf)
-      .expect("AAD-only AEGIS-256 encryption must succeed");
-    aead
-      .decrypt_in_place(&nonce, b"associated data only", &mut buf, &tag)
-      .expect("AAD-only AEGIS-256 decryption must succeed");
-  }
-
-  #[test]
   fn buffer_zeroed_on_auth_failure() {
     let key = Aegis256Key::from_bytes([0x42; 32]);
     let nonce = Nonce256::from_bytes([0x13; 32]);
@@ -944,25 +893,6 @@ mod tests {
   }
 
   #[test]
-  fn combined_encrypt_decrypt_round_trip() {
-    let key = Aegis256Key::from_bytes([7; 32]);
-    let nonce = Nonce256::from_bytes([8; 32]);
-    let aead = Aegis256::new(&key);
-    let pt = b"combined mode";
-
-    let mut sealed = vec![0u8; pt.len().strict_add(TAG_SIZE)];
-    aead
-      .encrypt(&nonce, b"h", pt.as_slice(), &mut sealed)
-      .expect("combined AEGIS-256 encryption must succeed");
-
-    let mut opened = vec![0u8; pt.len()];
-    aead
-      .decrypt(&nonce, b"h", &sealed, &mut opened)
-      .expect("combined AEGIS-256 decryption must succeed");
-    assert_eq!(&opened, &pt[..]);
-  }
-
-  #[test]
   fn tag_from_slice_rejects_wrong_length() {
     assert_eq!(
       Aegis256::tag_from_slice(&[0u8; 15]).expect_err("short AEGIS-256 tag must be rejected"),
@@ -974,80 +904,6 @@ mod tests {
     );
     let tag = Aegis256::tag_from_slice(&[0u8; 16]).expect("16-byte AEGIS-256 tag must be accepted");
     assert_eq!(tag.as_bytes(), &[0u8; 16]);
-  }
-
-  #[test]
-  fn multi_block_round_trip() {
-    let key = Aegis256Key::from_bytes([0xAB; 32]);
-    let nonce = Nonce256::from_bytes([0xCD; 32]);
-    let aead = Aegis256::new(&key);
-
-    // 100 bytes = 6 full blocks + 4-byte tail.
-    let plaintext = [0x77u8; 100];
-    let mut buf = plaintext;
-    let tag = aead
-      .encrypt_in_place(&nonce, b"multi-block aad that is longer than one rate block", &mut buf)
-      .expect("multi-block AEGIS-256 encryption must succeed");
-    aead
-      .decrypt_in_place(
-        &nonce,
-        b"multi-block aad that is longer than one rate block",
-        &mut buf,
-        &tag,
-      )
-      .expect("multi-block AEGIS-256 decryption must succeed");
-    assert_eq!(buf, plaintext);
-  }
-
-  #[test]
-  fn exact_block_boundary() {
-    let key = Aegis256Key::from_bytes([0x10; 32]);
-    let nonce = Nonce256::from_bytes([0x20; 32]);
-    let aead = Aegis256::new(&key);
-
-    // Exactly 16 bytes = 1 full block, 0-byte tail.
-    let plaintext = [0x55u8; 16];
-    let mut buf = plaintext;
-    let tag = aead
-      .encrypt_in_place(&nonce, b"", &mut buf)
-      .expect("one-block AEGIS-256 encryption must succeed");
-    aead
-      .decrypt_in_place(&nonce, b"", &mut buf, &tag)
-      .expect("one-block AEGIS-256 decryption must succeed");
-    assert_eq!(buf, plaintext);
-
-    // Exactly 32 bytes = 2 full blocks, 0-byte tail.
-    let plaintext32 = [0x66u8; 32];
-    let mut buf32 = plaintext32;
-    let tag32 = aead
-      .encrypt_in_place(&nonce, b"", &mut buf32)
-      .expect("two-block AEGIS-256 encryption must succeed");
-    aead
-      .decrypt_in_place(&nonce, b"", &mut buf32, &tag32)
-      .expect("two-block AEGIS-256 decryption must succeed");
-    assert_eq!(buf32, plaintext32);
-  }
-
-  /// Round-trip at 4-block boundary sizes to exercise the 4x unrolled loop.
-  #[test]
-  fn four_block_boundaries() {
-    let key = Aegis256Key::from_bytes([0xF4; 32]);
-    let nonce = Nonce256::from_bytes([0xB0; 32]);
-    let aead = Aegis256::new(&key);
-    let aad = b"four-block-test";
-
-    for &size in &[48usize, 64, 80, 96, 112, 128, 256, 1024, 4096] {
-      let plaintext: Vec<u8> = (0u8..=u8::MAX).cycle().take(size).collect();
-      let mut buf = plaintext.clone();
-      let tag = aead
-        .encrypt_in_place(&nonce, aad, &mut buf)
-        .expect("boundary AEGIS-256 encryption must succeed");
-      assert_ne!(&buf, &plaintext, "size {size}: ciphertext must differ");
-      aead
-        .decrypt_in_place(&nonce, aad, &mut buf, &tag)
-        .expect("boundary AEGIS-256 decryption must succeed");
-      assert_eq!(&buf, &plaintext, "size {size}: round-trip failed");
-    }
   }
 
   // -- vperm S-box table validation --

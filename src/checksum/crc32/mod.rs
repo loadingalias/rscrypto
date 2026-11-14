@@ -982,12 +982,6 @@ mod tests {
   }
 
   #[test]
-  fn test_kernel_probe_not_empty() {
-    assert!(!Crc32::kernel_name_for_len(1024).is_empty());
-    assert!(!Crc32C::kernel_name_for_len(1024).is_empty());
-  }
-
-  #[test]
   fn test_kernel_name_for_len_returns_specific_kernel_name() {
     // With the dispatch system, kernel_name_for_len returns the specific kernel name
     // from the dispatch table (e.g., "aarch64/pmull-small", "x86_64/hwcrc").

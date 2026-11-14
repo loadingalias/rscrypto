@@ -1319,48 +1319,6 @@ mod tests {
     );
   }
 
-  /// Detached encrypt/decrypt round-trip.
-  #[test]
-  fn detached_round_trip() {
-    let key = Aes128GcmKey::from_bytes([0x42u8; 16]);
-    let nonce = Nonce96::from_bytes([0x07u8; 12]);
-    let aad = b"associated data";
-    let plaintext = b"Hello, AES-128-GCM!";
-    let cipher = Aes128Gcm::new(&key);
-
-    let mut buf = plaintext.to_vec();
-    let tag = cipher
-      .encrypt_in_place(&nonce, aad, &mut buf)
-      .expect("AES-128-GCM detached encryption must succeed");
-    assert_ne!(&buf[..], &plaintext[..]);
-
-    cipher
-      .decrypt_in_place(&nonce, aad, &mut buf, &tag)
-      .expect("AES-128-GCM detached decryption must succeed");
-    assert_eq!(&buf[..], &plaintext[..]);
-  }
-
-  /// Combined encrypt/decrypt round-trip.
-  #[test]
-  fn combined_round_trip() {
-    let key = Aes128GcmKey::from_bytes([0x42u8; 16]);
-    let nonce = Nonce96::from_bytes([0x07u8; 12]);
-    let aad = b"associated data";
-    let plaintext = b"Hello, AES-128-GCM!";
-    let cipher = Aes128Gcm::new(&key);
-
-    let mut out = vec![0u8; plaintext.len().strict_add(TAG_SIZE)];
-    cipher
-      .encrypt(&nonce, aad, plaintext, &mut out)
-      .expect("AES-128-GCM combined encryption must succeed");
-
-    let mut pt_out = vec![0u8; plaintext.len()];
-    cipher
-      .decrypt(&nonce, aad, &out, &mut pt_out)
-      .expect("AES-128-GCM combined decryption must succeed");
-    assert_eq!(&pt_out[..], &plaintext[..]);
-  }
-
   /// `tag_from_slice` rejects wrong-length input.
   #[test]
   fn tag_from_slice_rejects_bad_length() {

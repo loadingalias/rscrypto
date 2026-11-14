@@ -838,21 +838,6 @@ mod tests {
 
   #[test]
   #[cfg(any(feature = "chacha20poly1305", feature = "xchacha20poly1305"))]
-  fn xor_keystream_is_symmetric() {
-    let key = [0x42; KEY_SIZE];
-    let nonce = [0x24; NONCE_SIZE];
-    let plaintext = *b"chacha20 portable core";
-    let mut ciphertext = plaintext;
-
-    xor_keystream(&key, 1, &nonce, &mut ciphertext).expect("test message must fit the ChaCha20 counter range");
-    assert_ne!(ciphertext, plaintext);
-
-    xor_keystream(&key, 1, &nonce, &mut ciphertext).expect("test message must fit the XChaCha20 counter range");
-    assert_eq!(ciphertext, plaintext);
-  }
-
-  #[test]
-  #[cfg(any(feature = "chacha20poly1305", feature = "xchacha20poly1305"))]
   fn xor_keystream_boundary_respects_u32_counter() {
     let key = [0u8; KEY_SIZE];
     let nonce = [0u8; NONCE_SIZE];

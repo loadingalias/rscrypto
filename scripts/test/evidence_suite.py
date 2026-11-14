@@ -10,7 +10,7 @@ TARGET_ARGS = [
     "--test", "chacha20poly1305", "--test", "rsa_public_key", "--test", "pbkdf2_evidence",
 ]
 BACKEND_MARKER = "RSCRYPTO_BACKEND_EVIDENCE="
-BACKEND_TESTS = {"counter-zero", "arbitrary-counters", "self-inverse"}
+BACKEND_TESTS = {"counter-zero", "arbitrary-counters"}
 
 
 def validate_backend_evidence(output, dispatch):

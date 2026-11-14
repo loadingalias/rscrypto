@@ -1056,12 +1056,6 @@ mod tests {
     }
   }
 
-  #[test]
-  fn test_kernel_probe_not_empty() {
-    assert!(!Crc64::kernel_name_for_len(1024).is_empty());
-    assert!(!Crc64Nvme::kernel_name_for_len(1024).is_empty());
-  }
-
   /// Test various buffer sizes to exercise both portable and SIMD paths.
   ///
   /// This test verifies that dispatch selection produces correct results

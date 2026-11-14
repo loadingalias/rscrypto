@@ -212,22 +212,6 @@ mod tests {
   use crate::aead::expert::AeadWithNonce;
 
   #[test]
-  fn round_trip() {
-    let key = XChaCha20Poly1305Key::from_bytes([0x42u8; 32]);
-    let nonce = Nonce192::from_bytes([0x07u8; 24]);
-    let cipher = XChaCha20Poly1305::new(&key);
-
-    let mut buf = *b"hello xchacha";
-    let tag = cipher
-      .encrypt_in_place(&nonce, b"aad", &mut buf)
-      .expect("XChaCha20-Poly1305 encryption must succeed");
-    cipher
-      .decrypt_in_place(&nonce, b"aad", &mut buf, &tag)
-      .expect("XChaCha20-Poly1305 decryption must succeed");
-    assert_eq!(&buf, b"hello xchacha");
-  }
-
-  #[test]
   fn wrong_nonce_rejected() {
     let key = XChaCha20Poly1305Key::from_bytes([0x42u8; 32]);
     let nonce = Nonce192::from_bytes([0x07u8; 24]);

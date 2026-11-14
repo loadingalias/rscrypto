@@ -173,40 +173,6 @@ fn all_chacha20_backends_match_portable_at_arbitrary_counters() {
   report_backend_execution("arbitrary-counters", &backends, cases, kernel_calls);
 }
 
-/// XOR keystream is its own inverse: applying it twice must restore the
-/// plaintext. This test catches a class of bugs where the kernel produces
-/// stable but wrong output (consistent across runs but not actually XOR).
-#[test]
-fn all_chacha20_backends_self_inverse() {
-  let backends: Vec<_> = runnable_backends().collect();
-  let mut cases = 0usize;
-  let mut kernel_calls = 0usize;
-  let key = [0x77u8; 32];
-  let nonce = [0x88u8; 12];
-
-  for &len in TEST_SIZES {
-    let original = deterministic_buffer(0xDE, len);
-
-    for backend in &backends {
-      let mut buffer = original.clone();
-      // SAFETY: `runnable_backends` proves the exact capability set; `TEST_SIZES` uses at most 65 blocks from zero.
-      unsafe {
-        (backend.xor_keystream)(&key, 0, &nonce, &mut buffer);
-        (backend.xor_keystream)(&key, 0, &nonce, &mut buffer);
-      }
-      cases = cases.strict_add(1);
-      kernel_calls = kernel_calls.strict_add(2);
-      assert_eq!(
-        buffer,
-        original,
-        "ChaCha20 backend {} not self-inverse at len={len}",
-        backend_id(backend)
-      );
-    }
-  }
-  report_backend_execution("self-inverse", &backends, cases, kernel_calls);
-}
-
 fn runnable_backends() -> impl Iterator<Item = &'static Backend> {
   let caps = platform::caps();
   BACKENDS

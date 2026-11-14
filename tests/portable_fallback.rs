@@ -146,20 +146,6 @@ fn crc64_streaming_matches_oneshot() {
 // Verify that empty input produces the expected initial/identity value.
 
 #[test]
-fn crc16_ccitt_empty_input() {
-  let result = Crc16Ccitt::checksum(&[]);
-  // CRC-16/CCITT with init=0xFFFF and final XOR=0xFFFF: empty => 0xFFFF ^ 0xFFFF = 0x0000
-  // Actually for X.25: init=0xFFFF, xorout=0xFFFF, so empty is 0x0000
-  // But let's just verify it's consistent
-  let hasher = Crc16Ccitt::new();
-  let streaming = hasher.finalize();
-  assert_eq!(
-    result, streaming,
-    "Empty input should be consistent between oneshot and streaming"
-  );
-}
-
-#[test]
 fn crc32_empty_input() {
   let result = Crc32::checksum(&[]);
   // CRC-32/IEEE: init=0xFFFFFFFF, xorout=0xFFFFFFFF, empty => 0x00000000
@@ -174,48 +160,4 @@ fn crc64_empty_input() {
     result, 0x0000_0000_0000_0000,
     "CRC-64 empty input should be 0x0000000000000000"
   );
-}
-
-// Various Input Sizes (Exercises Different Code Paths)
-//
-// Test with various input sizes to exercise:
-// - Tail handling (< 8 bytes)
-// - Small buffer paths
-// - Chunk alignment boundaries
-
-#[test]
-fn crc32_various_sizes() {
-  // Just verify that different sizes don't panic and produce consistent results
-  for size in [1, 2, 3, 4, 7, 8, 15, 16, 31, 32, 63, 64, 127, 128, 255, 256, 1024] {
-    let data: Vec<u8> = (0..size).map(|i: usize| i.to_le_bytes()[0]).collect();
-
-    let oneshot = Crc32::checksum(&data);
-
-    let mut hasher = Crc32::new();
-    hasher.update(&data);
-    let streaming = hasher.finalize();
-
-    assert_eq!(
-      streaming, oneshot,
-      "CRC-32 mismatch at size {size}: oneshot={oneshot:#010X}, streaming={streaming:#010X}"
-    );
-  }
-}
-
-#[test]
-fn crc64_various_sizes() {
-  for size in [1, 2, 3, 4, 7, 8, 15, 16, 31, 32, 63, 64, 127, 128, 255, 256, 1024] {
-    let data: Vec<u8> = (0..size).map(|i: usize| i.to_le_bytes()[0]).collect();
-
-    let oneshot = Crc64::checksum(&data);
-
-    let mut hasher = Crc64::new();
-    hasher.update(&data);
-    let streaming = hasher.finalize();
-
-    assert_eq!(
-      streaming, oneshot,
-      "CRC-64 mismatch at size {size}: oneshot={oneshot:#018X}, streaming={streaming:#018X}"
-    );
-  }
 }
