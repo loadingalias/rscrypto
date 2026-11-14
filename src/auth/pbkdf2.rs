@@ -1,9 +1,9 @@
 //! PBKDF2-HMAC-SHA2 key derivation (RFC 2898, NIST SP 800-132).
 //!
 //! Derives cryptographic keys from passwords using iterated HMAC-SHA256 or
-//! HMAC-SHA512. Each iteration runs directly against cached SHA compress
-//! function pointers with pre-computed HMAC prefix states — no per-iteration
-//! struct creation, dispatch, or `Drop` overhead.
+//! HMAC-SHA512. Each iteration runs directly against the cached SHA compression
+//! kernel with pre-computed HMAC prefix states — no per-iteration struct
+//! creation, dispatch, or `Drop` overhead.
 //!
 //! # Examples
 //!
@@ -368,10 +368,10 @@ macro_rules! define_pbkdf2_sha2 {
 
         let (inner_init, outer_init) = hmac_prefix_state(&mut key_block, |ipad, opad| {
           let mut inner_init = $h0;
-          compress(&mut inner_init, ipad);
+          compress.call(&mut inner_init, ipad);
 
           let mut outer_init = $h0;
-          compress(&mut outer_init, opad);
+          compress.call(&mut outer_init, opad);
 
           (inner_init, outer_init)
         });
@@ -767,7 +767,7 @@ fn sha256_oneshot_with_compress(data: &[u8], compress: Sha256CompressBlocksFn) -
   let mut state = SHA256_H0;
   let mut pos = 0usize;
   while pos.strict_add(SHA256_BLOCK_SIZE) <= data.len() {
-    compress(&mut state, &data[pos..pos.strict_add(SHA256_BLOCK_SIZE)]);
+    compress.call(&mut state, &data[pos..pos.strict_add(SHA256_BLOCK_SIZE)]);
     pos = pos.strict_add(SHA256_BLOCK_SIZE);
   }
   let mut block = [0u8; SHA256_BLOCK_SIZE];
@@ -775,11 +775,11 @@ fn sha256_oneshot_with_compress(data: &[u8], compress: Sha256CompressBlocksFn) -
   block[..tail].copy_from_slice(&data[pos..]);
   block[tail] = 0x80;
   if tail >= 56 {
-    compress(&mut state, &block);
+    compress.call(&mut state, &block);
     block = [0u8; SHA256_BLOCK_SIZE];
   }
   block[56..64].copy_from_slice(&(data.len() as u64).strict_mul(8).to_be_bytes());
-  compress(&mut state, &block);
+  compress.call(&mut state, &block);
   let mut out = [0u8; SHA256_OUTPUT_SIZE];
   let (chunks, _) = out.as_chunks_mut::<4>();
   for (chunk, &word) in chunks.iter_mut().zip(state.iter()) {
@@ -960,7 +960,7 @@ fn pbkdf2_sha256_f(
     block[salt.len()..pos].copy_from_slice(&block_index.to_be_bytes());
     block[pos] = 0x80;
     block[56..SHA256_BLOCK_SIZE].copy_from_slice(&total_inner.strict_mul(8).to_be_bytes());
-    compress(&mut state, &block);
+    compress.call(&mut state, &block);
   } else {
     let mut pos = 0usize;
 
@@ -974,7 +974,7 @@ fn pbkdf2_sha256_f(
       pos = pos.strict_add(take);
       salt_off = salt_off.strict_add(take);
       if pos == SHA256_BLOCK_SIZE {
-        compress(&mut state, &block);
+        compress.call(&mut state, &block);
         block = [0u8; SHA256_BLOCK_SIZE];
         pos = 0;
       }
@@ -985,7 +985,7 @@ fn pbkdf2_sha256_f(
       block[pos] = b;
       pos = pos.strict_add(1);
       if pos == SHA256_BLOCK_SIZE {
-        compress(&mut state, &block);
+        compress.call(&mut state, &block);
         block = [0u8; SHA256_BLOCK_SIZE];
         pos = 0;
       }
@@ -994,11 +994,11 @@ fn pbkdf2_sha256_f(
     // SHA-256 padding
     block[pos] = 0x80;
     if pos.strict_add(1) > 56 {
-      compress(&mut state, &block);
+      compress.call(&mut state, &block);
       block = [0u8; SHA256_BLOCK_SIZE];
     }
     block[56..SHA256_BLOCK_SIZE].copy_from_slice(&total_inner.strict_mul(8).to_be_bytes());
-    compress(&mut state, &block);
+    compress.call(&mut state, &block);
   }
 
   // Outer hash of U1: single block
@@ -1009,7 +1009,7 @@ fn pbkdf2_sha256_f(
   outer_block[56..SHA256_BLOCK_SIZE].copy_from_slice(&768u64.to_be_bytes());
 
   state = *outer_init;
-  compress(&mut state, &outer_block);
+  compress.call(&mut state, &outer_block);
   u_words = state;
   result_words = u_words;
 
@@ -1034,14 +1034,14 @@ fn pbkdf2_sha256_f(
     // Inner: compress(inner_init, U_{j-1} || padding)
     write_u32x8_be(&mut inner_block[..SHA256_OUTPUT_SIZE], &u_words);
     state = *inner_init;
-    compress(&mut state, &inner_block);
+    compress.call(&mut state, &inner_block);
 
     // Serialize inner hash directly into outer block
     write_u32x8_be(&mut outer_block[..SHA256_OUTPUT_SIZE], &state);
 
     // Outer: compress(outer_init, inner_hash || padding)
     state = *outer_init;
-    compress(&mut state, &outer_block);
+    compress.call(&mut state, &outer_block);
 
     u_words = state;
 
@@ -1107,11 +1107,11 @@ fn pbkdf2_sha256_iter1(
     block[index_pos..pad_pos].copy_from_slice(&block_index.to_be_bytes());
 
     state = *inner_init;
-    compress(&mut state, &block);
+    compress.call(&mut state, &block);
 
     write_u32x8_be(&mut outer_block[..SHA256_OUTPUT_SIZE], &state);
     state = *outer_init;
-    compress(&mut state, &outer_block);
+    compress.call(&mut state, &outer_block);
 
     write_u32x8_be(chunk, &state);
   }
@@ -1120,11 +1120,11 @@ fn pbkdf2_sha256_iter1(
     block[index_pos..pad_pos].copy_from_slice(&num_blocks.to_be_bytes());
 
     state = *inner_init;
-    compress(&mut state, &block);
+    compress.call(&mut state, &block);
 
     write_u32x8_be(&mut outer_block[..SHA256_OUTPUT_SIZE], &state);
     state = *outer_init;
-    compress(&mut state, &outer_block);
+    compress.call(&mut state, &outer_block);
 
     let mut block_out = [0u8; SHA256_OUTPUT_SIZE];
     write_u32x8_be(&mut block_out, &state);
@@ -1194,7 +1194,7 @@ fn sha512_oneshot_with_compress(data: &[u8], compress: Sha512CompressBlocksFn) -
   let mut state = SHA512_H0;
   let mut pos = 0usize;
   while pos.strict_add(SHA512_BLOCK_SIZE) <= data.len() {
-    compress(&mut state, &data[pos..pos.strict_add(SHA512_BLOCK_SIZE)]);
+    compress.call(&mut state, &data[pos..pos.strict_add(SHA512_BLOCK_SIZE)]);
     pos = pos.strict_add(SHA512_BLOCK_SIZE);
   }
   let mut block = [0u8; SHA512_BLOCK_SIZE];
@@ -1202,11 +1202,11 @@ fn sha512_oneshot_with_compress(data: &[u8], compress: Sha512CompressBlocksFn) -
   block[..tail].copy_from_slice(&data[pos..]);
   block[tail] = 0x80;
   if tail >= 112 {
-    compress(&mut state, &block);
+    compress.call(&mut state, &block);
     block = [0u8; SHA512_BLOCK_SIZE];
   }
   block[112..128].copy_from_slice(&(data.len() as u128).strict_mul(8).to_be_bytes());
-  compress(&mut state, &block);
+  compress.call(&mut state, &block);
   let mut out = [0u8; SHA512_OUTPUT_SIZE];
   let (chunks, _) = out.as_chunks_mut::<8>();
   for (chunk, &word) in chunks.iter_mut().zip(state.iter()) {
@@ -1245,7 +1245,7 @@ fn pbkdf2_sha512_f(
     block[salt.len()..pos].copy_from_slice(&block_index.to_be_bytes());
     block[pos] = 0x80;
     block[112..SHA512_BLOCK_SIZE].copy_from_slice(&total_inner.strict_mul(8).to_be_bytes());
-    compress(&mut state, &block);
+    compress.call(&mut state, &block);
   } else {
     let mut pos = 0usize;
 
@@ -1259,7 +1259,7 @@ fn pbkdf2_sha512_f(
       pos = pos.strict_add(take);
       salt_off = salt_off.strict_add(take);
       if pos == SHA512_BLOCK_SIZE {
-        compress(&mut state, &block);
+        compress.call(&mut state, &block);
         block = [0u8; SHA512_BLOCK_SIZE];
         pos = 0;
       }
@@ -1270,7 +1270,7 @@ fn pbkdf2_sha512_f(
       block[pos] = b;
       pos = pos.strict_add(1);
       if pos == SHA512_BLOCK_SIZE {
-        compress(&mut state, &block);
+        compress.call(&mut state, &block);
         block = [0u8; SHA512_BLOCK_SIZE];
         pos = 0;
       }
@@ -1279,11 +1279,11 @@ fn pbkdf2_sha512_f(
     // SHA-512 padding (16-byte length field)
     block[pos] = 0x80;
     if pos.strict_add(1) > 112 {
-      compress(&mut state, &block);
+      compress.call(&mut state, &block);
       block = [0u8; SHA512_BLOCK_SIZE];
     }
     block[112..SHA512_BLOCK_SIZE].copy_from_slice(&total_inner.strict_mul(8).to_be_bytes());
-    compress(&mut state, &block);
+    compress.call(&mut state, &block);
   }
 
   // Outer hash of U1: single block
@@ -1294,7 +1294,7 @@ fn pbkdf2_sha512_f(
   outer_block[112..SHA512_BLOCK_SIZE].copy_from_slice(&1536u128.to_be_bytes());
 
   state = *outer_init;
-  compress(&mut state, &outer_block);
+  compress.call(&mut state, &outer_block);
   u_words = state;
   result_words = u_words;
 
@@ -1306,12 +1306,12 @@ fn pbkdf2_sha512_f(
   for _ in 1..iterations {
     write_u64x8_be(&mut inner_block[..SHA512_OUTPUT_SIZE], &u_words);
     state = *inner_init;
-    compress(&mut state, &inner_block);
+    compress.call(&mut state, &inner_block);
 
     write_u64x8_be(&mut outer_block[..SHA512_OUTPUT_SIZE], &state);
 
     state = *outer_init;
-    compress(&mut state, &outer_block);
+    compress.call(&mut state, &outer_block);
 
     u_words = state;
 
@@ -1375,11 +1375,11 @@ fn pbkdf2_sha512_iter1(
     block[index_pos..pad_pos].copy_from_slice(&block_index.to_be_bytes());
 
     state = *inner_init;
-    compress(&mut state, &block);
+    compress.call(&mut state, &block);
 
     write_u64x8_be(&mut outer_block[..SHA512_OUTPUT_SIZE], &state);
     state = *outer_init;
-    compress(&mut state, &outer_block);
+    compress.call(&mut state, &outer_block);
 
     write_u64x8_be(chunk, &state);
   }
@@ -1388,11 +1388,11 @@ fn pbkdf2_sha512_iter1(
     block[index_pos..pad_pos].copy_from_slice(&num_blocks.to_be_bytes());
 
     state = *inner_init;
-    compress(&mut state, &block);
+    compress.call(&mut state, &block);
 
     write_u64x8_be(&mut outer_block[..SHA512_OUTPUT_SIZE], &state);
     state = *outer_init;
-    compress(&mut state, &outer_block);
+    compress.call(&mut state, &outer_block);
 
     let mut block_out = [0u8; SHA512_OUTPUT_SIZE];
     write_u64x8_be(&mut block_out, &state);
@@ -1748,7 +1748,8 @@ mod tests {
       Err(Pbkdf2Error::ExcessiveIterations)
     );
 
-    let sha256 = Pbkdf2Sha256::new_with_compress_for_test(b"pw", counting_sha256_compress);
+    let sha256 =
+      Pbkdf2Sha256::new_with_compress_for_test(b"pw", Sha256CompressBlocksFn::Test(counting_sha256_compress));
     SHA256_VERIFY_BLOCKS.store(0, Ordering::Relaxed);
     assert!(
       sha256
@@ -1782,7 +1783,8 @@ mod tests {
       Err(Pbkdf2Error::ExcessiveIterations)
     );
 
-    let sha512 = Pbkdf2Sha512::new_with_compress_for_test(b"pw", counting_sha512_compress);
+    let sha512 =
+      Pbkdf2Sha512::new_with_compress_for_test(b"pw", Sha512CompressBlocksFn::Test(counting_sha512_compress));
     SHA512_VERIFY_BLOCKS.store(0, Ordering::Relaxed);
     assert!(
       sha512
@@ -1803,7 +1805,7 @@ mod tests {
     let policy = Pbkdf2VerifyPolicy::new(1, 0);
 
     macro_rules! assert_block_work_limit {
-      ($pbkdf2:ty, $compress:path, $counter:ident, $output_size:expr) => {{
+      ($pbkdf2:ty, $compress:expr, $counter:ident, $output_size:expr) => {{
         // Three iterations over two blocks is six units of work.
         let max_work = 6;
         let mut at_limit = vec![0u8; 2 * $output_size];
@@ -1852,13 +1854,13 @@ mod tests {
 
     assert_block_work_limit!(
       Pbkdf2Sha256,
-      counting_sha256_compress,
+      Sha256CompressBlocksFn::Test(counting_sha256_compress),
       SHA256_VERIFY_BLOCKS,
       Pbkdf2Sha256::OUTPUT_SIZE
     );
     assert_block_work_limit!(
       Pbkdf2Sha512,
-      counting_sha512_compress,
+      Sha512CompressBlocksFn::Test(counting_sha512_compress),
       SHA512_VERIFY_BLOCKS,
       Pbkdf2Sha512::OUTPUT_SIZE
     );
@@ -2034,12 +2036,12 @@ mod tests {
 
   fn counting_sha256_compress(state: &mut [u32; 8], blocks: &[u8]) {
     SHA256_VERIFY_BLOCKS.fetch_add(blocks.len() / SHA256_BLOCK_SIZE, Ordering::Relaxed);
-    sha256_compress_blocks_fn(Sha256KernelId::Portable)(state, blocks);
+    sha256_compress_blocks_fn(Sha256KernelId::Portable).call(state, blocks);
   }
 
   fn counting_sha512_compress(state: &mut [u64; 8], blocks: &[u8]) {
     SHA512_VERIFY_BLOCKS.fetch_add(blocks.len() / SHA512_BLOCK_SIZE, Ordering::Relaxed);
-    sha512_compress_blocks_fn(Sha512KernelId::Portable)(state, blocks);
+    sha512_compress_blocks_fn(Sha512KernelId::Portable).call(state, blocks);
   }
 
   fn counted_sha256_verify(
@@ -2164,7 +2166,8 @@ mod tests {
   fn sha256_verify_keeps_same_compress_work_for_match_and_mismatch_positions() {
     let password = [0x11; 89];
     let salt = [0x22; 200];
-    let state = Pbkdf2Sha256::new_with_compress_for_test(&password, counting_sha256_compress);
+    let state =
+      Pbkdf2Sha256::new_with_compress_for_test(&password, Sha256CompressBlocksFn::Test(counting_sha256_compress));
     #[cfg(not(miri))]
     let output_lengths = 1..=96;
     #[cfg(miri)]
@@ -2212,7 +2215,8 @@ mod tests {
   fn sha512_verify_keeps_same_compress_work_for_match_and_mismatch_positions() {
     let password = [0x44; 161];
     let salt = [0x55; 260];
-    let state = Pbkdf2Sha512::new_with_compress_for_test(&password, counting_sha512_compress);
+    let state =
+      Pbkdf2Sha512::new_with_compress_for_test(&password, Sha512CompressBlocksFn::Test(counting_sha512_compress));
     #[cfg(not(miri))]
     let output_lengths = 1..=192;
     #[cfg(miri)]

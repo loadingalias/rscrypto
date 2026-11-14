@@ -517,7 +517,7 @@ impl Sha256 {
     #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     {
       // Check this before `COMPILE_TIME_HW`: SPR + `target-cpu=native` otherwise
-      // keeps streaming on the slow function-pointer wrapper shape.
+      // keeps streaming on the slower out-of-line kernel wrapper.
       if !cfg!(feature = "portable-only")
         && (self.update_mode == Sha256UpdateMode::X86ShaDirect || self.try_enable_x86_sha_direct_update())
       {
@@ -545,7 +545,7 @@ impl Sha256 {
 
   #[inline]
   fn update_with(&mut self, data: &[u8], compress_blocks: CompressBlocksFn) {
-    self.update_with_fn(data, compress_blocks);
+    self.update_with_fn(data, |state, blocks| compress_blocks.call(state, blocks));
   }
 
   #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
@@ -684,7 +684,7 @@ impl Sha256 {
 
     if block_len > 56 {
       block[block_len..].fill(0);
-      compress_blocks(state, block);
+      compress_blocks.call(state, block);
       *block = [0u8; BLOCK_LEN];
       block_len = 0;
     }
@@ -693,7 +693,7 @@ impl Sha256 {
 
     let bit_len = total_len.strict_mul(8);
     block[56..64].copy_from_slice(&bit_len.to_be_bytes());
-    compress_blocks(state, block);
+    compress_blocks.call(state, block);
   }
 
   #[inline]

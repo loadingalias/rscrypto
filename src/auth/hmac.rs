@@ -222,8 +222,8 @@ impl HmacSha256 {
   /// HKDF-Extract writes its PRK through this path.
   ///
   /// For data <= 256 B the entire padded inner message is built on the stack
-  /// and compressed in one call, eliminating per-call overhead (function-pointer
-  /// dispatch, state save/restore) that dominates on fast SHA2-CE cores.
+  /// and compressed in one call, eliminating per-call overhead (kernel dispatch,
+  /// state save/restore) that dominates on fast SHA2-CE cores.
   /// The outer hash is always merged into a single 128-byte (2-block) call, and
   /// zeroization is batched under a single compiler fence.
   #[inline]
@@ -269,7 +269,7 @@ impl HmacSha256 {
           inner_buf[SHA256_BLOCK_SIZE..data_end].copy_from_slice(data);
           inner_buf[data_end] = 0x80;
           inner_buf[padded.strict_sub(8)..padded].copy_from_slice(&total_inner_bits.to_be_bytes());
-          compress(&mut state, &inner_buf);
+          compress.call(&mut state, &inner_buf);
           ct::zeroize_no_fence(&mut inner_buf);
         }};
       }
@@ -289,11 +289,11 @@ impl HmacSha256 {
         }
       }
     } else {
-      compress(&mut state, &ipad);
+      compress.call(&mut state, &ipad);
 
       let full_len = data.len().strict_sub(data.len() % SHA256_BLOCK_SIZE);
       if full_len != 0 {
-        compress(&mut state, &data[..full_len]);
+        compress.call(&mut state, &data[..full_len]);
       }
       let rest = &data[full_len..];
 
@@ -301,11 +301,11 @@ impl HmacSha256 {
       inner_buf[..rest.len()].copy_from_slice(rest);
       inner_buf[rest.len()] = 0x80;
       if rest.len() >= 56 {
-        compress(&mut state, &inner_buf[..SHA256_BLOCK_SIZE]);
+        compress.call(&mut state, &inner_buf[..SHA256_BLOCK_SIZE]);
         inner_buf[..SHA256_BLOCK_SIZE].fill(0);
       }
       inner_buf[56..SHA256_BLOCK_SIZE].copy_from_slice(&total_inner_bits.to_be_bytes());
-      compress(&mut state, &inner_buf[..SHA256_BLOCK_SIZE]);
+      compress.call(&mut state, &inner_buf[..SHA256_BLOCK_SIZE]);
       ct::zeroize_no_fence(&mut inner_buf);
     }
 
@@ -319,7 +319,7 @@ impl HmacSha256 {
     outer[120..128].copy_from_slice(&768u64.to_be_bytes());
 
     state = SHA256_H0;
-    compress(&mut state, &outer);
+    compress.call(&mut state, &outer);
 
     for (chunk, &word) in tag.as_chunks_mut::<4>().0.iter_mut().zip(state.iter()) {
       chunk.copy_from_slice(&word.to_be_bytes());
@@ -602,7 +602,7 @@ impl HmacSha384 {
           inner_buf[SHA512_FAMILY_BLOCK_SIZE..data_end].copy_from_slice(data);
           inner_buf[data_end] = 0x80;
           inner_buf[padded.strict_sub(8)..padded].copy_from_slice(&total_inner_bits.to_be_bytes());
-          compress(&mut state, &inner_buf);
+          compress.call(&mut state, &inner_buf);
           ct::zeroize_no_fence(&mut inner_buf);
         }};
       }
@@ -620,11 +620,11 @@ impl HmacSha384 {
         }
       }
     } else {
-      compress(&mut state, &ipad);
+      compress.call(&mut state, &ipad);
 
       let full_len = data.len().strict_sub(data.len() % SHA512_FAMILY_BLOCK_SIZE);
       if full_len != 0 {
-        compress(&mut state, &data[..full_len]);
+        compress.call(&mut state, &data[..full_len]);
       }
       let rest = &data[full_len..];
 
@@ -632,11 +632,11 @@ impl HmacSha384 {
       inner_buf[..rest.len()].copy_from_slice(rest);
       inner_buf[rest.len()] = 0x80;
       if rest.len() >= 112 {
-        compress(&mut state, &inner_buf[..SHA512_FAMILY_BLOCK_SIZE]);
+        compress.call(&mut state, &inner_buf[..SHA512_FAMILY_BLOCK_SIZE]);
         inner_buf[..SHA512_FAMILY_BLOCK_SIZE].fill(0);
       }
       inner_buf[120..SHA512_FAMILY_BLOCK_SIZE].copy_from_slice(&total_inner_bits.to_be_bytes());
-      compress(&mut state, &inner_buf[..SHA512_FAMILY_BLOCK_SIZE]);
+      compress.call(&mut state, &inner_buf[..SHA512_FAMILY_BLOCK_SIZE]);
       ct::zeroize_no_fence(&mut inner_buf);
     }
 
@@ -650,7 +650,7 @@ impl HmacSha384 {
     outer[248..256].copy_from_slice(&1408u64.to_be_bytes());
 
     state = SHA384_H0;
-    compress(&mut state, &outer);
+    compress.call(&mut state, &outer);
 
     for (chunk, &word) in tag.as_chunks_mut::<8>().0.iter_mut().zip(state.iter()) {
       chunk.copy_from_slice(&word.to_be_bytes());
@@ -879,7 +879,7 @@ impl HmacSha512 {
           inner_buf[SHA512_FAMILY_BLOCK_SIZE..data_end].copy_from_slice(data);
           inner_buf[data_end] = 0x80;
           inner_buf[padded.strict_sub(8)..padded].copy_from_slice(&total_inner_bits.to_be_bytes());
-          compress(&mut state, &inner_buf);
+          compress.call(&mut state, &inner_buf);
           ct::zeroize_no_fence(&mut inner_buf);
         }};
       }
@@ -897,11 +897,11 @@ impl HmacSha512 {
         }
       }
     } else {
-      compress(&mut state, &ipad);
+      compress.call(&mut state, &ipad);
 
       let full_len = data.len().strict_sub(data.len() % SHA512_FAMILY_BLOCK_SIZE);
       if full_len != 0 {
-        compress(&mut state, &data[..full_len]);
+        compress.call(&mut state, &data[..full_len]);
       }
       let rest = &data[full_len..];
 
@@ -909,11 +909,11 @@ impl HmacSha512 {
       inner_buf[..rest.len()].copy_from_slice(rest);
       inner_buf[rest.len()] = 0x80;
       if rest.len() >= 112 {
-        compress(&mut state, &inner_buf[..SHA512_FAMILY_BLOCK_SIZE]);
+        compress.call(&mut state, &inner_buf[..SHA512_FAMILY_BLOCK_SIZE]);
         inner_buf[..SHA512_FAMILY_BLOCK_SIZE].fill(0);
       }
       inner_buf[120..SHA512_FAMILY_BLOCK_SIZE].copy_from_slice(&total_inner_bits.to_be_bytes());
-      compress(&mut state, &inner_buf[..SHA512_FAMILY_BLOCK_SIZE]);
+      compress.call(&mut state, &inner_buf[..SHA512_FAMILY_BLOCK_SIZE]);
       ct::zeroize_no_fence(&mut inner_buf);
     }
 
@@ -927,7 +927,7 @@ impl HmacSha512 {
     outer[248..256].copy_from_slice(&1536u64.to_be_bytes());
 
     state = SHA512_H0;
-    compress(&mut state, &outer);
+    compress.call(&mut state, &outer);
 
     for (chunk, &word) in tag.as_chunks_mut::<8>().0.iter_mut().zip(state.iter()) {
       chunk.copy_from_slice(&word.to_be_bytes());

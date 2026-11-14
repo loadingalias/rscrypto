@@ -61,6 +61,32 @@ pub use sha512::Sha512;
 #[cfg(feature = "sha2")]
 pub use sha512_256::Sha512_256;
 
+/// An operation that uses one SHA-2 compression function.
+///
+/// `CompressBlocksFn::with` of SHA-256 and SHA-512 runs it with the function
+/// item of the selected kernel. Each kernel thus gets its own copy, and each
+/// compression in it is a direct call.
+#[cfg(feature = "sha2")]
+pub(crate) trait WithCompress<S> {
+  type Output;
+
+  fn run(self, compress: impl Fn(&mut S, &[u8])) -> Self::Output;
+}
+
+/// Compress the whole blocks of `.1` into the state `.0`.
+#[cfg(feature = "sha2")]
+pub(crate) struct Compress<'a, S>(pub(crate) &'a mut S, pub(crate) &'a [u8]);
+
+#[cfg(feature = "sha2")]
+impl<S> WithCompress<S> for Compress<'_, S> {
+  type Output = ();
+
+  #[inline(always)]
+  fn run(self, compress: impl Fn(&mut S, &[u8])) {
+    compress(self.0, self.1);
+  }
+}
+
 /// Invalid BLAKE2 key, parameter, or output length.
 #[cfg(any(feature = "blake2b", feature = "blake2s"))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

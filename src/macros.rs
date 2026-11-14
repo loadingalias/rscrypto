@@ -152,7 +152,7 @@ macro_rules! define_sha_family_dispatch {
     required_caps: $required_caps:path,
     runtime_kernel: $runtime_kernel:path,
     output_len: $output_len:expr,
-    word_bytes: $word_bytes:expr,
+    word: $word:ty,
     total_bits_ty: $total_bits_ty:ty,
     length_offset: $length_offset:expr,
     h0: $h0:path,
@@ -214,34 +214,49 @@ macro_rules! define_sha_family_dispatch {
       digest_oneshot(data, active().compress_blocks)
     }
 
+    /// The one-shot digest of `.0`.
+    struct OneShot<'a>(&'a [u8]);
+
+    impl crate::hashes::crypto::WithCompress<[$word; 8]> for OneShot<'_> {
+      type Output = [u8; $output_len];
+
+      #[inline(always)]
+      fn run(self, compress: impl Fn(&mut [$word; 8], &[u8])) -> [u8; $output_len] {
+        let data = self.0;
+        let mut state = $h0;
+
+        let (blocks, rest) = data.as_chunks::<BLOCK_LEN>();
+        if !blocks.is_empty() {
+          compress(&mut state, &data[..blocks.len().strict_mul(BLOCK_LEN)]);
+        }
+
+        let total_bits = (data.len() as $total_bits_ty).strict_mul(8);
+
+        let mut block = [0u8; BLOCK_LEN];
+        block[..rest.len()].copy_from_slice(rest);
+        block[rest.len()] = 0x80;
+
+        if rest.len() >= $length_offset {
+          compress(&mut state, &block);
+          block = [0u8; BLOCK_LEN];
+        }
+
+        block[$length_offset..BLOCK_LEN].copy_from_slice(&total_bits.to_be_bytes());
+        compress(&mut state, &block);
+
+        let mut out = [0u8; $output_len];
+        for (chunk, &word) in out.chunks_exact_mut(size_of::<$word>()).zip(state.iter()) {
+          chunk.copy_from_slice(&word.to_be_bytes());
+        }
+        out
+      }
+    }
+
+    /// Select the kernel once, so each compression of the digest is one
+    /// direct call.
     #[inline]
     pub(super) fn digest_oneshot(data: &[u8], compress_blocks: $compress_fn_ty) -> [u8; $output_len] {
-      let mut state = $h0;
-
-      let (blocks, rest) = data.as_chunks::<BLOCK_LEN>();
-      if !blocks.is_empty() {
-        compress_blocks(&mut state, &data[..blocks.len().strict_mul(BLOCK_LEN)]);
-      }
-
-      let total_bits = (data.len() as $total_bits_ty).strict_mul(8);
-
-      let mut block = [0u8; BLOCK_LEN];
-      block[..rest.len()].copy_from_slice(rest);
-      block[rest.len()] = 0x80;
-
-      if rest.len() >= $length_offset {
-        compress_blocks(&mut state, &block);
-        block = [0u8; BLOCK_LEN];
-      }
-
-      block[$length_offset..BLOCK_LEN].copy_from_slice(&total_bits.to_be_bytes());
-      compress_blocks(&mut state, &block);
-
-      let mut out = [0u8; $output_len];
-      for (chunk, &word) in out.chunks_exact_mut($word_bytes).zip(state.iter()) {
-        chunk.copy_from_slice(&word.to_be_bytes());
-      }
-      out
+      compress_blocks.with(OneShot(data))
     }
 
     #[inline]

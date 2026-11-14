@@ -89,7 +89,7 @@ fn compress_hkdf_sha256_block(
 )))]
 #[inline(always)]
 fn compress_hkdf_sha256_block(compress: Sha256CompressBlocksFn, state: &mut [u32; 8], block: &[u8; SHA256_BLOCK_SIZE]) {
-  compress(state, block);
+  compress.call(state, block);
 }
 
 const HMAC_IPAD: u8 = 0x36;
@@ -105,7 +105,7 @@ const HMAC_OPAD: u8 = 0x5C;
 fn with_hmac_prefix_states<W: ct::WordZero, const KEY_SIZE: usize, const BLOCK_SIZE: usize, T>(
   key: &[u8; KEY_SIZE],
   h0: [W; 8],
-  compress: fn(&mut [W; 8], &[u8]),
+  compress: impl Fn(&mut [W; 8], &[u8]),
   build: impl FnOnce(&[W; 8], &[W; 8]) -> T,
 ) -> T {
   const { assert!(KEY_SIZE <= BLOCK_SIZE, "an HKDF PRK fits in one HMAC block") };
@@ -240,12 +240,17 @@ impl HkdfSha256 {
   /// Store `prk` and precompute its HMAC prefixes with `compress`.
   #[inline(always)]
   fn from_prk_with(prk: &[u8; SHA256_OUTPUT_SIZE], compress: Sha256CompressBlocksFn) -> Self {
-    with_hmac_prefix_states::<_, _, SHA256_BLOCK_SIZE, _>(prk, SHA256_H0, compress, |inner_init, outer_init| Self {
-      prk: *prk,
-      inner_init: *inner_init,
-      outer_init: *outer_init,
-      compress,
-    })
+    with_hmac_prefix_states::<_, _, SHA256_BLOCK_SIZE, _>(
+      prk,
+      SHA256_H0,
+      |state, block| compress.call(state, block),
+      |inner_init, outer_init| Self {
+        prk: *prk,
+        inner_init: *inner_init,
+        outer_init: *outer_init,
+        compress,
+      },
+    )
   }
 
   /// Expand the stored pseudorandom key into `okm`.
@@ -538,12 +543,17 @@ impl HkdfSha384 {
   /// Store `prk` and precompute its HMAC prefixes with `compress`.
   #[inline(always)]
   fn from_prk_with(prk: &[u8; SHA384_OUTPUT_SIZE], compress: Sha384CompressBlocksFn) -> Self {
-    with_hmac_prefix_states::<_, _, SHA384_BLOCK_SIZE, _>(prk, SHA384_H0, compress, |inner_init, outer_init| Self {
-      prk: *prk,
-      inner_init: *inner_init,
-      outer_init: *outer_init,
-      compress,
-    })
+    with_hmac_prefix_states::<_, _, SHA384_BLOCK_SIZE, _>(
+      prk,
+      SHA384_H0,
+      |state, block| compress.call(state, block),
+      |inner_init, outer_init| Self {
+        prk: *prk,
+        inner_init: *inner_init,
+        outer_init: *outer_init,
+        compress,
+      },
+    )
   }
 
   /// Expand the stored pseudorandom key into `okm`.
@@ -779,12 +789,17 @@ impl HkdfSha512 {
   /// Store `prk` and precompute its HMAC prefixes with `compress`.
   #[inline(always)]
   fn from_prk_with(prk: &[u8; SHA512_OUTPUT_SIZE], compress: Sha512CompressBlocksFn) -> Self {
-    with_hmac_prefix_states::<_, _, SHA512_BLOCK_SIZE, _>(prk, SHA512_H0, compress, |inner_init, outer_init| Self {
-      prk: *prk,
-      inner_init: *inner_init,
-      outer_init: *outer_init,
-      compress,
-    })
+    with_hmac_prefix_states::<_, _, SHA512_BLOCK_SIZE, _>(
+      prk,
+      SHA512_H0,
+      |state, block| compress.call(state, block),
+      |inner_init, outer_init| Self {
+        prk: *prk,
+        inner_init: *inner_init,
+        outer_init: *outer_init,
+        compress,
+      },
+    )
   }
 
   /// Expand the stored pseudorandom key into `okm`.
@@ -1040,7 +1055,7 @@ fn expand_hmac_sha384_inner(
       pos = pos.strict_add(take);
       part_off = part_off.strict_add(take);
       if pos == SHA384_BLOCK_SIZE {
-        compress(state, block);
+        compress.call(state, block);
         block.fill(0);
         pos = 0;
       }
@@ -1050,18 +1065,18 @@ fn expand_hmac_sha384_inner(
   block[pos] = counter;
   pos = pos.strict_add(1);
   if pos == SHA384_BLOCK_SIZE {
-    compress(state, block);
+    compress.call(state, block);
     block.fill(0);
     pos = 0;
   }
 
   block[pos] = 0x80;
   if pos.strict_add(1) > 112 {
-    compress(state, block);
+    compress.call(state, block);
     block.fill(0);
   }
   block[112..SHA384_BLOCK_SIZE].copy_from_slice(&total_bytes.strict_mul(8).to_be_bytes());
-  compress(state, block);
+  compress.call(state, block);
 
   write_u64x6_be(&mut outer_block[..SHA384_OUTPUT_SIZE], state);
 }
@@ -1075,7 +1090,7 @@ fn expand_hmac_sha384_outer(
   out: &mut [u8; SHA384_OUTPUT_SIZE],
 ) {
   *state = *outer_init;
-  compress(state, outer_block);
+  compress.call(state, outer_block);
 
   write_u64x6_be(out, state);
 }
@@ -1111,7 +1126,7 @@ fn expand_hmac_sha512_inner(
     pos = pos.strict_add(take);
     info_off = info_off.strict_add(take);
     if pos == SHA512_BLOCK_SIZE {
-      compress(state, block);
+      compress.call(state, block);
       block.fill(0);
       pos = 0;
     }
@@ -1120,18 +1135,18 @@ fn expand_hmac_sha512_inner(
   block[pos] = counter;
   pos = pos.strict_add(1);
   if pos == SHA512_BLOCK_SIZE {
-    compress(state, block);
+    compress.call(state, block);
     block.fill(0);
     pos = 0;
   }
 
   block[pos] = 0x80;
   if pos.strict_add(1) > 112 {
-    compress(state, block);
+    compress.call(state, block);
     block.fill(0);
   }
   block[112..SHA512_BLOCK_SIZE].copy_from_slice(&total_bytes.strict_mul(8).to_be_bytes());
-  compress(state, block);
+  compress.call(state, block);
 
   write_u64x8_be(&mut outer_block[..SHA512_OUTPUT_SIZE], state);
 }
@@ -1145,7 +1160,7 @@ fn expand_hmac_sha512_outer(
   out: &mut [u8; SHA512_OUTPUT_SIZE],
 ) {
   *state = *outer_init;
-  compress(state, outer_block);
+  compress.call(state, outer_block);
 
   write_u64x8_be(out, state);
 }

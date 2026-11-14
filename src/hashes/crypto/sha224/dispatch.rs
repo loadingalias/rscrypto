@@ -11,7 +11,7 @@ define_sha_family_dispatch! {
   required_caps: required_caps,
   runtime_kernel: super::dispatch_policy::select_runtime_kernel,
   output_len: 28,
-  word_bytes: 4,
+  word: u32,
   total_bits_ty: u64,
   length_offset: 56,
   h0: super::H0,

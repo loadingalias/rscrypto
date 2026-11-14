@@ -85,7 +85,7 @@ impl Default for Sha512_256 {
       block: [0u8; BLOCK_LEN],
       block_len: 0,
       bytes_hashed: 0,
-      compress_blocks: Sha512::compress_blocks_portable,
+      compress_blocks: kernels::compress_blocks_fn(kernels::Sha512_256KernelId::Portable),
       dispatch_initialized: false,
     }
   }
@@ -114,7 +114,7 @@ impl Sha512_256 {
       data = &data[take..];
 
       if self.block_len == BLOCK_LEN {
-        compress_blocks(&mut self.state, &self.block);
+        compress_blocks.call(&mut self.state, &self.block);
         self.bytes_hashed = self.bytes_hashed.strict_add(BLOCK_LEN as u128);
         self.block_len = 0;
       }
@@ -123,7 +123,7 @@ impl Sha512_256 {
     let full_len = data.len().strict_sub(data.len() % BLOCK_LEN);
     if full_len != 0 {
       let (blocks, rest) = data.split_at(full_len);
-      compress_blocks(&mut self.state, blocks);
+      compress_blocks.call(&mut self.state, blocks);
       self.bytes_hashed = self.bytes_hashed.strict_add(blocks.len() as u128);
       data = rest;
     }

@@ -1,7 +1,7 @@
 // SHA-512/256 uses SHA-512's compression function (FIPS 180-4 SS6.4).
 // Only H0 and output truncation differ.
 pub(crate) use crate::hashes::crypto::sha512::kernels::CompressBlocksFn;
-use crate::{hashes::crypto::sha512::Sha512, platform::Caps};
+use crate::platform::Caps;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
@@ -80,42 +80,8 @@ const fn to_sha512_kernel_id(id: Sha512_256KernelId) -> crate::hashes::crypto::s
 
 // Delegate to SHA-512 kernels — identical compression function.
 #[must_use]
-pub(crate) fn compress_blocks_fn(id: Sha512_256KernelId) -> CompressBlocksFn {
-  match id {
-    Sha512_256KernelId::Portable => Sha512::compress_blocks_portable,
-    #[cfg(target_arch = "aarch64")]
-    Sha512_256KernelId::Aarch64Sha512 => {
-      crate::hashes::crypto::sha512::kernels::compress_blocks_fn(to_sha512_kernel_id(id))
-    }
-    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
-    Sha512_256KernelId::X86Sha512 => {
-      crate::hashes::crypto::sha512::kernels::compress_blocks_fn(to_sha512_kernel_id(id))
-    }
-    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
-    Sha512_256KernelId::X86Avx512vl => {
-      crate::hashes::crypto::sha512::kernels::compress_blocks_fn(to_sha512_kernel_id(id))
-    }
-    #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
-    Sha512_256KernelId::Riscv64Zknh => {
-      crate::hashes::crypto::sha512::kernels::compress_blocks_fn(to_sha512_kernel_id(id))
-    }
-    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
-    Sha512_256KernelId::WasmSimd128 => {
-      crate::hashes::crypto::sha512::kernels::compress_blocks_fn(to_sha512_kernel_id(id))
-    }
-    #[cfg(target_arch = "s390x")]
-    Sha512_256KernelId::S390xKimd => {
-      crate::hashes::crypto::sha512::kernels::compress_blocks_fn(to_sha512_kernel_id(id))
-    }
-    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
-    Sha512_256KernelId::X86Avx2Decoupled => {
-      crate::hashes::crypto::sha512::kernels::compress_blocks_fn(to_sha512_kernel_id(id))
-    }
-    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
-    Sha512_256KernelId::X86Avx512vlDecoupled => {
-      crate::hashes::crypto::sha512::kernels::compress_blocks_fn(to_sha512_kernel_id(id))
-    }
-  }
+pub(crate) const fn compress_blocks_fn(id: Sha512_256KernelId) -> CompressBlocksFn {
+  crate::hashes::crypto::sha512::kernels::compress_blocks_fn(to_sha512_kernel_id(id))
 }
 
 #[inline]

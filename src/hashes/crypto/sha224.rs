@@ -121,7 +121,7 @@ impl Sha224 {
       data = &data[take..];
 
       if self.block_len == BLOCK_LEN {
-        compress_blocks(&mut self.state, &self.block);
+        compress_blocks.call(&mut self.state, &self.block);
         self.bytes_hashed = self.bytes_hashed.strict_add(BLOCK_LEN as u64);
         self.block_len = 0;
       }
@@ -130,7 +130,7 @@ impl Sha224 {
     let full_len = data.len().strict_sub(data.len() % BLOCK_LEN);
     if full_len != 0 {
       let (blocks, rest) = data.split_at(full_len);
-      compress_blocks(&mut self.state, blocks);
+      compress_blocks.call(&mut self.state, blocks);
       self.bytes_hashed = self.bytes_hashed.strict_add(blocks.len() as u64);
       data = rest;
     }
@@ -153,7 +153,7 @@ impl Sha224 {
 
     if block_len > 56 {
       block[block_len..].fill(0);
-      compress_blocks(&mut state, &block);
+      compress_blocks.call(&mut state, &block);
       block = [0u8; BLOCK_LEN];
       block_len = 0;
     }
@@ -162,7 +162,7 @@ impl Sha224 {
 
     let bit_len = total_len.strict_mul(8);
     block[56..64].copy_from_slice(&bit_len.to_be_bytes());
-    compress_blocks(&mut state, &block);
+    compress_blocks.call(&mut state, &block);
 
     let mut out = [0u8; 28];
     for (chunk, &word) in out.as_chunks_mut::<4>().0.iter_mut().zip(state.iter()) {

@@ -53,7 +53,7 @@ impl SeededSha256 {
     let mut block = [0; 64];
     block[..pk_seed.len()].copy_from_slice(pk_seed);
     let mut state = sha256::H0;
-    compress(&mut state, &block);
+    compress.call(&mut state, &block);
     Self { compress, state }
   }
 
@@ -73,7 +73,7 @@ impl SeededSha256 {
         filled = filled.strict_add(take);
         rest = tail;
         if filled == 64 {
-          (self.compress)(&mut state, &block);
+          self.compress.call(&mut state, &block);
           filled = 0;
         }
       }
@@ -82,12 +82,12 @@ impl SeededSha256 {
     filled = filled.strict_add(1);
     if filled > 56 {
       block[filled..].fill(0);
-      (self.compress)(&mut state, &block);
+      self.compress.call(&mut state, &block);
       filled = 0;
     }
     block[filled..56].fill(0);
     block[56..].copy_from_slice(&total.strict_mul(8).to_be_bytes());
-    (self.compress)(&mut state, &block);
+    self.compress.call(&mut state, &block);
     for (chunk, word) in out.chunks_mut(4).zip(state) {
       chunk.copy_from_slice(&word.to_be_bytes()[..chunk.len()]);
     }
@@ -109,7 +109,7 @@ impl SeededSha512 {
     let mut block = [0; 128];
     block[..pk_seed.len()].copy_from_slice(pk_seed);
     let mut state = sha512::H0;
-    compress(&mut state, &block);
+    compress.call(&mut state, &block);
     Self { compress, state }
   }
 
@@ -129,7 +129,7 @@ impl SeededSha512 {
         filled = filled.strict_add(take);
         rest = tail;
         if filled == 128 {
-          (self.compress)(&mut state, &block);
+          self.compress.call(&mut state, &block);
           filled = 0;
         }
       }
@@ -138,12 +138,12 @@ impl SeededSha512 {
     filled = filled.strict_add(1);
     if filled > 112 {
       block[filled..].fill(0);
-      (self.compress)(&mut state, &block);
+      self.compress.call(&mut state, &block);
       filled = 0;
     }
     block[filled..112].fill(0);
     block[112..].copy_from_slice(&total.strict_mul(8).to_be_bytes());
-    (self.compress)(&mut state, &block);
+    self.compress.call(&mut state, &block);
     for (chunk, word) in out.chunks_mut(8).zip(state) {
       chunk.copy_from_slice(&word.to_be_bytes()[..chunk.len()]);
     }

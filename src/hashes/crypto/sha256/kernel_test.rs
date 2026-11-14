@@ -115,23 +115,26 @@ mod tests {
 
 #[test]
 fn forced_backend_survives_initialization_and_clone_until_reset() {
-  fn observed(state: &mut [u32; 8], _blocks: &[u8]) {
-    state[0] = 42;
-  }
+  use super::kernels::CompressBlocksFn::Kernel;
 
-  let mut hasher = Sha256 {
-    compress_blocks: observed,
-    dispatch_initialized: true,
-    ..Default::default()
-  };
-  let mut cloned = hasher.clone();
-  for h in [&mut hasher, &mut cloned] {
-    let mut state = [0; 8];
-    h.select_compress()(&mut state, &[]);
-    assert_eq!(state[0], 42, "forced callback was replaced during selection");
-    h.reset();
-    assert!(!h.dispatch_initialized);
-    h.update(b"abc");
-    assert_eq!(h.finalize(), Sha256::digest(b"abc"));
+  let caps = crate::platform::caps();
+  for &id in ALL.iter().filter(|&&id| caps.has(required_caps(id))) {
+    let mut hasher = Sha256 {
+      compress_blocks: compress_blocks_fn(id),
+      dispatch_initialized: true,
+      ..Default::default()
+    };
+    let mut cloned = hasher.clone();
+    for h in [&mut hasher, &mut cloned] {
+      assert!(
+        matches!((h.select_compress(), compress_blocks_fn(id)), (Kernel(selected), Kernel(forced)) if selected == forced),
+        "forced kernel {} was replaced during selection",
+        id.as_str()
+      );
+      h.reset();
+      assert!(!h.dispatch_initialized);
+      h.update(b"abc");
+      assert_eq!(h.finalize(), Sha256::digest(b"abc"));
+    }
   }
 }

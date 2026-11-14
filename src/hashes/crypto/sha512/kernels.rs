@@ -1,4 +1,5 @@
 use super::Sha512;
+use crate::hashes::crypto::{Compress, WithCompress};
 use crate::platform::Caps;
 #[cfg(target_arch = "aarch64")]
 use crate::platform::caps::aarch64;
@@ -11,7 +12,54 @@ use crate::platform::caps::wasm;
 #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 use crate::platform::caps::x86;
 
-pub(crate) type CompressBlocksFn = fn(&mut [u64; 8], &[u8]);
+/// The selected compression kernel.
+///
+/// [`Self::with`] reaches each kernel through a direct call, so no code
+/// pointer is stored or called, and a static stack review bounds every path.
+#[derive(Clone, Copy)]
+pub(crate) enum CompressBlocksFn {
+  Kernel(Sha512KernelId),
+  /// A test's instrumented compression function.
+  #[cfg(test)]
+  Test(fn(&mut [u64; 8], &[u8])),
+}
+
+impl CompressBlocksFn {
+  /// Run `op` with the selected kernel.
+  ///
+  /// Each kernel gets its own copy of `op`, so each compression in `op` is
+  /// one direct call.
+  #[inline(always)]
+  pub(crate) fn with<O: WithCompress<[u64; 8]>>(self, op: O) -> O::Output {
+    match self {
+      Self::Kernel(Sha512KernelId::Portable) => op.run(Sha512::compress_blocks_portable),
+      #[cfg(target_arch = "aarch64")]
+      Self::Kernel(Sha512KernelId::Aarch64Sha512) => op.run(compress_blocks_aarch64_sha512),
+      #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+      Self::Kernel(Sha512KernelId::X86Sha512) => op.run(compress_blocks_x86_sha512),
+      #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+      Self::Kernel(Sha512KernelId::X86Avx512vl) => op.run(compress_blocks_x86_avx512vl),
+      #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
+      Self::Kernel(Sha512KernelId::Riscv64Zknh) => op.run(compress_blocks_riscv_zknh),
+      #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+      Self::Kernel(Sha512KernelId::WasmSimd128) => op.run(compress_blocks_wasm_simd128),
+      #[cfg(target_arch = "s390x")]
+      Self::Kernel(Sha512KernelId::S390xKimd) => op.run(compress_blocks_s390x_kimd),
+      #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+      Self::Kernel(Sha512KernelId::X86Avx2Decoupled) => op.run(compress_blocks_x86_avx2_decoupled),
+      #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+      Self::Kernel(Sha512KernelId::X86Avx512vlDecoupled) => op.run(compress_blocks_x86_avx512vl_decoupled),
+      #[cfg(test)]
+      Self::Test(compress) => op.run(compress),
+    }
+  }
+
+  /// Compress the whole blocks of `blocks` into `state`.
+  #[inline(always)]
+  pub(crate) fn call(self, state: &mut [u64; 8], blocks: &[u8]) {
+    self.with(Compress(state, blocks));
+  }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
@@ -63,9 +111,11 @@ impl Sha512KernelId {
   }
 }
 
-// Safe wrappers — dispatch validates caps before calling.
+// Safe wrappers — dispatch validates caps before calling. Each wrapper is
+// one out-of-line function, so no caller gets its own copy of a kernel.
 
 #[cfg(target_arch = "aarch64")]
+#[inline(never)]
 fn compress_blocks_aarch64_sha512(state: &mut [u64; 8], blocks: &[u8]) {
   // SAFETY: Dispatch-gated AArch64 SHA-512 compression because:
   // 1. `required_caps(Aarch64Sha512)` is `aarch64::SHA512`.
@@ -75,68 +125,58 @@ fn compress_blocks_aarch64_sha512(state: &mut [u64; 8], blocks: &[u8]) {
 }
 
 #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+#[inline(never)]
 fn compress_blocks_x86_sha512(state: &mut [u64; 8], blocks: &[u8]) {
   // SAFETY: Only called when dispatch has verified `x86::SHA512` is available.
   unsafe { super::x86_64::compress_blocks_sha512_ni(state, blocks) }
 }
 
 #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+#[inline(never)]
 fn compress_blocks_x86_avx512vl(state: &mut [u64; 8], blocks: &[u8]) {
   // SAFETY: Only called when dispatch has verified AVX-512VL and BMI2 are available.
   unsafe { super::x86_64_avx512vl::compress_blocks_avx512vl(state, blocks) }
 }
 
 #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
+#[inline(never)]
 fn compress_blocks_riscv_zknh(state: &mut [u64; 8], blocks: &[u8]) {
   // SAFETY: Only called when dispatch has verified `riscv::ZKNH` is available.
   unsafe { super::riscv64::compress_blocks_zknh(state, blocks) }
 }
 
 #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+#[inline(never)]
 fn compress_blocks_wasm_simd128(state: &mut [u64; 8], blocks: &[u8]) {
   // SAFETY: Only called when dispatch has verified `wasm::SIMD128` is available.
   unsafe { super::wasm::compress_blocks_wasm_simd(state, blocks) }
 }
 
 #[cfg(target_arch = "s390x")]
+#[inline(never)]
 fn compress_blocks_s390x_kimd(state: &mut [u64; 8], blocks: &[u8]) {
   // SAFETY: Only called when dispatch has verified `s390x::MSA` is available.
   unsafe { super::s390x::compress_blocks_kimd(state, blocks) }
 }
 
 #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+#[inline(never)]
 fn compress_blocks_x86_avx2_decoupled(state: &mut [u64; 8], blocks: &[u8]) {
   // SAFETY: Only called when dispatch has verified `x86::AVX2` and `x86::BMI2` are available.
   unsafe { super::x86_64_avx2::compress_blocks_avx2_decoupled(state, blocks) }
 }
 
 #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+#[inline(never)]
 fn compress_blocks_x86_avx512vl_decoupled(state: &mut [u64; 8], blocks: &[u8]) {
   // SAFETY: Only called when dispatch has verified AVX-512VL and BMI2 are available.
   unsafe { super::x86_64_avx512vl::compress_blocks_avx512vl_decoupled(state, blocks) }
 }
 
+/// The kernel `id`. Dispatch has already checked `id` against the CPU.
 #[must_use]
-pub(crate) fn compress_blocks_fn(id: Sha512KernelId) -> CompressBlocksFn {
-  match id {
-    Sha512KernelId::Portable => Sha512::compress_blocks_portable,
-    #[cfg(target_arch = "aarch64")]
-    Sha512KernelId::Aarch64Sha512 => compress_blocks_aarch64_sha512,
-    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
-    Sha512KernelId::X86Sha512 => compress_blocks_x86_sha512,
-    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
-    Sha512KernelId::X86Avx512vl => compress_blocks_x86_avx512vl,
-    #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
-    Sha512KernelId::Riscv64Zknh => compress_blocks_riscv_zknh,
-    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
-    Sha512KernelId::WasmSimd128 => compress_blocks_wasm_simd128,
-    #[cfg(target_arch = "s390x")]
-    Sha512KernelId::S390xKimd => compress_blocks_s390x_kimd,
-    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
-    Sha512KernelId::X86Avx2Decoupled => compress_blocks_x86_avx2_decoupled,
-    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
-    Sha512KernelId::X86Avx512vlDecoupled => compress_blocks_x86_avx512vl_decoupled,
-  }
+pub(crate) const fn compress_blocks_fn(id: Sha512KernelId) -> CompressBlocksFn {
+  CompressBlocksFn::Kernel(id)
 }
 
 #[inline]
