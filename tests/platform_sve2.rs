@@ -24,7 +24,7 @@ fn a_required_sve2_host_reports_and_selects_sve2() {
     "RSCRYPTO_REQUIRE_SVE2 is set, but detection reports {:?}",
     caps.feature_names().collect::<Vec<_>>()
   );
-  #[cfg(feature = "aes-gcm")]
+  #[cfg(all(feature = "aes-gcm", feature = "diag"))]
   assert_eq!(
     rscrypto::aead::introspect::aes256gcm_backend(),
     "aarch64/sve2+aes+pmull",

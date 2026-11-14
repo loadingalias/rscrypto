@@ -11,6 +11,7 @@
 #![cfg(all(
   feature = "aes-gcm",
   feature = "aes-gcm-siv",
+  feature = "diag",
   feature = "std",
   target_arch = "x86_64",
   not(feature = "portable-only"),
