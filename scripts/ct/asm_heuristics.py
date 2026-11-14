@@ -373,6 +373,11 @@ def waivers(root: Path) -> list[dict[str, Any]]:
   return list(ct.get("asm_waiver", []))
 
 
+def public_input_rules(root: Path) -> list[dict[str, Any]]:
+  ct = load_toml(root / "ct.toml")
+  return list(ct.get("asm_public_input", []))
+
+
 def select_branch_enforced_primitives(root: Path) -> set[str]:
   ct = load_toml(root / "ct.toml")
   return set(ct.get("asm_select_branch", {}).get("enforced_primitives", []))
@@ -513,6 +518,61 @@ def validate_waivers(configured: list[dict[str, Any]]) -> list[str]:
   return errors
 
 
+PUBLIC_INPUT_FIELDS = {"target", "symbol", "leaves", "source", "rationale"}
+QUERY_LEAF = re.compile(r"call \S.*|syscall \d+")
+
+
+def validate_public_inputs(configured: list[dict[str, Any]]) -> list[str]:
+  from condition_slice import STATE_READS
+
+  errors = []
+  named: dict[tuple[Any, Any], int] = {}
+  for index, rule in enumerate(configured):
+    if set(rule) != PUBLIC_INPUT_FIELDS:
+      errors.append(f"asm_public_input[{index}] must contain exactly: {', '.join(sorted(PUBLIC_INPUT_FIELDS))}")
+      continue
+    empty = [field for field in sorted(PUBLIC_INPUT_FIELDS - {"leaves"})
+             if not isinstance(rule[field], str) or not rule[field].strip()]
+    if empty:
+      errors.append(f"asm_public_input[{index}] field(s) {', '.join(empty)} must be non-empty strings")
+      continue
+    leaves = rule["leaves"]
+    if (
+      not isinstance(leaves, list)
+      or not leaves
+      or len(leaves) != len(set(leaves))
+      or any(not isinstance(leaf, str) or not (leaf in STATE_READS or QUERY_LEAF.fullmatch(leaf)) for leaf in leaves)
+    ):
+      errors.append(
+        f"asm_public_input[{index}] leaves must be unique processor-state instructions, `call <symbol>`, "
+        "or `syscall <number>`"
+      )
+    key = (rule["target"], rule["symbol"])
+    if key in named:
+      errors.append(f"asm_public_input[{index}] duplicates asm_public_input[{named[key]}]")
+    named.setdefault(key, index)
+  return errors
+
+
+def apply_public_inputs(findings: list[dict[str, Any]], configured: list[dict[str, Any]], target: str) -> None:
+  """Accept a select-shaped branch in a public-input function when its rule allows every leaf of its slice."""
+  rules = {rule["symbol"]: rule for rule in configured if rule["target"] == target}
+  for finding in findings:
+    rule = rules.get(finding["symbol"])
+    if rule is None or finding["kind"] != "select_branch" or "slice_leaves" not in finding:
+      continue
+    blocked = sorted(set(finding["slice_leaves"]) - set(rule["leaves"]))
+    if blocked:
+      finding["public_input_blocked"] = blocked
+      continue
+    finding["public_classification"] = {
+      "primitives": finding["primitive_ids"],
+      "roots": finding["roots"],
+      "source": rule["source"],
+      "rationale": rule["rationale"],
+    }
+
+
 def waiver_matches(waiver: dict[str, Any], finding: dict[str, Any], target: str, primitive_id: str) -> bool:
   return all(
     (
@@ -566,12 +626,20 @@ def attach_condition_identities(
     result = analyses[symbol].slice(item["line"])
     item["slice_sha256"] = condition_identity(result.canonical, result.reasons, item["function_sha256"])
     item["slice_open"] = bool(result.reasons)
+    item["slice_leaves"] = result.leaves
 
 
 def apply_waivers(findings: list[dict[str, Any]], configured: list[dict[str, Any]], target: str) -> list[str]:
-  used = set()
+  used, redundant = set(), set()
   for finding in findings:
     accepted = []
+    public_classification = finding.get("public_classification")
+    public_primitives = (
+      set(public_classification["primitives"])
+      if isinstance(public_classification, dict)
+      and isinstance(public_classification.get("primitives"), list)
+      else set()
+    )
     for primitive_id in finding.get("primitive_ids", []):
       matched = [
         (index, waiver)
@@ -580,7 +648,9 @@ def apply_waivers(findings: list[dict[str, Any]], configured: list[dict[str, Any
       ]
       if len(matched) > 1:
         raise ValueError(f"multiple waivers match {primitive_id} {finding['locator']}")
-      if matched:
+      if matched and primitive_id in public_primitives:
+        redundant.add(matched[0][0])
+      elif matched:
         index, waiver = matched[0]
         used.add(index)
         accepted.append(
@@ -596,13 +666,6 @@ def apply_waivers(findings: list[dict[str, Any]], configured: list[dict[str, Any
         )
 
     accepted_primitives = {row["primitive"] for row in accepted}
-    public_classification = finding.get("public_classification")
-    public_primitives = (
-      set(public_classification["primitives"])
-      if isinstance(public_classification, dict)
-      and isinstance(public_classification.get("primitives"), list)
-      else set()
-    )
     resolved_primitives = accepted_primitives | public_primitives
     unresolved = sorted(set(finding.get("primitive_ids", [])) - resolved_primitives)
     finding["waivers"] = accepted
@@ -616,10 +679,11 @@ def apply_waivers(findings: list[dict[str, Any]], configured: list[dict[str, Any
       finding["operand_class"] = "unproven"
       finding["disposition"] = "needs-fix" if finding["severity"] == "fail" else "needs-binsec"
 
-  return [
+  # A waiver for a finding that a public classification already accepts waives nothing.
+  return [f"asm_waiver[{index}] matches a finding that a public classification accepts" for index in sorted(redundant)] + [
     f"asm_waiver[{index}] matches no finding: its reviewed condition changed or disappeared"
     for index, waiver in enumerate(configured)
-    if waiver.get("target") == target and index not in used
+    if waiver.get("target") == target and index not in used | redundant
   ]
 
 
@@ -2526,8 +2590,9 @@ def main() -> int:
   ct_roots_by_primitive = ct_intended_roots_by_primitive(root)
   configured_waivers = waivers(root)
   configured_public_operands = public_operand_rules(root)
+  configured_public_inputs = public_input_rules(root)
   equality_roots = equality_release_roots(root)
-  waiver_errors = validate_waivers(configured_waivers)
+  waiver_errors = validate_waivers(configured_waivers) + validate_public_inputs(configured_public_inputs)
   if waiver_errors:
     for error in waiver_errors:
       print(error)
@@ -2627,6 +2692,7 @@ def main() -> int:
       for error in public_operand_errors:
         print(error)
       return 2
+    apply_public_inputs(findings, configured_public_inputs, args.target)
     stale_waivers = apply_waivers(findings, configured_waivers, args.target)
   except ValueError as exc:
     print(f"invalid asm waiver set: {exc}")

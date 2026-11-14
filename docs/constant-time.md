@@ -57,9 +57,30 @@ If a frame address is stored, passed to a call, or used in arithmetic, every cal
   so its waiver keeps matching when other code in the function or the file changes.
 - A slice is *open* when a call, an instruction of unknown effect, or an indirect jump can change a value it reads.
   Implicit register operands count as effects: `cpuid` writes eax through edx, `cmpxchg` and one-operand
-  `imul` write rax or rdx, and `syscall` returns in rax and can write the memory its arguments address,
-  as a call does. An instruction whose implicit operands the model does not know reads and writes every register.
+  `imul` write rax or rdx, and `syscall` (x86-64) and `ecall` (RISC-V) return in rax or a0 and can write
+  the memory their arguments address, as a call does. IBM Z `stfle` stores the facility list at its operand.
+  An instruction whose implicit operands the model does not know reads and writes every register.
   An open identity also binds the complete function hash, so any change in the function requires renewed review.
+
+The *leaves* of a slice are the values that its condition starts from, other than immediates,
+read-only data, and frame addresses:
+
+- `entry <register>` and `entry memory`: a function input, or memory that no store in the function writes;
+- a processor-state instruction, such as `cpuid`, `xgetbv`, `rdtsc`, `mrs`, or `stfle`;
+- `call <symbol>`: the results of a direct call and the memory that it can write;
+- `syscall <number>`: the same for a Linux system call whose number register holds that immediate;
+- `unknown ...` and `incomplete ...`: an effect, load, or store that the model cannot follow,
+  or an incomplete control-flow graph or slice.
+
+The walk to the leaves stops at a call, because the calling convention, not the callee,
+gives its argument registers.
+An `[[asm_public_input]]` rule in `ct.toml` names a function on one target whose branches test only public inputs,
+and the leaves that it allows. It accepts a `select_branch` finding in that function, for every primitive,
+only when the rule allows every leaf of its slice. Immediates, read-only data, and frame addresses are always allowed.
+A rule cannot allow an entry value, an unknown or incomplete leaf, or a call without a resolved destination,
+so a function input, other memory, or another call blocks the branch.
+A blocked branch needs an exact waiver.
+A waiver of a branch that a rule accepts fails the verdict, because it waives nothing.
 
 A count-only `asm_public_operand` rule cannot exempt a branch:
 another instruction in the same function could depend on a secret while staying within that count.
@@ -1018,6 +1039,72 @@ and offset. 21 identities changed, each in a slice or an open slice's function t
 Classifications, rationales, and review dates are unchanged, and no other target's identities change.
 With them, the scanner reports no stale waiver and no unwaived enforced finding on the IBM Z artifacts
 of both runs.
+
+### Public-input detection class, 2026-11-13
+
+`platform::detect::detect_uncached` runs one time per process, takes only its result pointer, and reads no secret.
+It is in the enforced call closure of every dispatching primitive, so 412 waivers named it, one per primitive and
+condition: x86-64 Linux 99, Windows 220, IBM Z 80, and RISC-V 13. A detection change made them stale.
+Four `[[asm_public_input]]` rules now classify the function:
+
+- x86-64 Linux: `cpuid`, `xgetbv`, `call core::core_arch::x86::xsave::_xgetbv`, and `syscall 158`,
+  arch_prctl(ARCH_GET_XCOMP_PERM);
+- Windows: `cpuid`, `xgetbv`, and `call core::core_arch::x86::xsave::_xgetbv`;
+- RISC-V: `syscall 258`, riscv_hwprobe;
+- IBM Z: `stfle` and `call getauxval@plt`.
+
+The leaves follow from `x86.rs`, `riscv.rs`, and `s390x.rs`. AArch64 Linux and POWER detection have no
+select-shaped branch, and Apple has no detection waiver, so they have no rule.
+
+The class needs a precise slice model. Six defects made a slice reach values that the code does not read,
+or miss values that it does read:
+
+- x86-64 `setcc` with a memory operand was a load without a location. It is a 1-byte store.
+- x86-64 `movq` and `movd` took the width of a vector register or no width. They access 8 and 4 bytes,
+  so a `movq` from xmm no longer replaces 16 bytes, and an immediate `movq` replaces its slot.
+- RISC-V `ecall` had no effect, so the riscv_hwprobe slice ended at the zero stored before the call.
+  It now reads a7 and a0-a5, returns in a0, and can write the memory that its arguments address.
+- IBM Z `xc`, `nc`, and `oc` defined the base register of their first storage operand, so r15 stopped being
+  the frame. They write only memory and the condition code, and `xc` of a location with itself reads nothing.
+- IBM Z `stfle` was a store to an unknown address. It stores at its operand and reads and writes r0.
+
+A run without each fix shows what it changes. Without the x86-64 width and `setcc` fixes, three Linux and
+one Windows detection branches have an `entry memory` or `unknown load` leaf. Without the IBM Z fixes,
+four branches have an `entry memory` or `unknown store` leaf. With them, these branches start only from
+CPUID results, the `_xgetbv` result, system call 158, the getauxval results, and the STFLE list.
+The RISC-V branch is accepted either way, but only the `ecall` model makes its leaf the system call.
+
+Against [Constant-Time 43248759823](https://github.com/loadingalias/rscrypto/actions/runs/43248759823)
+at `7ae05c1a` (IBM Z from attempt 2) and its RISC-V run
+[43250911201](https://github.com/loadingalias/rscrypto/actions/runs/43250911201), the rules accept 383 waived
+conditions, and those waivers were deleted: x86-64 Linux 90, Windows 200, IBM Z 80, and RISC-V 13.
+The `close_x86_implications` filter branch keeps its waivers: 9 on Linux at +0x5df and 20 on Windows at +0x5bf.
+Its slice loads the `IMPLIED` table through an indexed pointer, and only range analysis of the loop counter
+could show that the load reads only the table. Its rationale now says so.
+
+The model fixes made 82 other waivers stale in those artifacts. Each of their slices only lost nodes, and each
+kept every instruction that its rationale cites. 77 waivers moved to the new identity of the finding that their old
+identity named, by function, kind, and offset: 29 detection filter waivers and 48 RSA waivers
+(x86-64 Linux 28, Windows 9, IBM Z 11). Five RSA waivers named two branches each, with one shared slice.
+Each pair still shares one slice, so each waiver keeps one identity for both. They were reviewed again:
+
+| Waiver | Branches | Slice change | Verdict |
+| --- | --- | --- | --- |
+| Windows `ct_entry_rsa_oaep_decrypt_fixed_blinding`, out_len >= prefix | `jae` +0x785, +0x8a9 | 126 to 107 nodes | renewed |
+| Windows `ct_entry_rsa_oaep_decrypt_fixed_blinding`, seventh suffix zero | `je` +0x89c, +0x9fc | 129 to 110 nodes | renewed |
+| Windows `ct_entry_rsa_pkcs1v15_decrypt_fixed_blinding`, seventh suffix zero | `je` +0x4cc, +0x63c | 443 nodes, new edges | renewed |
+| Windows `ct_entry_rsa_pkcs1v15_decrypt_fixed_blinding`, out_len >= prefix | `jae` +0x28c, +0x4d9 | 440 nodes, new edges | renewed |
+| IBM Z `ct_entry_rsa_oaep_decrypt_fixed_blinding`, error-output clearing | `clgrjhe` +0xb28, +0xc7a | 227 to 195 nodes | renewed |
+
+In each pair, both new slices are identical, and every instruction that the rationale cites is still in them.
+The removed nodes are stores that the precise widths no longer let reach the loads, and no node was added.
+The slices stay open: their leaves include the function inputs, such as the output pointer and length that
+the rationales name, the calls of the private operation, and vector instructions that the model does not know.
+Each identity therefore still binds the function hash.
+
+With the rules and the re-encoded waivers, the gate scanner reports the same verdict as before on all six CI
+platforms, with no stale waiver and the same unaccepted findings. The waiver set now has 519 entries.
+AArch64 identities did not change, so the local Apple artifacts need no new review.
 
 ## Public decisions and exclusions
 

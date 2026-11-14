@@ -10,7 +10,10 @@ from asm_heuristics import (
   function_identity,
   instruction_identities,
   all_direct_callees,
+  apply_public_inputs,
   apply_select_branch_enforcement,
+  apply_waivers,
+  attach_condition_identities,
   build_call_graph,
   direct_callees,
   final_equality_closure,
@@ -23,6 +26,7 @@ from asm_heuristics import (
   reachable_closure,
   scan_symbol,
   unreachable_symbol_errors,
+  validate_public_inputs,
 )
 from linked_image import MERGED, LinkedImage, Section, Slot
 from symbolize_linked_binary import demangle_table
@@ -266,6 +270,70 @@ def linked_fixture(
 def fixture_hash(target: str, fixture: tuple[FunctionBody, LinkedImage]) -> str:
   body, image = fixture
   return function_identity(instruction_identities(target, body, {body.symbol}, image))
+
+
+DETECT = "rscrypto::platform::detect::detect_uncached"
+
+
+def public_input_branch(condition: list[str], symbol: str = DETECT, target: str = "x86_64-unknown-linux-gnu",
+                        waivers: list[dict] | None = None) -> tuple[dict, list[str]]:
+  """The enforced select-shaped branch on `condition`, and the waiver errors.
+
+  The rule classifies detection on x86-64 Linux, with leaves as in `ct.toml`.
+  """
+  rule = {"target": "x86_64-unknown-linux-gnu", "symbol": DETECT, "source": "src/platform/detect/arch/x86.rs",
+          "rationale": "fixture", "leaves": ["cpuid", "call core::core_arch::x86::xsave::_xgetbv"]}
+  address = 0x1000 + sum(len(line.split("\t")[0].split(": ")[1].split()) for line in condition)
+  lines = [*condition, f"{address:x}: 74 05\tje\t0x{address + 7:x} <{symbol}+0x{address + 7 - 0x1000:x}>",
+           f"{address + 2:x}: b8 01 00 00 00\tmovl\t$0x1, %eax", f"{address + 7:x}: c3\tretq"]
+  body = FunctionBody(symbol, Path("fixture.binary.disasm.txt"), 0x1000, list(enumerate(lines, start=1)))
+  local = {symbol, "core::core_arch::x86::xsave::_xgetbv", "g"}
+  findings = scan_symbol(target, symbol, body, local, scope="ct_intended_call_closure",
+                         primitive_ids=["kx.p256_ecdh"], roots=["ct_entry_p256_ecdh_agree"])
+  apply_select_branch_enforcement(findings, {"kx.p256_ecdh"})
+  attach_condition_identities(target, findings, {symbol: body}, "artifacts/fixture.binary.disasm.txt", local, None,
+                              {"select_branch"})
+  apply_public_inputs(findings, [rule], target)
+  errors = apply_waivers(findings, waivers or [], target)
+  [branch] = [row for row in findings if row["kind"] == "select_branch"]
+  return branch, errors
+
+
+def public_input_regressions() -> None:
+  # A feature test on a CPUID leaf: its only leaf is the CPUID result, which the rule allows.
+  cpuid = ["1000: b8 07 00 00 00\tmovl\t$0x7, %eax", "1005: 31 c9\txorl\t%ecx, %ecx", "1007: 0f a2\tcpuid",
+           "1009: f6 c3 08\ttestb\t$0x8, %bl"]
+  accepted, errors = public_input_branch(cpuid)
+  assert accepted["disposition"] == "accepted" and accepted["slice_leaves"] == ["cpuid"] and not errors, accepted
+  # XCR0 from core's `_xgetbv` call is an allowed query.
+  xgetbv = ["1000: 31 c9\txorl\t%ecx, %ecx",
+            "1002: e8 f9 0f 00 00\tcallq\t0x2000 <core::core_arch::x86::xsave::_xgetbv>",
+            "1007: a8 06\ttestb\t$0x6, %al"]
+  assert public_input_branch(xgetbv)[0]["disposition"] == "accepted"
+  # A function argument, writable memory, and an unlisted call each block, so the enforced branch still fails.
+  blocked = {
+    "entry rdi": ["1000: 40 f6 c7 08\ttestb\t$0x8, %dil"],
+    "entry memory": ["1000: f6 05 00 10 00 00 08\ttestb\t$0x8, 0x1000(%rip)"],
+    "call g": ["1000: e8 fb 0f 00 00\tcallq\t0x2000 <g>", "1005: a8 08\ttestb\t$0x8, %al"],
+  }
+  for leaf, condition in blocked.items():
+    branch = public_input_branch(condition)[0]
+    assert branch["disposition"] == "needs-fix" and branch["public_input_blocked"] == [leaf], branch
+  # The rule names one function on one target.
+  assert public_input_branch(cpuid, symbol="rscrypto::platform::detect::detect")[0]["disposition"] == "needs-fix"
+  assert public_input_branch(cpuid, target="x86_64-pc-windows-msvc")[0]["disposition"] == "needs-fix"
+  # A waiver of a branch that the rule accepts waives nothing, so it fails the verdict.
+  waiver = {"target": "x86_64-unknown-linux-gnu", "primitive": "kx.p256_ecdh", "symbol": DETECT,
+            "kind": "select_branch", "slice_sha256": accepted["slice_sha256"]}
+  assert public_input_branch(cpuid, waivers=[waiver])[1] == [
+    "asm_waiver[0] matches a finding that a public classification accepts"
+  ]
+  # Only processor-state instructions, named calls, and numbered system calls can be allowed leaves.
+  for leaves in (["entry memory"], ["call"], ["syscall"], ["unknown store"], ["cpuid", "cpuid"]):
+    rule = {"target": "t", "symbol": "f", "source": "s", "rationale": "r", "leaves": leaves}
+    assert validate_public_inputs([rule]) == [
+      "asm_public_input[0] leaves must be unique processor-state instructions, `call <symbol>`, or `syscall <number>`"
+    ], leaves
 
 
 def exrl_template_regressions() -> None:
@@ -827,6 +895,7 @@ def main() -> None:
   linker_stub_regressions()
   multiply_regressions()
   select_branch_regressions()
+  public_input_regressions()
   data_reference_regressions()
   exrl_template_regressions()
   placement_regressions()

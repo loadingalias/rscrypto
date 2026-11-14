@@ -20,7 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
 
 import evidence_bundle as bundle
 from dudect_report import raw_csv_rows
-from asm_heuristics import FINDINGS_EXIT, validate_waivers
+from asm_heuristics import FINDINGS_EXIT, validate_public_inputs, validate_waivers
 from provenance import ct_function_symbols, dudect_runner_sources, load_toml, sha256_file
 from manifest import (
   binsec_kernel_targets, binsec_required_targets, is_diagnostic_dudect_case, primitive_supports_physical_timing,
@@ -505,6 +505,14 @@ def validate_manifest(root: Path, selected_target: str, errors: list[str], warni
         )
       if not valid:
         fail(errors, f"asm_waiver[{index}] contract must reference existing primitive notes or an allowed disclosure")
+  configured_public_inputs = ct.get("asm_public_input", [])
+  errors.extend(validate_public_inputs(configured_public_inputs))
+  for index, rule in enumerate(configured_public_inputs):
+    if rule.get("target") not in target_names:
+      fail(errors, f"asm_public_input[{index}] must name an existing target")
+    source = rule.get("source")
+    if not isinstance(source, str) or not source.startswith("src/") or not (root / source).is_file():
+      fail(errors, f"asm_public_input[{index}] source must name an existing source file")
   for index, rule in enumerate(ct.get("asm_public_operand", [])):
     required_fields = {"primitives", "roots", "symbol", "kind", "max_count", "source", "rationale"}
     if not required_fields <= set(rule) <= required_fields | {"targets"}:

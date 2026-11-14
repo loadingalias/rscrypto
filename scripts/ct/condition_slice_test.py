@@ -155,6 +155,7 @@ def main() -> None:
   ], 3)
   assert looped.nodes[0]["inputs"] == {"rcx": ["+0x0", "+0x6"]}, looped.canonical
   memory_regressions()
+  leaf_regressions()
 
   # Win64 callees preserve rsi, so its value crosses the call; System V callees may change it.
   kept = [
@@ -323,6 +324,88 @@ def memory_regressions() -> None:
     assert result.reasons == [], (isa, result.reasons, result.canonical)
     load = next(node for node in result.nodes if node["offset"] == load_offset)
     assert load["inputs"]["mem"] == [store], (isa, result.canonical)
+
+
+def branched(*body: str, condition: str) -> list[str]:
+  """`body`, then an x86-64 select-shaped branch on `condition`, at the addresses that follow."""
+  address = 0x1000 + sum(len(line.split("\t")[0].split(": ")[1].split()) for line in body)
+  return [*body, f"{address:x}: {condition}", f"{address + 3:x}: 74 01\tje\t0x{address + 6:x} <f+0x{address + 6 - 0x1000:x}>",
+          f"{address + 5:x}: 90\tnop", f"{address + 6:x}: c3\tretq"]
+
+
+def leaf_regressions() -> None:
+  target = "x86_64-unknown-linux-gnu"
+  # A Linux system call is a leaf named by the immediate in its number register.
+  def system_call(number: str) -> list[str]:
+    after = 0x1000 + len(number.split("\t")[0].split(": ")[1].split())
+    return branched(number, f"{after:x}: 0f 05\tsyscall", condition="48 85 c0\ttestq\t%rax, %rax")
+  assert slice_of(target, system_call("1000: b8 9e 00 00 00\tmovl\t$0x9e, %eax"), 4).leaves == ["syscall 158"]
+  # Without an immediate number, the leaf names no system call, so no rule can allow it.
+  assert slice_of(target, system_call("1000: 89 f8\tmovl\t%edi, %eax"), 4).leaves == ["syscall"]
+  # A processor-state read that the rule does not name is a leaf, not an immediate.
+  assert slice_of(target, branched("1000: 0f 31\trdtsc", condition="a8 01 90\ttestb\t$0x1, %al"), 3).leaves == ["rdtsc"]
+  # The walk stops at a call. IBM Z passes arguments in r2-r6; getauxval reads only r2, so the
+  # unset r3-r6 must not become entry leaves.
+  queried = slice_of("s390x-unknown-linux-gnu", [
+    "1000: a7 29 00 10\tlghi\t%r2, 16",
+    "1004: c0 e5 00 00 07 fe\tbrasl\t%r14, 0x2000 <g>",
+    "100a: b9 02 00 22\tltgr\t%r2, %r2",
+    "100e: a7 84 00 04\tje\t0x1016",
+    "1012: 07 07\tnopr\t%r7",
+    "1016: 07 fe\tbr\t%r14",
+  ], 4)
+  assert queried.leaves == ["call g"], queried.leaves
+  # RISC-V riscv_hwprobe writes its key/value pairs on the stack. The `ecall` must reach the reload:
+  # before it was modeled, the slice ended at the zero stored before the call.
+  probed = slice_of("riscv64gc-unknown-linux-gnu", [
+    "1000: 1101\taddi\tsp, sp, -0x20",
+    "1002: ec02\tsd\tzero, 0x18(sp)",
+    "1004: 10200893\tli\ta7, 0x102",
+    "1008: 850a\tmv\ta0, sp",
+    "100a: 4589\tli\ta1, 0x2",
+    "100c: 00000073\tecall",
+    "1010: 6562\tld\ta0, 0x18(sp)",
+    "1012: c111\tbeqz\ta0, 0x1016 <f+0x16>",
+    "1014: 0001\tnop",
+    "1016: 8082\tret",
+  ], 8)
+  assert probed.leaves == ["syscall 258"], probed.leaves
+  assert "memory may be written by the call at +0xc" in probed.reasons, probed.reasons
+
+  # A `set` with a memory operand stores one byte; it reads no memory, and the reload reads that byte.
+  flag = slice_of(target, branched("1000: 48 83 ec 18\tsubq\t$0x18, %rsp", "1004: 0f 94 44 24 08\tsete\t0x8(%rsp)",
+                                   condition="80 7c 24 08 00\tcmpb\t$0x0, 0x8(%rsp)"), 4)
+  assert flag.reasons == [] and flag.nodes[1]["inputs"]["mem"] == ["+0x4"], flag.canonical
+  # `movq` stores 8 bytes, also from a vector register: the spill above it survives, and the
+  # immediate store replaces every byte of its own slot.
+  moved = slice_of(target, branched(
+    "1000: 48 83 ec 28\tsubq\t$0x28, %rsp",
+    "1004: 48 89 7c 24 10\tmovq\t%rdi, 0x10(%rsp)",
+    "1009: 66 0f d6 44 24 08\tmovq\t%xmm0, 0x8(%rsp)",
+    "100f: 48 c7 44 24 18 00 00 00 00\tmovq\t$0x0, 0x18(%rsp)",
+    "1018: 48 8b 44 24 10\tmovq\t0x10(%rsp), %rax",
+    condition="48 0b 44 24 18\torq\t0x18(%rsp), %rax"), 7)
+  loads = {node["offset"]: node["inputs"]["mem"] for node in moved.nodes if "mem" in node["inputs"]}
+  assert loads == {0x1d: ["+0xf"], 0x18: ["+0x4"]} and moved.reasons == [], moved.canonical
+
+  # IBM Z `xc` of a location with itself stores zeros and keeps r15 the frame; STFLE stores the facility
+  # list. The facility word therefore reads only those two stores.
+  facilities = slice_of("s390x-unknown-linux-gnu", [
+    "1000: a7 fb ff 40\taghi\t%r15, -192",
+    "1004: d7 1f f0 a0 f0 a0\txc\t160(32,%r15), 160(%r15)",
+    "100a: 41 10 f0 a0\tla\t%r1, 160(%r15)",
+    "100e: a7 09 00 03\tlghi\t%r0, 3",
+    "1012: b2 b0 10 00\tstfle\t0(%r1)",
+    "1016: e3 10 f0 a8 00 04\tlg\t%r1, 168(%r15)",
+    "101c: a7 11 08 00\ttmll\t%r1, 2048",
+    "1020: a7 84 00 04\tje\t0x1028",
+    "1024: 07 07\tnopr\t%r7",
+    "1028: 07 fe\tbr\t%r14",
+  ], 8)
+  assert facilities.reasons == [] and facilities.leaves == ["stfle"], (facilities.reasons, facilities.leaves)
+  word = next(node for node in facilities.nodes if node["offset"] == 0x16)
+  cleared = next(node for node in facilities.nodes if node["offset"] == 0x4)
+  assert word["inputs"]["mem"] == ["+0x4", "+0x12"] and cleared["inputs"] == {"r15": ["frame"]}, facilities.canonical
 
 
 def shift(line: str, by: int) -> str:

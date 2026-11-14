@@ -15,7 +15,9 @@ come from:
 
 The model is conservative. An unknown instruction defines and reads every
 register it names. The slice is the identity that an asm waiver binds
-(`asm_heuristics.condition_identity`); it never classifies a branch by itself.
+(`asm_heuristics.condition_identity`); it never classifies a branch by itself. An
+`[[asm_public_input]]` rule classifies a branch from the leaves of its slice
+(`asm_heuristics.apply_public_inputs`).
 """
 
 from __future__ import annotations
@@ -31,6 +33,8 @@ import asm_heuristics as scanner
 MAX_SLICE_NODES = 2048
 ENTRY = -1
 FRAME = -2
+# Instructions whose results come from processor state, not from their operands.
+STATE_READS = {"cpuid", "xgetbv", "rdtsc", "rdtscp", "mrs", "stfle"}
 
 
 @dataclass(frozen=True)
@@ -40,6 +44,8 @@ class Effects:
   load: bool = False
   call: bool = False
   unknown: bool = False
+  # The instruction reads processor state, such as CPUID leaves: its operands do not determine its results.
+  state: bool = False
 
 
 def effects(uses: set[str] | frozenset[str], defs: set[str] | frozenset[str], **flags: bool) -> Effects:
@@ -200,7 +206,7 @@ def x86_effects(row: scanner.DecodedLine, identity: str, caller_saved: set[str] 
       return effects({"rax"}, {"rdx"})
     if mnemonic in X86_IMPLICIT:
       uses, defs = X86_IMPLICIT[mnemonic]
-      return effects(set(uses), set(defs))
+      return effects(set(uses), set(defs), state=mnemonic in STATE_READS)
     # Implicit operands the model does not know: the instruction may read and write any register.
     every = X86_GENERAL | X86_VECTORS | {"flags"}
     return effects(every, every, unknown=True)
@@ -229,7 +235,8 @@ def x86_effects(row: scanner.DecodedLine, identity: str, caller_saved: set[str] 
     return effects(sources | x86_registers(destination), sources | destination_registers, load=load_from_memory)
   if base in {"set", "cmov"}:
     uses = {"flags"} | sources | address_uses | partial | (destination_registers if base == "cmov" else set())
-    return effects(uses, destination_registers, load=load_from_memory)
+    # A `set` memory operand is its destination, a store; a `cmov` memory operand is its source.
+    return effects(uses, destination_registers, load=load_from_memory and base == "cmov")
   if base == "xor" and len(operands) == 2 and operands[0] == operands[1] and not memory and not partial:
     return effects(set(), destination_registers | {"flags"})
   if base == "lea":
@@ -320,7 +327,7 @@ def aarch64_effects(row: scanner.DecodedLine, identity: str) -> Effects:
       return effects(set(aarch64_registers(row.operands)), set(), unknown=True)
     return effects(set(aarch64_registers(row.operands)), set())
   if mnemonic == "mrs":
-    return effects(set(), set(aarch64_registers(operands[0])), unknown="dit" not in row.operands.lower())
+    return effects(set(), set(aarch64_registers(operands[0])), unknown="dit" not in row.operands.lower(), state=True)
   if mnemonic in {"ldr", "ldrsw"} and memory is None:
     # A PC-relative literal load reads only its target, which the identity binds.
     return effects(set(), set(aarch64_registers(operands[0])), load=not constant)
@@ -385,6 +392,10 @@ def riscv_effects(row: scanner.DecodedLine, identity: str) -> Effects:
   if mnemonic in {"jal", "c.jal"} or (mnemonic in {"jalr", "c.jalr"} and (not registers or registers[0] == "ra"
                                                                             or "(" in row.operands)):
     return effects(set(registers) | {"sp"}, RISCV_CALLER_SAVED, call=True)
+  if mnemonic == "ecall":
+    # The Linux system-call ABI: number in a7, arguments in a0-a5, and the result in a0. Like a call, it can
+    # write the memory that its pointer arguments address.
+    return effects({"a7", *(f"a{n}" for n in range(6))}, {"a0"}, call=True)
   if mnemonic in {"j", "c.j", "jr", "c.jr", "ret", "nop", "c.nop", "ebreak", "c.ebreak", "unimp", "c.unimp",
                   "fence", "fence.i"}:
     return effects(set(registers), set())
@@ -614,7 +625,8 @@ S390X_KNOWN_VECTOR = {
   "vmalef", "vuplf", "vupllf", "vpkg", "vpkf", "vsumqg", "vsumqf", "vsumg", "vsum", "vmxlg", "vmnlg",
 }
 S390X_STORES = {"st", "stg", "sty", "sth", "sthy", "stc", "stcy", "stgrl", "strl", "sthrl", "stmg", "mvc", "mvi",
-                "mvhi", "mvghi", "mvhhi", "stoc", "stocg", "stfh", "std", "ste", "vst", "vsteg", "vstef", "stam"}
+                "mvhi", "mvghi", "mvhhi", "stoc", "stocg", "stfh", "std", "ste", "vst", "vsteg", "vstef", "stam",
+                "stfle"}
 
 
 def s390x_registers(text: str) -> list[str]:
@@ -658,6 +670,13 @@ def s390x_effects(row: scanner.DecodedLine, identity: str) -> Effects:
       return effects(address | reads, set(first), load=not constant)
     # Register-to-register vector operations; reading every named register over-approximates uses.
     return effects(set(registers), set(first), unknown=mnemonic not in S390X_KNOWN_VECTOR)
+  if mnemonic in {"xc", "nc", "oc"}:
+    # Storage-to-storage logic writes its first operand in memory and the condition code, not a register.
+    return effects(set(registers), {"cc"}, load=not s390x_clears(mnemonic, operands))
+  if mnemonic == "stfle":
+    # STORE FACILITY LIST EXTENDED stores the facility list at its operand. r0 gives the doublewords to store,
+    # less one, and receives the count that the processor has, less one.
+    return effects({"r0"} | set(registers), {"r0", "cc"}, state=True)
   if mnemonic in S390X_STORES:
     return effects(set(registers) | ({"cc"} if mnemonic in {"stoc", "stocg"} else set()), set())
   # Address registers inside parentheses are read; only the first operand can be defined.
@@ -789,7 +808,12 @@ def x86_memory(row: scanner.DecodedLine) -> Memory:
       steps = ((destination, destination, 1 if base_name == "inc" else -1),)
     return Memory(steps=steps)
   width = X86_SUFFIX_WIDTH.get(mnemonic[-1]) if mnemonic != base_name else None
-  if base_name in {"movzx", "movsx"} and len(mnemonic) > 4:
+  if mnemonic.removeprefix("v") in {"movq", "movd"}:
+    # `movq` and `movd` move 8 and 4 bytes, also to and from a vector register.
+    width = 8 if mnemonic.endswith("q") else 4
+  elif base_name == "set":
+    width = 1
+  elif base_name in {"movzx", "movsx"} and len(mnemonic) > 4:
     width = X86_SUFFIX_WIDTH.get(mnemonic[4])
   elif base_name == "movsxd":
     width = 4
@@ -981,6 +1005,14 @@ S390X_WIDTH = {
 
 
 S390X_STORAGE_COMPARES = {"chsi", "chhsi", "cghsi", "clhhsi", "clghsi", "clfhsi", "cli", "cliy", "tm", "tmy"}
+
+
+def s390x_clears(mnemonic: str, operands: list[str]) -> bool:
+  """Whether the instruction is `xc` of a location with itself, which stores zeros and reads nothing."""
+  if mnemonic != "xc" or len(operands) != 2:
+    return False
+  first, second = (S390X_STORAGE.search(operand) for operand in operands)
+  return bool(first and second) and (first["displacement"], first["base"]) == (second["displacement"], second["base"])
 
 
 def s390x_memory(row: scanner.DecodedLine) -> Memory:
@@ -1197,6 +1229,22 @@ def cyclic_rows(successors: list[list[int] | None], count: int) -> set[int]:
 
 
 FLAG_REGISTERS = {"flags", "nzcv", "cc", *(f"cr{n}" for n in range(8))}
+# The register that holds the number of a Linux system call.
+SYSCALL_NUMBER = {"syscall": "rax", "ecall": "a7"}
+# The identity of a direct transfer to a resolved symbol (`asm_heuristics.instruction_identity`).
+RESOLVED_TRANSFER = re.compile(r"[0-9a-f]+: \d+B [^<]*<(.+)>")
+
+
+def immediate_move(row: scanner.DecodedLine) -> int | None:
+  """The value that an x86 `mov $imm, reg` or a RISC-V `li` writes."""
+  operands = split_operands(row.operands)
+  if len(operands) != 2:
+    return None
+  if row.mnemonic in {"li", "c.li"}:
+    return immediate(operands[1])
+  if x86_base(row.mnemonic) in {"mov", "movq", "movabs"} and operands[0].startswith("$"):
+    return immediate(operands[0])
+  return None
 
 
 def frame_escapes(target: str, rows: list[scanner.DecodedLine], row_effects: list[Effects],
@@ -1270,11 +1318,19 @@ def alias(store: Location, load: Location, escaped: bool, unique: Any) -> str | 
 
 @dataclass
 class Slice:
-  """A canonical backward slice of one branch condition."""
+  """A canonical backward slice of one branch condition.
+
+  `leaves` names the values that the condition starts from, other than immediates, read-only data, and frame
+  addresses: `entry <register>` and `entry memory` (function inputs), a processor-state instruction such as
+  `cpuid`, `call <symbol>` and `syscall <number>` (results and memory written), and the open reasons that no
+  value can name (`unknown ...`, `incomplete ...`). A bare `call` or `syscall` has no resolved destination or
+  immediate number.
+  """
 
   canonical: str
   nodes: list[dict[str, Any]] = field(default_factory=list)
   reasons: list[str] = field(default_factory=list)
+  leaves: list[str] = field(default_factory=list)
 
 
 def strip_offset(identity: str) -> str:
@@ -1335,46 +1391,20 @@ class FunctionSlices:
     predecessors, row_effects, row_memory = self.predecessors, self.row_effects, self.row_memory
     states, escaped, cyclic = self.states, self.escaped, self.cyclic
     if line_number not in self.index_by_line:
-      return Slice("", reasons=["branch line not decoded"])
+      return Slice("", reasons=["branch line not decoded"], leaves=["incomplete slice"])
     reasons = list(self.reasons)
+    leaves = {"incomplete control flow"} if self.reasons else set()
+    # The leaves of each node's open reasons.
+    opened: dict[int, list[str]] = {}
     index_by_line = self.index_by_line
+
+    def open_leaf(index: int, reason: str, leaf: str) -> None:
+      reasons.append(reason)
+      opened.setdefault(index, []).append(leaf)
 
     def unique(root: tuple[int, str]) -> bool:
       # A root defined outside every loop holds one value per call.
       return root[0] == ENTRY or root[0] not in cyclic
-
-    def memory_reaching(index: int, location: Location) -> tuple[list[int], list[str]]:
-      """The stores that can write the loaded bytes, and `ENTRY` when entry memory can reach the load."""
-      found, open_reasons, pending, seen = set(), [], list(predecessors[index]), set()
-      while pending:
-        current = pending.pop()
-        if current in seen:
-          continue
-        seen.add(current)
-        if current == ENTRY:
-          found.add(ENTRY)
-          continue
-        memory = row_memory[current]
-        where = f"+0x{rows[current].offset:x}"
-        if row_effects[current].call and (location.other or (location.frame and escaped)):
-          open_reasons.append(f"memory may be written by the call at {where}")
-        elif memory.wild_store:
-          open_reasons.append(f"memory may be written at an unknown address at {where}")
-        else:
-          killed = False
-          for access in memory.accesses:
-            if not access.store:
-              continue
-            relation = alias(locate(access, states[current], frame), location, escaped, unique)
-            if relation:
-              found.add(current)
-              killed = killed or relation == "must"
-          if killed:
-            continue
-        pending.extend(predecessors[current])
-      if ENTRY in found and location.frame and (location.start is None or location.start < 0):
-        open_reasons.append(f"frame memory without a reaching store at +0x{rows[index].offset:x}")
-      return sorted(found), open_reasons
 
     def reaching(index: int, register: str) -> list[int]:
       found, pending, seen = set(), list(predecessors[index]), set()
@@ -1392,6 +1422,49 @@ class FunctionSlices:
         pending.extend(predecessors[current])
       return sorted(found)
 
+    def query(index: int) -> str:
+      """The leaf of a call's results and of the memory that it writes."""
+      row = rows[index]
+      if register := SYSCALL_NUMBER.get(row.mnemonic):
+        numbers = {immediate_move(rows[definition]) if definition >= 0 else None
+                   for definition in reaching(index, register)}
+        return f"syscall {numbers.pop()}" if len(numbers) == 1 and None not in numbers else "syscall"
+      called = RESOLVED_TRANSFER.fullmatch(identities[row.number])
+      return f"call {called.group(1)}" if called else "call"
+
+    def memory_reaching(index: int, location: Location) -> list[int]:
+      """The stores that can write the loaded bytes, and `ENTRY` when entry memory can reach the load."""
+      found, pending, seen = set(), list(predecessors[index]), set()
+      while pending:
+        current = pending.pop()
+        if current in seen:
+          continue
+        seen.add(current)
+        if current == ENTRY:
+          found.add(ENTRY)
+          continue
+        memory = row_memory[current]
+        where = f"+0x{rows[current].offset:x}"
+        if row_effects[current].call and (location.other or (location.frame and escaped)):
+          open_leaf(index, f"memory may be written by the call at {where}", query(current))
+        elif memory.wild_store:
+          open_leaf(index, f"memory may be written at an unknown address at {where}", "unknown store")
+        else:
+          killed = False
+          for access in memory.accesses:
+            if not access.store:
+              continue
+            relation = alias(locate(access, states[current], frame), location, escaped, unique)
+            if relation:
+              found.add(current)
+              killed = killed or relation == "must"
+          if killed:
+            continue
+        pending.extend(predecessors[current])
+      if ENTRY in found and location.frame and (location.start is None or location.start < 0):
+        reasons.append(f"frame memory without a reaching store at +0x{rows[index].offset:x}")
+      return sorted(found)
+
     order: dict[int, int] = {}
     nodes: list[dict[str, Any]] = []
     branch_index = index_by_line[line_number]
@@ -1402,6 +1475,7 @@ class FunctionSlices:
         continue
       if len(order) >= MAX_SLICE_NODES:
         reasons.append("slice exceeds the node limit")
+        leaves.add("incomplete slice")
         break
       order[index] = len(order)
       row = rows[index]
@@ -1418,14 +1492,12 @@ class FunctionSlices:
       if effect.load:
         loads = [access for access in row_memory[index].accesses if not access.store]
         if not loads:
-          reasons.append(f"non-constant load at +0x{row.offset:x}: {row.mnemonic} {row.operands}")
+          open_leaf(index, f"non-constant load at +0x{row.offset:x}: {row.mnemonic} {row.operands}", "unknown load")
         else:
           # The loaded value is a leaf only at entry memory; otherwise the reaching stores join the slice.
           definitions = set()
           for access in loads:
-            found, open_reasons = memory_reaching(index, locate(access, states[index], frame))
-            definitions.update(found)
-            reasons.extend(open_reasons)
+            definitions.update(memory_reaching(index, locate(access, states[index], frame)))
           inputs["mem"] = sorted(definitions)
           pending.extend(definition for definition in definitions if definition >= 0)
       nodes.append({"index": index, "offset": row.offset, "identity": identities[row.number], "inputs": inputs,
@@ -1434,9 +1506,33 @@ class FunctionSlices:
         if effect.call:
           reasons.append(f"call result at +0x{row.offset:x}: {row.mnemonic} {row.operands}")
         if effect.unknown:
-          reasons.append(f"unknown register effects at +0x{row.offset:x}: {row.mnemonic} {row.operands}")
+          open_leaf(index, f"unknown register effects at +0x{row.offset:x}: {row.mnemonic} {row.operands}",
+                    f"unknown {row.mnemonic}")
       elif effect.unknown:
-        reasons.append(f"unknown branch condition at +0x{row.offset:x}: {row.mnemonic} {row.operands}")
+        open_leaf(index, f"unknown branch condition at +0x{row.offset:x}: {row.mnemonic} {row.operands}",
+                  f"unknown {row.mnemonic}")
+
+    # The leaves are the values that the condition starts from. The walk stops at a call: the calling
+    # convention, not the callee, gives its argument registers, so they can name values that it never reads.
+    inputs_of = {node["index"]: node["inputs"] for node in nodes}
+    walk, walked = [branch_index], set()
+    while walk:
+      index = walk.pop()
+      if index in walked or index not in inputs_of:
+        continue
+      walked.add(index)
+      if row_effects[index].call:
+        leaves.add(query(index))
+        continue
+      if row_effects[index].state:
+        leaves.add(rows[index].mnemonic)
+      leaves.update(opened.get(index, []))
+      for register, definitions in inputs_of[index].items():
+        for definition in definitions:
+          if definition == ENTRY:
+            leaves.add("entry memory" if register == "mem" else f"entry {register}")
+          elif definition >= 0:
+            walk.append(definition)
 
     lines = []
     for node in nodes:
@@ -1449,4 +1545,4 @@ class FunctionSlices:
     for node in nodes:
       node["inputs"] = {register: [{ENTRY: "entry", FRAME: "frame"}.get(definition) or f"+0x{rows[definition].offset:x}"
                                    for definition in definitions] for register, definitions in node["inputs"].items()}
-    return Slice("\n".join(lines), nodes, sorted(set(reasons)))
+    return Slice("\n".join(lines), nodes, sorted(set(reasons)), sorted(leaves))
