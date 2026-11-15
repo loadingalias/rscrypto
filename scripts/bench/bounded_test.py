@@ -33,8 +33,11 @@ class BudgetTests(unittest.TestCase):
                            (['rsa-4096-keygen'], 1800), (['rsa-3072-keygen'], 600),
                            ([selector, '--filter', 'rscrypto'], 600),
                            ([selector, '--quick'], 600),
-                           ([selector, '--prepare-archive', 'fixture.tar'], 600),
-                           ([selector, '--run-archive', 'fixture.tar'], 1800)):
+                           ([selector, '--run-archive', 'fixture.tar'], 1800),
+                           (['rsa-3072-keygen', '--run-archive', 'fixture.tar'], 600),
+                           # Preparation is a build of every selected target, so it gets the build bound.
+                           ([selector, '--prepare-archive', 'fixture.tar'], 1800),
+                           (['sha2', '--prepare-archive', 'fixture.tar'], 1800)):
       with self.subTest(args=args), patch.dict(os.environ, {}, clear=True), patch('bounded.run', return_value=0) as execute:
         self.assertEqual(main(['--bench', *args]), 0)
         self.assertEqual(execute.call_args.args[1], expected)

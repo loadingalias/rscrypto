@@ -175,7 +175,7 @@ def measurement_runs(args, catalog) -> list[list[str]]:
 def run_budget(args, catalog, rows=None) -> int:
   """Extend only one complete catalog comparison; all other invocations keep the ordinary bound."""
   ordinary = settings.load()["max_run_seconds"]
-  if args.list or args.quick or args.prepare_archive or args.filter:
+  if args.list or args.quick or args.filter:
     return ordinary
   rows = requests(args, catalog) if rows is None else rows
   if len(rows) == 1:

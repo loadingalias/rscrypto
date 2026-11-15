@@ -801,7 +801,7 @@ selects the first message index for reproducing a discovered rejection case.
   `bench/settings.py` resolves overrides for one invocation.
 - Catalog algorithms on split targets may declare `max_run_seconds` within that ceiling.
   `bench/runner.py` grants it only to one complete operation without a filter; quick runs
-  and preparation keep the ordinary budget.
+  keep the ordinary budget. `bench/bounded.py` gives cross-build preparation the build budget.
 - `bench/bounded.py` stops the whole benchmark or profile process tree within the budget.
   Native campaigns measure one target at a time,
   splitting unfiltered targets marked `split: algorithms` into their complete catalog operations.
@@ -1100,8 +1100,8 @@ They do not install Rust, build code, or call Cargo Rail.
   and the default `auth` schedule runs SLH-DSA after the other targets.
   The 12 small-signature signing comparisons have a 30-minute catalog budget;
   all other invocations retain the ordinary ten-minute limit.
-  The CI planner sums the selected measurement budgets
-  while preparation keeps ten minutes per invocation.
+  The CI planner sums the selected measurement budgets.
+  A preparation job allows 30 minutes for its first invocation and 10 for each further one.
   A failed invocation still ends its job.
 - RSA key generation runs one key size per invocation.
   `rsa-4096-keygen` also has the 30-minute catalog budget.

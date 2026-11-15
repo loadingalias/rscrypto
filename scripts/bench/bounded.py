@@ -105,7 +105,10 @@ def main(arguments: list[str]) -> int:
         if status:
           return status
       return 0
-    return run(command, runner.run_budget(args, catalog), maximum=load()["max_comparison_seconds"])
+    if args.prepare_archive:
+      # Preparation builds every selected target and measures nothing, so it gets the build bound.
+      return run(command, build, maximum=build)
+    return run(command, runner.run_budget(args, catalog), maximum=build)
   return run(arguments, load()["max_run_seconds"])
 
 
