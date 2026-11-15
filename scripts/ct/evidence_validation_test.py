@@ -899,7 +899,7 @@ def main() -> None:
     "symbol": finding["symbol"],
     "kind": finding["kind"],
     "max_count": 1,
-    "source": "src/auth/argon2/mod.rs:1434",
+    "source": "src/auth/argon2/mod.rs fill_segment_inner",
     "rationale": "public addressing inputs",
   }
   assert apply_public_operand_rules([finding], [rule]) == []
@@ -971,7 +971,7 @@ def main() -> None:
   )
   waiver = {
     "target": target, "primitive": "kx.p256_ecdh", "symbol": public_site["symbol"],
-    "kind": "select_branch", "slice_sha256": public_site["slice_sha256"], "source": "src/auth/p256_portable.rs:246",
+    "kind": "select_branch", "slice_sha256": public_site["slice_sha256"], "source": "src/auth/p256_portable.rs bit_mask",
     "classification": "public", "rationale": "The compared value is the public window index.",
     "reviewer": "regression fixture", "reviewed_at": "2026-10-15",
   }
@@ -1013,6 +1013,18 @@ def main() -> None:
     assert any("contract must reference" in error for error in manifest_errors(
       lambda manifest: manifest.update(asm_waiver=[invalid])
     ))
+
+  # A source cites `path function`: a line number drifts with edits, so a renamed file or function must fail.
+  def cited(source):
+    return manifest_errors(lambda manifest: manifest.update(asm_waiver=[dict(waiver, source=source)]))
+  assert not cited("src/auth/p256_portable.rs bit_mask; src/traits/ct.rs zeroize_no_fence")
+  assert "asm_waiver[0] source cites missing file src/auth/missing.rs" in cited("src/auth/missing.rs bit_mask")
+  missing_function = "asm_waiver[0] source cites src/auth/p256_portable.rs without a function that the file defines"
+  assert missing_function in cited("src/auth/p256_portable.rs no_such_function")
+  assert missing_function in cited("src/auth/p256_portable.rs:246")
+  assert "asm_public_operand[0] source cites missing file src/auth/missing.rs" in manifest_errors(
+    lambda manifest: manifest["asm_public_operand"][0].update(source="src/auth/missing.rs fill_segment_inner")
+  )
 
 
 if __name__ == "__main__":

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import functools
 import hashlib
 import json
 import math
@@ -269,6 +270,29 @@ def compiler_public_api_snapshot(
   return len(rows), hashlib.sha256(encoded).hexdigest()
 
 
+SOURCE_REFERENCE = re.compile(r"(?P<path>(?:src|tools)/[\w/.-]+\.rs)(?:\s+(?:[A-Z]\w*::)?(?P<function>[A-Za-z_]\w*))?")
+
+
+def source_reference_errors(root: Path, source: object) -> list[str]:
+  """Check a `source` that cites `path function` pairs; a function name, unlike a line, survives edits."""
+  references = list(SOURCE_REFERENCE.finditer(str(source)))
+  if not references:
+    return ["source must cite a source file and a function in it"]
+  errors = []
+  for reference in references:
+    path, function = reference.group("path"), reference.group("function")
+    if not (root / path).is_file():
+      errors.append(f"source cites missing file {path}")
+    elif function is None or not re.search(rf"\bfn {re.escape(function)}\b", source_text(root / path)):
+      errors.append(f"source cites {path} without a function that the file defines")
+  return errors
+
+
+@functools.cache
+def source_text(path: Path) -> str:
+  return path.read_text()
+
+
 def validate_manifest(root: Path, selected_target: str, errors: list[str], warnings: list[str]) -> dict:
   ct_path = root / "ct.toml"
   matrix_path = root / ".config" / "target-matrix.json"
@@ -505,6 +529,9 @@ def validate_manifest(root: Path, selected_target: str, errors: list[str], warni
         )
       if not valid:
         fail(errors, f"asm_waiver[{index}] contract must reference existing primitive notes or an allowed disclosure")
+  for index, waiver in enumerate(configured_waivers):
+    for error in source_reference_errors(root, waiver.get("source", "")):
+      fail(errors, f"asm_waiver[{index}] {error}")
   configured_public_inputs = ct.get("asm_public_input", [])
   errors.extend(validate_public_inputs(configured_public_inputs))
   for index, rule in enumerate(configured_public_inputs):
@@ -571,9 +598,8 @@ def validate_manifest(root: Path, selected_target: str, errors: list[str], warni
     max_count = rule.get("max_count")
     if isinstance(max_count, bool) or not isinstance(max_count, int) or max_count <= 0:
       fail(errors, f"asm_public_operand[{index}] max_count must be a positive integer")
-    source, separator, line = str(rule.get("source", "")).rpartition(":")
-    if not separator or not line.isdigit() or not (root / source).is_file():
-      fail(errors, f"asm_public_operand[{index}] source must identify an existing source line")
+    for error in source_reference_errors(root, rule.get("source", "")):
+      fail(errors, f"asm_public_operand[{index}] {error}")
     if not isinstance(rule.get("rationale"), str) or not rule.get("rationale", "").strip():
       fail(errors, f"asm_public_operand[{index}] requires a rationale")
 
