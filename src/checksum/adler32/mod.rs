@@ -270,7 +270,10 @@ impl Checksum for Adler32 {
 
   #[inline]
   fn update(&mut self, data: &[u8]) {
-    self.state = (self.dispatch)(self.state, data);
+    // Empty data leaves both sums unchanged, so it skips the kernel call.
+    if !data.is_empty() {
+      self.state = (self.dispatch)(self.state, data);
+    }
   }
 
   #[inline]

@@ -21,7 +21,7 @@ use core::{
   simd::{i32x4, u8x16},
 };
 
-use super::blocks::{BLOCK, CHUNK_BLOCKS, WEIGHTS, finish, fold};
+use super::blocks::{BLOCK, CHUNK_BLOCKS, Step, WEIGHTS, finish, fold};
 
 /// Canonical name of the kernel.
 pub(in crate::checksum) const KERNEL_NAME: &str = "power/vmsum";
@@ -88,11 +88,48 @@ fn sum_lanes(lanes: &[i32x4; 4]) -> u64 {
     .sum()
 }
 
+/// The byte sum and the weighted sum of the whole 16-byte steps of a tail, for [`finish`].
+///
+/// # Safety
+/// Calling outside an AltiVec-enabled function requires AltiVec support.
+#[inline]
+#[target_feature(enable = "altivec")]
+fn step_sums(steps: &[Step], weights: &[Step]) -> (u32, u32) {
+  let ones = u8x16::splat(1);
+  let (mut bytes, mut weighted) = (i32x4::splat(0), i32x4::splat(0));
+  for (step, weight) in steps.iter().zip(weights) {
+    let v = u8x16::from_array(*step);
+    bytes = vmsumubm(v, ones, bytes);
+    weighted = vmsumubm(v, u8x16::from_array(*weight), weighted);
+  }
+  // A tail's sums stay below 2^19, so the 32-bit lane total does not wrap.
+  let total = |lanes: i32x4| {
+    lanes
+      .to_array()
+      .into_iter()
+      .fold(0u32, |sum, lane| sum.strict_add(lane.cast_unsigned()))
+  };
+  (total(bytes), total(weighted))
+}
+
+/// [`finish`] with [`step_sums`], out of line.
+///
+/// # Safety
+/// Calling outside an AltiVec-enabled function requires AltiVec support.
+#[inline(never)]
+#[target_feature(enable = "altivec")]
+fn finish_tail(adler: u32, tail: &[u8]) -> u32 {
+  finish(adler, tail, |steps, weights| step_sums(steps, weights))
+}
+
 /// # Safety
 /// Calling outside an AltiVec-enabled function requires AltiVec support.
 #[target_feature(enable = "altivec")]
 fn update(mut adler: u32, data: &[u8]) -> u32 {
   let (blocks, tail) = data.as_chunks::<BLOCK>();
+  if blocks.is_empty() {
+    return finish_tail(adler, tail);
+  }
   let quarters = WEIGHTS.as_chunks::<16>().0;
   let weights = [0, 1, 2, 3].map(|i| u8x16::from_array(quarters[i]));
   let ones = u8x16::splat(1);
@@ -123,7 +160,11 @@ fn update(mut adler: u32, data: &[u8]) -> u32 {
       .strict_add(sum_lanes(&weighted));
     adler = fold(adler, chunk.len().strict_mul(BLOCK), (sum_lanes(&bytes), weighted));
   }
-  finish(adler, tail)
+  if tail.is_empty() {
+    adler
+  } else {
+    finish_tail(adler, tail)
+  }
 }
 
 /// Safe wrapper for the kernel.

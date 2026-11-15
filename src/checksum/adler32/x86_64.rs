@@ -12,7 +12,7 @@
 use core::arch::x86_64::*;
 
 use super::{
-  blocks::{BLOCK, CHUNK_BLOCKS, WEIGHTS, finish, fold},
+  blocks::{BLOCK, CHUNK_BLOCKS, Step, WEIGHTS, finish, fold},
   config::Adler32Force,
   portable,
 };
@@ -126,6 +126,44 @@ fn widen_u32x4(v: __m128i) -> __m128i {
   _mm_add_epi64(_mm_srli_epi64::<32>(v), _mm_and_si128(v, _mm_set1_epi64x(0xffff_ffff)))
 }
 
+/// The byte sum and the weighted sum of the whole 16-byte steps of a tail, for [`finish`]. Every
+/// x86-64 kernel takes this step: a tail has at most three of them.
+///
+/// `pmaddubsw` adds two adjacent products of at most `255·(48 + 47)`, below `i16::MAX`.
+///
+/// # Safety
+/// Calling outside an SSSE3-enabled function requires SSSE3 support.
+#[inline]
+#[target_feature(enable = "ssse3")]
+fn step_sums128(steps: &[Step], weights: &[Step]) -> (u32, u32) {
+  let zero = _mm_setzero_si128();
+  let ones = _mm_set1_epi16(1);
+  let (mut bytes, mut weighted) = (zero, zero);
+  for (step, weight) in steps.iter().zip(weights) {
+    let v = load128(step);
+    bytes = _mm_add_epi64(bytes, _mm_sad_epu8(v, zero));
+    weighted = _mm_add_epi32(
+      weighted,
+      _mm_madd_epi16(_mm_maddubs_epi16(v, load_weights128(weight)), ones),
+    );
+  }
+  let (bytes, weighted) = sum_lanes128(bytes, widen_u32x4(weighted));
+  (
+    u32::try_from(bytes).expect("a tail's byte sum fits in 32 bits"),
+    u32::try_from(weighted).expect("a tail's weighted sum fits in 32 bits"),
+  )
+}
+
+/// [`finish`] with [`step_sums128`], out of line for every x86-64 kernel.
+///
+/// # Safety
+/// Calling outside an SSSE3-enabled function requires SSSE3 support.
+#[inline(never)]
+#[target_feature(enable = "ssse3")]
+fn finish128(adler: u32, tail: &[u8]) -> u32 {
+  finish(adler, tail, |steps, weights| step_sums128(steps, weights))
+}
+
 /// # Safety
 /// Calling outside an SSSE3-enabled function requires SSSE3 support.
 #[target_feature(enable = "ssse3")]
@@ -158,7 +196,7 @@ fn adler32_ssse3(mut adler: u32, data: &[u8]) -> u32 {
     let weighted = _mm_add_epi64(_mm_slli_epi64::<6>(prefix), widen_u32x4(weighted));
     adler = fold(adler, chunk.len().strict_mul(BLOCK), sum_lanes128(bytes, weighted));
   }
-  finish(adler, tail)
+  if tail.is_empty() { adler } else { finish128(adler, tail) }
 }
 
 /// Safe wrapper for the SSSE3 kernel.
@@ -274,7 +312,7 @@ fn adler32_avx2(mut adler: u32, data: &[u8]) -> u32 {
     let weighted = _mm256_add_epi64(_mm256_slli_epi64::<6>(prefix), widen_u32x8(weighted));
     adler = fold(adler, chunk.len().strict_mul(BLOCK), sum_lanes256(bytes, weighted));
   }
-  finish(adler, tail)
+  if tail.is_empty() { adler } else { finish128(adler, tail) }
 }
 
 /// Adler-32 of an input shorter than [`SHORT_LEN`], without chunks.
@@ -285,6 +323,10 @@ fn adler32_avx2(mut adler: u32, data: &[u8]) -> u32 {
 fn adler32_avx2_short(adler: u32, data: &[u8]) -> u32 {
   debug_assert!(data.len() < SHORT_LEN);
   let (blocks, tail) = data.as_chunks::<BLOCK>();
+  // An input shorter than a block goes straight to the tail steps.
+  if blocks.is_empty() {
+    return finish128(adler, tail);
+  }
   let halves = weight_halves();
   let weights = [load_weights256(&halves[0]), load_weights256(&halves[1])];
   let zero = _mm256_setzero_si256();
@@ -303,7 +345,8 @@ fn adler32_avx2_short(adler: u32, data: &[u8]) -> u32 {
   let (bytes, weighted) = sum_lanes32x8(bytes, _mm256_add_epi32(_mm256_slli_epi32::<6>(prefix), weighted));
   let a = (adler & 0xffff).strict_add(bytes);
   let b = (adler >> 16).strict_add(start_a_terms).strict_add(weighted);
-  finish(((b % portable::MOD) << 16) | (a % portable::MOD), tail)
+  let adler = ((b % portable::MOD) << 16) | (a % portable::MOD);
+  if tail.is_empty() { adler } else { finish128(adler, tail) }
 }
 
 /// Safe wrapper for the AVX2 kernel.
@@ -407,7 +450,7 @@ fn adler32_avx512_vnni(mut adler: u32, data: &[u8]) -> u32 {
     let weighted = _mm512_add_epi64(_mm512_slli_epi64::<6>(prefix), widen_u32x16(weighted));
     adler = fold(adler, chunk.len().strict_mul(BLOCK), sum_lanes512(bytes, weighted));
   }
-  finish(adler, tail)
+  if tail.is_empty() { adler } else { finish128(adler, tail) }
 }
 
 /// Safe wrapper for the AVX-512 VNNI kernel, which runs [`adler32_avx2_short`] on short inputs.

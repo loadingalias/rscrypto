@@ -4,7 +4,7 @@
 //! column sum of its position and the running total of that column sum after each row; the
 //! weighted sum follows from both once per chunk. `lanes` is the hart's vector length for
 //! 32-bit elements at LMUL 4, at most `MAX_LANES`, so the kernel runs on every VLEN. The byte
-//! tail goes to the portable kernel.
+//! tail, and an input shorter than every row, go to the portable kernel.
 //!
 //! Rust has no RVV intrinsics, and the safe column-sum loop that LLVM vectorizes keeps both
 //! column arrays in memory: two vector loads and two vector stores per row. The inline assembly
@@ -19,6 +19,9 @@ pub(in crate::checksum) const KERNEL_NAME: &str = "riscv64/v";
 
 /// The most lanes per row.
 const MAX_LANES: usize = 256;
+/// The fewest lanes per row: the V extension requires a VLEN of at least 128 bits (`Zvl128b`), so
+/// a row of 32-bit elements at LMUL 4 holds at least `128·4/32` lanes.
+const MIN_LANES: usize = 16;
 /// Rows between reductions.
 const ROWS: usize = 1024;
 /// Over a chunk of at most `ROWS` rows, a column sum stays at most `255·ROWS`, a running total
@@ -135,6 +138,10 @@ fn chunk_sums(chunk: &[u8], lanes: usize) -> (u64, u64, u64) {
 /// The CPU must support the V extension.
 #[target_feature(enable = "v")]
 pub(in crate::checksum) fn update(adler: u32, data: &[u8]) -> u32 {
+  // An input shorter than every row is all tail; it needs no vector setup.
+  if data.len() < MIN_LANES {
+    return portable::update(adler, data);
+  }
   // Under `ROW_SUMS_FIT`, no lane of a chunk of at most `ROWS` rows wraps.
   let () = ROW_SUMS_FIT;
   let lanes = lanes();

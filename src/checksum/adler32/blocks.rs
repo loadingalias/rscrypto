@@ -10,9 +10,10 @@
 //!   `Σ_t (k - 1 - t)·Σ_i x[t][i]`;
 //! - `weighted`: `Σ_t Σ_i (64 - i)·x[t][i]`.
 //!
-//! A chunk of [`CHUNK_BLOCKS`] blocks then folds into `(a, b)` once, modulo 65521, and bytes after
-//! the last whole block go to the portable kernel. Each kernel proves that its own lanes hold
-//! these sums without overflow for a whole chunk.
+//! A chunk of [`CHUNK_BLOCKS`] blocks then folds into `(a, b)` once, modulo 65521. [`finish`] adds
+//! the bytes after the last whole block: their whole 16-byte steps in one vector each, and the last
+//! 15 bytes or fewer one by one. Each kernel proves that its own lanes hold these sums without
+//! overflow for a whole chunk.
 
 use super::portable;
 
@@ -57,15 +58,37 @@ pub(super) fn fold(adler: u32, len: usize, (bytes, weighted): (u64, u64)) -> u32
   (b << 16) | (a % portable::MOD)
 }
 
-/// Add the bytes after the last whole block, which no vector holds.
+/// A 16-byte step of [`finish`].
+pub(super) type Step = [u8; 16];
+
+/// Add `tail`, the fewer than [`BLOCK`] bytes after the last whole block, to the reduced Adler-32
+/// value `adler`.
+///
+/// `steps` returns the byte sum and the weighted sum of the whole 16-byte steps of `tail`. It
+/// receives the weights that their bytes meet: the last quarters of [`WEIGHTS`], so a byte's weight
+/// is its distance from the end of the steps. The last 15 bytes or fewer are added one by one, and
+/// both sums reduce once. Each kernel keeps its call out of line and skips it for an empty tail, so
+/// a block loop keeps the size and layout that it has without a tail.
 #[inline(always)]
-pub(super) fn finish(adler: u32, tail: &[u8]) -> u32 {
-  // The portable kernel ends with two reductions, which an empty tail does not need.
-  if tail.is_empty() {
-    adler
-  } else {
-    portable::update(adler, tail)
+pub(super) fn finish(adler: u32, tail: &[u8], steps: impl FnOnce(&[Step], &[Step]) -> (u32, u32)) -> u32 {
+  debug_assert!(tail.len() < BLOCK);
+  let (whole, bytes) = tail.as_chunks::<16>();
+  let (mut a, mut b) = (adler & 0xffff, adler >> 16);
+  if !whole.is_empty() {
+    let quarters = WEIGHTS.as_chunks::<16>().0;
+    let (sum, weighted) = steps(whole, &quarters[quarters.len().strict_sub(whole.len())..]);
+    // At most 48 bytes of at most 255 each: `sum` stays below 2^14 and `weighted` below 2^19, and
+    // `b` below 2^23 from reduced sums.
+    let len = u32::try_from(whole.len().strict_mul(16)).expect("a tail is shorter than a block");
+    b = b.strict_add(len.strict_mul(a)).strict_add(weighted);
+    a = a.strict_add(sum);
   }
+  // At most 15 more bytes keep `a` below 2^17 and `b` below 2^23.
+  for &byte in bytes {
+    a = a.strict_add(u32::from(byte));
+    b = b.strict_add(a);
+  }
+  ((b % portable::MOD) << 16) | (a % portable::MOD)
 }
 
 /// Differential checks against the portable kernel that every block kernel runs on its target.

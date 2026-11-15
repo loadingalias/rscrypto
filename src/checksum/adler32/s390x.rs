@@ -16,7 +16,7 @@ use core::arch::s390x::{
   vec_add, vec_mule, vec_mulo, vec_sum4, vec_xl, vector_unsigned_char, vector_unsigned_int, vector_unsigned_short,
 };
 
-use super::blocks::{BLOCK, CHUNK_BLOCKS, WEIGHTS, finish, fold};
+use super::blocks::{BLOCK, CHUNK_BLOCKS, Step, WEIGHTS, finish, fold};
 
 /// Canonical name of the kernel.
 pub(in crate::checksum) const KERNEL_NAME: &str = "s390x/vsum";
@@ -46,11 +46,53 @@ fn sum_lanes(v: vector_unsigned_int) -> u64 {
   lanes.into_iter().map(u64::from).sum()
 }
 
+/// The byte sum and the weighted sum of the whole 16-byte steps of a tail, for [`finish`].
+///
+/// # Safety
+/// Calling outside a function that enables the vector facility requires it.
+#[inline]
+#[target_feature(enable = "vector")]
+fn step_sums(steps: &[Step], weights: &[Step]) -> (u32, u32) {
+  let zero8 = load(&[0; 16]);
+  // SAFETY: The function attribute enables the vector facility for these register-only operations.
+  // A 16-bit product lane holds two products of at most `255·48`, and a tail's sums stay below
+  // 2^19, so no addition wraps.
+  let (bytes, weighted) = unsafe {
+    let zero16: vector_unsigned_short = core::mem::transmute(zero8);
+    let zero32: vector_unsigned_int = core::mem::transmute(zero8);
+    let (mut bytes, mut weighted) = (zero32, zero32);
+    for (step, weight) in steps.iter().zip(weights) {
+      let (v, weight) = (load(step), load(weight));
+      bytes = vec_add(bytes, vec_sum4(v, zero8));
+      let products: vector_unsigned_short = vec_add(vec_mule(v, weight), vec_mulo(v, weight));
+      weighted = vec_add(weighted, vec_sum4(products, zero16));
+    }
+    (bytes, weighted)
+  };
+  (
+    u32::try_from(sum_lanes(bytes)).expect("a tail's byte sum fits in 32 bits"),
+    u32::try_from(sum_lanes(weighted)).expect("a tail's weighted sum fits in 32 bits"),
+  )
+}
+
+/// [`finish`] with [`step_sums`], out of line.
+///
+/// # Safety
+/// Calling outside a function that enables the vector facility requires it.
+#[inline(never)]
+#[target_feature(enable = "vector")]
+fn finish_tail(adler: u32, tail: &[u8]) -> u32 {
+  finish(adler, tail, |steps, weights| step_sums(steps, weights))
+}
+
 /// # Safety
 /// Calling outside a function that enables the vector facility requires it.
 #[target_feature(enable = "vector")]
 fn update(mut adler: u32, data: &[u8]) -> u32 {
   let (blocks, tail) = data.as_chunks::<BLOCK>();
+  if blocks.is_empty() {
+    return finish_tail(adler, tail);
+  }
   let quarters = WEIGHTS.as_chunks::<16>().0;
   let weights = [
     load(&quarters[0]),
@@ -81,7 +123,11 @@ fn update(mut adler: u32, data: &[u8]) -> u32 {
       adler = fold(adler, chunk.len().strict_mul(BLOCK), (sum_lanes(bytes), weighted));
     }
   }
-  finish(adler, tail)
+  if tail.is_empty() {
+    adler
+  } else {
+    finish_tail(adler, tail)
+  }
 }
 
 /// Safe wrapper for the kernel.
