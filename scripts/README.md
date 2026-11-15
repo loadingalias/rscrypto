@@ -512,7 +512,9 @@ Both kinds include recoverable error branches. `--evidence DIR` retains the bina
 its hash, symbol tables, relocations, disassembly, complete parsed call graph,
 source hashes, compiler identity, and reports in a new directory.
 
-- It builds `tools/frame-review` with `-Z emit-stack-sizes` and the shipping release profile.
+- It builds `tools/frame-review` with the shipping release profile, `-Z emit-stack-sizes`, and
+  `-C llvm-args=-emit-jump-table-sizes-section`. Each flag adds only a non-allocated ELF section
+  of compiler records: frame sizes, and the address and entry count of each jump table.
   The binary runs every ML-DSA and ML-KEM public operation once, and AES-GCM and
   ChaCha20-Poly1305 seal and open at lengths that reach each length-selected worker.
 - A boundary can name the targets whose artifact links its workers, and whether a
@@ -542,8 +544,21 @@ source hashes, compiler identity, and reports in a new directory.
   unsigned bound check precedes it, every instruction in between is a table step or a store, no branch
   enters that span, and every relative entry for every checked index, read from the linked image,
   lands on an instruction of the same function. Its destinations then add nothing beyond that
-  function's frame and calls. Each resolved table appears in the report's assumptions; any other
-  register jump stays an indirect transfer.
+  function's frame and calls.
+- A jump table with no bound check gets its index range from the compiler's jump-table record.
+  LLVM omits the check when the index cannot leave the table, as in an exhaustive `match` on an
+  enum. Such a jump is resolved only when four conditions hold:
+  1. The table base has an entry count in the binary's `.llvm_jump_table_sizes` record.
+  2. Each instruction from a start row through the jump is a table step or a store. A register
+     that the steps read before they write it holds the index.
+  3. No branch enters that span.
+  4. Each recorded entry, read from the linked image, lands on an instruction of the same
+     function.
+  The residual assumption is that the index is in range, unless the program already has undefined
+  behavior. A binary without the record, such as a `--binary` artifact built without the flag,
+  keeps such a jump unresolved.
+- Each resolved table appears in the report's assumptions, and a table without a bound check
+  appears as an `unchecked jump table`. Any other register jump stays an indirect transfer.
 
 The review fails when:
 

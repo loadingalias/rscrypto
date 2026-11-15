@@ -123,7 +123,9 @@ AWS x86-64/AArch64 machines had no instances during this run.
 preparation-plus-destruction roots for every set. Repeating with `--portable`
 selects the other dispatch configuration. The release profile uses fat LTO,
 one codegen unit, overflow checks, and panic abort. `-Z emit-stack-sizes` adds
-frame records; no target CPU override is supplied. As the
+frame records, and `-C llvm-args=-emit-jump-table-sizes-section` adds the
+address and entry count of each jump table. Each adds only a non-allocated
+section; no target CPU override is supplied. As the
 [Rust compiler documentation](https://doc.rust-lang.org/nightly/unstable-book/compiler-flags/emit-stack-sizes.html)
 explains, frame records do not include callees and can be absent for dynamic
 stack allocation. They are not whole-call bounds. On x86-64 and AArch64, code

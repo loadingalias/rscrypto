@@ -10,8 +10,9 @@ On x86-64 and AArch64, code without a record, such as hand-written assembly,
 gets a frame derived from its instructions when every stack-pointer change is
 provably bounded (see `assembly_region`); each derived frame is listed as an
 assumption. Calls come from the linked disassembly and are resolved by address;
-a checked jump table whose entries stay inside its function is resolved too
-(see `resolve_jump_tables`).
+a jump table whose entries stay inside its function is resolved too, when a
+bound check or the compiler's table record (`-emit-jump-table-sizes-section`)
+bounds its index (see `jump_table_targets`).
 A path is unbounded when it reaches a function without a frame record or a
 derivable frame, an indirect transfer, an unresolved external target, or
 recursion. Unbounded paths and
@@ -765,8 +766,16 @@ def assembly_region(program: Program, function: Function) -> AssemblyRegion | No
   return AssemblyRegion(frame, frozenset(members), note)
 
 
+SHT_LLVM_JT_SIZES = 0x6FFF4C0D
+
+
 class ElfImage:
-  """The file-backed bytes of an ELF64 executable's loadable segments, by virtual address."""
+  """The file-backed bytes of an ELF64 executable's loadable segments, by virtual address.
+
+  `jump_tables` maps each jump table's address to its entry count, from the
+  compiler's `.llvm_jump_table_sizes` records (one pair of 64-bit words per
+  table). An address recorded more than once keeps its largest count.
+  """
 
   def __init__(self, data: bytes) -> None:
     if data[:4] != b"\x7fELF" or data[4] != 2:
@@ -780,6 +789,16 @@ class ElfImage:
       kind, _, offset, vaddr, _, filesz = struct.unpack_from(self.endian + "IIQQQQ", data, phoff + index * phentsize)
       if kind == 1:  # PT_LOAD
         self.segments.append((vaddr, offset, filesz))
+    shoff, = struct.unpack_from(self.endian + "Q", data, 0x28)
+    shentsize, shnum = struct.unpack_from(self.endian + "HH", data, 0x3A)
+    self.jump_tables: dict[int, int] = {}
+    for index in range(shnum):
+      _, kind, _, _, offset, size = struct.unpack_from(self.endian + "IIQQQQ", data, shoff + index * shentsize)
+      if kind != SHT_LLVM_JT_SIZES:
+        continue
+      for record in range(offset, offset + size - size % 16, 16):
+        address, count = struct.unpack_from(self.endian + "QQ", data, record)
+        self.jump_tables[address] = max(count, self.jump_tables.get(address, 0))
 
   def int32(self, address: int) -> int | None:
     """The signed 32-bit value stored at `address`, or None outside file-backed memory."""
@@ -789,9 +808,11 @@ class ElfImage:
     return None
 
 
-# Symbolic values while following a jump-table sequence; i is the checked index, 0 <= i <= bound.
+# Symbolic values while following a jump-table sequence; i is the index, 0 <= i <= bound, and an
+# unchecked index has bound None.
 #   ("const", c)                 c
 #   ("index", scale, bound)      scale * i
+#   ("address", base, scale, bound) base + scale * i
 #   ("entry", base, scale, bound) the signed 32-bit table entry at base + scale * i
 #   ("target", origin, entry)    origin + entry
 JUMP_TABLE_STEPS = 12
@@ -925,13 +946,56 @@ def jump_table_bound(target: str, rows: list[tuple[int, str, str]], position: in
   return None
 
 
-def jump_table_targets(program: Program, image: ElfImage, function: Function, source: int) -> list[int] | None:
-  """Every destination of the register jump at `source`, if it is a checked relative jump table.
+class UncheckedIndex(dict):
+  """Jump-table state without a bound check: a register read before the sequence writes it holds the index."""
 
-  The jump must follow an unsigned bound check of an index register within a
-  few instructions. Between the check's fall-through and the jump, every
-  instruction must be a step of the table computation or a store, and no
-  branch may enter. Each entry for indexes 0 through the bound is read from
+  def get(self, register, default=None):
+    return super().get(register, ("index", 1, None))
+
+
+def table_jump(
+  program: Program, rows: list[tuple[int, str, str]], start: int, position: int, state: dict
+) -> tuple | None:
+  """The symbolic target of the jump at `rows[position]` after the table steps from `rows[start]`.
+
+  None when a branch enters the span, a row is not a table step or a store,
+  or the jump register does not hold a table entry plus its origin.
+  """
+  if any(rows[index][0] in program.branch_targets for index in range(start, position + 1)):
+    return None
+  for address, mnemonic, operands in rows[start:position]:
+    if program.target.startswith("x86_64"):
+      stepped = x86_jump_table_step(state, mnemonic, operands)
+    elif program.target.startswith("s390x"):
+      stepped = s390x_jump_table_step(state, mnemonic, operands)
+    else:
+      stepped = riscv_jump_table_step(state, mnemonic, operands, address)
+    if not stepped:
+      return None
+  _, mnemonic, operands = rows[position]
+  if program.target.startswith("x86_64"):
+    register = operands.strip().removeprefix("*")
+  elif program.target.startswith("s390x"):
+    register = operands.strip()
+  else:
+    register = ANNOTATION.sub("", operands).split(",")[-1].strip()
+  value = state.get(register)
+  return value if value is not None and value[0] == "target" else None
+
+
+def jump_table_targets(
+  program: Program, image: ElfImage, function: Function, source: int
+) -> tuple[list[int], bool] | None:
+  """Every destination of the register jump at `source` through a relative jump table, and whether it is checked.
+
+  A checked jump follows an unsigned bound check of an index register within
+  a few instructions; the steps start at the check's fall-through. With no
+  check in that window, the steps may start at any row, every register they
+  read before writing holds the index, and the table base must have an entry
+  count in the compiler's record. LLVM omits the check only when the index
+  cannot leave the table unless the program already has undefined behavior.
+  Either way, every row from the start through the jump must be a table step
+  or a store, and no branch may enter. Each entry for every index is read from
   the linked image; the destinations are returned only when every entry is
   readable.
   """
@@ -939,44 +1003,34 @@ def jump_table_targets(program: Program, image: ElfImage, function: Function, so
   position = next((index for index, row in enumerate(rows) if row[0] == source), None)
   if position is None:
     return None
-  for check in range(position - 1, max(position - JUMP_TABLE_STEPS, 0) - 1, -1):
-    if (bound := jump_table_bound(program.target, rows, check)) is None:
-      continue
-    if any(rows[index][0] in program.branch_targets for index in range(check + 1, position + 1)):
+  window = range(position - 1, max(position - JUMP_TABLE_STEPS, 0) - 1, -1)
+  checks = ((row, bound) for row in window if (bound := jump_table_bound(program.target, rows, row)) is not None)
+  check, bound = next(checks, (None, None))
+  value = None
+  if check is not None:
+    value = table_jump(program, rows, check + 1, position, {bound[0]: ("index", 1, bound[1])})
+  else:
+    for start in window:
+      if (value := table_jump(program, rows, start, position, UncheckedIndex())) is not None:
+        break
+  if value is None:
+    return None
+  _, origin, (_, table, scale, limit) = value
+  if limit is None:
+    if not (count := image.jump_tables.get(table)):
       return None
-    state: dict = {bound[0]: ("index", 1, bound[1])}
-    for address, mnemonic, operands in rows[check + 1:position]:
-      if program.target.startswith("x86_64"):
-        stepped = x86_jump_table_step(state, mnemonic, operands)
-      elif program.target.startswith("s390x"):
-        stepped = s390x_jump_table_step(state, mnemonic, operands)
-      else:
-        stepped = riscv_jump_table_step(state, mnemonic, operands, address)
-      if not stepped:
-        return None
-    _, mnemonic, operands = rows[position]
-    if program.target.startswith("x86_64"):
-      register = operands.strip().removeprefix("*")
-    elif program.target.startswith("s390x"):
-      register = operands.strip()
-    else:
-      register = ANNOTATION.sub("", operands).split(",")[-1].strip()
-    value = state.get(register)
-    if value is None or value[0] != "target":
+    limit = count - 1
+  targets = []
+  for index in range(limit + 1):
+    entry = image.int32(table + scale * index)
+    if entry is None:
       return None
-    _, origin, (_, table, scale, limit) = value
-    targets = []
-    for index in range(limit + 1):
-      entry = image.int32(table + scale * index)
-      if entry is None:
-        return None
-      targets.append((origin + entry) & ((1 << 64) - 1))
-    return targets
-  return None
+    targets.append((origin + entry) & ((1 << 64) - 1))
+  return targets, check is not None
 
 
 def resolve_jump_tables(program: Program, image: ElfImage) -> None:
-  """Replace register jumps through checked jump tables that stay inside their function.
+  """Replace register jumps through jump tables that stay inside their function.
 
   Such a jump moves only between instructions of a function whose frame and
   calls the review already counts, so it is no longer an unresolved transfer.
@@ -986,9 +1040,14 @@ def resolve_jump_tables(program: Program, image: ElfImage) -> None:
     for position, edge in enumerate(function.edges):
       if edge.kind != "indirect" or function.frame is None:
         continue
-      targets = jump_table_targets(program, image, function, edge.source)
-      if targets is not None and all(target in function.instruction_addresses for target in targets):
-        function.edges[position] = Edge("jump-table", edge.source, name=f"{len(targets)} entries")
+      resolved = jump_table_targets(program, image, function, edge.source)
+      if resolved is None or not all(target in function.instruction_addresses for target in resolved[0]):
+        continue
+      targets, checked = resolved
+      name = (f"jump table at {edge.source:#x}, {len(targets)} entries inside the function" if checked else
+              f"unchecked jump table at {edge.source:#x}, {len(targets)} entries of the compiler's table record "
+              "inside the function")
+      function.edges[position] = Edge("jump-table", edge.source, name=name)
 
 
 def parse_dynamic_symbols(text: str) -> dict[int, str | int]:
@@ -1274,7 +1333,7 @@ def depth_of(
             result.detection.append([name, str(edge.name)])
           continue
         if edge.kind == "jump-table":
-          result.assumptions.add(f"{name}: jump table at {edge.source:#x}, {edge.name} inside the function")
+          result.assumptions.add(f"{name}: {edge.name}")
           continue
         if edge.kind in {"indirect", "external"}:
           label = edge.name or (f"{edge.target:#x}" if edge.target is not None else "?")
@@ -1685,6 +1744,11 @@ def cross_linker(target: str) -> str:
   return compiler
 
 
+# Each flag adds a non-allocated ELF section and leaves the code unchanged: the
+# compiler's frame records and its jump-table records (address and entry count).
+RECORD_FLAGS = ("-Z", "emit-stack-sizes", "-C", "llvm-args=-emit-jump-table-sizes-section")
+
+
 def build(target: str, portable: bool, rustflags: list[str]) -> Path:
   if target not in ARCHES:
     raise SystemExit(f"unsupported target {target}; choose from {', '.join(ARCHES)}")
@@ -1692,8 +1756,8 @@ def build(target: str, portable: bool, rustflags: list[str]) -> Path:
   environment = dict(os.environ)
   key = target.upper().replace("-", "_")
   # The default is the shipping configuration: no target flags beyond the
-  # frame records the review reads.
-  flags = ["-Z", "emit-stack-sizes", *rustflags]
+  # frame and jump-table records the review reads.
+  flags = [*RECORD_FLAGS, *rustflags]
   environment["CARGO_ENCODED_RUSTFLAGS"] = "\x1f".join(flags)
   environment.pop("RUSTFLAGS", None)
   host = subprocess.run(["rustc", "--print", "host-tuple"], check=True, capture_output=True, text=True).stdout.strip()
@@ -1853,7 +1917,7 @@ def main(argv: list[str] | None = None) -> int:
     report["host"] = platform.platform()
     report["generated_at"] = datetime.now(timezone.utc).isoformat()
     report["command"] = sys.argv if argv is None else [sys.argv[0], *argv]
-    report["build_flags"] = ["-Z", "emit-stack-sizes", *args.rustflags.split()] if args.binary is None else None
+    report["build_flags"] = [*RECORD_FLAGS, *args.rustflags.split()] if args.binary is None else None
     report["build_provenance"] = "built by this invocation" if args.binary is None else "caller-supplied artifact; build/source configuration requires separate evidence"
     if not report["source_unchanged"]:
       report["passed"] = False

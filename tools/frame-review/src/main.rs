@@ -1,10 +1,10 @@
 //! Linked release artifact for secret-worker frame review.
 //!
 //! `scripts/stack/frames.py` reads the call graph and the compiler's
-//! `.stack_sizes` records from this binary. Each public operation runs once so
-//! every secret worker it reaches is linked exactly as an ordinary
-//! caller would link it. Inputs pass through `black_box` so constant folding
-//! cannot remove or specialize those paths.
+//! `.stack_sizes` and `.llvm_jump_table_sizes` records from this binary. Each
+//! public operation runs once so every secret worker it reaches is linked
+//! exactly as an ordinary caller would link it. Inputs pass through
+//! `black_box` so constant folding cannot remove or specialize those paths.
 
 extern crate alloc;
 

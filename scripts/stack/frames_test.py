@@ -568,21 +568,32 @@ def test_aarch64_labels_split_one_routine() -> None:
   }, looping
 
 
-def elf_image(base: int, data: bytes, big_endian: bool = False) -> ElfImage:
-  """A minimal ELF64 image with one loadable segment holding `data` at `base`."""
+def elf_image(base: int, data: bytes, big_endian: bool = False, records: dict[int, int] | None = None) -> ElfImage:
+  """A minimal ELF64 image with one loadable segment holding `data` at `base`.
+
+  `records` adds a `.llvm_jump_table_sizes` section: table address -> entry count.
+  """
   order = ">" if big_endian else "<"
   header = bytearray(64)
   header[:6] = b"\x7fELF" + bytes([2, 2 if big_endian else 1])
   struct.pack_into(order + "Q", header, 0x20, 64)
   struct.pack_into(order + "HH", header, 0x36, 56, 1)
   segment = struct.pack(order + "IIQQQQQQ", 1, 4, 120, base, base, len(data), len(data), 0x1000)
-  return ElfImage(bytes(header) + segment + data)
+  sizes = b"".join(struct.pack(order + "QQ", address, count) for address, count in (records or {}).items())
+  body = bytes(header) + segment + data + sizes
+  if records is not None:
+    struct.pack_into(order + "Q", header, 0x28, len(body))
+    struct.pack_into(order + "HH", header, 0x3A, 64, 1)
+    section = struct.pack(order + "IIQQQQIIQQ", 0, 0x6FFF4C0D, 0, 0, 120 + len(data), len(sizes), 0, 0, 1, 0)
+    body = bytes(header) + segment + data + sizes + section
+  return ElfImage(body)
 
 
-def table(base: int, targets: list[int], big_endian: bool = False) -> ElfImage:
+def table(base: int, targets: list[int], big_endian: bool = False, records: dict[int, int] | None = None) -> ElfImage:
   """A relative jump table at `base`: each entry is its destination minus `base`."""
   order = ">" if big_endian else "<"
-  return elf_image(base, b"".join(struct.pack(order + "i", target - base) for target in targets), big_endian)
+  entries = b"".join(struct.pack(order + "i", target - base) for target in targets)
+  return elf_image(base, entries, big_endian, records)
 
 
 def jump_table_call(target: str, functions: list[tuple[int, str, int | None, list[str]]], image: ElfImage) -> dict:
@@ -614,13 +625,44 @@ def test_x86_checked_jump_tables_stay_inside_their_function() -> None:
   refused = {
     "an entry leaves the function": (X86_JUMP_TABLE, [0x2020, 0x3000, 0x2030]),
     "the table is shorter than the bound": (X86_JUMP_TABLE, [0x2020, 0x2028]),
-    "no bound check precedes the table": ([line.replace("cmpq $0x2", "testq %rax,") for line in X86_JUMP_TABLE], None),
+    "no bound check and no table record": ([line.replace("cmpq $0x2", "testq %rax,") for line in X86_JUMP_TABLE], None),
     "a branch enters past the check": ([line.replace("2028: retq", "2028: jmp 0x2011") for line in X86_JUMP_TABLE], None),
     "a register is rewritten": ([line.replace("movq %r8, 0x28(%rsp)", "movq %rdx, %rax") for line in X86_JUMP_TABLE], None),
     "the table is outside the image": ([line.replace("# 0x9000", "# 0xa000") for line in X86_JUMP_TABLE], None),
   }
   for reason, (body, targets) in refused.items():
     unknown = call(body, targets) if targets is not None else call(body)
+    assert unknown["owned_bound_bytes"] is None, (reason, unknown)
+    assert [(item["reason"], item["address"]) for item in unknown["owned_unresolved"]] == [("indirect", "0x201d")], (
+      reason, unknown)
+
+
+def test_x86_unchecked_jump_tables_need_the_compiler_record() -> None:
+  # An exhaustive match on an enum: LLVM omits the bound check, and its table record gives the entry count.
+  unchecked = [line for line in X86_JUMP_TABLE if not line.startswith(("2000:", "2004:"))]
+
+  def call(body: list[str], targets: list[int], records: dict[int, int] | None) -> dict:
+    functions = [
+      (0x1000, "prepare", 32, ["1000: callq 0x200a", "1005: retq"]),
+      (0x200a, "rscrypto::fixture::pack", 64, body),
+      (0x3000, "rscrypto::fixture::leaf", 100, ["3000: retq"]),
+    ]
+    return jump_table_call("x86_64-unknown-linux-gnu", functions, table(0x9000, targets, records=records))
+
+  entries = [0x2020, 0x2028, 0x2030]
+  resolved = call(unchecked, entries, {0x9000: 3})
+  assert resolved["owned_bound_bytes"] == 8 + 32 + 8 + 64 + 8 + 100 + 128, resolved
+  assert ("rscrypto::fixture::pack: unchecked jump table at 0x201d, 3 entries of the compiler's table record inside "
+          "the function") in resolved["assumptions"], resolved
+  refused = {
+    "a recorded entry leaves the function": (unchecked, [0x2020, 0x3000, 0x2030], {0x9000: 3}),
+    "a branch enters the table sequence": (
+      [line.replace("2028: retq", "2028: jmp 0x2011") for line in unchecked], entries, {0x9000: 3}),
+    "the binary has no table record": (unchecked, entries, None),
+    "the record does not name the table base": (unchecked, entries, {0x9004: 3}),
+  }
+  for reason, (body, targets, records) in refused.items():
+    unknown = call(body, targets, records)
     assert unknown["owned_bound_bytes"] is None, (reason, unknown)
     assert [(item["reason"], item["address"]) for item in unknown["owned_unresolved"]] == [("indirect", "0x201d")], (
       reason, unknown)
@@ -935,6 +977,7 @@ def main() -> None:
   test_assembly_continuations_share_one_frame()
   test_aarch64_labels_split_one_routine()
   test_x86_checked_jump_tables_stay_inside_their_function()
+  test_x86_unchecked_jump_tables_need_the_compiler_record()
   test_s390x_and_riscv_checked_jump_tables()
   test_s390x_unlabelled_plt_keeps_allocator_edges_separate()
   test_riscv_call_clobbers_an_auipc_temporary()
