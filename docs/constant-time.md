@@ -1167,6 +1167,47 @@ No other target reports an unwaived condition in these roots.
 With them, the scanner reports no stale waiver and no unwaived enforced finding on the seven artifact sets of
 Constant-Time 43670264860 and the local Apple build. The waiver set has 521 entries.
 
+### HPKE and in-place key preparation renewal, 2026-11-15
+
+`5f6f0a47` added HPKE Base mode with the primitives `hpke.x25519_aes128gcm` and `hpke.xwing_chacha20poly1305`.
+`868dcbca` prepares ML-KEM and X-Wing encapsulation keys in place.
+[Constant-Time 43699511183](https://github.com/loadingalias/rscrypto/actions/runs/43699511183) at `868dcbca`,
+its RISC-V run [43700289282](https://github.com/loadingalias/rscrypto/actions/runs/43700289282), and a local Apple
+build at `868dcbca` were compared with the artifacts of Constant-Time 43670264860, which every waiver matched.
+
+The HPKE closures reach shared SHA-256 and detection code. In them, seven reviewed conditions now also list
+the two HPKE primitives: `Sha256::finalize_inner_into::<true>` on Apple, Windows, and POWER,
+`detect_uncached` +0x5bf on Windows, the SHA-256 `OnceCache::initialize` condition on RISC-V and IBM Z, and
+`Sha256::update_impl` on RISC-V. Each identity equals the reviewed one, so each HPKE primitive received a copy of
+the reviewed waiver: 14 new waivers.
+
+On Apple, four waivers in `rsa_aarch64_pair::exponentiate_pair` kept their slices. The function differs only in
+the read-only panic-location constant that the cold `overflow_panic::mul` path loads into x0. They were renewed by review.
+
+On POWER, 15 waivers in `ct_entry_rsa_pkcs1v15_decrypt_fixed_blinding` were stale. In the whole function, only two
+instruction identities changed, and each slice differs at most in them:
+
+- `li 7, 20592` became `li 7, 20848`. It is the index of `lxvd2x 1, 23, 7`, and its base r23 moved by the same 256 bytes
+  (`addi 23, 3, -31584` became `-31840`). So the load reads the same read-only address.
+- `addi 14, 5, 372` became `addi 14, 5, 411`. It forms an address in a global-merge unit of read-only constants,
+  whose layout the new HPKE constants changed.
+
+The renewal procedure says that a diff of only placement means the identity binds placement, and that
+`instruction_identity` is fixed and the waivers re-encoded. This renewal deviates from it by lead decision,
+because of the session deadline. The 15 waivers were renewed by instruction-level review, and the identity defect stays open:
+
+- In `power_member_identities` (`scripts/ct/asm_heuristics.py`), a constant loses its immediate only when every use
+  is the index of a resolved access (`index_uses - other_uses`). A call counts as a use of each tracked constant in
+  r3–r10, because `power_effects` (`scripts/ct/condition_slice.py`) gives `bl` those argument registers.
+  `li 5, 20832` is redefined before the next call, so it becomes `<member-offset>`. `li 7, 20848` is still live at
+  `bl Sha256::update_impl`, so the call adds it to `other_uses`, and it keeps its immediate.
+- A formed address in a global-merge unit is described by its member, and `add_member_starts` sets member boundaries at
+  every address that any function forms into the unit. The `addi 14, 5` member was 7 bytes and is now 21 bytes,
+  because the set of formed addresses changed. So the identity binds the reference layout of other functions.
+
+AArch64 Linux and x86-64 Linux needed no change. With these waivers, the gate scanner reports no stale waiver and
+no unwaived enforced finding on the seven artifact sets. The waiver set has 535 entries.
+
 ## Public decisions and exclusions
 
 Ordinary equality is allowed for public values, such as nonces, encoded public keys,
