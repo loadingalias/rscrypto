@@ -1106,6 +1106,48 @@ With the rules and the re-encoded waivers, the gate scanner reports the same ver
 platforms, with no stale waiver and the same unaccepted findings. The waiver set now has 519 entries.
 AArch64 identities did not change, so the local Apple artifacts need no new review.
 
+### SHA-2 kernel-id renewal, 2026-11-15
+
+`f3df3851` stores the selected SHA-256 and SHA-512 compression kernel as a one-byte id instead of a code pointer.
+On 64-bit targets, `Sha256` shrank from 128 to 120 bytes, and the `OnceCache` initializer now stores the kernel id.
+Inlining into the RSA, HMAC, MGF1, and PSS callers changed, so their frames and register allocation moved.
+`src/auth/rsa.rs` is unchanged since `7ae05c1a`.
+[Constant-Time 43670264860](https://github.com/loadingalias/rscrypto/actions/runs/43670264860) at `6f571652`,
+its RISC-V run [43671012462](https://github.com/loadingalias/rscrypto/actions/runs/43671012462), and a local Apple
+build at `6f571652` then had 129 stale waivers, all in SHA-2 code or in RSA functions that inline it.
+
+`just ct-renew` compared each target with artifacts that every current waiver matched:
+[Constant-Time 43248759823](https://github.com/loadingalias/rscrypto/actions/runs/43248759823) at `7ae05c1a`,
+its RISC-V run [43250911201](https://github.com/loadingalias/rscrypto/actions/runs/43250911201), and a local
+Apple build at `344971be`. Every stale slice changed, or binds a function that changed.
+So each condition was reviewed again in the `6f571652` linked binary, and its rationale was written from that code.
+Each rationale names the instructions, frame slots, and offsets that define the condition.
+A merged condition shares the slice identity of a renewed waiver, which then matches both branches.
+
+| Target | Stale | Renewed | New | Deleted | Cause of a new or deleted waiver |
+| --- | ---: | ---: | ---: | ---: | --- |
+| Apple | 13 | 13 | 5 | 0 | `finalize_inner_into::<true>` tests a constant 1 (one waiver per primitive) |
+| AArch64 Linux | 14 | 9 | 0 | 5 | MGF1, HMAC, PSS, and PKCS #1 v1.5 conditions are gone or merged |
+| x86-64 Linux | 21 | 21 | 0 | 0 | |
+| Windows x86-64 | 17 | 17 | 2 | 0 | OAEP decryption has two more cleanup conditions |
+| POWER | 24 | 23 | 0 | 1 | one OAEP decryption condition is gone or merged |
+| RISC-V | 18 | 18 | 0 | 0 | |
+| IBM Z | 22 | 21 | 0 | 1 | the PKCS #1 v1.5 signing cleanup branch is not select-shaped |
+
+Every renewed or new condition is public. Most are cleanup extents: the alignment prefix, word count, or suffix
+count of a public pointer and a public length. The others are public loop bounds of the implicit-rejection PRF
+and the fixed-pattern shift, the PSS unused-bit test, constants, and the SHA-256 kernel selection.
+Their operands come from entry arguments, scratch descriptors that `RsaPrivateScratch::new` writes, immediates,
+and capability words. On every reaching path, a frame slot in a slice holds only a value derived from these.
+On IBM Z, the shift bounds compare public indices with `ciphertext_len - 11`. The secret shift bit becomes a mask
+byte that enters only the masked merges after each bound.
+The PKCS #1 v1.5 decryption status test on IBM Z reads only the low word of `r10`, which `lhi` sets to 0 or 1.
+It keeps its allowed-disclosure classification.
+
+`6f571652` (Ed25519 verification) and `67dda27b` (Adler-32) changed no enforced condition on any target.
+With these waivers, the gate scanner reports no stale waiver on the seven artifact sets.
+The waiver set has 519 entries.
+
 ## Public decisions and exclusions
 
 Ordinary equality is allowed for public values, such as nonces, encoded public keys,
