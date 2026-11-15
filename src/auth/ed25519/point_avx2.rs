@@ -1532,16 +1532,15 @@ mod tests {
     hasher.update(public.as_bytes());
     hasher.update(b"test message for straus");
     let challenge = super::super::scalar::reduce_bytes_mod_order(&hasher.finalize());
-    let neg_challenge = super::super::scalar::negate_mod(&challenge);
-    let neg_challenge_bytes = super::super::scalar::to_bytes(&neg_challenge);
+    let challenge_bytes = super::super::scalar::to_bytes(&challenge);
     let s_canonical = super::super::scalar::to_bytes(&s_scalar);
+    let minus_a = a_point.neg();
 
-    let scalar_result =
-      super::super::point::straus_wnaf_basepoint_vartime(&s_canonical, &neg_challenge_bytes, &a_point);
+    let scalar_result = super::super::point::straus_wnaf_basepoint_vartime(&s_canonical, &challenge_bytes, &minus_a);
 
     // SAFETY: AVX2 availability checked by the runtime guard above.
     unsafe {
-      let avx_result = straus_wnaf_vartime_avx2(&s_canonical, &neg_challenge_bytes, &a_point);
+      let avx_result = straus_wnaf_vartime_avx2(&s_canonical, &challenge_bytes, &minus_a);
       assert!(
         scalar_result.equals_projective(&avx_result),
         "AVX2 wNAF Straus with large scalars should match scalar"

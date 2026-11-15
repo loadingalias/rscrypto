@@ -2966,22 +2966,6 @@ fn ed25519_verify(c: &mut Criterion) {
   g.finish();
 }
 
-/// Adds two little-endian 256-bit integers whose sum fits in 256 bits.
-#[cfg(all(rscrypto_internal, feature = "diag"))]
-fn add_le_256(lhs: &[u8; 32], rhs: &[u8; 32]) -> [u8; 32] {
-  let mut carry = 0u8;
-  let sum = core::array::from_fn(|index| {
-    let total = u16::from(lhs[index])
-      .strict_add(u16::from(rhs[index]))
-      .strict_add(u16::from(carry));
-    let [low, high] = total.to_le_bytes();
-    carry = high;
-    low
-  });
-  assert_eq!(carry, 0, "the sum must fit in 256 bits");
-  sum
-}
-
 #[cfg(all(rscrypto_internal, feature = "diag"))]
 fn ed25519_verify_phase(c: &mut Criterion) {
   if !bench_config::selected("ed25519/verify-phase") {
@@ -2994,9 +2978,8 @@ fn ed25519_verify_phase(c: &mut Criterion) {
 
   print_auth_diag_once();
 
-  // Dalek's signature satisfies [s]B + [-k]A = R. Decoded points must re-encode to their inputs, and the
-  // double-scalar rows must return R; with that equation, k + (-k) must equal the group order L.
-  let order = hex::<32>("edd3f55c1a631258d69cf7a2def9de1400000000000000000000000000000010");
+  // Dalek's signature satisfies [s]B + [k](-A) = R. Decoded points must re-encode to their inputs, the
+  // double-scalar rows must return R, and the reduced challenge must be the k of that equation.
   let signing_key = SigningKey::from_bytes(&[13u8; 32]);
   let public = Ed25519PublicKey::from_bytes(signing_key.verifying_key().to_bytes());
   let inputs = [0usize, 32, 1024, 16384]
@@ -3025,11 +3008,11 @@ fn ed25519_verify_phase(c: &mut Criterion) {
         |challenge| {
           let point = diag_ed25519_verify_portable_double_scalar_digest(
             &scalars.s_canonical,
-            &scalars.neg_challenge,
+            &scalars.challenge,
             &scalars.public_key,
           );
           assert_eq!(point, r_bytes);
-          assert_eq!(add_le_256(&challenge, &scalars.neg_challenge), order);
+          assert_eq!(challenge, scalars.challenge);
         },
       ),
     );
@@ -3056,7 +3039,7 @@ fn ed25519_verify_phase(c: &mut Criterion) {
         || {
           black_box(diag_ed25519_verify_portable_double_scalar_digest(
             black_box(&scalars.s_canonical),
-            black_box(&scalars.neg_challenge),
+            black_box(&scalars.challenge),
             black_box(&scalars.public_key),
           ))
         },
@@ -3076,7 +3059,7 @@ fn ed25519_verify_phase(c: &mut Criterion) {
         || {
           black_box(rscrypto::auth::diag_ed25519_verify_aarch64_asm_double_scalar_digest(
             black_box(&scalars.s_canonical),
-            black_box(&scalars.neg_challenge),
+            black_box(&scalars.challenge),
             black_box(&scalars.public_key),
           ))
         },

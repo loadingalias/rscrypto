@@ -525,17 +525,6 @@ pub(crate) fn mul_add_mod_secret(lhs: &Scalar, rhs: &Scalar, acc: &Scalar) -> Sc
   out
 }
 
-/// Negate a scalar modulo `L`: returns `L - s` when `s != 0`, else `0`.
-#[must_use]
-pub(crate) fn negate_mod(s: &Scalar) -> Scalar {
-  if *s == ZERO {
-    ZERO
-  } else {
-    let (result, _) = sub_raw(&ORDER, s);
-    result
-  }
-}
-
 /// Decompose a scalar into width-`w` non-adjacent form (wNAF).
 ///
 /// Returns a 256-element array of signed digits. Non-zero digits are odd

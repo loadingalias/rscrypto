@@ -372,6 +372,19 @@ impl ExtendedPoint {
     self.mul_by_cofactor().equals_projective(&Self::identity())
   }
 
+  /// The group inverse `-P`: Edwards negation changes the sign of X and T and
+  /// keeps Y and Z, so an affine point stays affine.
+  #[cfg(feature = "ed25519")]
+  #[must_use]
+  pub(crate) fn neg(&self) -> Self {
+    Self {
+      x: self.x.neg(),
+      y: self.y,
+      z: self.z,
+      t: self.t.neg(),
+    }
+  }
+
   /// Convert the point to affine coordinates when `Z != 0`.
   #[cfg(feature = "ed25519")]
   #[must_use]

@@ -60,9 +60,10 @@ pub(super) fn basepoint_mul_encoded(s: &[u8; SECRET_KEY_LENGTH]) -> [u8; PUBLIC_
 /// Compute `[s]B + [h]A` and return the compressed Ed25519 point.
 ///
 /// The s2n-bignum ABI takes its scalars as four little-endian `u64` limbs and
-/// its point as affine `(x, y)` field limbs. Callers pass `h = -H(R,A,M)` for
-/// strict Ed25519 verification. The public-key constructors cache `Z = 1`;
-/// a projective point returns `None` so the caller can use its portable fallback.
+/// its point as affine `(x, y)` field limbs. For strict Ed25519 verification,
+/// callers pass `h = H(R,A,M) mod L` and the point `-A`. The public-key
+/// constructors cache `Z = 1`, and negation keeps it. A projective point
+/// returns `None` so the caller can use its portable fallback.
 #[inline]
 pub(super) fn double_scalar_basepoint_encoded(
   s: &[u8; SECRET_KEY_LENGTH],

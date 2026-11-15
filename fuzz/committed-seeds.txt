@@ -14,6 +14,7 @@ fuzz-packages/auth-argon2/corpus/auth_argon2i/seed-basic
 fuzz-packages/auth-argon2/corpus/auth_argon2id/seed-basic
 fuzz-packages/auth-ed25519/corpus/auth_ed25519/seed-basic
 fuzz-packages/auth-ed25519/corpus/auth_ed25519_verify/seed-basic
+fuzz-packages/auth-ed25519/corpus/auth_ed25519_verify/seed-speccheck-mixed-order
 fuzz-packages/auth-hkdf/corpus/auth_hkdf_sha256/seed-basic
 fuzz-packages/auth-hkdf/corpus/auth_hkdf_sha384/seed-basic
 fuzz-packages/auth-hmac/corpus/auth_hmac_sha256/seed-basic
@@ -87,6 +88,7 @@ fuzz/corpus/auth_ecdsa_verify/seed-p384-derived
 fuzz/corpus/auth_ecdsa_verify/seed-p384-valid
 fuzz/corpus/auth_ed25519/seed-basic
 fuzz/corpus/auth_ed25519_verify/seed-basic
+fuzz/corpus/auth_ed25519_verify/seed-speccheck-mixed-order
 fuzz/corpus/auth_hkdf_sha256/seed-basic
 fuzz/corpus/auth_hkdf_sha384/seed-basic
 fuzz/corpus/auth_hmac_sha256/seed-basic

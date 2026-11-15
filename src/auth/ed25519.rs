@@ -465,6 +465,8 @@ impl_serde_bytes!(Ed25519PublicKey);
 impl Ed25519PublicKey {
   /// Verify a message/signature pair against this public key.
   ///
+  /// The accepted set is the one that [`verify`] documents.
+  ///
   /// # Errors
   ///
   /// Returns [`VerificationError`] if the public key bytes are invalid or
@@ -566,7 +568,7 @@ pub struct Ed25519Keypair {
 pub struct DiagEd25519VerifyScalars {
   pub r_bytes: [u8; PUBLIC_KEY_LENGTH],
   pub s_canonical: [u8; SECRET_KEY_LENGTH],
-  pub neg_challenge: [u8; SECRET_KEY_LENGTH],
+  pub challenge: [u8; SECRET_KEY_LENGTH],
   pub public_key: [u8; PUBLIC_KEY_LENGTH],
 }
 
@@ -696,6 +698,21 @@ impl fmt::Debug for Ed25519Keypair {
 
 /// Verify a message/signature pair against an Ed25519 public key.
 ///
+/// The check is the strict RFC 8032 section 5.1.7 check without the cofactor.
+/// Let the signature be `R || S`, and let `k` be SHA-512(`R || A || message`)
+/// reduced modulo the group order L. Verification accepts exactly when all of
+/// these are true:
+///
+/// - The public key A and R are canonical encodings of curve points.
+/// - Neither A nor R has small order, that is, neither is in the subgroup of order 8.
+/// - `S` is less than L.
+/// - `[S]B = R + [k]A` on the whole curve group, where B is the base point.
+///
+/// So a valid signature under a public key with a small-order component
+/// verifies. A signature that satisfies only the cofactored check
+/// `[8][S]B = [8]R + [8][k]A` does not verify. Every backend gives the same
+/// result.
+///
 /// # Errors
 ///
 /// Returns [`VerificationError`] if the public key bytes are invalid or weak,
@@ -714,20 +731,21 @@ pub fn verify(
   let s = scalar::from_canonical_bytes(&s_bytes).ok_or(VerificationError::new())?;
 
   let challenge_digest = hash_challenge(&r_bytes, public_key.as_bytes(), message);
-  let challenge = scalar::reduce_bytes_mod_order(&challenge_digest);
-  let neg_challenge = scalar::negate_mod(&challenge);
-  let neg_challenge_bytes = scalar::to_bytes(&neg_challenge);
+  let challenge_bytes = scalar::to_bytes(&scalar::reduce_bytes_mod_order(&challenge_digest));
   let s_canonical = scalar::to_bytes(&s);
 
-  // Strict Ed25519 verification: compute [s]B + [-h]A and compare it
-  // directly with R after rejecting weak points.
+  // Strict Ed25519 verification: compute [s]B + [h](-A) and compare it
+  // directly with R after rejecting weak points. This is [s]B - [h]A on the
+  // whole group. The scalar L - h would add [L]A, which is not the identity
+  // when A has a small-order component.
+  let minus_a = a_point.neg();
   #[cfg(all(
     target_arch = "aarch64",
     any(target_os = "macos", target_os = "linux"),
     not(feature = "portable-only"),
     not(miri)
   ))]
-  if let Some(result) = verify_aarch64_encoded_r(&r_bytes, &s_canonical, &neg_challenge_bytes, &a_point) {
+  if let Some(result) = verify_aarch64_encoded_r(&r_bytes, &s_canonical, &challenge_bytes, &minus_a) {
     return result;
   }
 
@@ -736,7 +754,7 @@ pub fn verify(
     return Err(VerificationError::new());
   }
 
-  let combined = straus_dispatch(&s_canonical, &neg_challenge_bytes, &a_point);
+  let combined = straus_dispatch(&s_canonical, &challenge_bytes, &minus_a);
 
   if combined.equals_projective(&r_point) {
     Ok(())
@@ -943,12 +961,11 @@ pub fn diag_ed25519_verify_scalars(
   let s = scalar::from_canonical_bytes(&s_bytes)?;
   let challenge_digest = hash_challenge(&r_bytes, public_key.as_bytes(), message);
   let challenge = scalar::reduce_bytes_mod_order(&challenge_digest);
-  let neg_challenge = scalar::negate_mod(&challenge);
 
   Some(DiagEd25519VerifyScalars {
     r_bytes,
     s_canonical: scalar::to_bytes(&s),
-    neg_challenge: scalar::to_bytes(&neg_challenge),
+    challenge: scalar::to_bytes(&challenge),
     public_key: *public_key.as_bytes(),
   })
 }
@@ -991,11 +1008,11 @@ pub fn diag_ed25519_verify_r_decode_digest(r_bytes: &[u8; PUBLIC_KEY_LENGTH]) ->
 #[must_use]
 pub fn diag_ed25519_verify_portable_double_scalar_digest(
   s_canonical: &[u8; SECRET_KEY_LENGTH],
-  neg_challenge: &[u8; SECRET_KEY_LENGTH],
+  challenge: &[u8; SECRET_KEY_LENGTH],
   public_key: &[u8; PUBLIC_KEY_LENGTH],
 ) -> [u8; PUBLIC_KEY_LENGTH] {
   point::ExtendedPoint::from_bytes(public_key)
-    .map(|a_point| point::straus_wnaf_basepoint_vartime(s_canonical, neg_challenge, &a_point))
+    .map(|a_point| point::straus_wnaf_basepoint_vartime(s_canonical, challenge, &a_point.neg()))
     .and_then(point::ExtendedPoint::to_bytes)
     .unwrap_or_default()
 }
@@ -1012,11 +1029,11 @@ pub fn diag_ed25519_verify_portable_double_scalar_digest(
 #[must_use]
 pub fn diag_ed25519_verify_aarch64_asm_double_scalar_digest(
   s_canonical: &[u8; SECRET_KEY_LENGTH],
-  neg_challenge: &[u8; SECRET_KEY_LENGTH],
+  challenge: &[u8; SECRET_KEY_LENGTH],
   public_key: &[u8; PUBLIC_KEY_LENGTH],
 ) -> [u8; PUBLIC_KEY_LENGTH] {
   point::ExtendedPoint::from_bytes(public_key)
-    .and_then(|point| aarch64_asm::double_scalar_basepoint_encoded(s_canonical, neg_challenge, &point))
+    .and_then(|point| aarch64_asm::double_scalar_basepoint_encoded(s_canonical, challenge, &point.neg()))
     .unwrap_or_default()
 }
 
@@ -1070,14 +1087,14 @@ const SMALL_ORDER_ENCODINGS: [[u8; PUBLIC_KEY_LENGTH]; 8] = [
 fn verify_aarch64_encoded_r(
   r_bytes: &[u8; PUBLIC_KEY_LENGTH],
   s_canonical: &[u8; SECRET_KEY_LENGTH],
-  neg_challenge_bytes: &[u8; SECRET_KEY_LENGTH],
-  public_point: &point::ExtendedPoint,
+  challenge_bytes: &[u8; SECRET_KEY_LENGTH],
+  minus_a: &point::ExtendedPoint,
 ) -> Option<Result<(), VerificationError>> {
   if is_small_order_encoded(r_bytes) {
     return Some(Err(VerificationError::new()));
   }
 
-  aarch64_asm::double_scalar_basepoint_encoded(s_canonical, neg_challenge_bytes, public_point).map(|combined| {
+  aarch64_asm::double_scalar_basepoint_encoded(s_canonical, challenge_bytes, minus_a).map(|combined| {
     if ct::fixed_eq(&combined, r_bytes).declassify() {
       Ok(())
     } else {
@@ -1149,8 +1166,8 @@ fn public_key_from_scalar(scalar_bytes: &[u8; SECRET_KEY_LENGTH]) -> Ed25519Publ
   }
 }
 
-/// Dispatch `[s]B + [-h]A` (Straus double-scalar mul) to the fastest
-/// available path.
+/// Dispatch `[s]B + [h]A` (Straus double-scalar mul) to the fastest
+/// available path. Verification passes `-A` as `a`.
 ///
 /// Uses wNAF-based Straus on IFMA platforms: wNAF(8) for the basepoint
 /// scalar and wNAF(5) for the public-key scalar.
@@ -1483,6 +1500,74 @@ mod tests {
     }
   }
 
+  /// Speccheck cases 3, 4, and 5 pass the encoding and order checks, so they
+  /// reach the double-scalar product. On every backend that product must be
+  /// [s]B - [h]A on the whole group. It equals R for case 3, whose mixed-order
+  /// A and R satisfy the cofactorless equation. It does not equal R for cases 4
+  /// and 5, which only the cofactored equation accepts.
+  #[cfg(not(miri))]
+  #[test]
+  fn speccheck_double_scalar_products_agree_on_every_backend() {
+    let cases: serde_json::Value = serde_json::from_str(include_str!("../../testdata/ed25519/speccheck/cases.json"))
+      .expect("the pinned speccheck JSON parses");
+    for (index, expected) in [(3usize, true), (4, false), (5, false)] {
+      let field = |name: &str| {
+        let hex = cases[index][name].as_str().expect(name);
+        let mut bytes = alloc::vec![0u8; hex.len() / 2];
+        crate::hex::from_hex(hex, &mut bytes).expect("speccheck hex");
+        bytes
+      };
+      let message = field("message");
+      let public: [u8; 32] = field("pub_key").try_into().expect("32-byte public key");
+      let signature: [u8; 64] = field("signature").try_into().expect("64-byte signature");
+      let (r_bytes, s_bytes) = super::split_signature(&Ed25519Signature::from_bytes(signature));
+      let a = point::ExtendedPoint::from_bytes(&public).expect("A decodes");
+      let r = point::ExtendedPoint::from_bytes(&r_bytes).expect("R decodes");
+      assert!(
+        !a.is_small_order() && !r.is_small_order(),
+        "case {index} reaches the product"
+      );
+      let s = scalar::to_bytes(&scalar::from_canonical_bytes(&s_bytes).expect("canonical S"));
+      let h = scalar::to_bytes(&scalar::reduce_bytes_mod_order(&super::hash_challenge(
+        &r_bytes, &public, &message,
+      )));
+      let minus_a = a.neg();
+
+      let mut products = alloc::vec::Vec::new();
+      products.push((
+        "portable",
+        point::straus_wnaf_basepoint_vartime(&s, &h, &minus_a).equals_projective(&r),
+      ));
+      #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+      {
+        use crate::platform::caps::x86;
+        let caps = crate::platform::caps();
+        if caps.has(x86::AVX2) {
+          // SAFETY: runtime detection confirmed AVX2.
+          let product = unsafe { super::point_avx2::straus_wnaf_vartime_avx2(&s, &h, &minus_a) };
+          products.push(("avx2", product.equals_projective(&r)));
+        }
+        if caps.has(x86::AVX512IFMA.union(x86::AVX512VL).union(x86::AVX2)) {
+          // SAFETY: runtime detection confirmed AVX-512 IFMA, AVX-512 VL, and AVX2.
+          let product = unsafe { super::point_avx2::straus_wnaf_vartime_ifma(&s, &h, &minus_a) };
+          products.push(("ifma", product.equals_projective(&r)));
+        }
+      }
+      #[cfg(all(
+        target_arch = "aarch64",
+        any(target_os = "macos", target_os = "linux"),
+        not(feature = "portable-only")
+      ))]
+      products.push((
+        "aarch64-asm",
+        super::aarch64_asm::double_scalar_basepoint_encoded(&s, &h, &minus_a) == Some(r_bytes),
+      ));
+      for (backend, verdict) in products {
+        assert_eq!(verdict, expected, "speccheck case {index}, {backend}");
+      }
+    }
+  }
+
   #[cfg(all(
     target_arch = "aarch64",
     any(target_os = "macos", target_os = "linux"),
@@ -1507,15 +1592,13 @@ mod tests {
         scalar::from_canonical_bytes(&s_bytes).expect("a locally generated Ed25519 signature has a canonical scalar");
 
       let challenge_digest = super::hash_challenge(&r_bytes, public.as_bytes(), message);
-      let challenge = scalar::reduce_bytes_mod_order(&challenge_digest);
-      let neg_challenge = scalar::negate_mod(&challenge);
-      let neg_challenge_bytes = scalar::to_bytes(&neg_challenge);
+      let challenge_bytes = scalar::to_bytes(&scalar::reduce_bytes_mod_order(&challenge_digest));
       let s_canonical = scalar::to_bytes(&s);
 
-      let portable = point::straus_wnaf_basepoint_vartime(&s_canonical, &neg_challenge_bytes, &a_point)
+      let portable = point::straus_wnaf_basepoint_vartime(&s_canonical, &challenge_bytes, &a_point.neg())
         .to_bytes()
         .expect("double-scalar multiplication produces an encodable Edwards point");
-      let asm = super::aarch64_asm::double_scalar_basepoint_encoded(&s_canonical, &neg_challenge_bytes, &a_point)
+      let asm = super::aarch64_asm::double_scalar_basepoint_encoded(&s_canonical, &challenge_bytes, &a_point.neg())
         .expect("the assembly double-scalar path accepts a locally generated public key");
 
       assert_eq!(asm, portable);
@@ -1524,14 +1607,15 @@ mod tests {
       let imported = Ed25519PublicKey::from_bytes(public.to_bytes());
       let imported_point = imported.point().expect("a generated public key has a valid encoding");
       assert_eq!(
-        super::aarch64_asm::double_scalar_basepoint_encoded(&s_canonical, &neg_challenge_bytes, &imported_point),
+        super::aarch64_asm::double_scalar_basepoint_encoded(&s_canonical, &challenge_bytes, &imported_point.neg()),
         Some(r_bytes)
       );
 
       // The same key in projective coordinates must still verify through the portable fallback.
       let projective = a_point.add(&point::ExtendedPoint::identity());
       assert!(
-        super::aarch64_asm::double_scalar_basepoint_encoded(&s_canonical, &neg_challenge_bytes, &projective).is_none()
+        super::aarch64_asm::double_scalar_basepoint_encoded(&s_canonical, &challenge_bytes, &projective.neg())
+          .is_none()
       );
       let fallback = Ed25519PublicKey {
         point: Some(projective),
