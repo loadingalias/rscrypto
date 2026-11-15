@@ -1144,6 +1144,13 @@ byte that enters only the masked merges after each bound.
 The PKCS #1 v1.5 decryption status test on IBM Z reads only the low word of `r10`, which `lhi` sets to 0 or 1.
 It keeps its allowed-disclosure classification.
 
+The deleted IBM Z waiver covered `clgrjhe %r8,%r5` at `ct_entry_rsa_pkcs1v15_sign_fixed_blinding+0x4dc`.
+Its branch is now a `conditional_branch` finding in the default `needs-binsec` class, so no waiver applies.
+Its condition is still public. `r8` is entry `out_len`, copied at +0x44 and not written again.
+`r4` is the out pointer from frame slot 1120, whose only reaching store is the entry store at +0x48.
+The function forms frame addresses only at 184, 216 (the scratch, `[216,1120)`), 456, and 1056, and its other stores
+use heap pointers. So the branch compares a public length with the alignment prefix of a public pointer.
+
 `6f571652` (Ed25519 verification) and `67dda27b` (Adler-32) changed no enforced condition on any target.
 With these waivers, the gate scanner reports no stale waiver on the seven artifact sets.
 The waiver set has 519 entries.
