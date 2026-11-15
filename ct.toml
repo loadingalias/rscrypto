@@ -382,6 +382,12 @@ symbols = [
   "ct_entry_xwing_keygen",
   "ct_entry_xwing_encapsulate",
   "ct_entry_xwing_decapsulate",
+  "ct_entry_hpke_x25519_derive_keypair",
+  "ct_entry_hpke_x25519_seal",
+  "ct_entry_hpke_x25519_open",
+  "ct_entry_hpke_xwing_derive_keypair",
+  "ct_entry_hpke_xwing_seal",
+  "ct_entry_hpke_xwing_open",
   "ct_entry_ed25519_sign",
   "ct_entry_ecdsa_p256_public_key",
   "ct_entry_ecdsa_p256_sign",
@@ -436,6 +442,8 @@ covers = [
   "kem.mlkem768",
   "kem.mlkem1024",
   "kem.xwing",
+  "hpke.x25519_aes128gcm",
+  "hpke.xwing_chacha20poly1305",
   "signature.ed25519_sign",
   "signature.ecdsa_p256_public_derivation",
   "signature.ecdsa_p256_sign",
@@ -1087,6 +1095,42 @@ primitive = "kem.xwing"
 filter = "xwing_decapsulate_fixed_vs_random_key"
 left_class = "X-Wing prepared decapsulation of a fixed ciphertext with its fixed key"
 right_class = "X-Wing prepared decapsulation of the same ciphertext with random keys, which ML-KEM implicitly rejects"
+samples = 20000
+smoke_samples = 512
+
+[[dudect_case]]
+name = "hpke_x25519_setup_sender_fixed_vs_random_ikm"
+primitive = "hpke.x25519_aes128gcm"
+filter = "hpke_x25519_setup_sender_fixed_vs_random_ikm"
+left_class = "HPKE DHKEM(X25519) sender setup to a fixed key with fixed encapsulation randomness"
+right_class = "HPKE DHKEM(X25519) sender setup to a fixed key with random encapsulation randomness"
+samples = 20000
+smoke_samples = 512
+
+[[dudect_case]]
+name = "hpke_x25519_setup_receiver_fixed_vs_random_key"
+primitive = "hpke.x25519_aes128gcm"
+filter = "hpke_x25519_setup_receiver_fixed_vs_random_key"
+left_class = "HPKE DHKEM(X25519) receiver setup of a fixed encapsulation with its fixed recipient key"
+right_class = "HPKE DHKEM(X25519) receiver setup of the same encapsulation with random recipient keys"
+samples = 20000
+smoke_samples = 512
+
+[[dudect_case]]
+name = "hpke_xwing_setup_sender_fixed_vs_random_coins"
+primitive = "hpke.xwing_chacha20poly1305"
+filter = "hpke_xwing_setup_sender_fixed_vs_random_coins"
+left_class = "HPKE X-Wing sender setup to a fixed key with fixed ML-KEM coins and X25519 ephemeral key"
+right_class = "HPKE X-Wing sender setup to a fixed key with random ML-KEM coins and X25519 ephemeral key"
+samples = 20000
+smoke_samples = 512
+
+[[dudect_case]]
+name = "hpke_xwing_setup_receiver_fixed_vs_random_key"
+primitive = "hpke.xwing_chacha20poly1305"
+filter = "hpke_xwing_setup_receiver_fixed_vs_random_key"
+left_class = "HPKE X-Wing receiver setup of a fixed encapsulation with its fixed prepared key"
+right_class = "HPKE X-Wing receiver setup of the same encapsulation with random prepared keys, which ML-KEM implicitly rejects"
 samples = 20000
 smoke_samples = 512
 
@@ -2342,6 +2386,34 @@ primitive = "kem.xwing"
 variant = "Decapsulate"
 dudect = ["xwing_decapsulate_fixed_vs_random_key"]
 notes = "Decapsulation evidence times prepared keys, so the secret ML-KEM, X25519, and combiner work varies while key expansion stays outside timing. The random class decapsulates through ML-KEM implicit rejection."
+
+[[evidence_unit]]
+id = "hpke.x25519_aes128gcm.setup_sender"
+primitive = "hpke.x25519_aes128gcm"
+variant = "SetupSender"
+dudect = ["hpke_x25519_setup_sender_fixed_vs_random_ikm"]
+notes = "Sender setup evidence holds the recipient public key and info fixed and varies the 32 encapsulation bytes, which determine the ephemeral key through DeriveKeyPair, the Diffie-Hellman secret, and the key schedule."
+
+[[evidence_unit]]
+id = "hpke.x25519_aes128gcm.setup_receiver"
+primitive = "hpke.x25519_aes128gcm"
+variant = "SetupReceiver"
+dudect = ["hpke_x25519_setup_receiver_fixed_vs_random_key"]
+notes = "Receiver setup evidence holds the encapsulation and info fixed and draws recipient keys from equal pools of the fixed key and random keys."
+
+[[evidence_unit]]
+id = "hpke.xwing_chacha20poly1305.setup_sender"
+primitive = "hpke.xwing_chacha20poly1305"
+variant = "SetupSender"
+dudect = ["hpke_xwing_setup_sender_fixed_vs_random_coins"]
+notes = "Sender setup evidence holds the prepared recipient key and info fixed and varies the 64 encapsulation bytes: the ML-KEM-768 coins and the X25519 ephemeral secret key."
+
+[[evidence_unit]]
+id = "hpke.xwing_chacha20poly1305.setup_receiver"
+primitive = "hpke.xwing_chacha20poly1305"
+variant = "SetupReceiver"
+dudect = ["hpke_xwing_setup_receiver_fixed_vs_random_key"]
+notes = "Receiver setup evidence times prepared keys from equal pools, so key expansion stays outside timing. The random class decapsulates through ML-KEM implicit rejection."
 
 [[evidence_unit]]
 id = "aead.open_authentication.aes128gcm"
@@ -3724,8 +3796,8 @@ name = "x86_64-unknown-linux-gnu"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 3693
-compiler_api_sha256 = "02bac5f94401975fd3a06de29300751bf890a34f6d39eb28396a9681c643b1a8"
+compiler_api_item_count = 3737
+compiler_api_sha256 = "9fc461f9f46da62b91a67a66e7bb71eab15c32bdaadcbc5b9ab6e794a3c5d0ed"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "required"
@@ -3735,8 +3807,8 @@ name = "aarch64-unknown-linux-gnu"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 3693
-compiler_api_sha256 = "02bac5f94401975fd3a06de29300751bf890a34f6d39eb28396a9681c643b1a8"
+compiler_api_item_count = 3737
+compiler_api_sha256 = "9fc461f9f46da62b91a67a66e7bb71eab15c32bdaadcbc5b9ab6e794a3c5d0ed"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "required"
@@ -3769,8 +3841,8 @@ group = "win"
 backend = "llvm"
 linker = "msvc-link-unpinned"
 claim = "ct-intended"
-compiler_api_item_count = 3693
-compiler_api_sha256 = "02bac5f94401975fd3a06de29300751bf890a34f6d39eb28396a9681c643b1a8"
+compiler_api_item_count = 3737
+compiler_api_sha256 = "9fc461f9f46da62b91a67a66e7bb71eab15c32bdaadcbc5b9ab6e794a3c5d0ed"
 physical_timing = "required"
 binsec = "unsupported"
 binsec_reason = "BINSEC PE/Windows evidence is not part of the current release evidence gate."
@@ -3791,8 +3863,8 @@ name = "aarch64-apple-darwin"
 group = "macos"
 backend = "llvm"
 linker = "apple-ld-unpinned"
-compiler_api_item_count = 3693
-compiler_api_sha256 = "02bac5f94401975fd3a06de29300751bf890a34f6d39eb28396a9681c643b1a8"
+compiler_api_item_count = 3737
+compiler_api_sha256 = "9fc461f9f46da62b91a67a66e7bb71eab15c32bdaadcbc5b9ab6e794a3c5d0ed"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -3803,8 +3875,8 @@ name = "s390x-unknown-linux-gnu"
 group = "ibm"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 3693
-compiler_api_sha256 = "02bac5f94401975fd3a06de29300751bf890a34f6d39eb28396a9681c643b1a8"
+compiler_api_item_count = 3737
+compiler_api_sha256 = "9fc461f9f46da62b91a67a66e7bb71eab15c32bdaadcbc5b9ab6e794a3c5d0ed"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -3815,8 +3887,8 @@ name = "powerpc64le-unknown-linux-gnu"
 group = "ibm"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 3693
-compiler_api_sha256 = "02bac5f94401975fd3a06de29300751bf890a34f6d39eb28396a9681c643b1a8"
+compiler_api_item_count = 3737
+compiler_api_sha256 = "9fc461f9f46da62b91a67a66e7bb71eab15c32bdaadcbc5b9ab6e794a3c5d0ed"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -3827,8 +3899,8 @@ name = "riscv64gc-unknown-linux-gnu"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 3693
-compiler_api_sha256 = "02bac5f94401975fd3a06de29300751bf890a34f6d39eb28396a9681c643b1a8"
+compiler_api_item_count = 3737
+compiler_api_sha256 = "9fc461f9f46da62b91a67a66e7bb71eab15c32bdaadcbc5b9ab6e794a3c5d0ed"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -4796,6 +4868,50 @@ evidence = [
 limitation = "Public encapsulation-key/ciphertext equality is ordinary equality. Decapsulation-key/shared-secret owners return CtDecision and require explicit declassification. The key seed also determines the public ML-KEM matrix seed, whose rejection sampling time is public, so no DudeCT case varies the seed through key generation, preparation, or compact decapsulation. Each secret step of that expansion has its own case. The SHAKE256 seed expansion calls keccak::secret::shake256, the worker that mlkem768_decapsulate_rejection_seed_fixed_vs_random times through ML-KEM J. The ML-KEM-768 expansion calls keygen_prepared_into, which mlkem768_keygen_prepared_secret_noise_fixed_vs_random times with the public matrix seed fixed. The X25519 base-point multiplication calls X25519SecretKey::public_key, which x25519_public_key_fixed_vs_random_scalar times."
 
 [[operation]]
+id = "hpke.base_mode"
+api = [
+  "rscrypto::HpkeSender::{setup,setup_in,seal,seal_in_place_detached,seal_to_vec,export,sequence}",
+  "rscrypto::HpkeReceiver::{setup,setup_in,open,open_in_place_detached,open_to_vec,export,sequence}",
+  "rscrypto::HpkeSuite::{derive_keypair,derive_keypair_in,seal,open}",
+  "rscrypto::Hpke{X25519HkdfSha256Aes128Gcm,XWingHkdfSha256ChaCha20Poly1305}::{derive_keypair,derive_keypair_in}",
+  "rscrypto::HpkeX25519PrivateKey::{new,public_key,secret_key,duplicate_secret}",
+]
+features = ["hpke", "x25519", "aes-gcm", "x-wing", "chacha20poly1305", "alloc"]
+targets = ["all-supported", "portable implementation"]
+secret_inputs = [
+  "recipient private key",
+  "DeriveKeyPair input keying material",
+  "encapsulation randomness",
+  "KEM shared secret",
+  "AEAD key, base nonce, and exporter secret",
+  "plaintext",
+]
+public_inputs = ["recipient public key", "encapsulation", "info", "aad", "exporter context", "lengths", "sequence number"]
+variable_time_components = [
+  "public fixed-shape parsing",
+  "rejection of a small-order X25519 part, which depends only on the public key or encapsulation",
+  "the components' own public-input variation, such as ML-KEM matrix rejection sampling",
+]
+permitted_leakage = ["public key", "encapsulation", "fixed sizes", "small-order X25519 rejection", "message limit", "authentication failure", "caller-authorized secret exposure"]
+claim = "ct-intended"
+evidence = [
+  "primitive:hpke.x25519_aes128gcm",
+  "primitive:hpke.xwing_chacha20poly1305",
+  "unit:hpke.x25519_aes128gcm.setup_sender",
+  "unit:hpke.x25519_aes128gcm.setup_receiver",
+  "unit:hpke.xwing_chacha20poly1305.setup_sender",
+  "unit:hpke.xwing_chacha20poly1305.setup_receiver",
+  "primitive:kx.x25519",
+  "primitive:kem.xwing",
+  "primitive:kdf.hkdf",
+  "unit:aead.symmetric_transform.aes128gcm",
+  "unit:aead.open_authentication.aes128gcm",
+  "unit:aead.symmetric_transform.chacha20poly1305",
+  "unit:aead.open_authentication.chacha20poly1305",
+]
+limitation = "The DudeCT cases time the sender and receiver setups, which contain every HPKE-specific secret step: DeriveKeyPair of the encapsulation randomness, the KEM, and the key schedule. Context seal, open, and export time only their AEAD and HKDF components, which have their own evidence. X-Wing DeriveKeyPair also determines the public ML-KEM matrix seed, so no case varies its input; it composes SHAKE256 through keccak::secret::shake256 with the X-Wing key expansion that kem.xwing covers. setup_in and derive_keypair_in run the same KEM, key-schedule, and AEAD code and write the context or key in place; the harness roots time the by-value forms only."
+
+[[operation]]
 id = "signature.ed25519_signing"
 api = [
   "rscrypto::Ed25519SecretKey::{public_key,sign}",
@@ -5541,6 +5657,55 @@ notes = "X-Wing composes ML-KEM-768, X25519, and the scrubbed Keccak secret work
 [primitive.harness]
 status = "covered"
 symbols = ["ct_entry_xwing_keygen", "ct_entry_xwing_encapsulate", "ct_entry_xwing_decapsulate"]
+
+[[primitive]]
+id = "hpke.x25519_aes128gcm"
+tier = "A"
+claim = "ct-intended"
+features = ["hpke", "x25519", "aes-gcm"]
+variants = ["SetupSender", "SetupReceiver"]
+entrypoints = ["HpkeSender::setup", "HpkeReceiver::setup", "HpkeX25519HkdfSha256Aes128Gcm::derive_keypair"]
+secrets = [
+  "recipient_private_key",
+  "encapsulation_random",
+  "ephemeral_private_key",
+  "dh_shared_secret",
+  "shared_secret",
+  "key_schedule_secrets",
+]
+public = ["recipient_public_key", "encapsulation", "info", "small_order_x25519_rejection", "rng_failure"]
+may_leak = ["input_length", "public_shape_error", "public_rng_failure", "opaque_success_or_failure"]
+must_not_leak_ref = "common_secret_data"
+required = ["tier_a"]
+binsec = "deferred"
+notes = "HPKE Base mode with DHKEM(X25519, HKDF-SHA256), HKDF-SHA256, and AES-128-GCM composes X25519, the HKDF-SHA256 key schedule, and AES-128-GCM. It rejects an all-zero X25519 output; clamping makes that depend only on the public key or encapsulation."
+[primitive.harness]
+status = "covered"
+symbols = ["ct_entry_hpke_x25519_derive_keypair", "ct_entry_hpke_x25519_seal", "ct_entry_hpke_x25519_open"]
+
+[[primitive]]
+id = "hpke.xwing_chacha20poly1305"
+tier = "A"
+claim = "ct-intended"
+features = ["hpke", "x-wing", "chacha20poly1305"]
+variants = ["SetupSender", "SetupReceiver"]
+entrypoints = ["HpkeSender::setup", "HpkeReceiver::setup", "HpkeXWingHkdfSha256ChaCha20Poly1305::derive_keypair"]
+secrets = [
+  "recipient_private_key",
+  "encapsulation_random",
+  "shared_secret",
+  "key_schedule_secrets",
+  "implicit_rejection_seed",
+]
+public = ["recipient_public_key", "encapsulation", "info", "small_order_x25519_rejection", "rng_failure"]
+may_leak = ["input_length", "public_shape_error", "public_rng_failure", "opaque_success_or_failure"]
+must_not_leak_ref = "common_secret_data"
+required = ["tier_a"]
+binsec = "deferred"
+notes = "HPKE Base mode with X-Wing, HKDF-SHA256, and ChaCha20Poly1305 composes the X-Wing KEM, the HKDF-SHA256 key schedule, and ChaCha20Poly1305. DeriveKeyPair runs SHAKE256 through the scrubbed Keccak secret worker and the X-Wing key expansion."
+[primitive.harness]
+status = "covered"
+symbols = ["ct_entry_hpke_xwing_derive_keypair", "ct_entry_hpke_xwing_seal", "ct_entry_hpke_xwing_open"]
 
 [[primitive]]
 id = "signature.ed25519_sign"

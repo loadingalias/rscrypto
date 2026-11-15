@@ -581,8 +581,13 @@ mod xwing {
   /// The expanded secrets: the ML-KEM-768 secret vector and `z`, and the
   /// X25519 secret key.
   pub(super) fn needles() {
+    expanded_needles(decapsulation_key().as_bytes());
+  }
+
+  /// The expanded secrets of `seed`.
+  pub(super) fn expanded_needles(seed: &[u8; XWing::DECAPSULATION_KEY_SIZE]) {
     let mut expanded = [0u8; 96];
-    Shake256::hash_into(decapsulation_key().as_bytes(), &mut expanded);
+    Shake256::hash_into(seed, &mut expanded);
     let mut ml_kem_seed = [0u8; 64];
     ml_kem_seed.copy_from_slice(&expanded[..64]);
     let (_, ml_kem) = MlKem768Seed::from_bytes(ml_kem_seed).keypair_in(&HEAP);
@@ -598,6 +603,299 @@ mod xwing {
     stream_fill::<XWingError>(ENCAPSULATION_STREAM)(&mut random).expect("the stream cannot fail");
     needle("coins", &random[..32]);
     needle("x25519_ephemeral", &random[32..]);
+  }
+
+  /// The shared secret that `encapsulate` returns by value.
+  pub(super) fn encapsulated_secret_needle() {
+    let key = XWingDecapsulationKey::from_bytes([0x5a; XWing::DECAPSULATION_KEY_SIZE]).encapsulation_key();
+    let (_, shared) = XWing::encapsulate(&key, stream_fill(ENCAPSULATION_STREAM)).expect("encapsulation");
+    needle("shared_secret", shared.as_bytes());
+  }
+
+  /// The shared secret that `decapsulate` returns by value for the prepared
+  /// ciphertext.
+  pub(super) fn decapsulated_secret_needle() {
+    let ciphertext = XWingCiphertext::try_from_slice(
+      &key_input(XWing::DECAPSULATION_KEY_SIZE + XWing::CIPHERTEXT_SIZE)[XWing::DECAPSULATION_KEY_SIZE..],
+    )
+    .expect("ciphertext");
+    let shared = XWing::decapsulate(&imported(), &ciphertext).expect("decapsulation");
+    needle("shared_secret", shared.as_bytes());
+  }
+}
+
+// RFC 9180 A.1.1 and draft-ietf-hpke-pq-05 A.5. The key schedule outputs of
+// each vector are needles, so no needle comes from the code under test. The
+// inputs live in KEY_INPUT, outside every scanned region.
+mod hpke {
+  use super::*;
+  use rscrypto::{
+    HpkeError, HpkeReceiver, HpkeSender, HpkeSuite, HpkeX25519HkdfSha256Aes128Gcm as X25519Suite, HpkeX25519PrivateKey,
+    HpkeXWingHkdfSha256ChaCha20Poly1305 as XWingSuite, X25519PublicKey, X25519SecretKey, X25519SharedSecret,
+    XWingEncapsulationKey,
+  };
+
+  const X25519_VECTOR: &str = include_str!("../../../testdata/hpke/hpke-x25519-hkdfsha256-aes128gcm.json");
+  const XWING_VECTORS: &str = include_str!("../../../testdata/hpke/hpke-pq-xwing.json");
+  const MESSAGE: &[u8] = b"rscrypto HPKE residue";
+  const NAMES: [&str; 8] = ["ikmR", "ikmE", "pkRm", "skRm", "enc", "info", "aad", "ct"];
+
+  /// One vector's fields in KEY_INPUT, in `NAMES` order: `[offset, length]`.
+  struct Layout([[usize; 2]; 8]);
+
+  impl Layout {
+    const fn new(lengths: [usize; 8]) -> Self {
+      let mut fields = [[0; 2]; 8];
+      let mut index = 0;
+      let mut offset = 0;
+      while index < 8 {
+        fields[index] = [offset, lengths[index]];
+        offset = offset.strict_add(lengths[index]);
+        index = index.strict_add(1);
+      }
+      Self(fields)
+    }
+
+    const fn end(&self) -> usize {
+      self.0[7][0].strict_add(self.0[7][1])
+    }
+
+    fn input(&self, name: &str) -> &'static [u8] {
+      let index = NAMES.iter().position(|field| *field == name).expect("field name");
+      let [offset, len] = self.0[index];
+      &key_input(offset.strict_add(len))[offset..]
+    }
+
+    fn array<const N: usize>(&self, name: &str) -> [u8; N] {
+      self.input(name).try_into().expect("field length")
+    }
+  }
+
+  const X25519: Layout = Layout::new([32, 32, 32, 32, 32, 20, 7, 45]);
+  const XWING: Layout = Layout::new([32, 64, 1216, 32, 1120, 40, 7, 74]);
+  const INPUT_SIZE: usize = XWING.end();
+
+  fn xwing_vector() -> &'static str {
+    XWING_VECTORS
+      .split("{\"mode\":")
+      .find(|vector| vector.contains("\"kdf_id\":1,"))
+      .expect("the A.5 vector")
+  }
+
+  /// The first hexadecimal field `name` of `vector`, decoded.
+  fn decode(vector: &str, name: &str) -> alloc::vec::Vec<u8> {
+    let (_, value) = vector
+      .split_once(&alloc::format!("\"{name}\":\""))
+      .expect("HPKE vector field");
+    let (value, _) = value.split_once('"').expect("HPKE vector field end");
+    value
+      .as_bytes()
+      .chunks(2)
+      .map(|pair| u8::from_str_radix(core::str::from_utf8(pair).expect("ASCII"), 16).expect("hex"))
+      .collect()
+  }
+
+  fn write(vector: &str, layout: &Layout) {
+    let input: &mut [u8; INPUT_SIZE] = key_input_mut();
+    for (name, [offset, len]) in NAMES.iter().zip(layout.0) {
+      let bytes = decode(vector, name);
+      assert_eq!(bytes.len(), len, "{name}");
+      input[offset..offset.strict_add(len)].copy_from_slice(&bytes);
+    }
+  }
+
+  pub(super) fn prepare_x25519() {
+    write(X25519_VECTOR, &X25519);
+  }
+
+  pub(super) fn prepare_xwing() {
+    write(xwing_vector(), &XWING);
+  }
+
+  /// Run the sender with the vector's `ikmE` and seal one message.
+  fn send<S: HpkeSuite>(layout: &Layout, public_key: &S::PublicKey) {
+    let random = layout.input("ikmE");
+    let (encapsulation, mut sender) = HpkeSender::<S>::setup(public_key, layout.input("info"), |out| {
+      out.copy_from_slice(random);
+      Ok::<(), HpkeError>(())
+    })
+    .expect("setup");
+    let mut ciphertext = [0u8; MESSAGE.len() + 16];
+    sender.seal(b"", MESSAGE, &mut ciphertext).expect("seal");
+    black_box((&encapsulation, &sender, &ciphertext));
+  }
+
+  /// Run the receiver and open the vector's first ciphertext.
+  fn receive<S: HpkeSuite>(layout: &Layout, encapsulation: &S::Encapsulation, private_key: &S::PrivateKey) {
+    let mut receiver = HpkeReceiver::<S>::setup(encapsulation, private_key, layout.input("info")).expect("setup");
+    let ciphertext = layout.input("ct");
+    let mut plaintext = [0u8; 64];
+    receiver
+      .open(
+        layout.input("aad"),
+        ciphertext,
+        &mut plaintext[..ciphertext.len().strict_sub(16)],
+      )
+      .expect("open");
+    black_box((&receiver, &plaintext));
+  }
+
+  pub(super) fn x25519_derive() {
+    let key = X25519Suite::derive_keypair(X25519.input("ikmR"));
+    black_box(&key);
+  }
+
+  pub(super) fn x25519_sender() {
+    send::<X25519Suite>(&X25519, &X25519PublicKey::from_bytes(X25519.array("pkRm")));
+  }
+
+  /// The recipient key is imported in this frame, so its bytes are not a
+  /// needle: the import is the caller's copy, not HPKE's.
+  pub(super) fn x25519_receiver() {
+    let recipient = HpkeX25519PrivateKey::new(X25519SecretKey::from_bytes(X25519.array("skRm")));
+    receive::<X25519Suite>(&X25519, &X25519PublicKey::from_bytes(X25519.array("enc")), &recipient);
+  }
+
+  pub(super) fn xwing_derive() {
+    let key = XWingSuite::derive_keypair(XWING.input("ikmR"));
+    black_box(&key);
+  }
+
+  pub(super) fn xwing_sender() {
+    let public_key = XWingEncapsulationKey::try_from_slice(XWING.input("pkRm"))
+      .expect("encapsulation key")
+      .prepare()
+      .expect("valid key");
+    send::<XWingSuite>(&XWING, &public_key);
+  }
+
+  /// Run the sender with its context in the arena.
+  fn send_in<S: HpkeSuite>(layout: &Layout, public_key: &S::PublicKey) {
+    let random = layout.input("ikmE");
+    let (encapsulation, mut sender) = HpkeSender::<S>::setup_in(
+      public_key,
+      layout.input("info"),
+      |out| {
+        out.copy_from_slice(random);
+        Ok::<(), HpkeError>(())
+      },
+      &ARENA,
+    )
+    .expect("setup");
+    let mut ciphertext = [0u8; MESSAGE.len() + 16];
+    sender.seal(b"", MESSAGE, &mut ciphertext).expect("seal");
+    black_box((&encapsulation, &sender, &ciphertext));
+  }
+
+  /// Run the receiver with its context in the arena.
+  fn receive_in<S: HpkeSuite>(layout: &Layout, encapsulation: &S::Encapsulation, private_key: &S::PrivateKey) {
+    let mut receiver =
+      HpkeReceiver::<S>::setup_in(encapsulation, private_key, layout.input("info"), &ARENA).expect("setup");
+    let ciphertext = layout.input("ct");
+    let mut plaintext = [0u8; 64];
+    receiver
+      .open(
+        layout.input("aad"),
+        ciphertext,
+        &mut plaintext[..ciphertext.len().strict_sub(16)],
+      )
+      .expect("open");
+    black_box((&receiver, &plaintext));
+  }
+
+  pub(super) fn x25519_derive_in() {
+    let key = X25519Suite::derive_keypair_in(X25519.input("ikmR"), &ARENA);
+    black_box(&key);
+  }
+
+  pub(super) fn x25519_sender_in() {
+    send_in::<X25519Suite>(&X25519, &X25519PublicKey::from_bytes(X25519.array("pkRm")));
+  }
+
+  pub(super) fn x25519_receiver_in() {
+    let recipient = X25519Suite::derive_keypair_in(X25519.input("ikmR"), &ARENA);
+    receive_in::<X25519Suite>(&X25519, &X25519PublicKey::from_bytes(X25519.array("enc")), &recipient);
+  }
+
+  pub(super) fn xwing_derive_in() {
+    let key = XWingSuite::derive_keypair_in(XWING.input("ikmR"), &ARENA);
+    black_box(&key);
+  }
+
+  pub(super) fn xwing_sender_in() {
+    let public_key = XWingEncapsulationKey::try_from_slice(XWING.input("pkRm"))
+      .expect("encapsulation key")
+      .prepare()
+      .expect("valid key");
+    send_in::<XWingSuite>(&XWING, &public_key);
+  }
+
+  pub(super) fn xwing_receiver_in() {
+    let key = XWingSuite::derive_keypair_in(XWING.input("ikmR"), &ARENA);
+    let encapsulation = XWingCiphertext::try_from_slice(XWING.input("enc")).expect("encapsulation");
+    receive_in::<XWingSuite>(&XWING, &encapsulation, &key);
+  }
+
+  pub(super) fn xwing_receiver() {
+    let key = XWingDecapsulationKey::try_from_slice(XWING.input("skRm"))
+      .expect("decapsulation key")
+      .prepare_in(&ARENA);
+    let encapsulation = XWingCiphertext::try_from_slice(XWING.input("enc")).expect("encapsulation");
+    receive::<XWingSuite>(&XWING, &encapsulation, &key);
+  }
+
+  /// The key schedule outputs that both roles hold, and the HMAC inner and
+  /// outer midstates of the exporter secret, which the context stores and
+  /// `sha2` derives independently. The 12-byte base nonce is shorter than the
+  /// scanner's 16-byte window, so it is not a needle.
+  fn schedule_needles(vector: &str) {
+    for name in ["shared_secret", "key", "exporter_secret"] {
+      needle(name, &decode(vector, name));
+    }
+    let exporter_secret = decode(vector, "exporter_secret");
+    needle("exporter_inner", &hkdf_sha256::prefix(&exporter_secret, 0x36));
+    needle("exporter_outer", &hkdf_sha256::prefix(&exporter_secret, 0x5c));
+  }
+
+  /// The X25519 shared secret of the vector, from the recipient side.
+  fn x25519_dh() -> X25519SharedSecret {
+    let secret = X25519SecretKey::from_bytes(decode(X25519_VECTOR, "skRm").try_into().expect("32 bytes"));
+    let enc = X25519PublicKey::from_bytes(decode(X25519_VECTOR, "enc").try_into().expect("32 bytes"));
+    secret.diffie_hellman(&enc).expect("vector DH")
+  }
+
+  pub(super) fn x25519_derive_needles() {
+    needle("skRm", &decode(X25519_VECTOR, "skRm"));
+  }
+
+  pub(super) fn x25519_sender_needles() {
+    needle("ikmE", &decode(X25519_VECTOR, "ikmE"));
+    needle("skEm", &decode(X25519_VECTOR, "skEm"));
+    needle("dh", x25519_dh().as_bytes());
+    schedule_needles(X25519_VECTOR);
+  }
+
+  pub(super) fn x25519_receiver_needles() {
+    needle("dh", x25519_dh().as_bytes());
+    schedule_needles(X25519_VECTOR);
+  }
+
+  pub(super) fn xwing_derive_needles() {
+    let seed = decode(xwing_vector(), "skRm");
+    needle("seed", &seed);
+    xwing::expanded_needles(&seed.try_into().expect("32-byte seed"));
+  }
+
+  pub(super) fn xwing_sender_needles() {
+    let random = decode(xwing_vector(), "ikmE");
+    needle("coins", &random[..32]);
+    needle("x25519_ephemeral", &random[32..]);
+    schedule_needles(xwing_vector());
+  }
+
+  pub(super) fn xwing_receiver_needles() {
+    xwing::expanded_needles(&decode(xwing_vector(), "skRm").try_into().expect("32-byte seed"));
+    schedule_needles(xwing_vector());
   }
 }
 
@@ -958,7 +1256,7 @@ macro_rules! hkdf {
       }
 
       /// Chaining state after one pad block, as the owner stores its words.
-      fn prefix(prk: &[u8], pad: u8) -> Vec<u8> {
+      pub(super) fn prefix(prk: &[u8], pad: u8) -> Vec<u8> {
         let mut block = [pad; $block];
         for (byte, key) in block.iter_mut().zip(prk) {
           *byte ^= key;
@@ -1392,10 +1690,107 @@ const SCENARIOS: &[Scenario] = &[
     xwing::needles
   ),
   scenario!(
+    "x-wing-decapsulate-shared-secret",
+    "report",
+    xwing::prepare,
+    xwing::decapsulate,
+    xwing::decapsulated_secret_needle
+  ),
+  scenario!(
     "x-wing-encapsulate",
     "none",
     xwing::encapsulate,
     xwing::encapsulation_needles
+  ),
+  scenario!(
+    "x-wing-encapsulate-shared-secret",
+    "report",
+    xwing::encapsulate,
+    xwing::encapsulated_secret_needle
+  ),
+  scenario!(
+    "hpke-x25519-derive",
+    "report",
+    hpke::prepare_x25519,
+    hpke::x25519_derive,
+    hpke::x25519_derive_needles
+  ),
+  scenario!(
+    "hpke-x25519-derive-in",
+    "none",
+    hpke::prepare_x25519,
+    hpke::x25519_derive_in,
+    hpke::x25519_derive_needles
+  ),
+  scenario!(
+    "hpke-x25519-sender",
+    "report",
+    hpke::prepare_x25519,
+    hpke::x25519_sender,
+    hpke::x25519_sender_needles
+  ),
+  scenario!(
+    "hpke-x25519-sender-in",
+    "none",
+    hpke::prepare_x25519,
+    hpke::x25519_sender_in,
+    hpke::x25519_sender_needles
+  ),
+  scenario!(
+    "hpke-x25519-receiver",
+    "report",
+    hpke::prepare_x25519,
+    hpke::x25519_receiver,
+    hpke::x25519_receiver_needles
+  ),
+  scenario!(
+    "hpke-x25519-receiver-in",
+    "none",
+    hpke::prepare_x25519,
+    hpke::x25519_receiver_in,
+    hpke::x25519_receiver_needles
+  ),
+  scenario!(
+    "hpke-xwing-derive",
+    "report",
+    hpke::prepare_xwing,
+    hpke::xwing_derive,
+    hpke::xwing_derive_needles
+  ),
+  scenario!(
+    "hpke-xwing-derive-in",
+    "none",
+    hpke::prepare_xwing,
+    hpke::xwing_derive_in,
+    hpke::xwing_derive_needles
+  ),
+  scenario!(
+    "hpke-xwing-sender",
+    "report",
+    hpke::prepare_xwing,
+    hpke::xwing_sender,
+    hpke::xwing_sender_needles
+  ),
+  scenario!(
+    "hpke-xwing-sender-in",
+    "none",
+    hpke::prepare_xwing,
+    hpke::xwing_sender_in,
+    hpke::xwing_sender_needles
+  ),
+  scenario!(
+    "hpke-xwing-receiver",
+    "report",
+    hpke::prepare_xwing,
+    hpke::xwing_receiver,
+    hpke::xwing_receiver_needles
+  ),
+  scenario!(
+    "hpke-xwing-receiver-in",
+    "none",
+    hpke::prepare_xwing,
+    hpke::xwing_receiver_in,
+    hpke::xwing_receiver_needles
   ),
   scenario!("ml-dsa-44-keygen", "report", mldsa44::keygen, mldsa44::needles),
   scenario!("ml-dsa-44-keygen-in", "none", mldsa44::keygen_in, mldsa44::needles),

@@ -1402,12 +1402,12 @@ On Linux and macOS, it is clear by default.
 
 `rscrypto` sets DIT for the full duration of every asymmetric, post-quantum, and password operation,
 then restores the caller's state: X25519, Ed25519, ECDSA, P-256 and P-384 ECDH, ML-KEM, X-Wing,
-ML-DSA, SLH-DSA, RSA private operations, Argon2, scrypt, and PBKDF2.
+HPKE setup and `DeriveKeyPair`, ML-DSA, SLH-DSA, RSA private operations, Argon2, scrypt, and PBKDF2.
 One toggle costs about 30 ns on Apple Silicon,
 which is less than 1% of these operations at realistic parameters.
 
 Short symmetric operations do not toggle DIT on each call: MACs and tag verification, AEADs,
-keyed hashes, HKDF, and fixed-size `ct_eq`.
+keyed hashes, HKDF, HPKE context seal, open, and export, and fixed-size `ct_eq`.
 For them, a toggle would cost between 14% and 15×.
 To use DIT there, wrap the work, or a whole worker loop, in `rscrypto::traits::ct::with_data_independent_timing`.
 A unit test checks that every covered operation enters the guard.

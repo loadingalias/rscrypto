@@ -21,7 +21,8 @@ use rscrypto::{
   AsconAead128, AsconAead128Key, Blake2b256, Blake2b512, Blake2bKey, Blake2s128, Blake2s256, Blake2sKey, Blake3,
   Blake3KeyedHash, ChaCha20Poly1305, ChaCha20Poly1305Key, ChaCha20Rng, Crc32, EcdsaP256SecretKey, EcdsaP384SecretKey,
   Ed25519PublicKey, Ed25519SecretKey, Ed25519Signature, HkdfSha256, HkdfSha384, HmacSha3_224Tag, HmacSha256,
-  HmacSha256Tag, HmacSha384, HmacSha384Tag, HmacSha512, HmacSha512Tag, Kmac256, MlKem512, MlKem512Ciphertext,
+  HmacSha256Tag, HmacSha384, HmacSha384Tag, HmacSha512, HmacSha512Tag, HpkeSuite, HpkeX25519HkdfSha256Aes128Gcm,
+  HpkeX25519PrivateKey, HpkeXWingHkdfSha256ChaCha20Poly1305, Kmac256, MlKem512, MlKem512Ciphertext,
   MlKem512DecapsulationKey, MlKem512EncapsulationKey, MlKem768, MlKem768Ciphertext, MlKem768DecapsulationKey,
   MlKem768EncapsulationKey, MlKem1024, MlKem1024Ciphertext, MlKem1024DecapsulationKey, MlKem1024EncapsulationKey,
   MlKemError, P256EphemeralSecret, P256PublicKey, P384EphemeralSecret, P384PublicKey, Pbkdf2Sha256, Pbkdf2Sha512,
@@ -878,6 +879,185 @@ kem_ct_harness!(
   XWingDecapsulationKey,
   XWingCiphertext,
   XWingError
+);
+
+/// Plaintext length of the HPKE harness roots.
+const HPKE_PLAINTEXT_SIZE: usize = 32;
+/// Ciphertext length of the HPKE harness roots: the plaintext and the tag.
+const HPKE_CIPHERTEXT_SIZE: usize = HPKE_PLAINTEXT_SIZE + 16;
+const HPKE_INFO: &[u8] = b"rscrypto-ct-hpke";
+
+/// Single-shot HPKE `Seal` with the caller's randomness.
+fn hpke_seal<S: HpkeSuite>(
+  public_key: &S::PublicKey,
+  random: &[u8],
+  plaintext: &[u8; HPKE_PLAINTEXT_SIZE],
+) -> Option<(S::Encapsulation, [u8; HPKE_CIPHERTEXT_SIZE])> {
+  let mut ciphertext = [0u8; HPKE_CIPHERTEXT_SIZE];
+  let encapsulation = S::seal(public_key, HPKE_INFO, b"", plaintext, &mut ciphertext, |out| {
+    out.copy_from_slice(random);
+    Ok(())
+  })
+  .ok()?;
+  Some((encapsulation, ciphertext))
+}
+
+/// Single-shot HPKE `Open`.
+fn hpke_open<S: HpkeSuite>(
+  encapsulation: &S::Encapsulation,
+  private_key: &S::PrivateKey,
+  ciphertext: &[u8; HPKE_CIPHERTEXT_SIZE],
+) -> Option<[u8; HPKE_PLAINTEXT_SIZE]> {
+  let mut plaintext = [0u8; HPKE_PLAINTEXT_SIZE];
+  S::open(encapsulation, private_key, HPKE_INFO, b"", ciphertext, &mut plaintext).ok()?;
+  Some(plaintext)
+}
+
+macro_rules! hpke_ct_harness {
+  (
+    $derive:ident,
+    $seal:ident,
+    $open:ident,
+    $suite:ty,
+    public_key: $public_key_size:expr, |$public_bytes:ident| $public_key:expr,
+    private_key: |$private_bytes:ident| $private_key:expr,
+    encapsulation: $encapsulation_size:expr, |$encapsulation_bytes:ident| $encapsulation:expr,
+    random: $random_size:expr,
+    public_key_of: |$derived:ident| $public_key_of:expr
+  ) => {
+    /// HPKE `DeriveKeyPair` harness: write the public key that a secret `ikm` determines.
+    ///
+    /// # Safety
+    ///
+    /// - When non-null, `ikm` must be valid for reads of 32 initialized bytes.
+    /// - When non-null, `public_key_out` must be valid for writes of the suite's public key
+    ///   size and must not be accessed while written.
+    /// - Every non-null pointer must remain valid for the duration of the call.
+    #[unsafe(no_mangle)]
+    pub unsafe extern "C" fn $derive(public_key_out: *mut u8, ikm: *const u8) -> u8 {
+      // SAFETY: The function contract requires a non-null `ikm` to reference 32 readable,
+      // initialized bytes that remain valid while `read_array` copies them.
+      let Some(ikm) = (unsafe { read_array::<32>(ikm) }) else {
+        return STATUS_ERR;
+      };
+      let $derived = <$suite>::derive_keypair(&ikm);
+      let public_key: [u8; $public_key_size] = $public_key_of;
+      // SAFETY: The function contract requires a non-null `public_key_out` to reference the
+      // suite's public key size in writable bytes, valid and unaccessed during the copy.
+      if unsafe { write_array(public_key_out, &public_key) } {
+        STATUS_OK
+      } else {
+        STATUS_ERR
+      }
+    }
+
+    /// Single-shot HPKE `Seal` harness of a 32-byte plaintext with caller randomness.
+    ///
+    /// # Safety
+    ///
+    /// - When non-null, `public_key`, `random`, and `plaintext` must be valid for reads of the
+    ///   suite's public key size, the suite's randomness size, and 32 bytes.
+    /// - When non-null, `encapsulation_out` and `ciphertext_out` must be valid for writes of the
+    ///   suite's encapsulation size and 48 bytes, and must not be accessed while written.
+    /// - Every non-null pointer must remain valid for the duration of the call.
+    #[unsafe(no_mangle)]
+    pub unsafe extern "C" fn $seal(
+      encapsulation_out: *mut u8,
+      ciphertext_out: *mut u8,
+      public_key: *const u8,
+      random: *const u8,
+      plaintext: *const u8,
+    ) -> u8 {
+      // SAFETY: The function contract requires each non-null input to reference its stated
+      // number of readable, initialized bytes while `read_array` copies them.
+      let (Some($public_bytes), Some(random), Some(plaintext)) = (unsafe {
+        (
+          read_array::<{ $public_key_size }>(public_key),
+          read_array::<{ $random_size }>(random),
+          read_array::<HPKE_PLAINTEXT_SIZE>(plaintext),
+        )
+      }) else {
+        return STATUS_ERR;
+      };
+      let Some(public_key) = $public_key else {
+        return STATUS_ERR;
+      };
+      let Some((encapsulation, ciphertext)) = hpke_seal::<$suite>(&public_key, &random, &plaintext) else {
+        return STATUS_ERR;
+      };
+      // SAFETY: The function contract requires both non-null outputs to reference their stated
+      // number of writable bytes, valid and unaccessed during the copies.
+      if unsafe { write_array(encapsulation_out, encapsulation.as_bytes()) && write_array(ciphertext_out, &ciphertext) }
+      {
+        STATUS_OK
+      } else {
+        STATUS_ERR
+      }
+    }
+
+    /// Single-shot HPKE `Open` harness of a 48-byte ciphertext.
+    ///
+    /// # Safety
+    ///
+    /// - When non-null, `private_key`, `encapsulation`, and `ciphertext` must be valid for reads
+    ///   of 32 bytes, the suite's encapsulation size, and 48 bytes.
+    /// - When non-null, `plaintext_out` must be valid for writes of 32 bytes and must not be
+    ///   accessed while written.
+    /// - Every non-null pointer must remain valid for the duration of the call.
+    #[unsafe(no_mangle)]
+    pub unsafe extern "C" fn $open(
+      plaintext_out: *mut u8,
+      private_key: *const u8,
+      encapsulation: *const u8,
+      ciphertext: *const u8,
+    ) -> u8 {
+      // SAFETY: The function contract requires each non-null input to reference its stated
+      // number of readable, initialized bytes while `read_array` copies them.
+      let (Some($private_bytes), Some($encapsulation_bytes), Some(ciphertext)) = (unsafe {
+        (
+          read_array::<32>(private_key),
+          read_array::<{ $encapsulation_size }>(encapsulation),
+          read_array::<HPKE_CIPHERTEXT_SIZE>(ciphertext),
+        )
+      }) else {
+        return STATUS_ERR;
+      };
+      let private_key = $private_key;
+      let Some(plaintext) = hpke_open::<$suite>(&$encapsulation, &private_key, &ciphertext) else {
+        return STATUS_ERR;
+      };
+      // SAFETY: The function contract requires a non-null `plaintext_out` to reference 32
+      // writable bytes, valid and unaccessed during the copy.
+      if unsafe { write_array(plaintext_out, &plaintext) } {
+        STATUS_OK
+      } else {
+        STATUS_ERR
+      }
+    }
+  };
+}
+
+hpke_ct_harness!(
+  ct_entry_hpke_x25519_derive_keypair,
+  ct_entry_hpke_x25519_seal,
+  ct_entry_hpke_x25519_open,
+  HpkeX25519HkdfSha256Aes128Gcm,
+  public_key: X25519PublicKey::LENGTH, |bytes| Some(X25519PublicKey::from_bytes(bytes)),
+  private_key: |secret| HpkeX25519PrivateKey::new(X25519SecretKey::from_bytes(secret)),
+  encapsulation: X25519PublicKey::LENGTH, |encoded| X25519PublicKey::from_bytes(encoded),
+  random: 32,
+  public_key_of: |key| key.public_key().to_bytes()
+);
+hpke_ct_harness!(
+  ct_entry_hpke_xwing_derive_keypair,
+  ct_entry_hpke_xwing_seal,
+  ct_entry_hpke_xwing_open,
+  HpkeXWingHkdfSha256ChaCha20Poly1305,
+  public_key: XWing::ENCAPSULATION_KEY_SIZE, |bytes| XWingEncapsulationKey::from_bytes(bytes).prepare().ok(),
+  private_key: |seed| XWingDecapsulationKey::from_bytes(seed).prepare(),
+  encapsulation: XWing::CIPHERTEXT_SIZE, |encoded| XWingCiphertext::from_bytes(encoded),
+  random: XWing::ENCAPSULATION_RANDOM_SIZE,
+  public_key_of: |key| key.encapsulation_key().to_bytes()
 );
 
 /// Run the ML-KEM forward-NTT diagnostic through the constant-time C ABI harness.

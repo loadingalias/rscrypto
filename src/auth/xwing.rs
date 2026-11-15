@@ -250,6 +250,15 @@ define_secret_bytes!(
   "X-Wing shared secret.\n\nNot `Clone` or `Copy`; zeroized on drop; `Debug` is redacted."
 );
 
+#[cfg(all(feature = "hpke", feature = "chacha20poly1305"))]
+impl XWingDecapsulationKey {
+  /// Borrow the seed mutably, so that HPKE derives a key in place and leaves
+  /// no moved copy.
+  pub(crate) const fn as_mut_bytes(&mut self) -> &mut [u8; Self::LENGTH] {
+    &mut self.0
+  }
+}
+
 /// X-Wing KEM marker.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct XWing;
@@ -516,8 +525,20 @@ impl XWingPreparedEncapsulationKey {
   /// order.
   pub fn encapsulate(
     &self,
-    mut fill_random: impl FnMut(&mut [u8]) -> Result<(), XWingError>,
+    fill_random: impl FnMut(&mut [u8]) -> Result<(), XWingError>,
   ) -> Result<(XWingCiphertext, XWingSharedSecret), XWingError> {
+    let mut shared = XWingSharedSecret([0; XWingSharedSecret::LENGTH]);
+    let ciphertext = self.encapsulate_into(fill_random, &mut shared.0)?;
+    Ok((ciphertext, shared))
+  }
+
+  /// [`Self::encapsulate`], writing the shared secret into `shared`, so that
+  /// no returned owner is moved.
+  pub(crate) fn encapsulate_into(
+    &self,
+    mut fill_random: impl FnMut(&mut [u8]) -> Result<(), XWingError>,
+    shared: &mut [u8; XWingSharedSecret::LENGTH],
+  ) -> Result<XWingCiphertext, XWingError> {
     let _dit = DataIndependentTiming::enter();
     let mut random = ZeroizingBytes::<ENCAPSULATION_RANDOM_SIZE>::zeroed();
     fill_random(random.as_mut_array())?;
@@ -528,8 +549,9 @@ impl XWingPreparedEncapsulationKey {
     let mut ephemeral = X25519SecretKey::from_bytes([0; X25519SecretKey::LENGTH]);
     ephemeral.as_mut_bytes().copy_from_slice(x25519_secret);
 
-    let x25519_shared = ephemeral
-      .diffie_hellman(&self.x25519)
+    let mut x25519_shared = ZeroizingBytes::<{ X25519SharedSecret::LENGTH }>::zeroed();
+    ephemeral
+      .diffie_hellman_into(&self.x25519, x25519_shared.as_mut_array())
       .map_err(|_| XWingError::InvalidEncapsulationKey)?;
     let x25519_ciphertext = ephemeral.public_key();
     let (ml_kem_ciphertext, ml_kem_shared) = self.ml_kem.encapsulate_internal(coins);
@@ -538,13 +560,14 @@ impl XWingPreparedEncapsulationKey {
     let (ml_kem_part, x25519_part) = ciphertext.split_at_mut(ML_KEM_CIPHERTEXT_SIZE);
     ml_kem_part.copy_from_slice(ml_kem_ciphertext.as_bytes());
     x25519_part.copy_from_slice(x25519_ciphertext.as_bytes());
-    let shared = combine(
+    combine(
       &ml_kem_shared,
-      &x25519_shared,
+      x25519_shared.as_array(),
       x25519_ciphertext.as_bytes(),
       self.x25519.as_bytes(),
+      shared,
     );
-    Ok((XWingCiphertext(ciphertext), shared))
+    Ok(XWingCiphertext(ciphertext))
   }
 }
 
@@ -608,23 +631,41 @@ impl XWingPreparedDecapsulationKey {
   /// is all-zero. That occurs exactly when the X25519 part of the ciphertext
   /// has small order, so the error depends only on the public ciphertext.
   pub fn decapsulate(&self, ciphertext: &XWingCiphertext) -> Result<XWingSharedSecret, XWingError> {
+    let mut shared = XWingSharedSecret([0; XWingSharedSecret::LENGTH]);
+    self.decapsulate_into(ciphertext, &mut shared.0)?;
+    Ok(shared)
+  }
+
+  /// [`Self::decapsulate`], writing the shared secret into `shared`, so that
+  /// no returned owner is moved.
+  pub(crate) fn decapsulate_into(
+    &self,
+    ciphertext: &XWingCiphertext,
+    shared: &mut [u8; XWingSharedSecret::LENGTH],
+  ) -> Result<(), XWingError> {
     let _dit = DataIndependentTiming::enter();
     let x25519_ciphertext = ciphertext.x25519();
-    let x25519_shared = self
+    let mut x25519_shared = ZeroizingBytes::<{ X25519SharedSecret::LENGTH }>::zeroed();
+    self
       .x25519
-      .diffie_hellman(&X25519PublicKey::from_bytes(*x25519_ciphertext))
+      .diffie_hellman_into(
+        &X25519PublicKey::from_bytes(*x25519_ciphertext),
+        x25519_shared.as_mut_array(),
+      )
       .map_err(|_| XWingError::InvalidCiphertext)?;
     let ml_kem_shared = self.ml_kem.decapsulate_internal(ciphertext.ml_kem());
-    Ok(combine(
+    combine(
       &ml_kem_shared,
-      &x25519_shared,
+      x25519_shared.as_array(),
       x25519_ciphertext,
       self.x25519_public.as_bytes(),
-    ))
+      shared,
+    );
+    Ok(())
   }
 
   /// All-zero owner that [`Self::expand`] fills in place.
-  fn unexpanded() -> Self {
+  pub(crate) fn unexpanded() -> Self {
     Self {
       key: XWingDecapsulationKey([0; XWingDecapsulationKey::LENGTH]),
       ml_kem: MlKem768PreparedDecapsulationKey::unexpanded(),
@@ -634,7 +675,7 @@ impl XWingPreparedDecapsulationKey {
   }
 
   /// `expandDecapsulationKey` of the draft, written in place.
-  fn expand(&mut self, key: &XWingDecapsulationKey) {
+  pub(crate) fn expand(&mut self, key: &XWingDecapsulationKey) {
     let _dit = DataIndependentTiming::enter();
     let mut expanded = ZeroizingBytes::<EXPANDED_SIZE>::zeroed();
     secret::shake256(&[key.as_bytes().as_slice()], expanded.as_mut_array());
@@ -663,25 +704,24 @@ fn encapsulation_key(ml_kem: &[u8; ML_KEM_ENCAPSULATION_KEY_SIZE], x25519: &X255
   XWingEncapsulationKey(bytes)
 }
 
-/// `Combiner` of the draft.
+/// `Combiner` of the draft, written into `shared`.
 fn combine(
   ml_kem_shared: &MlKem768SharedSecret,
-  x25519_shared: &X25519SharedSecret,
+  x25519_shared: &[u8; X25519SharedSecret::LENGTH],
   x25519_ciphertext: &[u8; X25519PublicKey::LENGTH],
   x25519_public: &[u8; X25519PublicKey::LENGTH],
-) -> XWingSharedSecret {
-  let mut shared = XWingSharedSecret([0; XWingSharedSecret::LENGTH]);
+  shared: &mut [u8; XWingSharedSecret::LENGTH],
+) {
   secret::sha3_256(
     &[
       ml_kem_shared.as_bytes(),
-      x25519_shared.as_bytes(),
+      x25519_shared,
       x25519_ciphertext,
       x25519_public,
       LABEL,
     ],
-    &mut shared.0,
+    shared,
   );
-  shared
 }
 
 #[cfg(feature = "getrandom")]

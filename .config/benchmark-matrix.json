@@ -180,6 +180,13 @@
       "required": true,
       "features": ["std", "x-wing"]
     },
+    "hpke": {
+      "binary": "hpke",
+      "kind": "criterion",
+      "family": "auth",
+      "required": true,
+      "features": ["std", "hpke", "x25519", "aes-gcm", "x-wing", "chacha20poly1305", "rand_core"]
+    },
     "slhdsa_portable": {
       "binary": "slhdsa",
       "kind": "criterion",
@@ -1675,6 +1682,41 @@
       "cases": "^(?P<variant>xwing)/decapsulate/(?P<input>import-encoded)/(?P<implementation>[^/]+)$",
       "headline": true,
       "task": "Import identical 32-byte decapsulation-key bytes and the ciphertext, then decapsulate."
+    },
+    "hpke-setup-sender": {
+      "family": "HPKE",
+      "bench": "hpke",
+      "cases": "^(?P<variant>hpke-(?:x25519-aes128gcm|xwing-chacha20poly1305))/setup-sender/(?P<input>derand)/(?P<implementation>[^/]+)$",
+      "headline": true,
+      "task": "Encapsulate to a recipient public key with caller randomness and run the key schedule."
+    },
+    "hpke-setup-receiver": {
+      "family": "HPKE",
+      "bench": "hpke",
+      "cases": "^(?P<variant>hpke-(?:x25519-aes128gcm|xwing-chacha20poly1305))/setup-receiver/(?P<input>reuse-key)/(?P<implementation>[^/]+)$",
+      "headline": true,
+      "task": "Decapsulate one encapsulation with each library's best reused recipient key and run the key schedule."
+    },
+    "hpke-export": {
+      "family": "HPKE",
+      "bench": "hpke",
+      "cases": "^(?P<variant>hpke-(?:x25519-aes128gcm|xwing-chacha20poly1305))/export/(?P<input>32)/(?P<implementation>[^/]+)$",
+      "headline": true,
+      "task": "Export 32 bytes for a short exporter context from an established receiver context."
+    },
+    "hpke-single-shot-seal": {
+      "family": "HPKE",
+      "bench": "hpke",
+      "cases": "^(?P<variant>hpke-(?:x25519-aes128gcm|xwing-chacha20poly1305))/single-shot-seal/(?P<input>64|16384)/(?P<implementation>[^/]+)$",
+      "headline": true,
+      "task": "Set up a sender with caller randomness and seal one message of 64 B or 16 KiB."
+    },
+    "hpke-single-shot-open": {
+      "family": "HPKE",
+      "bench": "hpke",
+      "cases": "^(?P<variant>hpke-(?:x25519-aes128gcm|xwing-chacha20poly1305))/single-shot-open/(?P<input>64|16384)/(?P<implementation>[^/]+)$",
+      "headline": true,
+      "task": "Set up a receiver with a reused recipient key and open one message of 64 B or 16 KiB."
     },
     "rsa-verify-reuse": {
       "family": "RSA",

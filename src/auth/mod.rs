@@ -111,6 +111,7 @@
 //! - `hmac` - HMAC-based authentication.
 //! - `hmac_sha3` - HMAC-SHA3 authentication.
 //! - `hkdf` - HKDF extract-then-expand key derivation.
+//! - `hpke` - HPKE (RFC 9180) Base mode for qualified suites.
 //! - `kmac` - KMAC128/KMAC256 variable-output MACs.
 //! - `mldsa` - ML-DSA-44/65/87 signatures and HashML-DSA prehash profiles (FIPS 204).
 //! - `mlkem` - ML-KEM typed key, ciphertext, and shared-secret foundations.
@@ -179,6 +180,14 @@ pub mod hmac;
 pub mod hmac_sha3;
 #[cfg(any(feature = "hmac", feature = "hmac-sha3"))]
 mod hmac_tag;
+#[cfg(all(
+  feature = "hpke",
+  any(
+    all(feature = "x25519", feature = "aes-gcm"),
+    all(feature = "x-wing", feature = "chacha20poly1305")
+  )
+))]
+pub mod hpke;
 #[cfg(feature = "kmac")]
 pub mod kmac;
 #[cfg(feature = "ml-dsa")]
@@ -394,6 +403,18 @@ pub use hmac_sha3::{
   HmacSha3_224, HmacSha3_224Tag, HmacSha3_256, HmacSha3_256Tag, HmacSha3_384, HmacSha3_384Tag, HmacSha3_512,
   HmacSha3_512Tag,
 };
+#[cfg(all(feature = "hpke", feature = "x-wing", feature = "chacha20poly1305"))]
+pub use hpke::HpkeXWingHkdfSha256ChaCha20Poly1305;
+#[cfg(all(
+  feature = "hpke",
+  any(
+    all(feature = "x25519", feature = "aes-gcm"),
+    all(feature = "x-wing", feature = "chacha20poly1305")
+  )
+))]
+pub use hpke::{HpkeError, HpkeReceiver, HpkeSender, HpkeSuite};
+#[cfg(all(feature = "hpke", feature = "x25519", feature = "aes-gcm"))]
+pub use hpke::{HpkeX25519HkdfSha256Aes128Gcm, HpkeX25519PrivateKey};
 #[cfg(feature = "kmac")]
 pub use kmac::{Kmac128, Kmac256};
 #[cfg(feature = "ml-dsa")]

@@ -13,12 +13,14 @@ use rscrypto::{
   AsconAead128, AsconAead128Key, Blake2b256, Blake2b512, Blake2bKey, Blake2s128, Blake2s256, Blake2sKey, Blake3,
   Blake3KeyedHash, ChaCha20Poly1305, ChaCha20Poly1305Key, EcdsaP256SecretKey, EcdsaP384SecretKey, Ed25519Keypair,
   Ed25519SecretKey, HkdfSha256, HkdfSha384, HmacSha256, HmacSha256Tag, HmacSha384, HmacSha384Tag, HmacSha512,
-  HmacSha512Tag, Kmac256, MlDsa65EcdsaP256SecretKey, MlDsa65Ed25519SecretKey, MlKem512, MlKem512Ciphertext,
-  MlKem512DecapsulationKey, MlKem768, MlKem768Ciphertext, MlKem768DecapsulationKey, MlKem1024, MlKem1024Ciphertext,
-  MlKem1024DecapsulationKey, MlKemError, P256EphemeralSecret, P384EphemeralSecret, Pbkdf2Sha256, Pbkdf2Sha512,
-  RsaBlindingPair, RsaEncryptionError, RsaOaepProfile, RsaPkcs1v15Profile, RsaPrivateKey, RsaPrivateScratch,
-  RsaPssProfile, RsaPublicKeyPolicy, RsaSignatureProfile, SecretBytes, Sha512, X25519SecretKey, XChaCha20Poly1305,
-  XChaCha20Poly1305Key, XWing, XWingDecapsulationKey, XWingError, XWingPreparedDecapsulationKey, XWingSharedSecret,
+  HmacSha512Tag, HpkeError, HpkeReceiver, HpkeSender, HpkeSuite as _, HpkeX25519HkdfSha256Aes128Gcm,
+  HpkeX25519PrivateKey, HpkeXWingHkdfSha256ChaCha20Poly1305, Kmac256, MlDsa65EcdsaP256SecretKey,
+  MlDsa65Ed25519SecretKey, MlKem512, MlKem512Ciphertext, MlKem512DecapsulationKey, MlKem768, MlKem768Ciphertext,
+  MlKem768DecapsulationKey, MlKem1024, MlKem1024Ciphertext, MlKem1024DecapsulationKey, MlKemError, P256EphemeralSecret,
+  P384EphemeralSecret, Pbkdf2Sha256, Pbkdf2Sha512, RsaBlindingPair, RsaEncryptionError, RsaOaepProfile,
+  RsaPkcs1v15Profile, RsaPrivateKey, RsaPrivateScratch, RsaPssProfile, RsaPublicKeyPolicy, RsaSignatureProfile,
+  SecretBytes, Sha512, X25519SecretKey, XChaCha20Poly1305, XChaCha20Poly1305Key, XWing, XWingDecapsulationKey,
+  XWingError, XWingPreparedDecapsulationKey, XWingSharedSecret,
   aead::{
     Nonce96, Nonce128, Nonce192, Nonce256, diag_aes_siv_cmac256_open_portable, diag_aes_siv_cmac256_s2v_portable,
     diag_aes128gcm_ctr32_be, diag_aes128gcm_ghash, diag_aes128gcm_tag_aes, diag_aes128gcmsiv_ctr32,
@@ -39,11 +41,11 @@ use rscrypto::{
     diag_mlkem_inverse_ntt_montgomery_product_input_digest, diag_mlkem_multiply_ntts_add_assign_input_digest,
     diag_mlkem_ntt_input_digest, diag_mlkem_to_montgomery_product_domain_input_digest,
     diag_mlkem512_keygen_secret_noise_digest, diag_mlkem768_keygen_prepared_secret_noise_digest,
-    diag_mlkem768_keygen_secret_noise_digest,
-    diag_mlkem1024_keygen_secret_noise_digest, diag_mlkem1024_multiply_ntts_accumulate_input_digest,
-    diag_rsa_blinding_factor_inverse_with_scratch, diag_rsa_import_pkcs8_private_key_der_stage,
-    diag_rsa_private_component_validation_32, diag_rsa_private_exponentiate_fixed_width_with_scratch,
-    diag_rsa_validate_pkcs8_private_key_der, diag_rsa_validate_pkcs8_private_key_der_stage,
+    diag_mlkem768_keygen_secret_noise_digest, diag_mlkem1024_keygen_secret_noise_digest,
+    diag_mlkem1024_multiply_ntts_accumulate_input_digest, diag_rsa_blinding_factor_inverse_with_scratch,
+    diag_rsa_import_pkcs8_private_key_der_stage, diag_rsa_private_component_validation_32,
+    diag_rsa_private_exponentiate_fixed_width_with_scratch, diag_rsa_validate_pkcs8_private_key_der,
+    diag_rsa_validate_pkcs8_private_key_der_stage,
   },
   traits::Kem as _,
 };
@@ -2006,6 +2008,138 @@ fn xwing_decapsulate_fixed_vs_random_key(runner: &mut CtRunner, rng: &mut BenchR
         .decapsulate(core::hint::black_box(&ciphertext))
         .expect("a full-order X25519 part decapsulates");
       core::hint::black_box(shared_secret.as_bytes()[0])
+    });
+  }
+}
+
+fn hpke_fill(bytes: &[u8]) -> impl FnMut(&mut [u8]) -> Result<(), HpkeError> + '_ {
+  |out| {
+    out.copy_from_slice(&bytes[..out.len()]);
+    Ok(())
+  }
+}
+
+/// HPKE DHKEM(X25519) sender setup to a fixed recipient: only the 32 random
+/// bytes vary. They determine the ephemeral key through `DeriveKeyPair`, then
+/// the Diffie-Hellman secret and the key schedule.
+fn hpke_x25519_setup_sender_fixed_vs_random_ikm(runner: &mut CtRunner, rng: &mut BenchRng) {
+  let public_key = HpkeX25519HkdfSha256Aes128Gcm::derive_keypair(&[0xa1; 32]).public_key();
+  let mut inputs = Vec::with_capacity(samples());
+  for _ in 0..samples() {
+    let class = random_class(rng);
+    let random = if matches!(class, Class::Left) {
+      [0xa2; 32]
+    } else {
+      rand_array::<32>(rng)
+    };
+    inputs.push((class, random));
+  }
+
+  for (class, random) in inputs {
+    runner.run_one(class, || {
+      let (encapsulation, sender) =
+        HpkeSender::<HpkeX25519HkdfSha256Aes128Gcm>::setup(&public_key, b"info", hpke_fill(&random))
+          .expect("a derived key encapsulates");
+      core::hint::black_box((encapsulation.as_bytes()[0], &sender));
+    });
+  }
+}
+
+/// HPKE DHKEM(X25519) receiver setup of one fixed encapsulation with fixed or
+/// random recipient keys, from pools of equal size.
+fn hpke_x25519_setup_receiver_fixed_vs_random_key(runner: &mut CtRunner, rng: &mut BenchRng) {
+  const POOL: usize = 64;
+  let fixed = HpkeX25519HkdfSha256Aes128Gcm::derive_keypair(&[0xa3; 32]);
+  let (encapsulation, _) =
+    HpkeSender::<HpkeX25519HkdfSha256Aes128Gcm>::setup(&fixed.public_key(), b"info", hpke_fill(&[0xa4; 32]))
+      .expect("a derived key encapsulates");
+  let fixed_pool: Vec<HpkeX25519PrivateKey> = (0..POOL).map(|_| fixed.duplicate_secret()).collect();
+  let random_pool: Vec<HpkeX25519PrivateKey> = (0..POOL)
+    .map(|_| HpkeX25519PrivateKey::new(X25519SecretKey::from_bytes(rand_array::<32>(rng))))
+    .collect();
+  let mut inputs = Vec::with_capacity(samples());
+  for _ in 0..samples() {
+    let class = random_class(rng);
+    inputs.push((class, usize::from(rng.random::<u8>()) % POOL));
+  }
+
+  for (class, index) in inputs {
+    let key = if matches!(class, Class::Left) {
+      &fixed_pool[index]
+    } else {
+      &random_pool[index]
+    };
+    runner.run_one(class, || {
+      let receiver =
+        HpkeReceiver::<HpkeX25519HkdfSha256Aes128Gcm>::setup(core::hint::black_box(&encapsulation), key, b"info")
+          .expect("a full-order encapsulation decapsulates");
+      core::hint::black_box(&receiver);
+    });
+  }
+}
+
+/// HPKE X-Wing sender setup to a fixed recipient: only the 64 encapsulation
+/// bytes vary.
+fn hpke_xwing_setup_sender_fixed_vs_random_coins(runner: &mut CtRunner, rng: &mut BenchRng) {
+  let public_key = HpkeXWingHkdfSha256ChaCha20Poly1305::derive_keypair(&[0xb1; 32])
+    .encapsulation_key()
+    .prepare()
+    .expect("derived X-Wing key");
+  let mut inputs = Vec::with_capacity(samples());
+  for _ in 0..samples() {
+    let class = random_class(rng);
+    let random = if matches!(class, Class::Left) {
+      [0xb2; XWing::ENCAPSULATION_RANDOM_SIZE]
+    } else {
+      rand_array::<{ XWing::ENCAPSULATION_RANDOM_SIZE }>(rng)
+    };
+    inputs.push((class, random));
+  }
+
+  for (class, random) in inputs {
+    runner.run_one(class, || {
+      let (encapsulation, sender) =
+        HpkeSender::<HpkeXWingHkdfSha256ChaCha20Poly1305>::setup(&public_key, b"info", hpke_fill(&random))
+          .expect("a derived key encapsulates");
+      core::hint::black_box((encapsulation.as_bytes()[0], &sender));
+    });
+  }
+}
+
+/// HPKE X-Wing receiver setup of one fixed encapsulation with prepared keys
+/// from equal pools, as `xwing_decapsulate_fixed_vs_random_key` does: copies
+/// of the fixed key, or random keys, for which ML-KEM implicitly rejects.
+fn hpke_xwing_setup_receiver_fixed_vs_random_key(runner: &mut CtRunner, rng: &mut BenchRng) {
+  const POOL: usize = 64;
+  let fixed = XWingDecapsulationKey::from_bytes([0xb3; XWing::DECAPSULATION_KEY_SIZE]).prepare();
+  let public_key = fixed.encapsulation_key().prepare().expect("derived X-Wing key");
+  let (encapsulation, _) = HpkeSender::<HpkeXWingHkdfSha256ChaCha20Poly1305>::setup(
+    &public_key,
+    b"info",
+    hpke_fill(&[0xb4; XWing::ENCAPSULATION_RANDOM_SIZE]),
+  )
+  .expect("a derived key encapsulates");
+  let fixed_pool: Vec<XWingPreparedDecapsulationKey> = (0..POOL).map(|_| fixed.duplicate_secret()).collect();
+  let random_pool: Vec<XWingPreparedDecapsulationKey> = (0..POOL)
+    .map(|_| XWingDecapsulationKey::from_bytes(rand_array::<{ XWing::DECAPSULATION_KEY_SIZE }>(rng)).prepare())
+    .collect();
+  let mut inputs = Vec::with_capacity(samples());
+  for _ in 0..samples() {
+    let class = random_class(rng);
+    inputs.push((class, usize::from(rng.random::<u8>()) % POOL));
+  }
+
+  for (class, index) in inputs {
+    let key = if matches!(class, Class::Left) {
+      &fixed_pool[index]
+    } else {
+      &random_pool[index]
+    };
+    runner.run_one(class, || {
+      let receiver =
+        HpkeReceiver::<HpkeXWingHkdfSha256ChaCha20Poly1305>::setup(core::hint::black_box(&encapsulation), key, b"info")
+          .expect("a full-order X25519 part decapsulates");
+      core::hint::black_box(&receiver);
     });
   }
 }
@@ -4201,9 +4335,16 @@ ctbench_main_with_seeds!(
     mlkem768_decapsulate_rejection_seed_fixed_vs_random,
     Some(0x6d6c6b656d72656a)
   ),
-  (mlkem768_keygen_prepared_secret_noise_fixed_vs_random, Some(0x6d6c6b656d6b6770)),
+  (
+    mlkem768_keygen_prepared_secret_noise_fixed_vs_random,
+    Some(0x6d6c6b656d6b6770)
+  ),
   (xwing_encapsulate_fixed_vs_random_coins, Some(0x7877696e67656e63)),
   (xwing_decapsulate_fixed_vs_random_key, Some(0x7877696e67646563)),
+  (hpke_x25519_setup_sender_fixed_vs_random_ikm, Some(0x68706b6578736e64)),
+  (hpke_x25519_setup_receiver_fixed_vs_random_key, Some(0x68706b6578726376)),
+  (hpke_xwing_setup_sender_fixed_vs_random_coins, Some(0x68706b6577736e64)),
+  (hpke_xwing_setup_receiver_fixed_vs_random_key, Some(0x68706b6577726376)),
   (mlkem1024_keygen_secret_noise_fixed_vs_random, Some(0x6d6b313032346b67)),
   (mlkem1024_encapsulate_fixed_vs_random_coins, Some(0x6d6b31303234656e)),
   (

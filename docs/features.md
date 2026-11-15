@@ -28,7 +28,7 @@ Umbrella features are convenient, but they make the build larger:
 | `kdfs`             | HKDF and PBKDF2 |
 | `password-hashing` | Argon2, scrypt, and PHC password records |
 | `signatures`       | ECDSA, Ed25519, RSA, ML-DSA, SLH-DSA, and composite ML-DSA |
-| `key-exchange`     | X25519, P-256 ECDH, P-384 ECDH, ML-KEM, and X-Wing |
+| `key-exchange`     | X25519, P-256 ECDH, P-384 ECDH, ML-KEM, X-Wing, and HPKE |
 | `auth`             | MACs, KDFs, password hashing, signatures, and key exchange |
 | `aead`             | All AEADs |
 | `full`             | Checksums, hashes, authentication, AEADs, and the ChaCha20 generator |
@@ -155,6 +155,21 @@ as X-Wing pull request 39 at `782c880e` and RFC 9180 specify.
 X25519 clamps its scalar, so that result depends only on the public key or ciphertext.
 `prepare_in` needs `alloc`.
 The `rscrypto::auth::xwing` module documentation describes the construction.
+
+`hpke` gives HPKE Base mode from [RFC 9180](https://www.rfc-editor.org/rfc/rfc9180.html), with its
+verified errata except 7121. draft-ietf-hpke-hpke-06 will replace RFC 9180, with a byte-for-byte identical Base mode.
+The `rscrypto::auth::hpke` module documentation says why erratum 7121 does not apply.
+`hpke` enables only `hkdf`. Each suite is available only when its KEM and AEAD features are also enabled,
+so `hpke` alone gives no suite:
+
+| Suite | Features |
+| --- | --- |
+| `HpkeX25519HkdfSha256Aes128Gcm`: DHKEM(X25519, HKDF-SHA256), HKDF-SHA256, AES-128-GCM | `hpke`, `x25519`, `aes-gcm` |
+| `HpkeXWingHkdfSha256ChaCha20Poly1305`: X-Wing (`0x647A`), HKDF-SHA256, ChaCha20Poly1305 | `hpke`, `x-wing`, `chacha20poly1305` |
+
+The X-Wing suite follows draft-ietf-hpke-pq-05 for its KEM identifier and key derivation.
+HPKE needs neither allocation nor operating-system entropy. `seal_to_vec`, `open_to_vec`, `setup_in`, and `derive_keypair_in` need `alloc`.
+The `rscrypto::auth::hpke` module documentation describes the API.
 
 `slh-dsa` supports all 12 FIPS 205 SLH-DSA parameter sets, each as a pure profile and an RFC 9909
 HashSLH-DSA profile, without allocation and without operating-system entropy. It enables `hmac` and `sha3`.

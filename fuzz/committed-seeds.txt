@@ -94,6 +94,7 @@ fuzz/corpus/auth_hkdf_sha384/seed-basic
 fuzz/corpus/auth_hmac_sha256/seed-basic
 fuzz/corpus/auth_hmac_sha384/seed-basic
 fuzz/corpus/auth_hmac_sha512/seed-basic
+fuzz/corpus/auth_hpke/seed-basic
 fuzz/corpus/auth_kmac256/seed-basic
 fuzz/corpus/auth_kmac256/seed-exact-key-bytepad
 fuzz/corpus/auth_kmac256/seed-short-auth-tag

@@ -186,9 +186,9 @@ impl X25519SecretKey {
     &self.0
   }
 
-  /// Borrow the secret key bytes mutably, so that X-Wing writes a derived key
-  /// in place and leaves no moved copy.
-  #[cfg(feature = "x-wing")]
+  /// Borrow the secret key bytes mutably, so that X-Wing and HPKE write a
+  /// derived key in place and leave no moved copy.
+  #[cfg(any(feature = "x-wing", all(feature = "hpke", feature = "aes-gcm")))]
   pub(crate) const fn as_mut_bytes(&mut self) -> &mut [u8; Self::LENGTH] {
     &mut self.0
   }
@@ -287,6 +287,13 @@ impl X25519SecretKey {
   /// which indicates a low-order peer input.
   pub fn diffie_hellman(&self, public: &X25519PublicKey) -> Result<X25519SharedSecret, X25519Error> {
     X25519SharedSecret::diffie_hellman(self, public)
+  }
+
+  /// Like [`Self::diffie_hellman`], writing the shared secret into `out`, so
+  /// that no returned owner is moved.
+  #[cfg(any(feature = "x-wing", all(feature = "hpke", feature = "aes-gcm")))]
+  pub(crate) fn diffie_hellman_into(&self, public: &X25519PublicKey, out: &mut [u8; 32]) -> Result<(), X25519Error> {
+    X25519SharedSecret::diffie_hellman_into(self, public, out)
   }
 
   #[cfg(any(
@@ -541,6 +548,18 @@ impl X25519SharedSecret {
   /// Returns [`X25519Error`] when the derived shared secret is all-zero,
   /// which indicates a low-order peer input.
   pub fn diffie_hellman(secret: &X25519SecretKey, public: &X25519PublicKey) -> Result<Self, X25519Error> {
+    let mut shared = Self([0; Self::LENGTH]);
+    Self::diffie_hellman_into(secret, public, &mut shared.0)?;
+    Ok(shared)
+  }
+
+  /// [`Self::diffie_hellman`] into `out`. An all-zero result leaves `out`
+  /// all-zero and returns the error.
+  pub(crate) fn diffie_hellman_into(
+    secret: &X25519SecretKey,
+    public: &X25519PublicKey,
+    out: &mut [u8; Self::LENGTH],
+  ) -> Result<(), X25519Error> {
     let _dit = crate::traits::ct::DataIndependentTiming::enter();
     #[cfg(any(
       all(
@@ -556,7 +575,9 @@ impl X25519SharedSecret {
         not(miri)
       )
     ))]
-    let mut shared = platform_asm::x25519(&secret.0, &public.bytes);
+    {
+      *out = platform_asm::x25519(&secret.0, &public.bytes);
+    }
 
     #[cfg(not(any(
       all(
@@ -572,15 +593,14 @@ impl X25519SharedSecret {
         not(miri)
       )
     )))]
-    let mut shared = secret.with_clamped_scalar(|scalar| montgomery_ladder(scalar, &public.u).to_bytes());
+    {
+      *out = secret.with_clamped_scalar(|scalar| montgomery_ladder(scalar, &public.u).to_bytes());
+    }
 
-    let result = if is_all_zero(&shared) {
-      Err(X25519Error::new())
-    } else {
-      Ok(Self(shared))
-    };
-    ct::zeroize(&mut shared);
-    result
+    if is_all_zero(out) {
+      return Err(X25519Error::new());
+    }
+    Ok(())
   }
 }
 

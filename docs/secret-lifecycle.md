@@ -207,8 +207,42 @@ erasure of every compiler-created copy, register, or spill.
   `prepare_in`, `Kem::decapsulate`, and encapsulation left no byte of the ML-KEM secret vector, `z`,
   the X25519 secret key, the encapsulation coins, or the X25519 ephemeral key, on both boards and both
   backends. The scenarios now require this.
+- Encapsulation and decapsulation write the X25519 output and the combiner output in place, so no
+  moved owner holds them inside the call. They return the shared secret by value, which leaves a
+  moved-from copy of it in the caller's frame: the same run found 16 to 32 bytes of it there for both
+  operations, on both boards and both backends. Those scenarios are measured only. HPKE calls the
+  in-place forms directly.
 - A rejected small-order X25519 part returns before ML-KEM encapsulation or decapsulation. Each owner
   that the call built clears on drop.
+
+### HPKE
+
+- Each `LabeledExtract` runs HMAC-SHA256 into an `HkdfSha256` state, which clears its PRK and HMAC
+  prefix states on drop. The key schedule's `secret` state and the DHKEM `eae_prk` and `dkp_prk`
+  states drop before the call returns. `psk_id_hash` and `info_hash` are public.
+- The KEM writes its shared secret into a zeroizing buffer in the setup frame, which clears on return.
+- The AEAD key is expanded directly into the key owner's zeroizing buffer and then into the AEAD
+  context. The key owner clears on drop. The base nonce is expanded in place in the context. The
+  exporter secret is expanded into a zeroizing buffer, and the context keeps its HKDF state: the PRK
+  and its HMAC inner and outer midstates, which `HkdfSha256` clears on drop. `setup_in` writes that
+  state in place with `set_prk`.
+- DHKEM(X25519) draws its 32 random bytes into a zeroizing buffer. `DeriveKeyPair` writes the
+  secret key in place in its owner, and the ephemeral key and the X25519 shared secret clear on drop.
+  X-Wing `DeriveKeyPair` writes the SHAKE256 output in place in the seed owner and expands it in
+  place in the prepared key.
+- `setup_in` and `derive_keypair_in` build the context or the key directly in a box that the caller
+  allocated. A failed `setup_in` returns before the allocation. `setup` and `derive_keypair` return
+  the context or the key by value, which leaves moved-from copies in the caller's frame, as the
+  by-value ML-KEM and X-Wing constructors do.
+- On 2026-11-15, with `just stack-residue` on `nightly-2026-10-24` and QEMU 11.1.3, `setup_in` of
+  both roles and `derive_keypair_in` left no byte of the encapsulation randomness, the ephemeral key,
+  the X25519 output, the KEM shared secret, the AEAD key, the exporter secret and its HMAC
+  midstates, or the recipient key, for both suites, on both boards and both backends. The scenarios
+  require this. The by-value forms are measured only: they leave copies of the exporter state, the
+  ChaCha20Poly1305 key, or the derived key in the caller's frame.
+- The 12-byte base nonce is not a residue needle: the scanner matches 16-byte windows.
+- A rejected small-order X25519 part returns before the key schedule. Each owner that the call
+  built clears on drop. A failed `open` leaves the context unchanged.
 
 ### P-256 ECDH
 

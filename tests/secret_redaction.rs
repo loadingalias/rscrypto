@@ -372,6 +372,22 @@ fn private_key_and_shared_secret_debug_snapshots_are_redacted() {
       "XWingSharedSecret(****)",
     );
   }
+
+  #[cfg(all(feature = "hpke", feature = "x25519", feature = "aes-gcm"))]
+  {
+    use rscrypto::{HpkeReceiver, HpkeSender, HpkeSuite, HpkeX25519HkdfSha256Aes128Gcm as Suite};
+
+    let recipient = Suite::derive_keypair(&[0x53; 32]);
+    assert_debug_snapshot(&recipient, "HpkeX25519PrivateKey(****)");
+    let (encapsulation, sender) = HpkeSender::<Suite>::setup(&recipient.public_key(), b"", |out| {
+      out.fill(0x53);
+      Ok(())
+    })
+    .expect("setup");
+    assert_debug_snapshot(&sender, "HpkeSender(****)");
+    let receiver = HpkeReceiver::<Suite>::setup(&encapsulation, &recipient, b"").expect("setup");
+    assert_debug_snapshot(&receiver, "HpkeReceiver(****)");
+  }
 }
 
 #[test]

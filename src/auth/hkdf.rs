@@ -194,6 +194,25 @@ impl HkdfSha256 {
     )
   }
 
+  /// HKDF-Extract over the concatenation of `input_key_material`, without
+  /// building that concatenation. HPKE labels its key material this way.
+  #[cfg(all(
+    feature = "hpke",
+    any(
+      all(feature = "x25519", feature = "aes-gcm"),
+      all(feature = "x-wing", feature = "chacha20poly1305")
+    )
+  ))]
+  pub(crate) fn extract_vectored(salt: &[u8], input_key_material: &[&[u8]]) -> Self {
+    Self::extract_with(salt, &[], sha256_dispatch::compress_dispatch(), |key, _, prk| {
+      let mut mac = <HmacSha256 as crate::traits::Mac>::new(key);
+      for part in input_key_material {
+        crate::traits::Mac::update(&mut mac, part);
+      }
+      mac.finalize_into(prk);
+    })
+  }
+
   /// Build the expansion state from an existing pseudorandom key.
   ///
   /// `prk` must already be pseudorandom: an HKDF-Extract output or an earlier
@@ -218,6 +237,48 @@ impl HkdfSha256 {
   #[must_use]
   pub fn from_prk(prk: &[u8; SHA256_OUTPUT_SIZE]) -> Self {
     Self::from_prk_with(prk, sha256_dispatch::compress_dispatch())
+  }
+
+  /// An all-zero state that [`Self::set_prk`] fills in place before any use.
+  #[cfg(all(
+    feature = "hpke",
+    feature = "alloc",
+    any(
+      all(feature = "x25519", feature = "aes-gcm"),
+      all(feature = "x-wing", feature = "chacha20poly1305")
+    )
+  ))]
+  pub(crate) fn zeroed() -> Self {
+    Self {
+      prk: [0; SHA256_OUTPUT_SIZE],
+      inner_init: [0; 8],
+      outer_init: [0; 8],
+      compress: sha256_dispatch::compress_dispatch(),
+    }
+  }
+
+  /// Replace the pseudorandom key and its HMAC prefix states in place, so that
+  /// no moved-from copy of the state remains.
+  #[cfg(all(
+    feature = "hpke",
+    feature = "alloc",
+    any(
+      all(feature = "x25519", feature = "aes-gcm"),
+      all(feature = "x-wing", feature = "chacha20poly1305")
+    )
+  ))]
+  pub(crate) fn set_prk(&mut self, prk: &[u8; SHA256_OUTPUT_SIZE]) {
+    let compress = self.compress;
+    with_hmac_prefix_states::<_, _, SHA256_BLOCK_SIZE, _>(
+      prk,
+      SHA256_H0,
+      |state, block| compress.call(state, block),
+      |inner_init, outer_init| {
+        self.prk = *prk;
+        self.inner_init = *inner_init;
+        self.outer_init = *outer_init;
+      },
+    );
   }
 
   /// Run HKDF-Extract with `mac`, then precompute the expand prefixes with `compress`.

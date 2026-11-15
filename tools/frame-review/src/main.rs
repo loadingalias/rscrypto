@@ -14,13 +14,14 @@ use core::hint::black_box;
 use rscrypto::aead::{Nonce96, OpenError, SealError, expert::AeadWithNonce};
 use rscrypto::{
   Aead, Aes128Gcm, Aes128GcmKey, Aes256Gcm, Aes256GcmKey, ChaCha20Poly1305, ChaCha20Poly1305Key, CompositeMlDsaError,
-  Kem, MlDsa44, MlDsa44PreparedSecretKey, MlDsa44PreparedSecretKeyStorage, MlDsa44PublicKey, MlDsa44SecretKey,
-  MlDsa44Signature, MlDsa65, MlDsa65EcdsaP256, MlDsa65EcdsaP256PreparedSecretKey, MlDsa65EcdsaP256PublicKey,
-  MlDsa65EcdsaP256SecretKey, MlDsa65EcdsaP256Signature, MlDsa65Ed25519, MlDsa65Ed25519PreparedSecretKey,
-  MlDsa65Ed25519PublicKey, MlDsa65Ed25519SecretKey, MlDsa65Ed25519Signature, MlDsa65PreparedSecretKey,
-  MlDsa65PreparedSecretKeyStorage, MlDsa65PublicKey, MlDsa65SecretKey, MlDsa65Signature, MlDsa87,
-  MlDsa87PreparedSecretKey, MlDsa87PreparedSecretKeyStorage, MlDsa87PublicKey, MlDsa87SecretKey, MlDsa87Signature,
-  MlDsaError, MlKem512, MlKem512PreparedDecapsulationKey, MlKem768, MlKem768PreparedDecapsulationKey, MlKem1024,
+  HpkeError, HpkeSuite, HpkeX25519HkdfSha256Aes128Gcm, HpkeXWingHkdfSha256ChaCha20Poly1305, Kem, MlDsa44,
+  MlDsa44PreparedSecretKey, MlDsa44PreparedSecretKeyStorage, MlDsa44PublicKey, MlDsa44SecretKey, MlDsa44Signature,
+  MlDsa65, MlDsa65EcdsaP256, MlDsa65EcdsaP256PreparedSecretKey, MlDsa65EcdsaP256PublicKey, MlDsa65EcdsaP256SecretKey,
+  MlDsa65EcdsaP256Signature, MlDsa65Ed25519, MlDsa65Ed25519PreparedSecretKey, MlDsa65Ed25519PublicKey,
+  MlDsa65Ed25519SecretKey, MlDsa65Ed25519Signature, MlDsa65PreparedSecretKey, MlDsa65PreparedSecretKeyStorage,
+  MlDsa65PublicKey, MlDsa65SecretKey, MlDsa65Signature, MlDsa87, MlDsa87PreparedSecretKey,
+  MlDsa87PreparedSecretKeyStorage, MlDsa87PublicKey, MlDsa87SecretKey, MlDsa87Signature, MlDsaError, MlKem512,
+  MlKem512PreparedDecapsulationKey, MlKem768, MlKem768PreparedDecapsulationKey, MlKem1024,
   MlKem1024PreparedDecapsulationKey, MlKemError, VerificationError, XWing, XWingError, XWingPreparedDecapsulationKey,
 };
 
@@ -226,6 +227,50 @@ kem_boundaries!(
   xwing_encapsulate,
   xwing_decapsulate,
   xwing_prepared_decapsulate
+);
+
+macro_rules! hpke_boundaries {
+  ($suite:ty, $derive:ident, $seal:ident, $open:ident) => {
+    #[inline(never)]
+    fn $derive(ikm: &[u8]) -> <$suite as HpkeSuite>::PrivateKey {
+      <$suite>::derive_keypair(ikm)
+    }
+
+    #[inline(never)]
+    fn $seal(
+      public_key: &<$suite as HpkeSuite>::PublicKey,
+      plaintext: &[u8],
+      out: &mut [u8],
+    ) -> Result<<$suite as HpkeSuite>::Encapsulation, HpkeError> {
+      <$suite>::seal(public_key, b"info", b"aad", plaintext, out, |out: &mut [u8]| {
+        out.fill(black_box(6));
+        Ok(())
+      })
+    }
+
+    #[inline(never)]
+    fn $open(
+      encapsulation: &<$suite as HpkeSuite>::Encapsulation,
+      private_key: &<$suite as HpkeSuite>::PrivateKey,
+      ciphertext: &[u8],
+      out: &mut [u8],
+    ) -> Result<(), HpkeError> {
+      <$suite>::open(encapsulation, private_key, b"info", b"aad", ciphertext, out)
+    }
+  };
+}
+
+hpke_boundaries!(
+  HpkeX25519HkdfSha256Aes128Gcm,
+  hpke_x25519_derive_keypair,
+  hpke_x25519_seal,
+  hpke_x25519_open
+);
+hpke_boundaries!(
+  HpkeXWingHkdfSha256ChaCha20Poly1305,
+  hpke_xwing_derive_keypair,
+  hpke_xwing_seal,
+  hpke_xwing_open
 );
 
 macro_rules! record_boundaries {
@@ -493,4 +538,19 @@ fn main() {
     composite_p256_sign_prepared,
     composite_p256_verify
   );
+  {
+    let plaintext = black_box(*b"frame review");
+    let mut ciphertext = [0u8; 12 + 16];
+    let mut opened = [0u8; 12];
+    let recipient = hpke_x25519_derive_keypair(black_box(&[8; 32]));
+    let encapsulation =
+      hpke_x25519_seal(&recipient.public_key(), &plaintext, &mut ciphertext).expect("HPKE X25519 seal");
+    hpke_x25519_open(&encapsulation, &recipient, &ciphertext, &mut opened).expect("HPKE X25519 open");
+    assert_eq!(opened, plaintext);
+    let recipient = hpke_xwing_derive_keypair(black_box(&[9; 32]));
+    let public_key = recipient.encapsulation_key().prepare().expect("derived X-Wing key");
+    let encapsulation = hpke_xwing_seal(&public_key, &plaintext, &mut ciphertext).expect("HPKE X-Wing seal");
+    hpke_xwing_open(&encapsulation, &recipient, &ciphertext, &mut opened).expect("HPKE X-Wing open");
+    assert_eq!(opened, plaintext);
+  }
 }

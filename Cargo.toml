@@ -196,6 +196,9 @@ mldsa65-ed25519 = ["ml-dsa", "ed25519", "sha2"]
 mldsa65-ecdsa-p256 = ["ml-dsa", "ecdsa-p256", "sha2"]
 # X-Wing (draft-connolly-cfrg-xwing-kem-11): the ML-KEM-768 and X25519 hybrid KEM.
 x-wing = ["ml-kem", "x25519"]
+# HPKE (RFC 9180) Base mode. Each suite also needs its KEM and AEAD features;
+# see docs/features.md.
+hpke = ["hkdf"]
 
 phc-strings = ["alloc"]
 argon2 = ["blake2b", "alloc"]
@@ -219,7 +222,7 @@ macs = ["hmac", "hmac-sha3", "kmac", "poly1305", "siphash"]
 kdfs = ["hkdf", "pbkdf2"]
 password-hashing = ["argon2", "scrypt", "phc-strings"]
 signatures = ["ecdsa", "ed25519", "rsa", "ml-dsa", "slh-dsa", "mldsa65-ed25519", "mldsa65-ecdsa-p256"]
-key-exchange = ["x25519", "p256-ecdh", "p384-ecdh", "ml-kem", "x-wing"]
+key-exchange = ["x25519", "p256-ecdh", "p384-ecdh", "ml-kem", "x-wing", "hpke"]
 auth = ["macs", "kdfs", "password-hashing", "signatures", "key-exchange"]
 aead = ["aes-gcm", "aes-gcm-siv", "aes-siv", "chacha20poly1305", "xchacha20poly1305", "aegis256", "ascon-aead"]
 full = ["checksums", "hashes", "auth", "aead", "chacha20-rng"]
@@ -299,6 +302,16 @@ rustcrypto-ml-kem = { package = "ml-kem", version = "0.3.2", default-features = 
 # Independent X-Wing oracle on RustCrypto ML-KEM and x25519-dalek; `hazmat`
 # exposes deterministic encapsulation.
 x-wing = { version = "=0.1.1", default-features = false, features = ["hazmat"] }
+# Independent HPKE oracle (rozbb/rust-hpke) on RustCrypto x25519-dalek,
+# aes-gcm, chacha20poly1305, hkdf, and x-wing.
+hpke = { version = "=0.15.1", default-features = false, features = [
+  "alloc",
+  "x25519",
+  "aes",
+  "chacha",
+  "hkdfsha2",
+  "mlkem",
+] }
 hmac = "0.13.0"
 hkdf = "0.13.0"
 chacha20poly1305 = "0.11.0"
@@ -498,6 +511,11 @@ required-features = ["mldsa65-ed25519", "mldsa65-ecdsa-p256"]
 name = "xwing"
 harness = false
 required-features = ["x-wing"]
+
+[[bench]]
+name = "hpke"
+harness = false
+required-features = ["hpke", "x25519", "aes-gcm", "x-wing", "chacha20poly1305", "rand_core"]
 
 [[bench]]
 name = "slhdsa"

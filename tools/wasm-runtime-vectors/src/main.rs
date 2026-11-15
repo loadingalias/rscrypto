@@ -817,6 +817,80 @@ fn assert_xwing_draft_vectors() {
   assert_eq!(count, 3);
 }
 
+/// RFC 9180 A.1.1 and draft-ietf-hpke-pq-05 A.5: `DeriveKeyPair`, the
+/// encapsulation, every encryption in sequence order on both roles, and
+/// every export.
+fn assert_hpke_vectors() {
+  use rscrypto::{
+    HpkeError, HpkeReceiver, HpkeSender, HpkeSuite, HpkeX25519HkdfSha256Aes128Gcm, HpkeXWingHkdfSha256ChaCha20Poly1305,
+  };
+
+  fn field<'a>(json: &'a str, name: &str) -> &'a str {
+    let (_, value) = json.split_once(&format!("\"{name}\":\"")).expect("HPKE vector field");
+    value.split_once('"').expect("HPKE vector field end").0
+  }
+
+  fn entries<'a>(json: &'a str, name: &str) -> impl Iterator<Item = &'a str> {
+    let (_, list) = json.split_once(&format!("\"{name}\":[")).expect("HPKE vector list");
+    let (list, _) = list.split_once(']').expect("HPKE vector list end");
+    list.split('}').filter(|entry| entry.contains('"'))
+  }
+
+  /// Run one vector's contexts and return the number of encryptions.
+  fn contexts<S: HpkeSuite>(
+    vector: &str,
+    public_key: &S::PublicKey,
+    recipient: &S::PrivateKey,
+    encoding: impl Fn(&S::Encapsulation) -> &[u8],
+  ) -> usize {
+    let random = hex_vec(field(vector, "ikmE"));
+    let info = hex_vec(field(vector, "info"));
+    let (encapsulation, mut sender) = HpkeSender::<S>::setup(public_key, &info, |out| {
+      out.copy_from_slice(&random);
+      Ok::<(), HpkeError>(())
+    })
+    .expect("HPKE sender setup");
+    assert_hex(encoding(&encapsulation), field(vector, "enc"));
+    let mut receiver = HpkeReceiver::<S>::setup(&encapsulation, recipient, &info).expect("HPKE receiver setup");
+    let mut count = 0usize;
+    for encryption in entries(vector, "encryptions") {
+      let (aad, plaintext) = (hex_vec(field(encryption, "aad")), hex_vec(field(encryption, "pt")));
+      let ciphertext = sender.seal_to_vec(&aad, &plaintext).expect("HPKE seal");
+      assert_hex(&ciphertext, field(encryption, "ct"));
+      assert_eq!(receiver.open_to_vec(&aad, &ciphertext).expect("HPKE open"), plaintext);
+      count = count.strict_add(1);
+    }
+    for export in entries(vector, "exports") {
+      let context = hex_vec(field(export, "exporter_context"));
+      let expected = field(export, "exported_value");
+      let mut out = vec![0u8; expected.len() / 2];
+      sender.export(&context, &mut out).expect("HPKE sender export");
+      assert_hex(&out, expected);
+      receiver.export(&context, &mut out).expect("HPKE receiver export");
+      assert_hex(&out, expected);
+    }
+    count
+  }
+
+  const X25519: &str = include_str!("../../../testdata/hpke/hpke-x25519-hkdfsha256-aes128gcm.json");
+  let recipient = HpkeX25519HkdfSha256Aes128Gcm::derive_keypair(&hex_vec(field(X25519, "ikmR")));
+  assert_hex(recipient.public_key().as_bytes(), field(X25519, "pkRm"));
+  let count =
+    contexts::<HpkeX25519HkdfSha256Aes128Gcm>(X25519, &recipient.public_key(), &recipient, |enc| enc.as_bytes());
+  assert_eq!(count, 257);
+
+  const XWING: &str = include_str!("../../../testdata/hpke/hpke-pq-xwing.json");
+  let vector = XWING
+    .split("{\"mode\":")
+    .find(|vector| vector.contains("\"kdf_id\":1,"))
+    .expect("the A.5 vector");
+  let recipient = HpkeXWingHkdfSha256ChaCha20Poly1305::derive_keypair(&hex_vec(field(vector, "ikmR")));
+  assert_hex(recipient.encapsulation_key().as_bytes(), field(vector, "pkRm"));
+  let public_key = recipient.encapsulation_key().prepare().expect("X-Wing vector key");
+  let count = contexts::<HpkeXWingHkdfSha256ChaCha20Poly1305>(vector, &public_key, &recipient, |enc| enc.as_bytes());
+  assert_eq!(count, 10);
+}
+
 fn hex_vec(input: &str) -> Vec<u8> {
   assert_eq!(input.len() % 2, 0, "hex input has whole bytes");
   input
@@ -1187,6 +1261,7 @@ fn run_vectors() {
   assert_mldsa_fips204_vectors();
   assert_slhdsa_fips205_vectors();
   assert_xwing_draft_vectors();
+  assert_hpke_vectors();
   assert_aead_wycheproof_suites();
   assert_crc_matches_the_catalogue_definition();
   assert_siphash_reference_vector_and_usize_width();

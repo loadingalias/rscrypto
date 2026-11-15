@@ -458,6 +458,8 @@ pub use aead::{ChaCha20Poly1305, ChaCha20Poly1305Key, ChaCha20Poly1305Tag};
 pub use aead::{XChaCha20Poly1305, XChaCha20Poly1305Key, XChaCha20Poly1305Tag};
 #[cfg(feature = "hkdf")]
 pub use auth::HkdfOutputLengthError;
+#[cfg(all(feature = "hpke", feature = "x-wing", feature = "chacha20poly1305"))]
+pub use auth::HpkeXWingHkdfSha256ChaCha20Poly1305;
 #[cfg(feature = "argon2")]
 pub use auth::{Argon2Block, Argon2Context, Argon2Error, Argon2Params, Argon2d, Argon2i, Argon2id};
 #[cfg(all(feature = "argon2", feature = "phc-strings"))]
@@ -505,6 +507,16 @@ pub use auth::{
 };
 #[cfg(feature = "hmac")]
 pub use auth::{HmacSha256, HmacSha256Tag, HmacSha384, HmacSha384Tag, HmacSha512, HmacSha512Tag};
+#[cfg(all(
+  feature = "hpke",
+  any(
+    all(feature = "x25519", feature = "aes-gcm"),
+    all(feature = "x-wing", feature = "chacha20poly1305")
+  )
+))]
+pub use auth::{HpkeError, HpkeReceiver, HpkeSender, HpkeSuite};
+#[cfg(all(feature = "hpke", feature = "x25519", feature = "aes-gcm"))]
+pub use auth::{HpkeX25519HkdfSha256Aes128Gcm, HpkeX25519PrivateKey};
 #[cfg(feature = "kmac")]
 pub use auth::{Kmac128, Kmac256};
 #[cfg(feature = "ml-dsa")]
