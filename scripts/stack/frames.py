@@ -1432,6 +1432,10 @@ WHOLE_CALL_GROUPS = {
     for parameter in (512, 768, 1024)
     for operation in ("generate", "encapsulate", "decapsulate", "prepared_decapsulate")
   ],
+  "xwing": [
+    f"rscrypto_frame_review::xwing_{operation}"
+    for operation in ("generate", "encapsulate", "decapsulate", "prepared_decapsulate")
+  ],
   "aead-records": [
     f"rscrypto_frame_review::{operation}_{cipher}"
     for cipher in ("aes128gcm", "aes256gcm", "chacha20poly1305")

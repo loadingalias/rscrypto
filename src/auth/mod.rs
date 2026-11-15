@@ -123,6 +123,8 @@
 //! - `p256_ecdh` - ephemeral P-256 Diffie-Hellman key agreement.
 //! - `p384_ecdh` - ephemeral P-384 Diffie-Hellman key agreement.
 //! - `x25519` - X25519 Diffie-Hellman key agreement.
+//! - `xwing` - X-Wing, the ML-KEM-768 and X25519 hybrid KEM
+//!   (draft-connolly-cfrg-xwing-kem-11).
 
 #[cfg(feature = "argon2")]
 pub mod argon2;
@@ -249,6 +251,8 @@ pub mod siphash;
 pub mod slhdsa;
 #[cfg(feature = "x25519")]
 pub mod x25519;
+#[cfg(feature = "x-wing")]
+pub mod xwing;
 
 #[cfg(all(feature = "phc-strings", any(feature = "argon2", feature = "scrypt")))]
 /// Result of a successful password verification.
@@ -415,9 +419,9 @@ pub use mlkem::{
   diag_mlkem_compress_decompress_values_digest, diag_mlkem_from_montgomery_product_domain_input_digest,
   diag_mlkem_inverse_ntt_montgomery_product_input_digest, diag_mlkem_multiply_ntts_add_assign_input_digest,
   diag_mlkem_ntt_input_digest, diag_mlkem_to_montgomery_product_domain_input_digest,
-  diag_mlkem512_keygen_secret_noise_digest, diag_mlkem768_keygen_secret_noise_digest,
-  diag_mlkem768_multiply_ntts_accumulate_input_digest, diag_mlkem1024_keygen_secret_noise_digest,
-  diag_mlkem1024_multiply_ntts_accumulate_input_digest,
+  diag_mlkem512_keygen_secret_noise_digest, diag_mlkem768_keygen_prepared_secret_noise_digest,
+  diag_mlkem768_keygen_secret_noise_digest, diag_mlkem768_multiply_ntts_accumulate_input_digest,
+  diag_mlkem1024_keygen_secret_noise_digest, diag_mlkem1024_multiply_ntts_accumulate_input_digest,
 };
 #[cfg(all(rscrypto_internal, feature = "diag", feature = "p256-ecdh"))]
 pub use p256_ecdh::diag_p256_field_mul_chain;
@@ -503,6 +507,11 @@ pub use slhdsa::{
 };
 #[cfg(feature = "x25519")]
 pub use x25519::{X25519Error, X25519PublicKey, X25519SecretKey, X25519SharedSecret};
+#[cfg(feature = "x-wing")]
+pub use xwing::{
+  XWing, XWingCiphertext, XWingDecapsulationKey, XWingEncapsulationKey, XWingError, XWingPreparedDecapsulationKey,
+  XWingPreparedEncapsulationKey, XWingSharedSecret,
+};
 
 #[cfg(all(rscrypto_internal, feature = "diag", feature = "x25519"))]
 pub use crate::backend::curve25519_swap::diag_curve25519_conditional_swap;

@@ -555,6 +555,7 @@ fuzz/corpus/auth_slhdsa/seed-profile-23
 fuzz/corpus/auth_slhdsa/seed-rfc9909-pkcs8
 fuzz/corpus/auth_slhdsa/seed-rfc9909-spki
 fuzz/corpus/auth_x25519/seed-basic
+fuzz/corpus/auth_xwing/seed-basic
 fuzz/corpus/checksum_adler32/seed-basic
 fuzz/corpus/checksum_crc/seed-basic
 fuzz/corpus/fast_rapidhash/seed-basic

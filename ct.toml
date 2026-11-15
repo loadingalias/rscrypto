@@ -357,6 +357,7 @@ symbols = [
   "ct_entry_aegis256_open",
   "ct_entry_ascon_aead128_open",
   "ct_entry_x25519",
+  "ct_entry_x25519_public_key",
   "ct_entry_p256_ecdh_public_key",
   "ct_entry_p256_ecdh_agree",
   "ct_entry_p384_ecdh_public_key",
@@ -378,6 +379,9 @@ symbols = [
   "ct_entry_mlkem_diag_multiply_ntts_accumulate_k3",
   "ct_entry_mlkem_diag_multiply_ntts_accumulate_k4",
   "ct_entry_mlkem_diag_compress_decompress",
+  "ct_entry_xwing_keygen",
+  "ct_entry_xwing_encapsulate",
+  "ct_entry_xwing_decapsulate",
   "ct_entry_ed25519_sign",
   "ct_entry_ecdsa_p256_public_key",
   "ct_entry_ecdsa_p256_sign",
@@ -431,6 +435,7 @@ covers = [
   "kem.mlkem512",
   "kem.mlkem768",
   "kem.mlkem1024",
+  "kem.xwing",
   "signature.ed25519_sign",
   "signature.ecdsa_p256_public_derivation",
   "signature.ecdsa_p256_sign",
@@ -807,9 +812,18 @@ smoke_samples = 2000
 [[dudect_case]]
 name = "x25519_fixed_vs_random_scalar"
 primitive = "kx.x25519"
-filter = "x25519"
+filter = "x25519_fixed_vs_random_scalar"
 left_class = "fixed scalar"
 right_class = "random scalar"
+samples = 20000
+smoke_samples = 2000
+
+[[dudect_case]]
+name = "x25519_public_key_fixed_vs_random_scalar"
+primitive = "kx.x25519"
+filter = "x25519_public_key_fixed_vs_random_scalar"
+left_class = "base-point multiplication with a fixed scalar"
+right_class = "base-point multiplication with a random scalar"
 samples = 20000
 smoke_samples = 2000
 
@@ -987,6 +1001,15 @@ samples = 20000
 smoke_samples = 2000
 
 [[dudect_case]]
+name = "mlkem768_keygen_prepared_secret_noise_fixed_vs_random"
+primitive = "kem.mlkem768"
+filter = "mlkem768_keygen_prepared_secret_noise_fixed_vs_random"
+left_class = "ML-KEM-768 prepared key generation with fixed secret noise and implicit-rejection seeds and fixed public matrix seed"
+right_class = "ML-KEM-768 prepared key generation with random secret noise and implicit-rejection seeds and fixed public matrix seed"
+samples = 20000
+smoke_samples = 2000
+
+[[dudect_case]]
 name = "mlkem768_encapsulate_fixed_vs_random_coins"
 primitive = "kem.mlkem768"
 filter = "mlkem768_encapsulate_fixed_vs_random_coins"
@@ -1046,6 +1069,24 @@ primitive = "kem.mlkem1024"
 filter = "mlkem1024_decapsulate_rejection_seed_fixed_vs_random"
 left_class = "ML-KEM-1024 implicit rejection with fixed secret rejection seed"
 right_class = "ML-KEM-1024 implicit rejection with random secret rejection seed"
+samples = 20000
+smoke_samples = 512
+
+[[dudect_case]]
+name = "xwing_encapsulate_fixed_vs_random_coins"
+primitive = "kem.xwing"
+filter = "xwing_encapsulate_fixed_vs_random_coins"
+left_class = "X-Wing encapsulation to a fixed key with fixed ML-KEM coins and X25519 ephemeral key"
+right_class = "X-Wing encapsulation to a fixed key with random ML-KEM coins and X25519 ephemeral key"
+samples = 20000
+smoke_samples = 512
+
+[[dudect_case]]
+name = "xwing_decapsulate_fixed_vs_random_key"
+primitive = "kem.xwing"
+filter = "xwing_decapsulate_fixed_vs_random_key"
+left_class = "X-Wing prepared decapsulation of a fixed ciphertext with its fixed key"
+right_class = "X-Wing prepared decapsulation of the same ciphertext with random keys, which ML-KEM implicitly rejects"
 samples = 20000
 smoke_samples = 512
 
@@ -2244,7 +2285,7 @@ notes = "Decapsulation evidence varies the secret PKE key with the embedded publ
 id = "kem.mlkem768.keygen"
 primitive = "kem.mlkem768"
 variant = "KeyGen"
-dudect = ["mlkem768_keygen_secret_noise_fixed_vs_random"]
+dudect = ["mlkem768_keygen_secret_noise_fixed_vs_random", "mlkem768_keygen_prepared_secret_noise_fixed_vs_random"]
 notes = "KeyGen evidence fixes the public matrix seed rho and varies only the secret noise seed sigma. Full FIPS key generation is still covered by the C harness symbol; all-seed DudeCT splits are intentionally not used because rho is published in the encapsulation key and drives FIPS rejection sampling work."
 
 [[evidence_unit]]
@@ -2287,6 +2328,20 @@ dudect = [
   "mlkem1024_decapsulate_rejection_seed_fixed_vs_random",
 ]
 notes = "Decapsulation evidence varies the secret PKE key with the embedded public key fixed, and separately covers the implicit-rejection seed path."
+
+[[evidence_unit]]
+id = "kem.xwing.encapsulate"
+primitive = "kem.xwing"
+variant = "Encapsulate"
+dudect = ["xwing_encapsulate_fixed_vs_random_coins"]
+notes = "Encapsulation evidence holds the public encapsulation key fixed and varies the 64 encapsulation bytes: the ML-KEM-768 coins and the X25519 ephemeral secret key."
+
+[[evidence_unit]]
+id = "kem.xwing.decapsulate"
+primitive = "kem.xwing"
+variant = "Decapsulate"
+dudect = ["xwing_decapsulate_fixed_vs_random_key"]
+notes = "Decapsulation evidence times prepared keys, so the secret ML-KEM, X25519, and combiner work varies while key expansion stays outside timing. The random class decapsulates through ML-KEM implicit rejection."
 
 [[evidence_unit]]
 id = "aead.open_authentication.aes128gcm"
@@ -3669,8 +3724,8 @@ name = "x86_64-unknown-linux-gnu"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 3607
-compiler_api_sha256 = "88935406607d71ff80c8a4ccd4caa7085204b86b43dc6c67675b87a0a8ea5124"
+compiler_api_item_count = 3693
+compiler_api_sha256 = "02bac5f94401975fd3a06de29300751bf890a34f6d39eb28396a9681c643b1a8"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "required"
@@ -3680,8 +3735,8 @@ name = "aarch64-unknown-linux-gnu"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 3607
-compiler_api_sha256 = "88935406607d71ff80c8a4ccd4caa7085204b86b43dc6c67675b87a0a8ea5124"
+compiler_api_item_count = 3693
+compiler_api_sha256 = "02bac5f94401975fd3a06de29300751bf890a34f6d39eb28396a9681c643b1a8"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "required"
@@ -3714,8 +3769,8 @@ group = "win"
 backend = "llvm"
 linker = "msvc-link-unpinned"
 claim = "ct-intended"
-compiler_api_item_count = 3607
-compiler_api_sha256 = "88935406607d71ff80c8a4ccd4caa7085204b86b43dc6c67675b87a0a8ea5124"
+compiler_api_item_count = 3693
+compiler_api_sha256 = "02bac5f94401975fd3a06de29300751bf890a34f6d39eb28396a9681c643b1a8"
 physical_timing = "required"
 binsec = "unsupported"
 binsec_reason = "BINSEC PE/Windows evidence is not part of the current release evidence gate."
@@ -3736,8 +3791,8 @@ name = "aarch64-apple-darwin"
 group = "macos"
 backend = "llvm"
 linker = "apple-ld-unpinned"
-compiler_api_item_count = 3607
-compiler_api_sha256 = "88935406607d71ff80c8a4ccd4caa7085204b86b43dc6c67675b87a0a8ea5124"
+compiler_api_item_count = 3693
+compiler_api_sha256 = "02bac5f94401975fd3a06de29300751bf890a34f6d39eb28396a9681c643b1a8"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -3748,8 +3803,8 @@ name = "s390x-unknown-linux-gnu"
 group = "ibm"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 3607
-compiler_api_sha256 = "88935406607d71ff80c8a4ccd4caa7085204b86b43dc6c67675b87a0a8ea5124"
+compiler_api_item_count = 3693
+compiler_api_sha256 = "02bac5f94401975fd3a06de29300751bf890a34f6d39eb28396a9681c643b1a8"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -3760,8 +3815,8 @@ name = "powerpc64le-unknown-linux-gnu"
 group = "ibm"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 3607
-compiler_api_sha256 = "88935406607d71ff80c8a4ccd4caa7085204b86b43dc6c67675b87a0a8ea5124"
+compiler_api_item_count = 3693
+compiler_api_sha256 = "02bac5f94401975fd3a06de29300751bf890a34f6d39eb28396a9681c643b1a8"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -3772,8 +3827,8 @@ name = "riscv64gc-unknown-linux-gnu"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 3607
-compiler_api_sha256 = "88935406607d71ff80c8a4ccd4caa7085204b86b43dc6c67675b87a0a8ea5124"
+compiler_api_item_count = 3693
+compiler_api_sha256 = "02bac5f94401975fd3a06de29300751bf890a34f6d39eb28396a9681c643b1a8"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -4470,7 +4525,9 @@ claim = "ct-intended"
 evidence = [
   "primitive:kx.x25519",
   "harness:ct_entry_x25519",
+  "harness:ct_entry_x25519_public_key",
   "dudect:x25519_fixed_vs_random_scalar",
+  "dudect:x25519_public_key_fixed_vs_random_scalar",
 ]
 limitation = "Exact assembly and portable lowering are target-specific evidence. Shared-secret comparison returns CtDecision; downstream declassification and codegen remain outside this operation's release evidence."
 
@@ -4645,7 +4702,7 @@ evidence = [
   "unit:kem.mlkem768.encapsulate",
   "unit:kem.mlkem768.decapsulate",
 ]
-limitation = "Public encapsulation-key/ciphertext equality is ordinary equality. Decapsulation-key/shared-secret owners return CtDecision and require explicit declassification. generate_prepared_keypair_in composes the evidenced key-generation noise, NTT, and encoding kernels with the evidenced decapsulation-key preparation; no DudeCT case runs that composition directly."
+limitation = "Public encapsulation-key/ciphertext equality is ordinary equality. Decapsulation-key/shared-secret owners return CtDecision and require explicit declassification. generate_prepared_keypair_in is timed directly by mlkem768_keygen_prepared_secret_noise_fixed_vs_random."
 
 [[operation]]
 id = "kem.mlkem1024"
@@ -4696,6 +4753,47 @@ evidence = [
   "unit:kem.mlkem1024.decapsulate",
 ]
 limitation = "Public encapsulation-key/ciphertext equality is ordinary equality. Decapsulation-key/shared-secret owners return CtDecision and require explicit declassification. generate_prepared_keypair_in composes the evidenced key-generation noise, NTT, and encoding kernels with the evidenced decapsulation-key preparation; no DudeCT case runs that composition directly."
+
+[[operation]]
+id = "kem.xwing"
+api = [
+  "rscrypto::XWing::{generate_keypair,encapsulate,decapsulate,try_generate_keypair,try_encapsulate}",
+  "rscrypto::XWing*::{from_bytes,try_from_slice,to_bytes,as_bytes,expose_secret,duplicate_secret}",
+  "rscrypto::XWingEncapsulationKey::{validate,prepare}",
+  "rscrypto::XWingDecapsulationKey::{generate,try_generate,encapsulation_key,prepare,prepare_in}",
+  "rscrypto::XWingPreparedEncapsulationKey::{encapsulation_key,encapsulate}",
+  "rscrypto::XWingPreparedDecapsulationKey::{decapsulation_key,encapsulation_key,decapsulate}",
+  "rscrypto::XWing{DecapsulationKey,SharedSecret}::ct_eq",
+  "rscrypto::XWing{EncapsulationKey,Ciphertext}::eq",
+]
+features = ["x-wing", "getrandom", "serde", "serde-secrets"]
+targets = ["all-supported", "portable implementation"]
+secret_inputs = [
+  "decapsulation key seed",
+  "expanded ML-KEM-768 and X25519 secret keys",
+  "encapsulation randomness",
+  "component shared secrets",
+  "shared secret",
+  "implicit-rejection fallback",
+]
+public_inputs = ["encapsulation key", "ciphertext", "encoded lengths"]
+variable_time_components = [
+  "public matrix rejection sampling",
+  "public fixed-shape parsing",
+  "full fixed-shape implicit-rejection comparison",
+  "rejection of a small-order X25519 part, which depends only on the public key or ciphertext",
+]
+permitted_leakage = ["public key", "ciphertext", "fixed sizes", "small-order X25519 rejection", "caller-authorized secret exposure"]
+claim = "ct-intended"
+evidence = [
+  "primitive:kem.xwing",
+  "unit:kem.xwing.encapsulate",
+  "unit:kem.xwing.decapsulate",
+  "unit:kem.mlkem768.keygen",
+  "unit:kem.mlkem768.decapsulate",
+  "dudect:x25519_public_key_fixed_vs_random_scalar",
+]
+limitation = "Public encapsulation-key/ciphertext equality is ordinary equality. Decapsulation-key/shared-secret owners return CtDecision and require explicit declassification. The key seed also determines the public ML-KEM matrix seed, whose rejection sampling time is public, so no DudeCT case varies the seed through key generation, preparation, or compact decapsulation. Each secret step of that expansion has its own case. The SHAKE256 seed expansion calls keccak::secret::shake256, the worker that mlkem768_decapsulate_rejection_seed_fixed_vs_random times through ML-KEM J. The ML-KEM-768 expansion calls keygen_prepared_into, which mlkem768_keygen_prepared_secret_noise_fixed_vs_random times with the public matrix seed fixed. The X25519 base-point multiplication calls X25519SecretKey::public_key, which x25519_public_key_fixed_vs_random_scalar times."
 
 [[operation]]
 id = "signature.ed25519_signing"
@@ -5225,7 +5323,7 @@ must_not_leak_ref = "common_secret_data"
 required = ["tier_a"]
 [primitive.harness]
 status = "covered"
-symbols = ["ct_entry_x25519"]
+symbols = ["ct_entry_x25519", "ct_entry_x25519_public_key"]
 
 [[primitive]]
 id = "kx.p256_ecdh"
@@ -5412,6 +5510,37 @@ symbols = [
   "ct_entry_mlkem_diag_multiply_ntts_accumulate_k4",
   "ct_entry_mlkem_diag_compress_decompress",
 ]
+
+[[primitive]]
+id = "kem.xwing"
+tier = "A"
+claim = "ct-intended"
+features = ["x-wing"]
+variants = ["Encapsulate", "Decapsulate"]
+entrypoints = ["XWing::encapsulate", "XWingPreparedDecapsulationKey::decapsulate"]
+secrets = [
+  "decapsulation_key",
+  "shared_secret",
+  "encapsulation_random",
+  "component_shared_secrets",
+  "implicit_rejection_seed",
+]
+public = [
+  "encapsulation_key",
+  "ciphertext",
+  "ciphertext_length",
+  "public_shape_error",
+  "small_order_x25519_rejection",
+  "rng_failure",
+]
+may_leak = ["input_length", "public_shape_error", "public_rng_failure", "opaque_success_or_failure"]
+must_not_leak_ref = "common_secret_data"
+required = ["tier_a"]
+binsec = "deferred"
+notes = "X-Wing composes ML-KEM-768, X25519, and the scrubbed Keccak secret worker for its SHAKE256 key expansion and SHA3-256 combiner. It rejects an all-zero X25519 output; clamping makes that depend only on the public X25519 part. The secret key seed determines the public ML-KEM matrix seed, so the X-Wing DudeCT cases cover encapsulation and prepared decapsulation. The kem.xwing operation names the component case that times each secret step of key generation and expansion. BINSEC proof is deferred with ML-KEM."
+[primitive.harness]
+status = "covered"
+symbols = ["ct_entry_xwing_keygen", "ct_entry_xwing_encapsulate", "ct_entry_xwing_decapsulate"]
 
 [[primitive]]
 id = "signature.ed25519_sign"

@@ -361,6 +361,17 @@ fn private_key_and_shared_secret_debug_snapshots_are_redacted() {
     assert_prepared_decapsulation_key_redacted!(rscrypto::MlKem768, "MlKem768PreparedDecapsulationKey(****)");
     assert_prepared_decapsulation_key_redacted!(rscrypto::MlKem1024, "MlKem1024PreparedDecapsulationKey(****)");
   }
+
+  #[cfg(feature = "x-wing")]
+  {
+    let key = rscrypto::XWingDecapsulationKey::from_bytes([0x53; rscrypto::XWingDecapsulationKey::LENGTH]);
+    assert_debug_snapshot(&key, "XWingDecapsulationKey(****)");
+    assert_debug_snapshot(&key.prepare(), "XWingPreparedDecapsulationKey(****)");
+    assert_debug_snapshot(
+      &rscrypto::XWingSharedSecret::from_bytes([0x53; rscrypto::XWingSharedSecret::LENGTH]),
+      "XWingSharedSecret(****)",
+    );
+  }
 }
 
 #[test]

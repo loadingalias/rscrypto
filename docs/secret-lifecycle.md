@@ -190,6 +190,26 @@ erasure of every compiler-created copy, register, or spill.
   decapsulates under data-independent timing. It clears both shared secrets before it returns.
   A rejected import clears every owner it built.
 
+### X-Wing
+
+- Key expansion writes SHAKE256 of the 32-byte key into a zeroizing 96-byte buffer through the
+  scrubbed secret Keccak worker. It writes the ML-KEM-768 key and its prepared arithmetic, and the
+  X25519 secret key, in place in the prepared key, and it clears the buffer on return.
+- The SHA3-256 combiner hashes both component shared secrets through the same worker, directly into
+  the shared-secret owner.
+- Encapsulation draws its 64 random bytes into a zeroizing buffer. It copies the X25519 ephemeral
+  secret key into place in its owner. The ephemeral key and both component shared secrets clear on drop.
+- `prepare_in` expands the key directly into the caller's allocation. Key generation,
+  `encapsulation_key`, and `Kem::decapsulate` expand it in their own frame and clear it on drop, so
+  no moved-from copy exists. `prepare` returns the prepared key by value, which can leave a moved-from
+  copy in the caller's frame.
+- On 2026-11-15, with `just stack-residue` on `nightly-2026-10-24` and QEMU 11.1.3, key generation,
+  `prepare_in`, `Kem::decapsulate`, and encapsulation left no byte of the ML-KEM secret vector, `z`,
+  the X25519 secret key, the encapsulation coins, or the X25519 ephemeral key, on both boards and both
+  backends. The scenarios now require this.
+- A rejected small-order X25519 part returns before ML-KEM encapsulation or decapsulation. Each owner
+  that the call built clears on drop.
+
 ### P-256 ECDH
 
 - Portable P-256 ECDH uses a separate projective owner type.

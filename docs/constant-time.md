@@ -1340,8 +1340,8 @@ for its listed instructions only while `PSTATE.DIT` is set.
 On Linux and macOS, it is clear by default.
 
 `rscrypto` sets DIT for the full duration of every asymmetric, post-quantum, and password operation,
-then restores the caller's state: X25519, Ed25519, ECDSA, P-256 and P-384 ECDH, ML-KEM, ML-DSA,
-SLH-DSA, RSA private operations, Argon2, scrypt, and PBKDF2.
+then restores the caller's state: X25519, Ed25519, ECDSA, P-256 and P-384 ECDH, ML-KEM, X-Wing,
+ML-DSA, SLH-DSA, RSA private operations, Argon2, scrypt, and PBKDF2.
 One toggle costs about 30 ns on Apple Silicon,
 which is less than 1% of these operations at realistic parameters.
 
@@ -1401,6 +1401,10 @@ derived once from the implicit-rejection secret `z`.
 The fused final pass of the inverse NTT removes its transform.
 The message and the work for each call do not change.
 One-shot decapsulation does not mask yet.
+
+X-Wing decapsulation always uses a prepared ML-KEM-768 key, so it gets the mask.
+It rejects a small-order X25519 part before ML-KEM decapsulation.
+X25519 clamps its scalar, so that early return depends only on the public ciphertext.
 
 See [`secret-ownership.md`](secret-ownership.md) for comparison capabilities,
 and [`secret-lifecycle.md`](secret-lifecycle.md) for cleanup evidence.

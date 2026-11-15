@@ -552,7 +552,7 @@ pub(super) fn keygen_into<
 /// [`validate_and_prepare_decapsulation_key_into`] derives from that `dk`: the transposed matrix
 /// is sampled once into `out`, the public vector is accumulated from those entries, and the
 /// prepared secret and public vectors are decoded from the encodings, as preparation decodes them.
-#[cfg(any(test, feature = "alloc"))]
+#[cfg(any(test, feature = "alloc", feature = "x-wing"))]
 pub(super) fn keygen_prepared_into<
   const K: usize,
   const K_U8: u8,
@@ -575,13 +575,39 @@ pub(super) fn keygen_prepared_into<
   let mut sigma = [0u8; SEED_BYTES];
   rho.copy_from_slice(&expanded[..SEED_BYTES]);
   sigma.copy_from_slice(&expanded[SEED_BYTES..]);
+  let z = random.last_chunk().expect("the implicit-rejection seed is 32 bytes");
+  keygen_prepared_expanded_into::<K, ETA1_RANDOM_BYTES, DK_PKE_BYTES, EK_BYTES, DK_BYTES>(&rho, &sigma, z, ek, dk, out);
 
+  ct::zeroize(&mut seed);
+  ct::zeroize(&mut expanded);
+  ct::zeroize(&mut sigma);
+}
+
+/// [`keygen_prepared_into`] after `G`: the key pair and its prepared arithmetic
+/// from the public matrix seed `rho`, the secret noise seed `sigma`, and the
+/// implicit-rejection seed `z`.
+#[cfg(any(test, feature = "alloc", feature = "x-wing"))]
+fn keygen_prepared_expanded_into<
+  const K: usize,
+  const ETA1_RANDOM_BYTES: usize,
+  const DK_PKE_BYTES: usize,
+  const EK_BYTES: usize,
+  const DK_BYTES: usize,
+>(
+  rho: &[u8; SEED_BYTES],
+  sigma: &[u8; SEED_BYTES],
+  z: &[u8; SEED_BYTES],
+  ek: &mut [u8; EK_BYTES],
+  dk: &mut [u8; DK_BYTES],
+  out: &mut PreparedDecapsulationArithmetic<K>,
+) {
+  let _dit = crate::traits::ct::DataIndependentTiming::enter();
   let mut s_hat = [[0u16; N]; K];
   let mut t_hat = [[0u16; N]; K];
-  keygen_sample_noise::<K, ETA1_RANDOM_BYTES>(&sigma, &mut s_hat, &mut t_hat);
+  keygen_sample_noise::<K, ETA1_RANDOM_BYTES>(sigma, &mut s_hat, &mut t_hat);
   keygen_ntt_noise::<K>(&mut s_hat, &mut t_hat);
   // Row r of A is column r of the stored transpose; the matrix is public.
-  prepare_matrix_transpose_into::<K>(&rho, &mut out.encapsulation.a_transpose_hat);
+  prepare_matrix_transpose_into::<K>(rho, &mut out.encapsulation.a_transpose_hat);
   let mut row = [[0u16; N]; K];
   for (r, t_hat_r) in t_hat.iter_mut().enumerate() {
     for (entry, column) in row.iter_mut().zip(&out.encapsulation.a_transpose_hat) {
@@ -592,7 +618,7 @@ pub(super) fn keygen_prepared_into<
   keygen_from_product_domain::<K>(&mut t_hat);
 
   let (dk_pke, tail) = dk.split_at_mut(DK_PKE_BYTES);
-  keygen_encode_into::<K, DK_PKE_BYTES, EK_BYTES>(&rho, &s_hat, &t_hat, ek, dk_pke);
+  keygen_encode_into::<K, DK_PKE_BYTES, EK_BYTES>(rho, &s_hat, &t_hat, ek, dk_pke);
   prepare_decapsulation_key_slice_into::<K, DK_PKE_BYTES>(dk_pke, &mut out.s_hat);
   for (i, poly) in out.encapsulation.t_hat.iter_mut().enumerate() {
     let start = i.strict_mul(POLY_BYTES);
@@ -600,21 +626,18 @@ pub(super) fn keygen_prepared_into<
   }
   #[cfg(test)]
   {
-    out.encapsulation.rho = rho;
+    out.encapsulation.rho = *rho;
   }
   let (dk_ek, tail) = tail.split_at_mut(EK_BYTES);
   dk_ek.copy_from_slice(ek);
   let (dk_hash, dk_z) = tail.split_at_mut(HASH_BYTES);
   dk_hash.copy_from_slice(&h(ek));
-  dk_z.copy_from_slice(&random[SEED_BYTES..]);
+  dk_z.copy_from_slice(z);
   let z = <&[u8; SEED_BYTES]>::try_from(&*dk_z).expect("the implicit-rejection seed is 32 bytes");
   decryption_mask_into(z, &mut out.mask);
 
   zeroize_polyvec(&mut s_hat);
   zeroize_polyvec(&mut t_hat);
-  ct::zeroize(&mut seed);
-  ct::zeroize(&mut expanded);
-  ct::zeroize(&mut sigma);
 }
 
 pub(super) fn encapsulate<
@@ -1115,6 +1138,43 @@ pub(super) fn diag_keygen_secret_noise_digest<
 
   ct::zeroize(&mut ek);
   ct::zeroize(&mut dk_pke);
+  digest
+}
+
+/// Prepared key generation from a fixed public matrix seed, for timing evidence
+/// that varies only the secret seeds.
+#[cfg(all(rscrypto_internal, feature = "diag"))]
+pub(super) fn diag_keygen_prepared_secret_noise_digest<
+  const K: usize,
+  const ETA1_RANDOM_BYTES: usize,
+  const DK_PKE_BYTES: usize,
+  const EK_BYTES: usize,
+  const DK_BYTES: usize,
+>(
+  rho: &[u8; SEED_BYTES],
+  sigma: &[u8; SEED_BYTES],
+  z: &[u8; SEED_BYTES],
+) -> [u8; HASH_BYTES] {
+  let mut ek = [0u8; EK_BYTES];
+  let mut dk = [0u8; DK_BYTES];
+  let mut prepared = PreparedDecapsulationArithmetic::<K>::zeroed();
+  keygen_prepared_expanded_into::<K, ETA1_RANDOM_BYTES, DK_PKE_BYTES, EK_BYTES, DK_BYTES>(
+    rho,
+    sigma,
+    z,
+    &mut ek,
+    &mut dk,
+    &mut prepared,
+  );
+  core::hint::black_box(&prepared);
+  let mut digest = [0u8; HASH_BYTES];
+
+  for (i, byte) in ek.iter().chain(dk.iter()).copied().enumerate() {
+    digest[i & (HASH_BYTES - 1)] ^= byte;
+  }
+
+  ct::zeroize(&mut ek);
+  ct::zeroize(&mut dk);
   digest
 }
 

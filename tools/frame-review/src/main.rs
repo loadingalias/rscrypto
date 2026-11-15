@@ -18,7 +18,8 @@ use rscrypto::{
   MlDsa65, MlDsa65PreparedSecretKey, MlDsa65PreparedSecretKeyStorage, MlDsa65PublicKey, MlDsa65SecretKey,
   MlDsa65Signature, MlDsa87, MlDsa87PreparedSecretKey, MlDsa87PreparedSecretKeyStorage, MlDsa87PublicKey,
   MlDsa87SecretKey, MlDsa87Signature, MlDsaError, MlKem512, MlKem512PreparedDecapsulationKey, MlKem768,
-  MlKem768PreparedDecapsulationKey, MlKem1024, MlKem1024PreparedDecapsulationKey, MlKemError, VerificationError,
+  MlKem768PreparedDecapsulationKey, MlKem1024, MlKem1024PreparedDecapsulationKey, MlKemError, VerificationError, XWing,
+  XWingError, XWingPreparedDecapsulationKey,
 };
 
 // These wrappers preserve the actual preparation return type and keep an
@@ -143,9 +144,17 @@ signing_boundaries!(
 );
 
 macro_rules! kem_boundaries {
-  ($profile:ty, $prepared_key:ty, $generate:ident, $encapsulate:ident, $decapsulate:ident, $prepared_decapsulate:ident) => {
+  (
+    $profile:ty,
+    $prepared_key:ty,
+    $error:ty,
+    $generate:ident,
+    $encapsulate:ident,
+    $decapsulate:ident,
+    $prepared_decapsulate:ident
+  ) => {
     #[inline(never)]
-    fn $generate() -> Result<(<$profile as Kem>::EncapsulationKey, <$profile as Kem>::DecapsulationKey), MlKemError> {
+    fn $generate() -> Result<(<$profile as Kem>::EncapsulationKey, <$profile as Kem>::DecapsulationKey), $error> {
       <$profile>::generate_keypair(|out: &mut [u8]| {
         out.fill(black_box(4));
         Ok(())
@@ -155,7 +164,7 @@ macro_rules! kem_boundaries {
     #[inline(never)]
     fn $encapsulate(
       key: &<$profile as Kem>::EncapsulationKey,
-    ) -> Result<(<$profile as Kem>::Ciphertext, <$profile as Kem>::SharedSecret), MlKemError> {
+    ) -> Result<(<$profile as Kem>::Ciphertext, <$profile as Kem>::SharedSecret), $error> {
       <$profile>::encapsulate(key, |out: &mut [u8]| {
         out.fill(black_box(5));
         Ok(())
@@ -166,7 +175,7 @@ macro_rules! kem_boundaries {
     fn $decapsulate(
       key: &<$profile as Kem>::DecapsulationKey,
       ciphertext: &<$profile as Kem>::Ciphertext,
-    ) -> Result<<$profile as Kem>::SharedSecret, MlKemError> {
+    ) -> Result<<$profile as Kem>::SharedSecret, $error> {
       <$profile>::decapsulate(key, ciphertext)
     }
 
@@ -174,7 +183,7 @@ macro_rules! kem_boundaries {
     fn $prepared_decapsulate(
       key: &$prepared_key,
       ciphertext: &<$profile as Kem>::Ciphertext,
-    ) -> Result<<$profile as Kem>::SharedSecret, MlKemError> {
+    ) -> Result<<$profile as Kem>::SharedSecret, $error> {
       key.decapsulate(ciphertext)
     }
   };
@@ -183,6 +192,7 @@ macro_rules! kem_boundaries {
 kem_boundaries!(
   MlKem512,
   MlKem512PreparedDecapsulationKey,
+  MlKemError,
   mlkem_512_generate,
   mlkem_512_encapsulate,
   mlkem_512_decapsulate,
@@ -191,6 +201,7 @@ kem_boundaries!(
 kem_boundaries!(
   MlKem768,
   MlKem768PreparedDecapsulationKey,
+  MlKemError,
   mlkem_768_generate,
   mlkem_768_encapsulate,
   mlkem_768_decapsulate,
@@ -199,10 +210,20 @@ kem_boundaries!(
 kem_boundaries!(
   MlKem1024,
   MlKem1024PreparedDecapsulationKey,
+  MlKemError,
   mlkem_1024_generate,
   mlkem_1024_encapsulate,
   mlkem_1024_decapsulate,
   mlkem_1024_prepared_decapsulate
+);
+kem_boundaries!(
+  XWing,
+  XWingPreparedDecapsulationKey,
+  XWingError,
+  xwing_generate,
+  xwing_encapsulate,
+  xwing_decapsulate,
+  xwing_prepared_decapsulate
 );
 
 macro_rules! record_boundaries {
@@ -372,4 +393,13 @@ fn main() {
     mlkem_1024_decapsulate,
     mlkem_1024_prepared_decapsulate
   );
+  {
+    let (encapsulation_key, decapsulation_key) = xwing_generate().expect("X-Wing key generation");
+    let (ciphertext, shared) = xwing_encapsulate(&encapsulation_key).expect("X-Wing encapsulation");
+    let decapsulated = xwing_decapsulate(&decapsulation_key, &ciphertext).expect("X-Wing decapsulation");
+    assert!(shared.ct_eq(&decapsulated).declassify());
+    let again =
+      xwing_prepared_decapsulate(&decapsulation_key.prepare(), &ciphertext).expect("X-Wing prepared decapsulation");
+    assert!(shared.ct_eq(&again).declassify());
+  }
 }

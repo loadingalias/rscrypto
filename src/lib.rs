@@ -562,6 +562,11 @@ pub use auth::{ScryptPassword, ScryptVerificationLimits};
 pub use auth::{SipHash13, SipHash24, SipHashKey, SipRandomState};
 #[cfg(feature = "x25519")]
 pub use auth::{X25519Error, X25519PublicKey, X25519SecretKey, X25519SharedSecret};
+#[cfg(feature = "x-wing")]
+pub use auth::{
+  XWing, XWingCiphertext, XWingDecapsulationKey, XWingEncapsulationKey, XWingError, XWingPreparedDecapsulationKey,
+  XWingPreparedEncapsulationKey, XWingSharedSecret,
+};
 #[cfg(feature = "adler32")]
 pub use checksum::Adler32;
 #[cfg(feature = "crc24")]

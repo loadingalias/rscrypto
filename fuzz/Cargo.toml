@@ -56,6 +56,7 @@ p384 = { version = "0.14.0", default-features = false, features = ["ecdh", "ecds
 pbkdf2 = "0.13.0"
 scrypt = { version = "0.12.0", default-features = false }
 x25519-dalek = { version = "3.0.0", features = ["static_secrets"] }
+x-wing = { version = "=0.1.1", default-features = false, features = ["hazmat"] }
 
 # Hashes
 bao = "=0.13.1"
@@ -249,6 +250,11 @@ doc = false
 [[bin]]
 name = "auth_mlkem1024"
 path = "fuzz_targets/auth_mlkem1024.rs"
+doc = false
+
+[[bin]]
+name = "auth_xwing"
+path = "fuzz_targets/auth_xwing.rs"
 doc = false
 
 [[bin]]

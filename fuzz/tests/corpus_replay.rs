@@ -96,6 +96,9 @@ mod auth_mlkem768;
 #[path = "../target_impls/auth_mlkem1024.rs"]
 mod auth_mlkem1024;
 
+#[path = "../target_impls/auth_xwing.rs"]
+mod auth_xwing;
+
 #[path = "../target_impls/auth_pbkdf2.rs"]
 mod auth_pbkdf2;
 
@@ -404,6 +407,12 @@ fn replay_auth_mlkem768_corpus() {
 fn replay_auth_mlkem1024_corpus() {
   let replayed = replay_corpus_dir("auth_mlkem1024", corpus_dir("auth_mlkem1024"), auth_mlkem1024::run);
   assert_ne!(replayed, 0, "auth_mlkem1024 corpus should not be empty");
+}
+
+#[test]
+fn replay_auth_xwing_corpus() {
+  let replayed = replay_corpus_dir("auth_xwing", corpus_dir("auth_xwing"), auth_xwing::run);
+  assert_ne!(replayed, 0, "auth_xwing corpus should not be empty");
 }
 
 #[test]

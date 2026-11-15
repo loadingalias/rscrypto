@@ -29,7 +29,8 @@ use core::{
 use rscrypto::{
   Kem, MlDsa44, MlDsa44SecretKey, MlDsa44Seed, MlDsa65, MlDsa65SecretKey, MlDsa65Seed, MlDsa87, MlDsa87SecretKey,
   MlDsa87Seed, MlKem512, MlKem512DecapsulationKey, MlKem512Seed, MlKem768, MlKem768DecapsulationKey, MlKem768Seed,
-  MlKem1024, MlKem1024DecapsulationKey, MlKem1024Seed, MlKemError,
+  MlKem1024, MlKem1024DecapsulationKey, MlKem1024Seed, MlKemError, Shake256, XWing, XWingCiphertext,
+  XWingDecapsulationKey, XWingError,
 };
 
 const PAINT: u32 = 0xA55A_5AA5;
@@ -526,6 +527,79 @@ mlkem!(
   MlKem1024Seed,
   0x1024_7F3B
 );
+
+mod xwing {
+  use super::*;
+
+  const STREAM: u32 = 0x5857_1D6E;
+  const ENCAPSULATION_STREAM: u32 = 0x5857_E2C4;
+
+  fn decapsulation_key() -> XWingDecapsulationKey {
+    XWingDecapsulationKey::generate(stream_fill(STREAM)).expect("key generation")
+  }
+
+  pub(super) fn keygen() {
+    let keys = XWing::generate_keypair(stream_fill(STREAM)).expect("key generation");
+    black_box(&keys);
+  }
+
+  /// Writes the decapsulation key, then a ciphertext for it.
+  pub(super) fn prepare() {
+    let key = decapsulation_key();
+    let (ciphertext, _) =
+      XWing::encapsulate(&key.encapsulation_key(), stream_fill(ENCAPSULATION_STREAM)).expect("encapsulation");
+    let input: &mut [u8; XWing::DECAPSULATION_KEY_SIZE + XWing::CIPHERTEXT_SIZE] = key_input_mut();
+    let (key_part, ciphertext_part) = input.split_at_mut(XWing::DECAPSULATION_KEY_SIZE);
+    key_part.copy_from_slice(key.as_bytes());
+    ciphertext_part.copy_from_slice(ciphertext.as_bytes());
+  }
+
+  fn imported() -> XWingDecapsulationKey {
+    XWingDecapsulationKey::try_from_slice(key_input(XWing::DECAPSULATION_KEY_SIZE)).expect("import")
+  }
+
+  pub(super) fn prepare_in() {
+    let key = imported().prepare_in(&ARENA);
+    black_box(&key);
+  }
+
+  pub(super) fn decapsulate() {
+    let ciphertext = XWingCiphertext::try_from_slice(
+      &key_input(XWing::DECAPSULATION_KEY_SIZE + XWing::CIPHERTEXT_SIZE)[XWing::DECAPSULATION_KEY_SIZE..],
+    )
+    .expect("ciphertext");
+    let shared = XWing::decapsulate(&imported(), &ciphertext).expect("decapsulation");
+    black_box(&shared);
+  }
+
+  pub(super) fn encapsulate() {
+    let key = XWingDecapsulationKey::from_bytes([0x5a; XWing::DECAPSULATION_KEY_SIZE]).encapsulation_key();
+    let output = XWing::encapsulate(black_box(&key), stream_fill(ENCAPSULATION_STREAM)).expect("encapsulation");
+    black_box(&output);
+  }
+
+  /// The expanded secrets: the ML-KEM-768 secret vector and `z`, and the
+  /// X25519 secret key.
+  pub(super) fn needles() {
+    let mut expanded = [0u8; 96];
+    Shake256::hash_into(decapsulation_key().as_bytes(), &mut expanded);
+    let mut ml_kem_seed = [0u8; 64];
+    ml_kem_seed.copy_from_slice(&expanded[..64]);
+    let (_, ml_kem) = MlKem768Seed::from_bytes(ml_kem_seed).keypair_in(&HEAP);
+    needle("dk_pke", &ml_kem.expose_secret().as_bytes()[..1152]);
+    needle("z", &expanded[32..64]);
+    needle("x25519_secret", &expanded[64..]);
+  }
+
+  /// The encapsulation randomness: the ML-KEM-768 coins and the X25519
+  /// ephemeral secret key.
+  pub(super) fn encapsulation_needles() {
+    let mut random = [0u8; XWing::ENCAPSULATION_RANDOM_SIZE];
+    stream_fill::<XWingError>(ENCAPSULATION_STREAM)(&mut random).expect("the stream cannot fail");
+    needle("coins", &random[..32]);
+    needle("x25519_ephemeral", &random[32..]);
+  }
+}
 
 const MLDSA_SEED: [u8; 32] = [0x3d; 32];
 
@@ -1301,6 +1375,27 @@ const SCENARIOS: &[Scenario] = &[
     mlkem1024::prepare_pkcs8_seed,
     mlkem1024::seed_owner,
     mlkem1024::needles
+  ),
+  scenario!("x-wing-keygen", "none", xwing::keygen, xwing::needles),
+  scenario!(
+    "x-wing-prepare-in",
+    "none",
+    xwing::prepare,
+    xwing::prepare_in,
+    xwing::needles
+  ),
+  scenario!(
+    "x-wing-decapsulate",
+    "none",
+    xwing::prepare,
+    xwing::decapsulate,
+    xwing::needles
+  ),
+  scenario!(
+    "x-wing-encapsulate",
+    "none",
+    xwing::encapsulate,
+    xwing::encapsulation_needles
   ),
   scenario!("ml-dsa-44-keygen", "report", mldsa44::keygen, mldsa44::needles),
   scenario!("ml-dsa-44-keygen-in", "none", mldsa44::keygen_in, mldsa44::needles),

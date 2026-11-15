@@ -765,6 +765,52 @@ fn assert_slhdsa_fips205_vectors() {
   assert!(input.is_empty(), "trailing runtime fixture bytes");
 }
 
+/// The 3 X-Wing vectors of draft-connolly-cfrg-xwing-kem-11 Appendix C through
+/// the `Kem` functions and the prepared keys.
+fn assert_xwing_draft_vectors() {
+  use rscrypto::{Kem as _, XWing, XWingCiphertext, XWingError};
+
+  const VECTORS: &str = include_str!("../../../testdata/xwing/draft-11-test-vectors.json");
+  let field = |vector: &'static str, name: &str| -> &'static str {
+    let (_, value) = vector
+      .split_once(&format!("\"{name}\": \""))
+      .expect("X-Wing vector field");
+    value.split_once('"').expect("X-Wing vector field end").0
+  };
+  let mut count = 0usize;
+  for vector in VECTORS.split('}').filter(|vector| vector.contains("\"seed\"")) {
+    let seed: [u8; XWing::DECAPSULATION_KEY_SIZE] = hex_array(field(vector, "seed"));
+    let randomness: [u8; XWing::ENCAPSULATION_RANDOM_SIZE] = hex_array(field(vector, "eseed"));
+    let (encapsulation_key, decapsulation_key) = XWing::generate_keypair(|out| {
+      out.copy_from_slice(&seed);
+      Ok::<(), XWingError>(())
+    })
+    .expect("X-Wing key generation");
+    assert_hex(decapsulation_key.as_bytes(), field(vector, "sk"));
+    assert_hex(encapsulation_key.as_bytes(), field(vector, "pk"));
+    let (ciphertext, shared_secret) = XWing::encapsulate(&encapsulation_key, |out| {
+      out.copy_from_slice(&randomness);
+      Ok::<(), XWingError>(())
+    })
+    .expect("X-Wing encapsulation");
+    assert_hex(ciphertext.as_bytes(), field(vector, "ct"));
+    assert_hex(shared_secret.as_bytes(), field(vector, "ss"));
+    let ciphertext = XWingCiphertext::from_bytes(hex_array(field(vector, "ct")));
+    let decapsulated = XWing::decapsulate(&decapsulation_key, &ciphertext).expect("X-Wing decapsulation");
+    assert_hex(decapsulated.as_bytes(), field(vector, "ss"));
+    let prepared = decapsulation_key.prepare();
+    assert_hex(
+      prepared
+        .decapsulate(&ciphertext)
+        .expect("X-Wing prepared decapsulation")
+        .as_bytes(),
+      field(vector, "ss"),
+    );
+    count = count.strict_add(1);
+  }
+  assert_eq!(count, 3);
+}
+
 fn main() {
   run_vectors();
 }
@@ -795,5 +841,6 @@ fn run_vectors() {
   assert_p384_ecdh_portable_vector();
   assert_mldsa_fips204_vectors();
   assert_slhdsa_fips205_vectors();
+  assert_xwing_draft_vectors();
   assert_simd128_runtime_caps_are_detected();
 }

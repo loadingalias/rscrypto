@@ -1364,6 +1364,55 @@ impl_mlkem_profile_ops!(
   "ML-KEM-768"
 );
 
+// X-Wing derives the ML-KEM-768 seed and encapsulation coins itself, so these
+// internal forms take them directly: they draw no randomness and cannot fail.
+#[cfg(feature = "x-wing")]
+impl MlKem768PreparedEncapsulationKey {
+  /// FIPS 203 ML-KEM.Encaps_internal with the coins `m`.
+  pub(crate) fn encapsulate_internal(
+    &self,
+    m: &[u8; ML_KEM_ENCAPSULATION_RANDOM_SIZE],
+  ) -> (MlKem768Ciphertext, MlKem768SharedSecret) {
+    let (ciphertext, shared_secret) = operations::encapsulate_prepared_768(&self.arithmetic, self.key_hash(), m);
+    (
+      MlKem768Ciphertext::from_bytes(ciphertext),
+      MlKem768SharedSecret::from_bytes(shared_secret),
+    )
+  }
+}
+
+#[cfg(feature = "x-wing")]
+impl MlKem768PreparedDecapsulationKey {
+  /// All-zero owner that [`Self::expand_seed`] fills in place.
+  pub(crate) const fn unexpanded() -> Self {
+    Self {
+      key: MlKem768DecapsulationKey::from_bytes([0; 2400]),
+      arithmetic: operations::PreparedDecapsulationArithmetic::zeroed(),
+    }
+  }
+
+  /// FIPS 203 ML-KEM.KeyGen_internal from the seed `d || z`, written in place
+  /// with its prepared arithmetic.
+  pub(crate) fn expand_seed(&mut self, seed: &[u8; ML_KEM_KEY_GENERATION_RANDOM_SIZE]) {
+    let mut encapsulation_key = [0u8; 1184];
+    operations::keygen_prepared_into::<3, 3, 128, 1152, 1184, 2400>(
+      seed,
+      &mut encapsulation_key,
+      &mut self.key.0,
+      &mut self.arithmetic,
+    );
+  }
+
+  /// FIPS 203 ML-KEM.Decaps_internal of an encoded ciphertext.
+  pub(crate) fn decapsulate_internal(&self, ciphertext: &[u8; 1088]) -> MlKem768SharedSecret {
+    MlKem768SharedSecret::from_bytes(operations::decapsulate_prepared_768(
+      self.as_bytes(),
+      &self.arithmetic,
+      ciphertext,
+    ))
+  }
+}
+
 impl_mlkem_profile_ops!(
   MlKem1024,
   MlKem1024EncapsulationKey,
@@ -1403,6 +1452,20 @@ macro_rules! mlkem_diag_keygen_secret_noise {
       operations::diag_keygen_secret_noise_digest::<$k, $eta1_random_bytes, $dk_pke_bytes, $ek_bytes>(&rho, &sigma)
     }
   };
+}
+
+/// Diagnostic digest for ML-KEM-768 prepared key generation with a fixed public matrix seed.
+/// This is only available under `diag`; production key generation derives `rho` and
+/// `sigma` through the FIPS 203 `G(d || k)` expansion and takes `z` from its seed.
+#[cfg(all(rscrypto_internal, feature = "diag"))]
+#[inline]
+#[must_use]
+pub fn diag_mlkem768_keygen_prepared_secret_noise_digest(
+  rho: [u8; ML_KEM_SEED_SIZE],
+  sigma: [u8; ML_KEM_SEED_SIZE],
+  z: [u8; ML_KEM_SEED_SIZE],
+) -> [u8; ML_KEM_SHARED_SECRET_SIZE] {
+  operations::diag_keygen_prepared_secret_noise_digest::<3, 128, 1152, 1184, 2400>(&rho, &sigma, &z)
 }
 
 mlkem_diag_keygen_secret_noise!(diag_mlkem512_keygen_secret_noise_digest, 2, 192, 768, 800, "ML-KEM-512");

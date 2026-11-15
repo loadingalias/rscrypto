@@ -186,6 +186,13 @@ impl X25519SecretKey {
     &self.0
   }
 
+  /// Borrow the secret key bytes mutably, so that X-Wing writes a derived key
+  /// in place and leaves no moved copy.
+  #[cfg(feature = "x-wing")]
+  pub(crate) const fn as_mut_bytes(&mut self) -> &mut [u8; Self::LENGTH] {
+    &mut self.0
+  }
+
   /// Try to construct a secret key by filling bytes from the provided closure.
   ///
   /// The closure may be called exactly once and must completely fill the

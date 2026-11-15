@@ -65,6 +65,9 @@ Runtime behavior needs execution on the target.
     the CPU lacks falls back to automatic selection.
     `Adler32::config()` reports the request and the effective choice.
   - Other targets use the portable kernel.
+- **X-Wing** has no backend or dispatch of its own. It runs the ML-KEM-768, X25519, and SHA-3
+  backends that each target selects for those primitives. X25519 assembly runs on Apple and Linux
+  AArch64 and on Linux x86-64; other targets use portable X25519.
 - **XXH32 and XXH64** are portable Rust on every target, with no accelerated backend or dispatch.
   They read input words little-endian on every target, as the specification requires.
 - **Scalar WebAssembly:** when `simd128` is disabled, hash, AEAD, and Argon2 dispatch exclude SIMD backends.

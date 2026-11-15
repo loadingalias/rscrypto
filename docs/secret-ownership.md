@@ -19,6 +19,8 @@ It does not prove that the compiler erases every copy it makes.
 | SLH-DSA secret keys, pure and HashSLH-DSA | Not `Clone` or `Copy`. | Raw export returns `SecretBytes`. PKCS #8 export writes into a fixed-size buffer that the caller owns and clears. Raw and PKCS #8 import borrow the caller's input and do not clear it. `Debug` is redacted. No Serde support. |
 | X25519 secrets; ML-KEM decapsulation keys and shared secrets | Explicit `duplicate_secret`. See [ML-KEM allocation](#ml-kem-allocation). | Secret export is explicit. ML-KEM decapsulation-key PKCS #8 export writes into a fixed-size buffer that the caller owns and clears. `Debug` is redacted. |
 | ML-KEM seeds | Not `Clone` or `Copy`. | Raw export returns `SecretBytes<64>`. PKCS #8 export writes into a fixed-size buffer that the caller owns and clears. `Debug` is redacted. No Serde support. |
+| X-Wing decapsulation keys and shared secrets (`XWingDecapsulationKey`, `XWingSharedSecret`) | Not `Clone` or `Copy`. Explicit `duplicate_secret`. | Raw export returns `SecretBytes<32>`. Raw import borrows the caller's input and does not clear it. `Debug` is redacted. Serialization needs `serde-secrets`. |
+| `XWingPreparedDecapsulationKey` | Not `Clone` or `Copy`. Explicit `duplicate_secret`. | No export of the expanded ML-KEM-768 and X25519 keys: the draft forbids their transfer. `decapsulation_key` borrows the 32-byte key. `Debug` is redacted. See [X-Wing allocation](#x-wing-allocation). |
 | `P256EphemeralSecret`, `P256SharedSecret` | Not `Clone` or `Copy`. | The ephemeral scalar has no export or import API. `P256SharedSecret::expose_secret` makes an explicit `SecretBytes<32>` copy. `as_bytes` gives borrowed access. Both types redact `Debug`. |
 | `P384EphemeralSecret`, `P384SharedSecret` | Not `Clone` or `Copy`. | The ephemeral scalar has no export or import API. `P384SharedSecret::expose_secret` makes an explicit `SecretBytes<48>` copy. `as_bytes` gives borrowed access. Both types redact `Debug`. |
 | `RsaPrivateKey`, `RsaPrivateScratch` | Not `Clone` or `Copy`. | Private DER export returns `SecretVec`. `Debug` shows only public metadata. |
@@ -344,6 +346,12 @@ their existing lifetimes; this boundary adds no secret owner or allocation.
 With `alloc`, these functions write the key
 or prepared key directly into an allocation from a caller-selected `Allocator`, and return `Box<_, A>`: `generate_keypair_in`, `generate_prepared_keypair_in`, `try_generate_keypair_in`, `DecapsulationKey::try_from_slice_in`, `DecapsulationKey::from_pkcs8_der_in`, `DecapsulationKey::prepare_in`, and `Seed::keypair_in`.
 PKCS #8 import borrows the caller's DER and does not clear it.
+
+### X-Wing allocation
+
+With `alloc`, `XWingDecapsulationKey::prepare_in` expands the key directly into an allocation from a
+caller-selected `Allocator` and returns `Box<XWingPreparedDecapsulationKey, A>`. `prepare` and the
+`Kem` functions keep the expanded keys on the stack and clear them on drop.
 
 ### BLAKE3 trees
 

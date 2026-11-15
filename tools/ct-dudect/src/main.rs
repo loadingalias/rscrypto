@@ -18,7 +18,7 @@ use rscrypto::{
   MlKem1024DecapsulationKey, MlKemError, P256EphemeralSecret, P384EphemeralSecret, Pbkdf2Sha256, Pbkdf2Sha512,
   RsaBlindingPair, RsaEncryptionError, RsaOaepProfile, RsaPkcs1v15Profile, RsaPrivateKey, RsaPrivateScratch,
   RsaPssProfile, RsaPublicKeyPolicy, RsaSignatureProfile, SecretBytes, Sha512, X25519SecretKey, XChaCha20Poly1305,
-  XChaCha20Poly1305Key,
+  XChaCha20Poly1305Key, XWing, XWingDecapsulationKey, XWingError, XWingPreparedDecapsulationKey, XWingSharedSecret,
   aead::{
     Nonce96, Nonce128, Nonce192, Nonce256, diag_aes_siv_cmac256_open_portable, diag_aes_siv_cmac256_s2v_portable,
     diag_aes128gcm_ctr32_be, diag_aes128gcm_ghash, diag_aes128gcm_tag_aes, diag_aes128gcmsiv_ctr32,
@@ -38,7 +38,8 @@ use rscrypto::{
     diag_ecdsa_p384_scalar_finish_limb_digest, diag_mlkem_from_montgomery_product_domain_input_digest,
     diag_mlkem_inverse_ntt_montgomery_product_input_digest, diag_mlkem_multiply_ntts_add_assign_input_digest,
     diag_mlkem_ntt_input_digest, diag_mlkem_to_montgomery_product_domain_input_digest,
-    diag_mlkem512_keygen_secret_noise_digest, diag_mlkem768_keygen_secret_noise_digest,
+    diag_mlkem512_keygen_secret_noise_digest, diag_mlkem768_keygen_prepared_secret_noise_digest,
+    diag_mlkem768_keygen_secret_noise_digest,
     diag_mlkem1024_keygen_secret_noise_digest, diag_mlkem1024_multiply_ntts_accumulate_input_digest,
     diag_rsa_blinding_factor_inverse_with_scratch, diag_rsa_import_pkcs8_private_key_der_stage,
     diag_rsa_private_component_validation_32, diag_rsa_private_exponentiate_fixed_width_with_scratch,
@@ -1080,6 +1081,26 @@ fn x25519_fixed_vs_random_scalar(runner: &mut CtRunner, rng: &mut BenchRng) {
   }
 }
 
+/// Base-point multiplication, `X25519SecretKey::public_key`, with a fixed or a
+/// random secret scalar.
+fn x25519_public_key_fixed_vs_random_scalar(runner: &mut CtRunner, rng: &mut BenchRng) {
+  let mut inputs = Vec::with_capacity(samples());
+  for _ in 0..samples() {
+    let class = random_class(rng);
+    let scalar = if matches!(class, Class::Left) {
+      [7u8; X25519SecretKey::LENGTH]
+    } else {
+      rand_array::<{ X25519SecretKey::LENGTH }>(rng)
+    };
+    inputs.push((class, scalar));
+  }
+
+  for (class, scalar) in inputs {
+    let secret = X25519SecretKey::from_bytes(scalar);
+    runner.run_one(class, || core::hint::black_box(secret.public_key().as_bytes()[0]));
+  }
+}
+
 fn valid_p256_ecdh_scalar(rng: &mut BenchRng) -> [u8; P256EphemeralSecret::LENGTH] {
   let mut scalar = rand_array::<{ P256EphemeralSecret::LENGTH }>(rng);
   scalar[0] &= 0x7f;
@@ -1893,6 +1914,101 @@ mlkem_dudect_profile!(
   MlKem1024DecapsulationKey,
   diag_mlkem1024_keygen_secret_noise_digest
 );
+
+/// ML-KEM-768 prepared key generation, the path that X-Wing key expansion and
+/// `generate_prepared_keypair_in` take. The public matrix seed `rho` stays fixed;
+/// the secret noise seed `sigma` and implicit-rejection seed `z` vary.
+fn mlkem768_keygen_prepared_secret_noise_fixed_vs_random(runner: &mut CtRunner, rng: &mut BenchRng) {
+  let rho = [0x41; 32];
+  let mut inputs = Vec::with_capacity(samples());
+  for _ in 0..samples() {
+    let class = random_class(rng);
+    let (sigma, z) = if matches!(class, Class::Left) {
+      ([0x42; 32], [0x43; 32])
+    } else {
+      (rand_array::<32>(rng), rand_array::<32>(rng))
+    };
+    inputs.push((class, sigma, z));
+  }
+
+  for (class, sigma, z) in inputs {
+    runner.run_one(class, || {
+      core::hint::black_box(diag_mlkem768_keygen_prepared_secret_noise_digest(rho, sigma, z))[0]
+    });
+  }
+}
+
+fn xwing_fill(bytes: &[u8]) -> impl FnMut(&mut [u8]) -> Result<(), XWingError> + '_ {
+  |out| {
+    out.copy_from_slice(bytes);
+    Ok(())
+  }
+}
+
+/// The public encapsulation key stays fixed; only the 64 encapsulation bytes,
+/// the ML-KEM-768 coins and the X25519 ephemeral secret key, vary.
+fn xwing_encapsulate_fixed_vs_random_coins(runner: &mut CtRunner, rng: &mut BenchRng) {
+  let (encapsulation_key, _) =
+    XWing::generate_keypair(xwing_fill(&[0x81; XWing::KEY_GENERATION_RANDOM_SIZE])).expect("fixed X-Wing key");
+  let mut inputs = Vec::with_capacity(samples());
+  for _ in 0..samples() {
+    let class = random_class(rng);
+    let random = if matches!(class, Class::Left) {
+      [0x82; XWing::ENCAPSULATION_RANDOM_SIZE]
+    } else {
+      rand_array::<{ XWing::ENCAPSULATION_RANDOM_SIZE }>(rng)
+    };
+    inputs.push((class, random));
+  }
+
+  for (class, random) in inputs {
+    runner.run_one(class, || {
+      let (ciphertext, shared_secret) =
+        XWing::encapsulate(&encapsulation_key, xwing_fill(&random)).expect("X-Wing encapsulation");
+      core::hint::black_box(ciphertext.as_bytes()[0] ^ shared_secret.as_bytes()[0])
+    });
+  }
+}
+
+/// One ciphertext for the fixed key, decapsulated with prepared keys.
+/// Preparation stays outside timing: the key seed also determines the public
+/// ML-KEM matrix, whose sampling time is public. Each class draws from its own
+/// pool of equal size, so both classes touch the same amount of key memory:
+/// copies of the fixed key, or random keys, for which ML-KEM implicitly
+/// rejects the ciphertext.
+fn xwing_decapsulate_fixed_vs_random_key(runner: &mut CtRunner, rng: &mut BenchRng) {
+  const POOL: usize = 64;
+  let fixed = XWingDecapsulationKey::from_bytes([0x91; XWing::DECAPSULATION_KEY_SIZE]).prepare();
+  let (ciphertext, _) = fixed
+    .encapsulation_key()
+    .prepare()
+    .expect("derived X-Wing key")
+    .encapsulate(xwing_fill(&[0x92; XWing::ENCAPSULATION_RANDOM_SIZE]))
+    .expect("X-Wing encapsulation");
+  let fixed_pool: Vec<XWingPreparedDecapsulationKey> = (0..POOL).map(|_| fixed.duplicate_secret()).collect();
+  let random_pool: Vec<XWingPreparedDecapsulationKey> = (0..POOL)
+    .map(|_| XWingDecapsulationKey::from_bytes(rand_array::<{ XWing::DECAPSULATION_KEY_SIZE }>(rng)).prepare())
+    .collect();
+  let mut inputs = Vec::with_capacity(samples());
+  for _ in 0..samples() {
+    let class = random_class(rng);
+    inputs.push((class, usize::from(rng.random::<u8>()) % POOL));
+  }
+
+  for (class, index) in inputs {
+    let key = if matches!(class, Class::Left) {
+      &fixed_pool[index]
+    } else {
+      &random_pool[index]
+    };
+    runner.run_one(class, || {
+      let shared_secret: XWingSharedSecret = key
+        .decapsulate(core::hint::black_box(&ciphertext))
+        .expect("a full-order X25519 part decapsulates");
+      core::hint::black_box(shared_secret.as_bytes()[0])
+    });
+  }
+}
 
 fn mlkem_arithmetic_ntt_fixed_vs_random_poly(runner: &mut CtRunner, rng: &mut BenchRng) {
   let mut inputs = Vec::with_capacity(samples());
@@ -4011,6 +4127,7 @@ ctbench_main_with_seeds!(
     Some(0x7369765f706f746d)
   ),
   (x25519_fixed_vs_random_scalar, Some(0x7832353531395f63)),
+  (x25519_public_key_fixed_vs_random_scalar, Some(0x7832353531397062)),
   (p256_ecdh_public_key_fixed_vs_random_scalar, Some(0x7032353665637075)),
   (p256_ecdh_agree_fixed_vs_random_scalar, Some(0x7032353665636167)),
   (p256_ecdh_probe_agree_same_vs_same, Some(0x7032353670720000)),
@@ -4084,6 +4201,9 @@ ctbench_main_with_seeds!(
     mlkem768_decapsulate_rejection_seed_fixed_vs_random,
     Some(0x6d6c6b656d72656a)
   ),
+  (mlkem768_keygen_prepared_secret_noise_fixed_vs_random, Some(0x6d6c6b656d6b6770)),
+  (xwing_encapsulate_fixed_vs_random_coins, Some(0x7877696e67656e63)),
+  (xwing_decapsulate_fixed_vs_random_key, Some(0x7877696e67646563)),
   (mlkem1024_keygen_secret_noise_fixed_vs_random, Some(0x6d6b313032346b67)),
   (mlkem1024_encapsulate_fixed_vs_random_coins, Some(0x6d6b31303234656e)),
   (

@@ -173,6 +173,13 @@
       "required": true,
       "features": ["std", "mldsa65-ed25519", "mldsa65-ecdsa-p256"]
     },
+    "xwing": {
+      "binary": "xwing",
+      "kind": "criterion",
+      "family": "auth",
+      "required": true,
+      "features": ["std", "x-wing"]
+    },
     "slhdsa_portable": {
       "binary": "slhdsa",
       "kind": "criterion",
@@ -1633,6 +1640,41 @@
       "cases": "^(?P<variant>mldsa65-(?:ed25519|ecdsa-p256))/verify/(?P<input>import-key)/(?P<implementation>[^/]+)$",
       "headline": true,
       "task": "Import identical public-key bytes, then parse and verify one signature with an empty context."
+    },
+    "xwing-keygen": {
+      "family": "X-Wing",
+      "bench": "xwing",
+      "cases": "^(?P<variant>xwing)/keygen/(?P<input>derand-encoded)/(?P<implementation>[^/]+)$",
+      "headline": true,
+      "task": "Expand a 32-byte seed and encode the encapsulation key."
+    },
+    "xwing-encapsulate-reuse": {
+      "family": "X-Wing",
+      "bench": "xwing",
+      "cases": "^(?P<variant>xwing)/encapsulate/(?P<input>derand-reuse-key)/(?P<implementation>[^/]+)$",
+      "headline": true,
+      "task": "Encapsulate with caller randomness to each library's best reused encapsulation key."
+    },
+    "xwing-encapsulate-import": {
+      "family": "X-Wing",
+      "bench": "xwing",
+      "cases": "^(?P<variant>xwing)/encapsulate/(?P<input>derand-import-encoded)/(?P<implementation>[^/]+)$",
+      "headline": true,
+      "task": "Import and validate identical encapsulation-key bytes, then encapsulate with caller randomness."
+    },
+    "xwing-decapsulate-reuse": {
+      "family": "X-Wing",
+      "bench": "xwing",
+      "cases": "^(?P<variant>xwing)/decapsulate/(?P<input>reuse-key)/(?P<implementation>[^/]+)$",
+      "headline": true,
+      "task": "Decapsulate one ciphertext with each library's best reused decapsulation key."
+    },
+    "xwing-decapsulate-import": {
+      "family": "X-Wing",
+      "bench": "xwing",
+      "cases": "^(?P<variant>xwing)/decapsulate/(?P<input>import-encoded)/(?P<implementation>[^/]+)$",
+      "headline": true,
+      "task": "Import identical 32-byte decapsulation-key bytes and the ciphertext, then decapsulate."
     },
     "rsa-verify-reuse": {
       "family": "RSA",

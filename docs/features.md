@@ -28,12 +28,12 @@ Umbrella features are convenient, but they make the build larger:
 | `kdfs`             | HKDF and PBKDF2 |
 | `password-hashing` | Argon2, scrypt, and PHC password records |
 | `signatures`       | ECDSA, Ed25519, RSA, ML-DSA, SLH-DSA, and composite ML-DSA |
-| `key-exchange`     | X25519, P-256 ECDH, P-384 ECDH, and ML-KEM |
+| `key-exchange`     | X25519, P-256 ECDH, P-384 ECDH, ML-KEM, and X-Wing |
 | `auth`             | MACs, KDFs, password hashing, signatures, and key exchange |
 | `aead`             | All AEADs |
 | `full`             | Checksums, hashes, authentication, AEADs, and the ChaCha20 generator |
 
-In libraries and constrained builds, use leaf features such as `sha2`, `blake3`, `aes-gcm`, `ed25519`, `p256-ecdh`, `p384-ecdh`, `ml-dsa`, `mldsa65-ed25519`, `slh-dsa`, or `ml-kem`.
+In libraries and constrained builds, use leaf features such as `sha2`, `blake3`, `aes-gcm`, `ed25519`, `p256-ecdh`, `p384-ecdh`, `ml-dsa`, `mldsa65-ed25519`, `slh-dsa`, `ml-kem`, or `x-wing`.
 
 `chacha20-rng` gives `ChaCha20Rng`, a ChaCha20 random generator seeded by the
 caller. It reads no operating-system entropy, works without `alloc`, and its
@@ -75,7 +75,7 @@ Enable it by name.
 | --------------- | ------ |
 | `alloc`         | Enables APIs that own heap memory, including `SecretVec` and `SecretString`. |
 | `std`           | Enables runtime CPU detection and standard-library integration. Enables `alloc`. |
-| `getrandom`     | Enables fallible helpers that get randomness from the operating system, such as keys, nonces, salts, seeds, hedged signatures, ML-KEM encapsulation, and RSA blinding. |
+| `getrandom`     | Enables fallible helpers that get randomness from the operating system, such as keys, nonces, salts, seeds, hedged signatures, ML-KEM and X-Wing encapsulation, and RSA blinding. |
 | `parallel`      | Enables Rayon-based BLAKE3 and Argon2 work. Enables `std`, `blake3`, and `argon2`. |
 | `rand_core`     | Implements `rand_core` 0.10's `TryRng`, `TryCryptoRng`, and `SeedableRng` for `ChaCha20Rng`. Enables `chacha20-rng`, adds only the `rand_core` dependency, and works without `alloc`. `SeedableRng::seed_from_u64` panics, because a 64-bit value is not a 256-bit seed. |
 | `serde`         | Serializes public types. |
@@ -144,6 +144,17 @@ They enable `ml-dsa` and `ed25519` or `ecdsa-p256`, need neither allocation nor 
 and import and export the draft's raw, SubjectPublicKeyInfo, and PKCS #8 encodings.
 A signature is valid only if both components verify. `prepare_in` needs `alloc`.
 The `rscrypto::auth::composite_mldsa` module documentation describes the construction and its limits.
+
+`x-wing` gives the X-Wing hybrid KEM of ML-KEM-768 and X25519 from
+[draft-connolly-cfrg-xwing-kem-11](https://datatracker.ietf.org/doc/draft-connolly-cfrg-xwing-kem/11/),
+which draft-irtf-cfrg-concrete-hybrid-kems-04 names MLKEM768-X25519 (HPKE KEM `0x647A`).
+It enables `ml-kem` and `x25519` and needs neither allocation nor operating-system entropy.
+Keys and ciphertexts use the draft's raw encodings. The decapsulation key is the 32-byte seed.
+It has one difference from the -11 text: encapsulation and decapsulation reject an all-zero X25519 shared secret,
+as X-Wing pull request 39 at `782c880e` and RFC 9180 specify.
+X25519 clamps its scalar, so that result depends only on the public key or ciphertext.
+`prepare_in` needs `alloc`.
+The `rscrypto::auth::xwing` module documentation describes the construction.
 
 `slh-dsa` supports all 12 FIPS 205 SLH-DSA parameter sets, each as a pure profile and an RFC 9909
 HashSLH-DSA profile, without allocation and without operating-system entropy. It enables `hmac` and `sha3`.

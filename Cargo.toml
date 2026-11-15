@@ -194,6 +194,8 @@ slh-dsa = ["hmac", "sha3"]
 # traditional signature. Each composite is its own leaf.
 mldsa65-ed25519 = ["ml-dsa", "ed25519", "sha2"]
 mldsa65-ecdsa-p256 = ["ml-dsa", "ecdsa-p256", "sha2"]
+# X-Wing (draft-connolly-cfrg-xwing-kem-11): the ML-KEM-768 and X25519 hybrid KEM.
+x-wing = ["ml-kem", "x25519"]
 
 phc-strings = ["alloc"]
 argon2 = ["blake2b", "alloc"]
@@ -217,7 +219,7 @@ macs = ["hmac", "hmac-sha3", "kmac", "poly1305", "siphash"]
 kdfs = ["hkdf", "pbkdf2"]
 password-hashing = ["argon2", "scrypt", "phc-strings"]
 signatures = ["ecdsa", "ed25519", "rsa", "ml-dsa", "slh-dsa", "mldsa65-ed25519", "mldsa65-ecdsa-p256"]
-key-exchange = ["x25519", "p256-ecdh", "p384-ecdh", "ml-kem"]
+key-exchange = ["x25519", "p256-ecdh", "p384-ecdh", "ml-kem", "x-wing"]
 auth = ["macs", "kdfs", "password-hashing", "signatures", "key-exchange"]
 aead = ["aes-gcm", "aes-gcm-siv", "aes-siv", "chacha20poly1305", "xchacha20poly1305", "aegis256", "ascon-aead"]
 full = ["checksums", "hashes", "auth", "aead", "chacha20-rng"]
@@ -294,6 +296,9 @@ rustcrypto-ml-kem = { package = "ml-kem", version = "0.3.2", default-features = 
   "hazmat",
   "pkcs8",
 ] }
+# Independent X-Wing oracle on RustCrypto ML-KEM and x25519-dalek; `hazmat`
+# exposes deterministic encapsulation.
+x-wing = { version = "=0.1.1", default-features = false, features = ["hazmat"] }
 hmac = "0.13.0"
 hkdf = "0.13.0"
 chacha20poly1305 = "0.11.0"
@@ -306,6 +311,9 @@ aegis = "0.9.20"
 ascon-aead = { version = "0.6.0", default-features = false, features = ["alloc"] }
 crrl = { version = "0.9.0", default-features = false, features = ["p256"] }
 libcrux-p256 = { version = "0.0.9", default-features = false, features = ["expose-hacl"] }
+# X-Wing benchmark comparator (`XWingKemDraft06`) on libcrux ML-KEM.
+libcrux-kem = { version = "=0.0.10", default-features = false }
+libcrux-traits = { version = "=0.0.9", default-features = false }
 serde_json = "1.0.154"
 ring = "0.17.14"
 rsa = { version = "0.9.10", default-features = false, features = ["std", "u64_digit", "sha2"] }
@@ -485,6 +493,11 @@ required-features = ["ml-dsa"]
 name = "composite_mldsa"
 harness = false
 required-features = ["mldsa65-ed25519", "mldsa65-ecdsa-p256"]
+
+[[bench]]
+name = "xwing"
+harness = false
+required-features = ["x-wing"]
 
 [[bench]]
 name = "slhdsa"

@@ -27,7 +27,8 @@ use rscrypto::{
   MlKemError, P256EphemeralSecret, P256PublicKey, P384EphemeralSecret, P384PublicKey, Pbkdf2Sha256, Pbkdf2Sha512,
   Poly1305, Poly1305OneTimeKey, RsaBlindingPair, RsaOaepProfile, RsaPkcs1v15Profile, RsaPrivateKey, RsaPssProfile,
   RsaPublicKeyPolicy, Scrypt, ScryptParams, SecretBytes, Sha256, SipHash24, SipHashKey, SipRandomState,
-  X25519PublicKey, X25519SecretKey, XChaCha20Poly1305, XChaCha20Poly1305Key,
+  X25519PublicKey, X25519SecretKey, XChaCha20Poly1305, XChaCha20Poly1305Key, XWing, XWingCiphertext,
+  XWingDecapsulationKey, XWingEncapsulationKey, XWingError,
   aead::{Nonce96, Nonce128, Nonce192, Nonce256, diag_aes_siv_cmac256_open_portable},
   checksum::Checksum,
   traits::Kem as _,
@@ -483,6 +484,32 @@ pub unsafe extern "C" fn ct_entry_x25519(out: *mut u8, scalar: *const u8, point:
   }
 }
 
+/// X25519 base-point multiplication harness: the public key of a secret scalar.
+///
+/// # Safety
+///
+/// - When non-null, `scalar` must be valid for reads of 32 initialized bytes and must not be
+///   mutated while copied.
+/// - When non-null, `out` must be valid for writes of 32 bytes and must not be accessed while
+///   written.
+/// - Every non-null pointer must remain valid for the duration of the call.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ct_entry_x25519_public_key(out: *mut u8, scalar: *const u8) -> u8 {
+  // SAFETY: The function contract requires a non-null `scalar` to reference exactly 32 readable,
+  // initialized bytes that remain valid while `read_array` copies them into owned storage.
+  let Some(scalar) = (unsafe { read_array::<32>(scalar) }) else {
+    return STATUS_ERR;
+  };
+  let public = X25519SecretKey::from_bytes(scalar).public_key();
+  // SAFETY: The function contract requires a non-null `out` to reference exactly 32 writable bytes
+  // that remain valid and unaccessed while `write_array` copies the public key.
+  if unsafe { write_array(out, public.as_bytes()) } {
+    STATUS_OK
+  } else {
+    STATUS_ERR
+  }
+}
+
 /// P-256 fixed-base public derivation harness.
 ///
 /// Scalar sampling is part of this retained linked-binary root so reachability
@@ -633,7 +660,7 @@ pub unsafe extern "C" fn ct_entry_p384_ecdh_agree(out: *mut u8, scalar: *const u
   }
 }
 
-macro_rules! mlkem_ct_harness {
+macro_rules! kem_ct_harness {
   (
     $keygen:ident,
     $encapsulate:ident,
@@ -641,9 +668,10 @@ macro_rules! mlkem_ct_harness {
     $profile:ty,
     $encapsulation_key:ty,
     $decapsulation_key:ty,
-    $ciphertext:ty
+    $ciphertext:ty,
+    $error:ty
   ) => {
-    /// Generate an ML-KEM key pair through the constant-time C ABI harness.
+    /// Generate a KEM key pair through the constant-time C ABI harness.
     ///
     /// # Safety
     ///
@@ -661,7 +689,7 @@ macro_rules! mlkem_ct_harness {
       decapsulation_key_out: *mut u8,
       random: *const u8,
     ) -> u8 {
-      // SAFETY: Copies ML-KEM key-generation randomness from FFI memory because:
+      // SAFETY: Copies KEM key-generation randomness from FFI memory because:
       // 1. `read_array` rejects a null pointer before reading.
       // 2. The required length is exactly `<$profile>::KEY_GENERATION_RANDOM_SIZE`.
       // 3. The returned array is owned by this harness function before use.
@@ -671,19 +699,19 @@ macro_rules! mlkem_ct_harness {
 
       let Ok((encapsulation_key, decapsulation_key)) = <$profile>::generate_keypair(|out| {
         out.copy_from_slice(&random);
-        Ok::<(), MlKemError>(())
+        Ok::<(), $error>(())
       }) else {
         return STATUS_ERR;
       };
 
-      // SAFETY: Writes the ML-KEM encapsulation key to FFI memory because:
+      // SAFETY: Writes the KEM encapsulation key to FFI memory because:
       // 1. The caller contract requires exactly `<$profile>::ENCAPSULATION_KEY_SIZE` writable bytes.
       // 2. `write_array` rejects a null pointer before writing.
       // 3. The source bytes are initialized and live for this call.
       if !unsafe { write_array(encapsulation_key_out, encapsulation_key.as_bytes()) } {
         return STATUS_ERR;
       }
-      // SAFETY: Writes the ML-KEM decapsulation key to FFI memory because:
+      // SAFETY: Writes the KEM decapsulation key to FFI memory because:
       // 1. The caller contract requires exactly `<$profile>::DECAPSULATION_KEY_SIZE` writable bytes.
       // 2. `write_array` rejects a null pointer before writing.
       // 3. The source bytes are initialized and live for this call.
@@ -694,7 +722,7 @@ macro_rules! mlkem_ct_harness {
       STATUS_OK
     }
 
-    /// Encapsulate an ML-KEM shared secret through the constant-time C ABI harness.
+    /// Encapsulate a KEM shared secret through the constant-time C ABI harness.
     ///
     /// # Safety
     ///
@@ -714,7 +742,7 @@ macro_rules! mlkem_ct_harness {
       random: *const u8,
     ) -> u8 {
       let Some(encapsulation_key) =
-        // SAFETY: Copies the ML-KEM encapsulation key from FFI memory because:
+        // SAFETY: Copies the KEM encapsulation key from FFI memory because:
         // 1. `read_array` rejects a null pointer before reading.
         // 2. The function contract requires exactly `<$profile>::ENCAPSULATION_KEY_SIZE` readable
         //    bytes.
@@ -723,7 +751,7 @@ macro_rules! mlkem_ct_harness {
       else {
         return STATUS_ERR;
       };
-      // SAFETY: Copies ML-KEM encapsulation randomness from FFI memory because:
+      // SAFETY: Copies KEM encapsulation randomness from FFI memory because:
       // 1. `read_array` rejects a null pointer before reading.
       // 2. The required length is exactly `<$profile>::ENCAPSULATION_RANDOM_SIZE`.
       // 3. The returned array is owned by this harness function before use.
@@ -736,19 +764,19 @@ macro_rules! mlkem_ct_harness {
 
       let Ok((ciphertext, shared_secret)) = <$profile>::encapsulate(&encapsulation_key, |out| {
         out.copy_from_slice(&random);
-        Ok::<(), MlKemError>(())
+        Ok::<(), $error>(())
       }) else {
         return STATUS_ERR;
       };
 
-      // SAFETY: Writes the ML-KEM ciphertext to FFI memory because:
+      // SAFETY: Writes the KEM ciphertext to FFI memory because:
       // 1. The caller contract requires exactly `<$profile>::CIPHERTEXT_SIZE` writable bytes.
       // 2. `write_array` rejects a null pointer before writing.
       // 3. The source bytes are initialized and live for this call.
       if !unsafe { write_array(ciphertext_out, ciphertext.as_bytes()) } {
         return STATUS_ERR;
       }
-      // SAFETY: Writes the ML-KEM shared secret to FFI memory because:
+      // SAFETY: Writes the KEM shared secret to FFI memory because:
       // 1. The caller contract requires exactly `<$profile>::SHARED_SECRET_SIZE` writable bytes.
       // 2. `write_array` rejects a null pointer before writing.
       // 3. The source bytes are initialized and live for this call.
@@ -759,7 +787,7 @@ macro_rules! mlkem_ct_harness {
       STATUS_OK
     }
 
-    /// Decapsulate an ML-KEM shared secret through the constant-time C ABI harness.
+    /// Decapsulate a KEM shared secret through the constant-time C ABI harness.
     ///
     /// # Safety
     ///
@@ -776,7 +804,7 @@ macro_rules! mlkem_ct_harness {
       ciphertext: *const u8,
     ) -> u8 {
       let Some(decapsulation_key) =
-        // SAFETY: Copies the ML-KEM decapsulation key from FFI memory because:
+        // SAFETY: Copies the KEM decapsulation key from FFI memory because:
         // 1. `read_array` rejects a null pointer before reading.
         // 2. The function contract requires exactly `<$profile>::DECAPSULATION_KEY_SIZE` readable
         //    bytes.
@@ -785,7 +813,7 @@ macro_rules! mlkem_ct_harness {
       else {
         return STATUS_ERR;
       };
-      // SAFETY: Copies the ML-KEM ciphertext from FFI memory because:
+      // SAFETY: Copies the KEM ciphertext from FFI memory because:
       // 1. `read_array` rejects a null pointer before reading.
       // 2. The required length is exactly `<$profile>::CIPHERTEXT_SIZE`.
       // 3. The returned array is owned by this harness function before use.
@@ -798,7 +826,7 @@ macro_rules! mlkem_ct_harness {
         return STATUS_ERR;
       };
 
-      // SAFETY: Writes the ML-KEM shared secret to FFI memory because:
+      // SAFETY: Writes the KEM shared secret to FFI memory because:
       // 1. The caller contract requires exactly `<$profile>::SHARED_SECRET_SIZE` writable bytes.
       // 2. `write_array` rejects a null pointer before writing.
       // 3. The source bytes are initialized and live for this call.
@@ -811,32 +839,45 @@ macro_rules! mlkem_ct_harness {
   };
 }
 
-mlkem_ct_harness!(
+kem_ct_harness!(
   ct_entry_mlkem512_keygen,
   ct_entry_mlkem512_encapsulate,
   ct_entry_mlkem512_decapsulate,
   MlKem512,
   MlKem512EncapsulationKey,
   MlKem512DecapsulationKey,
-  MlKem512Ciphertext
+  MlKem512Ciphertext,
+  MlKemError
 );
-mlkem_ct_harness!(
+kem_ct_harness!(
   ct_entry_mlkem768_keygen,
   ct_entry_mlkem768_encapsulate,
   ct_entry_mlkem768_decapsulate,
   MlKem768,
   MlKem768EncapsulationKey,
   MlKem768DecapsulationKey,
-  MlKem768Ciphertext
+  MlKem768Ciphertext,
+  MlKemError
 );
-mlkem_ct_harness!(
+kem_ct_harness!(
   ct_entry_mlkem1024_keygen,
   ct_entry_mlkem1024_encapsulate,
   ct_entry_mlkem1024_decapsulate,
   MlKem1024,
   MlKem1024EncapsulationKey,
   MlKem1024DecapsulationKey,
-  MlKem1024Ciphertext
+  MlKem1024Ciphertext,
+  MlKemError
+);
+kem_ct_harness!(
+  ct_entry_xwing_keygen,
+  ct_entry_xwing_encapsulate,
+  ct_entry_xwing_decapsulate,
+  XWing,
+  XWingEncapsulationKey,
+  XWingDecapsulationKey,
+  XWingCiphertext,
+  XWingError
 );
 
 /// Run the ML-KEM forward-NTT diagnostic through the constant-time C ABI harness.

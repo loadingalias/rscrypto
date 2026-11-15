@@ -1,15 +1,15 @@
 //! Secret SHA-3 and SHAKE hashing in a scrubbed out-of-line worker.
 //!
-//! ML-DSA and the ML-KEM G, J, and PRF functions hash secrets through this
-//! module. Each entry point builds the permuter in its own frame, so a
-//! process's first capability detection runs and returns before any secret is
-//! loaded. An `#[inline(never)]` worker then absorbs and squeezes, and
-//! `scrub_dead_stack`, called from the same frame, overwrites the worker's dead
-//! frame. That covers compiler-created Keccak lane spills that no named state
-//! owner can clear. `just stack-frames` checks on each reviewed target that
-//! every worker reaches no detection and fits within the scrub; changes to
-//! these functions require that review. Public SHA-3 and SHAKE hashing does
-//! not use this module.
+//! ML-DSA, the ML-KEM G, J, and PRF functions, and the X-Wing key expansion
+//! and combiner hash secrets through this module. Each entry point builds the
+//! permuter in its own frame, so a process's first capability detection runs
+//! and returns before any secret is loaded. An `#[inline(never)]` worker then
+//! absorbs and squeezes, and `scrub_dead_stack`, called from the same frame,
+//! overwrites the worker's dead frame. That covers compiler-created Keccak lane
+//! spills that no named state owner can clear. `just stack-frames` checks on
+//! each reviewed target that every worker reaches no detection and fits within
+//! the scrub; changes to these functions require that review. Public SHA-3 and
+//! SHAKE hashing does not use this module.
 
 #[cfg(any(feature = "ml-kem", feature = "ml-dsa"))]
 use super::KeccakXofImpl;
@@ -45,6 +45,16 @@ pub(crate) fn sha3_512(input: &[u8], out: &mut [u8; 64]) {
   // A SHA-3 digest no longer than the rate is the first squeeze of the sponge
   // padded with the SHA-3 suffix.
   absorb_and_squeeze::<72>(permuter, 0x06, &[input], out);
+  scrub_dead_stack::<STACK_SCRUB_WORDS>();
+}
+
+/// SHA3-256 of the concatenated `parts`, the X-Wing combiner.
+#[cfg(feature = "x-wing")]
+pub(crate) fn sha3_256(parts: &[&[u8]], out: &mut [u8; 32]) {
+  let permuter = PlatformPermuter::default();
+  // SHA3-256 has the SHAKE256 rate, so this is the SHAKE256 worker with the
+  // SHA-3 suffix. Its 32-byte digest is the first squeeze.
+  absorb_and_squeeze::<SHAKE256_RATE>(permuter, 0x06, parts, out);
   scrub_dead_stack::<STACK_SCRUB_WORDS>();
 }
 
