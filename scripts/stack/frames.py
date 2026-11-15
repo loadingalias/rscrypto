@@ -1500,6 +1500,11 @@ WHOLE_CALL_GROUPS = {
     for cipher in ("aes128gcm", "aes256gcm", "chacha20poly1305")
     for operation in ("seal", "open")
   ],
+  "composite": [
+    f"rscrypto_frame_review::composite_{traditional}_{operation}"
+    for traditional in ("ed25519", "p256")
+    for operation in ("sign", "sign_hedged", "sign_prepared", "verify")
+  ],
 }
 
 
@@ -1617,7 +1622,7 @@ def review_preparation(
     "target": program.target, "whole_calls": reports, "stack_cap_bytes": STACK_CAP,
     "declared_libc_edges": sorted(DECLARED_LIBC),
     "allowances": allowances,
-    "scope": "Linked public-operation wrappers (ML-DSA preparation including owned/borrowed destruction, ML-DSA signing and verification, ML-KEM, AEAD record seal and open); not enclosing TLS, worker, signal-handler or arbitrary Allocator callbacks. All syntactically reachable return/error paths are included; abort paths are listed separately. Unknown frames never constitute a bound. Public storage supplied by the caller is outside the borrowed call's frame. Owned bounds cover the artifact's own code and charge each declared libc edge only its caller's frame and call slot; they are not whole-call bounds until every reached declared edge has a measured allowance for the deployed libc.",
+    "scope": "Linked public-operation wrappers (ML-DSA preparation including owned/borrowed destruction, ML-DSA signing and verification, ML-KEM, X-Wing, AEAD record seal and open, composite ML-DSA signing and verification); not enclosing TLS, worker, signal-handler or arbitrary Allocator callbacks. All syntactically reachable return/error paths are included; abort paths are listed separately. Unknown frames never constitute a bound. Public storage supplied by the caller is outside the borrowed call's frame. Owned bounds cover the artifact's own code and charge each declared libc edge only its caller's frame and call slot; they are not whole-call bounds until every reached declared edge has a measured allowance for the deployed libc.",
     "passed": all(item["passed"] for item in reports),
   }
 

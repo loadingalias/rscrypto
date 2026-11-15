@@ -506,8 +506,10 @@ Release callers, and manual runs with no diagnostic input, keep the full require
 `mldsa-preparation` (owned and borrowed preparation for all three parameter sets, with separate
 roots that include successful destruction), `mldsa-signing` (deterministic, prepared hedged
 signing, and verification), `mlkem` (key generation, encapsulation, decapsulation, and prepared
-decapsulation for all three sets), and `aead-records` (in-place seal and open for AES-128-GCM,
-AES-256-GCM, and ChaCha20-Poly1305). `--mldsa-preparation` is shorthand for its first group.
+decapsulation for all three sets), `xwing` (the same four X-Wing operations), `aead-records`
+(in-place seal and open for AES-128-GCM, AES-256-GCM, and ChaCha20-Poly1305), and `composite`
+(deterministic, hedged, and prepared signing, and verification, for ML-DSA-65 with Ed25519 and
+with ECDSA P-256). `--mldsa-preparation` is shorthand for its first group.
 Both kinds include recoverable error branches. `--evidence DIR` retains the binary,
 its hash, symbol tables, relocations, disassembly, complete parsed call graph,
 source hashes, compiler identity, and reports in a new directory.
@@ -515,8 +517,8 @@ source hashes, compiler identity, and reports in a new directory.
 - It builds `tools/frame-review` with the shipping release profile, `-Z emit-stack-sizes`, and
   `-C llvm-args=-emit-jump-table-sizes-section`. Each flag adds only a non-allocated ELF section
   of compiler records: frame sizes, and the address and entry count of each jump table.
-  The binary runs every ML-DSA and ML-KEM public operation once, and AES-GCM and
-  ChaCha20-Poly1305 seal and open at lengths that reach each length-selected worker.
+  The binary runs every ML-DSA, ML-KEM, X-Wing, and composite ML-DSA public operation once, and
+  AES-GCM and ChaCha20-Poly1305 seal and open at lengths that reach each length-selected worker.
 - A boundary can name the targets whose artifact links its workers, and whether a
   `--portable` build does; elsewhere it is skipped rather than failed.
 - Linux targets other than the host link through `ct/zig-cc.sh`, with the pinned Zig on the Mac.

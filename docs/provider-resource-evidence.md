@@ -196,11 +196,12 @@ x86-64 bound and entry depth above is unchanged. x86-64, portable POWER,
 portable IBM Z, and both RISC-V configurations reach no detection edge, so
 their roots need only libc allowances.
 
-`--whole-calls all` adds 27 roots per configuration beyond preparation:
+`--whole-calls all` adds 39 roots per configuration beyond preparation:
 ML-DSA deterministic signing, prepared hedged signing, and verification; ML-KEM
-key generation, encapsulation, decapsulation, and prepared decapsulation; and
-in-place AEAD record seal and open. Largest owned bound, native / portable,
-with the number of roots that have one:
+and X-Wing key generation, encapsulation, decapsulation, and prepared
+decapsulation; in-place AEAD record seal and open; and composite ML-DSA
+signing and verification. Largest owned bound of three groups, native /
+portable, with the number of roots that have one:
 
 | Linux target | ML-DSA signing (9 roots) | ML-KEM (12 roots) | AEAD records (6 roots) |
 | --- | ---: | ---: | ---: |
@@ -228,7 +229,7 @@ through first-call detection on native AArch64, POWER, and IBM Z. Portable IBM
 Z AEAD roots reach no declared edge and have static whole-call bounds: 3,760 B
 for AES-GCM seal, 3,776 B for AES-GCM open, and 856 B for ChaCha20-Poly1305.
 
-CI enforces these owned bounds. Its `stack` row reviews all 39 whole-call roots
+CI enforces these owned bounds. Its `stack` row reviews all 51 whole-call roots
 of both builds on the five Linux targets and fails when a bound is unresolved
 or exceeds its budget in
 [`.config/stack-budgets.json`](../.config/stack-budgets.json): the reviewed
@@ -262,6 +263,26 @@ declared edge, so they also have static whole-call bounds, up to 59,080 B for
 ML-DSA-87 deterministic signing. Every ML-KEM root now has an owned bound: the tool
 follows a GOT-loaded import through full-width copies into caller-saved
 registers, which calls and implicit register writers end.
+
+Every composite ML-DSA root has an owned bound and a whole-call bound on every
+target and configuration (`just ci-stack`, 2026-11-15). The 8 roots are
+deterministic, hedged, and prepared signing, and verification, for ML-DSA-65
+with Ed25519 and with ECDSA P-256. On x86-64, SHA-512 selects one of five
+kernels through an exhaustive `match`. LLVM lowers it to a 13-entry jump table
+without a bound check. The tool takes the entry count from the compiler's
+`.llvm_jump_table_sizes` record and lists each such table as an unchecked jump
+table among the assumptions. That bound assumes that the index is in range,
+unless the program already has undefined behavior. Largest owned bound, native
+/ portable. The whole-call bounds are equal, except for POWER verification,
+where the libc allowances add 192 B (native) and 64 B (portable):
+
+| Linux target | Ed25519 composite (4 roots) | P-256 composite (4 roots) |
+| --- | ---: | ---: |
+| x86-64 GNU | 53,048 / 52,280 B | 52,984 / 52,216 B |
+| AArch64 GNU | 53,456 / 52,784 B | 53,264 / 52,592 B |
+| POWER64LE GNU | 53,088 / 53,024 B | 53,056 / 52,992 B |
+| IBM Z GNU | 52,808 / 52,808 B | 52,752 / 52,752 B |
+| RISC-V 64 GNU | 52,560 / 52,432 B | 52,480 / 52,352 B |
 
 These results come from the tree that reads the capability cache once on both
 paths (2026-11-04). An inlined `platform::caps()` check no longer copies the

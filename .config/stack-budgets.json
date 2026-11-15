@@ -3,6 +3,14 @@
   "targets": {
     "aarch64-unknown-linux-gnu": {
       "native": {
+        "composite_ed25519_sign": 60416,
+        "composite_ed25519_sign_hedged": 60416,
+        "composite_ed25519_sign_prepared": 40960,
+        "composite_ed25519_verify": 26624,
+        "composite_p256_sign": 60416,
+        "composite_p256_sign_hedged": 60416,
+        "composite_p256_sign_prepared": 40960,
+        "composite_p256_verify": 28672,
         "mlkem_1024_decapsulate": 37888,
         "mlkem_1024_encapsulate": 44032,
         "mlkem_1024_generate": 34816,
@@ -48,6 +56,14 @@
         "xwing_prepared_decapsulate": 14336
       },
       "portable": {
+        "composite_ed25519_sign": 59392,
+        "composite_ed25519_sign_hedged": 59392,
+        "composite_ed25519_sign_prepared": 39936,
+        "composite_ed25519_verify": 25600,
+        "composite_p256_sign": 59392,
+        "composite_p256_sign_hedged": 59392,
+        "composite_p256_sign_prepared": 39936,
+        "composite_p256_verify": 22528,
         "mlkem_1024_decapsulate": 37888,
         "mlkem_1024_encapsulate": 41984,
         "mlkem_1024_generate": 27648,
@@ -95,6 +111,14 @@
     },
     "powerpc64le-unknown-linux-gnu": {
       "native": {
+        "composite_ed25519_sign": 60416,
+        "composite_ed25519_sign_hedged": 60416,
+        "composite_ed25519_sign_prepared": 39936,
+        "composite_ed25519_verify": 25600,
+        "composite_p256_sign": 60416,
+        "composite_p256_sign_hedged": 60416,
+        "composite_p256_sign_prepared": 39936,
+        "composite_p256_verify": 23552,
         "mlkem_1024_decapsulate": 30720,
         "mlkem_1024_encapsulate": 38912,
         "mlkem_1024_generate": 33792,
@@ -140,6 +164,14 @@
         "xwing_prepared_decapsulate": 14336
       },
       "portable": {
+        "composite_ed25519_sign": 60416,
+        "composite_ed25519_sign_hedged": 60416,
+        "composite_ed25519_sign_prepared": 39936,
+        "composite_ed25519_verify": 25600,
+        "composite_p256_sign": 60416,
+        "composite_p256_sign_hedged": 60416,
+        "composite_p256_sign_prepared": 39936,
+        "composite_p256_verify": 23552,
         "mlkem_1024_decapsulate": 30720,
         "mlkem_1024_encapsulate": 38912,
         "mlkem_1024_generate": 26624,
@@ -187,6 +219,14 @@
     },
     "riscv64gc-unknown-linux-gnu": {
       "native": {
+        "composite_ed25519_sign": 59392,
+        "composite_ed25519_sign_hedged": 59392,
+        "composite_ed25519_sign_prepared": 39936,
+        "composite_ed25519_verify": 25600,
+        "composite_p256_sign": 59392,
+        "composite_p256_sign_hedged": 59392,
+        "composite_p256_sign_prepared": 39936,
+        "composite_p256_verify": 22528,
         "mlkem_1024_decapsulate": 28672,
         "mlkem_1024_encapsulate": 35840,
         "mlkem_1024_generate": 32768,
@@ -232,6 +272,14 @@
         "xwing_prepared_decapsulate": 13312
       },
       "portable": {
+        "composite_ed25519_sign": 59392,
+        "composite_ed25519_sign_hedged": 59392,
+        "composite_ed25519_sign_prepared": 39936,
+        "composite_ed25519_verify": 25600,
+        "composite_p256_sign": 59392,
+        "composite_p256_sign_hedged": 59392,
+        "composite_p256_sign_prepared": 39936,
+        "composite_p256_verify": 22528,
         "mlkem_1024_decapsulate": 28672,
         "mlkem_1024_encapsulate": 35840,
         "mlkem_1024_generate": 25600,
@@ -279,6 +327,14 @@
     },
     "s390x-unknown-linux-gnu": {
       "native": {
+        "composite_ed25519_sign": 60416,
+        "composite_ed25519_sign_hedged": 59392,
+        "composite_ed25519_sign_prepared": 39936,
+        "composite_ed25519_verify": 26624,
+        "composite_p256_sign": 59392,
+        "composite_p256_sign_hedged": 59392,
+        "composite_p256_sign_prepared": 39936,
+        "composite_p256_verify": 21504,
         "mlkem_1024_decapsulate": 38912,
         "mlkem_1024_encapsulate": 35840,
         "mlkem_1024_generate": 32768,
@@ -324,6 +380,14 @@
         "xwing_prepared_decapsulate": 14336
       },
       "portable": {
+        "composite_ed25519_sign": 60416,
+        "composite_ed25519_sign_hedged": 59392,
+        "composite_ed25519_sign_prepared": 39936,
+        "composite_ed25519_verify": 26624,
+        "composite_p256_sign": 59392,
+        "composite_p256_sign_hedged": 59392,
+        "composite_p256_sign_prepared": 39936,
+        "composite_p256_verify": 21504,
         "mlkem_1024_decapsulate": 29696,
         "mlkem_1024_encapsulate": 35840,
         "mlkem_1024_generate": 26624,
@@ -371,6 +435,14 @@
     },
     "x86_64-unknown-linux-gnu": {
       "native": {
+        "composite_ed25519_sign": 60416,
+        "composite_ed25519_sign_hedged": 60416,
+        "composite_ed25519_sign_prepared": 39936,
+        "composite_ed25519_verify": 31744,
+        "composite_p256_sign": 60416,
+        "composite_p256_sign_hedged": 60416,
+        "composite_p256_sign_prepared": 39936,
+        "composite_p256_verify": 28672,
         "mlkem_1024_decapsulate": 37888,
         "mlkem_1024_encapsulate": 38912,
         "mlkem_1024_generate": 33792,
@@ -403,7 +475,7 @@
         "seal_chacha20poly1305": 3072,
         "sign_44_deterministic": 39936,
         "sign_44_prepared": 26624,
-        "sign_65_deterministic": 51200,
+        "sign_65_deterministic": 52224,
         "sign_65_prepared": 31744,
         "sign_87_deterministic": 66560,
         "sign_87_prepared": 40960,
@@ -416,6 +488,14 @@
         "xwing_prepared_decapsulate": 13312
       },
       "portable": {
+        "composite_ed25519_sign": 59392,
+        "composite_ed25519_sign_hedged": 59392,
+        "composite_ed25519_sign_prepared": 39936,
+        "composite_ed25519_verify": 25600,
+        "composite_p256_sign": 59392,
+        "composite_p256_sign_hedged": 59392,
+        "composite_p256_sign_prepared": 38912,
+        "composite_p256_verify": 22528,
         "mlkem_1024_decapsulate": 37888,
         "mlkem_1024_encapsulate": 38912,
         "mlkem_1024_generate": 26624,

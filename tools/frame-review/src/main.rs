@@ -13,13 +13,15 @@ use core::hint::black_box;
 
 use rscrypto::aead::{Nonce96, OpenError, SealError, expert::AeadWithNonce};
 use rscrypto::{
-  Aead, Aes128Gcm, Aes128GcmKey, Aes256Gcm, Aes256GcmKey, ChaCha20Poly1305, ChaCha20Poly1305Key, Kem, MlDsa44,
-  MlDsa44PreparedSecretKey, MlDsa44PreparedSecretKeyStorage, MlDsa44PublicKey, MlDsa44SecretKey, MlDsa44Signature,
-  MlDsa65, MlDsa65PreparedSecretKey, MlDsa65PreparedSecretKeyStorage, MlDsa65PublicKey, MlDsa65SecretKey,
-  MlDsa65Signature, MlDsa87, MlDsa87PreparedSecretKey, MlDsa87PreparedSecretKeyStorage, MlDsa87PublicKey,
-  MlDsa87SecretKey, MlDsa87Signature, MlDsaError, MlKem512, MlKem512PreparedDecapsulationKey, MlKem768,
-  MlKem768PreparedDecapsulationKey, MlKem1024, MlKem1024PreparedDecapsulationKey, MlKemError, VerificationError, XWing,
-  XWingError, XWingPreparedDecapsulationKey,
+  Aead, Aes128Gcm, Aes128GcmKey, Aes256Gcm, Aes256GcmKey, ChaCha20Poly1305, ChaCha20Poly1305Key, CompositeMlDsaError,
+  Kem, MlDsa44, MlDsa44PreparedSecretKey, MlDsa44PreparedSecretKeyStorage, MlDsa44PublicKey, MlDsa44SecretKey,
+  MlDsa44Signature, MlDsa65, MlDsa65EcdsaP256, MlDsa65EcdsaP256PreparedSecretKey, MlDsa65EcdsaP256PublicKey,
+  MlDsa65EcdsaP256SecretKey, MlDsa65EcdsaP256Signature, MlDsa65Ed25519, MlDsa65Ed25519PreparedSecretKey,
+  MlDsa65Ed25519PublicKey, MlDsa65Ed25519SecretKey, MlDsa65Ed25519Signature, MlDsa65PreparedSecretKey,
+  MlDsa65PreparedSecretKeyStorage, MlDsa65PublicKey, MlDsa65SecretKey, MlDsa65Signature, MlDsa87,
+  MlDsa87PreparedSecretKey, MlDsa87PreparedSecretKeyStorage, MlDsa87PublicKey, MlDsa87SecretKey, MlDsa87Signature,
+  MlDsaError, MlKem512, MlKem512PreparedDecapsulationKey, MlKem768, MlKem768PreparedDecapsulationKey, MlKem1024,
+  MlKem1024PreparedDecapsulationKey, MlKemError, VerificationError, XWing, XWingError, XWingPreparedDecapsulationKey,
 };
 
 // These wrappers preserve the actual preparation return type and keep an
@@ -255,6 +257,81 @@ record_boundaries!(Aes128Gcm, seal_aes128gcm, open_aes128gcm);
 record_boundaries!(Aes256Gcm, seal_aes256gcm, open_aes256gcm);
 record_boundaries!(ChaCha20Poly1305, seal_chacha20poly1305, open_chacha20poly1305);
 
+// Composite ML-DSA signing and verification, each behind an inspectable call
+// boundary: deterministic and hedged signing from a secret key, signing from a
+// prepared key, and verification.
+macro_rules! composite_boundaries {
+  (
+    $secret:ty, $prepared:ident, $public:ty, $signature:ty, $sign:ident, $sign_hedged:ident, $sign_prepared:ident,
+    $verify:ident
+  ) => {
+    #[inline(never)]
+    fn $sign(key: &$secret, message: &[u8]) -> Result<$signature, CompositeMlDsaError> {
+      key.sign_deterministic(message, b"frame review")
+    }
+
+    #[inline(never)]
+    fn $sign_hedged(key: &$secret, message: &[u8]) -> Result<$signature, CompositeMlDsaError> {
+      key.sign_with(message, b"frame review", |out| {
+        out.fill(black_box(5));
+        Ok(())
+      })
+    }
+
+    #[inline(never)]
+    fn $sign_prepared(
+      key: &$prepared<Box<MlDsa65PreparedSecretKeyStorage>>,
+      message: &[u8],
+    ) -> Result<$signature, CompositeMlDsaError> {
+      key.sign_deterministic(message, b"frame review")
+    }
+
+    #[inline(never)]
+    fn $verify(key: &$public, message: &[u8], signature: &$signature) -> Result<(), VerificationError> {
+      key.verify_with_context(message, b"frame review", signature)
+    }
+  };
+}
+
+composite_boundaries!(
+  MlDsa65Ed25519SecretKey,
+  MlDsa65Ed25519PreparedSecretKey,
+  MlDsa65Ed25519PublicKey,
+  MlDsa65Ed25519Signature,
+  composite_ed25519_sign,
+  composite_ed25519_sign_hedged,
+  composite_ed25519_sign_prepared,
+  composite_ed25519_verify
+);
+composite_boundaries!(
+  MlDsa65EcdsaP256SecretKey,
+  MlDsa65EcdsaP256PreparedSecretKey,
+  MlDsa65EcdsaP256PublicKey,
+  MlDsa65EcdsaP256Signature,
+  composite_p256_sign,
+  composite_p256_sign_hedged,
+  composite_p256_sign_prepared,
+  composite_p256_verify
+);
+
+macro_rules! composite {
+  ($profile:ty, $sign:ident, $sign_hedged:ident, $sign_prepared:ident, $verify:ident) => {{
+    let (public, secret) = <$profile>::generate_keypair(|out| {
+      out.fill(black_box(6));
+      Ok(())
+    })
+    .expect("composite key generation");
+    let message = black_box(&b"frame review"[..]);
+    let signature = $sign(&secret, message).expect("composite signing");
+    $verify(&public, message, &signature).expect("composite verification");
+    let hedged = $sign_hedged(&secret, message).expect("composite hedged signing");
+    $verify(&public, message, &hedged).expect("composite verification");
+    let prepared = secret.prepare_in(Global).expect("composite preparation");
+    let signature = $sign_prepared(&prepared, message).expect("composite prepared signing");
+    $verify(&public, message, &signature).expect("composite verification");
+  }};
+}
+
 macro_rules! mldsa {
   (
     $profile:ty, $storage:ty, $owned:ident, $borrowed:ident, $owned_lifecycle:ident, $borrowed_lifecycle:ident,
@@ -402,4 +479,18 @@ fn main() {
       xwing_prepared_decapsulate(&decapsulation_key.prepare(), &ciphertext).expect("X-Wing prepared decapsulation");
     assert!(shared.ct_eq(&again).declassify());
   }
+  composite!(
+    MlDsa65Ed25519,
+    composite_ed25519_sign,
+    composite_ed25519_sign_hedged,
+    composite_ed25519_sign_prepared,
+    composite_ed25519_verify
+  );
+  composite!(
+    MlDsa65EcdsaP256,
+    composite_p256_sign,
+    composite_p256_sign_hedged,
+    composite_p256_sign_prepared,
+    composite_p256_verify
+  );
 }
