@@ -506,10 +506,12 @@ Release callers, and manual runs with no diagnostic input, keep the full require
 `mldsa-preparation` (owned and borrowed preparation for all three parameter sets, with separate
 roots that include successful destruction), `mldsa-signing` (deterministic, prepared hedged
 signing, and verification), `mlkem` (key generation, encapsulation, decapsulation, and prepared
-decapsulation for all three sets), `xwing` (the same four X-Wing operations), `aead-records`
-(in-place seal and open for AES-128-GCM, AES-256-GCM, and ChaCha20-Poly1305), and `composite`
-(deterministic, hedged, and prepared signing, and verification, for ML-DSA-65 with Ed25519 and
-with ECDSA P-256). `--mldsa-preparation` is shorthand for its first group.
+decapsulation for all three sets), `xwing` (the same four X-Wing operations), `hpke` (HPKE
+DeriveKeyPair, single-shot seal, and single-shot open for the X25519 and X-Wing suites), `hpke-in`
+(DeriveKeyPair and sender and receiver setup with a caller's allocator, for both suites),
+`aead-records` (in-place seal and open for AES-128-GCM, AES-256-GCM, and ChaCha20-Poly1305), and
+`composite` (deterministic, hedged, and prepared signing, and verification, for ML-DSA-65 with
+Ed25519 and with ECDSA P-256). `--mldsa-preparation` is shorthand for its first group.
 Both kinds include recoverable error branches. `--evidence DIR` retains the binary,
 its hash, symbol tables, relocations, disassembly, complete parsed call graph,
 source hashes, compiler identity, and reports in a new directory.
@@ -517,7 +519,7 @@ source hashes, compiler identity, and reports in a new directory.
 - It builds `tools/frame-review` with the shipping release profile, `-Z emit-stack-sizes`, and
   `-C llvm-args=-emit-jump-table-sizes-section`. Each flag adds only a non-allocated ELF section
   of compiler records: frame sizes, and the address and entry count of each jump table.
-  The binary runs every ML-DSA, ML-KEM, X-Wing, and composite ML-DSA public operation once, and
+  The binary runs every ML-DSA, ML-KEM, X-Wing, HPKE, and composite ML-DSA public operation once, and
   AES-GCM and ChaCha20-Poly1305 seal and open at lengths that reach each length-selected worker.
 - A boundary can name the targets whose artifact links its workers, and whether a
   `--portable` build does; elsewhere it is skipped rather than failed.
@@ -622,6 +624,13 @@ The declared edges are a fixed set: the libc imports `calloc`, `malloc`, `free`,
 relocation or a PLT stub. `getauxval` is the AArch64, POWER, and IBM Z Linux
 capability read.
 
+The `hpke-in` roots pass the frame review's bump arena, `ReviewArena`, as their
+allocator. The arena reserves blocks from a static buffer and never frees them.
+So these roots reach no allocator edge, such as `posix_memalign`, and their bounds
+cover rscrypto's frames plus the arena's. A caller that passes its own allocator to
+an `_in` form adds that allocator's depth. Each `hpke-in` root also drops what it
+creates, so the drop and the deallocation are in its call graph.
+
 Cold first-call detection is otherwise owned code: the lock-free capability
 cache, CPUID, STFLE, RISC-V hwprobe, and the AArch64 `DataIndependentTiming` probe.
 Detection reads no environment variable.
@@ -654,8 +663,9 @@ Assumptions and limits:
 - The review covers x86-64, AArch64, POWER, IBM Z, and RISC-V 64 Linux ELF binaries.
 - It is static build evidence for the reviewed compiler, target, and features.
   It does not run the binary.
-  The preparation roots use `Global`; they cannot bound arbitrary caller-supplied
-  allocators, enclosing TLS/worker frames, or asynchronous signal handlers.
+  The preparation roots use `Global`, and the `hpke-in` roots use the review arena.
+  Neither bounds an arbitrary caller-supplied allocator, enclosing TLS/worker frames,
+  or asynchronous signal handlers.
   Caller-owned prepared storage is outside the borrowed preparation call's frame.
   `--binary` reviews a supplied artifact; its build configuration and source
   identity need separate evidence.

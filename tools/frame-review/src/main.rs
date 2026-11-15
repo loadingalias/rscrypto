@@ -9,19 +9,24 @@
 extern crate alloc;
 
 use alloc::alloc::Global;
+use alloc::boxed::Box;
+use core::alloc::{AllocError, Allocator, Layout};
+use core::cell::UnsafeCell;
 use core::hint::black_box;
+use core::ptr::NonNull;
+use core::sync::atomic::{AtomicUsize, Ordering};
 
 use rscrypto::aead::{Nonce96, OpenError, SealError, expert::AeadWithNonce};
 use rscrypto::{
   Aead, Aes128Gcm, Aes128GcmKey, Aes256Gcm, Aes256GcmKey, ChaCha20Poly1305, ChaCha20Poly1305Key, CompositeMlDsaError,
-  HpkeError, HpkeSuite, HpkeX25519HkdfSha256Aes128Gcm, HpkeXWingHkdfSha256ChaCha20Poly1305, Kem, MlDsa44,
-  MlDsa44PreparedSecretKey, MlDsa44PreparedSecretKeyStorage, MlDsa44PublicKey, MlDsa44SecretKey, MlDsa44Signature,
-  MlDsa65, MlDsa65EcdsaP256, MlDsa65EcdsaP256PreparedSecretKey, MlDsa65EcdsaP256PublicKey, MlDsa65EcdsaP256SecretKey,
-  MlDsa65EcdsaP256Signature, MlDsa65Ed25519, MlDsa65Ed25519PreparedSecretKey, MlDsa65Ed25519PublicKey,
-  MlDsa65Ed25519SecretKey, MlDsa65Ed25519Signature, MlDsa65PreparedSecretKey, MlDsa65PreparedSecretKeyStorage,
-  MlDsa65PublicKey, MlDsa65SecretKey, MlDsa65Signature, MlDsa87, MlDsa87PreparedSecretKey,
-  MlDsa87PreparedSecretKeyStorage, MlDsa87PublicKey, MlDsa87SecretKey, MlDsa87Signature, MlDsaError, MlKem512,
-  MlKem512PreparedDecapsulationKey, MlKem768, MlKem768PreparedDecapsulationKey, MlKem1024,
+  HpkeError, HpkeReceiver, HpkeSender, HpkeSuite, HpkeX25519HkdfSha256Aes128Gcm, HpkeXWingHkdfSha256ChaCha20Poly1305,
+  Kem, MlDsa44, MlDsa44PreparedSecretKey, MlDsa44PreparedSecretKeyStorage, MlDsa44PublicKey, MlDsa44SecretKey,
+  MlDsa44Signature, MlDsa65, MlDsa65EcdsaP256, MlDsa65EcdsaP256PreparedSecretKey, MlDsa65EcdsaP256PublicKey,
+  MlDsa65EcdsaP256SecretKey, MlDsa65EcdsaP256Signature, MlDsa65Ed25519, MlDsa65Ed25519PreparedSecretKey,
+  MlDsa65Ed25519PublicKey, MlDsa65Ed25519SecretKey, MlDsa65Ed25519Signature, MlDsa65PreparedSecretKey,
+  MlDsa65PreparedSecretKeyStorage, MlDsa65PublicKey, MlDsa65SecretKey, MlDsa65Signature, MlDsa87,
+  MlDsa87PreparedSecretKey, MlDsa87PreparedSecretKeyStorage, MlDsa87PublicKey, MlDsa87SecretKey, MlDsa87Signature,
+  MlDsaError, MlKem512, MlKem512PreparedDecapsulationKey, MlKem768, MlKem768PreparedDecapsulationKey, MlKem1024,
   MlKem1024PreparedDecapsulationKey, MlKemError, VerificationError, XWing, XWingError, XWingPreparedDecapsulationKey,
 };
 
@@ -271,6 +276,113 @@ hpke_boundaries!(
   hpke_xwing_derive_keypair,
   hpke_xwing_seal,
   hpke_xwing_open
+);
+
+const ARENA_BYTES: usize = 256 * 1024;
+
+/// The allocator of the HPKE `_in` roots: a bump arena over a static buffer.
+///
+/// With a caller's allocator, an `_in` root reaches no libc allocator edge,
+/// so its bound covers rscrypto's frames and this arena's. `allocate` reserves
+/// the next block that fits the layout's size and alignment, and fails when
+/// the buffer is full. `deallocate` keeps the block reserved.
+struct ReviewArena {
+  buffer: UnsafeCell<[u8; ARENA_BYTES]>,
+  used: AtomicUsize,
+}
+
+// SAFETY: `ReviewArena` writes no byte of `buffer`. Each byte belongs to at
+// most one block: `allocate` reserves `[start, end)` with one atomic update of
+// `used`, and `used` never decreases. So threads that share the arena reach
+// each byte only through the single block that holds it.
+unsafe impl Sync for ReviewArena {}
+
+static ARENA: ReviewArena = ReviewArena {
+  buffer: UnsafeCell::new([0; ARENA_BYTES]),
+  used: AtomicUsize::new(0),
+};
+
+// SAFETY: A block is a reserved range of the static `buffer`, so it stays
+// valid for the whole program, and `deallocate` never makes it available
+// again. `&ReviewArena` is `Copy`; every copy refers to the one `ARENA` and
+// shares its reservations, so a block from any copy is valid for all of them.
+unsafe impl Allocator for &ReviewArena {
+  fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
+    let base = self.buffer.get().cast::<u8>();
+    let mut start = 0;
+    self
+      .used
+      .try_update(Ordering::Relaxed, Ordering::Relaxed, |used| {
+        let aligned = base
+          .addr()
+          .checked_add(used)?
+          .checked_next_multiple_of(layout.align())?;
+        start = aligned.checked_sub(base.addr())?;
+        let end = start.checked_add(layout.size())?;
+        (end <= ARENA_BYTES).then_some(end)
+      })
+      .map_err(|_| AllocError)?;
+    // `start + size <= ARENA_BYTES`, so the block lies inside `buffer` and keeps its provenance.
+    let block = NonNull::new(base.wrapping_add(start)).ok_or(AllocError)?;
+    Ok(NonNull::slice_from_raw_parts(block, layout.size()))
+  }
+
+  unsafe fn deallocate(&self, _block: NonNull<u8>, _layout: Layout) {}
+}
+
+// The HPKE `_in` operations with the review arena. Each root also drops what
+// it creates, so the drop and the arena's deallocation are in its call graph.
+macro_rules! hpke_in_boundaries {
+  ($suite:ty, $derive:ident, $sender:ident, $receiver:ident) => {
+    #[inline(never)]
+    fn $derive(ikm: &[u8]) {
+      let private_key = <$suite>::derive_keypair_in(ikm, &ARENA);
+      black_box(&private_key);
+      drop(private_key);
+    }
+
+    #[inline(never)]
+    fn $sender(
+      public_key: &<$suite as HpkeSuite>::PublicKey,
+    ) -> Result<<$suite as HpkeSuite>::Encapsulation, HpkeError> {
+      let (encapsulation, sender) = HpkeSender::<$suite>::setup_in(
+        public_key,
+        b"info",
+        |out: &mut [u8]| {
+          out.fill(black_box(7));
+          Ok(())
+        },
+        &ARENA,
+      )?;
+      black_box(&sender);
+      drop(sender);
+      Ok(encapsulation)
+    }
+
+    #[inline(never)]
+    fn $receiver(
+      encapsulation: &<$suite as HpkeSuite>::Encapsulation,
+      private_key: &<$suite as HpkeSuite>::PrivateKey,
+    ) -> Result<(), HpkeError> {
+      let receiver = HpkeReceiver::<$suite>::setup_in(encapsulation, private_key, b"info", &ARENA)?;
+      black_box(&receiver);
+      drop(receiver);
+      Ok(())
+    }
+  };
+}
+
+hpke_in_boundaries!(
+  HpkeX25519HkdfSha256Aes128Gcm,
+  hpke_x25519_derive_keypair_in,
+  hpke_x25519_sender_in,
+  hpke_x25519_receiver_in
+);
+hpke_in_boundaries!(
+  HpkeXWingHkdfSha256ChaCha20Poly1305,
+  hpke_xwing_derive_keypair_in,
+  hpke_xwing_sender_in,
+  hpke_xwing_receiver_in
 );
 
 macro_rules! record_boundaries {
@@ -547,10 +659,16 @@ fn main() {
       hpke_x25519_seal(&recipient.public_key(), &plaintext, &mut ciphertext).expect("HPKE X25519 seal");
     hpke_x25519_open(&encapsulation, &recipient, &ciphertext, &mut opened).expect("HPKE X25519 open");
     assert_eq!(opened, plaintext);
+    hpke_x25519_derive_keypair_in(black_box(&[8; 32]));
+    let encapsulation = hpke_x25519_sender_in(&recipient.public_key()).expect("HPKE X25519 sender setup");
+    hpke_x25519_receiver_in(&encapsulation, &recipient).expect("HPKE X25519 receiver setup");
     let recipient = hpke_xwing_derive_keypair(black_box(&[9; 32]));
     let public_key = recipient.encapsulation_key().prepare().expect("derived X-Wing key");
     let encapsulation = hpke_xwing_seal(&public_key, &plaintext, &mut ciphertext).expect("HPKE X-Wing seal");
     hpke_xwing_open(&encapsulation, &recipient, &ciphertext, &mut opened).expect("HPKE X-Wing open");
     assert_eq!(opened, plaintext);
+    hpke_xwing_derive_keypair_in(black_box(&[9; 32]));
+    let encapsulation = hpke_xwing_sender_in(&public_key).expect("HPKE X-Wing sender setup");
+    hpke_xwing_receiver_in(&encapsulation, &recipient).expect("HPKE X-Wing receiver setup");
   }
 }

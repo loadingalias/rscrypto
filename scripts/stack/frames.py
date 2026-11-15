@@ -1519,6 +1519,11 @@ WHOLE_CALL_GROUPS = {
     for suite in ("x25519", "xwing")
     for operation in ("derive_keypair", "seal", "open")
   ],
+  "hpke-in": [
+    f"rscrypto_frame_review::hpke_{suite}_{operation}_in"
+    for suite in ("x25519", "xwing")
+    for operation in ("derive_keypair", "sender", "receiver")
+  ],
   "aead-records": [
     f"rscrypto_frame_review::{operation}_{cipher}"
     for cipher in ("aes128gcm", "aes256gcm", "chacha20poly1305")
