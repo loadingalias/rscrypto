@@ -815,8 +815,11 @@ class ElfImage:
 #   ("address", base, scale, bound) base + scale * i
 #   ("entry", base, scale, bound) the signed 32-bit table entry at base + scale * i
 #   ("target", origin, entry)    origin + entry
+#   ("unknown",)                 a loaded value; every step that reads it fails
 JUMP_TABLE_STEPS = 12
 RISCV_STORES = {"sd", "sw", "sh", "sb", "fsd", "fsw", "c.sd", "c.sw", "c.sdsp", "c.swsp", "c.fsd", "c.fsdsp"}
+RISCV_LOADS = {"ld", "lw", "lwu", "lh", "lhu", "lb", "lbu", "c.ld", "c.lw", "c.ldsp", "c.lwsp"}
+S390X_LOADS = {"lg", "lgf", "llgf", "l", "ly", "lh", "lhy", "lgh", "llh", "llgh", "lb", "lgb", "llc", "llgc"}
 
 
 def x86_jump_table_step(state: dict, mnemonic: str, operands: str) -> bool:
@@ -869,6 +872,9 @@ def s390x_jump_table_step(state: dict, mnemonic: str, operands: str) -> bool:
       return False
     state[destination] = ("target", origin[1], ("entry", consts[0][1], indexes[0][1], indexes[0][2]))
     return True
+  if mnemonic in S390X_LOADS and len(parts) == 2 and "(" in parts[1]:
+    state[parts[0]] = ("unknown",)
+    return True
   return False
 
 
@@ -899,9 +905,11 @@ def riscv_jump_table_step(state: dict, mnemonic: str, operands: str, address: in
   if mnemonic in {"lw", "c.lw"} and len(parts) == 2:
     match = re.fullmatch(r"0x0\((\w+)\)|0\((\w+)\)", parts[1])
     source = state.get(match.group(1) or match.group(2)) if match else None
-    if source is None or source[0] != "address":
-      return False
-    state[parts[0]] = ("entry", source[1], source[2], source[3])
+    if source is not None and source[0] == "address":
+      state[parts[0]] = ("entry", source[1], source[2], source[3])
+      return True
+  if mnemonic in RISCV_LOADS and len(parts) == 2 and "(" in parts[1]:
+    state[parts[0]] = ("unknown",)
     return True
   return False
 
@@ -954,14 +962,17 @@ class UncheckedIndex(dict):
 
 
 def table_jump(
-  program: Program, rows: list[tuple[int, str, str]], start: int, position: int, state: dict
+  program: Program, rows: list[tuple[int, str, str]], start: int, position: int, state: dict, joins_at_start: bool
 ) -> tuple | None:
   """The symbolic target of the jump at `rows[position]` after the table steps from `rows[start]`.
 
-  None when a branch enters the span, a row is not a table step or a store,
-  or the jump register does not hold a table entry plus its origin.
+  None when a branch enters the span, a row is not a step that the target's
+  table rules accept, or the jump register does not hold a table entry plus
+  its origin.
+  With `joins_at_start`, a branch may enter at `rows[start]` itself.
   """
-  if any(rows[index][0] in program.branch_targets for index in range(start, position + 1)):
+  first = start + 1 if joins_at_start else start
+  if any(rows[index][0] in program.branch_targets for index in range(first, position + 1)):
     return None
   for address, mnemonic, operands in rows[start:position]:
     if program.target.startswith("x86_64"):
@@ -989,15 +1000,19 @@ def jump_table_targets(
   """Every destination of the register jump at `source` through a relative jump table, and whether it is checked.
 
   A checked jump follows an unsigned bound check of an index register within
-  a few instructions; the steps start at the check's fall-through. With no
-  check in that window, the steps may start at any row, every register they
-  read before writing holds the index, and the table base must have an entry
-  count in the compiler's record. LLVM omits the check only when the index
-  cannot leave the table unless the program already has undefined behavior.
-  Either way, every row from the start through the jump must be a table step
-  or a store, and no branch may enter. Each entry for every index is read from
-  the linked image; the destinations are returned only when every entry is
-  readable.
+  a few instructions; the steps start at the check's fall-through, and no
+  branch may enter there. Without a check that proves this, the steps may start
+  at any row, every register they read before writing holds the index, and
+  the table base must have an entry count in the compiler's record. A branch
+  may enter at that start row, because the record, not the path, bounds the
+  index. The index must be scaled by exactly the 4-byte entry width, because
+  the record counts entries. LLVM omits the check only when the index cannot
+  leave the table unless the program already has undefined behavior. Either
+  way, every row from the start through the jump must be a table step, a
+  store, or on IBM Z and RISC-V a load, and no branch may enter after the
+  start. A load writes an unknown value, which no later step accepts. Each
+  entry for every index is read from the linked image; the destinations are
+  returned only when every entry is readable.
   """
   rows = instruction_rows(function)
   position = next((index for index, row in enumerate(rows) if row[0] == source), None)
@@ -1008,11 +1023,15 @@ def jump_table_targets(
   check, bound = next(checks, (None, None))
   value = None
   if check is not None:
-    value = table_jump(program, rows, check + 1, position, {bound[0]: ("index", 1, bound[1])})
-  else:
+    value = table_jump(program, rows, check + 1, position, {bound[0]: ("index", 1, bound[1])}, joins_at_start=False)
+  if value is None:
+    check = None
     for start in window:
-      if (value := table_jump(program, rows, start, position, UncheckedIndex())) is not None:
+      value = table_jump(program, rows, start, position, UncheckedIndex(), joins_at_start=True)
+      if value is not None and value[2][2] == 4:
         break
+    else:
+      value = None
   if value is None:
     return None
   _, origin, (_, table, scale, limit) = value

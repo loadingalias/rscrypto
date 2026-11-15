@@ -547,20 +547,25 @@ source hashes, compiler identity, and reports in a new directory.
   enters that span, and every relative entry for every checked index, read from the linked image,
   lands on an instruction of the same function. Its destinations then add nothing beyond that
   function's frame and calls.
-- A jump table with no bound check gets its index range from the compiler's jump-table record.
-  LLVM omits the check when the index cannot leave the table, as in an exhaustive `match` on an
-  enum. Such a jump is resolved only when four conditions hold:
+- A jump table whose index no bound check proves gets its index range from the compiler's
+  jump-table record. LLVM omits the check when the index cannot leave the table, as in an
+  exhaustive `match` on an enum. A check proves nothing when a branch enters at its fall-through,
+  or when the tool does not read its form, such as the signed IBM Z `cijh`. Such a jump is
+  resolved only when four conditions hold:
   1. The table base has an entry count in the binary's `.llvm_jump_table_sizes` record.
-  2. Each instruction from a start row through the jump is a table step or a store. A register
-     that the steps read before they write it holds the index.
-  3. No branch enters that span.
+  2. Each instruction from a start row through the jump is a table step or a store, or on IBM Z
+     and RISC-V a load. A register that the steps read before they write it holds the index, and
+     the steps scale it by exactly the 4-byte entry width. A load writes an unknown value, which
+     no later step accepts.
+  3. No branch enters after the start row. A branch may enter at the start row, because the
+     record, not the path, bounds the index.
   4. Each recorded entry, read from the linked image, lands on an instruction of the same
      function.
   The residual assumption is that the index is in range, unless the program already has undefined
   behavior. A binary without the record, such as a `--binary` artifact built without the flag,
   keeps such a jump unresolved.
-- Each resolved table appears in the report's assumptions, and a table without a bound check
-  appears as an `unchecked jump table`. Any other register jump stays an indirect transfer.
+- Each resolved table appears in the report's assumptions, and a table that no bound check
+  proves appears as an `unchecked jump table`. Any other register jump stays an indirect transfer.
 
 The review fails when:
 

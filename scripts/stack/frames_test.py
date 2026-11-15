@@ -627,6 +627,8 @@ def test_x86_checked_jump_tables_stay_inside_their_function() -> None:
     "the table is shorter than the bound": (X86_JUMP_TABLE, [0x2020, 0x2028]),
     "no bound check and no table record": ([line.replace("cmpq $0x2", "testq %rax,") for line in X86_JUMP_TABLE], None),
     "a branch enters past the check": ([line.replace("2028: retq", "2028: jmp 0x2011") for line in X86_JUMP_TABLE], None),
+    "a branch enters at the check's fall-through": (
+      [line.replace("2028: retq", "2028: jmp 0x200a") for line in X86_JUMP_TABLE], None),
     "a register is rewritten": ([line.replace("movq %r8, 0x28(%rsp)", "movq %rdx, %rax") for line in X86_JUMP_TABLE], None),
     "the table is outside the image": ([line.replace("# 0x9000", "# 0xa000") for line in X86_JUMP_TABLE], None),
   }
@@ -666,6 +668,52 @@ def test_x86_unchecked_jump_tables_need_the_compiler_record() -> None:
     assert unknown["owned_bound_bytes"] is None, (reason, unknown)
     assert [(item["reason"], item["address"]) for item in unknown["owned_unresolved"]] == [("indirect", "0x201d")], (
       reason, unknown)
+
+
+def test_s390x_and_riscv_tables_from_the_compiler_record() -> None:
+  # IBM Z: the tool does not read the signed `cijh` check, so this sequence needs none. The record
+  # bounds the index that `sllg` scales. The unrelated `lg` writes an unknown value into a register
+  # that the jump does not use.
+  s390x = [
+    "2000: llgfr %r2, %r13", "2004: sllg %r2, %r2, 2", "200a: larl %r3, 0x9000", "2010: agf %r3, 0(%r2,%r3)",
+    "2016: lg %r2, 24(%r1)", "201c: br %r3", "2020: br %r14", "2030: br %r14",
+  ]
+
+  def s390x_call(body: list[str]) -> dict:
+    functions = [(0x1000, "prepare", 160, ["1000: brasl %r14, 0x2000", "1006: br %r14"]),
+                 (0x2000, "rscrypto::fixture::pack", 160, body)]
+    image = table(0x9000, [0x2020, 0x2030], big_endian=True, records={0x9000: 2})
+    return jump_table_call("s390x-unknown-linux-gnu", functions, image)
+
+  resolved = s390x_call(s390x)
+  assert resolved["owned_bound_bytes"] == 160 + 160, resolved
+  assert any("unchecked jump table at 0x201c, 2 entries" in item for item in resolved["assumptions"]), resolved
+  # RISC-V: a second path enters at the check's fall-through, so the check proves nothing there. The
+  # record bounds the index, and `auipc` at that join recomputes the base. `ld` writes an unknown value.
+  riscv = [
+    "2000: li a5, 0x1", "2002: bltu a5, s1, 0x2040", "2006: auipc a0, 0x7", "200a: slli s1, s1, 0x2",
+    "200c: addi a1, a0, -0x6", "2010: add s1, s1, a1", "2012: lw a2, 0x0(s1)", "2014: ld a0, 0x18(a3)",
+    "2018: add a1, a1, a2", "201a: jr a1", "2020: ret", "2030: ret", "2040: bgeu a5, s1, 0x2006", "2044: ret",
+  ]
+
+  def riscv_call(body: list[str], records: dict[int, int] | None = {0x9000: 2}) -> dict:
+    functions = [(0x1000, "prepare", 16, ["1000: jal 0x2000 <pack>", "1004: ret"]), (0x2000, "rscrypto::fixture::pack", 32, body)]
+    return jump_table_call("riscv64gc-unknown-linux-gnu", functions, table(0x9000, [0x2020, 0x2030], records=records))
+
+  resolved = riscv_call(riscv)
+  assert resolved["owned_bound_bytes"] == 16 + 32, resolved
+  assert any("unchecked jump table at 0x201a, 2 entries" in item for item in resolved["assumptions"]), resolved
+  refused = {
+    "a load writes the jump register": s390x_call([line.replace("2016: lg %r2", "2016: lg %r3") for line in s390x]),
+    "the index is not scaled by the entry width": s390x_call(
+      [line.replace("2004: sllg %r2, %r2, 2", "2004: lgr %r2, %r13") for line in s390x]),
+    "a load writes the table origin": riscv_call([line.replace("ld a0", "ld a1") for line in riscv]),
+    "a branch enters after the start row": riscv_call([line.replace("0x2006", "0x200a") for line in riscv]),
+    "the binary has no table record": riscv_call(riscv, None),
+  }
+  for reason, unknown in refused.items():
+    assert unknown["owned_bound_bytes"] is None, (reason, unknown)
+    assert [item["reason"] for item in unknown["owned_unresolved"]] == ["indirect"], (reason, unknown)
 
 
 def test_s390x_and_riscv_checked_jump_tables() -> None:
@@ -979,6 +1027,7 @@ def main() -> None:
   test_x86_checked_jump_tables_stay_inside_their_function()
   test_x86_unchecked_jump_tables_need_the_compiler_record()
   test_s390x_and_riscv_checked_jump_tables()
+  test_s390x_and_riscv_tables_from_the_compiler_record()
   test_s390x_unlabelled_plt_keeps_allocator_edges_separate()
   test_riscv_call_clobbers_an_auipc_temporary()
   test_declared_libc_edges_charge_only_the_call_site()
