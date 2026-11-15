@@ -6,6 +6,70 @@ The dated campaign records come first.
 The 2026-08-18 Linux snapshot near the end is historical:
 its aggregate ratios are withdrawn as performance claims (see [Corrections](#corrections)).
 
+## 2026-11-15: HPKE Base mode and X-Wing (HPKE, X-WING)
+
+Bench 43700946636 on all eight lanes at `8c624f6e`, toolchain nightly-2026-10-24, default target CPU,
+targets `hpke`, `xwing`, and `x25519`, scored with `just bench-compare` (tie band 5%). Every HPKE row
+checks its output against another implementation before timing. Comparators: AWS-LC EVP_HPKE through
+`aws-lc-sys` for the X25519 suite where `aws-lc-sys` builds (x86-64 Linux, Graviton4, POWER10,
+RISC-V), and `hpke` 0.15.1 for both suites on every lane; `libcrux-kem` 0.0.10 and RustCrypto `x-wing`
+0.1.1 for X-Wing. Ratios are the fastest external row's time over rscrypto's, so above 1 is faster.
+HPKE: 100 of 112 points faster and 12 ties, no loss. X-Wing: 40 of 40 faster; against the X-Wing rows
+of Bench 43676114189 there is no regression after `868dcbca`. Apple was measured locally only and is
+not part of this record.
+
+`HpkeX25519HkdfSha256Aes128Gcm` (setup with caller randomness, single-shot seal and open, and a 32-byte
+export from an established context):
+
+| Lane | setup S | setup R | seal 64 B | open 64 B | seal 16 KiB | open 16 KiB | export | comparator |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| AMD Linux | 1.03x | 1.06x | 1.03x | 1.06x | 1.01x | 1.06x | 1.67x | AWS-LC, `hpke` |
+| Intel Linux | 1.03x | 1.07x | 1.04x | 1.07x | 1.03x | 1.05x | 1.81x | AWS-LC, `hpke` |
+| AMD Windows | 1.57x | 1.50x | 1.53x | 1.48x | 1.57x | 1.52x | 1.95x | `hpke` |
+| Intel Windows | 1.45x | 1.37x | 1.44x | 1.37x | 1.47x | 1.41x | 1.85x | `hpke` |
+| Graviton4 | 1.02x | 1.05x | 1.02x | 1.05x | 1.01x | 1.03x | 1.82x | AWS-LC, `hpke` |
+| POWER10 | 1.16x | 1.22x | 1.17x | 1.22x | 1.17x | 1.22x | 3.19x | AWS-LC |
+| IBM Z | 1.41x | 1.49x | 1.41x | 1.51x | 2.54x | 3.08x | 3.59x | `hpke` |
+| RISC-V | 1.32x | 1.43x | 1.26x | 1.42x | 1.23x | 1.21x | 1.98x | AWS-LC, `hpke` |
+
+`HpkeXWingHkdfSha256ChaCha20Poly1305`, the same rows against `hpke`:
+
+| Lane | setup S | setup R | seal 64 B | open 64 B | seal 16 KiB | open 16 KiB | export |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| AMD Linux | 3.22x | 5.08x | 3.25x | 5.08x | 3.31x | 4.92x | 1.67x |
+| Intel Linux | 2.64x | 4.39x | 2.68x | 4.43x | 2.70x | 4.23x | 1.81x |
+| AMD Windows | 1.85x | 3.07x | 1.86x | 3.05x | 2.01x | 3.09x | 1.93x |
+| Intel Windows | 1.69x | 2.78x | 1.71x | 2.80x | 1.80x | 2.80x | 1.86x |
+| Graviton4 | 2.73x | 4.17x | 2.72x | 4.15x | 2.56x | 3.64x | 1.83x |
+| POWER10 | 1.36x | 2.32x | 1.36x | 2.33x | 1.49x | 2.28x | 1.97x |
+| IBM Z | 1.77x | 3.51x | 1.81x | 3.50x | 1.85x | 3.33x | 3.61x |
+| RISC-V | 1.79x | 2.82x | 1.78x | 2.82x | 1.51x | 2.07x | 1.90x |
+
+X-Wing KEM against the faster of `libcrux-kem` and `x-wing`:
+
+| Lane | keygen | encapsulate reuse | encapsulate import | decapsulate reuse | decapsulate import |
+| --- | --- | --- | --- | --- | --- |
+| AMD Linux | 2.44x | 2.79x | 2.18x | 2.96x | 2.07x |
+| Intel Linux | 2.25x | 2.42x | 1.96x | 2.67x | 1.93x |
+| AMD Windows | 2.17x | 1.57x | 1.36x | 1.73x | 1.39x |
+| Intel Windows | 2.20x | 1.52x | 1.35x | 1.68x | 1.41x |
+| Graviton4 | 2.66x | 2.55x | 2.24x | 2.81x | 2.22x |
+| POWER10 | 1.34x | 1.23x | 1.11x | 1.46x | 1.19x |
+| IBM Z | 1.63x | 1.43x | 1.29x | 1.70x | 1.36x |
+| RISC-V | 1.48x | 1.73x | 1.55x | 2.19x | 1.75x |
+
+The 12 HPKE ties are X25519-suite rows against AWS-LC on AMD Linux, Intel Linux, and Graviton4, at
+1.01–1.05x. On those lanes rscrypto and AWS-LC run the same s2n-bignum X25519 assembly (the X25519
+DH and public-key rows there are 1.01–1.02x ties against `aws-lc-rs`), and X25519 dominates a setup.
+The rest of the margin is the key schedule and the AEAD, so the setup rows cannot leave the tie band
+until X25519 itself is faster.
+
+Still losing, X25519 component rows against `dryoc`: DH 0.72x AMD Windows, 0.75x Intel Windows, 0.52x
+POWER10, 0.82x IBM Z, 0.77x RISC-V; public key 0.64x POWER10, 0.89x IBM Z (RISC-V 0.98x is a tie).
+Cause: these lanes run portable Rust X25519. X25519 assembly, the borrowed s2n-bignum backends, runs only
+on Apple and Linux AArch64 and on Linux x86-64 (see `docs/platforms.md`). HPKE's X25519 suite still wins on those lanes, but the gap
+remains an HPKE gap until X25519 has kernels there.
+
 ## 2026-11-10: SipHash table path and one-shot (KEYED-HASH)
 
 Five `siphash` Bench runs on all eight lanes between `92676e6e` and `44a65c86`, toolchain
