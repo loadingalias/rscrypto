@@ -12879,6 +12879,18 @@ reviewed_at = "2026-11-12"
 
 [[asm_waiver]]
 target = "x86_64-pc-windows-msvc"
+primitive = "kem.xwing"
+symbol = "rscrypto::platform::detect::detect_uncached"
+kind = "select_branch"
+slice_sha256 = "fe66b1e0dfe8eb759a2bbfc3d6eb1fcc3811dfed9db4b5956a0e5f2829763e4c"
+source = "src/platform/detect/arch/x86.rs:651 close_x86_implications"
+classification = "public"
+rationale = "Implication filter (x86.rs:651). r10 is the complement of the decoded capability word (+0x580..+0x583). r9 is the read-only IMPLIED table in .rdata (x86.rs:602), bound by contents (+0x579). r8 runs from 0 (+0x576) in steps of 0x80 (+0x590) and stops at 0x780 (+0x594). So 0x60(%r8,%r9) at +0x5ba reads only that table, and je +0x5bf keeps the feature when all its implied capabilities are present. The capability word comes only from CPUID results and XCR0. The open leaves are the _xgetbv result and frame bytes. No frame address escapes, and _xgetbv (+0x15a) receives no pointer and writes no memory. detect_uncached takes only its result pointer, rcx, which +0x10 saves and only the final store at +0x60e uses. No condition reads it. The asm_public_input rule cannot accept this branch: only range analysis of the loop counter can show that the indexed IMPLIED load reads only the table, and the scanner has none."
+reviewer = "rscrypto exact-artifact condition review"
+reviewed_at = "2026-11-15"
+
+[[asm_waiver]]
+target = "x86_64-pc-windows-msvc"
 primitive = "keyed_hash.blake2_blake3"
 symbol = "rscrypto::platform::detect::detect_uncached"
 kind = "select_branch"
@@ -12912,6 +12924,18 @@ classification = "public"
 rationale = "Implication filter (x86.rs:651). r10 is the complement of the decoded capability word (+0x580..+0x583). r9 is the read-only IMPLIED table in .rdata (x86.rs:602), bound by contents (+0x579). r8 runs from 0 (+0x576) in steps of 0x80 (+0x590) and stops at 0x780 (+0x594). So 0x60(%r8,%r9) at +0x5ba reads only that table, and je +0x5bf keeps the feature when all its implied capabilities are present. The capability word comes only from CPUID results and XCR0. The open leaves are the _xgetbv result and frame bytes. No frame address escapes, and _xgetbv (+0x15a) receives no pointer and writes no memory. detect_uncached takes only its result pointer, rcx, which +0x10 saves and only the final store at +0x60e uses. No condition reads it. The asm_public_input rule cannot accept this branch: only range analysis of the loop counter can show that the indexed IMPLIED load reads only the table, and the scanner has none."
 reviewer = "rscrypto exact-artifact condition review"
 reviewed_at = "2026-11-12"
+
+[[asm_waiver]]
+target = "x86_64-pc-windows-msvc"
+primitive = "kx.x25519"
+symbol = "rscrypto::platform::detect::detect_uncached"
+kind = "select_branch"
+slice_sha256 = "fe66b1e0dfe8eb759a2bbfc3d6eb1fcc3811dfed9db4b5956a0e5f2829763e4c"
+source = "src/platform/detect/arch/x86.rs:651 close_x86_implications"
+classification = "public"
+rationale = "Implication filter (x86.rs:651). r10 is the complement of the decoded capability word (+0x580..+0x583). r9 is the read-only IMPLIED table in .rdata (x86.rs:602), bound by contents (+0x579). r8 runs from 0 (+0x576) in steps of 0x80 (+0x590) and stops at 0x780 (+0x594). So 0x60(%r8,%r9) at +0x5ba reads only that table, and je +0x5bf keeps the feature when all its implied capabilities are present. The capability word comes only from CPUID results and XCR0. The open leaves are the _xgetbv result and frame bytes. No frame address escapes, and _xgetbv (+0x15a) receives no pointer and writes no memory. detect_uncached takes only its result pointer, rcx, which +0x10 saves and only the final store at +0x60e uses. No condition reads it. The asm_public_input rule cannot accept this branch: only range analysis of the loop counter can show that the indexed IMPLIED load reads only the table, and the scanner has none."
+reviewer = "rscrypto exact-artifact condition review"
+reviewed_at = "2026-11-15"
 
 [[asm_waiver]]
 target = "x86_64-pc-windows-msvc"

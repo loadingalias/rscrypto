@@ -1148,6 +1148,18 @@ It keeps its allowed-disclosure classification.
 With these waivers, the gate scanner reports no stale waiver on the seven artifact sets.
 The waiver set has 519 entries.
 
+### X-Wing detection closure, 2026-11-15
+
+`b5f7657e` added four CT roots: `ct_entry_xwing_keygen`, `ct_entry_xwing_encapsulate`,
+`ct_entry_xwing_decapsulate`, and `ct_entry_x25519_public_key`.
+On Windows, they put `detect_uncached` in the enforced closures of `kem.xwing` and `kx.x25519`.
+Its implication-filter branch at +0x5bf has the identity of the 20 waivers reviewed on 2026-11-12,
+so its slice and function are unchanged. Each of the two primitives received a waiver with that identity and rationale.
+No other target reports an unwaived condition in these roots.
+
+With them, the scanner reports no stale waiver and no unwaived enforced finding on the seven artifact sets of
+Constant-Time 43670264860 and the local Apple build. The waiver set has 521 entries.
+
 ## Public decisions and exclusions
 
 Ordinary equality is allowed for public values, such as nonces, encoded public keys,
