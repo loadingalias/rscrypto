@@ -111,3 +111,38 @@ fn hmac_sha384_wycheproof_full_tag_vectors() {
 fn hmac_sha512_wycheproof_full_tag_vectors() {
   run_hmac_suite::<HmacSha512, 64>(HMAC_SHA512, "HMAC-SHA512", 512, Counts { valid: 33, invalid: 54 });
 }
+
+/// The four HMAC-SHA3 suites. The public tag types hold only full-width tags,
+/// so `run_hmac_suite` skips the truncated-tag groups. HMAC takes any key
+/// length, so no key size is filtered.
+#[cfg(feature = "hmac-sha3")]
+#[test]
+fn hmac_sha3_wycheproof_full_tag_vectors() {
+  use rscrypto::{HmacSha3_224, HmacSha3_256, HmacSha3_384, HmacSha3_512};
+
+  let counts = || Counts { valid: 33, invalid: 54 };
+  run_hmac_suite::<HmacSha3_224, 28>(
+    include_str!("../testdata/auth/wycheproof/hmac_sha3_224_test.json"),
+    "HMAC-SHA3-224",
+    224,
+    counts(),
+  );
+  run_hmac_suite::<HmacSha3_256, 32>(
+    include_str!("../testdata/auth/wycheproof/hmac_sha3_256_test.json"),
+    "HMAC-SHA3-256",
+    256,
+    counts(),
+  );
+  run_hmac_suite::<HmacSha3_384, 48>(
+    include_str!("../testdata/auth/wycheproof/hmac_sha3_384_test.json"),
+    "HMAC-SHA3-384",
+    384,
+    counts(),
+  );
+  run_hmac_suite::<HmacSha3_512, 64>(
+    include_str!("../testdata/auth/wycheproof/hmac_sha3_512_test.json"),
+    "HMAC-SHA3-512",
+    512,
+    counts(),
+  );
+}
