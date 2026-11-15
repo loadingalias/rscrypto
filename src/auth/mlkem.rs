@@ -375,18 +375,37 @@ macro_rules! define_mlkem_prepared_keys {
       }
     }
 
+    impl $prepared_encapsulation_key {
+      /// `key` with all-zero arithmetic, which [`Self::prepare_in_place`]
+      /// fills.
+      pub(crate) const fn unprepared(key: $encapsulation_key) -> Self {
+        Self {
+          key,
+          key_hash: [0; ML_KEM_KEY_HASH_SIZE],
+          arithmetic: operations::PreparedEncapsulationArithmetic::zeroed(),
+        }
+      }
+
+      /// Validate the wrapped key and write its hash and arithmetic in place,
+      /// so that the prepared key is not moved through temporaries.
+      pub(crate) fn prepare_in_place(&mut self) -> Result<(), MlKemError> {
+        operations::validate_and_prepare_encapsulation_key_into::<$k, $ek_bytes>(
+          self.key.as_bytes(),
+          &mut self.arithmetic,
+        )?;
+        self.key_hash = operations::encapsulation_key_hash(self.key.as_bytes());
+        Ok(())
+      }
+    }
+
     impl core::convert::TryFrom<$encapsulation_key> for $prepared_encapsulation_key {
       type Error = MlKemError;
 
       #[inline]
       fn try_from(key: $encapsulation_key) -> Result<Self, Self::Error> {
-        let arithmetic = operations::validate_and_prepare_encapsulation_key::<$k, $ek_bytes>(key.as_bytes())?;
-        let key_hash = operations::encapsulation_key_hash(key.as_bytes());
-        Ok(Self {
-          key,
-          key_hash,
-          arithmetic,
-        })
+        let mut prepared = Self::unprepared(key);
+        prepared.prepare_in_place()?;
+        Ok(prepared)
       }
     }
 
@@ -395,13 +414,7 @@ macro_rules! define_mlkem_prepared_keys {
 
       #[inline]
       fn try_from(key: &$encapsulation_key) -> Result<Self, Self::Error> {
-        let arithmetic = operations::validate_and_prepare_encapsulation_key::<$k, $ek_bytes>(key.as_bytes())?;
-        let key_hash = operations::encapsulation_key_hash(key.as_bytes());
-        Ok(Self {
-          key: key.clone(),
-          key_hash,
-          arithmetic,
-        })
+        Self::try_from(key.clone())
       }
     }
 

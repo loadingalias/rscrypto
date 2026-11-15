@@ -164,6 +164,18 @@ pub(super) struct PreparedDecapsulationArithmetic<const K: usize> {
   encapsulation: PreparedEncapsulationArithmetic<K>,
 }
 
+impl<const K: usize> PreparedEncapsulationArithmetic<K> {
+  /// All-zero arithmetic that `prepare_encapsulation_key_into` fills in place.
+  pub(super) const fn zeroed() -> Self {
+    Self {
+      t_hat: [[0; N]; K],
+      #[cfg(test)]
+      rho: [0; SEED_BYTES],
+      a_transpose_hat: [[[0; N]; K]; K],
+    }
+  }
+}
+
 impl<const K: usize> PreparedDecapsulationArithmetic<K> {
   /// All-zero arithmetic that `validate_and_prepare_decapsulation_key_into`
   /// fills in place.
@@ -174,12 +186,7 @@ impl<const K: usize> PreparedDecapsulationArithmetic<K> {
         hat: [0; N],
         negated: [0; N],
       },
-      encapsulation: PreparedEncapsulationArithmetic {
-        t_hat: [[0; N]; K],
-        #[cfg(test)]
-        rho: [0; SEED_BYTES],
-        a_transpose_hat: [[[0; N]; K]; K],
-      },
+      encapsulation: PreparedEncapsulationArithmetic::zeroed(),
     }
   }
 }
@@ -361,14 +368,17 @@ pub(super) fn encapsulation_key_hash<const EK_BYTES: usize>(ek: &[u8; EK_BYTES])
   h(ek)
 }
 
-pub(super) fn validate_and_prepare_encapsulation_key<const K: usize, const EK_BYTES: usize>(
+/// Validate `ek` with the FIPS 203 modulus check and write its prepared
+/// arithmetic into `out` in place. A rejected key leaves `t_hat` cleared.
+pub(super) fn validate_and_prepare_encapsulation_key_into<const K: usize, const EK_BYTES: usize>(
   ek: &[u8; EK_BYTES],
-) -> Result<PreparedEncapsulationArithmetic<K>, MlKemError> {
+  out: &mut PreparedEncapsulationArithmetic<K>,
+) -> Result<(), MlKemError> {
   let mut ok = 0xffu8;
-  let mut arithmetic = prepare_encapsulation_key::<K, EK_BYTES>(ek);
+  prepare_encapsulation_key_into::<K, EK_BYTES>(ek, out);
   let mut encoded = [0u8; POLY_BYTES];
 
-  for (i, t_hat) in arithmetic.t_hat.iter().enumerate() {
+  for (i, t_hat) in out.t_hat.iter().enumerate() {
     let start = i.strict_mul(POLY_BYTES);
     let end = start.strict_add(POLY_BYTES);
     byte_encode::<12>(t_hat, &mut encoded);
@@ -376,9 +386,9 @@ pub(super) fn validate_and_prepare_encapsulation_key<const K: usize, const EK_BY
   }
 
   if ok == 0xff {
-    Ok(arithmetic)
+    Ok(())
   } else {
-    zeroize_polyvec(&mut arithmetic.t_hat);
+    zeroize_polyvec(&mut out.t_hat);
     Err(MlKemError::InvalidEncapsulationKey)
   }
 }
@@ -430,12 +440,7 @@ pub(super) fn validate_and_prepare_decapsulation_key_into<
 fn prepare_encapsulation_key<const K: usize, const EK_BYTES: usize>(
   ek: &[u8; EK_BYTES],
 ) -> PreparedEncapsulationArithmetic<K> {
-  let mut arithmetic = PreparedEncapsulationArithmetic {
-    t_hat: [[0; N]; K],
-    #[cfg(test)]
-    rho: [0; SEED_BYTES],
-    a_transpose_hat: [[[0; N]; K]; K],
-  };
+  let mut arithmetic = PreparedEncapsulationArithmetic::zeroed();
   prepare_encapsulation_key_into::<K, EK_BYTES>(ek, &mut arithmetic);
   arithmetic
 }

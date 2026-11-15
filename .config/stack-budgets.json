@@ -57,7 +57,7 @@
         "verify_65": 20480,
         "verify_87": 21504,
         "xwing_decapsulate": 26624,
-        "xwing_encapsulate": 54272,
+        "xwing_encapsulate": 38912,
         "xwing_generate": 27648,
         "xwing_prepared_decapsulate": 14336
       },
@@ -417,7 +417,7 @@
         "verify_65": 17408,
         "verify_87": 19456,
         "xwing_decapsulate": 26624,
-        "xwing_encapsulate": 53248,
+        "xwing_encapsulate": 39936,
         "xwing_generate": 27648,
         "xwing_prepared_decapsulate": 14336
       },
@@ -476,7 +476,7 @@
         "verify_65": 17408,
         "verify_87": 19456,
         "xwing_decapsulate": 26624,
-        "xwing_encapsulate": 53248,
+        "xwing_encapsulate": 39936,
         "xwing_generate": 27648,
         "xwing_prepared_decapsulate": 14336
       }
@@ -537,7 +537,7 @@
         "verify_65": 22528,
         "verify_87": 24576,
         "xwing_decapsulate": 25600,
-        "xwing_encapsulate": 54272,
+        "xwing_encapsulate": 37888,
         "xwing_generate": 26624,
         "xwing_prepared_decapsulate": 13312
       },
@@ -596,7 +596,7 @@
         "verify_65": 16384,
         "verify_87": 19456,
         "xwing_decapsulate": 25600,
-        "xwing_encapsulate": 55296,
+        "xwing_encapsulate": 39936,
         "xwing_generate": 26624,
         "xwing_prepared_decapsulate": 13312
       }

@@ -385,11 +385,17 @@ impl XWingEncapsulationKey {
   ///
   /// As [`Self::validate`].
   pub fn prepare(&self) -> Result<XWingPreparedEncapsulationKey, XWingError> {
-    Ok(XWingPreparedEncapsulationKey {
-      ml_kem: MlKem768PreparedEncapsulationKey::try_from(self.ml_kem())
-        .map_err(|_| XWingError::InvalidEncapsulationKey)?,
+    // Prepare in the returned owner, so the prepared ML-KEM key is not moved
+    // through temporaries.
+    let mut prepared = XWingPreparedEncapsulationKey {
+      ml_kem: MlKem768PreparedEncapsulationKey::unprepared(self.ml_kem()),
       x25519: X25519PublicKey::from_bytes(*self.x25519()),
-    })
+    };
+    prepared
+      .ml_kem
+      .prepare_in_place()
+      .map_err(|_| XWingError::InvalidEncapsulationKey)?;
+    Ok(prepared)
   }
 
   fn ml_kem(&self) -> MlKem768EncapsulationKey {
