@@ -4,13 +4,19 @@ use rscrypto::aead::expert::header_protection::{
   Aes128HeaderProtection, Aes128HeaderProtectionKey, Aes256HeaderProtection, Aes256HeaderProtectionKey,
   ChaCha20HeaderProtection, ChaCha20HeaderProtectionKey,
 };
+use rscrypto::aead::{Nonce96, Nonce192, expert::AeadWithNonce as _};
+use rscrypto::hashes::fast::Xxh3_64;
 use rscrypto::hashes::legacy::WebSocketAcceptDigest;
 use rscrypto::traits::Xof as _;
 use rscrypto::{
-  Adler32, AesSivCmac256, AesSivCmac256Key, AesSivCmac256Nonce, Blake2b512, Blake3, ChaCha20Rng, Checksum as _, Digest,
-  EcdsaP256SecretKey, EcdsaP384SecretKey, FastHash as _, P256EphemeralSecret, P256PublicKey, P384EphemeralSecret,
-  P384PublicKey, RsaPrivateKey, RsaPrivateOpError, RsaPssProfile, RsaPublicKeyPolicy, Sha256, Sha512, Xxh32,
-  Xxh32Hasher, Xxh64, Xxh64Hasher,
+  Adler32, Aes128Gcm, Aes128GcmKey, Aes256Gcm, Aes256GcmKey, AesSivCmac256, AesSivCmac256Key, AesSivCmac256Nonce,
+  Blake2b512, Blake3, ChaCha20Poly1305, ChaCha20Poly1305Key, ChaCha20Rng, Checksum as _, Crc32, Crc32C, Crc64, Digest,
+  EcdsaP256PublicKey, EcdsaP256SecretKey, EcdsaP256Signature, EcdsaP384SecretKey, Ed25519Keypair, Ed25519PublicKey,
+  Ed25519SecretKey, Ed25519Signature, FastHash as _, HkdfSha256, HmacSha256, MlDsa65EcdsaP256PublicKey,
+  MlDsa65EcdsaP256Signature, MlDsa65Ed25519PublicKey, MlDsa65Ed25519Signature, P256EphemeralSecret, P256PublicKey,
+  P384EphemeralSecret, P384PublicKey, Pbkdf2Sha256, RsaPkcs1v15Profile, RsaPrivateKey, RsaPrivateOpError,
+  RsaPssProfile, RsaPublicKeyPolicy, RsaSignatureProfile, Sha256, Sha512, SipHash13, SipHash24, SipHashKey,
+  XChaCha20Poly1305, XChaCha20Poly1305Key, Xxh32, Xxh32Hasher, Xxh64, Xxh64Hasher,
 };
 
 const RSA_PRIVATE_KEY_PEM: &str = include_str!("../fixtures/rsa2048_private_pkcs1.txt");
@@ -811,6 +817,345 @@ fn assert_xwing_draft_vectors() {
   assert_eq!(count, 3);
 }
 
+fn hex_vec(input: &str) -> Vec<u8> {
+  assert_eq!(input.len() % 2, 0, "hex input has whole bytes");
+  input
+    .as_bytes()
+    .as_chunks::<2>()
+    .0
+    .iter()
+    .map(|pair| {
+      let high = hex_value(pair[0]).expect("known vector must contain hexadecimal digits");
+      let low = hex_value(pair[1]).expect("known vector must contain hexadecimal digits");
+      high.strict_shl(4) | low
+    })
+    .collect()
+}
+
+/// The string value of the first `name` field in `object`.
+fn json_string<'a>(object: &'a str, name: &str) -> &'a str {
+  let (_, rest) = object.split_once(&format!("\"{name}\"")).expect("JSON field");
+  let rest = rest.trim_start().strip_prefix(':').expect("JSON colon").trim_start();
+  rest
+    .strip_prefix('"')
+    .expect("JSON string")
+    .split_once('"')
+    .expect("JSON string end")
+    .0
+}
+
+/// One case of a pinned Wycheproof AEAD suite.
+struct AeadCase {
+  key: Vec<u8>,
+  nonce: Vec<u8>,
+  aad: Vec<u8>,
+  msg: Vec<u8>,
+  ct: Vec<u8>,
+  tag: Vec<u8>,
+  valid: bool,
+}
+
+/// Each test of a Wycheproof AEAD suite. A test object starts with its `tcId`.
+fn wycheproof_aead_cases(json: &'static str) -> impl Iterator<Item = AeadCase> {
+  json.split("\"tcId\"").skip(1).map(|test| {
+    let result = json_string(test, "result");
+    assert!(matches!(result, "valid" | "invalid"), "Wycheproof AEAD result {result}");
+    AeadCase {
+      key: hex_vec(json_string(test, "key")),
+      nonce: hex_vec(json_string(test, "iv")),
+      aad: hex_vec(json_string(test, "aad")),
+      msg: hex_vec(json_string(test, "msg")),
+      ct: hex_vec(json_string(test, "ct")),
+      tag: hex_vec(json_string(test, "tag")),
+      valid: result == "valid",
+    }
+  })
+}
+
+/// Open each valid case of a Wycheproof AEAD suite and seal its message back to
+/// its ciphertext and tag. Reject each invalid case and clear its buffer.
+/// Return the valid and invalid case counts for one key and nonce length.
+macro_rules! wycheproof_aead {
+  ($json:literal, $cipher:ty, $key:ty, $nonce:ty) => {{
+    let mut counts = (0usize, 0usize);
+    for case in wycheproof_aead_cases(include_str!($json)) {
+      if case.key.len() != <$cipher>::KEY_SIZE
+        || case.nonce.len() != <$cipher>::NONCE_SIZE
+        || case.tag.len() != <$cipher>::TAG_SIZE
+      {
+        continue;
+      }
+      let cipher = <$cipher>::new(&<$key>::from_bytes(case.key.as_slice().try_into().expect("key length")));
+      let nonce = <$nonce>::from_bytes(case.nonce.as_slice().try_into().expect("nonce length"));
+      let tag = <$cipher>::tag_from_slice(&case.tag).expect("tag length");
+      let mut buffer = case.ct.clone();
+      let opened = cipher.decrypt_in_place(&nonce, &case.aad, &mut buffer, &tag);
+      if case.valid {
+        assert!(opened.is_ok(), "a valid Wycheproof case opens");
+        assert_eq!(buffer, case.msg);
+        let mut sealed = case.msg.clone();
+        let sealed_tag = cipher
+          .encrypt_in_place(&nonce, &case.aad, &mut sealed)
+          .expect("valid seal");
+        assert_eq!(
+          (sealed.as_slice(), sealed_tag.as_ref()),
+          (case.ct.as_slice(), case.tag.as_slice())
+        );
+        counts.0 = counts.0.strict_add(1);
+      } else {
+        assert!(opened.is_err(), "an invalid Wycheproof case does not open");
+        assert!(
+          buffer.iter().all(|&byte| byte == 0),
+          "a rejected open clears its buffer"
+        );
+        counts.1 = counts.1.strict_add(1);
+      }
+    }
+    counts
+  }};
+}
+
+/// Wycheproof ChaCha20-Poly1305, XChaCha20-Poly1305, and AES-GCM. In the
+/// SIMD128 build, the ChaCha20 suites run the SIMD128 ChaCha20 keystream and
+/// Poly1305 block kernels at every Wycheproof length. AES-GCM runs the portable
+/// backend, which WASM selects. The counts equal those of tests/aead_wycheproof.rs.
+fn assert_aead_wycheproof_suites() {
+  assert_eq!(
+    wycheproof_aead!(
+      "../../../testdata/aead/wycheproof/chacha20_poly1305_test.json",
+      ChaCha20Poly1305,
+      ChaCha20Poly1305Key,
+      Nonce96
+    ),
+    (256, 60)
+  );
+  assert_eq!(
+    wycheproof_aead!(
+      "../../../testdata/aead/wycheproof/xchacha20_poly1305_test.json",
+      XChaCha20Poly1305,
+      XChaCha20Poly1305Key,
+      Nonce192
+    ),
+    (246, 60)
+  );
+  let aes128 = wycheproof_aead!(
+    "../../../testdata/aead/wycheproof/aes_gcm_test.json",
+    Aes128Gcm,
+    Aes128GcmKey,
+    Nonce96
+  );
+  let aes256 = wycheproof_aead!(
+    "../../../testdata/aead/wycheproof/aes_gcm_test.json",
+    Aes256Gcm,
+    Aes256GcmKey,
+    Nonce96
+  );
+  assert_eq!((aes128.0.strict_add(aes256.0), aes128.1.strict_add(aes256.1)), (79, 54));
+}
+
+/// CRC-32 (ISO-HDLC), CRC-32C, and CRC-64/XZ. In the SIMD128 build, the
+/// slice-by-16 kernels load 16-byte vectors. The oracle is the bit-serial
+/// definition from each CRC catalogue entry: reflected polynomial, all-ones
+/// initial value, and all-ones final XOR. The catalogue check values for
+/// "123456789" anchor that definition.
+fn assert_crc_matches_the_catalogue_definition() {
+  fn reflected(polynomial: u64, mask: u64, data: &[u8]) -> u64 {
+    let mut crc = mask;
+    for &byte in data {
+      crc ^= u64::from(byte);
+      for _ in 0..8 {
+        crc = if crc & 1 == 1 {
+          (crc >> 1) ^ polynomial
+        } else {
+          crc >> 1
+        };
+      }
+    }
+    crc ^ mask
+  }
+  let crc32 = |data: &[u8]| reflected(0xedb8_8320, 0xffff_ffff, data);
+  let crc32c = |data: &[u8]| reflected(0x82f6_3b78, 0xffff_ffff, data);
+  let crc64 = |data: &[u8]| reflected(0xc96c_5795_d787_0f42, u64::MAX, data);
+  assert_eq!(crc32(b"123456789"), 0xcbf4_3926);
+  assert_eq!(crc32c(b"123456789"), 0xe306_9283);
+  assert_eq!(crc64(b"123456789"), 0x995d_c9bb_df19_39fa);
+
+  let data = patterned_bytes(4112);
+  for offset in 0..16usize {
+    for len in (0..=100usize).chain([4096]) {
+      let input = &data[offset..offset.strict_add(len)];
+      assert_eq!(
+        u64::from(Crc32::checksum(input)),
+        crc32(input),
+        "CRC-32 offset={offset} len={len}"
+      );
+      assert_eq!(
+        u64::from(Crc32C::checksum(input)),
+        crc32c(input),
+        "CRC-32C offset={offset} len={len}"
+      );
+      assert_eq!(
+        Crc64::checksum(input),
+        crc64(input),
+        "CRC-64/XZ offset={offset} len={len}"
+      );
+    }
+  }
+  let (mut stream32, mut stream32c, mut stream64) = (Crc32::new(), Crc32C::new(), Crc64::new());
+  for chunk in data.chunks(23) {
+    stream32.update(chunk);
+    stream32c.update(chunk);
+    stream64.update(chunk);
+  }
+  assert_eq!(u64::from(stream32.finalize()), crc32(&data));
+  assert_eq!(u64::from(stream32c.finalize()), crc32c(&data));
+  assert_eq!(stream64.finalize(), crc64(&data));
+}
+
+/// SipHash-2-4 for key `00..0f` and the 15-byte message `00..0e`, a whole
+/// word and a 7-byte tail, from the reference `vectors.h` (veorq/SipHash at
+/// 32d067603b93b47828700880649198e0bfbbcffa, as in tests/siphash.rs). Also
+/// `write_usize`, which must hash the 4 bytes of `to_ne_bytes` on wasm32, as
+/// `Hasher` defines it.
+fn assert_siphash_reference_vector_and_usize_width() {
+  let bytes: Vec<u8> = (0..16u8).collect();
+  let key = SipHashKey::from_bytes(bytes.as_slice().try_into().expect("16-byte key"));
+  assert_eq!(SipHash24::hash(&key, &bytes[..15]), 0xa129_ca61_49be_45e5);
+  let value = 0x0123_4567_usize;
+  let mut hasher = SipHash13::new(&key);
+  hasher.write_usize(value);
+  assert_eq!(hasher.finish(), SipHash13::hash(&key, &value.to_ne_bytes()));
+}
+
+/// xxhsum 0.8.4 `-H3` values for `patterned_bytes(4109)`, at seed zero and
+/// with `-s2654435761`. The long-input path derives a secret from a nonzero seed.
+fn assert_xxh3_matches_xxhsum() {
+  let data = patterned_bytes(4109);
+  assert_eq!(Xxh3_64::hash_with_seed(0, &data), 0x9697_17b0_b40a_9342);
+  assert_eq!(Xxh3_64::hash_with_seed(0x9e37_79b1, &data), 0xf2ae_faae_2cfd_2259);
+}
+
+/// RFC 4231 test case 6 (a key longer than one block), RFC 5869 A.1, and the
+/// two-iteration PBKDF2-HMAC-SHA256 value of tests/pbkdf2_kat_vectors.rs.
+fn assert_hmac_hkdf_pbkdf2_vectors() {
+  assert_hex(
+    HmacSha256::mac(&[0xaa; 131], b"Test Using Larger Than Block-Size Key - Hash Key First").as_bytes(),
+    "60e431591ee0b67f0d8a26aacbf5b77f8e0bc6213728c5140546040f0ee37f54",
+  );
+  let okm = HkdfSha256::new(&hex_vec("000102030405060708090a0b0c"), &[0x0b; 22])
+    .expand_array::<42>(&hex_vec("f0f1f2f3f4f5f6f7f8f9"))
+    .expect("RFC 5869 A.1 length");
+  assert_hex(
+    &okm,
+    "3cb25f25faacd57a90434f64d0362f2a2d2d0a90cf1a5a4c5db02d56ecc4c5bf34007208d5b887185865",
+  );
+  let mut out = [0u8; 32];
+  Pbkdf2Sha256::derive_key_primitive(b"password", b"salt", 2, &mut out).expect("PBKDF2 parameters");
+  assert_hex(&out, "ae4d0c95af6b46d32d0adff928f06dd02a303f8ef3c251dfd6e2d85a95474c43");
+}
+
+/// RFC 8032 section 7.1 test 2: key derivation, signing, and verification.
+fn assert_ed25519_rfc8032_vector() {
+  let public = "3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c";
+  let signature = "92a009a9f0d4cab8720e820b5f642540a2b27b5416503f8fb3762223ebdb69da085ac1e43e15996e458f3613d0f11d8c387b2eaeb4302aeeb00d291612bb0c00";
+  let keypair = Ed25519Keypair::from_secret_key(Ed25519SecretKey::from_bytes(hex_array(
+    "4ccd089b28ff96da9db6c346ec114e0f5b8a319f35aba624da8cf6ed4fb8a6fb",
+  )));
+  assert_hex(keypair.public_key().as_bytes(), public);
+  assert_hex(keypair.sign(&[0x72]).as_bytes(), signature);
+  Ed25519PublicKey::from_bytes(hex_array(public))
+    .verify(&[0x72], &Ed25519Signature::from_bytes(hex_array(signature)))
+    .expect("RFC 8032 signature verifies");
+}
+
+/// RFC 6979 A.2.5: the P-256/SHA-256 signature of "sample" verifies, and it does
+/// not verify for "test". Signing uses its own nonce derivation, so this pins
+/// verification against an independent signer.
+fn assert_ecdsa_p256_rfc6979_verification() {
+  let public = EcdsaP256PublicKey::from_sec1_bytes(&hex_vec(
+    "0460fed4ba255a9d31c961eb74c6356d68c049b8923b61fa6ce669622e60f29fb67903fe1008b8bc99a41ae9e95628bc64f2f1b20c2d7e9f5177a3c294d4462299",
+  ))
+  .expect("RFC 6979 public key");
+  let signature = EcdsaP256Signature::from_bytes(hex_array(
+    "efd48b2aacb6a8fd1140dd9cd45e81d69d2c877b56aaf991c34d0ea84eaf3716f7cb1c942d657c41d436c7a1b6e29f65f3e900dbb9aff4064dc4ab2f843acda8",
+  ))
+  .expect("RFC 6979 signature");
+  public
+    .verify(b"sample", &signature)
+    .expect("RFC 6979 signature verifies");
+  assert!(public.verify(b"test", &signature).is_err());
+}
+
+/// Wycheproof `rsa_pkcs1_2048_sig_gen_test.json`, the SHA-256 group, tcId 82:
+/// RSASSA-PKCS1-v1_5 is deterministic, so signing must give the Wycheproof
+/// signature whatever blinding factor the caller supplies.
+fn assert_rsa_pkcs1v15_wycheproof_signature() {
+  let der = decode_base64(include_str!("../fixtures/rsa2048_sha256_private_pkcs1.txt"));
+  let key = RsaPrivateKey::from_pkcs1_der_with_policy(&der, &RsaPublicKeyPolicy::modulus_2048_to_8192())
+    .expect("Wycheproof RSA-2048 private key");
+  let message = [0u8; 20];
+  let mut signature = vec![0u8; key.signature_len()];
+  key
+    .sign_signature_with_random_fill(
+      RsaSignatureProfile::pkcs1v15(RsaPkcs1v15Profile::Sha256),
+      &message,
+      &mut signature,
+      |random| {
+        // Blinding factor two and mask two pass on the first draw.
+        random.fill(0);
+        if let Some(last) = random.last_mut() {
+          *last = 2;
+        }
+        Ok::<(), ()>(())
+      },
+    )
+    .expect("caller-random PKCS #1 v1.5 signing");
+  assert_hex(
+    &signature,
+    "8a1b220cb2ab415dc760eb7f5bb10335a3cca269d7dbbf7d0962ba79f9cf7b43a5fc09c99a1584f07403473d6c189a836897a5b6f8ea9fa22d601e6ba5f7411fe27c638b81b1a22363583a80fce8c7df3e40fb51bd0e60d0a6653f79f3bcb7ec3e9dc14cfb5b31ab1735bca692d50ac03f979dda92747c6430f8045efa3513ba6e0ce3e9e35570e1c30c8ebe589b44192e1344ca83dfa576fc6fdc7bf1cd7cee875b001c8c02ce8d602769e4bd9d241c4857182a0089a8b67644e73eef105c550efa47a40874289395ac0c4e02fd4ba98e130a4c2d1b95521c6af4a002ac3bdc6e52122ae4c08cc3da1c896e059acbddec574ac0432f6103dd97273d8803c102",
+  );
+}
+
+/// draft-ietf-lamps-pq-composite-sigs-19 Appendix E: both composites verify the
+/// empty-context and context signatures, and refuse each under the other context.
+fn assert_composite_mldsa_draft_signatures() {
+  const VECTORS: &str = include_str!("../../../testdata/composite_mldsa/draft19/vectors.json");
+  let message = decode_base64(json_string(VECTORS, "m"));
+  let context = decode_base64(json_string(VECTORS, "ctx"));
+  let case = |id: &str| {
+    let (_, test) = VECTORS.split_once(&format!("\"{id}\"")).expect("composite test case");
+    (
+      decode_base64(json_string(test, "pk")),
+      decode_base64(json_string(test, "s")),
+      decode_base64(json_string(test, "sWithContext")),
+    )
+  };
+  macro_rules! check {
+    ($id:literal, $public:ty, $signature:ty) => {{
+      let (public, plain, with_context) = case($id);
+      let public = <$public>::try_from_slice(&public).expect("draft public key");
+      let plain = <$signature>::try_from_slice(&plain).expect("draft signature");
+      let with_context = <$signature>::try_from_slice(&with_context).expect("draft signature");
+      public.verify(&message, &plain).expect("empty-context draft signature");
+      public
+        .verify_with_context(&message, &context, &with_context)
+        .expect("context draft signature");
+      assert!(public.verify_with_context(&message, &context, &plain).is_err());
+      assert!(public.verify(&message, &with_context).is_err());
+    }};
+  }
+  check!(
+    "id-MLDSA65-Ed25519-SHA512",
+    MlDsa65Ed25519PublicKey,
+    MlDsa65Ed25519Signature
+  );
+  check!(
+    "id-MLDSA65-ECDSA-P256-SHA512",
+    MlDsa65EcdsaP256PublicKey,
+    MlDsa65EcdsaP256Signature
+  );
+}
+
 fn main() {
   run_vectors();
 }
@@ -842,5 +1187,14 @@ fn run_vectors() {
   assert_mldsa_fips204_vectors();
   assert_slhdsa_fips205_vectors();
   assert_xwing_draft_vectors();
+  assert_aead_wycheproof_suites();
+  assert_crc_matches_the_catalogue_definition();
+  assert_siphash_reference_vector_and_usize_width();
+  assert_xxh3_matches_xxhsum();
+  assert_hmac_hkdf_pbkdf2_vectors();
+  assert_ed25519_rfc8032_vector();
+  assert_ecdsa_p256_rfc6979_verification();
+  assert_rsa_pkcs1v15_wycheproof_signature();
+  assert_composite_mldsa_draft_signatures();
   assert_simd128_runtime_caps_are_detected();
 }
