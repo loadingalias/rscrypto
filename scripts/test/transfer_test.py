@@ -23,6 +23,7 @@ import dudect_execute
 import transfer
 import cross
 from cross_build import LINUX_TARGETS, TARGETS, environment, require_host, verify_elf
+from evidence_suite import BACKEND_TESTS
 
 TARGET = "riscv64gc-unknown-linux-gnu"
 spec = importlib.util.spec_from_file_location('runner_tools', ROOT / 'scripts/tooling/transfer.py')
@@ -410,8 +411,9 @@ class NativeArchive(unittest.TestCase):
             self.assertEqual(set(summary['modes']), {'native', 'portable', 'internal-native', 'internal-portable'})
             self.assertEqual(summary['nextest'], consumer_version)
             self.assertNotEqual(summary['nextest'], metadata['nextest'])
-            self.assertEqual(len(summary['modes']['internal-native']['backend_evidence']), 3)
-            self.assertEqual(len(summary['modes']['internal-portable']['backend_evidence']), 3)
+            # One record per ChaCha20 differential test; each record covers every available backend.
+            self.assertEqual(len(summary['modes']['internal-native']['backend_evidence']), len(BACKEND_TESTS))
+            self.assertEqual(len(summary['modes']['internal-portable']['backend_evidence']), len(BACKEND_TESTS))
 
             for mutation in ('missing-suite', 'missing-flag', 'wrong-boundary'):
                 broken = json.loads(json.dumps(metadata))
