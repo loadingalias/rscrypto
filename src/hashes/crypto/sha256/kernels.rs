@@ -22,8 +22,8 @@ use crate::platform::caps::x86;
 #[derive(Clone, Copy)]
 pub(crate) enum CompressBlocksFn {
   Kernel(Sha256KernelId),
-  /// A test's instrumented compression function.
-  #[cfg(test)]
+  /// A PBKDF2 test's instrumented compression function.
+  #[cfg(all(test, feature = "pbkdf2"))]
   Test(fn(&mut [u32; 8], &[u8])),
 }
 
@@ -49,7 +49,7 @@ impl CompressBlocksFn {
       Self::Kernel(Sha256KernelId::WasmSimd128) => op.run(compress_blocks_wasm_simd128),
       #[cfg(target_arch = "s390x")]
       Self::Kernel(Sha256KernelId::S390xKimd) => op.run(compress_blocks_s390x_kimd),
-      #[cfg(test)]
+      #[cfg(all(test, feature = "pbkdf2"))]
       Self::Test(compress) => op.run(compress),
     }
   }

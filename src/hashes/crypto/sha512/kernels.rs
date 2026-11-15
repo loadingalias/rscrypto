@@ -19,8 +19,8 @@ use crate::platform::caps::x86;
 #[derive(Clone, Copy)]
 pub(crate) enum CompressBlocksFn {
   Kernel(Sha512KernelId),
-  /// A test's instrumented compression function.
-  #[cfg(test)]
+  /// A PBKDF2 test's instrumented compression function.
+  #[cfg(all(test, feature = "pbkdf2"))]
   Test(fn(&mut [u64; 8], &[u8])),
 }
 
@@ -49,7 +49,7 @@ impl CompressBlocksFn {
       Self::Kernel(Sha512KernelId::X86Avx2Decoupled) => op.run(compress_blocks_x86_avx2_decoupled),
       #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
       Self::Kernel(Sha512KernelId::X86Avx512vlDecoupled) => op.run(compress_blocks_x86_avx512vl_decoupled),
-      #[cfg(test)]
+      #[cfg(all(test, feature = "pbkdf2"))]
       Self::Test(compress) => op.run(compress),
     }
   }
