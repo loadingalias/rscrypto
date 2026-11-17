@@ -1,3 +1,5 @@
+#[cfg(feature = "aes-gcm")]
+use core::arch::riscv64::{aes64ds, aes64dsm, aes64im};
 use core::arch::riscv64::{aes64es, aes64esm};
 
 /// AES-256 round keys stored as 15 pairs of 64-bit halves for scalar AES.
@@ -186,6 +188,68 @@ pub(super) fn from_portable_128(rk: &[u32; 44]) -> RvScalar128RoundKeys {
     i = i.strict_add(1);
   }
   RvScalar128RoundKeys { rk: keys }
+}
+
+/// Convert the portable AES-128 schedule into the equivalent inverse cipher schedule
+/// (FIPS 197 section 5.3.5) for Zknd.
+///
+/// The schedule is the encryption schedule reversed, with `aes64im` (InvMixColumns) applied to the
+/// nine middle round keys, because `aes64dsm` applies InvMixColumns before the key is added.
+///
+/// # Safety
+/// Caller must ensure the CPU supports Zknd.
+#[cfg(feature = "aes-gcm")]
+#[target_feature(enable = "zknd")]
+pub(super) unsafe fn decrypt_keys_from_portable_128(rk: &[u32; 44]) -> RvScalar128RoundKeys {
+  let mut keys = [(0u64, 0u64); 11];
+  let mut round = 0usize;
+  while round < 11 {
+    let base = 10usize.strict_sub(round).strict_mul(4);
+    let mut bytes = [0u8; 16];
+    bytes[0..4].copy_from_slice(&rk[base].to_be_bytes());
+    bytes[4..8].copy_from_slice(&rk[base.strict_add(1)].to_be_bytes());
+    bytes[8..12].copy_from_slice(&rk[base.strict_add(2)].to_be_bytes());
+    bytes[12..16].copy_from_slice(&rk[base.strict_add(3)].to_be_bytes());
+    let (lo, hi) = load_halves(&bytes);
+    crate::traits::ct::zeroize(&mut bytes);
+    keys[round] = if round == 0 || round == 10 {
+      (lo, hi)
+    } else {
+      (aes64im(lo), aes64im(hi))
+    };
+    round = round.strict_add(1);
+  }
+  RvScalar128RoundKeys { rk: keys }
+}
+
+/// Decrypt a single 16-byte block using AES-128 with scalar RV64 AES.
+///
+/// # Safety
+/// Caller must ensure the CPU supports Zknd, and `keys` must come from
+/// [`decrypt_keys_from_portable_128`].
+#[cfg(feature = "aes-gcm")]
+#[target_feature(enable = "zknd")]
+pub(super) unsafe fn decrypt_block_128(keys: &RvScalar128RoundKeys, block: &mut [u8; 16]) {
+  let (mut lo, mut hi) = load_halves(block);
+
+  let (rk0_lo, rk0_hi) = keys.rk[0];
+  lo ^= rk0_lo;
+  hi ^= rk0_hi;
+
+  let mut round = 1usize;
+  while round < 10 {
+    let next_lo = aes64dsm(lo, hi);
+    let next_hi = aes64dsm(hi, lo);
+    let (rk_lo, rk_hi) = keys.rk[round];
+    lo = next_lo ^ rk_lo;
+    hi = next_hi ^ rk_hi;
+    round = round.strict_add(1);
+  }
+
+  let next_lo = aes64ds(lo, hi);
+  let next_hi = aes64ds(hi, lo);
+  let (rk_lo, rk_hi) = keys.rk[10];
+  store_halves(block, next_lo ^ rk_lo, next_hi ^ rk_hi);
 }
 
 /// Encrypt a single 16-byte block using AES-128 with scalar RV64 AES.

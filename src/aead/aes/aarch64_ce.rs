@@ -2555,6 +2555,78 @@ pub(super) unsafe fn encrypt_block_128(keys: &Ce128RoundKeys, block: &mut [u8; 1
   unsafe { encrypt_block_128_core(keys, block) }
 }
 
+/// Run a sequence of dependent AES-128 blocks inside the AES-CE target-feature scope.
+///
+/// # Safety
+/// Caller must ensure the CPU supports AES-CE (`target_feature = "aes"`).
+#[cfg(feature = "aes-gcm")]
+#[target_feature(enable = "aes,neon")]
+pub(super) unsafe fn serial_128<W: super::Aes128Serial>(keys: &Ce128RoundKeys, work: W) -> W::Output {
+  // SAFETY: the closure inherits this function's AES-CE + NEON scope. Each load and store covers
+  // one complete 16-byte block value.
+  work.run(|block| unsafe {
+    let mut output = [0u8; 16];
+    vst1q_u8(
+      output.as_mut_ptr(),
+      encrypt_state_128_core(keys, vld1q_u8(block.as_ptr())),
+    );
+    output
+  })
+}
+
+/// Expand an AES-128 key into the schedule of the equivalent inverse cipher (FIPS 197 section 5.3.5).
+///
+/// The schedule is the encryption schedule reversed, with InvMixColumns applied to the nine middle
+/// round keys. `aesd` adds its key before InvShiftRows and InvSubBytes, and `aesimc` follows it, so
+/// each middle round needs InvMixColumns of its key.
+///
+/// # Safety
+/// Caller must ensure the CPU supports AES-CE (`target_feature = "aes"`).
+#[cfg(feature = "aes-gcm")]
+#[target_feature(enable = "aes,neon")]
+pub(super) unsafe fn expand_decrypt_key_128(key: &[u8; 16]) -> Ce128RoundKeys {
+  // SAFETY: target_feature gate guarantees AES-CE + NEON. The encryption schedule clears on drop.
+  unsafe {
+    let enc = expand_key_128_hw(key);
+    let mut rk = [vdupq_n_u8(0); 11];
+    rk[0] = enc.rk[10];
+    let mut round = 1usize;
+    while round < 10 {
+      rk[round] = vaesimcq_u8(enc.rk[10usize.strict_sub(round)]);
+      round = round.strict_add(1);
+    }
+    rk[10] = enc.rk[0];
+    Ce128RoundKeys { rk }
+  }
+}
+
+/// Decrypt a single 16-byte block using AES-128 with AES-CE.
+///
+/// # Safety
+/// Caller must ensure the CPU supports AES-CE (`target_feature = "aes"`), and `keys` must come
+/// from [`expand_decrypt_key_128`].
+#[cfg(feature = "aes-gcm")]
+#[target_feature(enable = "aes,neon")]
+pub(super) unsafe fn decrypt_block_128(keys: &Ce128RoundKeys, block: &mut [u8; 16]) {
+  // SAFETY: target_feature gate guarantees AES-CE + NEON. The fixed-size block
+  // supplies one complete load and store.
+  unsafe {
+    let k = &keys.rk;
+    let mut state = vld1q_u8(block.as_ptr());
+    state = vaesimcq_u8(vaesdq_u8(state, k[0]));
+    state = vaesimcq_u8(vaesdq_u8(state, k[1]));
+    state = vaesimcq_u8(vaesdq_u8(state, k[2]));
+    state = vaesimcq_u8(vaesdq_u8(state, k[3]));
+    state = vaesimcq_u8(vaesdq_u8(state, k[4]));
+    state = vaesimcq_u8(vaesdq_u8(state, k[5]));
+    state = vaesimcq_u8(vaesdq_u8(state, k[6]));
+    state = vaesimcq_u8(vaesdq_u8(state, k[7]));
+    state = vaesimcq_u8(vaesdq_u8(state, k[8]));
+    state = vaesdq_u8(state, k[9]);
+    vst1q_u8(block.as_mut_ptr(), veorq_u8(state, k[10]));
+  }
+}
+
 #[cfg(feature = "aes-gcm")]
 /// Encrypt one block and return only its first five bytes.
 ///

@@ -1,0 +1,217 @@
+//! QUIC-LB connection-ID cipher (draft-ietf-quic-load-balancers-22, section 5.4).
+
+#![cfg(feature = "aes-gcm")]
+
+mod common;
+
+use aes::cipher::{Array, BlockCipherDecrypt as _, BlockCipherEncrypt as _, KeyInit as _};
+use common::decode_hex_vec;
+use rscrypto::aead::expert::quic_lb::{QuicLbCipher, QuicLbKey};
+
+const LEN: usize = QuicLbCipher::MAX_PLAINTEXT_LEN;
+
+fn key(hex: &str) -> QuicLbKey {
+  QuicLbKey::from_bytes(decode_hex_vec(hex).try_into().expect("16-octet key"))
+}
+
+fn block(bytes: &[u8]) -> [u8; LEN] {
+  let mut block = [0u8; LEN];
+  block[..bytes.len()].copy_from_slice(bytes);
+  block
+}
+
+/// A deterministic stream of distinct test inputs.
+fn generated<const N: usize>(state: &mut u64) -> [u8; N] {
+  let mut out = [0u8; N];
+  for byte in &mut out {
+    *state ^= *state << 13;
+    *state ^= *state >> 7;
+    *state ^= *state << 17;
+    *byte = state.to_le_bytes()[0];
+  }
+  out
+}
+
+/// Every (server-ID length, nonce length) pair that section 5.3 allows: 120 pairs.
+fn allowed_lengths() -> impl Iterator<Item = (usize, usize)> {
+  (1..=LEN)
+    .flat_map(|server_id_len| (4..=LEN.strict_sub(server_id_len)).map(move |nonce_len| (server_id_len, nonce_len)))
+}
+
+/// The four encrypted CIDs of Appendix B.2 and the section 5.4.2.4 example. Each body is the CID
+/// without its first octet, which carries the rotation and length and is not encrypted.
+///
+/// Erratum: in the section 5.4.2.4 example, step 10 prints `0xb3e4357c` as the truncated output
+/// of `0xb334357c...`. The final CID `0767947d29be054a` matches the correct value.
+const VECTORS: &[(&str, &str, &str, &str)] = &[
+  // (key, server ID, nonce, encrypted body)
+  (
+    "fdf726a9893ec05c0632d3956680baf0",
+    "31441a",
+    "9c69c275",
+    "67947d29be054a",
+  ),
+  (
+    "8f95f09245765f80256934e50c66207f",
+    "ed793a",
+    "ee080dbf",
+    "20b1d07b359d3c",
+  ),
+  // The server ID is longer than the nonce, so decryption needs the fourth pass.
+  (
+    "8f95f09245765f80256934e50c66207f",
+    "ed793a51d49b8f5fab65",
+    "ee080dbf48",
+    "cc381bc74cb4fbad2823a3d1f8fed2",
+  ),
+  // Single pass: the server ID and nonce total 16 octets.
+  (
+    "8f95f09245765f80256934e50c66207f",
+    "ed793a51d49b8f5f",
+    "ee080dbf48c0d1e5",
+    "4dd2d05a7b0de9b2b9907afb5ecf8cc3",
+  ),
+  // Erratum: this B.2 row lists cr_bits 3, but its CID begins 0x12, which encodes rotation 0.
+  // The body does not depend on the first octet.
+  (
+    "8f95f09245765f80256934e50c66207f",
+    "ed793a51d49b8f5fab",
+    "ee080dbf48c0d1e55d",
+    "5779c9cc86beb3a3a4a3ca96fce4bfe0cdbc",
+  ),
+];
+
+/// Encryption reproduces the draft's ciphertexts, and decryption recovers each server ID.
+///
+/// Decryption inverts section 5.4.2.3. Erratum: the section 5.5.2 pseudocode clears the first bits
+/// of `left_1` after pass 3, where `right_1` is meant.
+#[test]
+fn draft_vectors_encrypt_and_decrypt() {
+  for &(key_hex, server_id, nonce, body) in VECTORS {
+    let (server_id, nonce, body) = (decode_hex_vec(server_id), decode_hex_vec(nonce), decode_hex_vec(body));
+    let cipher = QuicLbCipher::new(&key(key_hex), server_id.len(), nonce.len()).expect("draft lengths");
+
+    let mut encrypted = block(&[server_id.as_slice(), nonce.as_slice()].concat());
+    cipher.encrypt(&mut encrypted);
+    assert_eq!(encrypted, block(&body), "encrypt {key_hex} {}", server_id.len());
+
+    cipher.decrypt_server_id(&mut encrypted);
+    assert_eq!(encrypted, block(&server_id), "decrypt {key_hex} {}", server_id.len());
+  }
+}
+
+/// With a 16-octet total, the body is one AES-128 block (section 5.4.1), checked against an
+/// independent AES implementation in both directions.
+#[test]
+fn single_pass_matches_independent_aes() {
+  let mut state = 0x5155_4943_2d4c_4231u64;
+  for server_id_len in 1..=12 {
+    let raw_key: [u8; 16] = generated(&mut state);
+    let plaintext: [u8; 16] = generated(&mut state);
+    let aes = aes::Aes128::new(&Array::from(raw_key));
+    let mut expected = Array::from(plaintext);
+    aes.encrypt_block(&mut expected);
+
+    let cipher = QuicLbCipher::new(
+      &QuicLbKey::from_bytes(raw_key),
+      server_id_len,
+      16usize.strict_sub(server_id_len),
+    )
+    .expect("single-pass lengths");
+    let mut encrypted = block(&plaintext);
+    cipher.encrypt(&mut encrypted);
+    assert_eq!(encrypted[..16], expected[..], "encrypt, server ID {server_id_len}");
+
+    let ciphertext: [u8; 16] = generated(&mut state);
+    let mut expected = Array::from(ciphertext);
+    aes.decrypt_block(&mut expected);
+    let mut decrypted = block(&ciphertext);
+    cipher.decrypt_server_id(&mut decrypted);
+    assert_eq!(
+      decrypted,
+      block(&expected[..server_id_len]),
+      "decrypt, server ID {server_id_len}"
+    );
+  }
+}
+
+/// Decryption recovers the server ID for every allowed length pair. The inputs set every bit,
+/// including both halves of the octet that odd lengths split, and the server IDs that end in that
+/// octet need the fourth decryption pass.
+#[test]
+fn decrypt_recovers_the_server_id_for_every_length_pair() {
+  let mut state = 0x726f_7574_652d_6964u64;
+  for (server_id_len, nonce_len) in allowed_lengths() {
+    let len = server_id_len.strict_add(nonce_len);
+    let cipher = QuicLbCipher::new(&QuicLbKey::from_bytes(generated(&mut state)), server_id_len, nonce_len)
+      .expect("allowed lengths");
+    for plaintext in [[0xffu8; LEN], generated(&mut state)] {
+      let plaintext = block(&plaintext[..len]);
+      let mut buffer = plaintext;
+      cipher.encrypt(&mut buffer);
+      assert_ne!(
+        buffer[..len],
+        plaintext[..len],
+        "encrypt changes {server_id_len}+{nonce_len}"
+      );
+      cipher.decrypt_server_id(&mut buffer);
+      assert_eq!(
+        buffer,
+        block(&plaintext[..server_id_len]),
+        "round trip {server_id_len}+{nonce_len}"
+      );
+    }
+  }
+}
+
+/// Encryption neither reads nor writes the octets after the plaintext. Decryption does not read
+/// them, and it leaves zeros after the server ID.
+#[test]
+fn buffer_octets_after_the_plaintext_follow_the_contract() {
+  let mut state = 0x6275_6666_6572_2d31u64;
+  for (server_id_len, nonce_len) in [(3usize, 4usize), (10, 5), (8, 8), (9, 9), (1, 4), (15, 4)] {
+    let len = server_id_len.strict_add(nonce_len);
+    let cipher = QuicLbCipher::new(&QuicLbKey::from_bytes(generated(&mut state)), server_id_len, nonce_len)
+      .expect("allowed lengths");
+    let plaintext: [u8; LEN] = generated(&mut state);
+    let mut zero_tail = plaintext;
+    zero_tail[len..].fill(0);
+    let mut ones_tail = plaintext;
+    ones_tail[len..].fill(0xff);
+
+    cipher.encrypt(&mut zero_tail);
+    cipher.encrypt(&mut ones_tail);
+    assert!(
+      zero_tail[len..].iter().all(|&byte| byte == 0),
+      "encrypt writes the tail"
+    );
+    assert!(
+      ones_tail[len..].iter().all(|&byte| byte == 0xff),
+      "encrypt writes the tail"
+    );
+    assert_eq!(zero_tail[..len], ones_tail[..len], "encrypt reads the tail");
+
+    cipher.decrypt_server_id(&mut zero_tail);
+    cipher.decrypt_server_id(&mut ones_tail);
+    assert_eq!(zero_tail, ones_tail, "decrypt reads the tail");
+    assert!(
+      ones_tail[server_id_len..].iter().all(|&byte| byte == 0),
+      "decrypt leaves octets after the server ID"
+    );
+  }
+}
+
+/// Construction succeeds exactly for the lengths of section 5.3: a server ID of at least one
+/// octet, a nonce of at least four, and a total of at most 19.
+#[test]
+fn construction_accepts_exactly_the_draft_lengths() {
+  let key = QuicLbKey::from_bytes([0x42; 16]);
+  for server_id_len in 0..=21 {
+    for nonce_len in 0..=21 {
+      let allowed = server_id_len >= 1 && nonce_len >= 4 && server_id_len + nonce_len <= 19;
+      let cipher = QuicLbCipher::new(&key, server_id_len, nonce_len);
+      assert_eq!(cipher.is_some(), allowed, "{server_id_len}+{nonce_len}");
+    }
+  }
+  assert!(QuicLbCipher::new(&key, usize::MAX, 4).is_none(), "overflowing total");
+}

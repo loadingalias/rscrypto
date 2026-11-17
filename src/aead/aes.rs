@@ -53,6 +53,11 @@ pub(crate) const EXPANDED_KEY_WORDS_128: usize = 4 * (ROUNDS_128 + 1); // 44
 #[cfg(target_arch = "aarch64")]
 #[path = "aes/aarch64_ce.rs"]
 mod ce;
+#[cfg(feature = "aes-gcm")]
+#[path = "aes/inverse.rs"]
+mod inverse;
+#[cfg(feature = "aes-gcm")]
+pub(crate) use inverse::{Aes128DecKey, aes128_decrypt_block, aes128_expand_decrypt_key};
 #[cfg(any(test, target_arch = "riscv64", target_arch = "s390x"))]
 #[path = "aes/fixslice64.rs"]
 mod fixslice64;
@@ -2659,6 +2664,48 @@ pub(crate) fn aes128_encrypt_block_prefix_5(ek: &Aes128EncKey, block: &[u8; BLOC
   let prefix = [output[0], output[1], output[2], output[3], output[4]];
   crate::traits::ct::zeroize(&mut output);
   prefix
+}
+
+/// A sequence of dependent AES-128 block encryptions that runs in one backend scope.
+#[cfg(feature = "aes-gcm")]
+pub(crate) trait Aes128Serial {
+  /// The sequence's result.
+  type Output;
+
+  /// Run the sequence with `encrypt`, which returns the encryption of one block under the
+  /// caller's key.
+  ///
+  /// Blocks pass by value so that the fused backends keep them in vector registers.
+  fn run(self, encrypt: impl FnMut([u8; BLOCK_SIZE]) -> [u8; BLOCK_SIZE]) -> Self::Output;
+}
+
+/// Run `work` with single-block AES-128 encryption under `ek`.
+///
+/// On AES-NI and AES-CE the whole sequence runs inside one target-feature function, so the block
+/// encryption inlines into `work` and the round keys and blocks stay in registers between blocks.
+/// Other backends encrypt each block in memory through [`aes128_encrypt_block`] and clear that
+/// copy before they return the result.
+#[cfg(feature = "aes-gcm")]
+#[inline]
+pub(crate) fn aes128_serial<W: Aes128Serial>(ek: &Aes128EncKey, work: W) -> W::Output {
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+  if let Key128Inner::X86AesNi(ni_rk) = &ek.inner {
+    // SAFETY: this variant is constructed only after runtime detection confirms AES-NI.
+    return unsafe { ni::serial_128(ni_rk, work) };
+  }
+
+  #[cfg(target_arch = "aarch64")]
+  if let Key128Inner::Aarch64Aes(ce_rk) = &ek.inner {
+    // SAFETY: this variant is constructed only after runtime detection confirms AES-CE.
+    return unsafe { ce::serial_128(ce_rk, work) };
+  }
+
+  work.run(|mut block| {
+    aes128_encrypt_block(ek, &mut block);
+    let output = block;
+    crate::traits::ct::zeroize(&mut block);
+    output
+  })
 }
 
 /// XOR a serial block stream into `state` and AES-128-encrypt after each block.

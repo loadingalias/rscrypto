@@ -36,6 +36,9 @@ mod aead_aes_siv_cmac256;
 #[path = "../target_impls/aead_nonce_counter.rs"]
 mod aead_nonce_counter;
 
+#[path = "../target_impls/aead_quic_lb.rs"]
+mod aead_quic_lb;
+
 #[path = "../target_impls/aead_xchacha20poly1305.rs"]
 mod aead_xchacha20poly1305;
 
@@ -276,6 +279,12 @@ fn replay_aead_nonce_counter_corpus() {
     aead_nonce_counter::run,
   );
   assert_ne!(replayed, 0, "aead_nonce_counter corpus should not be empty");
+}
+
+#[test]
+fn replay_aead_quic_lb_corpus() {
+  let replayed = replay_corpus_dir("aead_quic_lb", corpus_dir("aead_quic_lb"), aead_quic_lb::run);
+  assert_ne!(replayed, 0, "aead_quic_lb corpus should not be empty");
 }
 
 #[test]

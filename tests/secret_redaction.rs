@@ -50,6 +50,7 @@ fn keyed_state_debug_snapshots_are_redacted() {
     use rscrypto::aead::expert::header_protection::{
       Aes128HeaderProtection, Aes128HeaderProtectionKey, Aes256HeaderProtection, Aes256HeaderProtectionKey,
     };
+    use rscrypto::aead::expert::quic_lb::{QuicLbCipher, QuicLbKey};
     use rscrypto::{Aes128Gcm, Aes128GcmKey, Aes256Gcm, Aes256GcmKey};
 
     let key = Aes128GcmKey::from_bytes(KEY_16);
@@ -67,6 +68,13 @@ fn keyed_state_debug_snapshots_are_redacted() {
     let key = Aes256HeaderProtectionKey::from_bytes(KEY_32);
     assert_debug_snapshot(&key, "Aes256HeaderProtectionKey(****)");
     assert_debug_snapshot(&Aes256HeaderProtection::new(&key), "Aes256HeaderProtection { .. }");
+
+    let key = QuicLbKey::from_bytes(KEY_16);
+    assert_debug_snapshot(&key, "QuicLbKey(****)");
+    assert_debug_snapshot(
+      &QuicLbCipher::new(&key, 3, 4).expect("allowed lengths"),
+      "QuicLbCipher { server_id_len: 3, nonce_len: 4, .. }",
+    );
   }
 
   #[cfg(feature = "aes-gcm-siv")]

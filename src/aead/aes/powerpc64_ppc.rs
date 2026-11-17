@@ -579,6 +579,49 @@ pub(super) unsafe fn encrypt_block_128(keys: &Ppc128RoundKeys, block: &mut [u8; 
   unsafe { encrypt_block_128_core(keys, block) }
 }
 
+/// Decrypt a single 16-byte block using AES-128 with POWER8 vncipher.
+///
+/// `vncipher` applies InvShiftRows, InvSubBytes, the round key, then InvMixColumns, so the
+/// inverse cipher of FIPS 197 section 5.3 runs on the encryption schedule in reverse order.
+///
+/// # Safety
+/// Caller must ensure POWER8 crypto instructions are available.
+#[cfg(feature = "aes-gcm")]
+#[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
+pub(super) unsafe fn decrypt_block_128(keys: &Ppc128RoundKeys, block: &mut [u8; 16]) {
+  // SAFETY: the target_feature gate guarantees POWER8 crypto. The asm reads and writes only
+  // vector registers. The state is loaded from and stored to one complete block.
+  unsafe {
+    let k = &keys.rk;
+    let mut state = load_block_be(block);
+
+    asm!(
+      "vxor {s}, {s}, {rk}",
+      s = inlateout(vreg) state,
+      rk = in(vreg) k[10],
+      options(nomem, nostack),
+    );
+    let mut round = 9usize;
+    while round > 0 {
+      asm!(
+        "vncipher {s}, {s}, {rk}",
+        s = inlateout(vreg) state,
+        rk = in(vreg) k[round],
+        options(nomem, nostack),
+      );
+      round = round.strict_sub(1);
+    }
+    asm!(
+      "vncipherlast {s}, {s}, {rk}",
+      s = inlateout(vreg) state,
+      rk = in(vreg) k[0],
+      options(nomem, nostack),
+    );
+
+    store_block_be(block, state);
+  }
+}
+
 // Eight-block AES-GCM: CTR keystream, data, and GHASH input stay in vector registers.
 
 /// `vperm` control that reverses the 16 register bytes.

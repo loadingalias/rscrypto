@@ -81,6 +81,16 @@ pub mod expert {
     #[cfg_attr(docsrs, doc(cfg(feature = "chacha20poly1305")))]
     pub use crate::aead::header_protection::{ChaCha20HeaderProtection, ChaCha20HeaderProtectionKey};
   }
+
+  /// The QUIC-LB connection-ID cipher of draft-ietf-quic-load-balancers-22, section 5.4.
+  ///
+  /// This capability encrypts and decrypts only the server-ID and nonce of a QUIC-LB connection
+  /// ID. It does not expose general AES block encryption or decryption.
+  #[cfg(feature = "aes-gcm")]
+  #[cfg_attr(docsrs, doc(cfg(feature = "aes-gcm")))]
+  pub mod quic_lb {
+    pub use crate::aead::quic_lb::{QuicLbCipher, QuicLbKey};
+  }
 }
 #[cfg(feature = "aegis256")]
 mod aegis256;
@@ -187,6 +197,8 @@ mod nonce_counter;
 mod poly1305;
 #[cfg(any(feature = "aes-gcm", feature = "aes-gcm-siv"))]
 mod polyval;
+#[cfg(feature = "aes-gcm")]
+mod quic_lb;
 #[cfg(any(
   feature = "aes-gcm",
   feature = "chacha20poly1305",

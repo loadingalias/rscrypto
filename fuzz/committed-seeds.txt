@@ -63,6 +63,7 @@ fuzz/corpus/aead_ascon128/seed-basic
 fuzz/corpus/aead_chacha20poly1305/seed-basic
 fuzz/corpus/aead_header_protection/seed-basic
 fuzz/corpus/aead_nonce_counter/seed-basic
+fuzz/corpus/aead_quic_lb/seed-basic
 fuzz/corpus/aead_xchacha20poly1305/seed-basic
 fuzz/corpus/auth_argon2d/seed-basic
 fuzz/corpus/auth_argon2i/seed-basic

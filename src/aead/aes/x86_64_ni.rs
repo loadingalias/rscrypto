@@ -692,6 +692,77 @@ pub(super) unsafe fn encrypt_block_128(keys: &Ni128RoundKeys, block: &mut [u8; 1
   }
 }
 
+/// Run a sequence of dependent AES-128 blocks inside the AES-NI target-feature scope.
+///
+/// # Safety
+/// Caller must ensure the CPU supports AES-NI (`target_feature = "aes"`).
+#[cfg(feature = "aes-gcm")]
+#[target_feature(enable = "aes,sse2")]
+pub(super) unsafe fn serial_128<W: super::Aes128Serial>(keys: &Ni128RoundKeys, work: W) -> W::Output {
+  // SAFETY: the closure inherits this function's AES-NI + SSE2 scope. Each unaligned load and
+  // store covers one complete 16-byte block value.
+  work.run(|block| unsafe {
+    let mut output = [0u8; 16];
+    _mm_storeu_si128(
+      output.as_mut_ptr().cast(),
+      encrypt_state_128(keys, _mm_loadu_si128(block.as_ptr().cast())),
+    );
+    output
+  })
+}
+
+/// Expand an AES-128 key into the schedule of the equivalent inverse cipher (FIPS 197 section 5.3.5).
+///
+/// The schedule is the encryption schedule reversed, with InvMixColumns applied to the nine middle
+/// round keys, which is the form that `aesdec` consumes.
+///
+/// # Safety
+/// Caller must ensure the CPU supports AES-NI (`target_feature = "aes"`).
+#[cfg(feature = "aes-gcm")]
+#[target_feature(enable = "aes,sse2")]
+pub(super) unsafe fn expand_decrypt_key_128(key: &[u8; 16]) -> Ni128RoundKeys {
+  // SAFETY: target_feature gate guarantees AES-NI + SSE2. The encryption schedule clears on drop.
+  unsafe {
+    let enc = expand_key_128(key);
+    let mut rk = [_mm_setzero_si128(); 11];
+    rk[0] = enc.rk[10];
+    let mut round = 1usize;
+    while round < 10 {
+      rk[round] = _mm_aesimc_si128(enc.rk[10usize.strict_sub(round)]);
+      round = round.strict_add(1);
+    }
+    rk[10] = enc.rk[0];
+    Ni128RoundKeys { rk }
+  }
+}
+
+/// Decrypt a single 16-byte block using AES-128 with AES-NI.
+///
+/// # Safety
+/// Caller must ensure the CPU supports AES-NI (`target_feature = "aes"`), and `keys` must come
+/// from [`expand_decrypt_key_128`].
+#[cfg(feature = "aes-gcm")]
+#[target_feature(enable = "aes,sse2")]
+pub(super) unsafe fn decrypt_block_128(keys: &Ni128RoundKeys, block: &mut [u8; 16]) {
+  // SAFETY: target_feature gate guarantees AES-NI + SSE2. The fixed-size block
+  // supplies one complete unaligned load and store.
+  unsafe {
+    let k = &keys.rk;
+    let mut state = _mm_xor_si128(_mm_loadu_si128(block.as_ptr().cast()), k[0]);
+    state = _mm_aesdec_si128(state, k[1]);
+    state = _mm_aesdec_si128(state, k[2]);
+    state = _mm_aesdec_si128(state, k[3]);
+    state = _mm_aesdec_si128(state, k[4]);
+    state = _mm_aesdec_si128(state, k[5]);
+    state = _mm_aesdec_si128(state, k[6]);
+    state = _mm_aesdec_si128(state, k[7]);
+    state = _mm_aesdec_si128(state, k[8]);
+    state = _mm_aesdec_si128(state, k[9]);
+    state = _mm_aesdeclast_si128(state, k[10]);
+    _mm_storeu_si128(block.as_mut_ptr().cast(), state);
+  }
+}
+
 #[cfg(feature = "aes-gcm")]
 /// Encrypt one block and return only its first five bytes.
 ///

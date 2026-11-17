@@ -133,6 +133,11 @@ path = "fuzz_targets/aead_nonce_counter.rs"
 doc = false
 
 [[bin]]
+name = "aead_quic_lb"
+path = "fuzz_targets/aead_quic_lb.rs"
+doc = false
+
+[[bin]]
 name = "aead_header_protection"
 path = "fuzz_targets/aead_header_protection.rs"
 doc = false

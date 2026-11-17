@@ -7,6 +7,10 @@
 //! s390x, where the byte-oriented arithmetic S-box is not a reliable
 //! constant-time source representation after target-specific lowering.
 //!
+//! The AES-128 inverse cipher here is rscrypto's own. It runs plain (not
+//! fixsliced) bitsliced rounds and builds InvSubBytes from the forward S-box
+//! circuit. [`inv_sub_bytes`] gives the proof.
+//!
 //! Reference: Adomnicai et al., "Fixslicing AES-like Ciphers",
 //! <https://eprint.iacr.org/2020/1123.pdf>.
 
@@ -161,6 +165,32 @@ pub(super) fn encrypt_4blocks_128(rkeys: &Fixslice128RoundKeys, blocks: &mut [[u
 }
 
 fn aes128_key_schedule(key: &[u8; KEY_SIZE_128]) -> [u64; 88] {
+  let mut rkeys = aes128_plain_key_schedule(key);
+
+  // Fold the cumulative ShiftRows rotation into the keys for rounds whose
+  // mix_columns variant in the encrypt loop is non-zero. Pattern mirrors
+  // [`aes256_key_schedule`] adapted to AES-128's 10-round count.
+  let mut i = 8usize;
+  while i < 72 {
+    inv_shift_rows_1(&mut rkeys[i..i.strict_add(8)]);
+    inv_shift_rows_2(&mut rkeys[i.strict_add(8)..i.strict_add(16)]);
+    inv_shift_rows_3(&mut rkeys[i.strict_add(16)..i.strict_add(24)]);
+    i = i.strict_add(32);
+  }
+  inv_shift_rows_1(&mut rkeys[72..80]);
+
+  // Account for the NOTs absorbed by sub_bytes during the schedule above.
+  i = 1;
+  while i < 11 {
+    sub_bytes_nots(&mut rkeys[i.strict_mul(8)..i.strict_mul(8).strict_add(8)]);
+    i = i.strict_add(1);
+  }
+
+  rkeys
+}
+
+/// The eleven AES-128 round keys, each bitsliced in the plain (not fixsliced) layout.
+fn aes128_plain_key_schedule(key: &[u8; KEY_SIZE_128]) -> [u64; 88] {
   let mut rkeys = [0u64; 88];
 
   bitslice(&mut rkeys[..8], key, key, key, key);
@@ -194,26 +224,126 @@ fn aes128_key_schedule(key: &[u8; KEY_SIZE_128]) -> [u64; 88] {
     rcon = rcon.strict_add(1);
   }
 
-  // Fold the cumulative ShiftRows rotation into the keys for rounds whose
-  // mix_columns variant in the encrypt loop is non-zero. Pattern mirrors
-  // [`aes256_key_schedule`] adapted to AES-128's 10-round count.
-  let mut i = 8usize;
-  while i < 72 {
-    inv_shift_rows_1(&mut rkeys[i..i.strict_add(8)]);
-    inv_shift_rows_2(&mut rkeys[i.strict_add(8)..i.strict_add(16)]);
-    inv_shift_rows_3(&mut rkeys[i.strict_add(16)..i.strict_add(24)]);
-    i = i.strict_add(32);
-  }
-  inv_shift_rows_1(&mut rkeys[72..80]);
+  rkeys
+}
 
-  // Account for the NOTs absorbed by sub_bytes during the schedule above.
-  i = 1;
-  while i < 11 {
-    sub_bytes_nots(&mut rkeys[i.strict_mul(8)..i.strict_mul(8).strict_add(8)]);
+/// Bitsliced AES-128 decryption round keys: the plain schedule, used in reverse order.
+#[cfg(feature = "aes-gcm")]
+pub(super) struct Fixslice128InvRoundKeys {
+  keys: [u64; 88],
+}
+
+#[cfg(feature = "aes-gcm")]
+impl Fixslice128InvRoundKeys {
+  #[inline]
+  pub(super) fn new(key: &[u8; KEY_SIZE_128]) -> Self {
+    Self {
+      keys: aes128_plain_key_schedule(key),
+    }
+  }
+
+  #[inline]
+  #[cfg(any(target_arch = "riscv64", target_arch = "s390x"))]
+  pub(super) fn zeroize(&mut self) {
+    // SAFETY: `[u64; 88]` is contiguous and valid to view as bytes for its
+    // exact initialized size.
+    crate::traits::ct::zeroize(unsafe {
+      core::slice::from_raw_parts_mut(self.keys.as_mut_ptr().cast::<u8>(), self.keys.len().strict_mul(8))
+    });
+  }
+}
+
+/// Decrypt one block with the AES-128 inverse cipher (FIPS 197 section 5.3).
+#[cfg(feature = "aes-gcm")]
+#[inline]
+pub(super) fn decrypt_block_128(rkeys: &Fixslice128InvRoundKeys, block: &mut [u8; BLOCK_SIZE]) {
+  let mut blocks = [*block; 4];
+  decrypt_4blocks_128(rkeys, &mut blocks);
+  *block = blocks[0];
+  crate::traits::ct::zeroize(blocks.as_flattened_mut());
+}
+
+/// Decrypt four blocks with the AES-128 inverse cipher (FIPS 197 section 5.3).
+///
+/// Each round is InvShiftRows, InvSubBytes, AddRoundKey, then InvMixColumns, on the plain
+/// bitsliced layout in which `shift_rows_1` and `mix_columns_0` are the standard ShiftRows and
+/// MixColumns. The last round omits InvMixColumns.
+#[cfg(feature = "aes-gcm")]
+#[inline]
+pub(super) fn decrypt_4blocks_128(rkeys: &Fixslice128InvRoundKeys, blocks: &mut [[u8; BLOCK_SIZE]; 4]) {
+  let mut state = State::default();
+  bitslice(&mut state, &blocks[0], &blocks[1], &blocks[2], &blocks[3]);
+
+  let mut rk_off = 80usize;
+  add_round_key(&mut state, &rkeys.keys[rk_off..]);
+  loop {
+    // `shift_rows_3` rotates each row three times as far as ShiftRows, which is InvShiftRows.
+    shift_rows_3(&mut state);
+    inv_sub_bytes(&mut state);
+    rk_off = rk_off.strict_sub(8);
+    add_round_key(&mut state, &rkeys.keys[rk_off..rk_off.strict_add(8)]);
+    if rk_off == 0 {
+      break;
+    }
+    inv_mix_columns(&mut state);
+  }
+
+  *blocks = inv_bitslice(&state);
+  crate::traits::ct::zeroize_words(&mut state);
+}
+
+/// Bitsliced AES InvSubBytes, built from the forward S-box circuit.
+///
+/// Proof. Let `inv` be inversion in GF(2^8) (with `inv(0) = 0`), `A` the AES affine matrix, and
+/// `L = A^-1`. FIPS 197 defines `S(x) = A(inv(x)) ^ 0x63`. [`sub_bytes`] computes
+/// `sb(x) = A(inv(x))`, the S-box without its constant. Then:
+///
+/// 1. `S^-1(y) = inv(L(y ^ 0x63)) = inv(L(y) ^ 0x05)`, because `L` is linear and
+///    `L(0x63) = 0x05`.
+/// 2. `inv(z) = L(sb(z))` for every `z`, by the definition of `sb`.
+/// 3. So `S^-1(y) = L(sb(L(y) ^ 0x05))`.
+///
+/// `L(y) = rotl(y, 1) ^ rotl(y, 3) ^ rotl(y, 6)` (FIPS 197 equation 5.6). Bit `i` of
+/// `rotl(y, k)` is bit `i - k` of `y`, and plane `i` of the bitsliced state holds bit `i` of every
+/// byte, so plane `i` of `L(y)` is the XOR of planes `i - 1`, `i - 3`, and `i - 6` (mod 8). The
+/// constant `0x05` sets bits 0 and 2, so it inverts planes 0 and 2. Every step is a fixed sequence
+/// of bitwise operations, with no data-dependent branch or index. A test checks all 256 inputs
+/// against the portable inverse S-box.
+#[cfg(feature = "aes-gcm")]
+#[inline]
+pub(super) fn inv_sub_bytes(state: &mut State) {
+  inv_affine_linear(state);
+  state[0] ^= 0xffffffffffffffff;
+  state[2] ^= 0xffffffffffffffff;
+  sub_bytes(state);
+  inv_affine_linear(state);
+}
+
+/// The linear part of the AES inverse affine map, `L(y) = rotl(y, 1) ^ rotl(y, 3) ^ rotl(y, 6)`,
+/// on every byte of the bitsliced state.
+#[cfg(feature = "aes-gcm")]
+#[inline(always)]
+fn inv_affine_linear(state: &mut State) {
+  let s = *state;
+  let mut i = 0usize;
+  while i < 8 {
+    state[i] = s[i.strict_add(7) & 7] ^ s[i.strict_add(5) & 7] ^ s[i.strict_add(2) & 7];
     i = i.strict_add(1);
   }
+}
 
-  rkeys
+/// AES InvMixColumns as three MixColumns.
+///
+/// Proof. MixColumns multiplies each column by `c(x) = 03x^3 + 01x^2 + 01x + 02` modulo
+/// `x^4 + 1` (FIPS 197 equation 5.5). Squaring in characteristic 2 squares each coefficient and
+/// doubles each exponent, so `c(x)^2 = 05x^6 + 01x^4 + 01x^2 + 04 = 04x^2 + 05`, and
+/// `c(x)^4 = 10x^4 + 11 = 01`. So `c(x)^3 = c(x)^-1`, which is the InvMixColumns polynomial.
+#[cfg(feature = "aes-gcm")]
+#[inline]
+fn inv_mix_columns(state: &mut State) {
+  mix_columns_0(state);
+  mix_columns_0(state);
+  mix_columns_0(state);
 }
 
 fn aes256_key_schedule(key: &[u8; KEY_SIZE]) -> [u64; 120] {

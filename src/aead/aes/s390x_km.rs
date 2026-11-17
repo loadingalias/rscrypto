@@ -67,20 +67,24 @@ pub(super) unsafe fn encrypt_block_raw(raw_key: &[u8; 32], block: &mut [u8; 16])
   crate::traits::ct::zeroize(&mut src);
 }
 
+/// KM modifier bit 56 of general register 0, which selects decryption.
+#[cfg(feature = "aes-gcm")]
+const KM_DECIPHER: u64 = 0x80;
+
 /// Bytes that one KM batch copies through the stack source buffer: eight AES blocks.
 const KM_BATCH_BYTES: usize = 16 * 8;
 
-/// Encrypt complete 16-byte blocks in place with KM in ECB mode.
+/// Encrypt or decrypt complete 16-byte blocks in place with KM in ECB mode.
 ///
 /// KM requires non-overlapping source and destination, so each batch of up to
-/// eight blocks is copied to a fixed stack source and encrypted back into
+/// eight blocks is copied to a fixed stack source and transformed back into
 /// `blocks`. The batches bound that copy for every block count.
 ///
 /// # Safety
 /// Caller must ensure the MSA (CPACF) facility is available, that `function`
-/// is the KM encrypt function code for the key, and that `parm` points to the
-/// key's initialized KM parameter block.
-unsafe fn encrypt_blocks_km(function: u64, parm: *const u8, blocks: &mut [u8]) {
+/// is the KM function code for the key (with `KM_DECIPHER` to decrypt), and
+/// that `parm` points to the key's initialized KM parameter block.
+unsafe fn km_ecb_blocks(function: u64, parm: *const u8, blocks: &mut [u8]) {
   debug_assert!(blocks.len().is_multiple_of(16));
 
   let mut src = [0u8; KM_BATCH_BYTES];
@@ -122,7 +126,7 @@ unsafe fn encrypt_blocks_km(function: u64, parm: *const u8, blocks: &mut [u8]) {
 pub(super) unsafe fn encrypt_blocks_raw(raw_key: &[u8; 32], blocks: &mut [u8], count: usize) {
   debug_assert_eq!(blocks.len(), count.strict_mul(16));
   // SAFETY: The caller guarantees MSA; function code 20 consumes the raw 32-byte AES-256 key.
-  unsafe { encrypt_blocks_km(20, raw_key.as_ptr(), &mut blocks[..count.strict_mul(16)]) }
+  unsafe { km_ecb_blocks(20, raw_key.as_ptr(), &mut blocks[..count.strict_mul(16)]) }
 }
 
 /// Encrypt a single 16-byte block using the KM instruction (AES-256 ECB).
@@ -146,7 +150,7 @@ pub(super) unsafe fn encrypt_block(key: &KmKey, block: &mut [u8; 16]) {
 pub(super) unsafe fn encrypt_blocks(key: &KmKey, blocks: &mut [u8], count: usize) {
   debug_assert_eq!(blocks.len(), count.strict_mul(16));
   // SAFETY: The caller guarantees MSA; KmKey stores the raw 32-byte AES-256 parameter block.
-  unsafe { encrypt_blocks_km(20, key.raw.as_ptr(), &mut blocks[..count.strict_mul(16)]) }
+  unsafe { km_ecb_blocks(20, key.raw.as_ptr(), &mut blocks[..count.strict_mul(16)]) }
 }
 
 // AES-128 (KM function code 18)
@@ -214,7 +218,7 @@ pub(super) unsafe fn encrypt_block_raw_128(raw_key: &[u8; 16], block: &mut [u8; 
 pub(super) unsafe fn encrypt_blocks_raw_128(raw_key: &[u8; 16], blocks: &mut [u8], count: usize) {
   debug_assert_eq!(blocks.len(), count.strict_mul(16));
   // SAFETY: The caller guarantees MSA; function code 18 consumes the raw 16-byte AES-128 key.
-  unsafe { encrypt_blocks_km(18, raw_key.as_ptr(), &mut blocks[..count.strict_mul(16)]) }
+  unsafe { km_ecb_blocks(18, raw_key.as_ptr(), &mut blocks[..count.strict_mul(16)]) }
 }
 
 /// Encrypt a single 16-byte block using the KM instruction (AES-128 ECB).
@@ -224,6 +228,17 @@ pub(super) unsafe fn encrypt_blocks_raw_128(raw_key: &[u8; 16], blocks: &mut [u8
 pub(super) unsafe fn encrypt_block_128(key: &Km128Key, block: &mut [u8; 16]) {
   // SAFETY: caller guarantees MSA; Km128Key stores a raw 16-byte AES-128 key.
   unsafe { encrypt_block_raw_128(&key.raw, block) }
+}
+
+/// Decrypt a single 16-byte block using the KM instruction (AES-128 ECB).
+///
+/// # Safety
+/// Caller must ensure the MSA (CPACF) facility is available.
+#[cfg(feature = "aes-gcm")]
+pub(super) unsafe fn decrypt_block_128(key: &Km128Key, block: &mut [u8; 16]) {
+  // SAFETY: The caller guarantees MSA. Function code 18 with the decipher modifier consumes the
+  // raw 16-byte AES-128 parameter block, and `block` is one complete 16-byte block.
+  unsafe { km_ecb_blocks(18 | KM_DECIPHER, key.raw.as_ptr(), block) }
 }
 
 /// Encrypt multiple independent 16-byte blocks with KM (AES-128 ECB).
@@ -240,5 +255,5 @@ pub(super) unsafe fn encrypt_block_128(key: &Km128Key, block: &mut [u8; 16]) {
 pub(super) unsafe fn encrypt_blocks_128(key: &Km128Key, blocks: &mut [u8], count: usize) {
   debug_assert_eq!(blocks.len(), count.strict_mul(16));
   // SAFETY: The caller guarantees MSA; Km128Key stores the raw 16-byte AES-128 parameter block.
-  unsafe { encrypt_blocks_km(18, key.raw.as_ptr(), &mut blocks[..count.strict_mul(16)]) }
+  unsafe { km_ecb_blocks(18, key.raw.as_ptr(), &mut blocks[..count.strict_mul(16)]) }
 }
