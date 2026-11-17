@@ -982,6 +982,86 @@ fn aes256_gcm_encrypt(c: &mut Criterion) {
   g.finish();
 }
 
+/// Seal one message of a stream under the next nonce of a counter that the library owns: a
+/// 4-byte prefix, then a 64-bit big-endian count. Each call takes the next nonce, so a row's
+/// check sees the second message. ring and RustCrypto have no nonce sequence of their own, and
+/// one written here would measure this harness.
+fn aes256_gcm_nonce_counter_encrypt(c: &mut Criterion) {
+  if !bench_config::selected("aes-256-gcm/copy-and-encrypt-nonce-counter") {
+    return;
+  }
+  aws_lc_bench! {
+    use aws_lc_rs::aead::{self as aws_aead, BoundKey as _};
+  }
+
+  const PREFIX: [u8; 4] = *b"sess";
+  let mut second_nonce = [0u8; 12];
+  second_nonce[..4].copy_from_slice(&PREFIX);
+  second_nonce[4..].copy_from_slice(&1u64.to_be_bytes());
+  let cipher_rs = rscrypto::Aes256Gcm::new(&rscrypto::Aes256GcmKey::from_bytes(KEY_32));
+  let cipher_rc = aes_gcm::Aes256Gcm::new(&KEY_32.into());
+  // Timed: restore input into a preallocated buffer, take the next nonce, encrypt, and handle the tag.
+  // Untimed: fixtures, buffer allocation, and cipher and counter construction and destruction.
+  let mut g = c.benchmark_group("aes-256-gcm/copy-and-encrypt-nonce-counter");
+
+  for len in [16, 64] {
+    common::set_throughput(&mut g, len);
+    let data = vec![0xa5u8; len];
+    // Every row must produce RustCrypto's ciphertext and tag for the second nonce.
+    let mut ciphertext = data.clone();
+    let tag = cipher_rc
+      .encrypt_inout_detached(
+        &aes_gcm::Nonce::from(second_nonce),
+        AAD,
+        ciphertext.as_mut_slice().into(),
+      )
+      .expect("valid AEAD benchmark operation must succeed");
+    let expected = sealed(&ciphertext, tag);
+
+    g.bench_function(
+      BenchmarkId::new("rscrypto", len),
+      checked_with(
+        (
+          rscrypto::aead::NonceCounter::<rscrypto::Aes256Gcm>::new(PREFIX),
+          data.clone(),
+        ),
+        |(counter, buf)| {
+          buf.copy_from_slice(&data);
+          counter
+            .encrypt_in_place(&cipher_rs, black_box(AAD), black_box(&mut *buf))
+            .expect("valid AEAD benchmark operation must succeed")
+        },
+        |(nonce, tag), (_, buf)| {
+          assert_eq!(nonce.to_bytes(), second_nonce);
+          assert_eq!(sealed(buf, tag), expected);
+        },
+      ),
+    );
+
+    aws_lc_bench! {
+      let key = aws_aead::UnboundKey::new(&aws_aead::AES_256_GCM, &KEY_32).expect("valid AEAD benchmark operation must succeed");
+      let nonces = aws_aead::nonce_sequence::Counter64Builder::new().identifier(PREFIX).build();
+      g.bench_function(
+        BenchmarkId::new("aws-lc-rs", len),
+        checked_with(
+          (aws_aead::SealingKey::new(key, nonces), data.clone()),
+          |(key, buf)| {
+            buf.copy_from_slice(black_box(&data));
+            let tag = key
+              .seal_in_place_separate_tag(aws_aead::Aad::from(AAD), black_box(&mut *buf))
+              .expect("valid AEAD benchmark operation must succeed");
+            black_box(&*buf);
+            tag
+          },
+          |tag, (_, buf)| assert_eq!(sealed(buf, tag), expected),
+        ),
+      );
+    }
+  }
+
+  g.finish();
+}
+
 fn aes256_gcm_decrypt(c: &mut Criterion) {
   if !bench_config::selected("aes-256-gcm/copy-and-decrypt") {
     return;
@@ -2354,6 +2434,7 @@ fn main() {
     aes128_gcm_siv_encrypt,
     aes128_gcm_siv_decrypt,
     aes256_gcm_encrypt,
+    aes256_gcm_nonce_counter_encrypt,
     aes256_gcm_decrypt,
     aes128_gcm_encrypt,
     aes128_gcm_decrypt,

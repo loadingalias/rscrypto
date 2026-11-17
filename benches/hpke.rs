@@ -14,8 +14,8 @@ mod bench_config;
 use core::hint::black_box;
 
 use aws_lc::aws_lc_bench;
-use bench_config::{checked, checked_with};
-use criterion::Criterion;
+use bench_config::{checked, checked_routine, checked_with};
+use criterion::{Bencher, Criterion};
 use hpke::{Deserializable as _, Kem as _, OpModeR, OpModeS, Serializable as _};
 use rscrypto::{
   ChaCha20Rng, HpkeError, HpkeReceiver, HpkeSender, HpkeSuite, HpkeX25519HkdfSha256Aes128Gcm as X25519Suite,
@@ -38,6 +38,27 @@ fn filled(bytes: &[u8]) -> impl FnMut(&mut [u8]) -> Result<(), HpkeError> + '_ {
 
 fn rng() -> ChaCha20Rng {
   ChaCha20Rng::from_seed([0x5a; 32])
+}
+
+/// Times `seal` of one `length`-byte message with an established sender context into a reused
+/// `ciphertext || tag` buffer. Each seal advances the sequence number, so before timing, `open`
+/// must accept the first two messages in order.
+fn context_seal<S>(
+  sender: S,
+  length: usize,
+  seal: impl FnMut(&mut S, &mut [u8]),
+  mut open: impl FnMut(&[u8]),
+) -> impl FnMut(&mut Bencher<'_>) {
+  checked_routine(
+    (sender, vec![0u8; length.strict_add(16)], seal),
+    move |(sender, out, seal)| {
+      for _ in 0..2 {
+        seal(sender, out);
+        open(out);
+      }
+    },
+    |b, (sender, out, seal)| b.iter(|| seal(sender, out)),
+  )
 }
 
 aws_lc_bench! {
@@ -464,6 +485,74 @@ fn x25519(c: &mut Criterion) {
             assert!(opened);
             assert_eq!(out, &plaintext);
           },
+        ),
+      );
+    }
+    group.finish();
+  }
+
+  // Context Seal: seal one short message of a stream with an established sender context.
+  // Each row's messages open in order with another implementation's receiver.
+  for length in [16, 64] {
+    let plaintext = vec![0xa5u8; length];
+    let opens_in_rscrypto = |encapsulation: [u8; 32]| {
+      let mut receiver =
+        HpkeReceiver::<X25519Suite>::setup(&rscrypto::X25519PublicKey::from_bytes(encapsulation), &recipient, INFO)
+          .expect("setup");
+      let plaintext = &plaintext;
+      move |sealed: &[u8]| assert_eq!(&receiver.open_to_vec(AAD, sealed).expect("open"), plaintext)
+    };
+    let mut group = c.benchmark_group(format!("hpke-x25519-aes128gcm/context-seal/{length}"));
+    let (_, sender) = HpkeSender::<X25519Suite>::setup(&public_key, INFO, filled(&SEED)).expect("setup");
+    let mut oracle = hpke::setup_receiver::<hpke::aead::AesGcm128, OracleKdf, hpke::kem::X25519HkdfSha256>(
+      &OpModeR::Base,
+      &oracle_secret,
+      &oracle_encapsulation,
+      INFO,
+    )
+    .expect("setup");
+    group.bench_function(
+      "rscrypto",
+      context_seal(
+        sender,
+        length,
+        |sender, out| sender.seal(AAD, black_box(&plaintext), out).expect("seal"),
+        |sealed| assert_eq!(oracle.open(sealed, AAD).expect("open"), plaintext),
+      ),
+    );
+    let (encapsulation, sender) = hpke::setup_sender_with_rng::<
+      hpke::aead::AesGcm128,
+      OracleKdf,
+      hpke::kem::X25519HkdfSha256,
+    >(&OpModeS::Base, &oracle_public, INFO, &mut rng())
+    .expect("setup");
+    group.bench_function(
+      "rust-hpke",
+      context_seal(
+        sender,
+        length,
+        |sender, out| {
+          let (ciphertext, tag) = out.split_at_mut(length);
+          ciphertext.copy_from_slice(black_box(&plaintext));
+          tag.copy_from_slice(
+            &sender
+              .seal_inout_detached(ciphertext.into(), AAD)
+              .expect("seal")
+              .to_bytes(),
+          );
+        },
+        opens_in_rscrypto(encapsulation.to_bytes().into()),
+      ),
+    );
+    aws_lc_bench! {
+      let (encapsulation, sender) = aws::Context::sender(public_key.as_bytes(), INFO, &[0x5a; 32]);
+      group.bench_function(
+        "aws-lc",
+        context_seal(
+          sender,
+          length,
+          |sender, out| sender.seal(AAD, black_box(&plaintext), out),
+          opens_in_rscrypto(encapsulation),
         ),
       );
     }
