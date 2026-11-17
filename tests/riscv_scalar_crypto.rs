@@ -1,4 +1,4 @@
-//! AES-GCM through the RV64 scalar-crypto backend (Zkne).
+//! AES-GCM and AEGIS-256 through the RV64 scalar-crypto backend (Zkne).
 //!
 //! The test removes Zvkned from the detected capabilities before first use, so that each AEAD
 //! selects the scalar backend. It runs only where the CPU reports Zkne. AES-GCM also needs a scalar
@@ -40,6 +40,8 @@ fn scalar_crypto_aeads_match_known_answers() {
   if detected.caps.has(riscv::ZBC) || detected.caps.has(riscv::ZBKC) {
     aes_gcm_matches_wycheproof();
   }
+  #[cfg(feature = "aegis256")]
+  aegis256_matches_draft_and_wycheproof();
 }
 
 fn aes_gcm_matches_wycheproof() {
@@ -101,4 +103,100 @@ fn aes_gcm_matches_wycheproof() {
     }
   }
   assert!(checked > 100, "Wycheproof AES-GCM coverage");
+}
+
+#[cfg(feature = "aegis256")]
+fn aegis256_matches_draft_and_wycheproof() {
+  use rscrypto::aead::Nonce256;
+  use rscrypto::{Aegis256, Aegis256Key, Aegis256Tag};
+
+  const AEGIS256: &str = include_str!("../testdata/aead/wycheproof/aegis256_test.json");
+  let open = |key: &[u8], nonce: &[u8], aad: &[u8], msg: &[u8], ct: &[u8], tag: &[u8], valid: bool, case: &str| {
+    let cipher = Aegis256::new(&Aegis256Key::from_bytes(key.try_into().expect("256-bit key")));
+    let nonce = Nonce256::from_bytes(nonce.try_into().expect("256-bit nonce"));
+    let tag: [u8; 16] = tag.try_into().expect("128-bit tag");
+    if valid {
+      let mut sealed = msg.to_vec();
+      let sealed_tag = cipher.encrypt_in_place(&nonce, aad, &mut sealed).expect("seal");
+      assert_eq!((sealed.as_slice(), sealed_tag.as_bytes()), (ct, &tag), "{case}");
+    }
+    let mut opened = ct.to_vec();
+    let result = cipher.decrypt_in_place(&nonce, aad, &mut opened, &Aegis256Tag::from_bytes(tag));
+    assert_eq!(result.is_ok(), valid, "{case}");
+    if valid {
+      assert_eq!(opened, msg, "{case}");
+    }
+  };
+
+  // draft-irtf-cfrg-aegis-aead, Appendix A.3: the key and nonce of every AEGIS-256 vector.
+  let key = decode_hex_vec("1001000000000000000000000000000000000000000000000000000000000000");
+  let nonce = decode_hex_vec("1000020000000000000000000000000000000000000000000000000000000000");
+  for (index, (msg, aad, ct, tag)) in [
+    (
+      "00000000000000000000000000000000",
+      "",
+      "754fc3d8c973246dcc6d741412a4b236",
+      "3fe91994768b332ed7f570a19ec5896e",
+    ),
+    ("", "", "", "e3def978a0f054afd1e761d7553afba3"),
+    (
+      "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "0001020304050607",
+      "f373079ed84b2709faee373584585d60accd191db310ef5d8b11833df9dec711",
+      "8d86f91ee606e9ff26a01b64ccbdd91d",
+    ),
+    (
+      "000102030405060708090a0b0c0d",
+      "0001020304050607",
+      "f373079ed84b2709faee37358458",
+      "c60b9c2d33ceb058f96e6dd03c215652",
+    ),
+    (
+      "101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f3031323334353637",
+      "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20212223242526272829",
+      "57754a7d09963e7c787583a2e7b859bb24fa1e04d49fd550b2511a358e3bca252a9b1b8b30cc4a67",
+      "ab8a7d53fd0e98d727accca94925e128",
+    ),
+  ]
+  .into_iter()
+  .enumerate()
+  {
+    let (msg, aad, ct, tag) = (
+      decode_hex_vec(msg),
+      decode_hex_vec(aad),
+      decode_hex_vec(ct),
+      decode_hex_vec(tag),
+    );
+    open(
+      &key,
+      &nonce,
+      &aad,
+      &msg,
+      &ct,
+      &tag,
+      true,
+      &format!("A.3 vector {}", index.strict_add(1)),
+    );
+  }
+
+  let suite: Value = serde_json::from_str(AEGIS256).expect("Wycheproof AEGIS-256 JSON");
+  let mut checked = 0usize;
+  for group in suite["testGroups"].as_array().expect("groups") {
+    for test in group["tests"].as_array().expect("tests") {
+      let valid = test["result"].as_str() == Some("valid");
+      let case = format!("tcId {}", test["tcId"]);
+      open(
+        &field(test, "key"),
+        &field(test, "iv"),
+        &field(test, "aad"),
+        &field(test, "msg"),
+        &field(test, "ct"),
+        &field(test, "tag"),
+        valid,
+        &case,
+      );
+      checked = checked.strict_add(1);
+    }
+  }
+  assert!(checked > 400, "Wycheproof AEGIS-256 coverage");
 }

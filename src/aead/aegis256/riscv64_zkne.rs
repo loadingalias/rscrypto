@@ -4,33 +4,35 @@ use super::{BLOCK_SIZE, Block, C0, C1, KEY_SIZE, NONCE_SIZE, TAG_SIZE, and_block
 
 type State = [Block; 6];
 
+/// Split a block into the two registers of the RV64 AES instructions.
+///
+/// Each register holds eight state bytes in little-endian order. The ratified scalar crypto
+/// specification (v1.0.1) defines `aes64esm` by the Sail model, in which
+/// `aes_rv64_shiftrows_fwd` selects state byte `i` of a register as
+/// `getbyte(x, i) = x[8i+7..8i]` (sail-riscv `model/extensions/K/types_kext.sail`).
+#[inline(always)]
+fn halves(block: &Block) -> (u64, u64) {
+  let (lo, hi) = block.split_at(8);
+  (
+    u64::from_le_bytes(lo.try_into().expect("eight-byte half")),
+    u64::from_le_bytes(hi.try_into().expect("eight-byte half")),
+  )
+}
+
 #[target_feature(enable = "zkne")]
 /// # Safety
 ///
 /// Caller must ensure the CPU supports the RISC-V `zkne` extension.
 unsafe fn aes_round(block: &Block, round_key: &Block) -> Block {
-  let mut lo_bytes = [0u8; 8];
-  lo_bytes.copy_from_slice(&block[0..8]);
-  let lo = u64::from_be_bytes(lo_bytes);
-
-  let mut hi_bytes = [0u8; 8];
-  hi_bytes.copy_from_slice(&block[8..16]);
-  let hi = u64::from_be_bytes(hi_bytes);
-
-  let mut rk_lo_bytes = [0u8; 8];
-  rk_lo_bytes.copy_from_slice(&round_key[0..8]);
-  let rk_lo = u64::from_be_bytes(rk_lo_bytes);
-
-  let mut rk_hi_bytes = [0u8; 8];
-  rk_hi_bytes.copy_from_slice(&round_key[8..16]);
-  let rk_hi = u64::from_be_bytes(rk_hi_bytes);
+  let (lo, hi) = halves(block);
+  let (rk_lo, rk_hi) = halves(round_key);
 
   let next_lo = aes64esm(lo, hi) ^ rk_lo;
   let next_hi = aes64esm(hi, lo) ^ rk_hi;
 
   let mut out = [0u8; BLOCK_SIZE];
-  out[0..8].copy_from_slice(&next_lo.to_be_bytes());
-  out[8..16].copy_from_slice(&next_hi.to_be_bytes());
+  out[0..8].copy_from_slice(&next_lo.to_le_bytes());
+  out[8..16].copy_from_slice(&next_hi.to_le_bytes());
   out
 }
 
