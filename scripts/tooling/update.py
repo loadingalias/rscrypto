@@ -102,10 +102,11 @@ def crate_version(name, rust_version=None):
 
 
 @cache
-def release(repo):
-    result = api(f'https://api.github.com/repos/{repo}/releases/latest')
+def release(repo, tag=None):
+    """The latest stable release of `repo`, or the release `tag` that a selected crate version names."""
+    result = api(f'https://api.github.com/repos/{repo}/releases/' + (f'tags/{tag}' if tag else 'latest'))
     if result['prerelease'] or result['draft']:
-        raise ValueError(f'{repo}: latest release is not stable')
+        raise ValueError(f'{repo}: release {tag or "latest"} is not stable')
     return result
 
 
@@ -135,8 +136,8 @@ def strawberry_perl_release():
     return versions[0]
 
 
-def github_asset(repo, name):
-    matches = [asset for asset in release(repo)['assets'] if asset['name'] == name]
+def github_asset(repo, name, tag=None):
+    matches = [asset for asset in release(repo, tag)['assets'] if asset['name'] == name]
     if len(matches) != 1:
         raise ValueError(f'{repo}: required native release asset is missing: {name}')
     asset = matches[0]
@@ -234,7 +235,9 @@ def resolve_catalog():
         assets['llvm'] = github_asset(REPOS['llvm'], llvm_name)
         if windows:
             windows_arch = 'arm64' if arch == 'aarch64' else 'amd64'
-            git_name = versions['git'].replace('.windows.', '.')
+            # Git for Windows names build 1 of a version without its build number: 2.56.1.windows.1 is Git-2.56.1.
+            base, build = versions['git'].split('.windows.')
+            git_name = base if build == '1' else f'{base}.{build}'
             # Full Git includes Git Bash, curl, archive utilities, and certificates.
             assets['git'] = github_asset(REPOS['git'], f'Git-{git_name}-' + ('arm64' if arch == 'aarch64' else '64-bit') + '.exe')
             assets['jq'] = github_asset(REPOS['jq'], f'jq-windows-{windows_arch}.exe')
@@ -248,10 +251,11 @@ def resolve_catalog():
             entry = zig[versions['zig']][f'{arch}-linux']
             assets['zig'] = {'url': entry['tarball'], 'sha256': entry['shasum']}
         if platform == 'x86_64-linux':
-            assets['just'] = github_asset(
-                JUST_REPO, f'just-{data["cargo"]["just"]}-x86_64-unknown-linux-musl.tar.gz')
+            # The crate version waits out the cooldown, so the archive comes from its release, not the latest.
+            just, nextest = data['cargo']['just'], data['cargo']['cargo-nextest']
+            assets['just'] = github_asset(JUST_REPO, f'just-{just}-x86_64-unknown-linux-musl.tar.gz', tag=just)
             assets['cargo-nextest'] = github_asset(
-                NEXTEST_REPO, f'cargo-nextest-{data["cargo"]["cargo-nextest"]}-{host}.tar.gz')
+                NEXTEST_REPO, f'cargo-nextest-{nextest}-{host}.tar.gz', tag=f'cargo-nextest-{nextest}')
             assets['wasmtime'] = github_asset(REPOS['wasmtime'], f'wasmtime-v{versions["wasmtime"]}-x86_64-linux.tar.xz')
         data[platform] = native
     entry = zig[versions['zig']]['aarch64-macos']
