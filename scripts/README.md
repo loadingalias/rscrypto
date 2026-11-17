@@ -250,6 +250,8 @@ A cross-built test suite also holds the `introspect` example. Before its suites,
 on the target host and records the capabilities that runtime detection reports, and the kernels that it selects,
 in `introspect.txt` and in `detection` of `summary.json`. The RISC-V run also prints the `isa` lines of
 `/proc/cpuinfo`.
+Then it runs the painted-stack checks, and then the suites. A failed stack check does not stop the suites. The run
+records it in `stack_paint` of `summary.json` and fails after the suites, so the job keeps the evidence of both.
 
 RISC-V is the exception to the shared matrix.
 GitHub cannot time out a queued job or cancel one job of a run,

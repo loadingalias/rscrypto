@@ -475,6 +475,41 @@ class ExecutionDiagnostics(unittest.TestCase):
             self.assertEqual(logs[0].read_text(), 'specific test failed\n')
             self.assertFalse(list(root.rglob('summary.json')))
 
+    def test_failed_stack_check_still_runs_every_suite_and_fails_the_run(self):
+        execute = subprocess.run
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            modes = {mode: {'internal': mode.startswith('internal-'),
+                           'encoded_rustflags': '--cfg\x1frscrypto_internal' if mode.startswith('internal-') else ''}
+                     for mode in cross.MODES}
+            manifest = {'source': 'fixture', 'metadata': {'nextest': 'fixture', 'modes': modes, 'stack_paint': {}}}
+            suites, measurements = [], []
+
+            def run(command, **kwargs):
+                if '--archive-file' in command:
+                    suites.append(Path(command[command.index('--archive-file') + 1]).name)
+                    return execute([sys.executable, '-c', 'pass'], **kwargs)
+                if any(str(part).endswith('painted.py') for part in command):
+                    # The edge check fails, as for an edge without a committed allowance.
+                    measurements.append(command[3])
+                    return execute([sys.executable, '-c', f'raise SystemExit({int(command[3] == "edges")})'], **kwargs)
+                return execute(command, **kwargs)
+
+            with patch.object(cross, 'ROOT', root), patch.object(cross, 'require_host'), \
+                 patch.object(cross, 'environment'), patch.object(cross, 'nextest_version', return_value='fixture'), \
+                 patch.object(cross, 'nextest_identity', return_value='fixture'), \
+                 patch.object(cross, 'validate_backend_evidence', return_value={}), \
+                 patch.object(cross.bundle, 'unpack'), patch.object(cross.bundle, 'verify', return_value=manifest), \
+                 patch.object(cross.bundle, 'digest', return_value='fixture'), \
+                 patch.object(cross.subprocess, 'run', side_effect=run):
+                with self.assertRaises(SystemExit) as raised:
+                    cross.execute(TARGET, root / 'tests.tar.xz')
+            self.assertIn('painted-stack checks failed: edges', str(raised.exception))
+            self.assertEqual(measurements, ['edges', 'worker', 'worker'])
+            self.assertEqual(suites, [f'{mode}.tar.zst' for mode in cross.MODES])
+            summary = json.loads(next(root.rglob('summary.json')).read_text())
+            self.assertEqual((summary['status'], summary['stack_paint']['failed']), ('fail', ['edges']))
+
 
 if __name__ == '__main__':
     unittest.main()

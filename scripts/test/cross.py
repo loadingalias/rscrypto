@@ -139,7 +139,9 @@ def execute(target, archive):
         (out / 'introspect.txt').write_text(detected)
         print(f'{target} runtime detection:\n{detected}', end='', flush=True)
     # Bundles that declare painted-stack binaries must measure them on this host.
-    # They run first, so that a failing suite does not hide the measurements.
+    # They run first, so that a failing suite does not hide the measurements. A
+    # failed measurement fails the run only after the suites, so that it does not
+    # hide their results either.
     stack = (stack_paint(target, incoming / 'stack-paint', out / 'stack-paint')
              if 'stack_paint' in manifest['metadata'] else None)
     results = {}
@@ -161,25 +163,33 @@ def execute(target, archive):
                 'portable-only' if mode.endswith('portable') else 'production-auto')
     # Detect accidental changes to inputs throughout execution as well as before it.
     bundle.verify(ROOT, incoming, 'rscrypto.cross.tests', target)
-    (out / 'summary.json').write_text(json.dumps({'status': 'pass', 'source': manifest['source'],
+    status = 'fail' if stack and stack['failed'] else 'pass'
+    (out / 'summary.json').write_text(json.dumps({'status': status, 'source': manifest['source'],
         'archive_sha256': bundle.digest(archive), 'host': platform.uname()._asdict(),
         'nextest': version, 'detection': detected, 'modes': results, 'stack_paint': stack}, indent=2) + '\n')
     print(f'{target} ordinary and internal suites passed: {out}', flush=True)
+    if status != 'pass':
+        raise SystemExit(f'{target} painted-stack checks failed: {", ".join(stack["failed"])}')
 
 
 def stack_paint(target, binaries, output):
     """Measure the declared libc edges and the TLS worker with the bundle's binaries.
 
-    Both check the committed allowances and worker budgets for this target.
+    Both check the committed allowances and worker budgets for this target. Each
+    measurement runs even after another fails, and the result names the failures.
     """
     script = ROOT / 'scripts/stack/painted.py'
-    runs = [['edges', '--binary-dir', str(binaries / 'native')]]
-    runs += [['worker', '--binary-dir', str(binaries / configuration), *(['--portable'] if configuration == 'portable' else [])]
-             for configuration in ('native', 'portable')]
-    for arguments in runs:
+    runs = {'edges': ['edges', '--binary-dir', str(binaries / 'native')]}
+    runs |= {f'worker {configuration}': ['worker', '--binary-dir', str(binaries / configuration),
+                                         *(['--portable'] if configuration == 'portable' else [])]
+             for configuration in ('native', 'portable')}
+    failed = []
+    for name, arguments in runs.items():
         command = [sys.executable, '-B', str(script), *arguments, '--target', target, '--check', '--output', str(output)]
-        subprocess.run(command, cwd=ROOT, check=True)
-    return {'status': 'pass', 'reports': sorted(path.name for path in output.glob('*.json'))}
+        if subprocess.run(command, cwd=ROOT, check=False).returncode:
+            failed.append(name)
+    return {'status': 'fail' if failed else 'pass', 'failed': failed,
+            'reports': sorted(path.name for path in output.glob('*.json'))}
 
 
 def main():
