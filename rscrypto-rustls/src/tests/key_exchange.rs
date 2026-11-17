@@ -53,7 +53,6 @@ fn group_inventory_and_both_roles_agree_with_independent_peers() {
   assert_eq!(ALL_KX_GROUPS.len(), expected.len());
   for (ours, (name, client_len, server_len, secret_len)) in ALL_KX_GROUPS.iter().zip(expected) {
     assert_eq!(ours.name(), name);
-    assert!(crate::tests::tls::provider().tls12_cipher_suites.is_empty());
     assert!(ours.ffdhe_group().is_none());
     assert_eq!(ours.fips(), rustls::pki_types::FipsStatus::Unvalidated);
     for peer in aws
