@@ -10,9 +10,12 @@
       "memset": 0,
       "memcmp": 0,
       "bcmp": 0,
-      "getauxval": 64
+      "getauxval": 64,
+      "getpid": 0,
+      "mmap": 64,
+      "madvise": 64
     },
-    "evidence": "just stack-allowances in CI 42061504225 at 9211e330 and on dev machines at 8bbe85d9; the larger allowance of the two"
+    "evidence": "just stack-allowances in CI 42061504225 at 9211e330 and on dev machines at 8bbe85d9; the larger allowance of the two; getpid, mmap, and madvise: just stack-allowances on the aws-linux-arm64 dev machine on 2026-11-17, with the probe of \"stack: declare getpid, mmap, and madvise as libc edges\""
   },
   "powerpc64le-unknown-linux-gnu": {
     "libc": "glibc 2.39 (2.39-0ubuntu8.9), libc.so.6 sha256 ec84681669234eda; Ubuntu 24.04.5 LTS; Linux 6.12.0-278.el10.ppc64le; cpu POWER10 (architected), altivec supported, revision 2.0 (pvr 0080 0200)",
@@ -70,8 +73,11 @@
       "memset": 192,
       "memcmp": 192,
       "bcmp": 192,
-      "getauxval": 192
+      "getauxval": 192,
+      "getpid": 192,
+      "mmap": 192,
+      "madvise": 192
     },
-    "evidence": "just stack-allowances in CI 42061504225 at 9211e330 and on dev machines at 8bbe85d9; the larger allowance of the two"
+    "evidence": "just stack-allowances in CI 42061504225 at 9211e330 and on dev machines at 8bbe85d9; the larger allowance of the two; getpid, mmap, and madvise: just stack-allowances on the aws-linux-x64-bench dev machine on 2026-11-17, with the probe of \"stack: declare getpid, mmap, and madvise as libc edges\""
   }
 }

@@ -348,6 +348,17 @@ of that run and an Ubuntu 26.04 glibc 2.43 (2.43-2ubuntu2.4) measurement on the
 Granite Rapids and Graviton4 dev machines. Each entry names its exact libc
 build hash, kernel, and CPU; `--check` reports a different identity.
 
+The process-origin edges of `src/platform/process.rs` have their own allowances.
+They were measured on 2026-11-17 on the same two dev machines:
+
+| Linux target | `getpid` | `mmap` | `madvise` |
+| --- | ---: | ---: | ---: |
+| x86-64 GNU | 192 | 192 | 192 |
+| AArch64 GNU | 0 | 64 | 64 |
+
+POWER, IBM Z, and RISC-V have no allowance for these edges yet. Their CI
+lanes measure them in the next CI run.
+
 The memory functions and `getauxval` are frameless or nearly so on every
 measured target. The allocator edges are deepest in the pseudo-random workload
 and the first calls on a fresh thread, which create and attach an arena. Their
