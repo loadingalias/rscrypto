@@ -26,7 +26,7 @@ It does not prove that the compiler erases every copy it makes.
 | `P256EphemeralSecret`, `P256SharedSecret` | Not `Clone` or `Copy`. | The ephemeral scalar has no export or import API. `P256SharedSecret::expose_secret` makes an explicit `SecretBytes<32>` copy. `as_bytes` gives borrowed access. Both types redact `Debug`. |
 | `P384EphemeralSecret`, `P384SharedSecret` | Not `Clone` or `Copy`. | The ephemeral scalar has no export or import API. `P384SharedSecret::expose_secret` makes an explicit `SecretBytes<48>` copy. `as_bytes` gives borrowed access. Both types redact `Debug`. |
 | `RsaPrivateKey`, `RsaPrivateScratch` | Not `Clone` or `Copy`. | Private DER export returns `SecretVec`. `Debug` shows only public metadata. |
-| `RsaBlindingCache` | Not `Clone` or `Copy`. See [RSA blinding cache](#rsa-blinding-cache). | No export or import API. `Debug` shows only the width and the remaining use count. |
+| `RsaSigningWorkspace` | Not `Clone` or `Copy`. See [RSA signing workspace](#rsa-signing-workspace). | No export or import API. `Debug` shows only the width and the remaining use count. |
 | HMAC, HKDF, KMAC, PBKDF2, and Poly1305 state | No generic copy. | `Debug` is redacted. Keyed state is not serialized. HKDF `prk()` gives borrowed access to the PRK. `from_prk` borrows the caller's PRK and does not clear it. |
 | Keyed BLAKE2 state | `Clone` where the shared `Digest` contract needs it. | `Debug` is redacted. A clone copies the keyed state. |
 | `SipHashKey`, `SipRandomState` | `Clone`, so a `HashMap` can be cloned. Each copy clears its key material on drop: `SipHashKey` its key bytes, `SipRandomState` the keyed starting words, which are equivalent to the key. | `Debug` is redacted. No export or Serde support. `SipHash13` and `SipHash24` hashers hold key-derived state for one hash, redact `Debug`, and do not clear on drop. |
@@ -64,15 +64,15 @@ The caller clears each returned derivation block after use. The selected
 plaintext or synthetic message is copied into caller-owned `out`; its cleanup
 is the caller's responsibility. See [cleanup boundaries](secret-lifecycle.md#rsa-implicit-rejection).
 
-### RSA blinding cache
+### RSA signing workspace
 
-`RsaBlindingCache` owns the blinding power `rᵉ mod n` and the inverse
-`r⁻¹ mod n` of its current epoch between signatures, in two modulus-width
-clearing buffers. It also holds public binding data: the bound key's modulus
-and public exponent, the remaining use count, and, on Unix with `std`, the
-process ID of the last refresh. Signing borrows the cache mutably, copies the
-pair into `RsaPrivateScratch`, and writes the next pair back. The cache never
-exposes the pair. See [cleanup boundaries](secret-lifecycle.md#rsa-blinding-cache).
+`RsaSigningWorkspace` owns a clearing `RsaPrivateScratch` and the blinding
+power `rᵉ mod n` and the inverse `r⁻¹ mod n` of its current epoch between
+signatures, in two modulus-width clearing buffers. It also holds public data:
+the owning key's modulus and public exponent, the remaining use count, and the
+`ProcessOrigin` of the last refresh. Signing borrows the workspace mutably,
+copies the pair into the scratch, and writes the next pair back. The workspace
+never exposes the pair. See [cleanup boundaries](secret-lifecycle.md#rsa-signing-workspace).
 
 ### x86-64 AES-GCM power table
 
@@ -198,11 +198,11 @@ The provider shares `EcdsaP256SecretKey`, `EcdsaP384SecretKey`,
 primitive owners clear when the last signing key or signer releases them. An RSA
 key shares, with its key, a mutex-guarded list of idle signing workspaces: at most
 one per available CPU, never more than 64, and none with `sign::Provider::compact`.
-Each workspace owns a clearing `RsaPrivateScratch` and an `RsaBlindingCache`. A
-signature takes an idle workspace or builds one, signs through the cache, and puts
-the workspace back on success while the list is below its limit; otherwise the
-workspace drops. Scratch is cleared after every signature. Idle caches keep their
-blinding pair between signatures (see [RSA blinding cache](#rsa-blinding-cache));
+Each workspace is an `RsaSigningWorkspace`. A signature takes an idle workspace
+or builds one, signs through it, and puts it back on success while the list is
+below its limit; otherwise the workspace drops. Scratch is cleared after every
+signature. Idle workspaces keep their blinding pair between signatures (see
+[RSA signing workspace](#rsa-signing-workspace));
 an error, a full list, or releasing the key drops the workspace, which clears both.
 A compact key builds one workspace for each signature and drops it before returning.
 The signer returns only the resulting public signature.
@@ -210,7 +210,12 @@ ECDSA signatures and cached SPKI are public. Key Debug formatting delegates to
 redacted primitive owners and the caller's selected entropy source; that source
 must not expose secret state through Debug. RSA signer formatting exposes only
 its signature scheme. Groups and signing keys borrow a static entropy source;
-the provider neither owns nor clones its state.
+the provider neither owns nor clones its state. The one exception is an RSA key
+that `sign::Provider::scoped` loads: it owns a `replay::Stream` for its blinding
+refreshes, seeded at load with `ChaCha20Rng::try_generate_with`, which writes
+the 32 bytes from the loading scope directly into the generator key. The stream
+clears when the key and its last signer release it, and the key's `Debug` does
+not show it.
 
 The ML-DSA loader constructs compact keys directly in allocator-backed storage.
 By default it then prepares each key once with `prepare_in`, keeps the prepared
@@ -261,8 +266,11 @@ and only the final location clears.
 
 ### rustls session tickets
 
-Each private ticket key owns a clearing `Aes256Gcm` context and an atomic public
-nonce counter. The provider's rotator owns the current and previous keys with
+Each private ticket key owns a clearing `Aes256Gcm` context, an atomic public
+nonce counter, and its public `ProcessOrigin`. A ticketer from
+`ticket::ticketer_with_rng` also owns a `replay::Stream` for its key draws, which
+clears when the ticketer drops; the ticketer's `Debug` does not show it. The
+provider's rotator owns the current and previous keys with
 their creation times on a monotonic or caller clock, and drops a key on its
 first use at or after twelve hours; a dropped key cannot return. A
 `SecretBytes<32>` protects entropy acquisition; the typed key and temporary owner
@@ -284,7 +292,8 @@ redacted `Debug`. `Stream::new` moves the generator into the allocation, and tha
 move copies the state once. `replay::scope` puts only an `Arc` clone in a
 thread-local slot, and it restores the previous slot when it returns or unwinds.
 So a scope copies no generator state. The generator clears when the last `Arc`
-drops. `ScopedRandom` holds no state.
+drops. `ScopedRandom` holds no state. A per-thread flag marks a shared owner's
+draw; it holds no secret.
 
 ### rustls QUIC integration
 

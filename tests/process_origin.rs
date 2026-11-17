@@ -244,3 +244,48 @@ fn a_child_generator_keeps_its_root_origin() {
   );
   assert!(root.child(b"worker\0\0", 0).origin().is_current());
 }
+
+#[cfg(all(feature = "rsa", feature = "getrandom"))]
+#[test]
+fn a_forked_signing_workspace_refreshes_from_its_blinding_source() {
+  use rscrypto::{RsaPkcs1v15Profile, RsaPrivateKey, RsaPublicKeyPolicy, RsaSignatureProfile};
+
+  let key =
+    RsaPrivateKey::generate_with_policy(2048, &RsaPublicKeyPolicy::modulus_2048_to_8192()).expect("RSA-2048 key");
+  let profile = RsaSignatureProfile::pkcs1v15(RsaPkcs1v15Profile::Sha256);
+  let mut workspace = key.signing_workspace();
+  let mut signature = vec![0; key.signature_len()];
+  let sign = |workspace: &mut rscrypto::RsaSigningWorkspace, signature: &mut [u8]| {
+    let requests = AtomicUsize::new(0);
+    let result = key.sign_signature_with_random_fill_and_workspace(
+      profile,
+      b"fork",
+      signature,
+      workspace,
+      |_| Ok::<(), !>(()),
+      |blinding| {
+        requests.fetch_add(1, Ordering::Relaxed);
+        getrandom::fill(blinding)
+      },
+    );
+    (result, requests.load(Ordering::Relaxed))
+  };
+  // The first signature draws the epoch's factor: a candidate and an inverse
+  // mask at least, and more when rejection sampling redraws. The second
+  // signature squares the pair and draws nothing.
+  assert!(matches!(sign(&mut workspace, &mut signature), (Ok(()), 2..)));
+  assert!(matches!(sign(&mut workspace, &mut signature), (Ok(()), 0)));
+  let code = fork_child(|| match sign(&mut workspace, &mut signature) {
+    (Ok(()), 2..) => 0,
+    (Ok(()), _) => 1,
+    (Err(_), _) => 2,
+  });
+  assert_eq!(
+    code, 0,
+    "1: the child continued its parent's blinding sequence; 2: the child failed to sign; 255: the child allocated"
+  );
+  assert!(
+    matches!(sign(&mut workspace, &mut signature), (Ok(()), 0)),
+    "the parent continues its epoch"
+  );
+}

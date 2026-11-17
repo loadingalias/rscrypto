@@ -58,6 +58,7 @@ use crate::{
     mgf1::mgf1,
   },
   hashes::crypto::{Sha256, Sha384, Sha512},
+  platform::ProcessOrigin,
   traits::{Digest, VerificationError, ct},
 };
 
@@ -315,7 +316,8 @@ pub enum RsaKeyGenerationContract {
 pub enum RsaPrivateOpError {
   /// Input, output, salt, or blinding-factor buffers have an invalid length.
   InvalidLength,
-  /// Scratch storage was created for a different modulus width.
+  /// Scratch storage was created for a different modulus width, or a signing
+  /// workspace was created for another key.
   InvalidScratch,
   /// The key is too small for the requested encoded message.
   MessageTooLong,
@@ -4267,62 +4269,65 @@ impl fmt::Debug for RsaPrivateKeyComponents {
   }
 }
 
-/// Signatures in one blinding epoch of [`RsaBlindingCache`].
-const RSA_BLINDING_CACHE_EPOCH_USES: u8 = 32;
+/// Signatures in one blinding epoch of [`RsaSigningWorkspace`].
+const RSA_SIGNING_WORKSPACE_EPOCH_USES: u8 = 32;
 
-/// Caller-owned RSA blinding state that signing reuses between signatures.
+/// Caller-owned state for repeated RSA signing with one key: private-operation
+/// scratch and a blinding pair that later signatures reuse.
 ///
 /// Every RSA private operation multiplies its input by `rᵉ mod n` for a
 /// blinding factor `r`, then multiplies the result by `r⁻¹ mod n`. Without a
-/// cache, each signature draws a new `r` from its entropy source, inverts it,
-/// and computes `rᵉ`. With a cache, one draw starts an epoch of up to 32
-/// signatures. The first signature uses `r`. Each later signature squares both
-/// cached values first, so the `k`-th signature of an epoch uses
+/// workspace, each signature draws a new `r` from its entropy source, inverts
+/// it, and computes `rᵉ`. With a workspace, one draw starts an epoch of up to
+/// 32 signatures. The first signature uses `r`. Each later signature squares
+/// both cached values first, so the `k`-th signature of an epoch uses
 /// `r^(2^(k-1))`. The squared values stay consistent: `(r²)ᵉ` and `(r²)⁻¹`.
 /// Reuse needs no entropy, no modular inverse, and no `rᵉ` computation. AWS-LC
 /// also squares its cached blinding pair between refreshes and draws a new one
 /// every 32 uses.
 ///
-/// Create a cache with [`RsaPrivateKey::blinding_cache`], and pass it to
-/// [`RsaPrivateKey::sign_signature_with_random_fill_and_blinding_cache`] or,
-/// with `getrandom`, `RsaPrivateKey::sign_signature_with_blinding_cache`. A
-/// signature through the cache equals the signature of the uncached API for
-/// the same key, message, and salt.
+/// Create a workspace with [`RsaPrivateKey::signing_workspace`], and pass it to
+/// [`RsaPrivateKey::sign_signature_with_random_fill_and_workspace`] or, with
+/// `getrandom`, `RsaPrivateKey::sign_signature_with_workspace`. A signature
+/// through the workspace equals the signature of the uncached API for the same
+/// key, message, and salt. A workspace belongs to the key that created it:
+/// signing with another key returns [`RsaPrivateOpError::InvalidScratch`].
 ///
 /// # Refresh
 ///
-/// A signature draws a new factor, through the same checked path as the
-/// uncached APIs, when any of these holds:
+/// A signature draws a new factor from its blinding source, through the same
+/// checked path as the uncached APIs, when any of these holds:
 ///
-/// - the cache is new, or its 32 uses are spent;
-/// - the signing key has a different modulus or public exponent than the key
-///   of the last refresh. The cache then rebinds to the new key, and
-///   reallocates its pair if the modulus width differs;
-/// - the previous operation through the cache failed. Every error clears the
-///   cache;
-/// - on Unix targets with `std`, the process ID differs from the one recorded
-///   at the last refresh. A forked child therefore does not reuse its parent's
-///   blinding sequence.
+/// - the workspace is new, or its 32 uses are spent;
+/// - the previous operation through the workspace failed. Every error clears
+///   the pair;
+/// - the [process origin](crate::platform::ProcessOrigin) of the pair is not
+///   current, because a process fork copied the workspace. A forked child
+///   therefore does not continue its parent's blinding sequence.
 ///
-/// The schedule depends only on the public use count, the public key, and the
-/// process ID.
+/// The schedule depends only on the public use count and the process origin.
 ///
 /// # Security
 ///
 /// - The factors within one epoch are correlated: each is the square of the
 ///   previous one. Their secrecy rests on the epoch's random `r`. Use the
 ///   uncached APIs if every signature needs an independent factor.
-/// - The cache keeps `rᵉ mod n` and `r⁻¹ mod n` between signatures. It is
+/// - The workspace keeps `rᵉ mod n` and `r⁻¹ mod n` between signatures. It is
 ///   secret state: it is not `Clone`, its `Debug` output shows only the width
-///   and the remaining use count, and drop zeroizes both values.
-/// - The fork guard compares process IDs only. Without `std`, on non-Unix
-///   targets, or after a copied memory image such as a restored virtual-machine
-///   snapshot, it does not detect duplication. Do not use one cache in two
-///   copies of a process.
-/// - Signing borrows the cache mutably. Give each thread its own cache.
-pub struct RsaBlindingCache {
-  /// Public modulus of the key that the cached pair blinds.
-  modulus: Vec<u8>,
+///   and the remaining use count, and drop zeroizes both values. Signing clears
+///   the scratch before it returns.
+/// - After a fork, the new factor is fresh only when the blinding source is
+///   fresh. A source that the fork also copied, such as a `ChaCha20Rng`, gives
+///   the child its parent's next factor; refuse such a source in the child.
+///   Fork detection has the targets and limits of
+///   [`ProcessOrigin`]. Do not use one
+///   workspace in two copies of a process image, such as a restored
+///   virtual-machine snapshot.
+/// - Signing borrows the workspace mutably. Give each thread its own workspace.
+pub struct RsaSigningWorkspace {
+  scratch: RsaPrivateScratch,
+  /// Public modulus of the key that owns this workspace.
+  modulus: Box<[u8]>,
   /// Public exponent of that key; the cached power is raised to it.
   public_exponent: u64,
   /// `rᵉ mod n` for the factor `r` of the latest signature.
@@ -4331,118 +4336,107 @@ pub struct RsaBlindingCache {
   blinding_inverse: SecretBigEndianBuffer,
   /// Signatures left in the epoch. Zero means that the next signature refreshes.
   remaining: u8,
-  /// Process that drew the epoch's factor.
-  #[cfg(all(feature = "std", unix))]
-  process_id: u32,
+  /// The process that drew the epoch's factor.
+  origin: ProcessOrigin,
 }
 
-impl RsaBlindingCache {
-  fn new(public: &RsaPublicKey) -> Self {
+impl RsaSigningWorkspace {
+  fn new(key: &RsaPrivateKey) -> Self {
+    let public = key.public_key();
     let len = public.modulus().len();
     Self {
-      modulus: public.modulus().to_vec(),
+      scratch: key.private_scratch(),
+      modulus: public.modulus().into(),
       public_exponent: public.public_exponent().as_u64(),
       blinding_power: SecretBigEndianBuffer::zeroed(len),
       blinding_inverse: SecretBigEndianBuffer::zeroed(len),
       remaining: 0,
-      #[cfg(all(feature = "std", unix))]
-      process_id: 0,
+      origin: ProcessOrigin::current(),
     }
   }
 
-  /// Whether the cached pair belongs to `public` and to this process.
-  fn is_bound_to(&self, public: &RsaPublicKey) -> bool {
-    #[cfg(all(feature = "std", unix))]
-    if self.process_id != std::process::id() {
-      return false;
-    }
-    self.public_exponent == public.public_exponent().as_u64() && self.modulus.as_slice() == public.modulus()
+  /// Whether `public` is the key that created this workspace. For valid RSA
+  /// keys, one modulus and public exponent name one key.
+  fn belongs_to(&self, public: &RsaPublicKey) -> bool {
+    self.public_exponent == public.public_exponent().as_u64() && *self.modulus == *public.modulus()
   }
 
-  /// Bind the cache to `public`, resizing the secret buffers to its width.
-  fn bind(&mut self, public: &RsaPublicKey) {
-    let len = public.modulus().len();
-    if self.modulus.as_slice() != public.modulus() {
-      self.modulus.clear();
-      self.modulus.extend_from_slice(public.modulus());
-    }
-    self.public_exponent = public.public_exponent().as_u64();
-    if self.blinding_power.as_slice().len() != len || self.blinding_inverse.as_slice().len() != len {
-      // Dropping the previous buffers zeroizes them.
-      self.blinding_power = SecretBigEndianBuffer::zeroed(len);
-      self.blinding_inverse = SecretBigEndianBuffer::zeroed(len);
-    }
-  }
-
-  fn clear(&mut self) {
+  fn clear_pair(&mut self) {
     ct::zeroize(self.blinding_power.as_mut_slice());
     ct::zeroize(self.blinding_inverse.as_mut_slice());
     self.remaining = 0;
   }
 }
 
-impl fmt::Debug for RsaBlindingCache {
+impl fmt::Debug for RsaSigningWorkspace {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    f.debug_struct("RsaBlindingCache")
+    f.debug_struct("RsaSigningWorkspace")
       .field("bytes", &self.blinding_power.as_slice().len())
       .field("remaining", &self.remaining)
       .finish_non_exhaustive()
   }
 }
 
-impl Drop for RsaBlindingCache {
+impl Drop for RsaSigningWorkspace {
   fn drop(&mut self) {
-    self.clear();
+    self.clear_pair();
   }
 }
 
 impl RsaPrivateKey {
-  /// Allocate an empty blinding cache bound to this key.
+  /// Allocate a signing workspace that belongs to this key.
   ///
-  /// The first signature through the cache draws a new blinding factor. See
-  /// [`RsaBlindingCache`] for the reuse schedule and its limits.
+  /// The first signature through the workspace draws a new blinding factor.
+  /// See [`RsaSigningWorkspace`] for the reuse schedule and its limits.
   #[inline]
   #[must_use]
-  pub fn blinding_cache(&self) -> RsaBlindingCache {
-    RsaBlindingCache::new(self.public_key())
+  pub fn signing_workspace(&self) -> RsaSigningWorkspace {
+    RsaSigningWorkspace::new(self)
   }
 
-  /// Sign using a typed RSA signature profile, OS-backed randomness,
-  /// caller-owned scratch, and a reused blinding cache.
+  /// Sign using a typed RSA signature profile, OS-backed randomness, and a
+  /// signing workspace.
   ///
-  /// This is [`Self::sign_signature_with_random_fill_and_blinding_cache`] with
-  /// `getrandom` as the entropy source.
+  /// This is [`Self::sign_signature_with_random_fill_and_workspace`] with
+  /// `getrandom` as both entropy sources.
   ///
   /// # Errors
   ///
-  /// The same as [`Self::sign_signature_with_random_fill_and_blinding_cache`].
+  /// The same as [`Self::sign_signature_with_random_fill_and_workspace`].
   #[cfg(feature = "getrandom")]
   #[cfg_attr(docsrs, doc(cfg(feature = "getrandom")))]
   #[must_use = "RSA signing failure must be checked; a dropped Result silently discards a failed signature"]
-  pub fn sign_signature_with_blinding_cache(
+  pub fn sign_signature_with_workspace(
     &self,
     profile: RsaSignatureProfile,
     message: &[u8],
     out: &mut [u8],
-    scratch: &mut RsaPrivateScratch,
-    cache: &mut RsaBlindingCache,
+    workspace: &mut RsaSigningWorkspace,
   ) -> Result<(), RsaPrivateOpError> {
-    self.sign_signature_with_random_fill_and_blinding_cache(profile, message, out, scratch, cache, getrandom::fill)
+    self.sign_signature_with_random_fill_and_workspace(
+      profile,
+      message,
+      out,
+      workspace,
+      getrandom::fill,
+      getrandom::fill,
+    )
   }
 
-  /// Sign using a typed RSA signature profile, caller-provided entropy,
-  /// caller-owned scratch, and a reused blinding cache.
+  /// Sign using a typed RSA signature profile, caller-provided entropy, and a
+  /// signing workspace.
   ///
-  /// PSS profiles request the profile's salt length from `fill_random` in
-  /// every call. Blinding comes from `cache`, as [`RsaBlindingCache`]
-  /// describes: a refresh then requests a blinding candidate and an inverse
-  /// mask with the bounds, order, and error normalization of
-  /// [`Self::sign_signature_with_random_fill`], and every other call squares
-  /// the cached pair without entropy. Once `scratch` and `cache` are
-  /// allocated for this key's modulus width, signing does not allocate.
-  /// Scratch and `out` are cleared on every error; scratch is also cleared
-  /// after success. Every error also clears `cache`, so the next call
-  /// refreshes it.
+  /// A PSS profile requests its salt length from `fill_salt` once in every
+  /// call. PKCS#1 v1.5 never calls `fill_salt`. Blinding comes from
+  /// `workspace`, as [`RsaSigningWorkspace`] describes: a refresh requests a
+  /// blinding candidate and an inverse mask from `fill_blinding`, with the
+  /// bounds, order, and error normalization of
+  /// [`Self::sign_signature_with_random_fill`]. Every other call squares the
+  /// cached pair and calls neither source for blinding. Signing does not
+  /// allocate. The two sources can have different owners: the salt belongs to
+  /// the signature, and the blinding pair belongs to the workspace. `out` is
+  /// cleared on every error. The workspace scratch is cleared after every call,
+  /// and every error also clears the pair, so the next call refreshes it.
   ///
   /// # Security
   ///
@@ -4451,106 +4445,116 @@ impl RsaPrivateKey {
   ///
   /// # Errors
   ///
-  /// Returns [`RsaPrivateOpError`] if entropy is unavailable, `out` has the
-  /// wrong length, `scratch` was allocated for a different modulus width, the
-  /// key is too small for the selected profile, a refresh finds no valid
-  /// blinding factor within the retry bound, or the post-signing public fault
-  /// check fails.
+  /// Returns [`RsaPrivateOpError::InvalidScratch`] if `workspace` belongs to
+  /// another key; this check comes first and calls no source. Otherwise
+  /// returns [`RsaPrivateOpError`] if `out` has the wrong length, the key is
+  /// too small for the selected profile, either source fails, a refresh finds
+  /// no valid blinding factor within the retry bound, or the post-signing
+  /// public fault check fails.
   #[must_use = "RSA signing failure must be checked; a dropped Result silently discards a failed signature"]
-  pub fn sign_signature_with_random_fill_and_blinding_cache<E>(
+  pub fn sign_signature_with_random_fill_and_workspace<E, F>(
     &self,
     profile: RsaSignatureProfile,
     message: &[u8],
     out: &mut [u8],
-    scratch: &mut RsaPrivateScratch,
-    cache: &mut RsaBlindingCache,
-    mut fill_random: impl FnMut(&mut [u8]) -> Result<(), E>,
+    workspace: &mut RsaSigningWorkspace,
+    fill_salt: impl FnOnce(&mut [u8]) -> Result<(), E>,
+    fill_blinding: impl FnMut(&mut [u8]) -> Result<(), F>,
   ) -> Result<(), RsaPrivateOpError> {
     let _dit = crate::traits::ct::DataIndependentTiming::enter();
-    let modulus_len = self.public_key().modulus().len();
-    let result = scratch.ensure_len(modulus_len).and_then(|()| {
-      if out.len() != modulus_len {
-        return Err(RsaPrivateOpError::InvalidLength);
-      }
-
-      match profile {
-        RsaSignatureProfile::Pss { profile, salt_len } => {
-          if !self.public_key().pss_salt_len_is_possible(profile, salt_len) {
-            return Err(RsaPrivateOpError::MessageTooLong);
-          }
-          {
-            let salt = scratch
-              .salt
-              .as_mut_slice()
-              .get_mut(..salt_len)
-              .ok_or(RsaPrivateOpError::MessageTooLong)?;
-            fill_random(salt).map_err(|_| RsaPrivateOpError::EntropyUnavailable)?;
-          }
-          self
-            .components
-            .encode_pss_with_stored_salt_into_scratch(profile, message, salt_len, scratch)
-        }
-        RsaSignatureProfile::Pkcs1v15(profile) => {
-          self.components.encode_pkcs1v15_into_scratch(profile, message, scratch)
-        }
-      }
-      .and_then(|()| {
-        self
-          .components
-          .sign_encoded_message_with_cached_blinding_and_scratch(out, scratch, cache, &mut fill_random)
-      })
-    });
-    scratch.clear();
+    let result = if workspace.belongs_to(self.public_key()) {
+      self.sign_with_workspace(profile, message, out, workspace, fill_salt, fill_blinding)
+    } else {
+      Err(RsaPrivateOpError::InvalidScratch)
+    };
+    workspace.scratch.clear();
     match &result {
-      Ok(remaining) => cache.remaining = *remaining,
-      Err(_) => cache.clear(),
+      Ok(remaining) => workspace.remaining = *remaining,
+      Err(_) => workspace.clear_pair(),
     }
     clear_output_on_error(result.map(|_| ()), out)
+  }
+
+  /// Encode and sign `message` into `out` with the next blinding pair of
+  /// `workspace`, which belongs to this key.
+  ///
+  /// On success, returns the signatures left in the epoch, which the caller
+  /// commits to `workspace.remaining`.
+  fn sign_with_workspace<E, F>(
+    &self,
+    profile: RsaSignatureProfile,
+    message: &[u8],
+    out: &mut [u8],
+    workspace: &mut RsaSigningWorkspace,
+    fill_salt: impl FnOnce(&mut [u8]) -> Result<(), E>,
+    fill_blinding: impl FnMut(&mut [u8]) -> Result<(), F>,
+  ) -> Result<u8, RsaPrivateOpError> {
+    if out.len() != self.public_key().modulus().len() {
+      return Err(RsaPrivateOpError::InvalidLength);
+    }
+    let scratch = &mut workspace.scratch;
+    match profile {
+      RsaSignatureProfile::Pss { profile, salt_len } => {
+        if !self.public_key().pss_salt_len_is_possible(profile, salt_len) {
+          return Err(RsaPrivateOpError::MessageTooLong);
+        }
+        {
+          let salt = scratch
+            .salt
+            .as_mut_slice()
+            .get_mut(..salt_len)
+            .ok_or(RsaPrivateOpError::MessageTooLong)?;
+          fill_salt(salt).map_err(|_| RsaPrivateOpError::EntropyUnavailable)?;
+        }
+        self
+          .components
+          .encode_pss_with_stored_salt_into_scratch(profile, message, salt_len, scratch)?;
+      }
+      RsaSignatureProfile::Pkcs1v15(profile) => {
+        self
+          .components
+          .encode_pkcs1v15_into_scratch(profile, message, scratch)?;
+      }
+    }
+    let remaining = self
+      .components
+      .workspace_blinding_into_scratch(workspace, fill_blinding)?;
+    let scratch = &mut workspace.scratch;
+    self
+      .components
+      .private_operation_from_scratch_encoded_with_stored_blinding_power(scratch)?;
+    out.copy_from_slice(scratch.blinded_private_result.as_slice());
+    Ok(remaining)
   }
 }
 
 impl RsaPrivateKeyComponents {
-  /// Sign `scratch.encoded` with the next blinding pair of `cache`.
-  ///
-  /// On success, returns the signatures left in the epoch, which the caller
-  /// commits to `cache.remaining`.
-  fn sign_encoded_message_with_cached_blinding_and_scratch<E>(
-    &self,
-    out: &mut [u8],
-    scratch: &mut RsaPrivateScratch,
-    cache: &mut RsaBlindingCache,
-    fill_random: impl FnMut(&mut [u8]) -> Result<(), E>,
-  ) -> Result<u8, RsaPrivateOpError> {
-    if out.len() != self.public.modulus().len() {
-      return Err(RsaPrivateOpError::InvalidLength);
-    }
-    let remaining = self.cached_blinding_into_scratch(scratch, cache, fill_random)?;
-    self.private_operation_from_scratch_encoded_with_stored_blinding_power(scratch)?;
-    out.copy_from_slice(scratch.blinded_private_result.as_slice());
-    Ok(remaining)
-  }
-
-  /// Advance `cache` and copy its pair into `scratch.blinding_power` and
-  /// `scratch.blinding_inverse`.
+  /// Advance the pair of `workspace` and copy it into its scratch
+  /// `blinding_power` and `blinding_inverse`.
   ///
   /// A refresh draws `r` and `r⁻¹` through
   /// [`Self::random_blinding_factor_into_scratch_with`], which checks
   /// `r · r⁻¹ = 1`, and computes `rᵉ` with the public operation. Otherwise
   /// both cached values are squared with the private modular multiplication.
-  /// Taking the use count first leaves the cache in the refresh state until the
-  /// caller commits the returned count, so any failure or unwind before the
+  /// Taking the use count first leaves the workspace in the refresh state until
+  /// the caller commits the returned count, so any failure or unwind before the
   /// commit forces the next call to refresh.
-  fn cached_blinding_into_scratch<E>(
+  fn workspace_blinding_into_scratch<F>(
     &self,
-    scratch: &mut RsaPrivateScratch,
-    cache: &mut RsaBlindingCache,
-    fill_random: impl FnMut(&mut [u8]) -> Result<(), E>,
+    workspace: &mut RsaSigningWorkspace,
+    fill_blinding: impl FnMut(&mut [u8]) -> Result<(), F>,
   ) -> Result<u8, RsaPrivateOpError> {
-    scratch.ensure_len(self.public.modulus().len())?;
-    let remaining = core::mem::take(&mut cache.remaining);
-    let remaining = if remaining == 0 || !cache.is_bound_to(&self.public) {
-      cache.bind(&self.public);
-      self.random_blinding_factor_into_scratch_with(scratch, fill_random)?;
+    let RsaSigningWorkspace {
+      scratch,
+      blinding_power,
+      blinding_inverse,
+      remaining,
+      origin,
+      ..
+    } = workspace;
+    let left = core::mem::take(remaining);
+    let left = if left == 0 || !origin.is_current() {
+      self.random_blinding_factor_into_scratch_with(scratch, fill_blinding)?;
       self
         .public
         .prepared_public_operation_with_scratch(
@@ -4559,37 +4563,32 @@ impl RsaPrivateKeyComponents {
           &mut scratch.public_scratch,
         )
         .map_err(|_| RsaPrivateOpError::InvalidBlindingFactor)?;
-      #[cfg(all(feature = "std", unix))]
-      {
-        cache.process_id = std::process::id();
-      }
-      RSA_BLINDING_CACHE_EPOCH_USES
+      *origin = ProcessOrigin::current();
+      RSA_SIGNING_WORKSPACE_EPOCH_USES
     } else {
       mod_mul_representatives_with_scratch(
         &self.public.modulus,
-        cache.blinding_power.as_slice(),
-        cache.blinding_power.as_slice(),
+        blinding_power.as_slice(),
+        blinding_power.as_slice(),
         scratch.blinding_power.as_mut_slice(),
         &mut scratch.mul_scratch,
       )?;
       mod_mul_representatives_with_scratch(
         &self.public.modulus,
-        cache.blinding_inverse.as_slice(),
-        cache.blinding_inverse.as_slice(),
+        blinding_inverse.as_slice(),
+        blinding_inverse.as_slice(),
         scratch.blinding_inverse.as_mut_slice(),
         &mut scratch.mul_scratch,
       )?;
-      remaining
+      left
     };
-    cache
-      .blinding_power
+    blinding_power
       .as_mut_slice()
       .copy_from_slice(scratch.blinding_power.as_slice());
-    cache
-      .blinding_inverse
+    blinding_inverse
       .as_mut_slice()
       .copy_from_slice(scratch.blinding_inverse.as_slice());
-    Ok(remaining.strict_sub(1))
+    Ok(left.strict_sub(1))
   }
 }
 
@@ -14479,34 +14478,33 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
       format!("RsaPrivateScratch {{ bytes: {}, .. }}", key.signature_len())
     );
 
-    // The blinding cache shows only its public width and use count, also
+    // The signing workspace shows only its public width and use count, also
     // while it holds a blinding pair.
     #[cfg(feature = "getrandom")]
     {
-      let mut cache = key.blinding_cache();
+      let mut workspace = key.signing_workspace();
       assert_eq!(
-        format!("{cache:?}"),
+        format!("{workspace:?}"),
         format!(
-          "RsaBlindingCache {{ bytes: {}, remaining: 0, .. }}",
+          "RsaSigningWorkspace {{ bytes: {}, remaining: 0, .. }}",
           key.signature_len()
         )
       );
       let mut signature = vec![0u8; key.signature_len()];
       key
-        .sign_signature_with_blinding_cache(
+        .sign_signature_with_workspace(
           RsaSignatureProfile::pkcs1v15(RsaPkcs1v15Profile::Sha256),
-          b"rscrypto blinding cache Debug",
+          b"rscrypto signing workspace Debug",
           &mut signature,
-          &mut key.private_scratch(),
-          &mut cache,
+          &mut workspace,
         )
-        .expect("signing through a new blinding cache must succeed");
-      assert!(!is_zero_unsigned_be(cache.blinding_power.as_slice()));
-      assert!(!is_zero_unsigned_be(cache.blinding_inverse.as_slice()));
+        .expect("signing through a new workspace must succeed");
+      assert!(!is_zero_unsigned_be(workspace.blinding_power.as_slice()));
+      assert!(!is_zero_unsigned_be(workspace.blinding_inverse.as_slice()));
       assert_eq!(
-        format!("{cache:?}"),
+        format!("{workspace:?}"),
         format!(
-          "RsaBlindingCache {{ bytes: {}, remaining: 31, .. }}",
+          "RsaSigningWorkspace {{ bytes: {}, remaining: 31, .. }}",
           key.signature_len()
         )
       );
@@ -16132,30 +16130,44 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
     assert_eq!(&decrypted[..decrypted_len], pkcs1v15_plaintext);
   }
 
-  /// Sign through `cache` with an entropy stream that fills the PSS salt with
-  /// `0x5a` and every modulus-width request (blinding candidate and inverse
-  /// mask) with the factor 2. Returns the result and the request count.
+  /// Request counts of one signature through a workspace.
+  #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+  struct Requests {
+    salt: usize,
+    blinding: usize,
+  }
+
+  /// Sign through `workspace` with a salt source that fills `0x5a` and a
+  /// blinding source that gives the factor 2 for every request (blinding
+  /// candidate and inverse mask). Returns the result and the requests of each
+  /// source.
   #[cfg(feature = "getrandom")]
-  fn sign_with_blinding_cache_and_factor_two(
+  fn sign_with_workspace_and_factor_two(
     key: &RsaPrivateKey,
     profile: RsaSignatureProfile,
     message: &[u8],
     out: &mut [u8],
-    scratch: &mut RsaPrivateScratch,
-    cache: &mut RsaBlindingCache,
-  ) -> (Result<(), RsaPrivateOpError>, usize) {
+    workspace: &mut RsaSigningWorkspace,
+  ) -> (Result<(), RsaPrivateOpError>, Requests) {
     let (factor, _) = factor_two_and_inverse(key.public_key().modulus());
-    let mut calls = 0usize;
-    let result = key.sign_signature_with_random_fill_and_blinding_cache(profile, message, out, scratch, cache, |out| {
-      calls = calls.strict_add(1);
-      if out.len() == factor.len() {
-        out.copy_from_slice(&factor);
-      } else {
-        out.fill(0x5a);
-      }
-      Ok::<(), ()>(())
-    });
-    (result, calls)
+    let mut requests = Requests { salt: 0, blinding: 0 };
+    let result = key.sign_signature_with_random_fill_and_workspace(
+      profile,
+      message,
+      out,
+      workspace,
+      |salt| {
+        requests.salt = requests.salt.strict_add(1);
+        salt.fill(0x5a);
+        Ok::<(), !>(())
+      },
+      |blinding| {
+        requests.blinding = requests.blinding.strict_add(1);
+        blinding.copy_from_slice(&factor);
+        Ok::<(), !>(())
+      },
+    );
+    (result, requests)
   }
 
   /// The pair that the `use_in_epoch`-th signature of an epoch uses when its
@@ -16178,20 +16190,19 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
   }
 
   #[cfg(feature = "getrandom")]
-  fn assert_blinding_cache_is_clear(cache: &RsaBlindingCache) {
-    assert_eq!(cache.remaining, 0);
-    assert!(cache.blinding_power.as_slice().iter().all(|&byte| byte == 0));
-    assert!(cache.blinding_inverse.as_slice().iter().all(|&byte| byte == 0));
+  fn assert_workspace_pair_is_clear(workspace: &RsaSigningWorkspace) {
+    assert_eq!(workspace.remaining, 0);
+    assert!(workspace.blinding_power.as_slice().iter().all(|&byte| byte == 0));
+    assert!(workspace.blinding_inverse.as_slice().iter().all(|&byte| byte == 0));
   }
 
   #[cfg(feature = "getrandom")]
   #[test]
-  fn blinding_cache_squares_its_pair_and_refreshes_every_32_signatures() {
+  fn signing_workspace_squares_its_pair_and_refreshes_from_its_blinding_source_every_32_signatures() {
     let key = prevalidated_test_private_key();
-    let mut cache = key.blinding_cache();
-    let mut scratch = key.private_scratch();
+    let mut workspace = key.signing_workspace();
     let mut signature = vec![0u8; key.signature_len()];
-    assert_blinding_cache_is_clear(&cache);
+    assert_workspace_pair_is_clear(&workspace);
 
     // Signatures 1, 33, and 65 refresh; PSS and PKCS #1 v1.5 share the epoch.
     for index in 0usize..70 {
@@ -16201,159 +16212,124 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
       } else {
         RsaSignatureProfile::pkcs1v15(RsaPkcs1v15Profile::Sha256)
       };
-      let message = format!("rscrypto blinding cache signature {index}");
-      let (result, calls) = sign_with_blinding_cache_and_factor_two(
-        &key,
-        profile,
-        message.as_bytes(),
-        &mut signature,
-        &mut scratch,
-        &mut cache,
-      );
-      result.expect("signing through the blinding cache must succeed");
+      let message = format!("rscrypto signing workspace signature {index}");
+      let (result, requests) =
+        sign_with_workspace_and_factor_two(&key, profile, message.as_bytes(), &mut signature, &mut workspace);
+      result.expect("signing through the workspace must succeed");
 
-      // Only a refresh draws blinding entropy: one candidate and one inverse mask.
-      let salt_calls = usize::from(matches!(profile, RsaSignatureProfile::Pss { .. }));
-      let blinding_calls = if use_in_epoch == 1 { 2 } else { 0 };
-      assert_eq!(calls, salt_calls.strict_add(blinding_calls), "signature {index}");
-      assert_eq!(usize::from(cache.remaining), 32usize.strict_sub(use_in_epoch));
+      // The salt source gets only the PSS salt. The blinding source gets only a
+      // refresh: one candidate and one inverse mask.
+      let expected = Requests {
+        salt: usize::from(matches!(profile, RsaSignatureProfile::Pss { .. })),
+        blinding: if use_in_epoch == 1 { 2 } else { 0 },
+      };
+      assert_eq!(requests, expected, "signature {index}");
+      assert_eq!(usize::from(workspace.remaining), 32usize.strict_sub(use_in_epoch));
       let (power, inverse) = factor_two_epoch_pair(&key, use_in_epoch);
-      assert_eq!(cache.blinding_power.as_slice(), power, "signature {index}");
-      assert_eq!(cache.blinding_inverse.as_slice(), inverse, "signature {index}");
+      assert_eq!(workspace.blinding_power.as_slice(), power, "signature {index}");
+      assert_eq!(workspace.blinding_inverse.as_slice(), inverse, "signature {index}");
       key
         .public_key()
         .verify_signature(profile, message.as_bytes(), &signature)
-        .expect("every signature through the blinding cache must verify");
-      assert_private_scratch_is_clear(&scratch);
+        .expect("every signature through the workspace must verify");
+      assert_private_scratch_is_clear(&workspace.scratch);
     }
   }
 
   #[cfg(feature = "getrandom")]
   #[test]
-  fn blinding_cache_failures_clear_it_and_binding_changes_refresh_it() {
+  fn signing_workspace_failures_clear_its_pair() {
     let key = prevalidated_test_private_key();
-    let message = b"rscrypto blinding cache failure and rebinding";
+    let message = b"rscrypto signing workspace failures";
     let pkcs1v15 = RsaSignatureProfile::pkcs1v15(RsaPkcs1v15Profile::Sha256);
     let pss = RsaSignatureProfile::pss(RsaPssProfile::Sha256);
     let (factor, _) = factor_two_and_inverse(key.public_key().modulus());
     let (first_power, first_inverse) = factor_two_epoch_pair(&key, 1);
-    let mut cache = key.blinding_cache();
-    let mut scratch = key.private_scratch();
+    let mut workspace = key.signing_workspace();
     let mut signature = vec![0u8; key.signature_len()];
-    let sign = |profile, cache: &mut RsaBlindingCache, scratch: &mut RsaPrivateScratch, out: &mut [u8]| {
-      sign_with_blinding_cache_and_factor_two(&key, profile, message, out, scratch, cache)
+    let sign = |profile, workspace: &mut RsaSigningWorkspace, out: &mut [u8]| {
+      sign_with_workspace_and_factor_two(&key, profile, message, out, workspace)
     };
-    let assert_refreshed = |cache: &RsaBlindingCache| {
-      assert_eq!(cache.remaining, 31);
-      assert_eq!(cache.blinding_power.as_slice(), first_power);
-      assert_eq!(cache.blinding_inverse.as_slice(), first_inverse);
+    let refresh = Requests { salt: 0, blinding: 2 };
+    let reuse = Requests { salt: 0, blinding: 0 };
+    let assert_refreshed = |workspace: &RsaSigningWorkspace| {
+      assert_eq!(workspace.remaining, 31);
+      assert_eq!(workspace.blinding_power.as_slice(), first_power);
+      assert_eq!(workspace.blinding_inverse.as_slice(), first_inverse);
     };
 
-    for expected_calls in [2, 0, 0] {
-      let (result, calls) = sign(pkcs1v15, &mut cache, &mut scratch, &mut signature);
-      result.expect("warm-up signing through the blinding cache must succeed");
-      assert_eq!(calls, expected_calls);
+    for expected in [&refresh, &reuse, &reuse] {
+      let (result, requests) = sign(pkcs1v15, &mut workspace, &mut signature);
+      result.expect("warm-up signing through the workspace must succeed");
+      assert_eq!(&requests, expected);
     }
-    assert_eq!(cache.remaining, 29);
+    assert_eq!(workspace.remaining, 29);
 
-    // A public length error clears the cache before any entropy request.
+    // A public length error clears the pair before any entropy request.
     let mut short = vec![0xa5; key.signature_len().strict_sub(1)];
     assert_eq!(
-      sign(pkcs1v15, &mut cache, &mut scratch, &mut short),
-      (Err(RsaPrivateOpError::InvalidLength), 0)
+      sign(pkcs1v15, &mut workspace, &mut short),
+      (Err(RsaPrivateOpError::InvalidLength), reuse)
     );
     assert!(is_zero_unsigned_be(&short));
-    assert_blinding_cache_is_clear(&cache);
-    assert_private_scratch_is_clear(&scratch);
-    let (result, calls) = sign(pkcs1v15, &mut cache, &mut scratch, &mut signature);
-    result.expect("signing after a length error must refresh the cache");
-    assert_eq!(calls, 2);
-    assert_refreshed(&cache);
+    assert_workspace_pair_is_clear(&workspace);
+    assert_private_scratch_is_clear(&workspace.scratch);
+    let (result, requests) = sign(pkcs1v15, &mut workspace, &mut signature);
+    result.expect("signing after a length error must refresh the pair");
+    assert_eq!(requests, refresh);
+    assert_refreshed(&workspace);
 
-    // So does scratch of the wrong width.
-    let mut smaller_scratch = wrong_width_private_scratch(&key);
-    signature.fill(0xa5);
-    assert_eq!(
-      sign(pkcs1v15, &mut cache, &mut smaller_scratch, &mut signature),
-      (Err(RsaPrivateOpError::InvalidScratch), 0)
-    );
-    assert!(is_zero_unsigned_be(&signature));
-    assert_blinding_cache_is_clear(&cache);
-
-    // Entropy failure for the salt of a warm epoch, and then for a refresh.
+    // A failed salt in a warm epoch, and a failed refresh, each clear the pair
+    // after one request to the failing source.
     for warm in [true, false] {
-      if warm {
-        sign(pkcs1v15, &mut cache, &mut scratch, &mut signature)
-          .0
-          .expect("signing must refresh the cleared cache");
-        assert_refreshed(&cache);
-      }
-      let mut calls = 0usize;
+      // The first case fails inside the epoch that the refresh above started;
+      // the second fails the refresh of the pair that the first case cleared.
+      assert_eq!(workspace.remaining > 0, warm, "warm: {warm}");
+      let mut requests = Requests { salt: 0, blinding: 0 };
       signature.fill(0xa5);
       assert_eq!(
-        key.sign_signature_with_random_fill_and_blinding_cache(
+        key.sign_signature_with_random_fill_and_workspace(
           if warm { pss } else { pkcs1v15 },
           message,
           &mut signature,
-          &mut scratch,
-          &mut cache,
-          |out| {
-            calls = calls.strict_add(1);
-            out.fill(0xa5);
+          &mut workspace,
+          |salt| {
+            requests.salt = requests.salt.strict_add(1);
+            salt.fill(0xa5);
+            Err(())
+          },
+          |blinding| {
+            requests.blinding = requests.blinding.strict_add(1);
+            blinding.fill(0xa5);
             Err(())
           },
         ),
         Err(RsaPrivateOpError::EntropyUnavailable)
       );
-      assert_eq!(calls, 1);
+      let expected = if warm {
+        Requests { salt: 1, blinding: 0 }
+      } else {
+        Requests { salt: 0, blinding: 1 }
+      };
+      assert_eq!(requests, expected, "warm: {warm}");
       assert!(is_zero_unsigned_be(&signature));
-      assert_blinding_cache_is_clear(&cache);
-      assert_private_scratch_is_clear(&scratch);
+      assert_workspace_pair_is_clear(&workspace);
+      assert_private_scratch_is_clear(&workspace.scratch);
     }
 
-    // An inconsistent cached pair fails the fault check, which clears the cache.
-    sign(pkcs1v15, &mut cache, &mut scratch, &mut signature)
+    // An inconsistent cached pair fails the fault check, which clears the pair.
+    sign(pkcs1v15, &mut workspace, &mut signature)
       .0
-      .expect("signing must refresh the cleared cache");
-    cache.blinding_inverse.as_mut_slice().copy_from_slice(&factor);
+      .expect("signing must refresh the cleared pair");
+    workspace.blinding_inverse.as_mut_slice().copy_from_slice(&factor);
     signature.fill(0xa5);
     assert_eq!(
-      sign(pkcs1v15, &mut cache, &mut scratch, &mut signature),
-      (Err(RsaPrivateOpError::FaultCheckFailed), 0)
+      sign(pkcs1v15, &mut workspace, &mut signature),
+      (Err(RsaPrivateOpError::FaultCheckFailed), reuse)
     );
     assert!(is_zero_unsigned_be(&signature));
-    assert_blinding_cache_is_clear(&cache);
-    assert_private_scratch_is_clear(&scratch);
-
-    // A changed public exponent, modulus, or process ID starts a new epoch and
-    // restores the binding.
-    let mut rebind = |change: &dyn Fn(&mut RsaBlindingCache)| {
-      sign(pss, &mut cache, &mut scratch, &mut signature)
-        .0
-        .expect("signing must start or continue an epoch");
-      sign(pss, &mut cache, &mut scratch, &mut signature)
-        .0
-        .expect("signing must continue the epoch");
-      assert!(cache.remaining < 31);
-      change(&mut cache);
-      let (result, calls) = sign(pss, &mut cache, &mut scratch, &mut signature);
-      result.expect("signing after a binding change must refresh the cache");
-      assert_eq!(calls, 3, "salt, blinding candidate, and inverse mask");
-      assert_refreshed(&cache);
-      assert_eq!(cache.public_exponent, key.public_key().public_exponent().as_u64());
-      assert_eq!(cache.modulus, key.public_key().modulus());
-      key
-        .public_key()
-        .verify_signature(pss, message, &signature)
-        .expect("the signature after rebinding must verify");
-    };
-    rebind(&|cache| cache.public_exponent = 3);
-    rebind(&|cache| cache.modulus[0] ^= 0x80);
-    #[cfg(all(feature = "std", unix))]
-    {
-      rebind(&|cache| cache.process_id = cache.process_id.wrapping_add(1));
-      assert_eq!(cache.process_id, std::process::id());
-    }
+    assert_workspace_pair_is_clear(&workspace);
+    assert_private_scratch_is_clear(&workspace.scratch);
   }
 
   #[cfg(feature = "getrandom")]

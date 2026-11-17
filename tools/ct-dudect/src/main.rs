@@ -2946,16 +2946,15 @@ fn rsa_pkcs1v15_os_blinding_fixed_vs_random_message(runner: &mut CtRunner, rng: 
 fn rsa_pkcs1v15_cached_blinding_fixed_vs_random_message(runner: &mut CtRunner, rng: &mut BenchRng) {
   let key = rsa_ct_fixture_key(RSA_CT_KEY_A_INDEX);
   let sig_len = key.signature_len();
-  let cache = RefCell::new(key.blinding_cache());
-  // One signature warms the cache, so samples start inside an epoch. The
+  let workspace = RefCell::new(key.signing_workspace());
+  // One signature warms the workspace, so samples start inside an epoch. The
   // public use count still refreshes it every 32 calls, in either class.
   key
-    .sign_signature_with_blinding_cache(
+    .sign_signature_with_workspace(
       RsaSignatureProfile::pkcs1v15(RsaPkcs1v15Profile::Sha256),
       &[0x42; 64],
       &mut vec![0u8; sig_len],
-      &mut key.private_scratch(),
-      &mut cache.borrow_mut(),
+      &mut workspace.borrow_mut(),
     )
     .expect("RSA cached-blinding warm-up signing must succeed");
 
@@ -2972,14 +2971,12 @@ fn rsa_pkcs1v15_cached_blinding_fixed_vs_random_message(runner: &mut CtRunner, r
   for (class, message) in inputs {
     runner.run_one(class, || {
       let mut out = vec![0u8; sig_len];
-      let mut scratch = key.private_scratch();
       key
-        .sign_signature_with_blinding_cache(
+        .sign_signature_with_workspace(
           RsaSignatureProfile::pkcs1v15(RsaPkcs1v15Profile::Sha256),
           &message,
           &mut out,
-          &mut scratch,
-          &mut cache.borrow_mut(),
+          &mut workspace.borrow_mut(),
         )
         .expect("RSA cached-blinding signing fixture must succeed");
       core::hint::black_box(out[0])

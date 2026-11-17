@@ -644,14 +644,14 @@ pub(crate) mod tests {
       covered("RSA implicit rejection with blinding and scratch", || {
         key.decrypt_pkcs1v15_with_blinding_factor_and_scratch(&[], blinding, &mut [], &mut scratch)
       });
-      covered("RSA signing with caller entropy and a blinding cache", || {
-        key.sign_signature_with_random_fill_and_blinding_cache(
+      covered("RSA signing with caller entropy and a workspace", || {
+        key.sign_signature_with_random_fill_and_workspace(
           crate::RsaSignatureProfile::pkcs1v15(crate::RsaPkcs1v15Profile::Sha256),
           &[],
           &mut [],
-          &mut scratch,
-          &mut key.blinding_cache(),
-          |_| Ok::<(), ()>(()),
+          &mut key.signing_workspace(),
+          |_| Ok::<(), !>(()),
+          |_| Ok::<(), !>(()),
         )
       });
       #[cfg(feature = "getrandom")]
@@ -660,13 +660,12 @@ pub(crate) mod tests {
         covered("RSA implicit rejection with scratch", || {
           key.decrypt_pkcs1v15_with_scratch(&[], &mut [], &mut scratch)
         });
-        covered("RSA signing with a blinding cache", || {
-          key.sign_signature_with_blinding_cache(
+        covered("RSA signing with a workspace", || {
+          key.sign_signature_with_workspace(
             crate::RsaSignatureProfile::pss(crate::RsaPssProfile::Sha256),
             &[],
             &mut [],
-            &mut scratch,
-            &mut key.blinding_cache(),
+            &mut key.signing_workspace(),
           )
         });
       }

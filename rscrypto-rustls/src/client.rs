@@ -20,7 +20,8 @@ use crate::{cipher_suite, verify};
 /// It offers TLS 1.3 only; to enable TLS 1.2, set the returned provider's
 /// `tls12_cipher_suites` to `cipher_suite::ALL_TLS12_CIPHER_SUITES`.
 /// For client certificates, set its `key_provider` to a static
-/// [`crate::sign::Provider`] over the same source.
+/// [`crate::sign::Provider`] over the same source, or `sign::Provider::scoped`
+/// over `replay::ScopedRandom`.
 ///
 /// The groups live in this value, so build it in a `static`:
 ///

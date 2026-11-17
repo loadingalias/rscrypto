@@ -18,7 +18,7 @@
 //!   factor. rscrypto calls `getrandom`, and RustCrypto rows receive a
 //!   `getrandom` RNG. aws-lc-rs takes no RNG and draws from AWS-LC's OS-seeded
 //!   DRBG.
-//! - `cached-blinding`: rscrypto signs through a reused `RsaBlindingCache`,
+//! - `cached-blinding`: rscrypto signs through a reused `RsaSigningWorkspace`,
 //!   which draws a new blinding factor from `getrandom` every 32 signatures
 //!   and squares its pair in between. PSS still draws a new salt in every
 //!   call.
@@ -1016,38 +1016,31 @@ fn rsa_private_signing_for_size(c: &mut Criterion, bits: usize, load_key: impl F
     group.finish();
 
     // PSS-SHA256 and PKCS #1 v1.5-SHA256 through one reused
-    // `RsaBlindingCache` per row. PSS draws a fresh salt from `getrandom` in
-    // every call. The cache draws a new blinding factor from `getrandom` every
+    // `RsaSigningWorkspace` per row. PSS draws a fresh salt from `getrandom` in
+    // every call. The workspace draws a new blinding factor from `getrandom` every
     // 32 signatures and squares its pair in between, so the time per call
     // includes one refresh amortized over each epoch. AWS-LC caches and
     // squares its blinding pair on the same schedule in the `fresh-entropy`
     // groups. rscrypto-only. PSS signatures must verify with rscrypto and
     // RustCrypto; PKCS #1 v1.5 signatures must equal RustCrypto's unblinded
     // signature.
-    let cached_buffers = || {
-      (
-        vec![0u8; key.signature_len()],
-        key.private_scratch(),
-        key.blinding_cache(),
-      )
-    };
+    let cached_buffers = || (vec![0u8; key.signature_len()], key.signing_workspace());
     let mut group = c.benchmark_group(format!("{name}/sign-pss-sha256/cached-blinding"));
     group.bench_function(
       "rscrypto",
       checked_with(
         cached_buffers(),
-        |(signature, scratch, cache)| {
+        |(signature, workspace)| {
           key
-            .sign_signature_with_blinding_cache(
+            .sign_signature_with_workspace(
               RsaSignatureProfile::pss(RsaPssProfile::Sha256),
               black_box(PRIVATE_SIGNING_MESSAGE),
               black_box(signature),
-              black_box(scratch),
-              black_box(cache),
+              black_box(workspace),
             )
             .expect("valid cached-blinding RSA-PSS benchmark signing must succeed")
         },
-        |(), (signature, _, _)| assert_private_pss_signature(&key, &rustcrypto_public_key, signature),
+        |(), (signature, _)| assert_private_pss_signature(&key, &rustcrypto_public_key, signature),
       ),
     );
     group.finish();
@@ -1057,18 +1050,17 @@ fn rsa_private_signing_for_size(c: &mut Criterion, bits: usize, load_key: impl F
       "rscrypto",
       checked_with(
         cached_buffers(),
-        |(signature, scratch, cache)| {
+        |(signature, workspace)| {
           key
-            .sign_signature_with_blinding_cache(
+            .sign_signature_with_workspace(
               RsaSignatureProfile::pkcs1v15(RsaPkcs1v15Profile::Sha256),
               black_box(PRIVATE_SIGNING_MESSAGE),
               black_box(signature),
-              black_box(scratch),
-              black_box(cache),
+              black_box(workspace),
             )
             .expect("valid cached-blinding RSA-PKCS1-v1_5 benchmark signing must succeed")
         },
-        |(), (signature, _, _)| assert_eq!(*signature, pkcs1v15()),
+        |(), (signature, _)| assert_eq!(*signature, pkcs1v15()),
       ),
     );
     group.finish();

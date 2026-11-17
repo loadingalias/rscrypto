@@ -184,5 +184,25 @@ impl rustls::crypto::TicketerFactory for TicketerFactory {
   }
 }
 
+/// Fill `output` from `random` for a value that many connections share, such
+/// as a ticketer or an RSA key's blinding pair.
+///
+/// `replay::ScopedRandom` refuses this draw, because its innermost scope
+/// belongs to one connection.
+#[cfg(any(feature = "aes-gcm", feature = "rsa"))]
+pub(crate) fn owner_fill(
+  random: &dyn rustls::crypto::SecureRandom,
+  output: &mut [u8],
+) -> Result<(), rustls::crypto::GetRandomFailed> {
+  #[cfg(feature = "chacha20-rng")]
+  {
+    replay::owner_fill(random, output)
+  }
+  #[cfg(not(feature = "chacha20-rng"))]
+  {
+    random.fill(output)
+  }
+}
+
 #[cfg(test)]
 mod tests;

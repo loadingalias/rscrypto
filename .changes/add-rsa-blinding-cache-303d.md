@@ -2,11 +2,4 @@
 "rscrypto" = "minor"
 ---
 
-Add the opt-in `RsaBlindingCache` for RSA signing.
-`RsaPrivateKey::sign_signature_with_random_fill_and_blinding_cache`, which takes caller entropy,
-and `sign_signature_with_blinding_cache`, which uses `getrandom`, reuse one blinding pair for up
-to 32 signatures and square it before each reuse, as AWS-LC does, instead of drawing, inverting,
-and exponentiating a new factor for every signature. Factors within an epoch are therefore
-correlated. Any signing error, a different key, or, on Unix with `std`, a changed process ID draws
-a new factor. The cache is not `Clone`, shows only its width and use count in `Debug`, and
-zeroizes its pair on error and drop.
+Add the opt-in `RsaSigningWorkspace` for repeated RSA signing with one key. It holds the private-operation scratch and a blinding pair that it reuses for up to 32 signatures, squaring the pair before each reuse, as AWS-LC does, instead of drawing, inverting, and exponentiating a new factor for every signature. Factors within an epoch are therefore correlated. `RsaPrivateKey::signing_workspace` creates it. `RsaPrivateKey::sign_signature_with_random_fill_and_workspace` takes two caller entropy sources: one for the PSS salt and one for each blinding refresh, so a shared workspace and each signature can draw from different owners. `sign_signature_with_workspace` uses `getrandom` for both and does not allocate. A workspace belongs to the key that created it: another key gets `RsaPrivateOpError::InvalidScratch` before any entropy request. Any signing error or a process fork (`platform::ProcessOrigin`) draws a new factor. The workspace is not `Clone`, shows only its width and use count in `Debug`, and zeroizes its pair on error and drop.

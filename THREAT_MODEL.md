@@ -104,14 +104,16 @@ One opaque authentication or verification result can also be visible.
 
 RSA private operations blind their input with a secret factor.
 The uncached signing APIs draw an independent factor for every signature.
-The opt-in `RsaBlindingCache` keeps one factor for an epoch of up to 32 signatures
+The opt-in `RsaSigningWorkspace` keeps one factor for an epoch of up to 32 signatures
 and squares it before each reuse, so the factors within an epoch are correlated,
 and the blinding state persists in caller-owned memory between signatures.
-Any signing error, a different key, or a spent epoch draws a new factor.
-On Unix targets with `std`, a changed process ID also draws a new factor, so a forked child
-does not continue its parent's sequence. That guard compares process IDs only.
-Without it, or after a copied process image such as a restored virtual-machine snapshot,
-the caller must not use one cache in two copies of a process.
+A workspace belongs to one key, and another key gets an error.
+Any signing error or a spent epoch draws a new factor.
+A process fork also draws a new factor, so a forked child does not continue its parent's sequence.
+The new factor comes from the caller's blinding source, so that source must also be fresh in the child.
+Fork detection has the targets and limits of `platform::ProcessOrigin`.
+After a copied process image, such as a restored virtual-machine snapshot,
+the caller must not use one workspace in two copies of a process.
 
 ### Backend and dispatch faults
 

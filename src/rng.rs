@@ -31,6 +31,11 @@
 //! values. A replay rebuilds the generator of any owner from the root seed and
 //! the owner's path.
 //!
+//! An owner that many other owners use, such as a cache or a session-ticket
+//! key store, gets its own child. It never draws from the generator of an owner
+//! that uses it. Then the position of each stream depends only on the draws of
+//! its owner.
+//!
 //! `rand_core`'s `SeedableRng::seed_from_u64` panics, because 64 bits are not a
 //! 256-bit seed. A test that needs a fixed seed writes all 32 bytes.
 

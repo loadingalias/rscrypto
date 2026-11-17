@@ -133,17 +133,16 @@ the [WASM SIMD128 record](../benchmark_results/OVERVIEW.md#2026-10-06-blake3-was
 - **Not claimed:** the general-purpose and vector registers that the AArch64 and x86-64
   Montgomery, IFMA, and paired NEON kernels and the NEON and AVX2 window selection use.
 
-### RSA blinding cache
+### RSA signing workspace
 
-`RsaBlindingCache` keeps its blinding power and inverse between signatures by design.
+`RsaSigningWorkspace` keeps its blinding power and inverse between signatures by design.
 
-- A refresh draws the factor and its inverse in `RsaPrivateScratch`, as the uncached path does,
-  and copies the power and the inverse into the cache. Reuse squares the cached pair into scratch
-  and copies it back. Every signature clears scratch before it returns.
-- Every signing error zeroizes both cached values and resets the use count, so the next
-  signature refreshes. Drop zeroizes both values.
-- Rebinding to a key of another modulus width replaces both buffers; dropping the old buffers
-  zeroizes them.
+- A refresh draws the factor and its inverse in the workspace's `RsaPrivateScratch`, as the
+  uncached path does, and copies the power and the inverse into the pair. Reuse squares the pair
+  into scratch and copies it back. Every signature clears scratch before it returns.
+- Every signing error zeroizes both values of the pair and resets the use count, so the next
+  signature refreshes. This includes a call with another key, which signs nothing. Drop zeroizes
+  both values, and the scratch clears when it drops.
 - Signing sets the use count to zero when it takes the pair and restores a count only after the
   signature succeeds. A panic that unwinds after that point therefore makes the next signature
   refresh. The previous pair stays in the owner until that refresh or drop.
@@ -537,11 +536,11 @@ Compiler-made moves and stack residue have not been separately qualified here.
 
 The provider's key loader uses rscrypto's bounded credential codecs and shares
 successful clearing key owners with signers. Rejected parsed keys drop before
-another format is attempted. An RSA signature takes an idle workspace (scratch and
-an `RsaBlindingCache`) or builds one, and returns it on success while the key keeps
-fewer idle workspaces than its limit; a compact key keeps none. Scratch is cleared
-after every signature; an idle cache keeps its blinding pair until its next use,
-an error, or the key's release, as [RSA blinding cache](#rsa-blinding-cache)
+another format is attempted. An RSA signature takes an idle `RsaSigningWorkspace`
+or builds one, and returns it on success while the key keeps fewer idle workspaces
+than its limit; a compact key keeps none. Scratch is cleared after every
+signature; an idle workspace keeps its blinding pair until its next use,
+an error, or the key's release, as [RSA signing workspace](#rsa-signing-workspace)
 describes. Entropy failure returns no signature and drops the workspace.
 ECDSA and hedged ML-DSA entropy failure also return no signature. ML-DSA keys are
 prepared once by default and the compact key is dropped; a compact-mode key prepares
@@ -595,7 +594,8 @@ The six-hour rotator keeps current and previous clearing key owners, timed by
 the monotonic clock or a caller clock. Before each seal or open it drops a key
 twelve or more hours old; its view of time never moves backward, so a lagging
 clock cannot revive a key. A failed rotation keeps the previous key and issues
-no tickets. On-use expiration can defer destruction while idle, and rustls
+no tickets. A key seals only in the process that created it, so a copy that a
+process fork made issues no ticket and consumes no nonce. On-use expiration can defer destruction while idle, and rustls
 configuration sharing can extend the rotator's lifetime. Tests cover independent
 AES-GCM, hostile tickets, concurrent exhaustion, entropy and clock failure,
 rotation on a simulated clock, and resumption. They do not qualify compiler-made copies or linked-code erasure.
@@ -611,7 +611,10 @@ this source boundary does not establish a whole-ticket lifecycle claim.
 
 A `replay::Stream` clears its generator when the stream and every scope that
 holds it have ended. `ScopedRandom` writes only to the rustls output buffer. It
-fails before it writes when no scope is active or the stream's lock is poisoned.
+fails before it writes when no scope is active, the stream's lock is poisoned,
+a shared owner draws, or a process fork copied the stream's root generator. A
+shared owner's stream, in a scoped RSA key or a generator ticketer, clears when
+that owner drops.
 Unit tests check that nested scopes and an unwinding scope restore the previous
 stream. They do not qualify compiler-made copies.
 

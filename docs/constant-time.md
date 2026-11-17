@@ -1482,16 +1482,18 @@ and neither depends on a secret. In a fork child, the owner refuses before any s
 The BINSEC generator leaf runs the Linux page-mode setup through the harness's `mmap` and `madvise` shims,
 because BINSEC loads its initial memory from the file.
 
-### RSA blinding cache
+### RSA signing workspace
 
-`RsaBlindingCache` signing changes only the source of the blinding pair.
+`RsaSigningWorkspace` signing changes only the source of the blinding pair.
 A refresh runs the candidate draw, masked inverse, and public `rᵉ` of the uncached path.
 Reuse squares the cached power and inverse with the modular multiplication
 that blinds and unblinds every private operation.
-The public use count, the bound public key, and the process ID choose between the two.
+The public use count and the process origin choose between the two.
+A workspace of another key is refused by its public key binding before any secret work.
+The PSS salt and each refresh come from separate caller callbacks.
 The diagnostic DudeCT case `rsa_pkcs1v15_cached_blinding_fixed_vs_random_message`
-measures message dependence through a warm cache. No evidence unit relies on it yet,
-and the cache adds no timing claim.
+measures message dependence through a warm workspace. No evidence unit relies on it yet,
+and the workspace adds no timing claim.
 
 ### ML-DSA
 

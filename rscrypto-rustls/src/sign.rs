@@ -7,7 +7,8 @@
 //! offers PKCS#1 v1.5 in TLS 1.3. Each ECDSA key signs with one scheme in every
 //! TLS version: P-256 with SHA-256, and P-384 with SHA-384. [`Provider::new`]
 //! takes the entropy source for key validation and signing; [`KEY_PROVIDER`]
-//! uses OS entropy and requires `getrandom`.
+//! uses OS entropy and requires `getrandom`. With `chacha20-rng`,
+//! `Provider::scoped` loads keys for replayable runs.
 
 use alloc::boxed::Box;
 use rustls::Error;
@@ -35,6 +36,9 @@ pub static KEY_PROVIDER: &dyn KeyProvider = &Provider::new(crate::random::SECURE
 #[derive(Debug)]
 pub struct Provider {
   random: &'static dyn rustls::crypto::SecureRandom,
+  /// Whether each loaded RSA key seeds its own blinding generator from `random` at load.
+  #[cfg(all(feature = "rsa", feature = "chacha20-rng"))]
+  scoped: bool,
   #[cfg(any(
     feature = "ml-dsa",
     feature = "rsa",
@@ -66,11 +70,15 @@ impl Provider {
   ///
   /// The source must provide cryptographically secure random bytes. Its failures
   /// propagate without fallback to the OS. Key formats, bounds, and owned DER
-  /// cleanup match [`KEY_PROVIDER`].
+  /// cleanup match [`KEY_PROVIDER`]. The blinding refreshes of an RSA key are
+  /// draws by a shared owner, which `replay::ScopedRandom` refuses; for that
+  /// source, use `Provider::scoped`.
   #[must_use]
   pub const fn new(random: &'static dyn rustls::crypto::SecureRandom) -> Self {
     Self {
       random,
+      #[cfg(all(feature = "rsa", feature = "chacha20-rng"))]
+      scoped: false,
       #[cfg(any(
         feature = "ml-dsa",
         feature = "rsa",
@@ -80,6 +88,24 @@ impl Provider {
       compact: false,
       #[cfg(feature = "rsa")]
       rsa_sizes: RsaSigningKeySizes::Bits2048To8192,
+    }
+  }
+
+  /// Load keys for replayable runs over [`crate::replay::ScopedRandom`].
+  ///
+  /// Each signature draws its salt, nonce, or hedge from the stream of the
+  /// connection that signs. An RSA key also seeds its own blinding generator at
+  /// load, from 32 bytes of the scope that loads it, and draws each blinding
+  /// refresh from that generator, never from a connection. So load keys inside
+  /// a scope; see [Shared owners](crate::replay#shared-owners). The other
+  /// options compose as with [`Provider::new`].
+  #[cfg(feature = "chacha20-rng")]
+  #[must_use]
+  pub const fn scoped() -> Self {
+    Self {
+      #[cfg(feature = "rsa")]
+      scoped: true,
+      ..Self::new(&crate::replay::SCOPED)
     }
   }
 
@@ -108,9 +134,9 @@ impl Provider {
   /// most one per available CPU and never more than 64. A workspace holds
   /// private-operation scratch and a blinding pair that the next signature
   /// squares instead of drawing, inverting, and exponentiating a new factor;
-  /// see [`rscrypto::RsaBlindingCache`]. A compact RSA key builds scratch and
-  /// draws a new blinding factor for every signature. Other algorithms are
-  /// unaffected.
+  /// see [`rscrypto::RsaSigningWorkspace`]. A compact RSA key builds a
+  /// workspace and draws a new blinding factor for every signature. Other
+  /// algorithms are unaffected.
   #[cfg(any(
     feature = "ml-dsa",
     feature = "rsa",
@@ -140,7 +166,14 @@ impl KeyProvider for Provider {
       return Ok(Box::new(key));
     }
     #[cfg(feature = "rsa")]
-    if let Some(key) = rsa::load(&key_der, _random, self.compact, self.rsa_sizes) {
+    if let Some(key) = rsa::load(
+      &key_der,
+      _random,
+      self.compact,
+      self.rsa_sizes,
+      #[cfg(feature = "chacha20-rng")]
+      self.scoped,
+    )? {
       return Ok(Box::new(key));
     }
     #[cfg(any(feature = "ed25519", feature = "ecdsa-p256", feature = "ecdsa-p384"))]
@@ -367,11 +400,11 @@ mod rsa {
   use std::sync::Mutex;
 
   use rscrypto::{
-    RsaBlindingCache, RsaPkcs1v15Profile, RsaPrivateKey, RsaPrivateScratch, RsaPssProfile, RsaPublicKeyPolicy,
-    RsaSignatureProfile,
+    RsaPkcs1v15Profile, RsaPrivateKey, RsaPssProfile, RsaPublicKeyPolicy, RsaSignatureProfile, RsaSigningWorkspace,
   };
   use rustls::Error;
   use rustls::crypto::SignatureScheme;
+  use rustls::crypto::{GetRandomFailed, SecureRandom};
   use rustls::crypto::{Signer, SigningKey};
   use rustls::pki_types::{PrivateKeyDer, SubjectPublicKeyInfoDer};
 
@@ -410,12 +443,17 @@ mod rsa {
   /// Idle signing workspaces that one loaded key keeps, at most.
   const MAX_IDLE_WORKSPACES: usize = 64;
 
+  /// Load an RSA key, or `None` if `der` holds no valid RSA key in `sizes`.
+  ///
+  /// With `scoped`, the key seeds its own blinding generator from 32 bytes of
+  /// `random`, which fails the load if `random` fails.
   pub(super) fn load(
     der: &PrivateKeyDer<'_>,
-    random: &'static dyn rustls::crypto::SecureRandom,
+    random: &'static dyn SecureRandom,
     compact: bool,
     sizes: super::RsaSigningKeySizes,
-  ) -> Option<Key> {
+    #[cfg(feature = "chacha20-rng")] scoped: bool,
+  ) -> Result<Option<Key>, Error> {
     let policy = match sizes {
       super::RsaSigningKeySizes::Bits2048To8192 => RsaPublicKeyPolicy::modulus_2048_to_8192(),
       super::RsaSigningKeySizes::Bits3072To8192 => RsaPublicKeyPolicy::modulus_3072_to_8192(),
@@ -423,9 +461,19 @@ mod rsa {
     let key = match der {
       PrivateKeyDer::Pkcs1(value) => RsaPrivateKey::from_pkcs1_der_with_policy(value.secret_pkcs1_der(), &policy),
       PrivateKeyDer::Pkcs8(value) => RsaPrivateKey::from_pkcs8_der_with_policy(value.secret_pkcs8_der(), &policy),
-      _ => return None,
-    }
-    .ok()?;
+      _ => return Ok(None),
+    };
+    let Ok(key) = key else {
+      return Ok(None);
+    };
+    #[cfg(feature = "chacha20-rng")]
+    let blinding = if scoped {
+      Some(crate::replay::Stream::new(rscrypto::ChaCha20Rng::try_generate_with(
+        |seed| random.fill(seed),
+      )?))
+    } else {
+      None
+    };
     let spki = key.public_key().to_spki_der();
     let idle_limit = if compact {
       0
@@ -434,38 +482,36 @@ mod rsa {
         .map_or(1, usize::from)
         .min(MAX_IDLE_WORKSPACES)
     };
-    Some(Key {
+    Ok(Some(Key {
       shared: Arc::new(Shared {
         key,
         idle: Mutex::new(Vec::new()),
         idle_limit,
+        #[cfg(feature = "chacha20-rng")]
+        blinding,
       }),
       spki,
       random,
-    })
-  }
-
-  /// Private-operation scratch and a blinding pair that signatures reuse.
-  ///
-  /// Signing clears the scratch before it returns. The cache keeps its
-  /// blinding pair between signatures and zeroizes it on error and drop.
-  struct Workspace {
-    scratch: RsaPrivateScratch,
-    cache: RsaBlindingCache,
+    }))
   }
 
   /// A loaded key and its idle workspaces, shared by the key and its signers.
   struct Shared {
     key: RsaPrivateKey,
-    /// Workspaces that no signature is using; at most `idle_limit`.
-    idle: Mutex<Vec<Workspace>>,
+    /// Workspaces that no signature is using; at most `idle_limit`. Signing
+    /// clears a workspace's scratch before it returns, and the workspace keeps
+    /// its blinding pair between signatures.
+    idle: Mutex<Vec<RsaSigningWorkspace>>,
     /// Zero for a compact key, which keeps no workspace.
     idle_limit: usize,
+    /// The key's own blinding generator, with `Provider::scoped`.
+    #[cfg(feature = "chacha20-rng")]
+    blinding: Option<crate::replay::Stream>,
   }
 
   impl Shared {
     /// Take an idle workspace, or build one.
-    fn take(&self) -> Workspace {
+    fn take(&self) -> RsaSigningWorkspace {
       // Only `Vec::pop` and `Vec::push` run under the lock, so a poisoned
       // lock still holds whole workspaces.
       let idle = self
@@ -473,14 +519,21 @@ mod rsa {
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .pop();
-      idle.unwrap_or_else(|| Workspace {
-        scratch: self.key.private_scratch(),
-        cache: self.key.blinding_cache(),
-      })
+      idle.unwrap_or_else(|| self.key.signing_workspace())
+    }
+
+    /// Fill a blinding refresh: from the key's own generator, or from `random`
+    /// as a shared owner, never from the stream of a connection.
+    fn fill_blinding(&self, random: &dyn SecureRandom, output: &mut [u8]) -> Result<(), GetRandomFailed> {
+      #[cfg(feature = "chacha20-rng")]
+      if let Some(stream) = &self.blinding {
+        return stream.fill(output);
+      }
+      crate::owner_fill(random, output)
     }
 
     /// Keep `workspace` for the next signature, or drop it at the limit.
-    fn give_back(&self, workspace: Workspace) {
+    fn give_back(&self, workspace: RsaSigningWorkspace) {
       let mut idle = self.idle.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
       if idle.len() < self.idle_limit {
         idle.push(workspace);
@@ -543,23 +596,25 @@ mod rsa {
   }
 
   impl Sign {
-    fn sign_with_random_fill<E>(
+    /// Sign with the salt from `fill_salt` and each blinding refresh from `fill_blinding`.
+    fn sign_with<E, F>(
       &self,
       message: &[u8],
-      fill: impl FnMut(&mut [u8]) -> Result<(), E>,
+      fill_salt: impl FnOnce(&mut [u8]) -> Result<(), E>,
+      fill_blinding: impl FnMut(&mut [u8]) -> Result<(), F>,
     ) -> Result<Vec<u8>, Error> {
       let key = &self.shared.key;
       let mut signature = vec![0; key.signature_len()];
       let mut workspace = self.shared.take();
-      // An error clears the workspace; dropping it releases its buffers.
+      // An error clears the workspace's pair; dropping it releases its buffers.
       key
-        .sign_signature_with_random_fill_and_blinding_cache(
+        .sign_signature_with_random_fill_and_workspace(
           self.profile,
           message,
           &mut signature,
-          &mut workspace.scratch,
-          &mut workspace.cache,
-          fill,
+          &mut workspace,
+          fill_salt,
+          fill_blinding,
         )
         .map_err(|_| super::signing_failed())?;
       self.shared.give_back(workspace);
@@ -569,7 +624,13 @@ mod rsa {
 
   impl Signer for Sign {
     fn sign(self: Box<Self>, message: &[u8]) -> Result<Vec<u8>, Error> {
-      self.sign_with_random_fill(message, |out| self.random.fill(out))
+      // The salt belongs to this signature, so it comes from the signing
+      // connection. The blinding pair belongs to the shared key.
+      self.sign_with(
+        message,
+        |out| self.random.fill(out),
+        |out| self.shared.fill_blinding(self.random, out),
+      )
     }
 
     fn scheme(&self) -> SignatureScheme {
@@ -611,7 +672,10 @@ mod rsa {
         &crate::tests::RANDOM,
         compact,
         super::RsaSigningKeySizes::Bits2048To8192,
+        #[cfg(feature = "chacha20-rng")]
+        false,
       )
+      .expect("load")
       .expect("fixture key");
       let kept = usize::from(!compact);
       // RSA-PSS wins whenever a peer offers it: TLS 1.3 offers carry only RSA-PSS,
@@ -671,28 +735,40 @@ mod rsa {
         assert_eq!(signature, expected, "signature {index}");
         assert_eq!(idle_workspaces(&key), kept, "signature {index}");
       }
-      // A failed entropy request (PSS salt or blinding) releases no partial
-      // signature and drops the workspace it used, and the signer still signs
-      // afterwards. Holding the idle workspace makes each attempt build a new
-      // one, so PKCS#1 v1.5 also requests blinding entropy.
+      // A failed salt (PSS) or blinding request releases no partial signature
+      // and drops the workspace it used, and the signer still signs afterwards.
+      // Holding the idle workspace makes each attempt build a new one, so
+      // every scheme requests blinding entropy.
+      let fail = |out: &mut [u8]| {
+        let partial = out.len().min(17);
+        out[..partial].fill(0x42);
+        Err(())
+      };
+      let fill = |out: &mut [u8]| crate::tests::RANDOM.fill(out);
       for &(scheme, profile) in SCHEMES {
-        let signer = Sign {
-          shared: Arc::clone(&key.shared),
-          scheme,
-          profile,
-          random: &crate::tests::RANDOM,
-        };
-        let held = signer.shared.take();
-        let result = signer.sign_with_random_fill(b"message", |out| {
-          let partial = out.len().min(17);
-          out[..partial].fill(0x42);
-          Err(())
-        });
-        assert!(matches!(result, Err(Error::General(message)) if message == "TLS signing failed"));
-        assert_eq!(idle_workspaces(&key), 0, "{scheme:?}");
-        signer.shared.give_back(held);
-        Box::new(signer).sign(b"message").expect("sign after entropy failure");
-        assert_eq!(idle_workspaces(&key), kept, "{scheme:?}");
+        let failing_salt = matches!(profile, RsaSignatureProfile::Pss { .. });
+        for salt_fails in [false, true]
+          .into_iter()
+          .filter(|&salt_fails| failing_salt || !salt_fails)
+        {
+          let signer = Sign {
+            shared: Arc::clone(&key.shared),
+            scheme,
+            profile,
+            random: &crate::tests::RANDOM,
+          };
+          let held = signer.shared.take();
+          let result = if salt_fails {
+            signer.sign_with(b"message", fail, fill)
+          } else {
+            signer.sign_with(b"message", fill, fail)
+          };
+          assert!(matches!(result, Err(Error::General(message)) if message == "TLS signing failed"));
+          assert_eq!(idle_workspaces(&key), 0, "{scheme:?}");
+          signer.shared.give_back(held);
+          Box::new(signer).sign(b"message").expect("sign after entropy failure");
+          assert_eq!(idle_workspaces(&key), kept, "{scheme:?}");
+        }
       }
     }
   }

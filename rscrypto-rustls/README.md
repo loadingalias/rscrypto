@@ -15,8 +15,8 @@ Each algorithm feature forwards to the corresponding rscrypto leaf feature.
 Default features enable every TLS 1.3 suite, key-exchange group, and classical
 signature algorithm; `ml-dsa` and the composite `mldsa65-ed25519` and `mldsa65-ecdsa-p256` are opt-in.
 `portable-only` selects rscrypto's portable dispatch for validation.
-`chacha20-rng` adds `replay`, which gives each connection its own rscrypto
-`ChaCha20Rng` stream, so a recorded root seed replays every handshake.
+`chacha20-rng` adds `replay`, which gives each connection and each shared owner
+its own rscrypto `ChaCha20Rng` stream, so a recorded root seed replays a whole run.
 
 rustls provides protocol composition, rustls-webpki provides certificate path
 validation, and rustls-pki-types provides credential types. Their built-in crypto
@@ -33,8 +33,8 @@ exclude ring, AWS-LC, OpenSSL, BoringSSL, and C build tools.
 | HKDF extract and expand | `HkdfSha256`, `HkdfSha384`; imported PRKs and multi-part info | [hash](src/hash.rs) |
 | TLS 1.3 and TLS 1.2 records, QUIC packets | `Aes128Gcm`, `Aes256Gcm`, `ChaCha20Poly1305` | [aead](src/aead.rs) |
 | QUIC header protection | `Aes128HeaderProtection`, `Aes256HeaderProtection`, `ChaCha20HeaderProtection` | [quic](src/quic.rs) |
-| Stateless tickets | `Aes256Gcm`, fresh process-local keys, atomic counter nonces; rotation on a monotonic or caller clock | [ticket](src/ticket.rs) |
-| Entropy | OS entropy through `getrandom::fill` with the `getrandom` feature, or a caller-selected `SecureRandom` without it; with `chacha20-rng`, one scoped `ChaCha20Rng` stream for each connection; partial primitive inputs clear on failure | [random](src/random.rs), [replay](src/replay.rs), [kx_group](src/kx_group.rs), [sign](src/sign.rs), [client](src/client.rs) |
+| Stateless tickets | `Aes256Gcm`, fresh process-local keys, atomic counter nonces that a fork child does not reuse; rotation on a monotonic or caller clock | [ticket](src/ticket.rs) |
+| Entropy | OS entropy through `getrandom::fill` with the `getrandom` feature, or a caller-selected `SecureRandom` without it; with `chacha20-rng`, one scoped `ChaCha20Rng` stream for each connection and one owned stream for each shared owner; partial primitive inputs clear on failure | [random](src/random.rs), [replay](src/replay.rs), [kx_group](src/kx_group.rs), [sign](src/sign.rs), [client](src/client.rs) |
 | Certificate and handshake verification | ECDSA P-256/P-384, Ed25519, RSA-PSS and RSA PKCS#1 v1.5 | [verify](src/verify.rs) |
 | Key import and signing | rscrypto PKCS#8/SEC1/PKCS#1 codecs; blinded ECDSA, Ed25519, blinded RSA-PSS and RSA PKCS#1 v1.5 | [sign](src/sign.rs) |
 | ML-DSA authentication | Pure ML-DSA-44/65/87 with the empty TLS context; keys prepared once (or compact on request) and hedged signing | [sign](src/sign/mldsa.rs), [verify](src/verify.rs) |
@@ -178,12 +178,12 @@ certificate verification only. TLS 1.2 handshake signatures follow TLS 1.2's
 rules; see [TLS 1.2](#tls-12).
 
 Each loaded RSA key keeps idle signing workspaces, at most one per available CPU
-and never more than 64. A workspace holds private-operation scratch and an
-`RsaBlindingCache`, so a signature squares the previous blinding pair instead of
-drawing, inverting, and exponentiating a new factor. The pair is redrawn every 32
-signatures and after any error, as in AWS-LC, so factors within that epoch are
+and never more than 64. A workspace is an `RsaSigningWorkspace`, so a signature
+squares the previous blinding pair instead of drawing, inverting, and
+exponentiating a new factor. The pair is redrawn every 32 signatures, after any
+error, and after a process fork, as in AWS-LC, so factors within that epoch are
 correlated. `sign::Provider::new(random).compact()` keeps no workspace; each RSA
-signature then builds scratch and draws a new factor.
+signature then builds one and draws a new factor.
 
 With `ml-dsa`, RFC 9881 PKCS#8 keys load and are prepared once. Provider tests
 cover the seed and combined seed/key forms; the expanded form also loads through
@@ -222,12 +222,17 @@ these constructors and for `ClientProvider::new`. It draws from the
 each connection its own stream, such as a `ChaCha20Rng::child` of the endpoint's
 generator. Run each rustls call of that connection inside its scope: the call
 that builds the connection and each call that processes peer data. A replay that
-rebuilds the same generators sends the same handshake bytes. Outside a scope,
+rebuilds the same generators and makes the same calls in the same order sends
+the same bytes; one connection alone is not promised to replay. Outside a scope,
 `fill` returns `GetRandomFailed`, so a missed scope fails the handshake and
-never draws from the stream of another connection. Shared values, such as
-session-ticket keys, draw from the scope in which they are built or rotated. In
-production, seed the root generator with 32 secret bytes from the operating
-system.
+never draws from the stream of another connection. A shared owner never draws
+from a connection's stream: `ticket::ticketer_with_rng(rng, time)` owns its
+generator, and an RSA key that `sign::Provider::scoped()` loads seeds its own
+blinding generator from 32 bytes of the scope that loads it. `ScopedRandom`
+refuses a draw by a shared owner, so `ticketer_with` and `sign::Provider::new`
+RSA keys over it fail at once. In a process fork child, every copied stream
+refuses to draw. In production, seed the root generator with 32 secret bytes
+from the operating system, once for each process.
 
 `ticket::ticketer_with(random, time)` supplies stateless session tickets with
 keys from a caller-selected `SecureRandom` and rotation timed by a caller's rustls
@@ -240,7 +245,8 @@ Rotation occurs on use: the first use after six hours replaces the key and keeps
 one previous key, and the first use at or after twelve hours erases a key, even
 after a long idle period. Inactive keys can stay resident until that use. A
 caller clock that falls behind delays rotation; it never revives an erased key.
-Process restart replaces ticket keys. A missing time reading, encryption failure,
+Process restart replaces ticket keys. A key seals only in the process that
+created it: in a fork child, a copied key issues no ticket. A missing time reading, encryption failure,
 or failed rotation suppresses tickets without failing TLS; after a failed
 rotation the previous key still opens its tickets. Early data remains off unless
 the caller explicitly enables it.

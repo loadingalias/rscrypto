@@ -9,6 +9,7 @@ use std::sync::RwLock;
 use std::time::Instant;
 
 use rscrypto::aead::{Nonce96, expert::AeadWithNonce};
+use rscrypto::platform::ProcessOrigin;
 use rscrypto::{Aes256Gcm, Aes256GcmKey, Aes256GcmTag, SecretBytes, SecretVec};
 use rustls::crypto::{GetRandomFailed, SecureRandom, TicketProducer};
 use rustls::time_provider::TimeProvider;
@@ -32,8 +33,11 @@ const AAD: &[u8] = b"rscrypto-rustls ticket v1";
 /// Returns an error if OS entropy fails to produce the first key.
 #[cfg(feature = "getrandom")]
 pub fn ticketer() -> Result<Arc<dyn TicketProducer>, rustls::Error> {
-  Rotator::new(crate::random::SECURE_RANDOM, Clock::Monotonic(Instant::now()))
-    .map(|rotator| Arc::new(rotator) as Arc<dyn TicketProducer>)
+  Rotator::new(
+    Source::Caller(crate::random::SECURE_RANDOM),
+    Clock::Monotonic(Instant::now()),
+  )
+  .map(|rotator| Arc::new(rotator) as Arc<dyn TicketProducer>)
 }
 
 /// Create a stateless ticketer with keys from `random` and rotation timed by `time`.
@@ -55,8 +59,13 @@ pub fn ticketer() -> Result<Arc<dyn TicketProducer>, rustls::Error> {
 /// rotation, no new tickets are issued until a later rotation succeeds; the previous key still
 /// opens its tickets. These failures fall back to full handshakes and never fail the connection.
 ///
-/// Keys are neither serialized nor shared across processes, and the ticket wire format is private
-/// to this implementation.
+/// Keys are not serialized, and the ticket wire format is private to this implementation. A
+/// process fork copies the keys and their nonce counters, so a key seals tickets only in the
+/// process that created it; in a fork child, `encrypt` issues no ticket under a copied key.
+///
+/// The ticketer is a shared owner: each key draw comes from `random` outside the scope of any
+/// connection. So [`replay::ScopedRandom`](crate::replay::ScopedRandom) refuses it, and this
+/// function returns an error over that source. Use [`ticketer_with_rng`] there.
 ///
 /// # Errors
 ///
@@ -65,7 +74,46 @@ pub fn ticketer_with(
   random: &'static dyn SecureRandom,
   time: Arc<dyn TimeProvider>,
 ) -> Result<Arc<dyn TicketProducer>, rustls::Error> {
-  Rotator::new(random, Clock::Caller(time)).map(|rotator| Arc::new(rotator) as Arc<dyn TicketProducer>)
+  Rotator::new(Source::Caller(random), Clock::Caller(time)).map(|rotator| Arc::new(rotator) as Arc<dyn TicketProducer>)
+}
+
+/// Create a stateless ticketer that owns `rng`, with rotation timed by `time`.
+///
+/// Behaves as [`ticketer_with`], but the ticketer draws its first key and each rotated key from
+/// `rng`, never from the stream of a connection. Give it a child of the endpoint's generator,
+/// such as `endpoint.child(b"tickets\0", 0)`, so a replay rebuilds the same keys; see
+/// [Shared owners](crate::replay#shared-owners). In a process other than the one that seeded the
+/// root of `rng`, the ticketer draws no key.
+///
+/// # Errors
+///
+/// Returns an error if `time` has no reading, or if a process fork copied the root of `rng`.
+#[cfg(feature = "chacha20-rng")]
+pub fn ticketer_with_rng(
+  rng: rscrypto::ChaCha20Rng,
+  time: Arc<dyn TimeProvider>,
+) -> Result<Arc<dyn TicketProducer>, rustls::Error> {
+  Rotator::new(Source::Generator(crate::replay::Stream::new(rng)), Clock::Caller(time))
+    .map(|rotator| Arc::new(rotator) as Arc<dyn TicketProducer>)
+}
+
+/// Where the ticketer draws its keys.
+enum Source {
+  /// A caller source. Each draw is a shared-owner draw, which `ScopedRandom` refuses.
+  Caller(&'static dyn SecureRandom),
+  /// The ticketer's own generator.
+  #[cfg(feature = "chacha20-rng")]
+  Generator(crate::replay::Stream),
+}
+
+impl Source {
+  fn fill(&self, output: &mut [u8]) -> Result<(), GetRandomFailed> {
+    match self {
+      Self::Caller(random) => crate::owner_fill(*random, output),
+      #[cfg(feature = "chacha20-rng")]
+      Self::Generator(stream) => stream.fill(output),
+    }
+  }
 }
 
 /// The rotation clock, as a duration since a fixed origin.
@@ -113,7 +161,7 @@ impl Keys {
         .is_none_or(|key| key.age(now) < ROTATION.saturating_mul(2))
   }
 
-  fn rotate(&mut self, now: Duration, random: &dyn SecureRandom) {
+  fn rotate(&mut self, now: Duration, source: &Source) {
     if self
       .previous
       .as_ref()
@@ -129,14 +177,14 @@ impl Keys {
     if let Some(current) = self.current.take() {
       self.previous = (current.age(now) < ROTATION.saturating_mul(2)).then_some(current);
     }
-    self.current = TicketKey::generate_with(|out| random.fill(out))
+    self.current = TicketKey::generate_with(|out| source.fill(out))
       .ok()
       .map(|key| Generation { key, created: now });
   }
 }
 
 struct Rotator {
-  random: &'static dyn SecureRandom,
+  source: Source,
   clock: Clock,
   /// The latest clock reading in whole seconds, so a lagging clock cannot rewind key age.
   latest: AtomicU64,
@@ -144,11 +192,11 @@ struct Rotator {
 }
 
 impl Rotator {
-  fn new(random: &'static dyn SecureRandom, clock: Clock) -> Result<Self, rustls::Error> {
+  fn new(source: Source, clock: Clock) -> Result<Self, rustls::Error> {
     let now = Duration::from_secs(clock.now().ok_or(rustls::Error::FailedToGetCurrentTime)?.as_secs());
-    let key = TicketKey::generate_with(|out| random.fill(out))?;
+    let key = TicketKey::generate_with(|out| source.fill(out))?;
     Ok(Self {
-      random,
+      source,
       clock,
       latest: AtomicU64::new(now.as_secs()),
       keys: RwLock::new(Keys {
@@ -174,7 +222,7 @@ impl Rotator {
       }
     }
     let mut keys = self.keys.write().ok()?;
-    keys.rotate(now, self.random);
+    keys.rotate(now, &self.source);
     use_keys(&keys)
   }
 }
@@ -207,6 +255,8 @@ impl TicketProducer for Rotator {
 struct TicketKey {
   cipher: Aes256Gcm,
   next_nonce: AtomicU32,
+  /// The process that created the key. A fork copies `next_nonce`, so only that process seals.
+  origin: ProcessOrigin,
 }
 
 impl TicketKey {
@@ -245,11 +295,13 @@ impl TicketKey {
     Self {
       cipher: Aes256Gcm::new(key),
       next_nonce: AtomicU32::new(0),
+      origin: ProcessOrigin::current(),
     }
   }
 
   fn encrypt(&self, plain: &[u8]) -> Option<Vec<u8>> {
-    if plain.len() > MAX_PLAINTEXT {
+    // A copy in a fork child would repeat the nonces of its parent under the same key.
+    if plain.len() > MAX_PLAINTEXT || !self.origin.is_current() {
       return None;
     }
     // Relaxed ordering provides uniqueness; no other state is published here.
