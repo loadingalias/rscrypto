@@ -26,11 +26,13 @@ pub(super) struct FixsliceRoundKeys {
 }
 
 impl FixsliceRoundKeys {
+  /// The storage that [`Self::expand`] fills, for example inside a new allocation.
+  pub(super) const ZERO: Self = Self { keys: [0; 120] };
+
+  /// Expand `key` into these round keys in place, as [`Fixslice128RoundKeys::expand`] does.
   #[inline]
-  pub(super) fn new(key: &[u8; KEY_SIZE]) -> Self {
-    Self {
-      keys: aes256_key_schedule(key),
-    }
+  pub(super) fn expand(&mut self, key: &[u8; KEY_SIZE]) {
+    aes256_key_schedule(key, &mut self.keys);
   }
 
   #[inline]
@@ -50,11 +52,15 @@ pub(super) struct Fixslice128RoundKeys {
 }
 
 impl Fixslice128RoundKeys {
+  /// The storage that [`Self::expand`] fills, for example inside a new allocation.
+  pub(super) const ZERO: Self = Self { keys: [0; 88] };
+
+  /// Expand `key` into these round keys in place.
+  ///
+  /// The schedule never moves by value, so no frame below this call holds a copy of it.
   #[inline]
-  pub(super) fn new(key: &[u8; KEY_SIZE_128]) -> Self {
-    Self {
-      keys: aes128_key_schedule(key),
-    }
+  pub(super) fn expand(&mut self, key: &[u8; KEY_SIZE_128]) {
+    aes128_key_schedule(key, &mut self.keys);
   }
 
   #[inline]
@@ -164,8 +170,8 @@ pub(super) fn encrypt_4blocks_128(rkeys: &Fixslice128RoundKeys, blocks: &mut [[u
   *blocks = inv_bitslice(&state);
 }
 
-fn aes128_key_schedule(key: &[u8; KEY_SIZE_128]) -> [u64; 88] {
-  let mut rkeys = aes128_plain_key_schedule(key);
+fn aes128_key_schedule(key: &[u8; KEY_SIZE_128], rkeys: &mut [u64; 88]) {
+  aes128_plain_key_schedule(key, rkeys);
 
   // Fold the cumulative ShiftRows rotation into the keys for rounds whose
   // mix_columns variant in the encrypt loop is non-zero. Pattern mirrors
@@ -185,20 +191,18 @@ fn aes128_key_schedule(key: &[u8; KEY_SIZE_128]) -> [u64; 88] {
     sub_bytes_nots(&mut rkeys[i.strict_mul(8)..i.strict_mul(8).strict_add(8)]);
     i = i.strict_add(1);
   }
-
-  rkeys
 }
 
-/// The eleven AES-128 round keys, each bitsliced in the plain (not fixsliced) layout.
-fn aes128_plain_key_schedule(key: &[u8; KEY_SIZE_128]) -> [u64; 88] {
-  let mut rkeys = [0u64; 88];
-
+/// Write the eleven AES-128 round keys to `rkeys`, each bitsliced in the plain (not fixsliced) layout.
+///
+/// Each word is written before it is read, so the previous contents of `rkeys` do not matter.
+fn aes128_plain_key_schedule(key: &[u8; KEY_SIZE_128], rkeys: &mut [u64; 88]) {
   bitslice(&mut rkeys[..8], key, key, key, key);
 
   let mut rk_off = 0usize;
   let mut rcon = 0usize;
   while rcon < 10 {
-    memshift32(&mut rkeys, rk_off);
+    memshift32(rkeys, rk_off);
     rk_off = rk_off.strict_add(8);
 
     sub_bytes(&mut rkeys[rk_off..rk_off.strict_add(8)]);
@@ -220,11 +224,9 @@ fn aes128_plain_key_schedule(key: &[u8; KEY_SIZE_128]) -> [u64; 88] {
       add_round_constant_bit(&mut rkeys[rk_off..rk_off.strict_add(8)], 5);
     }
 
-    xor_columns(&mut rkeys, rk_off, 8, ror_distance(1, 3));
+    xor_columns(rkeys, rk_off, 8, ror_distance(1, 3));
     rcon = rcon.strict_add(1);
   }
-
-  rkeys
 }
 
 /// Bitsliced AES-128 decryption round keys: the plain schedule, used in reverse order.
@@ -235,11 +237,13 @@ pub(super) struct Fixslice128InvRoundKeys {
 
 #[cfg(feature = "aes-gcm")]
 impl Fixslice128InvRoundKeys {
+  /// The storage that [`Self::expand`] fills, for example inside a new allocation.
+  pub(super) const ZERO: Self = Self { keys: [0; 88] };
+
+  /// Expand `key` into these round keys in place, as [`Fixslice128RoundKeys::expand`] does.
   #[inline]
-  pub(super) fn new(key: &[u8; KEY_SIZE_128]) -> Self {
-    Self {
-      keys: aes128_plain_key_schedule(key),
-    }
+  pub(super) fn expand(&mut self, key: &[u8; KEY_SIZE_128]) {
+    aes128_plain_key_schedule(key, &mut self.keys);
   }
 
   #[inline]
@@ -346,36 +350,37 @@ fn inv_mix_columns(state: &mut State) {
   mix_columns_0(state);
 }
 
-fn aes256_key_schedule(key: &[u8; KEY_SIZE]) -> [u64; 120] {
-  let mut rkeys = [0u64; 120];
-
+/// Write the fifteen fixsliced AES-256 round keys to `rkeys`.
+///
+/// Each word is written before it is read, so the previous contents of `rkeys` do not matter.
+fn aes256_key_schedule(key: &[u8; KEY_SIZE], rkeys: &mut [u64; 120]) {
   bitslice(&mut rkeys[..8], &key[..16], &key[..16], &key[..16], &key[..16]);
   bitslice(&mut rkeys[8..16], &key[16..], &key[16..], &key[16..], &key[16..]);
 
   let mut rk_off = 8usize;
   let mut rcon = 0usize;
   loop {
-    memshift32(&mut rkeys, rk_off);
+    memshift32(rkeys, rk_off);
     rk_off = rk_off.strict_add(8);
 
     sub_bytes(&mut rkeys[rk_off..rk_off.strict_add(8)]);
     sub_bytes_nots(&mut rkeys[rk_off..rk_off.strict_add(8)]);
 
     add_round_constant_bit(&mut rkeys[rk_off..rk_off.strict_add(8)], rcon);
-    xor_columns(&mut rkeys, rk_off, 16, ror_distance(1, 3));
+    xor_columns(rkeys, rk_off, 16, ror_distance(1, 3));
     rcon = rcon.strict_add(1);
 
     if rcon == 7 {
       break;
     }
 
-    memshift32(&mut rkeys, rk_off);
+    memshift32(rkeys, rk_off);
     rk_off = rk_off.strict_add(8);
 
     sub_bytes(&mut rkeys[rk_off..rk_off.strict_add(8)]);
     sub_bytes_nots(&mut rkeys[rk_off..rk_off.strict_add(8)]);
 
-    xor_columns(&mut rkeys, rk_off, 16, ror_distance(0, 3));
+    xor_columns(rkeys, rk_off, 16, ror_distance(0, 3));
   }
 
   let mut i = 8usize;
@@ -392,8 +397,6 @@ fn aes256_key_schedule(key: &[u8; KEY_SIZE]) -> [u64; 120] {
     sub_bytes_nots(&mut rkeys[i.strict_mul(8)..i.strict_mul(8).strict_add(8)]);
     i = i.strict_add(1);
   }
-
-  rkeys
 }
 
 define_mix_columns!(mix_columns_1, rotate_rows_and_columns_1_1, rotate_rows_and_columns_2_2);

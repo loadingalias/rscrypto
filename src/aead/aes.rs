@@ -838,13 +838,18 @@ pub(crate) fn aes128_expand_key_portable(key: &[u8; KEY_SIZE_128]) -> [u32; EXPA
 #[cfg(all(target_arch = "riscv64", feature = "alloc"))]
 #[inline]
 fn fixslice64_key_inner(key: &[u8; KEY_SIZE]) -> KeyInner {
-  KeyInner::Fixslice(alloc::boxed::Box::new(fixslice64::FixsliceRoundKeys::new(key)))
+  // Expand into the allocation: a schedule built on the stack and then moved leaves its copies there.
+  let mut round_keys = alloc::boxed::Box::new(fixslice64::FixsliceRoundKeys::ZERO);
+  round_keys.expand(key);
+  KeyInner::Fixslice(round_keys)
 }
 
 #[cfg(any(target_arch = "s390x", all(target_arch = "riscv64", not(feature = "alloc"))))]
 #[inline]
 fn fixslice64_key_inner(key: &[u8; KEY_SIZE]) -> KeyInner {
-  KeyInner::Fixslice(fixslice64::FixsliceRoundKeys::new(key))
+  let mut round_keys = fixslice64::FixsliceRoundKeys::ZERO;
+  round_keys.expand(key);
+  KeyInner::Fixslice(round_keys)
 }
 
 /// Expand a 256-bit AES key into round keys.
@@ -923,13 +928,18 @@ pub(crate) fn aes256_expand_key(key: &[u8; KEY_SIZE]) -> Aes256EncKey {
 #[cfg(all(target_arch = "riscv64", feature = "alloc"))]
 #[inline]
 fn fixslice64_key_inner_128(key: &[u8; KEY_SIZE_128]) -> Key128Inner {
-  Key128Inner::Fixslice(alloc::boxed::Box::new(fixslice64::Fixslice128RoundKeys::new(key)))
+  // Expand into the allocation: a schedule built on the stack and then moved leaves its copies there.
+  let mut round_keys = alloc::boxed::Box::new(fixslice64::Fixslice128RoundKeys::ZERO);
+  round_keys.expand(key);
+  Key128Inner::Fixslice(round_keys)
 }
 
 #[cfg(any(target_arch = "s390x", all(target_arch = "riscv64", not(feature = "alloc"))))]
 #[inline]
 fn fixslice64_key_inner_128(key: &[u8; KEY_SIZE_128]) -> Key128Inner {
-  Key128Inner::Fixslice(fixslice64::Fixslice128RoundKeys::new(key))
+  let mut round_keys = fixslice64::Fixslice128RoundKeys::ZERO;
+  round_keys.expand(key);
+  Key128Inner::Fixslice(round_keys)
 }
 
 /// Expand a 128-bit AES key into round keys.
@@ -6205,8 +6215,10 @@ mod tests {
       let key_256 = core::array::from_fn(|i| key_seed.wrapping_add(i.to_le_bytes()[0].wrapping_mul(0x67)));
       let mut km_128 = km::Km128Key::new(&key_128);
       let mut km_256 = km::KmKey::new(&key_256);
-      let mut fix_128 = fixslice64::Fixslice128RoundKeys::new(&key_128);
-      let mut fix_256 = fixslice64::FixsliceRoundKeys::new(&key_256);
+      let mut fix_128 = fixslice64::Fixslice128RoundKeys::ZERO;
+      fix_128.expand(&key_128);
+      let mut fix_256 = fixslice64::FixsliceRoundKeys::ZERO;
+      fix_256.expand(&key_256);
 
       for offset in 0usize..8 {
         // KM copies at most eight blocks per batch; cross one, two, and four batch boundaries.
@@ -6368,7 +6380,8 @@ mod tests {
       0x69, 0xc4, 0xe0, 0xd8, 0x6a, 0x7b, 0x04, 0x30, 0xd8, 0xcd, 0xb7, 0x80, 0x70, 0xb4, 0xc5, 0x5a,
     ];
 
-    let rk = fixslice64::Fixslice128RoundKeys::new(&key);
+    let mut rk = fixslice64::Fixslice128RoundKeys::ZERO;
+    rk.expand(&key);
     let mut block = plaintext;
     fixslice64::encrypt_block_128(&rk, &mut block);
     assert_eq!(block, expected);
@@ -6378,7 +6391,8 @@ mod tests {
   fn fixslice64_128_4blocks_matches_portable() {
     let key = [0xC4u8; KEY_SIZE_128];
     let portable = aes128_expand_key_portable(&key);
-    let fixslice = fixslice64::Fixslice128RoundKeys::new(&key);
+    let mut fixslice = fixslice64::Fixslice128RoundKeys::ZERO;
+    fixslice.expand(&key);
     let mut blocks = [[0u8; BLOCK_SIZE]; 4];
 
     for (i, block) in (0u8..).zip(&mut blocks) {
@@ -6409,7 +6423,8 @@ mod tests {
       0x8e, 0xa2, 0xb7, 0xca, 0x51, 0x67, 0x45, 0xbf, 0xea, 0xfc, 0x49, 0x90, 0x4b, 0x49, 0x60, 0x89,
     ];
 
-    let rk = fixslice64::FixsliceRoundKeys::new(&key);
+    let mut rk = fixslice64::FixsliceRoundKeys::ZERO;
+    rk.expand(&key);
     let mut block = plaintext;
     fixslice64::encrypt_block(&rk, &mut block);
     assert_eq!(block, expected);
@@ -6419,7 +6434,8 @@ mod tests {
   fn fixslice64_4blocks_matches_portable() {
     let key = [0x3cu8; KEY_SIZE];
     let portable = aes256_expand_key_portable(&key);
-    let fixslice = fixslice64::FixsliceRoundKeys::new(&key);
+    let mut fixslice = fixslice64::FixsliceRoundKeys::ZERO;
+    fixslice.expand(&key);
     let mut blocks = [[0u8; BLOCK_SIZE]; 4];
 
     for (i, block) in (0u8..).zip(&mut blocks) {

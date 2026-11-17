@@ -149,12 +149,17 @@ pub(crate) fn aes128_expand_decrypt_key(key: &[u8; KEY_SIZE_128]) -> Aes128DecKe
     }
   }
   let inner = cfg_select! {
-    all(target_arch = "riscv64", feature = "alloc") => {
-      Dec128Inner::Fixslice(alloc::boxed::Box::new(fixslice64::Fixslice128InvRoundKeys::new(key)))
-    }
-    any(target_arch = "riscv64", target_arch = "s390x") => {
-      Dec128Inner::Fixslice(fixslice64::Fixslice128InvRoundKeys::new(key))
-    }
+    all(target_arch = "riscv64", feature = "alloc") => {{
+      // Expand into the allocation, as `aes128_expand_key` does.
+      let mut round_keys = alloc::boxed::Box::new(fixslice64::Fixslice128InvRoundKeys::ZERO);
+      round_keys.expand(key);
+      Dec128Inner::Fixslice(round_keys)
+    }}
+    any(target_arch = "riscv64", target_arch = "s390x") => {{
+      let mut round_keys = fixslice64::Fixslice128InvRoundKeys::ZERO;
+      round_keys.expand(key);
+      Dec128Inner::Fixslice(round_keys)
+    }}
     _ => Dec128Inner::PortableRoundKeys(super::aes128_expand_key_portable(key)),
   };
   Aes128DecKey { inner }
@@ -347,7 +352,9 @@ mod tests {
       name: "fixslice",
       available: || true,
       decrypt: |key, block| {
-        super::super::fixslice64::decrypt_block_128(&super::super::fixslice64::Fixslice128InvRoundKeys::new(key), block)
+        let mut round_keys = super::super::fixslice64::Fixslice128InvRoundKeys::ZERO;
+        round_keys.expand(key);
+        super::super::fixslice64::decrypt_block_128(&round_keys, block)
       },
     });
     #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
