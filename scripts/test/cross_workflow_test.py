@@ -175,6 +175,82 @@ class CrossWorkflow(unittest.TestCase):
                 with tarfile.open(archive) as evidence:
                     self.assertEqual(evidence.extractfile('cross-results/summary.json').read(), payload)
 
+    def test_no_leg_judges_stack_measurements_and_the_stack_job_waits_for_all(self):
+        # A judgement in one leg would fail it, and fail-fast or the RISC-V dispatcher would then
+        # cancel the legs that measure the other targets. So no leg judges, and each leg uploads.
+        ci = read_yaml('.github/workflows/ci.yml')
+        riscv = read_yaml('.github/workflows/riscv.yml')
+        native = ci['jobs']['native']
+        measuring = [*ci['jobs']['native']['steps'], *riscv['jobs']['execute']['steps']]
+        commands = [step['run'] for step in measuring if 'run' in step]
+        self.assertTrue([command for command in commands if 'just stack-worker' in command])
+        for command in commands:
+            for line in command.splitlines():
+                if 'stack-allowances' in line or 'stack-worker' in line or 'painted.py' in line:
+                    self.assertNotIn('--check', line)
+        self.assertNotIn('stack', [row['platform'] for row in native['strategy']['matrix']['include']])
+        upload, = [step for step in native['steps'] if step.get('name') == 'Retain painted-stack measurements']
+        self.assertTrue(upload['if'].startswith('!cancelled() && (matrix.target ||'), upload['if'])
+        child, = [step for step in riscv['jobs']['execute']['steps']
+                  if step.get('name') == 'Retain painted-stack measurements']
+        self.assertEqual((child['if'], child['with']['name']),
+                         ("${{ !cancelled() && inputs.suite == 'tests' }}", 'stack-paint-${{ env.PLATFORM }}'))
+        stack = ci['jobs']['stack']
+        # It runs after a failed leg too, so that the verdict names each absent report.
+        self.assertEqual((stack['needs'], stack['if']), (['native', 'riscv64-linux'], '${{ !cancelled() }}'))
+        self.assertEqual(ci['jobs']['riscv64-linux']['outputs'],
+                         {'run-id': '${{ steps.execute.outputs.run-id }}',
+                          'skipped': '${{ steps.execute.outputs.skipped }}'})
+        check, = [step for step in stack['steps'] if step.get('name') == 'Check owned stack bounds against their budgets']
+        self.assertEqual(check['if'], '${{ !cancelled() }}')
+        self.assertIn('just ci-stack\n', check['run'])
+
+    def test_stack_judgement_expects_every_measuring_leg_and_names_an_unjudged_riscv_run(self):
+        ci = read_yaml('.github/workflows/ci.yml')
+        judge, = [step for step in ci['jobs']['stack']['steps'] if step.get('name', '').startswith('Judge painted')]
+        legs = {'x86_64-linux': 'x86_64-unknown-linux-gnu', 'aarch64-linux': 'aarch64-unknown-linux-gnu',
+                'x86_64-win': 'x86_64-pc-windows-msvc'}
+        rows = ci['jobs']['native']['strategy']['matrix']['include']
+        measured = [row.get('target') or legs[row['platform']] for row in rows
+                    if 'target' in row or row['platform'] in legs]
+        riscv = 'riscv64gc-unknown-linux-gnu'
+        tooling = self.root / '.local/share/rscrypto-tooling/environment.sh'
+        tooling.parent.mkdir(parents=True)
+        tooling.write_text('')
+        python = self.root / 'scripts/lib/python.sh'
+        python.parent.mkdir(parents=True)
+        python.write_text('#!/bin/bash\nprintf "%s\\n" "$@" > arguments\nexit "${JUDGE_EXIT:-0}"\n')
+        python.chmod(0o755)
+        reports = self.root / 'target/stack-paint/judged'
+        reports.mkdir(parents=True)
+        (reports / 'stack-worker-a.json').write_text('{}')
+        summary = self.root / 'summary'
+        fork = 'a pull request from a fork cannot dispatch the RISC-V run'
+        late = 'no RISC-V runner started within 30 minutes'
+        cases = [({}, True, None), ({'RISCV_SKIPPED': 'true'}, False, late),
+                 ({'RISCV_SKIPPED': 'true', 'REQUIRE_RISCV': 'true'}, True, None),
+                 ({'FORK_PULL_REQUEST': 'true'}, False, fork),
+                 ({'FORK_PULL_REQUEST': 'true', 'REQUIRE_RISCV': 'true'}, True, None)]
+        for env, judged, reason in cases:
+            with self.subTest(env=env):
+                summary.write_text('')
+                result = self.execute(judge, HOME=str(self.root), GITHUB_STEP_SUMMARY=str(summary),
+                                      **{'FORK_PULL_REQUEST': 'false', 'REQUIRE_RISCV': '', 'RISCV_SKIPPED': '', **env})
+                self.assertEqual(result.returncode, 0, result.stderr)
+                expected = [*measured, riscv] if judged else measured
+                arguments = (self.root / 'arguments').read_text().splitlines()
+                self.assertEqual(arguments[:3], ['scripts/stack/painted.py', 'judge',
+                                                 'target/stack-paint/judged/stack-worker-a.json'])
+                self.assertEqual(sorted(arguments[3:]), sorted(f'--expect={target}' for target in expected))
+                if reason:
+                    message = f'The {riscv} painted-stack reports were not judged: {reason}.'
+                    self.assertIn(f'::notice title=RISC-V stack not judged::{message}', result.stdout)
+                    self.assertEqual(summary.read_text(), message + '\n')
+                else:
+                    self.assertNotIn('not judged', result.stdout + summary.read_text())
+        result = self.execute(judge, HOME=str(self.root), GITHUB_STEP_SUMMARY=str(summary), JUDGE_EXIT='1')
+        self.assertEqual(result.returncode, 1)
+
     def test_bench_form_matches_planner_inputs(self):
         workflow = read_yaml('.github/workflows/bench.yml')
         inputs = workflow['on']['workflow_dispatch']['inputs']

@@ -229,7 +229,7 @@ through first-call detection on native AArch64, POWER, and IBM Z. Portable IBM
 Z AEAD roots reach no declared edge and have static whole-call bounds: 3,760 B
 for AES-GCM seal, 3,776 B for AES-GCM open, and 856 B for ChaCha20-Poly1305.
 
-CI enforces these owned bounds. Its `stack` row reviews all 51 whole-call roots
+CI enforces these owned bounds. Its `stack` job reviews all 51 whole-call roots
 of both builds on the five Linux targets and fails when a bound is unresolved
 or exceeds its budget in
 [`.config/stack-budgets.json`](../.config/stack-budgets.json): the reviewed

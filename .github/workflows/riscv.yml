@@ -94,6 +94,15 @@ jobs:
           archive: false
           if-no-files-found: warn
           retention-days: 7
+      # The calling CI run's `stack` job judges these measurements.
+      - name: Retain painted-stack measurements
+        if: ${{ !cancelled() && inputs.suite == 'tests' }}
+        uses: "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9" # v7.0.2
+        with:
+          name: stack-paint-${{ env.PLATFORM }}
+          path: target/cross-results/${{ env.TARGET }}/run-*/stack-paint/*.json
+          if-no-files-found: warn
+          retention-days: 30
 
       - name: Measure the prepared binaries on native hardware
         if: inputs.suite == 'ct'

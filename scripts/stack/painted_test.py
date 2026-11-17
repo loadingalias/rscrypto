@@ -8,8 +8,11 @@ import io
 import json
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
-from painted import DECLARED_EDGES, allowance, check_edges, check_worker, worker_budget, write_allowances
+import painted
+from painted import (DECLARED_EDGES, EDGES_KIND, WORKER_KIND, allowance, check_edges, check_worker, judge,
+                     worker_budget, write_allowances)
 
 TARGET = "x86_64-unknown-linux-gnu"
 
@@ -17,7 +20,12 @@ TARGET = "x86_64-unknown-linux-gnu"
 def edge_report(depths: dict[str, int], identity: str = "glibc fixture") -> dict:
   edges = {name: {"max_below_entry_bytes": depth, "allowance_bytes": allowance(depth, 128)}
            for name, depth in depths.items()}
-  return {"target": TARGET, "edges": edges, "libc_identity": identity}
+  return {"kind": EDGES_KIND, "target": TARGET, "edges": edges, "libc_identity": identity}
+
+
+def worker_report(target: str, configuration: str) -> dict:
+  return {"kind": WORKER_KIND, "target": target, "configuration": configuration, "failed": [],
+          "max_cold_bytes": 54_224, "max_cold_scenario": "deepest"}
 
 
 def test_allowance_rounds_then_adds_margin() -> None:
@@ -64,10 +72,47 @@ def test_worker_fails_on_any_scenario_or_budget() -> None:
       f"{path} has no portable budget for {TARGET}"]
 
 
+def test_judge_fails_on_a_missing_or_exceeded_allowance_or_an_absent_report() -> None:
+  # The CI `stack` job judges the uploads of every leg with this, after all legs measured.
+  depths = {name: 100 for name in DECLARED_EDGES}
+  windows = "x86_64-pc-windows-msvc"
+  expected = [TARGET, windows]
+  complete = [edge_report(depths), *(worker_report(target, configuration)
+                                     for target in expected for configuration in ("native", "portable"))]
+  with tempfile.TemporaryDirectory() as temporary:
+    allowances, budgets = Path(temporary) / "allowances.json", Path(temporary) / "budgets.json"
+    write_allowances([edge_report(depths)], allowances, "fixture evidence")
+    budgets.write_text(json.dumps({"targets": {target: {"native": 61_440, "portable": 61_440} for target in expected}}))
+    assert judge(complete, expected, allowances, budgets) == []
+    # The first run after a new edge is declared: the leg measured it, and no allowance is committed.
+    committed = json.loads(allowances.read_text())
+    del committed[TARGET]["edges"]["madvise"]
+    allowances.write_text(json.dumps(committed))
+    assert judge(complete, expected, allowances, budgets) == [f"{TARGET} edges: madvise: no committed allowance"]
+    write_allowances([edge_report(depths)], allowances, "fixture evidence")
+    deeper = edge_report({**depths, "free": 200})
+    assert judge([deeper, *complete[1:]], expected, allowances, budgets) == [
+      f"{TARGET} edges: free: measured allowance {allowance(200, 128)} B exceeds the committed "
+      f"{allowance(100, 128)} B"]
+    # A leg that failed before it uploaded, or a skipped RISC-V run that was required.
+    riscv = "riscv64gc-unknown-linux-gnu"
+    assert judge(complete[:-1], [*expected, riscv], allowances, budgets) == [
+      f"{windows} worker portable: no report", f"{riscv} edges: no report", f"{riscv} worker native: no report",
+      f"{riscv} worker portable: no report"]
+    # The command fails the job on any problem.
+    report = Path(temporary) / "report.json"
+    report.write_text(json.dumps(complete[0]))
+    with patch.object(painted, "DEFAULT_ALLOWANCES", allowances), \
+         patch.object(painted, "DEFAULT_WORKER_BUDGETS", budgets), contextlib.redirect_stdout(io.StringIO()) as output:
+      assert painted.main(["judge", str(report), "--expect", TARGET]) == 1
+    assert f"stack check failure: {TARGET} worker native: no report" in output.getvalue(), output.getvalue()
+
+
 def main() -> None:
   test_allowance_rounds_then_adds_margin()
   test_edges_fail_only_above_their_allowance()
   test_worker_fails_on_any_scenario_or_budget()
+  test_judge_fails_on_a_missing_or_exceeded_allowance_or_an_absent_report()
   print("painted-stack tests passed")
 
 

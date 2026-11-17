@@ -250,8 +250,8 @@ A cross-built test suite also holds the `introspect` example. Before its suites,
 on the target host and records the capabilities that runtime detection reports, and the kernels that it selects,
 in `introspect.txt` and in `detection` of `summary.json`. The RISC-V run also prints the `isa` lines of
 `/proc/cpuinfo`.
-Then it runs the painted-stack checks, and then the suites. A failed stack check does not stop the suites. The run
-records it in `stack_paint` of `summary.json` and fails after the suites, so the job keeps the evidence of both.
+Then it runs the painted-stack measurements, and then the suites. A failed measurement fails the run at once. The run
+does not judge the measurements: the CI `stack` job does that ([Painted stacks](#painted-stacks)).
 
 RISC-V is the exception to the shared matrix.
 GitHub cannot time out a queued job or cancel one job of a run,
@@ -265,6 +265,8 @@ That run checks out the caller's commit and downloads the caller's prepared arch
 - `require_riscv`, which releases set, removes the 30-minute limit.
   The dispatching job still stops after six hours, including the queue wait.
 - Fork pull requests skip RISC-V, because their read-only token cannot dispatch a run.
+- It sets the step output `run-id` when it dispatches the run, and `skipped=true` only for the 30-minute skip.
+  The CI `stack` job uses them to download and judge the run's stack measurements.
 
 Initial reads of the dispatched run and its jobs may return 404 before GitHub exposes them.
 The dispatcher retries those responses within its existing polling-error budget, only until a runner starts.
@@ -514,7 +516,7 @@ Release callers, and manual runs with no diagnostic input, keep the full require
 | ------------------ | ------ |
 | `stack/frames.py`  | `just stack-frames [--target TARGET]... [--portable \| --all-configurations] [--rustflags FLAGS] [--json PATH] [--evidence DIR] [--whole-calls GROUPS \| --mldsa-preparation] [--allowances FILE] [--budgets FILE] [--write-budgets FILE]`, `just ci-stack`, `just stack-budgets` |
 | `stack/residue.py` | `just stack-residue [--board BOARD]... [--backend native\|portable]... [--output DIR]` |
-| `stack/painted.py` | `just stack-allowances [--check [FILE]] [--output DIR]`, `just stack-worker [--all-configurations \| --portable] [--check [FILE]] [--output DIR]`, `scripts/test/cross.py` |
+| `stack/painted.py` | `just stack-allowances [--check [FILE]] [--output DIR]`, `just stack-worker [--all-configurations \| --portable] [--check [FILE]] [--output DIR]`, `scripts/test/cross.py`, `painted.py judge REPORT... --expect TARGET...` (the CI `stack` job) |
 
 ### Frame review
 
@@ -613,8 +615,8 @@ plus 12.5%, rounded up to 1 KiB.
 - `just stack-budgets [--target TARGET]...` rewrites the reviewed entries from the current bounds and
   refuses while any bound is unresolved. Run it after a reviewed change moves a bound, and commit the
   file with that change.
-- The CI `stack` row runs `x86_64-linux.sh --ci-stack`, which installs `llvm-tools`, the four other
-  Linux targets, and the catalog's Zig, then `just ci-stack`. The x86-64 build links natively and the
+- The CI `stack` job runs `x86_64-linux.sh --ci-stack`, which installs `llvm-tools`, the four other
+  Linux targets, and the catalog's Zig. It judges the painted-stack reports, then runs `just ci-stack`. The x86-64 build links natively and the
   others link through `ct/zig-cc.sh`, as on the Mac. Without Zig, the review links a non-host target
   with its GNU cross compiler when one is on `PATH`.
 
@@ -730,10 +732,19 @@ prebuilt binaries.
   one; a different libc identity is reported, not failed. A worker configuration fails when any scenario
   fails or the deepest scenario exceeds its budget: the measured high-water plus 12.5%, rounded up to
   1 KiB. `painted.py record REPORT...` writes those files from saved reports.
-- CI runs both measurements with `--check` on the x86-64 and AArch64 Linux rows and the worker on the
-  Windows row, and retains the reports. RISC-V, POWER, and IBM Z build the binaries in the cross-build
-  job, seal them in the test bundle, and measure them with `--check` after the native suites. macOS is
-  measured locally with `just stack-worker --all-configurations --check`.
+- `painted.py judge REPORT... --expect TARGET...` checks saved reports of several targets in the same way.
+  It also fails when an expected target has no worker report for a configuration, or no edge report on
+  Linux GNU.
+- CI measures without `--check`: both measurements on the x86-64 and AArch64 Linux rows, and the worker on
+  the Windows row. RISC-V, POWER, and IBM Z build the binaries in the cross-build job, seal them in the test
+  bundle, and measure them before the native suites. Each leg uploads its reports as `stack-paint-PLATFORM`.
+- A judgement in a leg would fail that leg. The fail-fast matrix and the RISC-V dispatcher would then cancel
+  the legs that measure the other targets, so a new edge could never get all its allowances from one run.
+  Thus the CI `stack` job judges all reports with `painted.py judge` after every leg, also after a failed
+  leg. An absent report fails the job. Only the documented RISC-V skips leave the RISC-V reports unjudged:
+  a fork pull request, or no runner within 30 minutes in a run without `require_riscv`. The job then names
+  the unjudged reports in a notice and in the step summary.
+- macOS is measured locally with `just stack-worker --all-configurations --check`.
 
 These are measurements of the reached paths on the measured host, not static proofs of glibc, rustls,
 or every input. They do not cover signal handlers or caller frames outside the measured call.

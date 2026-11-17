@@ -148,9 +148,6 @@ jobs:
           - platform: package
             runner: runs-on=${{ github.run_id }}/runner=package/env=production
             timeout: 60
-          - platform: stack
-            runner: runs-on=${{ github.run_id }}/runner=stack/env=production
-            timeout: 60
           - platform: x86_64-linux
             cache: true
             runner: runs-on=${{ github.run_id }}/runner=x86_64-linux/env=production
@@ -239,16 +236,16 @@ jobs:
       - name: Install tooling, check, and test (Linux)
         if: >-
           runner.os == 'Linux' && matrix.platform != 'compatibility' && matrix.platform != 'package' &&
-          matrix.platform != 'stack' && !matrix.target
+          !matrix.target
         env:
           PLATFORM: ${{ matrix.platform }}
         run: |
           source "$HOME/.local/share/rscrypto-tooling/environment.sh"
           # The Graviton4 row must run the SVE2 kernels. tests/platform_sve2.rs checks it.
           if [[ "$PLATFORM" == aarch64-linux ]]; then export RSCRYPTO_REQUIRE_SVE2=1; fi
-          # Measure first, so that a failing suite does not hide the stack evidence.
-          just stack-allowances --check --output target/stack-paint/evidence
-          just stack-worker --all-configurations --check --output target/stack-paint/evidence
+          # Measure first, so that a failing suite does not hide the stack evidence. The `stack` job judges it.
+          just stack-allowances --output target/stack-paint/evidence
+          just stack-worker --all-configurations --output target/stack-paint/evidence
           if [[ "$PLATFORM" == x86_64-linux ]]; then
             just test-scripts
             just ct-test
@@ -301,14 +298,6 @@ jobs:
           just ci-package
           git diff --exit-code HEAD
 
-      - name: Check owned stack bounds against their budgets
-        if: matrix.platform == 'stack'
-        run: |
-          scripts/tooling/x86_64-linux.sh --ci-stack
-          source "$HOME/.local/share/rscrypto-tooling/environment.sh"
-          just ci-stack
-          git diff --exit-code HEAD
-
       - name: Compile compatibility and execute WebAssembly
         if: matrix.platform == 'compatibility'
         run: |
@@ -324,7 +313,7 @@ jobs:
         run: |
           ./scripts/tooling/windows_download_test.ps1
           ./scripts/tooling/x86_64-win.ps1 -Ci
-          just stack-worker --all-configurations --check --output target/stack-paint/evidence
+          just stack-worker --all-configurations --output target/stack-paint/evidence
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           just ci-check
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -339,12 +328,14 @@ jobs:
 
       - name: Retain painted-stack measurements
         if: >-
-          !cancelled() && (matrix.platform == 'x86_64-linux' || matrix.platform == 'aarch64-linux' ||
+          !cancelled() && (matrix.target || matrix.platform == 'x86_64-linux' || matrix.platform == 'aarch64-linux' ||
           matrix.platform == 'x86_64-win')
         uses: "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9" # v7.0.2
         with:
           name: stack-paint-${{ matrix.platform }}
-          path: target/stack-paint/evidence
+          path: >-
+            ${{ matrix.target && format('target/cross-results/{0}/run-*/stack-paint/*.json', matrix.target) ||
+            'target/stack-paint/evidence' }}
           if-no-files-found: warn
           retention-days: 30
 
@@ -383,6 +374,9 @@ jobs:
     permissions:
       contents: read
       actions: write
+    outputs:
+      run-id: ${{ steps.execute.outputs.run-id }}
+      skipped: ${{ steps.execute.outputs.skipped }}
     steps:
       - uses: "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" # v7.0.1
         with:
@@ -395,6 +389,7 @@ jobs:
       # the cross Nextest profiles and native-only doctests remove most of that.
       # Recalibrate the timeout from the next passing run.
       - name: Execute the transferred suites on RISC-V hardware
+        id: execute
         env:
           GH_TOKEN: ${{ github.token }}
           QUEUE_MINUTES: ${{ inputs.require_riscv && '0' || '30' }}
@@ -409,6 +404,76 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: scripts/lib/python.sh scripts/lib/dispatched_run.py cancel --state "$RUNNER_TEMP/riscv-run"
+
+  # The legs only measure stack use and upload it. This job judges every measurement after all of them,
+  # so that a missing or exceeded allowance on one leg cannot cancel the legs that measure the others.
+  # It also runs after a failed leg, so that the stack verdict stays visible. An absent report fails it.
+  stack:
+    needs: [native, riscv64-linux]
+    if: ${{ !cancelled() }}
+    name: stack
+    runs-on: runs-on=${{ github.run_id }}/runner=stack/env=production
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      actions: read # Download the stack measurements of the dispatched RISC-V run.
+    steps:
+      - uses: "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install the stack tooling
+        run: scripts/tooling/x86_64-linux.sh --ci-stack
+      # A missing artifact is not an error here: the judgement reports each absent report.
+      - name: Download painted-stack measurements from this workflow run
+        continue-on-error: true
+        uses: "actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333" # v8.0.2
+        with:
+          pattern: stack-paint-*
+          merge-multiple: true
+          path: target/stack-paint/judged
+      - name: Download painted-stack measurements from the RISC-V run
+        if: needs.riscv64-linux.outputs.run-id && needs.riscv64-linux.outputs.skipped != 'true'
+        continue-on-error: true
+        uses: "actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333" # v8.0.2
+        with:
+          name: stack-paint-riscv64-linux
+          path: target/stack-paint/judged
+          run-id: ${{ needs.riscv64-linux.outputs.run-id }}
+          github-token: ${{ github.token }}
+      - name: Judge painted-stack measurements against the committed allowances and budgets
+        env:
+          FORK_PULL_REQUEST: >-
+            ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
+          REQUIRE_RISCV: ${{ inputs.require_riscv }}
+          RISCV_SKIPPED: ${{ needs.riscv64-linux.outputs.skipped }}
+        run: |
+          source "$HOME/.local/share/rscrypto-tooling/environment.sh"
+          shopt -s nullglob
+          expect=(x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu x86_64-pc-windows-msvc
+                  powerpc64le-unknown-linux-gnu s390x-unknown-linux-gnu)
+          # Only the documented RISC-V skips leave its reports unjudged, and never in a run that requires RISC-V.
+          if [[ "$REQUIRE_RISCV" == true ]]; then
+            expect+=(riscv64gc-unknown-linux-gnu)
+          elif [[ "$FORK_PULL_REQUEST" == true ]]; then
+            reason='a pull request from a fork cannot dispatch the RISC-V run'
+          elif [[ "$RISCV_SKIPPED" == true ]]; then
+            reason='no RISC-V runner started within 30 minutes'
+          else
+            expect+=(riscv64gc-unknown-linux-gnu)
+          fi
+          if [[ -v reason ]]; then
+            message="The riscv64gc-unknown-linux-gnu painted-stack reports were not judged: $reason."
+            echo "::notice title=RISC-V stack not judged::$message"
+            echo "$message" >>"$GITHUB_STEP_SUMMARY"
+          fi
+          reports=(target/stack-paint/judged/*.json)
+          scripts/lib/python.sh scripts/stack/painted.py judge "${reports[@]}" "${expect[@]/#/--expect=}"
+      - name: Check owned stack bounds against their budgets
+        if: ${{ !cancelled() }}
+        run: |
+          source "$HOME/.local/share/rscrypto-tooling/environment.sh"
+          just ci-stack
+          git diff --exit-code HEAD
 
   cache-report:
     name: Compiler cache report

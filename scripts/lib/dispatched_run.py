@@ -81,6 +81,14 @@ def cancel(api, run_id, *, clock=time.monotonic, sleep=time.sleep):
     raise RuntimeError(f'dispatched run {run_id} did not stop within {CANCEL_SECONDS} seconds')
 
 
+def output(name, value):
+    """Set a step output of the calling job."""
+    path = os.environ.get('GITHUB_OUTPUT')
+    if path:
+        with open(path, 'a', encoding='utf-8') as file:
+            file.write(f'{name}={value}\n')
+
+
 def jobs(api, run_id):
     return api.request('GET', f'/actions/runs/{run_id}/jobs?per_page=100')['jobs']
 
@@ -109,6 +117,8 @@ def run(api, *, workflow, ref, inputs, queue_minutes, state, parent, label,
     run_id, url = dispatched['workflow_run_id'], dispatched['html_url']
     # The caller's cleanup step cancels this run if the wait below is interrupted.
     state.write_text(f'{run_id}\n')
+    # A later job of the caller reads this run's artifacts, for example its stack measurements.
+    output('run-id', run_id)
     print(f'{label}: dispatched {url}', flush=True)
     # The limit bounds only the wait for a runner; a started run may take its full timeout.
     deadline = clock() + queue_minutes * 60 if queue_minutes else None
@@ -139,6 +149,8 @@ def run(api, *, workflow, ref, inputs, queue_minutes, state, parent, label,
                     state.unlink()
                     if result['conclusion'] != 'cancelled':
                         return report_conclusion(result, label, url)
+                    # The only state in which the caller may lack this run's evidence.
+                    output('skipped', 'true')
                     annotate('notice', f'{label} skipped: no runner started {url} within {queue_minutes} minutes',
                              title=f'{label} skipped')
                     return 0

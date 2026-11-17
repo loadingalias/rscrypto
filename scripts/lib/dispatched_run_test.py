@@ -94,7 +94,8 @@ class DispatchedRun(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.state = Path(temporary.name) / 'run'
         self.summary = Path(temporary.name) / 'summary'
-        patcher = patch.dict(os.environ, GITHUB_STEP_SUMMARY=str(self.summary))
+        self.outputs = Path(temporary.name) / 'outputs'
+        patcher = patch.dict(os.environ, GITHUB_STEP_SUMMARY=str(self.summary), GITHUB_OUTPUT=str(self.outputs))
         patcher.start()
         self.addCleanup(patcher.stop)
 
@@ -123,6 +124,9 @@ class DispatchedRun(unittest.TestCase):
                 self.assertEqual(github.cancels(), [])
                 self.assertFalse(self.state.exists())
                 self.assertIn(f'concluded {conclusion}' if expected else 'passed', output)
+                # The CI `stack` job judges a started run's measurements; only a skip exempts them.
+                self.assertEqual(self.outputs.read_text(), f'run-id={RUN}\n')
+                self.outputs.unlink()
 
     def test_unstarted_run_is_cancelled_and_skipped_at_the_limit(self):
         github = FakeGitHub()
@@ -133,6 +137,7 @@ class DispatchedRun(unittest.TestCase):
         self.assertIn('::notice title=RISC-V skipped::', output)
         self.assertIn(f'no runner started {URL} within 30 minutes', self.summary.read_text())
         self.assertFalse(self.state.exists())
+        self.assertEqual(self.outputs.read_text(), f'run-id={RUN}\nskipped=true\n')
 
     def test_zero_limit_waits_for_a_runner(self):
         github = FakeGitHub(started_at=300 * MINUTE, completed_at=400 * MINUTE)
@@ -277,6 +282,7 @@ class DispatchedRun(unittest.TestCase):
                 status, output = self.run_with(github)
                 self.assertEqual(status, expected)
                 self.assertNotIn('skipped', output)
+                self.assertNotIn('skipped', self.outputs.read_text())
                 self.assertEqual(github.cancels(), [])
                 self.assertFalse(self.state.exists())
 

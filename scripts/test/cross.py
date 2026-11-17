@@ -139,9 +139,8 @@ def execute(target, archive):
         (out / 'introspect.txt').write_text(detected)
         print(f'{target} runtime detection:\n{detected}', end='', flush=True)
     # Bundles that declare painted-stack binaries must measure them on this host.
-    # They run first, so that a failing suite does not hide the measurements. A
-    # failed measurement fails the run only after the suites, so that it does not
-    # hide their results either.
+    # They run first, so that a failing suite does not hide the measurements. The
+    # CI `stack` job judges them against the committed allowances and budgets.
     stack = (stack_paint(target, incoming / 'stack-paint', out / 'stack-paint')
              if 'stack_paint' in manifest['metadata'] else None)
     results = {}
@@ -163,33 +162,25 @@ def execute(target, archive):
                 'portable-only' if mode.endswith('portable') else 'production-auto')
     # Detect accidental changes to inputs throughout execution as well as before it.
     bundle.verify(ROOT, incoming, 'rscrypto.cross.tests', target)
-    status = 'fail' if stack and stack['failed'] else 'pass'
-    (out / 'summary.json').write_text(json.dumps({'status': status, 'source': manifest['source'],
+    (out / 'summary.json').write_text(json.dumps({'status': 'pass', 'source': manifest['source'],
         'archive_sha256': bundle.digest(archive), 'host': platform.uname()._asdict(),
         'nextest': version, 'detection': detected, 'modes': results, 'stack_paint': stack}, indent=2) + '\n')
     print(f'{target} ordinary and internal suites passed: {out}', flush=True)
-    if status != 'pass':
-        raise SystemExit(f'{target} painted-stack checks failed: {", ".join(stack["failed"])}')
 
 
 def stack_paint(target, binaries, output):
     """Measure the declared libc edges and the TLS worker with the bundle's binaries.
 
-    Both check the committed allowances and worker budgets for this target. Each
-    measurement runs even after another fails, and the result names the failures.
+    A failed measurement, such as a failed worker scenario, fails the run at once.
     """
     script = ROOT / 'scripts/stack/painted.py'
-    runs = {'edges': ['edges', '--binary-dir', str(binaries / 'native')]}
-    runs |= {f'worker {configuration}': ['worker', '--binary-dir', str(binaries / configuration),
-                                         *(['--portable'] if configuration == 'portable' else [])]
-             for configuration in ('native', 'portable')}
-    failed = []
-    for name, arguments in runs.items():
-        command = [sys.executable, '-B', str(script), *arguments, '--target', target, '--check', '--output', str(output)]
-        if subprocess.run(command, cwd=ROOT, check=False).returncode:
-            failed.append(name)
-    return {'status': 'fail' if failed else 'pass', 'failed': failed,
-            'reports': sorted(path.name for path in output.glob('*.json'))}
+    runs = [['edges', '--binary-dir', str(binaries / 'native')]]
+    runs += [['worker', '--binary-dir', str(binaries / configuration),
+              *(['--portable'] if configuration == 'portable' else [])] for configuration in ('native', 'portable')]
+    for arguments in runs:
+        subprocess.run([sys.executable, '-B', str(script), *arguments, '--target', target, '--output', str(output)],
+                       cwd=ROOT, check=True)
+    return {'reports': sorted(path.name for path in output.glob('*.json'))}
 
 
 def main():
