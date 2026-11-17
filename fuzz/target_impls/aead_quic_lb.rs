@@ -13,7 +13,8 @@ pub(super) fn run(data: &[u8]) {
   let [server_id_len, nonce_len]: [u8; 2] = some_or_return!(input.bytes());
   let buffer: [u8; QuicLbCipher::MAX_PLAINTEXT_LEN] = some_or_return!(input.bytes());
   let (server_id_len, nonce_len) = (usize::from(server_id_len % 21), usize::from(nonce_len % 21));
-  let len = server_id_len + nonce_len;
+  // Each length is at most 20.
+  let len = server_id_len.strict_add(nonce_len);
 
   let Some(cipher) = QuicLbCipher::new(&QuicLbKey::from_bytes(key), server_id_len, nonce_len) else {
     assert!(

@@ -18,8 +18,14 @@ pub(super) fn run(data: &[u8]) {
     return;
   };
   let rotation = RotationId::new(shape % 7).expect("codepoints 0 through 6");
-  let server_id_len = usize::from(shape >> 3) % 15 + 1;
-  let nonce_len = usize::from(nonce_shape & 0x7f) % (16 - server_id_len) + 4;
+  // The server ID is 1 to 15 octets, so the nonce span is 1 to 15 and nonzero, and the total is
+  // at most 19.
+  let server_id_len = (usize::from(shape >> 3) % 15).strict_add(1);
+  let nonce_span = 16usize.strict_sub(server_id_len);
+  let nonce_len = usize::from(nonce_shape & 0x7f)
+    .checked_rem(nonce_span)
+    .expect("a nonzero nonce span")
+    .strict_add(4);
   let first_octet = if nonce_shape & 0x80 == 0 {
     FirstOctet::Length
   } else {
@@ -44,7 +50,7 @@ pub(super) fn run(data: &[u8]) {
   assert_eq!(id.len(), id_len);
   assert_eq!(id[0] >> 5, rotation.get());
   if first_octet == FirstOctet::Length {
-    assert_eq!(usize::from(id[0] & 0x1f), id_len - 1);
+    assert_eq!(usize::from(id[0] & 0x1f), id_len.strict_sub(1));
   }
   assert_eq!(config.decode(id).expect("issued ID").as_slice(), server_id);
 
