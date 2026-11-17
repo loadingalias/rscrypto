@@ -246,7 +246,8 @@ one previous key, and the first use at or after twelve hours erases a key, even
 after a long idle period. Inactive keys can stay resident until that use. A
 caller clock that falls behind delays rotation; it never revives an erased key.
 Process restart replaces ticket keys. A key seals only in the process that
-created it: in a fork child, a copied key issues no ticket. A missing time reading, encryption failure,
+created it: in a fork child, the first use replaces a copied key with a new one
+and keeps the copy only to open earlier tickets. A missing time reading, encryption failure,
 or failed rotation suppresses tickets without failing TLS; after a failed
 rotation the previous key still opens its tickets. Early data remains off unless
 the caller explicitly enables it.

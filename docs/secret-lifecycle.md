@@ -594,8 +594,10 @@ The six-hour rotator keeps current and previous clearing key owners, timed by
 the monotonic clock or a caller clock. Before each seal or open it drops a key
 twelve or more hours old; its view of time never moves backward, so a lagging
 clock cannot revive a key. A failed rotation keeps the previous key and issues
-no tickets. A key seals only in the process that created it, so a copy that a
-process fork made issues no ticket and consumes no nonce. On-use expiration can defer destruction while idle, and rustls
+no tickets. A key seals only in the process that created it. In a fork child,
+the first use rotates: the copied current key becomes the previous key, which
+only opens tickets, and a new key comes from the ticketer's source. A generator
+ticketer's source refuses in the child, so that child issues no tickets. On-use expiration can defer destruction while idle, and rustls
 configuration sharing can extend the rotator's lifetime. Tests cover independent
 AES-GCM, hostile tickets, concurrent exhaustion, entropy and clock failure,
 rotation on a simulated clock, and resumption. They do not qualify compiler-made copies or linked-code erasure.

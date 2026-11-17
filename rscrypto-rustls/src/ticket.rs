@@ -61,7 +61,8 @@ pub fn ticketer() -> Result<Arc<dyn TicketProducer>, rustls::Error> {
 ///
 /// Keys are not serialized, and the ticket wire format is private to this implementation. A
 /// process fork copies the keys and their nonce counters, so a key seals tickets only in the
-/// process that created it; in a fork child, `encrypt` issues no ticket under a copied key.
+/// process that created it. In a fork child, the first use replaces the copied current key with a
+/// new key from `random` and keeps the copy only to open the parent's tickets.
 ///
 /// The ticketer is a shared owner: each key draw comes from `random` outside the scope of any
 /// connection. So [`replay::ScopedRandom`](crate::replay::ScopedRandom) refuses it, and this
@@ -83,7 +84,8 @@ pub fn ticketer_with(
 /// `rng`, never from the stream of a connection. Give it a child of the endpoint's generator,
 /// such as `endpoint.child(b"tickets\0", 0)`, so a replay rebuilds the same keys; see
 /// [Shared owners](crate::replay#shared-owners). In a process other than the one that seeded the
-/// root of `rng`, the ticketer draws no key.
+/// root of `rng`, the ticketer draws no key. So in a fork child it issues no tickets, and the
+/// copied keys only open the parent's tickets.
 ///
 /// # Errors
 ///
@@ -133,16 +135,32 @@ impl Clock {
   }
 }
 
-/// A ticket key and the clock reading at its creation.
+/// A ticket key, the clock reading at its creation, and the process that created it.
 struct Generation {
   key: TicketKey,
   created: Duration,
+  origin: ProcessOrigin,
 }
 
 impl Generation {
+  fn new(key: TicketKey, created: Duration) -> Self {
+    Self {
+      key,
+      created,
+      origin: ProcessOrigin::current(),
+    }
+  }
+
   fn age(&self, now: Duration) -> Duration {
     // `now` never precedes a reading the rotator has already used.
     now.saturating_sub(self.created)
+  }
+
+  /// Whether this key seals new tickets: it is younger than the rotation period, and this
+  /// process created it. A copy that a process fork made would repeat its parent's nonces under
+  /// the same key, so in a fork child the next use rotates instead.
+  fn seals(&self, now: Duration) -> bool {
+    self.age(now) < ROTATION && self.origin.is_current()
   }
 }
 
@@ -154,7 +172,7 @@ struct Keys {
 
 impl Keys {
   fn is_current(&self, now: Duration) -> bool {
-    self.current.as_ref().is_some_and(|key| key.age(now) < ROTATION)
+    self.current.as_ref().is_some_and(|key| key.seals(now))
       && self
         .previous
         .as_ref()
@@ -169,17 +187,18 @@ impl Keys {
     {
       self.previous = None;
     }
-    if self.current.as_ref().is_some_and(|key| key.age(now) < ROTATION) {
+    if self.current.as_ref().is_some_and(|key| key.seals(now)) {
       return;
     }
     // A current key that can still open tickets replaces `previous`; dropping a key clears it.
-    // After an earlier failed rotation there is no current key, and `previous` stays.
+    // This includes a key that a process fork copied: it opens its parent's tickets but seals
+    // nothing. After an earlier failed rotation there is no current key, and `previous` stays.
     if let Some(current) = self.current.take() {
       self.previous = (current.age(now) < ROTATION.saturating_mul(2)).then_some(current);
     }
     self.current = TicketKey::generate_with(|out| source.fill(out))
       .ok()
-      .map(|key| Generation { key, created: now });
+      .map(|key| Generation::new(key, now));
   }
 }
 
@@ -200,7 +219,7 @@ impl Rotator {
       clock,
       latest: AtomicU64::new(now.as_secs()),
       keys: RwLock::new(Keys {
-        current: Some(Generation { key, created: now }),
+        current: Some(Generation::new(key, now)),
         previous: None,
       }),
     })
@@ -255,8 +274,6 @@ impl TicketProducer for Rotator {
 struct TicketKey {
   cipher: Aes256Gcm,
   next_nonce: AtomicU32,
-  /// The process that created the key. A fork copies `next_nonce`, so only that process seals.
-  origin: ProcessOrigin,
 }
 
 impl TicketKey {
@@ -295,13 +312,11 @@ impl TicketKey {
     Self {
       cipher: Aes256Gcm::new(key),
       next_nonce: AtomicU32::new(0),
-      origin: ProcessOrigin::current(),
     }
   }
 
   fn encrypt(&self, plain: &[u8]) -> Option<Vec<u8>> {
-    // A copy in a fork child would repeat the nonces of its parent under the same key.
-    if plain.len() > MAX_PLAINTEXT || !self.origin.is_current() {
+    if plain.len() > MAX_PLAINTEXT {
       return None;
     }
     // Relaxed ordering provides uniqueness; no other state is published here.

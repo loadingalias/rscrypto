@@ -266,8 +266,8 @@ and only the final location clears.
 
 ### rustls session tickets
 
-Each private ticket key owns a clearing `Aes256Gcm` context, an atomic public
-nonce counter, and its public `ProcessOrigin`. A ticketer from
+Each private ticket key owns a clearing `Aes256Gcm` context and an atomic public
+nonce counter. The rotator records the public `ProcessOrigin` of each key. A ticketer from
 `ticket::ticketer_with_rng` also owns a `replay::Stream` for its key draws, which
 clears when the ticketer drops; the ticketer's `Debug` does not show it. The
 provider's rotator owns the current and previous keys with
