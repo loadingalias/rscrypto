@@ -16131,6 +16131,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
   }
 
   /// Request counts of one signature through a workspace.
+  #[cfg(feature = "getrandom")]
   #[derive(Clone, Copy, Debug, PartialEq, Eq)]
   struct Requests {
     salt: usize,
