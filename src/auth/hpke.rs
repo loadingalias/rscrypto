@@ -71,6 +71,7 @@ use core::{error::Error, fmt};
 use crate::{
   HkdfSha256,
   aead::{Nonce96, expert::AeadWithNonce},
+  platform::ProcessOrigin,
   secret::ZeroizingBytes,
   traits::{
     Aead,
@@ -90,7 +91,10 @@ pub enum HpkeError {
   DecapsulationFailed,
   /// A ciphertext failed authentication. The context does not change.
   OpenFailed,
-  /// The context reached its last sequence number and seals or opens no more messages.
+  /// The context seals or opens no more messages.
+  ///
+  /// It reached its last sequence number, or a process fork copied a sender
+  /// context from the process that set it up.
   MessageLimitReached,
   /// An output buffer has the wrong length, or an input exceeds the AEAD's length bound.
   InvalidLength,
@@ -105,7 +109,7 @@ impl fmt::Display for HpkeError {
       Self::EncapsulationFailed => "HPKE encapsulation failed",
       Self::DecapsulationFailed => "HPKE decapsulation failed",
       Self::OpenFailed => "HPKE open failed",
-      Self::MessageLimitReached => "HPKE message limit reached",
+      Self::MessageLimitReached => "HPKE context seals or opens no more messages",
       Self::InvalidLength => "HPKE buffer or input length is invalid",
       Self::ExportTooLong => "HPKE export length is too long",
     })
@@ -276,6 +280,9 @@ struct Context<S: HpkeSuite> {
   base_nonce: [u8; NONCE_SIZE],
   exporter: HkdfSha256,
   sequence: u64,
+  /// The process that ran the key schedule. Only that process seals, because a
+  /// copy that a fork made would repeat the sequence numbers.
+  origin: ProcessOrigin,
 }
 
 /// `KeySchedule<ROLE>(mode_base, shared_secret, info, "", "")` up to its
@@ -309,6 +316,7 @@ impl<S: HpkeSuite> Context<S> {
         base_nonce: [0; NONCE_SIZE],
         exporter: HkdfSha256::from_prk(exporter_secret.as_array()),
         sequence: 0,
+        origin: ProcessOrigin::current(),
       };
       labeled_expand(secret, suite_id, b"base_nonce", context, &mut schedule.base_nonce);
       schedule
@@ -323,6 +331,7 @@ impl<S: HpkeSuite> Context<S> {
       base_nonce: [0; NONCE_SIZE],
       exporter: HkdfSha256::zeroed(),
       sequence: 0,
+      origin: ProcessOrigin::current(),
     }
   }
 
@@ -339,6 +348,7 @@ impl<S: HpkeSuite> Context<S> {
       labeled_expand(secret, suite_id, b"exp", context, exporter_secret.as_mut_array());
       self.exporter.set_prk(exporter_secret.as_array());
     });
+    self.origin = ProcessOrigin::current();
   }
 
   /// `ComputeNonce(seq)` for the current sequence number. The last `u64`
@@ -354,8 +364,16 @@ impl<S: HpkeSuite> Context<S> {
     Ok(Nonce96::from_bytes(nonce))
   }
 
+  /// [`Self::nonce`] for a seal, which only the process that ran the key schedule makes.
+  fn seal_nonce(&self) -> Result<Nonce96, HpkeError> {
+    if !self.origin.is_current() {
+      return Err(HpkeError::MessageLimitReached);
+    }
+    self.nonce()
+  }
+
   fn seal(&mut self, aad: &[u8], plaintext: &[u8], out: &mut [u8]) -> Result<(), HpkeError> {
-    let nonce = self.nonce()?;
+    let nonce = self.seal_nonce()?;
     self
       .aead
       .encrypt(&nonce, aad, plaintext, out)
@@ -365,7 +383,7 @@ impl<S: HpkeSuite> Context<S> {
   }
 
   fn seal_in_place_detached(&mut self, aad: &[u8], buffer: &mut [u8]) -> Result<<S::Aead as Aead>::Tag, HpkeError> {
-    let nonce = self.nonce()?;
+    let nonce = self.seal_nonce()?;
     let tag = self
       .aead
       .encrypt_in_place(&nonce, aad, buffer)
@@ -424,8 +442,10 @@ macro_rules! define_context {
   ($name:ident, $doc:literal) => {
     #[doc = $doc]
     ///
-    /// Not `Clone` or `Copy`: a copy would reuse sequence numbers. The AEAD
-    /// key, base nonce, and exporter secret clear on drop; `Debug` is redacted.
+    /// Not `Clone` or `Copy`: a copy would reuse sequence numbers. A process
+    /// fork also copies a context, so a sender seals only in the process that
+    /// set it up. The AEAD key, base nonce, and exporter secret clear on drop;
+    /// `Debug` is redacted.
     pub struct $name<S: HpkeSuite>(Context<S>);
 
     impl<S: HpkeSuite> $name<S> {
@@ -520,8 +540,9 @@ impl<S: HpkeSuite> HpkeSender<S> {
   ///
   /// Returns [`HpkeError::InvalidLength`] when `out` is not
   /// `plaintext.len() + TAG_SIZE` bytes or the input exceeds the AEAD bound,
-  /// and [`HpkeError::MessageLimitReached`] after the last sequence number.
-  /// Neither changes the sequence number.
+  /// and [`HpkeError::MessageLimitReached`] after the last sequence number or
+  /// in a process fork child of the process that set up this sender. None of
+  /// them changes the sequence number.
   pub fn seal(&mut self, aad: &[u8], plaintext: &[u8], out: &mut [u8]) -> Result<(), HpkeError> {
     self.0.seal(aad, plaintext, out)
   }

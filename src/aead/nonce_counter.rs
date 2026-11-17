@@ -1,14 +1,17 @@
 use core::{fmt, marker::PhantomData};
 
 use super::{Aes128Gcm, Aes128GcmTag, Aes256Gcm, Aes256GcmTag, Nonce96, SealError};
-use crate::aead::expert::AeadWithNonce;
+use crate::{aead::expert::AeadWithNonce, platform::ProcessOrigin};
 
 const FIXED_PREFIX_LEN: usize = 4;
 const COUNTER_LEN: usize = 8;
 const MAX_MESSAGES: u64 = 1u64 << 48;
 
 define_unit_error! {
-  /// AES-GCM nonce counter exhausted its deterministic invocation budget.
+  /// No fresh AES-GCM nonce remains for this counter in this process.
+  ///
+  /// The counter issued its deterministic invocation budget, or a process
+  /// fork copied it from the process that created it.
   pub struct NonceCounterExhausted;
   "AES-GCM nonce counter exhausted"
 }
@@ -17,7 +20,7 @@ define_unit_error! {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum NonceCounterSealError {
-  /// No fresh nonce remains in the counter.
+  /// No fresh nonce remains for the counter in this process.
   Exhausted(NonceCounterExhausted),
   /// AES-GCM sealing itself failed.
   Seal(SealError),
@@ -81,9 +84,17 @@ impl From<SealError> for NonceCounterSealError {
 /// nonce stream. If you need restart-safe continuation, persist
 /// [`next_counter`](Self::next_counter) and restore with
 /// [`with_counter`](Self::with_counter).
+///
+/// A process fork copies the counter, and a copy would issue the same nonces
+/// as the original under the same key. So a counter issues nonces only in the
+/// process that created it ([`ProcessOrigin`]). In a fork child, every nonce
+/// request returns [`NonceCounterExhausted`] and consumes nothing. Create a new
+/// key and counter in the child.
 pub struct NonceCounter<Cipher> {
   fixed_prefix: [u8; FIXED_PREFIX_LEN],
   next: u64,
+  /// The process that created this counter.
+  origin: ProcessOrigin,
   _cipher: PhantomData<fn() -> Cipher>,
 }
 
@@ -107,12 +118,17 @@ impl NonceCounter<Aes256Gcm> {
   pub const MAX_MESSAGES: u64 = MAX_MESSAGES;
 
   /// Start a fresh AES-GCM nonce stream with `fixed_prefix`.
+  ///
+  /// The counter records the calling process ([`ProcessOrigin`]), and only that
+  /// process gets nonces from it. So this is not a `const fn`: build a counter at
+  /// run time, or in a `LazyLock`, not in a `const` or `static` initializer.
   #[inline]
   #[must_use]
-  pub const fn new(fixed_prefix: [u8; FIXED_PREFIX_LEN]) -> Self {
+  pub fn new(fixed_prefix: [u8; FIXED_PREFIX_LEN]) -> Self {
     Self {
       fixed_prefix,
       next: 0,
+      origin: ProcessOrigin::current(),
       _cipher: PhantomData,
     }
   }
@@ -131,6 +147,7 @@ impl NonceCounter<Aes256Gcm> {
     Ok(Self {
       fixed_prefix,
       next: next_counter,
+      origin: ProcessOrigin::current(),
       _cipher: PhantomData,
     })
   }
@@ -157,6 +174,8 @@ impl NonceCounter<Aes256Gcm> {
   }
 
   /// Return how many deterministic AES-GCM invocations remain.
+  ///
+  /// A copy that a process fork made issues no nonce, whatever this returns.
   #[inline]
   #[must_use]
   pub const fn remaining(&self) -> u64 {
@@ -168,10 +187,11 @@ impl NonceCounter<Aes256Gcm> {
   /// # Errors
   ///
   /// Returns [`NonceCounterExhausted`] when the counter reaches
-  /// [`MAX_MESSAGES`](Self::MAX_MESSAGES).
+  /// [`MAX_MESSAGES`](Self::MAX_MESSAGES), or in a process fork child of the
+  /// process that created the counter. Neither case consumes a nonce.
   #[inline]
   pub fn next_nonce(&mut self) -> Result<Nonce96, NonceCounterExhausted> {
-    if self.next >= Self::MAX_MESSAGES {
+    if self.next >= Self::MAX_MESSAGES || !self.origin.is_current() {
       return Err(NonceCounterExhausted::new());
     }
 
@@ -249,12 +269,17 @@ impl NonceCounter<Aes128Gcm> {
   pub const MAX_MESSAGES: u64 = MAX_MESSAGES;
 
   /// Start a fresh AES-128-GCM nonce stream with `fixed_prefix`.
+  ///
+  /// The counter records the calling process ([`ProcessOrigin`]), and only that
+  /// process gets nonces from it. So this is not a `const fn`: build a counter at
+  /// run time, or in a `LazyLock`, not in a `const` or `static` initializer.
   #[inline]
   #[must_use]
-  pub const fn new(fixed_prefix: [u8; FIXED_PREFIX_LEN]) -> Self {
+  pub fn new(fixed_prefix: [u8; FIXED_PREFIX_LEN]) -> Self {
     Self {
       fixed_prefix,
       next: 0,
+      origin: ProcessOrigin::current(),
       _cipher: PhantomData,
     }
   }
@@ -273,6 +298,7 @@ impl NonceCounter<Aes128Gcm> {
     Ok(Self {
       fixed_prefix,
       next: next_counter,
+      origin: ProcessOrigin::current(),
       _cipher: PhantomData,
     })
   }
@@ -299,6 +325,8 @@ impl NonceCounter<Aes128Gcm> {
   }
 
   /// Return how many deterministic AES-GCM invocations remain.
+  ///
+  /// A copy that a process fork made issues no nonce, whatever this returns.
   #[inline]
   #[must_use]
   pub const fn remaining(&self) -> u64 {
@@ -310,10 +338,11 @@ impl NonceCounter<Aes128Gcm> {
   /// # Errors
   ///
   /// Returns [`NonceCounterExhausted`] when the counter reaches
-  /// [`MAX_MESSAGES`](Self::MAX_MESSAGES).
+  /// [`MAX_MESSAGES`](Self::MAX_MESSAGES), or in a process fork child of the
+  /// process that created the counter. Neither case consumes a nonce.
   #[inline]
   pub fn next_nonce(&mut self) -> Result<Nonce96, NonceCounterExhausted> {
-    if self.next >= Self::MAX_MESSAGES {
+    if self.next >= Self::MAX_MESSAGES || !self.origin.is_current() {
       return Err(NonceCounterExhausted::new());
     }
 
@@ -393,6 +422,7 @@ mod tests {
     let counter = NonceCounter::<CipherWithoutDebug> {
       fixed_prefix: *b"test",
       next: 7,
+      origin: crate::platform::ProcessOrigin::current(),
       _cipher: PhantomData,
     };
 

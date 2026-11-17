@@ -34,9 +34,9 @@
 //! `rand_core`'s `SeedableRng::seed_from_u64` panics, because 64 bits are not a
 //! 256-bit seed. A test that needs a fixed seed writes all 32 bytes.
 
-use core::{convert::Infallible, fmt};
+use core::fmt;
 
-use crate::{backend::chacha20, traits::ct};
+use crate::{backend::chacha20, platform::ProcessOrigin, traits::ct};
 
 const SEED_SIZE: usize = chacha20::KEY_SIZE;
 /// Nonce of the block that derives the branch key from the seed.
@@ -90,6 +90,9 @@ const OUTPUT_SIZE: usize = CHUNK_SIZE - SEED_SIZE;
 /// `(label, index)` pair under one parent must have one owner, because a second
 /// derivation repeats the child's stream.
 ///
+/// A child keeps the [origin](Self::origin) of its parent, so a child that a
+/// fork child derives from a copied parent still reports the parent's process.
+///
 /// Child seeds rest on the same assumption as the stream: the keyed ChaCha20
 /// block function is a pseudorandom function of its counter and nonce. The
 /// seed keys the stream blocks with an all-zero nonce and the branch block with
@@ -114,6 +117,9 @@ const OUTPUT_SIZE: usize = CHUNK_SIZE - SEED_SIZE;
 ///   not on the seed or the generator state.
 /// - Rust moves copy the state. Dropping clears the final location only; earlier
 ///   copies made by moves are not cleared.
+/// - A process fork copies the state, so the parent and the child return the
+///   same output. The generator cannot refuse a read. An owner that must not
+///   repeat output checks [`origin`](Self::origin) before it reads.
 ///
 /// # `rand_core`
 ///
@@ -133,6 +139,8 @@ pub struct ChaCha20Rng {
   /// between calls, so a refill can XOR the keystream into the zeroed chunk.
   chunk: [u8; CHUNK_SIZE],
   position: usize,
+  /// The process that seeded the root of this generator. Public.
+  origin: ProcessOrigin,
 }
 
 impl ChaCha20Rng {
@@ -145,10 +153,17 @@ impl ChaCha20Rng {
   /// clear, its own copy.
   #[inline]
   #[must_use]
-  pub fn from_seed(mut seed: [u8; SEED_SIZE]) -> Self {
-    let Ok(rng) = Self::try_generate_with(|key| {
+  pub fn from_seed(seed: [u8; SEED_SIZE]) -> Self {
+    Self::from_seed_in(seed, ProcessOrigin::current())
+  }
+
+  /// [`from_seed`](Self::from_seed) with the origin of a root that this process did not
+  /// necessarily seed.
+  #[inline]
+  fn from_seed_in(mut seed: [u8; SEED_SIZE], origin: ProcessOrigin) -> Self {
+    let Ok(rng) = Self::generate_in(origin, |key| {
       key.copy_from_slice(&seed);
-      Ok::<(), Infallible>(())
+      Ok::<(), !>(())
     });
     ct::zeroize(&mut seed);
     rng
@@ -169,12 +184,19 @@ impl ChaCha20Rng {
   ///
   /// Returns the error from `fill`.
   #[inline]
-  pub fn try_generate_with<E>(mut fill: impl FnMut(&mut [u8]) -> Result<(), E>) -> Result<Self, E> {
+  pub fn try_generate_with<E>(fill: impl FnMut(&mut [u8]) -> Result<(), E>) -> Result<Self, E> {
+    Self::generate_in(ProcessOrigin::current(), fill)
+  }
+
+  /// [`try_generate_with`](Self::try_generate_with) with a given origin.
+  #[inline]
+  fn generate_in<E>(origin: ProcessOrigin, mut fill: impl FnMut(&mut [u8]) -> Result<(), E>) -> Result<Self, E> {
     let mut rng = Self {
       key: [0; SEED_SIZE],
       branch: [0; SEED_SIZE],
       chunk: [0; CHUNK_SIZE],
       position: OUTPUT_SIZE,
+      origin,
     };
     // On an error, dropping `rng` clears the partial seed.
     fill(&mut rng.key)?;
@@ -202,7 +224,8 @@ impl ChaCha20Rng {
   /// [Child generators](Self#child-generators).
   ///
   /// The child depends only on this generator's seed, `label`, and `index`. It
-  /// reads no output, so draws from this generator do not change it.
+  /// reads no output, so draws from this generator do not change it. It keeps
+  /// this generator's [origin](Self::origin).
   ///
   /// ```rust
   /// use rscrypto::ChaCha20Rng;
@@ -223,7 +246,23 @@ impl ChaCha20Rng {
     let [c0, c1, c2, c3, l4, l5, l6, l7] = *label;
     let [i0, i1, i2, i3, i4, i5, i6, i7] = index.to_le_bytes();
     let nonce = [l4, l5, l6, l7, i0, i1, i2, i3, i4, i5, i6, i7];
-    Self::from_seed(block_key(&self.branch, u32::from_le_bytes([c0, c1, c2, c3]), &nonce))
+    Self::from_seed_in(
+      block_key(&self.branch, u32::from_le_bytes([c0, c1, c2, c3]), &nonce),
+      self.origin,
+    )
+  }
+
+  /// The process that seeded the root of this generator.
+  ///
+  /// [`from_seed`](Self::from_seed) and the other seeding functions record the
+  /// calling process. [`child`](Self::child) keeps the origin of its parent. In
+  /// a copy that a process fork made, the origin is not
+  /// [current](ProcessOrigin::is_current). An owner that must not repeat
+  /// output, such as a per-connection stream, checks it before each read.
+  #[inline]
+  #[must_use]
+  pub const fn origin(&self) -> ProcessOrigin {
+    self.origin
   }
 
   /// Fill `output` with the next bytes of the stream.

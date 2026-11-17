@@ -22,7 +22,7 @@ It does not prove that the compiler erases every copy it makes.
 | X-Wing decapsulation keys and shared secrets (`XWingDecapsulationKey`, `XWingSharedSecret`) | Not `Clone` or `Copy`. Explicit `duplicate_secret`. | Raw export returns `SecretBytes<32>`. Raw import borrows the caller's input and does not clear it. `Debug` is redacted. Serialization needs `serde-secrets`. |
 | `XWingPreparedDecapsulationKey` | Not `Clone` or `Copy`. Explicit `duplicate_secret`. | No export of the expanded ML-KEM-768 and X25519 keys: the draft forbids their transfer. `decapsulation_key` borrows the 32-byte key. `Debug` is redacted. See [X-Wing allocation](#x-wing-allocation). |
 | `HpkeX25519PrivateKey` | Not `Clone` or `Copy`. Explicit `duplicate_secret`. | `new` takes an owned `X25519SecretKey`. `secret_key` borrows it; its bytes are the unclamped serialized private key. `derive_keypair_in` derives it in a box that the caller allocated. `Debug` is redacted. No Serde support. |
-| `HpkeSender`, `HpkeReceiver` | Not `Clone` or `Copy`: a copy would reuse sequence numbers. | They hold the AEAD context, the base nonce, and the exporter HKDF state: its PRK and its HMAC inner and outer midstates, each enough to compute every export. All clear on drop. No export of the AEAD key, the base nonce, or the exporter state. `export` writes a derived secret into a buffer that the caller owns and clears. `setup_in` builds the context in a box that the caller allocated. `Debug` is redacted. |
+| `HpkeSender`, `HpkeReceiver` | Not `Clone` or `Copy`: a copy would reuse sequence numbers. A sender seals only in the process that set it up, so a copy that a process fork made seals nothing. | They hold the AEAD context, the base nonce, and the exporter HKDF state: its PRK and its HMAC inner and outer midstates, each enough to compute every export. All clear on drop. No export of the AEAD key, the base nonce, or the exporter state. `export` writes a derived secret into a buffer that the caller owns and clears. `setup_in` builds the context in a box that the caller allocated. `Debug` is redacted. |
 | `P256EphemeralSecret`, `P256SharedSecret` | Not `Clone` or `Copy`. | The ephemeral scalar has no export or import API. `P256SharedSecret::expose_secret` makes an explicit `SecretBytes<32>` copy. `as_bytes` gives borrowed access. Both types redact `Debug`. |
 | `P384EphemeralSecret`, `P384SharedSecret` | Not `Clone` or `Copy`. | The ephemeral scalar has no export or import API. `P384SharedSecret::expose_secret` makes an explicit `SecretBytes<48>` copy. `as_bytes` gives borrowed access. Both types redact `Debug`. |
 | `RsaPrivateKey`, `RsaPrivateScratch` | Not `Clone` or `Copy`. | Private DER export returns `SecretVec`. `Debug` shows only public metadata. |
@@ -244,7 +244,8 @@ key provider that loads no key: it wraps the owned input in the same
 ### ChaCha20 generator
 
 `ChaCha20Rng` owns its current ChaCha20 key, its branch key, and one 512-byte
-keystream chunk. The branch key is derived from the seed at construction and
+keystream chunk. It also holds its public `ProcessOrigin`. In a copy that a
+process fork made, that origin is not current, so an owner can refuse the copy. The branch key is derived from the seed at construction and
 keys only child seeds. `from_seed` clears its parameter copy, and
 `try_generate_with` fills the key in place, clearing a partial seed on failure.
 The 64-byte block that derives a branch key or a child seed is cleared after its

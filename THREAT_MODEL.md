@@ -47,6 +47,11 @@ nonce policy, transport, and access control.
 1. Keep each required nonce unique for its key.
    Stay within each algorithm's documented misuse bounds.
    `NonceCounter` covers only its stated AES-GCM profile.
+   A process fork copies every counter, sequence, and generator.
+   `NonceCounter` and an HPKE sender refuse to continue in a fork child, and `ChaCha20Rng::origin`
+   lets an owner refuse a copied generator.
+   `platform::ProcessOrigin` documents the targets that detect a fork and the limits of detection.
+   Do not use one owner in two copies of a process image, such as a restored virtual-machine snapshot.
 1. Reject every failed authentication or verification.
    Public shape errors can be distinct.
    Secret-dependent failures stay opaque.

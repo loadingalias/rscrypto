@@ -25,6 +25,8 @@
 //! - **[`caps_static`]**: Compile-time facts from `cfg!(target_feature = ...)`
 //! - **[`caps()`]**: Runtime facts via CPUID/HWCAP with process-wide caching
 //! - **[`Detected`]**: Capabilities plus architecture identifier
+//! - **[`ProcessOrigin`]**: The process that created a value, so that owners of
+//!   unique state can detect a fork
 //!
 //! Algorithm crates decide whether to use compile-time facts, runtime facts, or
 //! a mix of both for their own planners. This module does not own dispatch
@@ -37,6 +39,7 @@
 
 pub mod caps;
 pub(crate) mod detect;
+mod process;
 #[cfg(not(miri))]
 mod target_matrix;
 
@@ -44,6 +47,7 @@ mod target_matrix;
 
 pub use caps::{Arch, Caps};
 pub use detect::Detected;
+pub use process::ProcessOrigin;
 
 // Architecture-specific feature constants are available via submodules:
 // - `caps::x86` - x86-64 features (SSE, AVX, AVX-512, etc.)

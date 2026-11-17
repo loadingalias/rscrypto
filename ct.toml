@@ -3625,7 +3625,7 @@ sse_depth = 20000
 secrets = [{ name = "CT_BINSEC_KEY_32", kind = "global", bytes = 32 }]
 public = [{ name = "OUTPUT_LEN", kind = "const", value = 32 }]
 assumptions = []
-notes = "Bounded production ChaCha20Rng leaf: seeding (one portable ChaCha20 block for the branch key), the first refill (eight portable ChaCha20 blocks), key replacement, output copy and clear, and drop."
+notes = "Bounded production ChaCha20Rng leaf: seeding (one portable ChaCha20 block for the branch key, and the public process-origin record), the first refill (eight portable ChaCha20 blocks), key replacement, output copy and clear, and drop. BINSEC loads the initial memory from the file, so seeding runs the process-origin setup; the harness's mmap and madvise shims model the Linux page-mode path (one page-aligned page, the invalid-advice probe refused, MADV_WIPEONFORK accepted), so that public setup stays inside the analyzed binary."
 claim = "ct-intended"
 
 [[binsec_kernel]]
@@ -3796,8 +3796,8 @@ name = "x86_64-unknown-linux-gnu"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 3737
-compiler_api_sha256 = "9fc461f9f46da62b91a67a66e7bb71eab15c32bdaadcbc5b9ab6e794a3c5d0ed"
+compiler_api_item_count = 3738
+compiler_api_sha256 = "f0a5c2a2d8abe3f42056e4f948cfa05daf7d5adc0b88e236304570d81ff0fa4d"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "required"
@@ -3807,8 +3807,8 @@ name = "aarch64-unknown-linux-gnu"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 3737
-compiler_api_sha256 = "9fc461f9f46da62b91a67a66e7bb71eab15c32bdaadcbc5b9ab6e794a3c5d0ed"
+compiler_api_item_count = 3738
+compiler_api_sha256 = "f0a5c2a2d8abe3f42056e4f948cfa05daf7d5adc0b88e236304570d81ff0fa4d"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "required"
@@ -3841,8 +3841,8 @@ group = "win"
 backend = "llvm"
 linker = "msvc-link-unpinned"
 claim = "ct-intended"
-compiler_api_item_count = 3737
-compiler_api_sha256 = "9fc461f9f46da62b91a67a66e7bb71eab15c32bdaadcbc5b9ab6e794a3c5d0ed"
+compiler_api_item_count = 3738
+compiler_api_sha256 = "f0a5c2a2d8abe3f42056e4f948cfa05daf7d5adc0b88e236304570d81ff0fa4d"
 physical_timing = "required"
 binsec = "unsupported"
 binsec_reason = "BINSEC PE/Windows evidence is not part of the current release evidence gate."
@@ -3863,8 +3863,8 @@ name = "aarch64-apple-darwin"
 group = "macos"
 backend = "llvm"
 linker = "apple-ld-unpinned"
-compiler_api_item_count = 3737
-compiler_api_sha256 = "9fc461f9f46da62b91a67a66e7bb71eab15c32bdaadcbc5b9ab6e794a3c5d0ed"
+compiler_api_item_count = 3738
+compiler_api_sha256 = "f0a5c2a2d8abe3f42056e4f948cfa05daf7d5adc0b88e236304570d81ff0fa4d"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -3875,8 +3875,8 @@ name = "s390x-unknown-linux-gnu"
 group = "ibm"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 3737
-compiler_api_sha256 = "9fc461f9f46da62b91a67a66e7bb71eab15c32bdaadcbc5b9ab6e794a3c5d0ed"
+compiler_api_item_count = 3738
+compiler_api_sha256 = "f0a5c2a2d8abe3f42056e4f948cfa05daf7d5adc0b88e236304570d81ff0fa4d"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -3887,8 +3887,8 @@ name = "powerpc64le-unknown-linux-gnu"
 group = "ibm"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 3737
-compiler_api_sha256 = "9fc461f9f46da62b91a67a66e7bb71eab15c32bdaadcbc5b9ab6e794a3c5d0ed"
+compiler_api_item_count = 3738
+compiler_api_sha256 = "f0a5c2a2d8abe3f42056e4f948cfa05daf7d5adc0b88e236304570d81ff0fa4d"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -3899,8 +3899,8 @@ name = "riscv64gc-unknown-linux-gnu"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 3737
-compiler_api_sha256 = "9fc461f9f46da62b91a67a66e7bb71eab15c32bdaadcbc5b9ab6e794a3c5d0ed"
+compiler_api_item_count = 3738
+compiler_api_sha256 = "f0a5c2a2d8abe3f42056e4f948cfa05daf7d5adc0b88e236304570d81ff0fa4d"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -4072,6 +4072,7 @@ variable_time_components = [
   "public buffer errors",
   "public backend dispatch",
   "entropy-source latency for random nonces",
+  "NonceCounter's public process-origin check, which refuses in a fork child",
 ]
 permitted_leakage = ["algorithm", "lengths", "nonce", "AAD", "backend", "opaque success/failure"]
 claim = "ct-intended"
@@ -4128,18 +4129,18 @@ limitation = "DudeCT covers complete key construction and mask generation. AES r
 [[operation]]
 id = "rng.chacha20_generate"
 api = [
-  "rscrypto::ChaCha20Rng::{from_seed,try_generate_with,try_generate,child,fill_bytes,next_u32,next_u64}",
+  "rscrypto::ChaCha20Rng::{from_seed,try_generate_with,try_generate,child,origin,fill_bytes,next_u32,next_u64}",
   "<rscrypto::ChaCha20Rng as rand_core::{TryRng,SeedableRng}>::{try_next_u32,try_next_u64,try_fill_bytes,from_seed,seed_from_u64,from_rng,try_from_rng}",
 ]
 features = ["chacha20-rng", "getrandom for try_generate", "rand_core for the rand_core traits"]
 targets = ["all-supported", "ChaCha20 kernel selected by public target capabilities"]
 secret_inputs = ["seed", "generator key", "branch key", "unread output", "keystream chunk"]
-public_inputs = ["request lengths", "call sequence", "child label and index", "backend capabilities"]
-variable_time_components = ["public-length copy and clear loops", "refill at public stream positions", "public backend dispatch", "entropy-source or source-generator latency for seeding"]
+public_inputs = ["request lengths", "call sequence", "child label and index", "backend capabilities", "process origin"]
+variable_time_components = ["public-length copy and clear loops", "refill at public stream positions", "public backend dispatch", "entropy-source or source-generator latency for seeding", "the first process-origin setup in a process"]
 permitted_leakage = ["algorithm", "request lengths and call sequence", "backend", "seeding success/failure"]
 claim = "ct-intended"
 evidence = ["primitive:rng.chacha20", "unit:rng.chacha20.chacha20_rng"]
-limitation = "The rand_core trait methods call the inherent methods; from_rng and try_from_rng write the seed straight into the generator key, as try_generate_with does. seed_from_u64 always panics before touching state. Seeding computes the branch key with one portable ChaCha20 block. child computes the child seed with one portable block under the branch key, then seeds through from_seed. No DudeCT case or harness entry calls child directly. DudeCT covers seeding, two refills, and drop. The linked-image harness entry ct_entry_chacha20_rng_fill runs construction, fill, and drop through the dispatched kernel; the BINSEC leaf runs the same state machine over the portable kernel, because symbolic execution does not model runtime dispatch. The accelerated kernels are covered by the AEAD evidence. Rust moves copy the generator state; only its final location clears on drop."
+limitation = "The rand_core trait methods call the inherent methods; from_rng and try_from_rng write the seed straight into the generator key, as try_generate_with does. seed_from_u64 always panics before touching state. Seeding computes the branch key with one portable ChaCha20 block. child computes the child seed with one portable block under the branch key, then seeds through from_seed. No DudeCT case or harness entry calls child directly. DudeCT covers seeding, two refills, and drop. The linked-image harness entry ct_entry_chacha20_rng_fill runs construction, fill, and drop through the dispatched kernel; the BINSEC leaf runs the same state machine over the portable kernel, because symbolic execution does not model runtime dispatch. The accelerated kernels are covered by the AEAD evidence. Rust moves copy the generator state; only its final location clears on drop. Seeding also records the public process origin (platform::ProcessOrigin::current); its first call in a process maps and advises one page on Linux, or reads the process ID. child copies the parent's origin and calls nothing."
 
 [[operation]]
 id = "aead.open_and_authenticate"
@@ -4886,11 +4887,12 @@ secret_inputs = [
   "AEAD key, base nonce, and exporter secret",
   "plaintext",
 ]
-public_inputs = ["recipient public key", "encapsulation", "info", "aad", "exporter context", "lengths", "sequence number"]
+public_inputs = ["recipient public key", "encapsulation", "info", "aad", "exporter context", "lengths", "sequence number", "process origin"]
 variable_time_components = [
   "public fixed-shape parsing",
   "rejection of a small-order X25519 part, which depends only on the public key or encapsulation",
   "the components' own public-input variation, such as ML-KEM matrix rejection sampling",
+  "a sender seal's public process-origin check, which refuses in a fork child",
 ]
 permitted_leakage = ["public key", "encapsulation", "fixed sizes", "small-order X25519 rejection", "message limit", "authentication failure", "caller-authorized secret exposure"]
 claim = "ct-intended"

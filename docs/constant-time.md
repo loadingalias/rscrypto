@@ -1474,6 +1474,14 @@ The mask protects the 31-bit inverse on RISC-V and IBM Z in the same way,
 including the `MLGR` products on IBM Z.
 Native DudeCT in the Constant-Time campaign gives the timing evidence for those targets.
 
+### Process origin
+
+`platform::ProcessOrigin` adds public control flow to three claimed paths: `ChaCha20Rng` seeding,
+`NonceCounter` nonce issue, and HPKE sender seals. The check reads a page generation or the process ID,
+and neither depends on a secret. In a fork child, the owner refuses before any secret work.
+The BINSEC generator leaf runs the Linux page-mode setup through the harness's `mmap` and `madvise` shims,
+because BINSEC loads its initial memory from the file.
+
 ### RSA blinding cache
 
 `RsaBlindingCache` signing changes only the source of the blinding pair.
