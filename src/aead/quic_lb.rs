@@ -54,10 +54,11 @@ impl Drop for QuicLbKey {
 /// The plaintext is the server ID followed by the nonce, `server_id_len + nonce_len` octets in
 /// all, at the start of a buffer of [`Self::MAX_PLAINTEXT_LEN`] octets:
 ///
-/// - [`Self::encrypt`] reads and writes only that plaintext prefix. It does not read or write the
-///   octets after it.
-/// - [`Self::decrypt_server_id`] reads only the ciphertext prefix. It leaves the server ID in the
-///   first `server_id_len` octets and sets every later octet of the buffer to zero.
+/// - [`Self::encrypt`] replaces that plaintext prefix with its ciphertext. The octets after it are
+///   unchanged, and the output does not depend on them.
+/// - [`Self::decrypt_server_id`] leaves the server ID in the first `server_id_len` octets and sets
+///   every later octet of the buffer to zero. The output does not depend on the octets after the
+///   ciphertext prefix.
 ///
 /// Neither operation allocates or fails. No branch or memory index depends on the key, the
 /// plaintext, or the ciphertext. The number of AES passes and the masks depend only on the
@@ -71,6 +72,7 @@ pub struct QuicLbCipher {
   encrypt: aes::Aes128EncKey,
   /// The inverse cipher schedule, present only for the single-pass form.
   decrypt: Option<aes::Aes128DecKey>,
+  layout: Layout,
   server_id_len: u8,
   nonce_len: u8,
 }
@@ -105,10 +107,11 @@ impl QuicLbCipher {
     {
       return None;
     }
-    let single_pass = server_id_len.strict_add(nonce_len) == SINGLE_PASS_LEN;
+    let len = server_id_len.strict_add(nonce_len);
     Some(Self {
       encrypt: aes::aes128_expand_key(&key.0),
-      decrypt: single_pass.then(|| aes::aes128_expand_decrypt_key(&key.0)),
+      decrypt: (len == SINGLE_PASS_LEN).then(|| aes::aes128_expand_decrypt_key(&key.0)),
+      layout: Layout::new(len),
       server_id_len: u8::try_from(server_id_len).ok()?,
       nonce_len: u8::try_from(nonce_len).ok()?,
     })
@@ -136,7 +139,8 @@ impl QuicLbCipher {
 
   /// Encrypt the server ID and nonce at the start of `block` in place.
   ///
-  /// The octets after `server_id_len + nonce_len` are not read or written.
+  /// The octets after `server_id_len + nonce_len` are unchanged, and the output does not depend on
+  /// them.
   pub fn encrypt(&self, block: &mut [u8; MAX_LEN]) {
     let len = self.len();
     if len == SINGLE_PASS_LEN {
@@ -146,29 +150,28 @@ impl QuicLbCipher {
       aes::aes128_encrypt_block(&self.encrypt, head);
       return;
     }
-    let mut halves = Halves::split(block, len);
+    let mut halves = self.layout.split(block);
     self.passes(&mut halves, 1, 4);
-    halves.join(block);
+    self.layout.join(&halves, block);
   }
 
   /// Decrypt the ciphertext at the start of `block` and leave the server ID in its first
   /// `server_id_len` octets.
   ///
-  /// The octets after `server_id_len + nonce_len` are not read. Every octet after the server ID is
-  /// set to zero.
+  /// The output does not depend on the octets after `server_id_len + nonce_len`. Every octet after
+  /// the server ID is set to zero.
   pub fn decrypt_server_id(&self, block: &mut [u8; MAX_LEN]) {
-    let len = self.len();
     if let Some(decrypt) = &self.decrypt {
       let (head, _) = block
         .split_first_chunk_mut::<SINGLE_PASS_LEN>()
         .expect("a 19-octet buffer");
       aes::aes128_decrypt_block(decrypt, head);
     } else {
-      let mut halves = Halves::split(block, len);
+      let mut halves = self.layout.split(block);
       // When the server ID fits in the left half, pass 1 recovers only nonce octets.
       let last = if self.server_id_len > self.nonce_len { 1 } else { 2 };
       self.passes(&mut halves, 4, last);
-      halves.join(block);
+      self.layout.join(&halves, block);
     }
     ct::zeroize(&mut block[self.server_id_len()..]);
   }
@@ -177,13 +180,22 @@ impl QuicLbCipher {
   /// dependent AES blocks.
   #[inline]
   fn passes(&self, halves: &mut Halves, first: u8, last: u8) {
-    aes::aes128_serial(&self.encrypt, Feistel { halves, first, last });
+    aes::aes128_serial(
+      &self.encrypt,
+      Feistel {
+        halves,
+        layout: &self.layout,
+        first,
+        last,
+      },
+    );
   }
 }
 
 /// The Feistel passes of section 5.4.2.3 over two halves, from pass `first` to pass `last`.
 struct Feistel<'a> {
   halves: &'a mut Halves,
+  layout: &'a Layout,
   first: u8,
   last: u8,
 }
@@ -197,10 +209,15 @@ impl aes::Aes128Serial for Feistel<'_> {
   /// fused backends keep in vector registers. The halves write back once, and clear on drop.
   #[inline(always)]
   fn run(self, mut encrypt: impl FnMut([u8; 16]) -> [u8; 16]) {
-    let Self { halves, first, last } = self;
+    let Self {
+      halves,
+      layout,
+      first,
+      last,
+    } = self;
     let (mut left, mut right) = (halves.left, halves.right);
-    let (left_mask, right_mask) = (halves.left_mask, halves.right_mask);
-    let len = halves.len;
+    let (left_mask, right_mask) = (layout.left_mask, layout.right_mask);
+    let len = layout.len;
     let mut pass = first;
     loop {
       if pass % 2 == 1 {
@@ -243,64 +260,132 @@ fn feistel_pass(
   core::array::from_fn(|i| target[i] ^ (output[i] & mask[i]))
 }
 
-/// The two Feistel halves of a plaintext or ciphertext, each in the first `half` octets of a
-/// 16-octet block with zero padding, and the masks that keep each half in place.
+/// The two Feistel halves of a plaintext or ciphertext, each in the first `len / 2` octets
+/// (rounded up) of a 16-octet block, with zero padding.
 struct Halves {
   left: [u8; 16],
   right: [u8; 16],
+}
+
+/// Where the halves sit in the 19-octet buffer, fixed by the plaintext length at construction.
+///
+/// The buffer is read and written only through its two 16-octet windows, octets 0..16 and 3..19,
+/// so every access has a fixed length and no runtime copy length exists. The right half starts at
+/// octet `len - half`, which is at most 9, and ends before octet `len`, which is at most 19, so
+/// it lies inside one window.
+struct Layout {
   /// Ones over the left half, without the low four bits of its last octet for odd lengths.
   left_mask: [u8; 16],
   /// Ones over the right half, without the high four bits of its first octet for odd lengths.
   right_mask: [u8; 16],
+  /// Whether the right half lies in the window at octet 3 (otherwise the window at octet 0).
+  right_in_tail: bool,
+  /// Bit offset of the right half inside its window.
+  right_shift: u32,
+  /// Bit offset of the right half from the start of the buffer.
+  right_start: u32,
+  /// Left and right shifts that move the right half from bit 0 to its place in the window at
+  /// octet 3. One of the two is zero.
+  tail_shifts: (u32, u32),
+  /// Ones over the octets of the window at octet 0 that are below `len`.
+  head_mask: u128,
+  /// Ones over the octets of the window at octet 3 that are below `len`.
+  tail_mask: u128,
   /// Plaintext length, the `length` argument of expand (section 5.4.2.2).
   len: u8,
 }
 
-impl Halves {
-  /// Split the first `len` octets of `block` into halves of `len / 2` octets, rounded up
-  /// (section 5.4.2.3, step 2). For odd lengths, the halves share the middle octet: the left half
-  /// keeps its high four bits and the right half its low four bits.
-  #[inline]
-  fn split(block: &[u8; MAX_LEN], len: usize) -> Self {
-    let half = len.div_ceil(2);
-    let odd = len % 2 == 1;
-    let mut halves = Self {
-      left: [0; 16],
-      right: [0; 16],
-      left_mask: [0; 16],
-      right_mask: [0; 16],
-      len: u8::try_from(len).expect("QUIC-LB length fits one octet"),
-    };
-    halves.left[..half].copy_from_slice(&block[..half]);
-    halves.right[..half].copy_from_slice(&block[len.strict_sub(half)..len]);
-    halves.left_mask[..half].fill(0xff);
-    halves.right_mask[..half].fill(0xff);
-    if odd {
-      halves.left_mask[half.strict_sub(1)] = 0xf0;
-      halves.right_mask[0] = 0x0f;
-    }
-    for (byte, mask) in halves.left.iter_mut().zip(&halves.left_mask) {
-      *byte &= mask;
-    }
-    for (byte, mask) in halves.right.iter_mut().zip(&halves.right_mask) {
-      *byte &= mask;
-    }
-    halves
+/// The first `octets` octets of a little-endian `u128` window set to ones.
+const fn low_octets(octets: usize) -> u128 {
+  if octets >= 16 {
+    u128::MAX
+  } else {
+    (1u128 << octets.strict_mul(8)).strict_sub(1)
   }
+}
 
-  /// Write the halves back over the first `len` octets of `block` (section 5.4.2.3, step 12).
-  /// For odd lengths, the shared middle octet is the left half's high bits and the right half's
-  /// low bits.
-  #[inline]
-  fn join(&self, block: &mut [u8; MAX_LEN]) {
-    let len = usize::from(self.len);
+/// The 16-octet window at octet 0 of the buffer, as a little-endian integer.
+#[inline(always)]
+fn head(block: &[u8; MAX_LEN]) -> u128 {
+  // Octets 0..16 of the 19-octet buffer.
+  u128::from_le_bytes(*block.first_chunk::<16>().expect("a 19-octet buffer"))
+}
+
+/// The 16-octet window at octet 3 of the buffer, as a little-endian integer.
+#[inline(always)]
+fn tail(block: &[u8; MAX_LEN]) -> u128 {
+  // Octets 3..19 of the 19-octet buffer.
+  u128::from_le_bytes(*block.last_chunk::<16>().expect("a 19-octet buffer"))
+}
+
+impl Layout {
+  /// The layout of a `len`-octet plaintext, 5 to 19 octets, other than 16: halves of `len / 2`
+  /// octets, rounded up (section 5.4.2.3, step 2). For odd lengths, the halves share the middle
+  /// octet: the left half keeps its high four bits and the right half its low four bits.
+  fn new(len: usize) -> Self {
     let half = len.div_ceil(2);
     let start = len.strict_sub(half);
-    block[start..len].copy_from_slice(&self.right[..half]);
-    block[..start].copy_from_slice(&self.left[..start]);
-    if half > start {
-      block[start] |= self.left[start];
+    let odd = len % 2 == 1;
+    let mut left_mask = [0u8; 16];
+    let mut right_mask = [0u8; 16];
+    left_mask[..half].fill(0xff);
+    right_mask[..half].fill(0xff);
+    if odd {
+      left_mask[half.strict_sub(1)] = 0xf0;
+      right_mask[0] = 0x0f;
     }
+    let right_in_tail = start >= 3;
+    let window = if right_in_tail { 3 } else { 0 };
+    Self {
+      left_mask,
+      right_mask,
+      right_in_tail,
+      right_shift: u32::try_from(start.strict_sub(window).strict_mul(8)).expect("small shift"),
+      right_start: u32::try_from(start.strict_mul(8)).expect("small shift"),
+      tail_shifts: if right_in_tail {
+        (
+          u32::try_from(start.strict_sub(3).strict_mul(8)).expect("small shift"),
+          0,
+        )
+      } else {
+        (
+          0,
+          u32::try_from(3usize.strict_sub(start).strict_mul(8)).expect("small shift"),
+        )
+      },
+      head_mask: low_octets(len),
+      tail_mask: low_octets(len.saturating_sub(3)),
+      len: u8::try_from(len).expect("QUIC-LB length fits one octet"),
+    }
+  }
+
+  /// Split the plaintext or ciphertext at the start of `block` into its halves.
+  #[inline]
+  fn split(&self, block: &[u8; MAX_LEN]) -> Halves {
+    let head = head(block);
+    let window = if self.right_in_tail { tail(block) } else { head };
+    Halves {
+      left: (head & u128::from_le_bytes(self.left_mask)).to_le_bytes(),
+      right: ((window >> self.right_shift) & u128::from_le_bytes(self.right_mask)).to_le_bytes(),
+    }
+  }
+
+  /// Write `halves` over the first `len` octets of `block` (section 5.4.2.3, step 12). For odd
+  /// lengths, the shared middle octet is the left half's high bits and the right half's low bits.
+  /// The octets from `len` on keep their values.
+  #[inline]
+  fn join(&self, halves: &Halves, block: &mut [u8; MAX_LEN]) {
+    let left = u128::from_le_bytes(halves.left);
+    let right = u128::from_le_bytes(halves.right);
+    // The right half shifted to its place in each window: octet `start` of the buffer is octet
+    // `start` of the head window and octet `start - 3` of the tail window.
+    let head_value = left | (right << self.right_start);
+    let tail_value = (left >> 24) | ((right << self.tail_shifts.0) >> self.tail_shifts.1);
+    let head_new = (head(block) & !self.head_mask) | (head_value & self.head_mask);
+    let tail_new = (tail(block) & !self.tail_mask) | (tail_value & self.tail_mask);
+    // Octets 0..16, then octets 3..19. The windows agree on octets 3..16.
+    *block.first_chunk_mut::<16>().expect("a 19-octet buffer") = head_new.to_le_bytes();
+    *block.last_chunk_mut::<16>().expect("a 19-octet buffer") = tail_new.to_le_bytes();
   }
 }
 

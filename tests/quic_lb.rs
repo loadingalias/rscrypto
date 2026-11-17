@@ -164,39 +164,59 @@ fn decrypt_recovers_the_server_id_for_every_length_pair() {
   }
 }
 
-/// Encryption neither reads nor writes the octets after the plaintext. Decryption does not read
-/// them, and it leaves zeros after the server ID.
+/// The octets after the plaintext keep their values through encryption, and neither output
+/// depends on them. Decryption leaves zeros after the server ID. Each trailing octet holds a
+/// distinct value, so a moved, swapped, or merged octet shows.
 #[test]
 fn buffer_octets_after_the_plaintext_follow_the_contract() {
   let mut state = 0x6275_6666_6572_2d31u64;
-  for (server_id_len, nonce_len) in [(3usize, 4usize), (10, 5), (8, 8), (9, 9), (1, 4), (15, 4)] {
+  for (server_id_len, nonce_len) in allowed_lengths() {
     let len = server_id_len.strict_add(nonce_len);
     let cipher = QuicLbCipher::new(&QuicLbKey::from_bytes(generated(&mut state)), server_id_len, nonce_len)
       .expect("allowed lengths");
     let plaintext: [u8; LEN] = generated(&mut state);
-    let mut zero_tail = plaintext;
-    zero_tail[len..].fill(0);
-    let mut ones_tail = plaintext;
-    ones_tail[len..].fill(0xff);
+    let tails: [[u8; LEN]; 2] = [
+      core::array::from_fn(|i| 0xa0 ^ u8::try_from(i).expect("small index")),
+      core::array::from_fn(|i| {
+        0x31_u8
+          .wrapping_mul(u8::try_from(i).expect("small index"))
+          .wrapping_add(7)
+      }),
+    ];
+    let buffers = tails.map(|tail| {
+      let mut buffer = plaintext;
+      buffer[len..].copy_from_slice(&tail[len..]);
+      buffer
+    });
 
-    cipher.encrypt(&mut zero_tail);
-    cipher.encrypt(&mut ones_tail);
-    assert!(
-      zero_tail[len..].iter().all(|&byte| byte == 0),
-      "encrypt writes the tail"
+    let encrypted = buffers.map(|mut buffer| {
+      cipher.encrypt(&mut buffer);
+      buffer
+    });
+    for (encrypted, tail) in encrypted.iter().zip(&tails) {
+      assert_eq!(
+        encrypted[len..],
+        tail[len..],
+        "encrypt changes the tail, {server_id_len}+{nonce_len}"
+      );
+    }
+    assert_eq!(
+      encrypted[0][..len],
+      encrypted[1][..len],
+      "encrypt reads the tail, {server_id_len}+{nonce_len}"
+    );
+
+    let decrypted = encrypted.map(|mut buffer| {
+      cipher.decrypt_server_id(&mut buffer);
+      buffer
+    });
+    assert_eq!(
+      decrypted[0], decrypted[1],
+      "decrypt reads the tail, {server_id_len}+{nonce_len}"
     );
     assert!(
-      ones_tail[len..].iter().all(|&byte| byte == 0xff),
-      "encrypt writes the tail"
-    );
-    assert_eq!(zero_tail[..len], ones_tail[..len], "encrypt reads the tail");
-
-    cipher.decrypt_server_id(&mut zero_tail);
-    cipher.decrypt_server_id(&mut ones_tail);
-    assert_eq!(zero_tail, ones_tail, "decrypt reads the tail");
-    assert!(
-      ones_tail[server_id_len..].iter().all(|&byte| byte == 0),
-      "decrypt leaves octets after the server ID"
+      decrypted[0][server_id_len..].iter().all(|&byte| byte == 0),
+      "decrypt leaves octets after the server ID, {server_id_len}+{nonce_len}"
     );
   }
 }
