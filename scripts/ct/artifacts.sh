@@ -263,6 +263,16 @@ fi
 objdump_args=(--disassemble --reloc --demangle)
 if [[ "$TARGET" == "s390x-unknown-linux-gnu" ]]; then
   objdump_args+=(--mattr=+vector)
+elif [[ "$TARGET" == riscv64* ]]; then
+  # Functions enable RISC-V extensions, such as V and Zknh, with `#[target_feature]`. llvm-objdump decodes only
+  # the extensions it is given, so give it every feature that the emitted LLVM IR enables.
+  riscv_features="$(sed -nE 's/.*"target-features"="([^"]*)".*/\1/p' "$ARTIFACT_DIR"/*.ll | tr ',' '\n' \
+    | sed -n '/^+/p' | sort -u | paste -sd, -)"
+  if [[ -z "$riscv_features" ]]; then
+    echo "the emitted LLVM IR names no RISC-V target feature" >&2
+    exit 1
+  fi
+  objdump_args+=("--mattr=$riscv_features")
 fi
 for obj in "${OBJECTS[@]}"; do
   base="$(basename "$obj")"
@@ -307,6 +317,8 @@ symbolizer_args=(
 )
 if [[ "$TARGET" == "s390x-unknown-linux-gnu" ]]; then
   symbolizer_args+=(--objdump-arg=--mattr=+vector)
+elif [[ "$TARGET" == riscv64* ]]; then
+  symbolizer_args+=("--objdump-arg=--mattr=$riscv_features")
 fi
 if [[ -f "$LINK_MAP" ]]; then
   symbolizer_args+=(--link-map "$LINK_MAP")

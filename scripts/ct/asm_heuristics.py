@@ -20,7 +20,11 @@ from linked_image import LinkedImage, load_linked_image
 from provenance import load_toml, sha256_file
 from symbolize_linked_binary import demangle_table
 
+# Arm Architecture Reference Manual (Arm ARM) C6.2: B.cond and BC.cond (FEAT_HBC) test the condition flags;
+# their AL and NV conditions branch always, so those forms are unconditional (DIRECT_TAIL_MNEMONICS).
+AARCH64_CONDITIONS = ("eq", "ne", "cs", "hs", "cc", "lo", "mi", "pl", "vs", "vc", "hi", "ls", "ge", "lt", "gt", "le")
 BRANCH_CONDS_AARCH64 = {
+  *(f"bc.{condition}" for condition in AARCH64_CONDITIONS),
   "b.eq",
   "b.ne",
   "b.cs",
@@ -42,7 +46,10 @@ BRANCH_CONDS_AARCH64 = {
   "tbz",
   "tbnz",
 }
+# Intel SDM Vol. 2: Jcc, JCXZ/JECXZ/JRCXZ, LOOPcc, and XBEGIN, which continues at its operand when the
+# transaction aborts.
 BRANCH_CONDS_X86 = {
+  "xbegin",
   "ja",
   "jae",
   "jb",
@@ -162,7 +169,14 @@ S390X_MUL_MNEMONICS = {
   "msy",
 }
 S390X_VECTOR_MUL_PREFIXES = ("vma", "vme", "vmh", "vml", "vmo")
+# z/Architecture Principles of Operation, chapter 7: BRANCH ON CONDITION to a register (`ber`) or to storage
+# (`be`), BRANCH ON COUNT, BRANCH ON INDEX, BRANCH RELATIVE ON COUNT HIGH, and the relative forms.
+S390X_BRANCH_CONDITIONS = ("o", "h", "nle", "l", "nhe", "lh", "ne", "e", "nlh", "he", "nl", "le", "nh", "no")
+S390X_BRANCH_REGISTER = {f"b{condition}r" for condition in S390X_BRANCH_CONDITIONS}
+S390X_BRANCH_STORAGE = {f"b{condition}" for condition in S390X_BRANCH_CONDITIONS}
 BRANCH_CONDS_S390X = {
+  *S390X_BRANCH_REGISTER, *S390X_BRANCH_STORAGE,
+  "bct", "bctg", "bctr", "bctgr", "brcth", "bxh", "bxhg", "bxle", "bxleg",
   "ber",
   "bher",
   "bhr",
@@ -198,37 +212,31 @@ BRANCH_CONDS_S390X = {
 DIRECT_CALL_MNEMONICS = {"bl", "brasl", "call", "callq", "jal"}
 # Optimized wrappers often tail-call production code without a link instruction.
 # Intra-function branches are removed by symbol identity when constructing edges.
-DIRECT_TAIL_MNEMONICS = {"b", "ba", "j", "jg", "jmp", "jmpq", "c.j"}
-INDIRECT_JUMP_MNEMONICS = {"br"}
-INDIRECT_CALL_MNEMONICS = {"blr", "jalr"}
+DIRECT_TAIL_MNEMONICS = {"b", "ba", "j", "jg", "jmp", "jmpq", "c.j", "b.al", "b.nv", "bc.al", "bc.nv"}
+# Jumps and calls through a register or memory: AArch64 BR and BLR with their pointer-authenticated forms
+# (Arm ARM C6.2), x86 far JMP and CALL (Intel SDM Vol. 2A), and RISC-V C.JALR.
+INDIRECT_JUMP_MNEMONICS = {"br", "braa", "brab", "braaz", "brabz", "ljmp", "ljmpl", "ljmpq", "ljmpw"}
+INDIRECT_CALL_MNEMONICS = {"blr", "blraa", "blrab", "blraaz", "blrabz", "jalr", "c.jalr", "lcall", "lcalll", "lcallq",
+                           "lcallw"}
 RESOLVED_RISCV_TRANSFERS = {"jalr", "c.jalr", "jr", "c.jr"}
 # s390x condition-code suffixes for relative jumps and compare-and-branch forms.
 S390X_CONDITION = r"(?:e|ne|h|nh|l|nl|lh|nlh|le|nle|he|nhe|o|no|p|np|m|nm|z|nz)"
 S390X_CONDITIONAL_JUMP = re.compile(rf"^(?:j|jg){S390X_CONDITION}$")
 S390X_COMPARE_AND_BRANCH = re.compile(rf"^cl?g?(?:r|i|f|fi|ih)?[jb]{S390X_CONDITION}$")
-POWER_BRANCH_CONDS = {
-  "bc",
-  "bdnz",
-  "bdnzf",
-  "bdnzt",
-  "bdz",
-  "bdzf",
-  "bdzt",
-  "beq",
-  "bf",
-  "bge",
-  "bgt",
-  "ble",
-  "blt",
-  "bne",
-  "bng",
-  "bnl",
-  "bns",
-  "bnu",
-  "bso",
-  "bt",
-  "bun",
-}
+# COMPARE AND TRAP, COMPARE LOGICAL AND TRAP, and LOAD AND TRAP (Principles of Operation, chapter 7): each
+# traps when its condition holds, so each is a conditional transfer.
+S390X_TRAP = re.compile(rf"^(?:(?:c|cg|cl|clg)(?:r|i|fi|t)?t|cgrt|clgrt|clfit|clgit)(?:{S390X_CONDITION})?$"
+                        r"|^(?:lat|lgat|lfhat|llgfat|llgtat)$")
+# BRANCH ON CONDITION with an explicit mask: 0 never branches (`nop`), 15 always does.
+S390X_MASKED_BRANCH = {"bc", "bcr"}
+# Power ISA 3.1 Book I, 2.4 "Branch Instructions", and Appendix C.2 "Branch Mnemonics": `b`, an optional
+# condition (`c` with explicit BO and BI fields, or an extended test), an optional register target (LR, CTR, or
+# TAR), an optional link bit, and an optional absolute-address bit. A `+` or `-` suffix is a prediction hint.
+# TRAP WORD and TRAP DOUBLEWORD (Power ISA 3.1 Book I, 3.3.11, and Appendix C.6): `tw TO, RA, RB`, `twi`, and the
+# extended forms such as `tweq` and `tdlgti`. `trap` and the `u` forms trap always.
+POWER_TRAP = re.compile(r"t[wd](?P<condition>lt|le|eq|ge|gt|nl|ne|ng|llt|lle|lge|lgt|lnl|lng|u)?i?")
+POWER_BRANCH = re.compile(r"b(?P<condition>c|t|f|dnzt|dnzf|dnz|dzt|dzf|dz|lt|le|eq|ge|gt|nl|ne|ng|so|ns|un|nu)?"
+                          r"(?P<register>lr|ctr|tar)?(?P<link>l)?(?P<absolute>a)?")
 CONTROL_FLOW_STOP_MNEMONICS = {
   "basr",
   "balr",
@@ -623,7 +631,8 @@ def attach_condition_identities(
     symbol = item["symbol"]
     if symbol not in analyses:
       analyses[symbol] = FunctionSlices(target, functions[symbol], image, local_symbols)
-    result = analyses[symbol].slice(item["line"])
+    analysis = analyses[symbol]
+    result = analysis.slice(item["line"], frozenset(analysis.index_by_line[line] for line in item.get("table_loads", ())))
     item["slice_sha256"] = condition_identity(result.canonical, result.reasons, item["function_sha256"])
     item["slice_open"] = bool(result.reasons)
     item["slice_leaves"] = result.leaves
@@ -803,11 +812,18 @@ def is_call_relocation(line: str) -> bool:
   return bool(re.search(r"\b(?:R_[A-Z0-9_]*(?:CALL(?:_PLT)?|PLT32)|ARM64_RELOC_BRANCH26|X86_64_RELOC_BRANCH)\b", line))
 
 
+# Targets whose conditional branch tables, together, name every conditional transfer mnemonic. The call graph does
+# not know a body's target, and a mnemonic that one ISA calls conditional transfers control on every ISA that has it.
+CONDITIONAL_TRANSFER_TARGETS = ("x86_64-", "riscv64", "powerpc64", "s390x-")
+
+
 def all_direct_callees(body: FunctionBody) -> set[str]:
   callees: set[str] = set()
   for index, (_, line) in enumerate(body.lines):
     inst = mnemonic(line)
-    if inst not in DIRECT_CALL_MNEMONICS | DIRECT_TAIL_MNEMONICS | RESOLVED_RISCV_TRANSFERS and not is_call_relocation(line):
+    conditional = inst is not None and any(is_conditional_branch(target, inst) for target in CONDITIONAL_TRANSFER_TARGETS)
+    if (inst not in DIRECT_CALL_MNEMONICS | DIRECT_TAIL_MNEMONICS | RESOLVED_RISCV_TRANSFERS and not conditional
+        and not is_call_relocation(line)):
       continue
     targets = direct_call_targets(line, body.symbol_names)
     if inst in DIRECT_CALL_MNEMONICS | DIRECT_TAIL_MNEMONICS and index + 1 < len(body.lines):
@@ -934,16 +950,60 @@ def is_s390x_return(target: str, inst: str, line: str) -> bool:
   return target.startswith("s390x-") and inst == "br" and re.search(r"\bbr\s+%r14\b", line.lower()) is not None
 
 
-def is_s390x_register_branch(target: str, inst: str) -> bool:
-  return target.startswith("s390x-") and inst == "br"
+# An x86 jump through a slot that the listing resolves to an import: `jmpq *0x10(%rip) # GOT 0x18f538 <free>`, a
+# Windows import-table slot `<__imp_free>`, or in an object listing the slot relocation that names the import.
+X86_RESOLVED_SLOT = re.compile(r"#\s+(?:GOT\s+0x[0-9a-fA-F]+\s+<[^>]+>|0x[0-9a-fA-F]+\s+<__imp_[^>]+>)\s*$")
+X86_SLOT_RELOCATION = re.compile(r"\s(?:R_X86_64_(?:REX_)?GOTPCRELX?|R_X86_64_GOTPCREL|IMAGE_REL_AMD64_REL32)\s+(?:__imp_)?\S+")
 
 
-def is_indirect_jump(target: str, inst: str) -> bool:
+def is_indirect_jump(target: str, inst: str, operands: str = "", relocation: str = "") -> bool:
+  """A jump through a register or memory: a jump table, or a tail transfer to a computed address."""
+  if target.startswith(("x86_64-", "i686-")):
+    if inst in {"jmp", "jmpq"} and operands.strip().startswith("*"):
+      slot = "(%rip)" in operands and (X86_SLOT_RELOCATION.search(relocation) is not None
+                                       and ("GOTPCREL" in relocation or "__imp_" in relocation))
+      return X86_RESOLVED_SLOT.search(operands) is None and not slot
+    return inst in INDIRECT_JUMP_MNEMONICS
+  if target.startswith("s390x-"):
+    # `br %r14` returns. z/Architecture Principles of Operation, chapter 7, BRANCH ON CONDITION: with R2 zero, BCR does
+    # not branch, so `br 0` (BCR 15,0), which serializes, and `br %r0` are no transfer.
+    return inst == "br" and operands.strip() not in {"%r14", "0", "%r0"}
+  if target.startswith("riscv"):
+    # `jr rs` and `c.jr rs` other than a return or a resolved tail transfer, such as a jump table.
+    return inst in {"jr", "c.jr"} and re.fullmatch(r"(?:0x0\()?ra\)?", operands.strip()) is None and "<" not in operands
+  if target.startswith(("powerpc", "ppc")):
+    # `bctr` and `bctar`: a jump through CTR or TAR, such as a jump table.
+    form = power_branch(inst)
+    return form is not None and form.group("register") in {"ctr", "tar"} and not form.group("link") \
+      and not form.group("condition")
   if inst not in INDIRECT_JUMP_MNEMONICS:
     return False
   if target.startswith("s390x-"):
     return False
   return True
+
+
+def x86_import_slot(target: str, image: LinkedImage | None, line: str) -> bool:
+  """Whether an x86 `jmpq *disp(%rip)` reads an import slot that the loader fills, such as a Windows IAT entry."""
+  match = re.search(r"\*(-?0x[0-9a-fA-F]+)\(%rip\)", line)
+  address = INSTRUCTION_ADDRESS.match(line)
+  if not target.startswith(("x86_64-", "i686-")) or image is None or match is None or address is None:
+    return False
+  encoded = line.split("\t")[0].split(":", 1)[1].split()
+  slot = image.slots.get(int(address.group(1), 16) + len(encoded) + int(match.group(1), 16))
+  return slot is not None and slot.symbol is not None
+
+
+def is_indirect_call(target: str, inst: str) -> bool:
+  if target.startswith("s390x-"):
+    # BRANCH AND SAVE and BRANCH AND LINK to a register or to storage.
+    return inst in {"basr", "balr", "bas", "bal"}
+  if target.startswith(("powerpc", "ppc")):
+    # `bctrl`, `blrl`, and `bctarl`. A POWER `blr` is a return.
+    form = power_branch(inst)
+    return form is not None and form.group("register") is not None and bool(form.group("link")) \
+      and not form.group("condition")
+  return inst in INDIRECT_CALL_MNEMONICS
 
 
 def is_mlkem_scope(primitive_ids: list[str]) -> bool:
@@ -1004,8 +1064,10 @@ def is_target_division_review(target: str, inst: str) -> bool:
 def is_s390x_conditional_branch(target: str, inst: str) -> bool:
   return target.startswith("s390x-") and (
     inst in BRANCH_CONDS_S390X
+    or inst in S390X_MASKED_BRANCH
     or S390X_CONDITIONAL_JUMP.match(inst) is not None
     or S390X_COMPARE_AND_BRANCH.match(inst) is not None
+    or S390X_TRAP.match(inst) is not None
   )
 
 
@@ -1013,8 +1075,20 @@ def is_riscv_conditional_branch(target: str, inst: str) -> bool:
   return target.startswith(("riscv32", "riscv64")) and inst in RISCV_BRANCH_CONDS
 
 
+def power_branch(inst: str) -> re.Match[str] | None:
+  """The parts of a POWER branch mnemonic (`POWER_BRANCH`), or None for another instruction."""
+  return POWER_BRANCH.fullmatch(inst.rstrip("+-"))
+
+
 def is_power_conditional_branch(target: str, inst: str) -> bool:
-  return target.startswith(("powerpc", "ppc")) and inst.rstrip("+-") in POWER_BRANCH_CONDS
+  """A conditional POWER transfer: a branch to a label, a return (`bclr`, `beqlr`), a jump through CTR, a call
+  (`bcl`), or a trap (`tweq`)."""
+  if not target.startswith(("powerpc", "ppc")):
+    return False
+  form = power_branch(inst)
+  trap = POWER_TRAP.fullmatch(inst)
+  return (form is not None and form.group("condition") is not None) or (
+    trap is not None and trap.group("condition") != "u")
 
 
 def is_conditional_branch(target: str, inst: str) -> bool:
@@ -1085,7 +1159,7 @@ def select_branch_arm(
       is_conditional_branch(target, instruction.mnemonic)
       or instruction.mnemonic in DIRECT_TAIL_MNEMONICS
       or instruction.mnemonic in DIRECT_CALL_MNEMONICS
-      or instruction.mnemonic in INDIRECT_CALL_MNEMONICS
+      or is_indirect_call(target, instruction.mnemonic)
       or instruction.mnemonic in CONTROL_FLOW_STOP_MNEMONICS
     )
 
@@ -1240,6 +1314,10 @@ RISCV_ADDI = re.compile(rf"^(?P<dst>\w+), (?P<src>\w+), (?P<imm>{SIGNED_IMMEDIAT
 RISCV_MOVE = re.compile(r"^(?P<dst>\w+), (?P<src>\w+)$")
 RISCV_MEMORY = re.compile(rf"(?P<imm>{SIGNED_IMMEDIATE})?\((?P<base>\w+)\)")
 RISCV_STORES = {"sb", "sh", "sw", "sd", "fsw", "fsd", "c.sw", "c.sd", "c.fsd", "c.swsp", "c.sdsp"}
+# JAL and JALR write the return address to rd (RISC-V Unprivileged ISA, "Control Transfer Instructions").
+# The disassembler prints the forms with rd = zero as `j`, `jr`, or `ret`, so each `jal` or `jalr` that it
+# prints links a register: a call, such as `jalr a1` for `jalr ra, 0(a1)`.
+RISCV_CALLS = {"jal", "c.jal", "jalr", "c.jalr"}
 POWER_ADD_IMMEDIATE = re.compile(rf"^(?P<dst>\d+), (?P<src>\d+), (?P<imm>{SIGNED_IMMEDIATE})$")
 POWER_DISPLACEMENT = re.compile(rf"^(?P<reg>\d+), (?P<imm>{SIGNED_IMMEDIATE})\((?P<base>\d+)\)$")
 # D-form and DS-form loads and stores, with the bytes each accesses.
@@ -1305,12 +1383,17 @@ def code_target_descriptor(image: LinkedImage, body: FunctionBody, target_addres
   return f"{descriptor}#{contents.hex()}" if contents is not None else descriptor
 
 
-def describe_reference(image: LinkedImage, body: FunctionBody, target_address: int, width: int = 0) -> str | None:
-  """Describe a resolved reference that reads `width` bytes, or 0 for an address that is only formed."""
-  sink = getattr(image, "reference_sink", None)
-  if sink is not None:
-    sink.add(target_address)
-    return "reference"
+def describe_reference(image: LinkedImage, body: FunctionBody, target_address: int, width: int = 0,
+                       paired: int = 0) -> str | None:
+  """Describe a resolved reference that reads `width` bytes, or 0 for an address that is only formed.
+
+  `paired` is the byte length that a call receives with a formed address (`paired_extents`). It is the read extent
+  only when it fits inside the object at the address: a larger value is not a byte length, such as the
+  `len << 1 | 1` of a `fmt::Arguments` literal, and the reference then binds its whole object.
+  """
+  if not width and paired and (region := image.region(target_address)) is not None and \
+      target_address + paired <= region[1]:
+    width = paired
   descriptor = image.describe(target_address, minimum_end=target_address + width if width else 0)
   if descriptor is not None and descriptor.startswith("code:"):
     descriptor = code_target_descriptor(image, body, target_address, descriptor)
@@ -1318,30 +1401,25 @@ def describe_reference(image: LinkedImage, body: FunctionBody, target_address: i
 
 
 def prepare_linked_image(target: str, functions: dict[str, FunctionBody], image: LinkedImage) -> None:
-  """Give the image its function ranges and the member starts of its global-merge units.
+  """Give the image its function ranges and the argument summaries of its functions.
 
-  A member starts at every address that some function forms into a global-merge
-  unit, so the image resolves the references of every function once before any
-  descriptor is made.
+  Whether a global-merge base, an index constant, or a frame address reaches a callee depends on the
+  argument registers that the callee reads (`condition_slice.argument_reads`).
   """
+  from condition_slice import argument_reads
+
   image.set_functions(function_ranges(functions))
-  if not image.merged_unit_count():
-    return
-  sink: set[int] = set()
-  image.reference_sink = sink
-  try:
-    for body in functions.values():
-      address_reference_identities(target, body, image)
-  finally:
-    image.reference_sink = None
-  image.add_member_starts(sink)
+  image.argument_reads = argument_reads(target, functions, image)
 
 
 def local_branch_targets(body: FunctionBody) -> set[int]:
   return {instruction.local_target for instruction in parse_instructions(body) if instruction.local_target is not None}
 
 
-def x86_reference_identities(rows: list[DecodedLine], body: FunctionBody, image: LinkedImage) -> dict[int, str]:
+def x86_reference_identities(rows: list[DecodedLine], body: FunctionBody, image: LinkedImage,
+                             extents: dict[int, int]) -> dict[int, str]:
+  from condition_slice import x86_memory
+
   identities = {}
   for row in rows:
     matches = list(X86_RIP_OPERAND.finditer(row.operands))
@@ -1352,7 +1430,9 @@ def x86_reference_identities(rows: list[DecodedLine], body: FunctionBody, image:
     annotated = re.match(r"(?:GOT\s+)?0x([0-9a-fA-F]+)", row.comment)
     if annotated is not None and int(annotated.group(1), 16) != target_address:
       continue
-    if (descriptor := describe_reference(image, body, target_address)) is None:
+    # An access reads its operand width; `leaq` forms an address, whose extent a paired length can give.
+    width = next((access.width or 0 for access in x86_memory(row).accesses), 0)
+    if (descriptor := describe_reference(image, body, target_address, width, extents.get(row.number, 0))) is None:
       continue
     operands = f"{row.operands[: match.start()]}<{descriptor}>(%rip){row.operands[match.end() :]}"
     identities[row.number] = reference_identity(row, operands)
@@ -1363,14 +1443,21 @@ def is_return_or_trap(target: str, row: DecodedLine) -> bool:
   """Whether control leaves the function or stops at `row` without a local successor."""
   mnemonic = row.mnemonic
   if target.startswith(("x86_64-", "i686-")):
-    return mnemonic in {"ret", "retq", "retl", "ud2", "int3", "hlt"}
+    # Near and far returns, interrupt and system returns, and traps (Intel SDM Vol. 2).
+    return mnemonic in {"ret", "retq", "retl", "lret", "lretl", "lretq", "lretw", "iret", "iretl", "iretq", "iretw",
+                        "sysret", "sysretl", "sysretq", "sysexit", "sysexitl", "sysexitq", "ud0", "ud1", "ud2", "int3",
+                        "int1", "hlt"}
   if target.startswith("aarch64-"):
-    return mnemonic in {"ret", "retaa", "retab", "brk", "udf", "hlt"}
+    return mnemonic in {"ret", "retaa", "retab", "eret", "eretaa", "eretab", "brk", "udf", "hlt"}
   if target.startswith("riscv64"):
     return mnemonic in {"ret", "ebreak", "c.ebreak", "unimp", "c.unimp"} or (
       mnemonic in {"jr", "c.jr"} and re.fullmatch(r"(?:0x0\()?ra\)?", row.operands.strip()) is not None)
   if target.startswith(("powerpc64", "ppc64")):
-    return mnemonic.rstrip("+-") in {"blr", "trap"}
+    form = power_branch(mnemonic)
+    unconditional_return = form is not None and form.group("register") == "lr" and not form.group("link") \
+      and not form.group("condition")
+    trap = POWER_TRAP.fullmatch(mnemonic)
+    return unconditional_return or mnemonic == "trap" or (trap is not None and trap.group("condition") == "u")
   if target.startswith("s390x-"):
     return (mnemonic == "br" and row.operands.strip() == "%r14") or mnemonic == "j" and row.operands.strip() == "0x0"
   return False
@@ -1380,16 +1467,34 @@ def is_register_jump(target: str, row: DecodedLine) -> bool:
   """Whether `row` jumps to a register target, such as a jump table entry."""
   mnemonic = row.mnemonic
   if target.startswith(("x86_64-", "i686-")):
-    return mnemonic in {"jmp", "jmpq"} and "*" in row.operands
+    # A far jump, and XABORT, which continues at the abort path of the enclosing XBEGIN.
+    return (mnemonic in {"jmp", "jmpq"} and "*" in row.operands) or mnemonic in INDIRECT_JUMP_MNEMONICS \
+      or mnemonic == "xabort"
   if target.startswith("aarch64-"):
-    return mnemonic in {"br", "braa", "brab"}
+    return mnemonic in {"br", "braa", "brab", "braaz", "brabz"}
   if target.startswith("riscv64"):
     return mnemonic in {"jr", "c.jr"} and not is_return_or_trap(target, row) and "<" not in row.operands
   if target.startswith(("powerpc64", "ppc64")):
-    return mnemonic.rstrip("+-") == "bctr"
+    # A jump through CTR or TAR, also a conditional one such as `bcctr`.
+    form = power_branch(mnemonic)
+    return form is not None and form.group("register") in {"ctr", "tar"} and not form.group("link")
   if target.startswith("s390x-"):
-    return mnemonic in {"br", "bcr"} and not is_return_or_trap(target, row)
+    # BRANCH ON CONDITION or ON COUNT to a register or to storage (Principles of Operation, chapter 7). With R2 zero,
+    # the register forms do not branch: `br 0` (BCR 15,0) serializes, and BCTR only counts. `bcr 0` never branches,
+    # and a conditional branch to r14 is a conditional return.
+    if is_return_or_trap(target, row):
+      return False
+    operands = split_register_operands(row.operands)
+    if mnemonic in S390X_BRANCH_REGISTER | {"br", "bcr", "bctr", "bctgr"}:
+      if operands[-1:] in (["%r0"], ["0"]) or (mnemonic == "bcr" and operands[:1] == ["0"]):
+        return False
+      return not (mnemonic in S390X_BRANCH_REGISTER and operands[-1:] == ["%r14"])
+    return mnemonic in S390X_BRANCH_STORAGE | {"b", "bc", "bct", "bctg"} and "(" in row.operands
   return False
+
+
+def split_register_operands(operands: str) -> list[str]:
+  return [part.strip() for part in re.sub(r"\s+<.*>$", "", operands).split(",") if part.strip()]
 
 
 def row_successors(target: str, body: FunctionBody, rows: list[DecodedLine]) -> list[list[int] | None]:
@@ -1434,6 +1539,7 @@ def page_pair_identities(
   consumer: Any,
   classify: Any,
   page_name: str,
+  extents: dict[int, int],
   defer_merged: bool = False,
 ) -> dict[int, str]:
   """Resolve two-instruction address formation such as `adrp` or `auipc` pairs.
@@ -1499,12 +1605,9 @@ def page_pair_identities(
           descriptor = f"merged-base@{target_address:x}"
         elif unit is not None and unit[0] == target_address:
           derived, consumed = resolve(position, formed, target_address, True)
-          if getattr(image, "reference_sink", None) is not None:
-            descriptor = describe_reference(image, body, target_address)
-          else:
-            descriptor = "merged-base" if derived and consumed else image.describe_unit(target_address)
+          descriptor = "merged-base" if derived and consumed else image.describe_unit(target_address)
         else:
-          descriptor = describe_reference(image, body, target_address, width)
+          descriptor = describe_reference(image, body, target_address, width, extents.get(following.number, 0))
         if descriptor is None:
           break
         # A consumer may name the encoded instruction when the disassembler printed an alias.
@@ -1548,7 +1651,7 @@ def aarch64_access_width(row: DecodedLine) -> int:
 
 
 def aarch64_reference_identities(
-  target: str, rows: list[DecodedLine], body: FunctionBody, image: LinkedImage,
+  target: str, rows: list[DecodedLine], body: FunctionBody, image: LinkedImage, extents: dict[int, int],
 ) -> dict[int, str]:
   identities = {}
   for row in rows:
@@ -1556,7 +1659,8 @@ def aarch64_reference_identities(
     if match is None or "[" in row.operands:
       continue
     if row.mnemonic == "adr" or row.mnemonic in {"ldr", "ldrsw", "prfm"}:
-      if (descriptor := describe_reference(image, body, int(match.group("address"), 16))) is not None:
+      width, paired = (0, extents.get(row.number, 0)) if row.mnemonic == "adr" else (aarch64_access_width(row), 0)
+      if (descriptor := describe_reference(image, body, int(match.group("address"), 16), width, paired)) is not None:
         identities[row.number] = reference_identity(row, f"{match.group('reg')}, <{descriptor}>")
 
   def base(row: DecodedLine) -> tuple[str, int] | None:
@@ -1599,24 +1703,24 @@ def aarch64_reference_identities(
       return "read"
     index = int(value)
     if row.mnemonic in {"bl", "blr", "blraa", "blrab"}:
-      # x0-x8 carry arguments, x9-x18 are clobbered, and x19-x28 survive.
-      return "read" if index <= 8 else ("dead" if index <= 18 else None)
+      # The callee reads the argument registers of its summary; x0-x18 are clobbered, and x19-x28 survive.
+      return "read" if f"x{index}" in transfer_reads(target, image, row) else ("dead" if index <= 18 else None)
     if row.mnemonic in {"ret", "retaa", "retab"}:
       return "read" if index <= 7 else "dead"
     if row.mnemonic in {"br", "braa", "brab"}:
       return "read"
     if row.mnemonic == "b" and re.search(rf"<_?{re.escape(body.symbol)}(?:\+|>)", row.operands) is None:
-      # A tail transfer leaves the function; only argument registers stay live.
-      return "read" if index <= 8 or index >= 19 else "dead"
+      # A tail transfer leaves the function: its destination reads its arguments, and our caller x19-x28.
+      return "read" if f"x{index}" in transfer_reads(target, image, row) or index >= 19 else "dead"
     return "dead" if written else None
 
   identities.update(page_pair_identities(target, rows, body, image, base=base,
-                                         consumer=consumer, classify=classify, page_name="page"))
+                                         consumer=consumer, classify=classify, page_name="page", extents=extents))
   return identities
 
 
 def riscv_reference_identities(
-  target: str, rows: list[DecodedLine], body: FunctionBody, image: LinkedImage,
+  target: str, rows: list[DecodedLine], body: FunctionBody, image: LinkedImage, extents: dict[int, int],
 ) -> dict[int, str]:
   def base(row: DecodedLine) -> tuple[str, int] | None:
     match = re.fullmatch(r"(\w+), 0x([0-9a-fA-F]+)", row.operands) if row.mnemonic == "auipc" else None
@@ -1651,35 +1755,38 @@ def riscv_reference_identities(
   def classify(row: DecodedLine, register: str, consumed: bool) -> str | None:
     operands = without_annotation(row.operands)
     tokens = RISCV_REGISTER.findall(operands)
-    indirect_form = re.match(rf"(?:{SIGNED_IMMEDIATE})?\(", operands) is not None
     if row.mnemonic in RISCV_STORES or row.mnemonic.startswith(("b", "c.b")) or row.mnemonic in {"j", "c.j", "jr", "c.jr", "ret"}:
       written, read = False, register in tokens
-    elif row.mnemonic in {"jalr", "c.jalr"} and indirect_form:
-      written, read = register == "ra", register in tokens
+    elif row.mnemonic in {"jalr", "c.jalr"}:
+      # `jalr rs` and `jalr 8(rs)` link ra; `jalr rd, rs` and `jalr rd, 8(rs)` link rd. The last register is the target.
+      written, read = register == (tokens[0] if len(tokens) == 2 else "ra"), register in tokens[-1:]
     else:
       written, read = bool(tokens) and tokens[0] == register, register in tokens[1:]
     if read and not consumed:
       return "read"
-    is_call = row.mnemonic in {"jal", "c.jal"} or (row.mnemonic in {"jalr", "c.jalr"} and (indirect_form or tokens[:1] == ["ra"]))
-    if is_call:
+    if row.mnemonic in RISCV_CALLS:
       if consumed or written:
         return "dead"
-      # a0-a7 carry arguments, s-registers survive, and temporaries are clobbered.
-      if re.fullmatch(r"a[0-7]|sp|gp|tp", register):
+      # The callee reads the argument registers of its summary, s-registers survive, and temporaries are clobbered.
+      if register in transfer_reads(target, image, row) or register in {"sp", "gp", "tp"}:
         return "read"
       return None if re.fullmatch(r"s\d+|fp", register) else "dead"
     if row.mnemonic in {"ret", "jr", "c.jr"}:
       if row.mnemonic != "ret" and tokens != ["ra"] and "<" not in row.operands:
         return "read"
       return "read" if register in {"a0", "a1"} else "dead"
+    if row.mnemonic in {"j", "c.j"} and re.search(rf"<{re.escape(body.symbol)}(?:\+|>)", row.operands) is None:
+      # A tail transfer leaves the function: its destination reads its arguments, and our caller the s-registers.
+      return "read" if register in transfer_reads(target, image, row) or re.fullmatch(r"s\d+|fp|sp|gp|tp", register) \
+        else "dead"
     return "dead" if written else None
 
   return page_pair_identities(target, rows, body, image, base=base, consumer=consumer,
-                              classify=classify, page_name="high")
+                              classify=classify, page_name="high", extents=extents)
 
 
 def power_reference_identities(
-  target: str, rows: list[DecodedLine], body: FunctionBody, image: LinkedImage,
+  target: str, rows: list[DecodedLine], body: FunctionBody, image: LinkedImage, extents: dict[int, int],
 ) -> dict[int, str]:
   toc = image.toc_base
   if toc is None:
@@ -1714,7 +1821,7 @@ def power_reference_identities(
     unit = image.merged_unit(single[0]) if single[2] is not None else None
     if unit is not None and unit[0] == single[0]:
       identities[row.number] = reference_identity(row, single[1](f"merged-base@{single[0]:x}"))
-    elif (descriptor := describe_reference(image, body, single[0], single[3])) is not None:
+    elif (descriptor := describe_reference(image, body, single[0], single[3], extents.get(row.number, 0))) is not None:
       identities[row.number] = reference_identity(row, single[1](descriptor))
 
   def base(row: DecodedLine) -> tuple[str, int] | None:
@@ -1746,9 +1853,9 @@ def power_reference_identities(
     return None
 
   identities.update(page_pair_identities(target, rows, body, image, base=base, consumer=consumer,
-                                         classify=classify, page_name="toc-high", defer_merged=True))
+                                         classify=classify, page_name="toc-high", extents=extents, defer_merged=True))
   if image.merged_unit_count():
-    identities.update(power_member_identities(target, rows, body, image, identities))
+    identities.update(power_member_identities(target, rows, body, image, identities, extents))
   return identities
 
 
@@ -1764,10 +1871,14 @@ MERGED_BASE = re.compile(r"merged-base@([0-9a-f]+)")
 
 # POWER instructions with implicit general-register operands: load and store multiple, string moves, `sc`.
 POWER_IMPLICIT_REGISTERS = {"lmw", "stmw", "lswi", "lswx", "stswi", "stswx", "sc", "scv"}
+# Returns: `blr`, the conditional `bclr`, and the extended forms such as `beqlr` and `bdnzlr`. ELFv2 returns values in
+# r3 and r4.
+POWER_RETURN = re.compile(r"b(?:c|t|f|dnz|dz|dnzt|dnzf|dzt|dzf|eq|ne|lt|gt|le|ge|so|ns|un|nu|ng|nl)?lr")
 
 
 def power_member_identities(
   target: str, rows: list[DecodedLine], body: FunctionBody, image: LinkedImage, identities: dict[int, str],
+  extents: dict[int, int],
 ) -> dict[int, str]:
   """Describe POWER references to global-merge members by forward dataflow.
 
@@ -1788,14 +1899,22 @@ def power_member_identities(
   function alone; a store to the frame at an unknown offset drops tracked slots
   and escapes their bases. An access through an `A` value with an unknown index
   also escapes its unit.
+
+  Values also leave the function. A direct call passes on the argument registers
+  that its destination reads (`transfer_reads`), and so does a tail transfer. A
+  return passes r3 and r4, and an indirect jump, such as a jump table, passes every
+  register: rows that only it reaches are outside the dataflow, so a base that they
+  form escapes.
   Returns replacement identities, including the settled `merged-base` placeholders.
   """
-  from condition_slice import power_effects
+  from condition_slice import argument_registers, leaves_function, power_effects
 
   toc = image.toc_base
   successors = row_successors(target, body, rows)
   value_forms = {"li", "lis", "addi", "addis", "mr", "add", "ld"}
   number = re.compile(r"(?<![\w.])-?\d+(?![\w.])")
+  arguments = set(argument_registers(target))
+  end = max((row.address + row.length for row in rows), default=body.address)
 
   def gpr(text: str) -> str | None:
     return None if text == "0" else f"r{text}"
@@ -1803,15 +1922,23 @@ def power_member_identities(
   def numbers_of(row: DecodedLine) -> list[str]:
     return number.findall(re.sub(r"\s+<.*>$", "", row.operands))
 
-  def row_effect(row: DecodedLine) -> tuple[set[str], set[str], bool]:
-    """(uses, defs, all registers) for one row."""
+  def row_effect(index: int) -> tuple[set[str], set[str], bool]:
+    """(uses, defs, all registers) for one row, with the registers that it passes out of the function."""
+    row = rows[index]
     effect = power_effects(row, identities.get(row.number, ""))
-    if not effect.unknown:
-      return set(effect.uses), set(effect.defs), False
-    if row.mnemonic.rstrip(".") in POWER_IMPLICIT_REGISTERS:
-      return set(), set(), True
-    named = {f"r{text}" for text in numbers_of(row)}
-    return named, named, False
+    if successors[index] is None or row.mnemonic.rstrip(".") in POWER_IMPLICIT_REGISTERS:
+      return set(), set(effect.defs), True
+    if POWER_RETURN.fullmatch(row.mnemonic.rstrip("+-")):
+      return {"r3", "r4"}, set(), False
+    if effect.unknown:
+      named = {f"r{text}" for text in numbers_of(row)}
+      return named, named, False
+    uses = set(effect.uses)
+    if row.mnemonic in {"bl", "bla"}:
+      uses = (uses - arguments) | transfer_reads(target, image, row)
+    elif leaves_function(target, body, end, row, successors[index], effect):
+      uses |= transfer_reads(target, image, row)
+    return uses, set(effect.defs), False
 
   def raw(value: tuple | None) -> bool:
     return value is not None and value[0] == "A" and value[1] == value[2]
@@ -1881,7 +2008,7 @@ def power_member_identities(
     row = rows[index]
     after = dict(state)
     lost: set[int] = set()
-    uses, defs, everything = row_effect(row)
+    uses, defs, everything = row_effect(index)
     slots = {key: value for key, value in state.items() if key.startswith("s")}
     if everything:
       return {"r2": ("T", toc)}, {value[1] for value in state.values() if value[0] == "A"}
@@ -1940,8 +2067,10 @@ def power_member_identities(
   for index, row in enumerate(rows):
     state = states[index]
     if state is None:
+      # Only an indirect jump reaches this row; a base that it forms can reach any member.
+      escaped.update(int(address, 16) for address in MERGED_BASE.findall(identities.get(row.number, "")))
       continue
-    uses, _defs, everything = row_effect(row)
+    uses, _defs, everything = row_effect(index)
     value = produced(index, state)
     numbers = numbers_of(row)
     plain = row.mnemonic
@@ -2001,7 +2130,7 @@ def power_member_identities(
       escaped.update(tracked[1] for tracked in pointers.values() if raw(tracked))
     if resolved is not None:
       address, render, used_constants, width = resolved
-      descriptor = describe_reference(image, body, address, width)
+      descriptor = describe_reference(image, body, address, width, extents.get(row.number, 0))
       if descriptor is None:
         escaped.update(tracked[1] for tracked in pointers.values())
       else:
@@ -2030,6 +2159,13 @@ def power_member_identities(
   return replacements
 
 
+def transfer_reads(target: str, image: LinkedImage, row: DecodedLine) -> frozenset[str]:
+  """The argument registers that a call or a transfer out of the function at `row` can pass on."""
+  from condition_slice import destination_reads
+
+  return destination_reads(target, image, image.argument_reads, row)
+
+
 def executed_instruction_descriptor(image: LinkedImage, address: int) -> str | None:
   """Describe the IBM Z instruction that `exrl` executes by its own bytes.
 
@@ -2044,7 +2180,8 @@ def executed_instruction_descriptor(image: LinkedImage, address: int) -> str | N
   return f"exec:{contents.hex()}" if contents is not None else None
 
 
-def s390x_reference_identities(rows: list[DecodedLine], body: FunctionBody, image: LinkedImage) -> dict[int, str]:
+def s390x_reference_identities(rows: list[DecodedLine], body: FunctionBody, image: LinkedImage,
+                               extents: dict[int, int]) -> dict[int, str]:
   identities = {}
   for row in rows:
     if row.mnemonic not in S390X_RELATIVE_LONG or row.length != 6:
@@ -2061,10 +2198,80 @@ def s390x_reference_identities(rows: list[DecodedLine], body: FunctionBody, imag
     if row.mnemonic == "exrl":
       descriptor = executed_instruction_descriptor(image, target_address)
     else:
-      descriptor = describe_reference(image, body, target_address)
+      descriptor = describe_reference(image, body, target_address, paired=extents.get(row.number, 0)
+                                      if row.mnemonic == "larl" else 0)
     if descriptor is not None:
       identities[row.number] = reference_identity(row, f"{match.group(1)}, <{descriptor}>")
   return identities
+
+
+def paired_extents(target: str, body: FunctionBody, rows: list[DecodedLine], image: LinkedImage) -> dict[int, int]:
+  """The byte lengths that calls receive with formed addresses, by the line number of the row that forms each address.
+
+  A `&str` or `&[u8]` argument is a pointer and a length in consecutive argument registers. When the length is an
+  immediate, it is the extent that the callee reads from the address, such as `add x0, x0, #0xc8c` and
+  `mov w1, #0x13d` before `bl core::panicking::panic`. Both registers are defined in the straight-line code before
+  the call. The callee's IR must declare the pair as a byte slice (`byte_slice_positions`): a length of other
+  elements, such as the `usize` of `fn(*const u64, usize)`, is not a byte extent.
+  """
+  from condition_slice import argument_registers, destination, immediate_move, isa_effects
+
+  model = isa_effects(target)
+  # AArch64 x8 is the address of a returned aggregate, not the next integer argument.
+  arguments = [register for register in argument_registers(target) if not (target.startswith("aarch64-")
+                                                                           and register == "x8")]
+  labels = local_branch_targets(body)
+  successors = row_successors(target, body, rows)
+  extents = {}
+  for index, row in enumerate(rows):
+    if not model(row, "").call:
+      continue
+    # Every IR form of the callee, a definition and the declarations of other modules, must agree.
+    signatures = image.parameters.get(destination(target, image, row) or "", frozenset())
+    positions = set.intersection(*(byte_slice_positions(target, parameters) for parameters in signatures)) \
+      if signatures else set()
+    if not positions:
+      continue
+    last: dict[str, int] = {}
+    position = index - 1
+    while position >= 0 and successors[position] == [position + 1]:
+      for register in model(rows[position], "").defs:
+        last.setdefault(register, position)
+      if rows[position].offset in labels:
+        break
+      position -= 1
+    for pair, (pointer, length) in enumerate(zip(arguments, arguments[1:])):
+      if pair in positions and pointer in last and length in last \
+          and (value := immediate_move(rows[last[length]])) is not None and value > 0:
+        extents[rows[last[pointer]].number] = value
+  return extents
+
+
+# The IR parameter types that one integer argument register carries on every lane.
+IR_REGISTER_TYPES = {"ptr", "i64", "i32", "i16", "i8", "i1"}
+
+
+def byte_slice_positions(target: str, parameters: tuple[str, ...]) -> set[int]:
+  """The argument-register positions of a function whose IR parameter there is a `&[u8]` or `&str` pointer and whose
+  next parameter is its `usize` length.
+
+  rustc gives such a pointer `noalias nonnull` and no `align` (its elements are bytes) and no `dereferenceable` (it
+  has no fixed size), as in `core::panicking::panic(ptr noalias nofree noundef nonnull readonly
+  captures(address, read_provenance) %0, i64 noundef range(i64 32, 143) %1, ...)` (nightly-2026-10-24). Another
+  slice has `align N`, a raw pointer has no `noalias nonnull`, and `fmt::Arguments` is two pointers. Each parameter
+  up to the pair must take one integer register; an AArch64 `sret` pointer goes in x8 instead (AAPCS64 6.9).
+  """
+  registers = []
+  for parameter in parameters:
+    kind, _, attributes = parameter.partition(" ")
+    if kind not in IR_REGISTER_TYPES:
+      break
+    if not (target.startswith("aarch64-") and re.search(r"\bsret\b", attributes)):
+      registers.append((kind, attributes))
+  return {position for position, ((kind, attributes), (length, _)) in enumerate(zip(registers, registers[1:]))
+          if kind == "ptr" and length == "i64" and re.search(r"\bnoalias\b", attributes)
+          and re.search(r"\bnonnull\b", attributes) and re.search(r"\b(?:align|dereferenceable(?:_or_null)?)\b",
+                                                                   attributes) is None}
 
 
 def address_reference_identities(target: str, body: FunctionBody, image: LinkedImage | None) -> dict[int, str]:
@@ -2072,16 +2279,17 @@ def address_reference_identities(target: str, body: FunctionBody, image: LinkedI
   if image is None:
     return {}
   rows = decode_lines(body)
+  extents = paired_extents(target, body, rows, image)
   if target.startswith(("x86_64-", "i686-")):
-    return x86_reference_identities(rows, body, image)
+    return x86_reference_identities(rows, body, image, extents)
   if target.startswith("aarch64-"):
-    return aarch64_reference_identities(target, rows, body, image)
+    return aarch64_reference_identities(target, rows, body, image, extents)
   if target.startswith("riscv64"):
-    return riscv_reference_identities(target, rows, body, image)
+    return riscv_reference_identities(target, rows, body, image, extents)
   if target.startswith(("powerpc64", "ppc64")):
-    return power_reference_identities(target, rows, body, image)
+    return power_reference_identities(target, rows, body, image, extents)
   if target.startswith("s390x-"):
-    return s390x_reference_identities(rows, body, image)
+    return s390x_reference_identities(rows, body, image, extents)
   return {}
 
 
@@ -2124,6 +2332,8 @@ def scan_symbol(
   findings: list[dict[str, Any]] = []
   instructions = parse_instructions(body)
   index_by_offset = {instruction.offset: position for position, instruction in enumerate(instructions)}
+  # The slice analysis that classifies indirect jumps, made at the first one.
+  tables = None
   for line_index, (line_number, line) in enumerate(body.lines):
     inst = mnemonic(line)
     if not inst:
@@ -2297,37 +2507,24 @@ def scan_symbol(
       )
     elif is_s390x_return(target, inst, line):
       continue
-    elif is_s390x_register_branch(target, inst):
-      findings.append(
-        finding(
-          symbol,
-          body.path,
-          line_number,
-          line,
-          "register_branch",
-          "warn",
-          "s390x register branch found inside a CT harness symbol. "
-          "It may be public jump-table control flow, but needs review.",
-          scope=scope,
-          primitive_ids=primitive_ids,
-          roots=roots,
-        )
-      )
-    elif is_indirect_jump(target, inst):
-      findings.append(
-        finding(
-          symbol,
-          body.path,
-          line_number,
-          line,
-          "indirect_jump",
-          "fail",
-          "Indirect jump inside a CT harness symbol can hide secret-dependent control flow.",
-          scope=scope,
-          primitive_ids=primitive_ids,
-          roots=roots,
-        )
-      )
+    elif is_indirect_jump(target, inst, line.split("\t")[-1] if line.count("\t") >= 2 else "",
+                          body.lines[line_index + 1][1] if line_index + 1 < len(body.lines) else "") \
+        and not x86_import_slot(target, image, line):
+      if tables is None:
+        from condition_slice import FunctionSlices
+        tables = FunctionSlices(target, body, image, local_symbols)
+      loads = tables.table_loads(line_number)
+      if loads is None:
+        findings.append(finding(symbol, body.path, line_number, line, "indirect_jump", "fail",
+                                "Indirect jump whose target is not a read-only table entry selected by an index. "
+                                "It can hide secret-dependent control flow.",
+                                scope=scope, primitive_ids=primitive_ids, roots=roots))
+      else:
+        findings.append(finding(symbol, body.path, line_number, line, "conditional_branch", "warn",
+                                "Jump table: a multi-way branch on the index that selects a read-only table entry. "
+                                "Its condition slice holds that index.",
+                                scope=scope, primitive_ids=primitive_ids, roots=roots))
+        findings[-1]["table_loads"] = sorted(tables.rows[index].number for index in loads)
     elif is_conditional_branch(target, inst):
       address = INSTRUCTION_ADDRESS.match(line)
       position = index_by_offset.get(int(address.group(1), 16) - body.address) if address else None
@@ -2384,7 +2581,7 @@ def scan_symbol(
           roots=roots,
         )
       )
-    elif inst == "jalr":
+    elif inst in {"jalr", "c.jalr"}:
       relocation_window = [previous_line for _, previous_line in body.lines[max(0, line_index - 2) : line_index]]
       if any("R_RISCV_CALL" in previous_line for previous_line in relocation_window):
         continue
@@ -2402,7 +2599,7 @@ def scan_symbol(
           roots=roots,
         )
       )
-    elif inst in INDIRECT_CALL_MNEMONICS:
+    elif is_indirect_call(target, inst):
       findings.append(
         finding(
           symbol,
@@ -2521,7 +2718,6 @@ def grouped_findings(findings: list[dict[str, Any]]) -> list[dict[str, Any]]:
   kind_priority = {
     "register_indexed_memory": 0,
     "conditional_branch": 1,
-    "register_branch": 1,
     "indirect_jump": 2,
     "indirect_call": 2,
     "call": 2,
@@ -2646,7 +2842,12 @@ def main() -> int:
       print(error)
     return 2
 
-  image = load_linked_image(args.artifact_dir)
+  try:
+    image = load_linked_image(args.artifact_dir)
+  except ValueError as error:
+    # A global-merge unit without an exact object table cannot be described by its objects.
+    print(f"cannot describe the linked binary's data: {error}")
+    return 2
   if image is None:
     print("cannot read the linked binary for placement-independent instruction identities")
     return 2
@@ -2754,7 +2955,6 @@ def main() -> int:
         "select_branch",
         "call",
         "indirect_call",
-        "register_branch",
         "register_indexed_memory",
         "s390x_division_review",
         "s390x_vector_multiply_review",

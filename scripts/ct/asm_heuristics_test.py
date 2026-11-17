@@ -6,6 +6,8 @@ from tempfile import TemporaryDirectory
 
 from asm_heuristics import (
   prepare_linked_image,
+  decode_lines,
+  row_successors,
   FunctionBody,
   function_identity,
   instruction_identities,
@@ -28,7 +30,7 @@ from asm_heuristics import (
   unreachable_symbol_errors,
   validate_public_inputs,
 )
-from linked_image import MERGED, LinkedImage, Section, Slot
+from linked_image import MERGED, LinkedImage, Section, Slot, assembly_merge_units, merge_unit_members
 from symbolize_linked_binary import demangle_table
 
 
@@ -269,7 +271,8 @@ def linked_fixture(
 
 def fixture_hash(target: str, fixture: tuple[FunctionBody, LinkedImage]) -> str:
   body, image = fixture
-  return function_identity(instruction_identities(target, body, {body.symbol}, image))
+  return function_identity(instruction_identities(target, body, {body.symbol} | {name for *_, name in image.functions},
+                                                  image))
 
 
 DETECT = "rscrypto::platform::detect::detect_uncached"
@@ -464,6 +467,76 @@ def data_reference_regressions() -> None:
   assert fixture_hash(target, branching(0x10000, 0x30000)) != fixture_hash(target, branching(0x50000, 0x91000))
 
 
+# The assertion message of `rsa_aarch64_pair::exponentiate_pair`, as the Apple builds at 6f571652 and 868dcbca
+# link it, and the panic call that passes it with its length.
+EXPONENTIATE_PAIR_MESSAGE = (
+  b"assertion failed: digits.is_multiple_of(BLOCK_DIGITS) && digits >= BLOCK_DIGITS.strict_mul(3) &&\n"
+  b"                p.m.len() == q.m.len() &&\n            digits.strict_mul(28) >= p.m.len().strict_mul(64)"
+  b".strict_add(2) &&\n        p.exponent.len() == q.exponent.len() &&\n    workspace.len() >= pair_workspace_words(digits)")
+
+
+# The IR parameters of `core::panicking::panic(&'static str, &Location)` and of a function that takes a `&[u64]`
+# and its length, as rustc emits them (nightly-2026-10-24, ddf3a965 x86-64 Linux `rscrypto_ct_evidence.ll`).
+PANIC_PARAMETERS = ("ptr noalias nofree noundef nonnull readonly captures(address, read_provenance) %0",
+                    "i64 noundef range(i64 32, 143) %1",
+                    "ptr noalias nofree noundef readonly align 8 captures(address, read_provenance) dereferenceable(24) %2")
+WORD_SLICE_PARAMETERS = ("ptr noalias nofree noundef nonnull readonly align 8 captures(address) %0", "i64 noundef %1")
+# `Sha256::update_impl(&mut self, data: &[u8])` as the two modules of the Windows build at ddf3a965 define it.
+UPDATE_IMPL_FORMS = frozenset({
+  ("ptr noalias nofree noundef nonnull align 8 captures(address) dereferenceable(120) %0",
+   "ptr noalias nofree noundef nonnull readonly captures(address) %1",
+   "i64 noundef range(i64 0, -9223372036854775808) %2"),
+  ("ptr noalias nofree noundef nonnull align 8 dereferenceable(120) %self",
+   "ptr noalias nofree noundef nonnull readonly captures(address, read_provenance) %data.0",
+   "i64 noundef range(i64 0, -9223372036854775808) %data.1"),
+})
+
+
+def ld64_atom_regressions() -> None:
+  """An ld64 atom can end in the alignment padding before the next atom; a reference binds it unless its extent is
+  known (2026-11-15 Apple renewal of `exponentiate_pair`)."""
+  target = "aarch64-apple-darwin"
+  assert len(EXPONENTIATE_PAIR_MESSAGE) == 317
+
+  def linked(code: int, page_offset: int, size: int, gap: int, length: str = "528027a1\tmov\tw1, #0x13d",
+             message: bytes = EXPONENTIATE_PAIR_MESSAGE, parameters: tuple[str, ...] = PANIC_PARAMETERS):
+    atom = 0x1000a6000 + page_offset
+    lines = [f"{code:x}: f0000360\tadrp\tx0, 0x1000a6000", f"{code + 4:x}: 91323000\tadd\tx0, x0, #0x{page_offset:x}",
+             f"{code + 8:x}: {length}", f"{code + 12:x}: 94013ef7\tbl\t0x1000878ec <core::panicking::panic>"]
+    body = FunctionBody("rscrypto::fixture", Path("fixture.binary.disasm.txt"), code, list(enumerate(lines, start=1)))
+    data = bytes(0x1000)
+    data = data[:page_offset] + message + bytes(size - len(message)) + data[page_offset + size:]
+    image = LinkedImage(data, [Section("__TEXT,__text", 0x100037000, 0x1000, None, True, False),
+                               Section("__TEXT,__const", 0x1000a6000, 0x1000, 0, False, False)], True,
+                        extents=[(atom, atom + size, None), (atom + size + gap, atom + size + gap + 0x100, None)],
+                        padded_units=True)
+    image.set_functions([(code, code + 0x10, body.symbol), (0x1000878ec, 0x100087900, "core::panicking::panic")])
+    image.parameters = {"core::panicking::panic": frozenset({parameters})}
+    return body, image
+
+  def hashed(fixture) -> str:
+    body, image = fixture
+    return function_identity(instruction_identities(target, body, {body.symbol, "core::panicking::panic"}, image))
+
+  # 6f571652: the atom holds one byte of padding (0x13e); 868dcbca: it holds none (0x13d), and a gap follows it.
+  original = hashed(linked(0x100037cfc, 0xc8c, 0x13e, 0))
+  assert hashed(linked(0x100037d18, 0xd24, 0x13d, 0x27)) == original
+  changed = EXPONENTIATE_PAIR_MESSAGE.replace(b"digits)", b"digitz)")
+  assert hashed(linked(0x100037cfc, 0xc8c, 0x13e, 0, message=changed)) != original
+  # A length in a register is no extent, so the padding byte binds.
+  register = "2a1403e1\tmov\tw1, w20"
+  assert hashed(linked(0x100037cfc, 0xc8c, 0x13e, 0, length=register)) != hashed(
+    linked(0x100037d18, 0xd24, 0x13d, 0x27, length=register))
+  # The length of a `&[u64]` counts words, not bytes, so it is no byte extent and the padding byte binds.
+  assert hashed(linked(0x100037cfc, 0xc8c, 0x13e, 0, parameters=WORD_SLICE_PARAMETERS)) != hashed(
+    linked(0x100037d18, 0xd24, 0x13d, 0x27, parameters=WORD_SLICE_PARAMETERS))
+  # A length past the end of the atom is not a byte length, such as `len << 1 | 1` of a `fmt::Arguments` literal
+  # (0x27b for 317 bytes), so the reference binds the whole atom.
+  arguments = "52804f61\tmov\tw1, #0x27b"
+  assert hashed(linked(0x100037cfc, 0xc8c, 0x13e, 0, length=arguments)) != hashed(
+    linked(0x100037d18, 0xd24, 0x13d, 0x27, length=arguments))
+
+
 def location_bytes(line: int, column: int, path: bytes) -> bytes:
   """A 64-bit little-endian `core::panic::Location` with an unrelocated name pointer."""
   return bytes(8) + len(path).to_bytes(8, "little") + line.to_bytes(4, "little") + column.to_bytes(4, "little")
@@ -506,31 +579,84 @@ def placement_regressions() -> None:
   assert fixture_hash(target, table(0x10000, 0x30000, 7, 1)) == fixture_hash(target, table(0x50000, 0x91000, 70, 1))
   assert fixture_hash(target, table(0x10000, 0x30000, 7, 1)) != fixture_hash(target, table(0x10000, 0x30000, 7, 2))
 
-  # Without map sizes (PE), trailing zero bytes before the next object may be alignment padding.
-  def padded(text: int, rodata: int, contents: bytes, padding: int, slot: bool = False):
+  # Without map sizes (PE), trailing zero bytes before the next object may be alignment padding. Only a reference
+  # with a known extent drops them, and never below that extent: an access width, or an immediate length that a
+  # call receives with the address (`&str`, `&[u8]`) in the next argument register of the Windows x64 ABI, here
+  # rcx and rdx. Any other reference binds the padding.
+  pe = "x86_64-pc-windows-msvc"
+
+  def padded(text: int, rodata: int, contents: bytes, padding: int, slot: bool = False, use: str = "paired",
+             length: int = 3, following_bytes: bytes = b"next", second: bool = False):
     following = rodata + len(contents) + padding
     displacement = rodata - (text + 7)
-    body = FunctionBody("rscrypto::fixture", Path("fixture.binary.disasm.txt"), text, list(enumerate([
-      f"{text:x}: 48 8d 05 {displacement.to_bytes(4, 'little').hex(' ')}\tleaq\t0x{displacement:x}(%rip), %rax",
-      f"{text + 7:x}: c3\tretq",
-    ], start=1)))
-    data = contents + bytes(padding) + b"next"
+    pointer = ("15", "%rdx") if second else ("0d", "%rcx")
+    rows = [(f"48 8d {pointer[0]} {displacement.to_bytes(4, 'little').hex(' ')}", f"leaq\t0x{displacement:x}(%rip), {pointer[1]}")]
+    rows += {"paired": [(f"41 b8 {length:02x} 00 00 00", f"movl\t$0x{length:x}, %r8d") if second else
+                        (f"ba {length:02x} 00 00 00", f"movl\t$0x{length:x}, %edx")],
+             "register": [("44 89 c2", "movl\t%r8d, %edx")]}.get(use, [])
+    if use in {"paired", "register"}:
+      rows.append(("e8 00 00 00 00", f"callq\t0x{text + 0x80:x} <rscrypto::consume>"))
+    lines, address = [], text
+    for encoding, instruction in [*rows, ("c3", "retq")]:
+      lines.append(f"{address:x}: {encoding}\t{instruction}")
+      address += len(encoding.split())
+    body = FunctionBody("rscrypto::fixture", Path("fixture.binary.disasm.txt"), text, list(enumerate(lines, start=1)))
+    data = contents + bytes(padding) + following_bytes
     image = LinkedImage(data, [Section(".text", text, 0x100, None, True, False),
                                Section(".rdata", rodata, len(data), 0, False, False)], True,
                         starts={rodata: None, following: None}, bounded_by_starts=True,
                         slots={rodata: Slot(symbol="HeapFree")} if slot else {})
-    image.set_functions([(text, text + 0x100, body.symbol)])
+    image.set_functions([(text, text + 0x80, body.symbol), (text + 0x80, text + 0x100, "rscrypto::consume")])
+    image.parameters = {"rscrypto::consume": UPDATE_IMPL_FORMS if second else frozenset({PANIC_PARAMETERS})}
     return body, image
 
   constant = b"\x01\x02\x03"
-  assert fixture_hash(target, padded(0x10000, 0x30000, constant, 5)) == fixture_hash(
-    target, padded(0x50000, 0x91000, constant, 13))
-  assert fixture_hash(target, padded(0x10000, 0x30000, constant, 5)) != fixture_hash(
-    target, padded(0x10000, 0x30000, b"\x01\x02\x04", 5))
+  assert fixture_hash(pe, padded(0x10000, 0x30000, constant, 5)) == fixture_hash(
+    pe, padded(0x50000, 0x91000, constant, 13))
+  assert fixture_hash(pe, padded(0x10000, 0x30000, constant, 5)) != fixture_hash(
+    pe, padded(0x10000, 0x30000, b"\x01\x02\x04", 5))
+  # Without a known extent, or with a length in a register, the reference can read the padding, so it binds it.
+  for use in ("formed", "register"):
+    assert fixture_hash(pe, padded(0x10000, 0x30000, constant, 5, use=use)) != fixture_hash(
+      pe, padded(0x10000, 0x30000, constant, 13, use=use)), use
+  # A length past the object is not a byte length, such as `len << 1 | 1` of a `fmt::Arguments` literal (7 for 3
+  # bytes). The reference binds its object, not the next one.
+  assert fixture_hash(pe, padded(0x10000, 0x30000, constant, 2, length=7)) == fixture_hash(
+    pe, padded(0x10000, 0x30000, constant, 2, length=7, following_bytes=b"NEXT"))
+  # Each module defines `update_impl` with other attributes, and both forms declare a byte slice, so the 8-byte zero
+  # prefix of PSS M' that `encode_pss_with_mask` hashes (RFC 8017 9.1.1, step 5) binds without its padding.
+  assert fixture_hash(pe, padded(0x10000, 0x30000, bytes(8), 8, length=8, second=True)) == fixture_hash(
+    pe, padded(0x50000, 0x91000, bytes(8), 0, length=8, second=True))
+
+  # A broadcast reads one element (Intel SDM Vol. 2, VPBROADCAST): `vpbroadcastq` of `__real@000fffffffffffff` in
+  # `rsa_x86_64_ifma::build_table::<3>` (Windows, ddf3a965) binds its 8 bytes, with the top zero byte, and not the
+  # constants after it, as a 64-byte read of the register width would.
+  def broadcast(word: bytes, following_bytes: bytes):
+    displacement = 0x30000 - (0x10000 + 10)
+    body = FunctionBody("rscrypto::fixture", Path("fixture.binary.disasm.txt"), 0x10000, list(enumerate([
+      f"10000: 62 e2 fd 48 59 05 {displacement.to_bytes(4, 'little').hex(' ')}\tvpbroadcastq\t0x{displacement:x}(%rip), %zmm16",
+      "1000a: c3\tretq"], start=1)))
+    image = LinkedImage(word + following_bytes, [Section(".text", 0x10000, 0x100, None, True, False),
+                                                 Section(".rdata", 0x30000, 64, 0, False, False)], True,
+                        starts={0x30000: "__real@000fffffffffffff", 0x30008: None}, bounded_by_starts=True)
+    image.set_functions([(0x10000, 0x10100, body.symbol)])
+    return body, image
+
+  mask = (0x000FFFFFFFFFFFFF).to_bytes(8, "little")
+  assert fixture_hash(pe, broadcast(mask, bytes(range(56)))) == fixture_hash(pe, broadcast(mask, bytes(range(1, 57))))
+  assert fixture_hash(pe, broadcast(mask, bytes(56))) != fixture_hash(pe, broadcast(mask[:7] + b"\x01", bytes(56)))
+  # A zero byte inside the extent binds: it can become nonzero, and when it leaves the object, the extent reads
+  # the next object instead.
+  zero = b"\x01\x02\x00"
+  assert fixture_hash(pe, padded(0x10000, 0x30000, zero, 5)) != fixture_hash(
+    pe, padded(0x10000, 0x30000, b"\x01\x02\x05", 5))
+  assert fixture_hash(pe, padded(0x10000, 0x30000, zero, 0)) != fixture_hash(
+    pe, padded(0x10000, 0x30000, b"\x01\x02", 0))
   # An import slot is never cut by the padding bound, so it describes by its import: the raw
   # entry (a placement-dependent RVA whose high bytes are zero) and the padding after it are free.
-  assert fixture_hash(target, padded(0x10000, 0x30000, (0x1234).to_bytes(8, "little"), 0, slot=True)) == fixture_hash(
-    target, padded(0x50000, 0x91000, (0x5678).to_bytes(8, "little"), 8, slot=True))
+  assert fixture_hash(pe, padded(0x10000, 0x30000, (0x1234).to_bytes(8, "little"), 0, slot=True)) == fixture_hash(
+    pe, padded(0x50000, 0x91000, (0x5678).to_bytes(8, "little"), 8, slot=True))
+  ld64_atom_regressions()
 
   # A small extent that starts inside a larger one (a TLS template offset) does not hide the larger one.
   image = LinkedImage(bytes(64), [Section(".data.rel.ro", 0x1000, 64, 0, False, False)], True,
@@ -538,81 +664,437 @@ def placement_regressions() -> None:
   assert image.region(0x1020)[:2] == (0x1000, 0x1040)
 
   power_merged_regressions()
+  merged_call_regressions()
+  power_branch_regressions()
+  transfer_form_regressions()
+  jump_table_regressions()
+  merge_table_regressions()
   riscv_live_high_part_regression()
   riscv_zero_low_part_regression()
 
 
-def power_fixture(text: int, unit: int, members: list[bytes], lines: list[str], spill: bool = False):
-  """A POWER function that addresses a global-merge unit; `lines` follow the TOC setup and base pair.
+POWER = "powerpc64le-unknown-linux-gnu"
+SYNTHETIC = "60 00 00 00"
 
-  `members` are laid out in order; the last one is a `Location` whose name lives elsewhere.
-  `{base}` in `lines` is the register holding the unit's start, and `{offset[i]}` is member i's offset.
+
+def power_entry(address: int, toc: int) -> list[tuple[str, str]]:
+  """The TOC setup of a POWER global entry point: `addis 2, 12, high` and `addi 2, 2, low` reach the TOC base."""
+  high = (toc - address + 0x8000) >> 16
+  return [(SYNTHETIC, f"addis 2, 12, {high}"), (SYNTHETIC, f"addi 2, 2, {toc - address - (high << 16)}")]
+
+
+def merged_assembly(size: int, objects: list[tuple[int, str, str, int]], name: str = ".L_MergedGlobals.2") -> str:
+  """Compiler assembly of one global-merge unit: (offset, data directives, alias, size) objects, zero padding between."""
+  lines, position = [f"{name}:"], 0
+  for offset, directives, _alias, length in objects:
+    if offset > position:
+      lines.append(f"\t.zero\t{offset - position}")
+    lines.extend(f"\t{directive}" for directive in directives.split("\n"))
+    position = offset + length
+  if size > position:
+    lines.append(f"\t.zero\t{size - position}")
+  lines.append(f"\t.size\t{name}, {size}")
+  for offset, _directives, alias, length in objects:
+    lines += [f"{alias} = {name}+{offset}", f"\t.size\t{alias}, {length}"]
+  return "\n".join(lines) + "\n"
+
+
+def power_link(toc: int, unit: int, assembly: str, functions: list[tuple[str, int, list[tuple[str, str]]]],
+               target: str = POWER) -> tuple[dict[str, FunctionBody], LinkedImage]:
+  """Link functions of (symbol, address, (encoding, text) rows) with the global-merge unit of `assembly` at `unit`."""
+  [definition] = assembly_merge_units(assembly, True)
+  bodies, number = {}, 1
+  for symbol, address, rows in functions:
+    lines = []
+    for index, (encoding, text) in enumerate(rows):
+      lines.append((number, f"{address + 4 * index:x}: {encoding}\t{text}"))
+      number += 1
+    bodies[symbol] = FunctionBody(symbol, Path("fixture.binary.disasm.txt"), address, lines)
+  data = definition.contents
+  image = LinkedImage(data, [Section(".text", 0x10000, 0x8000, None, True, False),
+                             Section(".data.rel.ro", unit, len(data), 0, False, False)], True,
+                      extents=[(unit, unit + len(data), MERGED)], toc_base=toc)
+  image.set_members(merge_unit_members(image, [definition]))
+  prepare_linked_image(target, bodies, image)
+  return bodies, image
+
+
+def linked_identities(target: str, fixture: tuple[dict[str, FunctionBody], LinkedImage], symbol: str) -> list[str]:
+  bodies, image = fixture
+  return list(instruction_identities(target, bodies[symbol], set(bodies), image).values())
+
+
+RSA_ROOT = "ct_entry_rsa_pkcs1v15_decrypt_fixed_blinding"
+UPDATE = "<rscrypto::hashes::crypto::sha256::Sha256>::update_impl"
+HMAC = "rscrypto::auth::rsa::hmac_sha256_parts"
+MEMCPY = "0000004f.plt_call.memcpy@@GLIBC_2.17"
+MEMMOVE = "0000004f.plt_call.memmove@@GLIBC_2.17"
+SHA256_IV = r'.ascii	"g\346\tj\205\256g\273r\363n<:\365O\245\177R\016Q\214h\005\233\253\331\203\037\031\315\340["'
+# Excerpts of POWER CT 43670264860 (6f571652) and CT 43699511183 (868dcbca). 868dcbca added HPKE labels to
+# `.L_MergedGlobals.2`: "dkp_prk" before "message" and two after it. Each row of the root is the linked
+# instruction of `ct_entry_rsa_pkcs1v15_decrypt_fixed_blinding`, in order; the TOC setups are synthetic.
+RSA_DECRYPT = {
+  "6f571652": {
+    "size": 20640, "base": ("a0 84 e3 3a", -31584), "li5": ("60 50 a0 38", 20576), "li7": ("70 50 e0 38", 20592),
+    "message": ("74 01 c5 39", 372),
+    "objects": [
+      (358, '.ascii	" { .. }"', ".Lanon.a93706019fb9a4aab351026df9960745.35", 7),
+      (365, '.ascii	"IOError"', ".Lanon.dd9cad2fdbdfc3f7f7080943c244926c.135", 7),
+      (372, '.ascii	"message"', ".Lanon.3c5503918be1719b3333892c6703e024.1043", 7),
+      (379, '.ascii	"unsafe "', ".Lanon.1c7fae5b1541fafbfe3fcff8c29715af.26", 7),
+      (386, '.ascii	"closure"', ".Lanon.1c7fae5b1541fafbfe3fcff8c29715af.53", 7),
+      (20576, SHA256_IV, ".Lanon.5db48453cec2c3d3d727b77dae34a150.16", 32),
+    ],
+  },
+  "868dcbca": {
+    "size": 20896, "base": ("a0 83 e3 3a", -31840), "li5": ("60 51 a0 38", 20832), "li7": ("70 51 e0 38", 20848),
+    "message": ("9b 01 c5 39", 411),
+    "objects": [
+      (390, '.ascii	" { .. }"', ".Lanon.a93706019fb9a4aab351026df9960745.35", 7),
+      (397, '.ascii	"IOError"', ".Lanon.dd9cad2fdbdfc3f7f7080943c244926c.135", 7),
+      (404, '.ascii	"dkp_prk"', ".Lanon.8bd117a2bc6b8f81c36665eb8c4023c2.826", 7),
+      (411, '.ascii	"message"', ".Lanon.8bd117a2bc6b8f81c36665eb8c4023c2.1049", 7),
+      (418, '.ascii	"HPKE-v1"', ".Lanon.8bd117a2bc6b8f81c36665eb8c4023c2.1080", 7),
+      (425, '.ascii	"eae_prk"', ".Lanon.8bd117a2bc6b8f81c36665eb8c4023c2.1220", 7),
+      (432, '.ascii	"unsafe "', ".Lanon.1c7fae5b1541fafbfe3fcff8c29715af.26", 7),
+      (439, '.ascii	"closure"', ".Lanon.1c7fae5b1541fafbfe3fcff8c29715af.53", 7),
+      (20832, SHA256_IV, ".Lanon.911c70f77840cbbdf87f006a729f1b0e.21", 32),
+    ],
+  },
+}
+
+
+def rsa_decrypt(version: str, *, update_call: list[tuple[str, str]] | None = None, message: int | None = None,
+                index: int | None = None, contents: dict[str, str] | None = None):
+  """Link the RSA root excerpt of `version` with its callees and global-merge objects.
+
+  `update_call` replaces the `memcpy` call of `update_impl`; `message` and `index` replace the immediates of
+  `addi 14, 5, ...` and `li 7, ...`; `contents` replaces object directives.
   """
-  toc = unit + 0x10000 + (text >> 4)
-  high = (toc - text + 0x8000) >> 16
-  low = toc - text - (high << 16)
-  delta = unit - toc
-  data_high = (delta + 0x8000) >> 16
-  data_low = delta - (data_high << 16)
-  offsets, contents = [], bytearray()
-  for member in members:
-    while member is members[-1] and len(contents) % 8:
-      contents.append(0)
-    offsets.append(len(contents))
-    contents.extend(member)
-  strings = unit + 0x1000
-  rows = [f"addis 2, 12, {high}", f"addi 2, 2, {low}", f"addis 3, 2, {data_high}", f"addi 3, 3, {data_low}"]
-  rows += [line.format(offset=offsets, base=3) for line in lines]
-  rows += ["blr"]
-  body_lines = [f"{text + 4 * index:x}: 60000000\t{row}" for index, row in enumerate(rows)]
-  body = FunctionBody("rscrypto::fixture", Path("fixture.binary.disasm.txt"), text, list(enumerate(body_lines, start=1)))
-  path = b"src/auth/rsa.rs"
-  data = bytes(contents)
-  sections = [Section(".text", text, 0x100, None, True, False), Section(".data.rel.ro", unit, len(data), 0, False, False),
-              Section(".rodata", strings, len(path), len(data), False, False)]
-  image = LinkedImage(data + path, sections, True, extents=[(unit, unit + len(data), MERGED), (strings, strings + len(path), None)],
-                      slots={unit + offsets[-1]: Slot(address=strings)}, toc_base=toc)
-  prepare_linked_image("powerpc64le-unknown-linux-gnu", {body.symbol: body}, image)
-  return body, image
+  layout = RSA_DECRYPT[version]
+  toc, root, update, hmac, stub = 0x200000, 0x10000, 0x11000, 0x12000, 0x13000
+  unit = toc - 0x10000 + layout["base"][1]
+  objects = [(offset, (contents or {}).get(directive, directive), alias, size)
+             for offset, directive, alias, size in layout["objects"]]
+  li7 = layout["li7"] if index is None else (SYNTHETIC, index)
+  addi14 = layout["message"] if message is None else (SYNTHETIC, message)
+  rows = [*power_entry(root, toc),
+          ("ff ff 62 3c", "addis 3, 2, -1"), (layout["li5"][0], f"li 5, {layout['li5'][1]}"),
+          ("48 00 9c e8", "ld 4, 72(28)"), (li7[0], f"li 7, {li7[1]}"), ("70 01 c1 ea", "ld 22, 368(1)"),
+          ("40 01 01 eb", "ld 24, 320(1)"), ("00 00 40 3b", "li 26, 0"), ("78 33 d9 7c", "mr\t25, 6"),
+          (layout["base"][0], f"addi 23, 3, {layout['base'][1]}"), ("40 00 60 38", "li 3, 64"),
+          ("00 05 41 b3", "sth 26, 1280(1)"), ("98 2e 17 7c", "lxvd2x 0, 23, 5"), ("50 00 bc e8", "ld 5, 80(28)"),
+          ("90 04 81 3b", "addi 28, 1, 1168"), ("98 3e 37 7c", "lxvd2x 1, 23, 7"),
+          ("98 1f 1c 7c", "stxvd2x 0, 28, 3"), ("d0 04 00 f0", "xxlxor 0, 0, 0"), ("30 00 60 38", "li 3, 48"),
+          ("98 1f 1c 7c", "stxvd2x 0, 28, 3"), ("20 00 60 38", "li 3, 32"), ("98 e7 00 7c", "stxvd2x 0, 0, 28"),
+          ("98 1f 1c 7c", "stxvd2x 0, 28, 3"), ("10 00 60 38", "li 3, 16"), ("98 1f 1c 7c", "stxvd2x 0, 28, 3"),
+          ("50 00 60 38", "li 3, 80"), ("98 1f 3c 7c", "stxvd2x 1, 28, 3"), ("60 00 60 38", "li 3, 96"),
+          ("98 1f 1c 7c", "stxvd2x 0, 28, 3"), ("78 e3 83 7f", "mr\t3, 28"),
+          ("21 db fa 4b", f"bl 0x{update + 8:x} <{UPDATE}+0x8>"), ("c0 05 61 3b", "addi 27, 1, 1472"),
+          ("48 00 e1 fa", "std 23, 72(1)"), ("48 00 a1 e8", "ld 5, 72(1)"), (addi14[0], f"addi 14, 5, {addi14[1]}"),
+          ("78 db 63 7f", "mr\t3, 27"), ("03 00 c0 38", "li 6, 3"), ("78 d3 44 7f", "mr\t4, 26"),
+          ("78 93 45 7e", "mr\t5, 18"), ("c0 05 21 fa", "std 17, 1472(1)"), ("c8 05 81 fb", "std 28, 1480(1)"),
+          ("d0 05 c1 f9", "std 14, 1488(1)"), ("d8 05 c1 fa", "std 22, 1496(1)"),
+          ("59 30 fe 4b", f"bl 0x{hmac + 8:x} <{HMAC}+0x8>"), ("20 00 80 4e", "blr")]
+  call = update_call if update_call is not None else [("79 4e fd 4b", f"bl 0x{stub:x} <{MEMCPY}>")]
+  update_rows = [*power_entry(update, toc), ("a6 02 08 7c", "mflr 0"), ("78 23 9c 7c", "mr\t28, 4"),
+                 ("78 1b 7d 7c", "mr\t29, 3"), ("78 2b be 7c", "mr\t30, 5"), ("40 00 7d 38", "addi 3, 29, 64"),
+                 ("78 eb a4 7f", "mr\t4, 29"), ("40 00 a0 38", "li 5, 64"), *call, ("18 00 41 e8", "ld 2, 24(1)"),
+                 ("a6 03 08 7c", "mtlr 0"), ("20 00 80 4e", "blr")]
+  stub_rows = [("18 00 41 f8", "std 2, 24(1)"), ("ff ff 82 3d", "addis 12, 2, -1"), ("c8 7d 8c e9", "ld 12, 32200(12)"),
+               ("a6 03 89 7d", "mtctr 12"), ("20 04 80 4e", "bctr")]
+  return power_link(toc, unit, merged_assembly(layout["size"], objects), [
+    (RSA_ROOT, root, rows), (UPDATE, update, update_rows),
+    (HMAC, hmac, [*power_entry(hmac, toc), ("a6 02 08 7c", "mflr 0"), ("20 00 80 4e", "blr")]),
+    (MEMCPY, stub, stub_rows), (MEMMOVE, stub + 0x100, stub_rows)])
+
+
+def rsa_row(fixture, text: str) -> str:
+  """The identity, without its offset, of the root's row whose disassembly starts with `text`."""
+  bodies, image = fixture
+  body = bodies[RSA_ROOT]
+  identities = instruction_identities(POWER, body, set(bodies), image)
+  return next(identities[number].split(": ", 1)[1] for number, line in body.lines
+              if line.split("\t", 1)[1].startswith(text))
 
 
 def power_merged_regressions() -> None:
-  """A global-merge member binds itself, not its offset or the other constants merged with it."""
-  target = "powerpc64le-unknown-linux-gnu"
-  message = b"index out of range"
-  location = location_bytes(41, 7, b"src/auth/rsa.rs")
-  short, long = [b"ab", message, location], [b"a different, longer neighbor", message, location]
-  changed = [b"ab", b"index out of rangf", location]
+  """A global-merge reference binds the object that the compiler merged, not the unit layout.
 
-  def hashed(fixture):
-    return function_identity(instruction_identities(target, fixture[0], {fixture[0].symbol}, fixture[1]))
+  The 2026-11-15 HPKE renewal (POWER CT 43699511183) had two causes, which these real excerpts pin.
+  """
+  def root(fixture) -> str:
+    return function_identity(dict(enumerate(linked_identities(POWER, fixture, RSA_ROOT))))
 
-  # The panic message and location are formed from the base, which the call no longer sees.
-  formed = ["addi 4, {base}, {offset[1]}", "addi 3, {base}, {offset[2]}", "bl 0x10000 <rscrypto::fixture>"]
-  original = hashed(power_fixture(0x10000, 0x30000, short, formed))
-  # Another member changes size, so the offsets move; the referenced members are the same.
-  assert hashed(power_fixture(0x50000, 0x91000, long, formed)) == original
-  assert hashed(power_fixture(0x10000, 0x30000, changed, formed)) != original
-  identities = "\n".join(instruction_identities(target, *(lambda f: (f[0], {f[0].symbol}, f[1]))(
-    power_fixture(0x10000, 0x30000, short, formed))).values())
-  assert "merged-base" in identities and "<loc>" in identities and "merged:" not in identities
+  old, new = rsa_decrypt("6f571652"), rsa_decrypt("868dcbca")
+  assert root(old) == root(new)
 
-  # An index constant that only selects a member is layout; the member it selects binds.
-  # A constant still live in an argument register at a call may be an argument, so it would stay exact.
-  indexed = ["li 11, {offset[1]}", "lxvd2x 1, {base}, 11", "li 3, 0", "bl 0x10000 <rscrypto::fixture>"]
-  original = hashed(power_fixture(0x10000, 0x30000, short, indexed))
-  assert hashed(power_fixture(0x50000, 0x91000, long, indexed)) == original
-  assert hashed(power_fixture(0x10000, 0x30000, changed, indexed)) != original
+  # Cause 2: `addi 14, 5, 372` became `411`. The member came from the addresses that every function formed, so
+  # it grew from "message" to 21 bytes when no listed function formed the new labels after it. The compiler's
+  # own object table keeps "message" at 7 bytes.
+  assert rsa_row(old, "addi 14, 5,") == rsa_row(new, "addi 14, 5,")
+  assert "/7:" in rsa_row(new, "addi 14, 5,"), rsa_row(new, "addi 14, 5,")
+  # A changed loaded byte or an address of other data is a changed identity.
+  changed = {'.ascii	"message"': '.ascii	"massage"'}
+  assert rsa_row(rsa_decrypt("868dcbca", contents=changed), "addi 14, 5,") != rsa_row(new, "addi 14, 5,")
+  assert rsa_row(rsa_decrypt("868dcbca", message=418), "addi 14, 5,") != rsa_row(new, "addi 14, 5,")
 
-  # A spilled and reloaded base is still the same base.
-  spilled = ["std {base}, 40(1)", "li 3, 0", "ld 6, 40(1)", "li 4, {offset[1]}", "lxvd2x 1, 6, 4"]
-  original = hashed(power_fixture(0x10000, 0x30000, short, spilled))
-  assert hashed(power_fixture(0x50000, 0x91000, long, spilled)) == original
+  # Cause 1: `li 7, 20592` became `20848`. It only selects the object that `lxvd2x 1, 23, 7` loads, but it is still
+  # in r7 at `bl update_impl`. `update_impl` reads r3-r5 and passes r3-r5 to `memcpy`, so r7 is no argument.
+  assert rsa_row(old, "li 7,") == rsa_row(new, "li 7,") == "4B li 7, <member-offset>"
+  assert rsa_row(old, "lxvd2x 1,") == rsa_row(new, "lxvd2x 1,")
+  iv = {SHA256_IV: SHA256_IV.replace(r'"g\346', r'"h\346')}
+  assert root(rsa_decrypt("868dcbca", contents=iv)) != root(new)
+  assert rsa_row(rsa_decrypt("868dcbca", index=20864), "lxvd2x 1,") != rsa_row(new, "lxvd2x 1,")
+  # An import without a prototype, and an indirect call, can read every argument register, so the immediate stays.
+  for call in ([("79 4e fd 4b", f"bl 0x13100 <{MEMMOVE}>")], [("a6 03 89 7d", "mtctr 12"), ("21 04 80 4e", "bctrl")]):
+    old_call, new_call = rsa_decrypt("6f571652", update_call=call), rsa_decrypt("868dcbca", update_call=call)
+    assert rsa_row(old_call, "li 7,") != rsa_row(new_call, "li 7,"), call
+    assert rsa_row(new_call, "li 7,").endswith("\tli 7, 20848"), rsa_row(new_call, "li 7,")
 
-  # A raw base that escapes into a call can reach any member, so the whole unit binds.
-  escaping = ["bl 0x10000 <rscrypto::fixture>"]
-  assert hashed(power_fixture(0x10000, 0x30000, short, escaping)) != hashed(
-    power_fixture(0x10000, 0x30000, [b"ac", message, location], escaping))
+  power_transfer_regressions()
+
+
+def power_transfer_regressions() -> None:
+  """A global-merge base that leaves the function binds its whole unit."""
+  toc, text, unit = 0x200000, 0x10000, 0x1e0000
+  objects = [(0, '.ascii	"index out of range"', ".Lanon.a.1", 18), (24, '.ascii	"other"', ".Lanon.a.2", 5)]
+
+  def link(leave: list[tuple[str, str]], other: str = '.ascii	"other"', callee: list[tuple[str, str]] | None = None):
+    rows = [*power_entry(text, toc), (SYNTHETIC, "addis 3, 2, -1"), (SYNTHETIC, f"addi 3, 3, {unit - toc + 0x10000}"),
+            (SYNTHETIC, "li 4, 0"), *leave]
+    callee_rows = callee or [*power_entry(0x11000, toc), (SYNTHETIC, "blr")]
+    return power_link(toc, unit, merged_assembly(32, [objects[0], (24, other, ".Lanon.a.2", 5)]), [
+      ("rscrypto::fixture", text, rows), ("rscrypto::callee", 0x11000, callee_rows),
+      ("rscrypto::reads_r3", 0x11100, [*power_entry(0x11100, toc), (SYNTHETIC, "lbz 5, 0(3)"), (SYNTHETIC, "blr")])])
+
+  def bound(leave: list[tuple[str, str]]) -> bool:
+    """Whether the other object, which no instruction addresses, binds the function."""
+    first = linked_identities(POWER, link(leave), "rscrypto::fixture")
+    return first != linked_identities(POWER, link(leave, '.ascii	"OTHER"'), "rscrypto::fixture")
+
+  # The base is still in r3 at a call to a callee that reads no argument, and the call clobbers r3.
+  assert not bound([(SYNTHETIC, "bl 0x11008 <rscrypto::callee+0x8>"), (SYNTHETIC, "blr")])
+  # The base leaves in r3: it is returned, passed to a callee that reads r3, tail-called with, or the function
+  # continues through a jump table, which the dataflow cannot follow.
+  for leave in ([(SYNTHETIC, "blr")], [(SYNTHETIC, "bclr 12, 2"), (SYNTHETIC, "li 3, 0"), (SYNTHETIC, "blr")],
+                [(SYNTHETIC, "bl 0x11108 <rscrypto::reads_r3+0x8>"), (SYNTHETIC, "blr")],
+                [(SYNTHETIC, "b 0x11108 <rscrypto::reads_r3+0x8>")],
+                [(SYNTHETIC, "mtctr 4"), (SYNTHETIC, "bctr"), (SYNTHETIC, "addis 5, 2, -1"),
+                 (SYNTHETIC, f"addi 5, 5, {unit - toc + 0x10000}"), (SYNTHETIC, "blr")]):
+    assert bound(leave), leave
+
+
+def merged_call_regressions() -> None:
+  """AArch64 and RISC-V: a global-merge base reaches a callee only through an argument that the callee reads."""
+  objects = [(0, '.ascii	"index out of range"', ".Lanon.d.1", 18), (24, '.ascii	"other"', ".Lanon.d.2", 5)]
+
+  def bound(target: str, rows: list[tuple[str, str]], callee: list[tuple[str, str]]) -> bool:
+    """Whether the object that no instruction addresses binds the caller."""
+    identities = []
+    for other in ('.ascii	"other"', '.ascii	"OTHER"'):
+      fixture = power_link(0, 0x30000, merged_assembly(32, [objects[0], (24, other, ".Lanon.d.2", 5)]), [
+        ("rscrypto::fixture", 0x10000, rows), ("rscrypto::callee", 0x11000, callee)], target=target)
+      identities.append(linked_identities(target, fixture, "rscrypto::fixture"))
+    return identities[0] != identities[1]
+
+  aarch64 = "aarch64-unknown-linux-gnu"
+  base = [("90000108", "adrp\tx8, 0x30000"), ("91000108", "add\tx8, x8, #0x0"), ("39400109", "ldrb\tw9, [x8]")]
+  call = [("94000400", "bl\t0x11000 <rscrypto::callee>"), ("d65f03c0", "ret")]
+  # x8 is still the base at the call. The callee reads no argument, and the call clobbers x8.
+  assert not bound(aarch64, base + call, [("d65f03c0", "ret")])
+  # The callee writes its result through x8, so the base reaches it.
+  assert bound(aarch64, base + call, [("f900011f", "str\txzr, [x8]"), ("d65f03c0", "ret")])
+
+  riscv = "riscv64gc-unknown-linux-gnu"
+  base = [("00020797", "auipc\ta5, 0x20"), ("00078793", "addi\ta5, a5, 0x0"), ("0007c803", "lbu\ta6, 0x0(a5)")]
+  # `jalr a1` is an indirect call, so every argument register reaches it.
+  assert bound(riscv, base + [("000580e7", "jalr\ta1"), ("00008067", "ret")], [("00008067", "ret")])
+  # A tail jump leaves the function: its destination reads a5 as an argument.
+  reads_a5 = [("0007c503", "lbu\ta0, 0x0(a5)"), ("00008067", "ret")]
+  assert bound(riscv, base + [("0000006f", "j\t0x11000 <rscrypto::callee>")], reads_a5)
+  assert not bound(riscv, base + [("0000006f", "j\t0x11000 <rscrypto::callee>")], [("00008067", "ret")])
+
+
+def power_branch_regressions() -> None:
+  """Each POWER branch form (Power ISA 3.1 Book I 2.4) is a finding of its kind."""
+  # `ct_entry_owner_eq_32` in POWER CT 43707625493 (ddf3a965) returns early through `bclr 12, 2` when an
+  # input pointer is null. The scanner knew only conditional branches to labels, so it reported neither return.
+  owner = FunctionBody("ct_entry_owner_eq_32", Path("fixture.binary.disasm.txt"), 0x7fe80, list(enumerate([
+    "7fe80: 00 00 23 2c  \tcmpdi\t3, 0",
+    "7fe84: 78 1b 65 7c  \tmr\t5, 3",
+    "7fe88: 00 00 60 38  \tli 3, 0",
+    "7fe8c: 20 00 82 4d  \tbclr\t12, 2",
+    "7fe90: 00 00 24 2c  \tcmpdi\t4, 0",
+    "7fe94: 20 00 82 4d  \tbclr\t12, 2",
+    "7fe98: 10 00 60 38  \tli 3, 16",
+    "7fe9c: 20 00 80 4e  \tblr",
+  ], start=1)))
+
+  def kinds(body: FunctionBody) -> list[tuple[str, int]]:
+    rows = scan_symbol(POWER, body.symbol, body, {body.symbol}, scope="entry", primitive_ids=["kx.p256_ecdh"],
+                       roots=[body.symbol])
+    return [(row["kind"], row["offset"]) for row in rows]
+
+  # A return is no finding; each conditional return is a conditional branch, whose slice reads cr0.
+  assert kinds(owner) == [("conditional_branch", 0xc), ("conditional_branch", 0x14)], kinds(owner)
+  rows = decode_lines(owner)
+  assert row_successors(POWER, owner, rows)[3] == [4] and row_successors(POWER, owner, rows)[7] == []
+  from condition_slice import condition_slice
+  bounded = condition_slice(POWER, owner, None, 4, {owner.symbol})
+  assert bounded.reasons == [] and [node["offset"] for node in bounded.nodes] == [0xc, 0x0], bounded.canonical
+  # A call or a jump through CTR is indirect, and a conditional jump through CTR has unknown successors.
+  dispatch = FunctionBody("rscrypto::fixture", owner.path, 0x1000, list(enumerate([
+    "1000: a6 03 89 7d\tmtctr 12", "1004: 21 04 80 4e\tbctrl", "1008: 20 04 82 4d\tbcctr 12, 2",
+    "100c: 20 04 80 4e\tbctr"], start=1)))
+  assert kinds(dispatch) == [("indirect_call", 0x4), ("conditional_branch", 0x8), ("indirect_jump", 0xc)]
+  assert row_successors(POWER, dispatch, decode_lines(dispatch))[2:] == [None, None]
+
+
+def transfer_form_regressions() -> None:
+  """Each control transfer of an ISA manual is a finding of its kind, with a matching control-flow edge."""
+  cases = {
+    # z/Architecture Principles of Operation, chapter 7. `ber %r1` jumps through a register, and
+    # `blhr %r14` (`core::ptr::drop_glue` at ddf3a965) is a conditional return.
+    "s390x-unknown-linux-gnu": [
+      ("0d e1\tbasr\t%r14, %r1", "indirect_call", [1]), ("05 e1\tbalr\t%r14, %r1", "indirect_call", [1]),
+      ("07 6e\tblhr\t%r14", "conditional_branch", [1]), ("07 81\tber\t%r1", "conditional_branch", None),
+      ("06 18\tbctr\t%r1, %r8", "conditional_branch", None), ("47 80 10 00\tbe\t0(%r1)", "conditional_branch", None),
+      ("b9 60 80 12\tcgrte\t%r1, %r2", "conditional_branch", [1]),
+      ("e3 10 20 00 00 85\tlgat\t%r1, 0(%r2)", "conditional_branch", [1]),
+    ],
+    # Arm ARM C6.2: pointer-authenticated BLR and BR, and BC.cond.
+    "aarch64-unknown-linux-gnu": [
+      ("d73f0900\tblraa\tx8, x0", "indirect_call", [1]), ("d71f0a30\tbraa\tx17, x16", "indirect_jump", None),
+      # A short forward branch over straight-line code is select-shaped.
+      ("54000050\tbc.eq\t0x1008 <rscrypto::fixture+0x8>", "select_branch", [1, 2]),
+    ],
+    # Intel SDM Vol. 2: far CALL and JMP, and XBEGIN, whose operand is the abort path.
+    "x86_64-unknown-linux-gnu": [
+      ("ff 18\tlcallq\t*(%rax)", "indirect_call", [1]), ("ff 28\tljmpq\t*(%rax)", "indirect_jump", None),
+      ("c7 f8 02 00 00 00\txbegin\t0x1008 <rscrypto::fixture+0x8>", "select_branch", [1, 2]),
+    ],
+    # Power ISA 3.1 Book I 3.3.11: TRAP WORD and its extended forms.
+    "powerpc64le-unknown-linux-gnu": [
+      ("08 20 83 7c\ttweq 3, 4", "conditional_branch", [1]), ("00 00 83 0c\ttwgti 3, 0", "conditional_branch", [1]),
+    ],
+    # RISC-V Unprivileged ISA, "Control Transfer Instructions": `jr a5` jumps through a register.
+    "riscv64gc-unknown-linux-gnu": [("00078067\tjr\ta5", "indirect_jump", None), ("9782\tjalr\ta5", "indirect_call", [1])],
+  }
+  for target, rows in cases.items():
+    for line, kind, following in rows:
+      body = FunctionBody("rscrypto::fixture", Path("fixture.binary.disasm.txt"), 0x1000, list(enumerate([
+        f"1000: {line}", "1004: 00000000\tnop", "1008: 00000000\tnop"], start=1)))
+      found = [row["kind"] for row in scan_symbol(target, body.symbol, body, {body.symbol}, scope="entry",
+                                                  primitive_ids=["kx.p256_ecdh"], roots=[body.symbol])]
+      assert found == [kind], (target, line, found)
+      assert row_successors(target, body, decode_lines(body))[0] == following, (target, line)
+
+  # z/Architecture Principles of Operation, chapter 7, BRANCH ON CONDITION: with R2 zero, BCR does not branch, and
+  # BCR 15,0 serializes. The rayon scope of Argon2 fences after `Injector::push` (IBM Z, ddf3a965, +0x164). The same
+  # row with R2 = 1 jumps through r1.
+  scope = "rayon_core::scope::scope::<rscrypto::auth::argon2::fill_slice_parallel::{closure#0}, ()>::{closure#0}"
+  for row, kinds, following in [("07 f0        \tbr\t0", [], [2]), ("07 f1        \tbr\t%r1", ["indirect_jump"], None)]:
+    body = FunctionBody(scope, Path("fixture.binary.disasm.txt"), 0x397b4, list(enumerate([
+      "397b4: c0 e5 ff ff 46 9e    \tbrasl\t%r14, 0x224f0 <<crossbeam_deque::deque::Injector<rayon_core::job::JobRef>>::push>",
+      f"397ba: {row}", "397bc: e3 10 d3 70 00 04    \tlg\t%r1, 880(%r13)"], start=1)))
+    found = [finding["kind"] for finding in scan_symbol("s390x-unknown-linux-gnu", scope, body, {scope}, scope="entry",
+                                                        primitive_ids=["password.argon2i"], roots=[scope])
+             if finding["offset"] == 6]
+    assert found == kinds, (row, found)
+    assert row_successors("s390x-unknown-linux-gnu", body, decode_lines(body))[1] == following, row
+
+  # An x86 conditional tail transfer into another function is a call-graph edge: `je` in
+  # `rscrypto_chacha20_poly1305_open_x86_64` (x86-64 Linux, ddf3a965) continues in its AVX2 form.
+  root, avx2 = "rscrypto_chacha20_poly1305_open_x86_64", "rscrypto_chacha20_poly1305_open_avx2_x86_64"
+  functions = {
+    root: FunctionBody(root, Path("fixture.binary.disasm.txt"), 0x537b0, [
+      (1, f"537b7: 0f 84 03 44 00 00            \tje\t0x57bc0 <{avx2}>"), (2, "537bd: c3\tretq")]),
+    avx2: FunctionBody(avx2, Path("fixture.binary.disasm.txt"), 0x57bc0, [(3, "57bc0: c3\tretq")]),
+  }
+  assert reachable_closure(root, build_call_graph(functions)) == {root, avx2}
+
+
+def jump_finding(target: str, body: FunctionBody) -> dict:
+  """The finding of the jump in `body`; the table load also has a register-indexed operand."""
+  [found] = [row for row in scan_symbol(target, body.symbol, body, {body.symbol}, scope="entry",
+                                        primitive_ids=["mac.hmac_verify"], roots=[body.symbol])
+             if row["kind"] in {"conditional_branch", "indirect_jump"}]
+  return found
+
+
+def jump_table_regressions() -> None:
+  """An indirect jump through a read-only table on an index is a multi-way branch on that index; any other indirect
+  jump fails."""
+  from condition_slice import FunctionSlices
+
+  cases = {
+    # `HkdfSha256::extract` in `rscrypto_ct_evidence.o` (RISC-V, ddf3a965): the `match padded` of
+    # `HmacSha256::mac_into` (src/auth/hmac.rs), on the block count (s1 + 0x88) >> 6.
+    "riscv64gc-unknown-linux-gnu": (0x382, [
+      "     382: 08848513     \taddi\ta0, s1, 0x88", "     386: 8119         \tsrli\ta0, a0, 0x6",
+      "0000000000000388 <.Lpcrel_hi1689>:", "     388: 00000597     \tauipc\ta1, 0x0",
+      "\t\t0000000000000388:  R_RISCV_PCREL_HI20\t.LJTI533_0", "     38c: 050a         \tslli\ta0, a0, 0x2",
+      "     38e: 00058593     \tmv\ta1, a1", "\t\t000000000000038e:  R_RISCV_PCREL_LO12_I\t.Lpcrel_hi1689",
+      "     392: 952e         \tadd\ta0, a0, a1", "     394: ff852503     \tlw\ta0, -0x8(a0)",
+      "     398: 952e         \tadd\ta0, a0, a1", "     39a: 8502         \tjr\ta0",
+    ], "entry s1", ("     38e: 00058593     \tmv\ta1, a1", "     38e: 0005b583     \tld\ta1, 0x0(a1)")),
+    # `ct_entry_hmac_sha384_verify` in the x86-64 Linux harness object (ddf3a965): the same `match padded`.
+    "x86_64-unknown-linux-gnu": (0x19d, [
+      "     19d: 40 0f b6 c5                  \tmovzbl\t%bpl, %eax",
+      "     1a1: 48 8d 0d 00 00 00 00         \tleaq\t(%rip), %rcx            # 0x1a8 <rscrypto::fixture+0xb>",
+      "\t\t00000000000001a4:  R_X86_64_PC32\t.rodata.ct_entry_hmac_sha384_verify-0x4",
+      "     1a8: 48 63 04 81                  \tmovslq\t(%rcx,%rax,4), %rax",
+      "     1ac: 48 01 c8                     \taddq\t%rcx, %rax", "     1af: ff e0                        \tjmpq\t*%rax",
+    ], "entry rbp", ("\t\t00000000000001a4:  R_X86_64_PC32\t.rodata.ct_entry_hmac_sha384_verify-0x4",
+                     "\t\t00000000000001a4:  R_X86_64_PC32\t.data.rscrypto_dispatch-0x4")),
+  }
+  for target, (address, lines, index, (original, mutated)) in cases.items():
+    for listing, expected in ((lines, "conditional_branch"), ([mutated if line == original else line for line in lines],
+                                                              "indirect_jump")):
+      body = FunctionBody("rscrypto::fixture", Path("fixture.o.disasm.txt"), address, list(enumerate(listing, start=1)))
+      assert jump_finding(target, body)["kind"] == expected, (target, expected)
+    # The table entry is public read-only data, so the slice reaches the index and no other input.
+    body = FunctionBody("rscrypto::fixture", Path("fixture.o.disasm.txt"), address, list(enumerate(lines, start=1)))
+    found = jump_finding(target, body)
+    analysis = FunctionSlices(target, body, None, {body.symbol})
+    result = analysis.slice(found["line"], frozenset(analysis.index_by_line[line] for line in found["table_loads"]))
+    assert set(result.leaves) == {index, "incomplete control flow"}, (target, result.leaves, result.canonical)
+
+
+def merge_table_regressions() -> None:
+  """A global-merge unit takes its objects only from an assembly table that matches it exactly."""
+  objects = [(0, '.ascii	"ab"', ".Lanon.b.1", 2), (2, '.ascii	"cd"', ".Lanon.b.2", 2)]
+  [definition] = assembly_merge_units(merged_assembly(4, objects), True)
+
+  def image(units: list[bytes]) -> LinkedImage:
+    data = b"".join(units)
+    return LinkedImage(data, [Section(".rodata", 0x1000, len(data), 0, False, False)], True,
+                       extents=[(0x1000 + 4 * index, 0x1004 + 4 * index, MERGED) for index in range(len(units))])
+
+  assert merge_unit_members(image([b"abcd"]), [definition]) == [(0x1000, 0x1002), (0x1002, 0x1004)]
+  failures = {
+    "unmatched": ([b"abce"], [definition]),
+    # One table cannot give the objects of two units.
+    "ambiguous unit": ([b"abcd", b"abcd"], [definition]),
+    # Two tables with the bytes of one unit but different objects.
+    "ambiguous table": ([b"abcd"], [definition, *assembly_merge_units(
+      merged_assembly(4, [(0, '.ascii	"abcd"', ".Lanon.c.1", 4)], ".L_MergedGlobals.3"), True)]),
+  }
+  for name, (units, tables) in failures.items():
+    try:
+      merge_unit_members(image(units), tables)
+    except ValueError:
+      continue
+    raise AssertionError(name)
+  # Content that no object holds, or a directive that the reader does not know, is not a table.
+  for text in (merged_assembly(4, objects[:1]).replace(".zero\t2", '.ascii\t"cd"'),
+               merged_assembly(4, objects).replace('.ascii\t"cd"', ".p2align\t1")):
+    try:
+      assembly_merge_units(text, True)
+    except ValueError:
+      continue
+    raise AssertionError(text)
 
 
 def riscv_live_high_part_regression() -> None:

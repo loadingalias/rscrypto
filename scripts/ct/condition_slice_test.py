@@ -4,8 +4,9 @@
 import re
 from pathlib import Path
 
-from asm_heuristics import FunctionBody
+from asm_heuristics import FunctionBody, prepare_linked_image
 from condition_slice import condition_slice
+from linked_image import LinkedImage, Section
 
 
 def body(lines: list[str], address: int = 0x1000) -> FunctionBody:
@@ -156,6 +157,8 @@ def main() -> None:
   assert looped.nodes[0]["inputs"] == {"rcx": ["+0x0", "+0x6"]}, looped.canonical
   memory_regressions()
   leaf_regressions()
+  atomic_regressions()
+  call_regressions()
 
   # Win64 callees preserve rsi, so its value crosses the call; System V callees may change it.
   kept = [
@@ -406,6 +409,153 @@ def leaf_regressions() -> None:
   word = next(node for node in facilities.nodes if node["offset"] == 0x16)
   cleared = next(node for node in facilities.nodes if node["offset"] == 0x4)
   assert word["inputs"]["mem"] == ["+0x4", "+0x12"] and cleared["inputs"] == {"r15": ["frame"]}, facilities.canonical
+
+
+def node_at(result, offset: int) -> dict:
+  return next(node for node in result.nodes if node["offset"] == offset)
+
+
+def atomic_regressions() -> None:
+  """Atomic and exclusive accesses: the registers they read and write, and the bytes they can store."""
+  # POWER `stdcx.` was hidden by the record-form dot, so a load after it read entry memory. A conditional
+  # store writes nothing when the reservation is lost, so both the store and entry memory reach the load.
+  conditional = slice_of("powerpc64le-unknown-linux-gnu", [
+    "1000: ad 21 a0 7c\tstdcx. 5, 0, 4",
+    "1004: 00 00 c4 e8\tld 6, 0(4)",
+    "1008: 00 00 26 2c\tcmpdi 6, 0",
+    "100c: 08 00 82 41\tbeq 0x1014 <f+0x14>",
+    "1010: 00 00 00 60\tnop",
+    "1014: 20 00 80 4e\tblr",
+  ], 4)
+  assert node_at(conditional, 0x4)["inputs"]["mem"] == ["entry", "+0x0"], conditional.canonical
+  # `lbarx` is a load: the reservation word is an input, not an unknown effect.
+  reserved = slice_of("powerpc64le-unknown-linux-gnu", [
+    "1000: 68 28 e0 7c\tlbarx 7, 0, 5",
+    "1004: 00 00 07 2c\tcmpwi 7, 0",
+    "1008: 08 00 82 41\tbeq 0x1010 <f+0x10>",
+    "100c: 00 00 00 60\tnop",
+    "1010: 20 00 80 4e\tblr",
+  ], 3)
+  assert reserved.reasons == [] and node_at(reserved, 0x0)["inputs"] == {"r5": ["entry"], "mem": ["entry"]}, \
+    reserved.canonical
+
+  aarch64 = "aarch64-unknown-linux-gnu"
+  # `ldaddal w1, w2, [x0]` reads w1 and returns the old value in w2; it does not write w1.
+  added = slice_of(aarch64, [
+    "1000: b8e10002\tldaddal\tw1, w2, [x0]",
+    "1004: 7100003f\tcmp\tw1, #0x0",
+    "1008: 54000040\tb.eq\t0x1010 <f+0x10>",
+    "100c: d503201f\tnop",
+    "1010: d65f03c0\tret",
+  ], 3)
+  assert node_at(added, 0x4)["inputs"]["x1"] == ["entry"], added.canonical
+  # `ldaddb` stores one byte, so a 4-byte store before it still reaches a 4-byte load.
+  narrow = slice_of(aarch64, [
+    "1000: b9000003\tstr\tw3, [x0]",
+    "1004: 38e10002\tldaddb\tw1, w2, [x0]",
+    "1008: b9400004\tldr\tw4, [x0]",
+    "100c: 7100009f\tcmp\tw4, #0x0",
+    "1010: 54000040\tb.eq\t0x1018 <f+0x18>",
+    "1014: d503201f\tnop",
+    "1018: d65f03c0\tret",
+  ], 5)
+  assert node_at(narrow, 0x8)["inputs"]["mem"] == ["+0x0", "+0x4"], narrow.canonical
+  # `casal w1, w2, [x0]` returns the old value in w1, and a failed comparison stores nothing.
+  swapped = slice_of(aarch64, [
+    "1000: b9000003\tstr\tw3, [x0]",
+    "1004: 88e1fc02\tcasal\tw1, w2, [x0]",
+    "1008: b9400004\tldr\tw4, [x0]",
+    "100c: 6b04003f\tcmp\tw1, w4",
+    "1010: 54000040\tb.eq\t0x1018 <f+0x18>",
+    "1014: d503201f\tnop",
+    "1018: d65f03c0\tret",
+  ], 5)
+  assert swapped.reasons == [], swapped.reasons
+  assert node_at(swapped, 0xc)["inputs"]["x1"] == ["+0x4"] and node_at(swapped, 0x8)["inputs"]["mem"] == ["+0x0", "+0x4"], \
+    swapped.canonical
+
+  # x86 `xadd` returns the old destination in its source register.
+  exchanged = slice_of("x86_64-unknown-linux-gnu", branched(
+    "1000: f0 48 0f c1 07\tlock xaddq\t%rax, (%rdi)", condition="48 85 c0\ttestq\t%rax, %rax"), 3)
+  assert node_at(exchanged, 0x5)["inputs"]["rax"] == ["+0x0"], exchanged.canonical
+
+  riscv = "riscv64gc-unknown-linux-gnu"
+  # `amoadd.w a0, a1, (a2)` loads a0 and reads a1 and a2; `sc.w` writes its status. The first operand
+  # can be `zero`, which names no register.
+  for lines, register, expected in (
+    (["1000: 00b6252f\tamoadd.w\ta0, a1, (a2)", "1004: c119\tbeqz\ta0, 0x100a <f+0xa>"], "a0",
+     {"a1": ["entry"], "a2": ["entry"], "mem": ["entry"]}),
+    (["1000: 18b626af\tsc.w\ta3, a1, (a2)", "1004: e299\tbnez\ta3, 0x100a <f+0xa>"], "a3",
+     {"a1": ["entry"], "a2": ["entry"]}),
+  ):
+    result = slice_of(riscv, [*lines, "1006: 0001\tnop", "1008: 0001\tnop", "100a: 8082\tret"], 2)
+    assert result.reasons == [] and node_at(result, 0x0)["inputs"] == expected, (register, result.canonical)
+
+
+def call_regressions() -> None:
+  """Every call clobbers the convention's registers and can write escaped memory."""
+  # RISC-V prints `jalr ra, 0(a1)` as `jalr a1`, and IBM Z calls through a register with `basr`. Each result
+  # comes from the call, not from the value that the register held before it.
+  for target, lines, branch in (
+    ("riscv64gc-unknown-linux-gnu", ["1000: 4505\tli\ta0, 0x1", "1002: 9582\tjalr\ta1",
+                                     "1004: c119\tbeqz\ta0, 0x100a <f+0xa>", "1006: 0001\tnop", "1008: 0001\tnop",
+                                     "100a: 8082\tret"], 3),
+    ("s390x-unknown-linux-gnu", ["1000: a7 29 00 01\tlghi\t%r2, 1", "1004: 0d e1\tbasr\t%r14, %r1",
+                                 "1006: b9 02 00 22\tltgr\t%r2, %r2", "100a: a7 84 00 04\tje\t0x1012",
+                                 "100e: 07 07\tnopr\t%r7", "1012: 07 fe\tbr\t%r14"], 4),
+  ):
+    result = slice_of(target, lines, branch)
+    assert result.leaves == ["call"] and any(reason.startswith("call result") for reason in result.reasons), \
+      (target, result.reasons, result.canonical)
+  # AArch64 passes the address of a returned aggregate in x8, so the callee can write that frame slot.
+  returned = slice_of("aarch64-unknown-linux-gnu", [
+    "1000: d10083ff\tsub\tsp, sp, #0x20",
+    "1004: b90013ff\tstr\twzr, [sp, #0x10]",
+    "1008: 910043e8\tadd\tx8, sp, #0x10",
+    "100c: 94000000\tbl\t0x2000 <g>",
+    "1010: b94013e0\tldr\tw0, [sp, #0x10]",
+    "1014: 34000040\tcbz\tw0, 0x101c <f+0x1c>",
+    "1018: d503201f\tnop",
+    "101c: d65f03c0\tret",
+  ], 6)
+  assert "memory may be written by the call at +0xc" in returned.reasons, returned.reasons
+  # x8 escapes only to a callee that reads it. In `private_exponentiate_window_five_bit` (AArch64 Linux, ddf3a965),
+  # x8 still holds a frame pointer at `bl memset@plt`, and memset reads x0-x2 (ISO C11 7.24.6.1).
+  def framed(callee: str, callee_lines: list[str]):
+    lines = ["1000: d10083ff\tsub\tsp, sp, #0x20", "1004: b90013ff\tstr\twzr, [sp, #0x10]",
+             "1008: 910043e8\tadd\tx8, sp, #0x10", "100c: 2a1f03e1\tmov\tw1, wzr",
+             f"1010: 94000400\tbl\t0x2000 <{callee}>", "1014: b94013e0\tldr\tw0, [sp, #0x10]",
+             "1018: 34000040\tcbz\tw0, 0x1020 <f+0x20>", "101c: d503201f\tnop", "1020: d65f03c0\tret"]
+    functions = {"f": body(lines), callee: FunctionBody(callee, Path("fixture.binary.disasm.txt"), 0x2000,
+                                                        list(enumerate(callee_lines, start=20)))}
+    image = LinkedImage(b"", [Section(".text", 0x1000, 0x2000, None, True, False)], True)
+    prepare_linked_image("aarch64-unknown-linux-gnu", functions, image)
+    return condition_slice("aarch64-unknown-linux-gnu", functions["f"], image, 7, set(functions))
+  stub = ["2000: d00009d0\tadrp\tx16, 0x13f000", "2004: f9465a11\tldr\tx17, [x16, #0xcb0]",
+          "2008: 9132c210\tadd\tx16, x16, #0xcb0", "200c: d61f0220\tbr\tx17"]
+  kept = framed("memset@plt", stub)
+  assert kept.reasons == [] and node_at(kept, 0x14)["inputs"]["mem"] == ["+0x4"], (kept.reasons, kept.canonical)
+  written = framed("g", ["2000: f900011f\tstr\txzr, [x8]", "2004: d65f03c0\tret"])
+  assert "memory may be written by the call at +0x10" in written.reasons, written.reasons
+  # IBM Z `lax` stores the result of its exclusive or, so a load after it reads that store.
+  interlocked = slice_of("s390x-unknown-linux-gnu", [
+    "1000: eb 23 40 00 00 f7\tlax\t%r2, %r3, 0(%r4)",
+    "1006: e3 50 40 00 00 04\tlg\t%r5, 0(%r4)",
+    "100c: b9 02 00 55\tltgr\t%r5, %r5",
+    "1010: a7 84 00 04\tje\t0x1018",
+    "1014: 07 07\tnopr\t%r7",
+    "1018: 07 fe\tbr\t%r14",
+  ], 4)
+  assert node_at(interlocked, 0x6)["inputs"]["mem"] == ["entry", "+0x0"], interlocked.canonical
+  # `csg %r2, %r3, 0(%r4)` returns the old storage in r2 and sets the condition code.
+  compared = slice_of("s390x-unknown-linux-gnu", [
+    "1000: eb 23 40 00 00 30\tcsg\t%r2, %r3, 0(%r4)",
+    "1006: a7 84 00 04\tje\t0x100e",
+    "100a: 07 07\tnopr\t%r7",
+    "100e: 07 fe\tbr\t%r14",
+  ], 2)
+  assert compared.reasons == [] and node_at(compared, 0x0)["inputs"] == {
+    "r2": ["entry"], "r3": ["entry"], "r4": ["entry"], "mem": ["entry"]}, compared.canonical
 
 
 def shift(line: str, by: int) -> str:

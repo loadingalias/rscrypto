@@ -95,8 +95,10 @@ assert not (build / 'stale-build').exists()
 emit = build / args[args.index('--target') + 1] / 'release'
 emit.mkdir(parents=True, exist_ok=True)
 name = 'rscrypto_ct_harness' if '--lib' in args else 'rscrypto_ct_evidence'
-for extension in ('ll', 's', 'o'):
+for extension in ('s', 'o'):
   (emit / (name + '.' + extension)).write_text('fresh')
+# A function that enables RISC-V extensions with `#[target_feature]`, as rustc emits its attributes.
+(emit / (name + '.ll')).write_text('attributes #0 = { "target-features"="+zknh,-relax,+v,+zknh" }\\n')
 if '--bin' in args:
   windows = 'windows-msvc' in args[args.index('--target') + 1]
   (emit / ('rscrypto-ct-evidence.exe' if windows else 'rscrypto-ct-evidence')).write_text('binary')
@@ -164,6 +166,8 @@ if '--bin' in args:
           self.assertEqual(len(disassemblies), 3)  # Two objects and the final linked binary.
           for command in disassemblies:
             self.assertEqual("--mattr=+vector" in command, target == "s390x-unknown-linux-gnu", command)
+            # llvm-objdump decodes only the RISC-V extensions it is given: each one that the IR enables.
+            self.assertEqual("--mattr=+v,+zknh" in command, target.startswith("riscv64"), command)
           binary = "rscrypto-ct-evidence.exe" if "windows" in target else "rscrypto-ct-evidence"
           self.assertEqual((artifacts / binary).read_text(), "binary")
           provenance = json.loads((output / "provenance.json").read_text())

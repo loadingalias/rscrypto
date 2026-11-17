@@ -15,13 +15,14 @@ This module resolves such a target address against the linked binary itself:
 
 A read-only digest covers one allocation unit. ELF units are linker-map input
 sections; Mach-O units are ld64 map atoms. Without a map, a PE or Mach-O unit
-runs from the nearest known object start to the next one, and its trailing zero
-bytes are not part of it: alignment padding before the next object depends on
-where the linker placed both. Merged string and literal sections bind only the
-referenced literal. An LLVM global-merge unit (`_MergedGlobals`) is split into
-members at every address the binary forms into it or stores a pointer to
-(`add_member_starts`), so a reference binds the member it designates instead of
-every other constant the compiler merged with it.
+runs from the nearest known object start to the next one. Such a unit and an
+ld64 atom can end in alignment padding, whose length depends on where the linker
+placed the next object, so a reference with a known read extent drops the zero
+bytes after that extent (`without_padding`). Merged string and literal sections bind only the
+referenced literal. A read-only LLVM global-merge unit (`_MergedGlobals`) holds
+many objects. The assembly that the same compilation emitted gives each one as
+an alias with a size (`assembly_merge_units`), so a reference binds the object
+it designates instead of every other constant the compiler merged with it.
 
 A `core::panic::Location` (a pointer to a `.rs` path, the path's length, a line,
 and a column) describes as `loc`, also inside other contents. A location is
@@ -111,8 +112,15 @@ class LinkedImage:
   toc_base: int | None = None
   # Without map units, bound an object by the surrounding known starts.
   bounded_by_starts: bool = False
-  # While set, the scanner records resolved reference addresses here instead of describing them.
-  reference_sink: set[int] | None = None
+  # The map units can end in the alignment padding before the next unit, as ld64 atoms do.
+  padded_units: bool = False
+  # The objects of the read-only global-merge units, as (start, end), from the compiler's assembly.
+  members: list[tuple[int, int]] = field(default_factory=list)
+  # The argument registers that each function can read before it writes them (`condition_slice.argument_reads`),
+  # which `asm_heuristics.prepare_linked_image` sets.
+  argument_reads: dict[str, frozenset[str]] = field(default_factory=dict)
+  # The LLVM IR parameter lists of each function, by demangled name (`ir_parameters`).
+  parameters: dict[str, frozenset[tuple[str, ...]]] = field(default_factory=dict)
 
   def __post_init__(self) -> None:
     self.sections.sort(key=lambda section: section.address)
@@ -122,25 +130,19 @@ class LinkedImage:
     self._object_starts = sorted(self.starts)
     self._slot_addresses = sorted(self.slots)
     self.set_functions(self.functions)
-    self._digests: dict[tuple[int, int, int], str] = {}
     self._locations: dict[int, bool] = {}
     self._merged = [(start, end) for start, end, element in self.extents if element == MERGED]
     self._merged_starts = [start for start, _ in self._merged]
-    members: set[int] = set()
-    for start, end in self._merged:
-      members.add(start)
-      first = bisect.bisect_left(self._slot_addresses, start)
-      for slot_address in self._slot_addresses[first : bisect.bisect_left(self._slot_addresses, end)]:
-        if self.location_at(slot_address):
-          members.update((slot_address, slot_address + LOCATION_SIZE))
-    for slot in self.slots.values():
-      if slot.address is not None and self.merged_unit(slot.address) is not None:
-        members.add(slot.address)
-    self._member_starts = sorted(members)
+    self.set_members(self.members)
 
   def set_functions(self, functions: list[tuple[int, int, str]]) -> None:
     self.functions = sorted(functions)
     self._function_starts = [start for start, _, _ in self.functions]
+
+  def set_members(self, members: list[tuple[int, int]]) -> None:
+    self.members = sorted(members)
+    self._member_starts = [start for start, _ in self.members]
+    self._digests: dict[tuple[int, int, int], str] = {}
 
   def section_at(self, address: int) -> Section | None:
     index = bisect.bisect_right(self._section_starts, address) - 1
@@ -175,18 +177,15 @@ class LinkedImage:
       return self._merged[index]
     return None
 
-  def add_member_starts(self, addresses: set[int]) -> None:
-    """Split global-merge units at addresses that code forms into them."""
-    members = {address for address in addresses if self.merged_unit(address) is not None}
-    if not members <= set(self._member_starts):
-      self._member_starts = sorted(set(self._member_starts) | members)
-      self._digests.clear()
-
   def without_padding(self, start: int, end: int, address: int, minimum_end: int) -> int:
-    """End an inferred bound before trailing zero bytes, which may be padding.
+    """End an inferred or padded bound before trailing zero bytes, which may be alignment padding.
 
-    The bound never cuts a pointer slot or a `Location`, whose high bytes are often zero.
+    Only a reference with a known extent, `minimum_end`, trims, and never below that extent: a reference whose
+    extent is unknown can read every byte. The bound never cuts a pointer slot or a `Location`, whose high bytes
+    are often zero.
     """
+    if not minimum_end:
+      return end
     contents = self.read(start, end - start)
     if contents is None:
       return max(end, address + 1, minimum_end)
@@ -220,14 +219,20 @@ class LinkedImage:
       following = self._object_starts[index + 1] if index + 1 < len(self._object_starts) else section.end
       end = self.without_padding(start, min(following, section.end), address, minimum_end)
       return (start, min(end, section.end), self.starts.get(start))
+    if unit is not None and unit[2] is None and self.padded_units:
+      start, end, _ = unit
+      return (start, min(self.without_padding(start, end, address, minimum_end), end), self.starts.get(start))
     if unit is None:
       return None
     start, end, element = unit
     if element == MERGED:
       index = bisect.bisect_right(self._member_starts, address) - 1
-      member = max(self._member_starts[index], start) if index >= 0 else start
-      following = self._member_starts[index + 1] if index + 1 < len(self._member_starts) else end
-      return (member, min(self.without_padding(member, min(following, end), address, minimum_end), end), None)
+      if index >= 0:
+        member_start, member_end = self.members[index]
+        if address < member_end and minimum_end <= member_end:
+          return (member_start, member_end, None)
+      # An address in alignment padding, or an access past the end of its object, can reach any object.
+      return (start, end, None)
     element = section.element if element is None else element
     if element is not None:
       return self.element_region(address, start, end, element)
@@ -377,6 +382,154 @@ def merged_element(input_section: str) -> int | None:
   return None
 
 
+@dataclass(frozen=True)
+class AssemblyUnit:
+  """One global-merge unit as the compiler's assembly defines it."""
+
+  name: str
+  contents: bytes
+  # (offset, width) of each value that a relocation gives, such as `.quad .Lanon.1`.
+  relocated: tuple[tuple[int, int], ...]
+  # (offset, size) of each object that the unit holds.
+  members: tuple[tuple[int, int], ...]
+
+
+ASSEMBLY_LABEL = re.compile(r"^(\S+):$")
+ASSEMBLY_ALIAS = re.compile(r"^(\S+)\s*=\s*(\S+?)(?:\+(\d+))?$")
+ASSEMBLY_SIZE = re.compile(r"^\.size\s+(\S+),\s*(\d+)$")
+ASSEMBLY_VALUE_WIDTH = {".byte": 1, ".short": 2, ".2byte": 2, ".long": 4, ".4byte": 4, ".quad": 8, ".8byte": 8}
+ASSEMBLY_ESCAPES = {"b": 8, "f": 12, "n": 10, "r": 13, "t": 9, '"': 34, "\\": 92}
+
+
+def assembly_string(text: str) -> bytes:
+  """The bytes of a quoted `.ascii` operand, with the escapes that LLVM prints."""
+  if len(text) < 2 or text[0] != '"' or text[-1] != '"':
+    raise ValueError(f"unexpected string operand {text!r}")
+  data, position, body = bytearray(), 0, text[1:-1]
+  while position < len(body):
+    character = body[position]
+    if character != "\\":
+      data.extend(character.encode())
+      position += 1
+    elif body[position + 1 : position + 2] in ASSEMBLY_ESCAPES:
+      data.append(ASSEMBLY_ESCAPES[body[position + 1]])
+      position += 2
+    elif match := re.match(r"[0-7]{1,3}", body[position + 1 :]):
+      data.append(int(match.group(0), 8) & 0xFF)
+      position += 1 + len(match.group(0))
+    else:
+      raise ValueError(f"unexpected escape in string operand {text!r}")
+  return bytes(data)
+
+
+def assembly_merge_units(text: str, little_endian: bool) -> list[AssemblyUnit]:
+  """Read each global-merge unit, its contents, and its objects from compiler assembly.
+
+  LLVM emits a unit as one label whose data directives hold every object in order, with zero padding
+  between them, and it gives each object an alias with a size: `.Lanon.1 = .L_MergedGlobals.2+411` and
+  `.size .Lanon.1, 7`. A directive that this reader does not know stops it, so it never guesses a layout.
+  """
+  bodies: dict[str, list[str]] = {}
+  sizes: dict[str, int] = {}
+  aliases: list[tuple[str, str, int]] = []
+  current = None
+  for raw in text.splitlines():
+    line = raw.strip()
+    if current is None and "_MergedGlobals" not in line and not line.startswith(".size"):
+      continue
+    if match := ASSEMBLY_SIZE.match(line):
+      sizes[match.group(1)] = int(match.group(2))
+      if match.group(1) == current:
+        current = None
+    elif match := ASSEMBLY_LABEL.match(line):
+      current = match.group(1) if "_MergedGlobals" in match.group(1) else None
+      if current is not None:
+        bodies[current] = []
+    elif (match := ASSEMBLY_ALIAS.match(line)) and "_MergedGlobals" in match.group(2):
+      aliases.append((match.group(1), match.group(2), int(match.group(3) or 0)))
+    elif current is not None and line:
+      bodies[current].append(line)
+  units = []
+  order = "little" if little_endian else "big"
+  for name, body in bodies.items():
+    contents, relocated = bytearray(), []
+    for line in body:
+      directive, operand = (line.split(None, 1) + [""])[:2]
+      if directive in {".ascii", ".asciz"}:
+        contents.extend(assembly_string(operand) + (b"\0" if directive == ".asciz" else b""))
+        continue
+      operand = re.sub(r"\s+#.*$", "", operand)
+      if directive in {".zero", ".space"}:
+        count, _, value = operand.partition(",")
+        contents.extend(bytes([int(value or "0", 0) & 0xFF]) * int(count, 0))
+      elif directive in ASSEMBLY_VALUE_WIDTH:
+        width = ASSEMBLY_VALUE_WIDTH[directive]
+        try:
+          contents.extend((int(operand, 0) % (1 << (8 * width))).to_bytes(width, order))
+        except ValueError:
+          relocated.append((len(contents), width))
+          contents.extend(bytes(width))
+      else:
+        raise ValueError(f"unexpected directive in global-merge unit {name}: {line}")
+    if sizes.get(name) != len(contents):
+      raise ValueError(f"global-merge unit {name} holds {len(contents)} bytes, but its size is {sizes.get(name)}")
+    members = sorted((offset, sizes.get(alias, -1)) for alias, unit, offset in aliases if unit == name)
+    covered = bytearray(len(contents))
+    for offset, size in members:
+      if size < 0 or offset + size > len(contents) or any(covered[offset : offset + size]):
+        raise ValueError(f"global-merge unit {name} has an object at +{offset} with an unknown or overlapping size")
+      covered[offset : offset + size] = b"\1" * size
+    padding = [position for position, used in enumerate(covered) if not used]
+    if any(contents[position] for position in padding) or any(
+        not covered[offset] for offset, width in relocated for offset in range(offset, offset + width)):
+      raise ValueError(f"global-merge unit {name} has contents that no object holds")
+    units.append(AssemblyUnit(name, bytes(contents), tuple(relocated), tuple(members)))
+  return units
+
+
+def merge_unit_members(image: LinkedImage, units: list[AssemblyUnit]) -> list[tuple[int, int]]:
+  """The objects of each read-only global-merge unit in `image`, matched to the assembly by contents.
+
+  Each linked unit must equal exactly one member table: its bytes match an assembly unit except where a
+  relocation fills them. Any other result, including an assembly unit that matches two linked units, is an error.
+  """
+  matched: dict[str, list[int]] = {}
+  members: list[tuple[int, int]] = []
+  for start, end in image._merged:
+    linked = image.read(start, end - start)
+    found = []
+    for unit in units:
+      if linked is None or len(unit.contents) != len(linked):
+        continue
+      expected, actual = bytearray(unit.contents), bytearray(linked)
+      for offset, width in unit.relocated:
+        actual[offset : offset + width] = bytes(width)
+      if expected == actual:
+        found.append(unit)
+    if not found:
+      raise ValueError(f"no assembly member table matches the global-merge unit at 0x{start:x}")
+    if len({unit.members for unit in found}) != 1:
+      raise ValueError(f"assembly units {', '.join(unit.name for unit in found)} have the bytes of the global-merge "
+                       f"unit at 0x{start:x} but different member tables")
+    for unit in found:
+      matched.setdefault(unit.name, []).append(start)
+    members.extend((start + offset, start + offset + size) for offset, size in found[0].members)
+  for name, starts in matched.items():
+    if len(starts) > 1:
+      raise ValueError(f"assembly unit {name} matches the global-merge units at "
+                       f"{', '.join(f'0x{start:x}' for start in starts)}")
+  return members
+
+
+def evidence_assembly(artifact_dir: Path, binary: Path) -> Path:
+  """The assembly that the compilation of the linked binary's own crate emitted."""
+  crate = binary.name.split(".")[0].replace("-", "_")
+  paths = sorted(path for path in artifact_dir.glob("*.s") if re.split(r"[.-]", path.name)[0] == crate)
+  if len(paths) != 1:
+    raise ValueError(f"expected one assembly file of crate {crate} in {artifact_dir}, found {len(paths)}")
+  return paths[0]
+
+
 def link_map_extents(path: Path) -> list[tuple[int, int, str]]:
   """Return (start, size, input section) rows from a GNU ld or lld ELF map."""
   if not path.is_file():
@@ -522,7 +675,11 @@ def load_elf(data: bytes, artifact_dir: Path, binary: Path) -> LinkedImage:
       elif kind in ELF_SYMBOLIC.get(machine, set()) and symbol_index < len(dynamic):
         raw, _sym_kind, shndx, value, _size = dynamic[symbol_index]
         slots[r_offset] = Slot(address=value + addend) if shndx else Slot(symbol=raw.split("@")[0], addend=addend)
-  return LinkedImage(data, sections, little, starts=starts, extents=extents, slots=slots, toc_base=toc_base)
+  image = LinkedImage(data, sections, little, starts=starts, extents=extents, slots=slots, toc_base=toc_base)
+  if image.merged_unit_count():
+    text = evidence_assembly(artifact_dir, binary).read_text(errors="replace")
+    image.set_members(merge_unit_members(image, assembly_merge_units(text, little)))
+  return image
 
 
 def load_pe(data: bytes, artifact_dir: Path, binary: Path) -> LinkedImage:
@@ -740,7 +897,8 @@ def load_macho(data: bytes, artifact_dir: Path, binary: Path) -> LinkedImage:
     if section is not None and not section.executable and size > 0:
       starts.setdefault(start, None)
       extents.append((start, start + size, None))
-  return LinkedImage(data, sections, True, starts=starts, extents=extents, slots=slots, bounded_by_starts=not extents)
+  return LinkedImage(data, sections, True, starts=starts, extents=extents, slots=slots, bounded_by_starts=not extents,
+                     padded_units=bool(extents))
 
 
 def ld64_map_atoms(path: Path) -> list[tuple[int, int]]:
@@ -766,9 +924,54 @@ def load_linked_image(artifact_dir: Path) -> LinkedImage | None:
     return None
   data = binary.read_bytes()
   if data[:4] == b"\x7fELF" and data[4] == 2:
-    return load_elf(data, artifact_dir, binary)
-  if data[:2] == b"MZ":
-    return load_pe(data, artifact_dir, binary)
-  if data[:4] == b"\xcf\xfa\xed\xfe":
-    return load_macho(data, artifact_dir, binary)
-  return None
+    image = load_elf(data, artifact_dir, binary)
+  elif data[:2] == b"MZ":
+    image = load_pe(data, artifact_dir, binary)
+  elif data[:4] == b"\xcf\xfa\xed\xfe":
+    image = load_macho(data, artifact_dir, binary)
+  else:
+    return None
+  image.parameters = ir_parameters(artifact_dir)
+  return image
+
+
+# A function that a `.ll` file defines or declares: `define internal fastcc void @_RNv…5panic(`.
+IR_FUNCTION = re.compile(r'(?:define|declare)\b[^@]*@("[^"]*"|[-\w.$]+)\(')
+
+
+def ir_parameters(artifact_dir: Path) -> dict[str, frozenset[tuple[str, ...]]]:
+  """The LLVM IR parameter lists, with their attributes, of each function in the compilation's `.ll` files.
+
+  The key is the demangled name that the linked disassembly prints. Mach-O symbols add a leading underscore.
+  A function that one module defines and another declares has one list for each form.
+  """
+  from symbolize_linked_binary import demangle_table
+
+  names = demangle_table(artifact_dir)
+  found: dict[str, set[tuple[str, ...]]] = {}
+  for path in sorted(artifact_dir.glob("*.ll")):
+    for line in path.read_text(errors="replace").splitlines():
+      if not line.startswith(("define", "declare")) or (match := IR_FUNCTION.match(line)) is None:
+        continue
+      name = match.group(1).strip('"')
+      demangled = names.get(name) or names.get(f"_{name}") or name
+      found.setdefault(demangled, set()).add(split_ir_parameters(line, match.end()))
+  return {name: frozenset(signatures) for name, signatures in found.items()}
+
+
+def split_ir_parameters(line: str, start: int) -> tuple[str, ...]:
+  """The parameters of the IR parameter list that starts at `line[start]`, split at commas outside brackets."""
+  parameters, depth, piece = [], 0, start
+  for position in range(start, len(line)):
+    character = line[position]
+    if character in "([{<":
+      depth += 1
+    elif character in ")]}>":
+      if depth == 0:
+        parameters.append(line[piece:position])
+        break
+      depth -= 1
+    elif character == "," and depth == 0:
+      parameters.append(line[piece:position])
+      piece = position + 1
+  return tuple(parameter.strip() for parameter in parameters if parameter.strip())

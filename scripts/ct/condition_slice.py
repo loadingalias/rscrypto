@@ -187,16 +187,21 @@ def x86_effects(row: scanner.DecodedLine, identity: str, caller_saved: set[str] 
     return effects({"rcx"}, set())
   if mnemonic in X86_LOOPS:
     return effects({"rcx"} | ({"flags"} if mnemonic != "loop" else set()), {"rcx"})
+  if mnemonic == "xbegin":
+    # The abort path receives the abort status in eax (Intel SDM Vol. 2C).
+    return effects(set(), {"rax"})
   if scanner.is_conditional_branch("x86_64-unknown-linux-gnu", mnemonic):
     return effects({"flags"}, set())
-  if mnemonic in {"call", "callq"}:
+  if mnemonic in {"call", "callq"} or mnemonic in scanner.INDIRECT_CALL_MNEMONICS:
     return effects(x86_registers(row.operands) | {"rsp"}, caller_saved, call=True)
   if mnemonic == "syscall":
     # The Linux kernel ABI: number in rax, arguments in rdi, rsi, rdx, r10, r8, and r9, the result in rax,
     # and rcx and r11 clobbered. Like a call, it can write the memory that its pointer arguments address.
     return effects({"rax", "rdi", "rsi", "rdx", "r10", "r8", "r9"}, {"rax", "rcx", "r11"}, call=True)
-  if mnemonic in {"ret", "retq", "jmp", "jmpq", "ud2", "int3", "hlt"}:
-    return effects(x86_registers(row.operands), set())
+  if mnemonic in {"jmp", "jmpq"} or mnemonic in scanner.INDIRECT_JUMP_MNEMONICS or scanner.is_return_or_trap(
+      "x86_64-unknown-linux-gnu", row):
+    # `jmpq *0x10(%rsp)` loads its target.
+    return effects(x86_registers(row.operands), set(), load=load_from_memory and row.operands.startswith("*"))
   if not operands:
     if base in {"cqto", "cqo"}:
       return effects({"rax"}, {"rdx"})
@@ -248,6 +253,10 @@ def x86_effects(row: scanner.DecodedLine, identity: str, caller_saved: set[str] 
     # Compares with rax and, when unequal, loads the destination into rax.
     return effects({"rax"} | sources | x86_registers(destination), {"rax", "flags"} | destination_registers,
                    load=load_from_memory)
+  if base == "xadd":
+    # Exchanges and adds: the source register receives the old destination.
+    return effects(sources | x86_registers(destination), sources | destination_registers | {"flags"},
+                   load=load_from_memory)
   if base in {"cmpxchg8b", "cmpxchg16b"}:
     return effects({"rax", "rbx", "rcx", "rdx"} | address_uses, {"rax", "rdx", "flags"}, load=load_from_memory)
   if base == "imul" and len(operands) == 1:
@@ -293,6 +302,9 @@ AARCH64_READS_DESTINATION = {"movk", "bfi", "bfxil", "bfm", "bfc", "ins", "mla",
 
 
 AARCH64_ATOMIC = re.compile(r"^(?:ld(?:add|clr|eor|set|smax|smin|umax|umin)|swp|cas)")
+# The ordering and size suffixes of an atomic memory operation: `ldaddalb`, `caspal`, `swpl`.
+AARCH64_ATOMIC_FORM = re.compile(r"(?:ld(?:add|clr|eor|set|smax|smin|umax|umin)|swp|cas)(?P<pair>p)?(?:a|l|al)?"
+                                 r"(?P<size>[bh])?")
 
 
 def aarch64_registers(text: str) -> list[str]:
@@ -308,20 +320,26 @@ def aarch64_registers(text: str) -> list[str]:
 
 
 def aarch64_effects(row: scanner.DecodedLine, identity: str) -> Effects:
-  mnemonic = row.mnemonic.split(".")[0] if not row.mnemonic.startswith("b.") else row.mnemonic
+  mnemonic = row.mnemonic.split(".")[0] if not row.mnemonic.startswith(("b.", "bc.")) else row.mnemonic
   operands = split_operands(row.operands)
   constant = "<const:" in identity
   # Brackets are a memory operand only for loads, stores, and atomics; elsewhere they index a vector lane.
   memory = re.search(r"\[(?P<inside>[^\]]*)\](?P<writeback>!?)(?:, #(?P<post>[-+]?\w+))?", row.operands) \
     if mnemonic.startswith(("ld", "st", "prfm")) or AARCH64_ATOMIC.match(mnemonic) else None
   writeback = memory is not None and (memory.group("writeback") or memory.group("post"))
-  if mnemonic.startswith("b."):
-    return effects({"nzcv"}, set())
+  if mnemonic.startswith(("b.", "bc.")):
+    # B.AL and B.NV branch always, without reading the flags.
+    return effects(set() if mnemonic.endswith((".al", ".nv")) else {"nzcv"}, set())
   if mnemonic in {"cbz", "cbnz", "tbz", "tbnz"}:
     return effects(set(aarch64_registers(operands[0])), set())
-  if mnemonic in {"bl", "blr", "blraa", "blrab"}:
+  if mnemonic in {"bl"} | scanner.INDIRECT_CALL_MNEMONICS - {"jalr", "c.jalr"}:
     return effects(set(aarch64_registers(row.operands)) | {"sp"}, AARCH64_CALLER_SAVED, call=True)
-  if mnemonic in {"b", "br", "ret", "retaa", "retab", "brk", "udf", "hint", "nop", "prfm", "dmb", "dsb", "isb",
+  if mnemonic == "svc":
+    # The Linux system-call ABI: number in x8, arguments in x0-x5, and the result in x0. Like a call, it can write
+    # the memory that its pointer arguments address.
+    return effects({"x8", *(f"x{n}" for n in range(6))}, {"x0"}, call=True)
+  if mnemonic in {"b", "br", "braa", "brab", "braaz", "brabz", "ret", "retaa", "retab", "brk", "udf", "hint", "nop",
+                  "prfm", "dmb", "dsb", "isb",
                   "bti", "paciasp", "autiasp", "pacibsp", "autibsp", "csdb", "sb", "msr"}:
     if mnemonic == "msr" and "dit" not in row.operands.lower():
       return effects(set(aarch64_registers(row.operands)), set(), unknown=True)
@@ -335,6 +353,13 @@ def aarch64_effects(row: scanner.DecodedLine, identity: str) -> Effects:
     base = aarch64_registers(memory.group("inside"))
     data = [register for operand in operands if "[" not in operand and not operand.startswith("#")
             for register in aarch64_registers(operand)]
+    if AARCH64_ATOMIC.match(mnemonic):
+      # `ld<op>` and `swp` read the first data register and return the old value in the second. `cas` and
+      # `casp` compare with the first register or pair, store the second, and return the old value in the first.
+      if mnemonic.startswith("cas"):
+        defs = set(data[: 2 if mnemonic.startswith("casp") else 1])
+        return effects(set(base) | set(data), defs, load=not constant)
+      return effects(set(base) | set(data[:1]), set(data[1:2]), load=not constant)
     if mnemonic.startswith(("st", "stur")):
       defs = {base[0]} if writeback and base else set()
       if mnemonic.startswith(("stxr", "stlxr", "stxp", "stlxp")):
@@ -389,8 +414,7 @@ def riscv_effects(row: scanner.DecodedLine, identity: str) -> Effects:
   registers = riscv_registers(row.operands)
   if mnemonic in RISCV_BRANCH_TWO | RISCV_BRANCH_ONE:
     return effects(set(registers), set())
-  if mnemonic in {"jal", "c.jal"} or (mnemonic in {"jalr", "c.jalr"} and (not registers or registers[0] == "ra"
-                                                                            or "(" in row.operands)):
+  if mnemonic in scanner.RISCV_CALLS:
     return effects(set(registers) | {"sp"}, RISCV_CALLER_SAVED, call=True)
   if mnemonic == "ecall":
     # The Linux system-call ABI: number in a7, arguments in a0-a5, and the result in a0. Like a call, it can
@@ -401,6 +425,12 @@ def riscv_effects(row: scanner.DecodedLine, identity: str) -> Effects:
     return effects(set(registers), set())
   if mnemonic in scanner.RISCV_STORES:
     return effects(set(registers), set())
+  if mnemonic.startswith(("lr.", "sc.", "amo")):
+    # `lr.w rd, (rs1)`, `sc.w rd, rs2, (rs1)`, and `amo<op>.w rd, rs2, (rs1)`: rd receives the loaded value or,
+    # for `sc`, the status. The first operand can be `zero`, so the operands are read by position.
+    named = [riscv_registers(operand) for operand in split_operands(row.operands)]
+    return effects({register for names in named[1:] for register in names}, set(named[0] if named else []),
+                   load=not mnemonic.startswith("sc."))
   if mnemonic in RISCV_LOADS:
     return effects(set(registers[1:]), set(registers[:1]), load="<const:" not in identity)
   if mnemonic in RISCV_ALU:
@@ -426,10 +456,14 @@ POWER_ROTATE = {"rldicl", "rldicr", "rldic", "rlwinm", "rlwnm", "rldcl", "sldi",
                 "clrlwi", "clrrdi", "rotldi", "rotlwi", "extldi", "extrdi", "rotld"}
 POWER_ROTATE_INSERT = {"rldimi", "rlwimi", "insrdi", "insrwi"}
 POWER_IMMEDIATE = {"addi", "addis", "mulli", "ori", "oris", "xori", "xoris", "andi.", "andis."}
+# Mnemonics without the record-form dot, which `power_effects` and `power_memory` remove before the lookup.
+# The reservation loads and the conditional stores (`stdcx.`) are the atomic accesses.
 POWER_LOADS = {"lbz", "lhz", "lha", "lwz", "lwa", "ld", "lbzu", "lhzu", "lwzu", "ldu", "lbzx", "lhzx", "lhax",
-               "lwzx", "lwax", "ldx", "ldbrx", "lwbrx", "lhbrx", "ldarx", "lwarx"}
+               "lwzx", "lwax", "ldx", "ldbrx", "lwbrx", "lhbrx", "lbarx", "lharx", "lwarx", "ldarx"}
 POWER_STORES = {"stb", "sth", "stw", "std", "stbu", "sthu", "stwu", "stdu", "stbx", "sthx", "stwx", "stdx",
-                "stdbrx", "stwbrx", "sthbrx", "stdcx.", "stwcx."}
+                "stdbrx", "stwbrx", "sthbrx", "stbcx", "sthcx", "stwcx", "stdcx"}
+# Record forms that set cr0 although their mnemonic is not an arithmetic record form.
+POWER_CR0_SETTERS = {"andi.", "andis.", "stbcx.", "sthcx.", "stwcx.", "stdcx."}
 POWER_VECTOR_MEMORY = {"lxv": 1, "lxvd2x": 2, "lxvw4x": 2, "lxsd": 1, "lxssp": 1, "lxsdx": 2, "lvx": 2, "lfd": 1,
                        "lfs": 1, "lfdx": 2, "lxvx": 2, "lxvdsx": 2, "lxsiwzx": 2}
 POWER_VECTOR_STORE = {"stxv": 1, "stxvd2x": 2, "stxvw4x": 2, "stxsd": 1, "stxssp": 1, "stxsdx": 2, "stvx": 2,
@@ -441,35 +475,60 @@ def power_numbers(text: str) -> list[str]:
   return re.findall(r"(?<![\w.])-?\d+(?![\w.])", re.sub(r"\s+<.*>$", "", text))
 
 
-def power_condition_field(row: scanner.DecodedLine) -> str:
-  """Return the CR field a conditional branch reads."""
-  first = split_operands(row.operands)[0] if row.operands else ""
-  if row.mnemonic.rstrip("+-") in {"bt", "bf", "bdnzt", "bdnzf", "bdzt", "bdzf"}:
-    return f"cr{int(first) // 4}" if first.isdigit() else "cr0"
-  if row.mnemonic.rstrip("+-") == "bc":
-    numbers = power_numbers(row.operands)
-    return f"cr{int(numbers[1]) // 4}" if len(numbers) >= 2 else "cr0"
-  return f"cr{first}" if first.isdigit() and len(split_operands(row.operands)) > 1 else "cr0"
+# The extended branch tests of the Power ISA (Appendix C.2), which read one bit of a CR field.
+POWER_CR_TESTS = {"lt", "le", "eq", "ge", "gt", "nl", "ne", "ng", "so", "ns", "un", "nu"}
+
+
+def power_branch_effects(row: scanner.DecodedLine, form: re.Match[str]) -> Effects:
+  """The effects of a POWER branch (`scanner.POWER_BRANCH`), from its BO and BI fields or its extended form.
+
+  BO bit 0x10 set skips the CR test, and BO bit 0x04 set skips the CTR decrement (Power ISA 3.1 Book I, 2.4).
+  A branch with the link bit is a call, except `bcl 20, 31, $+4`, which only reads the next address into LR.
+  """
+  condition, register = form.group("condition"), form.group("register")
+  operands = split_operands(row.operands)
+  numbers = [int(number) for number in power_numbers(row.operands)]
+  uses, defs = {register} if register else set(), set()
+  if condition == "c" and len(numbers) >= 2:
+    if not numbers[0] & 0x10:
+      uses.add(f"cr{numbers[1] // 4}")
+    if not numbers[0] & 0x04:
+      uses.add("ctr")
+      defs.add("ctr")
+  elif condition in {"t", "f", "dnzt", "dnzf", "dzt", "dzf"} and numbers:
+    uses.add(f"cr{numbers[0] // 4}")
+  elif condition in POWER_CR_TESTS:
+    # `beq 7, 0x40` and `beqlr 7` name CR field 7; without a field operand, the branch tests cr0.
+    named = operands and operands[0].isdigit() and (len(operands) > 1 or register)
+    uses.add(f"cr{operands[0]}" if named else "cr0")
+  if condition is not None and condition.startswith("d"):
+    uses.add("ctr")
+    defs.add("ctr")
+  if form.group("link"):
+    target = scanner.BRANCH_TARGET_ADDRESS.search(re.sub(r"\s+<.*>$", "", row.operands))
+    if target is not None and int(target.group(1), 16) == row.address + 4:
+      return effects(uses, defs | {"lr"})
+    # Every call keeps the model's earlier uses, which also name CTR.
+    return effects(uses | {f"r{n}" for n in range(3, 11)} | {"r1", "r2", "ctr"}, POWER_CALLER_SAVED | defs, call=True)
+  return effects(uses, defs)
 
 
 def power_effects(row: scanner.DecodedLine, identity: str) -> Effects:
   mnemonic = row.mnemonic.rstrip("+-")
-  record = mnemonic.endswith(".") and mnemonic not in {"andi.", "andis.", "stdcx.", "stwcx."}
+  record = mnemonic.endswith(".") and mnemonic not in POWER_CR0_SETTERS
   plain = mnemonic if mnemonic in {"andi.", "andis."} else mnemonic.rstrip(".")
   numbers = power_numbers(row.operands)
   gprs = [f"r{number}" for number in numbers]
   constant = "<const:" in identity
-  cr0 = {"cr0"} if record or mnemonic in {"andi.", "andis.", "stdcx.", "stwcx."} else set()
-  if scanner.is_conditional_branch("powerpc64le-unknown-linux-gnu", mnemonic):
-    if mnemonic in {"bdnz", "bdz"}:
-      return effects({"ctr"}, {"ctr"})
-    if mnemonic.startswith("bd"):
-      return effects({power_condition_field(row), "ctr"}, {"ctr"})
-    return effects({power_condition_field(row)}, set())
-  if mnemonic in {"bl", "bla", "bctrl", "blrl"}:
-    return effects({f"r{n}" for n in range(3, 11)} | {"r1", "r2", "ctr"}, POWER_CALLER_SAVED, call=True)
-  if mnemonic in {"b", "blr", "bctr", "nop", "trap", "sync", "lwsync", "isync", "attn"}:
-    return effects({"lr"} if mnemonic == "blr" else ({"ctr"} if mnemonic == "bctr" else set()), set())
+  cr0 = {"cr0"} if record or mnemonic in POWER_CR0_SETTERS else set()
+  if (form := scanner.power_branch(mnemonic)) is not None:
+    return power_branch_effects(row, form)
+  if (trap := scanner.POWER_TRAP.fullmatch(mnemonic)) is not None:
+    # `tw TO, RA, RB` and `twi TO, RA, SI` read RA and RB; the extended forms omit TO.
+    registers = numbers[1:] if trap.group("condition") is None else numbers
+    return effects({f"r{number}" for number in (registers[:-1] if mnemonic.endswith("i") else registers)}, set())
+  if mnemonic in {"nop", "trap", "sync", "lwsync", "isync", "attn"}:
+    return effects(set(), set())
   if plain in POWER_COMPARES:
     operands = split_operands(row.operands)
     field = f"cr{operands[0]}" if len(operands) == 3 else "cr0"
@@ -584,8 +643,12 @@ S390X_NO_CC = {
   "rll", "rllg", "risbg", "risbgn", "risbhg", "risblg", "msgr", "msr", "msg", "ms", "msgf", "msgfr", "msfi",
   "msgfi", "mlgr", "mlg", "lgdr", "ldgr", "locr", "locgr", "loc", "locg", "lochi", "locghi", "lgat", "bras", "risbgz",
   "risbgnz",
-  "lrvgr", "lrvr", "lrvg", "lrv", "llgt", "llgtr", "lax", "sar", "ear",
+  "lrvgr", "lrvr", "lrvg", "lrv", "llgt", "llgtr", "sar", "ear",
 }
+# Interlocked updates of storage, with the bytes that each accesses.
+S390X_COMPARE_AND_SWAP = {"cs": 4, "csy": 4, "csg": 8, "cds": 8, "cdsy": 8, "cdsg": 16}
+S390X_INTERLOCKED = {"laa": 4, "laal": 4, "lan": 4, "lao": 4, "lax": 4, "laag": 8, "laalg": 8, "lang": 8, "laog": 8,
+                     "laxg": 8}
 S390X_CC_SETTERS = {
   "a", "ag", "agr", "ar", "ahi", "aghi", "agf", "agfr", "afi", "agfi", "al", "alg", "algr", "alr", "alfi", "algfi",
   "alc", "alcr", "alcg", "alcgr", "s", "sg", "sgr", "sr", "sgf", "sgfr", "sl", "slg", "slgr", "slr", "slb", "slbr",
@@ -640,8 +703,30 @@ def s390x_effects(row: scanner.DecodedLine, identity: str) -> Effects:
   constant = "<const:" in identity
   operands = split_operands(row.operands)
   first = s390x_registers(operands[0]) if operands else []
-  if mnemonic == "brasl":
-    return effects({f"r{n}" for n in range(2, 7)} | {"r15"}, S390X_CALLER_SAVED, call=True)
+  if mnemonic in {"brasl", "bras", "bas", "bal"} or (mnemonic in {"basr", "balr"} and operands[1:2] != ["%r0"]):
+    # BRANCH RELATIVE AND SAVE (`brasl`, `bras`), and BRANCH AND SAVE or BRANCH AND LINK through a register
+    # (`basr %r14, %r1`, `balr`), z/Architecture Principles of Operation, chapter 7. With R2 zero, BASR and
+    # BALR do not branch. The ELF ABI passes arguments in r2-r6.
+    return effects({f"r{n}" for n in range(2, 7)} | {"r15"} | set(s390x_registers(", ".join(operands[1:]))),
+                   S390X_CALLER_SAVED, call=True)
+  if scanner.S390X_TRAP.match(mnemonic):
+    # LOAD AND TRAP loads its first operand; COMPARE AND TRAP only reads its operands.
+    if mnemonic in {"lat", "lgat", "lfhat", "llgfat", "llgtat"}:
+      return effects(set(s390x_registers("".join(operand for operand in operands if "(" in operand))), set(first),
+                     load=not constant)
+    return effects(set(registers), set(), load=memory and not constant)
+  if mnemonic in S390X_COMPARE_AND_SWAP or mnemonic in S390X_INTERLOCKED:
+    # COMPARE AND SWAP stores the third operand when the first equals storage; otherwise it loads storage into the
+    # first. LOAD AND ADD and the other interlocked forms load the old storage into the first operand and store the
+    # result. CDS and CDSG use even-odd register pairs.
+    address = set(s390x_registers("".join(operand for operand in operands if "(" in operand)))
+
+    def widened(names: list[str]) -> set[str]:
+      return {names[0], f"r{int(names[0][1:]) + 1}"} if mnemonic.startswith("cd") and names else set(names)
+
+    third = widened(s390x_registers(operands[1]) if len(operands) > 1 else [])
+    compared = widened(first) if mnemonic in S390X_COMPARE_AND_SWAP else set()
+    return effects(third | compared | address, widened(first) | {"cc"}, load=True)
   if mnemonic in {"j", "jg", "br", "bcr", "nopr", "nop", "brcl"} and not scanner.is_conditional_branch(
       "s390x-unknown-linux-gnu", mnemonic):
     return effects(set(registers), set())
@@ -744,6 +829,39 @@ X86_LOAD_ONLY = X86_COMPARES | {"movzx", "movsx", "movsxd", "push", "imul", "mul
 X86_STRING = re.compile(r"^(?:stos|movs|cmps|scas|lods)[bwlq]?$")
 
 
+# Intel SDM Vol. 2: a vector instruction that accesses fewer bytes than its register holds. A broadcast reads one
+# element (VPBROADCAST, VBROADCAST), an insert one element or lane (PINSR, INSERTPS, VINSERT, MOVHPS, MOVLPS), and
+# a scalar floating-point operation one element (ADDSS, VFMADD231SD, CVTSS2SD).
+X86_INTEGER_WIDTH = {"b": 1, "w": 2, "d": 4, "q": 8}
+X86_FLOAT_WIDTH = {"h": 2, "s": 4, "d": 8}
+X86_LANE_WIDTH = {"128": 16, "32x2": 8, "32x4": 16, "64x2": 16, "32x8": 32, "64x4": 32}
+X86_BROADCAST = re.compile(r"vp?broadcast(?:([bwdq])|s([sd])|[if](128|32x[248]|64x[24]))")
+# MOVHPS, MOVLPS, MOVHPD, and MOVLPD move one 8-byte half.
+X86_INSERT = re.compile(r"v?(?:pinsr([bwdq])|insertp(s)|insert[if](128|32x[48]|64x[24])|mov[hl]p([sd]))")
+X86_SCALAR = re.compile(
+  r"v?(?:add|sub|mul|div|min|max|sqrt|rcp(?:14)?|rsqrt(?:14)?|round|getexp|getmant|rndscale|scalef|range|reduce"
+  r"|fixupimm|ucomi|comi|cmp\w*|mov|fn?m(?:add|sub)(?:132|213|231)|cvtt?)s([hsd])(?:2\w+)?")
+
+
+def x86_element_width(mnemonic: str, operands: list[str]) -> int | None:
+  """The bytes that a vector instruction accesses in memory when they are fewer than its register holds."""
+  if embedded := next((match for operand in operands if (match := re.search(r"\{1to(\d+)\}", operand))), None):
+    vector = max((x86_register_width(operand) or 0 for operand in operands if re.fullmatch(r"%[xyz]mm\d+", operand)),
+                 default=0)
+    return vector // int(embedded.group(1)) or None
+  if mnemonic in {"movddup", "vmovddup"} and operands[-1:] and operands[-1].startswith("%xmm"):
+    return 8
+  if match := X86_BROADCAST.fullmatch(mnemonic):
+    integer, floating, lane = match.groups()
+    return X86_INTEGER_WIDTH[integer] if integer else X86_FLOAT_WIDTH[floating] if floating else X86_LANE_WIDTH[lane]
+  if match := X86_INSERT.fullmatch(mnemonic):
+    integer, single, lane, _half = match.groups()
+    return X86_INTEGER_WIDTH[integer] if integer else 4 if single else X86_LANE_WIDTH[lane] if lane else 8
+  if match := X86_SCALAR.fullmatch(mnemonic):
+    return X86_FLOAT_WIDTH[match.group(1)]
+  return None
+
+
 def x86_register_width(operand: str) -> int | None:
   name = operand.lstrip("%")
   if re.fullmatch(r"[xyz]mm\d+", name):
@@ -817,6 +935,8 @@ def x86_memory(row: scanner.DecodedLine) -> Memory:
     width = X86_SUFFIX_WIDTH.get(mnemonic[4])
   elif base_name == "movsxd":
     width = 4
+  if width is None:
+    width = x86_element_width(mnemonic, operands)
   if width is None and registers:
     width = x86_register_width(registers[0])
   destination_is_memory = "(" in operands[-1]
@@ -900,7 +1020,9 @@ def aarch64_memory(row: scanner.DecodedLine) -> Memory:
     width = 2
   elif mnemonic in {"ldrsw", "ldursw"}:
     width = 4
-  if mnemonic.startswith(("ldp", "stp", "ldnp", "stnp")) and width is not None:
+  if (atomic := AARCH64_ATOMIC_FORM.fullmatch(mnemonic)) and atomic.group("size"):
+    width = 1 if atomic.group("size") == "b" else 2
+  if (mnemonic.startswith(("ldp", "stp", "ldnp", "stnp")) or (atomic and atomic.group("pair"))) and width is not None:
     width *= 2
   if mnemonic.startswith(("ld1", "ld2", "ld3", "ld4", "st1", "st2", "st3", "st4")) or "xr" in mnemonic \
       or "xp" in mnemonic:
@@ -913,7 +1035,9 @@ def aarch64_memory(row: scanner.DecodedLine) -> Memory:
     steps = ((base, base, immediate(memory.group("post"))),)
     displacement = 0
   if AARCH64_ATOMIC.match(mnemonic):
-    return Memory((Access(False, base, index, displacement, width), Access(True, base, index, displacement, width)),
+    # A failed compare-and-swap writes nothing, so its store never replaces the earlier bytes.
+    stored = None if mnemonic.startswith("cas") else width
+    return Memory((Access(False, base, index, displacement, width), Access(True, base, index, displacement, stored)),
                   steps)
   if mnemonic.startswith("st"):
     return Memory((Access(True, base, index, displacement, width),), steps)
@@ -941,7 +1065,10 @@ def riscv_memory(row: scanner.DecodedLine) -> Memory:
                                width=RISCV_WIDTH.get(letter))
     if core.startswith("amo"):
       return Memory((access(False), access(True)))
-    return Memory((access(mnemonic in scanner.RISCV_STORES or core.startswith("sc.")),))
+    if core.startswith("sc."):
+      # A store-conditional writes nothing when the reservation is lost.
+      return Memory((Access(True, match.group("base"), None, immediate(match.group("displacement") or "0"), None),))
+    return Memory((access(mnemonic in scanner.RISCV_STORES),))
   if mnemonic in {"addi", "c.addi", "c.addi16sp", "c.addi4spn"} and len(registers) == 2:
     return Memory(steps=((registers[0], registers[1], immediate(operands[-1])),))
   if mnemonic in {"mv", "c.mv"} and len(registers) == 2:
@@ -965,6 +1092,9 @@ def power_memory(row: scanner.DecodedLine) -> Memory:
     store = plain in POWER_STORES or plain in POWER_VECTOR_STORE
     if vector:
       width = POWER_VECTOR_WIDTH.get(plain)
+    elif plain.endswith("cx"):
+      # A conditional store writes nothing when the reservation is lost, so it never replaces the earlier bytes.
+      width = None
     else:
       letter = plain[2] if plain.startswith("st") else plain[1]
       width = POWER_WIDTH.get(letter)
@@ -1056,6 +1186,14 @@ def s390x_memory(row: scanner.DecodedLine) -> Memory:
     width = (last - first + 1) * (8 if mnemonic.endswith("g") else 4) if last >= first else None
     return Memory((access(located[0][1], mnemonic.startswith("st"), width),))
   match = located[0][1]
+  if mnemonic in S390X_INTERLOCKED:
+    return Memory((access(match, False, S390X_INTERLOCKED[mnemonic]), access(match, True, S390X_INTERLOCKED[mnemonic])))
+  if scanner.S390X_TRAP.match(mnemonic):
+    # COMPARE LOGICAL AND TRAP and LOAD AND TRAP read 4 bytes, or 8 for their `g` forms.
+    return Memory((access(match, False, 8 if mnemonic in {"lgat", "clgt"} or mnemonic.startswith("clgt") else 4),))
+  if mnemonic in S390X_COMPARE_AND_SWAP:
+    # COMPARE AND SWAP stores nothing when the comparison fails.
+    return Memory((access(match, False, S390X_COMPARE_AND_SWAP[mnemonic]), access(match, True, None)))
   width = S390X_WIDTH.get(mnemonic)
   if mnemonic in S390X_STORES or mnemonic in S390X_VECTOR_STORES:
     return Memory((access(match, True, width),))
@@ -1077,19 +1215,159 @@ def isa_memory(target: str) -> Any:
   return s390x_memory
 
 
-def argument_registers(target: str) -> set[str]:
-  """Registers that can carry a pointer argument into a call."""
+def argument_registers(target: str) -> list[str]:
+  """The registers that can carry an argument into a call, in argument order.
+
+  The integer arguments come first. AArch64 passes the address of a returned aggregate in x8 (AAPCS64 6.9).
+  """
   if target.startswith("x86_64-") and "-windows-" in target:
-    return {"rcx", "rdx", "r8", "r9"}
+    return ["rcx", "rdx", "r8", "r9"]
   if target.startswith(("x86_64-", "i686-")):
-    return {"rdi", "rsi", "rdx", "rcx", "r8", "r9"}
+    return ["rdi", "rsi", "rdx", "rcx", "r8", "r9"]
   if target.startswith("aarch64-"):
-    return {f"x{n}" for n in range(8)}
+    return [f"x{n}" for n in range(9)]
   if target.startswith("riscv64"):
-    return {f"a{n}" for n in range(8)}
+    return [f"a{n}" for n in range(8)]
   if target.startswith(("powerpc64", "ppc64")):
-    return {f"r{n}" for n in range(3, 11)}
-  return {f"r{n}" for n in range(2, 7)}
+    return [f"r{n}" for n in range(3, 11)]
+  return [f"r{n}" for n in range(2, 7)]
+
+
+# The integer arguments of each imported C function whose prototype an argument summary uses. The
+# calling conventions pass them in order: ELFv2 in r3-r10, AAPCS64 in x0-x7, and the RISC-V psABI in a0-a7.
+IMPORT_ARGUMENTS = {
+  # macOS libSystem, bzero(3): void bzero(void *s, size_t n); also POSIX.1-2001 <strings.h>.
+  "bzero": 2,
+  "calloc": 2,  # ISO C11 7.22.3.2: void *calloc(size_t nmemb, size_t size)
+  # The POWER target (powerpc64le-unknown-linux-gnu) uses glibc: manual 25.5.1, unsigned long int
+  # getauxval(unsigned long int type). src/platform/detect.rs declares the same contract.
+  "getauxval": 1,
+  "memcpy": 3,  # ISO C11 7.24.2.1: void *memcpy(void *restrict s1, const void *restrict s2, size_t n)
+  "memset": 3,  # ISO C11 7.24.6.1: void *memset(void *s, int c, size_t n)
+}
+# A direct transfer: `bl 0x331b8 <Sha256::update_impl+0x8>`, or an IBM Z `brasl %r14, 0x1234`.
+TRANSFER_ADDRESS = re.compile(r"\b0x([0-9a-fA-F]+)(?:\s+<.*>)?\s*$")
+# A PLT entry, `memcpy@plt`, or a POWER call stub, `0000004f.plt_call.memcpy@@GLIBC_2.17`.
+IMPORT_STUB = re.compile(r"^(?:[0-9a-f]{8}\.plt_call\.(?P<stub>[^@]+)(?:@.*)?|(?P<plt>[^@]+)@plt)$")
+# The Mach-O sections of import stubs, whose symbols carry the C prefix `_`: `_bzero`.
+MACHO_STUB_SECTIONS = {"__TEXT,__stubs", "__TEXT,__auth_stubs"}
+
+
+def imported_function(symbol: str, section: str | None = None) -> str | None:
+  """The C function that a PLT entry, a POWER call stub, or a Mach-O stub transfers to."""
+  if section in MACHO_STUB_SECTIONS:
+    return symbol.removeprefix("_")
+  match = IMPORT_STUB.match(symbol)
+  return (match.group("stub") or match.group("plt")) if match else None
+
+
+def destination(target: str, code: Any, row: scanner.DecodedLine) -> str | None:
+  """The function that a direct transfer enters at its start, or at its POWER local entry point.
+
+  `code.function_at(address)` returns the (start, end, symbol) code range that contains an address. The POWER
+  local entry point follows the two-instruction TOC setup of the global entry point.
+  """
+  match = TRANSFER_ADDRESS.search(row.operands)
+  function = code.function_at(int(match.group(1), 16)) if match else None
+  if function is None:
+    return None
+  start, _, symbol = function
+  address = int(match.group(1), 16)
+  return symbol if address == start or (target.startswith(("powerpc64", "ppc64")) and address == start + 8) else None
+
+
+def destination_reads(target: str, code: Any, reads: dict[str, frozenset[str]],
+                      row: scanner.DecodedLine) -> frozenset[str]:
+  """The argument registers that a call or a transfer out of a function at `row` can pass on.
+
+  `code` is the linked image, with its functions. An unresolved or indirect destination, a function that `reads`
+  does not summarize, and an import without a prototype in `IMPORT_ARGUMENTS` can read every argument register.
+  """
+  arguments = argument_registers(target)
+  symbol = destination(target, code, row) if code is not None else None
+  if symbol is None:
+    return frozenset(arguments)
+  section = code.section_at(int(TRANSFER_ADDRESS.search(row.operands).group(1), 16))
+  if (imported := imported_function(symbol, section.name if section is not None else None)) is not None:
+    return frozenset(arguments[: IMPORT_ARGUMENTS[imported]] if imported in IMPORT_ARGUMENTS else arguments)
+  return reads.get(symbol, frozenset(arguments))
+
+
+def leaves_function(target: str, body: scanner.FunctionBody, end: int, row: scanner.DecodedLine,
+                    following: list[int] | None, effect: Effects) -> bool:
+  """Whether `row` is a call or a direct transfer that can continue in another function."""
+  if effect.call:
+    return True
+  if following == [] and not scanner.is_return_or_trap(target, row):
+    return True
+  match = TRANSFER_ADDRESS.search(row.operands)
+  return (match is not None and scanner.is_conditional_branch(target, row.mnemonic)
+          and not body.address <= int(match.group(1), 16) < end)
+
+
+def argument_reads(target: str, functions: dict[str, scanner.FunctionBody], code: Any) -> dict[str, frozenset[str]]:
+  """The argument registers that each function can read before it writes them.
+
+  A path reads an argument register when an instruction uses it, or when a call or a transfer out of the
+  function passes it on while it still holds the caller's value (`destination_reads`). An indirect jump reads
+  every argument register. The summaries are the least fixed point over the calls, so a cycle of calls adds only
+  what some path reads. `code` is the linked image that holds `functions`.
+  """
+  model = isa_effects(target)
+  every = frozenset(argument_registers(target))
+  analyses: dict[str, tuple[Any, ...]] = {}
+  callers: dict[str, set[str]] = {symbol: set() for symbol in functions}
+  for symbol, body in functions.items():
+    rows = scanner.decode_lines(body)
+    successors = scanner.row_successors(target, body, rows)
+    end = max((row.address + row.length for row in rows), default=body.address)
+    steps = []
+    for index, row in enumerate(rows):
+      effect = model(row, "")
+      transfer = leaves_function(target, body, end, row, successors[index], effect)
+      steps.append((effect, transfer))
+      if transfer and (callee := destination(target, code, row)) in callers:
+        callers[callee].add(symbol)
+    analyses[symbol] = (rows, successors, steps)
+  reads = {symbol: frozenset() for symbol in functions}
+
+  def function_reads(symbol: str) -> frozenset[str]:
+    rows, successors, steps = analyses[symbol]
+    if not rows:
+      return every
+    found: set[str] = set()
+    states: list[frozenset[str] | None] = [None] * len(rows)
+    states[0] = every
+    pending = [0]
+    while pending:
+      index = pending.pop()
+      unwritten = states[index]
+      effect, transfer = steps[index]
+      if successors[index] is None:
+        # An indirect jump can continue anywhere, including in another function.
+        found |= unwritten
+        continue
+      if transfer:
+        # A call's effects name every argument register of the convention; its destination says which it reads.
+        found |= ((effect.uses - every) | destination_reads(target, code, reads, rows[index])) & unwritten
+      else:
+        found |= effect.uses & unwritten
+      after = unwritten - effect.defs
+      for successor in successors[index]:
+        current = states[successor] if successor < len(rows) else None
+        if successor < len(rows) and (current is None or not after <= current):
+          states[successor] = after | (current or frozenset())
+          pending.append(successor)
+    return frozenset(found)
+
+  pending = set(functions)
+  while pending:
+    symbol = pending.pop()
+    value = function_reads(symbol)
+    if value != reads[symbol]:
+      reads[symbol] = value
+      pending |= callers[symbol]
+  return reads
 
 
 def stack_pointer(target: str) -> str:
@@ -1230,17 +1508,19 @@ def cyclic_rows(successors: list[list[int] | None], count: int) -> set[int]:
 
 FLAG_REGISTERS = {"flags", "nzcv", "cc", *(f"cr{n}" for n in range(8))}
 # The register that holds the number of a Linux system call.
-SYSCALL_NUMBER = {"syscall": "rax", "ecall": "a7"}
+SYSCALL_NUMBER = {"syscall": "rax", "ecall": "a7", "svc": "x8"}
 # The identity of a direct transfer to a resolved symbol (`asm_heuristics.instruction_identity`).
 RESOLVED_TRANSFER = re.compile(r"[0-9a-f]+: \d+B [^<]*<(.+)>")
 
 
 def immediate_move(row: scanner.DecodedLine) -> int | None:
-  """The value that an x86 `mov $imm, reg` or a RISC-V `li` writes."""
-  operands = split_operands(row.operands)
+  """The value that a move of an immediate writes: x86 `mov $imm, reg`, AArch64 `mov w1, #imm`, RISC-V and POWER
+  `li`, and IBM Z `lghi`."""
+  operands = split_operands(re.sub(r"\s+(?://|;).*$", "", row.operands))
   if len(operands) != 2:
     return None
-  if row.mnemonic in {"li", "c.li"}:
+  if row.mnemonic in {"li", "c.li", "lghi", "lhi", "lgfi", "llill", "llilf"} or (
+      row.mnemonic in {"mov", "movz"} and operands[1].startswith("#")):
     return immediate(operands[1])
   if x86_base(row.mnemonic) in {"mov", "movq", "movabs"} and operands[0].startswith("$"):
     return immediate(operands[0])
@@ -1248,13 +1528,14 @@ def immediate_move(row: scanner.DecodedLine) -> int | None:
 
 
 def frame_escapes(target: str, rows: list[scanner.DecodedLine], row_effects: list[Effects],
-                  row_memory: list[Memory], states: list[dict[str, Value] | None], frame: str) -> bool:
+                  row_memory: list[Memory], states: list[dict[str, Value] | None], frame: str, image: Any) -> bool:
   """Whether a frame address can reach memory or code that this function's slices cannot see.
 
-  An address of the locals escapes when it is stored as data, passed in an argument register to a call, or used
-  by an instruction other than an address computation, a pointer step, or a comparison.
+  An address of the locals escapes when it is stored as data, passed to a call in an argument register that the
+  callee can read (`destination_reads`), or used by an instruction other than an address computation, a pointer
+  step, or a comparison.
   """
-  arguments = argument_registers(target)
+  reads = getattr(image, "argument_reads", {})
   for index, effect in enumerate(row_effects):
     state = states[index]
     if state is None:
@@ -1267,7 +1548,7 @@ def frame_escapes(target: str, rows: list[scanner.DecodedLine], row_effects: lis
       return value.frame and (value.offset is None or value.offset < 0)
 
     if effect.call:
-      if any(framed(register) for register in arguments):
+      if any(framed(register) for register in destination_reads(target, image, reads, rows[index])):
         return True
       continue
     memory = row_memory[index]
@@ -1383,10 +1664,116 @@ class FunctionSlices:
     self.row_effects = [model(row, self.identities[row.number]) for row in rows]
     self.row_memory = [isa_memory(target)(row) for row in rows]
     self.states = pointer_values(rows, successors, self.row_effects, self.row_memory, self.frame)
-    self.escaped = frame_escapes(target, rows, self.row_effects, self.row_memory, self.states, self.frame)
+    self.escaped = frame_escapes(target, rows, self.row_effects, self.row_memory, self.states, self.frame, image)
     self.cyclic = cyclic_rows(successors, len(rows))
+    # The relocation that an object listing prints after an instruction, by row.
+    relocated, previous = {}, None
+    for number, line in body.lines:
+      if scanner.RELOCATION_LINE.match(line) and previous is not None:
+        relocated[previous] = line
+      elif number in self.index_by_line:
+        previous = self.index_by_line[number]
+    self.relocated = relocated
+    self.linked = image is not None
 
-  def slice(self, line_number: int) -> Slice:
+  def reaching(self, index: int, register: str) -> list[int]:
+    """The rows whose definition of `register` can reach rows[index], and `ENTRY` for its entry value."""
+    found, pending, seen = set(), list(self.predecessors[index]), set()
+    while pending:
+      current = pending.pop()
+      if current in seen:
+        continue
+      seen.add(current)
+      if current == ENTRY:
+        found.add(ENTRY)
+        continue
+      if register in self.row_effects[current].defs:
+        found.add(current)
+        continue
+      pending.extend(self.predecessors[current])
+    return sorted(found)
+
+  def read_only_address(self, index: int) -> bool:
+    """Whether rows[index] forms the address of read-only data or code, such as a jump table.
+
+    A linked listing describes the address (`<const:...>`, `<code:...>`, a global-merge base). An object listing
+    names the table section or label in the relocation (`.rodata.<function>`, `.rdata`, `.LJTI0_0`, `$JT0_0`,
+    `.Lswitch.table`), and an x86 RIP-relative address without a relocation is in the same code section.
+    """
+    row = self.rows[index]
+    identity = self.identities[row.number]
+    relocation = self.relocated.get(index)
+    if re.search(r"<(?:[\w-]+:)?(?:const:|code:|merged)", identity) is not None:
+      return True
+    if self.linked:
+      return False
+    if relocation is None:
+      return "(%rip)" in row.operands
+    return re.search(r"\s(?:\.rodata\S*|\.rdata\S*|\$JT\S*|\.LJTI\S*|\.Lswitch\.table\S*)\s*$", relocation) is not None
+
+  def table_loads(self, line_number: int) -> frozenset[int] | None:
+    """The read-only table loads that give the indirect jump on `line_number` its target, or None.
+
+    A jump table is a multi-way branch on its index. Its target is a table entry, a read-only base, constants, and
+    arithmetic over them. The entry load reads read-only data at the base plus an index, so the index is the only
+    input that can select the target. Any other source of the target, such as a call result or a load of writable
+    data, makes the jump an indirect jump of unknown target.
+    """
+    jump = self.index_by_line.get(line_number)
+    if jump is None:
+      return None
+    loads: set[int] = set()
+    memo: dict[tuple[str, int], bool] = {}
+    # The stores that reach each load of the jump's own slice, such as the spill of a table target.
+    offsets = {row.offset: index for index, row in enumerate(self.rows)}
+    stores = {node["index"]: [offsets.get(int(source[3:], 16), ENTRY) if source.startswith("+0x") else ENTRY
+                              for source in node["inputs"].get("mem", [])]
+              for node in self.slice(line_number).nodes if node["load"]}
+
+    def inputs(index: int) -> list[int]:
+      return [definition for register in sorted(self.row_effects[index].uses - {self.frame})
+              for definition in self.reaching(index, register)]
+
+    def check(kind: str, index: int) -> bool:
+      """`value`: the definition is part of the target. `address`: it adds an index to a read-only base."""
+      key = (kind, index)
+      if key not in memo:
+        memo[key] = False
+        memo[key] = classify(kind, index)
+      return memo[key]
+
+    def classify(kind: str, index: int) -> bool:
+      if index < 0:
+        return False
+      if self.read_only_address(index):
+        return True
+      effect = self.row_effects[index]
+      if effect.call or effect.unknown or effect.state:
+        return False
+      if effect.load:
+        # Only a table entry is loaded; its address must be a read-only base plus an index. A reload of a value that
+        # this function stored, such as a spilled table target, is that value.
+        accesses = [access for access in self.row_memory[index].accesses if not access.store]
+        registers = {register for access in accesses for register in (access.base, access.index) if register}
+        if kind != "value":
+          return False
+        if any(all(check("address", definition) for definition in self.reaching(index, register))
+               for register in registers):
+          loads.add(index)
+          return True
+        reaching = stores.get(index, [ENTRY])
+        return bool(reaching) and all(check("value", store) for store in reaching)
+      definitions = inputs(index)
+      if kind == "address":
+        return any(check("address", definition) for definition in definitions)
+      return all(check("value", definition) for definition in definitions)
+
+    # A jump through memory, such as `jmpq *0x2d8(%rsp)`, loads its own target.
+    return frozenset(loads) if check("value", jump) and loads else None
+
+  def slice(self, line_number: int, public_loads: frozenset[int] = frozenset()) -> Slice:
+    """The slice of the branch on `line_number`. Rows in `public_loads` read public read-only data, such as the
+    entries of a jump table: their address registers stay in the slice, and no store reaches them."""
     rows, identities, frame = self.rows, self.identities, self.frame
     predecessors, row_effects, row_memory = self.predecessors, self.row_effects, self.row_memory
     states, escaped, cyclic = self.states, self.escaped, self.cyclic
@@ -1406,21 +1793,7 @@ class FunctionSlices:
       # A root defined outside every loop holds one value per call.
       return root[0] == ENTRY or root[0] not in cyclic
 
-    def reaching(index: int, register: str) -> list[int]:
-      found, pending, seen = set(), list(predecessors[index]), set()
-      while pending:
-        current = pending.pop()
-        if current in seen:
-          continue
-        seen.add(current)
-        if current == ENTRY:
-          found.add(ENTRY)
-          continue
-        if register in row_effects[current].defs:
-          found.add(current)
-          continue
-        pending.extend(predecessors[current])
-      return sorted(found)
+    reaching = self.reaching
 
     def query(index: int) -> str:
       """The leaf of a call's results and of the memory that it writes."""
@@ -1489,7 +1862,7 @@ class FunctionSlices:
         definitions = reaching(index, register)
         inputs[register] = definitions
         pending.extend(definition for definition in definitions if definition >= 0)
-      if effect.load:
+      if effect.load and index not in public_loads:
         loads = [access for access in row_memory[index].accesses if not access.store]
         if not loads:
           open_leaf(index, f"non-constant load at +0x{row.offset:x}: {row.mnemonic} {row.operands}", "unknown load")

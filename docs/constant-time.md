@@ -40,16 +40,35 @@ LLVM can also turn a masked selection back into a branch on the mask.
 The binary inspection reports a conditional branch whose two paths rejoin after straight-line code
 as `select_branch`, the shape of that lowering.
 For the primitives under `[asm_select_branch]` in `ct.toml`, an unclassified `select_branch` fails the gate.
+The inspection classifies each control transfer by the forms that its ISA manual defines.
+Every conditional transfer is a conditional branch: also a POWER conditional return (`bclr`, `beqlr`),
+a jump through CTR (`bcctr`), a conditional trap (POWER `tweq`, IBM Z `cgrte`), and x86 `xbegin`.
+A call or a jump through a register or memory is an indirect call or jump: POWER `bctrl` and `bctr`,
+IBM Z `basr`, RISC-V `jalr a1` and `jr a5`, AArch64 `blraa`, and x86 far transfers.
+IBM Z `br 0` (BCR 15,0) is no transfer: with R2 zero, BCR does not branch, and BCR 15,0 serializes.
+A jump table is a multi-way branch, so its indirect jump is a `conditional_branch` whose slice holds the index.
+This applies only when the target is an entry of read-only data at a read-only base plus the index,
+with only the base and constants added: `movslq (%rcx,%rax,4), %rax`, `addq %rcx, %rax`, `jmpq *%rax`.
+Any other indirect jump is an `indirect_jump` and fails the gate.
+A table jump has no successors in the control-flow graph, so every slice in its function is open.
+The call graph also follows a conditional transfer into another function, such as an x86 `je` tail transfer.
+On RISC-V, llvm-objdump decodes each extension that the emitted LLVM IR enables, so V and Zknh code is visible.
 An `asm_waiver` binds a reviewed condition to its target, primitive, function, finding kind,
 and condition identity (`slice_sha256`): a digest of the backward slice of the condition in the linked binary.
 The slice holds every instruction whose result reaches the condition through registers, flags,
 or memory inside the function, each with the placement-independent identity described below.
 A load reaches the stores that can write the loaded bytes.
+An access covers the bytes that its ISA manual gives, not the width of its register.
+An x86 broadcast or a `{1toN}` operand reads one element, and an insert or a scalar operation reads its element.
 An x86 multi-byte NOP accesses no memory, despite its operand, so assembler padding never joins a slice.
 Stack slots are tracked by their offset from the entry stack pointer,
 and fields read through an unmodified argument pointer by their offset from it.
 Any other store that can overlap a load joins its slice.
+Atomic and exclusive accesses, such as `ldaddal`, `lock xaddq`, `amoadd.w`, `csg`, and `lax`, load and store
+like other accesses. A conditional store, such as `stdcx.`, `sc.w`, `stxr`, or a failed `cas` or `cs`,
+may write nothing, so it never replaces the bytes of an earlier store.
 If a frame address is stored, passed to a call, or used in arithmetic, every call can write the frame.
+AArch64 also passes a frame address in x8, the address of a returned aggregate.
 
 - A slice is *closed* when it ends only at function inputs, entry memory, immediates,
   and read-only data bound by contents.
@@ -59,6 +78,7 @@ If a frame address is stored, passed to a call, or used in arithmetic, every cal
   Implicit register operands count as effects: `cpuid` writes eax through edx, `cmpxchg` and one-operand
   `imul` write rax or rdx, and `syscall` (x86-64) and `ecall` (RISC-V) return in rax or a0 and can write
   the memory their arguments address, as a call does. IBM Z `stfle` stores the facility list at its operand.
+  A call through a register is a call on every target, also IBM Z `basr %r14, %r1` and RISC-V `jalr a1`.
   An instruction whose implicit operands the model does not know reads and writes every register.
   An open identity also binds the complete function hash, so any change in the function requires renewed review.
 
@@ -110,14 +130,37 @@ up to three levels deep, and each location by `loc`, so moved targets with uncha
 ELF allocation units are linker-map input sections, and Mach-O units are ld64 map atoms.
 Merged string and literal sections bind only the referenced literal.
 On PE, and in Mach-O artifacts without an ld64 map such as the `543fa738` baseline,
-a unit runs from the nearest known object start to the next one, without its trailing zero bytes,
-which may be alignment padding. The bound never cuts a pointer slot or a location.
+a unit runs from the nearest known object start to the next one.
+Such a unit and an ld64 atom can end in alignment padding, whose length depends on where the next object is.
+A reference with a known read extent binds the unit up to that extent, without the zero bytes that follow it.
+A known extent is the width of an access, or an immediate length that a call receives with the address:
+the address in one argument register of the target's ABI, and the length in the next one (`&str`, `&[u8]`).
+The callee's LLVM IR in the artifacts' `.ll` files must give that pair the form that rustc emits for a byte slice:
+a `noalias nonnull` pointer without `align` or `dereferenceable`, then an `i64`.
+Another slice has `align N`, and its length counts elements, not bytes.
+The length must also fit inside the object at the address. A larger value is not a byte length,
+such as the `len << 1 | 1` that a `fmt::Arguments` literal passes, so the reference binds its object.
+Each reference uses only its own extent, so other functions cannot change its identity.
+A reference without a known extent, such as an address passed with a length in a register, binds the whole unit.
+The bound never cuts a pointer slot or a location.
 A read-only LLVM global-merge unit (`_MergedGlobals`, on POWER) holds many objects.
-It splits into members at every address that code forms into it and every relocated pointer or location
-in it or pointing into it, and a reference binds the member it designates.
+The assembly that the same compilation emits gives each object as an alias with a size:
+`.Lanon.1 = .L_MergedGlobals.2+411` and `.size .Lanon.1, 7`.
+Each linked unit must match exactly one assembly unit by its bytes, except the bytes that relocations give.
+A reference then binds the object that it designates, so other functions and other objects do not change it.
+A unit without exactly one match, or an assembly unit that matches two units, stops the scanner with status 2.
+An address in alignment padding, or an access past the end of its object, binds the whole unit.
 On POWER, a forward dataflow follows the unit's start, the raw base, through copies, constant offsets,
 constant indices, and spills to the function's own stack slots. Each load or address formed from it binds
-its member. A constant used only as such an index loses its immediate, which is merged-unit layout.
+its object. A constant used only as such an index loses its immediate, which is merged-unit layout.
+A value leaves the function only through the registers that its destination reads.
+A direct call or a tail transfer passes the argument registers that its destination can read before it writes them.
+A fixed point over the linked functions gives these summaries. An import passes the arguments of its C prototype
+in the scanner's table. Any other import, and an indirect call, reads every argument register.
+On POWER, a return passes r3 and r4, and an indirect jump passes every register.
+On AArch64 and RISC-V, a base that a high part and its low part form binds the whole unit, unless its only
+reads are accesses and its register is dead after them. A call or a tail transfer reads it only as its
+destination's summary says.
 A raw base that reaches any other use, an access with an unknown index, or an instruction of unknown effect
 can reach any member, so it binds the whole unit. A writable merge unit binds its symbol like other writable data.
 A high part (`adrp`, `auipc`, or `addis`) is described by the targets of its resolved low parts
