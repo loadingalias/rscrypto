@@ -61,7 +61,6 @@ impl rscrypto::AeadGather for DirtyRejectingAead {
 
   #[expect(
     clippy::panic,
-    clippy::panic_in_result_fn,
     reason = "exercise adapter cleanup when an external implementation unwinds"
   )]
   fn __encrypt_gather_with_nonce<'input, 'output>(

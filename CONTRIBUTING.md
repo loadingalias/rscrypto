@@ -52,47 +52,38 @@ for example Miri and machine-code zeroization evidence.
 
 ## Validate
 
-### Local hooks
+### Local macOS qualification
 
-Every pushed tip queues macOS ARM64 qualification on the maintainer's physical Apple Silicon Mac.
-The push returns while qualification runs; a release waits for its passing GitHub status.
+The repository has no Git hooks, so a push does not queue macOS qualification.
+After each push, run `just qualify-macos` on the maintainer's physical Apple Silicon Mac,
+with the pushed commit checked out. The command returns while qualification runs,
+and a release waits for its passing GitHub status.
 
-Run `just install-hooks` once for each checkout.
-
-- The pre-commit and pre-merge-commit hooks run `just ci-check` on the staged tree:
-  formatting, native and portable host lints, and documentation.
-  The check runs in one persistent worktree, `rscrypto-ci-check/checkout` in the common Git directory,
-  with its own Cargo target directory.
-  One check runs at a time.
-  Unstaged edits and untracked files stay out of the check and do not block the commit,
-  so sessions can commit disjoint paths from one checkout.
-- The pre-push hook queues `just check-macos` in a detached worktree of the pushed commit:
-  native checks, complete release tests with native and portable dispatch (including doctests),
+- `just qualify-macos` queues `just check-macos` in a detached worktree of the checked-out commit:
+  `just ci-check`, complete release tests with native and portable dispatch (including doctests),
   internal evidence regressions, and the Apple Silicon RSA assembly gate.
-- The pushed tip must be the clean checkout. Later work in that checkout cannot change the background job.
+- The queued commit must be the clean checkout. Later work in that checkout cannot change the background job.
   Jobs run one at a time and keep their logs and passing tree/compiler records in the common Git directory.
-  A tree that already passed skips testing, from any worktree, and publishes the result for the pushed commit.
-- Both hooks reuse a pass when the new tree differs from the nearest passing first-parent ancestor
+  A tree that already passed skips testing, from any worktree, and publishes the result for the commit.
+- Qualification reuses a pass when the new tree differs from the nearest passing first-parent ancestor
   only in paths that no check reads: `docs/`, `.changes/`, `.github/`, `benchmark_results/`,
   `.config/tooling.toml`, `CHANGELOG.md`, `CONTRIBUTING.md`, `SECURITY.md`, and `THREAT_MODEL.md`.
   `scripts/check/qualified.py` owns this list. A change to any other path, or a different compiler, runs the checks.
   The checks read only the Mac's uv pin from `.config/tooling.toml`; a new uv does not invalidate a pass,
   because only the tree and the compiler identify one.
   `README.md` is checked because the crate documentation includes it.
-- `check-macos` skips `just ci-check` when the clean checkout already passed it in the pre-commit hook.
-- In a push of more than one commit, the intermediate commits get only `just ci-check`.
+- In a push of more than one commit, only the commit that you qualify gets `just check-macos`.
 
 Install the prerequisites with `scripts/tooling/aarch64-macos.sh` when you need them.
 Authenticate `gh` as a repository maintainer with permission to write commit statuses
 (`repo:status` for an OAuth token, or Commit statuses: write for a fine-grained token).
 See GitHub's [commit status API](https://docs.github.com/en/rest/commits/statuses).
 Run `just macos-status` to find each job's result and log.
-After fixing a failed check, commit and push the fix.
+After fixing a failed check, commit and push the fix, then run `just qualify-macos` again.
 For an interrupted job or failed status publication, run `just qualify-macos` on the clean commit to retry.
 The retry reuses a completed local pass when only publication failed.
 `just check-macos` remains available as a foreground diagnostic; it does not publish a status.
 
-Do not bypass the hooks.
 Release preflight, packaging, and publication require the latest `rscrypto/macos` status to pass
 for that commit, its exact Git tree, and the pinned compiler distribution.
 A missing, failed, pending, or mismatched status blocks release.

@@ -257,7 +257,6 @@ impl<'a> CallerFragments<'a> {
 impl Read for CallerFragments<'_> {
   #[expect(
     clippy::panic,
-    clippy::panic_in_result_fn,
     reason = "inject a reader panic and assert the reader stays on its caller"
   )]
   fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {

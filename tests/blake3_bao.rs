@@ -169,11 +169,7 @@ struct ShortReader<'a> {
 }
 
 impl Read for ShortReader<'_> {
-  #[expect(
-    clippy::panic,
-    clippy::panic_in_result_fn,
-    reason = "inject a reader panic to test the decoder's unwind state"
-  )]
+  #[expect(clippy::panic, reason = "inject a reader panic to test the decoder's unwind state")]
   fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
     if self.interruption {
       self.interruption = false;

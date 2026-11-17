@@ -9,7 +9,7 @@ import qualified
 
 
 def run(trees, changed, passes, rustc='rustc 1'):
-  """Evaluate `qualified('macos', 'candidate')` against fake history.
+  """Evaluate `qualified('candidate')` against fake history.
 
   `trees` maps first-parent commits (newest first) to trees, `changed` maps an ancestor
   tree to the paths that differ from the candidate, and `passes` maps passed trees to compilers.
@@ -30,7 +30,7 @@ def run(trees, changed, passes, rustc='rustc 1'):
 
     with patch.object(qualified, 'git', side_effect=git), patch.object(qualified, 'compiler', return_value=rustc), \
          patch.object(qualified, 'records', return_value=directory):
-      return qualified.qualified('macos', 'candidate')
+      return qualified.qualified('candidate')
 
 
 def main():

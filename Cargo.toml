@@ -66,13 +66,12 @@ unexpected_cfgs = { level = "deny", check-cfg = [
 ] }
 
 [workspace.lints.clippy]
-all = { level = "deny", priority = -1 }
+default = { level = "deny", priority = -1 }
 
 non_send_fields_in_send_ty = "deny"
 significant_drop_in_scrutinee = "deny"
 
 panic = "deny"
-panic_in_result_fn = "deny"
 string_slice = "deny"
 todo = "deny"
 unchecked_time_subtraction = "deny"

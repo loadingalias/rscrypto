@@ -1,8 +1,5 @@
 #!/usr/bin/env -S uv run python
-"""Record and reuse local qualification passes by Git tree and compiler.
-
-  qualified.py check KIND TREE    exit 0 if TREE is qualified for KIND, else 1
-  qualified.py record KIND TREE   record that TREE passed KIND with the current compiler
+"""Reuse local Mac qualification passes by Git tree and compiler.
 
 A tree is qualified when it passed with the current compiler, or when the nearest
 first-parent ancestor of HEAD with a pass differs from it only in paths that no
@@ -13,13 +10,11 @@ import hashlib
 import os
 import re
 import subprocess
-import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-KINDS = {'ci-check', 'macos'}
 MACOS_CONTEXT = 'rscrypto/macos'
-# Paths that `just ci-check` and `just check-macos` never compile, test, or read, apart from the Mac's
+# Paths that `just check-macos` never compiles, tests, or reads, apart from the Mac's
 # uv pin, which scripts/lib/python.sh reads from .config/tooling.toml. The uv version was never part of
 # a pass's identity, and CI runs every new uv release.
 # README.md is not here: `src/lib.rs` includes it as crate documentation, so doctests run it.
@@ -40,12 +35,10 @@ def git(*args):
 def environment():
   """Return this process's environment for a check in another worktree.
 
-  Hook-local Git variables would point the check's Git commands at the developer's index, HEAD, or
-  working directory. The `uv run` variables would run its Python with the developer's project, lock,
-  and virtual environment, which may change or disappear before the check ends.
+  The `uv run` variables would run its Python with the developer's project, lock, and virtual
+  environment, which may change or disappear before the check ends.
   """
-  hidden = set(git('rev-parse', '--local-env-vars').splitlines()) | set(UV_RUN)
-  env = {name: value for name, value in os.environ.items() if name not in hidden}
+  env = {name: value for name, value in os.environ.items() if name not in UV_RUN}
   if venv := os.environ.get('VIRTUAL_ENV'):
     env['PATH'] = os.pathsep.join(entry for entry in env.get('PATH', '').split(os.pathsep)
                                   if entry != os.path.join(venv, 'bin'))
@@ -57,8 +50,8 @@ def compiler():
   return subprocess.check_output(['rustc', f'+{channel}', '-vV'], cwd=ROOT, text=True).strip()
 
 
-def records(kind):
-  return Path(git('rev-parse', '--path-format=absolute', '--git-common-dir')) / f'rscrypto-{kind}-qualified'
+def records():
+  return Path(git('rev-parse', '--path-format=absolute', '--git-common-dir')) / 'rscrypto-macos-qualified'
 
 
 def macos_description(tree, rustc):
@@ -70,44 +63,23 @@ def macos_description(tree, rustc):
   return f'tree={tree} rustc={hashlib.sha256(identity.encode()).hexdigest()}'
 
 
-def passed(kind, tree, rustc):
-  record = records(kind) / tree
+def passed(tree, rustc):
+  record = records() / tree
   return record.is_file() and record.read_text() == rustc
 
 
-def qualified(kind, tree):
+def qualified(tree):
   rustc = compiler()
-  if passed(kind, tree, rustc):
-    return f'{kind} already passed for tree {tree}'
+  if passed(tree, rustc):
+    return f'Mac qualification already passed for tree {tree}'
   if subprocess.run(['git', 'rev-parse', '--verify', '--quiet', 'HEAD'], cwd=ROOT, capture_output=True).returncode:
     return None
   for commit in git('rev-list', '--first-parent', f'--max-count={ANCESTORS}', 'HEAD').splitlines():
     ancestor = git('rev-parse', f'{commit}^{{tree}}')
-    if not passed(kind, ancestor, rustc):
+    if not passed(ancestor, rustc):
       continue
     changed = [path for path in git('diff', '--name-only', ancestor, tree).splitlines() if path]
     if all(INERT.match(path) for path in changed):
-      return f'{kind} passed for ancestor {commit[:12]}; this tree changes only unchecked paths'
+      return f'Mac qualification passed for ancestor {commit[:12]}; this tree changes only unchecked paths'
     return None
   return None
-
-
-def main():
-  if len(sys.argv) != 4 or sys.argv[1] not in ('check', 'record') or sys.argv[2] not in KINDS:
-    raise SystemExit(__doc__)
-  operation, kind, tree = sys.argv[1:]
-  tree = git('rev-parse', '--verify', f'{tree}^{{tree}}')
-  if operation == 'record':
-    directory = records(kind)
-    directory.mkdir(parents=True, exist_ok=True)
-    (directory / tree).write_text(compiler())
-    return 0
-  reason = qualified(kind, tree)
-  if reason is None:
-    return 1
-  print(reason)
-  return 0
-
-
-if __name__ == '__main__':
-  sys.exit(main())

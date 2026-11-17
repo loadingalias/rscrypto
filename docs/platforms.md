@@ -156,7 +156,7 @@ A configured check is not a passing result for the current revision.
 Inspect the matching run artifacts before you qualify a release.
 Bare-metal checks do not run on devices.
 Wasmtime results do not show browser-engine behavior.
-Windows AArch64 runtime CI is deferred. The pre-push hook queues macOS checks and tests locally.
+Windows AArch64 runtime CI is deferred. `just qualify-macos` queues macOS checks and tests locally after each push.
 Releases require the passing `rscrypto/macos` status for the commit's tree and compiler.
 Timing qualification on physical Apple Silicon is a separate local requirement.
 

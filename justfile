@@ -128,11 +128,6 @@ qualify-macos:
 macos-status:
     @scripts/lib/python.sh scripts/check/macos_async.py status
 
-# Enable mandatory local checks for commits and macOS validation for pushes in this checkout.
-[group('tooling')]
-install-hooks:
-    @git config --local core.hooksPath .githooks
-
 # Cross-check the complete target native CI compilation surface.
 ci-check-target target:
     @scripts/check/check.sh target {{quote(target)}}

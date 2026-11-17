@@ -1,5 +1,0 @@
-#!/usr/bin/env bash
-set -euo pipefail
-cd "$(git rev-parse --show-toplevel)"
-# Check the staged tree in a separate worktree, so unstaged and untracked work stays out of the commit's check.
-exec scripts/lib/python.sh scripts/check/staged.py

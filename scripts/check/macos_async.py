@@ -31,14 +31,12 @@ def save(job, state, phase, **fields):
     temporary.replace(job / 'state.json')
 
 
-def queue(remote, expected=None):
+def queue(remote):
     if subprocess.check_output(['uname', '-sm'], text=True).strip() != 'Darwin arm64':
         raise ValueError('Queue macOS qualification on the physical Apple Silicon Mac')
     if qualified.git('status', '--porcelain'):
         raise ValueError('Commit or set aside every change before queuing qualification')
     sha = qualified.git('rev-parse', 'HEAD')
-    if expected is not None and sha != expected:
-        raise ValueError('Checkout changed while preparing the push; retry with the intended commit checked out')
     tree = qualified.git('rev-parse', f'{sha}^{{tree}}')
     rustc = qualified.compiler()
     if '\nhost: aarch64-apple-darwin\n' not in '\n' + rustc + '\n':
@@ -56,13 +54,13 @@ def queue(remote, expected=None):
             return
         state = {'commit': sha, 'tree': tree, 'compiler': rustc, 'repository': repo}
         save(job, state, 'queued')
-        # The detached worktree runs its own Git state and uv project, never the pusher's.
+        # The detached worktree runs its own uv project, never the queuing checkout's.
         env = qualified.environment()
-        # Freeze the runner too: an edit just after the push must not change code
+        # Freeze the runner too: an edit just after queuing must not change code
         # that the background Python process has not loaded yet.
         for name in ('macos_async.py', 'qualified.py'):
             (job / name).write_text(qualified.git('show', f'{sha}:scripts/check/{name}') + '\n')
-        # The child inherits the lock, so duplicate pushes cannot start a second job.
+        # The child inherits the lock, so a duplicate queue cannot start a second job.
         # Closing the parent's descriptor does not unlock the child's open file description.
         with (job / 'log').open('a') as log:
             try:
@@ -117,7 +115,7 @@ def worker(job, descriptor):
                 qualified.ROOT = checkout
                 if qualified.compiler() != state['compiler']:
                     raise ValueError('Compiler changed after qualification was queued; queue it again')
-                reason = qualified.qualified('macos', state['tree'])
+                reason = qualified.qualified(state['tree'])
                 if reason:
                     print(reason, flush=True)
                 else:
@@ -127,7 +125,7 @@ def worker(job, descriptor):
                 if (qualified.git('status', '--porcelain') or qualified.git('rev-parse', 'HEAD^{tree}') != state['tree']
                         or qualified.compiler() != state['compiler']):
                     raise ValueError('Source or compiler changed during qualification; no pass recorded')
-                records = qualified.records('macos')
+                records = qualified.records()
                 records.mkdir(parents=True, exist_ok=True)
                 (records / state['tree']).write_text(state['compiler'])
                 success = True
@@ -170,8 +168,6 @@ def status():
 def main():
     global ROOT
     match sys.argv[1:]:
-        case ['queue', destination, expected]:
-            queue(destination, expected)
         case ['queue', *destination] if len(destination) <= 1:
             queue(destination[0] if destination else qualified.git('remote', 'get-url', '--push', 'origin'))
         case ['status']:

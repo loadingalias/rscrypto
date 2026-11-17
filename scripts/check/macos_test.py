@@ -1,5 +1,5 @@
 #!/usr/bin/env -S uv run python
-"""Qualification preserves evidence while pushes only wait for a durable background job."""
+"""Qualification preserves evidence while the queue only waits for a durable background job."""
 import fcntl
 import json
 import os
@@ -19,8 +19,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 def install_qualification(root):
     """Give a fixture repository the real qualification helper and a pinned compiler."""
-    for name in ('scripts/check/qualified.py', 'scripts/check/macos_async.py', 'scripts/check/staged.py',
-                 'scripts/lib/python.sh'):
+    for name in ('scripts/check/qualified.py', 'scripts/check/macos_async.py', 'scripts/lib/python.sh'):
         (root / name).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(ROOT / name, root / name)
     toolchain = root / 'scripts/lib/toolchain.sh'
@@ -92,92 +91,6 @@ class MacOSCommit(unittest.TestCase):
             self.assertEqual((root / 'calls').read_text().splitlines(),
                              ['ci-check', 'test --all --release'])
 
-    def test_hook_checks_staged_tree_and_propagates_validation_failure(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            git = ['git', '-C', directory, '-c', 'user.name=t', '-c', 'user.email=t@t']
-            subprocess.run(['git', 'init', '-q', directory], check=True)
-            hook = root / '.git/hooks/pre-commit'
-            shutil.copy2(ROOT / '.githooks/pre-commit', hook)
-            install_qualification(root)
-            (root / '.gitignore').write_text('__pycache__/\n')
-            subprocess.run([*git, 'add', '.gitignore', 'scripts'], check=True)
-            subprocess.run([*git, 'commit', '-qm', 'tools', '--no-verify'], check=True)
-            # The check runs in the separate worktree; record the source it sees there.
-            tool = root / '.git/just'
-            tool.write_text('''#!/bin/sh
-common=$(git rev-parse --path-format=absolute --git-common-dir)
-[ ! -e untracked ] || exit 8
-echo "$* $(cat source)" >> "$common/calls"
-''' + RECORD_UV + ''' > "$common/environment"
-[ -z "${RESTAGE:-}" ] || { echo restaged > "$RESTAGE/source"; git -C "$RESTAGE" add source; }
-[ -z "${DIRTY:-}" ] || echo changed > source
-exit "${CHECK_STATUS:-0}"
-''')
-            tool.chmod(0o755)
-            env = {**os.environ, 'BASH_ENV': '/dev/null', 'PYTHON': sys.executable,
-                   'PATH': str(root / '.git') + os.pathsep + os.environ['PATH']}
-            source = root / 'source'
-
-            def stage(text):
-                source.write_text(text)
-                subprocess.run([*git, 'add', 'source'], check=True)
-
-            def run(**extra):
-                return subprocess.run([str(hook)], cwd=root, env={**env, **extra},
-                                      capture_output=True, text=True).returncode
-
-            def calls():
-                return (root / '.git/calls').read_text().splitlines()
-
-            # A failing check propagates and records nothing.
-            stage('staged')
-            self.assertEqual(run(CHECK_STATUS='7'), 7)
-            # Unstaged edits and untracked files neither block the commit nor enter the check.
-            # Neither does the committer's uv project: the check runs the staged one.
-            source.write_text('unstaged')
-            (root / 'untracked').write_text('new source')
-            self.assertEqual(run(**uv_run(root, env['PATH'])), 0)
-            self.assertEqual(calls(), ['ci-check staged', 'ci-check staged'])
-            assert_own_project(self, root / '.git/environment', root)
-            assert_own_project(self, root / '.git/toolchain', root)
-            self.assertEqual(source.read_text(), 'unstaged')
-            self.assertTrue((root / 'untracked').exists())
-
-            # A recorded tree, and a descendant that changes only unchecked paths, reuse the pass.
-            self.assertEqual(run(), 0)
-            subprocess.run([*git, 'commit', '-qm', 'checked', '--no-verify'], check=True)
-            (root / 'docs').mkdir()
-            (root / 'docs/guide.md').write_text('prose')
-            subprocess.run([*git, 'add', 'docs'], check=True)
-            self.assertEqual(run(), 0)
-            self.assertEqual(len(calls()), 2)
-            # Checked paths and compiler changes run the check again.
-            stage('changed')
-            self.assertEqual(run(), 0)
-            self.assertEqual(run(COMPILER='two'), 0)
-            self.assertEqual(calls()[2:], ['ci-check changed', 'ci-check changed'])
-
-            # A partial commit's temporary index is the checked source. Hook-local Git variables
-            # cannot redirect the worktree's reset and clean to the developer's index or files.
-            index = root / '.git/partial-index'
-            shutil.copy2(root / '.git/index', index)
-            source.write_text('partial')
-            subprocess.run([*git, 'add', 'source'], env={**os.environ, 'GIT_INDEX_FILE': str(index)}, check=True)
-            source.write_text('working')
-            self.assertEqual(run(GIT_INDEX_FILE=str(index), GIT_DIR=str(root / '.git'), GIT_WORK_TREE=directory), 0)
-            self.assertEqual(calls()[-1], 'ci-check partial')
-            self.assertEqual(subprocess.check_output([*git, 'show', ':source'], text=True), 'changed')
-            self.assertEqual(source.read_text(), 'working')
-            self.assertTrue((root / 'untracked').exists())
-
-            # Restaging during the check, or a check that edits its source, records no pass.
-            # The next run restores the staged file before checking.
-            stage('next')
-            self.assertEqual(run(RESTAGE=directory), 1)
-            self.assertEqual(run(DIRTY='1'), 1)
-            self.assertEqual(run(), 0)
-            self.assertEqual(calls()[-3:], ['ci-check next', 'ci-check restaged', 'ci-check restaged'])
 
 class AsyncMacOS(unittest.TestCase):
     def setUp(self):
@@ -189,8 +102,6 @@ class AsyncMacOS(unittest.TestCase):
                             ('commit.gpgsign', 'false')]:
             self.git('config', name, value)
         self.common = self.root / '.git'
-        self.hook = self.common / 'hooks/pre-push'
-        shutil.copy2(ROOT / '.githooks/pre-push', self.hook)
         install_qualification(self.root)
         (self.root / '.gitignore').write_text('__pycache__/\n')
         (self.root / 'source').write_text('first')
@@ -225,11 +136,11 @@ exit "${CHECK_STATUS:-0}"
         self.git('commit', '-qm', message)
         return self.git('rev-parse', 'HEAD')
 
-    def push(self, sha=None, remote=None, **extra):
-        sha = sha or self.git('rev-parse', 'HEAD')
-        update = f'refs/heads/main {sha} refs/heads/main {"0" * 40}\n'
-        return subprocess.run([str(self.hook), 'origin', remote or str(self.root)], cwd=self.root,
-                              env={**self.env, **extra}, input=update, capture_output=True, text=True, timeout=10)
+    def queue(self, remote=None, **extra):
+        """Queue qualification of HEAD, as `just qualify-macos` does."""
+        command = ['scripts/lib/python.sh', 'scripts/check/macos_async.py', 'queue', remote or str(self.root)]
+        return subprocess.run(command, cwd=self.root, env={**self.env, **extra}, capture_output=True, text=True,
+                              timeout=10)
 
     def jobs(self):
         return list((self.common / 'rscrypto-macos').glob('*/state.json'))
@@ -262,18 +173,18 @@ exit "${CHECK_STATUS:-0}"
         path = self.common / 'calls'
         return path.read_text().splitlines() if path.exists() else []
 
-    def test_push_returns_while_worker_is_held_and_deduplicates(self):
+    def test_queue_returns_while_worker_is_held_and_deduplicates(self):
         (self.common / 'hold').touch()
         first = self.git('rev-parse', 'HEAD')
-        self.assertEqual(self.push(GIT_DIR=str(self.common), GIT_WORK_TREE=str(self.root)).returncode, 0)
+        self.assertEqual(self.queue().returncode, 0)
         self.wait(lambda: (self.common / 'started').exists())
         self.assertEqual(self.phases(), ['running'])
-        self.assertEqual(self.push().returncode, 0)
+        self.assertEqual(self.queue().returncode, 0)
         self.assertEqual(self.calls(), [f'check-macos {first}'])
         # Advancing the main checkout cannot change the source the held job qualifies.
         (self.root / 'source').write_text('second')
         second = self.commit('second')
-        self.assertEqual(self.push().returncode, 0)
+        self.assertEqual(self.queue().returncode, 0)
         self.assertEqual(self.calls(), [f'check-macos {first}'])
         self.finish_workers()
         self.assertEqual(self.phases(), ['passed', 'passed'])
@@ -282,73 +193,74 @@ exit "${CHECK_STATUS:-0}"
         self.assertEqual(len(self.git('worktree', 'list', '--porcelain').split('worktree ')), 2)
 
     def test_worker_runs_the_job_checkout_project(self):
-        # The pusher's uv project may be a temporary clone that is gone before the job runs.
-        pusher = self.root / 'removed'
-        self.assertEqual(self.push(**uv_run(pusher, self.env['PATH'])).returncode, 0)
+        # The queuing checkout's uv project may be a temporary clone that is gone before the job runs.
+        queuer = self.root / 'removed'
+        self.assertEqual(self.queue(**uv_run(queuer, self.env['PATH'])).returncode, 0)
         self.finish_workers()
         self.assertEqual(self.phases(), ['passed'])
-        assert_own_project(self, self.common / 'environment', pusher)
+        assert_own_project(self, self.common / 'environment', queuer)
 
     def test_failures_record_no_pass_and_can_be_retried(self):
         for marker, environment in [(None, {'CHECK_STATUS': '7'}), ('dirty', {}), ('change-compiler', {})]:
             with self.subTest(marker=marker):
                 if marker:
                     (self.common / marker).touch()
-                self.assertEqual(self.push(**environment).returncode, 0)
+                self.assertEqual(self.queue(**environment).returncode, 0)
                 self.finish_workers()
                 self.assertEqual(self.phases(), ['failed'])
                 self.assertFalse(list((self.common / 'rscrypto-macos-qualified').glob('*')))
                 if marker:
                     (self.common / marker).unlink()
                 (self.common / 'compiler-change').unlink(missing_ok=True)
-        self.assertEqual(self.push().returncode, 0)
+        self.assertEqual(self.queue().returncode, 0)
         self.finish_workers()
         self.assertEqual(self.phases(), ['passed'])
 
     def test_reuses_exact_and_inert_pass_but_invalidates_source_and_compiler(self):
-        self.assertEqual(self.push().returncode, 0)
+        self.assertEqual(self.queue().returncode, 0)
         self.finish_workers()
         for _ in range(2):
-            self.assertEqual(self.push().returncode, 0)
+            self.assertEqual(self.queue().returncode, 0)
             self.finish_workers()
         (self.root / 'docs').mkdir()
         (self.root / 'docs/note.md').write_text('unchecked prose')
         self.commit('note')
-        self.assertEqual(self.push().returncode, 0)
+        self.assertEqual(self.queue().returncode, 0)
         self.finish_workers()
         self.assertEqual(len(self.calls()), 1)
         (self.root / 'source').write_text('changed source')
         self.commit('source')
-        self.assertEqual(self.push().returncode, 0)
+        self.assertEqual(self.queue().returncode, 0)
         self.finish_workers()
-        self.assertEqual(self.push(COMPILER='two').returncode, 0)
+        self.assertEqual(self.queue(COMPILER='two').returncode, 0)
         self.finish_workers()
         self.assertEqual(len(self.calls()), 3)
 
-    def test_hook_rejects_dirty_or_other_source_and_ignores_deletions(self):
-        self.assertNotEqual(self.push('1' * 40).returncode, 0)
-        stale = subprocess.run(['scripts/lib/python.sh', 'scripts/check/macos_async.py', 'queue', str(self.root), '1' * 40],
-                               cwd=self.root, env=self.env, capture_output=True, text=True)
-        self.assertNotEqual(stale.returncode, 0)
-        self.assertIn('Checkout changed', stale.stderr)
-        (self.root / 'source').write_text('dirty')
-        self.assertNotEqual(self.push().returncode, 0)
-        (self.root / 'source').write_text('first')
-        (self.root / 'untracked').touch()
-        self.assertNotEqual(self.push().returncode, 0)
-        self.assertEqual(self.push('0' * 40).returncode, 0)
+    def test_queue_rejects_a_dirty_checkout(self):
+        # Qualification tests the checkout, so a staged, unstaged, or untracked change is refused.
+        for change in ('staged', 'unstaged', 'untracked'):
+            with self.subTest(change=change):
+                path = self.root / ('untracked' if change == 'untracked' else 'source')
+                path.write_text(change)
+                if change == 'staged':
+                    self.git('add', 'source')
+                result = self.queue()
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('Commit or set aside every change', result.stderr)
+                self.git('reset', '-q', '--hard')
+                (self.root / 'untracked').unlink(missing_ok=True)
         self.assertEqual(self.jobs(), [])
 
     def test_interrupted_worker_is_reported_and_recovered(self):
         (self.common / 'interrupt').touch()
-        self.assertEqual(self.push().returncode, 0)
+        self.assertEqual(self.queue().returncode, 0)
         self.finish_workers()
         result = subprocess.run(['scripts/lib/python.sh', 'scripts/check/macos_async.py', 'status'],
                                 cwd=self.root, env=self.env, capture_output=True, text=True, check=True)
         self.assertIn('interrupted', result.stdout)
         self.assertFalse(list((self.common / 'rscrypto-macos-qualified').glob('*')))
         (self.common / 'interrupt').unlink()
-        self.assertEqual(self.push().returncode, 0)
+        self.assertEqual(self.queue().returncode, 0)
         self.finish_workers()
         self.assertEqual(self.phases(), ['passed'])
         self.assertEqual(len(self.calls()), 2)
@@ -358,7 +270,7 @@ exit "${CHECK_STATUS:-0}"
         directory.mkdir()
         with (directory / 'build.lock').open('w') as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
-            self.assertEqual(self.push().returncode, 0)
+            self.assertEqual(self.queue().returncode, 0)
             (self.common / 'compiler-change').write_text('changed')
         self.finish_workers()
         self.assertEqual(self.phases(), ['failed'])
@@ -369,19 +281,19 @@ exit "${CHECK_STATUS:-0}"
         gh.write_text('#!/bin/sh\necho "HTTP 403" >&2\nexit 1\n')
         gh.chmod(0o755)
         remote = 'git@github.com:example/rscrypto.git'
-        self.assertEqual(self.push(remote=remote).returncode, 0)
+        self.assertEqual(self.queue(remote=remote).returncode, 0)
         self.finish_workers()
         self.assertEqual(self.phases(), ['publication-failed'])
         self.assertTrue(json.loads(self.jobs()[0].read_text())['qualified'])
         gh.write_text('#!/bin/sh\nif [ "$2" = "--method" ]; then cat > "$(dirname "$0")/status-payload"; fi\n')
-        self.assertEqual(self.push(remote=remote).returncode, 0)
+        self.assertEqual(self.queue(remote=remote).returncode, 0)
         self.finish_workers()
         self.assertEqual(self.phases(), ['published'])
         self.assertEqual(len(self.calls()), 1)
         self.assertEqual(json.loads((self.common / 'status-payload').read_text())['state'], 'success')
         (self.root / 'source').write_text('failing source')
         self.commit('failing source')
-        self.assertEqual(self.push(remote=remote, CHECK_STATUS='7').returncode, 0)
+        self.assertEqual(self.queue(remote=remote, CHECK_STATUS='7').returncode, 0)
         self.finish_workers()
         self.assertEqual(json.loads((self.common / 'status-payload').read_text())['state'], 'failure')
         self.assertFalse((self.common / 'rscrypto-macos-qualified' / self.git('rev-parse', 'HEAD^{tree}')).exists())
