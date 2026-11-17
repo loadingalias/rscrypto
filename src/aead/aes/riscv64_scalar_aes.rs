@@ -23,19 +23,20 @@ impl RvScalarRoundKeys {
 /// Convert portable round keys (60 × big-endian u32) to scalar-Zkne format.
 pub(super) fn from_portable(rk: &[u32; 60]) -> RvScalarRoundKeys {
   let mut keys = [(0u64, 0u64); 15];
-  let mut i = 0usize;
-  while i < 15 {
-    let base = i.strict_mul(4);
-    let mut bytes = [0u8; 16];
-    bytes[0..4].copy_from_slice(&rk[base].to_be_bytes());
-    bytes[4..8].copy_from_slice(&rk[base.strict_add(1)].to_be_bytes());
-    bytes[8..12].copy_from_slice(&rk[base.strict_add(2)].to_be_bytes());
-    bytes[12..16].copy_from_slice(&rk[base.strict_add(3)].to_be_bytes());
-    keys[i] = load_halves(&bytes);
-    crate::traits::ct::zeroize(&mut bytes);
-    i = i.strict_add(1);
+  for (key, words) in keys.iter_mut().zip(rk.as_chunks::<4>().0) {
+    *key = round_key_halves(words);
   }
   RvScalarRoundKeys { rk: keys }
+}
+
+/// Split one round key of the portable schedule into the registers that [`load_halves`] describes.
+///
+/// Word `w` holds round-key bytes `4w..4w + 4`, most significant first (FIPS 197). The halves come
+/// from the words in registers, so no byte copy of the round key exists.
+#[inline(always)]
+fn round_key_halves(words: &[u32; 4]) -> (u64, u64) {
+  let half = |first: u32, second: u32| u64::from(first.swap_bytes()) | (u64::from(second.swap_bytes()) << 32);
+  (half(words[0], words[1]), half(words[2], words[3]))
 }
 
 /// Split an AES state or round key into the two registers of the RV64 AES instructions.
@@ -175,17 +176,8 @@ impl RvScalar128RoundKeys {
 /// Convert portable round keys (44 × big-endian u32) to scalar-Zkne format.
 pub(super) fn from_portable_128(rk: &[u32; 44]) -> RvScalar128RoundKeys {
   let mut keys = [(0u64, 0u64); 11];
-  let mut i = 0usize;
-  while i < 11 {
-    let base = i.strict_mul(4);
-    let mut bytes = [0u8; 16];
-    bytes[0..4].copy_from_slice(&rk[base].to_be_bytes());
-    bytes[4..8].copy_from_slice(&rk[base.strict_add(1)].to_be_bytes());
-    bytes[8..12].copy_from_slice(&rk[base.strict_add(2)].to_be_bytes());
-    bytes[12..16].copy_from_slice(&rk[base.strict_add(3)].to_be_bytes());
-    keys[i] = load_halves(&bytes);
-    crate::traits::ct::zeroize(&mut bytes);
-    i = i.strict_add(1);
+  for (key, words) in keys.iter_mut().zip(rk.as_chunks::<4>().0) {
+    *key = round_key_halves(words);
   }
   RvScalar128RoundKeys { rk: keys }
 }
@@ -202,22 +194,13 @@ pub(super) fn from_portable_128(rk: &[u32; 44]) -> RvScalar128RoundKeys {
 #[target_feature(enable = "zknd")]
 pub(super) unsafe fn decrypt_keys_from_portable_128(rk: &[u32; 44]) -> RvScalar128RoundKeys {
   let mut keys = [(0u64, 0u64); 11];
-  let mut round = 0usize;
-  while round < 11 {
-    let base = 10usize.strict_sub(round).strict_mul(4);
-    let mut bytes = [0u8; 16];
-    bytes[0..4].copy_from_slice(&rk[base].to_be_bytes());
-    bytes[4..8].copy_from_slice(&rk[base.strict_add(1)].to_be_bytes());
-    bytes[8..12].copy_from_slice(&rk[base.strict_add(2)].to_be_bytes());
-    bytes[12..16].copy_from_slice(&rk[base.strict_add(3)].to_be_bytes());
-    let (lo, hi) = load_halves(&bytes);
-    crate::traits::ct::zeroize(&mut bytes);
-    keys[round] = if round == 0 || round == 10 {
+  for (round, (key, words)) in keys.iter_mut().zip(rk.as_chunks::<4>().0.iter().rev()).enumerate() {
+    let (lo, hi) = round_key_halves(words);
+    *key = if round == 0 || round == 10 {
       (lo, hi)
     } else {
       (aes64im(lo), aes64im(hi))
     };
-    round = round.strict_add(1);
   }
   RvScalar128RoundKeys { rk: keys }
 }
@@ -340,4 +323,19 @@ pub(super) unsafe fn encrypt_4blocks_128(keys: &RvScalar128RoundKeys, blocks: &m
   store_halves(&mut blocks[1], next_lo1, next_hi1);
   store_halves(&mut blocks[2], next_lo2, next_hi2);
   store_halves(&mut blocks[3], next_lo3, next_hi3);
+}
+
+#[cfg(test)]
+mod tests {
+  /// The Sail model reads state byte `i` of a register from bits `8i + 7..8i` (`getbyte` in sail-riscv
+  /// `model/extensions/K/types_kext.sail`), so round-key bytes 0..8 are the low register, least
+  /// significant first. The words are the FIPS 197 schedule words of round-key bytes 0x00..0x0f.
+  #[test]
+  fn round_key_halves_place_byte_i_in_bits_8i_upward() {
+    let words = [0x0001_0203, 0x0405_0607, 0x0809_0a0b, 0x0c0d_0e0f];
+    assert_eq!(
+      super::round_key_halves(&words),
+      (0x0706_0504_0302_0100, 0x0f0e_0d0c_0b0a_0908)
+    );
+  }
 }
