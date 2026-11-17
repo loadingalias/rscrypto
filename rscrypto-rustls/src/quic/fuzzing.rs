@@ -6,8 +6,8 @@ use rustls::crypto::{GetRandomFailed, SecureRandom};
 use rustls::quic::Side;
 
 use super::{
-  AddressTokenKey, ConnectionIdKey, MAX_CONNECTION_ID_LEN, RETRY_INTEGRITY_TAG_LEN, initial_keys, is_valid_retry,
-  retry_integrity_tag,
+  AddressTokenKey, FirstOctet, LoadBalancerConfig, LoadBalancerKey, MAX_CONNECTION_ID_LEN, RETRY_INTEGRITY_TAG_LEN,
+  RotationId, initial_keys, is_valid_retry, retry_integrity_tag,
 };
 
 /// Fixture entropy: every request is filled with one byte.
@@ -83,8 +83,8 @@ pub fn header(data: &[u8]) {
   }
 }
 
-/// Open arbitrary address tokens and connection IDs, then check authentication
-/// failures on real seals.
+/// Open arbitrary address tokens, then check authentication failures on real
+/// seals.
 pub fn token(data: &[u8]) {
   if data.len() > 4144 {
     return;
@@ -93,8 +93,6 @@ pub fn token(data: &[u8]) {
   let key = AddressTokenKey::generate(&Fixed(0x42)).expect("fixed fixture key");
   let mut bytes = data.to_vec();
   let _opened = key.open(&mut bytes, AAD);
-  let ids = ConnectionIdKey::generate(&Fixed(0x24)).expect("fixed fixture key");
-  let _issued = ids.validate(data);
   if data.len() <= 4096 {
     let mut token = data.to_vec();
     key.seal(&Fixed(0x13), &mut token, AAD).expect("bounded seal");
@@ -106,6 +104,43 @@ pub fn token(data: &[u8]) {
     let mut other = token.clone();
     key.open(&mut other, b"other context").expect_err("wrong context");
     assert_eq!(key.open(&mut token, AAD).expect("valid token"), data);
+  }
+}
+
+/// Decode arbitrary connection IDs under a QUIC-LB configuration that the first two bytes
+/// choose, then issue and decode an ID from the following bytes.
+///
+/// A decode succeeds exactly when the ID carries the configuration's rotation and has enough
+/// octets (draft-ietf-quic-load-balancers-22, section 4.1), and an issued ID decodes to its
+/// server ID.
+pub fn load_balancer(data: &[u8]) {
+  let Some((&[shape, nonce_shape], rest)) = data.split_first_chunk::<2>() else {
+    return;
+  };
+  let rotation = RotationId::new(shape % 7).expect("codepoints 0 through 6");
+  let server_id_len = usize::from(shape >> 3) % 15 + 1;
+  let nonce_len = usize::from(nonce_shape & 0x7f) % (16 - server_id_len) + 4;
+  let first_octet = if nonce_shape & 0x80 == 0 {
+    FirstOctet::Length
+  } else {
+    FirstOctet::Random
+  };
+  let key = LoadBalancerKey::generate(&Fixed(0x51)).expect("fixed fixture key");
+  let config = LoadBalancerConfig::new(rotation, server_id_len, nonce_len, first_octet, key).expect("allowed lengths");
+  let id_len = config.connection_id_len();
+
+  let routable = rest.first().is_some_and(|first| first >> 5 == rotation.get()) && rest.len() >= id_len;
+  assert_eq!(config.decode(rest).is_some(), routable);
+
+  if let Some((server_id, rest)) = rest.split_at_checked(server_id_len)
+    && let Some(nonce) = rest.get(..nonce_len)
+  {
+    let id = config
+      .encode(server_id, nonce, &Fixed(0xa7))
+      .expect("configured lengths");
+    assert_eq!(id.as_slice().len(), id_len);
+    assert_eq!(id.as_slice()[0] >> 5, rotation.get());
+    assert_eq!(config.decode(id.as_slice()).expect("issued ID").as_slice(), server_id);
   }
 }
 

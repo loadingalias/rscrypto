@@ -307,6 +307,7 @@
     "quic-handshake": { "bench": "quic_connections", "filter": "^quic/handshake/" },
     "quic-packet": { "bench": "quic_connections", "filter": "^quic/packet-" },
     "quic-header": { "bench": "quic_connections", "filter": "^quic/header-" },
+    "quic-cid": { "bench": "quic_connections", "filter": "^quic/cid-" },
     "tls-key-schedule": { "bench": "tls_connections", "filter": "^(tls12/prf/|tls/hmac/|tls13/finished-hmac/)" },
     "tls12-handshake-p256": { "bench": "tls_connections", "filter": "^tls12/handshake/p256/" },
     "tls12-handshake-p384": { "bench": "tls_connections", "filter": "^tls12/handshake/p384/" },
@@ -509,7 +510,7 @@
     "hash-slhdsa-shake-192f": ["hash-slhdsa-shake-192f-sign", "hash-slhdsa-shake-192f-verify"],
     "hash-slhdsa-shake-256s": ["hash-slhdsa-shake-256s-sign", "hash-slhdsa-shake-256s-verify"],
     "hash-slhdsa-shake-256f": ["hash-slhdsa-shake-256f-sign", "hash-slhdsa-shake-256f-verify"],
-    "quic-provider": ["quic-handshake", "quic-packet", "quic-header"],
+    "quic-provider": ["quic-handshake", "quic-packet", "quic-header", "quic-cid"],
     "tls-provider": [
       "tls-key-schedule",
       "tls12-handshake-p256",

@@ -427,6 +427,11 @@ path = "fuzz_targets/provider_quic_token.rs"
 doc = false
 
 [[bin]]
+name = "provider_quic_lb"
+path = "fuzz_targets/provider_quic_lb.rs"
+doc = false
+
+[[bin]]
 name = "provider_quic_handshake"
 path = "fuzz_targets/provider_quic_handshake.rs"
 doc = false

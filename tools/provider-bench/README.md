@@ -334,13 +334,15 @@ attributing a loss to a production function requires a focused profile of that e
 
 ## QUIC
 
-`quic_connections` adds 66 cases, all using QUIC v1 through rustls's QUIC API.
+`quic_connections` adds 74 cases. Sixty-six use QUIC v1 through rustls's QUIC API,
+and eight use the provider's QUIC-LB connection IDs.
 Discover them with `just bench quic-provider --list`; measure one selector at a time:
 
 ```bash
 just bench quic-handshake
 just bench quic-packet
 just bench quic-header
+just bench quic-cid
 ```
 
 The target is optional and has the same OpenSSL 4.0.3 prerequisite as the TLS binary.
@@ -353,6 +355,7 @@ The rows measure the provider's QUIC cryptography; this repository has no QUIC t
 | `quic-handshake` | 12    | Both rustls QUIC TLS handshakes through raw TLS events, including Handshake and 1-RTT key derivation, connection allocation, input copies and destruction. No packet protection or transport. |
 | `quic-packet`    | 36    | 1-RTT payload seal or open, 1200 or 1350 plaintext bytes, under each suite and provider. Retained keys and buffers; buffer restoration and packet-number handling are timed. |
 | `quic-header`    | 18    | Apply or remove header protection under each suite and provider: short header, four-byte packet number and a fixed 16-byte sample. Header restoration is timed; key derivation is not. |
+| `quic-cid`       | 8     | Issue or decode one QUIC-LB connection ID with a retained configuration, for the four Appendix B.2 shapes of draft-ietf-quic-load-balancers-22: server ID and nonce of 3+4, 10+5, 8+8 (one AES block), and 9+9. The first octet describes the length, so no entropy is drawn. Key expansion is not timed. |
 
 Handshake rows use P-256 server authentication, X25519 and each of the three TLS suites.
 They compare `rscrypto`, `rscrypto-webpki`, `aws-lc-rs` and `ring` with the same certificate, validation time and ALPN as the TLS fixtures.
@@ -360,6 +363,11 @@ There is no client certificate, early data or TLS ticket issuance.
 Configuration and private-key import are untimed.
 Shared credential setup also checks an untimed TCP connection.
 The crypto handshake checks distinct authenticated transport-parameter bytes in both directions.
+
+Connection-ID rows measure rscrypto alone. No permissively licensed library with a QUIC-LB
+API exists to compare. The `quic-header` rows give the cost of one AES-128 block on the same
+host, and a four-pass ID costs at least four dependent blocks. Each row checks its ID or server
+ID against the draft's bytes before timing.
 
 Packet and header rows compare three production providers;
 certificate-verifier variants would do identical work.

@@ -1,4 +1,4 @@
-//! QUIC v1 handshake, packet-protection, and header-protection workloads.
+//! QUIC v1 handshake, packet-protection, header-protection, and QUIC-LB connection-ID workloads.
 
 #[path = "../../../benches/common/criterion.rs"]
 #[expect(dead_code, reason = "fixtures are registered lazily through custom routines")]
@@ -8,7 +8,10 @@ use core::hint::black_box;
 use criterion::{Criterion, Throughput};
 use rscrypto_provider_bench::{
   SUITES,
-  quic::{CRYPTO_BACKENDS, CryptoFixture, HeaderFixture, PacketFixture, TLS_BACKENDS},
+  quic::{
+    CRYPTO_BACKENDS, CryptoFixture, HeaderFixture, LOAD_BALANCER_SHAPES, LoadBalancerFixture, PacketFixture,
+    TLS_BACKENDS,
+  },
 };
 
 fn handshakes(c: &mut Criterion) {
@@ -105,6 +108,37 @@ fn packets(c: &mut Criterion) {
   }
 }
 
+/// Issue or decode one QUIC-LB connection ID with a retained configuration. rscrypto is the only
+/// implementation: no permissively licensed library with a QUIC-LB API exists to compare.
+fn connection_ids(c: &mut Criterion) {
+  for shape in LOAD_BALANCER_SHAPES {
+    for operation in ["encode", "decode"] {
+      let name = format!("quic/cid-{operation}/{shape}");
+      if !bench_config::selected(&name) || !bench_config::selected(&format!("{name}/rscrypto")) {
+        continue;
+      }
+      let mut group = c.benchmark_group(&name);
+      group.throughput(Throughput::Elements(1));
+      group.bench_function(
+        "rscrypto",
+        bench_config::checked_routine(
+          None,
+          |fixture| *fixture = Some(LoadBalancerFixture::new(shape)),
+          |b, fixture| {
+            let fixture = fixture.as_ref().expect("checked");
+            if operation == "encode" {
+              b.iter(|| black_box(black_box(fixture).encode()));
+            } else {
+              b.iter(|| black_box(black_box(fixture).decode()));
+            }
+          },
+        ),
+      );
+      group.finish();
+    }
+  }
+}
+
 fn main() {
   if !std::env::args().any(|arg| arg == "--list" || arg == "--rscrypto-filter-cases") {
     assert!(
@@ -116,5 +150,5 @@ fn main() {
       serde_json::json!({ "provider_bench_provenance": rscrypto_provider_bench::provenance() })
     );
   }
-  bench_config::run(&[handshakes, packets]);
+  bench_config::run(&[handshakes, packets, connection_ids]);
 }

@@ -288,53 +288,202 @@ fn address_tokens_match_independent_peer_and_fail_closed() {
   assert_eq!(format!("{key:?}"), "AddressTokenKey { .. }");
 }
 
-#[test]
-fn connection_ids_carry_independent_aes_tags_and_validate_only_under_their_key() {
-  use aes::cipher::{Array, BlockCipherEncrypt as _, KeyInit as _};
+/// Fills each request with the bytes of `0`, repeated from the start of every request.
+#[derive(Debug)]
+struct Bytes(&'static [u8]);
 
-  let source = Source::default();
-  let key = ConnectionIdKey::generate(&source).expect("ID key");
-  let tag_key: [u8; 16] = source.last().try_into().expect("key bytes");
-  let other = ConnectionIdKey::generate(&crate::tests::RANDOM).expect("ID key");
-  // RustCrypto AES-128 computes each tag block independently.
-  let oracle = aes::Aes128::new(&Array::from(tag_key));
-  let mut seen = alloc::collections::BTreeSet::new();
-  for _ in 0..128 {
-    let id = key.issue(&source).expect("issue");
-    assert_eq!(id.len(), ConnectionIdKey::ID_LEN);
-    assert_eq!(id[..3], source.last(), "the nonce is the caller's draw");
-    let mut block = [0u8; 16];
-    block[..3].copy_from_slice(&id[..3]);
-    block[3..].copy_from_slice(b"rscrypto-cid1");
-    let mut block = Array::from(block);
-    oracle.encrypt_block(&mut block);
-    assert_eq!(id[3..], block[..5], "the tag is truncated AES-128 under the key");
-    assert!(key.validate(&id));
-    assert!(!other.validate(&id), "different key");
-    for bit in 0..64 {
-      let mut forged = id;
-      forged[bit / 8] ^= 1 << (bit % 8);
-      assert!(!key.validate(&forged), "altered ID");
+impl SecureRandom for Bytes {
+  fn fill(&self, output: &mut [u8]) -> Result<(), GetRandomFailed> {
+    for (byte, source) in output.iter_mut().zip(self.0.iter().cycle()) {
+      *byte = *source;
     }
-    seen.insert(id);
+    Ok(())
   }
-  assert_eq!(seen.len(), 128, "distinct nonces give distinct IDs");
-  for length in [0, 7, 9, 20] {
-    assert!(!key.validate(&vec![0; length]), "foreign length");
-  }
-  assert_eq!(lengths(&source)[..2], [16, 3]);
-  assert_eq!(format!("{key:?}"), "ConnectionIdKey { .. }");
+}
 
-  let failing = Source::failing_at(1);
-  let key = ConnectionIdKey::generate(&failing).expect("first draw succeeds");
-  key.issue(&failing).expect_err("failed source");
-  ConnectionIdKey::generate(&Source::failing_at(0)).expect_err("failed source");
+/// A source whose every request fails.
+#[derive(Debug)]
+struct Failing;
+
+impl SecureRandom for Failing {
+  fn fill(&self, _output: &mut [u8]) -> Result<(), GetRandomFailed> {
+    Err(GetRandomFailed)
+  }
+}
+
+fn load_balancer(rotation: u8, server_id_len: usize, nonce_len: usize, first_octet: FirstOctet) -> LoadBalancerConfig {
+  let key = LoadBalancerKey::from_bytes(hex("8f95f09245765f80256934e50c66207f").try_into().expect("key"));
+  LoadBalancerConfig::new(
+    RotationId::new(rotation).expect("rotation"),
+    server_id_len,
+    nonce_len,
+    first_octet,
+    key,
+  )
+  .expect("allowed lengths")
+}
+
+/// Every encrypted CID of draft-ietf-quic-load-balancers-22 Appendix B.2 and the section 5.4.2.4
+/// example, with the first octet that encodes the rotation and the length (section 3.4).
+///
+/// Appendix B.1 is the no-key form, which this provider does not implement. Erratum: its second
+/// row is malformed, with a nine-digit nonce and a CID that does not match its fields.
+#[test]
+fn load_balancer_ids_match_the_draft_vectors() {
+  const B2_KEY: &[u8] = &[
+    0x8f, 0x95, 0xf0, 0x92, 0x45, 0x76, 0x5f, 0x80, 0x25, 0x69, 0x34, 0xe5, 0x0c, 0x66, 0x20, 0x7f,
+  ];
+  const EXAMPLE_KEY: &[u8] = &[
+    0xfd, 0xf7, 0x26, 0xa9, 0x89, 0x3e, 0xc0, 0x5c, 0x06, 0x32, 0xd3, 0x95, 0x66, 0x80, 0xba, 0xf0,
+  ];
+  let vectors: [(&'static [u8], u8, &str, &str, &str); 5] = [
+    (EXAMPLE_KEY, 0, "31441a", "9c69c275", "0767947d29be054a"),
+    (B2_KEY, 0, "ed793a", "ee080dbf", "0720b1d07b359d3c"),
+    (
+      B2_KEY,
+      1,
+      "ed793a51d49b8f5fab65",
+      "ee080dbf48",
+      "2fcc381bc74cb4fbad2823a3d1f8fed2",
+    ),
+    (
+      B2_KEY,
+      2,
+      "ed793a51d49b8f5f",
+      "ee080dbf48c0d1e5",
+      "504dd2d05a7b0de9b2b9907afb5ecf8cc3",
+    ),
+    // Erratum: B.2 lists cr_bits 3 for this row, but its CID begins 0x12, which encodes
+    // rotation 0 and length 18 (section 3.4). google/quiche's tests use configuration 0 too.
+    (
+      B2_KEY,
+      0,
+      "ed793a51d49b8f5fab",
+      "ee080dbf48c0d1e55d",
+      "125779c9cc86beb3a3a4a3ca96fce4bfe0cdbc",
+    ),
+  ];
+  for (key, rotation, server_id, nonce, id) in vectors {
+    let (server_id, nonce, id) = (hex(server_id), hex(nonce), hex(id));
+    // A generated key is the source's 16 bytes in order.
+    let key = LoadBalancerKey::generate(&Bytes(key)).expect("fixed key");
+    let config = LoadBalancerConfig::new(
+      RotationId::new(rotation).expect("rotation"),
+      server_id.len(),
+      nonce.len(),
+      FirstOctet::Length,
+      key,
+    )
+    .expect("draft lengths");
+    let issued = config
+      .encode(&server_id, &nonce, &Failing)
+      .expect("Length mode draws nothing");
+    assert_eq!(issued.as_slice(), id, "encode {}+{}", server_id.len(), nonce.len());
+    assert_eq!(config.connection_id_len(), id.len());
+    let decoded = config.decode(&id).expect("routable");
+    assert_eq!(
+      decoded.as_slice(),
+      server_id,
+      "decode {}+{}",
+      server_id.len(),
+      nonce.len()
+    );
+  }
+}
+
+/// Decoding refuses the IDs that section 4.1 calls unroutable for a configuration, and ignores
+/// server-use octets after the encrypted block.
+#[test]
+fn load_balancer_decode_refuses_unroutable_ids() {
+  let config = load_balancer(5, 3, 4, FirstOctet::Length);
+  let id = config.encode(&[1, 2, 3], &[4, 5, 6, 7], &Failing).expect("encode");
+  let id = id.as_slice();
+  assert_eq!(id[0] >> 5, 5, "rotation bits");
+  let server_id = config.decode(id).expect("routable");
+  assert_eq!(server_id.as_slice(), [1, 2, 3]);
+
+  let mut longer = id.to_vec();
+  longer.extend_from_slice(&[0xee; 12]);
+  assert_eq!(config.decode(&longer), Some(server_id), "server-use octets");
+
+  for rotation in [0b000, 0b100, 0b110, 0b111] {
+    let mut other = id.to_vec();
+    other[0] = (rotation << 5) | (other[0] & 0x1f);
+    assert_eq!(config.decode(&other), None, "rotation {rotation:#05b}");
+  }
+  assert_eq!(config.decode(&id[..id.len() - 1]), None, "short ID");
+  assert_eq!(config.decode(&[]), None, "empty ID");
+  assert_eq!(RotationId::new(0b111), None, "reserved rotation");
+}
+
+/// The first octet carries the rotation in its three high bits and the configured low bits.
+#[test]
+fn load_balancer_first_octet_carries_rotation_and_low_bits() {
+  let lengths = load_balancer(6, 2, 6, FirstOctet::Length);
+  assert_eq!(
+    lengths.encode(&[1, 2], &[3; 6], &Failing).expect("encode").as_slice()[0],
+    0b110_01000
+  );
+
+  let random = load_balancer(6, 2, 6, FirstOctet::Random);
+  for (draw, expected) in [(0xff, 0b110_11111), (0x00, 0b110_00000), (0xa5, 0b110_00101)] {
+    let source = Fixed(draw);
+    let id = random.encode(&[1, 2], &[3; 6], &source).expect("encode");
+    assert_eq!(id.as_slice()[0], expected, "draw {draw:#04x}");
+    assert_eq!(
+      id.as_slice()[1..],
+      lengths.encode(&[1, 2], &[3; 6], &Failing).expect("encode").as_slice()[1..]
+    );
+  }
+  assert!(matches!(
+    random.encode(&[1, 2], &[3; 6], &Failing),
+    Err(Error::FailedToGetRandomBytes)
+  ));
+}
+
+/// Encoding refuses a server ID or nonce of the wrong length before it draws entropy, so a short
+/// nonce never pads silently into a repeated one.
+#[test]
+fn load_balancer_encode_refuses_wrong_lengths() {
+  let config = load_balancer(0, 2, 6, FirstOctet::Random);
+  let source = Source::default();
+  for (server_id, nonce) in [
+    (&[1u8][..], &[0u8; 6][..]),
+    (&[1, 2, 3], &[0; 6]),
+    (&[1, 2], &[0; 5]),
+    (&[1, 2], &[0; 7]),
+  ] {
+    assert!(matches!(
+      config.encode(server_id, nonce, &source),
+      Err(Error::EncryptError)
+    ));
+  }
+  assert!(source.draws().is_empty(), "no entropy before the length check");
+  assert!(
+    LoadBalancerConfig::new(
+      RotationId::new(0).expect("rotation"),
+      1,
+      3,
+      FirstOctet::Length,
+      LoadBalancerKey::from_bytes([0; 16])
+    )
+    .is_none()
+  );
+  LoadBalancerKey::generate(&Failing).expect_err("failed source");
+  assert_eq!(
+    format!("{config:?}"),
+    "LoadBalancerConfig { rotation: RotationId(0), server_id_len: 2, nonce_len: 6, first_octet: Random, .. }"
+  );
+  assert_eq!(
+    format!("{:?}", LoadBalancerKey::from_bytes([0x42; 16])),
+    "LoadBalancerKey { .. }"
+  );
 }
 
 #[test]
 fn endpoint_keys_can_be_shared_across_threads() {
   fn shareable<T: Send + Sync + 'static>() {}
-  shareable::<ConnectionIdKey>();
+  shareable::<LoadBalancerConfig>();
   shareable::<StatelessResetKey>();
   shareable::<AddressTokenKey>();
 }

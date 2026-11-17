@@ -582,6 +582,7 @@ fuzz/corpus/hex_parse/seed-basic
 fuzz/corpus/provider_quic_handshake/seed-basic
 fuzz/corpus/provider_quic_handshake/seed-client-hello
 fuzz/corpus/provider_quic_header/seed-basic
+fuzz/corpus/provider_quic_lb/seed-basic
 fuzz/corpus/provider_quic_retry/seed-basic
 fuzz/corpus/provider_quic_token/seed-basic
 fuzz/corpus/traits_io/seed-basic

@@ -1,14 +1,16 @@
 //! QUIC v1 cryptography for any transport (RFC 9000 and RFC 9001).
 //!
 //! The [`AES_128_GCM`], [`AES_256_GCM`], and [`CHACHA20_POLY1305`] algorithms
-//! supply packet and header protection to rustls's QUIC API. With `aes-gcm` and
-//! `hkdf`, this module also supplies the endpoint cryptography that rustls does
-//! not own, independent of any transport crate:
+//! supply packet and header protection to rustls's QUIC API. With `aes-gcm`, this
+//! module also supplies the endpoint cryptography that rustls does not own,
+//! independent of any transport crate. Every item except [`LoadBalancerConfig`]
+//! also needs `hkdf`.
 //!
 //! - [`initial_keys`] derives Initial packet keys (RFC 9001, section 5.2).
 //! - [`retry_integrity_tag`] and [`is_valid_retry`] compute and check Retry
 //!   integrity tags (RFC 9001, section 5.8).
-//! - [`ConnectionIdKey`] issues connection IDs and recognizes its own IDs.
+//! - [`LoadBalancerConfig`] issues QUIC-LB connection IDs that route to a server and decodes
+//!   their server IDs (draft-ietf-quic-load-balancers-22).
 //! - [`StatelessResetKey`] derives stateless-reset tokens (RFC 9000, section 10.3).
 //! - [`AddressTokenKey`] seals and opens Retry and NEW_TOKEN address tokens
 //!   (RFC 9000, section 8.1).
@@ -16,46 +18,52 @@
 //! # Entropy
 //!
 //! Every random value comes from the caller's [`rustls::crypto::SecureRandom`]
-//! source, passed to each call that draws it: key generation, connection-ID
-//! nonces, and address-token nonces. A failing source fails the call, without a
-//! fallback to the operating system, and leaves caller data unchanged. With
-//! fixed sources, every output is deterministic. The source must provide
-//! cryptographically secure random bytes; a source that repeats output repeats
-//! connection IDs and address-token nonces.
+//! source, passed to each call that draws it: key generation, the random
+//! first-octet bits of connection IDs, and address-token nonces. A failing
+//! source fails the call, without a fallback to the operating system, and leaves
+//! caller data unchanged. With fixed sources, every output is deterministic. The
+//! source must provide cryptographically secure random bytes. A source that
+//! repeats output repeats keys and address-token nonces. The caller supplies
+//! each connection-ID nonce, which must not repeat under one key.
 //!
 //! # Example
 //!
 //! A server answers a client's first Initial packet with a Retry: it issues a
-//! connection ID, seals the client's original ID into an address token in its
-//! own format, and appends the integrity tag. The client checks the tag, and the
-//! server opens the token that the client returns.
+//! connection ID that routes to itself, seals the client's original ID into an
+//! address token in its own format, and appends the integrity tag. The client
+//! checks the tag, and the server opens the token that the client returns.
 //!
 //! ```
 //! # #[cfg(all(feature = "aes-gcm", feature = "hkdf", feature = "getrandom"))]
 //! # {
-//! use rscrypto_rustls::quic::{self, AddressTokenKey, ConnectionIdKey};
+//! use rscrypto_rustls::quic::{self, AddressTokenKey, FirstOctet, LoadBalancerConfig, LoadBalancerKey, RotationId};
 //! use rscrypto_rustls::random::SECURE_RANDOM;
 //!
-//! let ids = ConnectionIdKey::generate(SECURE_RANDOM)?;
+//! // Server ID 0x2a07, a nonce from this server's counter, and five random bits
+//! // in the first octet: a 9-byte ID.
+//! let rotation = RotationId::new(0).expect("rotation 0");
+//! let key = LoadBalancerKey::generate(SECURE_RANDOM)?;
+//! let ids = LoadBalancerConfig::new(rotation, 2, 6, FirstOctet::Random, key).expect("valid lengths");
 //! let tokens = AddressTokenKey::generate(SECURE_RANDOM)?;
 //! let client_id = [0x11; 8];
 //! let original_id = [0x83, 0x94, 0xc8, 0xf0, 0x3e, 0x51, 0x57, 0x08];
 //!
 //! let mut token = original_id.to_vec();
 //! tokens.seal(SECURE_RANDOM, &mut token, b"retry 192.0.2.7:50000")?;
-//! let server_id = ids.issue(SECURE_RANDOM)?;
+//! let server_id = ids.encode(&[0x2a, 0x07], &[0, 0, 0, 0, 0, 1], SECURE_RANDOM)?;
 //! // Long header, Retry type, version 1, then both connection IDs and the token.
 //! let mut retry = vec![0xf0, 0, 0, 0, 1, 8];
 //! retry.extend_from_slice(&client_id);
-//! retry.push(8);
-//! retry.extend_from_slice(&server_id);
+//! retry.push(9);
+//! retry.extend_from_slice(server_id.as_slice());
 //! retry.extend_from_slice(&token);
 //! let tag = quic::retry_integrity_tag(&original_id, &retry).expect("an 8-byte ID");
 //! retry.extend_from_slice(&tag);
 //! assert!(quic::is_valid_retry(&original_id, &retry));
 //!
-//! // The client's next Initial echoes the token and addresses the issued ID.
-//! assert!(ids.validate(&server_id));
+//! // The client's next Initial echoes the token and addresses the issued ID,
+//! // which any server with this configuration routes back to server 0x2a07.
+//! assert_eq!(ids.decode(server_id.as_slice()).expect("routable").as_slice(), [0x2a, 0x07]);
 //! assert_eq!(tokens.open(&mut token, b"retry 192.0.2.7:50000")?, original_id);
 //! # }
 //! # Ok::<(), rustls::Error>(())
@@ -232,21 +240,21 @@ pub static AES_256_GCM: &dyn rustls::quic::Algorithm = &Algorithm::Aes256;
 #[cfg(feature = "chacha20poly1305")]
 pub static CHACHA20_POLY1305: &dyn rustls::quic::Algorithm = &Algorithm::ChaCha20;
 
-#[cfg(all(feature = "aes-gcm", feature = "hkdf"))]
-mod cid;
 #[cfg(all(feature = "aes-gcm", feature = "hkdf", any(fuzzing, rscrypto_internal_fuzzing)))]
 #[doc(hidden)]
 pub mod fuzzing;
 #[cfg(all(feature = "aes-gcm", feature = "hkdf"))]
 mod initial;
+#[cfg(feature = "aes-gcm")]
+mod lb;
 #[cfg(all(feature = "aes-gcm", feature = "hkdf", test))]
 mod tests;
 #[cfg(all(feature = "aes-gcm", feature = "hkdf"))]
 mod token;
 
 #[cfg(all(feature = "aes-gcm", feature = "hkdf"))]
-pub use cid::ConnectionIdKey;
-#[cfg(all(feature = "aes-gcm", feature = "hkdf"))]
 pub use initial::{MAX_CONNECTION_ID_LEN, RETRY_INTEGRITY_TAG_LEN, initial_keys, is_valid_retry, retry_integrity_tag};
+#[cfg(feature = "aes-gcm")]
+pub use lb::{ConnectionId, FirstOctet, LoadBalancerConfig, LoadBalancerKey, RotationId, ServerId};
 #[cfg(all(feature = "aes-gcm", feature = "hkdf"))]
 pub use token::{AddressTokenKey, StatelessResetKey};

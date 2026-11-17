@@ -299,14 +299,19 @@ draw; it holds no secret.
 ### rustls QUIC integration
 
 The transport-neutral `quic` keys own the endpoint secrets. `StatelessResetKey`
-owns a clearing `SecretBytes<32>`. `ConnectionIdKey` owns a clearing AES-128 tag
-context, built from a clearing `SecretBytes<16>` draw. `AddressTokenKey` owns a
-clearing `HkdfSha256` address-token root, drawn into a clearing
-`SecretBytes<32>`. None of them is `Clone`, and their `Debug` output names only
-the type. Each token seal or open derives an `Aes256Gcm` context through a
-clearing `SecretBytes<32>` scratch, and that context seals once. Connection-ID
-and token nonces are public values. Reset tokens are returned to the caller as
-plain arrays. Token buffers belong to the caller.
+owns a clearing `SecretBytes<32>`. `LoadBalancerKey` owns a clearing
+`QuicLbKey`. `generate` draws it into a clearing `SecretBytes<16>`, and
+`from_bytes` takes the caller's array, whose copy the caller clears.
+`LoadBalancerConfig` owns a `QuicLbCipher`, whose AES-128 schedules clear on drop.
+`AddressTokenKey` owns a clearing `HkdfSha256` address-token root, drawn into a
+clearing `SecretBytes<32>`. None of them is `Clone`. The key `Debug` output names
+only the type, and the configuration `Debug` adds only its public rotation and
+lengths. Each token seal or open derives an `Aes256Gcm` context through a clearing
+`SecretBytes<32>` scratch, and that context seals once. Token nonces are public
+values. QUIC-LB server IDs and nonces are confidential from observers but are not
+key material: the caller supplies them, and `ServerId` and `ConnectionId` are
+plain `Copy` values. Reset tokens are returned to the caller as plain arrays.
+Token buffers belong to the caller.
 
 On that same GNU configuration, token construction uses an outlined worker that
 returns only the final `Box`. Its caller runs the construction guard before the

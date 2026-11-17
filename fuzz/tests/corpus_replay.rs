@@ -714,3 +714,14 @@ fn replay_provider_quic_token_corpus() {
   );
   assert_ne!(replayed, 0, "provider_quic_token corpus should not be empty");
 }
+
+#[cfg(any(fuzzing, rscrypto_internal_fuzzing))]
+#[test]
+fn replay_provider_quic_lb_corpus() {
+  let replayed = replay_corpus_dir(
+    "provider_quic_lb",
+    corpus_dir("provider_quic_lb"),
+    rscrypto_rustls::quic::fuzzing::load_balancer,
+  );
+  assert_ne!(replayed, 0, "provider_quic_lb corpus should not be empty");
+}

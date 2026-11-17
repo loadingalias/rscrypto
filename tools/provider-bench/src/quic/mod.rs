@@ -4,6 +4,7 @@
 //! This module supplies observations, never packet cryptography.
 
 mod crypto;
+mod load_balancer;
 
 use alloc::sync::Arc;
 
@@ -12,6 +13,7 @@ use rustls::{ClientConfig, ServerConfig};
 use crate::{Configs, Fixture, Profile, Workload};
 
 pub use crypto::{CryptoFixture, HeaderFixture, PacketFixture};
+pub use load_balancer::{LoadBalancerFixture, SHAPES as LOAD_BALANCER_SHAPES};
 
 pub const TLS_BACKENDS: [&str; 4] = ["rscrypto", "rscrypto-webpki", "aws-lc-rs", "ring"];
 pub const CRYPTO_BACKENDS: [&str; 3] = ["rscrypto", "aws-lc-rs", "ring"];

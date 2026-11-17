@@ -334,16 +334,23 @@ See the [campaign scope](../scripts/README.md#test-entry-points) for exclusions 
 ## QUIC v1
 
 With `aes-gcm` and `hkdf`, the `quic` module supplies the QUIC v1 cryptography
-that rustls's QUIC API leaves to the transport, without `getrandom`:
+that rustls's QUIC API leaves to the transport, without `getrandom`. The QUIC-LB
+connection IDs need only `aes-gcm`.
 
 - `quic::initial_keys(client_dst_connection_id, side)` derives Initial packet
   and header keys as rustls `quic::Keys`.
 - `quic::retry_integrity_tag` and `quic::is_valid_retry` compute and check Retry
   integrity tags.
-- `quic::ConnectionIdKey` issues eight-byte connection IDs, a three-byte nonce
-  and a five-byte AES-128 tag, and recognizes the IDs it issued. IDs carry no
-  counter or endpoint index. The 24-bit nonce repeats after a few thousand IDs,
-  so the transport rejects an issued ID that is already in use.
+- `quic::LoadBalancerConfig` issues connection IDs that encode an encrypted
+  server ID, as [draft-ietf-quic-load-balancers-22](https://datatracker.ietf.org/doc/draft-ietf-quic-load-balancers-22/)
+  specifies, and decodes the server ID of an ID. A load balancer that follows the
+  draft routes these IDs with no custom code. The configuration holds the
+  rotation codepoint, the server-ID and nonce lengths, the first-octet form, and
+  a `LoadBalancerKey`. A 16-octet total uses one AES-128 block, and every other
+  total uses the four-pass Feistel network. The transport supplies each nonce,
+  which must not repeat under one key. Decoding refuses the reserved and foreign
+  rotation codepoints and short IDs with one `None`. The no-key form, server-use
+  octets, and unroutable-ID issuance are not implemented.
 - `quic::StatelessResetKey` derives each connection ID's stateless-reset token
   from a static HMAC-SHA256 key.
 - `quic::AddressTokenKey` seals and opens Retry and NEW_TOKEN address tokens of
