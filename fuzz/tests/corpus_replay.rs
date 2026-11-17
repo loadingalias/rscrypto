@@ -197,6 +197,9 @@ mod hex_parse;
 #[path = "../target_impls/traits_io.rs"]
 mod traits_io;
 
+#[path = "../target_impls/provider_quic_lb.rs"]
+mod provider_quic_lb;
+
 #[test]
 fn replay_aead_aegis256_corpus() {
   let replayed = replay_corpus_dir("aead_aegis256", corpus_dir("aead_aegis256"), aead_aegis256::run);
@@ -715,13 +718,12 @@ fn replay_provider_quic_token_corpus() {
   assert_ne!(replayed, 0, "provider_quic_token corpus should not be empty");
 }
 
-#[cfg(any(fuzzing, rscrypto_internal_fuzzing))]
 #[test]
 fn replay_provider_quic_lb_corpus() {
   let replayed = replay_corpus_dir(
     "provider_quic_lb",
     corpus_dir("provider_quic_lb"),
-    rscrypto_rustls::quic::fuzzing::load_balancer,
+    provider_quic_lb::run,
   );
   assert_ne!(replayed, 0, "provider_quic_lb corpus should not be empty");
 }
