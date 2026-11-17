@@ -1,10 +1,11 @@
 #!/usr/bin/env -S uv run python
 """Regression tests for the waiver review record."""
 
+import json
 from pathlib import Path
 
 from asm_heuristics import FunctionBody, attach_condition_identities, scan_symbol
-from renew_waivers import Slicer, candidates, function_changes
+from renew_waivers import Slicer, apply_identities, candidates, function_changes, reencoding
 
 TARGET = "x86_64-unknown-linux-gnu"
 
@@ -69,6 +70,46 @@ def main() -> None:
   assert function_changes(Slicer(TARGET, open_functions, None), Slicer(TARGET, {}, None), "f") is None
   # A waived finding is not a candidate.
   assert candidates(waiver, [dict(moved, waived=True)], reviewed_record, Slicer(TARGET, reviewed_functions, None)) == []
+  reencoding_regressions(waiver, reviewed_functions)
+
+
+def reencoding_regressions(waiver: dict, functions: dict[str, FunctionBody]) -> None:
+  """A re-encoding moves a waiver to a new identity only for the slice it reviewed."""
+  # The reviewed scanner's records cross a process boundary as JSON. The current ones stay in this process.
+  [old] = json.loads(json.dumps(Slicer(TARGET, functions, None).branches(waiver, None)))
+  assert old["slice_sha256"] == waiver["slice_sha256"], old
+
+  def at(changed: dict[str, FunctionBody], identity: str | None = None) -> list[dict]:
+    rows = Slicer(TARGET, changed, None).branches(waiver, [old["line"]])
+    return [dict(row, slice_sha256=identity or row["slice_sha256"]) for row in rows]
+
+  # A changed identity of the same slice is a re-encoding; the same identity is unchanged.
+  assert reencoding([old], at(functions, "a" * 64)) == ("re-encoded", "a" * 64)
+  assert reencoding([old], at(functions)) == ("unchanged", old["slice_sha256"])
+  # A slice with other instructions or edges needs a review: here the loop starts from an input.
+  status, reason = reencoding([old], at(function(loop(start="48 89 f8\tmovq\t%rdi, %rax"))))
+  assert status == "refused" and "instructions or edges" in reason, reason
+  # So does a slice that a call now opens, and a waiver that the reviewed artifacts do not hold.
+  status, reason = reencoding([old], at(function(loop(start="e8 fb 0f 00 00\tcallq\t0x2000 <g>"))))
+  assert status == "refused", reason
+  assert reencoding([], [])[0] == "refused"
+  # Two branches that shared the reviewed identity must keep one identity.
+  second = dict(old, line=old["line"] + 100)
+  assert reencoding([old, second], [dict(old, slice_sha256="a" * 64), dict(second, slice_sha256="b" * 64)])[0] == "refused"
+
+  # Applying a re-encoding changes only the identity of the named waiver.
+  manifest = (
+    '[[asm_waiver]]\ntarget = "t"\nslice_sha256 = "0"\nrationale = "same"\n\n'
+    '[[asm_waiver]]\ntarget = "t"\nslice_sha256 = "0"\nrationale = "same"\n'
+  )
+  updated = apply_identities(manifest, {1: ("0", "1")})
+  assert updated == manifest[: manifest.rindex('slice_sha256 = "0"')] + 'slice_sha256 = "1"\nrationale = "same"\n', updated
+  try:
+    apply_identities(manifest, {0: ("2", "1")})
+  except SystemExit:
+    pass
+  else:
+    raise AssertionError("a waiver without the old identity was changed")
 
 
 if __name__ == "__main__":

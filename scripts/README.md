@@ -401,12 +401,23 @@ A stale waiver fails the verdict; the evidence and timing of the run are still c
   confirm its open leaves.
 - For each stale waiver, it shows the instruction identities that changed in its function, ignoring offsets.
   Read this diff first. If it is empty, or holds only placement, such as a symbol name that moved,
-  the identity is binding placement: fix `instruction_identity` and re-encode on the reviewed artifacts,
-  as the [2026-11-04 record](../docs/constant-time.md#immediate-symbol-re-encoding-2026-11-04) did.
-  Do not renew such a waiver by review.
+  the identity is binding placement: fix `instruction_identity` and re-encode on the reviewed artifacts
+  (below). Do not renew such a waiver by review.
 - It lists every enforced `select_branch` finding that no waiver covers, with its slice and identity.
 - It writes `renewal-record.json` and `renewal-record.md` under `--out` and changes nothing.
   To renew a waiver, set its `slice_sha256` to the reviewed candidate's identity and update `reviewed_at`.
+
+After an identity fix,
+`just ct-renew --target TARGET --reviewed-artifacts REVIEWED --reencode-from COMMIT --out DIR`
+re-encodes the waivers of `TARGET`. `COMMIT` is the commit whose scanner gave the current identities, and
+`REVIEWED` holds the artifacts that the waivers were reviewed against.
+
+- It finds the branches of each waiver with the scanner of `COMMIT` and the same branches with the current scanner.
+- A waiver moves to its current identity only when each branch keeps its instructions, edges, and open reasons,
+  and all of its branches get one identity. It refuses every other waiver, which then needs a review.
+- It writes `reencoding-record.json` and `reencoding-record.md` under `--out`: the old and the new identity
+  of each waiver, and the slice diff of each refusal. It exits with status 3 when it refuses a waiver.
+- `--apply` then changes only the `slice_sha256` of each re-encoded waiver in `ct.toml`.
 
 A call defines every register that the target's calling convention lets the callee change.
 On Windows x86-64, `rsi` and `rdi` keep their values across a call; every vector register is still clobbered,
