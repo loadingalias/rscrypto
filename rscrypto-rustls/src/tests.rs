@@ -1,20 +1,18 @@
 core::cfg_select! {
-  // The users of the test entropy source: the RSA, ML-DSA, and composite signing tests, the QUIC
-  // tests, the hybrid key-exchange tests (which the key-exchange test module's features include),
-  // and, without `getrandom`, the TLS test provider. `Fixed` below needs a subset of these features.
+  // The users of the test entropy source: the RSA, ML-DSA, and composite signing tests, the
+  // hybrid key-exchange tests, and the client provider tests. The features of each other user,
+  // such as the TLS test provider without `getrandom`, include the features of one of these.
   any(
     feature = "rsa",
     feature = "ml-dsa",
     feature = "mldsa65-ed25519",
     feature = "mldsa65-ecdsa-p256",
-    all(feature = "aes-gcm", feature = "hkdf"),
     all(feature = "ml-kem", feature = "x25519"),
     all(
-      not(feature = "getrandom"),
       feature = "hkdf",
       any(feature = "aes-gcm", feature = "chacha20poly1305"),
       any(feature = "x25519", feature = "p256-ecdh", feature = "p384-ecdh"),
-      any(feature = "ecdsa-p256", feature = "ecdsa-p384", feature = "ed25519")
+      any(feature = "ecdsa-p256", feature = "ecdsa-p384", feature = "ed25519", feature = "rsa")
     )
   ) => {
     use rustls::crypto::{GetRandomFailed, SecureRandom};
@@ -41,8 +39,8 @@ core::cfg_select! {
 pub(crate) struct Fixed(pub(crate) u8);
 
 #[cfg(all(feature = "aes-gcm", feature = "hkdf"))]
-impl SecureRandom for Fixed {
-  fn fill(&self, output: &mut [u8]) -> Result<(), GetRandomFailed> {
+impl rustls::crypto::SecureRandom for Fixed {
+  fn fill(&self, output: &mut [u8]) -> Result<(), rustls::crypto::GetRandomFailed> {
     output.fill(self.0);
     Ok(())
   }
