@@ -1,5 +1,5 @@
 #!/usr/bin/env -S uv run python
-"""Verify internal compiler opt-in and BINSEC flag provenance."""
+"""Verify internal compiler opt-in, BINSEC flag provenance, and the BINSEC startup model."""
 
 import contextlib
 import io
@@ -97,6 +97,20 @@ class InternalBuildTests(unittest.TestCase):
                                     'relocation-model=static', '-C', 'link-arg=-no-pie',
                                     '--cfg', 'rscrypto_internal'])
             self.assertEqual(build.call_args.kwargs['env']['CARGO_ENCODED_RUSTFLAGS'].split('\x1f'), flags)
+
+  def test_binsec_script_sets_the_lse_flag_after_the_section_load_only_if_the_elf_defines_it(self):
+    # Before the load, the load writes the file's 0 over the flag. Without the symbol, BINSEC
+    # cannot resolve the name and stops.
+    load = 'load sections .text, .bss from file'
+    flag = '@[<__aarch64_have_lse_atomics>, 1] := 1'
+    for symbols, present in (({'leaf', 'done', '__aarch64_have_lse_atomics'}, True), ({'leaf', 'done'}, False)):
+      with self.subTest(symbols=symbols):
+        lines = binsec.binsec_script(
+          {}, start_symbol='leaf', done_symbol='done', load_sections=['.text', '.bss'], symbols=symbols
+        ).splitlines()
+        self.assertEqual(flag in lines, present)
+        if present:
+          self.assertGreater(lines.index(flag), lines.index(load))
 
 
 if __name__ == '__main__':

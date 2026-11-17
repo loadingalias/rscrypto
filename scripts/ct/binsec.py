@@ -291,7 +291,23 @@ def binsec_load_sections(binary: Path) -> list[str]:
   return selected or [".text", ".rodata", ".data", ".bss"]
 
 
-def binsec_script(kernel: dict, *, start_symbol: str, done_symbol: str, load_sections: list[str]) -> str:
+# The byte that compiler-rt's AArch64 outline atomics read: 1 runs one LSE instruction, 0 an LL/SC loop.
+# Before `main`, the `.init_array` constructor `init_have_lse_atomics` sets it from HWCAP_ATOMICS.
+LSE_ATOMICS_FLAG = "__aarch64_have_lse_atomics"
+
+
+def binsec_script(
+  kernel: dict, *, start_symbol: str, done_symbol: str, load_sections: list[str], symbols: set[str]
+) -> str:
+  # BINSEC starts at the leaf, so it skips that constructor, and the file gives 0. unisim 0.0.14 has
+  # no semantics for exclusive monitors, so it cannot run the LL/SC loop. Set the byte as on a FEAT_LSE
+  # host, after the load of `.bss` (BINSEC runs declarations in order). Then each helper runs its real
+  # LSE instruction. The two paths do the same read-modify-write on the same address. The LL/SC
+  # compare-and-swap branches on the loaded value. unisim models the LSE `cas` with the same branch, so
+  # checkct analyzes the compare. Only the `stxr` retry is not analyzed. It depends on the exclusive
+  # monitor, not on data.
+  startup = [f"@[<{LSE_ATOMICS_FLAG}>, 1] := 1"] if LSE_ATOMICS_FLAG in symbols else []
+
   secret_lines = []
   for secret in kernel.get("secrets", []):
     if secret.get("kind") == "global":
@@ -305,6 +321,7 @@ def binsec_script(kernel: dict, *, start_symbol: str, done_symbol: str, load_sec
   assumptions = [f"assume {assumption}" for assumption in kernel.get("assumptions", [])]
   body = [
     f"load sections {', '.join(load_sections)} from file",
+    *startup,
     f"starting from <{start_symbol}>",
     "with concrete stack pointer",
     *secret_lines,
@@ -554,7 +571,9 @@ def main() -> int:
 
     cfg = out_dir / "checkct.cfg"
     cfg.write_text(
-      binsec_script(kernel, start_symbol=start_symbol, done_symbol=done_symbol, load_sections=load_sections)
+      binsec_script(
+        kernel, start_symbol=start_symbol, done_symbol=done_symbol, load_sections=load_sections, symbols=names
+      )
     )
     artifacts["checkct.cfg"] = sha256_file(cfg)
 

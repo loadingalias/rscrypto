@@ -1482,6 +1482,16 @@ and neither depends on a secret. In a fork child, the owner refuses before any s
 The BINSEC generator leaf runs the Linux page-mode setup through the harness's `mmap` and `madvise` shims,
 because BINSEC loads its initial memory from the file.
 
+On `aarch64-unknown-linux-gnu`, the setup's atomics call the compiler-rt outline-atomics helpers. In each
+helper, the byte `__aarch64_have_lse_atomics` selects one LSE instruction or an LL/SC loop. A startup
+constructor sets the byte from HWCAP_ATOMICS, but BINSEC starts at the leaf. So the BINSEC script sets the
+byte to 1, as on a FEAT_LSE host, and unisim 0.0.14 models the setup's `ldadd` and `casal`.
+
+On AArch64 hosts without FEAT_LSE (ARMv8.0), the outline-atomics LL/SC path of the process-origin setup has
+no BINSEC proof. That path reads and writes only public `LAST`, `STATE`, and the page. Closing it needs
+exclusive-monitor semantics in unisim. This residual applies to `aarch64-unknown-linux-gnu` with unisim
+0.0.14.
+
 ### RSA signing workspace
 
 `RsaSigningWorkspace` signing changes only the source of the blinding pair.
