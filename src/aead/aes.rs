@@ -6255,6 +6255,46 @@ mod tests {
     }
   }
 
+  /// FIPS 197 Appendices C.1 and C.3 through the RV64 scalar (Zkne) backend, where the CPU has it.
+  #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
+  #[test]
+  fn riscv_zkne_matches_fips_197_c1_and_c3() {
+    if !crate::platform::caps().has(crate::platform::caps::riscv::ZKNE) {
+      return;
+    }
+    let key256: [u8; 32] = core::array::from_fn(|i| u8::try_from(i).expect("small index"));
+    let key128: [u8; 16] = core::array::from_fn(|i| u8::try_from(i).expect("small index"));
+    let plaintext: [u8; 16] = [
+      0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff,
+    ];
+    let expected128: [u8; 16] = [
+      0x69, 0xc4, 0xe0, 0xd8, 0x6a, 0x7b, 0x04, 0x30, 0xd8, 0xcd, 0xb7, 0x80, 0x70, 0xb4, 0xc5, 0x5a,
+    ];
+    let expected256: [u8; 16] = [
+      0x8e, 0xa2, 0xb7, 0xca, 0x51, 0x67, 0x45, 0xbf, 0xea, 0xfc, 0x49, 0x90, 0x4b, 0x49, 0x60, 0x89,
+    ];
+
+    let keys128 = rv_scalar_aes::from_portable_128(&aes128_expand_key_portable(&key128));
+    let mut block = plaintext;
+    // SAFETY: Zkne availability checked above.
+    unsafe { rv_scalar_aes::encrypt_block_128(&keys128, &mut block) };
+    assert_eq!(block, expected128, "AES-128 single block");
+    let mut blocks = [plaintext; 4];
+    // SAFETY: Zkne availability checked above.
+    unsafe { rv_scalar_aes::encrypt_4blocks_128(&keys128, &mut blocks) };
+    assert_eq!(blocks, [expected128; 4], "AES-128 four blocks");
+
+    let keys256 = rv_scalar_aes::from_portable(&aes256_expand_key_portable(&key256));
+    let mut block = plaintext;
+    // SAFETY: Zkne availability checked above.
+    unsafe { rv_scalar_aes::encrypt_block(&keys256, &mut block) };
+    assert_eq!(block, expected256, "AES-256 single block");
+    let mut blocks = [plaintext; 4];
+    // SAFETY: Zkne availability checked above.
+    unsafe { rv_scalar_aes::encrypt_4blocks(&keys256, &mut blocks) };
+    assert_eq!(blocks, [expected256; 4], "AES-256 four blocks");
+  }
+
   /// FIPS 197 Appendix C.1 against the table-free fixslice AES-128 path.
   #[test]
   fn fixslice64_matches_nist_aes128_vector() {

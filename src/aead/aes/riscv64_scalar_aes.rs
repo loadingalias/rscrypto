@@ -2,8 +2,8 @@ use core::arch::riscv64::{aes64es, aes64esm};
 
 /// AES-256 round keys stored as 15 pairs of 64-bit halves for scalar AES.
 ///
-/// Each round key is kept in canonical AES byte order and split into the
-/// upper/lower 64-bit halves consumed by the RV64 scalar AES instructions.
+/// Each round key is split into the two register halves that [`load_halves`]
+/// describes.
 #[repr(C, align(64))]
 pub(super) struct RvScalarRoundKeys {
   rk: [(u64, u64); 15],
@@ -29,29 +29,34 @@ pub(super) fn from_portable(rk: &[u32; 60]) -> RvScalarRoundKeys {
     bytes[4..8].copy_from_slice(&rk[base.strict_add(1)].to_be_bytes());
     bytes[8..12].copy_from_slice(&rk[base.strict_add(2)].to_be_bytes());
     bytes[12..16].copy_from_slice(&rk[base.strict_add(3)].to_be_bytes());
-    let mut lo_bytes = [0u8; 8];
-    lo_bytes.copy_from_slice(&bytes[0..8]);
-    let mut hi_bytes = [0u8; 8];
-    hi_bytes.copy_from_slice(&bytes[8..16]);
-    keys[i] = (u64::from_be_bytes(lo_bytes), u64::from_be_bytes(hi_bytes));
+    keys[i] = load_halves(&bytes);
+    crate::traits::ct::zeroize(&mut bytes);
     i = i.strict_add(1);
   }
   RvScalarRoundKeys { rk: keys }
 }
 
+/// Split an AES state or round key into the two registers of the RV64 AES instructions.
+///
+/// Each register holds eight state bytes in little-endian order: bytes 0..8 form the low register
+/// and bytes 8..16 the high one. The ratified scalar crypto specification (v1.0.1) defines
+/// `aes64es` and its siblings by the Sail model, in which `aes_rv64_shiftrows_fwd` selects state
+/// byte `i` of a register as `getbyte(x, i) = x[8i+7..8i]` (sail-riscv
+/// `model/extensions/K/types_kext.sail`).
 #[inline(always)]
 fn load_halves(block: &[u8; 16]) -> (u64, u64) {
-  let mut lo_bytes = [0u8; 8];
-  lo_bytes.copy_from_slice(&block[0..8]);
-  let mut hi_bytes = [0u8; 8];
-  hi_bytes.copy_from_slice(&block[8..16]);
-  (u64::from_be_bytes(lo_bytes), u64::from_be_bytes(hi_bytes))
+  let (lo, hi) = block.split_at(8);
+  (
+    u64::from_le_bytes(lo.try_into().expect("eight-byte half")),
+    u64::from_le_bytes(hi.try_into().expect("eight-byte half")),
+  )
 }
 
+/// Inverse of [`load_halves`].
 #[inline(always)]
 fn store_halves(block: &mut [u8; 16], lo: u64, hi: u64) {
-  block[0..8].copy_from_slice(&lo.to_be_bytes());
-  block[8..16].copy_from_slice(&hi.to_be_bytes());
+  block[0..8].copy_from_slice(&lo.to_le_bytes());
+  block[8..16].copy_from_slice(&hi.to_le_bytes());
 }
 
 /// Encrypt a single 16-byte block using AES-256 with scalar RV64 AES.
@@ -176,11 +181,8 @@ pub(super) fn from_portable_128(rk: &[u32; 44]) -> RvScalar128RoundKeys {
     bytes[4..8].copy_from_slice(&rk[base.strict_add(1)].to_be_bytes());
     bytes[8..12].copy_from_slice(&rk[base.strict_add(2)].to_be_bytes());
     bytes[12..16].copy_from_slice(&rk[base.strict_add(3)].to_be_bytes());
-    let mut lo_bytes = [0u8; 8];
-    lo_bytes.copy_from_slice(&bytes[0..8]);
-    let mut hi_bytes = [0u8; 8];
-    hi_bytes.copy_from_slice(&bytes[8..16]);
-    keys[i] = (u64::from_be_bytes(lo_bytes), u64::from_be_bytes(hi_bytes));
+    keys[i] = load_halves(&bytes);
+    crate::traits::ct::zeroize(&mut bytes);
     i = i.strict_add(1);
   }
   RvScalar128RoundKeys { rk: keys }
