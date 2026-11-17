@@ -2,7 +2,7 @@
 //!
 //! `scripts/stack/frames.py` stops its owned bounds at the libc imports
 //! `calloc`, `malloc`, `free`, `memcpy`, `memmove`, `memset`, `memcmp`, `bcmp`,
-//! and `getauxval`. This program calls each one directly on a painted private
+//! `getauxval`, `getpid`, `mmap`, and `madvise`. This program calls each one directly on a painted private
 //! stack, through the same dynamically resolved symbol a Rust executable
 //! binds, across sizes, alignments, allocator states, threads, and failure
 //! returns. It prints the deepest use for each edge as JSON. The driver,
@@ -15,7 +15,7 @@
 
 #[cfg(target_os = "linux")]
 mod linux {
-  use core::ffi::{CStr, c_char, c_void};
+  use core::ffi::{CStr, c_char, c_int, c_void};
 
   use rscrypto_stack_paint::{GuardedStack, Painted, json_string};
 
@@ -38,9 +38,12 @@ mod linux {
     Memcmp,
     Bcmp,
     Getauxval,
+    Getpid,
+    Mmap,
+    Madvise,
   }
 
-  const EDGES: [Edge; 9] = [
+  const EDGES: [Edge; 12] = [
     Edge::Calloc,
     Edge::Malloc,
     Edge::Free,
@@ -50,6 +53,9 @@ mod linux {
     Edge::Memcmp,
     Edge::Bcmp,
     Edge::Getauxval,
+    Edge::Getpid,
+    Edge::Mmap,
+    Edge::Madvise,
   ];
 
   impl Edge {
@@ -64,6 +70,9 @@ mod linux {
         Self::Memcmp => "memcmp",
         Self::Bcmp => "bcmp",
         Self::Getauxval => "getauxval",
+        Self::Getpid => "getpid",
+        Self::Mmap => "mmap",
+        Self::Madvise => "madvise",
       }
     }
 
@@ -77,6 +86,9 @@ mod linux {
       let memcmp: unsafe extern "C" fn(*const c_void, *const c_void, usize) -> i32 = libc::memcmp;
       let compare: unsafe extern "C" fn(*const c_void, *const c_void, usize) -> i32 = bcmp;
       let getauxval: unsafe extern "C" fn(libc::c_ulong) -> libc::c_ulong = libc::getauxval;
+      let getpid: unsafe extern "C" fn() -> libc::pid_t = libc::getpid;
+      let mmap: unsafe extern "C" fn(*mut c_void, usize, c_int, c_int, c_int, libc::off_t) -> *mut c_void = libc::mmap;
+      let madvise: unsafe extern "C" fn(*mut c_void, usize, c_int) -> c_int = libc::madvise;
       match self {
         Self::Calloc => calloc as *const (),
         Self::Malloc => malloc as *const (),
@@ -87,6 +99,9 @@ mod linux {
         Self::Memcmp => memcmp as *const (),
         Self::Bcmp => compare as *const (),
         Self::Getauxval => getauxval as *const (),
+        Self::Getpid => getpid as *const (),
+        Self::Mmap => mmap as *const (),
+        Self::Madvise => madvise as *const (),
       }
     }
 
@@ -115,7 +130,7 @@ mod linux {
   /// Painted calls and their per-edge maxima on one thread's private stack.
   struct Meter {
     stack: GuardedStack,
-    deepest: [Deepest; 9],
+    deepest: [Deepest; EDGES.len()],
     paint: usize,
   }
 
@@ -123,7 +138,7 @@ mod linux {
     fn new() -> Self {
       Self {
         stack: GuardedStack::new(STACK_BYTES),
-        deepest: [NONE; 9],
+        deepest: [NONE; EDGES.len()],
         paint: 0,
       }
     }
@@ -133,13 +148,20 @@ mod linux {
     /// # Safety
     ///
     /// The arguments must satisfy the edge's C contract.
-    unsafe fn call(&mut self, edge: Edge, case: &'static str, size: usize, arguments: [usize; 3]) -> usize {
+    unsafe fn call<const N: usize>(
+      &mut self,
+      edge: Edge,
+      case: &'static str,
+      size: usize,
+      arguments: [usize; N],
+    ) -> usize {
       let paint = PAINTS[self.paint];
       // Alternate the two paints.
       self.paint = usize::from(self.paint == 0);
-      // SAFETY: each edge is a non-unwinding libc function of up to three
-      // integer or pointer arguments; the caller supplies valid arguments. None
-      // retains a stack address, and none needs a large stack.
+      // SAFETY: each edge is a non-unwinding libc function of at most six
+      // integer or pointer parameters, which take the first values of
+      // `arguments`; the caller supplies valid arguments. None retains a stack
+      // address, and none needs a large stack.
       let painted: Painted = unsafe { self.stack.call(paint, edge.function(), arguments) };
       let entry = &mut self.deepest[edge.index()];
       entry.calls = entry.calls.strict_add(1);
@@ -174,7 +196,7 @@ mod linux {
       unsafe { self.call(Edge::Free, case, 0, [pointer.expose_provenance(), 0, 0]) };
     }
 
-    fn merge(&mut self, other: &[Deepest; 9]) {
+    fn merge(&mut self, other: &[Deepest; EDGES.len()]) {
       for (mine, theirs) in self.deepest.iter_mut().zip(other) {
         let calls = mine.calls.strict_add(theirs.calls);
         if theirs.bytes > mine.bytes || mine.case.is_empty() {
@@ -289,6 +311,68 @@ mod linux {
     for kind in (0..=64usize).chain([0x7fff, usize::MAX]) {
       // SAFETY: getauxval accepts any type and reads only the auxiliary vector.
       unsafe { meter.call(Edge::Getauxval, "type", kind, [kind, 0, 0]) };
+    }
+  }
+
+  /// A C `int` argument, sign-extended to its 64-bit register: RISC-V, POWER,
+  /// and IBM Z require the extension, and x86-64 and AArch64 read 32 bits.
+  fn int(value: c_int) -> usize {
+    usize::try_from(i64::from(value).cast_unsigned()).expect("64-bit target")
+  }
+
+  /// The C `int` that a call returned in the low 32 bits of its register.
+  fn returned_int(result: usize) -> c_int {
+    u32::try_from(result & 0xffff_ffff)
+      .expect("masked to 32 bits")
+      .cast_signed()
+  }
+
+  /// The process-origin calls of `src/platform/process.rs`. glibc 2.39 makes
+  /// each one a system-call wrapper: `getpid` and `madvise` from
+  /// `sysdeps/unix/sysv/linux/syscalls.list` and `sysdeps/unix/syscalls.list`,
+  /// and `mmap` from `sysdeps/unix/sysv/linux/mmap64.c` (`__mmap64`). Each case
+  /// runs twice, once with each paint, and the failures take the errno path.
+  fn process(meter: &mut Meter) {
+    const PAGE: usize = 4096;
+    let anonymous = [
+      0,
+      PAGE,
+      int(libc::PROT_READ | libc::PROT_WRITE),
+      int(libc::MAP_PRIVATE | libc::MAP_ANONYMOUS),
+      int(-1),
+      0,
+    ];
+    for _ in 0..2 {
+      // SAFETY: getpid takes no argument and reads no memory.
+      unsafe { meter.call(Edge::Getpid, "process ID", 0, []) };
+      // SAFETY: a null hint without MAP_FIXED maps a fresh private anonymous
+      // page and affects no existing mapping.
+      let page = unsafe { meter.call(Edge::Mmap, "private anonymous page", PAGE, anonymous) };
+      assert!(page != int(-1), "mmap of one page failed");
+      let mut zero_length = anonymous;
+      zero_length[1] = 0;
+      // SAFETY: as above; a zero length fails with EINVAL and maps nothing.
+      let failed = unsafe { meter.call(Edge::Mmap, "zero length, EINVAL", 0, zero_length) };
+      assert_eq!(failed, int(-1), "mmap of zero bytes succeeded");
+      // SAFETY: `page` is the page mapped above. Advice -1 is invalid and fails
+      // with EINVAL; MADV_WIPEONFORK changes only the page's fork behavior.
+      let (invalid, wipe) = unsafe {
+        (
+          meter.call(Edge::Madvise, "invalid advice, EINVAL", PAGE, [page, PAGE, int(-1)]),
+          meter.call(
+            Edge::Madvise,
+            "MADV_WIPEONFORK",
+            PAGE,
+            [page, PAGE, int(libc::MADV_WIPEONFORK)],
+          ),
+        )
+      };
+      assert_eq!(returned_int(invalid), -1, "madvise accepted invalid advice");
+      assert_eq!(returned_int(wipe), 0, "madvise refused MADV_WIPEONFORK");
+      // SAFETY: `page` is the live mapping of `PAGE` bytes from above, and no
+      // reference into it exists.
+      let unmapped = unsafe { libc::munmap(core::ptr::with_exposed_provenance_mut(page), PAGE) };
+      assert_eq!(unmapped, 0, "munmap failed");
     }
   }
 
@@ -463,6 +547,7 @@ mod linux {
     }
     memory(&mut meter);
     auxiliary(&mut meter);
+    process(&mut meter);
     failures(&mut meter);
     let mut kept = workload(&mut meter, 0x9e37_79b9_7f4a_7c15, 100_000, 0);
     for index in 0..4u64 {

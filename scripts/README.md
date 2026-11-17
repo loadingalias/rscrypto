@@ -635,9 +635,12 @@ The preparation review reports two bounds for each root.
   `whole_call_bound_basis` names the rule that applied.
 
 The declared edges are a fixed set: the libc imports `calloc`, `malloc`, `free`,
-`memcpy`, `memmove`, `memset`, `memcmp`, `bcmp`, and `getauxval`, named by a GOT
-relocation or a PLT stub. `getauxval` is the AArch64, POWER, and IBM Z Linux
-capability read.
+`memcpy`, `memmove`, `memset`, `memcmp`, `bcmp`, `getauxval`, `getpid`, `mmap`, and
+`madvise`, named by a GOT relocation or a PLT stub. `getauxval` is the AArch64, POWER,
+and IBM Z Linux capability read. `getpid`, `mmap`, and `madvise` are the process-origin
+calls of `src/platform/process.rs`. In glibc 2.39, each one is a system-call wrapper:
+`getpid` in `sysdeps/unix/sysv/linux/syscalls.list`, `madvise` in
+`sysdeps/unix/syscalls.list`, and `mmap` in `sysdeps/unix/sysv/linux/mmap64.c`.
 
 The `hpke-in` roots pass the frame review's bump arena, `ReviewArena`, as their
 allocator. The arena reserves blocks from a static buffer and never frees them.
@@ -696,13 +699,16 @@ prebuilt binaries.
 
 - The library maps a private stack between two inaccessible 1 MiB guards, fills it with a paint byte,
   and runs one call on it through a small assembly wrapper for each ABI: x86-64 System V and
-  Windows, AArch64 Linux and macOS, POWER ELFv2, IBM Z, and RISC-V. On Windows the wrapper also moves
-  the TEB stack bounds to the private stack for the call. After the call, the lowest byte that lost its
+  Windows, AArch64 Linux and macOS, POWER ELFv2, IBM Z, and RISC-V. A Linux wrapper passes up to six
+  integer arguments, as `mmap` needs, and the Windows and macOS wrappers pass up to three. On Windows the
+  wrapper also moves the TEB stack bounds to the private stack for the call. After the call, the lowest byte that lost its
   paint gives the high-water mark. A changed lowest 4 KiB stops the run.
 - `just stack-allowances [--check [FILE]] [--write FILE --evidence NOTE] [--output DIR]` runs on a
   Linux GNU host. It calls each declared edge of the [preparation bounds](#preparation-bounds) through
   the symbol the executable binds: memory functions over sizes 0 to 64 MiB, alignments, overlaps,
-  and equal or different inputs; `getauxval` for every type; and `malloc`, `calloc`, and `free` in
+  and equal or different inputs; `getauxval` for every type; `getpid`, `mmap` of one private anonymous
+  page and of zero bytes, and `madvise` with invalid advice and `MADV_WIPEONFORK`; and `malloc`,
+  `calloc`, and `free` in
   first calls on fresh threads, a pseudo-random workload across every bin size and the mmap threshold,
   bulk release, frees of other threads' chunks, and failure returns. Every call alternates two paints.
   The allowance is the deepest use below the entry stack pointer, rounded up to 16 bytes, plus the ABI

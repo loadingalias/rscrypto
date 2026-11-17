@@ -155,8 +155,13 @@ EXTERNAL_LEAVES = {"memcpy", "memmove", "memset", "memcmp", "bcmp"}
 # (and, for `getauxval`, the kernel); none is assumed frameless. `getauxval` is
 # the AArch64, POWER, and IBM Z Linux capability read. Cold first-call capability
 # detection is otherwise owned code: the lock-free cache, CPUID, STFLE, and
-# RISC-V hwprobe. Any other import, including IFUNC relocations, remains unresolved.
-DECLARED_LIBC = {"calloc", "malloc", "free", "memcpy", "memmove", "memset", "memcmp", "bcmp", "getauxval"}
+# RISC-V hwprobe. `getpid`, `mmap`, and `madvise` are the process-origin calls of
+# `src/platform/process.rs`, system-call wrappers in glibc 2.39
+# (`sysdeps/unix/sysv/linux/syscalls.list`, `sysdeps/unix/syscalls.list`, and
+# `sysdeps/unix/sysv/linux/mmap64.c`). Any other import, including IFUNC
+# relocations, remains unresolved.
+DECLARED_LIBC = {"calloc", "malloc", "free", "memcpy", "memmove", "memset", "memcmp", "bcmp", "getauxval", "getpid",
+                 "mmap", "madvise"}
 
 HEADER = re.compile(r"^([0-9a-f]+) <(.+)>:$")
 INSTRUCTION = re.compile(r"^\s*([0-9a-f]+):\s+(\S+)(?:\s+(.*))?$")

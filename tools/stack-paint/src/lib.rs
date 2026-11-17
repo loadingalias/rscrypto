@@ -32,7 +32,8 @@ use core::ffi::c_void;
 /// x86-64 pushes the return address, and Windows also reserves 32 bytes of
 /// shadow space above it. POWER ELFv2 callees store the link register and TOC
 /// in a 32-byte header that the caller supplies. IBM Z callees save registers
-/// into a 160-byte area that the caller supplies. AArch64 and RISC-V supply none.
+/// into a 160-byte area that the caller supplies, and the sixth argument
+/// follows it. AArch64 and RISC-V supply none.
 pub const ENTRY_OFFSET: usize = if cfg!(all(target_arch = "x86_64", windows)) {
   40
 } else if cfg!(target_arch = "x86_64") {
@@ -40,7 +41,7 @@ pub const ENTRY_OFFSET: usize = if cfg!(all(target_arch = "x86_64", windows)) {
 } else if cfg!(target_arch = "powerpc64") {
   32
 } else if cfg!(target_arch = "s390x") {
-  160
+  168
 } else {
   0
 };
@@ -67,26 +68,39 @@ const GUARD_BYTES: usize = 1024 * 1024;
 #[repr(C)]
 struct Call {
   function: *const (),
-  arguments: [usize; 3],
+  arguments: [usize; MAX_ARGUMENTS],
   result: usize,
   top: *mut u8,
   limit: *mut u8,
   base: *mut u8,
 }
 
+/// The integer arguments that a Linux wrapper passes. `mmap` takes six.
+const MAX_ARGUMENTS: usize = 6;
+/// The integer arguments that the Windows and macOS wrappers pass. No call
+/// measured there takes more.
+#[cfg(not(target_os = "linux"))]
+const WRAPPER_ARGUMENTS: usize = 3;
+#[cfg(target_os = "linux")]
+const WRAPPER_ARGUMENTS: usize = MAX_ARGUMENTS;
+
 const _: () = {
   assert!(core::mem::offset_of!(Call, arguments) == 8);
-  assert!(core::mem::offset_of!(Call, result) == 32);
-  assert!(core::mem::offset_of!(Call, top) == 40);
-  assert!(core::mem::offset_of!(Call, limit) == 48);
-  assert!(core::mem::offset_of!(Call, base) == 56);
+  assert!(core::mem::offset_of!(Call, result) == 56);
+  assert!(core::mem::offset_of!(Call, top) == 64);
+  assert!(core::mem::offset_of!(Call, limit) == 72);
+  assert!(core::mem::offset_of!(Call, base) == 80);
 };
 
 // Each wrapper preserves the registers it uses on the original stack, moves the
 // stack pointer to `top` less the ABI's entry slots, calls `function` with the
-// three integer arguments, stores the integer result, and restores the original
-// stack pointer. It writes the private stack only through the call itself.
+// first `WRAPPER_ARGUMENTS` integer arguments, stores the integer result, and
+// restores the original stack pointer. It writes the private stack only through
+// the call itself, except the IBM Z sixth-argument slot above the entry stack
+// pointer.
 
+// System V AMD64 ABI, "Parameter Passing": the INTEGER arguments go in rdi,
+// rsi, rdx, rcx, r8, and r9, so the sixth is in r9.
 #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
 core::arch::global_asm!(
   ".text",
@@ -98,12 +112,15 @@ core::arch::global_asm!(
   "push r12",
   "mov rbx, rdi",
   "mov r12, rsp",
-  "mov rsp, qword ptr [rbx + 40]",
+  "mov rsp, qword ptr [rbx + 64]",
   "mov rdi, qword ptr [rbx + 8]",
   "mov rsi, qword ptr [rbx + 16]",
   "mov rdx, qword ptr [rbx + 24]",
+  "mov rcx, qword ptr [rbx + 32]",
+  "mov r8, qword ptr [rbx + 40]",
+  "mov r9, qword ptr [rbx + 48]",
   "call qword ptr [rbx]",
-  "mov qword ptr [rbx + 32], rax",
+  "mov qword ptr [rbx + 56], rax",
   "mov rsp, r12",
   "pop r12",
   "pop rbx",
@@ -131,19 +148,19 @@ core::arch::global_asm!(
   "mov rsi, qword ptr gs:[0x08]",
   "mov rdi, qword ptr gs:[0x10]",
   "mov r13, qword ptr gs:[0x1478]",
-  "mov rax, qword ptr [rbx + 40]",
+  "mov rax, qword ptr [rbx + 64]",
   "mov qword ptr gs:[0x08], rax",
-  "mov rax, qword ptr [rbx + 48]",
+  "mov rax, qword ptr [rbx + 72]",
   "mov qword ptr gs:[0x10], rax",
-  "mov rax, qword ptr [rbx + 56]",
+  "mov rax, qword ptr [rbx + 80]",
   "mov qword ptr gs:[0x1478], rax",
-  "mov rsp, qword ptr [rbx + 40]",
+  "mov rsp, qword ptr [rbx + 64]",
   "sub rsp, 32",
   "mov rcx, qword ptr [rbx + 8]",
   "mov rdx, qword ptr [rbx + 16]",
   "mov r8, qword ptr [rbx + 24]",
   "call qword ptr [rbx]",
-  "mov qword ptr [rbx + 32], rax",
+  "mov qword ptr [rbx + 56], rax",
   "mov rsp, r12",
   "mov qword ptr gs:[0x08], rsi",
   "mov qword ptr gs:[0x10], rdi",
@@ -156,6 +173,8 @@ core::arch::global_asm!(
   "ret",
 );
 
+// AAPCS64, "Parameter passing": x0 to x7 carry the first eight integer
+// arguments, so the sixth is in x5.
 #[cfg(all(target_arch = "aarch64", target_os = "linux"))]
 core::arch::global_asm!(
   ".text",
@@ -168,14 +187,17 @@ core::arch::global_asm!(
   "mov x29, sp",
   "mov x19, x0",
   "mov x20, sp",
-  "ldr x9, [x19, #40]",
+  "ldr x9, [x19, #64]",
   "mov sp, x9",
   "ldr x0, [x19, #8]",
   "ldr x1, [x19, #16]",
   "ldr x2, [x19, #24]",
+  "ldr x3, [x19, #32]",
+  "ldr x4, [x19, #40]",
+  "ldr x5, [x19, #48]",
   "ldr x9, [x19]",
   "blr x9",
-  "str x0, [x19, #32]",
+  "str x0, [x19, #56]",
   "mov sp, x20",
   "ldp x19, x20, [sp, #16]",
   "ldp x29, x30, [sp], #32",
@@ -194,20 +216,23 @@ core::arch::global_asm!(
   "mov x29, sp",
   "mov x19, x0",
   "mov x20, sp",
-  "ldr x9, [x19, #40]",
+  "ldr x9, [x19, #64]",
   "mov sp, x9",
   "ldr x0, [x19, #8]",
   "ldr x1, [x19, #16]",
   "ldr x2, [x19, #24]",
   "ldr x9, [x19]",
   "blr x9",
-  "str x0, [x19, #32]",
+  "str x0, [x19, #56]",
   "mov sp, x20",
   "ldp x19, x20, [sp, #16]",
   "ldp x29, x30, [sp], #32",
   "ret",
 );
 
+// ELFv2 ABI, "Parameter Passing in Registers": r3 to r10 carry the first eight
+// integer arguments, so the sixth is in r8. A prototyped callee whose arguments
+// all fit in registers needs no parameter save area.
 // ELFv2: the wrapper saves its caller's TOC in the caller's TOC slot and
 // restores it after the call; the callee's global entry derives its own TOC
 // from r12. The private stack's 32-byte header carries a back chain to the
@@ -228,15 +253,18 @@ core::arch::global_asm!(
   "mr 31, 3",
   "mr 30, 1",
   "ld 12, 0(31)",
-  "ld 4, 40(31)",
+  "ld 4, 64(31)",
   "addi 1, 4, -32",
   "std 30, 0(1)",
   "ld 3, 8(31)",
   "ld 4, 16(31)",
   "ld 5, 24(31)",
+  "ld 6, 32(31)",
+  "ld 7, 40(31)",
+  "ld 8, 48(31)",
   "mtctr 12",
   "bctrl",
-  "std 3, 32(31)",
+  "std 3, 56(31)",
   "mr 1, 30",
   "ld 30, 32(1)",
   "ld 31, 40(1)",
@@ -249,6 +277,11 @@ core::arch::global_asm!(
 );
 
 // The caller of an IBM Z function supplies its 160-byte register save area.
+// s390x ELF ABI Supplement, "Parameter Passing": r2 to r6 carry the first five
+// integer arguments, and the caller puts the others in its parameter area,
+// which starts at 160(%r15). So the wrapper reserves 168 bytes, the save area
+// and one argument slot, which is why `ENTRY_OFFSET` is 168. The call record
+// stays in r8, which the callee preserves.
 #[cfg(all(target_arch = "s390x", target_os = "linux"))]
 core::arch::global_asm!(
   ".text",
@@ -257,22 +290,28 @@ core::arch::global_asm!(
   ".type rscrypto_stack_paint_call, @function",
   "rscrypto_stack_paint_call:",
   "stmg %r6, %r15, 48(%r15)",
-  "lgr %r6, %r2",
+  "lgr %r8, %r2",
   "lgr %r7, %r15",
-  "lg %r15, 40(%r6)",
-  "aghi %r15, -160",
-  "lg %r1, 0(%r6)",
-  "lg %r2, 8(%r6)",
-  "lg %r3, 16(%r6)",
-  "lg %r4, 24(%r6)",
+  "lg %r15, 64(%r8)",
+  "aghi %r15, -168",
+  "lg %r1, 48(%r8)",
+  "stg %r1, 160(%r15)",
+  "lg %r1, 0(%r8)",
+  "lg %r2, 8(%r8)",
+  "lg %r3, 16(%r8)",
+  "lg %r4, 24(%r8)",
+  "lg %r5, 32(%r8)",
+  "lg %r6, 40(%r8)",
   "basr %r14, %r1",
-  "stg %r2, 32(%r6)",
+  "stg %r2, 56(%r8)",
   "lgr %r15, %r7",
   "lmg %r6, %r15, 48(%r15)",
   "br %r14",
   ".size rscrypto_stack_paint_call, .-rscrypto_stack_paint_call",
 );
 
+// RISC-V ELF psABI, "Integer Calling Convention": a0 to a7 carry the first
+// eight integer arguments, so the sixth is in a5.
 #[cfg(all(target_arch = "riscv64", target_os = "linux"))]
 core::arch::global_asm!(
   ".text",
@@ -286,13 +325,16 @@ core::arch::global_asm!(
   "sd s1, 8(sp)",
   "mv s0, a0",
   "mv s1, sp",
-  "ld sp, 40(s0)",
+  "ld sp, 64(s0)",
   "ld t0, 0(s0)",
   "ld a0, 8(s0)",
   "ld a1, 16(s0)",
   "ld a2, 24(s0)",
+  "ld a3, 32(s0)",
+  "ld a4, 40(s0)",
+  "ld a5, 48(s0)",
   "jalr t0",
-  "sd a0, 32(s0)",
+  "sd a0, 56(s0)",
   "mv sp, s1",
   "ld ra, 24(sp)",
   "ld s0, 16(sp)",
@@ -468,12 +510,16 @@ impl GuardedStack {
   ///
   /// # Safety
   ///
-  /// `function` must be a C-ABI function of up to three integer or pointer
-  /// arguments that returns an integer, a pointer, or nothing. Every argument
-  /// must be valid for it. It must not unwind, jump out of the call, retain an
-  /// address of the private stack, or need more stack than [`Self::bytes`] less
-  /// [`SENTINEL_BYTES`].
-  pub unsafe fn call(&mut self, paint: u8, function: *const (), arguments: [usize; 3]) -> Painted {
+  /// `function` must be a C-ABI function of at most `N` integer or pointer
+  /// parameters, which take the first values of `arguments`, and it must return
+  /// an integer, a pointer, or nothing. Every argument must be valid for it. It
+  /// must not unwind, jump out of the call, retain an address of the private
+  /// stack, or need more stack than [`Self::bytes`] less [`SENTINEL_BYTES`].
+  /// `N` is at most six on Linux and three elsewhere; the compiler rejects more.
+  pub unsafe fn call<const N: usize>(&mut self, paint: u8, function: *const (), arguments: [usize; N]) -> Painted {
+    const { assert!(N <= WRAPPER_ARGUMENTS, "the platform wrapper passes fewer arguments") };
+    let mut padded = [0; MAX_ARGUMENTS];
+    padded[..N].copy_from_slice(&arguments);
     // SAFETY: `self.stack` is the start of `self.bytes` committed, writable
     // bytes that only this owner addresses; no view of them is live.
     unsafe { core::ptr::write_bytes(self.stack, paint, self.bytes) };
@@ -481,7 +527,7 @@ impl GuardedStack {
     let top = unsafe { self.stack.add(self.bytes) };
     let mut call = Call {
       function,
-      arguments,
+      arguments: padded,
       result: 0,
       top,
       limit: self.stack,

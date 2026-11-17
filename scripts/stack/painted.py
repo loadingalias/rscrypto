@@ -26,7 +26,8 @@ CRATE = ROOT / "tools" / "stack-paint"
 EDGES_BINARY = "rscrypto-stack-edges"
 WORKER_BINARY = "rscrypto-stack-worker"
 # The libc imports at which `frames.py --whole-calls` stops its owned bounds.
-DECLARED_EDGES = ("calloc", "malloc", "free", "memcpy", "memmove", "memset", "memcmp", "bcmp", "getauxval")
+DECLARED_EDGES = ("calloc", "malloc", "free", "memcpy", "memmove", "memset", "memcmp", "bcmp", "getauxval",
+                  "getpid", "mmap", "madvise")
 STACK_CAP = 8 * 1024 * 1024
 DEFAULT_ALLOWANCES = ROOT / ".config" / "stack-allowances.json"
 DEFAULT_WORKER_BUDGETS = ROOT / ".config" / "stack-worker-budgets.json"
