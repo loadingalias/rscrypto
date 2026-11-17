@@ -2683,8 +2683,8 @@ pub(crate) trait Aes128Serial {
 ///
 /// On AES-NI and AES-CE the whole sequence runs inside one target-feature function, so the block
 /// encryption inlines into `work` and the round keys and blocks stay in registers between blocks.
-/// Other backends encrypt each block in memory through [`aes128_encrypt_block`] and clear that
-/// copy before they return the result.
+/// Other backends run `work` in an out-of-line worker, one [`aes128_encrypt_block`] call per block,
+/// and then scrub the worker's dead stack: the compiler spills the blocks of `work` there.
 #[cfg(feature = "aes-gcm")]
 #[inline]
 pub(crate) fn aes128_serial<W: Aes128Serial>(ek: &Aes128EncKey, work: W) -> W::Output {
@@ -2700,6 +2700,38 @@ pub(crate) fn aes128_serial<W: Aes128Serial>(ek: &Aes128EncKey, work: W) -> W::O
     return unsafe { ce::serial_128(ce_rk, work) };
   }
 
+  let _scrub = BlockStackScrub;
+  aes128_serial_worker(ek, work)
+}
+
+// A block dispatch can cache expanded round keys and spill blocks and intermediate state outside
+// their named owners. The CTR and serial workers keep that work below a borrowed-only boundary,
+// and the caller then overwrites their dead frames, with the portable or fixslice block core below
+// them. `just stack-frames` checks on each reviewed target that each linked worker depth fits in
+// this scrub. On 2026-11-17 the deepest were the serial worker (2448 B) and the CTR worker
+// (2336 B), both on x86-64, so 3 KiB keeps a margin above them.
+#[cfg(feature = "aes-gcm")]
+const BLOCK_STACK_SCRUB_WORDS: usize = 384;
+
+/// Overwrites the dead frame of a block worker when the caller's scope ends.
+#[cfg(feature = "aes-gcm")]
+struct BlockStackScrub;
+
+#[cfg(feature = "aes-gcm")]
+impl Drop for BlockStackScrub {
+  fn drop(&mut self) {
+    crate::backend::stack::scrub_dead_stack::<BLOCK_STACK_SCRUB_WORDS>();
+  }
+}
+
+/// Run `work` with one [`aes128_encrypt_block`] call per block.
+///
+/// It runs out of line, so the compiler's copies of the blocks of `work` stay in this frame and the
+/// frames below it, which the caller's [`BlockStackScrub`] overwrites. The block copy that the
+/// cipher writes is cleared before its result returns.
+#[cfg(feature = "aes-gcm")]
+#[inline(never)]
+fn aes128_serial_worker<W: Aes128Serial>(ek: &Aes128EncKey, work: W) -> W::Output {
   work.run(|mut block| {
     aes128_encrypt_block(ek, &mut block);
     let output = block;
@@ -3567,7 +3599,7 @@ fn aes128_ctr32_be_uses_block_batch(ek: &Aes128EncKey) -> bool {
 #[inline]
 #[cfg(feature = "aes-gcm")]
 pub(crate) fn aes256_ctr32_encrypt_be(ek: &Aes256EncKey, initial_counter: &[u8; BLOCK_SIZE], data: &mut [u8]) {
-  let _scrub = CtrStackScrub;
+  let _scrub = BlockStackScrub;
   aes256_ctr32_encrypt_be_worker(ek, initial_counter, data);
 }
 
@@ -4271,27 +4303,8 @@ pub(crate) unsafe fn aes256_ctr32_decrypt_be_aarch64_ghash(
 #[inline]
 #[cfg(feature = "aes-gcm")]
 pub(crate) fn aes128_ctr32_encrypt_be(ek: &Aes128EncKey, initial_counter: &[u8; BLOCK_SIZE], data: &mut [u8]) {
-  let _scrub = CtrStackScrub;
+  let _scrub = BlockStackScrub;
   aes128_ctr32_encrypt_be_worker(ek, initial_counter, data);
-}
-
-// A block dispatch can cache expanded round keys and spill intermediate state
-// outside the named keystream owner. Keep that work below a borrowed-only
-// boundary, then overwrite its dead frame, including the portable block core.
-// `just stack-frames` checks that the linked worker depth fits in this scrub on
-// each reviewed target; the deepest worker measured 2336 B (x86-64) on
-// 2026-11-08, so 3 KiB keeps a margin above it.
-#[cfg(feature = "aes-gcm")]
-const CTR_STACK_SCRUB_WORDS: usize = 384;
-
-#[cfg(feature = "aes-gcm")]
-struct CtrStackScrub;
-
-#[cfg(feature = "aes-gcm")]
-impl Drop for CtrStackScrub {
-  fn drop(&mut self) {
-    crate::backend::stack::scrub_dead_stack::<CTR_STACK_SCRUB_WORDS>();
-  }
 }
 
 #[inline(never)]

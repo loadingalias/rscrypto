@@ -105,7 +105,14 @@ BOUNDARIES = [
     workers=re.compile(r"^rscrypto::aead::aes::aes(?:128|256)_ctr32_encrypt_be_worker$"),
     scrub=re.compile(r"^rscrypto::backend::stack::scrub_dead_stack::<384>$"),
     source=ROOT / "src" / "aead" / "aes.rs",
-    constant="CTR_STACK_SCRUB_WORDS",
+    constant="BLOCK_STACK_SCRUB_WORDS",
+  ),
+  Boundary(
+    name="QUIC-LB four-pass Feistel without fused AES",
+    workers=re.compile(r"^rscrypto::aead::aes::aes128_serial_worker::<rscrypto::aead::quic_lb::Feistel>$"),
+    scrub=re.compile(r"^rscrypto::backend::stack::scrub_dead_stack::<384>$"),
+    source=ROOT / "src" / "aead" / "aes.rs",
+    constant="BLOCK_STACK_SCRUB_WORDS",
   ),
   Boundary(
     name="AES-GCM x86-64 VAES message tails",

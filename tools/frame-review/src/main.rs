@@ -549,6 +549,16 @@ macro_rules! records {
 }
 
 fn main() {
+  // QUIC-LB: a four-pass length links the scrubbed fallback worker on every target.
+  {
+    use rscrypto::aead::expert::quic_lb::{QuicLbCipher, QuicLbKey};
+    let key = QuicLbKey::from_bytes(black_box([10; 16]));
+    let cipher = QuicLbCipher::new(&key, black_box(3), black_box(4)).expect("QUIC-LB lengths");
+    let mut block = black_box([11u8; 19]);
+    cipher.encrypt(&mut block);
+    cipher.decrypt_server_id(&mut block);
+    black_box(block);
+  }
   records!(
     Aes128Gcm,
     Aes128GcmKey::generate(|out| out.fill(black_box(7))),
