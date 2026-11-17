@@ -279,9 +279,10 @@ if name=='cargo' and args==['nextest','--version']:
     print('cargo-nextest '+os.environ['TRANSFER_NEXTEST'])
 elif name=='cargo' and args[0]=='build':
     release = Path(args[args.index('--target-dir')+1]) / args[args.index('--target')+1] / 'release'
-    release.mkdir(parents=True, exist_ok=True)
-    for binary in ('rscrypto-stack-edges', 'rscrypto-stack-worker'):
-        (release / binary).write_bytes(b'stack-paint fixture')
+    binaries = ('examples/introspect',) if '--example' in args else ('rscrypto-stack-edges', 'rscrypto-stack-worker')
+    for binary in binaries:
+        (release / binary).parent.mkdir(parents=True, exist_ok=True)
+        (release / binary).write_bytes(b'binary fixture')
         (release / binary).chmod(0o755)
 elif name=='cargo':
     internal = 'internal-' in args[args.index('--archive-file')+1]
@@ -322,12 +323,16 @@ elif name.endswith('gcc'): print('gcc pinned fixture')
                     ['aead_kernel_equivalence', 'argon2_kernels', 'chacha20poly1305', 'rsa_public_key', 'pbkdf2_evidence'])
             self.assertIn('--all-features', builds[3])
             # The painted-stack binaries travel in the same sealed bundle.
-            stack = [row for row in calls if row[:2] == ['cargo', 'build']]
+            stack = [row for row in calls if row[:2] == ['cargo', 'build'] and '--example' not in row]
             self.assertEqual(len(stack), 2)
             self.assertTrue(all('--locked' in row and '--release' in row and row[row.index('--target') + 1] == target
                                 and row[row.index('--manifest-path') + 1].endswith('tools/stack-paint/Cargo.toml')
                                 for row in stack))
             self.assertEqual(['--features' in row for row in stack], [False, True])
+            # The detection report of the target host travels in the same bundle.
+            introspect, = [row for row in calls if row[:2] == ['cargo', 'build'] and '--example' in row]
+            self.assertEqual(introspect[introspect.index('--example') + 1], 'introspect')
+            self.assertEqual(introspect[introspect.index('--target') + 1], target)
             with patch.dict(os.environ, TRANSFER_FAIL='internal'):
                 failed = self.root / 'target/failed-internal.tar.gz'
                 with self.assertRaises(subprocess.CalledProcessError): cross.prepare(target, failed)
@@ -397,6 +402,11 @@ class NativeArchive(unittest.TestCase):
                 self.assertEqual(built.returncode, 0, built.stderr)
                 metadata['modes'][mode] = {'internal': internal,
                     'encoded_rustflags': mode_env.get('CARGO_ENCODED_RUSTFLAGS')}
+            # The bundled detection report runs on the consumer host, and the summary keeps what it printed.
+            introspect = directory / 'introspect'
+            introspect.write_text('#!/bin/sh\necho "Platform: fixture caps (Riscv64)"\n')
+            introspect.chmod(0o755)
+            metadata['introspect'] = {'command': ['cargo', 'build', '--example', 'introspect']}
             bundle.seal(root, directory, 'rscrypto.cross.tests', TARGET, bundle.source_identity(root), metadata)
             archive = root / 'target/transfer.tar.xz'; bundle.pack(directory, archive, compression='xz')
             # Removing the original build tree catches hidden dependencies on it.
@@ -410,6 +420,7 @@ class NativeArchive(unittest.TestCase):
             self.assertEqual(summary['status'], 'pass')
             self.assertEqual(set(summary['modes']), {'native', 'portable', 'internal-native', 'internal-portable'})
             self.assertEqual(summary['nextest'], consumer_version)
+            self.assertEqual(summary['detection'], 'Platform: fixture caps (Riscv64)\n')
             self.assertNotEqual(summary['nextest'], metadata['nextest'])
             # One record per ChaCha20 differential test; each record covers every available backend.
             self.assertEqual(len(summary['modes']['internal-native']['backend_evidence']), len(BACKEND_TESTS))

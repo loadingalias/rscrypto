@@ -27,6 +27,8 @@ MODES = ("native", "portable", "internal-native", "internal-portable")
 # Painted-stack measurements (scripts/stack/painted.py) run from the same bundle.
 STACK_PAINT = ROOT / 'tools/stack-paint'
 STACK_BINARIES = ('rscrypto-stack-edges', 'rscrypto-stack-worker')
+# `examples/introspect.rs` prints the capabilities that runtime detection reports and the kernels that it selects.
+INTROSPECT = ['--example', 'introspect', '--features', 'crc32,sha2,chacha20poly1305,diag']
 
 
 def features(mode):
@@ -101,6 +103,12 @@ def prepare(target, archive):
             for name in STACK_BINARIES:
                 shutil.copy2(build_dir / target / 'release' / name, destination / name)
             metadata['stack_paint'][configuration] = {'command': command}
+        build_dir = ROOT / 'target/introspect'
+        command = ['cargo', 'build', '--locked', '--release', '--target', target, '--target-dir', str(build_dir),
+                   *INTROSPECT]
+        subprocess.run(command, cwd=ROOT, env=env, check=True)
+        shutil.copy2(build_dir / target / 'release/examples/introspect', out / 'introspect')
+        metadata['introspect'] = {'command': command}
         bundle.seal(ROOT, out, 'rscrypto.cross.tests', target, identity, metadata)
         bundle.pack(out, archive, compression='xz')
 
@@ -124,6 +132,12 @@ def execute(target, archive):
         flags = (record.get('encoded_rustflags') or '').split('\x1f')
         if record.get('internal') != internal or ('rscrypto_internal' in flags) != internal:
             raise ValueError('test archive internal-build provenance differs from its suite')
+    # The detection of this host shows which kernels its suites can select.
+    detected = None
+    if 'introspect' in manifest['metadata']:
+        detected = subprocess.run([str(incoming / 'introspect')], check=True, capture_output=True, text=True).stdout
+        (out / 'introspect.txt').write_text(detected)
+        print(f'{target} runtime detection:\n{detected}', end='', flush=True)
     # Bundles that declare painted-stack binaries must measure them on this host.
     # They run first, so that a failing suite does not hide the measurements.
     stack = (stack_paint(target, incoming / 'stack-paint', out / 'stack-paint')
@@ -149,7 +163,7 @@ def execute(target, archive):
     bundle.verify(ROOT, incoming, 'rscrypto.cross.tests', target)
     (out / 'summary.json').write_text(json.dumps({'status': 'pass', 'source': manifest['source'],
         'archive_sha256': bundle.digest(archive), 'host': platform.uname()._asdict(),
-        'nextest': version, 'modes': results, 'stack_paint': stack}, indent=2) + '\n')
+        'nextest': version, 'detection': detected, 'modes': results, 'stack_paint': stack}, indent=2) + '\n')
     print(f'{target} ordinary and internal suites passed: {out}', flush=True)
 
 

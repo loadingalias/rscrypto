@@ -246,6 +246,11 @@ CI, CT, Bench, and Profile share two preparation actions:
 Each workflow still owns its preparation command, runner selection, timeout, native execution,
 and fail-fast matrix.
 
+A cross-built test suite also holds the `introspect` example. Before its suites, `just test-cross run` executes it
+on the target host and records the capabilities that runtime detection reports, and the kernels that it selects,
+in `introspect.txt` and in `detection` of `summary.json`. The RISC-V run also prints the `isa` lines of
+`/proc/cpuinfo`.
+
 RISC-V is the exception to the shared matrix.
 GitHub cannot time out a queued job or cancel one job of a run,
 so CI and CT dispatch RISC-V execution as a [RISC-V](../.github/workflows/riscv.yml) run.

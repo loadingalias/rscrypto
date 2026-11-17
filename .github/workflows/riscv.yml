@@ -55,6 +55,15 @@ jobs:
         with:
           ref: ${{ inputs.sha }}
           persist-credentials: false
+      # Which extension kernels can run here depends on the ISA that the kernel reports. The `tests` suite also
+      # prints the capabilities that rscrypto detects (`examples/introspect.rs`).
+      - name: Record the runner ISA
+        run: |
+          grep -E '^(hart isa|isa|isa-ext|uarch)[[:space:]]*:' /proc/cpuinfo | sort | uniq -c
+          # glibc's view of the auxiliary vector (AT_HWCAP), and of hwprobe when this glibc reads it.
+          for loader in /lib/ld-linux-riscv64-*.so.1; do
+            "$loader" --list-diagnostics | grep -iE 'hwcap|hwprobe|riscv' || true
+          done
       # The archives are bound to the source; execution rejects any other checkout.
       - name: Download the prepared suite from the calling run
         uses: "actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333" # v8.0.2
