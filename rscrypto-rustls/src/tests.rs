@@ -1,17 +1,39 @@
-use rustls::crypto::{GetRandomFailed, SecureRandom};
+core::cfg_select! {
+  // The users of the test entropy source: the RSA, ML-DSA, and composite signing tests, the QUIC
+  // tests, the hybrid key-exchange tests (which the key-exchange test module's features include),
+  // and, without `getrandom`, the TLS test provider. `Fixed` below needs a subset of these features.
+  any(
+    feature = "rsa",
+    feature = "ml-dsa",
+    feature = "mldsa65-ed25519",
+    feature = "mldsa65-ecdsa-p256",
+    all(feature = "aes-gcm", feature = "hkdf"),
+    all(feature = "ml-kem", feature = "x25519"),
+    all(
+      not(feature = "getrandom"),
+      feature = "hkdf",
+      any(feature = "aes-gcm", feature = "chacha20poly1305"),
+      any(feature = "x25519", feature = "p256-ecdh", feature = "p384-ecdh"),
+      any(feature = "ecdsa-p256", feature = "ecdsa-p384", feature = "ed25519")
+    )
+  ) => {
+    use rustls::crypto::{GetRandomFailed, SecureRandom};
 
-/// Caller entropy for tests: an independent source behind this crate's
-/// caller-entropy constructors, so the suite runs without `getrandom`.
-#[derive(Debug)]
-pub(crate) struct Random;
+    /// Caller entropy for tests: an independent source behind this crate's
+    /// caller-entropy constructors, so the suite runs without `getrandom`.
+    #[derive(Debug)]
+    pub(crate) struct Random;
 
-impl SecureRandom for Random {
-  fn fill(&self, output: &mut [u8]) -> Result<(), GetRandomFailed> {
-    rustls_ring::DEFAULT_TLS13_PROVIDER.secure_random.fill(output)
+    impl SecureRandom for Random {
+      fn fill(&self, output: &mut [u8]) -> Result<(), GetRandomFailed> {
+        rustls_ring::DEFAULT_TLS13_PROVIDER.secure_random.fill(output)
+      }
+    }
+
+    pub(crate) static RANDOM: Random = Random;
   }
+  _ => {}
 }
-
-pub(crate) static RANDOM: Random = Random;
 
 /// Fills every request with one byte, so an independent oracle can rebuild the drawn keys.
 #[cfg(all(feature = "aes-gcm", feature = "hkdf"))]
