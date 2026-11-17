@@ -1250,6 +1250,72 @@ because of the session deadline. The 15 waivers were renewed by instruction-leve
 
 AArch64 Linux and x86-64 Linux needed no change. With these waivers, the gate scanner reports no stale waiver and
 no unwaived enforced finding on the seven artifact sets. The waiver set has 535 entries.
+The [2026-11-17 record](#identity-fixes-and-re-encoding-2026-11-17) fixes both defects and the Apple cause,
+and closes this deviation.
+
+### Identity fixes and re-encoding, 2026-11-17
+
+This record fixes the causes of the 2026-11-15 renewals by review in the instruction identity, as the renewal
+procedure requires. The waivers were re-encoded on the artifacts that they were reviewed against:
+[Constant-Time 43707625493](https://github.com/loadingalias/rscrypto/actions/runs/43707625493), its RISC-V run
+[43708411105](https://github.com/loadingalias/rscrypto/actions/runs/43708411105), and a local Apple build, all at `ddf3a965`.
+
+The causes of the 2026-11-15 renewals:
+
+- POWER `li 7, 20848` kept its immediate because a call counted as a use of each constant in r3–r10.
+  Now each linked function has a summary of the argument registers that it can read before it writes them.
+  `Sha256::update_impl` does not read r7, so the constant is an index only and loses its immediate.
+- POWER `addi 14, 5, 411` changed its member from 7 to 21 bytes, because member bounds came from the addresses that
+  all functions form into the unit. Now the bounds come from the compiler's assembly, so the member stays 7 bytes.
+- Apple `exponentiate_pair` (four waivers) passes an assertion message to `core::panicking::panic` with
+  `mov w1, #0x13d`. Its ld64 atom held 318 bytes, with one byte of alignment padding, at `6f571652`.
+  At `868dcbca`, it held 317 bytes. The identity bound linker padding. Now the reference binds the 317 bytes
+  that the call reads, and the 808 instruction identities of the function at the two builds are equal.
+
+The same review found these identity defects:
+
+- The PE rule of 2026-11-06 dropped trailing zero bytes of every reference, also bytes that code reads.
+  `detect_uncached` reads a 1920-byte table in full (`cmpq $0x780, %r8`), and the identity bound 1893 bytes.
+  `encode_pss_with_mask::<Sha256>` hashes the 8-byte zero prefix of PSS M' (RFC 8017, 9.1.1), and the identity
+  bound 1 byte. `vpbroadcastq` in `rsa_x86_64_ifma::build_table` reads the top zero byte of `__real@000fffffffffffff`.
+  Now only a known read extent trims, and never below it.
+- A paired length counted as a byte extent for every callee. On Apple, `open(path, O_RDWR)` paired the path with 2,
+  so the identity dropped the NUL that `open` reads. A `fmt::Arguments` literal passes `len << 1 | 1`,
+  so 60 POWER references bound a whole merged unit of 30 696 or 32 724 bytes.
+  Now the callee's IR must declare a byte slice, and the length must fit inside its object.
+- An x86 broadcast had the width of its register. On PE, `vpbroadcastq` of an 8-byte constant bound 56 bytes of the
+  constants after it.
+
+The rules above also record the slice and transfer fixes. They cover atomic and exclusive accesses on five ISAs,
+conditional stores, AArch64 x8, IBM Z `basr`, `balr`, and `br 0`, and RISC-V `jalr`. They also cover the POWER branch
+forms of Power ISA 3.1, the RISC-V extensions that llvm-objdump decodes, and jump tables. With the RISC-V fix,
+957 rows of V and Zknh code decode that were `<unknown>`, and the Zknh SHA-256 findings do not change.
+
+These fixes add findings. No new finding is waived, and each one is a warning:
+
+- POWER: 19 `conditional_branch` findings from conditional returns (`bclr`), whose leaves are public lengths, null-pointer
+  guards, positions, and one once-state word. 26 `indirect_call` findings (`bctrl`). The 397 false `blr` findings are gone.
+- IBM Z: 41 `indirect_call` findings (`basr`).
+- 202 table jumps are `conditional_branch` findings: x86-64 Linux 28, Windows 169, IBM Z 2, and RISC-V 3.
+  Their indexes are the SHA-512 and SHA-384 kernel ID (170, `src/hashes/crypto/sha512/kernels.rs:34`), the BLAKE3
+  kernel ID (23), the HMAC-SHA256 padded length (6, `src/auth/hmac.rs:277`), the target architecture
+  (2, `src/aead/targets.rs:319`), and a BLAKE3 parent count (1, `src/hashes/crypto/blake3/kernels.rs:1674`).
+  Each slice is open, because a table jump has no successors in the control-flow graph.
+
+`just ct-renew --reencode-from ddf3a965` re-encoded 48 waivers and refused none:
+
+| Target | Waivers | Re-encoded |
+|---|---:|---:|
+| `powerpc64le-unknown-linux-gnu` | 73 | 17: 15 in `ct_entry_rsa_pkcs1v15_decrypt_fixed_blinding`, 2 in `ct_entry_p256_ecdh_agree` |
+| `x86_64-pc-windows-msvc` | 120 | 31: 24 in `detect_uncached`, 6 in `build_table`, 1 in `encode_pss_with_mask` |
+| `aarch64-apple-darwin` | 78 | 0 |
+| `aarch64-unknown-linux-gnu` | 62 | 0 |
+| `riscv64gc-unknown-linux-gnu` | 46 | 0 |
+| `s390x-unknown-linux-gnu` | 52 | 0 |
+| `x86_64-unknown-linux-gnu` | 104 | 0 |
+
+On the seven artifact sets, the gate scanner reports no stale waiver, no unmatched waiver, and no unwaived
+enforced finding.
 
 ## Public decisions and exclusions
 
