@@ -377,13 +377,14 @@ erasure of every compiler-created copy, register, or spill.
 - Signing and verification leave no SK.seed, SK.prf, or `addrnd` bytes in the measured RV32 and
   Cortex-M runs, in byte or word order; key generation and both imports return the key by value and
   leave moved-from copies.
-- In the measured native macOS AArch64 run of SLH-DSA-SHA2-128s, signing also leaves no unrevealed
-  WOTS+ chain value or FORS leaf secret, and key generation and import leave no WOTS+ chain value.
+- In the measured native runs of SLH-DSA-SHA2-128s on macOS AArch64 and Linux x86-64 and AArch64,
+  signing also leaves no unrevealed WOTS+ chain value or FORS leaf secret, and key generation and
+  import leave no WOTS+ chain value.
   The failure paths leave no secret byte, and no call allocates.
   See [the residue results](#optimized-evidence).
 - The per-call clearing above is the whole cleanup boundary. No dead-stack scrub follows the
   operation: the measured runs found no residue to clear, and a scrub would add stack on every target.
-- **Not claimed:** registers, and native Linux, Windows, and portable SHA-256 runs of the derived secrets.
+- **Not claimed:** registers, a native Windows run, and the other parameter sets on native targets.
 
 ### Argon2 and scrypt
 
@@ -778,8 +779,18 @@ builds use the ARMv8 SHA-256 kernel. The oracle found every revealed value of ea
   leave no secret byte.
 - No call allocates. The private stack reaches 2,608 B in key generation, 2,736 B in import, 3,840 B in
   hedged signing, and 5,952 B in deterministic and pre-hash signing.
-- Limits: one target and one SHA-256 kernel, the dead stack only, not registers.
 - Raw results: `benchmark_results/slhdsa-native-residue-20261118/` (local; `SHA256SUMS` inside).
+
+The same command ran on 2026-11-18 at `d095c9e6` on ephemeral Linux hosts (glibc 2.43): x86-64 on
+an AWS c8i (Intel, SHA-NI) and AArch64 on an AWS c8g (Graviton4, SHA2). There the `portable-only`
+build runs the portable SHA-256 kernel. Both configurations on both hosts give the macOS result: no
+derived secret remains, the failure paths leave no secret byte, and no call allocates. Signing
+reaches 5,736 B native and 6,064 B portable on x86-64, and 5,936 B and 6,096 B on AArch64.
+
+- Limits: the dead stack only, not registers; no Windows run.
+- Raw results: the reports and identities in
+  `benchmark_results/slhdsa-native-residue-linux-20261118/` (local); the hosts and their snapshots
+  were deleted after each run.
 
 On 2026-10-16 the harness measured HKDF-SHA256, HKDF-SHA384, and HKDF-SHA512 extract,
 on `nightly-2026-10-14` and QEMU 11.1.2. Each scenario searches for the PRK and both HMAC prefix states:
