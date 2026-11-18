@@ -27,8 +27,40 @@ use rscrypto::{
   MlDsa65PreparedSecretKeyStorage, MlDsa65PublicKey, MlDsa65SecretKey, MlDsa65Signature, MlDsa87,
   MlDsa87PreparedSecretKey, MlDsa87PreparedSecretKeyStorage, MlDsa87PublicKey, MlDsa87SecretKey, MlDsa87Signature,
   MlDsaError, MlKem512, MlKem512PreparedDecapsulationKey, MlKem768, MlKem768PreparedDecapsulationKey, MlKem1024,
-  MlKem1024PreparedDecapsulationKey, MlKemError, VerificationError, XWing, XWingError, XWingPreparedDecapsulationKey,
+  MlKem1024PreparedDecapsulationKey, MlKemError, SlhDsaError, SlhDsaSha2_128s, SlhDsaSha2_128sPublicKey,
+  SlhDsaSha2_128sSecretKey, VerificationError, XWing, XWingError, XWingPreparedDecapsulationKey,
 };
+
+// SLH-DSA-SHA2-128s, the family trust-root profile: key generation, hedged signing, and verification.
+#[inline(never)]
+fn slhdsa_sha2_128s_generate(seed: u8) -> Result<(SlhDsaSha2_128sPublicKey, SlhDsaSha2_128sSecretKey), SlhDsaError> {
+  SlhDsaSha2_128s::generate_keypair(|out| {
+    out.fill(black_box(seed));
+    Ok(())
+  })
+}
+
+#[inline(never)]
+fn slhdsa_sha2_128s_sign(
+  key: &SlhDsaSha2_128sSecretKey,
+  message: &[u8],
+  signature: &mut [u8; SlhDsaSha2_128s::SIGNATURE_LENGTH],
+) -> Result<(), SlhDsaError> {
+  key.sign_with(
+    message,
+    b"frame review",
+    |out| {
+      out.fill(black_box(9));
+      Ok(())
+    },
+    signature,
+  )
+}
+
+#[inline(never)]
+fn slhdsa_sha2_128s_verify(key: &SlhDsaSha2_128sPublicKey, message: &[u8], signature: &[u8]) -> Result<(), VerificationError> {
+  key.verify_with_context(message, b"frame review", signature)
+}
 
 // These wrappers preserve the actual preparation return type and keep an
 // inspectable call boundary after LTO, including borrowed preparation.
@@ -549,6 +581,12 @@ macro_rules! records {
 }
 
 fn main() {
+  {
+    let (public, secret) = slhdsa_sha2_128s_generate(black_box(5)).expect("SLH-DSA key generation");
+    let mut signature = [0u8; SlhDsaSha2_128s::SIGNATURE_LENGTH];
+    slhdsa_sha2_128s_sign(&secret, black_box(b"frame review"), &mut signature).expect("SLH-DSA signing");
+    slhdsa_sha2_128s_verify(&public, black_box(b"frame review"), &signature).expect("SLH-DSA verification");
+  }
   // QUIC-LB: a four-pass length links the scrubbed fallback worker on every target.
   {
     use rscrypto::aead::expert::quic_lb::{QuicLbCipher, QuicLbKey};

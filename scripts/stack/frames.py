@@ -1522,6 +1522,7 @@ WHOLE_CALL_GROUPS = {
     for parameter in (512, 768, 1024)
     for operation in ("generate", "encapsulate", "decapsulate", "prepared_decapsulate")
   ],
+  "slhdsa": [f"rscrypto_frame_review::slhdsa_sha2_128s_{operation}" for operation in ("generate", "sign", "verify")],
   "xwing": [
     f"rscrypto_frame_review::xwing_{operation}"
     for operation in ("generate", "encapsulate", "decapsulate", "prepared_decapsulate")
