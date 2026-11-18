@@ -8,7 +8,6 @@ import os
 from pathlib import Path
 import signal
 import subprocess
-import sys
 import time
 import tomllib
 
@@ -103,17 +102,12 @@ def cases():
 
     # Embedders build the exported portable BLAKE3 text alone: no cfg, crate, unsafe code, or warning.
     source = ROOT / 'src/hashes/crypto/blake3/portable.rs'
-    wrapper = ('#![no_std] #![forbid(unsafe_code)] #[allow(dead_code)] mod blake3 { include!(' + json.dumps(str(source))
-               + '); } #[panic_handler] fn panic(_: &core::panic::PanicInfo) -> ! { loop {} }\n')
-    generate = ('import pathlib, sys\nsource, path, text = sys.argv[1:]\n'
-                "if 'cfg' in pathlib.Path(source).read_text(): sys.exit(source + ' contains cfg')\n"
-                'pathlib.Path(path).parent.mkdir(parents=True, exist_ok=True)\npathlib.Path(path).write_text(text)\n')
-    crate = '{target_dir}/blake3-portable/blake3_portable.rs'
-    yield 'blake3-portable-source', [
-        [sys.executable, '-c', generate, str(source), crate, wrapper],
-        # The cdylib exports nothing, so a link proves nothing about the text. Every check runs before it.
-        ['rustc', '+' + EMBED_CHANNEL, '--edition', '2024', '--crate-type', 'cdylib', '-C', 'panic=abort',
-         '--emit=obj', '-D', 'warnings', '--out-dir', '{target_dir}/blake3-portable', crate]], {}
+    if 'cfg' in source.read_text():
+        raise SystemExit(f'{source} must not contain cfg')
+    # The cdylib exports nothing, so a link proves nothing about the text. Every check runs before it.
+    yield 'blake3-portable-source', [['rustc', '+' + EMBED_CHANNEL, '--edition', '2024', '--crate-type', 'cdylib',
+                                      '-C', 'panic=abort', '--emit=obj', '-D', 'warnings', '--out-dir',
+                                      '{target_dir}/blake3-portable', 'scripts/check/blake3_portable_embed.rs']], {}
 
     # Execute the same independent vectors in bare WASM and WASI, scalar and SIMD.
     for target in ('wasm32-unknown-unknown', 'wasm32-wasip1'):
