@@ -5,7 +5,8 @@ Boots `tools/residue-harness` on the RV32 `virt` and Cortex-M3 `mps2-an385`
 boards, with native and portable backends. For each scenario the harness
 prints the dead stack and allocator arenas left after the operation returns,
 followed by the scenario's secret byte strings ("needles"). This script finds
-every 16-byte window of each needle in each region.
+every 16-byte window of each needle in each region, in byte order and in the
+4-byte and 8-byte word order of SHA-256 and SHA-512.
 
 Expectations come from the harness: `none` fails on any needle byte found,
 `stack` and `arena` are controls whose needle must be found in full in that
@@ -146,11 +147,27 @@ def windows(needle: bytes) -> list[int]:
   return offsets
 
 
-def found_bytes(needle: bytes, region: bytes) -> int:
-  """Count needle bytes covered by a window that occurs anywhere in `region`."""
+def word_views(base: int, data: bytes) -> list[bytes]:
+  """`data` in byte order, then with each aligned 4-byte and 8-byte word reversed.
+
+  SHA-256 holds big-endian 32-bit words and SHA-512 big-endian 64-bit words. On
+  these little-endian boards, a secret in a hash state or message schedule is
+  reversed within each word.
+  """
+  views = [data]
+  for size in (4, 8):
+    head = -base % size
+    whole = head + (len(data) - head) // size * size
+    words = b"".join(data[index : index + size][::-1] for index in range(head, whole, size))
+    views.append(data[:head] + words + data[whole:])
+  return views
+
+
+def found_bytes(needle: bytes, views: list[bytes]) -> int:
+  """Count needle bytes covered by a window that occurs anywhere in one of `views`."""
   covered = bytearray(len(needle))
   for offset in windows(needle):
-    if needle[offset : offset + WINDOW] in region:
+    if any(needle[offset : offset + WINDOW] in view for view in views):
       covered[offset : offset + WINDOW] = b"\x01" * WINDOW
   return sum(covered)
 
@@ -170,11 +187,12 @@ def judge(run: Run) -> dict[str, object]:
     if set(scenario.regions) != {"stack", "heap", "arena"}:
       problems.append(f"{scenario.name}: missing regions")
     results = {}
+    views = {region: word_views(base, data) for region, (base, data) in scenario.regions.items()}
     for needle_name, needle in scenario.needles.items():
       results[needle_name] = {
         "bytes": len(needle),
-        "found": {region: found_bytes(needle, data) for region, (_, data) in scenario.regions.items()},
-        "copies": sum(data.count(needle) for _, data in scenario.regions.values()),
+        "found": {region: found_bytes(needle, region_views) for region, region_views in views.items()},
+        "copies": sum(view.count(needle) for region_views in views.values() for view in region_views),
       }
     for needle_name, result in results.items():
       total = sum(result["found"].values())
@@ -264,8 +282,14 @@ def main(argv: list[str] | None = None) -> int:
 
     arguments.remove("--native-mldsa")
     return mldsa_residue.main(arguments)
+  if "--native-slhdsa" in arguments:
+    import slhdsa_residue
+
+    arguments.remove("--native-slhdsa")
+    return slhdsa_residue.main(arguments)
   parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
   parser.add_argument("--native-mldsa", action="store_true", help="check native ML-DSA signing scratch; combine with --help for its options")
+  parser.add_argument("--native-slhdsa", action="store_true", help="check native SLH-DSA-SHA2-128s residue and resources; combine with --help for its options")
   parser.add_argument("--board", action="append", choices=sorted(BOARDS), help="repeatable (default: all)")
   parser.add_argument("--backend", action="append", choices=BACKENDS, help="repeatable (default: both)")
   parser.add_argument("--timeout", type=float, default=900.0, help="seconds per boot")

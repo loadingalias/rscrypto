@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from residue import found_bytes, judge, parse, windows
+from residue import found_bytes, judge, parse, windows, word_views
 from mldsa_residue import judge as native_judge, needles as native_needles, windows as native_windows
 
 NEEDLE = bytes(range(0x40, 0x40 + 40))
@@ -52,9 +52,22 @@ def test_windows_cover_every_byte() -> None:
 def test_partial_and_scattered_residue() -> None:
   # The first and last windows remain, in separate places; the middle is gone.
   region_bytes = NEEDLE[24:] + b"\xa5" * 8 + NEEDLE[:16]
-  assert found_bytes(NEEDLE, region_bytes) == 32
-  assert found_bytes(NEEDLE, NEEDLE[:15] + NEEDLE[16:]) == 24
-  assert found_bytes(NEEDLE, b"\xa5" * 64) == 0
+  assert found_bytes(NEEDLE, [region_bytes]) == 32
+  assert found_bytes(NEEDLE, [NEEDLE[:15] + NEEDLE[16:]]) == 24
+  assert found_bytes(NEEDLE, [b"\xa5" * 64]) == 0
+
+
+def test_word_order_residue() -> None:
+  # A hash keeps a secret in big-endian words, which little-endian memory
+  # stores reversed within each aligned word.
+  def reversed_words(data: bytes, size: int) -> bytes:
+    return b"".join(data[index : index + size][::-1] for index in range(0, len(data), size))
+
+  assert found_bytes(NEEDLE, word_views(0x80000000, reversed_words(NEEDLE, 4))) == 40
+  assert found_bytes(NEEDLE, word_views(0x80000000, reversed_words(NEEDLE, 8))) == 40
+  # A region that starts four bytes past an 8-byte boundary keeps 8-byte words aligned.
+  assert found_bytes(NEEDLE, word_views(0x80000004, b"\xa5" * 4 + reversed_words(NEEDLE, 8))) == 40
+  assert found_bytes(NEEDLE, word_views(0x80000000, b"\xa5" * 4 + reversed_words(NEEDLE, 8))) == 0
 
 
 def test_expectations() -> None:
@@ -185,6 +198,7 @@ def test_native_capture_completeness_and_injected_residue() -> None:
 def main() -> None:
   test_windows_cover_every_byte()
   test_partial_and_scattered_residue()
+  test_word_order_residue()
   test_expectations()
   test_incomplete_runs_fail()
   test_damaged_uart_line_is_named()

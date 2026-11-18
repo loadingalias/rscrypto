@@ -29,6 +29,7 @@ blake3 = { version = "=1.8.7", default-features = false, features = ["pure"] }
 portable-only = ["rscrypto/portable-only"]
 native-mldsa = ["rscrypto/std"]
 capture-mldsa = ["native-mldsa"]
+native-slhdsa = ["rscrypto/std"]
 
 [[bin]]
 name = "rscrypto-residue-harness"
@@ -40,5 +41,12 @@ test = false
 name = "rscrypto-mldsa-residue-native"
 path = "src/mldsa_native.rs"
 required-features = ["native-mldsa"]
+bench = false
+test = false
+
+[[bin]]
+name = "rscrypto-slhdsa-residue-native"
+path = "src/slhdsa_native.rs"
+required-features = ["native-slhdsa"]
 bench = false
 test = false

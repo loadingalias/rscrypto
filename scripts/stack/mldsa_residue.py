@@ -73,8 +73,8 @@ def sha256(path: Path) -> str:
   return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def build(root: Path, target: Path, backend: str, capture: bool, log: Path) -> Path:
-  features = ["capture-mldsa" if capture else "native-mldsa"]
+def build(root: Path, target: Path, backend: str, feature: str, log: Path, binary: str = BINARY) -> Path:
+  features = [feature]
   if backend == "portable":
     features.append("portable-only")
   env = dict(os.environ)
@@ -82,9 +82,9 @@ def build(root: Path, target: Path, backend: str, capture: bool, log: Path) -> P
   env.pop("CARGO_ENCODED_RUSTFLAGS", None)
   command([
     "cargo", "build", "--locked", "--release", "--manifest-path", str(root / CRATE / "Cargo.toml"),
-    "--bin", BINARY, "--features", ",".join(features), "--target-dir", str(target),
+    "--bin", binary, "--features", ",".join(features), "--target-dir", str(target),
   ], cwd=root, log=log, env=env)
-  return target / "release" / BINARY
+  return target / "release" / binary
 
 
 def parse(path: Path) -> dict[str, dict]:
@@ -261,7 +261,8 @@ def main(argv: list[str] | None = None) -> int:
       name: sha256(ROOT / name) for name in [
         "Cargo.toml", "Cargo.lock", "rust-toolchain.toml", ".cargo/config.toml", ".config/target-matrix.json",
         "tools/residue-harness/Cargo.toml", "tools/residue-harness/Cargo.lock",
-        "tools/residue-harness/src/mldsa_native.rs", "scripts/stack/mldsa_residue.py",
+        "tools/residue-harness/src/mldsa_native.rs", "tools/residue-harness/src/native_stack.rs",
+        "scripts/stack/mldsa_residue.py",
       ]
     },
   }
@@ -282,9 +283,9 @@ def main(argv: list[str] | None = None) -> int:
     for backend in args.backend or ["native", "portable"]:
       directory = output / backend
       directory.mkdir(exist_ok=True)
-      capture = build(capture_root, ROOT / "target/mldsa-residue-capture" / backend, backend, True, directory / "capture-build.log")
+      capture = build(capture_root, ROOT / "target/mldsa-residue-capture" / backend, backend, "capture-mldsa", directory / "capture-build.log")
       command([str(capture), str(directory), str(args.cases), str(args.start)], cwd=ROOT, log=directory / "capture.log")
-      measured = build(ROOT, ROOT / "target/mldsa-residue-native" / backend, backend, False, directory / "measurement-build.log")
+      measured = build(ROOT, ROOT / "target/mldsa-residue-native" / backend, backend, "native-mldsa", directory / "measurement-build.log")
       command([str(measured), str(directory), str(args.cases), str(args.start)], cwd=ROOT, log=directory / "measurement.log")
       shutil.copy2(measured, directory / BINARY)
       captured = parse(directory / "capture.log")

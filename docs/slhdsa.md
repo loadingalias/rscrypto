@@ -56,13 +56,17 @@ These checks cover every set unless the row names one.
 | RFC 9909 encodings | SPKI and PKCS #8 for all 24 profiles against DER built from the RFC's OIDs, with one rejection test for each rule, and an exchange with RustCrypto and the OpenSSL CLI |
 | Fuzzing | The `auth_slhdsa` target checks verification and the canonical key encodings for all 24 profiles |
 | WebAssembly | Scalar and SIMD128 builds generate each set's ACVP key, sign one deterministic case again, and verify pure and pre-hash signatures |
+| Stack bounds (`just stack-frames --whole-calls slhdsa`) | SHA2-128s only: key generation, signing, and verification on the five Linux CI targets, in both dispatch configurations, against `.config/stack-budgets.json` |
+| Secret residue (`just stack-residue`) | SHA2-128s and the six fast sets on QEMU RV32 and Cortex-M3; SHA2-128s on native macOS AArch64 (`--native-slhdsa`), with every derived WOTS+ and FORS secret. See [the secret lifecycle](secret-lifecycle.md#slh-dsa) |
 
 ## Limits
 
-- **Timing.** `ct.toml` registers `signature.slhdsa` with a best-effort claim and no timing
-  harness yet. Signing and key generation get DudeCT cases (fixed against random secret key) in a
-  later change.
-- **Stack and residue.** No linked stack bound or secret-residue evidence exists yet for SLH-DSA.
+- **Timing.** `ct.toml` registers `signature.slhdsa` with a best-effort claim. Its DudeCT cases
+  measure SHA2-128s key generation and deterministic signing, with a fixed against a random secret
+  key. SLH-DSA has no timing claim until the CT campaign passes them on every lane. No case covers
+  import, hedged or pre-hash signing, or the other sets.
+- **Stack and residue.** Native residue runs on Linux and Windows are open, and no stack bound
+  covers a set other than SHA2-128s.
 - **Targets.** POWER, IBM Z, and RISC-V run no small-set differentials or fuzzing. Windows AArch64
   runs nothing.
 - **No Wycheproof suite** exists for SLH-DSA. OpenSSL and RustCrypto have no HashSLH-DSA codecs, so

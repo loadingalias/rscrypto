@@ -513,7 +513,7 @@ Release callers, and manual runs with no diagnostic input, keep the full require
 | Script             | Caller |
 | ------------------ | ------ |
 | `stack/frames.py`  | `just stack-frames [--target TARGET]... [--portable \| --all-configurations] [--rustflags FLAGS] [--json PATH] [--evidence DIR] [--whole-calls GROUPS \| --mldsa-preparation] [--allowances FILE] [--budgets FILE] [--write-budgets FILE]`, `just stack-budgets` |
-| `stack/residue.py` | `just stack-residue [--board BOARD]... [--backend native\|portable]... [--output DIR]` |
+| `stack/residue.py` | `just stack-residue [--board BOARD]... [--backend native\|portable]... [--output DIR]`, or `--native-mldsa` or `--native-slhdsa` with `--output DIR` |
 | `stack/painted.py` | `just stack-allowances [--check [FILE]] [--output DIR]`, `just stack-worker [--all-configurations \| --portable] [--check [FILE]] [--output DIR]`, `scripts/test/cross.py`, `painted.py judge REPORT... --expect TARGET...` (the CI `stack` job) |
 
 ### Frame review
@@ -758,7 +758,9 @@ or every input. They do not cover signal handlers or caller frames outside the m
    Only then does it derive the scenario's secret byte strings again.
    HKDF scenarios derive the HMAC prefix states with the independent `sha2` crate.
 1. The host reports how many bytes of each secret occur in 16-byte windows in each region,
-   and how many whole copies remain.
+   and how many whole copies remain. It searches each region in byte order,
+   and with each aligned 4-byte and 8-byte word reversed:
+   SHA-256 and SHA-512 keep big-endian words in little-endian memory.
 
 Pass and fail rules:
 
@@ -793,6 +795,24 @@ artifact, not arbitrary compiler-created fragments, registers, heap residue,
 every rejection path, or other targets. `--cases N` changes the deterministic
 message count per parameter set, key form, and mode (default eight); `--start N`
 selects the first message index for reproducing a discovered rejection case.
+
+`just stack-residue --native-slhdsa --output DIR` checks SLH-DSA-SHA2-128s on macOS
+AArch64 and Linux AArch64/x86-64, with both dispatch configurations. It uses the
+same private painted stack for each production call: key generation, raw import,
+rejected import, deterministic, hedged, and pre-hash signing, and the failed key
+generation and hedged signing callbacks. After each call, an independent FIPS 205
+oracle over RustCrypto `sha2` derives the call's secrets: SK.seed, SK.prf,
+`addrnd`, each WOTS+ chain value below its revealed or public end, and each
+unrevealed FORS leaf secret. The oracle must find every revealed value of the
+signature on its chain or leaf, so a wrong derivation stops the run. The search
+covers the touched stack in byte order and in SHA-256 word order, as whole
+16-byte values and as 8-byte halves. Any find fails the scenario, except the
+moved-from SK.seed and SK.prf copies of the by-value key generation and import.
+A counting allocator also fails any call that allocates. Planted, planted-word,
+and cleared controls check the search. `--cases N` sets the keys and messages per
+scenario (default two). Snapshots, binaries, build logs, and `report.json` stay in
+the output directory. It records no timing measurements, and it does not cover
+registers or the other parameter sets.
 
 ## Benchmarks
 

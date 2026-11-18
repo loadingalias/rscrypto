@@ -375,10 +375,15 @@ erasure of every compiler-created copy, register, or spill.
   Signing fails only before it starts, and then zero-fills the buffer.
 - Raw and PKCS #8 import borrow the caller's input and never clear it.
 - Signing and verification leave no SK.seed, SK.prf, or `addrnd` bytes in the measured RV32 and
-  Cortex-M runs; key generation and both imports return the key by value and leave moved-from copies.
+  Cortex-M runs, in byte or word order; key generation and both imports return the key by value and
+  leave moved-from copies.
+- In the measured native macOS AArch64 run of SLH-DSA-SHA2-128s, signing also leaves no unrevealed
+  WOTS+ chain value or FORS leaf secret, and key generation and import leave no WOTS+ chain value.
+  The failure paths leave no secret byte, and no call allocates.
   See [the residue results](#optimized-evidence).
-- **Not claimed:** register and spill copies in the hash workers.
-  Target qualification is still open.
+- The per-call clearing above is the whole cleanup boundary. No dead-stack scrub follows the
+  operation: the measured runs found no residue to clear, and a scrub would add stack on every target.
+- **Not claimed:** registers, and native Linux, Windows, and portable SHA-256 runs of the derived secrets.
 
 ### Argon2 and scrypt
 
@@ -751,6 +756,30 @@ serves HMAC-SHA3 and the SHA-3 hashers.
 - Limits: emulated RV32 and Cortex-M3, the dead stack and two allocator arenas, not registers.
 - The raw logs were not retained; their `report.json` had SHA-256
   `c4fcca0ffc69d925431c2cc89d634ab90fe9b029cf3779d09c41a50339dfa173`.
+
+On 2026-11-18 the QEMU judge also searched each region with each aligned 4-byte and 8-byte word
+reversed, the order of SHA-256 and SHA-512 words in little-endian memory. The raw logs of a
+`just stack-residue` run at `58663fa7`, on `nightly-2026-10-24` and QEMU 11.1.3, pass every
+scenario under that judge on both boards and both backends, including all 49 SLH-DSA scenarios.
+Raw results: `benchmark_results/qemu-residue-20261118/` (local; `SHA256SUMS` inside).
+
+On 2026-11-18 `just stack-residue --native-slhdsa` measured SLH-DSA-SHA2-128s at `58663fa7` plus
+the uncommitted harness, on `nightly-2026-10-24` and macOS 27.2.1 on Apple Silicon. It ran two keys
+and messages per scenario in the default and the `portable-only` build; on Apple Silicon both
+builds use the ARMv8 SHA-256 kernel. The oracle found every revealed value of each signature.
+
+- Deterministic, hedged, and pre-hash signing leave no SK.seed, SK.prf, or `addrnd` bytes, none
+  of about 1.88 million unrevealed WOTS+ chain values, and none of 57,330 unrevealed FORS leaf secrets,
+  in byte or word order, whole or as 8-byte halves.
+- Key generation, import, and an import with a wrong PK.root leave none of the 268,800 secret WOTS+
+  chain values of the top tree. Key generation leaves two copies of SK.seed and SK.prf, and import
+  three, because the key returns by value.
+- The rejected import, a failed key-generation callback, and a failed hedged-signing callback
+  leave no secret byte.
+- No call allocates. The private stack reaches 2,608 B in key generation, 2,736 B in import, 3,840 B in
+  hedged signing, and 5,952 B in deterministic and pre-hash signing.
+- Limits: one target and one SHA-256 kernel, the dead stack only, not registers.
+- Raw results: `benchmark_results/slhdsa-native-residue-20261118/` (local; `SHA256SUMS` inside).
 
 On 2026-10-16 the harness measured HKDF-SHA256, HKDF-SHA384, and HKDF-SHA512 extract,
 on `nightly-2026-10-14` and QEMU 11.1.2. Each scenario searches for the PRK and both HMAC prefix states:

@@ -296,7 +296,7 @@ stack-allowances *args:
 stack-worker *args:
     @scripts/lib/python.sh scripts/stack/painted.py worker "$@"
 
-# Measure secret residue on QEMU boards or native ML-DSA signing stacks.
+# Measure secret residue on QEMU boards, or native ML-DSA signing and SLH-DSA-SHA2-128s stacks.
 [group('secret-lifecycle')]
 stack-residue *args:
     @scripts/lib/python.sh scripts/stack/residue.py "$@"
