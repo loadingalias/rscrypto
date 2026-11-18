@@ -1530,7 +1530,13 @@ Whole ML-DSA signing is best effort, with no strict constant-time claim.
 ### SLH-DSA
 
 `ct.toml` registers `signature.slhdsa` as best effort.
-It has no harness, DudeCT case, or BINSEC kernel yet, so SLH-DSA has no timing claim.
+Two DudeCT cases measure SLH-DSA-SHA2-128s through its public calls, with a fixed against a random
+SK.seed and SK.prf: key generation, and deterministic signing of random messages.
+The digest selects the revealed leaves and chain lengths, and it depends on the key.
+Random messages in both classes give that public work one distribution.
+No case covers import, hedged or pre-hash signing, or the other 11 sets.
+No linked-root closure or BINSEC kernel covers SLH-DSA.
+SLH-DSA has no timing claim until the CT campaign passes these cases on every lane.
 
 ## Native evidence by platform
 

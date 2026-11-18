@@ -6228,7 +6228,7 @@ timeout_seconds = 3600
 timeout_reason = "Each sample includes a full ML-DSA-65 signature, which physical RISC-V runs slowly."
 notes = "Fixed ML-DSA randomness keeps the ML-DSA component's work equal across classes; the P-256 component takes fresh blinding."
 
-# SLH-DSA registration only: no CT harness, DudeCT case, or BINSEC kernel yet.
+# SLH-DSA: DudeCT covers SHA2-128s key generation and signing; no linked-root closure or BINSEC kernel.
 [[primitive]]
 id = "signature.slhdsa"
 tier = "A"
@@ -6254,11 +6254,35 @@ public = ["parameter_set", "profile", "public_key", "signature", "message_length
 may_leak = ["opaque_success_or_failure"]
 must_not_leak_ref = "common_secret_data"
 required = []
-notes = "Work is fixed by the parameter set apart from message hashing, and every index derives from the public digest. That is a source-level property only; no harness, timing case, or binary review exists for this primitive yet."
+notes = "Work is fixed by the parameter set apart from message hashing, and every index derives from the public digest, which the signature reveals. The DudeCT cases measure SLH-DSA-SHA2-128s, the family trust-root profile, through its public key-generation and deterministic signing calls."
 [primitive.harness]
-status = "missing"
+status = "partial"
 symbols = []
-gap = "No CT harness, DudeCT case, or BINSEC kernel covers SLH-DSA key generation, signing, or secret-key import. The shared SHA-2, HMAC, and Keccak workers it reaches are qualified only on their own paths."
+gap = "DudeCT covers SLH-DSA-SHA2-128s key generation and deterministic pure signing with fixed or random SK.seed and SK.prf. No case covers secret-key import, hedged or pre-hash signing, or the other 11 sets, and no linked-root closure or BINSEC kernel covers SLH-DSA. The shared SHA-2, HMAC, and Keccak workers it reaches are qualified only on their own paths."
+
+[[dudect_case]]
+name = "slhdsa_sha2_128s_keygen_fixed_vs_random_secret"
+primitive = "signature.slhdsa"
+filter = "slhdsa_sha2_128s_keygen_fixed_vs_random_secret"
+left_class = "SLH-DSA-SHA2-128s key generation from a fixed SK.seed and SK.prf"
+right_class = "SLH-DSA-SHA2-128s key generation from a random SK.seed and SK.prf"
+samples = 4000
+smoke_samples = 16
+timeout_seconds = 3600
+timeout_reason = "Each sample computes a whole 512-leaf XMSS tree, about 287,000 SHA-256 compressions, which physical RISC-V runs with portable SHA-256."
+notes = "PK.seed is fixed, so the classes differ only in the secret seeds. Every key generation computes the whole top tree, so the work does not depend on any input."
+
+[[dudect_case]]
+name = "slhdsa_sha2_128s_sign_fixed_vs_random_secret"
+primitive = "signature.slhdsa"
+filter = "slhdsa_sha2_128s_sign_fixed_vs_random_secret"
+left_class = "deterministic SLH-DSA-SHA2-128s signing of a random message with a fixed SK.seed and SK.prf"
+right_class = "deterministic SLH-DSA-SHA2-128s signing of a random message with a random SK.seed and SK.prf"
+samples = 2000
+smoke_samples = 16
+timeout_seconds = 10800
+timeout_reason = "Each sample is one whole signature, about 2.2 million SHA-256 compressions, and its setup adds one key generation; physical RISC-V runs both with portable SHA-256."
+notes = "The digest selects the revealed leaves and WOTS+ chain lengths, and it depends on the key, so both classes sign random messages under a fixed PK.seed: that public work has one distribution in both classes. Each sample owns its key in both classes. Every signature computes all seven XMSS trees and all 14 FORS trees, so 1,000 observations per class find a systematic leak in that work."
 
 [[primitive]]
 id = "signature.mldsa.secret_kernels"

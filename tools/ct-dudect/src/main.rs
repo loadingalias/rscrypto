@@ -19,7 +19,7 @@ use rscrypto::{
   MlKem768DecapsulationKey, MlKem1024, MlKem1024Ciphertext, MlKem1024DecapsulationKey, MlKemError, P256EphemeralSecret,
   P384EphemeralSecret, Pbkdf2Sha256, Pbkdf2Sha512, RsaBlindingPair, RsaEncryptionError, RsaOaepProfile,
   RsaPkcs1v15Profile, RsaPrivateKey, RsaPrivateScratch, RsaPssProfile, RsaPublicKeyPolicy, RsaSignatureProfile,
-  SecretBytes, Sha512, X25519SecretKey, XChaCha20Poly1305, XChaCha20Poly1305Key, XWing, XWingDecapsulationKey,
+  SecretBytes, Sha512, SlhDsaSha2_128s, SlhDsaSha2_128sSecretKey, X25519SecretKey, XChaCha20Poly1305, XChaCha20Poly1305Key, XWing, XWingDecapsulationKey,
   XWingError, XWingPreparedDecapsulationKey, XWingSharedSecret,
   aead::{
     Nonce96, Nonce128, Nonce192, Nonce256, diag_aes_siv_cmac256_open_portable, diag_aes_siv_cmac256_s2v_portable,
@@ -2475,6 +2475,73 @@ fn ecdsa_p256_sign_fixed_vs_random_secret(runner: &mut CtRunner, rng: &mut Bench
   }
 }
 
+/// PK.seed of every SLH-DSA-SHA2-128s case key, so only SK.seed and SK.prf
+/// differ between the classes.
+const SLHDSA_PK_SEED: [u8; 16] = [0x5a; 16];
+
+/// SK.seed, SK.prf, and the fixed PK.seed for `secret`.
+fn slhdsa_sha2_128s_seeds(secret: [u8; 32]) -> [u8; 48] {
+  let mut seeds = [0u8; 48];
+  seeds[..32].copy_from_slice(&secret);
+  seeds[32..].copy_from_slice(&SLHDSA_PK_SEED);
+  seeds
+}
+
+fn slhdsa_sha2_128s_keygen(seeds: &[u8; 48]) -> SlhDsaSha2_128sSecretKey {
+  let (_, key) = SlhDsaSha2_128s::generate_keypair(|out| {
+    out.copy_from_slice(seeds);
+    Ok(())
+  })
+  .expect("SLH-DSA key generation from fixed-length seeds");
+  key
+}
+
+fn slhdsa_sha2_128s_keygen_fixed_vs_random_secret(runner: &mut CtRunner, rng: &mut BenchRng) {
+  let mut inputs = Vec::with_capacity(samples());
+  for class in balanced_classes(rng, samples()) {
+    let secret = if matches!(class, Class::Left) {
+      [0x42; 32]
+    } else {
+      rand_array::<32>(rng)
+    };
+    inputs.push((class, slhdsa_sha2_128s_seeds(secret)));
+  }
+
+  for (class, seeds) in inputs {
+    runner.run_one(class, || {
+      core::hint::black_box(slhdsa_sha2_128s_keygen(core::hint::black_box(&seeds)));
+    });
+  }
+}
+
+/// The digest selects the revealed leaves and WOTS+ chain lengths, and it
+/// depends on the key. Both classes sign random messages, so that public work
+/// has one distribution in both classes; only the secret key differs.
+fn slhdsa_sha2_128s_sign_fixed_vs_random_secret(runner: &mut CtRunner, rng: &mut BenchRng) {
+  let mut inputs = Vec::with_capacity(samples());
+  for class in balanced_classes(rng, samples()) {
+    let secret = if matches!(class, Class::Left) {
+      [0x42; 32]
+    } else {
+      rand_array::<32>(rng)
+    };
+    // Each sample owns its key in both classes, so key placement is the same.
+    inputs.push((class, slhdsa_sha2_128s_keygen(&slhdsa_sha2_128s_seeds(secret)), rand_array::<32>(rng)));
+  }
+
+  let signature = RefCell::new(vec![0u8; SlhDsaSha2_128s::SIGNATURE_LENGTH]);
+  for (class, key, message) in inputs {
+    runner.run_one(class, || {
+      let mut signature = signature.borrow_mut();
+      let output = signature.as_mut_slice().try_into().expect("signature length");
+      key
+        .sign_deterministic(core::hint::black_box(&message), b"", output)
+        .expect("SLH-DSA signing with an empty context");
+      core::hint::black_box(&*signature);
+    });
+  }
+}
+
 /// Composite ML-DSA keys for the traditional-secret cases share one ML-DSA
 /// seed, so deterministic ML-DSA signing over the fixed message does the
 /// same work in both classes and only the traditional secret differs.
@@ -4397,6 +4464,14 @@ ctbench_main_with_seeds!(
   (
     composite_mldsa65_ecdsa_p256_sign_fixed_vs_random_traditional,
     Some(0x636d6c6473617032)
+  ),
+  (
+    slhdsa_sha2_128s_keygen_fixed_vs_random_secret,
+    Some(0x736c6864736b6731)
+  ),
+  (
+    slhdsa_sha2_128s_sign_fixed_vs_random_secret,
+    Some(0x736c686473736731)
   ),
   (
     ecdsa_p256_diag_nonce_reduce_fixed_vs_random_secret,
