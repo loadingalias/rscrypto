@@ -28,9 +28,12 @@
       "memset": 384,
       "memcmp": 384,
       "bcmp": 448,
-      "getauxval": 384
+      "getauxval": 384,
+      "getpid": 384,
+      "mmap": 384,
+      "madvise": 384
     },
-    "evidence": "just stack-allowances in CI 42061504225 at 9211e330"
+    "evidence": "just stack-allowances in CI 42061504225 at 9211e330; getpid, mmap, and madvise: just stack-allowances in CI 44200652600 at 832cb1ca"
   },
   "riscv64gc-unknown-linux-gnu": {
     "libc": "glibc 2.39 (2.39-0ubuntu8.9), libc.so.6 sha256 4de978f73344b750; Ubuntu 24.04.5 LTS; Linux 5.10.113-scw1; riscv64",
@@ -43,9 +46,12 @@
       "memset": 64,
       "memcmp": 64,
       "bcmp": 64,
-      "getauxval": 64
+      "getauxval": 64,
+      "getpid": 0,
+      "mmap": 64,
+      "madvise": 0
     },
-    "evidence": "just stack-allowances in CI 42061504225 at 9211e330"
+    "evidence": "just stack-allowances in CI 42061504225 at 9211e330; getpid, mmap, and madvise: just stack-allowances in CI 44204128280, the RISC-V run of CI 44200652600 at 832cb1ca"
   },
   "s390x-unknown-linux-gnu": {
     "libc": "glibc 2.39 (2.39-0ubuntu8.9), libc.so.6 sha256 1e4922a662125f1c; Ubuntu 24.04.5 LTS; Linux 6.8.0-147-generic; machine 8562",
@@ -58,9 +64,12 @@
       "memset": 0,
       "memcmp": 0,
       "bcmp": 0,
-      "getauxval": 0
+      "getauxval": 0,
+      "getpid": 0,
+      "mmap": 256,
+      "madvise": 0
     },
-    "evidence": "just stack-allowances in CI 42061504225 at 9211e330"
+    "evidence": "just stack-allowances in CI 42061504225 at 9211e330; getpid, mmap, and madvise: just stack-allowances in CI 44200652600 at 832cb1ca"
   },
   "x86_64-unknown-linux-gnu": {
     "libc": "glibc 2.39 (2.39-0ubuntu8.8), libc.so.6 sha256 8db37cf3f2169f59; Ubuntu 24.04.4 LTS; Linux 7.0.0-1011-aws; model name AMD EPYC 9R14; also glibc 2.43 (2.43-2ubuntu2.4), libc.so.6 sha256 305014d0b30755fc; Ubuntu 26.04.1 LTS; Linux 7.0.0-1014-aws; model name Intel(R) Xeon(R) 6975P-C",

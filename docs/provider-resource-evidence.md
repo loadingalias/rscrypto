@@ -349,15 +349,17 @@ Granite Rapids and Graviton4 dev machines. Each entry names its exact libc
 build hash, kernel, and CPU; `--check` reports a different identity.
 
 The process-origin edges of `src/platform/process.rs` have their own allowances.
-They were measured on 2026-11-17 on the same two dev machines:
+The same two dev machines measured them for x86-64 and AArch64 on 2026-11-17.
+The CI runners of CI 44200652600 at `832cb1ca` measured them for POWER, IBM Z,
+and RISC-V:
 
 | Linux target | `getpid` | `mmap` | `madvise` |
 | --- | ---: | ---: | ---: |
 | x86-64 GNU | 192 | 192 | 192 |
 | AArch64 GNU | 0 | 64 | 64 |
-
-POWER, IBM Z, and RISC-V have no allowance for these edges yet. Their CI
-lanes measure them in the next CI run.
+| POWER64LE GNU | 384 | 384 | 384 |
+| IBM Z GNU | 0 | 256 | 0 |
+| RISC-V 64 GNU | 0 | 64 | 0 |
 
 The memory functions and `getauxval` are frameless or nearly so on every
 measured target. The allocator edges are deepest in the pseudo-random workload
