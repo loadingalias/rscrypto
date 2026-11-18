@@ -255,13 +255,13 @@ proptest = "1.12.0"
 
 # Oracles
 bao = "=0.13.1"
-aes = "0.9.3"
+aes = "0.9.4"
 aes-siv = { version = "0.8.0", default-features = false, features = ["alloc"] }
 cshake = { version = "0.2.1", default-features = false }
 crc = "3.4.0"
 crc-fast = { version = "1.10.0", default-features = false, features = ["std"] }
-crc32c = "0.6.8"
-crc32fast = "1.5.3"
+crc32c = "0.6.9"
+crc32fast = "1.5.5"
 simd-adler32 = "0.3.10"
 zlib-rs = { version = "0.6.8", default-features = false, features = ["std"] }
 crc64fast = "1.1.0"
@@ -319,7 +319,7 @@ chacha20 = "0.10.2"
 aes-gcm = "0.11.1"
 aes-gcm-siv = "0.12.1"
 aegis = "0.9.20"
-ascon-aead = { version = "0.6.0", default-features = false, features = ["alloc"] }
+ascon-aead = { version = "0.6.1", default-features = false, features = ["alloc"] }
 crrl = { version = "0.9.0", default-features = false, features = ["p256"] }
 libcrux-p256 = { version = "0.0.9", default-features = false, features = ["expose-hacl"] }
 # X-Wing benchmark comparator (`XWingKemDraft06`) on libcrux ML-KEM.
@@ -383,12 +383,12 @@ libcrux-ml-kem = { version = "0.0.11", default-features = false, features = [
 libcrux-ml-dsa = { version = "0.0.11", default-features = false, features = ["std", "mldsa44", "mldsa65", "mldsa87"] }
 
 [target.'cfg(all(any(unix, windows), not(target_arch = "wasm32"), not(any(target_arch = "s390x", target_arch = "powerpc64"))))'.dev-dependencies]
-aws-lc-rs = "1.18.2"
-aws-lc-sys = "0.46.0"
+aws-lc-rs = "1.19.0"
+aws-lc-sys = "0.47.0"
 
 [target.powerpc64le-unknown-linux-gnu.dev-dependencies]
-aws-lc-rs = "1.18.2"
-aws-lc-sys = { version = "0.46.0", features = ["bindgen"] }
+aws-lc-rs = "1.19.0"
+aws-lc-sys = { version = "0.47.0", features = ["bindgen"] }
 
 [lib]
 bench = false

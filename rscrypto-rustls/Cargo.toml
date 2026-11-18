@@ -58,12 +58,12 @@ portable-only = ["rscrypto/portable-only"]
 rscrypto = { version = "0.12.0", path = "..", default-features = false, features = ["std"] }
 rustls = { version = "=0.24.0-dev.2", git = "https://github.com/rustls/rustls", rev = "0419f479ff5c99a471428ee197e899ccd1629aa8", default-features = false, features = ["webpki"] }
 rustls-webpki = { version = "=0.104.0-alpha.8", default-features = false, features = ["alloc", "std"] }
-rustls-pki-types = { version = "=1.15.1", default-features = false, features = ["std"] }
+rustls-pki-types = { version = "=1.16.0", default-features = false, features = ["std"] }
 getrandom = { version = "0.4.3", optional = true }
 zeroize = { version = "1.9.1", default-features = false }
 
 [dev-dependencies]
-aes = "0.9.3"
+aes = "0.9.4"
 rustls-aws-lc-rs = { version = "=0.24.0-dev.2", git = "https://github.com/rustls/rustls", rev = "0419f479ff5c99a471428ee197e899ccd1629aa8" }
 rustls-ring = { version = "=0.24.0-dev.2", git = "https://github.com/rustls/rustls", rev = "0419f479ff5c99a471428ee197e899ccd1629aa8" }
 

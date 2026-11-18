@@ -37,8 +37,8 @@ rscrypto = { path = "..", features = [
 
 # ── Oracle crates for differential testing ────────────────────────────────────
 # AEAD
-aes = "0.9.3"
-ascon-aead = { version = "0.6.0", default-features = false, features = ["alloc"] }
+aes = "0.9.4"
+ascon-aead = { version = "0.6.1", default-features = false, features = ["alloc"] }
 aes-gcm = { version = "0.11.1", default-features = false, features = ["alloc", "aes"] }
 aes-gcm-siv = { version = "0.12.1", default-features = false, features = ["alloc", "aes"] }
 aes-siv = { version = "0.8.0", default-features = false, features = ["alloc"] }
