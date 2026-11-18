@@ -448,7 +448,7 @@ jobs:
           RISCV_SKIPPED: ${{ needs.riscv64-linux.outputs.skipped }}
         run: |
           source "$HOME/.local/share/rscrypto-tooling/environment.sh"
-          shopt -s nullglob
+          shopt -s nullglob globstar
           expect=(x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu x86_64-pc-windows-msvc
                   powerpc64le-unknown-linux-gnu s390x-unknown-linux-gnu)
           # Only the documented RISC-V skips leave its reports unjudged, and never in a run that requires RISC-V.
@@ -466,7 +466,8 @@ jobs:
             echo "::notice title=RISC-V stack not judged::$message"
             echo "$message" >>"$GITHUB_STEP_SUMMARY"
           fi
-          reports=(target/stack-paint/judged/*.json)
+          # upload-artifact keeps the path below the first wildcard, so each cross report is in a subdirectory.
+          reports=(target/stack-paint/judged/**/*.json)
           scripts/lib/python.sh scripts/stack/painted.py judge "${reports[@]}" "${expect[@]/#/--expect=}"
       - name: Check owned stack bounds against their budgets
         if: ${{ !cancelled() }}

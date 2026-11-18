@@ -221,9 +221,12 @@ class CrossWorkflow(unittest.TestCase):
         python.parent.mkdir(parents=True)
         python.write_text('#!/bin/bash\nprintf "%s\\n" "$@" > arguments\nexit "${JUDGE_EXIT:-0}"\n')
         python.chmod(0o755)
-        reports = self.root / 'target/stack-paint/judged'
-        reports.mkdir(parents=True)
-        (reports / 'stack-worker-a.json').write_text('{}')
+        # A native leg uploads flat reports. A cross leg keeps its `run-*/stack-paint/` path in the artifact.
+        reports = ['target/stack-paint/judged/run-a/stack-paint/stack-worker-b.json',
+                   'target/stack-paint/judged/stack-worker-a.json']
+        for report in reports:
+            (self.root / report).parent.mkdir(parents=True, exist_ok=True)
+            (self.root / report).write_text('{}')
         summary = self.root / 'summary'
         fork = 'a pull request from a fork cannot dispatch the RISC-V run'
         late = 'no RISC-V runner started within 30 minutes'
@@ -239,9 +242,9 @@ class CrossWorkflow(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stderr)
                 expected = [*measured, riscv] if judged else measured
                 arguments = (self.root / 'arguments').read_text().splitlines()
-                self.assertEqual(arguments[:3], ['scripts/stack/painted.py', 'judge',
-                                                 'target/stack-paint/judged/stack-worker-a.json'])
-                self.assertEqual(sorted(arguments[3:]), sorted(f'--expect={target}' for target in expected))
+                self.assertEqual(arguments[:2], ['scripts/stack/painted.py', 'judge'])
+                self.assertEqual(sorted(arguments[2:4]), reports)
+                self.assertEqual(sorted(arguments[4:]), sorted(f'--expect={target}' for target in expected))
                 if reason:
                     message = f'The {riscv} painted-stack reports were not judged: {reason}.'
                     self.assertIn(f'::notice title=RISC-V stack not judged::{message}', result.stdout)
