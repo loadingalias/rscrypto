@@ -1,29 +1,19 @@
-#[cfg(any(fuzzing, rscrypto_internal_fuzzing))]
 use rscrypto::auth::rsa::expert::RsaPkcs1v15Decrypt;
-#[cfg(any(fuzzing, rscrypto_internal_fuzzing))]
 use rscrypto::{
   RsaBlindingPair, RsaEncryptionError, RsaOaepProfile, RsaPkcs1v15Profile, RsaPrivateKey, RsaPrivateOpError,
   RsaPssProfile, RsaPublicKeyPolicy, RsaSignatureProfile,
 };
-#[cfg(any(fuzzing, rscrypto_internal_fuzzing))]
+use rscrypto_fuzz::rsa_fixture::valid_pkcs1_private_key_der;
 use rscrypto_fuzz::{FuzzInput, some_or_return, split_at_ratio};
 
-#[cfg(any(fuzzing, rscrypto_internal_fuzzing))]
-#[path = "rsa_fixture.rs"]
-mod rsa_fixture;
-
-#[cfg(any(fuzzing, rscrypto_internal_fuzzing))]
 const PKCS1_PROFILES: [RsaPkcs1v15Profile; 3] = [
   RsaPkcs1v15Profile::Sha256,
   RsaPkcs1v15Profile::Sha384,
   RsaPkcs1v15Profile::Sha512,
 ];
-#[cfg(any(fuzzing, rscrypto_internal_fuzzing))]
 const PSS_PROFILES: [RsaPssProfile; 3] = [RsaPssProfile::Sha256, RsaPssProfile::Sha384, RsaPssProfile::Sha512];
-#[cfg(any(fuzzing, rscrypto_internal_fuzzing))]
 const OAEP_PROFILES: [RsaOaepProfile; 3] = [RsaOaepProfile::Sha256, RsaOaepProfile::Sha384, RsaOaepProfile::Sha512];
 
-#[cfg(any(fuzzing, rscrypto_internal_fuzzing))]
 pub(super) fn run(data: &[u8]) {
   let mut input = FuzzInput::new(data);
   let mode = some_or_return!(input.byte());
@@ -32,7 +22,7 @@ pub(super) fn run(data: &[u8]) {
   let (left, right) = split_at_ratio(input.rest(), split);
 
   let key = RsaPrivateKey::from_pkcs1_der_with_policy(
-    &rsa_fixture::valid_pkcs1_private_key_der(),
+    &valid_pkcs1_private_key_der(),
     &RsaPublicKeyPolicy::modulus_2048_to_8192(),
   )
   .expect("fuzz RSA private-key fixture must parse");
@@ -271,10 +261,6 @@ pub(super) fn run(data: &[u8]) {
   }
 }
 
-#[cfg(not(any(fuzzing, rscrypto_internal_fuzzing)))]
-pub(super) fn run(_data: &[u8]) {}
-
-#[cfg(any(fuzzing, rscrypto_internal_fuzzing))]
 fn factor_one(len: usize) -> (Vec<u8>, Vec<u8>) {
   let mut one = vec![0u8; len];
   if let Some(last) = one.last_mut() {
@@ -283,12 +269,10 @@ fn factor_one(len: usize) -> (Vec<u8>, Vec<u8>) {
   (one.clone(), one)
 }
 
-#[cfg(any(fuzzing, rscrypto_internal_fuzzing))]
 fn bounded_slice(input: &[u8], max_len: usize) -> &[u8] {
   &input[..input.len().min(max_len)]
 }
 
-#[cfg(any(fuzzing, rscrypto_internal_fuzzing))]
 fn full_width_candidate(input: &[u8], len: usize) -> Vec<u8> {
   let mut out = vec![0u8; len];
   if input.is_empty() {
@@ -300,7 +284,6 @@ fn full_width_candidate(input: &[u8], len: usize) -> Vec<u8> {
   out
 }
 
-#[cfg(any(fuzzing, rscrypto_internal_fuzzing))]
 fn fill_random_from(bytes: &[u8]) -> impl FnMut(&mut [u8]) -> Result<(), RsaEncryptionError> + '_ {
   let mut offset = 0usize;
   move |out| {
@@ -314,7 +297,6 @@ fn fill_random_from(bytes: &[u8]) -> impl FnMut(&mut [u8]) -> Result<(), RsaEncr
   }
 }
 
-#[cfg(any(fuzzing, rscrypto_internal_fuzzing))]
 fn oaep_message_limit(key: &RsaPrivateKey, profile: RsaOaepProfile) -> usize {
   key
     .signature_len()
@@ -322,7 +304,6 @@ fn oaep_message_limit(key: &RsaPrivateKey, profile: RsaOaepProfile) -> usize {
     .saturating_sub(2)
 }
 
-#[cfg(any(fuzzing, rscrypto_internal_fuzzing))]
 fn oaep_seed(profile: RsaOaepProfile, selector: u8, left: &[u8], right: &[u8]) -> Vec<u8> {
   let mut seed = vec![selector; profile.digest_len()];
   for (index, byte) in left.iter().chain(right.iter()).copied().enumerate() {
@@ -332,7 +313,6 @@ fn oaep_seed(profile: RsaOaepProfile, selector: u8, left: &[u8], right: &[u8]) -
   seed
 }
 
-#[cfg(any(fuzzing, rscrypto_internal_fuzzing))]
 fn caller_pss_salt(profile: RsaPssProfile, selector: u8, left: &[u8], right: &[u8]) -> Vec<u8> {
   let mut salt = vec![selector; profile.digest_len()];
   for (index, byte) in left.iter().chain(right.iter()).copied().enumerate() {
@@ -342,12 +322,10 @@ fn caller_pss_salt(profile: RsaPssProfile, selector: u8, left: &[u8], right: &[u
   salt
 }
 
-#[cfg(any(fuzzing, rscrypto_internal_fuzzing))]
 fn pkcs1v15_message_limit(key: &RsaPrivateKey) -> usize {
   key.signature_len().saturating_sub(11)
 }
 
-#[cfg(any(fuzzing, rscrypto_internal_fuzzing))]
 fn pkcs1v15_seed(key: &RsaPrivateKey, message_len: usize, selector: u8, left: &[u8], right: &[u8]) -> Vec<u8> {
   let len = key.signature_len().saturating_sub(message_len).saturating_sub(3);
   let mut seed = vec![selector.wrapping_add(1).max(1); len];

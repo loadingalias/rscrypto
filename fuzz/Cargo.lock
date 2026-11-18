@@ -888,6 +888,7 @@ dependencies = [
  "rscrypto",
  "rscrypto-fuzz-support",
  "rscrypto-rustls",
+ "rustls",
  "scrypt",
  "sha1",
  "sha2",

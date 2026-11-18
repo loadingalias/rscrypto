@@ -173,11 +173,9 @@ It does not download upstream archives.
   all signature operations still use this provider.
   `--test` narrows the campaign for diagnosis.
   It is not full-profile qualification.
-- The `provider_quic_*` fuzz targets call production Retry, header, token, and
-  handshake methods through hooks compiled only under `cfg(fuzzing)` or
-  `cfg(rscrypto_internal_fuzzing)`. Ordinary builds omit them.
-  `just test-fuzz-asan` sets `rscrypto_internal_fuzzing` and replays the four committed
-  `provider_quic_*` corpora. Live campaigns use the normal
+- The `provider_quic_*` fuzz targets call the provider's public QUIC API.
+  Ordinary builds compile and lint them, and `just test-fuzz-asan` replays their
+  committed corpora. Live campaigns use the normal
   `just test-fuzz --full --targets` front door with explicit duration and limits.
 - The `tls-provider` benchmark selector and `just bench-provider-scorecard`
   use the independent [provider benchmark workspace](../tools/provider-bench/README.md).

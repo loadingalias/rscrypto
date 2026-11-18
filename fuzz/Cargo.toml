@@ -7,11 +7,9 @@ edition = "2024"
 [package.metadata]
 cargo-fuzz = true
 
-[lints.rust]
-unexpected_cfgs = { level = "deny", check-cfg = ['cfg(fuzzing)', 'cfg(rscrypto_internal_fuzzing)'] }
-
 [dependencies]
 rscrypto-rustls = { path = "../rscrypto-rustls", default-features = false, features = ["aes-gcm", "hkdf", "x25519", "ecdsa-p256", "getrandom", "chacha20-rng"] }
+rustls = { version = "=0.24.0-dev.2", git = "https://github.com/rustls/rustls", rev = "0419f479ff5c99a471428ee197e899ccd1629aa8", default-features = false }
 libfuzzer-sys = "0.4.13"
 rscrypto_fuzz = { package = "rscrypto-fuzz-support", path = "support", features = [
   "aead",

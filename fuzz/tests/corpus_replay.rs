@@ -197,8 +197,20 @@ mod hex_parse;
 #[path = "../target_impls/traits_io.rs"]
 mod traits_io;
 
+#[path = "../target_impls/provider_quic_handshake.rs"]
+mod provider_quic_handshake;
+
+#[path = "../target_impls/provider_quic_header.rs"]
+mod provider_quic_header;
+
 #[path = "../target_impls/provider_quic_lb.rs"]
 mod provider_quic_lb;
+
+#[path = "../target_impls/provider_quic_retry.rs"]
+mod provider_quic_retry;
+
+#[path = "../target_impls/provider_quic_token.rs"]
+mod provider_quic_token;
 
 #[test]
 fn replay_aead_aegis256_corpus() {
@@ -672,48 +684,42 @@ fn replay_auth_slhdsa_corpus() {
   assert_ne!(replayed, 0, "auth_slhdsa corpus should not be empty");
 }
 
-// The provider compiles its QUIC fuzz entry points only for fuzz builds. `just test-fuzz-asan`
-// sets `rscrypto_internal_fuzzing`; its replay inventory check fails if these tests are absent.
-#[cfg(any(fuzzing, rscrypto_internal_fuzzing))]
 #[test]
 fn replay_provider_quic_handshake_corpus() {
   let replayed = replay_corpus_dir(
     "provider_quic_handshake",
     corpus_dir("provider_quic_handshake"),
-    rscrypto_rustls::quic::fuzzing::handshake,
+    provider_quic_handshake::run,
   );
   assert_ne!(replayed, 0, "provider_quic_handshake corpus should not be empty");
 }
 
-#[cfg(any(fuzzing, rscrypto_internal_fuzzing))]
 #[test]
 fn replay_provider_quic_header_corpus() {
   let replayed = replay_corpus_dir(
     "provider_quic_header",
     corpus_dir("provider_quic_header"),
-    rscrypto_rustls::quic::fuzzing::header,
+    provider_quic_header::run,
   );
   assert_ne!(replayed, 0, "provider_quic_header corpus should not be empty");
 }
 
-#[cfg(any(fuzzing, rscrypto_internal_fuzzing))]
 #[test]
 fn replay_provider_quic_retry_corpus() {
   let replayed = replay_corpus_dir(
     "provider_quic_retry",
     corpus_dir("provider_quic_retry"),
-    rscrypto_rustls::quic::fuzzing::retry,
+    provider_quic_retry::run,
   );
   assert_ne!(replayed, 0, "provider_quic_retry corpus should not be empty");
 }
 
-#[cfg(any(fuzzing, rscrypto_internal_fuzzing))]
 #[test]
 fn replay_provider_quic_token_corpus() {
   let replayed = replay_corpus_dir(
     "provider_quic_token",
     corpus_dir("provider_quic_token"),
-    rscrypto_rustls::quic::fuzzing::token,
+    provider_quic_token::run,
   );
   assert_ne!(replayed, 0, "provider_quic_token corpus should not be empty");
 }

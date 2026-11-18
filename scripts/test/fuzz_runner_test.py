@@ -47,7 +47,6 @@ with open(os.environ['FUZZ_LOG'], 'a') as output:
 if sys.argv[1] == 'test' and os.environ.get('CHECK_ASAN_FLAGS'):
     flags = os.environ.get('RUSTFLAGS', '')
     assert '-Zsanitizer=address' in flags
-    assert '--cfg rscrypto_internal_fuzzing' in flags
     assert ('-Ctarget-feature=-outline-atomics' in flags) == (
         os.environ.get('FIXTURE_HOST') == 'aarch64-unknown-linux-gnu')
 if sys.argv[1:3] == ['fuzz', 'list']:

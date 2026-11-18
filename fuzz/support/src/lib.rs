@@ -4,6 +4,7 @@
 //! for AEAD, digest, MAC, and checksum primitives.
 
 mod corpus;
+pub mod rsa_fixture;
 
 pub use corpus::replay_corpus_dir;
 

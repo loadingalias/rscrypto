@@ -82,12 +82,12 @@ def rustls_pins(manifest):
 
 
 def check_tool_pins(root=ROOT):
-    """Require each independent tool workspace to pin rustls crates exactly as the provider does.
+    """Require each independent tool or fuzz workspace to pin rustls crates exactly as the provider does.
 
-    Each tool has its own lockfile, so Cargo cannot share the provider's pin with it.
+    Each one has its own lockfile, so Cargo cannot share the provider's pin with it.
     """
     provider = rustls_pins(root / PACKAGE / 'Cargo.toml')
-    for manifest in sorted((root / 'tools').glob('*/Cargo.toml')):
+    for manifest in [*sorted((root / 'tools').glob('*/Cargo.toml')), root / 'fuzz/Cargo.toml']:
         path = manifest.relative_to(root)
         for name, pin in rustls_pins(manifest).items():
             if name not in provider:

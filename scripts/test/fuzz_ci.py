@@ -221,7 +221,7 @@ def retain(root, cache, logs, selected, env):
                     values[hashlib.sha256(data).hexdigest()] = data
             shutil.rmtree(minimized)
             write_inputs(minimized, values)
-            cov_env = {**env, 'RUSTFLAGS': env.get('RUSTFLAGS', '') + ' --cfg rscrypto_internal_fuzzing -Zcoverage-options=branch'}
+            cov_env = {**env, 'RUSTFLAGS': env.get('RUSTFLAGS', '') + ' -Zcoverage-options=branch'}
             raw = package / 'coverage' / target
             if raw.exists():
                 shutil.rmtree(raw)  # Generated output: stale profiles must never enter this report.

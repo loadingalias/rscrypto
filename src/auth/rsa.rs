@@ -7818,46 +7818,6 @@ fn private_key_components_from_prevalidated_parts(
   })
 }
 
-#[cfg(any(fuzzing, rscrypto_internal_fuzzing))]
-#[doc(hidden)]
-pub fn fuzz_rsa_import_der(format: u8, der: &[u8]) -> bool {
-  let policy = if format & 0b10 == 0 {
-    RsaPublicKeyPolicy::modulus_2048_to_8192()
-  } else {
-    RsaPublicKeyPolicy::modulus_2048_to_8192().allow_legacy_small_exponents()
-  };
-
-  let parsed = if format & 0b01 == 0 {
-    parse_pkcs1_private_key_der_with_policy(der, &policy)
-  } else {
-    parse_pkcs8_private_key_der_with_policy(der, &policy)
-  };
-
-  let Ok(key) = parsed else {
-    return false;
-  };
-
-  let public_key = key.public_key();
-  let mut representative = public_key.modulus().to_vec();
-  for byte in representative.iter_mut().rev() {
-    if *byte != 0 {
-      *byte = byte.strict_sub(1);
-      break;
-    }
-    *byte = 0xff;
-  }
-
-  let mut out = vec![0u8; public_key.modulus().len()];
-  let mut scratch = public_key.public_scratch();
-  if public_key
-    .public_operation_with_scratch(&representative, &mut out, &mut scratch)
-    .is_err()
-  {
-    return false;
-  }
-  true
-}
-
 struct RsaPrivateKeyDerComponents<'a> {
   modulus: &'a [u8],
   public_exponent: RsaPublicExponent,

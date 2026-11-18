@@ -240,9 +240,6 @@ pub static AES_256_GCM: &dyn rustls::quic::Algorithm = &Algorithm::Aes256;
 #[cfg(feature = "chacha20poly1305")]
 pub static CHACHA20_POLY1305: &dyn rustls::quic::Algorithm = &Algorithm::ChaCha20;
 
-#[cfg(all(feature = "aes-gcm", feature = "hkdf", any(fuzzing, rscrypto_internal_fuzzing)))]
-#[doc(hidden)]
-pub mod fuzzing;
 #[cfg(all(feature = "aes-gcm", feature = "hkdf"))]
 mod initial;
 #[cfg(feature = "aes-gcm")]

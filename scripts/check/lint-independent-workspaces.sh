@@ -99,8 +99,6 @@ fi
 
 check_cfg_flags=(
   '--check-cfg=cfg(miri)'
-  '--check-cfg=cfg(fuzzing)'
-  '--check-cfg=cfg(rscrypto_internal_fuzzing)'
   '--check-cfg=cfg(rscrypto_internal)'
   '--check-cfg=cfg(target_feature,values("movdiri","movdir64b","serialize"))'
 )

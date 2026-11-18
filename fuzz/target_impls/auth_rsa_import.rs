@@ -1,19 +1,12 @@
-#[cfg(any(fuzzing, rscrypto_internal_fuzzing))]
-#[path = "rsa_fixture.rs"]
-mod rsa_fixture;
-#[cfg(any(fuzzing, rscrypto_internal_fuzzing))]
-use rsa_fixture::{
+use rscrypto_fuzz::rsa_fixture::{
   RSA_PRIVATE_COEFFICIENT_HEX, RSA_PRIVATE_EXPONENT_HEX, RSA_PRIVATE_EXPONENT_P_HEX, RSA_PRIVATE_EXPONENT_Q_HEX,
   RSA_PRIVATE_MODULUS_HEX, RSA_PRIVATE_PRIME_P_HEX, RSA_PRIVATE_PRIME_Q_HEX, hex_to_vec, hex_value, integer_unsigned,
   pkcs1_private_key_der_with_crt, sequence, tlv, valid_pkcs1_private_key_der,
 };
 
-#[cfg(any(fuzzing, rscrypto_internal_fuzzing))]
-use rscrypto::auth::rsa::fuzz_rsa_import_der;
-#[cfg(any(fuzzing, rscrypto_internal_fuzzing))]
+use rscrypto::{RsaPrivateKey, RsaPublicKeyPolicy};
 use rscrypto_fuzz::{FuzzInput, some_or_return};
 
-#[cfg(any(fuzzing, rscrypto_internal_fuzzing))]
 pub(super) fn run(data: &[u8]) {
   let mut input = FuzzInput::new(data);
   let format = some_or_return!(input.byte());
@@ -23,7 +16,7 @@ pub(super) fn run(data: &[u8]) {
     (decoded_der(input.rest()), None)
   };
 
-  let accepted = fuzz_rsa_import_der(format, &der);
+  let accepted = import_der(format, &der);
   if let Some(expected) = expected {
     assert_eq!(
       accepted, expected,
@@ -32,10 +25,40 @@ pub(super) fn run(data: &[u8]) {
   }
 }
 
-#[cfg(not(any(fuzzing, rscrypto_internal_fuzzing)))]
-pub(super) fn run(_data: &[u8]) {}
+/// Import `der` as PKCS #1 when format bit 0 is clear and as PKCS #8 when it is set. Format bit 1
+/// allows legacy small exponents. An accepted key must also map modulus minus one through its
+/// public operation.
+fn import_der(format: u8, der: &[u8]) -> bool {
+  let policy = if format & 0b10 == 0 {
+    RsaPublicKeyPolicy::modulus_2048_to_8192()
+  } else {
+    RsaPublicKeyPolicy::modulus_2048_to_8192().allow_legacy_small_exponents()
+  };
+  let parsed = if format & 0b01 == 0 {
+    RsaPrivateKey::from_pkcs1_der_with_policy(der, &policy)
+  } else {
+    RsaPrivateKey::from_pkcs8_der_with_policy(der, &policy)
+  };
+  let Ok(key) = parsed else {
+    return false;
+  };
 
-#[cfg(any(fuzzing, rscrypto_internal_fuzzing))]
+  let public_key = key.public_key();
+  let mut representative = public_key.modulus().to_vec();
+  for byte in representative.iter_mut().rev() {
+    if *byte != 0 {
+      *byte = byte.strict_sub(1);
+      break;
+    }
+    *byte = 0xff;
+  }
+  let mut out = vec![0u8; public_key.modulus().len()];
+  let mut scratch = public_key.public_scratch();
+  public_key
+    .public_operation_with_scratch(&representative, &mut out, &mut scratch)
+    .is_ok()
+}
+
 fn decoded_der(input: &[u8]) -> Vec<u8> {
   if input.first().copied() != Some(b'H') {
     return input.to_vec();
@@ -56,7 +79,6 @@ fn decoded_der(input: &[u8]) -> Vec<u8> {
   out
 }
 
-#[cfg(any(fuzzing, rscrypto_internal_fuzzing))]
 fn valid_private_key_der(format: u8, control: &[u8]) -> (Vec<u8>, Option<bool>) {
   let control = control.strip_suffix(b"\n").unwrap_or(control);
   let pkcs1 = match control.first().copied() {
@@ -108,7 +130,6 @@ fn valid_private_key_der(format: u8, control: &[u8]) -> (Vec<u8>, Option<bool>) 
   }
 }
 
-#[cfg(any(fuzzing, rscrypto_internal_fuzzing))]
 fn pkcs1_private_key_der_with_noncanonical_version() -> Vec<u8> {
   sequence(&[
     tlv_with_noncanonical_short_len(0x02, &[0]),
@@ -123,7 +144,6 @@ fn pkcs1_private_key_der_with_noncanonical_version() -> Vec<u8> {
   ])
 }
 
-#[cfg(any(fuzzing, rscrypto_internal_fuzzing))]
 fn private_key_der_for_format(format: u8, pkcs1: &[u8]) -> Vec<u8> {
   if format & 1 == 0 {
     pkcs1.to_vec()
@@ -132,7 +152,6 @@ fn private_key_der_for_format(format: u8, pkcs1: &[u8]) -> Vec<u8> {
   }
 }
 
-#[cfg(any(fuzzing, rscrypto_internal_fuzzing))]
 fn valid_pkcs8_private_key_der(pkcs1: &[u8]) -> Vec<u8> {
   sequence(&[
     integer_unsigned(&[0]),
@@ -141,7 +160,6 @@ fn valid_pkcs8_private_key_der(pkcs1: &[u8]) -> Vec<u8> {
   ])
 }
 
-#[cfg(any(fuzzing, rscrypto_internal_fuzzing))]
 fn pkcs8_private_key_der_with_attributes(pkcs1: &[u8]) -> Vec<u8> {
   sequence(&[
     integer_unsigned(&[0]),
@@ -151,7 +169,6 @@ fn pkcs8_private_key_der_with_attributes(pkcs1: &[u8]) -> Vec<u8> {
   ])
 }
 
-#[cfg(any(fuzzing, rscrypto_internal_fuzzing))]
 fn algorithm_identifier(oid: &[u8], params: Option<&[u8]>) -> Vec<u8> {
   let mut body = Vec::new();
   body.extend_from_slice(&tlv(0x06, oid));
@@ -161,12 +178,10 @@ fn algorithm_identifier(oid: &[u8], params: Option<&[u8]>) -> Vec<u8> {
   tlv(0x30, &body)
 }
 
-#[cfg(any(fuzzing, rscrypto_internal_fuzzing))]
 fn der_null() -> Vec<u8> {
   tlv(0x05, &[])
 }
 
-#[cfg(any(fuzzing, rscrypto_internal_fuzzing))]
 fn tlv_with_noncanonical_short_len(tag: u8, value: &[u8]) -> Vec<u8> {
   let mut out = Vec::with_capacity(3usize.strict_add(value.len()));
   out.push(tag);
@@ -176,7 +191,6 @@ fn tlv_with_noncanonical_short_len(tag: u8, value: &[u8]) -> Vec<u8> {
   out
 }
 
-#[cfg(any(fuzzing, rscrypto_internal_fuzzing))]
 fn tlv_with_leading_zero_long_len(der: &[u8]) -> Vec<u8> {
   let len_len = usize::from(der[1] & 0x7f);
   let mut out = Vec::with_capacity(der.len().strict_add(1));
@@ -187,5 +201,4 @@ fn tlv_with_leading_zero_long_len(der: &[u8]) -> Vec<u8> {
   out
 }
 
-#[cfg(any(fuzzing, rscrypto_internal_fuzzing))]
 const RSA_ENCRYPTION_OID: &[u8] = &[0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01];

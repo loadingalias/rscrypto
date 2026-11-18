@@ -148,7 +148,7 @@ def main():
     for name in ('scripts/check/check.sh', 'scripts/check/dependencies.sh', 'scripts/lib/toolchain.sh',
                  'scripts/lib/toolchain.py', 'scripts/lib/cross_build.py', 'scripts/lib/python.sh', 'Cargo.toml',
                  'rust-toolchain.toml', '.config/target-matrix.json', 'scripts/test/fixtures.py',
-                 'scripts/check/provider.py', 'rscrypto-rustls/Cargo.toml'):
+                 'scripts/check/provider.py', 'rscrypto-rustls/Cargo.toml', 'fuzz/Cargo.toml'):
       destination = root / name
       destination.parent.mkdir(parents=True, exist_ok=True)
       shutil.copy2(source / name, destination)

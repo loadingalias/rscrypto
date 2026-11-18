@@ -80,7 +80,7 @@ GIT = 'version = "=0.24.0-dev.2", git = "https://github.com/rustls/rustls", rev 
 
 class ToolPins(unittest.TestCase):
     def tool(self, edit):
-        """Write a provider and a passing tool fixture, then apply `edit` to the tool manifest."""
+        """Write a provider and passing tool and fuzz fixtures, then apply `edit` to the tool manifest."""
         root = Path(self.enterContext(tempfile.TemporaryDirectory()))
         (root / 'rscrypto-rustls').mkdir()
         (root / 'rscrypto-rustls/Cargo.toml').write_text(
@@ -91,8 +91,9 @@ class ToolPins(unittest.TestCase):
         valid = (f'[dependencies]\nrustls = {{ {GIT}, features = ["webpki", "std"] }}\n'
                  f"[target.'cfg(unix)'.dev-dependencies]\nrustls-ring = {{ {GIT} }}\n"
                  'webpki = { package = "rustls-webpki", version = "=0.104.0-alpha.8" }\n')
-        (root / 'tools/bench').mkdir(parents=True)
-        (root / 'tools/bench/Cargo.toml').write_text(valid)
+        for workspace in ('tools/bench', 'fuzz'):
+            (root / workspace).mkdir(parents=True)
+            (root / workspace / 'Cargo.toml').write_text(valid)
         provider.check_tool_pins(root)
         (root / 'tools/bench/Cargo.toml').write_text(edit(valid))
         return root
