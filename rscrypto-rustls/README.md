@@ -50,7 +50,7 @@ Hash and primitive adapters remain available with their own leaf features.
 The implementation-inventory test checks each suite's wire identifier, hash,
 key size, TLS and QUIC usage limits, and available operations. Independent
 AWS-LC comparisons and [RFC vectors](tests/vectors/README.md) exercise them.
-`just ci-provider` checks feature subsets and the provider's own normal/build
+CI's `scripts/check/provider.py` checks feature subsets and the provider's own normal/build
 dependency graph; independent crypto peers are dev dependencies.
 
 rustls owns transcript composition, the TLS key schedule, HKDF labels, record

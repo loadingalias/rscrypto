@@ -23,7 +23,7 @@ fn peers() -> impl Iterator<Item = (&'static Tls13CipherSuite, &'static Tls13Cip
 fn implementation_inventory_covers_every_enabled_suite() {
   // These are the wire algorithms and limits promised by the profile, independent
   // of the tables used to build the provider. The differential tests exercise
-  // the selected operations; ci-provider checks their normal/build provenance.
+  // the selected operations; `scripts/check/provider.py no-c` checks their normal/build provenance.
   let expected = [
     (CipherSuite::TLS13_AES_256_GCM_SHA384, 48, 32, 1 << 24, 1 << 23, 1 << 52),
     (CipherSuite::TLS13_AES_128_GCM_SHA256, 32, 16, 1 << 24, 1 << 23, 1 << 52),

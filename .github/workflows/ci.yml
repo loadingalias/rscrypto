@@ -44,8 +44,9 @@ jobs:
     name: Prepare ${{ matrix.target }} tests
     runs-on: runs-on=${{ github.run_id }}-${{ matrix.target }}/runner=ci-cross-build/env=production
     timeout-minutes: 45
+    # Each target prepares its own suite, so a failure in one must not cancel the others.
     strategy:
-      fail-fast: true
+      fail-fast: false
       matrix:
         target: [riscv64gc-unknown-linux-gnu, powerpc64le-unknown-linux-gnu, s390x-unknown-linux-gnu]
     env:
@@ -137,9 +138,12 @@ jobs:
 
   native:
     needs: cross-build
+    # A failed cross build fails only the leg that downloads its suite.
+    if: ${{ !cancelled() }}
     name: ${{ matrix.platform }}
+    # Each platform is its own signal: one failure must not cancel the others.
     strategy:
-      fail-fast: true
+      fail-fast: false
       matrix:
         include:
           - platform: compatibility
@@ -249,11 +253,11 @@ jobs:
           if [[ "$PLATFORM" == x86_64-linux ]]; then
             just test-scripts
             just ct-test
-            just ci-policy
+            scripts/check/dependencies.sh
             just test-rsa-linux-asm
             just test --all -- --lib -E 'test(bytes_to_bits) | test(nonce_counter) | test(xor_keystream_boundary_respects_u32_counter)'
           fi
-          just ci-check
+          scripts/check/check.sh native
           just test --all --release
           just test --all --release --portable
           if [[ "$PLATFORM" != x86_64-linux ]]; then just test-evidence; fi
@@ -295,7 +299,7 @@ jobs:
         run: |
           scripts/tooling/x86_64-linux.sh --ci-package
           source "$HOME/.local/share/rscrypto-tooling/environment.sh"
-          just ci-package
+          scripts/lib/python.sh scripts/check/package.py
           git diff --exit-code HEAD
 
       - name: Compile compatibility and execute WebAssembly
@@ -303,8 +307,16 @@ jobs:
         run: |
           scripts/tooling/x86_64-linux.sh --ci-compat
           source "$HOME/.local/share/rscrypto-tooling/environment.sh"
-          just ci-compat
-          just ci-provider
+          scripts/lib/python.sh scripts/check/compat.py
+          scripts/lib/python.sh scripts/check/provider.py features
+          scripts/lib/python.sh scripts/check/provider.py no-c
+          scripts/lib/python.sh scripts/check/provider.py runtime
+          # Clippy for every catalog target that no other leg checks; the Mac checks Apple locally.
+          channel=$(scripts/lib/toolchain.sh)
+          mapfile -t catalog < <(jq -r '.targets[] | select(endswith("-apple-darwin") | not)' .config/target-matrix.json)
+          rustup toolchain install "$channel" --profile minimal --component clippy --component rustfmt
+          rustup target add --toolchain "$channel" "${catalog[@]}"
+          scripts/check/check.sh targets
           git diff --exit-code HEAD
 
       - name: Install tooling, check, and test (Windows)
@@ -315,7 +327,7 @@ jobs:
           ./scripts/tooling/x86_64-win.ps1 -Ci
           just stack-worker --all-configurations --output target/stack-paint/evidence
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          just ci-check
+          & $env:RSCRYPTO_BASH scripts/check/check.sh native
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           just test --all --release
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -359,15 +371,16 @@ jobs:
   # cannot time out a queued job or cancel one job of a run, so this job dispatches
   # the RISC-V execution as its own run and skips it when no runner starts it in
   # time. A started run must pass. It sits outside the native matrix so that only
-  # this job, which runs no build or test tooling, holds actions: write; the script
-  # cancels the dispatched run when another job of this run fails.
+  # this job, which runs no build or test tooling, holds actions: write. A failure in
+  # another job does not stop the RISC-V run, so its result still counts.
   riscv64-linux:
     needs: cross-build
     name: riscv64-linux
     # Fork pull requests receive a read-only token that cannot dispatch a run.
     if: >-
-      github.event_name != 'pull_request' ||
-      github.event.pull_request.head.repo.full_name == github.repository
+      !cancelled() &&
+      (github.event_name != 'pull_request' ||
+       github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-24.04
     # GitHub-hosted jobs stop at six hours; this one waits for the queue and the run.
     timeout-minutes: 360
@@ -468,12 +481,18 @@ jobs:
           fi
           # upload-artifact keeps the path below the first wildcard, so each cross report is in a subdirectory.
           reports=(target/stack-paint/judged/**/*.json)
-          scripts/lib/python.sh scripts/stack/painted.py judge "${reports[@]}" "${expect[@]/#/--expect=}"
+          # The libc edge allowances come from this run's measurements; none is committed.
+          scripts/lib/python.sh scripts/stack/painted.py judge "${reports[@]}" "${expect[@]/#/--expect=}" \
+            --allowances target/stack-paint/allowances.json
       - name: Check owned stack bounds against their budgets
         if: ${{ !cancelled() }}
         run: |
           source "$HOME/.local/share/rscrypto-tooling/environment.sh"
-          just ci-stack
+          # Compose the whole-call bounds of each Linux target that measured its libc edges in this run.
+          mapfile -t measured < <(jq -r 'keys[]' target/stack-paint/allowances.json)
+          scripts/lib/python.sh scripts/stack/frames.py --whole-calls all --all-configurations \
+            --budgets .config/stack-budgets.json --allowances target/stack-paint/allowances.json \
+            "${measured[@]/#/--target=}"
           git diff --exit-code HEAD
 
   cache-report:

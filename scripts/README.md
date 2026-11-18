@@ -9,14 +9,14 @@ Those entry points call the supporting modules.
 
 | Script                                 | Caller |
 | -------------------------------------- | ------ |
-| `check/check.sh`                       | `just check`, `just ci-check`, `just ci-check-target` |
-| `check/compat.py`                      | `just ci-compat` |
-| `check/provider.py`                    | `just ci-provider`, `check/check.sh` |
+| `check/check.sh`                       | `just check` (local: repair, then validate the Mac); CI `check.sh native` and `check.sh targets` |
+| `check/compat.py`                      | CI compatibility row |
+| `check/provider.py`                    | CI compatibility row, `check/check.sh` |
 | `test/test-musl.sh`                    | `just test-musl` |
 | `check/macos.sh`                       | `just check-macos`, background Mac qualification |
 | `check/macos_async.py`                 | `just qualify-macos`, `just macos-status` |
 | `check/qualified.py`                   | local qualification reuse and release status identity |
-| `check/dependencies.sh`                | `just ci-policy`, and the dependency checks in `just check` |
+| `check/dependencies.sh`                | CI x86-64 Linux row |
 | `check/lint-independent-workspaces.sh` | `check/check.sh` |
 | `asm/p384.py check`                    | `check/check.sh` |
 | `asm/rsa_pair.py check`                | `check/check.sh` |
@@ -35,9 +35,9 @@ Ignored manifests, such as local evidence crates, are not repository policy.
 on every catalog target with `std`, including WASI. Bare-metal and browser WASM
 remain rscrypto-only. Workspace documentation and host builds include both crates.
 
-`just ci-provider` checks empty, default, each individual feature, all production
-features, and all features on the host and minimum-Rust toolchain. CI runs it in
-the compatibility row of the existing fail-fast matrix. Usable TLS and QUIC feature
+`provider.py features`, `no-c`, and `runtime` check empty, default, each individual feature, all production
+features, and all features on the host and minimum-Rust toolchain. CI runs them in
+the compatibility row. Usable TLS and QUIC feature
 bundles also execute the connection matrix in native and portable modes:
 mutual authentication, stateful/stateless resumption where available, exporters,
 key updates, and closure against independent rustls crypto backends.
@@ -49,7 +49,7 @@ The all-features row contains every additive dependency feature, so its graph
 covers arbitrary feature combinations as well as the compiled rows.
 The shared lockfile is not the gate: it includes rscrypto's dev-only crypto oracles.
 
-Every `check/provider.py` mode, so `just ci-check` as well as `just ci-provider`, also requires each
+Every `check/provider.py` mode, so `just check` as well, also requires each
 `tools/*/Cargo.toml` to pin each `rustls` or `rustls-*` crate that it names with the same version and source
 keys as `rscrypto-rustls/Cargo.toml`; features may differ. A tool may not name a rustls crate that the provider
 does not pin. Each tool has its own lockfile, so a pin change, such as the swap from the Git pins to a rustls
@@ -244,7 +244,7 @@ CI, CT, Bench, and Profile share two preparation actions:
   Diagnostic logs retain their separate failure handling and retention periods.
 
 Each workflow still owns its preparation command, runner selection, timeout, native execution,
-and fail-fast matrix.
+and matrix. No multi-target matrix fails fast: each target is its own signal.
 
 A cross-built test suite also holds the `introspect` example. Before its suites, `just test-cross run` executes it
 on the target host and records the capabilities that runtime detection reports, and the kernels that it selects,
@@ -350,13 +350,13 @@ They do not detect a compromised producer that forges its own metadata.
   `--full` and `--scoped` limit the scope.
   The default is full, including named targets.
 - `just test-fuzz --build --all` builds every fuzz package without starting fuzzing.
-- `just test-fuzz-ci plan` accepts only a manual dispatch.
+- `fuzz_ci.py plan` (CI only) accepts only a manual dispatch.
   It selects the requested exact target names, the daily rotation, or every target,
   in every package that contains each name, and validates the live-fuzzing budget.
-- `just test-fuzz-ci restore` merges the corpus checkpoint into the working corpora by SHA256.
+- `fuzz_ci.py restore` merges the corpus checkpoint into the working corpora by SHA256.
   It rejects symlinks and invalid hashes and preserves committed seed files.
   `snapshot` prepares a new checkpoint after successful replay and fuzzing.
-- `just test-fuzz-ci retain` minimizes the planned corpora and collects branch coverage with
+- `fuzz_ci.py retain` minimizes the planned corpora and collects branch coverage with
   the pinned compiler's LLVM tools. It keeps committed regression seeds even when edge
   minimization drops them. The merge runs the built production fuzzer directly because
   `cargo-fuzz` 0.13.2 can return success after a failed `cmin` merge.
@@ -514,7 +514,7 @@ Release callers, and manual runs with no diagnostic input, keep the full require
 
 | Script             | Caller |
 | ------------------ | ------ |
-| `stack/frames.py`  | `just stack-frames [--target TARGET]... [--portable \| --all-configurations] [--rustflags FLAGS] [--json PATH] [--evidence DIR] [--whole-calls GROUPS \| --mldsa-preparation] [--allowances FILE] [--budgets FILE] [--write-budgets FILE]`, `just ci-stack`, `just stack-budgets` |
+| `stack/frames.py`  | `just stack-frames [--target TARGET]... [--portable \| --all-configurations] [--rustflags FLAGS] [--json PATH] [--evidence DIR] [--whole-calls GROUPS \| --mldsa-preparation] [--allowances FILE] [--budgets FILE] [--write-budgets FILE]`, `just stack-budgets` |
 | `stack/residue.py` | `just stack-residue [--board BOARD]... [--backend native\|portable]... [--output DIR]` |
 | `stack/painted.py` | `just stack-allowances [--check [FILE]] [--output DIR]`, `just stack-worker [--all-configurations \| --portable] [--check [FILE]] [--output DIR]`, `scripts/test/cross.py`, `painted.py judge REPORT... --expect TARGET...` (the CI `stack` job) |
 
@@ -606,17 +606,17 @@ The review fails when:
 `--whole-calls all` root, per Linux target and per native or `--portable` build: the reviewed bound
 plus 12.5%, rounded up to 1 KiB.
 
-- `just ci-stack [--target TARGET]...` reviews both builds of every target, or of the named ones,
-  against the file. A root fails when its owned bound is unresolved, it has no budget, or the bound
-  exceeds the budget; a budget for a root the review no longer has also fails. The recipe also passes
-  [`.config/stack-allowances.json`](../.config/stack-allowances.json), the measured libc allowances
+- The CI `stack` job reviews both builds of each Linux target against the file. A root fails when its
+  owned bound is unresolved, it has no budget, or the bound exceeds the budget; a budget for a root the
+  review no longer has also fails. It composes the libc allowances that the same CI run measured
   ([Painted stacks](#painted-stacks)), so a root also fails when it has no whole-call bound or its
-  whole-call bound exceeds the 8 MiB worker cap.
+  whole-call bound exceeds the 8 MiB worker cap. No allowance is committed.
 - `just stack-budgets [--target TARGET]...` rewrites the reviewed entries from the current bounds and
   refuses while any bound is unresolved. Run it after a reviewed change moves a bound, and commit the
   file with that change.
 - The CI `stack` job runs `x86_64-linux.sh --ci-stack`, which installs `llvm-tools`, the four other
-  Linux targets, and the catalog's Zig. It judges the painted-stack reports, then runs `just ci-stack`. The x86-64 build links natively and the
+  Linux targets, and the catalog's Zig. It judges the painted-stack reports, writes their edge allowances,
+  then runs `frames.py --whole-calls all` with them. The x86-64 build links natively and the
   others link through `ct/zig-cc.sh`, as on the Mac. Without Zig, the review links a non-host target
   with its GNU cross compiler when one is on `PATH`.
 
@@ -727,21 +727,19 @@ prebuilt binaries.
   compact ML-DSA keys, TLS 1.2, and each recoverable failure: bad signatures, untrusted or expired
   certificates, corrupt records, invalid key shares, failing entropy, foreign tickets, and no common
   group or suite. A failure scenario that completes, or a success scenario that fails, fails the run.
-- `--check` compares the measurement with [`.config/stack-allowances.json`](../.config/stack-allowances.json) or
-  [`.config/stack-worker-budgets.json`](../.config/stack-worker-budgets.json). An edge fails when its measured allowance exceeds the committed
-  one; a different libc identity is reported, not failed. A worker configuration fails when any scenario
-  fails or the deepest scenario exceeds its budget: the measured high-water plus 12.5%, rounded up to
-  1 KiB. `painted.py record REPORT...` writes those files from saved reports.
+- `--check` compares a worker measurement with [`.config/stack-worker-budgets.json`](../.config/stack-worker-budgets.json).
+  A worker configuration fails when any scenario fails or the deepest scenario exceeds its budget: the
+  measured high-water plus 12.5%, rounded up to 1 KiB. `painted.py record REPORT...` writes that file from
+  saved worker reports. `painted.py judge --allowances FILE` writes the edge allowances of the judged reports
+  for `frames.py`.
 - `painted.py judge REPORT... --expect TARGET...` checks saved reports of several targets in the same way.
   It also fails when an expected target has no worker report for a configuration, or no edge report on
   Linux GNU.
 - CI measures without `--check`: both measurements on the x86-64 and AArch64 Linux rows, and the worker on
   the Windows row. RISC-V, POWER, and IBM Z build the binaries in the cross-build job, seal them in the test
   bundle, and measure them before the native suites. Each leg uploads its reports as `stack-paint-PLATFORM`.
-- A judgement in a leg would fail that leg. The fail-fast matrix and the RISC-V dispatcher would then cancel
-  the legs that measure the other targets, so a new edge could never get all its allowances from one run.
-  Thus the CI `stack` job judges all reports with `painted.py judge` after every leg, also after a failed
-  leg. An absent report fails the job. Only the documented RISC-V skips leave the RISC-V reports unjudged:
+- The CI `stack` job judges all reports with `painted.py judge` after every leg, also after a failed
+  leg, and takes the edge allowances of that run from them. An absent report fails the job. Only the documented RISC-V skips leave the RISC-V reports unjudged:
   a fork pull request, or no runner within 30 minutes in a run without `require_riscv`. The job then names
   the unjudged reports in a notice and in the step summary.
 - macOS is measured locally with `just stack-worker --all-configurations --check`.
@@ -973,7 +971,7 @@ The scripts install those two on first use under `~/.local/share/rscrypto-toolin
 so a Homebrew uv or Zig stays as it is.
 `scripts/tooling/aarch64-macos.sh` can install the pinned prerequisites for `just check-macos`.
 
-All full profiles install the prerequisites for `just ci-check`, `just test`, and Criterion `just bench`.
+All full profiles install the prerequisites for `just check`, `just test`, and Criterion `just bench`.
 RISC-V, IBM Z, and POWER use native CMake and Clang from the Ubuntu archive.
 They do not install cross targets, Miri, browsers, or profiling tools.
 
@@ -988,9 +986,9 @@ and profiling execution on each machine.
 
 CI calls the same installers with `--ci` on Linux or `-Ci` on Windows.
 
-- The catalog's `ci` section selects the Cargo tools that `just ci-check`, `just test --all --release`, and `just test --all --release --portable` need.
+- The catalog's `ci` section selects the Cargo tools that `check.sh native`, `just test --all --release`, and `just test --all --release --portable` need.
   Both test commands include doctests.
-- Only Linux x86-64 adds the `ci-policy` tools and runs `just ci-policy`.
+- Only Linux x86-64 adds the `ci-policy` tools and runs `check/dependencies.sh`.
   Cargo Deny checks the full target graph in `deny.toml`, and Cargo Audit checks the lockfile.
 - Every host keeps native and portable Clippy, independent-workspace linting, documentation,
   and runtime tests.
@@ -1085,7 +1083,7 @@ registry versions, no patch remains, and the same run verifies the archive again
   live fuzzing, and daily coverage when selected. Miri jobs have a 60-minute limit.
 - `--ci-miri` installs the pinned interpreter for an independent focused Miri row,
   including the RSA unsafe-boundary tests.
-- All rows share fail-fast cancellation.
+- No row cancels another: each architecture and Miri is its own signal.
 - After those rows pass, `Release qualification` passes only for both architectures,
   a smoke campaign, blank targets, and at least 120 seconds per target.
   Release preflight requires this job to pass in the current attempt of the latest manual Fuzz run
@@ -1187,11 +1185,12 @@ It accepts one native Linux architecture and one curated primitive.
 
 ### CI compatibility
 
-The compatibility matrix row starts with every native row, and uses the same fail-fast policy.
+The compatibility matrix row starts with every native row. No row cancels another.
 
 - `x86_64-linux.sh --ci-compat` installs only the catalog-selected compatibility tools,
-  Rust versions, and cross-target libraries. Nextest runs `just ci-provider`'s runtime matrix.
-- `just ci-compat` uses bounded workers with separate build directories and a shared CPU budget.
+  Rust versions, and cross-target libraries. Nextest runs the `provider.py runtime` matrix.
+  The row then adds Clippy and every catalog target, and runs `check.sh targets`.
+- `compat.py` uses bounded workers with separate build directories and a shared CPU budget.
   A failed command stops the running siblings and stops queued work from starting.
   Logs stay under `target/compat/`.
 
@@ -1272,10 +1271,22 @@ can pass that job.
 The default Fuzz inputs satisfy this contract.
 The preflight can read statuses and workflow runs but cannot write them or dispatch Fuzz.
 Its refusal tests run through `just test-scripts`.
-[CONTRIBUTING.md](../CONTRIBUTING.md#release) has the maintainer setup, check, deployment, and retry instructions.
+To release:
+
+1. Push the reviewed commits to `main`. Run `just qualify-macos` on the physical Mac, and start Fuzz with its
+   default inputs (`gh workflow run fuzz.yml --ref main`).
+2. When CI, the Mac status, and Fuzz pass on that commit, run `just release-check` (or `just release-check minor`).
+   It needs a clean checkout at the tip of `origin/main` and a crates.io credential. Exit code 1 means that checks
+   on the source commit still run.
+3. Run `just release`. It repeats the check and starts `release.yml`, which runs CI with RISC-V and full CT, then
+   `cargo rail release`. After an interruption, run it again with the same bump; it finishes only the missing steps.
+
+One-time setup: a GitHub environment `release` restricted to `main`, and a crates.io Trusted Publisher for
+`loadingalias/rscrypto`, workflow `release.yml`, environment `release`.
 
 `scripts/check/macos.sh` owns `just check-macos`, which replaces hosted macOS checks and tests with local Apple Silicon validation.
-Run `just qualify-macos` after each push to queue it. macOS is still a supported release target.
+Run `just qualify-macos` before a push or a release when the maintainer asks for it. A release needs its
+passing status. macOS is still a supported release target.
 Timing qualification on physical Apple Silicon is a separate local requirement before submission.
 
 `scripts/check/macos_async.py` queues a detached worktree of the checked-out commit and returns immediately.

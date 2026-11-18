@@ -204,12 +204,11 @@ just plan
 just check
 ```
 
-- `just check` repairs formatting and lints, then checks the host and the target catalog.
-- `just ci-check` checks the host without repairs.
-- Both lint the combined native and portable feature sets.
-- `just ci-compat` checks each feature alone on the development compiler and on the MSRV.
-  It also builds the bare-metal targets and runs the scalar
-  and SIMD WebAssembly vectors in Wasmtime.
+- `just check` repairs formatting and lints, then checks this Mac. It lints the combined native and
+  portable feature sets.
+- CI checks every other target without repairs. Its compatibility row (`scripts/check/compat.py`) checks
+  each feature alone on the development compiler and on the MSRV. It also builds the bare-metal targets
+  and runs the scalar and SIMD WebAssembly vectors in Wasmtime.
 
 To check one feature selection by itself, use the `cargo check` command above.
 

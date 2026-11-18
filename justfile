@@ -108,13 +108,9 @@ release-check bump="auto":
 release bump="auto": (release-check bump)
     @gh workflow run release.yml --ref main -f bump="$1"
 
-# Repair, then validate the host and the explicit supported target catalog.
+# Repair (rustfmt and Clippy fixes), then validate this Mac. CI validates the other targets.
 check:
     @scripts/check/check.sh check
-
-# Validate the native host without source fixes or cross-target prerequisites.
-ci-check:
-    @scripts/check/check.sh native
 
 # Validate Apple Silicon checks, native/portable release tests, and RSA assembly locally.
 check-macos:
@@ -128,23 +124,9 @@ qualify-macos:
 macos-status:
     @scripts/lib/python.sh scripts/check/macos_async.py status
 
-# Cross-check the complete target native CI compilation surface.
-ci-check-target target:
-    @scripts/check/check.sh target {{quote(target)}}
-
 # Prepare or execute complete, source-bound cross-compiled test artifacts.
 test-cross operation target archive:
     @scripts/lib/python.sh scripts/test/cross.py {{quote(operation)}} {{quote(target)}} {{quote(archive)}}
-
-# Check dependency policy for every supported target, once per CI workflow.
-ci-policy:
-    @scripts/check/dependencies.sh
-
-# Check provider feature subsets on the host/MSRV and reject C dependencies on every target.
-ci-provider:
-    @scripts/lib/python.sh scripts/check/provider.py features
-    @scripts/lib/python.sh scripts/check/provider.py no-c
-    @scripts/lib/python.sh scripts/check/provider.py runtime
 
 # Exercise TLS with the pinned OpenSSL and Go peers; retain process evidence locally.
 [group('tests')]
@@ -170,14 +152,6 @@ bench-mldsa-tail *args:
 [group('tests')]
 test-provider-bogo *args:
     @scripts/lib/python.sh scripts/test/provider_bogo.py "$@"
-
-# Compile feature/MSRV/bare-metal compatibility and execute WASM/WASI vectors.
-ci-compat:
-    @scripts/lib/python.sh scripts/check/compat.py
-
-# Verify the publishable archive and external std/core/alloc consumers.
-ci-package:
-    @scripts/lib/python.sh scripts/check/package.py
 
 # Execute the full native and portable suites against the host's musl target.
 test-musl:
@@ -255,11 +229,6 @@ test-rsa-linux-asm:
 test-fuzz *args:
     @scripts/test/test-fuzz.sh "$@"
 
-# Plan CI fuzz selection, restore/save corpora, or retain daily coverage.
-[group('tests')]
-test-fuzz-ci *args:
-    @scripts/lib/python.sh scripts/test/fuzz_ci.py "$@"
-
 # Run fuzz targets with AddressSanitizer.
 [group('tests')]
 test-fuzz-asan *args:
@@ -311,11 +280,6 @@ ct-renew *args:
 [group('secret-lifecycle')]
 stack-frames *args:
     @scripts/lib/python.sh scripts/stack/frames.py "$@"
-
-# Check every whole-call root's owned stack bound against its budget and compose its whole-call bound with the measured libc allowances.
-[group('secret-lifecycle')]
-ci-stack *args:
-    @scripts/lib/python.sh scripts/stack/frames.py --whole-calls all --all-configurations --budgets .config/stack-budgets.json --allowances .config/stack-allowances.json "$@"
 
 # Regenerate the owned stack budgets from the current bounds after a reviewed stack change.
 [group('secret-lifecycle')]

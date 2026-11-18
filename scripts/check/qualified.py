@@ -20,7 +20,7 @@ MACOS_CONTEXT = 'rscrypto/macos'
 # README.md is not here: `src/lib.rs` includes it as crate documentation, so doctests run it.
 INERT = re.compile(
   r'^(\.changes/|\.github/|benchmark_results/|docs/|\.config/tooling\.toml$'
-  r'|CHANGELOG\.md$|CONTRIBUTING\.md$|SECURITY\.md$|THREAT_MODEL\.md$)'
+  r'|CHANGELOG\.md$|SECURITY\.md$|THREAT_MODEL\.md$)'
 )
 # Bound the ancestor walk; an older pass is not worth the lookup.
 ANCESTORS = 64

@@ -216,7 +216,6 @@ Older campaigns retain their original dates and methods and do not fill missing 
 The guides and examples describe the source in this repository.
 For a published version, use the matching [API documentation](https://docs.rs/rscrypto).
 
-Read [`CONTRIBUTING.md`](CONTRIBUTING.md) before you change code.
 [`CHANGELOG.md`](CHANGELOG.md) lists published changes.
 
 ## License

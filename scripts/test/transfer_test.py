@@ -296,6 +296,9 @@ elif name.endswith('gcc'): print('gcc pinned fixture')
         tool.chmod(0o755)
         for name in ('just', 'cargo', 'rustc', TARGETS[target][1] + '-gcc'):
             (commands / name).symlink_to(tool)
+        check = self.root / 'scripts/check/check.sh'
+        check.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(tool, check)
         # Do not include fixture executable symlinks in the effective source digest.
         with (self.root / '.gitignore').open('a') as output: output.write('commands/\n')
         pin = __import__('tomllib').loads((ROOT / '.config/tooling.toml').read_text())['cargo']['cargo-nextest']
@@ -306,7 +309,7 @@ elif name.endswith('gcc'): print('gcc pinned fixture')
             archive = self.root / 'target/test-suites.tar.xz'
             cross.prepare(target, archive)
             calls = [json.loads(row) for row in log.read_text().splitlines()]
-            self.assertIn(['just', 'ci-check-target', target], calls)
+            self.assertIn(['check.sh', 'target', target], calls)
             builds = [row for row in calls if row[:3] == ['cargo', 'nextest', 'archive']]
             self.assertEqual(len(builds), 4)
             self.assertTrue(all('--workspace' in row and '--locked' in row and '--release' in row for row in builds))

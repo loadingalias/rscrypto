@@ -2,19 +2,25 @@
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 
-[[ $# -ge 1 && $# -le 2 ]] || { echo 'usage: scripts/check/check.sh {check|fix|local|native|target TRIPLE}' >&2; exit 2; }
-mode=$1
+# check: local development. Repair (rustfmt and Clippy fixes), then validate this host.
+# native: CI. Validate the runner's host without repairs.
+# target TRIPLE: CI cross build. Validate one cross-built Linux target as its own host.
+# targets: CI. Run Clippy for each catalog target that no other job checks: not this host, not Apple
+# (the Mac checks it), and not a cross-built target (its cross build checks it).
+usage='usage: scripts/check/check.sh {check|native|targets|target TRIPLE}'
+mode=${1:-}
 case "$mode" in
-  check|fix|local|native) [[ $# -eq 1 ]] || exit 2 ;;
-  target) [[ $# -eq 2 ]] || exit 2; scripts/lib/python.sh scripts/lib/cross_build.py "$2" >/dev/null ;;
-  *) echo 'usage: scripts/check/check.sh {check|fix|local|native}' >&2; exit 2 ;;
+  check|native|targets) [[ $# -eq 1 ]] || { echo "$usage" >&2; exit 2; } ;;
+  target) [[ $# -eq 2 ]] || { echo "$usage" >&2; exit 2; }
+          scripts/lib/python.sh scripts/lib/cross_build.py "$2" >/dev/null ;;
+  *) echo "$usage" >&2; exit 2 ;;
 esac
 
 host=$(scripts/lib/toolchain.sh --print-host)
 if [[ "$mode" == target ]]; then
   host=$2
-  # Cargo keeps build scripts/proc macros on the build host; all checked product
-  # targets and independent workspaces use the same target cfg as native CI.
+  # Cargo keeps build scripts and proc macros on the build host; the checked product
+  # targets and independent workspaces use the target cfg.
   export CARGO_BUILD_TARGET="$host"
 fi
 [[ -n "$host" ]] || { echo 'cannot determine Rust host' >&2; exit 1; }
@@ -35,10 +41,12 @@ print(','.join(sorted(selected)))
 PY
 )
 targets=("$host")
-if [[ "$mode" != native && "$mode" != target ]]; then
+if [[ "$mode" == targets ]]; then
+  targets=()
   catalog=$(jq -er '.targets | if length > 0 and length == (unique | length) then .[] else error("invalid target catalog") end' .config/target-matrix.json)
+  cross=$("$python" -c 'import sys; sys.path.insert(0, "scripts/lib"); from cross_build import TARGETS; print(*TARGETS)')
   while IFS= read -r target; do
-    [[ "$target" == "$host" ]] || targets+=("$target")
+    [[ "$target" == "$host" || "$target" == *-apple-darwin || " $cross " == *" $target "* ]] || targets+=("$target")
   done <<<"$catalog"
 fi
 
@@ -103,16 +111,12 @@ run_checks() {
 }
 if [[ "$mode" == check ]]; then
   run_checks fix
-  run_checks local
-else
-  run_checks "$mode"
 fi
-[[ "$mode" != fix ]] || exit 0
+run_checks verify
+[[ "$mode" != targets ]] || exit 0
 
 "$python" scripts/asm/p384.py check
 "$python" scripts/asm/rsa_pair.py check
 "$python" scripts/asm/provenance.py check
-# Native CI keeps architecture-sensitive compilation and documentation here.
 scripts/check/lint-independent-workspaces.sh
-if [[ "$mode" != native && "$mode" != target ]]; then scripts/check/dependencies.sh; fi
 RUSTDOCFLAGS="${RUSTDOCFLAGS:+$RUSTDOCFLAGS }-D warnings" cargo doc --workspace --no-deps --all-features --locked

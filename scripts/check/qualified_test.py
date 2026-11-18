@@ -40,7 +40,7 @@ def main():
   assert run(history, {}, {'candidate': 'rustc 0'}) is None
   # A descendant that changes only unchecked paths reuses the nearest passing ancestor.
   inert = ['docs/platforms.md', '.changes/x.md', '.github/workflows/ci.yml', 'benchmark_results/OVERVIEW.md',
-           '.config/tooling.toml', 'CHANGELOG.md', 'CONTRIBUTING.md', 'SECURITY.md', 'THREAT_MODEL.md']
+           '.config/tooling.toml', 'CHANGELOG.md', 'SECURITY.md', 'THREAT_MODEL.md']
   assert run(history, {'T2': inert}, {'T2': 'rustc 1'}) is not None
   assert run(history, {'T2': inert}, {'T2': 'rustc 0'}) is None
   # Any checked path forces a new run: source, tests, manifests, scripts, crate docs, and nested Markdown.

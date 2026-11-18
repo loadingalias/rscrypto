@@ -72,6 +72,7 @@ class MacOSCommit(unittest.TestCase):
             shutil.copy2(ROOT / 'scripts/check/macos.sh', script)
             for name, body in {
                 'scripts/lib/toolchain.sh': 'echo aarch64-apple-darwin',
+                'scripts/check/check.sh': '[ "$RUSTUP_TOOLCHAIN" = aarch64-apple-darwin ] || exit 9\necho "check.sh $*" >> calls',
                 'uname': 'if [ "$1" = -s ]; then echo Darwin; else echo arm64; fi',
                 'just': '[ "$RUSTUP_TOOLCHAIN" = aarch64-apple-darwin ] && [ -z "${RSCRYPTO_SKIP_DOCTESTS:-}" ] || exit 9\necho "$*" >> calls; [ "$*" != "${FAIL_COMMAND:-}" ]',
             }.items():
@@ -83,13 +84,13 @@ class MacOSCommit(unittest.TestCase):
                    'PATH': str(root) + os.pathsep + os.environ['PATH']}
             self.assertEqual(subprocess.run([str(script)], env=env).returncode, 0)
             self.assertEqual((root / 'calls').read_text().splitlines(), [
-                'ci-check', 'test --all --release', 'test --all --release --portable',
+                'check.sh native', 'test --all --release', 'test --all --release --portable',
                 'test-evidence', 'test-rsa-macos-asm'])
             (root / 'calls').unlink()
             result = subprocess.run([str(script)], env={**env, 'FAIL_COMMAND': 'test --all --release'})
             self.assertNotEqual(result.returncode, 0)
             self.assertEqual((root / 'calls').read_text().splitlines(),
-                             ['ci-check', 'test --all --release'])
+                             ['check.sh native', 'test --all --release'])
 
 
 class AsyncMacOS(unittest.TestCase):

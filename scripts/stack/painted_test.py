@@ -11,8 +11,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import painted
-from painted import (DECLARED_EDGES, EDGES_KIND, WORKER_KIND, allowance, check_edges, check_worker, judge,
-                     worker_budget, write_allowances)
+from painted import DECLARED_EDGES, EDGES_KIND, WORKER_KIND, allowance, check_worker, judge, worker_budget
 
 TARGET = "x86_64-unknown-linux-gnu"
 
@@ -37,27 +36,6 @@ def test_allowance_rounds_then_adds_margin() -> None:
   assert [worker_budget(depth) for depth in (0, 54_224, 9216)] == [1024, 61_440, 11_264]  # 10,368
 
 
-def test_edges_fail_only_above_their_allowance() -> None:
-  depths = {name: 100 for name in DECLARED_EDGES}
-  with tempfile.TemporaryDirectory() as temporary:
-    path = Path(temporary) / "allowances.json"
-    write_allowances([edge_report(depths)], path, "fixture evidence")
-    written = json.loads(path.read_text())[TARGET]
-    assert written["libc"] == "glibc fixture" and written["evidence"] == "fixture evidence", written
-    assert set(written["edges"]) == set(DECLARED_EDGES), written
-    assert check_edges(edge_report(depths), path) == []
-    deeper = edge_report({**depths, "free": 200})
-    assert check_edges(deeper, path) == [f"free: measured allowance {allowance(200, 128)} B exceeds the committed "
-                                          f"{allowance(100, 128)} B"], check_edges(deeper, path)
-    # Another libc is reported, not failed, while its use stays within the allowance.
-    with contextlib.redirect_stdout(io.StringIO()) as output:
-      assert check_edges(edge_report(depths, "glibc other"), path) == []
-    assert "glibc other" in output.getvalue()
-    missing = edge_report(depths)
-    missing["target"] = "aarch64-unknown-linux-gnu"
-    assert check_edges(missing, path) == [f"{path} has no allowances for aarch64-unknown-linux-gnu"]
-
-
 def test_worker_fails_on_any_scenario_or_budget() -> None:
   with tempfile.TemporaryDirectory() as temporary:
     path = Path(temporary) / "budgets.json"
@@ -72,7 +50,7 @@ def test_worker_fails_on_any_scenario_or_budget() -> None:
       f"{path} has no portable budget for {TARGET}"]
 
 
-def test_judge_fails_on_a_missing_or_exceeded_allowance_or_an_absent_report() -> None:
+def test_judge_fails_on_a_budget_or_an_absent_report_and_writes_the_measured_allowances() -> None:
   # The CI `stack` job judges the uploads of every leg with this, after all legs measured.
   depths = {name: 100 for name in DECLARED_EDGES}
   windows = "x86_64-pc-windows-msvc"
@@ -80,39 +58,37 @@ def test_judge_fails_on_a_missing_or_exceeded_allowance_or_an_absent_report() ->
   complete = [edge_report(depths), *(worker_report(target, configuration)
                                      for target in expected for configuration in ("native", "portable"))]
   with tempfile.TemporaryDirectory() as temporary:
-    allowances, budgets = Path(temporary) / "allowances.json", Path(temporary) / "budgets.json"
-    write_allowances([edge_report(depths)], allowances, "fixture evidence")
+    budgets = Path(temporary) / "budgets.json"
     budgets.write_text(json.dumps({"targets": {target: {"native": 61_440, "portable": 61_440} for target in expected}}))
-    assert judge(complete, expected, allowances, budgets) == []
-    # The first run after a new edge is declared: the leg measured it, and no allowance is committed.
-    committed = json.loads(allowances.read_text())
-    del committed[TARGET]["edges"]["madvise"]
-    allowances.write_text(json.dumps(committed))
-    assert judge(complete, expected, allowances, budgets) == [f"{TARGET} edges: madvise: no committed allowance"]
-    write_allowances([edge_report(depths)], allowances, "fixture evidence")
-    deeper = edge_report({**depths, "free": 200})
-    assert judge([deeper, *complete[1:]], expected, allowances, budgets) == [
-      f"{TARGET} edges: free: measured allowance {allowance(200, 128)} B exceeds the committed "
-      f"{allowance(100, 128)} B"]
+    assert judge(complete, expected, budgets) == []
     # A leg that failed before it uploaded, or a skipped RISC-V run that was required.
     riscv = "riscv64gc-unknown-linux-gnu"
-    assert judge(complete[:-1], [*expected, riscv], allowances, budgets) == [
+    assert judge(complete[:-1], [*expected, riscv], budgets) == [
       f"{windows} worker portable: no report", f"{riscv} edges: no report", f"{riscv} worker native: no report",
       f"{riscv} worker portable: no report"]
+    # The same run's edge measurements become the allowances that frames.py composes.
+    paths = []
+    for index, report in enumerate(complete):
+      path = Path(temporary) / f"report-{index}.json"
+      path.write_text(json.dumps(report))
+      paths.append(str(path))
+    allowances = Path(temporary) / "allowances.json"
+    with patch.object(painted, "DEFAULT_WORKER_BUDGETS", budgets), contextlib.redirect_stdout(io.StringIO()):
+      assert painted.main(["judge", *paths, "--expect", TARGET, "--expect", windows,
+                           "--allowances", str(allowances)]) == 0
+    written = json.loads(allowances.read_text())
+    assert written == {TARGET: {"libc": "glibc fixture",
+                                "edges": {name: allowance(100, 128) for name in DECLARED_EDGES}}}, written
     # The command fails the job on any problem.
-    report = Path(temporary) / "report.json"
-    report.write_text(json.dumps(complete[0]))
-    with patch.object(painted, "DEFAULT_ALLOWANCES", allowances), \
-         patch.object(painted, "DEFAULT_WORKER_BUDGETS", budgets), contextlib.redirect_stdout(io.StringIO()) as output:
-      assert painted.main(["judge", str(report), "--expect", TARGET]) == 1
+    with patch.object(painted, "DEFAULT_WORKER_BUDGETS", budgets), contextlib.redirect_stdout(io.StringIO()) as output:
+      assert painted.main(["judge", paths[0], "--expect", TARGET]) == 1
     assert f"stack check failure: {TARGET} worker native: no report" in output.getvalue(), output.getvalue()
 
 
 def main() -> None:
   test_allowance_rounds_then_adds_margin()
-  test_edges_fail_only_above_their_allowance()
   test_worker_fails_on_any_scenario_or_budget()
-  test_judge_fails_on_a_missing_or_exceeded_allowance_or_an_absent_report()
+  test_judge_fails_on_a_budget_or_an_absent_report_and_writes_the_measured_allowances()
   print("painted-stack tests passed")
 
 

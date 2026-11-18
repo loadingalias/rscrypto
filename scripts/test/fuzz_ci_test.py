@@ -193,7 +193,8 @@ elif sys.argv[1:3] == ['fuzz', 'coverage']:
             self.assertFalse(any(job.get('uses') == './.github/workflows/fuzz.yml' for job in caller['jobs'].values()), path)
         self.assertEqual(workflow['on']['workflow_dispatch']['inputs']['campaign']['options'], ['smoke', 'daily'])
         job = workflow['jobs']['fuzz']
-        self.assertEqual(job['strategy']['fail-fast'], 'true')
+        # Each architecture and Miri is its own signal: one failure must not cancel the others.
+        self.assertEqual(job['strategy']['fail-fast'], 'false')
         self.assertIn("inputs.architectures == 'all'", job['strategy']['matrix']['platform'])
         self.assertNotIn('github.event_name', job['strategy']['matrix']['platform'])
         steps = job['steps']
@@ -203,7 +204,7 @@ elif sys.argv[1:3] == ['fuzz', 'coverage']:
         live, = [step for step in steps if step.get('name') == 'Fuzz selected targets']
         self.assertEqual(live['env']['RSCRYPTO_FUZZ_TARGET_CONCURRENCY'], '${{ steps.plan.outputs.concurrency }}')
         self.assertEqual(live['env']['RSCRYPTO_FUZZ_BUDGET_SECS'], '${{ steps.plan.outputs.budget }}')
-        retain, = [step for step in steps if 'just test-fuzz-ci retain' in step.get('run', '')]
+        retain, = [step for step in steps if 'scripts/test/fuzz_ci.py retain' in step.get('run', '')]
         self.assertIn("steps.plan.outputs.retain == 'true'", retain['if'])
         save, = [step for step in steps if step.get('uses', '').startswith('actions/cache/save@')]
         self.assertIn("github.ref == 'refs/heads/main'", save['if'])
@@ -217,6 +218,11 @@ elif sys.argv[1:3] == ['fuzz', 'coverage']:
         binary.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$COMMAND_LOG"\n'
                           'case "$*" in *--build*) exit "${BUILD_EXIT:-0}";; esac\n')
         binary.chmod(0o755)
+        # The lane calls the CI-only corpus script directly.
+        python = self.root / 'scripts/lib/python.sh'
+        python.parent.mkdir(parents=True, exist_ok=True)
+        python.write_text('#!/bin/sh\nprintf "python %s\\n" "$*" >> "$COMMAND_LOG"\n')
+        python.chmod(0o755)
         for status in ('0', '19'):
             commands = self.root / 'commands'
             commands.write_text('')

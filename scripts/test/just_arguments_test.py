@@ -59,7 +59,6 @@ if os.environ.get('ENV_LOG'):
       'build': ['--exec', 'cargo', 'build', '--locked', '--workspace', '--all-targets', '--all-features'],
       'plan': ['rail', 'plan', '--explain'],
       'test': [], 'test-miri': [], 'test-fuzz': [], 'test-fuzz-asan': [],
-      'test-fuzz-ci': ['scripts/test/fuzz_ci.py'],
       'test-provider-interop': ['scripts/test/provider_interop.py'],
       'test-provider-bogo': ['scripts/test/provider_bogo.py'],
       'bench-provider-scorecard': ['scripts/bench/provider_scorecard.py'],
@@ -72,8 +71,6 @@ if os.environ.get('ENV_LOG'):
       'ct-validate': ['scripts/ct/validate.py'],
       'ct-renew': ['scripts/ct/renew_waivers.py'],
       'stack-frames': ['scripts/stack/frames.py'],
-      'ci-stack': ['scripts/stack/frames.py', '--whole-calls', 'all', '--all-configurations',
-                   '--budgets', '.config/stack-budgets.json', '--allowances', '.config/stack-allowances.json'],
       'stack-budgets': ['scripts/stack/frames.py', '--whole-calls', 'all', '--all-configurations',
                         '--write-budgets', '.config/stack-budgets.json'],
       'stack-residue': ['scripts/stack/residue.py'],
@@ -118,7 +115,7 @@ if os.environ.get('ENV_LOG'):
       assert env_log.read_text().splitlines() == ['"1"'], (recipe, env_log.read_text())
     env.pop('ENV_LOG')
     env.pop('HOME', None)
-    run('ci-check', [], [['native']])
+    run('check', [], [['check']])
     covered = set(prefixes) | {'ssh', 'ssh-create', 'ssh-just', 'ssh-cargo'}
     assert set(re.findall(r'^([\w-]+).*\*args:', source, re.M)) == covered
   print('Just argument forwarding regressions passed')

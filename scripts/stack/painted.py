@@ -6,8 +6,10 @@ running Linux GNU host and derives their allowances. `worker` measures the
 provider TLS worker's high-water mark for every scenario of
 `tools/stack-paint`, one fresh process each. Both build the tool with the
 shipping release profile unless `--binary-dir` names prebuilt binaries.
-`judge` checks saved reports of several targets against the committed
-allowances and budgets, after every target has measured.
+`judge` checks the saved reports of every target after all of them have
+measured: each worker against its committed budget, and each expected report
+for presence. It writes the edge allowances of the same run for
+`frames.py --allowances`, so no allowance is committed.
 """
 
 from __future__ import annotations
@@ -33,7 +35,6 @@ DECLARED_EDGES = ("calloc", "malloc", "free", "memcpy", "memmove", "memset", "me
 STACK_CAP = 8 * 1024 * 1024
 EDGES_KIND = "rscrypto.stack.libc-edges"
 WORKER_KIND = "rscrypto.stack.tls-worker"
-DEFAULT_ALLOWANCES = ROOT / ".config" / "stack-allowances.json"
 DEFAULT_WORKER_BUDGETS = ROOT / ".config" / "stack-worker-budgets.json"
 
 
@@ -170,31 +171,12 @@ def measure_edges(binaries: Path, target: str) -> dict[str, object]:
   return report
 
 
-def check_edges(report: dict[str, object], path: Path) -> list[str]:
-  committed = json.loads(path.read_text()).get(str(report["target"]))
-  if committed is None:
-    return [f"{path} has no allowances for {report['target']}"]
-  problems = []
-  for name, entry in report["edges"].items():
-    limit = committed["edges"].get(name)
-    if limit is None:
-      problems.append(f"{name}: no committed allowance")
-    elif entry["allowance_bytes"] > limit:
-      problems.append(f"{name}: measured allowance {entry['allowance_bytes']} B exceeds the committed {limit} B")
-  if committed["libc"] != report["libc_identity"]:
-    print(f"note: committed allowances name {committed['libc']!r}; this host is {report['libc_identity']!r}",
-          flush=True)
-  return problems
-
-
-def write_allowances(reports: list[dict[str, object]], path: Path, evidence: str) -> None:
-  document = json.loads(path.read_text()) if path.exists() else {}
-  for report in reports:
-    document[str(report["target"])] = {
-      "libc": report["libc_identity"],
-      "edges": {name: report["edges"][name]["allowance_bytes"] for name in DECLARED_EDGES},
-      "evidence": evidence,
-    }
+def write_allowances(reports: list[dict[str, object]], path: Path) -> None:
+  """Write the measured edge allowances of these reports in the `frames.py --allowances` form."""
+  document = {str(report["target"]): {
+    "libc": report["libc_identity"],
+    "edges": {name: report["edges"][name]["allowance_bytes"] for name in DECLARED_EDGES},
+  } for report in reports}
   path.write_text(json.dumps(dict(sorted(document.items())), indent=2) + "\n")
 
 
@@ -252,8 +234,8 @@ def check_worker(report: dict[str, object], path: Path) -> list[str]:
   return problems
 
 
-def judge(reports: list[dict[str, object]], expected: list[str], allowances: Path, budgets: Path) -> list[str]:
-  """Check each saved report, and require every report of each expected target.
+def judge(reports: list[dict[str, object]], expected: list[str], budgets: Path) -> list[str]:
+  """Check each saved worker report, and require every report of each expected target.
 
   An expected target needs a native and a portable worker report, and on Linux GNU also an edge report.
   """
@@ -262,7 +244,7 @@ def judge(reports: list[dict[str, object]], expected: list[str], allowances: Pat
   for report in reports:
     target = str(report["target"])
     if report["kind"] == EDGES_KIND:
-      name, report_problems = "edges", check_edges(report, allowances)
+      name, report_problems = "edges", []
     else:
       name, report_problems = f"worker {report['configuration']}", check_worker(report, budgets)
     found.add((target, name))
@@ -300,8 +282,7 @@ def save(output: Path | None, name: str, report: dict[str, object], echo: bool) 
 def main(argv: list[str] | None = None) -> int:
   parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
   parser.add_argument("measurement", choices=("edges", "worker", "record", "judge"),
-                      help="record writes committed allowances or worker budgets from saved reports. "
-                           "judge checks saved reports against them")
+                      help="record writes worker budgets from saved reports. judge checks saved reports")
   parser.add_argument("reports", nargs="*", type=Path, help="record and judge: saved JSON reports")
   parser.add_argument("--target", help="target tuple of the binaries (default: the host)")
   parser.add_argument("--binary-dir", type=Path, help="directory of prebuilt binaries; skips the build")
@@ -309,9 +290,9 @@ def main(argv: list[str] | None = None) -> int:
   parser.add_argument("--all-configurations", action="store_true", help="worker: measure native and portable builds")
   parser.add_argument("--output", type=Path, help="directory for the JSON reports")
   parser.add_argument("--check", nargs="?", const=None, default=argparse.SUPPRESS, type=Path,
-                      help="compare against the committed allowances or worker budgets (default file when omitted)")
-  parser.add_argument("--write", type=Path, help="edges: merge this target's allowances into FILE")
-  parser.add_argument("--evidence", default="", help="edges: evidence note recorded with --write")
+                      help="worker: compare against the committed budgets (default file when omitted)")
+  parser.add_argument("--allowances", type=Path,
+                      help="judge: write the measured edge allowances of the reports to FILE for frames.py")
   parser.add_argument("--write-budgets", type=Path, nargs="?", const=DEFAULT_WORKER_BUDGETS, default=None,
                       help="worker: merge this target's budgets into FILE")
   parser.add_argument("--print-reports", action="store_true", help="also print each full JSON report")
@@ -335,16 +316,15 @@ def main(argv: list[str] | None = None) -> int:
   if args.measurement == "judge":
     if not args.expect:
       parser.error("judge needs at least one --expect TARGET")
-    problems = judge(reports, args.expect, DEFAULT_ALLOWANCES, DEFAULT_WORKER_BUDGETS)
+    problems = judge(reports, args.expect, DEFAULT_WORKER_BUDGETS)
+    if args.allowances is not None:
+      write_allowances(edges, args.allowances)
     if not problems:
-      print(f"{len(reports)} report(s) are within their committed allowances and budgets, and none is absent.")
+      print(f"{len(reports)} report(s) are within their committed budgets, and none is absent.")
   elif args.measurement == "record":
-    if not reports:
-      parser.error("record takes saved libc-edge or TLS-worker reports")
-    if edges:
-      write_allowances(edges, args.write or DEFAULT_ALLOWANCES, args.evidence)
-    if workers:
-      write_worker_budgets(workers, args.write_budgets or DEFAULT_WORKER_BUDGETS)
+    if not workers or edges:
+      parser.error("record takes saved TLS-worker reports; edge allowances come from each CI run")
+    write_worker_budgets(workers, args.write_budgets or DEFAULT_WORKER_BUDGETS)
     return 0
   elif args.measurement == "edges":
     if "linux-gnu" not in target:
@@ -357,10 +337,6 @@ def main(argv: list[str] | None = None) -> int:
       print(f"{target} {name}: {entry['max_below_entry_bytes']} B below entry ({entry['deepest_case']}, "
             f"{entry['calls']} calls); allowance {entry['allowance_bytes']} B", flush=True)
     print(f"libc: {report['libc_identity']}", flush=True)
-    if check is not False:
-      problems = check_edges(report, check or DEFAULT_ALLOWANCES)
-    if args.write is not None:
-      write_allowances([report], args.write, args.evidence)
   else:
     configurations = [False, True] if args.all_configurations else [args.portable]
     reports = []

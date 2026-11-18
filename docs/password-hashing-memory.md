@@ -169,7 +169,7 @@ the [Argon2 tests](../src/auth/argon2/mod.rs), [scrypt tests](../src/auth/scrypt
 
 Passed checks:
 
-- `just ci-check`: formatting, native and portable host Clippy, independent
+- The host check without repairs (`scripts/check/check.sh native`): formatting, native and portable host Clippy, independent
   workspace lints, and all-feature Rustdoc. This read-only gate preserved the
   checkout's pre-existing edits.
 - `just test --release --lib -E 'test(auth::argon2) | test(auth::scrypt) | test(slow_secret_operations)'`:

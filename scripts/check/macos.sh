@@ -13,7 +13,7 @@ unset RSCRYPTO_SKIP_DOCTESTS
   echo 'macOS validation requires an aarch64-apple-darwin Rust toolchain.' >&2
   exit 1
 }
-just ci-check
+scripts/check/check.sh native
 just test --all --release
 just test --all --release --portable
 just test-evidence

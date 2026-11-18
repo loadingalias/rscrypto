@@ -664,7 +664,7 @@ They have no cleanup claim.
 
 ## Optimized evidence
 
-`just check` and `just ci-check` do not verify optimized zeroization.
+`just check` and the CI host check do not verify optimized zeroization.
 Source cleanup and passing tests do not prove that secret stores survive optimization.
 Machine-code evidence applies only to the compiler, target, features, and operation inspected.
 

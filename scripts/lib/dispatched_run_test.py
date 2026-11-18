@@ -16,7 +16,6 @@ spec.loader.exec_module(dispatched_run)
 
 MINUTE = 60
 RUN = 7
-PARENT = 1
 URL = 'https://github.com/owner/repo/actions/runs/7'
 
 
@@ -38,12 +37,11 @@ class FakeGitHub:
     """Serve the dispatched run and its caller's jobs as functions of elapsed time."""
 
     def __init__(self, *, started_at=None, completed_at=None, conclusion='success',
-                 sibling_failed_at=None, failures=()):
+                 failures=()):
         self.now = 0
         self.started_at = started_at
         self.completed_at = completed_at
         self.conclusion = conclusion
-        self.sibling_failed_at = sibling_failed_at
         self.failures = list(failures)
         self.cancelled_at = None
         self.calls = []
@@ -74,11 +72,6 @@ class FakeGitHub:
         if path.startswith(f'/actions/runs/{RUN}/jobs'):
             return {'jobs': [{'name': 'execute', 'conclusion': None,
                               'status': 'in_progress' if self.reached(self.started_at) else 'queued'}]}
-        if path.startswith(f'/actions/runs/{PARENT}/jobs'):
-            failed = self.reached(self.sibling_failed_at)
-            return {'jobs': [{'name': 'riscv64-linux', 'status': 'in_progress', 'conclusion': None},
-                             {'name': 'x86_64-linux', 'status': 'completed',
-                              'conclusion': 'failure' if failed else 'success'}]}
         raise AssertionError(f'unexpected request {method} {path}')
 
     def sleep(self, seconds):
@@ -104,7 +97,7 @@ class DispatchedRun(unittest.TestCase):
         with contextlib.redirect_stdout(output):
             status = dispatched_run.run(
                 github, workflow='riscv.yml', ref='main', inputs={'suite': 'tests'}, queue_minutes=queue_minutes,
-                state=self.state, parent=PARENT, label='RISC-V', clock=lambda: github.now, sleep=github.sleep)
+                state=self.state, label='RISC-V', clock=lambda: github.now, sleep=github.sleep)
         return status, output.getvalue()
 
     def test_dispatches_the_requested_ref_and_inputs(self):
@@ -145,15 +138,6 @@ class DispatchedRun(unittest.TestCase):
         self.assertEqual(status, 0)
         self.assertEqual(github.cancels(), [])
 
-    def test_failed_caller_job_stops_the_dispatched_run(self):
-        for started_at in (None, 5 * MINUTE):
-            with self.subTest(started_at=started_at):
-                github = FakeGitHub(started_at=started_at, completed_at=200 * MINUTE, sibling_failed_at=10 * MINUTE)
-                status, output = self.run_with(github, queue_minutes=0)
-                self.assertEqual(status, 1)
-                self.assertEqual(github.cancelled_at, 10 * MINUTE)
-                self.assertIn('stopped (cancelled) after x86_64-linux failed', output)
-
     def test_transient_api_failures_are_retried_and_others_are_not(self):
         github = FakeGitHub(started_at=0, completed_at=5 * MINUTE,
                             failures=[http_error(502), urllib.error.URLError('reset'), http_error(429)])
@@ -191,11 +175,10 @@ class DispatchedRun(unittest.TestCase):
                 self.assertEqual(output.count('::warning::'), 1)
                 self.assertEqual(github.cancels(), [])
 
-    def test_missing_child_retries_are_bounded_and_parent_errors_are_fatal(self):
+    def test_missing_child_retries_are_bounded(self):
         for missing, expected_time in (
                 (f'/actions/runs/{RUN}', 9 * MINUTE),
-                (f'/actions/runs/{RUN}/jobs?per_page=100', 9 * MINUTE),
-                (f'/actions/runs/{PARENT}/jobs?per_page=100', 0)):
+                (f'/actions/runs/{RUN}/jobs?per_page=100', 9 * MINUTE)):
             with self.subTest(path=missing):
                 github = FakeGitHub()
                 request = github.request

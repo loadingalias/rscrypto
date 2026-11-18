@@ -241,7 +241,7 @@ class LinuxInstall(unittest.TestCase):
         result, calls, _ = self.provision('x86_64-linux', profile='ci-compat')
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         installs = [c for c in calls if c[0] == 'cargo' and 'binstall' in c]
-        # Nextest runs the provider runtime matrix that `just ci-provider` executes in this row.
+        # Nextest runs the provider runtime matrix that `provider.py runtime` executes in this row.
         self.assertEqual([c[-1] for c in installs], [f"just@{CATALOG['cargo']['just']}",
                                                      f"cargo-nextest@{CATALOG['cargo']['cargo-nextest']}"])
         archives = [c[-2] for c in python(calls) if 'install-archive' in c]

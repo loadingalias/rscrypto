@@ -222,36 +222,38 @@ if name == 'cargo' and args[0] == 'deny':
             pending.append(dependency)
       return expanded
 
-    # One canonical toolchain checks every target.
+    # One canonical toolchain checks every target. `check` repairs and then validates the host; `native`
+    # validates the host without repairs; `targets` runs Clippy for the catalog without the host and Apple.
     channel = tomllib.loads((root / 'rust-toolchain.toml').read_text())['toolchain']['channel']
-    for mode in ('fix', 'local', 'native'):
+    built = {'riscv64gc-unknown-linux-gnu', 'powerpc64le-unknown-linux-gnu', 's390x-unknown-linux-gnu'}
+    cross = [t for t in targets if not t.endswith('-apple-darwin') and t not in built]
+    for mode in ('check', 'native', 'targets'):
       result, commands = run(mode)
       assert result.returncode == 0, result.stderr
       assert 'Vector fixtures: 1 payloads verified across 1 manifests' in result.stdout
       inventories = [tuple(c) for c in commands if c[0] == 'rustup']
       assert len(inventories) == len(set(inventories)) == 2, inventories
       clippy = [c for c in commands if c[0] == 'cargo' and 'clippy' in c and 'rscrypto' in c]
-      expected = targets if mode != 'native' else ['aarch64-apple-darwin']
-      assert len(clippy) == 2 * len(expected), clippy
+      expected = cross if mode == 'targets' else ['aarch64-apple-darwin']
+      passes = 2 if mode == 'check' else 1
+      assert len(clippy) == 2 * passes * len(expected), clippy
+      assert sum('--fix' in c for c in clippy) == (2 * len(expected) if mode == 'check' else 0)
       provider = [c for c in commands if c[0] == 'cargo' and 'clippy' in c and 'rscrypto-rustls' in c]
       std_targets = {t for t in expected if '-none' not in t and t != 'wasm32-unknown-unknown'}
-      assert len(provider) == 2 * len(std_targets), provider
+      assert len(provider) == 2 * passes * len(std_targets), provider
       assert {c[c.index('--target') + 1] for c in provider} == std_targets
       for command in provider:
         selected = set(command[command.index('--features') + 1].split(','))
         assert ('--release' in command) != ('portable-only' in selected)
-        assert ('--fix' in command) == (mode == 'fix')
         assert 'full' not in selected and 'hkdf' in selected
         assert '--workspace' not in command
       for target in expected:
         rows = [c for c in clippy if c[c.index('--target') + 1] == target]
-        assert len(rows) == 2
+        assert len(rows) == 2 * passes
         for command in rows:
           selected = set(command[command.index('--features') + 1].split(','))
           assert ('--release' in command) != ('portable-only' in selected)
-          assert ('--fix' in command) == (mode == 'fix')
-          assert ('--allow-dirty' in command) == (mode == 'fix')
-          assert ('--allow-staged' in command) == (mode == 'fix')
+          assert ('--allow-dirty' in command) == ('--fix' in command) == ('--allow-staged' in command)
           assert '--locked' in command and '--no-default-features' in command
           assert command[command.index('-p') + 1] == 'rscrypto' and '--workspace' not in command
           assert ('--all-targets' in command) == (target == 'aarch64-apple-darwin')
@@ -265,40 +267,26 @@ if name == 'cargo' and args[0] == 'deny':
           if target == 'wasm32-wasip1':
             assert {'std', 'getrandom', 'full'} <= selected and 'parallel' not in selected
       fmt = [c for c in commands if c[:3] == ['cargo', '+' + channel, 'fmt']]
-      assert fmt == ([['cargo', '+' + channel, 'fmt', '--all']] * 2 if mode == 'fix' else
-                     [['cargo', '+' + channel, 'fmt', '--all', '--', '--check']])
+      check = [['cargo', '+' + channel, 'fmt', '--all', '--', '--check']]
+      assert fmt == ([['cargo', '+' + channel, 'fmt', '--all']] * 2 + check if mode == 'check' else check)
       assert not any('plan' in c for c in commands)
-      deny = [c for c in commands if c[:2] == ['cargo', 'deny']]
-      assert len(deny) == (0 if mode in ('fix', 'native') else 2)
-      assert (['cargo', 'audit'] in commands) == (mode not in ('fix', 'native'))
-      if deny:
-        assert all('--target' not in c and '--workspace' in c and '--locked' in c for c in deny)
-        assert '--exclude-dev' in deny[0] and deny[0][-3:] == ['-D', 'warnings', 'bans']
-        assert '--exclude-dev' not in deny[1] and deny[1][-5:] == ['-D', 'warnings', '-A', 'duplicate', 'all']
-      assert (['lint-independent-workspaces.sh'] in commands) == (mode != 'fix')
-      assert (['p384.py', 'check'] in commands) == (mode != 'fix')
-      assert (['rsa_pair.py', 'check'] in commands) == (mode != 'fix')
-      assert (['provenance.py', 'check'] in commands) == (mode != 'fix')
-    for target in ('riscv64gc-unknown-linux-gnu', 'powerpc64le-unknown-linux-gnu', 's390x-unknown-linux-gnu'):
+      # Dependency policy runs only in CI, through scripts/check/dependencies.sh.
+      assert not any(c[:2] in (['cargo', 'deny'], ['cargo', 'audit']) for c in commands)
+      for extra in (['lint-independent-workspaces.sh'], ['p384.py', 'check'], ['rsa_pair.py', 'check'],
+                    ['provenance.py', 'check']):
+        assert (extra in commands) == (mode != 'targets'), (mode, extra)
+    # The cross build validates each cross-built target as its own host, without repairs.
+    for target in sorted(built):
       result, commands = run('target', target)
       assert result.returncode == 0, result.stderr
-      cross = [c for c in commands if c[0] == 'cargo' and 'clippy' in c and 'rscrypto' in c]
-      assert len(cross) == 2
-      assert all('--all-targets' in c and c[c.index('--target') + 1] == target for c in cross)
-      assert all(c[1] == '+' + channel for c in cross)
-      assert sum('--release' in c for c in cross) == 1
-      assert ['lint-independent-workspaces.sh'] in commands
-      assert ['p384.py', 'check'] in commands
-      assert ['rsa_pair.py', 'check'] in commands
-      assert ['provenance.py', 'check'] in commands
+      rows = [c for c in commands if c[0] == 'cargo' and 'clippy' in c and 'rscrypto' in c]
+      assert len(rows) == 2 and sum('--release' in c for c in rows) == 1
+      assert all('--all-targets' in c and c[c.index('--target') + 1] == target for c in rows)
+      assert all(c[1] == '+' + channel for c in rows)
+      for extra in (['lint-independent-workspaces.sh'], ['p384.py', 'check'], ['rsa_pair.py', 'check'],
+                    ['provenance.py', 'check']):
+        assert extra in commands, (target, extra)
       assert not any('--fix' in c for c in commands)
-    result, commands = run('check')
-    assert result.returncode == 0, result.stderr
-    inventories = [c for c in commands if c[0] == 'rustup']
-    assert len(inventories) == 2, inventories
-    clippy = [c for c in commands if c[0] == 'cargo' and 'clippy' in c and 'rscrypto' in c]
-    assert len(clippy) == 4 * len(targets)
-    assert sum('--fix' in c for c in clippy) == 2 * len(targets)
     tooling = tomllib.loads((source / '.config/tooling.toml').read_text())
     hosts = {row['rust-host'] for row in tooling.values() if isinstance(row, dict) and 'rust-host' in row}
     hosts.add('aarch64-apple-darwin')
@@ -306,21 +294,27 @@ if name == 'cargo' and args[0] == 'deny':
       result, commands = run('native', CHECK_HOST=host, RUSTUP_TOOLCHAIN='wrong-ambient-channel')
       assert result.returncode == 0, result.stderr
       assert all(c[1] == '+' + channel for c in commands if c[0] == 'cargo' and 'clippy' in c)
-    result, commands = run('fix', CHECK_MISSING='thumbv6m-none-eabi')
+    result, commands = run('targets', CHECK_MISSING='thumbv6m-none-eabi')
     assert result.returncode != 0 and not any(c[0] == 'cargo' for c in commands)
     result, commands = run('native', CHECK_CLIPPY_EXIT='7')
-    assert result.returncode == 7 and not any(c[:2] == ['cargo', 'deny'] for c in commands)
+    assert result.returncode == 7 and not any(c[:2] == ['cargo', 'doc'] for c in commands)
+    # The policy stops at the first failing scope and never reaches the audit.
     for scope, count in (('normal', 1), ('complete', 2)):
-      result, commands = run('local', CHECK_DENY_FAIL=scope)
+      log.write_text('')
+      result = subprocess.run(['bash', str(root / 'scripts/check/dependencies.sh')], cwd=root,
+                              env={**environment, 'CHECK_DENY_FAIL': scope}, capture_output=True, text=True,
+                              timeout=30)
+      commands = [json.loads(line) for line in log.read_text().splitlines()]
       assert result.returncode == 9, result.stderr
       assert len([c for c in commands if c[:2] == ['cargo', 'deny']]) == count
-      assert ['cargo', 'audit'] not in commands and not any(c[:2] == ['cargo', 'doc'] for c in commands)
-    result, commands = run('fix', CHECK_INVENTORY_EXIT='19')
+      assert ['cargo', 'audit'] not in commands
+    result, commands = run('check', CHECK_INVENTORY_EXIT='19')
     assert result.returncode == 19 and not any(c[0] == 'cargo' for c in commands)
-    result, commands = run('bogus')
-    assert result.returncode == 2 and not commands
+    for args in (('bogus',), ('target',), ('native', 'extra'), ('fix',), ('local',)):
+      result, commands = run(*args)
+      assert result.returncode == 2 and not commands, args
     payload.write_bytes(b'corrupted')
-    for args in (('fix',), ('local',), ('native',), ('check',), ('target', 's390x-unknown-linux-gnu')):
+    for args in (('check',), ('native',), ('targets',), ('target', 's390x-unknown-linux-gnu')):
       result, commands = run(*args)
       assert result.returncode != 0 and 'vector checksum mismatch' in result.stderr, result.stderr
       assert not any(c[0] == 'cargo' for c in commands), commands

@@ -46,8 +46,9 @@ jobs:
     permissions:
       contents: read
       actions: read # Download the prepared suite of the CI run.
+    # Each CPU configuration is its own signal: one failure must not cancel the others.
     strategy:
-      fail-fast: true
+      fail-fast: false
       matrix:
         include:
           # Every extension that QEMU supports, at the minimum vector length.

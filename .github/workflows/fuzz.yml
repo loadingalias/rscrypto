@@ -36,8 +36,9 @@ defaults:
 jobs:
   fuzz:
     name: ${{ matrix.task }} (${{ matrix.platform }})
+    # Each architecture and Miri is its own signal: one failure must not cancel the others.
     strategy:
-      fail-fast: true
+      fail-fast: false
       matrix:
         platform: ${{ fromJSON(inputs.architectures == 'all' && '["x86_64-linux","aarch64-linux"]' || inputs.architectures == 'aarch64-linux' && '["aarch64-linux"]' || '["x86_64-linux"]') }}
         task: [fuzz]
@@ -71,7 +72,7 @@ jobs:
           FUZZ_CAMPAIGN: ${{ inputs.campaign }}
         run: |
           source "$HOME/.local/share/rscrypto-tooling/environment.sh"
-          just test-fuzz-ci plan
+          scripts/lib/python.sh scripts/test/fuzz_ci.py plan
           rustc +"$(scripts/lib/toolchain.sh)" -vV > "$RSCRYPTO_FUZZ_LOG_DIR/compiler.txt"
       - name: Restore corpus checkpoint
         if: matrix.task == 'fuzz'
@@ -84,7 +85,7 @@ jobs:
         if: matrix.task == 'fuzz'
         run: |
           source "$HOME/.local/share/rscrypto-tooling/environment.sh"
-          just test-fuzz-ci restore
+          scripts/lib/python.sh scripts/test/fuzz_ci.py restore
           just test-fuzz --build --all
           RSCRYPTO_FUZZ_CORPUS=local just test-fuzz-asan --all
       - name: Fuzz selected targets
@@ -101,12 +102,12 @@ jobs:
         if: matrix.task == 'fuzz'
         run: |
           source "$HOME/.local/share/rscrypto-tooling/environment.sh"
-          just test-fuzz-ci snapshot
+          scripts/lib/python.sh scripts/test/fuzz_ci.py snapshot
       - name: Minimize daily corpora and report source coverage
         if: matrix.task == 'fuzz' && steps.plan.outputs.retain == 'true'
         run: |
           source "$HOME/.local/share/rscrypto-tooling/environment.sh"
-          just test-fuzz-ci retain
+          scripts/lib/python.sh scripts/test/fuzz_ci.py retain
       - name: Save corpus checkpoint
         if: matrix.task == 'fuzz' && github.ref == 'refs/heads/main'
         uses: "actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9" # v6.1.0

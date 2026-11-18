@@ -101,8 +101,9 @@ jobs:
     name: Prepare ${{ matrix.platform }} / ${{ matrix.family }}
     runs-on: runs-on=${{ github.run_id }}-${{ matrix.target }}-${{ matrix.family }}/runner=bench-cross-build/env=production
     timeout-minutes: ${{ matrix.timeout }}
+    # Each lane prepares its own build, so a failure in one must not cancel the others.
     strategy:
-      fail-fast: true
+      fail-fast: false
       matrix: ${{ fromJSON(needs.plan.outputs.builds) }}
     env:
       DISPATCH_INPUTS: ${{ needs.plan.outputs.request }}
@@ -175,10 +176,12 @@ jobs:
 
   bench:
     needs: [plan, cross-build]
-    if: ${{ !cancelled() && needs.plan.result == 'success' && (needs.cross-build.result == 'success' || needs.cross-build.result == 'skipped') }}
+    # A failed cross build fails only the lane that downloads it.
+    if: ${{ !cancelled() && needs.plan.result == 'success' }}
     name: Measure ${{ matrix.name }} / ${{ matrix.family }}
+    # Each lane is its own measurement: one failure must not cancel the others.
     strategy:
-      fail-fast: true
+      fail-fast: false
       matrix: ${{ fromJSON(needs.plan.outputs.measurements) }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: ${{ matrix.timeout }}

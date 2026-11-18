@@ -142,8 +142,9 @@ class CrossWorkflow(unittest.TestCase):
                 self.assertEqual(download['with']['name'], artifact)
                 self.assertNotIn('run-id', download['with'])
                 if suite != 'profile':
-                    self.assertEqual(build['strategy']['fail-fast'], 'true')
-                    self.assertEqual(native['strategy']['fail-fast'], 'true')
+                    # Each target is its own signal: one failure must not cancel the others.
+                    self.assertEqual(build['strategy']['fail-fast'], 'false')
+                    self.assertEqual(native['strategy']['fail-fast'], 'false')
                 if suite in ('tests', 'ct'):
                     self.assertIn('just test-transfer', prepare['run'])
 
@@ -176,8 +177,7 @@ class CrossWorkflow(unittest.TestCase):
                     self.assertEqual(evidence.extractfile('cross-results/summary.json').read(), payload)
 
     def test_no_leg_judges_stack_measurements_and_the_stack_job_waits_for_all(self):
-        # A judgement in one leg would fail it, and fail-fast or the RISC-V dispatcher would then
-        # cancel the legs that measure the other targets. So no leg judges, and each leg uploads.
+        # No leg judges its own measurements, and each leg uploads them. One job judges all of them.
         ci = read_yaml('.github/workflows/ci.yml')
         riscv = read_yaml('.github/workflows/riscv.yml')
         native = ci['jobs']['native']
@@ -203,7 +203,8 @@ class CrossWorkflow(unittest.TestCase):
                           'skipped': '${{ steps.execute.outputs.skipped }}'})
         check, = [step for step in stack['steps'] if step.get('name') == 'Check owned stack bounds against their budgets']
         self.assertEqual(check['if'], '${{ !cancelled() }}')
-        self.assertIn('just ci-stack\n', check['run'])
+        # The judge writes this run's measured libc allowances; the bounds compose exactly those.
+        self.assertIn('--allowances target/stack-paint/allowances.json', check['run'])
 
     def test_stack_judgement_expects_every_measuring_leg_and_names_an_unjudged_riscv_run(self):
         ci = read_yaml('.github/workflows/ci.yml')
@@ -244,7 +245,8 @@ class CrossWorkflow(unittest.TestCase):
                 arguments = (self.root / 'arguments').read_text().splitlines()
                 self.assertEqual(arguments[:2], ['scripts/stack/painted.py', 'judge'])
                 self.assertEqual(sorted(arguments[2:4]), reports)
-                self.assertEqual(sorted(arguments[4:]), sorted(f'--expect={target}' for target in expected))
+                self.assertEqual(arguments[-2:], ['--allowances', 'target/stack-paint/allowances.json'])
+                self.assertEqual(sorted(arguments[4:-2]), sorted(f'--expect={target}' for target in expected))
                 if reason:
                     message = f'The {riscv} painted-stack reports were not judged: {reason}.'
                     self.assertIn(f'::notice title=RISC-V stack not judged::{message}', result.stdout)

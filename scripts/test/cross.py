@@ -69,10 +69,10 @@ def prepare(target, archive):
     with tempfile.TemporaryDirectory(prefix='build-', dir=directory) as temporary:
         out = Path(temporary)
         # Same all-targets native/portable Clippy, independent workspaces, and docs.
-        subprocess.run(['just', 'ci-check-target', target], cwd=ROOT, env=env, check=True)
+        subprocess.run([str(ROOT / 'scripts/check/check.sh'), 'target', target], cwd=ROOT, env=env, check=True)
         metadata = {'nextest': version, 'rustc': subprocess.check_output(['rustc', '-vV'], env=env, text=True),
                     'profile': tomllib.loads((ROOT / 'Cargo.toml').read_text())['profile']['release'],
-                    'checks': 'ci-check-target', 'modes': {}}
+                    'checks': 'check.sh target', 'modes': {}}
         metadata['linker'] = {'path': str(compiler), 'sha256': bundle.digest(compiler),
                              'version': subprocess.check_output([str(compiler), '--version'], text=True)}
         for mode in MODES:

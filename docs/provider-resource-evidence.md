@@ -221,7 +221,7 @@ AEAD root through a std `OnceLock` of function pointers, which ran `Once`
 (indirect calls, futex `syscall`, no frame records) and made each dispatched
 call indirect. The AES-GCM bounds are dominated by the fixed 3 KiB frame of
 the CTR scrub, `backend::stack::scrub_dead_stack::<384>`, which clears the stack
-below the CTR worker. The AEAD columns of both tables come from `just ci-stack`
+below the CTR worker. The AEAD columns of both tables come from the whole-call review
 on 2026-11-09, after that scrub shrank from 8 KiB; the other columns keep their
 earlier reviews. The roots
 reach `memcpy` and `memset` on every target except IBM Z, and `getauxval`
@@ -265,7 +265,7 @@ follows a GOT-loaded import through full-width copies into caller-saved
 registers, which calls and implicit register writers end.
 
 Every composite ML-DSA root has an owned bound and a whole-call bound on every
-target and configuration (`just ci-stack`, 2026-11-15). The 8 roots are
+target and configuration (whole-call review, 2026-11-15). The 8 roots are
 deterministic, hedged, and prepared signing, and verification, for ML-DSA-65
 with Ed25519 and with ECDSA P-256. On x86-64, SHA-512 selects one of five
 kernels through an exhaustive `match`. LLVM lowers it to a 13-entry jump table
@@ -329,37 +329,9 @@ every input.
 executable binds, so the loader's IFUNC selection for the host CPU applies. An
 allowance is the deepest use below the edge's entry stack pointer over the
 measured calls, rounded up to 16 bytes, plus the ABI red zone, then 12.5% more,
-rounded up to 64 bytes. [`.config/stack-allowances.json`](../.config/stack-allowances.json)
-records each target's allowances and libc identity.
-
-| Linux target | `calloc` | `malloc` | `free` | `memcpy` | `memmove` | `memset` | `memcmp` | `bcmp` | `getauxval` |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| x86-64 GNU | 576 | 576 | 576 | 192 | 192 | 192 | 192 | 192 | 192 |
-| AArch64 GNU | 640 | 576 | 512 | 0 | 0 | 0 | 0 | 0 | 64 |
-| POWER64LE GNU | 896 | 896 | 960 | 384 | 384 | 384 | 384 | 448 | 384 |
-| IBM Z GNU | 1,216 | 1,152 | 1,024 | 0 | 0 | 0 | 0 | 0 | 0 |
-| RISC-V 64 GNU | 576 | 576 | 512 | 128 | 128 | 64 | 64 | 64 | 64 |
-
-The measured deployments are Ubuntu 24.04 glibc 2.39 on the CI runners of
-CI 42061504225 at `9211e330`: x86-64 on AMD EPYC 9R14 (2.39-0ubuntu8.8),
-AArch64 on Graviton3 (2.39-0ubuntu8.8), POWER10, IBM z15, and RISC-V
-(2.39-0ubuntu8.9). For x86-64 and AArch64, the committed value is the larger
-of that run and an Ubuntu 26.04 glibc 2.43 (2.43-2ubuntu2.4) measurement on the
-Granite Rapids and Graviton4 dev machines. Each entry names its exact libc
-build hash, kernel, and CPU; `--check` reports a different identity.
-
-The process-origin edges of `src/platform/process.rs` have their own allowances.
-The same two dev machines measured them for x86-64 and AArch64 on 2026-11-17.
-The CI runners of CI 44200652600 at `832cb1ca` measured them for POWER, IBM Z,
-and RISC-V:
-
-| Linux target | `getpid` | `mmap` | `madvise` |
-| --- | ---: | ---: | ---: |
-| x86-64 GNU | 192 | 192 | 192 |
-| AArch64 GNU | 0 | 64 | 64 |
-| POWER64LE GNU | 384 | 384 | 384 |
-| IBM Z GNU | 0 | 256 | 0 |
-| RISC-V 64 GNU | 0 | 64 | 0 |
+rounded up to 64 bytes. Each CI run measures the allowances on its own Linux runners, and its
+`stack` job composes them in the same run, so no allowance is committed. The `stack-paint-*` artifacts
+of the run hold each target's measured allowances, its libc build hash, kernel, and CPU.
 
 The memory functions and `getauxval` are frameless or nearly so on every
 measured target. The allocator edges are deepest in the pseudo-random workload
@@ -370,7 +342,7 @@ corruption reports, are not covered; they abort.
 
 ### Whole-call bounds
 
-`just ci-stack` composes these allowances with the owned bounds:
+The CI `stack` job composes these allowances with the owned bounds:
 `max(owned bound, max over reached edges of (entry depth + allowance))`. Every
 `--whole-calls all` root on all five Linux targets, native and portable, now
 has a whole-call bound, and CI fails a root without one or above 8 MiB.
@@ -514,10 +486,10 @@ just stack-residue --native-mldsa --output /path/to/new-residue
 ```
 
 The preparation reviews exit nonzero while a root has an unresolved owned edge
-or reaches a declared edge without an allowance; pass
-`--allowances .config/stack-allowances.json` to compose the committed ones.
-`just stack-allowances --check` and `just stack-worker --all-configurations
---check` repeat the measurements on a host against the committed files. The legacy scrub review passes on all ten retained artifacts; its
+or reaches a declared edge without an allowance; pass `--allowances FILE` with
+measured allowances (`painted.py judge --allowances FILE`) to compose them.
+`just stack-worker --all-configurations --check` repeats the worker measurement
+on a host against the committed budgets. The legacy scrub review passes on all ten retained artifacts; its
 explicit memory-leaf assumptions do not apply to the preparation gate.
 `check.log`, `test-scripts.log`, `frames-tests-final.log`, and
 `scrub-regressions/` retain the corresponding validation output.

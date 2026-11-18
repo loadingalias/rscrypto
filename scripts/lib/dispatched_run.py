@@ -21,7 +21,6 @@ MAX_POLL_ERRORS = 10
 CANCEL_SECONDS = 120
 FORCE_CANCEL_AFTER = 60
 CANCEL_POLL_SECONDS = 5
-FAILED = {'failure', 'timed_out'}
 
 
 class GitHub:
@@ -107,7 +106,7 @@ def report_conclusion(result, label, url):
     return 1
 
 
-def run(api, *, workflow, ref, inputs, queue_minutes, state, parent, label,
+def run(api, *, workflow, ref, inputs, queue_minutes, state, label,
         clock=time.monotonic, sleep=time.sleep):
     """Return 0 when the dispatched run passes or never starts in time, 1 when it fails."""
     dispatched = api.request('POST', f'/actions/workflows/{workflow}/dispatches',
@@ -127,14 +126,9 @@ def run(api, *, workflow, ref, inputs, queue_minutes, state, parent, label,
     while True:
         pending_child = False
         try:
-            failed = sorted(job['name'] for job in jobs(api, parent) if job['conclusion'] in FAILED)
-            if failed:
-                result = cancel(api, run_id, clock=clock, sleep=sleep)
-                state.unlink()
-                annotate('error', f'{label} stopped ({result["conclusion"]}) after {", ".join(failed)} failed: {url}')
-                return 1
+            # A failure in another job of the caller does not stop this run: its result is still signal.
             # Only this known child's initial run/jobs reads may return a transient
-            # 404. A 404 from parent lookup, dispatch, or a started run remains fatal.
+            # 404. A 404 from dispatch or a started run remains fatal.
             pending_child = not started
             dispatched_run = api.request('GET', f'/actions/runs/{run_id}')
             if dispatched_run['status'] == 'completed':
@@ -203,7 +197,7 @@ def main():
         parser.error('--input must be NAME=VALUE')
     inputs = dict(value.split('=', 1) for value in args.input)
     return run(api, workflow=args.workflow, ref=args.ref, inputs=inputs, queue_minutes=args.queue_minutes,
-               state=args.state, parent=os.environ['GITHUB_RUN_ID'], label=args.label)
+               state=args.state, label=args.label)
 
 
 if __name__ == '__main__':

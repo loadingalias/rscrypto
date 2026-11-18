@@ -66,8 +66,9 @@ jobs:
     runs-on: runs-on=${{ github.run_id }}-${{ matrix.target }}/runner=ct-cross-build/env=production
     timeout-minutes: 45
     name: Prepare ${{ matrix.target }} CT
+    # Each target prepares its own evidence, so a failure in one must not cancel the others.
     strategy:
-      fail-fast: true
+      fail-fast: false
       matrix: ${{ fromJSON(needs.select.outputs.builds) }}
     env:
       TARGET: ${{ matrix.target }}
@@ -103,11 +104,13 @@ jobs:
 
   ct:
     needs: [select, cross-build]
-    if: ${{ !cancelled() && needs.select.result == 'success' && needs.select.outputs.native == 'true' && (needs.cross-build.result == 'success' || needs.cross-build.result == 'skipped') }}
+    # A failed cross build fails only the leg that downloads its preparation.
+    if: ${{ !cancelled() && needs.select.result == 'success' && needs.select.outputs.native == 'true' }}
     # Success means complete evidence, not a passing report; see the platform verdict jobs.
     name: ${{ matrix.platform }} evidence (${{ inputs.diagnostic_case && 'diagnostic' || 'full' }})
+    # Each platform is its own signal: one failure must not cancel the others.
     strategy:
-      fail-fast: true
+      fail-fast: false
       matrix: ${{ fromJSON(needs.select.outputs.matrix) }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: ${{ matrix.timeout }}
@@ -187,11 +190,11 @@ jobs:
   # cannot time out a queued job or cancel one job of a run, so this job dispatches
   # the RISC-V measurement as its own run and skips it when no runner starts it in
   # time. A started run must pass. It sits outside the CT matrix so that only this
-  # job, which runs no build or measurement tooling, holds actions: write; the script
-  # cancels the dispatched run when another job of this run fails.
+  # job, which runs no build or measurement tooling, holds actions: write. A failure
+  # in another job does not stop the RISC-V run.
   riscv64-linux:
     needs: [select, cross-build]
-    if: ${{ !cancelled() && needs.select.outputs.riscv != '' && needs.cross-build.result == 'success' }}
+    if: ${{ !cancelled() && needs.select.outputs.riscv != '' }}
     name: riscv64-linux (${{ inputs.diagnostic_case && 'diagnostic' || 'full' }})
     runs-on: ubuntu-24.04
     # GitHub-hosted jobs stop at six hours; this one waits for the queue and the run.

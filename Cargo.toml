@@ -18,7 +18,6 @@ include = [
   "/README.md",
   "/SECURITY.md",
   "/THREAT_MODEL.md",
-  "/CONTRIBUTING.md",
   "/.config/target-matrix.json",
   "/benchmark_results/OVERVIEW.md",
   "/testdata/rsa/fixtures/**",
