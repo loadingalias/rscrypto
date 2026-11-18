@@ -501,10 +501,8 @@ fn load_balancer_ids_match_independent_implementations() {
   ];
   let mut pairs = alloc::collections::BTreeSet::new();
   for line in files.iter().flat_map(|file| file.lines()) {
-    let fields: Vec<&str> = line.split(' ').collect();
-    let [rotation, key, server_id, nonce, id] = fields[..] else {
-      panic!("five fields: {line}")
-    };
+    let [rotation, key, server_id, nonce, id]: [&str; 5] =
+      line.split(' ').collect::<Vec<_>>().try_into().expect("five fields");
     let (server_id, nonce, id) = (hex(server_id), hex(nonce), hex(id));
     let config = LoadBalancerConfig::new(
       RotationId::new(rotation.parse().expect("rotation")).expect("rotation"),
@@ -514,18 +512,26 @@ fn load_balancer_ids_match_independent_implementations() {
       LoadBalancerKey::from_bytes(hex(key).try_into().expect("key")),
     )
     .expect("allowed lengths");
-    let issued = config.encode(&server_id, &nonce, &Failing).expect("Length mode draws nothing");
+    let issued = config
+      .encode(&server_id, &nonce, &Failing)
+      .expect("Length mode draws nothing");
     assert_eq!(issued.as_slice(), id, "encode {line}");
 
     let mut longer = id.clone();
     longer.resize(20, 0xee);
     for received in [&id, &longer] {
       let decoded = config.decode(received).expect("routable");
-      assert_eq!(decoded.as_slice(), server_id, "decode {} octets, {line}", received.len());
+      assert_eq!(
+        decoded.as_slice(),
+        server_id,
+        "decode {} octets, {line}",
+        received.len()
+      );
     }
     pairs.insert((server_id.len(), nonce.len()));
   }
-  let allowed = (1..=19_usize)
-    .flat_map(|server_id_len| (4..=19_usize.strict_sub(server_id_len)).map(move |nonce_len| (server_id_len, nonce_len)));
+  let allowed = (1..=19_usize).flat_map(|server_id_len| {
+    (4..=19_usize.strict_sub(server_id_len)).map(move |nonce_len| (server_id_len, nonce_len))
+  });
   assert!(pairs.into_iter().eq(allowed), "every allowed length pair");
 }
