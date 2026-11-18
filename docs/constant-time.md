@@ -59,6 +59,8 @@ The scanner works in a closed world. It stops with status 2 on a row that it can
   An encoding rule finds each transfer of control from the instruction bytes, by the opcode groups of the ISA manual,
   without the mnemonic tables. Each such row needs a control rule, and a transfer that encodes its destination
   needs a mnemonic whose destination the call graph follows. A missed transfer could drop a function from a closure.
+  An IBM Z `exrl` transfers when the instruction that it executes does. The linked binary holds that instruction at
+  the operand. In an object listing, the relocation after the `exrl` names it as a row of the same listing.
 - Bytes that do not decode, such as `.word` data or `<unknown>` padding, pass only when no edge from the entry reaches
   them. An indirect jump can reach any row, so such bytes in its function stop the scanner.
 - In the closure of each primitive under `[asm_select_branch]`, each row must also match an explicit effect rule:

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import functools
 import sys
 import hashlib
 import json
@@ -1704,7 +1705,39 @@ def s390x_transfer(code: bytes) -> str | None:
   return None
 
 
-def transfer_encoding(target: str, row: DecodedLine, image: LinkedImage | None) -> str | None:
+@functools.cache
+def listing_bytes(path: Path) -> dict[tuple[str, int], bytes]:
+  """The encoded bytes of each row of a disassembly listing, by section and address."""
+  rows, section = {}, ""
+  for line in path.read_text(errors="replace").splitlines():
+    if line.startswith("Disassembly of section "):
+      section = line.removeprefix("Disassembly of section ").rstrip(":")
+    elif (match := re.match(r"^\s*([0-9a-fA-F]+):\s+((?:[0-9a-fA-F]{2} )+)", line)) and not RELOCATION_LINE.match(line):
+      rows[(section, int(match.group(1), 16))] = bytes.fromhex(match.group(2))
+  return rows
+
+
+def executed_bytes(body: FunctionBody, row: DecodedLine, image: LinkedImage | None) -> bytes | None:
+  """The bytes of the instruction that an IBM Z `exrl` executes.
+
+  The linked image holds them at the operand address. An object listing names the template with the relocation on
+  the next line, `R_390_PC32DBL .text+0x4a`, whose addend counts from the relocated field, 2 bytes into the `exrl`.
+  The template is a row of that section in the same listing. An EXECUTE through a register (`ex`) has neither.
+  """
+  if row.mnemonic != "exrl":
+    return None
+  if image is not None:
+    match = re.fullmatch(r"%r\d+, 0x([0-9a-fA-F]+)(?: <.*>)?", row.operands)
+    first = image.read(int(match.group(1), 16), 1) if match else None
+    return image.read(int(match.group(1), 16), (2, 4, 4, 6)[first[0] >> 6]) if first else None
+  following = next((line for number, line in body.lines if number > row.number), "")
+  relocation = re.search(r"\bR_390_PC32DBL\s+(\S+)\+0x([0-9a-fA-F]+)\s*$", following)
+  if not RELOCATION_LINE.match(following) or relocation is None:
+    return None
+  return listing_bytes(body.path).get((relocation.group(1), int(relocation.group(2), 16) - 2))
+
+
+def transfer_encoding(target: str, body: FunctionBody, row: DecodedLine, image: LinkedImage | None) -> str | None:
   """Classify `row` by its encoding, independent of the mnemonic tables: "direct" for a transfer whose instruction
   holds its destination, "transfer" for any other transfer of control (through a register or memory, a return, a
   system call, or a trap), and None for an instruction that continues at the next one."""
@@ -1719,10 +1752,8 @@ def transfer_encoding(target: str, row: DecodedLine, image: LinkedImage | None) 
   kind = s390x_transfer(instruction_bytes(row))
   if kind != "execute":
     return kind
-  # The executed instruction must not transfer; an object listing, or an EXECUTE through a register, cannot show it.
-  match = re.fullmatch(r"%r\d+, 0x([0-9a-fA-F]+)(?: <.*>)?", row.operands)
-  first = image.read(int(match.group(1), 16), 1) if image is not None and match and row.mnemonic == "exrl" else None
-  executed = image.read(int(match.group(1), 16), (2, 4, 4, 6)[first[0] >> 6]) if first else None
+  # The executed instruction must not transfer, and an instruction that the scanner cannot read may.
+  executed = executed_bytes(body, row, image)
   return "transfer" if executed is None or s390x_transfer(executed) is not None else None
 
 
@@ -1768,7 +1799,7 @@ def control_errors(target: str, body: FunctionBody, image: LinkedImage | None) -
       if reachable is None or index in reachable:
         errors.append(f"{where}: an edge can reach bytes that do not decode")
       continue
-    kind = transfer_encoding(target, row, image)
+    kind = transfer_encoding(target, body, row, image)
     if kind is not None and not has_control_rule(target, row):
       errors.append(f"{where}: a transfer of control without a control rule")
     elif kind == "direct" and not follows_destination(row.mnemonic):

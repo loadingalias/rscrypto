@@ -1093,6 +1093,22 @@ def closed_world_regressions() -> None:
   assert effect_errors(x86, vector, {vector.symbol}, None) == [
     "rscrypto::fixture+0x0: vpermq $0x4e, %zmm1, %zmm0: no effect rule"]
 
+  # In an object listing, the relocation after an IBM Z `exrl` names its template, a row of `.text`; its addend counts
+  # from the relocated field, 2 bytes into the `exrl` (`Sha512::update` at 466c3556). An MVC continues; a BRC jumps.
+  def executed(template: str) -> list[str]:
+    with TemporaryDirectory() as directory:
+      listing = Path(directory) / "fixture.o.disasm.txt"
+      listing.write_text("\n".join([
+        "Disassembly of section .text:", "", "0000000000000000 <.text>:", f"      48: {template}", "",
+        "Disassembly of section .text.update:", "", "0000000000000000 <rscrypto::fixture>:",
+        "     174: c6 20 00 00 00 00    \texrl\t%r2, 0x174", "\t\t0000000000000176:  R_390_PC32DBL\t.text+0x4a",
+        "     17a: 07 fe    \tbr\t%r14"]) + "\n")
+      functions, _ = parse_disassembly(listing)
+      return control_errors("s390x-unknown-linux-gnu", functions["rscrypto::fixture"], None)
+  assert executed("d2 00 30 00 40 00    \tmvc\t0(1,%r3), 0(%r4)") == []
+  assert executed("a7 f4 00 08          \tj\t0x58") == [
+    "rscrypto::fixture+0x174: exrl %r2, 0x174: a transfer of control without a control rule"]
+
   # z/Architecture BRANCH ON CONDITION: with R2 zero, BCR does not branch. `bnor 0` (BCR 14,0) serializes, so it is
   # no conditional branch, and it continues at the next row.
   target = "s390x-unknown-linux-gnu"
