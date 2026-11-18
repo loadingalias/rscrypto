@@ -1,0 +1,108 @@
+name: RISC-V QEMU
+run-name: RISC-V QEMU for run ${{ inputs.run_id || github.event.workflow_run.id }}
+
+# The RISC-V runner reports no ISA extension (`rv64imafdcsu`), so its suites select no extension kernel.
+# This workflow runs the same prepared suites in a riscv64 Ubuntu container under QEMU user mode, with
+# the extensions on, so that each RISC-V extension kernel executes against the portable authority. It
+# proves function only, not timing, constant time, or speed.
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: CI run that prepared the riscv64gc-unknown-linux-gnu suite
+        type: string
+        required: true
+      sha:
+        description: Commit the prepared suite is bound to
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+env:
+  TARGET: riscv64gc-unknown-linux-gnu
+  # The newest stable QEMU release (11.1.3), from Debian. Its qemu-riscv64 is static, so it runs in a container.
+  QEMU_DEB_URL: https://snapshot.debian.org/file/df5ab4a6de0ab31b9a5215eb03929285dcbe4d7e
+  QEMU_DEB_SHA256: 5fa915e759f314400cf7d64a2745747e6baa50a180c938b3e8d281ce57ede452
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  execute:
+    # A pull request from a fork runs no prepared suite here, and a cancelled CI run prepared none.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.head_repository.full_name == github.repository &&
+      github.event.workflow_run.conclusion != 'cancelled')
+    name: riscv64-qemu (${{ matrix.name }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    permissions:
+      contents: read
+      actions: read # Download the prepared suite of the CI run.
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          # Every extension that QEMU supports, at the minimum vector length.
+          - name: vector-128
+            cpu: max
+          # A wide vector length, and the vector kernels without scalar carry-less multiply.
+          - name: vector-1024
+            cpu: max,vlen=1024,zbc=false
+          # The scalar extension kernels, with no vector unit.
+          - name: scalar
+            cpu: rv64,v=false,zba=true,zbb=true,zbc=true,zbs=true,zbkb=true,zbkc=true,zbkx=true,zkne=true,zknd=true,zknh=true
+    steps:
+      - uses: "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" # v7.0.1
+        with:
+          ref: ${{ inputs.sha || github.event.workflow_run.head_sha }}
+          persist-credentials: false
+      - name: Install QEMU for riscv64 binaries
+        run: |
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/qemu-user.deb" "$QEMU_DEB_URL"
+          echo "$QEMU_DEB_SHA256  $RUNNER_TEMP/qemu-user.deb" | sha256sum --check --strict
+          dpkg-deb -x "$RUNNER_TEMP/qemu-user.deb" "$RUNNER_TEMP/qemu"
+          sudo install -m 0755 "$RUNNER_TEMP/qemu/usr/bin/qemu-riscv64" /usr/local/bin/qemu-riscv64-static
+          /usr/local/bin/qemu-riscv64-static --version
+          # The F flag opens the interpreter now, so the kernel can use it inside the container.
+          [[ -e /proc/sys/fs/binfmt_misc/register ]] || sudo mount -t binfmt_misc binfmt_misc /proc/sys/fs/binfmt_misc
+          [[ ! -e /proc/sys/fs/binfmt_misc/qemu-riscv64 ]] || echo -1 | sudo tee /proc/sys/fs/binfmt_misc/qemu-riscv64
+          # binfmt_misc decodes the \x escapes itself, so the line is written literally.
+          printf '%s\n' ':qemu-riscv64:M::\x7fELF\x02\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x02\x00\xf3\x00:\xff\xff\xff\xff\xff\xff\xff\x00\xff\xff\xff\xff\xff\xff\xff\xff\xfe\xff\xff\xff:/usr/local/bin/qemu-riscv64-static:F' |
+            sudo tee /proc/sys/fs/binfmt_misc/register >/dev/null
+      # The archives are bound to the source; execution rejects any other checkout.
+      - name: Download the prepared suite from the CI run
+        uses: "actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333" # v8.0.2
+        with:
+          name: ${{ env.TARGET }}-tests
+          path: target/cross-download
+          run-id: ${{ inputs.run_id || github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+      # The container runs the same installer and suites as the RISC-V runner. QEMU reads QEMU_CPU at each exec.
+      - name: Execute the suites under QEMU (${{ matrix.cpu }})
+        env:
+          QEMU_CPU: ${{ matrix.cpu }}
+        run: |
+          docker run --rm --platform linux/riscv64 \
+            -e QEMU_CPU -e TARGET -e CARGO_RAIL_CACHE=off \
+            -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
+            -v "$PWD:/work" -w /work ubuntu:24.04 bash -euo pipefail -c '
+              scripts/tooling/riscv64-linux.sh --ci-cross-run "target/cross-download/$TARGET-tools.tar.gz"
+              source "$HOME/.local/share/rscrypto-tooling/environment.sh"
+              just test-cross run "$TARGET" "target/cross-download/$TARGET-tests.tar.xz" 2>&1 | tee target/qemu.log
+              git diff --exit-code HEAD'
+      # A run that detects no extension tested no extension kernel.
+      - name: Require the extensions in the runtime detection
+        run: |
+          grep -F 'Platform: Caps(riscv64,' target/qemu.log
+          if grep -Fq 'Platform: Caps(riscv64, none)' target/qemu.log; then
+            echo "::error::rscrypto detected no RISC-V extension under QEMU_CPU=${{ matrix.cpu }}"
+            exit 1
+          fi
