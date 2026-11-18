@@ -831,13 +831,17 @@ def is_call_relocation(line: str) -> bool:
 CONDITIONAL_TRANSFER_TARGETS = ("x86_64-", "riscv64", "powerpc64", "s390x-")
 
 
+def follows_destination(inst: str | None) -> bool:
+  """Whether the call graph reads the destination of a transfer with this mnemonic."""
+  return inst is not None and (inst in DIRECT_CALL_MNEMONICS | DIRECT_TAIL_MNEMONICS | RESOLVED_RISCV_TRANSFERS
+                               or any(is_conditional_branch(target, inst) for target in CONDITIONAL_TRANSFER_TARGETS))
+
+
 def all_direct_callees(body: FunctionBody) -> set[str]:
   callees: set[str] = set()
   for index, (_, line) in enumerate(body.lines):
     inst = mnemonic(line)
-    conditional = inst is not None and any(is_conditional_branch(target, inst) for target in CONDITIONAL_TRANSFER_TARGETS)
-    if (inst not in DIRECT_CALL_MNEMONICS | DIRECT_TAIL_MNEMONICS | RESOLVED_RISCV_TRANSFERS and not conditional
-        and not is_call_relocation(line)):
+    if not follows_destination(inst) and not is_call_relocation(line):
       continue
     targets = direct_call_targets(line, body.symbol_names)
     if inst in DIRECT_CALL_MNEMONICS | DIRECT_TAIL_MNEMONICS and index + 1 < len(body.lines):
@@ -1075,8 +1079,19 @@ def is_target_division_review(target: str, inst: str) -> bool:
   )
 
 
-def is_s390x_conditional_branch(target: str, inst: str) -> bool:
-  return target.startswith("s390x-") and (
+# BRANCH ON CONDITION and BRANCH ON COUNT to a register, z/Architecture Principles of Operation, chapter 7.
+S390X_REGISTER_BRANCHES = S390X_BRANCH_REGISTER | {"br", "bcr", "bctr", "bctgr"}
+
+
+def s390x_no_branch(inst: str, operands: str) -> bool:
+  """Whether a register form of BRANCH ON CONDITION or ON COUNT cannot branch: with R2 zero none branches, and
+  BCR also does not with M1 zero. `bnor 0` (BCR 14,0) and `br 0` (BCR 15,0) serialize; `bctr %r1, 0` only counts."""
+  parts = split_register_operands(operands)
+  return inst in S390X_REGISTER_BRANCHES and (parts[-1:] in (["0"], ["%r0"]) or (inst == "bcr" and parts[:1] == ["0"]))
+
+
+def is_s390x_conditional_branch(target: str, inst: str, operands: str = "") -> bool:
+  return target.startswith("s390x-") and not s390x_no_branch(inst, operands) and (
     inst in BRANCH_CONDS_S390X
     or inst in S390X_MASKED_BRANCH
     or S390X_CONDITIONAL_JUMP.match(inst) is not None
@@ -1105,10 +1120,11 @@ def is_power_conditional_branch(target: str, inst: str) -> bool:
     trap is not None and trap.group("condition") != "u")
 
 
-def is_conditional_branch(target: str, inst: str) -> bool:
+def is_conditional_branch(target: str, inst: str, operands: str = "") -> bool:
+  """Whether `inst` can transfer control or continue. An IBM Z register form also needs its `operands`."""
   # s390x `jg` is an unconditional long jump, not x86 "jump if greater".
   if target.startswith("s390x-"):
-    return is_s390x_conditional_branch(target, inst)
+    return is_s390x_conditional_branch(target, inst, operands)
   return (
     inst in BRANCH_CONDS_AARCH64
     or inst in BRANCH_CONDS_X86
@@ -1122,6 +1138,7 @@ class Instruction:
   offset: int
   mnemonic: str
   local_target: int | None
+  operands: str = ""
 
 
 def parse_instructions(body: FunctionBody) -> list[Instruction]:
@@ -1145,7 +1162,8 @@ def parse_instructions(body: FunctionBody) -> list[Instruction]:
       relocated = index + 1 < len(lines) and RELOCATION_LINE.match(lines[index + 1]) is not None
       if not relocated:
         local_target = int(address_target.group(1), 16) - body.address
-    instructions.append(Instruction(int(address.group(1), 16) - body.address, inst, local_target))
+    instructions.append(Instruction(int(address.group(1), 16) - body.address, inst, local_target,
+                                    instruction_text(line)[1]))
   return instructions
 
 
@@ -1170,7 +1188,7 @@ def select_branch_arm(
 
   def is_stop(instruction: Instruction) -> bool:
     return (
-      is_conditional_branch(target, instruction.mnemonic)
+      is_conditional_branch(target, instruction.mnemonic, instruction.operands)
       or instruction.mnemonic in DIRECT_TAIL_MNEMONICS
       or instruction.mnemonic in DIRECT_CALL_MNEMONICS
       or is_indirect_call(target, instruction.mnemonic)
@@ -1183,7 +1201,8 @@ def select_branch_arm(
   def arm_jump(start: int) -> tuple[int, int | None] | None:
     """Return the length and destination of a straight-line arm ending in an unconditional jump."""
     for length, instruction in enumerate(instructions[start : start + SELECT_BRANCH_MAX_ARM + 1]):
-      if instruction.mnemonic in DIRECT_TAIL_MNEMONICS and not is_conditional_branch(target, instruction.mnemonic):
+      if instruction.mnemonic in DIRECT_TAIL_MNEMONICS and not is_conditional_branch(target, instruction.mnemonic,
+                                                                                     instruction.operands):
         return length, instruction.local_target
       if is_stop(instruction):
         return None
@@ -1373,15 +1392,22 @@ def decode_lines(body: FunctionBody) -> list[DecodedLine]:
     encoded = fields[0].split(":", 1)[1].split()
     if not encoded or any(not re.fullmatch(r"(?:[0-9a-fA-F]{2}){1,8}", word) for word in encoded):
       continue
-    text = " ".join(" ".join(fields[1:]).split())
-    comment = ""
-    if match := COMMENT.search(text):
-      text, comment = text[: match.start()], text[match.end() :].strip()
-    inst, _, operands = text.partition(" ")
+    inst, operands, comment = instruction_text(line)
     value = int(address.group(1), 16)
     decoded.append(DecodedLine(number, value - body.address, value, sum(len(word) // 2 for word in encoded),
-                               inst.lower(), operands.strip(), comment, tuple(encoded)))
+                               inst, operands, comment, tuple(encoded)))
   return decoded
+
+
+def instruction_text(line: str) -> tuple[str, str, str]:
+  """The mnemonic, the operands, and the comment of an llvm-objdump instruction line."""
+  fields = [part.strip() for part in line.split("\t") if part.strip()]
+  text = " ".join(" ".join(fields[1:]).split())
+  comment = ""
+  if match := COMMENT.search(text):
+    text, comment = text[: match.start()], text[match.end() :].strip()
+  inst, _, operands = text.partition(" ")
+  return inst.lower(), operands.strip(), comment
 
 
 def reference_identity(row: DecodedLine, operands: str, mnemonic: str | None = None) -> str:
@@ -1528,7 +1554,7 @@ def row_successors(target: str, body: FunctionBody, rows: list[DecodedLine]) -> 
       successors.append(None)
       continue
     destination = local.get(row.offset)
-    conditional = is_conditional_branch(target, row.mnemonic)
+    conditional = is_conditional_branch(target, row.mnemonic, row.operands)
     unconditional = row.mnemonic in DIRECT_TAIL_MNEMONICS and not conditional
     if not conditional and not unconditional:
       successors.append([index + 1])
@@ -1541,6 +1567,240 @@ def row_successors(target: str, body: FunctionBody, rows: list[DecodedLine]) -> 
       following.append(index_by_offset[destination])
     successors.append(following)
   return successors
+
+
+# Rows that llvm-objdump prints for bytes that it does not decode as an instruction: data in code, and padding.
+PADDING_MNEMONICS = {".byte", ".short", ".hword", ".word", ".long", ".quad", ".inst", "<unknown>", "(bad)"}
+# System calls continue at the next instruction, as calls do.
+SYSTEM_CALL_MNEMONICS = {"syscall", "sysenter", "svc", "ecall", "sc", "scv"}
+X86_LEGACY_PREFIXES = frozenset({0x26, 0x2E, 0x36, 0x3E, 0x64, 0x65, 0x66, 0x67, 0xF0, 0xF2, 0xF3})
+
+
+def instruction_bytes(row: DecodedLine) -> bytes:
+  """The bytes of `row` in instruction order. llvm-objdump prints an AArch64 or RISC-V instruction as one number
+  and other rows as bytes in memory order."""
+  if len(row.encoded) == 1:
+    return bytes.fromhex(row.encoded[0])
+  return bytes(int(word, 16) for word in row.encoded)
+
+
+def instruction_word(target: str, row: DecodedLine) -> int:
+  """The value of a fixed-width instruction: one printed number, or little-endian bytes."""
+  data = instruction_bytes(row)
+  return int.from_bytes(data, "big" if len(row.encoded) == 1 else "little")
+
+
+def x86_transfer(code: bytes) -> str | None:
+  """Intel SDM Vol. 2: the user-mode control transfers by opcode, after the legacy, REX, and REX2 prefixes. VEX, EVEX,
+  and XOP opcodes transfer nothing."""
+  index, extended = 0, False
+  while index < len(code) and code[index] in X86_LEGACY_PREFIXES:
+    index += 1
+  if index < len(code) and code[index] & 0xF0 == 0x40:
+    index += 1
+  elif index + 1 < len(code) and code[index] == 0xD5:
+    # REX2: its M0 bit selects the 0F opcode map, and map 0 opcode A1 is JMPABS.
+    extended, index = bool(code[index + 1] & 0x80), index + 2
+    if not extended and code[index : index + 1] == b"\xa1":
+      return "direct"
+  if index >= len(code):
+    return None
+  opcode, following = code[index], code[index + 1] if index + 1 < len(code) else None
+  if extended or opcode == 0x0F:
+    second = opcode if extended else following
+    if second is not None and 0x80 <= second <= 0x8F:
+      return "direct"
+    # SYSCALL, SYSRET, UD2, SYSENTER, SYSEXIT, UD1, and UD0.
+    return "transfer" if second in {0x05, 0x07, 0x0B, 0x34, 0x35, 0xB9, 0xFF} else None
+  # Jcc, LOOPcc, JrCXZ, CALL, JMP, and XBEGIN, whose operand is the abort path.
+  if 0x70 <= opcode <= 0x7F or 0xE0 <= opcode <= 0xE3 or opcode in {0xE8, 0xE9, 0xEB} or (
+      opcode == 0xC7 and following == 0xF8):
+    return "direct"
+  # RET, far RET, INT3, INT n, IRET, INT1, HLT, XABORT, and CALL or JMP through a register or memory (FF /2 to /5).
+  if opcode in {0xC2, 0xC3, 0xCA, 0xCB, 0xCC, 0xCD, 0xCF, 0xF1, 0xF4} or (opcode == 0xC6 and following == 0xF8) or (
+      opcode == 0xFF and following is not None and (following >> 3) & 7 in {2, 3, 4, 5}):
+    return "transfer"
+  return None
+
+
+def aarch64_transfer(word: int) -> str | None:
+  """Arm ARM C4.1: the "Branches, Exception Generating and System instructions" group, bits 28 to 26 equal to
+  0b101, other than the system instructions (bits 31 to 24 equal to 0xd5), and UDF. B, BL, B.cond, BC.cond, CBZ, CBNZ,
+  TBZ, TBNZ, and CB<cc> encode their destination."""
+  if word >> 16 == 0:
+    return "transfer"
+  if (word >> 26) & 0b111 != 0b101 or word >> 24 == 0xD5:
+    return None
+  if (word & 0x7C000000 in {0x14000000, 0x34000000} or word & 0xFE000000 == 0x54000000
+      or word & 0x7E000000 == 0x74000000):
+    return "direct"
+  return "transfer"
+
+
+def power_transfer(word: int) -> str | None:
+  """Power ISA 3.1 Book I by primary opcode: `bc` (16) and `b` (18) encode their destination; `bclr`, `bcctr`,
+  and `bctar` (19), the interrupt returns (19), `sc` and `scv` (17), and the traps (2, 3, and 31) transfer too."""
+  primary, extended = word >> 26, (word >> 1) & 0x3FF
+  if primary in {16, 18}:
+    return "direct"
+  if (primary == 19 and extended in {16, 18, 50, 82, 274, 528, 560}) or primary in {2, 3, 17} or (
+      primary == 31 and extended in {4, 68}):
+    return "transfer"
+  return None
+
+
+def riscv_transfer(word: int, length: int) -> str | None:
+  """RISC-V Unprivileged ISA: BRANCH, JAL, C.J, C.BEQZ, and C.BNEZ encode their destination. JALR, C.JR, C.JALR,
+  C.EBREAK, ECALL, EBREAK, the trap returns, and the defined illegal instructions (C.UNIMP and UNIMP) transfer too.
+  On RV64, compressed quadrant 1 with funct3 1 is C.ADDIW."""
+  if length == 2:
+    quadrant, funct3 = word & 0b11, (word >> 13) & 0b111
+    if quadrant == 1 and funct3 in {5, 6, 7}:
+      return "direct"
+    if word == 0 or (quadrant == 2 and funct3 == 4 and (word >> 2) & 0x1F == 0
+                     and ((word >> 7) & 0x1F or (word >> 12) & 1)):
+      return "transfer"
+    return None
+  opcode = word & 0x7F
+  if opcode in {0x63, 0x6F}:
+    return "direct"
+  if opcode == 0x67 or word in {0x00000073, 0x00100073, 0x10200073, 0x30200073, 0x7B200073, 0xC0001073}:
+    return "transfer"
+  return None
+
+
+def s390x_transfer(code: bytes) -> str | None:
+  """z/Architecture Principles of Operation, chapter 7, and the traps of chapters 7 and 10, by opcode. A register
+  form does not branch with R2 zero, and BCR, BC, BRC, and BRCL do not with M1 zero. EXECUTE and EXECUTE RELATIVE
+  LONG run the instruction at their operand."""
+  if len(code) < 2:
+    return None
+  opcode, second, last = code[0], code[1], code[-1]
+  mask, low = second >> 4, second & 0xF
+  if opcode in {0x05, 0x06, 0x0B, 0x0C, 0x0D} or (opcode == 0xB9 and second == 0x46 and len(code) == 4):
+    # BALR, BCTR, BSM, BASSM, BASR, and BCTGR.
+    return "transfer" if (code[3] if opcode == 0xB9 else second) & 0xF else None
+  if opcode == 0x07:
+    return "transfer" if mask and low else None
+  if opcode == 0x47:
+    return "transfer" if mask else None
+  if (opcode == 0xA7 and low == 4) or (opcode == 0xC0 and low == 4):
+    return "direct" if mask else None
+  if ((opcode == 0xA7 and low in {5, 6, 7}) or (opcode == 0xC0 and low == 5) or (opcode == 0xCC and low == 6)
+      or opcode in {0x84, 0x85}
+      or (opcode == 0xEC and last in {0x44, 0x45, 0x64, 0x65, 0x76, 0x77, 0x7C, 0x7D, 0x7E, 0x7F})):
+    # BRAS, BRCT, BRCTG, BRASL, BRCTH, BRXH, BRXLE, BRXHG, BRXLG, and the compare-and-branch-relative forms.
+    return "direct"
+  if opcode in {0x44, 0xC6} and (opcode == 0x44 or low == 0):
+    return "execute"
+  if (opcode in {0x0A, 0x45, 0x46, 0x4D, 0x86, 0x87} or (opcode == 0x01 and second in {0x01, 0xFF})
+      or (opcode == 0xB2 and second in {0xB2, 0xFC, 0xFF}) or (opcode == 0xB9 and second in {0x60, 0x61, 0x72, 0x73})
+      or (opcode == 0xE3 and last in {0x46, 0x47, 0x85, 0x9C, 0x9D, 0x9F, 0xC8})
+      or (opcode == 0xEB and last in {0x23, 0x2B, 0x44, 0x45})
+      or (opcode == 0xEC and last in {0x70, 0x71, 0x72, 0x73, 0xE4, 0xE5, 0xF6, 0xF7, 0xFC, 0xFD, 0xFE, 0xFF})):
+    # SVC, BAL, BCT, BAS, BXH, BXLE, PR, TRAP2, LPSWE, TABORT, TRAP4, the compare-and-trap and load-and-trap forms,
+    # BCTG, BIC, BXHG, BXLEG, and the compare-and-branch-to-storage forms.
+    return "transfer"
+  return None
+
+
+def transfer_encoding(target: str, row: DecodedLine, image: LinkedImage | None) -> str | None:
+  """Classify `row` by its encoding, independent of the mnemonic tables: "direct" for a transfer whose instruction
+  holds its destination, "transfer" for any other transfer of control (through a register or memory, a return, a
+  system call, or a trap), and None for an instruction that continues at the next one."""
+  if target.startswith(("x86_64-", "i686-")):
+    return x86_transfer(instruction_bytes(row))
+  if target.startswith("aarch64-"):
+    return aarch64_transfer(instruction_word(target, row))
+  if target.startswith("riscv"):
+    return riscv_transfer(instruction_word(target, row), row.length)
+  if target.startswith(("powerpc64", "ppc64")):
+    return power_transfer(instruction_word(target, row))
+  kind = s390x_transfer(instruction_bytes(row))
+  if kind != "execute":
+    return kind
+  # The executed instruction must not transfer; an object listing, or an EXECUTE through a register, cannot show it.
+  match = re.fullmatch(r"%r\d+, 0x([0-9a-fA-F]+)(?: <.*>)?", row.operands)
+  first = image.read(int(match.group(1), 16), 1) if image is not None and match and row.mnemonic == "exrl" else None
+  executed = image.read(int(match.group(1), 16), (2, 4, 4, 6)[first[0] >> 6]) if first else None
+  return "transfer" if executed is None or s390x_transfer(executed) is not None else None
+
+
+def has_control_rule(target: str, row: DecodedLine) -> bool:
+  """Whether the control-flow graph or the call graph classifies `row` as a transfer."""
+  return (is_return_or_trap(target, row) or is_register_jump(target, row) or is_indirect_call(target, row.mnemonic)
+          or is_conditional_branch(target, row.mnemonic, row.operands)
+          or row.mnemonic in DIRECT_CALL_MNEMONICS | DIRECT_TAIL_MNEMONICS | RESOLVED_RISCV_TRANSFERS
+          | SYSTEM_CALL_MNEMONICS)
+
+
+def reachable_rows(target: str, body: FunctionBody, rows: list[DecodedLine]) -> set[int] | None:
+  """The rows that an edge from the entry can reach, or None when an unknown edge can reach any row."""
+  successors = row_successors(target, body, rows)
+  seen: set[int] = set()
+  pending = [0] if rows else []
+  while pending:
+    index = pending.pop()
+    if index in seen or index >= len(rows):
+      continue
+    seen.add(index)
+    if successors[index] is None:
+      return None
+    pending.extend(successors[index])
+  return seen
+
+
+def control_errors(target: str, body: FunctionBody, image: LinkedImage | None) -> list[str]:
+  """The rows that keep `body` from being control-complete.
+
+  Each transfer of control that `transfer_encoding` finds needs a control rule, and a direct one needs a mnemonic
+  whose destination the call graph follows: a missed transfer can drop a function from a closure. Bytes that do not
+  decode pass only when no edge reaches them.
+  """
+  rows = decode_lines(body)
+  decoded = {row.number for row in rows}
+  errors = [f"{body.symbol}: line {number} does not decode: {line.strip()}" for number, line in body.lines
+            if INSTRUCTION_ADDRESS.match(line) and not RELOCATION_LINE.match(line) and number not in decoded]
+  reachable = None if not any(row.mnemonic in PADDING_MNEMONICS for row in rows) else reachable_rows(target, body, rows)
+  for index, row in enumerate(rows):
+    where = f"{body.symbol}+0x{row.offset:x}: {row.mnemonic} {row.operands}".rstrip()
+    if row.mnemonic in PADDING_MNEMONICS:
+      if reachable is None or index in reachable:
+        errors.append(f"{where}: an edge can reach bytes that do not decode")
+      continue
+    kind = transfer_encoding(target, row, image)
+    if kind is not None and not has_control_rule(target, row):
+      errors.append(f"{where}: a transfer of control without a control rule")
+    elif kind == "direct" and not follows_destination(row.mnemonic):
+      errors.append(f"{where}: the call graph does not follow this direct transfer")
+  return errors
+
+
+def effect_errors(target: str, body: FunctionBody, local_symbols: set[str], image: LinkedImage | None) -> list[str]:
+  """The instructions of `body` without an explicit effect rule in the condition-slice model."""
+  from condition_slice import isa_effects
+
+  model = isa_effects(target)
+  identities = instruction_identities(target, body, local_symbols, image)
+  return [f"{body.symbol}+0x{row.offset:x}: {f'{row.mnemonic} {row.operands}'.rstrip()}: no effect rule"
+          for row in decode_lines(body)
+          if row.mnemonic not in PADDING_MNEMONICS and model(row, identities[row.number]).unknown]
+
+
+def closed_world_errors(target: str, visited: dict[str, FunctionBody], enforced: dict[str, FunctionBody],
+                        local_symbols: set[str], image: LinkedImage, final_path: Path) -> list[str]:
+  """Each function that a call-graph walk visits must be control-complete, and each row of an enforced-closure
+  function must also match an explicit effect rule. The linked image describes only the final binary's bodies."""
+  errors, checked = [], set()
+  for symbol in sorted(visited):
+    body = visited[symbol]
+    if (body.path, body.address) not in checked:
+      checked.add((body.path, body.address))
+      errors.extend(control_errors(target, body, image if body.path == final_path else None))
+  for symbol in sorted(enforced):
+    body = enforced[symbol]
+    errors.extend(effect_errors(target, body, local_symbols, image if body.path == final_path else None))
+  return errors
 
 
 def page_pair_identities(
@@ -2539,7 +2799,7 @@ def scan_symbol(
                                 "Its condition slice holds that index.",
                                 scope=scope, primitive_ids=primitive_ids, roots=roots))
         findings[-1]["table_loads"] = sorted(tables.rows[index].number for index in loads)
-    elif is_conditional_branch(target, inst):
+    elif is_conditional_branch(target, inst, instruction_text(line)[1]):
       address = INSTRUCTION_ADDRESS.match(line)
       position = index_by_offset.get(int(address.group(1), 16) - body.address) if address else None
       arm = select_branch_arm(target, instructions, index_by_offset, position) if position is not None else None
@@ -2880,6 +3140,22 @@ def main() -> int:
         primitive_ids_by_symbol.setdefault(symbol, set()).add(primitive_id)
 
   local_symbols = set(functions)
+  enforced_symbols = {
+    symbol for primitive in select_branch_enforced_primitives(root)
+    for reachable in closures.get(primitive, {}).values() for symbol in reachable
+  }
+  closed_world = closed_world_errors(
+    args.target,
+    {symbol: functions[symbol] for symbol in symbols | closure_symbols if symbol in functions}
+    | {symbol: final_functions[symbol] for symbol in final_equality["reachable_symbols"]}
+    | {symbol: final_functions[symbol] for symbol in final_enforced["reachable_symbols"]},
+    {symbol: functions[symbol] for symbol in enforced_symbols if symbol in functions},
+    local_symbols, image, final_path,
+  )
+  if closed_world:
+    for error in closed_world:
+      print(f"closed world: {error}")
+    return 2
   for symbol in sorted(symbols | closure_symbols):
     body = functions.get(symbol)
     if body is None:

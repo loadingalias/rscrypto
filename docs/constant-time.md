@@ -45,12 +45,25 @@ Every conditional transfer is a conditional branch: also a POWER conditional ret
 a jump through CTR (`bcctr`), a conditional trap (POWER `tweq`, IBM Z `cgrte`), and x86 `xbegin`.
 A call or a jump through a register or memory is an indirect call or jump: POWER `bctrl` and `bctr`,
 IBM Z `basr`, RISC-V `jalr a1` and `jr a5`, AArch64 `blraa`, and x86 far transfers.
-IBM Z `br 0` (BCR 15,0) is no transfer: with R2 zero, BCR does not branch, and BCR 15,0 serializes.
+A register form of IBM Z BRANCH ON CONDITION or ON COUNT with R2 zero is no transfer:
+`br 0` (BCR 15,0) and `bnor 0` (BCR 14,0) serialize, and `bctr %r1, 0` only decrements r1.
 A jump table is a multi-way branch, so its indirect jump is a `conditional_branch` whose slice holds the index.
 This applies only when the target is an entry of read-only data at a read-only base plus the index,
 with only the base and constants added: `movslq (%rcx,%rax,4), %rax`, `addq %rcx, %rax`, `jmpq *%rax`.
 Any other indirect jump is an `indirect_jump` and fails the gate.
 A table jump has no successors in the control-flow graph, so every slice in its function is open.
+
+The scanner works in a closed world. It stops with status 2 on a row that it cannot model:
+
+- Each function that a call-graph walk visits must be control-complete.
+  An encoding rule finds each transfer of control from the instruction bytes, by the opcode groups of the ISA manual,
+  without the mnemonic tables. Each such row needs a control rule, and a transfer that encodes its destination
+  needs a mnemonic whose destination the call graph follows. A missed transfer could drop a function from a closure.
+- Bytes that do not decode, such as `.word` data or `<unknown>` padding, pass only when no edge from the entry reaches
+  them. An indirect jump can reach any row, so such bytes in its function stop the scanner.
+- In the closure of each primitive under `[asm_select_branch]`, each row must also match an explicit effect rule:
+  the registers, flags, and memory that it reads and writes.
+  The IBM Z `exrl` rule reads the instruction that it executes from the linked binary.
 The call graph also follows a conditional transfer into another function, such as an x86 `je` tail transfer.
 On RISC-V, llvm-objdump decodes each extension that the emitted LLVM IR enables, so V and Zknh code is visible.
 An `asm_waiver` binds a reviewed condition to its target, primitive, function, finding kind,
@@ -75,6 +88,7 @@ AArch64 also passes a frame address in x8, the address of a returned aggregate.
   Code outside a closed slice cannot change the condition,
   so its waiver keeps matching when other code in the function or the file changes.
 - A slice is *open* when a call, an instruction of unknown effect, or an indirect jump can change a value it reads.
+  Enforced closures hold no instruction of unknown effect.
   Implicit register operands count as effects: `cpuid` writes eax through edx, `cmpxchg` and one-operand
   `imul` write rax or rdx, and `syscall` (x86-64) and `ecall` (RISC-V) return in rax or a0 and can write
   the memory their arguments address, as a call does. IBM Z `stfle` stores the facility list at its operand.
@@ -1332,6 +1346,52 @@ These fixes add findings. No new finding is waived, and each one is a warning:
 
 On the seven artifact sets, the gate scanner reports no stale waiver, no unmatched waiver, and no unwaived
 enforced finding.
+
+### Closed-world scanner, 2026-11-18
+
+CT-CLOSED-WORLD adds the closed-world checks above.
+At `f4f0d6b0`, the enforced closures held instructions without an effect rule.
+There were 47 distinct mnemonics on each x86-64 lane, 12 on POWER and on IBM Z, and 5 on each AArch64 lane and on RISC-V.
+Most were x86 AVX-512 operations with mask registers in the RSA IFMA kernels. Each has a rule now.
+The control check found no unclassified transfer.
+The only rows that do not decode are AArch64 Keccak round constants after a `ret` and POWER zero words after a tail branch.
+No edge reaches them.
+
+The rules also correct the model where it named the wrong registers or memory:
+
+- x86-64 vector operations change no flag, and an EVEX write mask is read.
+  Without `{z}`, a masked vector destination is also read.
+  The model had let these operations define the flags, so a branch could take its condition from one.
+  The mask registers are call-clobbered.
+- POWER VMX register n is VSX register n + 32, and the record form of a vector compare sets CR6.
+  In `ct_entry_p256_ecdh_agree`, the curve-equation branch `bt 24` tests the `vcmpequb.` before it.
+  The model took CR6 from an earlier call, so the reviewed slice held the wrong instructions.
+  The update-indexed loads and stores, such as `lbzux`, write their base register.
+- IBM Z `exrl` with an MVC, XC, or CLC template accesses memory, and MVC loads its source.
+  Floating-point register n is the high doubleword of vector register n.
+  BRANCH ON COUNT decrements its counter.
+
+These rules changed 38 condition slices on the same artifacts:
+[Constant-Time 44185315723](https://github.com/loadingalias/rscrypto/actions/runs/44185315723) at `f4f0d6b0`.
+Each finding is the same instruction in a function with the same identity, so its code is the reviewed code.
+Each waiver was compared with its new slice and bound to its new identity.
+In the x86-64 IFMA `build_table` slices, the leaves lose only their `unknown` entries.
+On POWER and IBM Z, some slices grew, because they now reach the stores that the model did not see.
+Each new slice holds the instructions that its rationale names.
+
+| Target | Renewed |
+|---|---:|
+| `x86_64-unknown-linux-gnu` | 9, all in `rsa_x86_64_ifma::build_table` |
+| `x86_64-pc-windows-msvc` | 6, all in `rsa_x86_64_ifma::build_table` |
+| `powerpc64le-unknown-linux-gnu` | 9: 7 in `ct_entry_rsa_pkcs1v15_decrypt_fixed_blinding`, 1 in `ct_entry_p256_ecdh_agree`, 1 in the RSA exponentiation |
+| `s390x-unknown-linux-gnu` | 14: 12 in the RSA decryption roots, 2 in the RSA exponentiation |
+
+`aead.quic_lb` is a new tier-B primitive with a `ct-intended` claim.
+Its harness roots `ct_entry_quic_lb_encrypt` and `ct_entry_quic_lb_decrypt` construct the cipher and run one operation.
+Four DudeCT cases compare a fixed key and buffer with random ones.
+They time single-pass and four-pass encryption and decryption.
+QUIC-LB is not an `[asm_select_branch]` primitive, as the other AES-based primitives are not.
+In a local Apple build, its closure has no failing finding, and 2 of its 11 select-shaped branches decide from constants.
 
 ## Public decisions and exclusions
 

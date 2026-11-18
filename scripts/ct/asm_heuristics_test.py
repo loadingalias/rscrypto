@@ -18,7 +18,9 @@ from asm_heuristics import (
   apply_waivers,
   attach_condition_identities,
   build_call_graph,
+  control_errors,
   direct_callees,
+  effect_errors,
   final_equality_closure,
   is_call_relocation,
   is_conditional_branch,
@@ -713,6 +715,7 @@ def placement_regressions() -> None:
   merged_call_regressions()
   power_branch_regressions()
   transfer_form_regressions()
+  closed_world_regressions()
   jump_table_regressions()
   merge_table_regressions()
   riscv_live_high_part_regression()
@@ -1059,6 +1062,44 @@ def transfer_form_regressions() -> None:
     avx2: FunctionBody(avx2, Path("fixture.binary.disasm.txt"), 0x57bc0, [(3, "57bc0: c3\tretq")]),
   }
   assert reachable_closure(root, build_call_graph(functions)) == {root, avx2}
+
+
+def closed_world_regressions() -> None:
+  """The scanner stops on a row that it cannot model: reachable bytes that do not decode, a transfer of control that
+  no rule classifies, and, in an enforced closure, an instruction without an effect rule."""
+  def fixture(lines: list[str]) -> FunctionBody:
+    return FunctionBody("rscrypto::fixture", Path("fixture.binary.disasm.txt"), 0x1000, list(enumerate(lines, start=1)))
+
+  # The Keccak round constants that follow the `ret` of `rscrypto_keccakf1600_aarch64_sve2_sha3_x4` (AArch64 Linux,
+  # f4f0d6b0) are data that no edge reaches. The same word after a fall-through could run.
+  aarch64 = "aarch64-unknown-linux-gnu"
+  constants = ["1000: d65f03c0\tret", "1004: d503201f\tnop", "1008: 01 00 00 00\t.word\t0x00000001"]
+  assert control_errors(aarch64, fixture(constants), None) == []
+  assert control_errors(aarch64, fixture(constants[1:]), None) == [
+    "rscrypto::fixture+0x8: .word 0x00000001: an edge can reach bytes that do not decode"]
+  # Arm ARM C6.2, FEAT_CMPBR: CBGT encodes its destination, and no rule names it.
+  assert control_errors(aarch64, fixture(["1000: 74000041\tcbgt\tx1, x0, 0x1008 <rscrypto::fixture+0x8>",
+                                          "1004: d65f03c0\tret"]), None) == [
+    "rscrypto::fixture+0x0: cbgt x1, x0, 0x1008 <rscrypto::fixture+0x8>: a transfer of control without a control rule"]
+  # z/Architecture BRANCH RELATIVE AND SAVE calls its operand, and no rule names it.
+  assert control_errors("s390x-unknown-linux-gnu", fixture(["1000: a7 e5 00 80\tbras\t%r14, 0x1100 <rscrypto::g>",
+                                                            "1004: 07 fe\tbr\t%r14"]), None) == [
+    "rscrypto::fixture+0x0: bras %r14, 0x1100 <rscrypto::g>: a transfer of control without a control rule"]
+  # x86 VPERMQ has no effect rule; VPXORQ has one.
+  x86 = "x86_64-unknown-linux-gnu"
+  vector = fixture(["1000: 62 f3 fd 48 00 c1 4e\tvpermq\t$0x4e, %zmm1, %zmm0",
+                    "1007: 62 f1 f5 48 ef c2\tvpxorq\t%zmm2, %zmm1, %zmm0", "100d: c3\tretq"])
+  assert control_errors(x86, vector, None) == []
+  assert effect_errors(x86, vector, {vector.symbol}, None) == [
+    "rscrypto::fixture+0x0: vpermq $0x4e, %zmm1, %zmm0: no effect rule"]
+
+  # z/Architecture BRANCH ON CONDITION: with R2 zero, BCR does not branch. `bnor 0` (BCR 14,0) serializes, so it is
+  # no conditional branch, and it continues at the next row.
+  target = "s390x-unknown-linux-gnu"
+  fence = fixture(["1000: 07 e0\tbnor\t0", "1002: 07 fe\tbr\t%r14"])
+  assert scan_symbol(target, fence.symbol, fence, {fence.symbol}, scope="entry", primitive_ids=["kx.p256_ecdh"],
+                     roots=[fence.symbol]) == []
+  assert row_successors(target, fence, decode_lines(fence))[0] == [1]
 
 
 def jump_finding(target: str, body: FunctionBody) -> dict:

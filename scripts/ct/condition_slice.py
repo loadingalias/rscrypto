@@ -85,7 +85,9 @@ for wide, names in {
 for number in range(8, 16):
   for suffix in ("", "d", "w", "b"):
     X86_ALIASES[f"r{number}{suffix}"] = f"r{number}"
-X86_CALLER_SAVED = {"rax", "rcx", "rdx", "rsi", "rdi", "r8", "r9", "r10", "r11", "flags", *(f"v{n}" for n in range(32))}
+# The System V and Win64 conventions preserve no mask register.
+X86_CALLER_SAVED = {"rax", "rcx", "rdx", "rsi", "rdi", "r8", "r9", "r10", "r11", "flags", *(f"v{n}" for n in range(32)),
+                    *(f"k{n}" for n in range(8))}
 X86_GENERAL = {"rax", "rbx", "rcx", "rdx", "rsi", "rdi", "rbp", "rsp", *(f"r{n}" for n in range(8, 16))}
 X86_VECTORS = {f"v{n}" for n in range(32)}
 # Register operands that the disassembly does not print, as (uses, defines). An instruction without
@@ -125,6 +127,23 @@ X86_WRITE_ONLY = {"mov", "movabs", "movzx", "movsx", "movsxd", "lea", "movd", "m
 X86_COMPARES = {"cmp", "test", "bt"}
 X86_VECTOR_MOVE = re.compile(r"v?mov(?:dq[au](?:8|16|32|64)?|[au]p[sd])|vmov[qd]")
 X86_ZERO_IDIOM = re.compile(r"v?pxor[dq]?|v?xorp[sd]")
+# Intel SDM Vol. 2: SSE, AVX, and AVX-512 operations that write their last operand, read the others, and change no
+# flags. A legacy SSE form also reads its destination, except the X86_SSE_WRITE_ONLY forms. A VEX or EVEX form reads
+# it only when it accumulates (X86_VECTOR_ACCUMULATE) or merges under a mask register.
+X86_VECTOR = re.compile(
+  r"v?p(?:add|sub)[bwdq]|v?p(?:and|andn|or|xor)[dq]?|v?(?:and|andn|or|xor)p[sd]|v?pcmp(?:eq|gt)[bwdq]"
+  r"|vpcmp(?:eq|lt|le|neq|nlt|nle)u[bwdq]|v?ps(?:ll|rl|ra)[wdq]|v?ps(?:ll|rl)dq|v?punpck[lh](?:bw|wd|dq|qdq)"
+  r"|v?pack[us]s(?:wb|dw)|v?pshuf(?:b|d|lw|hw)|v?palignr|v?pblendw|v?shufp[sd]|valign[dq]|vpternlog[dq]"
+  r"|vpmadd52[lh]uq|v?pinsr[bwdq]|vinsert[if](?:128|32x4|64x2|32x8|64x4)|v?pextr[bwdq]|v?pmovmskb"
+  r"|vpbroadcast[bwdq]|sha256(?:rnds2|msg1|msg2)"
+  # Mask-register moves and logic (AVX-512).
+  r"|kmov[bwdq]|knot[bwdq]|k(?:and|andn|or|xor|xnor|add)[bwdq]|kunpck(?:bw|wd|dq)|kshift[lr][bwdq]")
+X86_SSE_WRITE_ONLY = re.compile(r"pshuf(?:d|lw|hw)|pextr[bwdq]|pmovmskb")
+X86_VECTOR_ACCUMULATE = re.compile(r"vpternlog[dq]|vpmadd52[lh]uq")
+# KORTEST and KTEST set ZF and CF from two mask registers.
+X86_MASK_TEST = re.compile(r"k(?:or)?test[bwdq]")
+X86_WRITE_MASK = re.compile(r"\s*\{%(k[0-7])\}")
+X86_ZEROING = re.compile(r"\s*\{z\}")
 X86_CONDITIONS = r"(?:o|no|b|nae|c|nb|ae|nc|e|z|ne|nz|be|na|nbe|a|s|ns|p|pe|np|po|l|nge|nl|ge|le|ng|nle|g)"
 
 
@@ -170,6 +189,32 @@ def x86_unprefixed(row: scanner.DecodedLine) -> scanner.DecodedLine:
     inner, _, operands = row.operands.strip().partition(" ")
     return dataclasses.replace(row, mnemonic=inner.strip(), operands=operands.strip())
   return row
+
+
+def x86_vector_effects(mnemonic: str, operands: list[str], constant: bool) -> Effects:
+  """The effects of an `X86_VECTOR` or `X86_MASK_TEST` instruction.
+
+  An EVEX destination can carry a write mask, `%zmm3 {%k1}`, and zeroing, `{z}`. The mask is read. Without zeroing,
+  the elements that the mask clears keep the destination's value, so a vector destination is also read. A compare
+  into a mask register zeroes those bits instead.
+  """
+  if X86_MASK_TEST.fullmatch(mnemonic):
+    return effects(set().union(*(x86_registers(operand) for operand in operands)), {"flags"})
+  destination = operands[-1]
+  mask = X86_WRITE_MASK.search(destination)
+  zeroing = X86_ZEROING.search(destination) is not None
+  destination = X86_ZEROING.sub("", X86_WRITE_MASK.sub("", destination))
+  written = set() if "(" in destination else x86_registers(destination)
+  sources = set().union(*(x86_registers(operand) for operand in operands[:-1])) | (
+    x86_registers(destination) if "(" in destination else set())
+  legacy = not mnemonic.startswith(("v", "k"))
+  reads_destination = (
+    (legacy and not X86_SSE_WRITE_ONLY.fullmatch(mnemonic))
+    or X86_VECTOR_ACCUMULATE.fullmatch(mnemonic) is not None
+    or (mask is not None and not zeroing and bool(written) and all(name.startswith("v") for name in written))
+  )
+  uses = sources | ({mask.group(1)} if mask else set()) | (written if reads_destination else set())
+  return effects(uses, written, load=any("(" in operand for operand in operands[:-1]) and not constant)
 
 
 def x86_effects(row: scanner.DecodedLine, identity: str, caller_saved: set[str] = X86_CALLER_SAVED) -> Effects:
@@ -273,6 +318,8 @@ def x86_effects(row: scanner.DecodedLine, identity: str, caller_saved: set[str] 
   if X86_ZERO_IDIOM.fullmatch(mnemonic) and not memory and len(set(operands)) == 1:
     # `xor` of a register with itself sets it to zero.
     return effects(set(), destination_registers)
+  if X86_VECTOR.fullmatch(mnemonic) or X86_MASK_TEST.fullmatch(mnemonic):
+    return x86_vector_effects(mnemonic, operands, constant)
   # Vector and other instructions: AT&T puts the destination last. Two
   # operands read the destination too. The model does not know them.
   uses = sources | address_uses | (x86_registers(destination) if len(operands) == 2 else set())
@@ -296,9 +343,11 @@ AARCH64_DATA = {
   "uaddlv", "xtn", "uzp1", "uzp2", "zip1", "zip2", "trn1", "trn2", "cmeq", "cmhi", "cmhs", "cmgt", "cmge", "cmtst",
   "ushr", "sshr", "shl", "ushll", "ushll2", "umlal", "umlal2", "umull2", "mla", "fadd", "not", "bsl", "bit", "bif",
   "pmull", "pmull2", "ext", "tbl", "movi", "rev64", "addp", "umaxv", "uminv", "uzp", "shrn", "sli", "sri", "usra",
+  "uaddlp", "sha256h", "sha256h2", "sha256su0", "sha256su1",
 }
+# Arm ARM C7.2: SHA256H, SHA256H2, SHA256SU0, and SHA256SU1 update their destination.
 AARCH64_READS_DESTINATION = {"movk", "bfi", "bfxil", "bfm", "bfc", "ins", "mla", "umlal", "umlal2", "bsl", "bit",
-                             "bif", "sli", "sri", "usra"}
+                             "bif", "sli", "sri", "usra", "sha256h", "sha256h2", "sha256su0", "sha256su1"}
 
 
 AARCH64_ATOMIC = re.compile(r"^(?:ld(?:add|clr|eor|set|smax|smin|umax|umin)|swp|cas)")
@@ -398,6 +447,8 @@ RISCV_ALU = {
   "zext.h", "zext.w", "mul", "mulh", "mulhu", "mulhsu", "mulw", "div", "divu", "divw", "divuw", "rem", "remu",
   "remw", "remuw", "c.mv", "c.li", "c.addi", "c.add", "c.sub", "c.and", "c.or", "c.xor", "c.slli", "c.srli",
   "c.srai", "c.andi", "c.lui", "c.addiw", "c.addw", "c.subw", "c.addi16sp", "c.addi4spn", "fmv.x.d", "fmv.d.x",
+  # Zknh: the SHA-256 sigma and sum functions of one register.
+  "sha256sig0", "sha256sig1", "sha256sum0", "sha256sum1",
 }
 RISCV_LOADS = {"lb", "lh", "lw", "ld", "lbu", "lhu", "lwu", "flw", "fld", "c.lw", "c.ld", "c.lwsp", "c.ldsp",
                "c.fld", "c.fldsp"}
@@ -420,8 +471,9 @@ def riscv_effects(row: scanner.DecodedLine, identity: str) -> Effects:
     # The Linux system-call ABI: number in a7, arguments in a0-a5, and the result in a0. Like a call, it can
     # write the memory that its pointer arguments address.
     return effects({"a7", *(f"a{n}" for n in range(6))}, {"a0"}, call=True)
+  # Zihintpause `pause` is a FENCE hint that orders nothing.
   if mnemonic in {"j", "c.j", "jr", "c.jr", "ret", "nop", "c.nop", "ebreak", "c.ebreak", "unimp", "c.unimp",
-                  "fence", "fence.i"}:
+                  "fence", "fence.i", "pause"}:
     return effects(set(registers), set())
   if mnemonic in scanner.RISCV_STORES:
     return effects(set(registers), set())
@@ -459,9 +511,10 @@ POWER_IMMEDIATE = {"addi", "addis", "mulli", "ori", "oris", "xori", "xoris", "an
 # Mnemonics without the record-form dot, which `power_effects` and `power_memory` remove before the lookup.
 # The reservation loads and the conditional stores (`stdcx.`) are the atomic accesses.
 POWER_LOADS = {"lbz", "lhz", "lha", "lwz", "lwa", "ld", "lbzu", "lhzu", "lwzu", "ldu", "lbzx", "lhzx", "lhax",
-               "lwzx", "lwax", "ldx", "ldbrx", "lwbrx", "lhbrx", "lbarx", "lharx", "lwarx", "ldarx"}
+               "lwzx", "lwax", "ldx", "ldbrx", "lwbrx", "lhbrx", "lbarx", "lharx", "lwarx", "ldarx", "lbzux", "lhzux",
+               "lhaux", "lwzux", "lwaux", "ldux"}
 POWER_STORES = {"stb", "sth", "stw", "std", "stbu", "sthu", "stwu", "stdu", "stbx", "sthx", "stwx", "stdx",
-                "stdbrx", "stwbrx", "sthbrx", "stbcx", "sthcx", "stwcx", "stdcx"}
+                "stdbrx", "stwbrx", "sthbrx", "stbcx", "sthcx", "stwcx", "stdcx", "stbux", "sthux", "stwux", "stdux"}
 # Record forms that set cr0 although their mnemonic is not an arithmetic record form.
 POWER_CR0_SETTERS = {"andi.", "andis.", "stbcx.", "sthcx.", "stwcx.", "stdcx."}
 POWER_VECTOR_MEMORY = {"lxv": 1, "lxvd2x": 2, "lxvw4x": 2, "lxsd": 1, "lxssp": 1, "lxsdx": 2, "lvx": 2, "lfd": 1,
@@ -577,7 +630,7 @@ def power_effects(row: scanner.DecodedLine, identity: str) -> Effects:
       defs = {gprs[0]} | ({gprs[2]} if plain.endswith("u") else set())
     else:
       base = ({gprs[1]} if numbers[1] != "0" else set()) | {gprs[2]}
-      defs = {gprs[0]}
+      defs = {gprs[0]} | ({gprs[1]} if plain.endswith("ux") else set())
     return effects(base, defs | cr0, load=not constant)
   if plain in POWER_STORES:
     if "(" in row.operands:
@@ -585,11 +638,11 @@ def power_effects(row: scanner.DecodedLine, identity: str) -> Effects:
       defs = {gprs[2]} if plain.endswith("u") else set()
     else:
       uses = {gprs[0], gprs[2]} | ({gprs[1]} if numbers[1] != "0" else set())
-      defs = set()
+      defs = {gprs[1]} if plain.endswith("ux") else set()
     return effects(uses, defs | cr0)
   if plain in POWER_VECTOR_MEMORY or plain in POWER_VECTOR_STORE:
     count = POWER_VECTOR_MEMORY.get(plain) or POWER_VECTOR_STORE[plain]
-    vector = f"vs{numbers[0]}"
+    vector = power_vector(plain, numbers[0])
     if count == 1:
       bases = {gprs[2]} if len(numbers) > 2 and numbers[2] != "0" else set()
     else:
@@ -597,10 +650,14 @@ def power_effects(row: scanner.DecodedLine, identity: str) -> Effects:
     if plain in POWER_VECTOR_MEMORY:
       return effects(bases, {vector}, load=not constant)
     return effects(bases | {vector}, set())
-  if plain in {"mtvsrd", "mtvsrwz", "mtvsrdd", "mtvsrws"}:
+  if plain in {"mtvsrd", "mtvsrwz", "mtvsrdd", "mtvsrws", "mtfprd", "mtfprwz"}:
     return effects(set(gprs[1:]), {f"vs{numbers[0]}"})
-  if plain in {"mfvsrd", "mfvsrwz", "mfvsrld"}:
+  if plain in {"mfvsrd", "mfvsrwz", "mfvsrld", "mffprd", "mffprwz"}:
     return effects({f"vs{numbers[1]}"}, {gprs[0]})
+  if plain == "mfxer":
+    return effects({"xer"}, {gprs[0]})
+  if plain == "mtxer":
+    return effects({gprs[0]}, {"xer"})
   if plain == "mflr":
     return effects({"lr"}, {gprs[0]})
   if plain == "mtlr":
@@ -614,12 +671,31 @@ def power_effects(row: scanner.DecodedLine, identity: str) -> Effects:
   if plain in {"mtocrf", "mtcrf"}:
     return effects({gprs[-1]}, {f"cr{n}" for n in range(8)})
   if plain.startswith(("x", "v", "f")) and not plain.startswith(("xor", "xori", "xoris")):
-    # VSX, VMX, and FP arithmetic use only vector registers.
-    vectors = [f"vs{number}" for number in numbers]
-    return effects(set(vectors[1:]), set(vectors[:1]), unknown=plain not in POWER_KNOWN_VECTOR)
+    # VSX, VMX, and FP arithmetic use only vector registers, then their immediate fields. A record form sets CR6 for a
+    # vector compare and CR1 for floating point.
+    registers = numbers[: len(numbers) - POWER_VECTOR_IMMEDIATES.get(plain, 0)]
+    vectors = [power_vector(plain, number) for number in registers]
+    record_field = {"cr6"} if plain.startswith(("vcmp", "xvcmp")) else {"cr1"} if plain.startswith("f") else set()
+    return effects(set(vectors[1:]), set(vectors[:1]) | (record_field if record else set()),
+                   unknown=plain not in POWER_KNOWN_VECTOR)
   return effects(set(gprs), set(gprs[:1]) | {"cr0"}, unknown=True)
 
 
+def power_vector(mnemonic: str, number: str) -> str:
+  """The VSX register that an operand of a vector or floating-point instruction names.
+
+  Power ISA 3.1 Book I, 7.2: VMX register n is VSX register n + 32, and FPR n is VSX register n. VMX instructions
+  start with `v`. The DS- and DQ-form scalar accesses `lxsd`, `lxssp`, `stxsd`, and `stxssp` name a VMX register.
+  """
+  vmx = mnemonic.startswith("v") or mnemonic in {"lvx", "stvx", "lxsd", "lxssp", "stxsd", "stxssp"}
+  return f"vs{int(number) + 32}" if vmx else f"vs{number}"
+
+
+# The immediate fields that follow the register operands of a vector instruction.
+POWER_VECTOR_IMMEDIATES = {
+  "xxpermdi": 1, "xxsldwi": 1, "xxspltw": 1, "xxspltd": 1, "xxspltib": 1, "vsldoi": 1, "vspltisw": 1, "vspltisb": 1,
+  "vsplth": 1, "vspltb": 1, "vspltw": 1, "vshasigmaw": 2, "vshasigmad": 2,
+}
 POWER_KNOWN_VECTOR = {
   "xxlor", "xxland", "xxlxor", "xxlnor", "xxlandc", "xxlorc", "xxsel", "xxpermdi", "xxswapd", "xxspltw", "xxmrghw",
   "xxmrglw", "xxmrghd", "xxmrgld", "xxleqv", "xxlnand", "xxspltib", "xxbrd", "xxbrw", "vadduwm", "vaddudm",
@@ -627,14 +703,13 @@ POWER_KNOWN_VECTOR = {
   "vsrw", "vsraw", "vsrad", "vspltisw", "vspltisb", "vsplth", "vspltb", "vspltw", "vcmpequw", "vcmpequd",
   "vcmpgtuw", "vcmpgtud", "vand", "vor", "vxor", "vandc", "vnor", "vmrghw", "vmrglw", "vpkudum", "vupklsw",
   "vrlw", "vrld", "vaddcuw", "vsububm", "vaddubm", "vcipher", "vcipherlast", "vncipher", "vncipherlast",
-  "vpmsumd", "vpmsumw", "vsbox", "vshasigmaw", "vshasigmad", "fmr",
+  "vpmsumd", "vpmsumw", "vsbox", "vshasigmaw", "vshasigmad", "fmr", "xxspltd", "vcmpequb",
 }
 
 
 # IBM Z ----------------------------------------------------------------------
 
-S390X_CALLER_SAVED = {f"r{n}" for n in range(6)} | {"r14", "cc"} | {f"f{n}" for n in range(8)} | {
-  f"v{n}" for n in range(32)}
+S390X_CALLER_SAVED = {f"r{n}" for n in range(6)} | {"r14", "cc"} | {f"v{n}" for n in range(32)}
 S390X_NO_CC = {
   "l", "lg", "ly", "lgf", "lgfr", "llgf", "llgfr", "llgc", "llgcr", "llc", "llcr", "llh", "llhr", "llgh", "llghr",
   "lh", "lhy", "lgh", "lghr", "lb", "lbr", "lgb", "lgbr", "lr", "lgr", "la", "lay", "larl", "lhi", "lghi", "lgfi",
@@ -644,6 +719,9 @@ S390X_NO_CC = {
   "msgfi", "mlgr", "mlg", "lgdr", "ldgr", "locr", "locgr", "loc", "locg", "lochi", "locghi", "lgat", "bras", "risbgz",
   "risbgnz",
   "lrvgr", "lrvr", "lrvg", "lrv", "llgt", "llgtr", "sar", "ear",
+  # MULTIPLY HALFWORD IMMEDIATE, INSERT CHARACTER, LOAD HALFWORD from a register, and the floating-point loads,
+  # which replace only the high doubleword of their vector register.
+  "mghi", "mhi", "ic", "icy", "lhr", "ld", "ldy", "le", "ley",
 }
 # Interlocked updates of storage, with the bytes that each accesses.
 S390X_COMPARE_AND_SWAP = {"cs": 4, "csy": 4, "csg": 8, "cds": 8, "cdsy": 8, "cdsg": 16}
@@ -661,6 +739,8 @@ S390X_CC_SETTERS = {
   "srak", "flogr", "popcnt", "icm", "icmh", "icmy", "rnsbg", "rosbg", "rxsbg", "clc", "xc", "nc", "oc", "chhsi",
   "cghsi", "clhhsi", "clghsi", "clfhsi", "cgrl", "crl", "clgrl", "clrl", "cghrl", "chrl", "clhrl", "clghrl",
   "cgfrl", "clgfrl", "clgt", "clt", "cy", "cly", "msrkc", "msgrkc", "msc", "msgc", "cli", "cliy",
+  # ADD LOGICAL and SUBTRACT LOGICAL of a zero-extended 32-bit second operand.
+  "algf", "algfr", "slgf", "slgfr",
 }
 # Instructions that replace all 64 bits of their first operand. Every other
 # instruction may keep some bits, so it also reads the first operand.
@@ -685,7 +765,7 @@ S390X_KNOWN_VECTOR = {
   "vnx", "voc", "vsel", "vperm", "vpdi", "vsrlb", "vslb", "vsrl", "vsl", "vsra", "vsrab", "vsldb", "vesrlg",
   "veslg", "vesrag", "vesrlf", "veslf", "vmrhg", "vmrlg", "vmrhf", "vmrlf", "vlr", "vgbm", "vgm", "vceqg",
   "vceqf", "vchlg", "vchlf", "vchg", "vchf", "vmlf", "vmlhf", "vmalf", "vmalhf", "vmlof", "vmlef", "vmalof",
-  "vmalef", "vuplf", "vupllf", "vpkg", "vpkf", "vsumqg", "vsumqf", "vsumg", "vsum", "vmxlg", "vmnlg",
+  "vmalef", "vuplf", "vupllf", "vpkg", "vpkf", "vsumqg", "vsumqf", "vsumg", "vsum", "vmxlg", "vmnlg", "vesrlvg",
 }
 S390X_STORES = {"st", "stg", "sty", "sth", "sthy", "stc", "stcy", "stgrl", "strl", "sthrl", "stmg", "mvc", "mvi",
                 "mvhi", "mvghi", "mvhhi", "stoc", "stocg", "stfh", "std", "ste", "vst", "vsteg", "vstef", "stam",
@@ -693,7 +773,30 @@ S390X_STORES = {"st", "stg", "sty", "sth", "sthy", "stc", "stcy", "stgrl", "strl
 
 
 def s390x_registers(text: str) -> list[str]:
-  return [f"{kind}{number}" for kind, number in re.findall(r"%([rfva])(\d+)", re.sub(r"\s+<.*>$", "", text))]
+  """The registers that operands name. Floating-point register n is the high doubleword of vector register n
+  (z/Architecture Principles of Operation, chapter 20), so both are `v<n>`."""
+  return [f"{'v' if kind == 'f' else kind}{number}"
+          for kind, number in re.findall(r"%([rfva])(\d+)", re.sub(r"\s+<.*>$", "", text))]
+
+
+# The storage-to-storage instructions that `exrl` executes, from their opcode byte (SS-a format): MOVE, EXCLUSIVE OR,
+# AND, OR, and COMPARE LOGICAL. EXCLUSIVE OR, AND, and OR set the condition code; COMPARE LOGICAL only reads.
+S390X_EXECUTED = {0xd2: "mvc", 0xd7: "xc", 0xd4: "nc", 0xd6: "oc", 0xd5: "clc"}
+S390X_EXECUTE_TEMPLATE = re.compile(r"<exec:(?P<bytes>[0-9a-f]{12})>")
+
+
+def s390x_executed(identity: str) -> tuple[str, list[str]] | None:
+  """The mnemonic and the two storage operands of the SS-a instruction that an `exrl` executes.
+
+  The identity binds the executed bytes (`asm_heuristics.executed_instruction_descriptor`). EXECUTE ORs bits 56-63
+  of its register into the second byte, the length, so the template's base registers and displacements stay.
+  """
+  match = S390X_EXECUTE_TEMPLATE.search(identity)
+  if match is None or (mnemonic := S390X_EXECUTED.get(int(match["bytes"][:2], 16))) is None:
+    return None
+  fields = match["bytes"]
+  operands = [f"{int(fields[base + 1:base + 4], 16)}(%r{int(fields[base], 16)})" for base in (4, 8)]
+  return mnemonic, operands
 
 
 def s390x_effects(row: scanner.DecodedLine, identity: str) -> Effects:
@@ -727,17 +830,26 @@ def s390x_effects(row: scanner.DecodedLine, identity: str) -> Effects:
     third = widened(s390x_registers(operands[1]) if len(operands) > 1 else [])
     compared = widened(first) if mnemonic in S390X_COMPARE_AND_SWAP else set()
     return effects(third | compared | address, widened(first) | {"cc"}, load=True)
+  if mnemonic in {"brct", "brctg", "bct", "bctg", "bctr", "bctgr"}:
+    # BRANCH ON COUNT decrements its first operand, also when R2 is zero and it does not branch.
+    return effects(set(registers), set(first))
+  if scanner.s390x_no_branch(mnemonic, row.operands):
+    return effects(set(), set())
   if mnemonic in {"j", "jg", "br", "bcr", "nopr", "nop", "brcl"} and not scanner.is_conditional_branch(
-      "s390x-unknown-linux-gnu", mnemonic):
+      "s390x-unknown-linux-gnu", mnemonic, row.operands):
     return effects(set(registers), set())
   if scanner.S390X_COMPARE_AND_BRANCH.match(mnemonic):
     return effects(set(registers), set())
-  if mnemonic in {"brct", "brctg"}:
-    return effects(set(first), set(first))
   if scanner.is_conditional_branch("s390x-unknown-linux-gnu", mnemonic):
     return effects({"cc"}, set())
   if mnemonic == "exrl":
-    return effects(set(registers), set(registers), unknown=True)
+    executed = s390x_executed(identity)
+    if executed is None:
+      return effects(set(registers), set(registers), unknown=True)
+    executed_mnemonic, executed_operands = executed
+    bases = {name for operand in executed_operands for name in s390x_registers(operand) if name != "r0"}
+    clears = executed_mnemonic == "xc" and executed_operands[0] == executed_operands[1]
+    return effects(set(registers) | bases, set() if executed_mnemonic == "mvc" else {"cc"}, load=not clears)
   if mnemonic in {"lmg", "lm"} and len(first) == 1:
     last = s390x_registers(operands[1]) if len(operands) > 1 else []
     if last and last[0].startswith("r"):
@@ -755,6 +867,19 @@ def s390x_effects(row: scanner.DecodedLine, identity: str) -> Effects:
       return effects(address | reads, set(first), load=not constant)
     # Register-to-register vector operations; reading every named register over-approximates uses.
     return effects(set(registers), set(first), unknown=mnemonic not in S390X_KNOWN_VECTOR)
+  if mnemonic in {"agsi", "asi", "algsi", "alsi"}:
+    # ADD IMMEDIATE and ADD LOGICAL WITH SIGNED IMMEDIATE to storage set the condition code.
+    return effects(set(registers), {"cc"}, load=True)
+  if mnemonic == "pfd":
+    # PREFETCH DATA changes no register and no storage.
+    return effects(set(), set())
+  if mnemonic in {"kimd", "klmd"}:
+    # COMPUTE INTERMEDIATE and LAST MESSAGE DIGEST: r0 holds the function code and r1 the parameter block, which
+    # holds the chaining value. The second operand names an even-odd pair, the message address and length, which
+    # the instruction advances. It sets the condition code.
+    second = s390x_registers(operands[1]) if len(operands) > 1 else []
+    pair = {second[0], f"r{int(second[0][1:]) + 1}"} if second else set()
+    return effects({"r0", "r1"} | pair, pair | {"cc"}, load=True)
   if mnemonic in {"xc", "nc", "oc"}:
     # Storage-to-storage logic writes its first operand in memory and the condition code, not a register.
     return effects(set(registers), {"cc"}, load=not s390x_clears(mnemonic, operands))
@@ -763,7 +888,9 @@ def s390x_effects(row: scanner.DecodedLine, identity: str) -> Effects:
     # less one, and receives the count that the processor has, less one.
     return effects({"r0"} | set(registers), {"r0", "cc"}, state=True)
   if mnemonic in S390X_STORES:
-    return effects(set(registers) | ({"cc"} if mnemonic in {"stoc", "stocg"} else set()), set())
+    # MOVE copies storage to storage, so it also loads.
+    return effects(set(registers) | ({"cc"} if mnemonic in {"stoc", "stocg"} else set()), set(),
+                   load=mnemonic == "mvc")
   # Address registers inside parentheses are read; only the first operand can be defined.
   address = set(s390x_registers("".join(operand for operand in operands if "(" in operand)))
   sources = set(s390x_registers(", ".join(operands[1:])))
@@ -1124,10 +1251,10 @@ S390X_STORAGE = re.compile(r"(?P<displacement>-?\d+)\((?:(?P<inner>%r\d+|\d+),)?
 S390X_WIDTH = {
   **dict.fromkeys(("lg", "stg", "ltg", "alg", "ag", "sg", "slg", "cg", "clg", "ng", "og", "xg", "lrvg", "alcg",
                    "slbg", "msg", "mlg", "dlg", "dsg", "mvghi", "lgat", "stocg", "locg", "vleg", "vsteg", "vlrepg",
-                   "cghsi", "clghsi"), 8),
+                   "cghsi", "clghsi", "ld", "ldy"), 8),
   **dict.fromkeys(("l", "ly", "st", "sty", "a", "al", "s", "sl", "c", "cl", "n", "o", "x", "lt", "llgf", "lgf",
                    "ltgf", "lrv", "agf", "algf", "sgf", "slgf", "cgf", "clgf", "msgf", "mvhi", "ms", "alc", "slb",
-                   "llgt", "vlef", "vstef", "vlrepf", "chsi", "clfhsi"), 4),
+                   "llgt", "vlef", "vstef", "vlrepf", "chsi", "clfhsi", "le", "ley"), 4),
   **dict.fromkeys(("lh", "lhy", "sth", "sthy", "llh", "llgh", "lgh", "mvhhi", "ch", "chy", "chhsi", "clhhsi"), 2),
   **dict.fromkeys(("llc", "llgc", "lgb", "lb", "stc", "stcy", "ic", "icy", "cli", "cliy", "mvi", "tm"), 1),
   **dict.fromkeys(("vl", "vst"), 16),
@@ -1145,11 +1272,29 @@ def s390x_clears(mnemonic: str, operands: list[str]) -> bool:
   return bool(first and second) and (first["displacement"], first["base"]) == (second["displacement"], second["base"])
 
 
-def s390x_memory(row: scanner.DecodedLine) -> Memory:
+def s390x_memory(row: scanner.DecodedLine, identity: str = "") -> Memory:
   mnemonic = row.mnemonic
   if mnemonic in {"pfd", "pfdrl"}:
     # A prefetch reads no value and writes no memory.
     return NO_MEMORY
+  if mnemonic == "exrl":
+    # The executed instruction's length comes from the register, so each access has an unknown width.
+    executed = s390x_executed(identity)
+    if executed is None:
+      return Memory(wild_store=True)
+    first, second = (S390X_STORAGE.search(operand) for operand in executed[1])
+    destination = Access(True, first["base"].lstrip("%"), None, int(first["displacement"]), None)
+    source = Access(False, second["base"].lstrip("%"), None, int(second["displacement"]), None)
+    if executed[0] == "clc":
+      return Memory((source, dataclasses.replace(destination, store=False)))
+    if executed[0] == "mvc":
+      return Memory((source, destination))
+    if executed[1][0] == executed[1][1] and executed[0] == "xc":
+      return Memory((destination,))
+    return Memory((source, dataclasses.replace(destination, store=False), destination))
+  if mnemonic in {"kimd", "klmd"}:
+    # The digest updates the parameter block at r1 in place.
+    return Memory(wild_store=True)
   operands = split_operands(row.operands)
   storage = [S390X_STORAGE.search(operand) for operand in operands]
   located = [(position, match) for position, match in enumerate(storage) if match]
@@ -1188,6 +1333,9 @@ def s390x_memory(row: scanner.DecodedLine) -> Memory:
   match = located[0][1]
   if mnemonic in S390X_INTERLOCKED:
     return Memory((access(match, False, S390X_INTERLOCKED[mnemonic]), access(match, True, S390X_INTERLOCKED[mnemonic])))
+  if mnemonic in {"agsi", "algsi", "asi", "alsi"}:
+    width = 8 if mnemonic.startswith("ag") else 4
+    return Memory((access(match, False, width), access(match, True, width)))
   if scanner.S390X_TRAP.match(mnemonic):
     # COMPARE LOGICAL AND TRAP and LOAD AND TRAP read 4 bytes, or 8 for their `g` forms.
     return Memory((access(match, False, 8 if mnemonic in {"lgat", "clgt"} or mnemonic.startswith("clgt") else 4),))
@@ -1204,15 +1352,19 @@ def s390x_memory(row: scanner.DecodedLine) -> Memory:
 
 
 def isa_memory(target: str) -> Any:
+  """The memory model of a target, called with a row and its instruction identity. Only the IBM Z model reads the
+  identity, which binds the instruction that an `exrl` executes."""
+  if target.startswith("s390x-"):
+    return s390x_memory
   if target.startswith(("x86_64-", "i686-")):
-    return x86_memory
-  if target.startswith("aarch64-"):
-    return aarch64_memory
-  if target.startswith("riscv64"):
-    return riscv_memory
-  if target.startswith(("powerpc64", "ppc64")):
-    return power_memory
-  return s390x_memory
+    model = x86_memory
+  elif target.startswith("aarch64-"):
+    model = aarch64_memory
+  elif target.startswith("riscv64"):
+    model = riscv_memory
+  else:
+    model = power_memory
+  return lambda row, _identity: model(row)
 
 
 def argument_registers(target: str) -> list[str]:
@@ -1301,7 +1453,7 @@ def leaves_function(target: str, body: scanner.FunctionBody, end: int, row: scan
   if following == [] and not scanner.is_return_or_trap(target, row):
     return True
   match = TRANSFER_ADDRESS.search(row.operands)
-  return (match is not None and scanner.is_conditional_branch(target, row.mnemonic)
+  return (match is not None and scanner.is_conditional_branch(target, row.mnemonic, row.operands)
           and not body.address <= int(match.group(1), 16) < end)
 
 
@@ -1663,7 +1815,8 @@ class FunctionSlices:
           predecessors[successor].append(index)
     model = isa_effects(target)
     self.row_effects = [model(row, self.identities[row.number]) for row in rows]
-    self.row_memory = [isa_memory(target)(row) for row in rows]
+    memory = isa_memory(target)
+    self.row_memory = [memory(row, self.identities[row.number]) for row in rows]
     self.states = pointer_values(rows, successors, self.row_effects, self.row_memory, self.frame)
     self.escaped = frame_escapes(target, rows, self.row_effects, self.row_memory, self.states, self.frame, image)
     self.cyclic = cyclic_rows(successors, len(rows))
@@ -1709,7 +1862,8 @@ class FunctionSlices:
     successors = []
     for index, following in enumerate(self.successors):
       targets = {successor if successor < count else count for successor in following}
-      if not targets or (len(targets) == 1 and scanner.is_conditional_branch(self.target, self.rows[index].mnemonic)):
+      if not targets or (len(targets) == 1 and scanner.is_conditional_branch(self.target, self.rows[index].mnemonic,
+                                                                              self.rows[index].operands)):
         targets.add(count)
       successors.append(targets)
     everything = (1 << (count + 1)) - 1

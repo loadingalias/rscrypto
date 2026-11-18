@@ -571,6 +571,56 @@ header_protection_fixed_vs_random_key!(
   [0x63; 32]
 );
 
+type QuicLbEntry = unsafe extern "C" fn(*const u8, usize, usize, *mut u8) -> u8;
+
+/// One QUIC-LB operation through its CT harness root, cipher construction included. The classes
+/// differ in the key and the whole 19-octet buffer; the lengths, and so the form, are fixed.
+fn quic_lb_fixed_vs_random(
+  runner: &mut CtRunner,
+  rng: &mut BenchRng,
+  entry: QuicLbEntry,
+  server_id_len: usize,
+  nonce_len: usize,
+) {
+  let mut inputs = Vec::with_capacity(samples());
+  for class in balanced_classes(rng, samples()) {
+    let input = if matches!(class, Class::Left) {
+      ([0x71; 16], [0x5c; 19])
+    } else {
+      (rand_array::<16>(rng), rand_array::<19>(rng))
+    };
+    inputs.push((class, input));
+  }
+  let entry = core::hint::black_box(entry);
+  for (class, (key, block)) in inputs {
+    runner.run_one(class, || {
+      let mut block = block;
+      // SAFETY: key is a live 16-byte array and block a distinct, writable 19-byte array.
+      let status = unsafe { entry(key.as_ptr(), server_id_len, nonce_len, block.as_mut_ptr()) };
+      core::hint::black_box((status, block))
+    });
+  }
+}
+
+/// A 9-octet server ID and a 6-octet nonce: an odd total, so the halves share a nibble, and four
+/// decryption passes, because the server ID is longer than the nonce.
+fn quic_lb_four_pass_encrypt_fixed_vs_random(runner: &mut CtRunner, rng: &mut BenchRng) {
+  quic_lb_fixed_vs_random(runner, rng, rscrypto_ct_harness::ct_entry_quic_lb_encrypt, 9, 6);
+}
+
+fn quic_lb_four_pass_decrypt_fixed_vs_random(runner: &mut CtRunner, rng: &mut BenchRng) {
+  quic_lb_fixed_vs_random(runner, rng, rscrypto_ct_harness::ct_entry_quic_lb_decrypt, 9, 6);
+}
+
+/// An 8-octet server ID and an 8-octet nonce: one AES block.
+fn quic_lb_single_pass_encrypt_fixed_vs_random(runner: &mut CtRunner, rng: &mut BenchRng) {
+  quic_lb_fixed_vs_random(runner, rng, rscrypto_ct_harness::ct_entry_quic_lb_encrypt, 8, 8);
+}
+
+fn quic_lb_single_pass_decrypt_fixed_vs_random(runner: &mut CtRunner, rng: &mut BenchRng) {
+  quic_lb_fixed_vs_random(runner, rng, rscrypto_ct_harness::ct_entry_quic_lb_decrypt, 8, 8);
+}
+
 fn chacha20_rng_fixed_vs_random_seed(runner: &mut CtRunner, rng: &mut BenchRng) {
   let mut inputs = Vec::with_capacity(samples());
   for class in balanced_classes(rng, samples()) {
@@ -4309,6 +4359,10 @@ ctbench_main_with_seeds!(
   (aes128_header_protection_fixed_vs_random_key, Some(0x6870616573313238)),
   (aes256_header_protection_fixed_vs_random_key, Some(0x6870616573323536)),
   (chacha20_header_protection_fixed_vs_random_key, Some(0x687063686132305f)),
+  (quic_lb_four_pass_encrypt_fixed_vs_random, Some(0x716c623466656e63)),
+  (quic_lb_four_pass_decrypt_fixed_vs_random, Some(0x716c623466646563)),
+  (quic_lb_single_pass_encrypt_fixed_vs_random, Some(0x716c623173656e63)),
+  (quic_lb_single_pass_decrypt_fixed_vs_random, Some(0x716c623173646563)),
   (chacha20_rng_fixed_vs_random_seed, Some(0x6332307267736564)),
   (aes_siv_cmac256_fixed_vs_random_key_open, Some(0x7369765f6f70656e)),
   (aes_siv_cmac256_first_vs_last_tag_mismatch, Some(0x7369765f7461676d)),

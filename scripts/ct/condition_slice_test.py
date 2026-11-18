@@ -159,6 +159,7 @@ def main() -> None:
   leaf_regressions()
   atomic_regressions()
   call_regressions()
+  effect_rule_regressions()
 
   # Win64 callees preserve rsi, so its value crosses the call; System V callees may change it.
   kept = [
@@ -556,6 +557,94 @@ def call_regressions() -> None:
   ], 2)
   assert compared.reasons == [] and node_at(compared, 0x0)["inputs"] == {
     "r2": ["entry"], "r3": ["entry"], "r4": ["entry"], "mem": ["entry"]}, compared.canonical
+
+
+def effect_rule_regressions() -> None:
+  """Instructions that the model did not know defined the wrong registers, so a slice stopped at them or passed them."""
+  x86 = "x86_64-unknown-linux-gnu"
+  # Intel SDM Vol. 2: PXOR changes no flag, so the branch tests the compare before it.
+  compared = slice_of(x86, ["1000: 48 39 f7\tcmpq\t%rsi, %rdi", "1003: 66 0f ef c1\tpxor\t%xmm1, %xmm0",
+                            "1007: 74 01\tje\t0x100a <f+0xa>", "1009: 90\tnop", "100a: c3\tretq"], 3)
+  assert compared.reasons == [] and compared.leaves == ["entry rdi", "entry rsi"], compared.canonical
+
+  # An EVEX write mask is read, and without {z} the elements it clears keep the old destination. A compare into a
+  # mask register reads neither its old value nor that of the write mask's elements.
+  def masked(decoration: str):
+    return slice_of(x86, [
+      "1000: c5 f8 92 cf\tkmovw\t%edi, %k1",
+      f"1004: 62 f1 dd 49 fb dd\tvpsubq\t%zmm5, %zmm4, %zmm3 {decoration}",
+      "100a: 62 f2 e5 48 29 c0\tvpcmpeqq\t%zmm0, %zmm3, %k0",
+      "1010: c5 f8 93 c0\tkmovw\t%k0, %eax",
+      "1014: 85 c0\ttestl\t%eax, %eax",
+      "1016: 74 01\tje\t0x1019 <f+0x19>",
+      "1018: 90\tnop",
+      "1019: c3\tretq",
+    ], 6)
+  merged, zeroed = masked("{%k1}"), masked("{%k1} {z}")
+  assert merged.reasons == [] and merged.leaves == ["entry rdi", "entry v0", "entry v3", "entry v4", "entry v5"], (
+    merged.canonical)
+  assert zeroed.leaves == ["entry rdi", "entry v0", "entry v4", "entry v5"], zeroed.canonical
+
+  # Power ISA 3.1 Book I, 7.2: VMX register 2 is VSX register 34, and a vector compare's record form sets CR6. This is
+  # the curve-equation test of `ct_entry_p256_ecdh_agree` on POWER at f4f0d6b0: the branch reads the vcmpequb.
+  # result, not a register that a call wrote.
+  curve = slice_of("powerpc64le-unknown-linux-gnu", [
+    "1000: 99 1e 54 7c\tlxvd2x 34, 20, 3",
+    "1004: 99 1e 64 7c\tlxvd2x 35, 4, 3",
+    "1008: 06 14 43 10\tvcmpequb. 2, 3, 2",
+    "100c: 08 00 98 41\tbt 24, 0x1014 <f+0x14>",
+    "1010: 00 00 00 60\tnop",
+    "1014: 20 00 80 4e\tblr",
+  ], 4)
+  assert curve.reasons == [] and curve.leaves == ["entry memory", "entry r20", "entry r3", "entry r4"], curve.canonical
+  # LBZUX also writes its base register with the effective address. The slice holds its load too.
+  updated = slice_of("powerpc64le-unknown-linux-gnu", [
+    "1000: ee 18 86 7c\tlbzux 4, 6, 3",
+    "1004: 40 28 26 7c\tcmpld\t6, 5",
+    "1008: 08 00 82 41\tbeq 0x1010 <f+0x10>",
+    "100c: 00 00 00 60\tnop",
+    "1010: 20 00 80 4e\tblr",
+  ], 3)
+  assert updated.leaves == ["entry memory", "entry r3", "entry r5", "entry r6"], updated.canonical
+
+  s390x = "s390x-unknown-linux-gnu"
+  # MOVE copies storage, so the reloaded word also depends on the bytes that MVC reads.
+  copied = slice_of(s390x, [
+    "1000: d2 07 f0 a0 20 00\tmvc\t160(8,%r15), 0(%r2)",
+    "1006: e3 10 f0 a0 00 04\tlg\t%r1, 160(%r15)",
+    "100c: b9 02 00 11\tltgr\t%r1, %r1",
+    "1010: a7 84 00 04\tje\t0x1018",
+    "1014: 07 07\tnopr\t%r7",
+    "1018: 07 fe\tbr\t%r14",
+  ], 4)
+  assert copied.reasons == [] and copied.leaves == ["entry memory", "entry r2"], copied.canonical
+  # Floating-point register 8 is the high doubleword of vector register 8.
+  spilled = slice_of(s390x, [
+    "1000: 68 80 20 00\tld\t%f8, 0(%r2)",
+    "1004: e7 18 00 00 30 21\tvlgvg\t%r1, %v8, 0",
+    "100a: b9 02 00 11\tltgr\t%r1, %r1",
+    "100e: a7 84 00 04\tje\t0x1016",
+    "1012: 07 07\tnopr\t%r7",
+    "1016: 07 fe\tbr\t%r14",
+  ], 4)
+  assert spilled.reasons == [] and node_at(spilled, 0x4)["inputs"]["v8"] == ["+0x0"], spilled.canonical
+
+  # EXECUTE RELATIVE LONG runs its template: here MVC 0(%r2), 0(%r3), whose length comes from r1. The reload reads
+  # the bytes that it copies.
+  text, island = 0x10000, 0x30000
+  executed = FunctionBody("f", Path("fixture.binary.disasm.txt"), text, list(enumerate([
+    f"{text:x}: c6 10 {((island - text) // 2).to_bytes(4, 'big').hex(' ')}\texrl\t%r1, 0x{island:x}",
+    f"{text + 0x6:x}: e3 40 20 00 00 04\tlg\t%r4, 0(%r2)",
+    f"{text + 0xc:x}: b9 02 00 44\tltgr\t%r4, %r4",
+    f"{text + 0x10:x}: a7 84 00 04\tje\t0x{text + 0x18:x}",
+    f"{text + 0x14:x}: 07 07\tnopr\t%r7",
+    f"{text + 0x18:x}: 07 fe\tbr\t%r14",
+  ], start=1)))
+  image = LinkedImage(bytes.fromhex("d20020003000"), [Section(".text", text, 0x100, None, True, False),
+                                                       Section(".rodata", island, 6, 0, False, False)], True)
+  prepare_linked_image(s390x, {"f": executed}, image)
+  run = condition_slice(s390x, executed, image, 4, {"f"})
+  assert run.reasons == [] and run.leaves == ["entry memory", "entry r1", "entry r2", "entry r3"], run.canonical
 
 
 def shift(line: str, by: int) -> str:

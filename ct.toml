@@ -339,6 +339,8 @@ symbols = [
   "ct_entry_secret_bytes32_debug_masked",
   "ct_entry_poly1305_authenticate",
   "ct_entry_siphash_hash",
+  "ct_entry_quic_lb_encrypt",
+  "ct_entry_quic_lb_decrypt",
   "ct_entry_chacha20_rng_fill",
   "ct_entry_hmac_sha256_verify",
   "ct_entry_hmac_sha256_verify_truncated_64",
@@ -458,6 +460,7 @@ covers = [
   "password.argon2d_argon2id",
   "password.scrypt",
   "aead.symmetric_transform",
+  "aead.quic_lb",
   "keyed_hash.blake2_blake3",
   "public_hashes_and_checksums",
 ]
@@ -951,6 +954,42 @@ primitive = "aead.symmetric_transform"
 filter = "chacha20_header_protection_fixed_vs_random_key"
 left_class = "complete ChaCha20 header-protection operation with fixed secret key"
 right_class = "complete ChaCha20 header-protection operation with random secret key"
+samples = 20000
+smoke_samples = 2000
+
+[[dudect_case]]
+name = "quic_lb_four_pass_encrypt_fixed_vs_random"
+primitive = "aead.quic_lb"
+filter = "quic_lb_four_pass_encrypt_fixed_vs_random"
+left_class = "QUIC-LB four-pass encryption, cipher construction included, of a 9-octet server ID and 6-octet nonce: fixed key and fixed 19-octet server ID and nonce buffer"
+right_class = "the same lengths with a random key and a random 19-octet buffer"
+samples = 20000
+smoke_samples = 2000
+
+[[dudect_case]]
+name = "quic_lb_four_pass_decrypt_fixed_vs_random"
+primitive = "aead.quic_lb"
+filter = "quic_lb_four_pass_decrypt_fixed_vs_random"
+left_class = "QUIC-LB four-pass server-ID decryption, cipher construction included, of a 9-octet server ID and 6-octet nonce: fixed key and fixed 19-octet ciphertext buffer"
+right_class = "the same lengths with a random key and a random 19-octet buffer"
+samples = 20000
+smoke_samples = 2000
+
+[[dudect_case]]
+name = "quic_lb_single_pass_encrypt_fixed_vs_random"
+primitive = "aead.quic_lb"
+filter = "quic_lb_single_pass_encrypt_fixed_vs_random"
+left_class = "QUIC-LB single-pass encryption, cipher construction included, of an 8-octet server ID and 8-octet nonce: fixed key and fixed 19-octet server ID and nonce buffer"
+right_class = "the same lengths with a random key and a random 19-octet buffer"
+samples = 20000
+smoke_samples = 2000
+
+[[dudect_case]]
+name = "quic_lb_single_pass_decrypt_fixed_vs_random"
+primitive = "aead.quic_lb"
+filter = "quic_lb_single_pass_decrypt_fixed_vs_random"
+left_class = "QUIC-LB single-pass server-ID decryption, cipher construction included, of an 8-octet server ID and 8-octet nonce: fixed key and fixed 19-octet ciphertext buffer"
+right_class = "the same lengths with a random key and a random 19-octet buffer"
 samples = 20000
 smoke_samples = 2000
 
@@ -2594,6 +2633,20 @@ dudect = ["chacha20_header_protection_fixed_vs_random_key"]
 binsec = ["aead.symmetric_transform.chacha20poly1305_seal.portable.all"]
 
 [[evidence_unit]]
+id = "aead.quic_lb.four_pass"
+primitive = "aead.quic_lb"
+variant = "FourPass"
+dudect = ["quic_lb_four_pass_encrypt_fixed_vs_random", "quic_lb_four_pass_decrypt_fixed_vs_random"]
+notes = "A 15-octet total, so the Feistel halves share a nibble, with a server ID longer than the nonce, so decryption runs all four passes."
+
+[[evidence_unit]]
+id = "aead.quic_lb.single_pass"
+primitive = "aead.quic_lb"
+variant = "SinglePass"
+dudect = ["quic_lb_single_pass_encrypt_fixed_vs_random", "quic_lb_single_pass_decrypt_fixed_vs_random"]
+notes = "A 16-octet total: one AES-128 block encryption, or one decryption with the inverse cipher schedule."
+
+[[evidence_unit]]
 id = "rng.chacha20.chacha20_rng"
 primitive = "rng.chacha20"
 variant = "ChaCha20Rng"
@@ -4125,6 +4178,28 @@ evidence = [
   "unit:aead.symmetric_transform.chacha20_header_protection",
 ]
 limitation = "DudeCT covers complete key construction and mask generation. AES reuses the existing portable-round BINSEC leaf; ChaCha20 reuses the portable seal leaf. Exact release claims remain bound to target artifacts."
+
+[[operation]]
+id = "aead.quic_lb_connection_id"
+api = [
+  "rscrypto::aead::expert::quic_lb::QuicLbKey::from_bytes",
+  "rscrypto::aead::expert::quic_lb::QuicLbCipher::{new,server_id_len,nonce_len,encrypt,decrypt_server_id}",
+]
+features = ["aes-gcm"]
+targets = ["all-supported", "AES backend selected by public target capabilities"]
+secret_inputs = ["QUIC-LB key", "expanded AES-128 encryption and decryption schedules", "server ID", "nonce", "Feistel halves and AES pass outputs"]
+public_inputs = ["server-ID length", "nonce length", "connection-ID ciphertext", "backend capabilities"]
+variable_time_components = ["public backend dispatch", "the form, the pass count, and the masks, which depend only on the public lengths", "construction, which rejects lengths outside the draft before it reads the key"]
+permitted_leakage = ["server-ID and nonce lengths", "backend", "ciphertext", "length rejection"]
+claim = "ct-intended"
+evidence = [
+  "primitive:aead.quic_lb",
+  "unit:aead.quic_lb.four_pass",
+  "unit:aead.quic_lb.single_pass",
+  "harness:ct_entry_quic_lb_encrypt",
+  "harness:ct_entry_quic_lb_decrypt",
+]
+limitation = "DudeCT covers cipher construction and one operation for one length pair of each form: 9 and 6 octets (four passes in each direction), and 8 and 8 octets (one block). Other length pairs select other masks and windows, and three decryption passes when the server ID is no longer than the nonce; their code paths are the same, but no timing case measures them. The AES rounds carry the aead.symmetric_transform evidence. Exact release claims remain bound to target artifacts."
 
 [[operation]]
 id = "rng.chacha20_generate"
@@ -6094,6 +6169,25 @@ symbols = [
   "ct_entry_ascon_aead128_open",
 ]
 coverage = "AEAD open harnesses exercise encrypt/decrypt transforms and authentication backends through production public APIs; later BINSEC/asm leaf harnesses may split smaller kernels."
+
+[[primitive]]
+id = "aead.quic_lb"
+tier = "B"
+claim = "ct-intended"
+features = ["aes-gcm"]
+variants = ["FourPass", "SinglePass"]
+components = ["AES-128", "four-pass Feistel network"]
+entrypoints = ["QuicLbCipher::new", "QuicLbCipher::encrypt", "QuicLbCipher::decrypt_server_id"]
+secrets = ["key", "expanded_key_schedules", "server_id", "nonce", "feistel_halves", "aes_pass_outputs"]
+public = ["server_id_length", "nonce_length", "ciphertext", "backend_caps"]
+may_leak = ["input_length", "public_backend_dispatch", "public_shape_error"]
+must_not_leak_ref = "common_secret_data"
+required = ["tier_b"]
+binsec = "deferred"
+notes = "The lengths fix the form, the pass count, the masks, and the windows at construction. The Feistel passes run as one sequence of dependent AES blocks on the dispatched AES backend. BINSEC proof is deferred: the portable AES round has its own leaf under aead.symmetric_transform, and the Feistel layer has no leaf kernel."
+[primitive.harness]
+status = "covered"
+symbols = ["ct_entry_quic_lb_encrypt", "ct_entry_quic_lb_decrypt"]
 
 [[primitive]]
 id = "rng.chacha20"
@@ -8342,12 +8436,12 @@ target = "powerpc64le-unknown-linux-gnu"
 primitive = "rsa.private_ops"
 symbol = "ct_entry_rsa_pkcs1v15_decrypt_fixed_blinding"
 kind = "select_branch"
-slice_sha256 = "22e39ad2715955bd5c6c879b4ec134db1de923699eea48fcd7ae8c7abfe47c8e"
+slice_sha256 = "48bc935b02a105c63d9556eaa969416fe6ba357e67f51af31d0b73c6dd1ca10c"
 source = "src/traits/ct.rs zeroize_no_fence; src/auth/rsa.rs clear_output_on_error; src/auth/rsa.rs decrypt_pkcs1v15_with_blinding_factor_and_scratch result clearing"
 classification = "public"
-rationale = "Prefix split of both clear_output_on_error zeroizes of out; one identity covers +0x25c and +0x4cc. Entry +0x24 copies out to r11 and +0x2c copies out_len to r30. r30 is written again only at +0x4ec and +0x540, both inside the second clear. The only other r11 value is the sentinel 1 at +0x138, after a null pointer with zero length is accepted. The only store to 176(r1) is +0xac (std r11). No callee receives that slot. The output borrow is an exclusive caller allocation, disjoint from the inputs, the heap buffers and this frame. Both error paths reach +0x248: the private-operation failure at +0x238 after RsaPrivateScratch::clear at +0x240, and the decode-result test bf 9 at +0x12e4. CR2 bit 9 is set from public length checks; it is not the implicit-rejection padding decision, which yields Ok. No output byte is loaded by the tested length or alignment computation. +0x248 reloads r23=out, and +0x24c/+0x250/+0x254 compute r5=((out+7)&~7)-out. cmpld cr1,r30,r5 at +0x258 / bf 4 at +0x25c selects the short-prefix path. The same cr1 is tested again at +0x4cc after the first clear's sync at +0x4c8. The path from +0x25c to +0x4cc runs only through +0x260..+0x274 and +0x3a4..+0x4c8. Every compare in (+0x258, +0x4cc) is a two-operand CR0 form or andi., and there is no call, mtocrf, mcrf or CR-logical instruction. The external entries at +0x278/+0x298/+0x2b8 (reject_short_decryption_output) leave through b +0x650 at +0x3a0 and never reach +0x4cc. Both sites therefore compare the original public output length with its alignment prefix. Literal-zero prefix, word and suffix stores remain in both clears, ending in sync at +0x648. Renewed 2026-11-15 against Constant-Time 43670264860 at 6f571652: every instruction that this rationale cites is unchanged at its offset except frame displacements. The frame grew, so the cited slots moved (out 152 to 176(r1), k 144 to 168(r1), scratch r1+168 to r1+192, the blinding pointer from 296 to 320(r1) at +0x6d8 and from 88 to 96(r1) at +0x8b4, the black-box byte 1440 to 1472(r1), the candidates array 1144 to 1168), and the text uses the new values. RsaPrivateScratch::new is at 0x6bcd0 and keeps std r21,128(r30) at +0x730. Renewed 2026-11-15 against Constant-Time 43699511183 at 868dcbca: the slice differs only in two read-only constant references, the lxvd2x 1,23,7 index (li 7) and the addi 14,5 offset into a merged read-only unit. The r23 base moved by the same 256 bytes, so the vector load reads the same address, and no secret value reaches either operand."
+rationale = "Prefix split of both clear_output_on_error zeroizes of out; one identity covers +0x25c and +0x4cc. Entry +0x24 copies out to r11 and +0x2c copies out_len to r30. r30 is written again only at +0x4ec and +0x540, both inside the second clear. The only other r11 value is the sentinel 1 at +0x138, after a null pointer with zero length is accepted. The only store to 176(r1) is +0xac (std r11). No callee receives that slot. The output borrow is an exclusive caller allocation, disjoint from the inputs, the heap buffers and this frame. Both error paths reach +0x248: the private-operation failure at +0x238 after RsaPrivateScratch::clear at +0x240, and the decode-result test bf 9 at +0x12e4. CR2 bit 9 is set from public length checks; it is not the implicit-rejection padding decision, which yields Ok. No output byte is loaded by the tested length or alignment computation. +0x248 reloads r23=out, and +0x24c/+0x250/+0x254 compute r5=((out+7)&~7)-out. cmpld cr1,r30,r5 at +0x258 / bf 4 at +0x25c selects the short-prefix path. The same cr1 is tested again at +0x4cc after the first clear's sync at +0x4c8. The path from +0x25c to +0x4cc runs only through +0x260..+0x274 and +0x3a4..+0x4c8. Every compare in (+0x258, +0x4cc) is a two-operand CR0 form or andi., and there is no call, mtocrf, mcrf or CR-logical instruction. The external entries at +0x278/+0x298/+0x2b8 (reject_short_decryption_output) leave through b +0x650 at +0x3a0 and never reach +0x4cc. Both sites therefore compare the original public output length with its alignment prefix. Literal-zero prefix, word and suffix stores remain in both clears, ending in sync at +0x648. Renewed 2026-11-15 against Constant-Time 43670264860 at 6f571652: every instruction that this rationale cites is unchanged at its offset except frame displacements. The frame grew, so the cited slots moved (out 152 to 176(r1), k 144 to 168(r1), scratch r1+168 to r1+192, the blinding pointer from 296 to 320(r1) at +0x6d8 and from 88 to 96(r1) at +0x8b4, the black-box byte 1440 to 1472(r1), the candidates array 1144 to 1168), and the text uses the new values. RsaPrivateScratch::new is at 0x6bcd0 and keeps std r21,128(r30) at +0x730. Renewed 2026-11-15 against Constant-Time 43699511183 at 868dcbca: the slice differs only in two read-only constant references, the lxvd2x 1,23,7 index (li 7) and the addi 14,5 offset into a merged read-only unit. The r23 base moved by the same 256 bytes, so the vector load reads the same address, and no secret value reaches either operand. Renewed 2026-11-18 on the same artifacts (Constant-Time 44185315723 at f4f0d6b0): the explicit effect rules of CT-CLOSED-WORLD changed the slice, not the function or the branch."
 reviewer = "rscrypto exact-artifact condition review"
-reviewed_at = "2026-11-15"
+reviewed_at = "2026-11-18"
 
 [[asm_waiver]]
 target = "powerpc64le-unknown-linux-gnu"
@@ -8366,48 +8460,48 @@ target = "powerpc64le-unknown-linux-gnu"
 primitive = "rsa.private_ops"
 symbol = "ct_entry_rsa_pkcs1v15_decrypt_fixed_blinding"
 kind = "select_branch"
-slice_sha256 = "dc664327858afe3b6ab557308eeba1f9b547ad0791aab3b7719fc06d9441a363"
+slice_sha256 = "6d8ce237c3a8caba23e96b03636e5f78f6aed0fb080aa198e6cdafd5242c7e67"
 source = "src/traits/ct.rs zeroize_no_fence; src/auth/rsa.rs clear_output_on_error; src/auth/rsa.rs decrypt_pkcs1v15_with_blinding_factor_and_scratch result clearing"
 classification = "public"
-rationale = "Suffix count of the first (inner) clear_output_on_error zeroize of out. Entry +0x24 copies out to r11 and +0x2c copies out_len to r30. r30 is written again only at +0x4ec and +0x540, both inside the second clear. The only other r11 value is the sentinel 1 at +0x138, after a null pointer with zero length is accepted. The only store to 176(r1) is +0xac (std r11). No callee receives that slot. The output borrow is an exclusive caller allocation, disjoint from the inputs, the heap buffers and this frame. Both error paths reach +0x248: the private-operation failure at +0x238 after RsaPrivateScratch::clear at +0x240, and the decode-result test bf 9 at +0x12e4. CR2 bit 9 is set from public length checks; it is not the implicit-rejection padding decision, which yields Ok. No output byte is loaded by the tested length or alignment computation. At +0x254 r5 is the output alignment prefix. The normal split computes r3=r30-r5 at +0x3a4 and r6=(r30-r5)&7 at +0x3b0; the short path sets r6=0 at +0x270. cmpldi r6,6 at +0x4b4 / bt 2 at +0x4bc skips only the seventh suffix zero. The prefix and word stores and the suffix writes through +0x4c4 remain, followed by sync at +0x4c8. Renewed 2026-11-15 against Constant-Time 43670264860 at 6f571652: every instruction that this rationale cites is unchanged at its offset except frame displacements. The frame grew, so the cited slots moved (out 152 to 176(r1), k 144 to 168(r1), scratch r1+168 to r1+192, the blinding pointer from 296 to 320(r1) at +0x6d8 and from 88 to 96(r1) at +0x8b4, the black-box byte 1440 to 1472(r1), the candidates array 1144 to 1168), and the text uses the new values. RsaPrivateScratch::new is at 0x6bcd0 and keeps std r21,128(r30) at +0x730. Renewed 2026-11-15 against Constant-Time 43699511183 at 868dcbca: the slice differs only in two read-only constant references, the lxvd2x 1,23,7 index (li 7) and the addi 14,5 offset into a merged read-only unit. The r23 base moved by the same 256 bytes, so the vector load reads the same address, and no secret value reaches either operand."
+rationale = "Suffix count of the first (inner) clear_output_on_error zeroize of out. Entry +0x24 copies out to r11 and +0x2c copies out_len to r30. r30 is written again only at +0x4ec and +0x540, both inside the second clear. The only other r11 value is the sentinel 1 at +0x138, after a null pointer with zero length is accepted. The only store to 176(r1) is +0xac (std r11). No callee receives that slot. The output borrow is an exclusive caller allocation, disjoint from the inputs, the heap buffers and this frame. Both error paths reach +0x248: the private-operation failure at +0x238 after RsaPrivateScratch::clear at +0x240, and the decode-result test bf 9 at +0x12e4. CR2 bit 9 is set from public length checks; it is not the implicit-rejection padding decision, which yields Ok. No output byte is loaded by the tested length or alignment computation. At +0x254 r5 is the output alignment prefix. The normal split computes r3=r30-r5 at +0x3a4 and r6=(r30-r5)&7 at +0x3b0; the short path sets r6=0 at +0x270. cmpldi r6,6 at +0x4b4 / bt 2 at +0x4bc skips only the seventh suffix zero. The prefix and word stores and the suffix writes through +0x4c4 remain, followed by sync at +0x4c8. Renewed 2026-11-15 against Constant-Time 43670264860 at 6f571652: every instruction that this rationale cites is unchanged at its offset except frame displacements. The frame grew, so the cited slots moved (out 152 to 176(r1), k 144 to 168(r1), scratch r1+168 to r1+192, the blinding pointer from 296 to 320(r1) at +0x6d8 and from 88 to 96(r1) at +0x8b4, the black-box byte 1440 to 1472(r1), the candidates array 1144 to 1168), and the text uses the new values. RsaPrivateScratch::new is at 0x6bcd0 and keeps std r21,128(r30) at +0x730. Renewed 2026-11-15 against Constant-Time 43699511183 at 868dcbca: the slice differs only in two read-only constant references, the lxvd2x 1,23,7 index (li 7) and the addi 14,5 offset into a merged read-only unit. The r23 base moved by the same 256 bytes, so the vector load reads the same address, and no secret value reaches either operand. Renewed 2026-11-18 on the same artifacts (Constant-Time 44185315723 at f4f0d6b0): the explicit effect rules of CT-CLOSED-WORLD changed the slice, not the function or the branch."
 reviewer = "rscrypto exact-artifact condition review"
-reviewed_at = "2026-11-15"
+reviewed_at = "2026-11-18"
 
 [[asm_waiver]]
 target = "powerpc64le-unknown-linux-gnu"
 primitive = "rsa.private_ops"
 symbol = "ct_entry_rsa_pkcs1v15_decrypt_fixed_blinding"
 kind = "select_branch"
-slice_sha256 = "90e3e4785a477121d7656d2ff36aecf436b29b80528ae8fd906578d5d137eada"
+slice_sha256 = "8d2062e8b294488dba9010d3b6c9674ff89f4c9c713211ed6a77b9e20e1c501a"
 source = "src/traits/ct.rs zeroize_no_fence; src/auth/rsa.rs clear_output_on_error; src/auth/rsa.rs clear_decryption_output_on_error outer clear_decryption_output_on_error"
 classification = "public"
-rationale = "Suffix count of the second (outer) clear_decryption_output_on_error zeroize of out. Entry +0x24 copies out to r11 and +0x2c copies out_len to r30. r30 is written again only at +0x4ec and +0x540, both inside the second clear. The only other r11 value is the sentinel 1 at +0x138, after a null pointer with zero length is accepted. The only store to 176(r1) is +0xac (std r11). No callee receives that slot. The output borrow is an exclusive caller allocation, disjoint from the inputs, the heap buffers and this frame. Both error paths reach +0x248: the private-operation failure at +0x238 after RsaPrivateScratch::clear at +0x240, and the decode-result test bf 9 at +0x12e4. CR2 bit 9 is set from public length checks; it is not the implicit-rejection padding decision, which yields Ok. No output byte is loaded by the tested length or alignment computation. The original public r30 survives to the CR1 test at +0x4cc. The normal split computes r4=r30-r5 at +0x4e4 and r6=r4&7 at +0x4f8; r30 is reused for the prefix count only at +0x4ec. The short path sets r6=0 at +0x4dc. cmpldi r6,6 at +0x634 / bt 2 at +0x63c skips only the seventh suffix zero. The prefix and word loops and the suffix zero stores through +0x640 remain, followed by sync at +0x648. Renewed 2026-11-15 against Constant-Time 43670264860 at 6f571652: every instruction that this rationale cites is unchanged at its offset except frame displacements. The frame grew, so the cited slots moved (out 152 to 176(r1), k 144 to 168(r1), scratch r1+168 to r1+192, the blinding pointer from 296 to 320(r1) at +0x6d8 and from 88 to 96(r1) at +0x8b4, the black-box byte 1440 to 1472(r1), the candidates array 1144 to 1168), and the text uses the new values. RsaPrivateScratch::new is at 0x6bcd0 and keeps std r21,128(r30) at +0x730. Renewed 2026-11-15 against Constant-Time 43699511183 at 868dcbca: the slice differs only in two read-only constant references, the lxvd2x 1,23,7 index (li 7) and the addi 14,5 offset into a merged read-only unit. The r23 base moved by the same 256 bytes, so the vector load reads the same address, and no secret value reaches either operand."
+rationale = "Suffix count of the second (outer) clear_decryption_output_on_error zeroize of out. Entry +0x24 copies out to r11 and +0x2c copies out_len to r30. r30 is written again only at +0x4ec and +0x540, both inside the second clear. The only other r11 value is the sentinel 1 at +0x138, after a null pointer with zero length is accepted. The only store to 176(r1) is +0xac (std r11). No callee receives that slot. The output borrow is an exclusive caller allocation, disjoint from the inputs, the heap buffers and this frame. Both error paths reach +0x248: the private-operation failure at +0x238 after RsaPrivateScratch::clear at +0x240, and the decode-result test bf 9 at +0x12e4. CR2 bit 9 is set from public length checks; it is not the implicit-rejection padding decision, which yields Ok. No output byte is loaded by the tested length or alignment computation. The original public r30 survives to the CR1 test at +0x4cc. The normal split computes r4=r30-r5 at +0x4e4 and r6=r4&7 at +0x4f8; r30 is reused for the prefix count only at +0x4ec. The short path sets r6=0 at +0x4dc. cmpldi r6,6 at +0x634 / bt 2 at +0x63c skips only the seventh suffix zero. The prefix and word loops and the suffix zero stores through +0x640 remain, followed by sync at +0x648. Renewed 2026-11-15 against Constant-Time 43670264860 at 6f571652: every instruction that this rationale cites is unchanged at its offset except frame displacements. The frame grew, so the cited slots moved (out 152 to 176(r1), k 144 to 168(r1), scratch r1+168 to r1+192, the blinding pointer from 296 to 320(r1) at +0x6d8 and from 88 to 96(r1) at +0x8b4, the black-box byte 1440 to 1472(r1), the candidates array 1144 to 1168), and the text uses the new values. RsaPrivateScratch::new is at 0x6bcd0 and keeps std r21,128(r30) at +0x730. Renewed 2026-11-15 against Constant-Time 43699511183 at 868dcbca: the slice differs only in two read-only constant references, the lxvd2x 1,23,7 index (li 7) and the addi 14,5 offset into a merged read-only unit. The r23 base moved by the same 256 bytes, so the vector load reads the same address, and no secret value reaches either operand. Renewed 2026-11-18 on the same artifacts (Constant-Time 44185315723 at f4f0d6b0): the explicit effect rules of CT-CLOSED-WORLD changed the slice, not the function or the branch."
 reviewer = "rscrypto exact-artifact condition review"
-reviewed_at = "2026-11-15"
+reviewed_at = "2026-11-18"
 
 [[asm_waiver]]
 target = "powerpc64le-unknown-linux-gnu"
 primitive = "rsa.private_ops"
 symbol = "ct_entry_rsa_pkcs1v15_decrypt_fixed_blinding"
 kind = "select_branch"
-slice_sha256 = "92c0682b752f32e38b4a37f5c9353b7456e5a2788464797f19899ccd4eddef48"
+slice_sha256 = "a62f8bb07fd0a4a9fcb292f626f63b221a927c3590a59ca4cbde73f37ee31948"
 source = "src/traits/ct.rs zeroize_no_fence; src/auth/rsa.rs decode_pkcs1v15_with_implicit_rejection zeroize(alternative)"
 classification = "public"
-rationale = "Prefix split of the final zeroize(alternative) in decode_pkcs1v15_with_implicit_rejection. RsaPrivateScratch::new at 0x6bcd0 writes the blinding_power Vec pointer at self+128 (std r21,128(r30) at +0x730). The entry passes self=r1+192 (+0x9c). So ld r24,320(r1) at entry +0x6d8 is that public allocation pointer, and std r24,96(r1) at +0x8b4 is the only store to 96(r1). The ensure_len checks at +0x188..+0x208 bind every scratch length to the public modulus byte width k (ld 4,8(r28) at +0xc4), which is ciphertext_len at 168(r1). The private operation and the decode only write the backing bytes through as_mut_slice; no linked or source path replaces a scratch Vec. r6 reloaded from 168(r1) is the public k. r21 is reloaded from 96(r1) (+0xc1c, +0xf18, +0x12fc, +0x1324); r20=r21+7 at +0xc20 is spilled to 80(r1) at +0xc50 and reloaded at +0xf1c, +0x1300 or +0x1328. Secret candidate, EM and selected-message stores write buffer bytes, not these pointer or length slots. At +0x1198 r3=r20&~7, and +0x11a0 forms the alignment prefix r8=r3-r21. cmpld r6,r8 at +0x11a4 / bf 0 at +0x11a8 tests whether public k is shorter than this public prefix. The prefix zero stores (+0x11f0), the aligned word stores (+0x1230, +0x1250..+0x126c) and the suffix stores through +0x12d4 remain, followed by sync at +0x12d8. Only the split of the same public cleanup extent changes. Renewed 2026-11-15 against Constant-Time 43670264860 at 6f571652: every instruction that this rationale cites is unchanged at its offset except frame displacements. The frame grew, so the cited slots moved (out 152 to 176(r1), k 144 to 168(r1), scratch r1+168 to r1+192, the blinding pointer from 296 to 320(r1) at +0x6d8 and from 88 to 96(r1) at +0x8b4, the black-box byte 1440 to 1472(r1), the candidates array 1144 to 1168), and the text uses the new values. RsaPrivateScratch::new is at 0x6bcd0 and keeps std r21,128(r30) at +0x730. Renewed 2026-11-15 against Constant-Time 43699511183 at 868dcbca: the slice differs only in two read-only constant references, the lxvd2x 1,23,7 index (li 7) and the addi 14,5 offset into a merged read-only unit. The r23 base moved by the same 256 bytes, so the vector load reads the same address, and no secret value reaches either operand."
+rationale = "Prefix split of the final zeroize(alternative) in decode_pkcs1v15_with_implicit_rejection. RsaPrivateScratch::new at 0x6bcd0 writes the blinding_power Vec pointer at self+128 (std r21,128(r30) at +0x730). The entry passes self=r1+192 (+0x9c). So ld r24,320(r1) at entry +0x6d8 is that public allocation pointer, and std r24,96(r1) at +0x8b4 is the only store to 96(r1). The ensure_len checks at +0x188..+0x208 bind every scratch length to the public modulus byte width k (ld 4,8(r28) at +0xc4), which is ciphertext_len at 168(r1). The private operation and the decode only write the backing bytes through as_mut_slice; no linked or source path replaces a scratch Vec. r6 reloaded from 168(r1) is the public k. r21 is reloaded from 96(r1) (+0xc1c, +0xf18, +0x12fc, +0x1324); r20=r21+7 at +0xc20 is spilled to 80(r1) at +0xc50 and reloaded at +0xf1c, +0x1300 or +0x1328. Secret candidate, EM and selected-message stores write buffer bytes, not these pointer or length slots. At +0x1198 r3=r20&~7, and +0x11a0 forms the alignment prefix r8=r3-r21. cmpld r6,r8 at +0x11a4 / bf 0 at +0x11a8 tests whether public k is shorter than this public prefix. The prefix zero stores (+0x11f0), the aligned word stores (+0x1230, +0x1250..+0x126c) and the suffix stores through +0x12d4 remain, followed by sync at +0x12d8. Only the split of the same public cleanup extent changes. Renewed 2026-11-15 against Constant-Time 43670264860 at 6f571652: every instruction that this rationale cites is unchanged at its offset except frame displacements. The frame grew, so the cited slots moved (out 152 to 176(r1), k 144 to 168(r1), scratch r1+168 to r1+192, the blinding pointer from 296 to 320(r1) at +0x6d8 and from 88 to 96(r1) at +0x8b4, the black-box byte 1440 to 1472(r1), the candidates array 1144 to 1168), and the text uses the new values. RsaPrivateScratch::new is at 0x6bcd0 and keeps std r21,128(r30) at +0x730. Renewed 2026-11-15 against Constant-Time 43699511183 at 868dcbca: the slice differs only in two read-only constant references, the lxvd2x 1,23,7 index (li 7) and the addi 14,5 offset into a merged read-only unit. The r23 base moved by the same 256 bytes, so the vector load reads the same address, and no secret value reaches either operand. Renewed 2026-11-18 on the same artifacts (Constant-Time 44185315723 at f4f0d6b0): the explicit effect rules of CT-CLOSED-WORLD changed the slice, not the function or the branch."
 reviewer = "rscrypto exact-artifact condition review"
-reviewed_at = "2026-11-15"
+reviewed_at = "2026-11-18"
 
 [[asm_waiver]]
 target = "powerpc64le-unknown-linux-gnu"
 primitive = "rsa.private_ops"
 symbol = "ct_entry_rsa_pkcs1v15_decrypt_fixed_blinding"
 kind = "select_branch"
-slice_sha256 = "7b0121868a7f1ac4c63f9538fde87d0361bd01433414724af83f49621dc27c6f"
+slice_sha256 = "0af68aebb59b819531530ac77735347be846a5336f6697dea1b473740bf79470"
 source = "src/traits/ct.rs zeroize_no_fence; src/auth/rsa.rs decode_pkcs1v15_with_implicit_rejection zeroize(alternative)"
 classification = "public"
-rationale = "Suffix count of the final zeroize(alternative) in decode_pkcs1v15_with_implicit_rejection. RsaPrivateScratch::new at 0x6bcd0 writes the blinding_power Vec pointer at self+128 (std r21,128(r30) at +0x730). The entry passes self=r1+192 (+0x9c). So ld r24,320(r1) at entry +0x6d8 is that public allocation pointer, and std r24,96(r1) at +0x8b4 is the only store to 96(r1). The ensure_len checks at +0x188..+0x208 bind every scratch length to the public modulus byte width k (ld 4,8(r28) at +0xc4), which is ciphertext_len at 168(r1). The private operation and the decode only write the backing bytes through as_mut_slice; no linked or source path replaces a scratch Vec. r6 reloaded from 168(r1) is the public k. r21 is reloaded from 96(r1) (+0xc1c, +0xf18, +0x12fc, +0x1324); r20=r21+7 at +0xc20 is spilled to 80(r1) at +0xc50 and reloaded at +0xf1c, +0x1300 or +0x1328. Secret candidate, EM and selected-message stores write buffer bytes, not these pointer or length slots. +0x11a0 computes the public alignment prefix r8. +0x11c0 computes r3=k-prefix, and clrldi at +0x11d4 leaves (k-prefix)&7 in r4. The short path sets r4=0 at +0x11b8. cmpldi r4,6 at +0x12c4 / bt 2 at +0x12cc skips the seventh suffix zero when the suffix has six bytes. The prefix and word stores remain, and the suffix literal-zero stores continue through +0x12d4, followed by sync at +0x12d8. Renewed 2026-11-15 against Constant-Time 43670264860 at 6f571652: every instruction that this rationale cites is unchanged at its offset except frame displacements. The frame grew, so the cited slots moved (out 152 to 176(r1), k 144 to 168(r1), scratch r1+168 to r1+192, the blinding pointer from 296 to 320(r1) at +0x6d8 and from 88 to 96(r1) at +0x8b4, the black-box byte 1440 to 1472(r1), the candidates array 1144 to 1168), and the text uses the new values. RsaPrivateScratch::new is at 0x6bcd0 and keeps std r21,128(r30) at +0x730. Renewed 2026-11-15 against Constant-Time 43699511183 at 868dcbca: the slice differs only in two read-only constant references, the lxvd2x 1,23,7 index (li 7) and the addi 14,5 offset into a merged read-only unit. The r23 base moved by the same 256 bytes, so the vector load reads the same address, and no secret value reaches either operand."
+rationale = "Suffix count of the final zeroize(alternative) in decode_pkcs1v15_with_implicit_rejection. RsaPrivateScratch::new at 0x6bcd0 writes the blinding_power Vec pointer at self+128 (std r21,128(r30) at +0x730). The entry passes self=r1+192 (+0x9c). So ld r24,320(r1) at entry +0x6d8 is that public allocation pointer, and std r24,96(r1) at +0x8b4 is the only store to 96(r1). The ensure_len checks at +0x188..+0x208 bind every scratch length to the public modulus byte width k (ld 4,8(r28) at +0xc4), which is ciphertext_len at 168(r1). The private operation and the decode only write the backing bytes through as_mut_slice; no linked or source path replaces a scratch Vec. r6 reloaded from 168(r1) is the public k. r21 is reloaded from 96(r1) (+0xc1c, +0xf18, +0x12fc, +0x1324); r20=r21+7 at +0xc20 is spilled to 80(r1) at +0xc50 and reloaded at +0xf1c, +0x1300 or +0x1328. Secret candidate, EM and selected-message stores write buffer bytes, not these pointer or length slots. +0x11a0 computes the public alignment prefix r8. +0x11c0 computes r3=k-prefix, and clrldi at +0x11d4 leaves (k-prefix)&7 in r4. The short path sets r4=0 at +0x11b8. cmpldi r4,6 at +0x12c4 / bt 2 at +0x12cc skips the seventh suffix zero when the suffix has six bytes. The prefix and word stores remain, and the suffix literal-zero stores continue through +0x12d4, followed by sync at +0x12d8. Renewed 2026-11-15 against Constant-Time 43670264860 at 6f571652: every instruction that this rationale cites is unchanged at its offset except frame displacements. The frame grew, so the cited slots moved (out 152 to 176(r1), k 144 to 168(r1), scratch r1+168 to r1+192, the blinding pointer from 296 to 320(r1) at +0x6d8 and from 88 to 96(r1) at +0x8b4, the black-box byte 1440 to 1472(r1), the candidates array 1144 to 1168), and the text uses the new values. RsaPrivateScratch::new is at 0x6bcd0 and keeps std r21,128(r30) at +0x730. Renewed 2026-11-15 against Constant-Time 43699511183 at 868dcbca: the slice differs only in two read-only constant references, the lxvd2x 1,23,7 index (li 7) and the addi 14,5 offset into a merged read-only unit. The r23 base moved by the same 256 bytes, so the vector load reads the same address, and no secret value reaches either operand. Renewed 2026-11-18 on the same artifacts (Constant-Time 44185315723 at f4f0d6b0): the explicit effect rules of CT-CLOSED-WORLD changed the slice, not the function or the branch."
 reviewer = "rscrypto exact-artifact condition review"
-reviewed_at = "2026-11-15"
+reviewed_at = "2026-11-18"
 
 [[asm_waiver]]
 target = "powerpc64le-unknown-linux-gnu"
@@ -8474,12 +8568,12 @@ target = "powerpc64le-unknown-linux-gnu"
 primitive = "rsa.private_ops"
 symbol = "ct_entry_rsa_pkcs1v15_decrypt_fixed_blinding"
 kind = "select_branch"
-slice_sha256 = "02cc13d226423b943546a6072ecd3ebfb4542e961c10df33f484755c8a5d66f1"
+slice_sha256 = "262c77adf60e1ba4191118819696703b7a78ae18f1c07c5fd32c6adc680ccbcb"
 source = "src/traits/ct.rs zeroize_no_fence; src/auth/rsa.rs decode_pkcs1v15_implicit_rejection zeroize(alternative)"
 classification = "public"
-rationale = "Suffix count of zeroize(alternative) at the end of decode_pkcs1v15_implicit_rejection. RsaPrivateScratch::new at 0x6bcd0 writes the blinding_power Vec pointer at self+128 (std r21,128(r30) at +0x730). The entry passes self=r1+192 (+0x9c). So ld r24,320(r1) at entry +0x6d8 is that public allocation pointer, and std r24,96(r1) at +0x8b4 is the only store to 96(r1). The ensure_len checks at +0x188..+0x208 bind every scratch length to the public modulus byte width k (ld 4,8(r28) at +0xc4), which is ciphertext_len at 168(r1). The private operation and the decode only write the backing bytes through as_mut_slice; no linked or source path replaces a scratch Vec. r6 reloaded from 168(r1) is the public k. r21 is reloaded from 96(r1) (+0xc1c, +0xf18, +0x12fc, +0x1324); r20=r21+7 at +0xc20 is spilled to 80(r1) at +0xc50 and reloaded at +0xf1c, +0x1300 or +0x1328. Secret candidate, EM and selected-message stores write buffer bytes, not these pointer or length slots. After memcpy at +0x183c copies the selected message to the disjoint caller output, +0x1844 aligns r20 down, +0x1848 reloads k, +0x184c forms prefix=r5-r21, and clrldi at +0x18c4 sets r4=(k-prefix)&7. cmpldi r4,6 at +0x1984 / bt 2 at +0x198c skips only the seventh suffix zero. The prefix store (+0x186c), the word store (+0x18f4) and the byte groups and suffix stores through +0x1994 remain, followed by sync at +0x1998. The copied output and the selected secret bytes do not overwrite r21, r20 or the k and pointer slots. Renewed 2026-11-15 against Constant-Time 43670264860 at 6f571652: every instruction that this rationale cites is unchanged at its offset except frame displacements. The frame grew, so the cited slots moved (out 152 to 176(r1), k 144 to 168(r1), scratch r1+168 to r1+192, the blinding pointer from 296 to 320(r1) at +0x6d8 and from 88 to 96(r1) at +0x8b4, the black-box byte 1440 to 1472(r1), the candidates array 1144 to 1168), and the text uses the new values. RsaPrivateScratch::new is at 0x6bcd0 and keeps std r21,128(r30) at +0x730. Renewed 2026-11-15 against Constant-Time 43699511183 at 868dcbca: the slice differs only in two read-only constant references, the lxvd2x 1,23,7 index (li 7) and the addi 14,5 offset into a merged read-only unit. The r23 base moved by the same 256 bytes, so the vector load reads the same address, and no secret value reaches either operand."
+rationale = "Suffix count of zeroize(alternative) at the end of decode_pkcs1v15_implicit_rejection. RsaPrivateScratch::new at 0x6bcd0 writes the blinding_power Vec pointer at self+128 (std r21,128(r30) at +0x730). The entry passes self=r1+192 (+0x9c). So ld r24,320(r1) at entry +0x6d8 is that public allocation pointer, and std r24,96(r1) at +0x8b4 is the only store to 96(r1). The ensure_len checks at +0x188..+0x208 bind every scratch length to the public modulus byte width k (ld 4,8(r28) at +0xc4), which is ciphertext_len at 168(r1). The private operation and the decode only write the backing bytes through as_mut_slice; no linked or source path replaces a scratch Vec. r6 reloaded from 168(r1) is the public k. r21 is reloaded from 96(r1) (+0xc1c, +0xf18, +0x12fc, +0x1324); r20=r21+7 at +0xc20 is spilled to 80(r1) at +0xc50 and reloaded at +0xf1c, +0x1300 or +0x1328. Secret candidate, EM and selected-message stores write buffer bytes, not these pointer or length slots. After memcpy at +0x183c copies the selected message to the disjoint caller output, +0x1844 aligns r20 down, +0x1848 reloads k, +0x184c forms prefix=r5-r21, and clrldi at +0x18c4 sets r4=(k-prefix)&7. cmpldi r4,6 at +0x1984 / bt 2 at +0x198c skips only the seventh suffix zero. The prefix store (+0x186c), the word store (+0x18f4) and the byte groups and suffix stores through +0x1994 remain, followed by sync at +0x1998. The copied output and the selected secret bytes do not overwrite r21, r20 or the k and pointer slots. Renewed 2026-11-15 against Constant-Time 43670264860 at 6f571652: every instruction that this rationale cites is unchanged at its offset except frame displacements. The frame grew, so the cited slots moved (out 152 to 176(r1), k 144 to 168(r1), scratch r1+168 to r1+192, the blinding pointer from 296 to 320(r1) at +0x6d8 and from 88 to 96(r1) at +0x8b4, the black-box byte 1440 to 1472(r1), the candidates array 1144 to 1168), and the text uses the new values. RsaPrivateScratch::new is at 0x6bcd0 and keeps std r21,128(r30) at +0x730. Renewed 2026-11-15 against Constant-Time 43699511183 at 868dcbca: the slice differs only in two read-only constant references, the lxvd2x 1,23,7 index (li 7) and the addi 14,5 offset into a merged read-only unit. The r23 base moved by the same 256 bytes, so the vector load reads the same address, and no secret value reaches either operand. Renewed 2026-11-18 on the same artifacts (Constant-Time 44185315723 at f4f0d6b0): the explicit effect rules of CT-CLOSED-WORLD changed the slice, not the function or the branch."
 reviewer = "rscrypto exact-artifact condition review"
-reviewed_at = "2026-11-15"
+reviewed_at = "2026-11-18"
 
 [[asm_waiver]]
 target = "powerpc64le-unknown-linux-gnu"
@@ -8522,12 +8616,12 @@ target = "powerpc64le-unknown-linux-gnu"
 primitive = "rsa.private_ops"
 symbol = "ct_entry_rsa_pkcs1v15_decrypt_fixed_blinding"
 kind = "select_branch"
-slice_sha256 = "6ab5d75a696667a0ccc25837b1a410ea9671976c34173cc82087717aad0db154"
+slice_sha256 = "9418b7198ec568e8c42efee3fcf549ec12e8b0d04257abbcd295206b68b10544"
 source = "src/traits/ct.rs zeroize_no_fence; src/auth/rsa.rs decode_pkcs1v15_with_implicit_rejection zeroize(kdk)"
 classification = "public"
-rationale = "Zeroize of the 32-byte KDK stack array at r1+1136 (addi r5,r1,1136 at +0x9e8; hmac_sha256_parts at +0x7fc writes the KDK there). ld r4,184(r1) at +0xf2c reloads that address. The only store to 184(r1) is +0x9f4, which dominates every path to +0xf28. +0xf28 forms r1+1143, which is aligned down, the array base is subtracted, 32 minus that prefix gives the extent, and clrldi keeps its low three bits; cmpldi r5,6 / bt 2 at +0x1038 selects only whether the seventh suffix byte is required. The condition uses a frame address and the constant 32; no KDK byte enters it. Renewed 2026-11-15 against Constant-Time 43699511183 at 868dcbca: the slice differs only in two read-only constant references, the lxvd2x 1,23,7 index (li 7) and the addi 14,5 offset into a merged read-only unit. The r23 base moved by the same 256 bytes, so the vector load reads the same address, and no secret value reaches either operand."
+rationale = "Zeroize of the 32-byte KDK stack array at r1+1136 (addi r5,r1,1136 at +0x9e8; hmac_sha256_parts at +0x7fc writes the KDK there). ld r4,184(r1) at +0xf2c reloads that address. The only store to 184(r1) is +0x9f4, which dominates every path to +0xf28. +0xf28 forms r1+1143, which is aligned down, the array base is subtracted, 32 minus that prefix gives the extent, and clrldi keeps its low three bits; cmpldi r5,6 / bt 2 at +0x1038 selects only whether the seventh suffix byte is required. The condition uses a frame address and the constant 32; no KDK byte enters it. Renewed 2026-11-15 against Constant-Time 43699511183 at 868dcbca: the slice differs only in two read-only constant references, the lxvd2x 1,23,7 index (li 7) and the addi 14,5 offset into a merged read-only unit. The r23 base moved by the same 256 bytes, so the vector load reads the same address, and no secret value reaches either operand. Renewed 2026-11-18 on the same artifacts (Constant-Time 44185315723 at f4f0d6b0): the explicit effect rules of CT-CLOSED-WORLD changed the slice, not the function or the branch."
 reviewer = "rscrypto exact-artifact condition review"
-reviewed_at = "2026-11-15"
+reviewed_at = "2026-11-18"
 
 [[asm_waiver]]
 target = "powerpc64le-unknown-linux-gnu"
@@ -10756,12 +10850,12 @@ target = "powerpc64le-unknown-linux-gnu"
 primitive = "kx.p256_ecdh"
 symbol = "ct_entry_p256_ecdh_agree"
 kind = "select_branch"
-slice_sha256 = "bd45ef26024241dfcd1f3aafb1019fe397cc9cd53c1722295a1a81ed6b30f3ca"
+slice_sha256 = "ac2d636022f793be70887f5e7ef0fc30fc63f1ac41dd83eacf0c22fa6f3c6778"
 source = "tools/ct-harness/src/lib.rs ct_entry_p256_ecdh_agree P256PublicKey::from_sec1_bytes; src/auth/p256_portable.rs Affine::is_on_curve"
 classification = "public"
-rationale = "At +0x6ac, bt 24 reads CR6 from vcmpequb. v2,v3,v2 at +0x6a8, which compares the high 16 bytes of the curve-equation sides. Those halves are loaded by lxvd2x vs34,r20,r3 at +0x69c and lxvd2x vs35,r4,r3 at +0x6a0, with r3=16 (+0x698). The low halves are compared at +0x690/+0x694. r20=r1+416 (+0x2a0) holds the RHS x^3-3x+b, stored at +0x670..+0x688 after square at +0x29c and montgomery_mul at +0x2c0. r4 is the LHS y^2 buffer r1+320, loaded from 48(r1) at +0x678; the only store to 48(r1) is +0x268, and square at +0x26c fills r1+320. Both sides derive only from the public point's x/y, read through entry r5 by ldx at +0x98..+0xd8 after the 0x04 tag check at +0x88/+0x8c. They pass through Montgomery conversion (montgomery_mul at +0x238/+0x25c with r30=FIELD_R2) and inline field arithmetic with immediate curve constants. The secret scalar is copied from entry r4 to r1+80..r1+111 (+0x74..+0x80) and is never loaded before +0x6ac, and r1+80 is not passed to any call before it. The scanner keeps those copy stores in the slice only as possible aliases of the point loads; a caller's point buffer cannot alias this new frame. Source: P256PublicKey::from_sec1_bytes calls Affine::is_on_curve before the secret is built at the harness root. This short-circuit comparison reveals only public point validity, which is outside the private-agreement CT claim. Rechecked against the current linked binary: verified-review-facts.json binds complete function instructions, actual public constants/Locations and named PLT edges. No new secret dependency reaches this condition. Renewed 2026-11-05 against Constant-Time 41973426452 at 21824d5f: the anonymous read-only _MergedGlobals unit that the TOC references address shrank from 32,707 to 32,697 bytes, so its digest changed and offsets into it moved. The function and this slice differ only in that unit's descriptor and offset immediates, which this rationale does not cite; read-only constants are public and the open leaves name the same callees. Renewed at the reviewed branch offset, as on 2026-11-04; the placement leak is CT-TOOLING (a). Renewed again 2026-11-05 against Constant-Time 41988218703 at c55dad7d: the slice is unchanged except for placement-dependent constant descriptors (CT-TOOLING (a))."
+rationale = "At +0x6ac, bt 24 reads CR6 from vcmpequb. v2,v3,v2 at +0x6a8, which compares the high 16 bytes of the curve-equation sides. Those halves are loaded by lxvd2x vs34,r20,r3 at +0x69c and lxvd2x vs35,r4,r3 at +0x6a0, with r3=16 (+0x698). The low halves are compared at +0x690/+0x694. r20=r1+416 (+0x2a0) holds the RHS x^3-3x+b, stored at +0x670..+0x688 after square at +0x29c and montgomery_mul at +0x2c0. r4 is the LHS y^2 buffer r1+320, loaded from 48(r1) at +0x678; the only store to 48(r1) is +0x268, and square at +0x26c fills r1+320. Both sides derive only from the public point's x/y, read through entry r5 by ldx at +0x98..+0xd8 after the 0x04 tag check at +0x88/+0x8c. They pass through Montgomery conversion (montgomery_mul at +0x238/+0x25c with r30=FIELD_R2) and inline field arithmetic with immediate curve constants. The secret scalar is copied from entry r4 to r1+80..r1+111 (+0x74..+0x80) and is never loaded before +0x6ac, and r1+80 is not passed to any call before it. The scanner keeps those copy stores in the slice only as possible aliases of the point loads; a caller's point buffer cannot alias this new frame. Source: P256PublicKey::from_sec1_bytes calls Affine::is_on_curve before the secret is built at the harness root. This short-circuit comparison reveals only public point validity, which is outside the private-agreement CT claim. Rechecked against the current linked binary: verified-review-facts.json binds complete function instructions, actual public constants/Locations and named PLT edges. No new secret dependency reaches this condition. Renewed 2026-11-05 against Constant-Time 41973426452 at 21824d5f: the anonymous read-only _MergedGlobals unit that the TOC references address shrank from 32,707 to 32,697 bytes, so its digest changed and offsets into it moved. The function and this slice differ only in that unit's descriptor and offset immediates, which this rationale does not cite; read-only constants are public and the open leaves name the same callees. Renewed at the reviewed branch offset, as on 2026-11-04; the placement leak is CT-TOOLING (a). Renewed again 2026-11-05 against Constant-Time 41988218703 at c55dad7d: the slice is unchanged except for placement-dependent constant descriptors (CT-TOOLING (a)). Renewed 2026-11-18 on the same artifacts (Constant-Time 44185315723 at f4f0d6b0): the explicit effect rules of CT-CLOSED-WORLD changed the slice, not the function or the branch."
 reviewer = "rscrypto exact-artifact condition review"
-reviewed_at = "2026-11-05"
+reviewed_at = "2026-11-18"
 
 [[asm_waiver]]
 target = "powerpc64le-unknown-linux-gnu"
@@ -10936,12 +11030,12 @@ target = "powerpc64le-unknown-linux-gnu"
 primitive = "rsa.private_ops"
 symbol = "rscrypto::auth::rsa::private_exponentiate_representative_with_scratch"
 kind = "select_branch"
-slice_sha256 = "95542a6120ea091a7485f0d672538d790aeb8f3d63078293b0bde23c33022e8f"
+slice_sha256 = "e636a43adc9407f50a2e0e6bb81a8c170fa7c8427c222691fda413f47b2ecf1c"
 source = "src/auth/rsa.rs private_exponentiate_representative_with_scratch"
 classification = "public"
-rationale = "The actual branch bf 0 at +0x5cc consumes CR0 from cmpld r3,r22 at +0x5c0. r3 is the five-bit window counter r28 shifted right by three at +0x5b0, and r22 is public exponent.len()-1, set by addi r22,r24,-1 at +0x524; r24 preserves incoming exponent length from entry r5. r28 advances by five per window at +0x5a4 and derives its initial padding only from that length. LI r5,0 and LBZUX r4,r6,r3 between compare and branch do not alter CR0. Power ISA 3.1B Book I p52 lists no special registers altered for LBZUX. The conservative slice incorrectly stops at the byte load; the loaded secret byte feeds only the window value passed to fixed table selection. This branch checks whether the following public byte index exists. Rechecked against the current linked binary: verified-review-facts.json binds complete function instructions, actual public constants/Locations and named PLT edges. No new secret dependency reaches this condition. Renewed 2026-11-05 against Constant-Time 41973426452 at 21824d5f: the anonymous read-only _MergedGlobals unit that the TOC references address shrank from 32,707 to 32,697 bytes, so its digest changed and offsets into it moved. The function and this slice differ only in that unit's descriptor and offset immediates, which this rationale does not cite; read-only constants are public and the open leaves name the same callees. Renewed at the reviewed branch offset, as on 2026-11-04; the placement leak is CT-TOOLING (a). Renewed again 2026-11-05 against Constant-Time 41988218703 at c55dad7d: the slice is unchanged except for placement-dependent constant descriptors (CT-TOOLING (a))."
+rationale = "The actual branch bf 0 at +0x5cc consumes CR0 from cmpld r3,r22 at +0x5c0. r3 is the five-bit window counter r28 shifted right by three at +0x5b0, and r22 is public exponent.len()-1, set by addi r22,r24,-1 at +0x524; r24 preserves incoming exponent length from entry r5. r28 advances by five per window at +0x5a4 and derives its initial padding only from that length. LI r5,0 and LBZUX r4,r6,r3 between compare and branch do not alter CR0. Power ISA 3.1B Book I p52 lists no special registers altered for LBZUX. The conservative slice incorrectly stops at the byte load; the loaded secret byte feeds only the window value passed to fixed table selection. This branch checks whether the following public byte index exists. Rechecked against the current linked binary: verified-review-facts.json binds complete function instructions, actual public constants/Locations and named PLT edges. No new secret dependency reaches this condition. Renewed 2026-11-05 against Constant-Time 41973426452 at 21824d5f: the anonymous read-only _MergedGlobals unit that the TOC references address shrank from 32,707 to 32,697 bytes, so its digest changed and offsets into it moved. The function and this slice differ only in that unit's descriptor and offset immediates, which this rationale does not cite; read-only constants are public and the open leaves name the same callees. Renewed at the reviewed branch offset, as on 2026-11-04; the placement leak is CT-TOOLING (a). Renewed again 2026-11-05 against Constant-Time 41988218703 at c55dad7d: the slice is unchanged except for placement-dependent constant descriptors (CT-TOOLING (a)). Renewed 2026-11-18 on the same artifacts (Constant-Time 44185315723 at f4f0d6b0): the explicit effect rules of CT-CLOSED-WORLD changed the slice, not the function or the branch."
 reviewer = "rscrypto exact-artifact condition review"
-reviewed_at = "2026-11-05"
+reviewed_at = "2026-11-18"
 
 [[asm_waiver]]
 target = "powerpc64le-unknown-linux-gnu"
@@ -11200,24 +11294,24 @@ target = "s390x-unknown-linux-gnu"
 primitive = "rsa.private_ops"
 symbol = "ct_entry_rsa_oaep_decrypt_fixed_blinding"
 kind = "select_branch"
-slice_sha256 = "fc430b4db7b2c0b3a78360efc72510637a490f888245a895ebc2824d7d91dd9c"
+slice_sha256 = "450d8d009f3120ed041b2eaadf9ea86a4e6a35b5fb7a2605456b2b0fccc7e7f7"
 source = "tools/ct-harness/src/lib.rs ct_entry_rsa_oaep_decrypt_fixed_blinding"
 classification = "public"
-rationale = "Scratch begins at frame184. Its one pointer is frame408 (184+224), which RsaPrivateScratch::new writes and +0x2ae loads into r8. The length r6 is incoming ciphertext_len from the caller argument at frame1352, loaded at +0x2a. The checks at +0x298..+0x2a8 equate it with the key width and the blinding factor and inverse lengths. The test compares that length with the alignment prefix of the pointer. The ciphertext copy at +0x280 and the exrl template at +0x292 write the encoded heap buffer, not descriptor 408."
+rationale = "Scratch begins at frame184. Its one pointer is frame408 (184+224), which RsaPrivateScratch::new writes and +0x2ae loads into r8. The length r6 is incoming ciphertext_len from the caller argument at frame1352, loaded at +0x2a. The checks at +0x298..+0x2a8 equate it with the key width and the blinding factor and inverse lengths. The test compares that length with the alignment prefix of the pointer. The ciphertext copy at +0x280 and the exrl template at +0x292 write the encoded heap buffer, not descriptor 408. Renewed 2026-11-18 on the same artifacts (Constant-Time 44185315723 at f4f0d6b0): the explicit effect rules of CT-CLOSED-WORLD changed the slice, not the function or the branch."
 reviewer = "rscrypto exact-artifact condition review"
-reviewed_at = "2026-11-15"
+reviewed_at = "2026-11-18"
 
 [[asm_waiver]]
 target = "s390x-unknown-linux-gnu"
 primitive = "rsa.private_ops"
 symbol = "ct_entry_rsa_oaep_decrypt_fixed_blinding"
 kind = "select_branch"
-slice_sha256 = "9406a9e190e1785021e5e743a9e6cac601bbf7a5b375103ada5c90c59495767e"
+slice_sha256 = "c5a2979c5ac9a8479480e4fc66f9009ac579b3ca6f42632731591f77c3169eee"
 source = "tools/ct-harness/src/lib.rs ct_entry_rsa_oaep_decrypt_fixed_blinding"
 classification = "public"
-rationale = "The error-output clearing after RsaPrivateScratch::clear at +0xa20 compares saved out_len (frame1168, +0xa38) with the alignment prefix of the saved out pointer (frame1160, +0xa26). +0xb90 tests the same pair. Those slots receive the ABI inputs at +0x5a and +0x60. The only other store to them, +0xd2e, advances the output pointer on the successful output copy, which returns through +0xce0 and cannot reach these branches. The function forms frame addresses only at 184, 424, and 1024 inside the scratch [184,1088), at the byte locals 1092..1096, and at the 32-byte digest result 1104 (+0x778), which ends at 1136. So no pointer store or callee addresses the saved slots at 1136..1175. The branches select only zero-store head, word, and tail extents."
+rationale = "The error-output clearing after RsaPrivateScratch::clear at +0xa20 compares saved out_len (frame1168, +0xa38) with the alignment prefix of the saved out pointer (frame1160, +0xa26). +0xb90 tests the same pair. Those slots receive the ABI inputs at +0x5a and +0x60. The only other store to them, +0xd2e, advances the output pointer on the successful output copy, which returns through +0xce0 and cannot reach these branches. The function forms frame addresses only at 184, 424, and 1024 inside the scratch [184,1088), at the byte locals 1092..1096, and at the 32-byte digest result 1104 (+0x778), which ends at 1136. So no pointer store or callee addresses the saved slots at 1136..1175. The branches select only zero-store head, word, and tail extents. Renewed 2026-11-18 on the same artifacts (Constant-Time 44185315723 at f4f0d6b0): the explicit effect rules of CT-CLOSED-WORLD changed the slice, not the function or the branch."
 reviewer = "rscrypto exact-artifact condition review"
-reviewed_at = "2026-11-15"
+reviewed_at = "2026-11-18"
 
 [[asm_waiver]]
 target = "s390x-unknown-linux-gnu"
@@ -11236,24 +11330,24 @@ target = "s390x-unknown-linux-gnu"
 primitive = "rsa.private_ops"
 symbol = "ct_entry_rsa_pkcs1v15_decrypt_fixed_blinding"
 kind = "select_branch"
-slice_sha256 = "e9ac6c0c1d5d98c8bc80e95bbaf533c9516084f4047d2331905dfa638b87219a"
+slice_sha256 = "f642f10602b7531bc3eba9fb0cd395187fdef7b44b300736d726ac7276df3cfd"
 source = "tools/ct-harness/src/lib.rs ct_entry_rsa_pkcs1v15_decrypt_fixed_blinding"
 classification = "public"
-rationale = "Scratch starts at frame1096, so the one pointer is frame1320 (1096+224), loaded into r9 at +0x27c. la/nill/sgr at +0x282..+0x28a compute its alignment prefix. The other operand r6 is incoming ciphertext_len, which +0x266..+0x276 equate with the key width and the blinding factor and inverse lengths. The earlier mvc at +0x24e copies bytes through the encoded backing pointer loaded from 1104, not into the one descriptor at 1320. This is a public zero-store split."
+rationale = "Scratch starts at frame1096, so the one pointer is frame1320 (1096+224), loaded into r9 at +0x27c. la/nill/sgr at +0x282..+0x28a compute its alignment prefix. The other operand r6 is incoming ciphertext_len, which +0x266..+0x276 equate with the key width and the blinding factor and inverse lengths. The earlier mvc at +0x24e copies bytes through the encoded backing pointer loaded from 1104, not into the one descriptor at 1320. This is a public zero-store split. Renewed 2026-11-18 on the same artifacts (Constant-Time 44185315723 at f4f0d6b0): the explicit effect rules of CT-CLOSED-WORLD changed the slice, not the function or the branch."
 reviewer = "rscrypto exact-artifact condition review"
-reviewed_at = "2026-11-15"
+reviewed_at = "2026-11-18"
 
 [[asm_waiver]]
 target = "s390x-unknown-linux-gnu"
 primitive = "rsa.private_ops"
 symbol = "ct_entry_rsa_pkcs1v15_decrypt_fixed_blinding"
 kind = "select_branch"
-slice_sha256 = "3ca1fb1eac5e755e3861afd2e4fcfba9c795acc8fc482c4ec2586cb13a48038f"
+slice_sha256 = "2da5f07d2397e812a140717ce4a613a0740d3cba5dbd811fe7f5ce5b99945d3b"
 source = "tools/ct-harness/src/lib.rs ct_entry_rsa_pkcs1v15_decrypt_fixed_blinding unwrap_or(usize::MAX)"
 classification = "allowed-disclosure"
-rationale = "CIJLH at +0x94e compares only the low 32-bit Result discriminant r10 with zero and maps the returned status to length r13 or usize::MAX (lghi r0,-1 at +0x94a). Its reaching definitions are LHI immediates: 1 on the error paths at +0x68a, +0x1dbe, and +0x219e, and 0 at +0x27ec. LHI writes only that low word. The slice is wide only because LHI keeps the high word of r10, which CIJLH does not read. Implicit rejection returns Ok with a selected message for both valid and invalid padding, so the padding mask is not this returned status. This keeps the existing allowed-disclosure classification rather than calling a returned result public metadata."
+rationale = "CIJLH at +0x94e compares only the low 32-bit Result discriminant r10 with zero and maps the returned status to length r13 or usize::MAX (lghi r0,-1 at +0x94a). Its reaching definitions are LHI immediates: 1 on the error paths at +0x68a, +0x1dbe, and +0x219e, and 0 at +0x27ec. LHI writes only that low word. The slice is wide only because LHI keeps the high word of r10, which CIJLH does not read. Implicit rejection returns Ok with a selected message for both valid and invalid padding, so the padding mask is not this returned status. This keeps the existing allowed-disclosure classification rather than calling a returned result public metadata. Renewed 2026-11-18 on the same artifacts (Constant-Time 44185315723 at f4f0d6b0): the explicit effect rules of CT-CLOSED-WORLD changed the slice, not the function or the branch."
 reviewer = "rscrypto exact-artifact condition review"
-reviewed_at = "2026-11-15"
+reviewed_at = "2026-11-18"
 contract = "primitive:rsa.private_ops:may_leak:opaque_success_or_failure"
 
 [[asm_waiver]]
@@ -11261,96 +11355,96 @@ target = "s390x-unknown-linux-gnu"
 primitive = "rsa.private_ops"
 symbol = "ct_entry_rsa_pkcs1v15_decrypt_fixed_blinding"
 kind = "select_branch"
-slice_sha256 = "fc475828141eab2375e70f1891a53a750225295696872440723fc10c7f68990c"
+slice_sha256 = "4e1b40f9a19f7e7e1d5d146fc2bfce5ecb359e5fbff644f3e2e82a64f41004fe"
 source = "tools/ct-harness/src/lib.rs ct_entry_rsa_pkcs1v15_decrypt_fixed_blinding"
 classification = "public"
-rationale = "The candidate-byte PRF initializes remaining to 256 (lghi r3 at +0x110c) and compares the public remaining count with 32 at +0x120e. The countdown store at +0x122a writes r3=remaining-chunk to frame1024, and +0x1662 reloads it for the next iteration. On the CFG, +0x122a is the only frame store to 1024 that reaches +0x1662. The later uses of 1024 by the alternative-message PRF (+0x17fa, +0x1906) cannot reach it. HMAC block bytes go to the 120-byte SHA states at frame184, 440, and 584 and the 32-byte digests at 896, 1032, 1064, and 2008, which do not supply either count."
+rationale = "The candidate-byte PRF initializes remaining to 256 (lghi r3 at +0x110c) and compares the public remaining count with 32 at +0x120e. The countdown store at +0x122a writes r3=remaining-chunk to frame1024, and +0x1662 reloads it for the next iteration. On the CFG, +0x122a is the only frame store to 1024 that reaches +0x1662. The later uses of 1024 by the alternative-message PRF (+0x17fa, +0x1906) cannot reach it. HMAC block bytes go to the 120-byte SHA states at frame184, 440, and 584 and the 32-byte digests at 896, 1032, 1064, and 2008, which do not supply either count. Renewed 2026-11-18 on the same artifacts (Constant-Time 44185315723 at f4f0d6b0): the explicit effect rules of CT-CLOSED-WORLD changed the slice, not the function or the branch."
 reviewer = "rscrypto exact-artifact condition review"
-reviewed_at = "2026-11-15"
+reviewed_at = "2026-11-18"
 
 [[asm_waiver]]
 target = "s390x-unknown-linux-gnu"
 primitive = "rsa.private_ops"
 symbol = "ct_entry_rsa_pkcs1v15_decrypt_fixed_blinding"
 kind = "select_branch"
-slice_sha256 = "10f0e67e48d35e61683124645c9eb29d8a085152468d5c00470c36e3e1b9fd98"
+slice_sha256 = "c295c3b193feb11c04c9e01aaed04289ff114f3ee94d2a73cde804153737d3f0"
 source = "tools/ct-harness/src/lib.rs ct_entry_rsa_pkcs1v15_decrypt_fixed_blinding"
 classification = "public"
-rationale = "The alternative-message PRF stores incoming ciphertext_len r6 to frame888 at +0x1800. +0x1820 reloads remaining into r10, and the comparison with 32 at +0x1832 chooses the next public chunk. +0x190c, +0x1912, and +0x1916 reload it, subtract the chunk, and store the next remaining count. On the CFG, these two stores are the only frame stores to 888 that reach +0x1820. The earlier uses of 888 (+0x5c0..+0x9b2, +0x1134, +0x1256) and the later shift amount at +0x24dc are in disjoint phases that cannot return here. No HMAC output byte feeds this loop extent."
+rationale = "The alternative-message PRF stores incoming ciphertext_len r6 to frame888 at +0x1800. +0x1820 reloads remaining into r10, and the comparison with 32 at +0x1832 chooses the next public chunk. +0x190c, +0x1912, and +0x1916 reload it, subtract the chunk, and store the next remaining count. On the CFG, these two stores are the only frame stores to 888 that reach +0x1820. The earlier uses of 888 (+0x5c0..+0x9b2, +0x1134, +0x1256) and the later shift amount at +0x24dc are in disjoint phases that cannot return here. No HMAC output byte feeds this loop extent. Renewed 2026-11-18 on the same artifacts (Constant-Time 44185315723 at f4f0d6b0): the explicit effect rules of CT-CLOSED-WORLD changed the slice, not the function or the branch."
 reviewer = "rscrypto exact-artifact condition review"
-reviewed_at = "2026-11-15"
+reviewed_at = "2026-11-18"
 
 [[asm_waiver]]
 target = "s390x-unknown-linux-gnu"
 primitive = "rsa.private_ops"
 symbol = "ct_entry_rsa_pkcs1v15_decrypt_fixed_blinding"
 kind = "select_branch"
-slice_sha256 = "eeb56653ef64c7639a579e67616cbd6056c2de3bd75556f55426403ede690ede"
+slice_sha256 = "1c4233911e8a47dcf2eee7d4199cab60ad33662ad0d12a961cd3b7f94cd70888"
 source = "tools/ct-harness/src/lib.rs ct_entry_rsa_pkcs1v15_decrypt_fixed_blinding"
 classification = "public"
-rationale = "The mvc at +0x9d0 copies the blinding_power pointer from Scratch frame1224 (1096+128) into pointer slot 880. On the CFG, +0x9d0 is the only frame store to 880 that reaches the +0x201c load. The later +0x20a6 store advances the pointer inside this zeroization and cannot return to the test. la/nill/sgr at +0x2022..+0x202a form only the public pointer-alignment prefix, and the other operand r6 is incoming ciphertext_len. The 120-byte SHA states at frame184, 440, and 584, the 32-byte digests at 896, 1032, 1064, and 2008, and the heap writes do not overwrite slot 880 or descriptor 1224. The call argument windows and typed callee contracts establish those bounds."
+rationale = "The mvc at +0x9d0 copies the blinding_power pointer from Scratch frame1224 (1096+128) into pointer slot 880. On the CFG, +0x9d0 is the only frame store to 880 that reaches the +0x201c load. The later +0x20a6 store advances the pointer inside this zeroization and cannot return to the test. la/nill/sgr at +0x2022..+0x202a form only the public pointer-alignment prefix, and the other operand r6 is incoming ciphertext_len. The 120-byte SHA states at frame184, 440, and 584, the 32-byte digests at 896, 1032, 1064, and 2008, and the heap writes do not overwrite slot 880 or descriptor 1224. The call argument windows and typed callee contracts establish those bounds. Renewed 2026-11-18 on the same artifacts (Constant-Time 44185315723 at f4f0d6b0): the explicit effect rules of CT-CLOSED-WORLD changed the slice, not the function or the branch."
 reviewer = "rscrypto exact-artifact condition review"
-reviewed_at = "2026-11-15"
+reviewed_at = "2026-11-18"
 
 [[asm_waiver]]
 target = "s390x-unknown-linux-gnu"
 primitive = "rsa.private_ops"
 symbol = "ct_entry_rsa_pkcs1v15_decrypt_fixed_blinding"
 kind = "select_branch"
-slice_sha256 = "18df2e8665d8cc1f68f7d48e18864816c34fb2fb76f2c2f2d8a1b17340b2fede"
+slice_sha256 = "ce9f45b539fbb74ac13e8f150a6569335d5221b2728574937bebb4ffbd2f3714"
 source = "tools/ct-harness/src/lib.rs ct_entry_rsa_pkcs1v15_decrypt_fixed_blinding"
 classification = "public"
-rationale = "These five fixed-pattern shift bounds compare public source indices with r12=ciphertext_len-11 (lay at +0x21ac from entry r6, which the function does not write before them). The step r11 is 1 shifted by the public pass counter r4 (sllg at +0x250c). r4 starts at zero at +0x24f6 and increments at +0x24fe. The index r8 starts at zero at +0x254e and advances by four, with the unrolled offsets 0, 1, 2, and 3 and the final single-byte remainder in r7. The counter and step definitions, not candidate length bytes or the padding mask, supply each tested index. The secret shift bit becomes the mask byte at frame184 (+0x2518..+0x252c), which enters only the masked data merges after each public bounds decision. The conservative slice includes unrelated frame writes and SLLG memory-form annotations. The SLLG shifts literal 1 by the public pass counter."
+rationale = "These five fixed-pattern shift bounds compare public source indices with r12=ciphertext_len-11 (lay at +0x21ac from entry r6, which the function does not write before them). The step r11 is 1 shifted by the public pass counter r4 (sllg at +0x250c). r4 starts at zero at +0x24f6 and increments at +0x24fe. The index r8 starts at zero at +0x254e and advances by four, with the unrolled offsets 0, 1, 2, and 3 and the final single-byte remainder in r7. The counter and step definitions, not candidate length bytes or the padding mask, supply each tested index. The secret shift bit becomes the mask byte at frame184 (+0x2518..+0x252c), which enters only the masked data merges after each public bounds decision. The conservative slice includes unrelated frame writes and SLLG memory-form annotations. The SLLG shifts literal 1 by the public pass counter. Renewed 2026-11-18 on the same artifacts (Constant-Time 44185315723 at f4f0d6b0): the explicit effect rules of CT-CLOSED-WORLD changed the slice, not the function or the branch."
 reviewer = "rscrypto exact-artifact condition review"
-reviewed_at = "2026-11-15"
+reviewed_at = "2026-11-18"
 
 [[asm_waiver]]
 target = "s390x-unknown-linux-gnu"
 primitive = "rsa.private_ops"
 symbol = "ct_entry_rsa_pkcs1v15_decrypt_fixed_blinding"
 kind = "select_branch"
-slice_sha256 = "e5df0fa18125ad6aeb8fae6d4ea2e9cb0f719f98e6196a109aafd759cfb15d82"
+slice_sha256 = "5f1b762ffa812ad7615d541d515dac1b6c9eba9c2dd04aa9c65743bc9cff33d2"
 source = "tools/ct-harness/src/lib.rs ct_entry_rsa_pkcs1v15_decrypt_fixed_blinding"
 classification = "public"
-rationale = "These five fixed-pattern shift bounds compare public source indices with r12=ciphertext_len-11 (lay at +0x21ac from entry r6, which the function does not write before them). The step r11 is 1 shifted by the public pass counter r4 (sllg at +0x250c). r4 starts at zero at +0x24f6 and increments at +0x24fe. The index r8 starts at zero at +0x254e and advances by four, with the unrolled offsets 0, 1, 2, and 3 and the final single-byte remainder in r7. The counter and step definitions, not candidate length bytes or the padding mask, supply each tested index. The secret shift bit becomes the mask byte at frame184 (+0x2518..+0x252c), which enters only the masked data merges after each public bounds decision. The conservative slice includes unrelated frame writes and SLLG memory-form annotations. The SLLG shifts literal 1 by the public pass counter."
+rationale = "These five fixed-pattern shift bounds compare public source indices with r12=ciphertext_len-11 (lay at +0x21ac from entry r6, which the function does not write before them). The step r11 is 1 shifted by the public pass counter r4 (sllg at +0x250c). r4 starts at zero at +0x24f6 and increments at +0x24fe. The index r8 starts at zero at +0x254e and advances by four, with the unrolled offsets 0, 1, 2, and 3 and the final single-byte remainder in r7. The counter and step definitions, not candidate length bytes or the padding mask, supply each tested index. The secret shift bit becomes the mask byte at frame184 (+0x2518..+0x252c), which enters only the masked data merges after each public bounds decision. The conservative slice includes unrelated frame writes and SLLG memory-form annotations. The SLLG shifts literal 1 by the public pass counter. Renewed 2026-11-18 on the same artifacts (Constant-Time 44185315723 at f4f0d6b0): the explicit effect rules of CT-CLOSED-WORLD changed the slice, not the function or the branch."
 reviewer = "rscrypto exact-artifact condition review"
-reviewed_at = "2026-11-15"
+reviewed_at = "2026-11-18"
 
 [[asm_waiver]]
 target = "s390x-unknown-linux-gnu"
 primitive = "rsa.private_ops"
 symbol = "ct_entry_rsa_pkcs1v15_decrypt_fixed_blinding"
 kind = "select_branch"
-slice_sha256 = "4bf215c73b47048e6a8c5c8d63335b8a72af8b60524722d1cca2c5d6359de570"
+slice_sha256 = "08e01335682b0291f778029c8f69a447e94ea05ae109bb43d4198c40c3d57dfe"
 source = "tools/ct-harness/src/lib.rs ct_entry_rsa_pkcs1v15_decrypt_fixed_blinding"
 classification = "public"
-rationale = "These five fixed-pattern shift bounds compare public source indices with r12=ciphertext_len-11 (lay at +0x21ac from entry r6, which the function does not write before them). The step r11 is 1 shifted by the public pass counter r4 (sllg at +0x250c). r4 starts at zero at +0x24f6 and increments at +0x24fe. The index r8 starts at zero at +0x254e and advances by four, with the unrolled offsets 0, 1, 2, and 3 and the final single-byte remainder in r7. The counter and step definitions, not candidate length bytes or the padding mask, supply each tested index. The secret shift bit becomes the mask byte at frame184 (+0x2518..+0x252c), which enters only the masked data merges after each public bounds decision. The conservative slice includes unrelated frame writes and SLLG memory-form annotations. The SLLG shifts literal 1 by the public pass counter."
+rationale = "These five fixed-pattern shift bounds compare public source indices with r12=ciphertext_len-11 (lay at +0x21ac from entry r6, which the function does not write before them). The step r11 is 1 shifted by the public pass counter r4 (sllg at +0x250c). r4 starts at zero at +0x24f6 and increments at +0x24fe. The index r8 starts at zero at +0x254e and advances by four, with the unrolled offsets 0, 1, 2, and 3 and the final single-byte remainder in r7. The counter and step definitions, not candidate length bytes or the padding mask, supply each tested index. The secret shift bit becomes the mask byte at frame184 (+0x2518..+0x252c), which enters only the masked data merges after each public bounds decision. The conservative slice includes unrelated frame writes and SLLG memory-form annotations. The SLLG shifts literal 1 by the public pass counter. Renewed 2026-11-18 on the same artifacts (Constant-Time 44185315723 at f4f0d6b0): the explicit effect rules of CT-CLOSED-WORLD changed the slice, not the function or the branch."
 reviewer = "rscrypto exact-artifact condition review"
-reviewed_at = "2026-11-15"
+reviewed_at = "2026-11-18"
 
 [[asm_waiver]]
 target = "s390x-unknown-linux-gnu"
 primitive = "rsa.private_ops"
 symbol = "ct_entry_rsa_pkcs1v15_decrypt_fixed_blinding"
 kind = "select_branch"
-slice_sha256 = "59fc7e7b3b71324b5b24689b2a5769a71826da7faf543560247cc5d89655a605"
+slice_sha256 = "10ea49d8579479d1cea62c7387bd35c3c3c0b064b9729deccd15de8f2c811a49"
 source = "tools/ct-harness/src/lib.rs ct_entry_rsa_pkcs1v15_decrypt_fixed_blinding"
 classification = "public"
-rationale = "These five fixed-pattern shift bounds compare public source indices with r12=ciphertext_len-11 (lay at +0x21ac from entry r6, which the function does not write before them). The step r11 is 1 shifted by the public pass counter r4 (sllg at +0x250c). r4 starts at zero at +0x24f6 and increments at +0x24fe. The index r8 starts at zero at +0x254e and advances by four, with the unrolled offsets 0, 1, 2, and 3 and the final single-byte remainder in r7. The counter and step definitions, not candidate length bytes or the padding mask, supply each tested index. The secret shift bit becomes the mask byte at frame184 (+0x2518..+0x252c), which enters only the masked data merges after each public bounds decision. The conservative slice includes unrelated frame writes and SLLG memory-form annotations. The SLLG shifts literal 1 by the public pass counter."
+rationale = "These five fixed-pattern shift bounds compare public source indices with r12=ciphertext_len-11 (lay at +0x21ac from entry r6, which the function does not write before them). The step r11 is 1 shifted by the public pass counter r4 (sllg at +0x250c). r4 starts at zero at +0x24f6 and increments at +0x24fe. The index r8 starts at zero at +0x254e and advances by four, with the unrolled offsets 0, 1, 2, and 3 and the final single-byte remainder in r7. The counter and step definitions, not candidate length bytes or the padding mask, supply each tested index. The secret shift bit becomes the mask byte at frame184 (+0x2518..+0x252c), which enters only the masked data merges after each public bounds decision. The conservative slice includes unrelated frame writes and SLLG memory-form annotations. The SLLG shifts literal 1 by the public pass counter. Renewed 2026-11-18 on the same artifacts (Constant-Time 44185315723 at f4f0d6b0): the explicit effect rules of CT-CLOSED-WORLD changed the slice, not the function or the branch."
 reviewer = "rscrypto exact-artifact condition review"
-reviewed_at = "2026-11-15"
+reviewed_at = "2026-11-18"
 
 [[asm_waiver]]
 target = "s390x-unknown-linux-gnu"
 primitive = "rsa.private_ops"
 symbol = "ct_entry_rsa_pkcs1v15_decrypt_fixed_blinding"
 kind = "select_branch"
-slice_sha256 = "4665c88d44ccaa9dcab4f44ad93b79175954c1e27730ec61ad3113f62c85c817"
+slice_sha256 = "768ffff3e06ad45fc052eaf1ff07a438ca0d2bfb4f4d673e12056cf786ca7c23"
 source = "tools/ct-harness/src/lib.rs ct_entry_rsa_pkcs1v15_decrypt_fixed_blinding"
 classification = "public"
-rationale = "These five fixed-pattern shift bounds compare public source indices with r12=ciphertext_len-11 (lay at +0x21ac from entry r6, which the function does not write before them). The step r11 is 1 shifted by the public pass counter r4 (sllg at +0x250c). r4 starts at zero at +0x24f6 and increments at +0x24fe. The index r8 starts at zero at +0x254e and advances by four, with the unrolled offsets 0, 1, 2, and 3 and the final single-byte remainder in r7. The counter and step definitions, not candidate length bytes or the padding mask, supply each tested index. The secret shift bit becomes the mask byte at frame184 (+0x2518..+0x252c), which enters only the masked data merges after each public bounds decision. The conservative slice includes unrelated frame writes and SLLG memory-form annotations. The SLLG shifts literal 1 by the public pass counter."
+rationale = "These five fixed-pattern shift bounds compare public source indices with r12=ciphertext_len-11 (lay at +0x21ac from entry r6, which the function does not write before them). The step r11 is 1 shifted by the public pass counter r4 (sllg at +0x250c). r4 starts at zero at +0x24f6 and increments at +0x24fe. The index r8 starts at zero at +0x254e and advances by four, with the unrolled offsets 0, 1, 2, and 3 and the final single-byte remainder in r7. The counter and step definitions, not candidate length bytes or the padding mask, supply each tested index. The secret shift bit becomes the mask byte at frame184 (+0x2518..+0x252c), which enters only the masked data merges after each public bounds decision. The conservative slice includes unrelated frame writes and SLLG memory-form annotations. The SLLG shifts literal 1 by the public pass counter. Renewed 2026-11-18 on the same artifacts (Constant-Time 44185315723 at f4f0d6b0): the explicit effect rules of CT-CLOSED-WORLD changed the slice, not the function or the branch."
 reviewer = "rscrypto exact-artifact condition review"
-reviewed_at = "2026-11-15"
+reviewed_at = "2026-11-18"
 
 [[asm_waiver]]
 target = "s390x-unknown-linux-gnu"
@@ -11417,24 +11511,24 @@ target = "s390x-unknown-linux-gnu"
 primitive = "rsa.private_ops"
 symbol = "rscrypto::auth::rsa::private_exponentiate_representative_with_scratch"
 kind = "select_branch"
-slice_sha256 = "aa8f18ef949251ab24394e715c91d67424d6e276a8e1dc866497519c924b3f1c"
+slice_sha256 = "9f7eec61d47eadb4cf83bfe5f60501578c0cc780f01c7a98b6eab5ed6d71e5e8"
 source = "src/auth/rsa.rs private_exponentiate_representative_with_scratch"
 classification = "public"
-rationale = "The compared r1 is the next public exponent byte index: r12 is a public bit counter, shifted right by3 into r2, then incremented. r9 preserves incoming exponent length from entry r4. The bit counter derives its initial window padding from that length and advances by5 per window. No loaded exponent byte, selected table limb or private carry supplies the index or length. The test selects the presence of a following public byte. Rechecked against the current linked binary: verified-review-facts.json binds complete function instructions, actual public constants/Locations and named PLT edges. No new secret dependency reaches this condition."
+rationale = "The compared r1 is the next public exponent byte index: r12 is a public bit counter, shifted right by3 into r2, then incremented. r9 preserves incoming exponent length from entry r4. The bit counter derives its initial window padding from that length and advances by5 per window. No loaded exponent byte, selected table limb or private carry supplies the index or length. The test selects the presence of a following public byte. Rechecked against the current linked binary: verified-review-facts.json binds complete function instructions, actual public constants/Locations and named PLT edges. No new secret dependency reaches this condition. Renewed 2026-11-18 on the same artifacts (Constant-Time 44185315723 at f4f0d6b0): the explicit effect rules of CT-CLOSED-WORLD changed the slice, not the function or the branch."
 reviewer = "rscrypto exact-artifact condition review"
-reviewed_at = "2026-11-02"
+reviewed_at = "2026-11-18"
 
 [[asm_waiver]]
 target = "s390x-unknown-linux-gnu"
 primitive = "rsa.private_ops"
 symbol = "rscrypto::auth::rsa::private_exponentiate_window_five_bit"
 kind = "select_branch"
-slice_sha256 = "8be655a3b4f16dd59a24f7192f6c56fb27cc8da29e8257f2fbab82e2d6cdb501"
+slice_sha256 = "d3680f462479f31c8d1784b9400e348cd65eb4789c723543046573c4c149de4d"
 source = "src/auth/rsa.rs private_exponentiate_window_five_bit"
 classification = "public"
-rationale = "r13 preserves incoming workspace pointer r6. r5 loads selected.len at workspace+72; r1 reloads that same pointer from its dedicated frame248 slot, then LTG r7,56(r1) loads high_selected.len. Initial squares and both table scans write only bounded backing elements; their XC/VST/STG stores do not replace the workspace descriptor. The comparison picks the public minimum of these selected extents, independent of the window masks. Rechecked against the current linked binary: verified-review-facts.json binds complete function instructions, actual public constants/Locations and named PLT edges. No new secret dependency reaches this condition."
+rationale = "r13 preserves incoming workspace pointer r6. r5 loads selected.len at workspace+72; r1 reloads that same pointer from its dedicated frame248 slot, then LTG r7,56(r1) loads high_selected.len. Initial squares and both table scans write only bounded backing elements; their XC/VST/STG stores do not replace the workspace descriptor. The comparison picks the public minimum of these selected extents, independent of the window masks. Rechecked against the current linked binary: verified-review-facts.json binds complete function instructions, actual public constants/Locations and named PLT edges. No new secret dependency reaches this condition. Renewed 2026-11-18 on the same artifacts (Constant-Time 44185315723 at f4f0d6b0): the explicit effect rules of CT-CLOSED-WORLD changed the slice, not the function or the branch."
 reviewer = "rscrypto exact-artifact condition review"
-reviewed_at = "2026-11-02"
+reviewed_at = "2026-11-18"
 
 [[asm_waiver]]
 target = "s390x-unknown-linux-gnu"
@@ -11825,12 +11919,12 @@ target = "x86_64-pc-windows-msvc"
 primitive = "rsa.private_ops"
 symbol = "rscrypto::auth::rsa::rsa_x86_64_ifma::build_table::<3>"
 kind = "select_branch"
-slice_sha256 = "2aab22b242d9ae97ee109d654fa4f97de24f53e040d349a49a11a96c2abe7f05"
+slice_sha256 = "0253bc6bee0ae6e1eff4edcfb8b5ae94afdcd8a4fcec0a9a93bd89ca223a301f"
 source = "src/auth/rsa_x86_64_ifma.rs build_table"
 classification = "public"
-rationale = "This checks whether the public table length contains its first complete 24-word entry. For V=3/5 the fixed reciprocal multiply/divide and rounding act on Prime.table.len, at Prime+0xd8; V=4 compares the length directly against 32. No table limb enters this extent. Prime::new partitions its backing workspace into disjoint table, multiplier and one slices. build_table never replaces their descriptor fields. MEMSET writes only multiplier backing bytes; MEMCPY and vector stores write bounded local digit arrays or those backing slices. The saved descriptor pointer and public length slots remain disjoint. Pinned native Windows instructions and complete condition dependencies are retained with this decision. Renewed again 2026-11-05 against Constant-Time 41988218703 at c55dad7d: the slice is unchanged except for placement-dependent constant descriptors (CT-TOOLING (a))."
+rationale = "This checks whether the public table length contains its first complete 24-word entry. For V=3/5 the fixed reciprocal multiply/divide and rounding act on Prime.table.len, at Prime+0xd8; V=4 compares the length directly against 32. No table limb enters this extent. Prime::new partitions its backing workspace into disjoint table, multiplier and one slices. build_table never replaces their descriptor fields. MEMSET writes only multiplier backing bytes; MEMCPY and vector stores write bounded local digit arrays or those backing slices. The saved descriptor pointer and public length slots remain disjoint. Pinned native Windows instructions and complete condition dependencies are retained with this decision. Renewed again 2026-11-05 against Constant-Time 41988218703 at c55dad7d: the slice is unchanged except for placement-dependent constant descriptors (CT-TOOLING (a)). Renewed 2026-11-18 on the same artifacts (Constant-Time 44185315723 at f4f0d6b0): the explicit effect rules of CT-CLOSED-WORLD changed the slice, not the function or the branch."
 reviewer = "RSA native arithmetic and condition-slice review"
-reviewed_at = "2026-11-05"
+reviewed_at = "2026-11-18"
 
 [[asm_waiver]]
 target = "x86_64-pc-windows-msvc"
@@ -11849,12 +11943,12 @@ target = "x86_64-pc-windows-msvc"
 primitive = "rsa.private_ops"
 symbol = "rscrypto::auth::rsa::rsa_x86_64_ifma::build_table::<3>"
 kind = "select_branch"
-slice_sha256 = "b2be6ef7bf5f91e533109366a9ff0bad57cf48064664ec8dc779a8ac69ad0b49"
+slice_sha256 = "1b1e5adaf5103cb6485093404d37e4384f84d3f2a536472b7928a0cd4e709e73"
 source = "src/auth/rsa_x86_64_ifma.rs build_table"
 classification = "public"
-rationale = "The base digit-conversion output index rdx starts at zero and advances by one under public input/bit-count loops. The compared r15 reloads the saved multiplier.len (rsp+0x100 for V=3, rsp+0x40 for V=4, rsp+0x180 for V=5). Every reaching definition is the initial public Prime multiplier length; data writes use a separate backing slice. Prime::new partitions its backing workspace into disjoint table, multiplier and one slices. build_table never replaces their descriptor fields. MEMSET writes only multiplier backing bytes; MEMCPY and vector stores write bounded local digit arrays or those backing slices. The saved descriptor pointer and public length slots remain disjoint. Pinned native Windows instructions and complete condition dependencies are retained with this decision. Renewed again 2026-11-05 against Constant-Time 41988218703 at c55dad7d: the slice is unchanged except for placement-dependent constant descriptors (CT-TOOLING (a))."
+rationale = "The base digit-conversion output index rdx starts at zero and advances by one under public input/bit-count loops. The compared r15 reloads the saved multiplier.len (rsp+0x100 for V=3, rsp+0x40 for V=4, rsp+0x180 for V=5). Every reaching definition is the initial public Prime multiplier length; data writes use a separate backing slice. Prime::new partitions its backing workspace into disjoint table, multiplier and one slices. build_table never replaces their descriptor fields. MEMSET writes only multiplier backing bytes; MEMCPY and vector stores write bounded local digit arrays or those backing slices. The saved descriptor pointer and public length slots remain disjoint. Pinned native Windows instructions and complete condition dependencies are retained with this decision. Renewed again 2026-11-05 against Constant-Time 41988218703 at c55dad7d: the slice is unchanged except for placement-dependent constant descriptors (CT-TOOLING (a)). Renewed 2026-11-18 on the same artifacts (Constant-Time 44185315723 at f4f0d6b0): the explicit effect rules of CT-CLOSED-WORLD changed the slice, not the function or the branch."
 reviewer = "RSA native arithmetic and condition-slice review"
-reviewed_at = "2026-11-05"
+reviewed_at = "2026-11-18"
 
 [[asm_waiver]]
 target = "x86_64-pc-windows-msvc"
@@ -11873,12 +11967,12 @@ target = "x86_64-pc-windows-msvc"
 primitive = "rsa.private_ops"
 symbol = "rscrypto::auth::rsa::rsa_x86_64_ifma::build_table::<4>"
 kind = "select_branch"
-slice_sha256 = "9e25a2a3a0c8f2f65aac510b828d74e41331e8580dbffaa2d8eb1edb8242beca"
+slice_sha256 = "bf7d2299b1c728be85fc86bc19afb174c6095a0a6a57d362debbe4e459e78b2f"
 source = "src/auth/rsa_x86_64_ifma.rs build_table"
 classification = "public"
-rationale = "The base digit-conversion output index rdx starts at zero and advances by one under public input/bit-count loops. The compared r15 reloads the saved multiplier.len (rsp+0x100 for V=3, rsp+0x40 for V=4, rsp+0x180 for V=5). Every reaching definition is the initial public Prime multiplier length; data writes use a separate backing slice. Prime::new partitions its backing workspace into disjoint table, multiplier and one slices. build_table never replaces their descriptor fields. MEMSET writes only multiplier backing bytes; MEMCPY and vector stores write bounded local digit arrays or those backing slices. The saved descriptor pointer and public length slots remain disjoint. Pinned native Windows instructions and complete condition dependencies are retained with this decision. Renewed again 2026-11-05 against Constant-Time 41988218703 at c55dad7d: the slice is unchanged except for placement-dependent constant descriptors (CT-TOOLING (a))."
+rationale = "The base digit-conversion output index rdx starts at zero and advances by one under public input/bit-count loops. The compared r15 reloads the saved multiplier.len (rsp+0x100 for V=3, rsp+0x40 for V=4, rsp+0x180 for V=5). Every reaching definition is the initial public Prime multiplier length; data writes use a separate backing slice. Prime::new partitions its backing workspace into disjoint table, multiplier and one slices. build_table never replaces their descriptor fields. MEMSET writes only multiplier backing bytes; MEMCPY and vector stores write bounded local digit arrays or those backing slices. The saved descriptor pointer and public length slots remain disjoint. Pinned native Windows instructions and complete condition dependencies are retained with this decision. Renewed again 2026-11-05 against Constant-Time 41988218703 at c55dad7d: the slice is unchanged except for placement-dependent constant descriptors (CT-TOOLING (a)). Renewed 2026-11-18 on the same artifacts (Constant-Time 44185315723 at f4f0d6b0): the explicit effect rules of CT-CLOSED-WORLD changed the slice, not the function or the branch."
 reviewer = "RSA native arithmetic and condition-slice review"
-reviewed_at = "2026-11-05"
+reviewed_at = "2026-11-18"
 
 [[asm_waiver]]
 target = "x86_64-pc-windows-msvc"
@@ -11909,24 +12003,24 @@ target = "x86_64-pc-windows-msvc"
 primitive = "rsa.private_ops"
 symbol = "rscrypto::auth::rsa::rsa_x86_64_ifma::build_table::<4>"
 kind = "select_branch"
-slice_sha256 = "1e4708e9b62775ba853a76c4eede79d6954dcefd619c86796ae915d7b2de4321"
+slice_sha256 = "d2b8e3f281552a007fd3978d3c58c99a4640d7f8bc265d76d16a0e7c0785b27c"
 source = "src/auth/rsa_x86_64_ifma.rs build_table"
 classification = "public"
-rationale = "This checks whether the public table length contains its first complete 32-word entry. For V=3/5 the fixed reciprocal multiply/divide and rounding act on Prime.table.len, at Prime+0x118; V=4 compares the length directly against 32. No table limb enters this extent. Prime::new partitions its backing workspace into disjoint table, multiplier and one slices. build_table never replaces their descriptor fields. MEMSET writes only multiplier backing bytes; MEMCPY and vector stores write bounded local digit arrays or those backing slices. The saved descriptor pointer and public length slots remain disjoint. Pinned native Windows instructions and complete condition dependencies are retained with this decision. Renewed again 2026-11-05 against Constant-Time 41988218703 at c55dad7d: the slice is unchanged except for placement-dependent constant descriptors (CT-TOOLING (a))."
+rationale = "This checks whether the public table length contains its first complete 32-word entry. For V=3/5 the fixed reciprocal multiply/divide and rounding act on Prime.table.len, at Prime+0x118; V=4 compares the length directly against 32. No table limb enters this extent. Prime::new partitions its backing workspace into disjoint table, multiplier and one slices. build_table never replaces their descriptor fields. MEMSET writes only multiplier backing bytes; MEMCPY and vector stores write bounded local digit arrays or those backing slices. The saved descriptor pointer and public length slots remain disjoint. Pinned native Windows instructions and complete condition dependencies are retained with this decision. Renewed again 2026-11-05 against Constant-Time 41988218703 at c55dad7d: the slice is unchanged except for placement-dependent constant descriptors (CT-TOOLING (a)). Renewed 2026-11-18 on the same artifacts (Constant-Time 44185315723 at f4f0d6b0): the explicit effect rules of CT-CLOSED-WORLD changed the slice, not the function or the branch."
 reviewer = "RSA native arithmetic and condition-slice review"
-reviewed_at = "2026-11-05"
+reviewed_at = "2026-11-18"
 
 [[asm_waiver]]
 target = "x86_64-pc-windows-msvc"
 primitive = "rsa.private_ops"
 symbol = "rscrypto::auth::rsa::rsa_x86_64_ifma::build_table::<5>"
 kind = "select_branch"
-slice_sha256 = "681613844896d3dc7c71e3c10bb5624805a5a2b99d0d30975855d62e697c7d7a"
+slice_sha256 = "f2fa23da0997a35014148fe9e80ff7caad48244c00ad202dd427849057dccf73"
 source = "src/auth/rsa_x86_64_ifma.rs build_table"
 classification = "public"
-rationale = "This checks whether the public table length contains its first complete 40-word entry. For V=3/5 the fixed reciprocal multiply/divide and rounding act on Prime.table.len, at Prime+0x158; V=4 compares the length directly against 32. No table limb enters this extent. Prime::new partitions its backing workspace into disjoint table, multiplier and one slices. build_table never replaces their descriptor fields. MEMSET writes only multiplier backing bytes; MEMCPY and vector stores write bounded local digit arrays or those backing slices. The saved descriptor pointer and public length slots remain disjoint. Pinned native Windows instructions and complete condition dependencies are retained with this decision. Renewed again 2026-11-05 against Constant-Time 41988218703 at c55dad7d: the slice is unchanged except for placement-dependent constant descriptors (CT-TOOLING (a))."
+rationale = "This checks whether the public table length contains its first complete 40-word entry. For V=3/5 the fixed reciprocal multiply/divide and rounding act on Prime.table.len, at Prime+0x158; V=4 compares the length directly against 32. No table limb enters this extent. Prime::new partitions its backing workspace into disjoint table, multiplier and one slices. build_table never replaces their descriptor fields. MEMSET writes only multiplier backing bytes; MEMCPY and vector stores write bounded local digit arrays or those backing slices. The saved descriptor pointer and public length slots remain disjoint. Pinned native Windows instructions and complete condition dependencies are retained with this decision. Renewed again 2026-11-05 against Constant-Time 41988218703 at c55dad7d: the slice is unchanged except for placement-dependent constant descriptors (CT-TOOLING (a)). Renewed 2026-11-18 on the same artifacts (Constant-Time 44185315723 at f4f0d6b0): the explicit effect rules of CT-CLOSED-WORLD changed the slice, not the function or the branch."
 reviewer = "RSA native arithmetic and condition-slice review"
-reviewed_at = "2026-11-05"
+reviewed_at = "2026-11-18"
 
 [[asm_waiver]]
 target = "x86_64-pc-windows-msvc"
@@ -11957,12 +12051,12 @@ target = "x86_64-pc-windows-msvc"
 primitive = "rsa.private_ops"
 symbol = "rscrypto::auth::rsa::rsa_x86_64_ifma::build_table::<5>"
 kind = "select_branch"
-slice_sha256 = "bab47c9dcd83122d213863f96a8319baa90be3bc4cb29c477b4ef59a73ff61a5"
+slice_sha256 = "d30478d4ecfe38837925e25b3627d0d05e770ddde060720e6a7d4b1f02291657"
 source = "src/auth/rsa_x86_64_ifma.rs build_table"
 classification = "public"
-rationale = "The base digit-conversion output index rdx starts at zero and advances by one under public input/bit-count loops. The compared r15 reloads the saved multiplier.len (rsp+0x100 for V=3, rsp+0x40 for V=4, rsp+0x180 for V=5). Every reaching definition is the initial public Prime multiplier length; data writes use a separate backing slice. Prime::new partitions its backing workspace into disjoint table, multiplier and one slices. build_table never replaces their descriptor fields. MEMSET writes only multiplier backing bytes; MEMCPY and vector stores write bounded local digit arrays or those backing slices. The saved descriptor pointer and public length slots remain disjoint. Pinned native Windows instructions and complete condition dependencies are retained with this decision. Renewed again 2026-11-05 against Constant-Time 41988218703 at c55dad7d: the slice is unchanged except for placement-dependent constant descriptors (CT-TOOLING (a))."
+rationale = "The base digit-conversion output index rdx starts at zero and advances by one under public input/bit-count loops. The compared r15 reloads the saved multiplier.len (rsp+0x100 for V=3, rsp+0x40 for V=4, rsp+0x180 for V=5). Every reaching definition is the initial public Prime multiplier length; data writes use a separate backing slice. Prime::new partitions its backing workspace into disjoint table, multiplier and one slices. build_table never replaces their descriptor fields. MEMSET writes only multiplier backing bytes; MEMCPY and vector stores write bounded local digit arrays or those backing slices. The saved descriptor pointer and public length slots remain disjoint. Pinned native Windows instructions and complete condition dependencies are retained with this decision. Renewed again 2026-11-05 against Constant-Time 41988218703 at c55dad7d: the slice is unchanged except for placement-dependent constant descriptors (CT-TOOLING (a)). Renewed 2026-11-18 on the same artifacts (Constant-Time 44185315723 at f4f0d6b0): the explicit effect rules of CT-CLOSED-WORLD changed the slice, not the function or the branch."
 reviewer = "RSA native arithmetic and condition-slice review"
-reviewed_at = "2026-11-05"
+reviewed_at = "2026-11-18"
 
 [[asm_waiver]]
 target = "x86_64-pc-windows-msvc"
@@ -12305,48 +12399,48 @@ target = "x86_64-unknown-linux-gnu"
 primitive = "rsa.private_ops"
 symbol = "rscrypto::auth::rsa::rsa_x86_64_ifma::build_table::<3>"
 kind = "select_branch"
-slice_sha256 = "ae2e712c959c9dc2425b74350ececa09fce3606763736b3e5024052688cf5d29"
+slice_sha256 = "53acff4a1d1ab29d9063573c17b522599252d648f2ee8ae6443a1eece63e3db3"
 source = "src/auth/rsa_x86_64_ifma.rs build_table"
 classification = "public"
-rationale = "The condition tests whether the public table slice contains its first full vector-width entry. V=3 and V=5 divide the public table length by 24 and 40 using fixed reciprocal multiply/shift arithmetic and round down; V=4 compares the public length against 32. The Prime pointer is retained in its dedicated stack slot, and the table descriptor is never replaced. For V=3, multiplier.len is Prime+0xe8 and table.len is Prime+0xd8. The table and multiplier backing slices come from disjoint safe workspace splits. MEMSET writes only multiplier backing bytes. MEMCPY writes the fixed local vector arrays or multiplier backing bytes, with lengths capped at V*64. Vector normalization stores do not overlap the public-width slot at rsp+0x18 or the saved Prime pointer. The unknown-vector effects in the conservative slice cannot alter those descriptors; every actual scalar store/reload and its control-flow position was checked. Exact clean CI capture binding: prototype-ci-binding.json verifies whole-function instructions and decoded public Location references against the reviewed prototype; the current condition text and coordinate are otherwise identical."
+rationale = "The condition tests whether the public table slice contains its first full vector-width entry. V=3 and V=5 divide the public table length by 24 and 40 using fixed reciprocal multiply/shift arithmetic and round down; V=4 compares the public length against 32. The Prime pointer is retained in its dedicated stack slot, and the table descriptor is never replaced. For V=3, multiplier.len is Prime+0xe8 and table.len is Prime+0xd8. The table and multiplier backing slices come from disjoint safe workspace splits. MEMSET writes only multiplier backing bytes. MEMCPY writes the fixed local vector arrays or multiplier backing bytes, with lengths capped at V*64. Vector normalization stores do not overlap the public-width slot at rsp+0x18 or the saved Prime pointer. The vector instructions write only vector and mask registers, so they cannot alter those descriptors; every actual scalar store/reload and its control-flow position was checked. Exact clean CI capture binding: prototype-ci-binding.json verifies whole-function instructions and decoded public Location references against the reviewed prototype; the current condition text and coordinate are otherwise identical. Renewed 2026-11-18 on the same artifacts (Constant-Time 44185315723 at f4f0d6b0): the explicit effect rules of CT-CLOSED-WORLD changed the slice, not the function or the branch."
 reviewer = "RSA native arithmetic and condition-slice review"
-reviewed_at = "2026-10-31"
+reviewed_at = "2026-11-18"
 
 [[asm_waiver]]
 target = "x86_64-unknown-linux-gnu"
 primitive = "rsa.private_ops"
 symbol = "rscrypto::auth::rsa::rsa_x86_64_ifma::build_table::<3>"
 kind = "select_branch"
-slice_sha256 = "929cc8d3d5fdc02bbe819f63a50e1f24f06a790c58f52964fca518dda44fc770"
+slice_sha256 = "6e6d2beab0f22c644a3706bde3a9e3bf3190fb7032eb402fe85a7dcb68467beb"
 source = "src/auth/rsa_x86_64_ifma.rs build_table"
 classification = "public"
-rationale = "The public base input is empty on this path, so rax is zero. rsi reloads the same saved multiplier.len. The condition is 0 < multiplier.len and selects its single partial-digit store. For V=3, multiplier.len is Prime+0xe8 and table.len is Prime+0xd8. The table and multiplier backing slices come from disjoint safe workspace splits. MEMSET writes only multiplier backing bytes. MEMCPY writes the fixed local vector arrays or multiplier backing bytes, with lengths capped at V*64. Vector normalization stores do not overlap the public-width slot at rsp+0x18 or the saved Prime pointer. The unknown-vector effects in the conservative slice cannot alter those descriptors; every actual scalar store/reload and its control-flow position was checked. Exact clean CI capture binding: prototype-ci-binding.json verifies whole-function instructions and decoded public Location references against the reviewed prototype; the current condition text and coordinate are otherwise identical."
+rationale = "The public base input is empty on this path, so rax is zero. rsi reloads the same saved multiplier.len. The condition is 0 < multiplier.len and selects its single partial-digit store. For V=3, multiplier.len is Prime+0xe8 and table.len is Prime+0xd8. The table and multiplier backing slices come from disjoint safe workspace splits. MEMSET writes only multiplier backing bytes. MEMCPY writes the fixed local vector arrays or multiplier backing bytes, with lengths capped at V*64. Vector normalization stores do not overlap the public-width slot at rsp+0x18 or the saved Prime pointer. The vector instructions write only vector and mask registers, so they cannot alter those descriptors; every actual scalar store/reload and its control-flow position was checked. Exact clean CI capture binding: prototype-ci-binding.json verifies whole-function instructions and decoded public Location references against the reviewed prototype; the current condition text and coordinate are otherwise identical. Renewed 2026-11-18 on the same artifacts (Constant-Time 44185315723 at f4f0d6b0): the explicit effect rules of CT-CLOSED-WORLD changed the slice, not the function or the branch."
 reviewer = "RSA native arithmetic and condition-slice review"
-reviewed_at = "2026-10-31"
+reviewed_at = "2026-11-18"
 
 [[asm_waiver]]
 target = "x86_64-unknown-linux-gnu"
 primitive = "rsa.private_ops"
 symbol = "rscrypto::auth::rsa::rsa_x86_64_ifma::build_table::<3>"
 kind = "select_branch"
-slice_sha256 = "1a3aaa3be055e195c4cfec0c88760050e8fbc9d230dd999ee5a6cd6741b98f15"
+slice_sha256 = "872c9502d8ed0efb18532c5c0b2a1280a8a3fad03479cb1bdd427a830e8d32b5"
 source = "src/auth/rsa_x86_64_ifma.rs build_table"
 classification = "public"
-rationale = "The base conversion starts its digit counter rax at zero and increments it only under the public bit-count loop. rsi reloads multiplier.len from rsp+0x18. That slot keeps the entry public multiplier width throughout this conversion; later reuse occurs after this branch and cannot reach it. The comparison selects only a final partial-digit store. For V=3, multiplier.len is Prime+0xe8 and table.len is Prime+0xd8. The table and multiplier backing slices come from disjoint safe workspace splits. MEMSET writes only multiplier backing bytes. MEMCPY writes the fixed local vector arrays or multiplier backing bytes, with lengths capped at V*64. Vector normalization stores do not overlap the public-width slot at rsp+0x18 or the saved Prime pointer. The unknown-vector effects in the conservative slice cannot alter those descriptors; every actual scalar store/reload and its control-flow position was checked. Exact clean CI capture binding: prototype-ci-binding.json verifies whole-function instructions and decoded public Location references against the reviewed prototype; the current condition text and coordinate are otherwise identical."
+rationale = "The base conversion starts its digit counter rax at zero and increments it only under the public bit-count loop. rsi reloads multiplier.len from rsp+0x18. That slot keeps the entry public multiplier width throughout this conversion; later reuse occurs after this branch and cannot reach it. The comparison selects only a final partial-digit store. For V=3, multiplier.len is Prime+0xe8 and table.len is Prime+0xd8. The table and multiplier backing slices come from disjoint safe workspace splits. MEMSET writes only multiplier backing bytes. MEMCPY writes the fixed local vector arrays or multiplier backing bytes, with lengths capped at V*64. Vector normalization stores do not overlap the public-width slot at rsp+0x18 or the saved Prime pointer. The vector instructions write only vector and mask registers, so they cannot alter those descriptors; every actual scalar store/reload and its control-flow position was checked. Exact clean CI capture binding: prototype-ci-binding.json verifies whole-function instructions and decoded public Location references against the reviewed prototype; the current condition text and coordinate are otherwise identical. Renewed 2026-11-18 on the same artifacts (Constant-Time 44185315723 at f4f0d6b0): the explicit effect rules of CT-CLOSED-WORLD changed the slice, not the function or the branch."
 reviewer = "RSA native arithmetic and condition-slice review"
-reviewed_at = "2026-10-31"
+reviewed_at = "2026-11-18"
 
 [[asm_waiver]]
 target = "x86_64-unknown-linux-gnu"
 primitive = "rsa.private_ops"
 symbol = "rscrypto::auth::rsa::rsa_x86_64_ifma::build_table::<4>"
 kind = "select_branch"
-slice_sha256 = "03856a2dadea97ca1af7059d9a7d200d6c93ec54ee17afe62fce51d9e93b5236"
+slice_sha256 = "b3f237d41b2833981e79199b1416a667701edeaa7c9b6590101f1f11cca312b3"
 source = "src/auth/rsa_x86_64_ifma.rs build_table"
 classification = "public"
-rationale = "The base conversion starts its digit counter rax at zero and increments it only under the public bit-count loop. rsi reloads multiplier.len from rsp+0x18. That slot keeps the entry public multiplier width throughout this conversion; later reuse occurs after this branch and cannot reach it. The comparison selects only a final partial-digit store. For V=4, multiplier.len is Prime+0x128 and table.len is Prime+0x118. The table and multiplier backing slices come from disjoint safe workspace splits. MEMSET writes only multiplier backing bytes. MEMCPY writes the fixed local vector arrays or multiplier backing bytes, with lengths capped at V*64. Vector normalization stores do not overlap the public-width slot at rsp+0x18 or the saved Prime pointer. The unknown-vector effects in the conservative slice cannot alter those descriptors; every actual scalar store/reload and its control-flow position was checked. Exact clean CI capture binding: prototype-ci-binding.json verifies whole-function instructions and decoded public Location references against the reviewed prototype; the current condition text and coordinate are otherwise identical."
+rationale = "The base conversion starts its digit counter rax at zero and increments it only under the public bit-count loop. rsi reloads multiplier.len from rsp+0x18. That slot keeps the entry public multiplier width throughout this conversion; later reuse occurs after this branch and cannot reach it. The comparison selects only a final partial-digit store. For V=4, multiplier.len is Prime+0x128 and table.len is Prime+0x118. The table and multiplier backing slices come from disjoint safe workspace splits. MEMSET writes only multiplier backing bytes. MEMCPY writes the fixed local vector arrays or multiplier backing bytes, with lengths capped at V*64. Vector normalization stores do not overlap the public-width slot at rsp+0x18 or the saved Prime pointer. The vector instructions write only vector and mask registers, so they cannot alter those descriptors; every actual scalar store/reload and its control-flow position was checked. Exact clean CI capture binding: prototype-ci-binding.json verifies whole-function instructions and decoded public Location references against the reviewed prototype; the current condition text and coordinate are otherwise identical. Renewed 2026-11-18 on the same artifacts (Constant-Time 44185315723 at f4f0d6b0): the explicit effect rules of CT-CLOSED-WORLD changed the slice, not the function or the branch."
 reviewer = "RSA native arithmetic and condition-slice review"
-reviewed_at = "2026-10-31"
+reviewed_at = "2026-11-18"
 
 [[asm_waiver]]
 target = "x86_64-unknown-linux-gnu"
@@ -12377,60 +12471,60 @@ target = "x86_64-unknown-linux-gnu"
 primitive = "rsa.private_ops"
 symbol = "rscrypto::auth::rsa::rsa_x86_64_ifma::build_table::<4>"
 kind = "select_branch"
-slice_sha256 = "59943d4c182e90632a5922d71755a52088fd85676d9be1303ea6783b46b41fb4"
+slice_sha256 = "2816d7302bf2fa24cfd3bdcfa0d115065cf5454ab31a786063a8a617f04c1081"
 source = "src/auth/rsa_x86_64_ifma.rs build_table"
 classification = "public"
-rationale = "The condition tests whether the public table slice contains its first full vector-width entry. V=3 and V=5 divide the public table length by 24 and 40 using fixed reciprocal multiply/shift arithmetic and round down; V=4 compares the public length against 32. The Prime pointer is retained in its dedicated stack slot, and the table descriptor is never replaced. For V=4, multiplier.len is Prime+0x128 and table.len is Prime+0x118. The table and multiplier backing slices come from disjoint safe workspace splits. MEMSET writes only multiplier backing bytes. MEMCPY writes the fixed local vector arrays or multiplier backing bytes, with lengths capped at V*64. Vector normalization stores do not overlap the public-width slot at rsp+0x18 or the saved Prime pointer. The unknown-vector effects in the conservative slice cannot alter those descriptors; every actual scalar store/reload and its control-flow position was checked. Exact clean CI capture binding: prototype-ci-binding.json verifies whole-function instructions and decoded public Location references against the reviewed prototype; the current condition text and coordinate are otherwise identical."
+rationale = "The condition tests whether the public table slice contains its first full vector-width entry. V=3 and V=5 divide the public table length by 24 and 40 using fixed reciprocal multiply/shift arithmetic and round down; V=4 compares the public length against 32. The Prime pointer is retained in its dedicated stack slot, and the table descriptor is never replaced. For V=4, multiplier.len is Prime+0x128 and table.len is Prime+0x118. The table and multiplier backing slices come from disjoint safe workspace splits. MEMSET writes only multiplier backing bytes. MEMCPY writes the fixed local vector arrays or multiplier backing bytes, with lengths capped at V*64. Vector normalization stores do not overlap the public-width slot at rsp+0x18 or the saved Prime pointer. The vector instructions write only vector and mask registers, so they cannot alter those descriptors; every actual scalar store/reload and its control-flow position was checked. Exact clean CI capture binding: prototype-ci-binding.json verifies whole-function instructions and decoded public Location references against the reviewed prototype; the current condition text and coordinate are otherwise identical. Renewed 2026-11-18 on the same artifacts (Constant-Time 44185315723 at f4f0d6b0): the explicit effect rules of CT-CLOSED-WORLD changed the slice, not the function or the branch."
 reviewer = "RSA native arithmetic and condition-slice review"
-reviewed_at = "2026-10-31"
+reviewed_at = "2026-11-18"
 
 [[asm_waiver]]
 target = "x86_64-unknown-linux-gnu"
 primitive = "rsa.private_ops"
 symbol = "rscrypto::auth::rsa::rsa_x86_64_ifma::build_table::<4>"
 kind = "select_branch"
-slice_sha256 = "63e9f5ae7e27341efd91f140b3fdfed3685a5200ae1040b720836fa6bbc69ae1"
+slice_sha256 = "ade6664a5b82193a3e02b3960d970118936e3650cbd7c9d4f1deaa0937d3bf63"
 source = "src/auth/rsa_x86_64_ifma.rs build_table"
 classification = "public"
-rationale = "The public base input is empty on this path, so rax is zero. rsi reloads the same saved multiplier.len. The condition is 0 < multiplier.len and selects its single partial-digit store. For V=4, multiplier.len is Prime+0x128 and table.len is Prime+0x118. The table and multiplier backing slices come from disjoint safe workspace splits. MEMSET writes only multiplier backing bytes. MEMCPY writes the fixed local vector arrays or multiplier backing bytes, with lengths capped at V*64. Vector normalization stores do not overlap the public-width slot at rsp+0x18 or the saved Prime pointer. The unknown-vector effects in the conservative slice cannot alter those descriptors; every actual scalar store/reload and its control-flow position was checked. Exact clean CI capture binding: prototype-ci-binding.json verifies whole-function instructions and decoded public Location references against the reviewed prototype; the current condition text and coordinate are otherwise identical."
+rationale = "The public base input is empty on this path, so rax is zero. rsi reloads the same saved multiplier.len. The condition is 0 < multiplier.len and selects its single partial-digit store. For V=4, multiplier.len is Prime+0x128 and table.len is Prime+0x118. The table and multiplier backing slices come from disjoint safe workspace splits. MEMSET writes only multiplier backing bytes. MEMCPY writes the fixed local vector arrays or multiplier backing bytes, with lengths capped at V*64. Vector normalization stores do not overlap the public-width slot at rsp+0x18 or the saved Prime pointer. The vector instructions write only vector and mask registers, so they cannot alter those descriptors; every actual scalar store/reload and its control-flow position was checked. Exact clean CI capture binding: prototype-ci-binding.json verifies whole-function instructions and decoded public Location references against the reviewed prototype; the current condition text and coordinate are otherwise identical. Renewed 2026-11-18 on the same artifacts (Constant-Time 44185315723 at f4f0d6b0): the explicit effect rules of CT-CLOSED-WORLD changed the slice, not the function or the branch."
 reviewer = "RSA native arithmetic and condition-slice review"
-reviewed_at = "2026-10-31"
+reviewed_at = "2026-11-18"
 
 [[asm_waiver]]
 target = "x86_64-unknown-linux-gnu"
 primitive = "rsa.private_ops"
 symbol = "rscrypto::auth::rsa::rsa_x86_64_ifma::build_table::<5>"
 kind = "select_branch"
-slice_sha256 = "fa31978f33ec36c7b264da87a6cd891c0918b2006fd65ce105c0735f9732dbb2"
+slice_sha256 = "0091053f30caace178593ba3db7c277c143957bebd98b328a4ff331ec4d98d6e"
 source = "src/auth/rsa_x86_64_ifma.rs build_table"
 classification = "public"
-rationale = "The public base input is empty on this path, so rax is zero. rsi reloads the same saved multiplier.len. The condition is 0 < multiplier.len and selects its single partial-digit store. For V=5, multiplier.len is Prime+0x168 and table.len is Prime+0x158. The table and multiplier backing slices come from disjoint safe workspace splits. MEMSET writes only multiplier backing bytes. MEMCPY writes the fixed local vector arrays or multiplier backing bytes, with lengths capped at V*64. Vector normalization stores do not overlap the public-width slot at rsp+0x18 or the saved Prime pointer. The unknown-vector effects in the conservative slice cannot alter those descriptors; every actual scalar store/reload and its control-flow position was checked. Exact clean CI capture binding: prototype-ci-binding.json verifies whole-function instructions and decoded public Location references against the reviewed prototype; the current condition text and coordinate are otherwise identical."
+rationale = "The public base input is empty on this path, so rax is zero. rsi reloads the same saved multiplier.len. The condition is 0 < multiplier.len and selects its single partial-digit store. For V=5, multiplier.len is Prime+0x168 and table.len is Prime+0x158. The table and multiplier backing slices come from disjoint safe workspace splits. MEMSET writes only multiplier backing bytes. MEMCPY writes the fixed local vector arrays or multiplier backing bytes, with lengths capped at V*64. Vector normalization stores do not overlap the public-width slot at rsp+0x18 or the saved Prime pointer. The vector instructions write only vector and mask registers, so they cannot alter those descriptors; every actual scalar store/reload and its control-flow position was checked. Exact clean CI capture binding: prototype-ci-binding.json verifies whole-function instructions and decoded public Location references against the reviewed prototype; the current condition text and coordinate are otherwise identical. Renewed 2026-11-18 on the same artifacts (Constant-Time 44185315723 at f4f0d6b0): the explicit effect rules of CT-CLOSED-WORLD changed the slice, not the function or the branch."
 reviewer = "RSA native arithmetic and condition-slice review"
-reviewed_at = "2026-10-31"
+reviewed_at = "2026-11-18"
 
 [[asm_waiver]]
 target = "x86_64-unknown-linux-gnu"
 primitive = "rsa.private_ops"
 symbol = "rscrypto::auth::rsa::rsa_x86_64_ifma::build_table::<5>"
 kind = "select_branch"
-slice_sha256 = "e5f72a5daacb67669ada5dc5468a6cff29cf4d649a2819451b6ed2784cbbb256"
+slice_sha256 = "bcbe6855ef9a56768bdf1eb93e212fd32a1ced8d4c6362b72bc501385ff9f22f"
 source = "src/auth/rsa_x86_64_ifma.rs build_table"
 classification = "public"
-rationale = "The base conversion starts its digit counter rax at zero and increments it only under the public bit-count loop. rsi reloads multiplier.len from rsp+0x18. That slot keeps the entry public multiplier width throughout this conversion; later reuse occurs after this branch and cannot reach it. The comparison selects only a final partial-digit store. For V=5, multiplier.len is Prime+0x168 and table.len is Prime+0x158. The table and multiplier backing slices come from disjoint safe workspace splits. MEMSET writes only multiplier backing bytes. MEMCPY writes the fixed local vector arrays or multiplier backing bytes, with lengths capped at V*64. Vector normalization stores do not overlap the public-width slot at rsp+0x18 or the saved Prime pointer. The unknown-vector effects in the conservative slice cannot alter those descriptors; every actual scalar store/reload and its control-flow position was checked. Exact clean CI capture binding: prototype-ci-binding.json verifies whole-function instructions and decoded public Location references against the reviewed prototype; the current condition text and coordinate are otherwise identical."
+rationale = "The base conversion starts its digit counter rax at zero and increments it only under the public bit-count loop. rsi reloads multiplier.len from rsp+0x18. That slot keeps the entry public multiplier width throughout this conversion; later reuse occurs after this branch and cannot reach it. The comparison selects only a final partial-digit store. For V=5, multiplier.len is Prime+0x168 and table.len is Prime+0x158. The table and multiplier backing slices come from disjoint safe workspace splits. MEMSET writes only multiplier backing bytes. MEMCPY writes the fixed local vector arrays or multiplier backing bytes, with lengths capped at V*64. Vector normalization stores do not overlap the public-width slot at rsp+0x18 or the saved Prime pointer. The vector instructions write only vector and mask registers, so they cannot alter those descriptors; every actual scalar store/reload and its control-flow position was checked. Exact clean CI capture binding: prototype-ci-binding.json verifies whole-function instructions and decoded public Location references against the reviewed prototype; the current condition text and coordinate are otherwise identical. Renewed 2026-11-18 on the same artifacts (Constant-Time 44185315723 at f4f0d6b0): the explicit effect rules of CT-CLOSED-WORLD changed the slice, not the function or the branch."
 reviewer = "RSA native arithmetic and condition-slice review"
-reviewed_at = "2026-10-31"
+reviewed_at = "2026-11-18"
 
 [[asm_waiver]]
 target = "x86_64-unknown-linux-gnu"
 primitive = "rsa.private_ops"
 symbol = "rscrypto::auth::rsa::rsa_x86_64_ifma::build_table::<5>"
 kind = "select_branch"
-slice_sha256 = "ae4e7fe778e4ab246d6506258250a050469227b886ccbf246b24c653933d7e8f"
+slice_sha256 = "3525d0ec0739f59f01fa22339343c0e1976704d3a51c8872c145ee264a8ac9a5"
 source = "src/auth/rsa_x86_64_ifma.rs build_table"
 classification = "public"
-rationale = "The condition tests whether the public table slice contains its first full vector-width entry. V=3 and V=5 divide the public table length by 24 and 40 using fixed reciprocal multiply/shift arithmetic and round down; V=4 compares the public length against 32. The Prime pointer is retained in its dedicated stack slot, and the table descriptor is never replaced. For V=5, multiplier.len is Prime+0x168 and table.len is Prime+0x158. The table and multiplier backing slices come from disjoint safe workspace splits. MEMSET writes only multiplier backing bytes. MEMCPY writes the fixed local vector arrays or multiplier backing bytes, with lengths capped at V*64. Vector normalization stores do not overlap the public-width slot at rsp+0x18 or the saved Prime pointer. The unknown-vector effects in the conservative slice cannot alter those descriptors; every actual scalar store/reload and its control-flow position was checked. Exact clean CI capture binding: prototype-ci-binding.json verifies whole-function instructions and decoded public Location references against the reviewed prototype; the current condition text and coordinate are otherwise identical."
+rationale = "The condition tests whether the public table slice contains its first full vector-width entry. V=3 and V=5 divide the public table length by 24 and 40 using fixed reciprocal multiply/shift arithmetic and round down; V=4 compares the public length against 32. The Prime pointer is retained in its dedicated stack slot, and the table descriptor is never replaced. For V=5, multiplier.len is Prime+0x168 and table.len is Prime+0x158. The table and multiplier backing slices come from disjoint safe workspace splits. MEMSET writes only multiplier backing bytes. MEMCPY writes the fixed local vector arrays or multiplier backing bytes, with lengths capped at V*64. Vector normalization stores do not overlap the public-width slot at rsp+0x18 or the saved Prime pointer. The vector instructions write only vector and mask registers, so they cannot alter those descriptors; every actual scalar store/reload and its control-flow position was checked. Exact clean CI capture binding: prototype-ci-binding.json verifies whole-function instructions and decoded public Location references against the reviewed prototype; the current condition text and coordinate are otherwise identical. Renewed 2026-11-18 on the same artifacts (Constant-Time 44185315723 at f4f0d6b0): the explicit effect rules of CT-CLOSED-WORLD changed the slice, not the function or the branch."
 reviewer = "RSA native arithmetic and condition-slice review"
-reviewed_at = "2026-10-31"
+reviewed_at = "2026-11-18"
 
 [[asm_waiver]]
 target = "x86_64-unknown-linux-gnu"

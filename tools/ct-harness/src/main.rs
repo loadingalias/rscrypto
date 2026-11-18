@@ -37,6 +37,11 @@ fn main() {
 
   retain!(rscrypto_ct_harness::ct_entry_siphash_hash);
 
+  retain!(
+    rscrypto_ct_harness::ct_entry_quic_lb_encrypt,
+    rscrypto_ct_harness::ct_entry_quic_lb_decrypt,
+  );
+
   retain!(rscrypto_ct_harness::ct_entry_chacha20_rng_fill);
 
   retain!(

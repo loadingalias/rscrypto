@@ -14,6 +14,7 @@ use core::hash::BuildHasher as _;
 use core::{ptr, slice};
 use std::format;
 
+use rscrypto::aead::expert::quic_lb::{QuicLbCipher, QuicLbKey};
 use rscrypto::auth::rsa::expert::RsaPkcs1v15Decrypt;
 use rscrypto::{
   Aegis256, Aegis256Key, Aes128Gcm, Aes128GcmKey, Aes128GcmSiv, Aes128GcmSivKey, Aes256Gcm, Aes256GcmKey, Aes256GcmSiv,
@@ -2892,6 +2893,85 @@ pub unsafe extern "C" fn ct_entry_siphash_hash(key: *const u8, data: *const u8, 
   } else {
     STATUS_ERR
   }
+}
+
+/// Run one QUIC-LB operation on the 19-octet buffer at `block`: construct the cipher for `key`,
+/// `server_id_len`, and `nonce_len`, apply `operation` to a copy of the buffer, write the copy
+/// back, and drop the cipher.
+///
+/// # Safety
+///
+/// A non-null `key` must expose 16 initialized readable bytes. A non-null `block` must expose 19
+/// initialized readable and writable bytes, with no other access until the call returns. Null
+/// pointers and lengths that the cipher rejects return `STATUS_ERR` and leave `block` unchanged.
+unsafe fn quic_lb_operation(
+  key: *const u8,
+  server_id_len: usize,
+  nonce_len: usize,
+  block: *mut u8,
+  operation: impl FnOnce(&QuicLbCipher, &mut [u8; QuicLbCipher::MAX_PLAINTEXT_LEN]),
+) -> u8 {
+  // SAFETY: The caller establishes 16 initialized readable bytes for a non-null key. The zeroizing
+  // owner takes the copy at once.
+  let Some(key) = (unsafe { read_array::<{ QuicLbKey::LENGTH }>(key) }).map(QuicLbKey::from_bytes) else {
+    return STATUS_ERR;
+  };
+  // SAFETY: The caller establishes 19 initialized readable bytes for a non-null block.
+  let Some(mut buffer) = (unsafe { read_array::<{ QuicLbCipher::MAX_PLAINTEXT_LEN }>(block) }) else {
+    return STATUS_ERR;
+  };
+  let Some(cipher) = QuicLbCipher::new(&key, server_id_len, nonce_len) else {
+    return STATUS_ERR;
+  };
+  operation(&cipher, &mut buffer);
+  // SAFETY: The caller establishes 19 writable bytes for the non-null block. The stack-owned
+  // buffer cannot overlap it.
+  if unsafe { write_array(block, &buffer) } {
+    STATUS_OK
+  } else {
+    STATUS_ERR
+  }
+}
+
+/// Encrypt a QUIC-LB server ID and nonce in place through the production cipher. A total of 16
+/// octets selects the single-pass form; every other total selects the four-pass Feistel network.
+///
+/// # Safety
+///
+/// A non-null `key` must expose 16 initialized readable bytes. A non-null `block` must expose 19
+/// initialized readable and writable bytes, with no other access until the call returns. Null
+/// pointers and lengths that the cipher rejects return 0 and leave `block` unchanged. Byte
+/// pointers need no extra alignment.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ct_entry_quic_lb_encrypt(
+  key: *const u8,
+  server_id_len: usize,
+  nonce_len: usize,
+  block: *mut u8,
+) -> u8 {
+  // SAFETY: The caller contract is the contract of quic_lb_operation.
+  unsafe { quic_lb_operation(key, server_id_len, nonce_len, block, QuicLbCipher::encrypt) }
+}
+
+/// Decrypt a QUIC-LB connection-ID ciphertext in place through the production cipher, which leaves
+/// the server ID and zero octets. A total of 16 octets selects the single-pass form; every other
+/// total selects the Feistel network, with three or four passes by the public lengths.
+///
+/// # Safety
+///
+/// A non-null `key` must expose 16 initialized readable bytes. A non-null `block` must expose 19
+/// initialized readable and writable bytes, with no other access until the call returns. Null
+/// pointers and lengths that the cipher rejects return 0 and leave `block` unchanged. Byte
+/// pointers need no extra alignment.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ct_entry_quic_lb_decrypt(
+  key: *const u8,
+  server_id_len: usize,
+  nonce_len: usize,
+  block: *mut u8,
+) -> u8 {
+  // SAFETY: The caller contract is the contract of quic_lb_operation.
+  unsafe { quic_lb_operation(key, server_id_len, nonce_len, block, QuicLbCipher::decrypt_server_id) }
 }
 
 /// Compute a public-data SHA-256 digest through the CT harness.
