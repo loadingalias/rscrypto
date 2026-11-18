@@ -103,7 +103,7 @@ def cases():
     # Embedders build the exported portable BLAKE3 text alone: no cfg, crate, unsafe code, or warning.
     source = ROOT / 'src/hashes/crypto/blake3/portable.rs'
     if 'cfg' in source.read_text():
-        raise SystemExit(f'{source} must not contain cfg')
+        raise SystemExit(f'{source} contains cfg')
     # The cdylib exports nothing, so a link proves nothing about the text. Every check runs before it.
     yield 'blake3-portable-source', [['rustc', '+' + EMBED_CHANNEL, '--edition', '2024', '--crate-type', 'cdylib',
                                       '-C', 'panic=abort', '--emit=obj', '-D', 'warnings', '--out-dir',

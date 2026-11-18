@@ -1,4 +1,4 @@
-// The `compatibility` lane of `scripts/check/compat.py` builds this embedder of the portable BLAKE3 text.
+// `compat.py` builds this wrapper to prove that an embedder can build `BLAKE3_PORTABLE_SOURCE` alone.
 #![no_std]
 #![forbid(unsafe_code)]
 
