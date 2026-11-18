@@ -1005,7 +1005,9 @@ mod rv_scalar_clmul {
   #[target_feature(enable = "zbc")]
   unsafe fn mul64(a: u64, b: u64) -> (u64, u64) {
     // SAFETY: Caller guarantees Zbc availability; clmul/clmulh are pure
-    // register-to-register instructions with no memory side effects.
+    // register-to-register instructions with no memory side effects. `lo` is
+    // written before `clmulh` reads `a` and `b`, so it must not share their
+    // register (`out`, not `lateout`); `hi` is written last.
     unsafe {
       let lo: u64;
       let hi: u64;
@@ -1014,7 +1016,7 @@ mod rv_scalar_clmul {
         "clmulh {hi}, {a}, {b}",
         a = in(reg) a,
         b = in(reg) b,
-        lo = lateout(reg) lo,
+        lo = out(reg) lo,
         hi = lateout(reg) hi,
         options(nomem, nostack, pure),
       );

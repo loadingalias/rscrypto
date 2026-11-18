@@ -584,7 +584,8 @@ fn fold_block_128_zvbc(
         "vxor.vv v3, v3, v5",
         "vse64.v v2, ({xlo})",
         "vse64.v v3, ({xhi})",
-        vl = lateout(reg) vl,
+        // `vsetvli` writes `vl` before the loads read the pointers, so `vl` must not share an input register.
+        vl = out(reg) vl,
         avl = in(reg) remaining,
         xlo = in(reg) x_lo.as_mut_ptr().add(offset),
         xhi = in(reg) x_hi.as_mut_ptr().add(offset),
