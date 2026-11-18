@@ -246,12 +246,10 @@ fn every_length_pair_matches_independent_implementations() {
     include_str!("../testdata/quic_lb/quiche-vectors.txt"),
     include_str!("../testdata/quic_lb/hopf-vectors.txt"),
   ];
-  let mut pairs = std::collections::BTreeSet::new();
+  let mut pairs = Vec::new();
   for line in files.iter().flat_map(|file| file.lines()) {
-    let fields: Vec<&str> = line.split(' ').collect();
-    let [_, key_hex, server_id, nonce, id] = fields[..] else {
-      panic!("five fields: {line}")
-    };
+    let [_, key_hex, server_id, nonce, id]: [&str; 5] =
+      line.split(' ').collect::<Vec<_>>().try_into().expect("five fields");
     let (server_id, nonce, id) = (decode_hex_vec(server_id), decode_hex_vec(nonce), decode_hex_vec(id));
     let cipher = QuicLbCipher::new(&key(key_hex), server_id.len(), nonce.len()).expect("allowed lengths");
 
@@ -261,7 +259,9 @@ fn every_length_pair_matches_independent_implementations() {
 
     cipher.decrypt_server_id(&mut buffer);
     assert_eq!(buffer, block(&server_id), "decrypt {line}");
-    pairs.insert((server_id.len(), nonce.len()));
+    pairs.push((server_id.len(), nonce.len()));
   }
+  pairs.sort_unstable();
+  pairs.dedup();
   assert!(pairs.into_iter().eq(allowed_lengths()), "every allowed length pair");
 }
