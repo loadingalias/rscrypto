@@ -179,7 +179,7 @@ HashSLH-DSA profile, without allocation and without operating-system entropy. It
 Signatures are 7,856 to 49,856 bytes and go into buffers that the caller provides. The small (`s`)
 sets compute larger trees than the fast (`f`) sets, so they sign much more slowly, and importing a
 secret key costs one key generation.
-The `rscrypto::auth::slhdsa` module documentation describes the API; target qualification is open.
+See [SLH-DSA](slhdsa.md) for the profile choice, the API, and the open qualification gates.
 
 `p256-ecdh` and `p384-ecdh` are standalone leaf features.
 They do not enable ECDSA, HMAC, `alloc`, or `std`.

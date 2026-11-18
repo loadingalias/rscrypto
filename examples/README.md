@@ -20,6 +20,7 @@ just test-examples
 | `ed25519_sign_verify` | Generate an Ed25519 keypair, sign a message, and verify the signature. | `ed25519,getrandom` |
 | `rsa_pss_verify` | Verify a packaged RSA-PSS/SHA-256 fixture. | `rsa` |
 | `mldsa_sign_verify` | Generate ML-DSA-65 keys, sign with operating-system randomness and an explicit context, and verify. | `ml-dsa,getrandom` |
+| `slhdsa_update_verify` | Pin an SLH-DSA-SHA2-128s root key as an RFC 9909 SubjectPublicKeyInfo, sign an update manifest under a context, and verify it on the device side. | `slh-dsa,getrandom` |
 | `mlkem_encapsulation` | Generate ML-KEM-768 keys and confirm that encapsulation and decapsulation agree. | `ml-kem,getrandom` |
 | `p256_ecdh` | Generate two ephemeral P-256 keys and confirm that both parties derive the same fixed-width ECC CDH output. | `p256-ecdh,getrandom` |
 | `p384_ecdh` | Generate two ephemeral P-384 keys and confirm that both parties derive the same fixed-width ECC CDH output. | `p384-ecdh,getrandom` |

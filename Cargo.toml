@@ -416,6 +416,10 @@ name = "mldsa_sign_verify"
 required-features = ["ml-dsa", "getrandom"]
 
 [[example]]
+name = "slhdsa_update_verify"
+required-features = ["slh-dsa", "getrandom"]
+
+[[example]]
 name = "mlkem_encapsulation"
 required-features = ["ml-kem", "getrandom"]
 
