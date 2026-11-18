@@ -3,7 +3,9 @@
 
 Doctests run only on the native CI rows. Each cross suite runs under the `cross` or
 `cross-internal` Nextest profile, which skips work the native rows or another suite
-already cover on the same target (`.config/nextest.toml`).
+already cover on the same target (`.config/nextest.toml`). Under emulation (`run --emulated`),
+only the native-dispatch suites run, under the `emulated` profiles: they select the extension
+kernels, and the native runner covers the portable suites.
 """
 
 import argparse
@@ -24,6 +26,7 @@ from workspace_features import native_features
 from evidence_suite import TARGET_ARGS, validate_backend_evidence
 
 MODES = ("native", "portable", "internal-native", "internal-portable")
+EMULATED_MODES = ("native", "internal-native")
 # Painted-stack measurements (scripts/stack/painted.py) run from the same bundle.
 STACK_PAINT = ROOT / 'tools/stack-paint'
 STACK_BINARIES = ('rscrypto-stack-edges', 'rscrypto-stack-worker')
@@ -113,7 +116,7 @@ def prepare(target, archive):
         bundle.pack(out, archive, compression='xz')
 
 
-def execute(target, archive):
+def execute(target, archive, emulated=False):
     require_host(target)
     environment(target)  # Reject inherited filters/profile overrides on the consumer too.
     version = nextest_version()
@@ -144,13 +147,13 @@ def execute(target, archive):
     stack = (stack_paint(target, incoming / 'stack-paint', out / 'stack-paint')
              if 'stack_paint' in manifest['metadata'] else None)
     results = {}
-    for mode in MODES:
+    for mode in EMULATED_MODES if emulated else MODES:
         internal = mode.startswith('internal-')
         log_path = out / f'{mode}-nextest.log'
         with log_path.open('w') as log:
             result = subprocess.run(['cargo', 'nextest', 'run', '--archive-file', str(incoming / f'{mode}.tar.zst'),
                             '--workspace-remap', str(ROOT), '--config-file', str(ROOT / '.config/nextest.toml'),
-                            '--profile', 'cross-internal' if internal else 'cross',
+                            '--profile', ('emulated' if emulated else 'cross') + ('-internal' if internal else ''),
                             '--no-tests', 'fail'], cwd=ROOT, stdout=log, stderr=subprocess.STDOUT, check=False)
         if result.returncode:
             print(f'{target} {mode} Nextest failed; full log: {log_path}\n'
@@ -164,7 +167,8 @@ def execute(target, archive):
     bundle.verify(ROOT, incoming, 'rscrypto.cross.tests', target)
     (out / 'summary.json').write_text(json.dumps({'status': 'pass', 'source': manifest['source'],
         'archive_sha256': bundle.digest(archive), 'host': platform.uname()._asdict(),
-        'nextest': version, 'detection': detected, 'modes': results, 'stack_paint': stack}, indent=2) + '\n')
+        'nextest': version, 'detection': detected, 'emulated': emulated, 'modes': results,
+        'stack_paint': stack}, indent=2) + '\n')
     print(f'{target} ordinary and internal suites passed: {out}', flush=True)
 
 
@@ -188,8 +192,16 @@ def main():
     parser.add_argument('operation', choices=('prepare', 'run'))
     parser.add_argument('target', choices=TARGETS)
     parser.add_argument('archive', type=Path)
+    parser.add_argument('--emulated', action='store_true',
+                        help='run under QEMU user-mode emulation: only the native-dispatch suites, '
+                             'with the emulated Nextest profiles')
     args = parser.parse_args()
-    (prepare if args.operation == 'prepare' else execute)(args.target, args.archive.resolve())
+    if args.operation == 'prepare':
+        if args.emulated:
+            parser.error('--emulated applies only to run')
+        prepare(args.target, args.archive.resolve())
+    else:
+        execute(args.target, args.archive.resolve(), args.emulated)
 
 
 if __name__ == '__main__':

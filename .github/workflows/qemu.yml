@@ -97,7 +97,7 @@ jobs:
             -v "$PWD:/work" -w /work ubuntu:24.04 bash -euo pipefail -c '
               scripts/tooling/riscv64-linux.sh --ci-cross-run "target/cross-download/$TARGET-tools.tar.gz"
               source "$HOME/.local/share/rscrypto-tooling/environment.sh"
-              just test-cross run "$TARGET" "target/cross-download/$TARGET-tests.tar.xz" 2>&1 | tee target/qemu.log
+              just test-cross run "$TARGET" "target/cross-download/$TARGET-tests.tar.xz" --emulated 2>&1 | tee target/qemu.log
               git diff --exit-code HEAD'
       # A run that detects no extension tested no extension kernel.
       - name: Require the extensions in the runtime detection

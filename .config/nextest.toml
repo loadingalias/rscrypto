@@ -57,3 +57,22 @@ default-filter = 'not (binary(=slhdsa) & test(/_(128|192|256)s_matches_independe
 
 [profile.cross-internal]
 default-filter = 'not (binary(=rscrypto) & test(/^auth::slhdsa::tests::acvp_/))'
+
+# QEMU user-mode emulation (`cross.py run --emulated`, the RISC-V QEMU workflow) executes each
+# instruction in software. That lane exists to run each extension kernel against the portable
+# authority, which the direct kernel tests do. SLH-DSA signing chains millions of hash calls
+# through the same kernels and runs on every native row, so these profiles skip it. Every other
+# test gets 16 minutes; the catch-all override outranks the default profile's per-test overrides.
+[profile.emulated]
+default-filter = 'not (binary(=slhdsa) | binary(=slhdsa_pkix) | (binary(=rscrypto) & test(/^auth::slhdsa::tests::acvp_signing_/)))'
+
+[[profile.emulated.overrides]]
+filter = 'all()'
+slow-timeout = { period = "120s", terminate-after = 8 }
+
+[profile.emulated-internal]
+default-filter = 'not (binary(=rscrypto) & test(/^auth::slhdsa::tests::acvp_/))'
+
+[[profile.emulated-internal.overrides]]
+filter = 'all()'
+slow-timeout = { period = "120s", terminate-after = 8 }

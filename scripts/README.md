@@ -301,6 +301,10 @@ Test preparation and native execution retain these contracts:
   [`.config/nextest.toml`](../.config/nextest.toml). The SLH-DSA small-set independent-implementation
   differentials run on the native rows only, and the internal suites leave the SLH-DSA ACVP vectors to
   the ordinary suite with the same dispatch on the same target. Every other test runs in every suite.
+- `just test-cross run ... --emulated` (the RISC-V QEMU workflow) runs only the native-dispatch suites,
+  which select the extension kernels, under the `emulated` profiles. They skip SLH-DSA signing, which
+  chains millions of hash calls through the same kernels and runs on every native row, and give each
+  other test 16 minutes under emulation.
 - Preparation is not a runtime pass.
 - The Rust release profile, target compiler, feature sets, and test assertions do not change.
 - Profile CI uses the same exact-artifact transfer boundary for x86-64, AArch64, RISC-V, POWER,

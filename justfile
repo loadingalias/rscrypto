@@ -124,9 +124,9 @@ qualify-macos:
 macos-status:
     @scripts/lib/python.sh scripts/check/macos_async.py status
 
-# Prepare or execute complete, source-bound cross-compiled test artifacts.
-test-cross operation target archive:
-    @scripts/lib/python.sh scripts/test/cross.py {{quote(operation)}} {{quote(target)}} {{quote(archive)}}
+# Prepare or execute complete, source-bound cross-compiled test artifacts; `run ... --emulated` under QEMU.
+test-cross operation target archive *flags:
+    @scripts/lib/python.sh scripts/test/cross.py "$@"
 
 # Exercise TLS with the pinned OpenSSL and Go peers; retain process evidence locally.
 [group('tests')]
