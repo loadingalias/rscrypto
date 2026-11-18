@@ -127,6 +127,37 @@ pub mod expert {
   pub mod bao {
     pub use crate::hashes::crypto::blake3::bao::Decoder;
   }
+
+  /// Source text of the portable BLAKE3 compression function.
+  ///
+  /// This is the exact file that rscrypto compiles as its Portable BLAKE3 kernel. Embed it in
+  /// code that cannot link rscrypto, for example a `no_std` cdylib that plain `rustc` builds.
+  ///
+  /// The text holds these `pub(crate)` items:
+  ///
+  /// - The flags `CHUNK_START`, `CHUNK_END`, `PARENT`, `ROOT`, `KEYED_HASH`, `DERIVE_KEY_CONTEXT`,
+  ///   and `DERIVE_KEY_MATERIAL`, each a `u32`.
+  /// - `IV: [u32; 8]` and `MSG_SCHEDULE: [[usize; 16]; 7]`.
+  /// - `const fn block_words(block: &[u8; 64]) -> [u32; 16]`, which decodes the 16
+  ///   little-endian message words of a block.
+  /// - `const fn compress_pre`, the seven rounds, and `fn compress_words`, the compression
+  ///   function of decoded message words.
+  /// - The compression function of one block:
+  ///   `fn compress(cv: &[u32; 8], block: &[u8; 64], counter: u64, block_len: u32, flags: u32) -> [u32; 16]`.
+  ///
+  /// # Build contract
+  ///
+  /// The text builds with Rust 1.85 or later, edition 2024. It uses only `core`, so it builds in
+  /// a `no_std` crate. It has no `unsafe` code, no conditional compilation, and no inner
+  /// attribute. Put it inline in a module, use it as the file of a `mod`, or use it with
+  /// `include!`. An embedder that uses only some of the items gets `dead_code` warnings.
+  ///
+  /// The BLAKE3 vectors and kernel tests of rscrypto run this text. Test the output of your
+  /// embedded copy against [`Blake3::keyed_xof`](crate::Blake3::keyed_xof) or another
+  /// [`Blake3`](crate::Blake3) function.
+  ///
+  /// The names, values, and signatures of these items are public API under semantic versioning.
+  pub const BLAKE3_PORTABLE_SOURCE: &str = include_str!("crypto/blake3/portable.rs");
 }
 #[cfg(all(
   feature = "std",

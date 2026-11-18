@@ -26,7 +26,8 @@ mod asm;
 
 // Constants
 use super::{
-  BLOCK_LEN, CHUNK_END, CHUNK_LEN, CHUNK_START, IV, MSG_SCHEDULE, OUT_LEN, PARENT, ROOT, words16_from_le_bytes_64,
+  BLOCK_LEN, CHUNK_END, CHUNK_LEN, CHUNK_START, IV, OUT_LEN, PARENT, ROOT, portable::MSG_SCHEDULE,
+  words16_from_le_bytes_64,
 };
 
 const BLOCK_LEN_U32: u32 = 64;

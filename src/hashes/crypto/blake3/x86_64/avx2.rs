@@ -14,7 +14,7 @@ use core::arch::x86_64::*;
 ))]
 use super::super::{CHUNK_END, CHUNK_LEN, CHUNK_START, OUT_LEN, PARENT};
 use super::{
-  super::{BLOCK_LEN, BLOCK_LEN_U32, IV, MSG_SCHEDULE},
+  super::{BLOCK_LEN, BLOCK_LEN_U32, IV, portable::MSG_SCHEDULE},
   HashManyRequest, counter_high, counter_low,
 };
 

@@ -29,12 +29,20 @@ mod kernel_test;
 pub(crate) mod kernels;
 #[cfg(feature = "parallel")]
 mod parallel;
+mod portable;
 pub(crate) mod tree;
 #[cfg(all(target_arch = "wasm32", target_feature = "simd128", not(feature = "portable-only")))]
 mod wasm32;
 #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 pub(crate) mod x86_64;
-use self::{control::ParallelPolicyKind, kernels::Kernel};
+use self::{
+  control::ParallelPolicyKind,
+  kernels::Kernel,
+  portable::{
+    CHUNK_END, CHUNK_START, DERIVE_KEY_CONTEXT, DERIVE_KEY_MATERIAL, IV, KEYED_HASH, PARENT, ROOT, compress,
+    compress_pre, compress_words,
+  },
+};
 
 const OUT_LEN: usize = 32;
 const KEY_LEN: usize = 32;
@@ -246,25 +254,6 @@ mod join {
     }
   }
 }
-
-const CHUNK_START: u32 = 1 << 0;
-const CHUNK_END: u32 = 1 << 1;
-const PARENT: u32 = 1 << 2;
-const ROOT: u32 = 1 << 3;
-const KEYED_HASH: u32 = 1 << 4;
-const DERIVE_KEY_CONTEXT: u32 = 1 << 5;
-const DERIVE_KEY_MATERIAL: u32 = 1 << 6;
-
-const IV: [u32; 8] = [
-  0x6A09_E667,
-  0xBB67_AE85,
-  0x3C6E_F372,
-  0xA54F_F53A,
-  0x510E_527F,
-  0x9B05_688C,
-  0x1F83_D9AB,
-  0x5BE0_CD19,
-];
 
 #[cfg(feature = "std")]
 thread_local! {
@@ -688,24 +677,6 @@ fn hash_power_of_two_subtree_roots_parallel_rayon(req: SubtreeRootsRequest<'_>) 
     });
   });
 }
-
-/// BLAKE3 message schedule.
-///
-/// `MSG_SCHEDULE[round][i]` gives the index of the message word to use.
-#[cfg(any(
-  all(target_arch = "x86_64", target_feature = "sse2"),
-  target_arch = "aarch64",
-  all(target_arch = "wasm32", target_feature = "simd128", not(feature = "portable-only"))
-))]
-pub(crate) const MSG_SCHEDULE: [[usize; 16]; 7] = [
-  [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
-  [2, 6, 3, 10, 7, 0, 4, 13, 1, 11, 12, 5, 9, 14, 15, 8],
-  [3, 4, 10, 12, 13, 2, 7, 14, 6, 5, 9, 0, 11, 15, 8, 1],
-  [10, 7, 12, 9, 14, 3, 13, 15, 4, 0, 11, 2, 5, 8, 1, 6],
-  [12, 13, 9, 11, 15, 10, 14, 8, 7, 2, 5, 3, 0, 1, 6, 4],
-  [9, 14, 11, 5, 8, 12, 15, 1, 13, 3, 0, 10, 2, 6, 4, 7],
-  [11, 15, 5, 0, 1, 9, 8, 6, 14, 10, 2, 12, 3, 4, 7, 13],
-];
 
 #[inline(always)]
 fn uninit_cv_stack() -> [MaybeUninit<[u32; 8]>; CV_STACK_LEN] {
@@ -1185,122 +1156,6 @@ fn add_chunk_cvs_batched_bytes(
 
     offset = offset.strict_add(size);
   }
-}
-
-// Share the rounds while keeping 8-word chaining-value finalization separate
-// from the 16-word XOF finalization. Inlining the round state lets LLVM omit
-// the unused second output half from the CV caller without changing XOF output.
-#[inline(always)]
-const fn compress_pre(
-  chaining_value: &[u32; 8],
-  block_words: &[u32; 16],
-  counter: u64,
-  block_len: u32,
-  flags: u32,
-) -> [u32; 16] {
-  let m0 = block_words[0];
-  let m1 = block_words[1];
-  let m2 = block_words[2];
-  let m3 = block_words[3];
-  let m4 = block_words[4];
-  let m5 = block_words[5];
-  let m6 = block_words[6];
-  let m7 = block_words[7];
-  let m8 = block_words[8];
-  let m9 = block_words[9];
-  let m10 = block_words[10];
-  let m11 = block_words[11];
-  let m12 = block_words[12];
-  let m13 = block_words[13];
-  let m14 = block_words[14];
-  let m15 = block_words[15];
-
-  let [c0, c1, c2, c3, c4, c5, c6, c7] = counter.to_le_bytes();
-  let counter_low = u32::from_le_bytes([c0, c1, c2, c3]);
-  let counter_high = u32::from_le_bytes([c4, c5, c6, c7]);
-  let mut v0 = chaining_value[0];
-  let mut v1 = chaining_value[1];
-  let mut v2 = chaining_value[2];
-  let mut v3 = chaining_value[3];
-  let mut v4 = chaining_value[4];
-  let mut v5 = chaining_value[5];
-  let mut v6 = chaining_value[6];
-  let mut v7 = chaining_value[7];
-  let mut v8 = IV[0];
-  let mut v9 = IV[1];
-  let mut v10 = IV[2];
-  let mut v11 = IV[3];
-  let mut v12 = counter_low;
-  let mut v13 = counter_high;
-  let mut v14 = block_len;
-  let mut v15 = flags;
-
-  macro_rules! g {
-    ($a:ident, $b:ident, $c:ident, $d:ident, $mx:expr, $my:expr) => {{
-      $a = $a.wrapping_add($b).wrapping_add($mx);
-      $d = ($d ^ $a).rotate_right(16);
-      $c = $c.wrapping_add($d);
-      $b = ($b ^ $c).rotate_right(12);
-      $a = $a.wrapping_add($b).wrapping_add($my);
-      $d = ($d ^ $a).rotate_right(8);
-      $c = $c.wrapping_add($d);
-      $b = ($b ^ $c).rotate_right(7);
-    }};
-  }
-
-  // One full BLAKE3 round, with an explicit message schedule. This lets the
-  // compiler keep `v0..v15` and `m0..m15` in registers without indirect
-  // indexing in the hottest loop.
-  macro_rules! round {
-    (
-      $m0:expr, $m1:expr, $m2:expr, $m3:expr, $m4:expr, $m5:expr, $m6:expr, $m7:expr,
-      $m8:expr, $m9:expr, $m10:expr, $m11:expr, $m12:expr, $m13:expr, $m14:expr, $m15:expr
-    ) => {{
-      g!(v0, v4, v8, v12, $m0, $m1);
-      g!(v1, v5, v9, v13, $m2, $m3);
-      g!(v2, v6, v10, v14, $m4, $m5);
-      g!(v3, v7, v11, v15, $m6, $m7);
-
-      g!(v0, v5, v10, v15, $m8, $m9);
-      g!(v1, v6, v11, v12, $m10, $m11);
-      g!(v2, v7, v8, v13, $m12, $m13);
-      g!(v3, v4, v9, v14, $m14, $m15);
-    }};
-  }
-
-  // Per-round schedules for the 7-round BLAKE3 compression function.
-  round!(m0, m1, m2, m3, m4, m5, m6, m7, m8, m9, m10, m11, m12, m13, m14, m15);
-  round!(m2, m6, m3, m10, m7, m0, m4, m13, m1, m11, m12, m5, m9, m14, m15, m8);
-  round!(m3, m4, m10, m12, m13, m2, m7, m14, m6, m5, m9, m0, m11, m15, m8, m1);
-  round!(m10, m7, m12, m9, m14, m3, m13, m15, m4, m0, m11, m2, m5, m8, m1, m6);
-  round!(m12, m13, m9, m11, m15, m10, m14, m8, m7, m2, m5, m3, m0, m1, m6, m4);
-  round!(m9, m14, m11, m5, m8, m12, m15, m1, m13, m3, m0, m10, m2, m6, m4, m7);
-  round!(m11, m15, m5, m0, m1, m9, m8, m6, m14, m10, m2, m12, m3, m4, m7, m13);
-
-  [v0, v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15]
-}
-
-#[inline]
-fn compress(chaining_value: &[u32; 8], block_words: &[u32; 16], counter: u64, block_len: u32, flags: u32) -> [u32; 16] {
-  let mut state = compress_pre(chaining_value, block_words, counter, block_len, flags);
-  state[0] ^= state[8];
-  state[1] ^= state[9];
-  state[2] ^= state[10];
-  state[3] ^= state[11];
-  state[4] ^= state[12];
-  state[5] ^= state[13];
-  state[6] ^= state[14];
-  state[7] ^= state[15];
-
-  state[8] ^= chaining_value[0];
-  state[9] ^= chaining_value[1];
-  state[10] ^= chaining_value[2];
-  state[11] ^= chaining_value[3];
-  state[12] ^= chaining_value[4];
-  state[13] ^= chaining_value[5];
-  state[14] ^= chaining_value[6];
-  state[15] ^= chaining_value[7];
-  state
 }
 
 #[inline(always)]

@@ -204,7 +204,7 @@ pub(crate) fn kernel(id: Blake3KernelId) -> Kernel {
     #[cfg(all(target_arch = "wasm32", target_feature = "simd128", not(feature = "portable-only")))]
     Blake3KernelId::WasmSimd128 => Kernel {
       id,
-      compress: super::compress,
+      compress: super::compress_words,
       chunk_compress_blocks: super::wasm32::chunk_compress_blocks,
       hash_many_contiguous: super::wasm32::hash_many_contiguous,
       #[cfg(feature = "diag")]
@@ -212,7 +212,7 @@ pub(crate) fn kernel(id: Blake3KernelId) -> Kernel {
     },
     Blake3KernelId::Portable => Kernel {
       id,
-      compress: super::compress,
+      compress: super::compress_words,
       chunk_compress_blocks: chunk_compress_blocks_portable,
       hash_many_contiguous: hash_many_contiguous_portable,
       #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
@@ -534,7 +534,7 @@ pub(crate) unsafe fn compress_block_asm_inline(
   #[cfg(all(target_arch = "wasm32", target_feature = "simd128", not(feature = "portable-only")))]
   if id == Blake3KernelId::WasmSimd128 {
     let mut words = words16_from_le_bytes_64(block);
-    let mut output = super::compress(chaining_value, &words, chunk_counter, BLOCK_LEN_U32, flags);
+    let mut output = super::compress_words(chaining_value, &words, chunk_counter, BLOCK_LEN_U32, flags);
     *chaining_value = first_8_words(output);
     if flags & (super::KEYED_HASH | super::DERIVE_KEY_MATERIAL) != 0 {
       crate::traits::ct::zeroize_words_no_fence(&mut words);
@@ -546,10 +546,9 @@ pub(crate) unsafe fn compress_block_asm_inline(
 
   // Fallback: portable compress (also covers SSSE3, NEON, etc.)
   let _ = id;
-  let block_words = words16_from_le_bytes_64(block);
-  *chaining_value = first_8_words((super::compress)(
+  *chaining_value = first_8_words(super::compress(
     chaining_value,
-    &block_words,
+    block,
     chunk_counter,
     BLOCK_LEN_U32,
     flags,
@@ -660,9 +659,9 @@ pub(crate) fn compress_block_inline(
   flags: u32,
 ) -> [u32; 16] {
   match id {
-    Blake3KernelId::Portable => super::compress(chaining_value, block_words, counter, block_len, flags),
+    Blake3KernelId::Portable => super::compress_words(chaining_value, block_words, counter, block_len, flags),
     #[cfg(all(target_arch = "wasm32", target_feature = "simd128", not(feature = "portable-only")))]
-    Blake3KernelId::WasmSimd128 => super::compress(chaining_value, block_words, counter, block_len, flags),
+    Blake3KernelId::WasmSimd128 => super::compress_words(chaining_value, block_words, counter, block_len, flags),
     #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     Blake3KernelId::X86Sse41 => compress_sse41_wrapper(chaining_value, block_words, counter, block_len, flags),
     #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
@@ -775,7 +774,7 @@ fn root_output_block_words_inline(
   if id == Blake3KernelId::Aarch64Neon {
     // Single-block XOF emit follows upstream BLAKE3's portable NEON policy.
     // Bulk emit remains on root_output_blocks4_neon.
-    let words = super::compress(chaining_value, block_words, counter, block_len, flags);
+    let words = super::compress_words(chaining_value, block_words, counter, block_len, flags);
     write_root_output_words(out, &words);
     return;
   }
@@ -1985,7 +1984,7 @@ fn chunk_compress_blocks_portable(
   if let [block_bytes] = block_slices {
     let start = if *blocks_compressed == 0 { CHUNK_START } else { 0 };
     let block_words = words16_from_le_bytes_64(block_bytes);
-    *chaining_value = first_8_words((super::compress)(
+    *chaining_value = first_8_words((super::compress_words)(
       chaining_value,
       &block_words,
       chunk_counter,
@@ -1999,7 +1998,7 @@ fn chunk_compress_blocks_portable(
   for block_bytes in block_slices {
     let start = if *blocks_compressed == 0 { CHUNK_START } else { 0 };
     let block_words = words16_from_le_bytes_64(block_bytes);
-    *chaining_value = first_8_words((super::compress)(
+    *chaining_value = first_8_words((super::compress_words)(
       chaining_value,
       &block_words,
       chunk_counter,
@@ -2015,7 +2014,7 @@ fn parent_cv_portable(left_child_cv: [u32; 8], right_child_cv: [u32; 8], key_wor
   let mut block_words = [0u32; 16];
   block_words[..8].copy_from_slice(&left_child_cv);
   block_words[8..].copy_from_slice(&right_child_cv);
-  first_8_words((super::compress)(
+  first_8_words((super::compress_words)(
     &key_words,
     &block_words,
     0,
@@ -2046,7 +2045,7 @@ unsafe fn hash_many_contiguous_portable(
 
     for block_idx in 0..CHUNK_LEN.strict_div(BLOCK_LEN) {
       // SAFETY: caller guarantees `input` is valid for `num_chunks * CHUNK_LEN`.
-      let block_words = unsafe {
+      let block = unsafe {
         let src = input.add(
           chunk_idx
             .strict_mul(CHUNK_LEN)
@@ -2056,7 +2055,7 @@ unsafe fn hash_many_contiguous_portable(
         // - Caller guarantees `src` is valid for `BLOCK_LEN` bytes.
         // - `[u8; BLOCK_LEN]` has alignment 1, so this reference doesn't assume any alignment of the input
         //   pointer.
-        words16_from_le_bytes_64(&*src.cast::<[u8; BLOCK_LEN]>())
+        &*src.cast::<[u8; BLOCK_LEN]>()
       };
 
       let start = if block_idx == 0 { CHUNK_START } else { 0 };
@@ -2066,13 +2065,7 @@ unsafe fn hash_many_contiguous_portable(
         0
       };
       let block_flags = flags | start | end;
-      cv = first_8_words(super::compress(
-        &cv,
-        &block_words,
-        chunk_counter,
-        BLOCK_LEN_U32,
-        block_flags,
-      ));
+      cv = first_8_words(super::compress(&cv, block, chunk_counter, BLOCK_LEN_U32, block_flags));
     }
 
     for (j, &word) in cv.iter().enumerate() {
@@ -3426,8 +3419,8 @@ unsafe fn x86_compress_cv_portable_wrapper(
   flags: u32,
 ) -> [u32; 8] {
   // SAFETY: caller guarantees `block` points to a readable 64-byte block.
-  let block_words = unsafe { words16_from_le_bytes_64(&*block.cast::<[u8; BLOCK_LEN]>()) };
-  first_8_words(super::compress(cv, &block_words, counter, block_len, flags))
+  let block = unsafe { &*block.cast::<[u8; BLOCK_LEN]>() };
+  first_8_words(super::compress(cv, block, counter, block_len, flags))
 }
 
 #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]

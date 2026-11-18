@@ -3,7 +3,7 @@
 use core::arch::x86_64::*;
 
 use super::{
-  super::{BLOCK_LEN, BLOCK_LEN_U32, CHUNK_LEN, IV, MSG_SCHEDULE, OUT_LEN},
+  super::{BLOCK_LEN, BLOCK_LEN_U32, CHUNK_LEN, IV, OUT_LEN, portable::MSG_SCHEDULE},
   HashManyRequest,
   avx2::transpose8x8,
   counter_high, counter_low,

@@ -10,8 +10,8 @@ use core::arch::wasm32::{
 };
 
 use super::{
-  BLOCK_LEN, CHUNK_END, CHUNK_LEN, CHUNK_START, DERIVE_KEY_MATERIAL, IV, KEYED_HASH, MSG_SCHEDULE, OUT_LEN, PARENT,
-  ROOT, first_8_words, words16_from_le_bytes_64,
+  BLOCK_LEN, CHUNK_END, CHUNK_LEN, CHUNK_START, DERIVE_KEY_MATERIAL, IV, KEYED_HASH, OUT_LEN, PARENT, ROOT,
+  first_8_words, portable::MSG_SCHEDULE, words16_from_le_bytes_64,
 };
 use crate::traits::ct;
 
@@ -61,7 +61,7 @@ pub(super) fn chunk_compress_blocks(cv: &mut [u32; 8], counter: u64, flags: u32,
   for block in blocks {
     words = words16_from_le_bytes_64(block);
     let start = if *count == 0 { CHUNK_START } else { 0 };
-    output = super::compress(cv, &words, counter, 64, flags | start);
+    output = super::compress_words(cv, &words, counter, 64, flags | start);
     *cv = first_8_words(output);
     *count = count.strict_add(1);
   }
@@ -77,7 +77,7 @@ pub(super) fn parent_cv(mut left: [u32; 8], mut right: [u32; 8], mut key: [u32; 
   let mut block = [0u32; 16];
   block[..8].copy_from_slice(&left);
   block[8..].copy_from_slice(&right);
-  let mut output = super::compress(&key, &block, 0, 64, flags | PARENT);
+  let mut output = super::compress_words(&key, &block, 0, 64, flags | PARENT);
   let cv = first_8_words(output);
   if secret(flags) {
     ct::zeroize_words_no_fence(&mut left);

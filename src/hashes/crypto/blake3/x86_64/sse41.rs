@@ -3,7 +3,7 @@
 use core::arch::x86_64::*;
 
 use super::{
-  super::{BLOCK_LEN, BLOCK_LEN_U32, CHUNK_END, CHUNK_LEN, CHUNK_START, IV, MSG_SCHEDULE},
+  super::{BLOCK_LEN, BLOCK_LEN_U32, CHUNK_END, CHUNK_LEN, CHUNK_START, IV, portable::MSG_SCHEDULE},
   HashManyRequest, counter_high, counter_low,
 };
 

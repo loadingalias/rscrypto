@@ -121,6 +121,9 @@ against an independently trusted BLAKE3 root. It returns only verified chunks
 and authenticates the final chunk before reporting EOF. It supports sequential
 unkeyed decoding; outboard encodings, slices and seeking are outside this API.
 
+`hashes::expert::BLAKE3_PORTABLE_SOURCE` holds the source text of the portable BLAKE3 compression
+function that rscrypto compiles, for code that builds with Rust 1.85 and cannot link rscrypto.
+
 The [BLAKE3 performance matrix](blake3-performance.md) records qualified
 results and the remaining target and workload gaps.
 
