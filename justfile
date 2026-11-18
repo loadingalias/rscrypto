@@ -348,11 +348,6 @@ bench-export run:
 bench-compare *args:
     @scripts/lib/python.sh scripts/bench/compare.py "$@"
 
-# Update tool pins, stable Rust, and every Cargo manifest.
-[group('tooling')]
-update *args:
-    @scripts/update-all.sh "$@"
-
 # Run internal-hook regressions with native and portable dispatch.
 [group('tests')]
 test-evidence:

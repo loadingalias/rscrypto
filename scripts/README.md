@@ -796,7 +796,7 @@ every rejection path, or other targets. `--cases N` changes the deterministic
 message count per parameter set, key form, and mode (default eight); `--start N`
 selects the first message index for reproducing a discovered rejection case.
 
-## Benchmarks and updates
+## Benchmarks
 
 | Script                | Caller |
 | --------------------- | ------ |
@@ -812,7 +812,6 @@ selects the first message index for reproducing a discovered rejection case.
 | `bench/bounded.py`    | `just bench`, `just bench-structural`, `just profile`: process-tree deadline |
 | `bench/mldsa_tail.py` | `just bench-mldsa-tail`: ML-DSA signing-tail baseline |
 | `bench/compare.py`    | `just bench-compare`, Bench `Score comparisons` job: catalog comparison scorecard |
-| `update-all.sh`       | `just update` |
 
 - `bench/benchmark_catalog.py` owns the selector name space (targets, algorithms, groups, and `all`),
   curated profile-preset selection, and the validation of comparison declarations.
@@ -907,7 +906,7 @@ and [`uv.lock`](../uv.lock) pins the packages of [`pyproject.toml`](../pyproject
 The staged check and Mac qualification also remove the caller's `uv run` variables and virtual environment,
 so each worktree runs its own lock.
 Checks and benchmarks use only the standard library.
-The `tooling` group holds the updater's libraries and those of the catalog and workflow tests;
+The `tooling` group holds the libraries of the catalog and workflow tests;
 `lib/python.sh --group tooling` selects it.
 The installers install the catalog's pinned uv.
 On the Apple Silicon Mac, `lib/python.sh` runs the catalog's `aarch64-macos` uv, which `tooling/uv.sh` installs under `~/.local/share/rscrypto-tooling/uv/` on first use;
@@ -937,22 +936,12 @@ Workflows refer to profile names, and do not override their shapes.
 - For this public repository, RunsOn reads the catalog from the default branch.
   A new profile must be on the default branch before workflow jobs can resolve its name.
 
-### Updates
-
-`just update` refreshes the tooling catalog, stable Rust, every Cargo manifest
-(including the standalone and fuzz support workspaces),
-the lockfiles, and the existing GitHub Action pins.
-It runs on local macOS after `machine update all`, which installs the shared nightly.
-Release selection skips crate versions younger than `CARGO_REGISTRY_GLOBAL_MIN_PUBLISH_AGE`,
-the publish-age cooldown that Cargo itself reads; without it, no cooldown applies.
-Inspect its changes before you commit.
+### Toolchain
 
 `rust-toolchain.toml` pins the one canonical nightly for every host, target, and tool lane, including formatting, Miri,
 fuzzing, coverage, and CT evidence.
 `lib/toolchain.py` reads that pin.
 Build, check, test, and benchmark entry points use it, not an ambient `RUSTUP_TOOLCHAIN`.
-`just update` pins `UPDATE_NIGHTLY`, the shared nightly that `machine update all` selects.
-It fails when that nightly lacks a selected component for a catalog host or a standard library for a catalog target.
 
 The MSRV lane uses `rust-version` from `Cargo.toml`.
 While that Rust release is unpublished,

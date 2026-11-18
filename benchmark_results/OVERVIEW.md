@@ -1330,7 +1330,7 @@ Retained failed windows and rejected candidates must survive any future reconcil
 
 This campaign qualifies the standalone Poly1305, BLAKE3 reader, and RSA public-key import changes.
 It uses `nightly-2026-10-24` (rustc `48f4b05538b8`, LLVM 23.1.4) and the refreshed lockfiles.
-`just update` refreshed the project and auxiliary Cargo dependencies, Python tooling, and tool/Action pins.
+The refresh updated the project and auxiliary Cargo dependencies, Python tooling, and tool/Action pins.
 The production `src/` tree is unchanged from `5d5f79fc` through the qualified commit `2622c4a9`;
 its path-and-content SHA-256 is `907b125989da86a7e5addcf31a4ac44db23824d11f42ace465673ff0d6eb3e7a`.
 Raw samples, source/control receipts, binaries, host observations,

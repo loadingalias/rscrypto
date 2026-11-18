@@ -65,7 +65,7 @@ if os.environ.get('ENV_LOG'):
       'bench-provider-resources': ['scripts/bench/provider_resources.py'],
       'bench-mldsa-tail': ['scripts/bench/mldsa_tail.py'],
       'bench-compare': ['scripts/bench/compare.py'],
-      'ct-dudect': [], 'ct-artifacts': [], 'update': [],
+      'ct-dudect': [], 'ct-artifacts': [],
       'ct-full': ['scripts/ct/full.py'], 'ct-binsec': ['scripts/ct/binsec.py'],
       'ct-replay': ['scripts/ct/replay.py'],
       'ct-validate': ['scripts/ct/validate.py'],
