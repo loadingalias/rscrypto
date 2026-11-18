@@ -1031,7 +1031,7 @@ with the operations each RunsOn image runs.
 
 ### Workflows
 
-**`ci.yml`** also runs `--ci-package` provisioning and `just ci-package` on an independent runner.
+**`ci.yml`** also runs `--ci-package` provisioning and `scripts/check/package.py` on an independent runner.
 It runs the examples, then packages `rscrypto` and the unpublished `rscrypto-rustls` in one `cargo package`
 call, so Cargo verifies the provider archive against the packaged `rscrypto`. It runs external `std`, `core`,
 and `alloc` consumers against the unpacked `rscrypto` on the canonical and MSRV toolchains.
