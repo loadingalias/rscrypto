@@ -1,0 +1,25 @@
+# Appended to quiche/BUILD.bazel in a quiche checkout, so that the harness is in the package of
+# //quiche:quiche_core, which declares no visibility. No quiche target builds the load-balancer
+# sources (`load_balancer_srcs` in build/source_list.bzl), so this rule compiles the three that the
+# harness uses. The package enables `layering_check`, so each header that these sources include
+# comes from a direct dependency. See ../README.md.
+cc_binary(
+    name = "quic_lb_vectors",
+    srcs = [
+        "quic/load_balancer/load_balancer_config.cc",
+        "quic/load_balancer/load_balancer_config.h",
+        "quic/load_balancer/load_balancer_decoder.cc",
+        "quic/load_balancer/load_balancer_decoder.h",
+        "quic/load_balancer/load_balancer_server_id.cc",
+        "quic/load_balancer/load_balancer_server_id.h",
+        "quic_lb_harness/quic_lb_vectors.cc",
+    ],
+    copts = ["-O3"],
+    deps = [
+        ":quiche_core",
+        "@boringssl//:crypto",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:span",
+    ],
+)

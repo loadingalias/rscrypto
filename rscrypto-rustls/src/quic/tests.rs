@@ -487,3 +487,45 @@ fn endpoint_keys_can_be_shared_across_threads() {
   shareable::<StatelessResetKey>();
   shareable::<AddressTokenKey>();
 }
+
+/// Every allowed length pair issues the connection ID of an independent implementation:
+/// google/quiche for 117 pairs, and hopf-quic for the 3 pairs with a nonce of more than 16 octets,
+/// which quiche refuses. The lines step through rotations 0 to 6. Decode recovers each server ID,
+/// and it ignores the server-use octets after the encrypted block up to the 20-octet QUIC limit.
+/// The provenance is in `tests/vectors/quic_lb/README.md`.
+#[test]
+fn load_balancer_ids_match_independent_implementations() {
+  let files = [
+    include_str!("../../tests/vectors/quic_lb/quiche-vectors.txt"),
+    include_str!("../../tests/vectors/quic_lb/hopf-vectors.txt"),
+  ];
+  let mut pairs = alloc::collections::BTreeSet::new();
+  for line in files.iter().flat_map(|file| file.lines()) {
+    let fields: Vec<&str> = line.split(' ').collect();
+    let [rotation, key, server_id, nonce, id] = fields[..] else {
+      panic!("five fields: {line}")
+    };
+    let (server_id, nonce, id) = (hex(server_id), hex(nonce), hex(id));
+    let config = LoadBalancerConfig::new(
+      RotationId::new(rotation.parse().expect("rotation")).expect("rotation"),
+      server_id.len(),
+      nonce.len(),
+      FirstOctet::Length,
+      LoadBalancerKey::from_bytes(hex(key).try_into().expect("key")),
+    )
+    .expect("allowed lengths");
+    let issued = config.encode(&server_id, &nonce, &Failing).expect("Length mode draws nothing");
+    assert_eq!(issued.as_slice(), id, "encode {line}");
+
+    let mut longer = id.clone();
+    longer.resize(20, 0xee);
+    for received in [&id, &longer] {
+      let decoded = config.decode(received).expect("routable");
+      assert_eq!(decoded.as_slice(), server_id, "decode {} octets, {line}", received.len());
+    }
+    pairs.insert((server_id.len(), nonce.len()));
+  }
+  let allowed = (1..=19_usize)
+    .flat_map(|server_id_len| (4..=19_usize.strict_sub(server_id_len)).map(move |nonce_len| (server_id_len, nonce_len)));
+  assert!(pairs.into_iter().eq(allowed), "every allowed length pair");
+}

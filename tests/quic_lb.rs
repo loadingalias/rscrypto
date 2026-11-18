@@ -235,3 +235,33 @@ fn construction_accepts_exactly_the_draft_lengths() {
   }
   assert!(QuicLbCipher::new(&key, usize::MAX, 4).is_none(), "overflowing total");
 }
+
+/// Every allowed length pair matches an independent implementation: google/quiche for 117 pairs,
+/// and hopf-quic for the 3 pairs with a nonce of more than 16 octets, which quiche refuses. Each
+/// line is "rotation key server_id nonce connection_id", and the first octet of the connection ID
+/// is not encrypted. The provenance is in `testdata/quic_lb/README.md`.
+#[test]
+fn every_length_pair_matches_independent_implementations() {
+  let files = [
+    include_str!("../testdata/quic_lb/quiche-vectors.txt"),
+    include_str!("../testdata/quic_lb/hopf-vectors.txt"),
+  ];
+  let mut pairs = std::collections::BTreeSet::new();
+  for line in files.iter().flat_map(|file| file.lines()) {
+    let fields: Vec<&str> = line.split(' ').collect();
+    let [_, key_hex, server_id, nonce, id] = fields[..] else {
+      panic!("five fields: {line}")
+    };
+    let (server_id, nonce, id) = (decode_hex_vec(server_id), decode_hex_vec(nonce), decode_hex_vec(id));
+    let cipher = QuicLbCipher::new(&key(key_hex), server_id.len(), nonce.len()).expect("allowed lengths");
+
+    let mut buffer = block(&[server_id.as_slice(), nonce.as_slice()].concat());
+    cipher.encrypt(&mut buffer);
+    assert_eq!(buffer, block(&id[1..]), "encrypt {line}");
+
+    cipher.decrypt_server_id(&mut buffer);
+    assert_eq!(buffer, block(&server_id), "decrypt {line}");
+    pairs.insert((server_id.len(), nonce.len()));
+  }
+  assert!(pairs.into_iter().eq(allowed_lengths()), "every allowed length pair");
+}
