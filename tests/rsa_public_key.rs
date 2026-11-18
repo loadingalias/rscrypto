@@ -18,10 +18,11 @@ use std::{
 use aws_lc_rs::signature as aws_signature;
 #[cfg(not(any(target_arch = "s390x", target_arch = "powerpc64")))]
 use aws_lc_sys as aws_lc;
+use num_bigint::BigUint;
 use proptest::prelude::*;
 use ring::signature as ring_signature;
 use rsa::{
-  BigUint, RsaPrivateKey as RustCryptoRsaPrivateKey, RsaPublicKey as RustCryptoRsaPublicKey,
+  BoxedUint, PrivateKey as RustCryptoRsaPrivateKey, PublicKey as RustCryptoRsaPublicKey,
   pkcs1::{DecodeRsaPrivateKey, DecodeRsaPublicKey, EncodeRsaPrivateKey},
   pkcs1v15::{
     Signature as RustCryptoPkcs1v15Signature, SigningKey as RustCryptoPkcs1v15SigningKey,
@@ -406,25 +407,25 @@ fn x509_self_signed_tbs_certificate(signature_algorithm_der: &[u8], subject_publ
 
 fn rustcrypto_fixture_private_key() -> RustCryptoRsaPrivateKey {
   RustCryptoRsaPrivateKey::from_components(
-    BigUint::parse_bytes(
-      b"00d397b84d98a4c26138ed1b695a8106ead91d553bf06041b62d3fdc50a041e222b8f4529689c1b82c5e71554f5dd69fa2f4b6158cf0dbeb57811a0fc327e1f28e74fe74d3bc166c1eabdc1b8b57b934ca8be5b00b4f29975bcc99acaf415b59bb28a6782bb41a2c3c2976b3c18dbadef62f00c6bb226640095096c0cc60d22fe7ef987d75c6a81b10d96bf292028af110dc7cc1bbc43d22adab379a0cd5d8078cc780ff5cd6209dea34c922cf784f7717e428d75b5aec8ff30e5f0141510766e2e0ab8d473c84e8710b2b98227c3db095337ad3452f19e2b9bfbccdd8148abf6776fa552775e6e75956e45229ae5a9c46949bab1e622f0e48f56524a84ed3483b",
+    BoxedUint::from_str_radix_vartime(
+      "00d397b84d98a4c26138ed1b695a8106ead91d553bf06041b62d3fdc50a041e222b8f4529689c1b82c5e71554f5dd69fa2f4b6158cf0dbeb57811a0fc327e1f28e74fe74d3bc166c1eabdc1b8b57b934ca8be5b00b4f29975bcc99acaf415b59bb28a6782bb41a2c3c2976b3c18dbadef62f00c6bb226640095096c0cc60d22fe7ef987d75c6a81b10d96bf292028af110dc7cc1bbc43d22adab379a0cd5d8078cc780ff5cd6209dea34c922cf784f7717e428d75b5aec8ff30e5f0141510766e2e0ab8d473c84e8710b2b98227c3db095337ad3452f19e2b9bfbccdd8148abf6776fa552775e6e75956e45229ae5a9c46949bab1e622f0e48f56524a84ed3483b",
       16,
     )
     .expect("the fixed RSA modulus must be valid hexadecimal"),
-    BigUint::parse_bytes(b"010001", 16).expect("the fixed RSA exponent must be valid hexadecimal"),
-    BigUint::parse_bytes(
-      b"00c4e70c689162c94c660828191b52b4d8392115df486a9adbe831e458d73958320dc1b755456e93701e9702d76fb0b92f90e01d1fe248153281fe79aa9763a92fae69d8d7ecd144de29fa135bd14f9573e349e45031e3b76982f583003826c552e89a397c1a06bd2163488630d92e8c2bb643d7abef700da95d685c941489a46f54b5316f62b5d2c3a7f1bbd134cb37353a44683fdc9d95d36458de22f6c44057fe74a0a436c4308f73f4da42f35c47ac16a7138d483afc91e41dc3a1127382e0c0f5119b0221b4fc639d6b9c38177a6de9b526ebd88c38d7982c07f98a0efd877d508aae275b946915c02e2e1106d175d74ec6777f5e80d12c053d9c7be1e341",
+    BoxedUint::from_str_radix_vartime("010001", 16).expect("the fixed RSA exponent must be valid hexadecimal"),
+    BoxedUint::from_str_radix_vartime(
+      "00c4e70c689162c94c660828191b52b4d8392115df486a9adbe831e458d73958320dc1b755456e93701e9702d76fb0b92f90e01d1fe248153281fe79aa9763a92fae69d8d7ecd144de29fa135bd14f9573e349e45031e3b76982f583003826c552e89a397c1a06bd2163488630d92e8c2bb643d7abef700da95d685c941489a46f54b5316f62b5d2c3a7f1bbd134cb37353a44683fdc9d95d36458de22f6c44057fe74a0a436c4308f73f4da42f35c47ac16a7138d483afc91e41dc3a1127382e0c0f5119b0221b4fc639d6b9c38177a6de9b526ebd88c38d7982c07f98a0efd877d508aae275b946915c02e2e1106d175d74ec6777f5e80d12c053d9c7be1e341",
       16,
     )
     .expect("the fixed RSA private exponent must be valid hexadecimal"),
     vec![
-      BigUint::parse_bytes(
-        b"00f827bbf3a41877c7cc59aebf42ed4b29c32defcb8ed96863d5b090a05a8930dd624a21c9dcf9838568fdfa0df65b8462a5f2ac913d6c56f975532bd8e78fb07bd405ca99a484bcf59f019bbddcb3933f2bce706300b4f7b110120c5df9018159067c35da3061a56c8635a52b54273b31271b4311f0795df6021e6355e1a42e61",
+      BoxedUint::from_str_radix_vartime(
+        "00f827bbf3a41877c7cc59aebf42ed4b29c32defcb8ed96863d5b090a05a8930dd624a21c9dcf9838568fdfa0df65b8462a5f2ac913d6c56f975532bd8e78fb07bd405ca99a484bcf59f019bbddcb3933f2bce706300b4f7b110120c5df9018159067c35da3061a56c8635a52b54273b31271b4311f0795df6021e6355e1a42e61",
         16,
       )
       .expect("the fixed first RSA prime must be valid hexadecimal"),
-      BigUint::parse_bytes(
-        b"00da4817ce0089dd36f2ade6a3ff410c73ec34bf1b4f6bda38431bfede11cef1f7f6efa70e5f8063a3b1f6e17296ffb15feefa0912a0325b8d1fd65a559e717b5b961ec345072e0ec5203d03441d29af4d64054a04507410cf1da78e7b6119d909ec66e6ad625bf995b279a4b3c5be7d895cd7c5b9c4c497fde730916fcdb4e41b",
+      BoxedUint::from_str_radix_vartime(
+        "00da4817ce0089dd36f2ade6a3ff410c73ec34bf1b4f6bda38431bfede11cef1f7f6efa70e5f8063a3b1f6e17296ffb15feefa0912a0325b8d1fd65a559e717b5b961ec345072e0ec5203d03441d29af4d64054a04507410cf1da78e7b6119d909ec66e6ad625bf995b279a4b3c5be7d895cd7c5b9c4c497fde730916fcdb4e41b",
         16,
       )
       .expect("the fixed second RSA prime must be valid hexadecimal"),
@@ -436,7 +437,7 @@ fn rustcrypto_fixture_private_key() -> RustCryptoRsaPrivateKey {
 fn x509_sha256_rsa_self_signed_certificate(params: Option<&[u8]>) -> (Vec<u8>, Vec<u8>) {
   let private_key = rustcrypto_fixture_private_key();
   let public_key = private_key.to_public_key();
-  let pkcs1 = valid_pkcs1_with_modulus_and_exponent(&public_key.n().to_bytes_be(), &public_key.e().to_bytes_be());
+  let pkcs1 = valid_pkcs1_with_modulus_and_exponent(&public_key.n_bytes(), &public_key.e_bytes());
   let spki = spki_for_pkcs1_with_algorithm(&pkcs1, &algorithm_identifier(RSA_ENCRYPTION_OID, Some(&null())));
   let signature_algorithm = algorithm_identifier(SHA256_WITH_RSA_ENCRYPTION_OID, params);
   let tbs = x509_self_signed_tbs_certificate(&signature_algorithm, &spki);
@@ -898,7 +899,7 @@ fn assert_rustcrypto_cavp(
   let key = RustCryptoRsaPublicKey::from_pkcs1_der(pkcs1).expect("the CAVP PKCS#1 public key must parse");
   let actual = match (scheme, sha) {
     ("pss", "SHA256") => {
-      let key = RustCryptoPssVerifyingKey::<sha2_010::Sha256>::new_with_salt_len(
+      let key = RustCryptoPssVerifyingKey::<sha2::Sha256>::new_with_salt_len(
         key,
         salt_len.expect("a CAVP PSS case must provide a salt length"),
       );
@@ -906,7 +907,7 @@ fn assert_rustcrypto_cavp(
       Some(key.verify(message, &signature).is_ok())
     }
     ("pss", "SHA384") => {
-      let key = RustCryptoPssVerifyingKey::<sha2_010::Sha384>::new_with_salt_len(
+      let key = RustCryptoPssVerifyingKey::<sha2::Sha384>::new_with_salt_len(
         key,
         salt_len.expect("a CAVP PSS case must provide a salt length"),
       );
@@ -914,7 +915,7 @@ fn assert_rustcrypto_cavp(
       Some(key.verify(message, &signature).is_ok())
     }
     ("pss", "SHA512") => {
-      let key = RustCryptoPssVerifyingKey::<sha2_010::Sha512>::new_with_salt_len(
+      let key = RustCryptoPssVerifyingKey::<sha2::Sha512>::new_with_salt_len(
         key,
         salt_len.expect("a CAVP PSS case must provide a salt length"),
       );
@@ -922,19 +923,19 @@ fn assert_rustcrypto_cavp(
       Some(key.verify(message, &signature).is_ok())
     }
     ("pkcs1v15", "SHA256") => {
-      let key = RustCryptoPkcs1v15VerifyingKey::<sha2_010::Sha256>::new(key);
+      let key = RustCryptoPkcs1v15VerifyingKey::<sha2::Sha256>::new(key);
       let signature =
         RustCryptoPkcs1v15Signature::try_from(signature).expect("the CAVP PKCS#1 v1.5 signature width must match");
       Some(key.verify(message, &signature).is_ok())
     }
     ("pkcs1v15", "SHA384") => {
-      let key = RustCryptoPkcs1v15VerifyingKey::<sha2_010::Sha384>::new(key);
+      let key = RustCryptoPkcs1v15VerifyingKey::<sha2::Sha384>::new(key);
       let signature =
         RustCryptoPkcs1v15Signature::try_from(signature).expect("the CAVP PKCS#1 v1.5 signature width must match");
       Some(key.verify(message, &signature).is_ok())
     }
     ("pkcs1v15", "SHA512") => {
-      let key = RustCryptoPkcs1v15VerifyingKey::<sha2_010::Sha512>::new(key);
+      let key = RustCryptoPkcs1v15VerifyingKey::<sha2::Sha512>::new(key);
       let signature =
         RustCryptoPkcs1v15Signature::try_from(signature).expect("the CAVP PKCS#1 v1.5 signature width must match");
       Some(key.verify(message, &signature).is_ok())
@@ -989,7 +990,7 @@ fn cavp_rscrypto_result(
 
 fn assert_rustcrypto_pss_sha256(pkcs1: &[u8], message: &[u8], signature: &[u8], expected: bool) {
   let key = RustCryptoRsaPublicKey::from_pkcs1_der(pkcs1).expect("the PKCS#1 public-key fixture must parse");
-  let key = RustCryptoPssVerifyingKey::<sha2_010::Sha256>::new(key);
+  let key = RustCryptoPssVerifyingKey::<sha2::Sha256>::new(key);
   let signature = RustCryptoPssSignature::try_from(signature).expect("the PSS signature width must match the key");
 
   assert_eq!(key.verify(message, &signature).is_ok(), expected);
@@ -998,7 +999,7 @@ fn assert_rustcrypto_pss_sha256(pkcs1: &[u8], message: &[u8], signature: &[u8], 
 #[cfg(feature = "getrandom")]
 fn assert_rustcrypto_pss_sha384(pkcs1: &[u8], message: &[u8], signature: &[u8], expected: bool) {
   let key = RustCryptoRsaPublicKey::from_pkcs1_der(pkcs1).expect("the PKCS#1 public-key fixture must parse");
-  let key = RustCryptoPssVerifyingKey::<sha2_010::Sha384>::new(key);
+  let key = RustCryptoPssVerifyingKey::<sha2::Sha384>::new(key);
   let signature = RustCryptoPssSignature::try_from(signature).expect("the PSS signature width must match the key");
 
   assert_eq!(key.verify(message, &signature).is_ok(), expected);
@@ -1007,7 +1008,7 @@ fn assert_rustcrypto_pss_sha384(pkcs1: &[u8], message: &[u8], signature: &[u8], 
 #[cfg(feature = "getrandom")]
 fn assert_rustcrypto_pss_sha512(pkcs1: &[u8], message: &[u8], signature: &[u8], expected: bool) {
   let key = RustCryptoRsaPublicKey::from_pkcs1_der(pkcs1).expect("the PKCS#1 public-key fixture must parse");
-  let key = RustCryptoPssVerifyingKey::<sha2_010::Sha512>::new(key);
+  let key = RustCryptoPssVerifyingKey::<sha2::Sha512>::new(key);
   let signature = RustCryptoPssSignature::try_from(signature).expect("the PSS signature width must match the key");
 
   assert_eq!(key.verify(message, &signature).is_ok(), expected);
@@ -1015,7 +1016,7 @@ fn assert_rustcrypto_pss_sha512(pkcs1: &[u8], message: &[u8], signature: &[u8], 
 
 fn assert_rustcrypto_pkcs1v15_sha256(pkcs1: &[u8], message: &[u8], signature: &[u8], expected: bool) {
   let key = RustCryptoRsaPublicKey::from_pkcs1_der(pkcs1).expect("the PKCS#1 public-key fixture must parse");
-  let key = RustCryptoPkcs1v15VerifyingKey::<sha2_010::Sha256>::new(key);
+  let key = RustCryptoPkcs1v15VerifyingKey::<sha2::Sha256>::new(key);
   let signature =
     RustCryptoPkcs1v15Signature::try_from(signature).expect("the PKCS#1 v1.5 signature width must match the key");
 
@@ -1025,7 +1026,7 @@ fn assert_rustcrypto_pkcs1v15_sha256(pkcs1: &[u8], message: &[u8], signature: &[
 #[cfg(feature = "getrandom")]
 fn assert_rustcrypto_pkcs1v15_sha384(pkcs1: &[u8], message: &[u8], signature: &[u8], expected: bool) {
   let key = RustCryptoRsaPublicKey::from_pkcs1_der(pkcs1).expect("the PKCS#1 public-key fixture must parse");
-  let key = RustCryptoPkcs1v15VerifyingKey::<sha2_010::Sha384>::new(key);
+  let key = RustCryptoPkcs1v15VerifyingKey::<sha2::Sha384>::new(key);
   let signature =
     RustCryptoPkcs1v15Signature::try_from(signature).expect("the PKCS#1 v1.5 signature width must match the key");
 
@@ -1035,7 +1036,7 @@ fn assert_rustcrypto_pkcs1v15_sha384(pkcs1: &[u8], message: &[u8], signature: &[
 #[cfg(feature = "getrandom")]
 fn assert_rustcrypto_pkcs1v15_sha512(pkcs1: &[u8], message: &[u8], signature: &[u8], expected: bool) {
   let key = RustCryptoRsaPublicKey::from_pkcs1_der(pkcs1).expect("the PKCS#1 public-key fixture must parse");
-  let key = RustCryptoPkcs1v15VerifyingKey::<sha2_010::Sha512>::new(key);
+  let key = RustCryptoPkcs1v15VerifyingKey::<sha2::Sha512>::new(key);
   let signature =
     RustCryptoPkcs1v15Signature::try_from(signature).expect("the PKCS#1 v1.5 signature width must match the key");
 
@@ -1044,7 +1045,7 @@ fn assert_rustcrypto_pkcs1v15_sha512(pkcs1: &[u8], message: &[u8], signature: &[
 
 fn assert_rustcrypto_spki_pss_sha256(spki: &[u8], message: &[u8], signature: &[u8], expected: bool) {
   let key = RustCryptoRsaPublicKey::from_public_key_der(spki).expect("the SPKI public-key fixture must parse");
-  let key = RustCryptoPssVerifyingKey::<sha2_010::Sha256>::new(key);
+  let key = RustCryptoPssVerifyingKey::<sha2::Sha256>::new(key);
   let signature = RustCryptoPssSignature::try_from(signature).expect("the PSS signature width must match the key");
 
   assert_eq!(key.verify(message, &signature).is_ok(), expected);
@@ -1052,7 +1053,7 @@ fn assert_rustcrypto_spki_pss_sha256(spki: &[u8], message: &[u8], signature: &[u
 
 fn assert_rustcrypto_spki_pkcs1v15_sha256(spki: &[u8], message: &[u8], signature: &[u8], expected: bool) {
   let key = RustCryptoRsaPublicKey::from_public_key_der(spki).expect("the SPKI public-key fixture must parse");
-  let key = RustCryptoPkcs1v15VerifyingKey::<sha2_010::Sha256>::new(key);
+  let key = RustCryptoPkcs1v15VerifyingKey::<sha2::Sha256>::new(key);
   let signature =
     RustCryptoPkcs1v15Signature::try_from(signature).expect("the PKCS#1 v1.5 signature width must match the key");
 
@@ -1576,7 +1577,7 @@ fn caller_random_signatures_verify_with_independent_implementations_without_getr
 fn private_key_outputs_verify_and_decrypt_with_rustcrypto_rsa() {
   use rsa::{
     oaep::{DecryptingKey as RustCryptoOaepDecryptingKey, EncryptingKey as RustCryptoOaepEncryptingKey},
-    rand_core::{CryptoRng, Error as RustCryptoRngError, RngCore},
+    rand_core::{TryCryptoRng, TryRng},
     traits::{Decryptor as _, RandomizedEncryptor as _},
   };
 
@@ -1584,34 +1585,32 @@ fn private_key_outputs_verify_and_decrypt_with_rustcrypto_rsa() {
     state: u64,
   }
 
-  impl RngCore for DeterministicRng {
-    fn next_u32(&mut self) -> u32 {
-      let word = self.next_u64().to_le_bytes();
-      u32::from_le_bytes([word[0], word[1], word[2], word[3]])
+  impl TryRng for DeterministicRng {
+    type Error = core::convert::Infallible;
+
+    fn try_next_u32(&mut self) -> Result<u32, Self::Error> {
+      let word = self.try_next_u64()?.to_le_bytes();
+      Ok(u32::from_le_bytes([word[0], word[1], word[2], word[3]]))
     }
 
-    fn next_u64(&mut self) -> u64 {
+    fn try_next_u64(&mut self) -> Result<u64, Self::Error> {
       self.state = self
         .state
         .wrapping_mul(0x5851_f42d_4c95_7f2d)
         .wrapping_add(0x1405_7b7e_f767_814f);
-      self.state
+      Ok(self.state)
     }
 
-    fn fill_bytes(&mut self, dest: &mut [u8]) {
+    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), Self::Error> {
       for chunk in dest.chunks_mut(8) {
-        let word = self.next_u64().to_le_bytes();
+        let word = self.try_next_u64()?.to_le_bytes();
         chunk.copy_from_slice(&word[..chunk.len()]);
       }
-    }
-
-    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), RustCryptoRngError> {
-      self.fill_bytes(dest);
       Ok(())
     }
   }
 
-  impl CryptoRng for DeterministicRng {}
+  impl TryCryptoRng for DeterministicRng {}
 
   let rustcrypto_key = rustcrypto_fixture_private_key();
   let rustcrypto_pkcs1 =
@@ -1712,13 +1711,15 @@ fn private_key_outputs_verify_and_decrypt_with_rustcrypto_rsa() {
         .public_key()
         .encrypt_oaep($profile, label.as_bytes(), plaintext, &mut ciphertext)
         .expect("OAEP encryption must succeed for the valid RustCrypto round-trip fixture");
-      let decrypting_key = RustCryptoOaepDecryptingKey::<$digest>::new_with_label(rustcrypto_key.clone(), label);
+      let decrypting_key =
+        RustCryptoOaepDecryptingKey::<$digest>::new_with_label(rustcrypto_key.clone(), label.as_bytes());
       let decrypted = decrypting_key
         .decrypt(&ciphertext)
         .expect("RustCrypto must decrypt the matching rscrypto OAEP ciphertext");
       assert_eq!(decrypted, plaintext);
 
-      let encrypting_key = RustCryptoOaepEncryptingKey::<$digest>::new_with_label(rustcrypto_public_key.clone(), label);
+      let encrypting_key =
+        RustCryptoOaepEncryptingKey::<$digest>::new_with_label(rustcrypto_public_key.clone(), label.as_bytes());
       let mut rng = DeterministicRng { state: $seed };
       let rustcrypto_ciphertext = encrypting_key
         .encrypt_with_rng(&mut rng, plaintext)
@@ -1735,21 +1736,9 @@ fn private_key_outputs_verify_and_decrypt_with_rustcrypto_rsa() {
       assert_eq!(&rscrypto_decrypted[..rscrypto_decrypted_len], plaintext);
     }};
   }
-  assert_oaep_roundtrip_with_rustcrypto!(
-    rscrypto::RsaOaepProfile::Sha256,
-    sha2_010::Sha256,
-    0x7273_6372_7970_746f
-  );
-  assert_oaep_roundtrip_with_rustcrypto!(
-    rscrypto::RsaOaepProfile::Sha384,
-    sha2_010::Sha384,
-    0x7273_6372_7970_7484
-  );
-  assert_oaep_roundtrip_with_rustcrypto!(
-    rscrypto::RsaOaepProfile::Sha512,
-    sha2_010::Sha512,
-    0x7273_6372_7970_7512
-  );
+  assert_oaep_roundtrip_with_rustcrypto!(rscrypto::RsaOaepProfile::Sha256, sha2::Sha256, 0x7273_6372_7970_746f);
+  assert_oaep_roundtrip_with_rustcrypto!(rscrypto::RsaOaepProfile::Sha384, sha2::Sha384, 0x7273_6372_7970_7484);
+  assert_oaep_roundtrip_with_rustcrypto!(rscrypto::RsaOaepProfile::Sha512, sha2::Sha512, 0x7273_6372_7970_7512);
 
   let openssl_plaintext = b"rscrypto OAEP interop with OpenSSL";
   macro_rules! assert_oaep_roundtrip_with_openssl {
@@ -1958,8 +1947,8 @@ fn generated_private_key_outputs_verify_and_decrypt_with_external_oracles() {
   let rustcrypto_from_pkcs8 =
     RustCryptoRsaPrivateKey::from_pkcs8_der(&pkcs8).expect("RustCrypto must parse generated PKCS#8 private key");
   assert_private_key_parts_match(&rustcrypto_from_pkcs1, &rustcrypto_from_pkcs8);
-  assert_eq!(rustcrypto_from_pkcs1.n().to_bytes_be(), key.public_key().modulus());
-  assert_eq!(rustcrypto_from_pkcs1.e().to_bytes_be(), [0x01, 0x00, 0x01]);
+  assert_eq!(&*rustcrypto_from_pkcs1.n_bytes(), key.public_key().modulus());
+  assert_eq!(&*rustcrypto_from_pkcs1.e_bytes(), [0x01, 0x00, 0x01]);
   assert_generated_pkcs1v15_encryption_external_oracles(&key, &rustcrypto_from_pkcs1, &pkcs1, &spki, "RSA-2048");
 
   if let Some(openssl_spki_from_pkcs1) = openssl_private_key_to_spki_der(&pkcs1) {
@@ -2039,7 +2028,7 @@ fn generated_private_key_outputs_verify_and_decrypt_with_external_oracles() {
         )
         .expect("generated-key OAEP encryption must succeed");
       let rustcrypto_decrypting_key =
-        RustCryptoOaepDecryptingKey::<$digest>::new_with_label(rustcrypto_from_pkcs1.clone(), label);
+        RustCryptoOaepDecryptingKey::<$digest>::new_with_label(rustcrypto_from_pkcs1.clone(), label.as_bytes());
       let rustcrypto_decrypted = rustcrypto_decrypting_key
         .decrypt(&ciphertext)
         .expect("RustCrypto must decrypt the matching generated-key OAEP ciphertext");
@@ -2067,7 +2056,7 @@ fn generated_private_key_outputs_verify_and_decrypt_with_external_oracles() {
     RsaPkcs1v15Profile::Sha256,
     RsaPssProfile::Sha256,
     rscrypto::RsaOaepProfile::Sha256,
-    sha2_010::Sha256,
+    sha2::Sha256,
     [0x47; 32],
     "-sha256",
     "SHA256",
@@ -2080,7 +2069,7 @@ fn generated_private_key_outputs_verify_and_decrypt_with_external_oracles() {
     RsaPkcs1v15Profile::Sha384,
     RsaPssProfile::Sha384,
     rscrypto::RsaOaepProfile::Sha384,
-    sha2_010::Sha384,
+    sha2::Sha384,
     [0x48; 48],
     "-sha384",
     "SHA384",
@@ -2093,7 +2082,7 @@ fn generated_private_key_outputs_verify_and_decrypt_with_external_oracles() {
     RsaPkcs1v15Profile::Sha512,
     RsaPssProfile::Sha512,
     rscrypto::RsaOaepProfile::Sha512,
-    sha2_010::Sha512,
+    sha2::Sha512,
     [0x49; 64],
     "-sha512",
     "SHA512",
@@ -2123,8 +2112,8 @@ fn generated_modern_private_key_outputs_verify_and_decrypt_with_external_oracles
     let rustcrypto_from_pkcs8 =
       RustCryptoRsaPrivateKey::from_pkcs8_der(&pkcs8).expect("RustCrypto must parse generated PKCS#8 key");
     assert_private_key_parts_match(&rustcrypto_from_pkcs1, &rustcrypto_from_pkcs8);
-    assert_eq!(rustcrypto_from_pkcs1.n().to_bytes_be(), key.public_key().modulus());
-    assert_eq!(rustcrypto_from_pkcs1.e().to_bytes_be(), [0x01, 0x00, 0x01]);
+    assert_eq!(&*rustcrypto_from_pkcs1.n_bytes(), key.public_key().modulus());
+    assert_eq!(&*rustcrypto_from_pkcs1.e_bytes(), [0x01, 0x00, 0x01]);
     let key_description = format!("RSA-{bits}");
     assert_generated_pkcs1v15_encryption_external_oracles(
       &key,
@@ -2215,7 +2204,7 @@ fn generated_modern_private_key_outputs_verify_and_decrypt_with_external_oracles
           )
           .expect("generated modern-key OAEP encryption must succeed");
         let rustcrypto_decrypting_key =
-          RustCryptoOaepDecryptingKey::<$digest>::new_with_label(rustcrypto_from_pkcs1.clone(), label);
+          RustCryptoOaepDecryptingKey::<$digest>::new_with_label(rustcrypto_from_pkcs1.clone(), label.as_bytes());
         let rustcrypto_decrypted = rustcrypto_decrypting_key
           .decrypt(&ciphertext)
           .expect("RustCrypto must decrypt the matching generated modern-key OAEP ciphertext");
@@ -2243,7 +2232,7 @@ fn generated_modern_private_key_outputs_verify_and_decrypt_with_external_oracles
       RsaPkcs1v15Profile::Sha256,
       RsaPssProfile::Sha256,
       rscrypto::RsaOaepProfile::Sha256,
-      sha2_010::Sha256,
+      sha2::Sha256,
       [0x73; 32],
       "-sha256",
       "SHA256",
@@ -2256,7 +2245,7 @@ fn generated_modern_private_key_outputs_verify_and_decrypt_with_external_oracles
       RsaPkcs1v15Profile::Sha384,
       RsaPssProfile::Sha384,
       rscrypto::RsaOaepProfile::Sha384,
-      sha2_010::Sha384,
+      sha2::Sha384,
       [0x74; 48],
       "-sha384",
       "SHA384",
@@ -2269,7 +2258,7 @@ fn generated_modern_private_key_outputs_verify_and_decrypt_with_external_oracles
       RsaPkcs1v15Profile::Sha512,
       RsaPssProfile::Sha512,
       rscrypto::RsaOaepProfile::Sha512,
-      sha2_010::Sha512,
+      sha2::Sha512,
       [0x75; 64],
       "-sha512",
       "SHA512",
@@ -3769,7 +3758,7 @@ fn diagnostic_private_exponentiation_matches_independent_fixed_width_reference()
   assert!(out.iter().all(|&byte| byte == 0));
 
   let rustcrypto_key = rustcrypto_fixture_private_key();
-  let component_modulus = rustcrypto_key.primes()[0].clone();
+  let component_modulus = BigUint::from_bytes_be(&rustcrypto_key.primes()[0].to_be_bytes());
   let private_der = rustcrypto_key
     .to_pkcs8_der()
     .expect("the fixed private key must encode as PKCS#8");
@@ -3803,7 +3792,10 @@ fn diagnostic_private_exponentiation_matches_independent_fixed_width_reference()
 #[test]
 fn private_crt_pair_diagnostic_matches_independent_modpow() {
   let rustcrypto_key = rustcrypto_fixture_private_key();
-  let primes = [rustcrypto_key.primes()[0].clone(), rustcrypto_key.primes()[1].clone()];
+  let primes = [
+    BigUint::from_bytes_be(&rustcrypto_key.primes()[0].to_be_bytes()),
+    BigUint::from_bytes_be(&rustcrypto_key.primes()[1].to_be_bytes()),
+  ];
   let private_der = rustcrypto_key
     .to_pkcs8_der()
     .expect("the fixed private key must encode as PKCS#8");

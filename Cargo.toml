@@ -274,7 +274,6 @@ blake2s_simd = "1.0.5"
 pbkdf2 = "0.13.0"
 scrypt = { version = "0.12.0", default-features = false, features = ["phc"] }
 sha2 = "0.11.1"
-sha2_010 = { package = "sha2", version = "0.10.9" }
 sha3 = "0.12.0"
 shake = "0.1.0"
 sha1 = { version = "0.11.0", default-features = false }
@@ -328,7 +327,9 @@ libcrux-kem = { version = "=0.0.10", default-features = false }
 libcrux-traits = { version = "=0.0.9", default-features = false }
 serde_json = "1.0.154"
 ring = "0.17.14"
-rsa = { version = "0.9.10", default-features = false, features = ["std", "u64_digit", "sha2"] }
+rsa = { version = "0.10.0", default-features = false, features = ["encoding", "pkcs1v15"] }
+# Independent big-integer oracle for the RSA arithmetic tests.
+num-bigint = { version = "0.5.1", default-features = false }
 dryoc = "2.0.0"
 rustcrypto-ml-dsa = { version = "=0.1.1", package = "ml-dsa", default-features = false, features = ["alloc", "pkcs8", "zeroize"] }
 rustcrypto-slh-dsa = { version = "=0.2.0-rc.5", package = "slh-dsa" }
@@ -337,7 +338,7 @@ fips205 = "=0.5.0"
 # darkbio-crypto implements id-MLDSA65-Ed25519-SHA512 with the draft's encodings;
 # kryptering implements the same combiner for ML-DSA-65 + P-256 with JOSE encodings.
 darkbio-crypto = { version = "=0.20.1", default-features = false, features = ["xdsa"] }
-kryptering = { version = "=0.7.0", default-features = false, features = ["rustcrypto", "post-quantum"] }
+kryptering = { version = "=0.7.1", default-features = false, features = ["rustcrypto", "post-quantum"] }
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 # Explicit collection boundaries avoid ARM Callgrind return-heuristic leakage.

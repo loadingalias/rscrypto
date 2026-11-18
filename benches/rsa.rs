@@ -51,11 +51,10 @@ use ring::signature as ring_signature;
 use rsa::{
   Pkcs1v15Encrypt as RustCryptoPkcs1v15Encrypt,
   oaep::DecryptingKey as RustCryptoOaepDecryptingKey,
-  pss::BlindedSigningKey as RustCryptoBlindedPssSigningKey,
   traits::{Decryptor as _, RandomizedDecryptor as _},
 };
 use rsa::{
-  RsaPrivateKey as RustCryptoRsaPrivateKey, RsaPublicKey as RustCryptoRsaPublicKey,
+  PrivateKey as RustCryptoRsaPrivateKey, PublicKey as RustCryptoRsaPublicKey,
   oaep::EncryptingKey as RustCryptoOaepEncryptingKey,
   pkcs1::{DecodeRsaPrivateKey, DecodeRsaPublicKey, EncodeRsaPublicKey as _},
   pkcs1v15::{
@@ -67,7 +66,7 @@ use rsa::{
     Signature as RustCryptoPssSignature, SigningKey as RustCryptoPssSigningKey,
     VerifyingKey as RustCryptoPssVerifyingKey,
   },
-  rand_core::{CryptoRng as RustCryptoCryptoRng, Error as RustCryptoRngError, RngCore as RustCryptoRngCore},
+  rand_core::{TryCryptoRng as RustCryptoTryCryptoRng, TryRng as RustCryptoTryRng, utils::next_word_via_fill},
   signature::{RandomizedSigner as _, SignatureEncoding as _, Signer as _, Verifier as _},
   traits::RandomizedEncryptor as _,
 };
@@ -124,54 +123,49 @@ const OAEP_LABEL: &[u8] = b"";
 struct GetrandomRng;
 
 #[cfg(feature = "getrandom")]
-impl RustCryptoRngCore for GetrandomRng {
-  fn next_u32(&mut self) -> u32 {
-    rsa::rand_core::impls::next_u32_via_fill(self)
+impl RustCryptoTryRng for GetrandomRng {
+  type Error = getrandom::Error;
+
+  fn try_next_u32(&mut self) -> Result<u32, Self::Error> {
+    next_word_via_fill(self)
   }
 
-  fn next_u64(&mut self) -> u64 {
-    rsa::rand_core::impls::next_u64_via_fill(self)
+  fn try_next_u64(&mut self) -> Result<u64, Self::Error> {
+    next_word_via_fill(self)
   }
 
-  fn fill_bytes(&mut self, dest: &mut [u8]) {
-    self
-      .try_fill_bytes(dest)
-      .expect("OS entropy must remain available during the RSA benchmark")
-  }
-
-  fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), RustCryptoRngError> {
-    getrandom::fill(dest).map_err(RustCryptoRngError::new)
+  fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), Self::Error> {
+    getrandom::fill(dest)
   }
 }
 
 #[cfg(feature = "getrandom")]
-impl RustCryptoCryptoRng for GetrandomRng {}
+impl RustCryptoTryCryptoRng for GetrandomRng {}
 
-/// RustCrypto RNG that repeats one byte. Unblinded RustCrypto PSS draws only
-/// its salt from the RNG, and RustCrypto OAEP draws only its seed, so this
-/// reproduces a fixed-salt signature or a fixed-seed ciphertext.
+/// RustCrypto RNG that repeats one byte. RustCrypto PSS draws its salt and
+/// its blinding factor from the RNG, and RustCrypto OAEP draws only its seed.
+/// Blinding does not change a signature, so this reproduces a fixed-salt
+/// signature or a fixed-seed ciphertext.
 struct RepeatedByteRng(u8);
 
-impl RustCryptoRngCore for RepeatedByteRng {
-  fn next_u32(&mut self) -> u32 {
-    rsa::rand_core::impls::next_u32_via_fill(self)
+impl RustCryptoTryRng for RepeatedByteRng {
+  type Error = core::convert::Infallible;
+
+  fn try_next_u32(&mut self) -> Result<u32, Self::Error> {
+    next_word_via_fill(self)
   }
 
-  fn next_u64(&mut self) -> u64 {
-    rsa::rand_core::impls::next_u64_via_fill(self)
+  fn try_next_u64(&mut self) -> Result<u64, Self::Error> {
+    next_word_via_fill(self)
   }
 
-  fn fill_bytes(&mut self, dest: &mut [u8]) {
+  fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), Self::Error> {
     dest.fill(self.0);
-  }
-
-  fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), RustCryptoRngError> {
-    self.fill_bytes(dest);
     Ok(())
   }
 }
 
-impl RustCryptoCryptoRng for RepeatedByteRng {}
+impl RustCryptoTryCryptoRng for RepeatedByteRng {}
 
 fn hex_to_vec(hex: &str) -> Vec<u8> {
   let mut out = Vec::with_capacity(hex.len() / 2);
@@ -383,14 +377,14 @@ fn modulus_minus_one(key: &RsaPublicKey) -> Vec<u8> {
   value
 }
 
-/// `input^e mod n` with RustCrypto's big integers, left-padded to the modulus
-/// length: the oracle for every public-operation row.
+/// `input^e mod n` with num-bigint, left-padded to the modulus length: the
+/// oracle for every public-operation row.
 fn reference_public_operation(key: &RsaPublicKey, input: &[u8]) -> Vec<u8> {
   let modulus = key.modulus();
-  let value = rsa::BigUint::from_bytes_be(input)
+  let value = num_bigint::BigUint::from_bytes_be(input)
     .modpow(
-      &rsa::BigUint::from(key.public_exponent().as_u64()),
-      &rsa::BigUint::from_bytes_be(modulus),
+      &num_bigint::BigUint::from(key.public_exponent().as_u64()),
+      &num_bigint::BigUint::from_bytes_be(modulus),
     )
     .to_bytes_be();
   let mut out = vec![0u8; modulus.len().strict_sub(value.len())];
@@ -581,7 +575,7 @@ fn assert_private_pss_signature(key: &RsaPrivateKey, rustcrypto: &RustCryptoRsaP
     .public_key()
     .verify_pss(RsaPssProfile::Sha256, PRIVATE_SIGNING_MESSAGE, signature)
     .expect("rscrypto must verify the RSA-PSS benchmark signature");
-  RustCryptoPssVerifyingKey::<sha2_010::Sha256>::new(rustcrypto.clone())
+  RustCryptoPssVerifyingKey::<sha2::Sha256>::new(rustcrypto.clone())
     .verify(
       PRIVATE_SIGNING_MESSAGE,
       &RustCryptoPssSignature::try_from(signature).expect("RSA-PSS benchmark signature must have the modulus length"),
@@ -609,13 +603,11 @@ fn rsa_private_signing_for_size(c: &mut Criterion, bits: usize, load_key: impl F
   };
   #[cfg(feature = "getrandom")]
   let rustcrypto_public_key = rustcrypto_private_key.to_public_key();
-  #[cfg(feature = "getrandom")]
-  let rustcrypto_signing_key = RustCryptoBlindedPssSigningKey::<rsa::sha2::Sha256>::new(rustcrypto_private_key.clone());
-  let rustcrypto_pkcs1v15_key = RustCryptoPkcs1v15SigningKey::<sha2_010::Sha256>::new(rustcrypto_private_key.clone());
-  let rustcrypto_pss_key = RustCryptoPssSigningKey::<sha2_010::Sha256>::new(rustcrypto_private_key);
+  let rustcrypto_pkcs1v15_key = RustCryptoPkcs1v15SigningKey::<sha2::Sha256>::new(rustcrypto_private_key.clone());
+  let rustcrypto_pss_key = RustCryptoPssSigningKey::<sha2::Sha256>::new(rustcrypto_private_key);
 
-  // Untimed oracles. Unblinded RustCrypto PSS draws only its salt from the
-  // RNG, so with the fixed salt it reproduces the signature of all four
+  // Untimed oracles. RustCrypto PSS draws its salt and its blinding factor
+  // from the repeated-byte RNG, so it reproduces the signature of all four
   // fixed-salt rscrypto rows; blinding does not change a signature. PKCS #1
   // v1.5 is deterministic. Randomized signatures must verify with rscrypto and
   // RustCrypto.
@@ -684,7 +676,7 @@ fn rsa_private_signing_for_size(c: &mut Criterion, bits: usize, load_key: impl F
   //
   // PSS-SHA256 with a caller salt and blinding pair. rscrypto-only: no
   // comparison library accepts a caller blinding pair. The signature must
-  // match unblinded RustCrypto PSS with the same salt.
+  // match RustCrypto PSS with the same salt.
   let mut group = c.benchmark_group(format!("{name}/sign-pss-sha256/fixed-entropy"));
   group.bench_function(
     "rscrypto",
@@ -729,7 +721,7 @@ fn rsa_private_signing_for_size(c: &mut Criterion, bits: usize, load_key: impl F
   // 2; rscrypto then computes the inverse inside timing. rscrypto-only:
   // RustCrypto draws its blinding factor from an RNG and computes different
   // blinding work, and aws-lc-rs and ring take no caller entropy. The
-  // signature must match unblinded RustCrypto PSS with the same salt.
+  // signature must match RustCrypto PSS with the same salt.
   let mut group = c.benchmark_group(format!("{name}/sign-pss-sha256/caller-entropy"));
   group.bench_function(
     "rscrypto",
@@ -809,7 +801,7 @@ fn rsa_private_signing_for_size(c: &mut Criterion, bits: usize, load_key: impl F
   // PSS-SHA256 with a fresh salt per call. Every library imports its key pair
   // outside timing.
   // - rscrypto draws the salt and blinding factor from `getrandom`.
-  // - RustCrypto's `BlindedSigningKey` draws both from a `getrandom` RNG,
+  // - RustCrypto's `SigningKey` draws both from a `getrandom` RNG,
   //   uses its precomputed CRT values, and returns a new signature allocation
   //   inside timing.
   // - aws-lc-rs `RsaKeyPair::sign` ignores its RNG argument: AWS-LC draws the
@@ -868,7 +860,7 @@ fn rsa_private_signing_for_size(c: &mut Criterion, bits: usize, load_key: impl F
       "rustcrypto-rsa-blinded",
       checked(
         || {
-          black_box(&rustcrypto_signing_key)
+          black_box(&rustcrypto_pss_key)
             .try_sign_with_rng(&mut GetrandomRng, black_box(PRIVATE_SIGNING_MESSAGE))
             .expect("valid RustCrypto RSA-PSS benchmark signing must succeed")
         },
@@ -919,7 +911,7 @@ fn rsa_private_signing_for_size(c: &mut Criterion, bits: usize, load_key: impl F
     // `getrandom` RNG and returns a new signature allocation inside timing.
     // AWS-LC blinds with its cached blinding pair, and ring does not blind. The
     // padding is deterministic, so every signature must equal RustCrypto's
-    // unblinded signature; the RustCrypto row must equal ring's.
+    // deterministic signature; the RustCrypto row must equal ring's.
     let mut group = c.benchmark_group(format!("{name}/sign-pkcs1v15-sha256/fresh-entropy"));
     group.bench_function(
       "rscrypto",
@@ -1022,8 +1014,8 @@ fn rsa_private_signing_for_size(c: &mut Criterion, bits: usize, load_key: impl F
     // includes one refresh amortized over each epoch. AWS-LC caches and
     // squares its blinding pair on the same schedule in the `fresh-entropy`
     // groups. rscrypto-only. PSS signatures must verify with rscrypto and
-    // RustCrypto; PKCS #1 v1.5 signatures must equal RustCrypto's unblinded
-    // signature.
+    // RustCrypto; PKCS #1 v1.5 signatures must equal RustCrypto's
+    // deterministic signature.
     let cached_buffers = || (vec![0u8; key.signature_len()], key.signing_workspace());
     let mut group = c.benchmark_group(format!("{name}/sign-pss-sha256/cached-blinding"));
     group.bench_function(
@@ -1114,9 +1106,9 @@ fn rsa_oaep_for_size(c: &mut Criterion, bits: usize, document: &str) {
   let rustcrypto_private_key = RustCryptoRsaPrivateKey::from_pkcs8_der(&fixture.private_key_pkcs8)
     .expect("RustCrypto must import the Wycheproof RSA private key");
   let rustcrypto_encrypting_key =
-    RustCryptoOaepEncryptingKey::<sha2_010::Sha256>::new(rustcrypto_private_key.to_public_key());
+    RustCryptoOaepEncryptingKey::<sha2::Sha256>::new(rustcrypto_private_key.to_public_key());
   #[cfg(feature = "getrandom")]
-  let rustcrypto_decrypting_key = RustCryptoOaepDecryptingKey::<sha2_010::Sha256>::new(rustcrypto_private_key);
+  let rustcrypto_decrypting_key = RustCryptoOaepDecryptingKey::<sha2::Sha256>::new(rustcrypto_private_key);
   #[cfg(feature = "getrandom")]
   let rustcrypto_decrypts = |ciphertext: &[u8]| {
     assert_eq!(
@@ -1522,7 +1514,7 @@ struct PssSha256;
 impl VerifyScheme for PssSha256 {
   const OPERATION: &'static str = "verify-pss-sha256";
   const MESSAGE: &'static [u8] = MESSAGE_PSS;
-  type RustCryptoKey = RustCryptoPssVerifyingKey<sha2_010::Sha256>;
+  type RustCryptoKey = RustCryptoPssVerifyingKey<sha2::Sha256>;
   type RustCryptoSignature = RustCryptoPssSignature;
 
   fn rustcrypto_key(key: RustCryptoRsaPublicKey) -> Self::RustCryptoKey {
@@ -1559,7 +1551,7 @@ struct Pkcs1v15Sha256;
 impl VerifyScheme for Pkcs1v15Sha256 {
   const OPERATION: &'static str = "verify-pkcs1v15-sha256";
   const MESSAGE: &'static [u8] = MESSAGE_PKCS1V15;
-  type RustCryptoKey = RustCryptoPkcs1v15VerifyingKey<sha2_010::Sha256>;
+  type RustCryptoKey = RustCryptoPkcs1v15VerifyingKey<sha2::Sha256>;
   type RustCryptoSignature = RustCryptoPkcs1v15Signature;
 
   fn rustcrypto_key(key: RustCryptoRsaPublicKey) -> Self::RustCryptoKey {
@@ -2442,7 +2434,7 @@ fn rsa_hash_components(c: &mut Criterion) {
       |digest| {
         assert_eq!(
           digest.as_ref(),
-          <sha2_010::Sha256 as sha2_010::Digest>::digest(MESSAGE_PSS).as_slice()
+          <sha2::Sha256 as sha2::Digest>::digest(MESSAGE_PSS).as_slice()
         )
       },
     ),
@@ -2454,7 +2446,7 @@ fn rsa_hash_components(c: &mut Criterion) {
       |digest| {
         assert_eq!(
           digest.as_ref(),
-          <sha2_010::Sha384 as sha2_010::Digest>::digest(MESSAGE_PSS).as_slice()
+          <sha2::Sha384 as sha2::Digest>::digest(MESSAGE_PSS).as_slice()
         )
       },
     ),
@@ -2466,7 +2458,7 @@ fn rsa_hash_components(c: &mut Criterion) {
       |digest| {
         assert_eq!(
           digest.as_ref(),
-          <sha2_010::Sha512 as sha2_010::Digest>::digest(MESSAGE_PSS).as_slice()
+          <sha2::Sha512 as sha2::Digest>::digest(MESSAGE_PSS).as_slice()
         )
       },
     ),
@@ -2478,7 +2470,7 @@ fn rsa_hash_components(c: &mut Criterion) {
       |digest| {
         assert_eq!(
           digest.as_ref(),
-          <sha2_010::Sha256 as sha2_010::Digest>::digest(MESSAGE_PKCS1V15).as_slice()
+          <sha2::Sha256 as sha2::Digest>::digest(MESSAGE_PKCS1V15).as_slice()
         )
       },
     ),
@@ -2490,7 +2482,7 @@ fn rsa_hash_components(c: &mut Criterion) {
       |digest| {
         assert_eq!(
           digest.as_ref(),
-          <sha2_010::Sha384 as sha2_010::Digest>::digest(MESSAGE_PKCS1V15).as_slice()
+          <sha2::Sha384 as sha2::Digest>::digest(MESSAGE_PKCS1V15).as_slice()
         )
       },
     ),
@@ -2502,7 +2494,7 @@ fn rsa_hash_components(c: &mut Criterion) {
       |digest| {
         assert_eq!(
           digest.as_ref(),
-          <sha2_010::Sha512 as sha2_010::Digest>::digest(MESSAGE_PKCS1V15).as_slice()
+          <sha2::Sha512 as sha2::Digest>::digest(MESSAGE_PKCS1V15).as_slice()
         )
       },
     ),

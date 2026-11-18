@@ -378,6 +378,8 @@ fn shift_limbs_right_into(out: &mut [u64], value: &[u64], shift: u32) {
 mod tests {
   use alloc::{vec, vec::Vec};
 
+  use num_bigint::BigUint;
+
   use super::{
     super::{
       RsaPublicExponent, RsaPublicKey, RsaPublicModulus, RsaPublicOpError, RsaPublicScratch, limbs_to_be,
@@ -386,12 +388,12 @@ mod tests {
     div_3by2, public_montgomery_form_vartime, reciprocal_3by2,
   };
 
-  fn limbs_to_biguint(limbs: &[u64]) -> rsa::BigUint {
+  fn limbs_to_biguint(limbs: &[u64]) -> BigUint {
     let bytes: Vec<u8> = limbs.iter().flat_map(|limb| limb.to_le_bytes()).collect();
-    rsa::BigUint::from_bytes_le(&bytes)
+    BigUint::from_bytes_le(&bytes)
   }
 
-  fn biguint_to_limbs(value: &rsa::BigUint, words: usize) -> Vec<u64> {
+  fn biguint_to_limbs(value: &BigUint, words: usize) -> Vec<u64> {
     let mut bytes = value.to_bytes_le();
     assert!(bytes.len() <= words.strict_mul(8), "value exceeds {words} limbs");
     bytes.resize(words.strict_mul(8), 0);
@@ -452,9 +454,9 @@ mod tests {
   fn test_inputs(modulus: &[u64], state: &mut u64) -> Vec<Vec<u64>> {
     let words = modulus.len();
     let n = limbs_to_biguint(modulus);
-    let one = rsa::BigUint::from(1u8);
-    let two = rsa::BigUint::from(2u8) % &n;
-    let mut inputs = vec![rsa::BigUint::from(0u8), one.clone(), two.clone(), &n - &one, &n - &two];
+    let one = BigUint::from(1u8);
+    let two = BigUint::from(2u8) % &n;
+    let mut inputs = vec![BigUint::from(0u8), one.clone(), two.clone(), &n - &one, &n - &two];
     for _ in 0..4 {
       let random: Vec<u64> = (0..words).map(|_| xorshift(state)).collect();
       inputs.push(limbs_to_biguint(&random) % &n);
@@ -466,7 +468,7 @@ mod tests {
       let shift = usize::try_from(modulus[words.strict_sub(1)].leading_zeros()).expect("shift fits usize");
       let normalized = &n << shift;
       let divisor_top = &normalized >> words.strict_sub(2).strict_mul(64);
-      let shifted = (rsa::BigUint::from(u64::MAX) * &divisor_top) << words.strict_sub(3).strict_mul(64);
+      let shifted = (BigUint::from(u64::MAX) * &divisor_top) << words.strict_sub(3).strict_mul(64);
       let input = &shifted >> shift;
       assert_eq!(&input << shift, shifted);
       assert!(input < n);
@@ -494,7 +496,7 @@ mod tests {
     for words in widths {
       for modulus in test_moduli(words, &mut state) {
         let n = limbs_to_biguint(&modulus);
-        let r = rsa::BigUint::from(1u8) << words.strict_mul(64);
+        let r = BigUint::from(1u8) << words.strict_mul(64);
         for input in test_inputs(&modulus, &mut state) {
           let expected = biguint_to_limbs(&((limbs_to_biguint(&input) * &r) % &n), words);
           let mut out = vec![0u64; words];
@@ -510,7 +512,7 @@ mod tests {
   #[test]
   fn reciprocal_and_quotient_match_big_integer_division() {
     let mut state = 0xa54f_f53a_5f1d_36f1u64;
-    let b = rsa::BigUint::from(1u8) << 64usize;
+    let b = BigUint::from(1u8) << 64usize;
     let mut divisors = vec![
       (1u64 << 63, 0u64),
       (1u64 << 63, 1),
@@ -523,10 +525,10 @@ mod tests {
       divisors.push((xorshift(&mut state) | (1 << 63), xorshift(&mut state)));
     }
     for (d1, d0) in divisors {
-      let divisor = rsa::BigUint::from(d1) * &b + rsa::BigUint::from(d0);
+      let divisor = BigUint::from(d1) * &b + BigUint::from(d0);
       let v = reciprocal_3by2(d1, d0);
-      let full = ((&b * &b * &b) - rsa::BigUint::from(1u8)) / &divisor;
-      assert_eq!(rsa::BigUint::from(v) + &b, full, "reciprocal of ({d1:#x}, {d0:#x})");
+      let full = ((&b * &b * &b) - BigUint::from(1u8)) / &divisor;
+      assert_eq!(BigUint::from(v) + &b, full, "reciprocal of ({d1:#x}, {d0:#x})");
 
       // Numerators with (u2, u1) < (d1, d0): zero, the largest, and random ones on both sides of
       // u2 = d1.
@@ -548,9 +550,9 @@ mod tests {
         if (u2, u1) >= (d1, d0) {
           continue;
         }
-        let numerator = (rsa::BigUint::from(u2) * &b + rsa::BigUint::from(u1)) * &b + rsa::BigUint::from(u0);
+        let numerator = (BigUint::from(u2) * &b + BigUint::from(u1)) * &b + BigUint::from(u0);
         assert_eq!(
-          rsa::BigUint::from(div_3by2(u2, u1, u0, d1, d0, v)),
+          BigUint::from(div_3by2(u2, u1, u0, d1, d0, v)),
           &numerator / &divisor,
           "({u2:#x}, {u1:#x}, {u0:#x}) / ({d1:#x}, {d0:#x})"
         );
@@ -615,7 +617,7 @@ mod tests {
           for input_limbs in test_inputs(modulus_limbs, &mut state) {
             let mut input = vec![0u8; bytes.len()];
             limbs_to_be(&input_limbs, &mut input);
-            let power = limbs_to_biguint(&input_limbs).modpow(&rsa::BigUint::from(exponent), &n);
+            let power = limbs_to_biguint(&input_limbs).modpow(&BigUint::from(exponent), &n);
             let mut expected = vec![0u8; bytes.len()];
             limbs_to_be(&biguint_to_limbs(&power, words), &mut expected);
 
@@ -651,7 +653,7 @@ mod tests {
     for &words in widths {
       for modulus_limbs in test_moduli(words, &mut state) {
         let (bytes, bits) = modulus_bytes(&modulus_limbs);
-        let r2 = (rsa::BigUint::from(1u8) << words.strict_mul(128)) % limbs_to_biguint(&modulus_limbs);
+        let r2 = (BigUint::from(1u8) << words.strict_mul(128)) % limbs_to_biguint(&modulus_limbs);
         let mut expected = modulus_limbs;
         expected.extend(biguint_to_limbs(&r2, words));
         let imported = RsaPublicKey {

@@ -325,7 +325,7 @@ def update_manifests(paths):
                  '--message-format', 'plain'], cwd=ROOT, text=True).strip())
             rust_version = documents[workspace]['workspace']['package']['rust-version']
         rust_versions[path] = rust_version
-    # Renames can hold a compatibility version beside the current crate (sha2_010).
+    # A rename (`package = ...`) can hold a compatibility version beside the current crate.
     # Preserve their requirements; cargo update still refreshes compatible lock entries.
     # Only stable releases are eligible, so a prerelease pin, such as a fork's development
     # version, keeps its requirement instead of moving back to an older stable release.

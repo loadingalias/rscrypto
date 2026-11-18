@@ -19,14 +19,14 @@ aws_lc_bench! {
 use bench_config::checked;
 use criterion::Criterion;
 use rsa::{
-  RsaPrivateKey as RustCryptoRsaPrivateKey, RsaPublicKey as RustCryptoRsaPublicKey,
+  PrivateKey as RustCryptoRsaPrivateKey, PublicKey as RustCryptoRsaPublicKey,
   pkcs1::EncodeRsaPublicKey as _,
   pkcs1v15::{
     Signature as RustCryptoPkcs1v15Signature, SigningKey as RustCryptoPkcs1v15SigningKey,
     VerifyingKey as RustCryptoPkcs1v15VerifyingKey,
   },
   pkcs8::DecodePublicKey as _,
-  rand_core::{CryptoRng as RustCryptoCryptoRng, Error as RustCryptoRngError, RngCore as RustCryptoRngCore},
+  rand_core::{TryCryptoRng as RustCryptoTryCryptoRng, TryRng as RustCryptoTryRng, utils::next_word_via_fill},
   signature::{SignatureEncoding as _, Signer as _, Verifier as _},
 };
 use rscrypto::{RsaPkcs1v15Profile, RsaPrivateKey, RsaPublicKey, RsaPublicKeyPolicy};
@@ -47,7 +47,7 @@ struct SeededRng {
 impl SeededRng {
   fn new(label: &[u8]) -> Self {
     Self {
-      seed: <sha2_010::Sha256 as sha2_010::Digest>::digest(label).into(),
+      seed: <sha2::Sha256 as sha2::Digest>::digest(label).into(),
       counter: 0,
       block: [0; 32],
       used: 32,
@@ -55,37 +55,35 @@ impl SeededRng {
   }
 }
 
-impl RustCryptoRngCore for SeededRng {
-  fn next_u32(&mut self) -> u32 {
-    rsa::rand_core::impls::next_u32_via_fill(self)
+impl RustCryptoTryRng for SeededRng {
+  type Error = core::convert::Infallible;
+
+  fn try_next_u32(&mut self) -> Result<u32, Self::Error> {
+    next_word_via_fill(self)
   }
 
-  fn next_u64(&mut self) -> u64 {
-    rsa::rand_core::impls::next_u64_via_fill(self)
+  fn try_next_u64(&mut self) -> Result<u64, Self::Error> {
+    next_word_via_fill(self)
   }
 
-  fn fill_bytes(&mut self, dest: &mut [u8]) {
+  fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), Self::Error> {
     for byte in dest {
       if self.used == self.block.len() {
-        let mut hasher = <sha2_010::Sha256 as sha2_010::Digest>::new();
-        sha2_010::Digest::update(&mut hasher, self.seed);
-        sha2_010::Digest::update(&mut hasher, self.counter.to_be_bytes());
-        self.block = sha2_010::Digest::finalize(hasher).into();
+        let mut hasher = <sha2::Sha256 as sha2::Digest>::new();
+        sha2::Digest::update(&mut hasher, self.seed);
+        sha2::Digest::update(&mut hasher, self.counter.to_be_bytes());
+        self.block = sha2::Digest::finalize(hasher).into();
         self.counter = self.counter.strict_add(1);
         self.used = 0;
       }
       *byte = self.block[self.used];
       self.used = self.used.strict_add(1);
     }
-  }
-
-  fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), RustCryptoRngError> {
-    self.fill_bytes(dest);
     Ok(())
   }
 }
 
-impl RustCryptoCryptoRng for SeededRng {}
+impl RustCryptoTryCryptoRng for SeededRng {}
 
 /// RSA-2048 keys need the legacy policy; larger keys use the modern default.
 fn key_policy(bits: usize) -> RsaPublicKeyPolicy {
@@ -169,7 +167,7 @@ fn rsa_keygen_for_size(c: &mut Criterion, bits: usize) {
         key
           .sign_pkcs1v15(RsaPkcs1v15Profile::Sha256, PRIVATE_SIGNING_MESSAGE, &mut signature)
           .expect("a generated rscrypto RSA key must sign");
-        RustCryptoPkcs1v15VerifyingKey::<sha2_010::Sha256>::new(
+        RustCryptoPkcs1v15VerifyingKey::<sha2::Sha256>::new(
           RustCryptoRsaPublicKey::from_public_key_der(&key.public_key().to_spki_der())
             .expect("RustCrypto must import the generated rscrypto RSA public key"),
         )
@@ -196,7 +194,7 @@ fn rsa_keygen_for_size(c: &mut Criterion, bits: usize) {
           .to_public_key()
           .to_pkcs1_der()
           .expect("RustCrypto must encode the generated RSA public key");
-        let signature = RustCryptoPkcs1v15SigningKey::<sha2_010::Sha256>::new(key)
+        let signature = RustCryptoPkcs1v15SigningKey::<sha2::Sha256>::new(key)
           .try_sign(PRIVATE_SIGNING_MESSAGE)
           .expect("a generated RustCrypto RSA key must sign");
         assert_generated_public_key(bits, public_key.as_bytes(), &signature.to_vec());

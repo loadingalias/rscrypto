@@ -13390,6 +13390,7 @@ mod rsa_public_division;
 mod tests {
   use alloc::format;
 
+  use num_bigint::BigUint;
   use proptest::prelude::*;
   use rsa::traits::{PrivateKeyParts as _, PublicKeyParts as _};
   #[cfg(feature = "getrandom")]
@@ -14184,25 +14185,26 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
     assert_eq!(key.coefficient.as_bytes(), rsa_private_coefficient());
   }
 
+  /// The minimal big-endian bytes of a RustCrypto integer.
+  fn rustcrypto_be(value: &rsa::BoxedUint) -> Vec<u8> {
+    value.to_be_bytes_trimmed_vartime().into_vec()
+  }
+
   #[test]
   fn private_key_import_normalizes_crt_exponents_to_factor_width() {
-    let prime_p = rsa::BigUint::from_bytes_be(&rsa_private_prime_p());
-    let prime_q = rsa::BigUint::from_bytes_be(&rsa_private_prime_q());
+    let prime_p = rsa::BoxedUint::from_be_slice_vartime(&rsa_private_prime_p());
+    let prime_q = rsa::BoxedUint::from_be_slice_vartime(&rsa_private_prime_q());
     let public_exponent = 883;
-    let oracle = rsa::RsaPrivateKey::from_p_q(prime_p, prime_q, rsa::BigUint::from(public_exponent))
+    let oracle = rsa::PrivateKey::from_p_q(prime_p, prime_q, rsa::BoxedUint::from(public_exponent))
       .expect("fixture factors and exponent form an algebraically valid key");
-    let modulus = oracle.n().to_bytes_be();
-    let private_exponent = oracle.d().to_bytes_be();
-    let prime_p = oracle.primes()[0].to_bytes_be();
-    let prime_q = oracle.primes()[1].to_bytes_be();
-    let exponent_p = oracle.dp().expect("RustCrypto CRT exponent").to_bytes_be();
-    let exponent_q = oracle.dq().expect("RustCrypto CRT exponent").to_bytes_be();
+    let modulus = rustcrypto_be(oracle.n());
+    let private_exponent = rustcrypto_be(oracle.d());
+    let prime_p = rustcrypto_be(&oracle.primes()[0]);
+    let prime_q = rustcrypto_be(&oracle.primes()[1]);
+    let exponent_p = rustcrypto_be(oracle.dp().expect("RustCrypto CRT exponent"));
+    let exponent_q = rustcrypto_be(oracle.dq().expect("RustCrypto CRT exponent"));
     assert!(exponent_p.len() < prime_p.len() || exponent_q.len() < prime_q.len());
-    let coefficient = oracle
-      .qinv()
-      .and_then(|value| value.to_biguint())
-      .expect("positive RustCrypto CRT coefficient")
-      .to_bytes_be();
+    let coefficient = rustcrypto_be(&oracle.crt_coefficient().expect("RustCrypto CRT coefficient"));
 
     let key = RsaPrivateKey::from_components_with_policy(
       RsaPrivateKeyParts {
@@ -14240,8 +14242,9 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
     use rsa::{pkcs1::EncodeRsaPrivateKey as _, pkcs8::DecodePrivateKey as _};
 
     // Recombine published Wycheproof factors so q^-1 mod p occupies 127
-    // octets, one fewer than p. RustCrypto supplies the independent key and
-    // private-operation expectation; no prime search runs in this test.
+    // octets, one fewer than p. RustCrypto supplies the independent key, and
+    // num-bigint the private-operation expectation. No prime search runs in
+    // this test.
     let signing: serde_json::Value = serde_json::from_str(include_str!(
       "../../testdata/rsa/wycheproof/rsa_pkcs1_2048_sig_gen_test.json"
     ))
@@ -14250,29 +14253,25 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
       "../../testdata/rsa/wycheproof/rsa_oaep_2048_sha384_mgf1sha1_test.json"
     ))
     .expect("Wycheproof encryption fixture");
-    let signing_key = rsa::RsaPrivateKey::from_pkcs8_der(&hex_to_vec(
+    let signing_key = rsa::PrivateKey::from_pkcs8_der(&hex_to_vec(
       signing["testGroups"][0]["privateKeyPkcs8"]
         .as_str()
         .expect("signing key"),
     ))
     .expect("published signing key");
-    let encryption_key = rsa::RsaPrivateKey::from_pkcs8_der(&hex_to_vec(
+    let encryption_key = rsa::PrivateKey::from_pkcs8_der(&hex_to_vec(
       encryption["testGroups"][0]["privateKeyPkcs8"]
         .as_str()
         .expect("encryption key"),
     ))
     .expect("published encryption key");
-    let oracle = rsa::RsaPrivateKey::from_p_q(
-      signing_key.primes()[1].clone(),
-      encryption_key.primes()[0].clone(),
-      rsa::BigUint::from(65_537u32),
+    let oracle = rsa::PrivateKey::from_p_q(
+      signing_key.primes()[1].clone().get(),
+      encryption_key.primes()[0].clone().get(),
+      rsa::BoxedUint::from(65_537u32),
     )
     .expect("published factors form a valid RSA key");
-    let coefficient = oracle
-      .qinv()
-      .and_then(|value| value.to_biguint())
-      .expect("CRT coefficient")
-      .to_bytes_be();
+    let coefficient = rustcrypto_be(&oracle.crt_coefficient().expect("CRT coefficient"));
     assert_eq!(coefficient.len(), 127);
     let der = oracle.to_pkcs1_der().expect("independent canonical DER");
     let key = RsaPrivateKey::from_pkcs1_der_with_policy(der.as_bytes(), &RsaPublicKeyPolicy::modulus_2048_to_8192())
@@ -14286,7 +14285,12 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
 
     let mut input = vec![0u8; key.signature_len()];
     *input.last_mut().expect("RSA input") = 2;
-    let expected = rsa::BigUint::from(2u8).modpow(oracle.d(), oracle.n()).to_bytes_be();
+    let expected = BigUint::from(2u8)
+      .modpow(
+        &BigUint::from_bytes_be(&oracle.d().to_be_bytes()),
+        &BigUint::from_bytes_be(&oracle.n().to_be_bytes()),
+      )
+      .to_bytes_be();
     let mut padded_expected = vec![0u8; key.signature_len().strict_sub(expected.len())];
     padded_expected.extend_from_slice(&expected);
     let (factor, inverse) = factor_two_and_inverse(key.public_key().modulus());
@@ -14308,38 +14312,38 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
 
   #[test]
   fn private_key_import_rejects_balanced_composite_factor_in_every_format() {
-    let one = rsa::BigUint::from(1u8);
-    let prime_q = rsa::BigUint::from_bytes_be(&rsa_private_prime_q());
+    let one = BigUint::from(1u8);
+    let prime_q = rsa::BoxedUint::from_be_slice_vartime(&rsa_private_prime_q());
     let (oracle, composite_p) = (1u64..4096)
       .step_by(2)
       .find_map(|offset| {
-        let left = (&one << 512usize) + rsa::BigUint::from(offset);
-        let right = (&one << 512usize) - rsa::BigUint::from(offset);
+        let left = (&one << 512usize) + BigUint::from(offset);
+        let right = (&one << 512usize) - BigUint::from(offset);
         let composite_p = left * right;
         let composite_bytes = composite_p.to_bytes_be();
         if unsigned_be_bit_len(&composite_bytes) != 1024 || has_small_prime_factor(&composite_bytes) {
           return None;
         }
-        rsa::RsaPrivateKey::from_p_q(composite_p.clone(), prime_q.clone(), rsa::BigUint::from(65_537u32))
-          .ok()
-          .map(|oracle| (oracle, composite_p))
+        rsa::PrivateKey::from_p_q(
+          rsa::BoxedUint::from_be_slice_vartime(&composite_bytes),
+          prime_q.clone(),
+          rsa::BoxedUint::from(65_537u32),
+        )
+        .ok()
+        .map(|oracle| (oracle, composite_bytes))
       })
       .expect("construct a balanced composite without a small prime divisor");
-    let modulus = oracle.n().to_bytes_be();
-    let private_exponent = oracle.d().to_bytes_be();
-    let prime_p = oracle.primes()[0].to_bytes_be();
-    let prime_q = oracle.primes()[1].to_bytes_be();
-    let exponent_p = oracle.dp().expect("RustCrypto CRT exponent").to_bytes_be();
-    let exponent_q = oracle.dq().expect("RustCrypto CRT exponent").to_bytes_be();
-    let coefficient = oracle
-      .qinv()
-      .and_then(|value| value.to_biguint())
-      .expect("positive RustCrypto CRT coefficient")
-      .to_bytes_be();
+    let modulus = rustcrypto_be(oracle.n());
+    let private_exponent = rustcrypto_be(oracle.d());
+    let prime_p = rustcrypto_be(&oracle.primes()[0]);
+    let prime_q = rustcrypto_be(&oracle.primes()[1]);
+    let exponent_p = rustcrypto_be(oracle.dp().expect("RustCrypto CRT exponent"));
+    let exponent_q = rustcrypto_be(oracle.dq().expect("RustCrypto CRT exponent"));
+    let coefficient = rustcrypto_be(&oracle.crt_coefficient().expect("RustCrypto CRT coefficient"));
     assert_eq!(unsigned_be_bit_len(&modulus), 2048);
     assert_eq!(unsigned_be_bit_len(&prime_p), 1024);
     assert_eq!(unsigned_be_bit_len(&prime_q), 1024);
-    assert_eq!(prime_p, composite_p.to_bytes_be());
+    assert_eq!(prime_p, composite_p);
     assert!(!has_small_prime_factor(&prime_p));
     assert!(
       !private_import_is_probable_prime(&prime_p)
@@ -14378,22 +14382,29 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
 
   #[test]
   fn private_key_import_rejects_grossly_unbalanced_factors() {
-    let one = rsa::BigUint::from(1u8);
+    let one = BigUint::from(1u8);
     let oversized_composite = (&one << 3008usize) - &one;
-    let small_prime = rsa::BigUint::from(18_446_744_073_709_551_557u64);
-    let oracle = rsa::RsaPrivateKey::from_p_q(oversized_composite, small_prime, rsa::BigUint::from(65_537u32))
-      .expect("algebraically valid two-factor key");
-    let modulus = oracle.n().to_bytes_be();
-    let private_exponent = oracle.d().to_bytes_be();
-    let prime_p = oracle.primes()[0].to_bytes_be();
-    let prime_q = oracle.primes()[1].to_bytes_be();
-    let exponent_p = oracle.dp().expect("RustCrypto CRT exponent").to_bytes_be();
-    let exponent_q = oracle.dq().expect("RustCrypto CRT exponent").to_bytes_be();
-    let coefficient = oracle
-      .qinv()
-      .and_then(|value| value.to_biguint())
-      .expect("positive RustCrypto CRT coefficient")
-      .to_bytes_be();
+    let small_prime = BigUint::from(18_446_744_073_709_551_557u64);
+    let public_exponent = BigUint::from(65_537u32);
+    let private_exponent = public_exponent
+      .modinv(&((&oversized_composite - &one) * (&small_prime - &one)))
+      .expect("the public exponent is coprime to the totient");
+    let boxed = |value: &BigUint| rsa::BoxedUint::from_be_slice_vartime(&value.to_bytes_be());
+    // rsa 0.10 limits each `from_p_q` prime to ceil(bits(n)/2) bits, so this key needs the wide-primes constructor.
+    let oracle = rsa::PrivateKey::from_components_with_wide_primes(
+      boxed(&(&oversized_composite * &small_prime)),
+      boxed(&public_exponent),
+      boxed(&private_exponent),
+      vec![boxed(&oversized_composite), boxed(&small_prime)],
+    )
+    .expect("algebraically valid two-factor key");
+    let modulus = rustcrypto_be(oracle.n());
+    let private_exponent = rustcrypto_be(oracle.d());
+    let prime_p = rustcrypto_be(&oracle.primes()[0]);
+    let prime_q = rustcrypto_be(&oracle.primes()[1]);
+    let exponent_p = rustcrypto_be(oracle.dp().expect("RustCrypto CRT exponent"));
+    let exponent_q = rustcrypto_be(oracle.dq().expect("RustCrypto CRT exponent"));
+    let coefficient = rustcrypto_be(&oracle.crt_coefficient().expect("RustCrypto CRT coefficient"));
     assert_eq!(unsigned_be_bit_len(&modulus), 3072);
     assert_eq!(unsigned_be_bit_len(&prime_p), 3008);
     assert_eq!(unsigned_be_bit_len(&prime_q), 64);
@@ -16173,16 +16184,16 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
 
   /// The pair that the `use_in_epoch`-th signature of an epoch uses when its
   /// refresh drew the factor 2: `(2^(2^(k-1)))ᵉ mod n` and `(2⁻¹)^(2^(k-1)) mod n`,
-  /// computed with RustCrypto's big integers.
+  /// computed with num-bigint.
   #[cfg(feature = "getrandom")]
   fn factor_two_epoch_pair(key: &RsaPrivateKey, use_in_epoch: usize) -> (Vec<u8>, Vec<u8>) {
-    let modulus = rsa::BigUint::from_bytes_be(key.public_key().modulus());
+    let modulus = BigUint::from_bytes_be(key.public_key().modulus());
     let squarings = u32::try_from(use_in_epoch.strict_sub(1)).expect("an epoch has at most 32 signatures");
     let doubling = 1u64.strict_shl(squarings);
     let exponent = key.public_key().public_exponent().as_u64().strict_mul(doubling);
-    let power = rsa::BigUint::from(2u8).modpow(&rsa::BigUint::from(exponent), &modulus);
+    let power = BigUint::from(2u8).modpow(&BigUint::from(exponent), &modulus);
     let (_, half) = factor_two_and_inverse(key.public_key().modulus());
-    let inverse = rsa::BigUint::from_bytes_be(&half).modpow(&rsa::BigUint::from(doubling), &modulus);
+    let inverse = BigUint::from_bytes_be(&half).modpow(&BigUint::from(doubling), &modulus);
     let mut power_bytes = vec![0u8; key.signature_len()];
     let mut inverse_bytes = vec![0u8; key.signature_len()];
     left_pad_be(&power.to_bytes_be(), &mut power_bytes).expect("the blinding power must fit the modulus width");
@@ -16785,7 +16796,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
   fn private_modular_inverse_matches_biguint_for_full_width_inputs() {
     let modulus_bytes = rsa_private_modulus();
     let modulus = RsaPublicModulus::new(&modulus_bytes, unsigned_be_bit_len(&modulus_bytes));
-    let modulus_oracle = rsa::BigUint::from_bytes_be(&modulus_bytes);
+    let modulus_oracle = BigUint::from_bytes_be(&modulus_bytes);
     let mut scratch = RsaPrivateInverseScratch::new(modulus.bits);
     let mut factor = vec![0u8; modulus_bytes.len()];
     let mut inverse = vec![0u8; modulus_bytes.len()];
@@ -16802,8 +16813,8 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
 
       private_modular_inverse_odd(&modulus, &factor, &mut inverse, &mut scratch)
         .expect("a nonzero 64-bit factor cannot share either 1024-bit prime factor");
-      let product = rsa::BigUint::from(candidate) * rsa::BigUint::from_bytes_be(&inverse);
-      assert_eq!(product % &modulus_oracle, rsa::BigUint::from(1u8));
+      let product = BigUint::from(candidate) * BigUint::from_bytes_be(&inverse);
+      assert_eq!(product % &modulus_oracle, BigUint::from(1u8));
       assert!(scratch.is_cleared());
     }
 
@@ -16812,7 +16823,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
     // coprime to n and therefore has an inverse.
     for sample in 0usize..64 {
       let shift = sample.strict_mul(modulus.bits.strict_sub(2)) / 63;
-      let candidate = &modulus_oracle - (rsa::BigUint::from(1u8) << shift);
+      let candidate = &modulus_oracle - (BigUint::from(1u8) << shift);
       let candidate_bytes = candidate.to_bytes_be();
       factor.fill(0);
       let candidate_start = factor.len().strict_sub(candidate_bytes.len());
@@ -16820,8 +16831,8 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
 
       private_modular_inverse_odd(&modulus, &factor, &mut inverse, &mut scratch)
         .expect("n - 2^k must be invertible modulo an odd RSA modulus");
-      let product = &candidate * rsa::BigUint::from_bytes_be(&inverse);
-      assert_eq!(product % &modulus_oracle, rsa::BigUint::from(1u8));
+      let product = &candidate * BigUint::from_bytes_be(&inverse);
+      assert_eq!(product % &modulus_oracle, BigUint::from(1u8));
       assert!(scratch.is_cleared());
     }
 
@@ -18351,9 +18362,9 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
 
   #[test]
   fn portable_montgomery_kernels_match_big_integer_products() {
-    fn big(limbs: &[u64]) -> rsa::BigUint {
+    fn big(limbs: &[u64]) -> BigUint {
       let bytes: Vec<u8> = limbs.iter().flat_map(|limb| limb.to_le_bytes()).collect();
-      rsa::BigUint::from_bytes_le(&bytes)
+      BigUint::from_bytes_le(&bytes)
     }
 
     #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), not(miri)))]
@@ -18395,7 +18406,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
         *bytes.last_mut().expect("nonzero width") |= 1;
         let modulus = RsaPublicModulus::new(&bytes, words.strict_mul(64));
         let n = big(&modulus.limbs);
-        let r = rsa::BigUint::from(1u8) << words.strict_mul(64);
+        let r = BigUint::from(1u8) << words.strict_mul(64);
         // Zero, n - 1, and random values below n.
         let mut below = |kind: usize| -> Vec<u64> {
           match kind {
@@ -18418,7 +18429,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
           let b = below(right_kind);
           let mut t = vec![0u64; words.strict_mul(2).strict_add(2)];
           let mut out = vec![0u64; words];
-          let product = |value: &[u64]| -> rsa::BigUint { big(value) * &r % &n };
+          let product = |value: &[u64]| -> BigUint { big(value) * &r % &n };
 
           mont_mul_cios_portable(&mut out, &a, &b, &modulus, &mut t);
           assert!(big(&out) < n, "mul result below n for {words} limbs");
@@ -19115,7 +19126,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
       let mut modulus_bytes = vec![0xffu8; bytes];
       modulus_bytes[0] = 0xbf;
       let modulus = private_component_modulus(&modulus_bytes).expect("odd modulus imports");
-      let reference_modulus = rsa::BigUint::from_bytes_be(&modulus_bytes);
+      let reference_modulus = BigUint::from_bytes_be(&modulus_bytes);
       let mut scratch = RsaPrivateExponentScratch::new(words.strict_mul(2));
       assert!(scratch.table.as_slice().len() >= words.strict_mul(32));
       for pattern in [0u8, 0xff, 0xa5, 0x81] {
@@ -19126,10 +19137,9 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
           let mut out = vec![0u8; bytes];
           private_exponentiate_representative_with_scratch(&modulus, &exponent, &input, &mut out, &mut scratch)
             .expect("five-bit exponentiation succeeds");
-          let expected =
-            rsa::BigUint::from_bytes_be(&input).modpow(&rsa::BigUint::from_bytes_be(&exponent), &reference_modulus);
+          let expected = BigUint::from_bytes_be(&input).modpow(&BigUint::from_bytes_be(&exponent), &reference_modulus);
           assert_eq!(
-            rsa::BigUint::from_bytes_be(&out),
+            BigUint::from_bytes_be(&out),
             expected,
             "{words} words, {pattern:#x}, base {base}"
           );
@@ -19145,8 +19155,8 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
           let mut out = vec![0u8; bytes];
           private_exponentiate_representative_with_scratch(&modulus, &exponent, &input, &mut out, &mut scratch)
             .expect("every five-bit window succeeds");
-          let expected = rsa::BigUint::from(7u8).modpow(&rsa::BigUint::from(window), &reference_modulus);
-          assert_eq!(rsa::BigUint::from_bytes_be(&out), expected, "window {window}");
+          let expected = BigUint::from(7u8).modpow(&BigUint::from(window), &reference_modulus);
+          assert_eq!(BigUint::from_bytes_be(&out), expected, "window {window}");
         }
       }
     }
@@ -19235,8 +19245,8 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
   fn diag_montgomery_r2_precompute_matches_imported_key() {
     let spki = include_bytes!("../../testdata/rsa/fixtures/rsa3072_spki.der");
     let key = RsaPublicKey::from_spki_der(spki).expect("RSA-3072 SPKI fixture must import");
-    let n = rsa::BigUint::from_bytes_be(key.modulus());
-    let r2 = (rsa::BigUint::from(1u8) << key.modulus.limbs.len().strict_mul(128)) % &n;
+    let n = BigUint::from_bytes_be(key.modulus());
+    let r2 = (BigUint::from(1u8) << key.modulus.limbs.len().strict_mul(128)) % &n;
     let mut r2_bytes = r2.to_bytes_be();
     r2_bytes.splice(
       ..0,
