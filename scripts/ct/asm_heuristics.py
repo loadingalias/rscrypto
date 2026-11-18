@@ -562,6 +562,19 @@ def validate_public_inputs(configured: list[dict[str, Any]]) -> list[str]:
   return errors
 
 
+def apply_constant_conditions(findings: list[dict[str, Any]]) -> None:
+  """Accept a select-shaped branch that decides from constants alone (`FunctionSlices.constant`)."""
+  for finding in findings:
+    if finding["kind"] == "select_branch" and finding.get("slice_constant"):
+      finding["public_classification"] = {
+        "primitives": finding["primitive_ids"],
+        "roots": finding["roots"],
+        "source": "condition slice",
+        "rationale": "The closed condition slice starts only from immediates, read-only data, and frame addresses, "
+                     "and each branch that decides whether a slice instruction runs is constant by the same rule.",
+      }
+
+
 def apply_public_inputs(findings: list[dict[str, Any]], configured: list[dict[str, Any]], target: str) -> None:
   """Accept a select-shaped branch in a public-input function when its rule allows every leaf of its slice."""
   rules = {rule["symbol"]: rule for rule in configured if rule["target"] == target}
@@ -636,6 +649,7 @@ def attach_condition_identities(
     item["slice_sha256"] = condition_identity(result.canonical, result.reasons, item["function_sha256"])
     item["slice_open"] = bool(result.reasons)
     item["slice_leaves"] = result.leaves
+    item["slice_constant"] = not result.reasons and not result.leaves and analysis.constant(item["line"])
 
 
 def apply_waivers(findings: list[dict[str, Any]], configured: list[dict[str, Any]], target: str) -> list[str]:
@@ -2893,6 +2907,7 @@ def main() -> int:
       for error in public_operand_errors:
         print(error)
       return 2
+    apply_constant_conditions(findings)
     apply_public_inputs(findings, configured_public_inputs, args.target)
     stale_waivers = apply_waivers(findings, configured_waivers, args.target)
   except ValueError as exc:

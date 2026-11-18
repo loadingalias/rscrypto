@@ -396,6 +396,9 @@ A waiver binds the backward slice of the condition it reviewed (`slice_sha256`,
 [docs/constant-time.md](../docs/constant-time.md#evidence-model)), so it goes stale only when the condition
 changed or, for an open slice, when its function changed.
 A stale waiver fails the verdict; the evidence and timing of the run are still complete.
+A branch that decides from constants alone needs no waiver
+([docs/constant-time.md](../docs/constant-time.md#evidence-model)). The verdict reports a waiver of such a branch
+as matching an accepted finding: delete it, do not renew it.
 
 `just ct-renew --target TARGET --reviewed-artifacts REVIEWED --artifacts NEW --out DIR` prepares the review.
 `NEW` is any retained CT artifact directory of the run.

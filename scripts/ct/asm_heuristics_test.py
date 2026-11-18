@@ -12,6 +12,7 @@ from asm_heuristics import (
   function_identity,
   instruction_identities,
   all_direct_callees,
+  apply_constant_conditions,
   apply_public_inputs,
   apply_select_branch_enforcement,
   apply_waivers,
@@ -337,6 +338,51 @@ def public_input_regressions() -> None:
     assert validate_public_inputs([rule]) == [
       "asm_public_input[0] leaves must be unique processor-state instructions, `call <symbol>`, or `syscall <number>`"
     ], leaves
+
+
+def constant_branches(lines: list[str], waivers: list[dict] | None = None) -> tuple[list[dict], list[str]]:
+  """The enforced select-shaped branches of an x86-64 fixture, and the waiver errors."""
+  target, symbol = "x86_64-unknown-linux-gnu", "rscrypto::fixture"
+  body = FunctionBody(symbol, Path("fixture.binary.disasm.txt"), 0x1000, list(enumerate(lines, start=1)))
+  findings = scan_symbol(target, symbol, body, {symbol}, scope="ct_intended_call_closure",
+                         primitive_ids=["kx.p256_ecdh"], roots=["ct_entry_p256_ecdh_agree"])
+  apply_select_branch_enforcement(findings, {"kx.p256_ecdh"})
+  attach_condition_identities(target, findings, {symbol: body}, "artifacts/fixture.binary.disasm.txt", {symbol}, None,
+                              {"select_branch"})
+  apply_constant_conditions(findings)
+  errors = apply_waivers(findings, waivers or [], target)
+  return [row for row in findings if row["kind"] == "select_branch"], errors
+
+
+def constant_condition_regressions() -> None:
+  # A loop counter from an immediate, tested inside its loop: the branch decides from constants alone.
+  loop = ["1000: b9 00 00 00 00\tmovl\t$0x0, %ecx", "1005: 83 c1 01\taddl\t$0x1, %ecx",
+          "1008: 83 f9 32\tcmpl\t$0x32, %ecx", "100b: 74 05\tje\t0x1012 <rscrypto::fixture+0x12>",
+          "100d: b8 01 00 00 00\tmovl\t$0x1, %eax", "1012: 83 f9 34\tcmpl\t$0x34, %ecx",
+          "1015: 75 ee\tjne\t0x1005 <rscrypto::fixture+0x5>", "1017: c3\tretq"]
+  [accepted], errors = constant_branches(loop)
+  assert accepted["slice_constant"] and accepted["disposition"] == "accepted" and not errors, accepted
+  # A waiver of that branch waives nothing, so it fails the verdict.
+  waiver = {"target": "x86_64-unknown-linux-gnu", "primitive": "kx.p256_ecdh", "symbol": "rscrypto::fixture",
+            "kind": "select_branch", "slice_sha256": accepted["slice_sha256"]}
+  assert constant_branches(loop, [waiver])[1] == ["asm_waiver[0] matches a finding that a public classification accepts"]
+  # The counter advances only when an argument is nonzero. Its data slice has no leaves, but the argument
+  # decides its value, so the second branch stays blocked.
+  guarded = ["1000: b9 00 00 00 00\tmovl\t$0x0, %ecx", "1005: 85 ff\ttestl\t%edi, %edi",
+             "1007: 74 03\tje\t0x100c <rscrypto::fixture+0xc>", "1009: 83 c1 01\taddl\t$0x1, %ecx",
+             "100c: 83 f9 01\tcmpl\t$0x1, %ecx", "100f: 74 05\tje\t0x1016 <rscrypto::fixture+0x16>",
+             "1011: b8 01 00 00 00\tmovl\t$0x1, %eax", "1016: c3\tretq"]
+  argument, counter = constant_branches(guarded)[0]
+  assert argument["slice_leaves"] == ["entry rdi"] and not argument["slice_constant"], argument
+  assert not counter["slice_open"] and counter["slice_leaves"] == [] and not counter["slice_constant"], counter
+  assert counter["disposition"] == "needs-fix", counter
+  # An argument bounds the loop, so the count that the branch after the loop tests is the argument.
+  bounded = ["1000: b9 00 00 00 00\tmovl\t$0x0, %ecx", "1005: 83 c1 01\taddl\t$0x1, %ecx",
+             "1008: 39 f9\tcmpl\t%edi, %ecx", "100a: 75 f9\tjne\t0x1005 <rscrypto::fixture+0x5>",
+             "100c: 83 f9 03\tcmpl\t$0x3, %ecx", "100f: 74 05\tje\t0x1016 <rscrypto::fixture+0x16>",
+             "1011: b8 01 00 00 00\tmovl\t$0x1, %eax", "1016: c3\tretq"]
+  [after] = constant_branches(bounded)[0]
+  assert after["slice_leaves"] == [] and not after["slice_constant"] and after["disposition"] == "needs-fix", after
 
 
 def exrl_template_regressions() -> None:
@@ -1378,6 +1424,7 @@ def main() -> None:
   multiply_regressions()
   select_branch_regressions()
   public_input_regressions()
+  constant_condition_regressions()
   data_reference_regressions()
   exrl_template_regressions()
   placement_regressions()

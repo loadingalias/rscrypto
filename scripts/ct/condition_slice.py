@@ -1642,13 +1642,14 @@ class FunctionSlices:
 
   def __init__(self, target: str, body: scanner.FunctionBody, image: Any, local_symbols: set[str]) -> None:
     rows = self.rows = scanner.decode_lines(body)
+    self.target = target
     self.identities = scanner.instruction_identities(target, body, local_symbols, image)
     self.frame = stack_pointer(target)
     self.index_by_line = {row.number: index for index, row in enumerate(rows)}
     reasons = self.reasons = []
     if any(scanner.is_register_jump(target, row) for row in rows):
       reasons.append("function contains an indirect jump; its control-flow graph is incomplete")
-    successors = scanner.row_successors(target, body, rows)
+    successors = self.successors = scanner.row_successors(target, body, rows)
     predecessors = self.predecessors = {index: [] for index in range(len(rows))}
     if rows:
       predecessors[0].append(ENTRY)
@@ -1692,6 +1693,76 @@ class FunctionSlices:
         continue
       pending.extend(self.predecessors[current])
     return sorted(found)
+
+  @functools.cached_property
+  def control_dependences(self) -> dict[int, int] | None:
+    """The rows that each two-way branch decides whether to run, as a bit set by row index.
+
+    A row depends on a branch when it post-dominates one successor of the branch but does not strictly
+    post-dominate the branch (Ferrante, Ottenstein, and Warren, 1987). A return, a trap, and a transfer to
+    another function reach one exit, so a conditional transfer out of the function is a two-way branch.
+    The result is None when the control-flow graph is incomplete.
+    """
+    if self.reasons:
+      return None
+    count = len(self.rows)
+    successors = []
+    for index, following in enumerate(self.successors):
+      targets = {successor if successor < count else count for successor in following}
+      if not targets or (len(targets) == 1 and scanner.is_conditional_branch(self.target, self.rows[index].mnemonic)):
+        targets.add(count)
+      successors.append(targets)
+    everything = (1 << (count + 1)) - 1
+    post = [everything] * count + [1 << count]
+    changed = True
+    while changed:
+      changed = False
+      for index in reversed(range(count)):
+        meet = everything
+        for successor in successors[index]:
+          meet &= post[successor]
+        value = meet | 1 << index
+        if value != post[index]:
+          post[index], changed = value, True
+    dependences = {}
+    for index, targets in enumerate(successors):
+      if len(targets) > 1:
+        strict = post[index] & ~(1 << index)
+        decided = 0
+        for successor in targets:
+          decided |= post[successor] & ~strict
+        dependences[index] = decided & ~(1 << count)
+    return dependences
+
+  def controllers(self, index: int) -> frozenset[int]:
+    """The branches that decide whether rows[index] runs."""
+    return frozenset(branch for branch, rows in (self.control_dependences or {}).items() if rows >> index & 1)
+
+  def constant(self, line_number: int) -> bool:
+    """Whether the branch on `line_number` decides from constants alone.
+
+    Its slice is closed and has no leaves, so its condition starts only from immediates, read-only data, and
+    frame addresses. A slice instruction can still supply another value when a branch decides whether it runs,
+    so that branch must be constant by the same rule. The exception is a branch that also decides whether the
+    branch under test runs, such as the latch of a loop that holds both: it changes how often the branch under
+    test runs, which is its own condition, and not the value that the branch tests.
+    """
+    if self.control_dependences is None or line_number not in self.index_by_line:
+      return False
+    pending, seen = [self.index_by_line[line_number]], set()
+    while pending:
+      branch = pending.pop()
+      if branch in seen:
+        continue
+      seen.add(branch)
+      result = self.slice(self.rows[branch].number)
+      if result.reasons or result.leaves:
+        return False
+      context = self.controllers(branch)
+      for node in result.nodes:
+        if node["index"] != branch:
+          pending.extend(self.controllers(node["index"]) - context)
+    return True
 
   def read_only_address(self, index: int) -> bool:
     """Whether rows[index] forms the address of read-only data or code, such as a jump table.

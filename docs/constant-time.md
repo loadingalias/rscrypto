@@ -102,6 +102,22 @@ so a function input, other memory, or another call blocks the branch.
 A blocked branch needs an exact waiver.
 A waiver of a branch that a rule accepts fails the verdict, because it waives nothing.
 
+The scanner also accepts a `select_branch` finding in any function when it decides from constants alone,
+such as a fixed loop counter or a fixed bit-index bound:
+
+- Its slice is closed and has no leaves.
+  The condition starts only from immediates, read-only data, and frame addresses.
+- A slice instruction can supply another value when a branch decides whether it runs.
+  Each such branch must also decide from constants alone, by the same rule.
+  Control dependence comes from post-dominators of the function's control-flow graph,
+  so an incomplete graph proves nothing.
+- The exception is a branch that also decides whether the tested branch runs,
+  such as the latch of a loop that holds both.
+  It changes how often the tested branch runs, which is its own condition, not the value that the branch tests.
+
+A counter that advances under an input test, or that a loop with an input bound leaves behind, stays blocked.
+A waiver of a branch that this rule accepts also fails the verdict.
+
 A count-only `asm_public_operand` rule cannot exempt a branch:
 another instruction in the same function could depend on a secret while staying within that count.
 Instruction identities use function-relative positions. Resolved direct transfers retain their
