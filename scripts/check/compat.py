@@ -93,9 +93,7 @@ def cases():
             yield f'{target}-portable-{boundary}', [check(msrv, target, selected)], {}
         selected = boundary_features(graph, 'alloc') if '-none' in target else sorted(graph)
         yield f'{target}-portable-build', [check(msrv, target, selected, 'build')], {}
-        # A nightly gate in src/lib.rs that misses a feature still compiles in every bundle that
-        # also enables a feature it lists, so check each feature alone on the nightly channel.
-        # `chacha20-rng` alone failed on POWER, IBM Z, and RISC-V that way (Bench 44512697840).
+        # Each feature alone builds its nightly backends for the target, as the host loop checks above.
         for feature in sorted(selected):
             yield f'{target}-{feature}', [check(canonical, target, [feature])], {}
 

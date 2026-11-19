@@ -448,17 +448,6 @@ pub fn diag_hmac_sha256_verify_truncated_64_portable(
   ct::fixed_eq(&tag, expected)
 }
 
-#[cfg(all(rscrypto_internal, feature = "diag"))]
-#[doc(hidden)]
-#[unsafe(no_mangle)]
-#[inline(never)]
-pub fn diag_zeroize_hmac_sha256_finalize(mut key: [u8; SHA256_TAG_SIZE]) -> u8 {
-  let mut state = HmacSha256::new(&key);
-  ct::zeroize(&mut key);
-  state.update(b"zeroize-finalize");
-  core::hint::black_box(state.finalize().as_bytes()[0])
-}
-
 impl Mac for HmacSha256 {
   const TAG_SIZE: usize = SHA256_TAG_SIZE;
   type Tag = HmacSha256Tag;

@@ -147,6 +147,7 @@ Every target in the catalog supports `portable-only` on the declared MSRV.
 The compatibility lane checks core-only and allocation-enabled builds and generates release code
 for POWER, IBM Z, RV64, and RV32 with this feature on the MSRV compiler.
 Their accelerated backends still use the unstable compiler features below and need nightly Rust.
+Without `portable-only`, each POWER, IBM Z, and RV64 build needs nightly Rust, whatever features it selects.
 
 | Target                                     | Unstable features |
 | ------------------------------------------ | ----------------- |
@@ -174,7 +175,7 @@ The [CI workflow](../.github/workflows/ci.yml) and the [repository recipes](../s
 
 | Check              | Scope |
 | ------------------ | ----- |
-| `just check`       | Repairs formatting and lints, then checks this Mac. CI checks every other catalog target. |
+| `just check`       | Repairs formatting and lints, checks this Mac, and runs the CI tooling checks: script tests, CT tooling tests, and dependency policy. CI checks every other catalog target. |
 | Native CI          | Native and portable suites on Linux x86-64, AArch64, POWER, IBM Z, and RISC-V, and on Windows x86-64. Doctests run on the x86-64, AArch64, and Windows rows. POWER, IBM Z, and RISC-V build on x86-64 and run the transferred artifacts on native hardware, without doctests or the SLH-DSA small-set differentials. RISC-V is skipped on fork pull requests and when no donated runner starts it within 30 minutes; releases wait for it. |
 | `just check-macos` | Full local Apple Silicon qualification: native and portable release suites, doctests, internal evidence regressions, and physical RSA assembly checks. `just qualify-macos` queues it in the background before a push or release. |
 | `just test-musl`   | Native and portable suites, plus doctests, on a matching x86-64 or AArch64 Linux host. |

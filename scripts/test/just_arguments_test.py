@@ -31,9 +31,8 @@ if os.environ.get('ENV_LOG'):
 ''')
     recorder.chmod(0o755)
     source = (root / "justfile").read_text()
-    for name in set(re.findall(r'scripts/[\w/.-]+\.(?:sh|py)', source)) | {
-      'bin/cargo', 'bin/gh', 'bin/gungraun-runner', 'bin/valgrind',
-    }:
+    scripts = set(re.findall(r'scripts/[\w/.-]+\.(?:sh|py)', source))
+    for name in scripts | {'bin/cargo', 'bin/gh', 'bin/gungraun-runner', 'bin/valgrind'}:
       path = root / name
       path.parent.mkdir(parents=True, exist_ok=True)
       path.symlink_to(recorder)
@@ -115,7 +114,9 @@ if os.environ.get('ENV_LOG'):
       assert env_log.read_text().splitlines() == ['"1"'], (recipe, env_log.read_text())
     env.pop('ENV_LOG')
     env.pop('HOME', None)
-    run('check', [], [['check']])
+    # `check` runs check.sh, dependency policy, every script test outside scripts/ct, then `ct-test`.
+    tests = sorted(name for name in scripts if name.endswith('_test.py') and not name.startswith('scripts/ct/'))
+    run('check', [], [['check'], [], *(['--group', 'tooling', test] for test in tests), []])
     covered = set(prefixes) | {'ssh', 'ssh-create', 'ssh-just', 'ssh-cargo'}
     assert set(re.findall(r'^([\w-]+).*\*args:', source, re.M)) == covered
   print('Just argument forwarding regressions passed')

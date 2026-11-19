@@ -207,33 +207,3 @@ impl Drop for ChaCha20HeaderProtection {
     ct::zeroize(&mut self.key);
   }
 }
-
-#[cfg(all(rscrypto_internal, feature = "diag", feature = "aes-gcm"))]
-/// Exercise AES-128 header protection while retaining key, schedule, and temporary-block cleanup.
-#[unsafe(no_mangle)]
-#[inline(never)]
-#[must_use]
-pub fn diag_zeroize_aes128_header_protection(key: [u8; 16], sample: [u8; SAMPLE_SIZE]) -> [u8; MASK_SIZE] {
-  let key = Aes128HeaderProtectionKey::from_bytes(key);
-  Aes128HeaderProtection::new(&key).mask(&sample)
-}
-
-#[cfg(all(rscrypto_internal, feature = "diag", feature = "aes-gcm"))]
-/// Exercise AES-256 header protection while retaining key, schedule, and temporary-block cleanup.
-#[unsafe(no_mangle)]
-#[inline(never)]
-#[must_use]
-pub fn diag_zeroize_aes256_header_protection(key: [u8; 32], sample: [u8; SAMPLE_SIZE]) -> [u8; MASK_SIZE] {
-  let key = Aes256HeaderProtectionKey::from_bytes(key);
-  Aes256HeaderProtection::new(&key).mask(&sample)
-}
-
-#[cfg(all(rscrypto_internal, feature = "diag", feature = "chacha20poly1305"))]
-/// Exercise ChaCha20 header protection while retaining key, context, and temporary-block cleanup.
-#[unsafe(no_mangle)]
-#[inline(never)]
-#[must_use]
-pub fn diag_zeroize_chacha20_header_protection(key: [u8; 32], sample: [u8; SAMPLE_SIZE]) -> [u8; MASK_SIZE] {
-  let key = ChaCha20HeaderProtectionKey::from_bytes(key);
-  ChaCha20HeaderProtection::new(&key).mask(&sample)
-}

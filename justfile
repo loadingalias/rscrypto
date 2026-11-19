@@ -108,9 +108,10 @@ release-check bump="auto":
 release bump="auto": (release-check bump)
     @gh workflow run release.yml --ref main -f bump="$1"
 
-# Repair (rustfmt and Clippy fixes), then validate this Mac. CI validates the other targets.
-check:
+# Repair (rustfmt and Clippy fixes), validate this Mac, and run the CI tooling checks. CI validates the other targets.
+check: && test-scripts ct-test
     @scripts/check/check.sh check
+    @scripts/check/dependencies.sh
 
 # Validate Apple Silicon checks, native/portable release tests, and RSA assembly locally.
 check-macos:
@@ -165,39 +166,12 @@ test *args:
 # Test script selection and failure handling without running cryptographic workloads.
 [group('tooling')]
 test-scripts:
-    @scripts/lib/python.sh --group tooling scripts/release/release_test.py
-    @scripts/lib/python.sh scripts/check/qualified_test.py
-    @scripts/lib/python.sh scripts/test/test_runner_test.py
-    @scripts/lib/python.sh scripts/test/evidence_suite_test.py
-    @scripts/lib/python.sh scripts/test/fixtures_test.py
-    @scripts/lib/python.sh scripts/test/coverage_test.py
-    @scripts/lib/python.sh scripts/test/just_arguments_test.py
-    @scripts/lib/python.sh --group tooling scripts/test/ci_cache_test.py
-    @scripts/lib/python.sh --group tooling scripts/test/cross_workflow_test.py
-    @scripts/lib/python.sh scripts/lib/dispatched_run_test.py
-    @scripts/lib/python.sh scripts/lib/openssl_peer_test.py
-    @scripts/lib/python.sh scripts/tooling/toolchain_test.py
-    @scripts/lib/python.sh scripts/tooling/install_test.py
-    @scripts/lib/python.sh --group tooling scripts/tooling/test_tooling.py
-    @scripts/lib/python.sh scripts/bench/ci_test.py
-    @scripts/lib/python.sh scripts/bench/file_cache_test.py
-    @scripts/lib/python.sh scripts/bench/profile_ci_test.py
-    @scripts/lib/python.sh scripts/bench/compare_test.py
-    @scripts/lib/python.sh scripts/bench/benchmark_catalog_test.py
-    @scripts/lib/python.sh scripts/test/fuzz_features_test.py
-    @scripts/lib/python.sh scripts/check/macos_test.py
-    @scripts/lib/python.sh scripts/check/check_runner_test.py
-    @scripts/lib/python.sh scripts/check/provider_test.py
-    @scripts/lib/python.sh scripts/test/provider_bogo_test.py
-    @scripts/lib/python.sh scripts/check/compat_test.py
-    @scripts/lib/python.sh scripts/check/package_test.py
-    @scripts/lib/python.sh scripts/test/fuzz_runner_test.py
-    @scripts/lib/python.sh --group tooling scripts/test/fuzz_ci_test.py
-    @scripts/lib/python.sh scripts/asm/p384_test.py
-    @scripts/lib/python.sh scripts/asm/rsa_pair_test.py
-    @scripts/lib/python.sh scripts/stack/frames_test.py
-    @scripts/lib/python.sh scripts/stack/residue_test.py
-    @scripts/lib/python.sh scripts/stack/painted_test.py
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # `just ct-test` runs scripts/ct.
+    for test in $(find scripts -name '*_test.py' -not -path 'scripts/ct/*' | sort); do
+      scripts/lib/python.sh --group tooling "$test"
+    done
 
 # Exercise artifact transfer and the pinned rustdoc build/run contract.
 [group('tests')]

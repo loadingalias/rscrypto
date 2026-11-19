@@ -43,17 +43,6 @@ impl Drop for ParallelBatchScratch {
   }
 }
 
-#[cfg(all(rscrypto_internal, feature = "diag"))]
-#[doc(hidden)]
-#[unsafe(no_mangle)]
-#[inline(never)]
-pub(super) fn diag_zeroize_blake3_parallel_scratch(input: [u32; 8]) -> u32 {
-  let mut scratch = ParallelBatchScratch::default();
-  scratch.zeroize = true;
-  scratch.roots.push(input);
-  core::hint::black_box(scratch.roots[0][0])
-}
-
 impl Blake3 {
   /// Whether a plain hasher sits at a reader-buffer boundary, where
   /// [`Self::try_parallel_reader_update`] can hash one whole buffer.

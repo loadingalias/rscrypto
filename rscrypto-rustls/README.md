@@ -24,6 +24,24 @@ validation, and rustls-pki-types provides credential types. Their built-in crypt
 backends are disabled. The provider's normal and build dependency graph must
 exclude ring, AWS-LC, OpenSSL, BoringSSL, and C build tools.
 
+## Quick start
+
+```rust
+use std::sync::Arc;
+
+// Add the trust anchors that the client accepts.
+let roots = rustls::RootCertStore::empty();
+let provider = Arc::new(rscrypto_rustls::default_provider());
+let config = rustls::ClientConfig::builder(provider)
+  .with_root_certificates(roots)
+  .with_no_client_auth()?;
+# let _ = config;
+# Ok::<(), rustls::Error>(())
+```
+
+`default_provider()` needs the default features. The sections below describe the other
+constructors, the opt-in algorithms, and caller-selected entropy.
+
 ## Implementation inventory
 
 | Operation | rscrypto implementation | Adapter |

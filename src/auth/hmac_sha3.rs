@@ -184,14 +184,3 @@ define_hmac_sha3!(
   SHA3_512_TAG_SIZE,
   "SHA3-512"
 );
-
-#[cfg(all(rscrypto_internal, feature = "diag"))]
-#[doc(hidden)]
-#[unsafe(no_mangle)]
-#[inline(never)]
-pub fn diag_zeroize_hmac_sha3_finalize(mut key: [u8; SHA3_256_TAG_SIZE]) -> u8 {
-  let mut state = HmacSha3_256::new(&key);
-  ct::zeroize(&mut key);
-  state.update(b"zeroize-finalize");
-  core::hint::black_box(state.finalize().as_bytes()[0])
-}

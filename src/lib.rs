@@ -133,170 +133,23 @@ assert!(
 //! evidence. See the security guidance for nonce lifecycle, PHC verification
 //! limits, and platform fallback notes.
 
-// Exotic-architecture backends require nightly-only features (inline asm +
-// portable_simd + unstable target-feature flags). Primary targets (x86_64,
-// aarch64, wasm) and portable-only builds compile from the declared MSRV.
+// NIGHTLY: the POWER, IBM Z, and RV64 backends use these unstable features. Each build for these
+// targets enables all of them unless `portable-only` excludes the backends, so a build with few
+// backends leaves some unused. The other targets and `portable-only` builds compile on the MSRV.
 #![cfg_attr(
-  all(
-    target_arch = "powerpc64",
-    not(feature = "portable-only"),
-    any(
-      feature = "crc16",
-      feature = "crc24",
-      feature = "crc32",
-      feature = "crc64",
-      feature = "adler32",
-      feature = "aes-gcm",
-      feature = "aes-gcm-siv",
-      feature = "aes-siv",
-      feature = "aegis256",
-      feature = "blake3",
-      feature = "xxh3",
-      feature = "chacha20poly1305",
-      feature = "xchacha20poly1305",
-      feature = "chacha20-rng",
-      feature = "argon2",
-      all(
-        feature = "ml-dsa",
-        target_endian = "little",
-        not(feature = "portable-only"),
-        not(miri)
-      )
-    )
-  ),
-  feature(portable_simd, powerpc_target_feature)
-)]
-// s390x VGFM/hash backends use vector asm; selected checksum/hash/AEAD/password
-// kernels also use portable SIMD.
-#![cfg_attr(
-  all(
-    target_arch = "s390x",
-    not(feature = "portable-only"),
-    any(
-      feature = "crc16",
-      feature = "crc24",
-      feature = "crc32",
-      feature = "crc64",
-      feature = "aes-gcm",
-      feature = "aes-gcm-siv",
-      feature = "aes-siv",
-      feature = "aegis256",
-      feature = "xxh3",
-      feature = "chacha20poly1305",
-      feature = "xchacha20poly1305",
-      feature = "chacha20-rng",
-      feature = "ml-kem",
-      all(feature = "ml-dsa", not(feature = "portable-only"), not(miri)),
-      feature = "argon2"
-    )
-  ),
-  feature(asm_experimental_reg)
+  all(target_arch = "powerpc64", not(feature = "portable-only")),
+  feature(portable_simd, powerpc_target_feature),
+  allow(unused_features)
 )]
 #![cfg_attr(
-  all(
-    target_arch = "s390x",
-    not(feature = "portable-only"),
-    any(
-      feature = "crc16",
-      feature = "crc24",
-      feature = "crc32",
-      feature = "crc64",
-      feature = "aes-gcm",
-      feature = "aes-gcm-siv",
-      feature = "aegis256",
-      feature = "blake3",
-      feature = "xxh3",
-      feature = "chacha20poly1305",
-      feature = "xchacha20poly1305",
-      feature = "chacha20-rng",
-      all(feature = "ml-kem", not(feature = "portable-only"), not(miri)),
-      all(feature = "ml-dsa", not(feature = "portable-only"), not(miri)),
-      feature = "argon2"
-    )
-  ),
-  feature(portable_simd)
-)]
-// NIGHTLY: ML-KEM and ML-DSA use s390x vector intrinsics for explicit modular arithmetic, and
-// Adler-32 for its byte sums and products.
-#![cfg_attr(
-  all(
-    target_arch = "s390x",
-    any(feature = "ml-kem", feature = "ml-dsa", feature = "adler32"),
-    not(feature = "portable-only"),
-    not(miri)
-  ),
-  feature(stdarch_s390x)
-)]
-// RISC-V CRC/vector/AES-style backends still need nightly target-feature names.
-// SHA-2's Zknh intrinsics are gated separately by `riscv_ext_intrinsics`.
-#![cfg_attr(
-  all(
-    target_arch = "riscv64",
-    not(feature = "portable-only"),
-    any(
-      feature = "adler32",
-      feature = "crc16",
-      feature = "crc24",
-      feature = "crc32",
-      feature = "blake2b",
-      feature = "blake2s",
-      feature = "blake3",
-      feature = "aes-gcm",
-      feature = "aes-gcm-siv",
-      feature = "aes-siv",
-      feature = "chacha20poly1305",
-      feature = "xchacha20poly1305",
-      feature = "chacha20-rng",
-      feature = "aegis256",
-      feature = "argon2"
-    )
-  ),
-  feature(riscv_target_feature)
+  all(target_arch = "s390x", not(feature = "portable-only")),
+  feature(asm_experimental_reg, portable_simd, stdarch_s390x),
+  allow(unused_features)
 )]
 #![cfg_attr(
-  all(
-    target_arch = "riscv64",
-    not(feature = "portable-only"),
-    any(
-      feature = "adler32",
-      feature = "crc16",
-      feature = "crc24",
-      feature = "crc32",
-      feature = "aes-gcm",
-      feature = "aes-gcm-siv",
-      feature = "aes-siv",
-      feature = "aegis256"
-    )
-  ),
-  feature(asm_experimental_reg)
-)]
-#![cfg_attr(
-  all(
-    target_arch = "riscv64",
-    not(feature = "portable-only"),
-    any(
-      feature = "sha2",
-      feature = "aes-gcm",
-      feature = "aes-gcm-siv",
-      feature = "aes-siv",
-      feature = "aegis256"
-    )
-  ),
-  feature(riscv_ext_intrinsics)
-)]
-#![cfg_attr(
-  all(
-    target_arch = "riscv64",
-    not(feature = "portable-only"),
-    any(
-      feature = "blake3",
-      feature = "chacha20poly1305",
-      feature = "xchacha20poly1305",
-      feature = "chacha20-rng",
-      feature = "argon2"
-    )
-  ),
-  feature(portable_simd)
+  all(target_arch = "riscv64", not(feature = "portable-only")),
+  feature(asm_experimental_reg, portable_simd, riscv_ext_intrinsics, riscv_target_feature),
+  allow(unused_features)
 )]
 #![cfg_attr(
   all(target_arch = "riscv32", feature = "sha2", not(feature = "portable-only")),
@@ -1891,14 +1744,6 @@ use rscrypto::auth::hmac::diag_hmac_sha384_verify_portable;
 ```compile_fail,E0432
 use rscrypto::auth::hmac::diag_hmac_sha512_verify_portable;
 ```
-
-```compile_fail,E0432
-use rscrypto::auth::hmac::diag_zeroize_hmac_sha256_finalize;
-```
-
-```compile_fail,E0432
-use rscrypto::auth::hmac_sha3::diag_zeroize_hmac_sha3_finalize;
-```
 "#]
 pub struct __HmacEvidenceBoundary;
 
@@ -2066,10 +1911,6 @@ use rscrypto::aead::diag_aes_siv_cmac256_open_portable;
 ```
 
 ```compile_fail,E0432
-use rscrypto::aead::diag_zeroize_aes_siv_cmac256;
-```
-
-```compile_fail,E0432
 use rscrypto::aead::diag_chacha20_xor_keystream_portable;
 ```
 
@@ -2079,10 +1920,6 @@ use rscrypto::aead::diag_poly1305_block_portable_digest;
 
 ```compile_fail,E0432
 use rscrypto::aead::diag_chacha20poly1305_encrypt_in_place_owned;
-```
-
-```compile_fail,E0432
-use rscrypto::aead::diag_zeroize_aes128_header_protection;
 ```
 
 ```compile_fail,E0432
@@ -2143,14 +1980,6 @@ use rscrypto::hashes::crypto::blake2s::diag_blake2s256_keyed_digest_portable;
 
 ```compile_fail,E0432
 use rscrypto::hashes::crypto::blake3::Blake3DiagKernel;
-```
-
-```compile_fail,E0432
-use rscrypto::hashes::crypto::blake3::diag_zeroize_blake3_drop;
-```
-
-```compile_fail,E0432
-use rscrypto::hashes::crypto::sha3::diag_zeroize_mlkem_sha3_512;
 ```
 
 ```compile_fail,E0432

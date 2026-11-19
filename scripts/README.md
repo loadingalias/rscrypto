@@ -16,7 +16,7 @@ Those entry points call the supporting modules.
 | `check/macos.sh`                       | `just check-macos`, background Mac qualification |
 | `check/macos_async.py`                 | `just qualify-macos`, `just macos-status` |
 | `check/qualified.py`                   | local qualification reuse and release status identity |
-| `check/dependencies.sh`                | CI x86-64 Linux row |
+| `check/dependencies.sh`                | `just check`, CI x86-64 Linux row |
 | `check/lint-independent-workspaces.sh` | `check/check.sh` |
 | `asm/p384.py check`                    | `check/check.sh` |
 | `asm/rsa_pair.py check`                | `check/check.sh` |
@@ -118,8 +118,7 @@ It does not download upstream archives.
 | `test/coverage_run.py`   | Coverage-only nextest target runner, invoked by `test-coverage.py` |
 | `test/test-rsa-asm.sh`   | `just test-rsa-linux-asm`, `just test-rsa-macos-asm` |
 
-- `just test-scripts` runs the argument-forwarding, toolchain, test, check, and fuzz regressions
-  with substitute executors.
+- `just test-scripts` runs each `scripts/**/*_test.py` outside `scripts/ct`, with substitute executors.
 - `just test-fuzz-asan` rebuilds the standard library and replays the selected corpus tests
   with address instrumentation, building `rscrypto` itself at opt-level 1 with debug assertions
   and overflow checks on. On AArch64 Linux it disables outlined atomics: the current
@@ -886,8 +885,8 @@ registers or the other parameter sets.
   without starting a measurement run.
   `--diag` enables diagnostic cases.
 
-`bench/benchmark_catalog_test.py` includes the benchmark runner and profiling regression tests.
-`just test-scripts` runs it; run it alone with `scripts/lib/python.sh scripts/bench/benchmark_catalog_test.py`.
+`just test-scripts` runs the benchmark catalog, runner, and profiling regression tests in `bench/`.
+Run one alone, for example, with `scripts/lib/python.sh scripts/bench/benchmark_catalog_test.py`.
 It tests the Python runner, Just argument forwarding, and export in temporary directories,
 with substitute Cargo, benchmark, and profiler executors.
 It does not run cryptographic benchmarks.

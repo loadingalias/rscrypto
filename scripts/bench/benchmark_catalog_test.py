@@ -6,8 +6,6 @@ from __future__ import annotations
 import copy
 import json
 import re
-import subprocess
-import sys
 from pathlib import Path
 
 import tomllib
@@ -291,13 +289,7 @@ def main() -> None:
     else:
       fail('catalog accepted an invalid companion manifest')
 
-  subprocess.run([sys.executable, str(ROOT / "scripts/bench/bounded_test.py")], check=True)
-  subprocess.run([sys.executable, str(ROOT / "scripts/bench/run_test.py")], check=True)
-  subprocess.run([sys.executable, str(ROOT / "scripts/bench/profile_test.py")], check=True)
-  subprocess.run([sys.executable, str(ROOT / "scripts/bench/profile_ci_test.py")], check=True)
-  subprocess.run([sys.executable, str(ROOT / "scripts/bench/transfer_test.py")], check=True)
-  subprocess.run([sys.executable, str(ROOT / "scripts/bench/compare_test.py")], check=True)
-  print("benchmark catalog and orchestration tests passed")
+  print("benchmark catalog tests passed")
 
 
 if __name__ == "__main__":

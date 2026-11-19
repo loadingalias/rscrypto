@@ -247,9 +247,7 @@ pub use aes_siv_cmac256::{
   AesSivCmac256, AesSivCmac256Key, AesSivCmac256Nonce, AesSivCmac256NonceError, AesSivCmac256Tag,
 };
 #[cfg(all(rscrypto_internal, feature = "diag", feature = "aes-siv"))]
-pub use aes_siv_cmac256::{
-  diag_aes_siv_cmac256_open_portable, diag_aes_siv_cmac256_s2v_portable, diag_zeroize_aes_siv_cmac256,
-};
+pub use aes_siv_cmac256::{diag_aes_siv_cmac256_open_portable, diag_aes_siv_cmac256_s2v_portable};
 #[cfg(feature = "aes-gcm")]
 pub use aes128gcm::{Aes128Gcm, Aes128GcmKey, Aes128GcmTag};
 #[cfg(all(rscrypto_internal, feature = "diag", feature = "aes-gcm"))]
@@ -337,10 +335,6 @@ pub use chacha20poly1305::{
 };
 #[cfg(all(rscrypto_internal, feature = "diag", feature = "aes-gcm"))]
 pub use ghash::diag_ghash_block_portable;
-#[cfg(all(rscrypto_internal, feature = "diag", feature = "chacha20poly1305"))]
-pub use header_protection::diag_zeroize_chacha20_header_protection;
-#[cfg(all(rscrypto_internal, feature = "diag", feature = "aes-gcm"))]
-pub use header_protection::{diag_zeroize_aes128_header_protection, diag_zeroize_aes256_header_protection};
 #[cfg(feature = "aes-gcm")]
 pub use nonce_counter::{NonceCounter, NonceCounterExhausted, NonceCounterSealError};
 #[cfg(all(

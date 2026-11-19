@@ -83,7 +83,7 @@ class Fingerprint(unittest.TestCase):
             names = {name for platform in self.PLATFORMS for operation in ('dev', 'ci-compat', 'ci-package')
                      if operation in fingerprint.OPERATIONS[platform.rsplit('-', 1)[1]]
                      for name in fingerprint.inputs(platform, operation)}
-            for name in names | {'Cargo.toml', 'scripts/tooling/test_tooling.py'}:
+            for name in names | {'Cargo.toml', 'scripts/tooling/tooling_test.py'}:
                 (root / name).parent.mkdir(parents=True, exist_ok=True)
                 (root / name).write_bytes((source / name).read_bytes())
 
@@ -111,7 +111,7 @@ class Fingerprint(unittest.TestCase):
                     ('scripts/check/compat.py', None, None, {'compat'}),
                     ('Cargo.toml', '[package]', '[package]\n# changed', set()),
                     ('Cargo.toml', f'rust-version = "{msrv}"', 'rust-version = "1.0"', {'compat'}),
-                    ('scripts/tooling/test_tooling.py', None, None, set())]:
+                    ('scripts/tooling/tooling_test.py', None, None, set())]:
                 with self.subTest(name=name, change=after):
                     path = root / name
                     original_bytes = path.read_bytes()

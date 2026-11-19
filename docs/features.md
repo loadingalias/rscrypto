@@ -222,7 +222,7 @@ just check
 ```
 
 - `just check` repairs formatting and lints, then checks this Mac. It lints the combined native and
-  portable feature sets.
+  portable feature sets, and runs the CI tooling checks.
 - CI checks every other target without repairs. Its compatibility row (`scripts/check/compat.py`) checks
   each feature alone on the development compiler and on the MSRV. It also builds the bare-metal targets
   and runs the scalar and SIMD WebAssembly vectors in Wasmtime.

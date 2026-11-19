@@ -270,7 +270,7 @@ if name == 'cargo' and args[0] == 'deny':
       check = [['cargo', '+' + channel, 'fmt', '--all', '--', '--check']]
       assert fmt == ([['cargo', '+' + channel, 'fmt', '--all']] * 2 + check if mode == 'check' else check)
       assert not any('plan' in c for c in commands)
-      # Dependency policy runs only in CI, through scripts/check/dependencies.sh.
+      # Dependency policy runs only through scripts/check/dependencies.sh.
       assert not any(c[:2] in (['cargo', 'deny'], ['cargo', 'audit']) for c in commands)
       for extra in (['lint-independent-workspaces.sh'], ['p384.py', 'check'], ['rsa_pair.py', 'check'],
                     ['provenance.py', 'check']):

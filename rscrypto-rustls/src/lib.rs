@@ -204,5 +204,9 @@ pub(crate) fn owner_fill(
   }
 }
 
+#[cfg(all(doctest, feature = "default"))]
+#[doc = include_str!("../README.md")]
+pub struct ReadmeDoctests;
+
 #[cfg(test)]
 mod tests;

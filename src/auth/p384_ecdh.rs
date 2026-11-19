@@ -296,45 +296,6 @@ pub fn diag_p384_ecdh_select_window_limb_digest(digit: u8) -> [u64; 13] {
   p384_portable::diag_select_window_limb_digest(digit)
 }
 
-/// Exercise P-384 ECDH candidate cleanup on success and partial-fill failure.
-#[cfg(all(rscrypto_internal, feature = "diag"))]
-#[doc(hidden)]
-#[unsafe(no_mangle)]
-#[inline(never)]
-pub(crate) fn diag_zeroize_p384_ecdh_generation(value: u8, fail: bool) -> u8 {
-  let result = P384EphemeralSecret::try_generate_with(|candidate| {
-    candidate[..24].fill(core::hint::black_box(value & 0x7f));
-    if core::hint::black_box(fail) {
-      return Err(());
-    }
-    candidate[24..].fill(core::hint::black_box(value));
-    Ok(())
-  });
-  result.map_or(0, |secret| core::hint::black_box(secret.0[0]))
-}
-
-/// Exercise P-384 ECDH scalar, projective-state, and shared-secret cleanup.
-#[cfg(all(rscrypto_internal, feature = "diag"))]
-#[doc(hidden)]
-#[unsafe(no_mangle)]
-#[inline(never)]
-pub(crate) fn diag_zeroize_p384_ecdh_agreement(secret: [u8; 48]) -> u8 {
-  let Ok(secret) = P384EphemeralSecret::try_generate_with(|candidate| {
-    candidate.copy_from_slice(core::hint::black_box(&secret));
-    Ok::<(), core::convert::Infallible>(())
-  }) else {
-    return 0;
-  };
-  let Ok(peer) = P384EphemeralSecret::try_generate_with(|candidate| {
-    candidate.fill(0x24);
-    Ok::<(), core::convert::Infallible>(())
-  }) else {
-    return 0;
-  };
-  let shared = secret.diffie_hellman(&peer.public_key());
-  core::hint::black_box(shared.as_bytes()[0])
-}
-
 #[cfg(test)]
 mod tests {
   use super::{P384EphemeralSecret, P384KeyGenerationError, P384PublicKey, P384PublicKeyError};

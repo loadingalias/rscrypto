@@ -462,24 +462,6 @@ pub fn diag_aes_siv_cmac256_open_portable(
   digest ^ u8::from(accepted)
 }
 
-#[cfg(all(rscrypto_internal, feature = "diag"))]
-#[doc(hidden)]
-/// Exercise AES-SIV construction, seal, open, local cleanup, and retained-owner drop.
-#[unsafe(no_mangle)]
-#[inline(never)]
-#[must_use]
-pub fn diag_zeroize_aes_siv_cmac256(key: [u8; KEY_SIZE], nonce: [u8; BLOCK_SIZE], input: [u8; 48]) -> u8 {
-  let key = AesSivCmac256Key::from_bytes(key);
-  let cipher = AesSivCmac256::new(&key);
-  let nonce = AesSivCmac256Nonce::try_from(nonce.as_slice()).expect("fixed diagnostic nonce is non-empty");
-  let mut buffer = input;
-  let tag = cipher.seal_in_place(nonce, b"zeroize evidence", &mut buffer);
-  cipher
-    .open_in_place(nonce, b"zeroize evidence", &mut buffer, &tag)
-    .expect("fresh diagnostic ciphertext authenticates");
-  buffer[0] ^ tag.as_bytes()[0]
-}
-
 #[inline]
 fn xor_block(left: &mut [u8; BLOCK_SIZE], right: &[u8; BLOCK_SIZE]) {
   for (left_byte, right_byte) in left.iter_mut().zip(right) {

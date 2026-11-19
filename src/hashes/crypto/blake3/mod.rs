@@ -325,20 +325,6 @@ fn with_subtree_scratch<R>(
   })
 }
 
-#[cfg(all(feature = "parallel", all(rscrypto_internal, feature = "diag")))]
-#[doc(hidden)]
-#[unsafe(no_mangle)]
-#[inline(never)]
-pub fn diag_zeroize_blake3_thread_scratch(mut input: [u32; 8]) -> u32 {
-  let output = with_subtree_scratch(1, KEYED_HASH, |scratch0, scratch1| {
-    scratch0[0] = input;
-    scratch1[0] = input;
-    core::hint::black_box(scratch0[0][0])
-  });
-  ct::zeroize_words(&mut input);
-  output
-}
-
 #[cfg(feature = "parallel")]
 #[inline]
 fn reduce_power_of_two_cvs_in_place(
@@ -2666,50 +2652,6 @@ pub fn diag_blake3_keyed_digest_portable(key: &[u8; KEY_LEN]) -> Blake3KeyedHash
   let mut key_words = words8_from_le_bytes_32(key);
   let kernel = kernels::kernel(kernels::Blake3KernelId::Portable);
   Blake3KeyedHash::from_bytes(digest_oneshot(kernel, &mut key_words, KEYED_HASH, b"binsec"))
-}
-
-#[cfg(all(rscrypto_internal, feature = "diag"))]
-#[doc(hidden)]
-#[unsafe(no_mangle)]
-#[inline(never)]
-pub fn diag_zeroize_blake3_drop(mut key: [u8; KEY_LEN]) -> u8 {
-  let mut state = Blake3::new_keyed(&key);
-  ct::zeroize(&mut key);
-  state.update(b"zeroize-drop");
-  core::hint::black_box(state.finalize()[0])
-}
-
-#[cfg(all(rscrypto_internal, feature = "diag"))]
-#[doc(hidden)]
-#[unsafe(no_mangle)]
-#[inline(never)]
-pub fn diag_zeroize_blake3_reuse(mut key: [u8; KEY_LEN]) -> u8 {
-  let mut state = Blake3::new_keyed(&key);
-  ct::zeroize(&mut key);
-  state.update(b"discarded keyed prefix");
-  state.reset();
-  state.update(b"reused keyed state");
-  core::hint::black_box(state.finalize()[0])
-}
-
-#[cfg(all(rscrypto_internal, feature = "diag"))]
-#[doc(hidden)]
-#[unsafe(no_mangle)]
-#[inline(never)]
-pub fn diag_zeroize_blake3_xof_move(mut key: [u8; KEY_LEN]) -> u8 {
-  let reader = Blake3::keyed_xof(&key, b"moved keyed XOF");
-  ct::zeroize(&mut key);
-  diag_zeroize_blake3_xof_consume(reader)
-}
-
-#[cfg(all(rscrypto_internal, feature = "diag"))]
-#[doc(hidden)]
-#[unsafe(no_mangle)]
-#[inline(never)]
-pub fn diag_zeroize_blake3_xof_consume(mut reader: Blake3XofReader) -> u8 {
-  let mut output = [0u8; 1];
-  reader.squeeze(&mut output);
-  core::hint::black_box(output[0])
 }
 
 #[cfg(all(rscrypto_internal, feature = "diag"))]

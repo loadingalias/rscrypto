@@ -2,8 +2,6 @@
 //!
 //! Portable, `no_std`, pure Rust Keccak-f\[1600\] sponge.
 
-#[cfg(all(rscrypto_internal, feature = "diag", feature = "ml-kem"))]
-use super::keccak::secret;
 #[cfg(all(test, feature = "ml-kem"))]
 use super::keccak::xof_quad;
 use super::keccak::{PublicKeccakCore, PublicKeccakXof};
@@ -13,64 +11,6 @@ use super::keccak::{
   xof_seeded_32_2_quad as keccak_xof_seeded_32_2_quad, xof_seeded_32_2_triple as keccak_xof_seeded_32_2_triple,
 };
 use crate::traits::{Digest, Xof};
-
-#[cfg(all(rscrypto_internal, feature = "diag", feature = "ml-kem"))]
-#[doc(hidden)]
-#[unsafe(no_mangle)]
-#[inline(never)]
-pub fn diag_zeroize_mlkem_sha3_512(mut seed: [u8; 32]) -> u8 {
-  let mut digest = [0u8; 64];
-  secret::sha3_512(&seed, &mut digest);
-  crate::traits::ct::zeroize(&mut seed);
-  let observed = digest[0];
-  crate::traits::ct::zeroize(&mut digest);
-  core::hint::black_box(observed)
-}
-
-#[cfg(all(rscrypto_internal, feature = "diag", feature = "ml-kem"))]
-#[doc(hidden)]
-#[unsafe(no_mangle)]
-#[inline(never)]
-pub fn diag_zeroize_mlkem_shake256_scalar(mut seed: [u8; 32]) -> u8 {
-  let mut out = [0u8; 192];
-  secret::shake256_seeded(&seed, 1, &mut out);
-  crate::traits::ct::zeroize(&mut seed);
-  let observed = out[0];
-  crate::traits::ct::zeroize(&mut out);
-  core::hint::black_box(observed)
-}
-
-#[cfg(all(rscrypto_internal, feature = "diag", feature = "ml-kem"))]
-#[doc(hidden)]
-#[unsafe(no_mangle)]
-#[inline(never)]
-pub fn diag_zeroize_mlkem_shake256_pair(mut seed: [u8; 32]) -> u8 {
-  let mut out_a = [0u8; 192];
-  let mut out_b = [0u8; 192];
-  secret::shake256_seeded_pair(&seed, [1, 2], [&mut out_a, &mut out_b]);
-  crate::traits::ct::zeroize(&mut seed);
-  let observed = out_a[0] ^ out_b[0];
-  crate::traits::ct::zeroize(&mut out_a);
-  crate::traits::ct::zeroize(&mut out_b);
-  core::hint::black_box(observed)
-}
-
-#[cfg(all(rscrypto_internal, feature = "diag", feature = "ml-kem"))]
-#[doc(hidden)]
-#[unsafe(no_mangle)]
-#[inline(never)]
-pub fn diag_zeroize_mlkem_shake256_quad(mut seed: [u8; 32]) -> u8 {
-  let mut outputs = [[0u8; 192]; 4];
-  secret::shake256_seeded_quad(&seed, [1, 2, 3, 4], outputs.each_mut());
-  crate::traits::ct::zeroize(&mut seed);
-  let [mut out_a, mut out_b, mut out_c, mut out_d] = outputs;
-  let observed = out_a[0] ^ out_b[0] ^ out_c[0] ^ out_d[0];
-  crate::traits::ct::zeroize(&mut out_a);
-  crate::traits::ct::zeroize(&mut out_b);
-  crate::traits::ct::zeroize(&mut out_c);
-  crate::traits::ct::zeroize(&mut out_d);
-  core::hint::black_box(observed)
-}
 
 /// SHA3-256 digest state.
 ///
