@@ -2024,11 +2024,14 @@ fn xwing_encapsulate_fixed_vs_random_coins(runner: &mut CtRunner, rng: &mut Benc
 
 /// One ciphertext for the fixed key, decapsulated with prepared keys.
 /// Preparation stays outside timing: the key seed also determines the public
-/// ML-KEM matrix, whose sampling time is public. Before each sample, the fixed
-/// key or a random key, for which ML-KEM implicitly rejects the ciphertext, is
-/// copied into one key slot. So the classes differ only in key contents, not in
-/// key address: with one pool per class, the class difference kept its sign in
-/// a process but changed sign between processes.
+/// ML-KEM matrix, whose sampling time is public. One pool holds pairs of a
+/// fixed-key copy and a random key, for which ML-KEM implicitly rejects the
+/// ciphertext. Before each sample, the class's key of one pair is copied into
+/// one key slot. So both classes copy the same amount of adjacent key memory,
+/// and the timed call reads the same address. With one pool per class, the
+/// class difference kept its sign in a process but changed sign between
+/// processes; with the fixed key copied from one hot source, the random class
+/// alone evicted cache lines before each sample.
 fn xwing_decapsulate_fixed_vs_random_key(runner: &mut CtRunner, rng: &mut BenchRng) {
   const POOL: usize = 64;
   let fixed = XWingDecapsulationKey::from_bytes([0x91; XWing::DECAPSULATION_KEY_SIZE]).prepare();
@@ -2038,8 +2041,11 @@ fn xwing_decapsulate_fixed_vs_random_key(runner: &mut CtRunner, rng: &mut BenchR
     .expect("derived X-Wing key")
     .encapsulate(xwing_fill(&[0x92; XWing::ENCAPSULATION_RANDOM_SIZE]))
     .expect("X-Wing encapsulation");
-  let random_pool: Vec<XWingPreparedDecapsulationKey> = (0..POOL)
-    .map(|_| XWingDecapsulationKey::from_bytes(rand_array::<{ XWing::DECAPSULATION_KEY_SIZE }>(rng)).prepare())
+  let pool: Vec<(XWingPreparedDecapsulationKey, XWingPreparedDecapsulationKey)> = (0..POOL)
+    .map(|_| {
+      let random = XWingDecapsulationKey::from_bytes(rand_array::<{ XWing::DECAPSULATION_KEY_SIZE }>(rng)).prepare();
+      (fixed.duplicate_secret(), random)
+    })
     .collect();
   let mut inputs = Vec::with_capacity(samples());
   for _ in 0..samples() {
@@ -2048,10 +2054,11 @@ fn xwing_decapsulate_fixed_vs_random_key(runner: &mut CtRunner, rng: &mut BenchR
   }
 
   for (class, index) in inputs {
+    let (fixed_copy, random) = &pool[index];
     let key = if matches!(class, Class::Left) {
-      fixed.duplicate_secret()
+      fixed_copy.duplicate_secret()
     } else {
-      random_pool[index].duplicate_secret()
+      random.duplicate_secret()
     };
     runner.run_one(class, || {
       let shared_secret: XWingSharedSecret = key
@@ -2095,16 +2102,19 @@ fn hpke_x25519_setup_sender_fixed_vs_random_ikm(runner: &mut CtRunner, rng: &mut
   }
 }
 
-/// HPKE DHKEM(X25519) receiver setup of one fixed encapsulation with the fixed
-/// recipient key or a random one, copied into one key slot before each sample.
+/// HPKE DHKEM(X25519) receiver setup of one fixed encapsulation, with the key
+/// pairs and the key slot of `xwing_decapsulate_fixed_vs_random_key`.
 fn hpke_x25519_setup_receiver_fixed_vs_random_key(runner: &mut CtRunner, rng: &mut BenchRng) {
   const POOL: usize = 64;
   let fixed = HpkeX25519HkdfSha256Aes128Gcm::derive_keypair(&[0xa3; 32]);
   let (encapsulation, _) =
     HpkeSender::<HpkeX25519HkdfSha256Aes128Gcm>::setup(&fixed.public_key(), b"info", hpke_fill(&[0xa4; 32]))
       .expect("a derived key encapsulates");
-  let random_pool: Vec<HpkeX25519PrivateKey> = (0..POOL)
-    .map(|_| HpkeX25519PrivateKey::new(X25519SecretKey::from_bytes(rand_array::<32>(rng))))
+  let pool: Vec<(HpkeX25519PrivateKey, HpkeX25519PrivateKey)> = (0..POOL)
+    .map(|_| {
+      let random = HpkeX25519PrivateKey::new(X25519SecretKey::from_bytes(rand_array::<32>(rng)));
+      (fixed.duplicate_secret(), random)
+    })
     .collect();
   let mut inputs = Vec::with_capacity(samples());
   for _ in 0..samples() {
@@ -2113,10 +2123,11 @@ fn hpke_x25519_setup_receiver_fixed_vs_random_key(runner: &mut CtRunner, rng: &m
   }
 
   for (class, index) in inputs {
+    let (fixed_copy, random) = &pool[index];
     let key = if matches!(class, Class::Left) {
-      fixed.duplicate_secret()
+      fixed_copy.duplicate_secret()
     } else {
-      random_pool[index].duplicate_secret()
+      random.duplicate_secret()
     };
     runner.run_one(class, || {
       let receiver =
@@ -2155,9 +2166,9 @@ fn hpke_xwing_setup_sender_fixed_vs_random_coins(runner: &mut CtRunner, rng: &mu
   }
 }
 
-/// HPKE X-Wing receiver setup of one fixed encapsulation, as
-/// `xwing_decapsulate_fixed_vs_random_key` does: the fixed prepared key, or a
-/// random one for which ML-KEM implicitly rejects, copied into one key slot.
+/// HPKE X-Wing receiver setup of one fixed encapsulation, with the key pairs
+/// and the key slot of `xwing_decapsulate_fixed_vs_random_key`: a fixed-key
+/// copy, or a random key for which ML-KEM implicitly rejects.
 fn hpke_xwing_setup_receiver_fixed_vs_random_key(runner: &mut CtRunner, rng: &mut BenchRng) {
   const POOL: usize = 64;
   let fixed = XWingDecapsulationKey::from_bytes([0xb3; XWing::DECAPSULATION_KEY_SIZE]).prepare();
@@ -2168,8 +2179,11 @@ fn hpke_xwing_setup_receiver_fixed_vs_random_key(runner: &mut CtRunner, rng: &mu
     hpke_fill(&[0xb4; XWing::ENCAPSULATION_RANDOM_SIZE]),
   )
   .expect("a derived key encapsulates");
-  let random_pool: Vec<XWingPreparedDecapsulationKey> = (0..POOL)
-    .map(|_| XWingDecapsulationKey::from_bytes(rand_array::<{ XWing::DECAPSULATION_KEY_SIZE }>(rng)).prepare())
+  let pool: Vec<(XWingPreparedDecapsulationKey, XWingPreparedDecapsulationKey)> = (0..POOL)
+    .map(|_| {
+      let random = XWingDecapsulationKey::from_bytes(rand_array::<{ XWing::DECAPSULATION_KEY_SIZE }>(rng)).prepare();
+      (fixed.duplicate_secret(), random)
+    })
     .collect();
   let mut inputs = Vec::with_capacity(samples());
   for _ in 0..samples() {
@@ -2178,10 +2192,11 @@ fn hpke_xwing_setup_receiver_fixed_vs_random_key(runner: &mut CtRunner, rng: &mu
   }
 
   for (class, index) in inputs {
+    let (fixed_copy, random) = &pool[index];
     let key = if matches!(class, Class::Left) {
-      fixed.duplicate_secret()
+      fixed_copy.duplicate_secret()
     } else {
-      random_pool[index].duplicate_secret()
+      random.duplicate_secret()
     };
     runner.run_one(class, || {
       let receiver =

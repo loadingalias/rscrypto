@@ -2438,7 +2438,7 @@ id = "hpke.x25519_aes128gcm.setup_receiver"
 primitive = "hpke.x25519_aes128gcm"
 variant = "SetupReceiver"
 dudect = ["hpke_x25519_setup_receiver_fixed_vs_random_key"]
-notes = "Receiver setup evidence holds the encapsulation and info fixed. Before each sample, it copies the fixed key or a random key into one key slot, so the classes differ only in key contents."
+notes = "Receiver setup evidence holds the encapsulation and info fixed. One pool holds pairs of a fixed-key copy and a random key. Before each sample, it copies the class key of one pair into one key slot, so the classes differ only in key contents."
 
 [[evidence_unit]]
 id = "hpke.xwing_chacha20poly1305.setup_sender"
@@ -2452,7 +2452,7 @@ id = "hpke.xwing_chacha20poly1305.setup_receiver"
 primitive = "hpke.xwing_chacha20poly1305"
 variant = "SetupReceiver"
 dudect = ["hpke_xwing_setup_receiver_fixed_vs_random_key"]
-notes = "Receiver setup evidence times prepared keys, so key expansion stays outside timing. Before each sample, it copies the fixed key or a random key into one key slot, so the classes differ only in key contents. The random class decapsulates through ML-KEM implicit rejection."
+notes = "Receiver setup evidence times prepared keys, so key expansion stays outside timing. One pool holds pairs of a fixed-key copy and a random key. Before each sample, it copies the class key of one pair into one key slot, so the classes differ only in key contents. The random class decapsulates through ML-KEM implicit rejection."
 
 [[evidence_unit]]
 id = "aead.open_authentication.aes128gcm"
