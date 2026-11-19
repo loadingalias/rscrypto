@@ -2438,7 +2438,7 @@ id = "hpke.x25519_aes128gcm.setup_receiver"
 primitive = "hpke.x25519_aes128gcm"
 variant = "SetupReceiver"
 dudect = ["hpke_x25519_setup_receiver_fixed_vs_random_key"]
-notes = "Receiver setup evidence holds the encapsulation and info fixed and draws recipient keys from equal pools of the fixed key and random keys."
+notes = "Receiver setup evidence holds the encapsulation and info fixed. Before each sample, it copies the fixed key or a random key into one key slot, so the classes differ only in key contents."
 
 [[evidence_unit]]
 id = "hpke.xwing_chacha20poly1305.setup_sender"
@@ -2452,7 +2452,7 @@ id = "hpke.xwing_chacha20poly1305.setup_receiver"
 primitive = "hpke.xwing_chacha20poly1305"
 variant = "SetupReceiver"
 dudect = ["hpke_xwing_setup_receiver_fixed_vs_random_key"]
-notes = "Receiver setup evidence times prepared keys from equal pools, so key expansion stays outside timing. The random class decapsulates through ML-KEM implicit rejection."
+notes = "Receiver setup evidence times prepared keys, so key expansion stays outside timing. Before each sample, it copies the fixed key or a random key into one key slot, so the classes differ only in key contents. The random class decapsulates through ML-KEM implicit rejection."
 
 [[evidence_unit]]
 id = "aead.open_authentication.aes128gcm"
@@ -12707,6 +12707,18 @@ reviewer = "rscrypto exact-artifact condition review"
 reviewed_at = "2026-11-12"
 
 [[asm_waiver]]
+target = "x86_64-unknown-linux-gnu"
+primitive = "aead.quic_lb"
+symbol = "rscrypto::platform::detect::detect_uncached"
+kind = "select_branch"
+slice_sha256 = "b495045dcf05cbee51235894a1a32f56f22e44232b4a963aceeb601cd3eafbaa"
+source = "src/platform/detect/arch/x86.rs close_x86_implications"
+classification = "public"
+rationale = "Implication filter (x86.rs:651). r8 is the complement of the decoded capability word (+0x5a3..+0x5a6). rdi is the 1920-byte read-only IMPLIED table (x86.rs:602), bound by contents (+0x59c). rax runs from 0 (+0x59a) in steps of 0x80 (+0x5b0) and stops at 0x780 (+0x5b4). So 0x60(%rax,%rdi) at +0x5da reads only that table, and je +0x5df keeps the feature when all its implied capabilities are present. The stack stores and entry registers in the slice reach this load only through aliasing that the bounded address excludes. The capability word comes only from CPUID results, XCR0, and the permission byte. The open leaves are the _xgetbv and syscall results and frame bytes. _xgetbv (+0x161) sets ecx to 0, executes xgetbv, receives no pointer, and writes no memory. The ARCH_GET_XCOMP_PERM syscall (+0x181) writes only the 8-byte permission word at rsp+0x38. detect_uncached takes only its result pointer, rdi, which +0xe saves and only the final store at +0x643 uses. No condition reads it. The asm_public_input rule cannot accept this branch: only range analysis of the loop counter can show that the indexed IMPLIED load reads only the table, and the scanner has none."
+reviewer = "rscrypto exact-artifact condition review"
+reviewed_at = "2026-11-18"
+
+[[asm_waiver]]
 target = "x86_64-pc-windows-msvc"
 primitive = "kx.p256_ecdh"
 symbol = "rscrypto::platform::detect::detect_uncached"
@@ -12992,3 +13004,15 @@ classification = "public"
 rationale = "Implication filter (x86.rs:651). r10 is the complement of the decoded capability word (+0x580..+0x583). r9 is the read-only IMPLIED table in .rdata (x86.rs:602), bound by contents (+0x579). r8 runs from 0 (+0x576) in steps of 0x80 (+0x590) and stops at 0x780 (+0x594). So 0x60(%r8,%r9) at +0x5ba reads only that table, and je +0x5bf keeps the feature when all its implied capabilities are present. The capability word comes only from CPUID results and XCR0. The open leaves are the _xgetbv result and frame bytes. No frame address escapes, and _xgetbv (+0x15a) receives no pointer and writes no memory. detect_uncached takes only its result pointer, rcx, which +0x10 saves and only the final store at +0x60e uses. No condition reads it. The asm_public_input rule cannot accept this branch: only range analysis of the loop counter can show that the indexed IMPLIED load reads only the table, and the scanner has none."
 reviewer = "rscrypto exact-artifact condition review"
 reviewed_at = "2026-11-15"
+
+[[asm_waiver]]
+target = "x86_64-pc-windows-msvc"
+primitive = "aead.quic_lb"
+symbol = "rscrypto::platform::detect::detect_uncached"
+kind = "select_branch"
+slice_sha256 = "20e86ab451584a257c95e00e60531ad0bf72a42e536c81dd14e26e091a9a7cd1"
+source = "src/platform/detect/arch/x86.rs close_x86_implications"
+classification = "public"
+rationale = "Implication filter (x86.rs:651). r10 is the complement of the decoded capability word (+0x580..+0x583). r9 is the read-only IMPLIED table in .rdata (x86.rs:602), bound by contents (+0x579). r8 runs from 0 (+0x576) in steps of 0x80 (+0x590) and stops at 0x780 (+0x594). So 0x60(%r8,%r9) at +0x5ba reads only that table, and je +0x5bf keeps the feature when all its implied capabilities are present. The capability word comes only from CPUID results and XCR0. The open leaves are the _xgetbv result and frame bytes. No frame address escapes, and _xgetbv (+0x15a) receives no pointer and writes no memory. detect_uncached takes only its result pointer, rcx, which +0x10 saves and only the final store at +0x60e uses. No condition reads it. The asm_public_input rule cannot accept this branch: only range analysis of the loop counter can show that the indexed IMPLIED load reads only the table, and the scanner has none."
+reviewer = "rscrypto exact-artifact condition review"
+reviewed_at = "2026-11-18"
