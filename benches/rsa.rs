@@ -1690,8 +1690,8 @@ fn rsa_verify_for_scheme<V: VerifyScheme>(
 ) {
   let ring_oracle = || ring_confirms::<V>(fixture);
   let rscrypto_oracle = || rscrypto_confirms::<V>(key, fixture);
-  // `None` above RustCrypto's 4096-bit modulus limit.
-  let rustcrypto_key = RustCryptoRsaPublicKey::from_pkcs1_der(&fixture.pkcs1).ok();
+  let rustcrypto_key =
+    RustCryptoRsaPublicKey::from_pkcs1_der(&fixture.pkcs1).expect("RustCrypto imports every benchmark modulus");
 
   // Verification with a key that the caller already holds: each call verifies
   // the fixture signature over the fixed message. Each library's prepared key
@@ -1705,8 +1705,7 @@ fn rsa_verify_for_scheme<V: VerifyScheme>(
   //   context in the key after the first call. aws-lc-rs builds an
   //   `EVP_PKEY_CTX` on every call.
   // - RustCrypto reuses a `VerifyingKey`, which holds only n and e. It
-  //   converts the signature bytes to an integer on every call. It rejects
-  //   moduli over 4096 bits, so it is left out at 8192 bits.
+  //   converts the signature bytes to an integer on every call.
   // - ring has no prepared-key verifier. Its best API for this task,
   //   `RsaPublicKeyComponents`, skips DER parsing but rebuilds the modulus and
   //   its Montgomery constant on every call.
@@ -1745,22 +1744,20 @@ fn rsa_verify_for_scheme<V: VerifyScheme>(
       ),
     );
   }
-  if let Some(rustcrypto_key) = &rustcrypto_key {
-    let verifying_key = V::rustcrypto_key(rustcrypto_key.clone());
-    group.bench_function(
-      "rustcrypto-rsa",
-      verify_row(
-        fixture,
-        VerifyTask::ReuseKey,
-        (),
-        |_, _, signature| {
-          let signature = V::RustCryptoSignature::try_from(signature)?;
-          verifying_key.verify(black_box(V::MESSAGE), &signature)
-        },
-        &rscrypto_oracle,
-      ),
-    );
-  }
+  let verifying_key = V::rustcrypto_key(rustcrypto_key);
+  group.bench_function(
+    "rustcrypto-rsa",
+    verify_row(
+      fixture,
+      VerifyTask::ReuseKey,
+      (),
+      |_, _, signature| {
+        let signature = V::RustCryptoSignature::try_from(signature)?;
+        verifying_key.verify(black_box(V::MESSAGE), &signature)
+      },
+      &rscrypto_oracle,
+    ),
+  );
   let exponent = exponent_bytes(key.public_exponent().as_u64());
   let ring_key = ring_signature::RsaPublicKeyComponents {
     n: key.modulus(),
@@ -1791,8 +1788,8 @@ fn rsa_verify_for_scheme<V: VerifyScheme>(
   // - ring: a 2048-8192-bit modulus and odd e from 3 to 2^33 - 1.
   // - aws-lc-rs: AWS-LC accepts a modulus of at most 16384 bits and odd e
   //   from 3 to 2^33 - 1; aws-lc-rs then requires 2048-8192 bits.
-  // - RustCrypto: a modulus of at most 4096 bits, and odd e from 3 to
-  //   2^33 - 1 and below n. It is left out at 8192 bits.
+  // - RustCrypto: a modulus of at most 8192 bits, and odd e from 3 to
+  //   2^33 - 1 and below n.
   let mut group = c.benchmark_group(format!("{name}/{}/import-key", V::OPERATION));
   group.bench_function(
     "rscrypto",
@@ -1822,25 +1819,22 @@ fn rsa_verify_for_scheme<V: VerifyScheme>(
       ),
     );
   }
-  if rustcrypto_key.is_some() {
-    group.bench_function(
-      "rustcrypto-rsa",
-      verify_row(
-        fixture,
-        VerifyTask::ImportKey,
-        (),
-        |_, key_der, signature| {
-          let key = RustCryptoRsaPublicKey::from_pkcs1_der(key_der).map_err(|_| "RustCrypto rejected the key")?;
-          let signature =
-            V::RustCryptoSignature::try_from(signature).map_err(|_| "RustCrypto rejected the signature")?;
-          V::rustcrypto_key(key)
-            .verify(black_box(V::MESSAGE), &signature)
-            .map_err(|_| "RustCrypto rejected the signature")
-        },
-        &rscrypto_oracle,
-      ),
-    );
-  }
+  group.bench_function(
+    "rustcrypto-rsa",
+    verify_row(
+      fixture,
+      VerifyTask::ImportKey,
+      (),
+      |_, key_der, signature| {
+        let key = RustCryptoRsaPublicKey::from_pkcs1_der(key_der).map_err(|_| "RustCrypto rejected the key")?;
+        let signature = V::RustCryptoSignature::try_from(signature).map_err(|_| "RustCrypto rejected the signature")?;
+        V::rustcrypto_key(key)
+          .verify(black_box(V::MESSAGE), &signature)
+          .map_err(|_| "RustCrypto rejected the signature")
+      },
+      &rscrypto_oracle,
+    ),
+  );
   group.bench_function(
     "ring",
     verify_row(
@@ -2076,33 +2070,31 @@ fn rsa_components_for_size(
       ),
     );
   }
-  if RustCryptoRsaPublicKey::from_public_key_der(pss_spki).is_ok() {
-    group.bench_function(
-      "rustcrypto-rsa",
-      checked(
-        || {
-          black_box(
-            RustCryptoRsaPublicKey::from_public_key_der(black_box(pss_spki))
-              .expect("valid RSA benchmark fixture must succeed"),
-          )
-        },
-        |key| {
-          let encoded = key
-            .to_pkcs1_der()
-            .expect("RustCrypto must encode the parsed RSA public key");
-          assert_eq!(
-            encoded.as_bytes(),
-            pss_key.to_pkcs1_der(),
-            "RustCrypto parse of the RSA SPKI"
-          );
-          assert!(
-            RustCryptoRsaPublicKey::from_public_key_der(&malformed_spki).is_err(),
-            "RustCrypto must reject a non-minimal RSA exponent encoding"
-          );
-        },
-      ),
-    );
-  }
+  group.bench_function(
+    "rustcrypto-rsa",
+    checked(
+      || {
+        black_box(
+          RustCryptoRsaPublicKey::from_public_key_der(black_box(pss_spki))
+            .expect("valid RSA benchmark fixture must succeed"),
+        )
+      },
+      |key| {
+        let encoded = key
+          .to_pkcs1_der()
+          .expect("RustCrypto must encode the parsed RSA public key");
+        assert_eq!(
+          encoded.as_bytes(),
+          pss_key.to_pkcs1_der(),
+          "RustCrypto parse of the RSA SPKI"
+        );
+        assert!(
+          RustCryptoRsaPublicKey::from_public_key_der(&malformed_spki).is_err(),
+          "RustCrypto must reject a non-minimal RSA exponent encoding"
+        );
+      },
+    ),
+  );
   group.finish();
 
   rsa_verify_for_scheme::<PssSha256>(c, name, &pss_key, &pss_fixture, import_policy);

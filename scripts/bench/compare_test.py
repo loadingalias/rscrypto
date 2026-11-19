@@ -71,42 +71,38 @@ def write_run(root: Path, entries: dict[str, dict[str, float]], host=HOST, state
 
 
 class PairingTests(unittest.TestCase):
-  def test_rsa_spki_comparisons_follow_available_public_parsers(self):
+  def test_rsa_spki_comparisons_need_an_external_parser_on_every_architecture(self):
     catalog = load_catalog()
     records = {("rsa", case): record(10.0) for case in (
       "rsa-4096/parse-spki/rscrypto", "rsa-4096/parse-spki/rustcrypto-rsa", "rsa-8192/parse-spki/rscrypto")}
-    for arch in ("s390x",):
-      with self.subTest(arch=arch):
-        standalone = []
-        rows, problems = compare.points(catalog, arch, records, arch, standalone)
-        self.assertEqual(problems, [])
-        self.assertEqual([row["variant"] for row in rows], ["rsa-4096"])
-        self.assertEqual([row["case"] for row in standalone], ["rsa-8192/parse-spki/rscrypto"])
-        self.assertIn("4096", standalone[0]["reason"])
-    # AWS-LC supplies the 8192-bit parser on these architectures; a missing row still fails.
-    for arch in ("x86_64", "aarch64", "riscv64", "powerpc64"):
+    # RustCrypto `rsa` 0.10 parses 8192-bit SPKI everywhere, so a missing external row fails on
+    # each architecture. Bench 44457214337 measured that row on IBM Z, where the catalog still
+    # declared the 8192-bit point standalone.
+    for arch in ("x86_64", "aarch64", "riscv64", "powerpc64", "s390x"):
       with self.subTest(arch=arch):
         self.assertTrue(compare.points(catalog, arch, records, arch)[1])
-        complete = records | {("rsa", "rsa-8192/parse-spki/aws-lc-rs"): record(20.0)}
+        complete = records | {("rsa", "rsa-8192/parse-spki/rustcrypto-rsa"): record(20.0)}
         rows, problems = compare.points(catalog, arch, complete, arch)
         self.assertEqual(problems, [])
         self.assertEqual({row["variant"] for row in rows}, {"rsa-4096", "rsa-8192"})
-    # A newly available parser must update the catalog, not silently disappear from the report.
-    self.assertTrue(compare.points(catalog, "s390x", complete, "s390x")[1])
 
   def test_standalone_measurement_remains_in_quick_coverage(self):
+    case = "aes-256-gcm/copy-and-encrypt-nonce-counter/rscrypto/64"
     with tempfile.TemporaryDirectory() as directory:
       root = Path(directory)
-      run = write_run(root / "run", {"rsa": {"rsa-8192/parse-spki/rscrypto": 10.0}},
-                      host=HOST | {"machine": "s390x"}, quick=True)
+      run = write_run(root / "run", {"aead": {case: 10.0}}, host=HOST | {"machine": "s390x"}, quick=True)
       output = root / "report.json"
       with contextlib.redirect_stdout(io.StringIO()) as stdout:
         self.assertEqual(compare.main([f"ibmz={run}", "--json", str(output)]), 0)
       report = json.loads(output.read_text())
       self.assertEqual(report["coverage"], [{"platform": "ibmz", "cases": 1, "comparison_points": 0}])
-      self.assertEqual(report["standalone"][0]["case"], "rsa-8192/parse-spki/rscrypto")
+      self.assertEqual(report["standalone"][0]["case"], case)
       self.assertIn("was measured without a comparison", stdout.getvalue())
       self.assertNotIn("points", report)
+    # A standalone point gains a comparison only through the catalog: an external row fails.
+    catalog = load_catalog()
+    records = {("aead", case): record(10.0), ("aead", case.replace("/rscrypto/", "/aws-lc-rs/")): record(9.0)}
+    self.assertTrue(compare.points(catalog, "s390x", records, "s390x")[1])
 
   def test_fastest_external_across_builds_and_ignored_variants(self):
     records = {

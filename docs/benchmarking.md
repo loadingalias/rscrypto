@@ -784,12 +784,10 @@ the default Bench workflow does not provision them and excludes this optional ta
   All four libraries reject non-minimal DER and an even modulus.
   `rscrypto` requires e = 65537 and its policy's size range.
   ring, AWS-LC, and RustCrypto accept odd e from 3 to 2³³−1.
-  RustCrypto stops at 4096 bits; aws-lc-rs checks its 2048–8192-bit range only when it verifies.
+  RustCrypto (`rsa` 0.10) accepts moduli up to 8192 bits; aws-lc-rs checks its 2048–8192-bit range only when it verifies.
 - RSA `parse-spki` parses and validates identical SPKI bytes. aws-lc-rs tries PKCS#1 first and copies the input.
   ring has no SPKI parser.
-  RustCrypto's parser stops at 4096 bits. At 8192 bits, AWS-LC is the only external parser in this suite.
-  The root suite excludes AWS-LC on IBM Z, so that platform retains the rscrypto 8192-bit measurement
-  without a comparison; the catalog requires the external row on x86-64, ARM64, RISC-V and POWER64LE.
+  RustCrypto's parser accepts every size from 2048 to 8192 bits, so each lane, IBM Z included, has an external row.
 - RSA signing and OAEP name their entropy: `fixed` is a caller blinding pair,
   `caller-entropy` is a fill closure or RNG that writes fixed bytes,
   and `fresh-entropy` is new randomness in every call.
