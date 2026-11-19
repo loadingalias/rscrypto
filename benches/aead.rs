@@ -1669,15 +1669,21 @@ fn ascon_aead128_decrypt(c: &mut Criterion) {
 /// A header-protection vector: key, 16-byte sample, and five-byte mask.
 type MaskVector<const N: usize> = ([u8; N], [u8; 16], [u8; 5]);
 
+/// Decodes a hexadecimal test vector.
+fn hex_bytes(text: &str) -> Vec<u8> {
+  let (pairs, rest) = text.as_bytes().as_chunks::<2>();
+  assert!(rest.is_empty(), "hex vector length");
+  pairs
+    .iter()
+    .map(|pair| {
+      u8::from_str_radix(core::str::from_utf8(pair).expect("hex vector is ASCII"), 16).expect("hex digit pair")
+    })
+    .collect()
+}
+
 /// Decodes a fixed-length hexadecimal test vector.
 fn hex<const N: usize>(text: &str) -> [u8; N] {
-  assert_eq!(text.len(), N.strict_mul(2), "hex vector length");
-  let mut out = [0u8; N];
-  for (byte, pair) in out.iter_mut().zip(text.as_bytes().as_chunks::<2>().0) {
-    let pair = core::str::from_utf8(pair).expect("hex vector is ASCII");
-    *byte = u8::from_str_radix(pair, 16).expect("hex vector digit pair");
-  }
-  out
+  hex_bytes(text).try_into().expect("hex vector length")
 }
 
 /// One library's header-protection API for one algorithm.
@@ -2007,6 +2013,72 @@ fn header_protection(c: &mut Criterion) {
     mask_row(&mut mask, "aws-lc-rs", &chacha20, &aws_chacha20);
   }
   mask.finish();
+}
+
+/// QUIC-LB connection-ID encryption and server-ID decryption
+/// (draft-ietf-quic-load-balancers-22), with a cipher built once. One pinned
+/// google/quiche vector checks each form before timing: the single-pass form
+/// (16 octets) and the four-pass form at 12 octets and at the 19-octet maximum.
+/// No other Rust crate implements the cipher, so the rows have no comparator.
+fn quic_lb(c: &mut Criterion) {
+  if !bench_config::selected("quic-lb/") {
+    return;
+  }
+  use rscrypto::aead::expert::quic_lb::{QuicLbCipher, QuicLbKey};
+  const FORMS: [(&str, usize, usize); 3] = [
+    ("single-pass-16", 1, 15),
+    ("four-pass-12", 4, 8),
+    ("four-pass-19", 3, 16),
+  ];
+  const BUFFER: usize = QuicLbCipher::MAX_PLAINTEXT_LEN;
+
+  let vectors = include_str!("../testdata/quic_lb/quiche-vectors.txt");
+  let mut group = c.benchmark_group("quic-lb");
+  for (form, server_id_len, nonce_len) in FORMS {
+    // Each line is `rotation key server_id nonce connection_id`.
+    let fields: Vec<&str> = vectors
+      .lines()
+      .map(|line| line.split(' ').collect::<Vec<_>>())
+      .find(|fields| fields[2].len() == server_id_len.strict_mul(2) && fields[3].len() == nonce_len.strict_mul(2))
+      .expect("a quiche vector for each form");
+    let len = server_id_len.strict_add(nonce_len);
+    let server_id = hex_bytes(fields[2]);
+    let connection_id = hex_bytes(fields[4]);
+    let ciphertext = connection_id[1..].to_vec();
+    let mut plaintext = [0u8; BUFFER];
+    plaintext[..server_id_len].copy_from_slice(&server_id);
+    plaintext[server_id_len..len].copy_from_slice(&hex_bytes(fields[3]));
+    let mut sealed = [0u8; BUFFER];
+    sealed[..len].copy_from_slice(&ciphertext);
+
+    let encrypt = QuicLbCipher::new(&QuicLbKey::from_bytes(hex(fields[1])), server_id_len, nonce_len)
+      .expect("vector lengths are valid");
+    group.bench_function(
+      BenchmarkId::new("encrypt/rscrypto", form),
+      checked(
+        move || {
+          let mut block = black_box(plaintext);
+          encrypt.encrypt(&mut block);
+          block
+        },
+        move |block| assert_eq!(block[..len], ciphertext[..]),
+      ),
+    );
+    let decrypt = QuicLbCipher::new(&QuicLbKey::from_bytes(hex(fields[1])), server_id_len, nonce_len)
+      .expect("vector lengths are valid");
+    group.bench_function(
+      BenchmarkId::new("decrypt/rscrypto", form),
+      checked(
+        move || {
+          let mut block = black_box(sealed);
+          decrypt.decrypt_server_id(&mut block);
+          block
+        },
+        move |block| assert_eq!(block[..server_id_len], server_id[..]),
+      ),
+    );
+  }
+  group.finish();
 }
 
 // AES-SIV-CMAC-256 (RFC 5297 nonce-based profile)
@@ -2451,6 +2523,7 @@ fn main() {
     aegis256_construct_and_encrypt,
     ascon_aead128_construct_and_encrypt,
     header_protection,
+    quic_lb,
     aes_siv_cmac256,
   ]);
 }

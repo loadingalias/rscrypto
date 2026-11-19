@@ -631,6 +631,13 @@ An added comparator is a candidate for measurement, not a claim that it wins on 
   Composite ML-DSA compares `id-MLDSA65-Ed25519-SHA512` with `darkbio-crypto` and `id-MLDSA65-ECDSA-P256-SHA512`
   with `kryptering`; no other library implements them.
   Each of these rows checks its output against another implementation before timing.
+- `ChaCha20Rng` compares with the `chacha20` crate's `ChaCha20Rng`. Both run 20-round ChaCha from the zero seed.
+  rscrypto's generator also rekeys from its own output and clears each byte that it returns, so it does more work per byte.
+  The streams differ after the first block, so each row first checks that the timed generator's first 64 bytes
+  are RFC 8439 Appendix A.1 test vector 1.
+- QUIC-LB rows encrypt a connection ID and decrypt its server ID with a cipher built once, in the single-pass form
+  and the four-pass form at 12 and 19 octets. No other Rust crate implements the cipher, so the rows have no comparator.
+  A pinned google/quiche vector checks each form before timing.
 - AWS-LC's POWER64LE GNU dependency was restored for ML-DSA in `ecde7e65`.
   The other benchmarks retained older gates and silently omitted their AWS-LC rows.
   All AWS-LC benchmark gates now share [one target definition](../benches/common/aws_lc.rs),

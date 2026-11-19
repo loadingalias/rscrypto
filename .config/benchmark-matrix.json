@@ -285,6 +285,13 @@
         "ascon-aead"
       ]
     },
+    "rng": {
+      "binary": "rng",
+      "kind": "criterion",
+      "family": "aead",
+      "required": true,
+      "features": ["std", "chacha20-rng", "rand_core"]
+    },
     "structural": {
       "binary": "structural",
       "kind": "gungraun",
@@ -483,6 +490,7 @@
     "aegis-256": { "bench": "aead", "filter": "aegis-256" },
     "ascon-aead128": { "bench": "aead", "filter": "ascon-aead128" },
     "header-protection": { "bench": "aead", "filter": "header-protection" },
+    "quic-lb": { "bench": "aead", "filter": "quic-lb" },
     "chacha20-poly1305-diag": { "bench": "aead_diag", "filter": "chacha20-poly1305/copy-and-encrypt" }
   },
   "groups": {
@@ -1384,6 +1392,20 @@
       "cases": "^header-protection/construct/(?P<implementation>[^/]+)/(?P<input>aes128|aes256|chacha20)$",
       "headline": false,
       "task": "Build a header-protection context from key bytes, then destroy it."
+    },
+    "quic-lb": {
+      "family": "QUIC-LB",
+      "bench": "aead",
+      "cases": "^quic-lb/(?P<variant>encrypt|decrypt)/(?P<implementation>[^/]+)/(?P<input>[^/]+)$",
+      "headline": false,
+      "task": "Encrypt a QUIC-LB connection ID, or decrypt its server ID, with a cipher built once."
+    },
+    "chacha20-rng": {
+      "family": "ChaCha20Rng",
+      "bench": "rng",
+      "cases": "^chacha20-rng/(?P<variant>fill|next)/(?P<implementation>[^/]+)/(?P<input>[^/]+)$",
+      "headline": true,
+      "task": "Fill one buffer, or draw one word, from a ChaCha20 generator seeded once."
     },
     "blake3-hash": {
       "family": "BLAKE3",
