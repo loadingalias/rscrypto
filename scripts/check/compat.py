@@ -35,7 +35,7 @@ def portable_targets():
 
 
 def install():
-    channels = {toolchain.channel(): set(targets())}
+    channels = {toolchain.channel(): {*targets(), *portable_targets()}}
     channels.setdefault(toolchain.msrv_channel(), set()).update(['thumbv6m-none-eabi', *portable_targets()])
     channels.setdefault(EMBED_CHANNEL, set()).add(toolchain.host())
     for channel, selected in channels.items():
@@ -93,6 +93,11 @@ def cases():
             yield f'{target}-portable-{boundary}', [check(msrv, target, selected)], {}
         selected = boundary_features(graph, 'alloc') if '-none' in target else sorted(graph)
         yield f'{target}-portable-build', [check(msrv, target, selected, 'build')], {}
+        # A nightly gate in src/lib.rs that misses a feature still compiles in every bundle that
+        # also enables a feature it lists, so check each feature alone on the nightly channel.
+        # `chacha20-rng` alone failed on POWER, IBM Z, and RISC-V that way (Bench 44512697840).
+        for feature in sorted(selected):
+            yield f'{target}-{feature}', [check(canonical, target, [feature])], {}
 
     for target in targets():
         features = ['full', 'rand_core', 'serde', 'serde-secrets', 'websocket-sha1']

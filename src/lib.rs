@@ -154,6 +154,7 @@ assert!(
       feature = "xxh3",
       feature = "chacha20poly1305",
       feature = "xchacha20poly1305",
+      feature = "chacha20-rng",
       feature = "argon2",
       all(
         feature = "ml-dsa",
@@ -183,6 +184,7 @@ assert!(
       feature = "xxh3",
       feature = "chacha20poly1305",
       feature = "xchacha20poly1305",
+      feature = "chacha20-rng",
       feature = "ml-kem",
       all(feature = "ml-dsa", not(feature = "portable-only"), not(miri)),
       feature = "argon2"
@@ -206,6 +208,7 @@ assert!(
       feature = "xxh3",
       feature = "chacha20poly1305",
       feature = "xchacha20poly1305",
+      feature = "chacha20-rng",
       all(feature = "ml-kem", not(feature = "portable-only"), not(miri)),
       all(feature = "ml-dsa", not(feature = "portable-only"), not(miri)),
       feature = "argon2"
@@ -243,6 +246,7 @@ assert!(
       feature = "aes-siv",
       feature = "chacha20poly1305",
       feature = "xchacha20poly1305",
+      feature = "chacha20-rng",
       feature = "aegis256",
       feature = "argon2"
     )
@@ -288,6 +292,7 @@ assert!(
       feature = "blake3",
       feature = "chacha20poly1305",
       feature = "xchacha20poly1305",
+      feature = "chacha20-rng",
       feature = "argon2"
     )
   ),
