@@ -1393,13 +1393,6 @@
       "headline": false,
       "task": "Build a header-protection context from key bytes, then destroy it."
     },
-    "quic-lb": {
-      "family": "QUIC-LB",
-      "bench": "aead",
-      "cases": "^quic-lb/(?P<variant>encrypt|decrypt)/(?P<implementation>[^/]+)/(?P<input>[^/]+)$",
-      "headline": false,
-      "task": "Encrypt a QUIC-LB connection ID, or decrypt its server ID, with a cipher built once."
-    },
     "chacha20-rng": {
       "family": "ChaCha20Rng",
       "bench": "rng",
