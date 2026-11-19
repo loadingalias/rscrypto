@@ -42,7 +42,8 @@ jobs:
       github.event.workflow_run.conclusion != 'cancelled')
     name: riscv64-qemu (${{ matrix.name }})
     runs-on: ubuntu-24.04
-    timeout-minutes: 300
+    # The longest passing job (vector-1024) took 58 minutes.
+    timeout-minutes: 90
     permissions:
       contents: read
       actions: read # Download the prepared suite of the CI run.
