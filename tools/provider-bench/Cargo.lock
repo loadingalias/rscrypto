@@ -634,7 +634,7 @@ dependencies = [
 
 [[package]]
 name = "rscrypto-rustls"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "getrandom 0.4.3",
  "rscrypto",
@@ -652,8 +652,9 @@ checksum = "6b1e7f9a428571be2dc5bc0505c13fb6bf936822b894ec87abf8a08a4e51742d"
 
 [[package]]
 name = "rustls"
-version = "0.24.0-dev.2"
-source = "git+https://github.com/rustls/rustls?rev=0419f479ff5c99a471428ee197e899ccd1629aa8#0419f479ff5c99a471428ee197e899ccd1629aa8"
+version = "0.24.0-dev.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e7378b5d914866a2f4314e852d1d54293aea3f5781f1191841821c63f7ef6af7"
 dependencies = [
  "rustls-pki-types",
  "rustls-webpki",
@@ -663,8 +664,9 @@ dependencies = [
 
 [[package]]
 name = "rustls-aws-lc-rs"
-version = "0.24.0-dev.2"
-source = "git+https://github.com/rustls/rustls?rev=0419f479ff5c99a471428ee197e899ccd1629aa8#0419f479ff5c99a471428ee197e899ccd1629aa8"
+version = "0.24.0-dev.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "147adff5d8dbf7ff0a6de8a72e6a7d9a558694b71a2a8c5d8ad63e08ba70dfc1"
 dependencies = [
  "aws-lc-rs",
  "rustls",
@@ -684,8 +686,9 @@ dependencies = [
 
 [[package]]
 name = "rustls-ring"
-version = "0.24.0-dev.2"
-source = "git+https://github.com/rustls/rustls?rev=0419f479ff5c99a471428ee197e899ccd1629aa8#0419f479ff5c99a471428ee197e899ccd1629aa8"
+version = "0.24.0-dev.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2bb59cc88a65a3dae4a1b4cbad89a5a83e5bf8f78b0a6c624c51b7cdcaa501e1"
 dependencies = [
  "ring",
  "rustls",

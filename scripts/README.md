@@ -52,8 +52,8 @@ The shared lockfile is not the gate: it includes rscrypto's dev-only crypto orac
 Every `check/provider.py` mode, so `just check` as well, also requires each
 `tools/*/Cargo.toml` to pin each `rustls` or `rustls-*` crate that it names with the same version and source
 keys as `rscrypto-rustls/Cargo.toml`; features may differ. A tool may not name a rustls crate that the provider
-does not pin. Each tool has its own lockfile, so a pin change, such as the swap from the Git pins to a rustls
-release, makes the same edit in the provider and in each tool manifest, then refreshes each lockfile.
+does not pin. Each tool has its own lockfile, so a pin change, such as the swap from rustls `0.24.0-dev.3` to
+`0.24.0`, makes the same edit in the provider and in each tool manifest, then refreshes each lockfile.
 
 Dependency policy checks duplicate versions without dev edges, matching the
 existing exclusion of dev-only duplicates. This keeps oracle-only features on
@@ -147,14 +147,14 @@ It does not download upstream archives.
   records the command, seed, hashes, and unsupported 2049-bit import.
 - `just test-provider-interop` builds the bounded loopback endpoint and runs the
   full suite/group/credential matrix in both roles against OpenSSL 4.0.3 and
-  Go 1.27.3. Each row requires a full and resumed mutually authenticated
+  Go 1.27.4. Each row requires a full and resumed mutually authenticated
   connection. Go also supplies an independent exporter check. This POSIX process
   harness retains commands, source, versions, stdout/stderr, and results beneath
   `benchmark_results/`; `--quick` selects one diagnostic profile and is not full
   qualification. `--protocol tls12` runs only the opt-in TLS 1.2 suites, with the
   classical credentials and groups and the extended master secret required;
   `--protocol tls13` runs only the TLS 1.3 matrix. `--group NAME` (repeatable) restricts the TLS 1.3 groups,
-  including the provider's opt-in SecP256r1MLKEM768, SecP384r1MLKEM1024, MLKEM768, and MLKEM1024; Go 1.27.3 has
+  including the provider's opt-in SecP256r1MLKEM768, SecP384r1MLKEM1024, MLKEM768, and MLKEM1024; Go 1.27.4 has
   no MLKEM768, so those rows run against OpenSSL only. The ephemeral session files and exporter values protect only
   public test fixtures. The runner enforces timeouts and reaps peer processes.
 - `just test-provider-bogo` prepares pinned upstream rustls and runner checkouts,
@@ -1057,18 +1057,16 @@ with the operations each RunsOn image runs.
 ### Workflows
 
 **`ci.yml`** also runs `--ci-package` provisioning and `scripts/check/package.py` on an independent runner.
-It runs the examples, then packages `rscrypto` and the unpublished `rscrypto-rustls` in one `cargo package`
+It runs the examples, then packages `rscrypto` and `rscrypto-rustls` in one `cargo package`
 call, so Cargo verifies the provider archive against the packaged `rscrypto`. It runs external `std`, `core`,
 and `alloc` consumers against the unpacked `rscrypto` on the canonical and MSRV toolchains.
 `core` and `alloc` also compile on the existing Thumb sentinel.
 Each file of the provider archive must equal its `rscrypto-rustls/` source, apart from the files that Cargo
 writes, and the provider's library tests build and run from the unpacked archive on the canonical toolchain.
-Packaging keeps only a dependency's version. While the provider pins a crate by Git revision, the lane
-patches that crate back to the pinned revision with `--config patch.crates-io`, derived from
-`rscrypto-rustls/Cargo.toml`. So today the lane proves that the provider archive is complete and works with
-the packaged `rscrypto` and the pinned rustls revision, not with a crates.io rustls. When the pins become
-registry versions, no patch remains, and the same run verifies the archive against the crates.io releases.
-`publish = false` does not stop `cargo package`. No package is published.
+Packaging keeps only a dependency's version. The provider pins only registry versions, so the run verifies
+the archive against the crates.io releases. If the provider pins a crate by Git revision, the lane patches that
+crate back to the pinned revision with `--config patch.crates-io`, derived from `rscrypto-rustls/Cargo.toml`.
+No package is published.
 
 **`fuzz.yml`** uses `--ci-fuzz` for ASan corpus replay and bounded live fuzzing.
 
@@ -1297,6 +1295,9 @@ To release:
 
 One-time setup: a GitHub environment `release` restricted to `main`, and a crates.io Trusted Publisher for
 `loadingalias/rscrypto`, workflow `release.yml`, environment `release`.
+Trusted Publishing cannot create a crate. So the owner releases the first version of a new crate with a local
+`cargo rail release` and a personal crates.io token, then adds the crate's Trusted Publisher and adds the crate to the
+`crates` input of `release.yml`.
 
 `scripts/check/macos.sh` owns `just check-macos`, which replaces hosted macOS checks and tests with local Apple Silicon validation.
 Run `just qualify-macos` before a push or a release when the maintainer asks for it. A release needs its

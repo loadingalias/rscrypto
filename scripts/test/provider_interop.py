@@ -163,7 +163,7 @@ def main():
     executables = {'openssl': str(openssl_peer.binary()) if 'openssl' in peers else 'openssl', 'go': 'go'}
     for peer in peers:
         version = subprocess.check_output([executables[peer], 'version'], text=True).strip()
-        expected = 'OpenSSL 4.0.3 ' if peer == 'openssl' else 'go version go1.27.3 '
+        expected = 'OpenSSL 4.0.3 ' if peer == 'openssl' else 'go version go1.27.4 '
         if not version.startswith(expected):
             raise RuntimeError(f'{peer}: expected {expected}, found {version}')
         versions[peer] = version

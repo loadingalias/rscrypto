@@ -910,7 +910,7 @@ dependencies = [
 
 [[package]]
 name = "rscrypto-rustls"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "getrandom",
  "rscrypto",
@@ -931,8 +931,9 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.24.0-dev.2"
-source = "git+https://github.com/rustls/rustls?rev=0419f479ff5c99a471428ee197e899ccd1629aa8#0419f479ff5c99a471428ee197e899ccd1629aa8"
+version = "0.24.0-dev.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e7378b5d914866a2f4314e852d1d54293aea3f5781f1191841821c63f7ef6af7"
 dependencies = [
  "rustls-pki-types",
  "rustls-webpki",

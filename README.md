@@ -109,9 +109,9 @@ The `rscrypto-rustls` companion connects these primitives to rustls:
 The provider supports mutual authentication, session resumption, stateless tickets, and caller-supplied entropy.
 rustls owns the TLS protocol and rustls-webpki validates certificate paths. The QUIC transport belongs to the application.
 
-The companion requires `std` and remains unpublished.
-Its [manifest](rscrypto-rustls/Cargo.toml) pins rustls to an upstream development revision;
-consumers must use the same Git source and revision.
+The companion requires `std`.
+Its [manifest](rscrypto-rustls/Cargo.toml) pins rustls to the crates.io development release `=0.24.0-dev.3`.
+A later companion release moves the pin to rustls 0.24.0. Consumers must depend on the same rustls version.
 See the [provider guide](rscrypto-rustls/README.md) for configuration, feature requirements, and limits.
 
 ## Platforms and dispatch

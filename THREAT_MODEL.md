@@ -146,7 +146,7 @@ in `src/**/*_assembly_provenance.tsv` manifests, which `just check` verifies aga
 - The quality of entropy that the operating system or a caller-supplied source returns successfully.
 - Downstream protocol design, certificate path validation, key custody, transport security,
   and access control.
-- The unpublished `rscrypto-rustls` companion crate. Its README states its boundary.
+- The `rscrypto-rustls` companion crate. Its README states its boundary.
 
 ## Assurance
 

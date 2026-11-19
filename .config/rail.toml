@@ -41,8 +41,8 @@ targets = "workspace"
 [release]
 # `release.yml` runs `cargo rail release` with the defaults: publish to crates.io, create the
 # GitHub Release, and require every check on the source commit to pass.
-# Only rscrypto is released; rscrypto-rustls is unpublished and needs no change files.
-crates = ["rscrypto"]
+# rscrypto-rustls depends on rscrypto, so Cargo-Rail uploads rscrypto first.
+crates = ["rscrypto", "rscrypto-rustls"]
 # Releases must have conclusive compatibility evidence.
 semver_check = "deny"
 # Keep the existing `v<version>` tag line, so planning finds the previous release.

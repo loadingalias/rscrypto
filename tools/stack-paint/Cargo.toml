@@ -20,7 +20,7 @@ strip = false
 
 [dependencies]
 rscrypto-rustls = { path = "../../rscrypto-rustls", features = ["ml-dsa"] }
-rustls = { version = "=0.24.0-dev.2", git = "https://github.com/rustls/rustls", rev = "0419f479ff5c99a471428ee197e899ccd1629aa8", default-features = false, features = ["webpki"] }
+rustls = { version = "=0.24.0-dev.3", default-features = false, features = ["std", "webpki"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2.191"

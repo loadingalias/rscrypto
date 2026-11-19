@@ -99,7 +99,7 @@ release-surface:
 
 # Preview the next release and run every release check without any effect; exit 1 means checks are pending.
 release-check bump="auto":
-    @status=0; cargo rail release rscrypto --bump "$1" --dry-run || status=$?; [ "$status" -le 1 ] || exit "$status"
+    @status=0; cargo rail release rscrypto rscrypto-rustls --bump "$1" --dry-run || status=$?; [ "$status" -le 1 ] || exit "$status"
 
 # Surface is paused: restore `release-surface` as the first dependency when its target preflight passes.
 # release bump="auto": release-surface (release-check bump)

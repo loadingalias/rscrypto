@@ -1,5 +1,5 @@
 name: Release
-run-name: Release rscrypto (${{ inputs.bump }}${{ inputs.dry-run && ', dry run' || '' }})
+run-name: Release (${{ inputs.bump }}${{ inputs.dry-run && ', dry run' || '' }})
 
 on:
   workflow_dispatch:
@@ -73,7 +73,7 @@ jobs:
       architectures: all
       require_riscv: true
 
-  # cargo-rail writes the release commit, tags v<version>, pushes both atomically,
+  # cargo-rail writes the release commit, tags each crate that it releases, pushes them atomically,
   # publishes to crates.io, and creates the GitHub Release. Its checks gate requires
   # every check on the source commit to pass; this run's qualification jobs gate it here.
   release:
@@ -106,7 +106,7 @@ jobs:
         id: release
         uses: "loadingalias/cargo-rail-action/release@fd41439dfa862939e6928cb98d7e76de580f673c" # v12.0.0
         with:
-          crates: rscrypto
+          crates: rscrypto # The owner releases rscrypto-rustls 0.1.0 with a local `cargo rail release`; then restore `rscrypto rscrypto-rustls`.
           bump: ${{ inputs.bump }}
           dry-run: ${{ inputs.dry-run }}
         env:

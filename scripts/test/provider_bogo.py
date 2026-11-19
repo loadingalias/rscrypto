@@ -132,8 +132,8 @@ def main():
         **pin, 'boringssl': BORINGSSL, 'test': args.test, 'work': str(work)}
     for tool, arguments in (('go', ['version']), ('rustc', ['-Vv'])):
         versions[tool] = subprocess.check_output([tool, *arguments], cwd=ROOT, text=True).strip()
-    if not versions['go'].startswith('go version go1.27.3 '):
-        raise RuntimeError('this pinned campaign requires Go 1.27.3')
+    if not versions['go'].startswith('go version go1.27.4 '):
+        raise RuntimeError('this pinned campaign requires Go 1.27.4')
     (output / 'provenance.json').write_text(json.dumps(versions, indent=2) + '\n')
     (output / 'source.patch').write_bytes(subprocess.check_output(['git', 'diff', '--binary', 'HEAD'], cwd=ROOT))
     shutil.copytree(ROOT / 'rscrypto-rustls', output / 'source/rscrypto-rustls')

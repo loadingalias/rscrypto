@@ -1,14 +1,15 @@
 # rscrypto-rustls
 
-This unpublished crate supplies rscrypto-backed TLS 1.3 and QUIC cryptographic
+This crate supplies rscrypto-backed TLS 1.3 and QUIC cryptographic
 adapters for rustls 0.24 development, including hybrid key exchange, classical
 authentication, opt-in ML-DSA authentication, and opt-in TLS 1.2 suites. The `quic` module supplies QUIC v1 endpoint
 cryptography for any transport; this crate contains no QUIC transport.
 
-The [manifest](Cargo.toml) pins rustls to an upstream `main` revision.
-This is a development revision, not a released rustls 0.24 version.
-Consumers must use the same Git sources and revisions so their configuration
-types match the provider's types.
+The [manifest](Cargo.toml) pins rustls to the crates.io development release
+`=0.24.0-dev.3`. This is not the stable rustls 0.24.0. A later release of this
+crate moves the pin to rustls 0.24.0.
+Consumers must depend on the same rustls version so their configuration types
+match the provider's types.
 
 The crate requires `std` and the same minimum Rust version as rscrypto.
 Each algorithm feature forwards to the corresponding rscrypto leaf feature.
@@ -95,7 +96,7 @@ In-process tests agree with the pinned aws-lc-rs groups in both roles, with
 rustls's hybrid composer over aws-lc-rs and *ring* components (the only
 SecP384r1MLKEM1024 peers in the pinned rustls tree), and through full TLS 1.3
 handshakes; `just test-provider-interop --group NAME` adds OpenSSL 4.0.3 for all
-four and Go 1.27.3 for every group except MLKEM768.
+four and Go 1.27.4 for every group except MLKEM768.
 
 Malformed public shares and entropy failures never return a successful exchange.
 No new timing qualification is claimed.
@@ -363,6 +364,5 @@ failing source fails the call, without OS fallback, and leaves caller data
 unchanged. Rustls's QUIC API supplies the handshake and the packet and header
 protection keys through this provider's `quic` algorithms.
 
-The crate stays unpublished while it depends on an unreleased rustls revision.
-rscrypto keeps its `v<version>` tags. Once this crate can be published, its tags
-will be `rscrypto-rustls-v<version>`.
+rscrypto keeps its `v<version>` tags. This crate's tags are
+`rscrypto-rustls-v<version>`.
