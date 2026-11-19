@@ -6,6 +6,70 @@ The dated campaign records come first.
 The 2026-08-18 Linux snapshot near the end is historical:
 its aggregate ratios are withdrawn as performance claims (see [Corrections](#corrections)).
 
+## 2026-11-19: v0.13 release record, every primitive on every lane
+
+One run of the `all` selector on each lane, at the `.config/criterion.json` settings (20 samples,
+100 ms warm-up, 400 ms measurement), toolchain nightly-2026-10-24, default target CPU, scored with
+`just bench-compare` (tie band 5%). Each row checks its output before timing. Ratios are the
+fastest external row's median time over rscrypto's, so above 1 is faster. This is a record, not a
+qualified survey: no host had load or thermal checks before collection. Loss counts do not gate
+v0.13; the per-point scores are the starting data for the v0.14 performance work.
+
+- CI lanes: Bench 44457214337 at `0ede6b42`, scored by re-score 44515348516 with the catalog of
+  `d99b4423`. From `0ede6b42` to the release source, the measured rscrypto code changed only in
+  tests, rustdoc, and nightly-feature gates.
+- `ChaCha20Rng` and QUIC-LB on the CI lanes: Bench 44519763386 (attempt 2) at `f588066e`, scored
+  by re-score 44538077493.
+- Apple M1 Pro: the owner's local `just bench all` at `13d4cad2`, 114 run directories from
+  `20261119T180051Z-t2i2qlv1` to `20261119T192314Z-yh0c_rlr`. Its raw data stays on that Mac.
+
+All comparison points and the headline subset:
+
+| Lane | Points | Faster | Tie | Slower | Headline | Faster | Tie | Slower | Headline median | Headline geomean |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Intel Linux | 1777 | 950 | 501 | 326 | 1025 | 662 | 253 | 110 | 1.10x | 1.37x |
+| AMD Linux | 1777 | 958 | 558 | 261 | 1025 | 664 | 300 | 61 | 1.11x | 1.38x |
+| Intel Windows | 1777 | 1005 | 408 | 364 | 1025 | 698 | 197 | 130 | 1.17x | 1.42x |
+| AMD Windows | 1777 | 1055 | 422 | 300 | 1025 | 732 | 196 | 97 | 1.14x | 1.42x |
+| Graviton4 | 1743 | 986 | 478 | 279 | 1025 | 634 | 306 | 85 | 1.10x | 1.34x |
+| POWER10 | 1743 | 950 | 532 | 261 | 1025 | 526 | 392 | 107 | 1.05x | 1.48x |
+| IBM Z | 1738 | 1230 | 265 | 243 | 1022 | 767 | 171 | 84 | 2.10x | 2.71x |
+| RISC-V | 1743 | 808 | 510 | 425 | 1025 | 571 | 284 | 170 | 1.07x | 1.14x |
+| Apple M1 Pro | 1743 | 731 | 664 | 348 | 1025 | 486 | 411 | 128 | 1.04x | 1.28x |
+
+`ChaCha20Rng` against the `chacha20` crate's `ChaCha20Rng`, from the zero seed. rscrypto's
+generator also rekeys from its own output and clears each byte that it returns, so it does more
+work per draw; the word rows show that cost. The RISC-V CI host has no vector extension, so its
+fills run the portable kernel.
+
+| Lane | fill 16 B | fill 32 B | fill 64 B | fill 1 KiB | fill 16 KiB | `next_u32` | `next_u64` |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Intel Linux | 1.67x | 1.60x | 2.20x | 2.52x | 2.53x | 0.43x | 0.75x |
+| AMD Linux | 1.85x | 1.79x | 2.02x | 2.15x | 2.18x | 0.54x | 0.94x |
+| Intel Windows | 1.40x | 1.57x | 1.65x | 2.07x | 2.06x | 0.50x | 0.59x |
+| AMD Windows | 1.78x | 1.69x | 1.92x | 2.12x | 2.11x | 0.39x | 0.81x |
+| Graviton4 | 1.28x | 1.35x | 1.47x | 1.46x | 1.46x | 0.64x | 1.08x |
+| POWER10 | 1.27x | 1.40x | 1.68x | 2.03x | 2.07x | 0.57x | 0.82x |
+| IBM Z | 1.82x | 2.05x | 2.13x | 2.20x | 2.26x | 1.17x | 1.64x |
+| RISC-V | 0.80x | 0.75x | 0.73x | 0.72x | 0.72x | 0.48x | 0.55x |
+| Apple M1 Pro | 1.36x | 1.34x | 1.38x | 1.45x | 1.46x | 0.58x | 0.97x |
+
+QUIC-LB connection-ID encryption and server-ID decryption with a cipher built once, median time per
+operation. No other Rust crate implements the cipher, so these rows have no comparison. The RISC-V
+CI host has no AES extension, so its rows run the portable AES.
+
+| Lane | encrypt, 16 octets | decrypt, 16 octets | encrypt, 12 octets | decrypt, 12 octets | encrypt, 19 octets | decrypt, 19 octets |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Intel Linux | 6.2 ns | 8.5 ns | 64.0 ns | 55.8 ns | 64.0 ns | 56.3 ns |
+| AMD Linux | 4.5 ns | 6.3 ns | 64.5 ns | 54.7 ns | 64.5 ns | 54.4 ns |
+| Intel Windows | 6.4 ns | 8.8 ns | 63.8 ns | 55.9 ns | 63.8 ns | 55.9 ns |
+| AMD Windows | 4.8 ns | 6.3 ns | 65.4 ns | 55.1 ns | 65.4 ns | 55.4 ns |
+| Graviton4 | 14.0 ns | 16.4 ns | 55.3 ns | 49.2 ns | 55.4 ns | 49.6 ns |
+| POWER10 | 27.0 ns | 34.8 ns | 253.8 ns | 229.3 ns | 254.1 ns | 229.7 ns |
+| IBM Z | 40.1 ns | 52.1 ns | 548.5 ns | 500.2 ns | 568.2 ns | 499.7 ns |
+| RISC-V | 1.46 µs | 1.94 µs | 6.12 µs | 4.74 µs | 6.13 µs | 4.80 µs |
+| Apple M1 Pro | 14.7 ns | 15.1 ns | 64.7 ns | 53.3 ns | 64.8 ns | 54.1 ns |
+
 ## 2026-11-15: HPKE Base mode and X-Wing (HPKE, X-WING)
 
 Bench 43700946636 on all eight lanes at `8c624f6e`, toolchain nightly-2026-10-24, default target CPU,
