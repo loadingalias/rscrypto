@@ -29,7 +29,7 @@ pub(super) fn load(
         let form = if compact {
           Form::Compact(Box::new(key))
         } else {
-          Form::Prepared(key.prepare_in(Global).ok()?)
+          Form::Prepared(Box::new(key.prepare_in(Global).ok()?))
         };
         return Some(Key {
           secret: Arc::new(Secret::$variant(form)),
@@ -47,11 +47,12 @@ pub(super) fn load(
 }
 
 /// A loaded key: the compact key, or its prepared form, which owns its
-/// ML-DSA storage and a copy of the traditional key.
+/// ML-DSA storage and a copy of the traditional key. Both forms are boxed,
+/// so the larger prepared Ed25519 form does not set the size of the ECDSA form.
 #[derive(Debug)]
 enum Form<C, P> {
   Compact(Box<C>),
-  Prepared(P),
+  Prepared(Box<P>),
 }
 
 #[derive(Debug)]

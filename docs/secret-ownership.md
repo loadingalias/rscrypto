@@ -230,8 +230,8 @@ signature leaves a retained prepared key unchanged.
 The composite ML-DSA loader imports a composite key by value, then by default
 prepares it once with `prepare_in` and drops the imported key, which clears its
 owners. The prepared composite key owns its `MlDsa65PreparedSecretKeyStorage`
-box and an explicit `duplicate_secret` copy of the Ed25519 or P-256 key; signers
-share it through `Arc` and return public signatures. With `sign::Provider::compact`,
+box and an explicit `duplicate_secret` copy of the Ed25519 or P-256 key. The loader
+boxes it; signers share it through `Arc` and return public signatures. With `sign::Provider::compact`,
 the loader boxes the imported key instead, and each signature prepares a
 temporary prepared key with `prepare_in`. Hedged signing draws its randomness
 into a zeroizing owner before any secret computation.
