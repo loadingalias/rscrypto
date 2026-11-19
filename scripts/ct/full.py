@@ -192,8 +192,15 @@ def primitives_by_id(ct: dict[str, Any]) -> dict[str, dict[str, Any]]:
   return {primitive.get("id", ""): primitive for primitive in ct.get("primitive", []) if primitive.get("id")}
 
 
+def physically_timed(ct: dict[str, Any], primitive_id: str, target: str | None) -> bool:
+  """Whether `ct.toml` requires native timing of `primitive_id` on `target`: the target and the primitive allow it."""
+  row = target_record(ct, target) if target is not None else None
+  timed_target = row is None or row.get("physical_timing") != "unsupported"
+  return timed_target and primitive_supports_physical_timing(primitives_by_id(ct).get(primitive_id, {}), target)
+
+
 def dudect_case_supported_on_target(ct: dict[str, Any], case: dict[str, Any], target: str | None) -> bool:
-  return primitive_supports_physical_timing(primitives_by_id(ct).get(str(case.get("primitive", "")), {}), target)
+  return physically_timed(ct, str(case.get("primitive", "")), target)
 
 
 def filter_dudect_cases_by_target(
@@ -210,7 +217,7 @@ def primitive_ids_requiring_dudect(ct: dict[str, Any], target: str | None = None
     if primitive.get("claim") != "ct-intended":
       continue
     primitive_id = primitive.get("id", "")
-    if not primitive_id or not primitive_supports_physical_timing(primitives_by_id(ct).get(primitive_id, {}), target):
+    if not primitive_id or not physically_timed(ct, primitive_id, target):
       continue
     required = set()
     for profile_name in primitive.get("required", []):
@@ -770,7 +777,7 @@ def build_primitive_evidence(
       continue
 
     claim = primitive.get("claim", "not-claimed")
-    physical_supported = primitive_supports_physical_timing(primitives_by_id(ct).get(primitive_id, {}), target)
+    physical_supported = physically_timed(ct, primitive_id, target)
     manifest_cases = primitive_manifest_dudect_cases(ct, primitive_id, target)
     required_cases = [case for case in manifest_cases if not is_diagnostic_dudect_case(case)]
     executed_cases = executed_dudect_by_primitive.get(primitive_id, [])
@@ -1557,7 +1564,10 @@ def main() -> int:
 
   dudect_run = None
   dudect_cases = []
-  if all(step["status"] in (*COMPLETE, "not_applicable") for step in steps):
+  proof_passed = all(step["status"] in (*COMPLETE, "not_applicable") for step in steps)
+  if proof_passed and not manifest_cases:
+    steps.append(skipped_step("ct-dudect", "ct.toml times no selected DudeCT case on this target"))
+  elif proof_passed:
     # Every case report must come from this source; a transferred binary was
     # built from the same checkout, which `transfer.consume` has verified.
     source = evidence_bundle.source_identity(root)

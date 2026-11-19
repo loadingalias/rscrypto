@@ -190,7 +190,9 @@ if [[ "$ci" == false ]]; then
   mapfile -t native_packages < <(catalog_get "$platform" packages)
   packages+=("${native_packages[@]}")
 fi
-if [[ "$ci" == true && "$profile" == ci && ( "$platform" == x86_64-linux || "$platform" == aarch64-linux ) ]]; then
+# The AArch64 CT job also scans the MUSL build, whose code differs from GNU's.
+if [[ "$ci" == true && ( ( "$profile" == ci && ( "$platform" == x86_64-linux || "$platform" == aarch64-linux ) ) ||
+      ( "$profile" == ci-ct && "$platform" == aarch64-linux ) ) ]]; then
   mapfile -t musl_packages < <(catalog_get ci-musl packages)
   packages+=("${musl_packages[@]}")
 fi
@@ -311,6 +313,9 @@ elif [[ "$profile" == ci-fuzz || "$profile" == ci-miri || "$profile" == ci-ct ||
   if [[ "$profile" == ci-stack ]]; then
     mapfile -t stack_targets < <(catalog_get ci-stack targets)
     rustup target add --toolchain "$channel" "${stack_targets[@]}"
+  fi
+  if [[ "$profile" == ci-ct && "$platform" == aarch64-linux ]]; then
+    rustup target add --toolchain "$channel" aarch64-unknown-linux-musl
   fi
 else
   "$python" "$SCRIPT_DIR/../lib/toolchain.py" --install "${component_args[@]}"

@@ -134,6 +134,13 @@ jobs:
           else
             if [[ "$PLATFORM" == x86_64-linux ]]; then just ct-test; fi
             just ct-full || status=$?
+            # On AArch64 the MUSL build compiles other code than GNU's, so the job scans it too.
+            # ct.toml times no case on MUSL; x86-64 MUSL code equals GNU's.
+            if [[ "$PLATFORM" == aarch64-linux ]]; then
+              musl=0
+              just ct-full --target aarch64-unknown-linux-musl || musl=$?
+              if ((musl != 0 && musl != 3)); then exit "$musl"; fi
+            fi
           fi
           if ((status != 0 && status != 3)); then exit "$status"; fi
       - name: Download prepared target CT evidence from this workflow run

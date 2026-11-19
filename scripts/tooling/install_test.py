@@ -287,15 +287,19 @@ class LinuxInstall(unittest.TestCase):
                     installs = [f"{c[-1]}@{c[c.index('--version') + 1]}" for c in calls
                                 if c[0] == 'cargo' and 'install' in c]
                 self.assertEqual(installs, [f"{t}@{CATALOG['cargo'][t]}" for t in CATALOG[profile]['cargo']])
+                # The AArch64 CT job also scans the MUSL build.
+                musl = profile == 'ci-ct' and platform == 'aarch64-linux'
                 self.assertEqual(package_installs(calls),
-                                 [CATALOG['linux-ci' if profile == 'ci-bench' else profile]['packages']])
+                                 [CATALOG['linux-ci' if profile == 'ci-bench' else profile]['packages']
+                                  + (CATALOG['ci-musl']['packages'] if musl else [])])
                 rustup = [c for c in calls if c[:3] == ['rustup', 'toolchain', 'install']]
                 # One canonical toolchain carries every lane's components.
                 self.assertEqual(len(rustup), 1)
                 self.assertEqual(rustup[0][3], tomllib.loads((ROOT / 'rust-toolchain.toml').read_text())['toolchain']['channel'])
                 self.assertEqual([c[i + 1] for c in rustup for i, arg in enumerate(c) if arg == '--component'],
                                  components)
-                self.assertFalse(any('target' in c and c[0] == 'rustup' for c in calls))
+                self.assertEqual([c[-1] for c in calls if c[:3] == ['rustup', 'target', 'add']],
+                                 ['aarch64-unknown-linux-musl'] if musl else [])
                 archives = [c[-2] for c in python(calls) if 'install-archive' in c]
                 self.assertEqual(archives, ['cargo-binstall'] if 'cargo-binstall' in CATALOG[platform]['assets'] else [])
                 for tool in CATALOG[profile]['cargo']:

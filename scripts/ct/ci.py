@@ -75,16 +75,15 @@ def verdict(directory, platforms_run, riscv_result):
         if len(archives) != 1:
             rows.append((platform, 'missing', f'{len(archives)} retained archives; expected one'))
             continue
-        archive = archives[0]
-        with tarfile.open(archive) as bundle:
-            reports = [member for member in bundle.getmembers()
+        # A platform job can retain one report for each target that it qualifies.
+        with tarfile.open(archives[0]) as bundle:
+            reports = [json.load(bundle.extractfile(member)) for member in bundle.getmembers()
                        if member.name.endswith('/release/ct-report.json') and member.name.startswith('ct/')]
-            if len(reports) != 1:
-                rows.append((platform, 'missing', f'{len(reports)} reports in the archive'))
-                continue
-            report = json.load(bundle.extractfile(reports[0]))
-        rows.append((platform, report['status'], f"{report['failure_count']} failure(s); evidence complete: "
-                                                   f"{report.get('evidence_complete', False)}"))
+        if not reports:
+            rows.append((platform, 'missing', 'no report in the archive'))
+        for report in reports:
+            rows.append((f"{platform} ({report['target']})", report['status'],
+                         f"{report['failure_count']} failure(s); evidence complete: {report.get('evidence_complete', False)}"))
     if riscv_result:
         # The RISC-V run reports through its dispatching job; skipped means no runner started it.
         rows.append(('riscv64-linux', {'success': 'pass', 'skipped': 'skipped'}.get(riscv_result, 'fail'),

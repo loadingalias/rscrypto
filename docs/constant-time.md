@@ -1648,6 +1648,12 @@ It does not mean that a candidate has passed.
 Each release still needs passing native results for the exact source on every selected architecture.
 Cross-compilation is not timing proof, and neither is a result from a different microarchitecture.
 
+The AArch64 Linux job also runs `ct-full` for `aarch64-unknown-linux-musl`.
+Five GNU-only gates select other AES-GCM and clearing code there, so the job scans those artifacts.
+`ct.toml` marks the target `physical_timing = "unsupported"`, and `ct-full` times no case for such a target.
+The run's verdict reads every target report in each platform archive.
+On x86-64, the pre-link code of MUSL and GNU builds is the same, so no MUSL lane runs.
+
 For RISC-V, POWER, and IBM Z, CI prepares the CT artifacts on x86-64,
 then measures the transferred executables on matching native hardware.
 The preparation bundle binds the exact source, compiler, binary, disassembly,

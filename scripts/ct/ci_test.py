@@ -18,12 +18,14 @@ spec.loader.exec_module(ci)
 
 
 class Verdict(unittest.TestCase):
-    def archive(self, root, platform, report):
+    def archive(self, root, platform, report, *more):
         directory = root / f'ct-{platform}-full'
         directory.mkdir()
-        source = root / f'source-{platform}' / 'ct' / platform / 'release'
-        source.mkdir(parents=True)
-        (source / 'ct-report.json').write_text(json.dumps(report))
+        for target_report in (report, *more):
+            target = target_report.setdefault('target', platform)
+            source = root / f'source-{platform}' / 'ct' / target / 'release'
+            source.mkdir(parents=True)
+            (source / 'ct-report.json').write_text(json.dumps(target_report))
         with tarfile.open(directory / f'ct-{platform}-full.tar.gz', 'w:gz') as bundle:
             bundle.add(root / f'source-{platform}' / 'ct', arcname='ct')
 
@@ -44,6 +46,16 @@ class Verdict(unittest.TestCase):
             self.archive(root, 'powerpc64le-linux', findings)
             # A report with findings completed its evidence, and still fails the verdict.
             self.assertEqual(ci.verdict(root, ['x86_64-linux', 'powerpc64le-linux'], ''), 1)
+
+    def test_every_target_report_of_a_platform_decides(self):
+        gnu = {'target': 'aarch64-unknown-linux-gnu', 'status': 'pass', 'failure_count': 0, 'evidence_complete': True}
+        for musl_status, failures, expected in (('pass', 0, 0), ('fail', 3, 1)):
+            with self.subTest(musl=musl_status), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                musl = {'target': 'aarch64-unknown-linux-musl', 'status': musl_status, 'failure_count': failures,
+                        'evidence_complete': True}
+                self.archive(root, 'aarch64-linux', dict(gnu), musl)
+                self.assertEqual(ci.verdict(root, ['aarch64-linux'], ''), expected)
 
     def test_single_flat_download_preserves_the_report_verdict(self):
         for status, failures, expected in (('pass', 0, 0), ('fail', 2, 1)):

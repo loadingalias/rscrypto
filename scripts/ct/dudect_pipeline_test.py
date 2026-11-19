@@ -288,6 +288,15 @@ def test_artifact_failure_reports_child_output():
       assert Path(failure["stderr"]).read_text() == "specific preparation error\n"
 
 
+def test_target_timing_policy():
+  # A target that ct.toml does not time runs no case, so it cannot miss DudeCT evidence.
+  ct = {"target": [{"name": "scan-only", "physical_timing": "unsupported"}, {"name": "timed", "physical_timing": "required"}],
+        "primitive": [{"id": "every"}, {"id": "some", "physical_timing_unsupported_targets": ["timed"]}]}
+  assert not full.physically_timed(ct, "every", "scan-only")
+  assert full.physically_timed(ct, "every", "timed") and not full.physically_timed(ct, "some", "timed")
+  assert full.physically_timed(ct, "every", "unlisted-host")
+
+
 def test_confirmation_policy():
   rationale = "fixture"
   assert dudect_confirmation_policy(
@@ -322,6 +331,7 @@ def test_exact_case_selection():
 
 
 if __name__ == "__main__":
+  test_target_timing_policy()
   test_confirmation_policy()
   test_exact_case_selection()
   test_utf8_child_process()
