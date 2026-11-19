@@ -146,9 +146,16 @@ pub fn update_ct_stats(
     }
 
     let (max_t, max_tau, sample_size) = {
-        // Get the test with the maximum t
+        // Get the test with the maximum t. A cropped test whose classes each hold one repeated
+        // duration has no variance, so its t is undefined. A coarse timer makes such crops: the
+        // RISC-V CI timer ticks every 333 ns, and equal tick counts convert to durations 1 ns
+        // apart, which gave t = -inf. The full test (index 0) keeps every sample, so a constant
+        // difference between the classes still sets t there.
         let max_test = tests
             .iter()
+            .enumerate()
+            .filter(|&(index, test)| index == 0 || compute_t(test).is_finite())
+            .map(|(_, test)| test)
             .max_by(|&x, &y| local_cmp(compute_t(x).abs(), compute_t(y).abs()))
             .unwrap();
         let sample_size = max_test.sizes.0 + max_test.sizes.1;
@@ -196,4 +203,30 @@ fn update_test_right(test: &mut CtTest, datum: f64) {
     let diff = datum - test.means.1;
     test.means.1 += diff / (test.sizes.1 as f64);
     test.sq_diffs.1 += diff * (datum - test.means.1);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::update_ct_stats;
+
+    /// The shape of the RISC-V Argon2i run of CT 44476221075: each class's fastest samples sit on
+    /// one timer tick, 1 ns apart after conversion, and the next tick repeats, so the lowest crop
+    /// threshold equals it and keeps only the constant samples. The other samples differ, so the
+    /// full test has variance.
+    #[test]
+    fn crops_without_variance_do_not_set_max_t() {
+        let spread = |offset: u64| (0..58u64).map(move |i| 300 + 7 * i + offset);
+        let left: Vec<u64> = [100, 100, 200, 200, 200, 200].into_iter().chain(spread(0)).collect();
+        let right: Vec<u64> = [101, 101, 101, 101, 200, 200].into_iter().chain(spread(3)).collect();
+        let (summary, _) = update_ct_stats(None, &(left, right));
+        assert!(summary.max_t.is_finite(), "max t = {}", summary.max_t);
+    }
+
+    /// Two classes with one constant duration each differ in every sample: the full test keeps
+    /// that difference as an infinite t.
+    #[test]
+    fn a_constant_class_difference_stays_infinite() {
+        let (summary, _) = update_ct_stats(None, &(vec![100; 64], vec![200; 64]));
+        assert_eq!(summary.max_t, f64::NEG_INFINITY);
+    }
 }
