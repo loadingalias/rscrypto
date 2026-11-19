@@ -47,6 +47,13 @@ slow-timeout = { period = "60s", terminate-after = 8 }
 filter = 'binary(=slhdsa) & test(/^(sha2|shake)_(128|192|256)s_matches_independent_implementations$/)'
 slow-timeout = { period = "60s", terminate-after = 8 }
 
+# The provider's TLS profile matrices run full handshakes for each suite, group, and
+# signature scheme. On the IBM Z runner, CI 44519739337 measured p384_profiles at 112 s
+# and stopped rsa_profiles at the 120 s default.
+[[profile.default.overrides]]
+filter = 'package(=rscrypto-rustls) & test(/^tests::(profiles|tls12)::[a-z0-9_]+_profiles$/)'
+slow-timeout = { period = "60s", terminate-after = 8 }
+
 # Cross-target suites (RISC-V, POWER, IBM Z) run on slow native hardware;
 # `scripts/test/cross.py` selects these profiles. The SLH-DSA small-set
 # independent-implementation differentials run only on the native rows, and the
