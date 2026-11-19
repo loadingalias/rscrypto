@@ -40,6 +40,7 @@ def main() -> int:
   parser.add_argument("--smoke", action="store_true")
   parser.add_argument("--threshold", type=float, default=10.0)
   parser.add_argument("--filter", default="")
+  parser.add_argument("--seed", help="hexadecimal seed that replaces the seed of each selected case")
   parser.add_argument("--timeout", type=int)
   parser.add_argument("--latest", type=Path)
   args = parser.parse_args()
@@ -86,9 +87,11 @@ def measure(prepared, args):
   for path in (args.stdout, args.csv, report_path):
     if path.exists():
       raise ValueError(f"refusing to reuse measurement evidence: {path}")
-  command = [prepared["metadata"]["binary"]["path"], "--out", str(args.csv)]
+  command = [prepared["metadata"]["binary"]["path"], "--out", str(args.csv), "--min-ticks", str(prepared["min_median_ticks"])]
   if args.filter:
     command += ["--filter", args.filter]
+  if args.seed:
+    command += ["--seed", args.seed]
   args.command = f"RSCRYPTO_CT_DUDECT_SAMPLES={args.samples} " + " ".join(command)
   print(args.command, flush=True)
   with args.stdout.open("w") as stdout:

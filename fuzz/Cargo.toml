@@ -31,6 +31,8 @@ rscrypto = { path = "..", features = [
   "argon2",
   "scrypt",
   "phc-strings",
+  "chacha20-rng",
+  "serde-secrets",
 ] }
 
 # ── Oracle crates for differential testing ────────────────────────────────────
@@ -43,6 +45,8 @@ aes-siv = { version = "0.8.0", default-features = false, features = ["alloc"] }
 aegis = "0.9.20"
 chacha20poly1305 = { version = "0.11.0", default-features = false, features = ["alloc"] }
 chacha20 = "0.10.2"
+poly1305 = "0.9.1"
+serde = { version = "1.0.229", default-features = false }
 
 # Auth
 argon2 = { version = "0.6.0", default-features = false, features = ["alloc"] }
@@ -432,4 +436,39 @@ doc = false
 [[bin]]
 name = "provider_quic_handshake"
 path = "fuzz_targets/provider_quic_handshake.rs"
+doc = false
+
+[[bin]]
+name = "auth_poly1305"
+path = "fuzz_targets/auth_poly1305.rs"
+doc = false
+
+[[bin]]
+name = "auth_hmac_sha3"
+path = "fuzz_targets/auth_hmac_sha3.rs"
+doc = false
+
+[[bin]]
+name = "auth_kmac128"
+path = "fuzz_targets/auth_kmac128.rs"
+doc = false
+
+[[bin]]
+name = "auth_hkdf_sha512"
+path = "fuzz_targets/auth_hkdf_sha512.rs"
+doc = false
+
+[[bin]]
+name = "auth_chacha20_rng"
+path = "fuzz_targets/auth_chacha20_rng.rs"
+doc = false
+
+[[bin]]
+name = "hash_cshake128"
+path = "fuzz_targets/hash_cshake128.rs"
+doc = false
+
+[[bin]]
+name = "serde_secrets"
+path = "fuzz_targets/serde_secrets.rs"
 doc = false

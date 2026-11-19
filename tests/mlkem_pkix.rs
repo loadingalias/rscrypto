@@ -1,6 +1,9 @@
 //! RFC 9935 SubjectPublicKeyInfo and PKCS #8 import and export of ML-KEM keys.
 #![cfg(feature = "ml-kem")]
 
+#[path = "common/openssl.rs"]
+mod openssl_oracle;
+
 use rscrypto::{
   Kem as _, MlKem512, MlKem512DecapsulationKey, MlKem512EncapsulationKey, MlKem512Seed, MlKem768,
   MlKem768DecapsulationKey, MlKem768EncapsulationKey, MlKem768Seed, MlKem1024, MlKem1024DecapsulationKey,
@@ -541,7 +544,9 @@ fn pkix_matches_openssl_cli_when_available() {
   let supported = openssl(&["list", "-kem-algorithms"])
     .is_some_and(|list| String::from_utf8_lossy(&list).contains("id-alg-ml-kem-1024"));
   if !supported {
-    eprintln!("skipping the OpenSSL ML-KEM PKIX exchange because `openssl` lacks ML-KEM");
+    openssl_oracle::skip(format_args!(
+      "skipping the OpenSSL ML-KEM PKIX exchange because `openssl` lacks ML-KEM"
+    ));
     return;
   }
   let directory = std::env::temp_dir().join(format!("rscrypto-mlkem-pkix-{}", std::process::id()));

@@ -21,6 +21,17 @@ from dudect_report import (
   raw_csv_rows,
 )
 from full import validate_dudect_case_report, validated_dudect_case_report
+
+
+def case_rows(results, seeds, raw_rows, manifest_cases, *, tick_ns=1, min_median_ticks=1, **options):
+  """Call `dudect_case_rows` with one call per sample and a median of 100 ns unless given."""
+  results = {name: {"calls_per_sample": 1, **result} for name, result in results.items()}
+  raw_rows = {name: {"median_runtime_ns": 100, **raw} for name, raw in raw_rows.items()}
+  return dudect_case_rows(
+    results, seeds, raw_rows, manifest_cases, tick_ns=tick_ns, min_median_ticks=min_median_ticks, **options
+  )
+
+
 def expect_failure(action) -> None:
   try:
     action()
@@ -36,7 +47,7 @@ def test_case_selection() -> None:
   }
 
   def rows(names, filter_value="", selected_manifest=manifest):
-    return dudect_case_rows(
+    return case_rows(
       {name: {"abs_max_t": 1.0} for name in names}, {},
       {name: {"row_count": 100, "labels": {"0": 40, "1": 60}} for name in names}, selected_manifest,
       threshold=10.0, requested_samples=100, filter_value=filter_value,
@@ -63,6 +74,9 @@ def test_case_selection() -> None:
     result_line = "bench alpha_one ... : n == +0.01M, max t = +1.00, max tau = +0.01, (5/tau)^2 = 250000\n"
     stdout.write_text(result_line)
     assert list(parse_stdout(stdout)[1]) == ["alpha_one"]
+    stdout.write_text("timer tick 41 ns\n" + result_line + "bench alpha_one timed 64 calls per sample\n")
+    _, results, tick_ns = parse_stdout(stdout)
+    assert tick_ns == 41 and results["alpha_one"]["calls_per_sample"] == 64
     stdout.write_text(result_line * 2)
     expect_failure(lambda: parse_stdout(stdout))
 
@@ -95,11 +109,23 @@ def test_raw_csv() -> None:
     valid = "fixture,0,1,31\nfixture,1,0,11\nfixture,2,1,32\nfixture,3,1,33\nfixture,4,0,12\n"
     path.write_text(header + valid)
     raw = raw_csv_rows(path)
-    assert raw == {"fixture": {"row_count": 5, "labels": {"0": 2, "1": 3}}}
+    assert raw == {"fixture": {"row_count": 5, "labels": {"0": 2, "1": 3}, "median_runtime_ns": 31}}
     metadata = {"fixture": {"primitive": "fixture", "gate": "required", "left_class": "left", "right_class": "right"}}
     def rows(raw_rows):
-      return dudect_case_rows({"fixture": {"abs_max_t": 1.0}}, {}, raw_rows, metadata, threshold=10, requested_samples=5)
+      return case_rows({"fixture": {"abs_max_t": 1.0}}, {}, raw_rows, metadata, threshold=10, requested_samples=5)
     assert rows(raw)[0]["raw_csv"] == raw["fixture"]
+
+    # The 31 ns median spans 31 ticks of 1 ns, so 31 ticks pass and 32 fail.
+    def resolution(min_ticks, tick_ns=1):
+      row = case_rows({"fixture": {"abs_max_t": 1.0}}, {}, raw, metadata, threshold=10, requested_samples=5,
+                      tick_ns=tick_ns, min_median_ticks=min_ticks)[0]
+      return row["resolution"], row["status"]
+    assert resolution(31) == ("pass", "pass")
+    assert resolution(32) == ("fail", "fail")
+    assert resolution(2, tick_ns=16) == ("fail", "fail")
+    expect_failure(lambda: dudect_case_rows({"fixture": {"abs_max_t": 1.0}}, {}, raw, metadata, threshold=10,
+                                            requested_samples=5, tick_ns=1, min_median_ticks=1))
+    expect_failure(lambda: resolution(1, tick_ns=0))
     path.write_text(header + valid.rsplit("fixture,4", 1)[0])
     expect_failure(lambda: rows(raw_csv_rows(path)))
     # A legacy label-only export can have contiguous positions but only one class.
@@ -122,13 +148,12 @@ def test_runner_upstream_identity() -> None:
   upstream = json.loads((runner / "UPSTREAM.json").read_text())
   expected_files = {**upstream["files"], **upstream["local_files"]}
   for name, expected in expected_files.items():
-    if name != "src/ctbench.rs":
-      assert hashlib.sha256((runner / name).read_bytes()).hexdigest() == expected, name
+    assert hashlib.sha256((runner / name).read_bytes()).hexdigest() == expected, name
 
 
 def test_manifest_threshold() -> None:
   def result(limit, measured=9.0):
-    return dudect_case_rows(
+    return case_rows(
       {"rsa": {"abs_max_t": measured}}, {},
       {"rsa": {"row_count": 4000, "labels": {"0": 2000, "1": 2000}}},
       {"rsa": {"primitive": "rsa.private_ops", "gate": "required", "left_class": "fixed", "right_class": "random", "threshold_abs_max_t": limit}},
@@ -157,13 +182,12 @@ def main() -> None:
     "aes_siv_cmac256_fixed_vs_random_key_seal": 418.20301,
     "aes_siv_cmac256_fixed_vs_random_key_open": 377.36551,
     "aes_siv_cmac256_portable_s2v_fixed_vs_random_key": 85.85045,
-    "aes_siv_cmac256_portable_s2v_seal_fixed_vs_random_key": 97.96790,
     "aes_siv_cmac256_portable_open_fixed_vs_random_key": 102.87448,
     "ecdsa_p256_diag_reduce_wide_fixed_vs_random_input": 609.64484,
     "ecdsa_p256_diag_nonce_inverse_blinded_fixed_vs_random_secret": 36.62068,
     "ecdsa_p384_diag_reduce_wide_fixed_vs_random_input": 660.27823,
   }
-  baseline_rows = dudect_case_rows(
+  baseline_rows = case_rows(
     {
       name: {
         "abs_max_t": abs(max_t),
@@ -177,9 +201,9 @@ def main() -> None:
     threshold=10.0,
     requested_samples=20_000,
   )
-  assert len(baseline_rows) == 10
+  assert len(baseline_rows) == 9
   assert all(row["gate"] == "required" for row in baseline_rows)
-  assert sum(row["status"] == "fail" for row in baseline_rows) == 10
+  assert sum(row["status"] == "fail" for row in baseline_rows) == 9
   assert sum(row["status"] == "diagnostic-fail" for row in baseline_rows) == 0
 
   required_case = manifest_cases["ecdsa_p256_diag_reduce_wide_fixed_vs_random_input"]
@@ -213,7 +237,7 @@ def main() -> None:
   expect_failure(lambda: validated([valid_required_row] * 2))
   expect_failure(lambda: validated([valid_required_row, {"name": "unexpected", "status": "pass"}]))
   expect_failure(
-    lambda: dudect_case_rows(
+    lambda: case_rows(
       {"undeclared_case": {"abs_max_t": 11.0}},
       {},
       {},

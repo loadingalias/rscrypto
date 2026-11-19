@@ -8,13 +8,21 @@ release_report = "ct-report.json"
 harness = "tools/ct-harness"
 artifact_script = "scripts/ct/artifacts.sh"
 
-# Sequential DudeCT decision. A required case whose screening |t| reaches
-# review_fraction of its threshold is measured again on the same prepared binary
-# with sample_factor times its samples, and that measurement decides the case.
+# Sequential DudeCT decision. A screening failure is final. A required case that
+# passes with |t| at or above review_fraction of its threshold is measured again on
+# the same prepared binary with a fresh seed and sample_factor times its samples,
+# and it passes only when both measurements pass.
 [dudect_confirmation]
 sample_factor = 4
 review_fraction = 0.75
-rationale = "With stable distributions and independent samples, a fixed class difference grows expected |t| by about sqrt(sample_factor). Four times the samples keeps every threshold and also escalates passing results within 25% of the threshold. Confirmation uses a new process on the same host; persistent host or measurement bias can survive it, so it does not establish the cause of a timing difference."
+rationale = "With stable distributions and independent samples, a fixed class difference grows expected |t| by about sqrt(sample_factor). Four times the samples keeps every threshold and escalates passing results within 25% of the threshold. A confirmation cannot replace a failure, so measurement noise cannot clear one. The fresh seed gives new inputs and a new class order. Confirmation uses a new process on the same host; persistent host or measurement bias can survive it, so it does not establish the cause of a timing difference."
+
+# A case fails when its median sample spans fewer than min_median_ticks timer ticks.
+# The runner times enough calls of the operation in each sample to span twice that
+# number, from the smallest step of the timer that it measures at start.
+[dudect_resolution]
+min_median_ticks = 100
+rationale = "A sample shorter than a few timer ticks quantizes to a few values. The cropped tests then degenerate, and a difference smaller than one tick can hide in the rounding. At 100 ticks, one tick is at most 1% of the median sample. The Windows timer ticks every 100 ns, and the RISC-V timer every 333 ns. Before repetition, CT 44476221075 recorded medians of 0 to 200 ns for 46 Windows cases."
 
 [equality_evidence.release_binary]
 name = "rscrypto-ct-evidence"
@@ -245,7 +253,7 @@ call_count = 1
 operations = ["password.argon2i", "password.argon2d_and_argon2id"]
 public_length = "Primitive verification derives exactly the caller-supplied expected output length after public bounds checks."
 secret_contents = "The freshly derived password verifier and expected bytes are traversed fully before the temporary is cleared."
-tests = "Argon2 vectors/differentials/parallel tests and variant CT harness/DudeCT cases."
+tests = "Argon2 vectors, differentials, and parallel tests; the verify harness entry of each variant; and DudeCT cases for Argon2i only."
 evidence_symbols = [
   "ct_entry_argon2i_verify",
   "ct_entry_argon2d_verify",
@@ -261,7 +269,7 @@ call_count = 1
 operations = ["password.scrypt"]
 public_length = "Primitive verification derives exactly the caller-supplied expected output length after public minimum-length checks."
 secret_contents = "The freshly derived password verifier and expected bytes are traversed fully before the temporary is cleared."
-tests = "scrypt vectors/differentials and verification CT harness/DudeCT cases."
+tests = "scrypt vectors and differentials, and the ct_entry_scrypt_verify harness entry. No DudeCT case times scrypt."
 evidence_symbols = ["ct_entry_scrypt_verify"]
 evidenced_call_count = 1
 limited_call_count = 0
@@ -395,6 +403,10 @@ symbols = [
   "ct_entry_ecdsa_p256_sign",
   "ct_entry_ecdsa_p384_public_key",
   "ct_entry_ecdsa_p384_sign",
+  "ct_entry_ecdsa_p256_default_public_key",
+  "ct_entry_ecdsa_p256_default_sign",
+  "ct_entry_ecdsa_p384_default_public_key",
+  "ct_entry_ecdsa_p384_default_sign",
   "ct_entry_ed25519_verify",
   "ct_entry_rsa_pkcs1v15_sign_fixed_blinding",
   "ct_entry_rsa_pss_sign_fixed_blinding",
@@ -548,6 +560,15 @@ samples = 20000
 smoke_samples = 2000
 
 [[dudect_case]]
+name = "secret_hex_from_str_fixed_vs_random"
+primitive = "secret_wrappers.exposure_and_display"
+filter = "secret_hex_from_str"
+left_class = "hex of a fixed secret key: digits only"
+right_class = "hex of random secret keys: digits and letters of both cases"
+samples = 20000
+smoke_samples = 2000
+
+[[dudect_case]]
 name = "hmac_sha256_valid_vs_invalid_tag"
 primitive = "mac.hmac_verify"
 filter = "hmac_sha256_valid_vs_invalid_tag"
@@ -605,45 +626,37 @@ smoke_samples = 2000
 name = "aes128gcm_fixed_vs_random_key_open"
 primitive = "aead.open_authentication"
 filter = "aes128gcm_fixed_vs_random_key_open"
-left_class = "s390x_aes_aead_highlevel: valid open with fixed secret key"
-right_class = "s390x_aes_aead_highlevel: valid open with random secret key"
+left_class = "valid open of random plaintext with fixed secret key"
+right_class = "valid open of random plaintext with random secret key"
 samples = 20000
 smoke_samples = 2000
-gate = "diagnostic"
-reason = "High-level AEAD open varies the public ciphertext/tag transcript with the key class; required AES-GCM evidence is carried by the secret-only CTR/GHASH/tag-AES probes."
 
 [[dudect_case]]
 name = "aes256gcm_fixed_vs_random_key_open"
 primitive = "aead.open_authentication"
 filter = "aes256gcm_fixed_vs_random_key_open"
-left_class = "s390x_aes_aead_highlevel: valid open with fixed secret key"
-right_class = "s390x_aes_aead_highlevel: valid open with random secret key"
+left_class = "valid open of random plaintext with fixed secret key"
+right_class = "valid open of random plaintext with random secret key"
 samples = 20000
 smoke_samples = 2000
-gate = "diagnostic"
-reason = "High-level AEAD open varies the public ciphertext/tag transcript with the key class; required AES-GCM evidence is carried by the secret-only CTR/GHASH/tag-AES probes."
 
 [[dudect_case]]
 name = "aes128gcmsiv_fixed_vs_random_key_open"
 primitive = "aead.open_authentication"
 filter = "aes128gcmsiv_fixed_vs_random_key_open"
-left_class = "s390x_aes_aead_highlevel: valid open with fixed secret key"
-right_class = "s390x_aes_aead_highlevel: valid open with random secret key"
+left_class = "valid open of random plaintext with fixed secret key"
+right_class = "valid open of random plaintext with random secret key"
 samples = 20000
 smoke_samples = 2000
-gate = "diagnostic"
-reason = "High-level AEAD open varies the public ciphertext/tag transcript with the key class; required AES-GCM-SIV evidence is carried by the secret-only key-derivation/POLYVAL/tag-AES/CTR probes."
 
 [[dudect_case]]
 name = "aes256gcmsiv_fixed_vs_random_key_open"
 primitive = "aead.open_authentication"
 filter = "aes256gcmsiv_fixed_vs_random_key_open"
-left_class = "s390x_aes_aead_highlevel: valid open with fixed secret key"
-right_class = "s390x_aes_aead_highlevel: valid open with random secret key"
+left_class = "valid open of random plaintext with fixed secret key"
+right_class = "valid open of random plaintext with random secret key"
 samples = 20000
 smoke_samples = 2000
-gate = "diagnostic"
-reason = "High-level AEAD open varies the public ciphertext/tag transcript with the key class; required AES-GCM-SIV evidence is carried by the secret-only key-derivation/POLYVAL/tag-AES/CTR probes."
 
 [[dudect_case]]
 name = "aes128_gcm_siv_diag_derive_fixed_vs_random_key"
@@ -1338,6 +1351,50 @@ timeout_seconds = 7200
 timeout_reason = "Physical RISC-V needs a two-hour evidence budget for the full 20,000-sample P-384 gate."
 
 [[dudect_case]]
+name = "ecdsa_p256_default_public_key_fixed_vs_random_secret"
+primitive = "signature.ecdsa_p256_public_derivation"
+filter = "ecdsa_p256_default_public_key_fixed_vs_random_secret"
+left_class = "fixed P-256 secret-scalar default public derivation"
+right_class = "random P-256 secret-scalar default public derivation"
+samples = 20000
+smoke_samples = 2000
+timeout_seconds = 1800
+timeout_reason = "Reserve time for full P-256 arithmetic on physical RISC-V without reducing the 20,000-sample gate."
+
+[[dudect_case]]
+name = "ecdsa_p384_default_public_key_fixed_vs_random_secret"
+primitive = "signature.ecdsa_p384_public_derivation"
+filter = "ecdsa_p384_default_public_key_fixed_vs_random_secret"
+left_class = "fixed P-384 secret-scalar default public derivation"
+right_class = "random P-384 secret-scalar default public derivation"
+samples = 20000
+smoke_samples = 2000
+timeout_seconds = 7200
+timeout_reason = "Physical RISC-V needs a two-hour evidence budget for the full 20,000-sample P-384 gate."
+
+[[dudect_case]]
+name = "ecdsa_p256_default_sign_fixed_vs_random_secret"
+primitive = "signature.ecdsa_p256_sign"
+filter = "ecdsa_p256_default_sign_fixed_vs_random_secret"
+left_class = "fixed P-256 signing secret on the default path without caller blinding"
+right_class = "random P-256 signing secret on the default path without caller blinding"
+samples = 20000
+smoke_samples = 2000
+timeout_seconds = 1800
+timeout_reason = "Reserve time for full P-256 arithmetic on physical RISC-V without reducing the 20,000-sample gate."
+
+[[dudect_case]]
+name = "ecdsa_p384_default_sign_fixed_vs_random_secret"
+primitive = "signature.ecdsa_p384_sign"
+filter = "ecdsa_p384_default_sign_fixed_vs_random_secret"
+left_class = "fixed P-384 signing secret on the default path without caller blinding"
+right_class = "random P-384 signing secret on the default path without caller blinding"
+samples = 20000
+smoke_samples = 2000
+timeout_seconds = 7200
+timeout_reason = "Physical RISC-V needs a two-hour evidence budget for the full 20,000-sample P-384 gate."
+
+[[dudect_case]]
 name = "ecdsa_p256_diag_nonce_reduce_fixed_vs_random_secret"
 primitive = "signature.ecdsa_p256_sign"
 filter = "ecdsa_p256_diag_nonce_reduce_fixed_vs_random_secret"
@@ -1977,111 +2034,91 @@ smoke_samples = 16
 name = "aes128gcm_gather_fixed_vs_random_key_seal"
 primitive = "aead.symmetric_transform"
 filter = "aes128gcm_gather_fixed_vs_random_key_seal"
-left_class = "16385-byte gather seal with fixed public partition and fixed secret key"
-right_class = "16385-byte gather seal with the same public partition and random secret key"
+left_class = "16385-byte gather seal of random plaintext with a fixed public partition and fixed secret key"
+right_class = "the same gather seal with random secret key"
 samples = 20000
 smoke_samples = 2000
-gate = "diagnostic"
-reason = "High-level gather seal exposes class-dependent public ciphertext/tag. This composed-path timing diagnostic supplements the required secret-only CTR/GHASH/tag-AES probes and generated-code review."
 
 [[dudect_case]]
 name = "aes256gcm_gather_fixed_vs_random_key_seal"
 primitive = "aead.symmetric_transform"
 filter = "aes256gcm_gather_fixed_vs_random_key_seal"
-left_class = "16385-byte gather seal with fixed public partition and fixed secret key"
-right_class = "16385-byte gather seal with the same public partition and random secret key"
+left_class = "16385-byte gather seal of random plaintext with a fixed public partition and fixed secret key"
+right_class = "the same gather seal with random secret key"
 samples = 20000
 smoke_samples = 2000
-gate = "diagnostic"
-reason = "High-level gather seal exposes class-dependent public ciphertext/tag. This composed-path timing diagnostic supplements the required secret-only CTR/GHASH/tag-AES probes and generated-code review."
 
 [[dudect_case]]
 name = "chacha20poly1305_gather_fixed_vs_random_key_seal"
 primitive = "aead.symmetric_transform"
 filter = "chacha20poly1305_gather_fixed_vs_random_key_seal"
-left_class = "16385-byte gather seal with fixed public partition and fixed secret key"
-right_class = "16385-byte gather seal with the same public partition and random secret key"
+left_class = "16385-byte gather seal of random plaintext with a fixed public partition and fixed secret key"
+right_class = "the same gather seal with random secret key"
 samples = 20000
 smoke_samples = 2000
-gate = "diagnostic"
-reason = "High-level gather seal exposes class-dependent public ciphertext/tag. This composed-path timing diagnostic supplements the required primitive probes and generated-code review."
 
 [[dudect_case]]
 name = "aes128gcm_record_gather_fixed_vs_random_key_seal"
 primitive = "aead.symmetric_transform"
 filter = "aes128gcm_record_gather_fixed_vs_random_key_seal"
-left_class = "TLS record gather seal (1024-byte payload span and content-type byte) with fixed secret key"
+left_class = "TLS record gather seal (random 1024-byte payload span and content-type byte) with fixed secret key"
 right_class = "the same TLS record gather seal with random secret key"
 samples = 20000
 smoke_samples = 2000
-gate = "diagnostic"
-reason = "High-level record-shaped gather seal exposes class-dependent public ciphertext/tag. It reaches the head-and-tail gather kernels that the 16385-byte partition does not; this composed-path timing diagnostic supplements the required secret-only CTR/GHASH/tag-AES probes and generated-code review."
 
 [[dudect_case]]
 name = "aes256gcm_record_gather_fixed_vs_random_key_seal"
 primitive = "aead.symmetric_transform"
 filter = "aes256gcm_record_gather_fixed_vs_random_key_seal"
-left_class = "TLS record gather seal (1024-byte payload span and content-type byte) with fixed secret key"
+left_class = "TLS record gather seal (random 1024-byte payload span and content-type byte) with fixed secret key"
 right_class = "the same TLS record gather seal with random secret key"
 samples = 20000
 smoke_samples = 2000
-gate = "diagnostic"
-reason = "High-level record-shaped gather seal exposes class-dependent public ciphertext/tag. It reaches the head-and-tail gather kernels that the 16385-byte partition does not; this composed-path timing diagnostic supplements the required secret-only CTR/GHASH/tag-AES probes and generated-code review."
 
 [[dudect_case]]
 name = "chacha20poly1305_record_gather_fixed_vs_random_key_seal"
 primitive = "aead.symmetric_transform"
 filter = "chacha20poly1305_record_gather_fixed_vs_random_key_seal"
-left_class = "TLS record gather seal (1024-byte payload span and content-type byte) with fixed secret key"
+left_class = "TLS record gather seal (random 1024-byte payload span and content-type byte) with fixed secret key"
 right_class = "the same TLS record gather seal with random secret key"
 samples = 20000
 smoke_samples = 2000
-gate = "diagnostic"
-reason = "High-level record-shaped gather seal exposes class-dependent public ciphertext/tag. It reaches the head-and-tail gather kernels that the 16385-byte partition does not; this composed-path timing diagnostic supplements the required primitive probes and generated-code review."
 
 [[dudect_case]]
 name = "aes128gcm_fixed_vs_random_key_seal"
 primitive = "aead.symmetric_transform"
 filter = "aes128gcm_fixed_vs_random_key_seal"
-left_class = "s390x_aes_aead_highlevel: fixed secret key"
-right_class = "s390x_aes_aead_highlevel: random secret key"
+left_class = "seal of random plaintext with fixed secret key"
+right_class = "seal of random plaintext with random secret key"
 samples = 20000
 smoke_samples = 2000
-gate = "diagnostic"
-reason = "High-level AEAD seal varies public ciphertext/tag output with the key class; required AES-GCM evidence is carried by the secret-only CTR/GHASH/tag-AES probes."
 
 [[dudect_case]]
 name = "aes256gcm_fixed_vs_random_key_seal"
 primitive = "aead.symmetric_transform"
 filter = "aes256gcm_fixed_vs_random_key_seal"
-left_class = "s390x_aes_aead_highlevel: fixed secret key"
-right_class = "s390x_aes_aead_highlevel: random secret key"
+left_class = "seal of random plaintext with fixed secret key"
+right_class = "seal of random plaintext with random secret key"
 samples = 20000
 smoke_samples = 2000
-gate = "diagnostic"
-reason = "High-level AEAD seal varies public ciphertext/tag output with the key class; required AES-GCM evidence is carried by the secret-only CTR/GHASH/tag-AES probes."
 
 [[dudect_case]]
 name = "aes128gcmsiv_fixed_vs_random_key_seal"
 primitive = "aead.symmetric_transform"
 filter = "aes128gcmsiv_fixed_vs_random_key_seal"
-left_class = "s390x_aes_aead_highlevel: fixed secret key"
-right_class = "s390x_aes_aead_highlevel: random secret key"
+left_class = "seal of random plaintext with fixed secret key"
+right_class = "seal of random plaintext with random secret key"
 samples = 20000
 smoke_samples = 2000
-gate = "diagnostic"
-reason = "High-level AEAD seal varies public ciphertext/tag output with the key class; required AES-GCM-SIV evidence is carried by the secret-only key-derivation/POLYVAL/tag-AES/CTR probes."
 
 [[dudect_case]]
 name = "aes256gcmsiv_fixed_vs_random_key_seal"
 primitive = "aead.symmetric_transform"
 filter = "aes256gcmsiv_fixed_vs_random_key_seal"
-left_class = "s390x_aes_aead_highlevel: fixed secret key"
-right_class = "s390x_aes_aead_highlevel: random secret key"
+left_class = "seal of random plaintext with fixed secret key"
+right_class = "seal of random plaintext with random secret key"
 samples = 20000
 smoke_samples = 2000
-gate = "diagnostic"
-reason = "High-level AEAD seal varies public ciphertext/tag output with the key class; required AES-GCM-SIV evidence is carried by the secret-only key-derivation/POLYVAL/tag-AES/CTR probes."
 
 [[dudect_case]]
 name = "ietf_chacha20poly1305_fixed_vs_random_key_seal"
@@ -2186,15 +2223,6 @@ smoke_samples = 2000
 name = "aes_siv_cmac256_portable_s2v_fixed_vs_random_key"
 primitive = "aead.open_authentication"
 filter = "aes_siv_cmac256_portable_s2v_fixed_vs_random_key"
-left_class = "forced-portable complete CMAC/S2V state with fixed secret key"
-right_class = "forced-portable complete CMAC/S2V state with random secret key"
-samples = 20000
-smoke_samples = 2000
-
-[[dudect_case]]
-name = "aes_siv_cmac256_portable_s2v_seal_fixed_vs_random_key"
-primitive = "aead.symmetric_transform"
-filter = "aes_siv_cmac256_portable_s2v_seal_fixed_vs_random_key"
 left_class = "forced-portable complete CMAC/S2V state with fixed secret key"
 right_class = "forced-portable complete CMAC/S2V state with random secret key"
 samples = 20000
@@ -2458,7 +2486,11 @@ notes = "Receiver setup evidence times prepared keys, so key expansion stays out
 id = "aead.open_authentication.aes128gcm"
 primitive = "aead.open_authentication"
 variant = "Aes128Gcm"
-dudect = ["aes128_gcm_diag_ghash_fixed_vs_random_h", "aes128_gcm_diag_tag_aes_fixed_vs_random_key"]
+dudect = [
+  "aes128_gcm_diag_ghash_fixed_vs_random_h",
+  "aes128_gcm_diag_tag_aes_fixed_vs_random_key",
+  "aes128gcm_fixed_vs_random_key_open",
+]
 binsec = [
   "aead.open_authentication.aes_round_portable.all",
   "aead.open_authentication.ghash_block_portable.all",
@@ -2468,7 +2500,11 @@ binsec = [
 id = "aead.open_authentication.aes256gcm"
 primitive = "aead.open_authentication"
 variant = "Aes256Gcm"
-dudect = ["aes256_gcm_diag_ghash_fixed_vs_random_h", "aes256_gcm_diag_tag_aes_fixed_vs_random_key"]
+dudect = [
+  "aes256_gcm_diag_ghash_fixed_vs_random_h",
+  "aes256_gcm_diag_tag_aes_fixed_vs_random_key",
+  "aes256gcm_fixed_vs_random_key_open",
+]
 binsec = [
   "aead.open_authentication.aes_round_portable.all",
   "aead.open_authentication.ghash_block_portable.all",
@@ -2482,6 +2518,7 @@ dudect = [
   "aes128_gcm_siv_diag_derive_fixed_vs_random_key",
   "gcm_siv_diag_polyval_fixed_vs_random_auth_key",
   "aes128_gcm_siv_diag_raw_tag_aes_fixed_vs_random_key",
+  "aes128gcmsiv_fixed_vs_random_key_open",
 ]
 binsec = [
   "aead.open_authentication.aes_round_portable.all",
@@ -2496,6 +2533,7 @@ dudect = [
   "aes256_gcm_siv_diag_derive_fixed_vs_random_key",
   "gcm_siv_diag_polyval_fixed_vs_random_auth_key",
   "aes256_gcm_siv_diag_raw_tag_aes_fixed_vs_random_key",
+  "aes256gcmsiv_fixed_vs_random_key_open",
 ]
 binsec = [
   "aead.open_authentication.aes_round_portable.all",
@@ -2547,7 +2585,12 @@ binsec = ["aead.open_authentication.aes_round_portable.all"]
 id = "aead.symmetric_transform.aes128gcm"
 primitive = "aead.symmetric_transform"
 variant = "Aes128Gcm"
-dudect = ["aes128_gcm_diag_ctr32_be_fixed_vs_random_key"]
+dudect = [
+  "aes128_gcm_diag_ctr32_be_fixed_vs_random_key",
+  "aes128gcm_fixed_vs_random_key_seal",
+  "aes128gcm_gather_fixed_vs_random_key_seal",
+  "aes128gcm_record_gather_fixed_vs_random_key_seal",
+]
 binsec = [
   "aead.symmetric_transform.aes_round_portable.all",
   "aead.symmetric_transform.ghash_block_portable.all",
@@ -2557,7 +2600,12 @@ binsec = [
 id = "aead.symmetric_transform.aes256gcm"
 primitive = "aead.symmetric_transform"
 variant = "Aes256Gcm"
-dudect = ["aes256_gcm_diag_ctr32_be_fixed_vs_random_key"]
+dudect = [
+  "aes256_gcm_diag_ctr32_be_fixed_vs_random_key",
+  "aes256gcm_fixed_vs_random_key_seal",
+  "aes256gcm_gather_fixed_vs_random_key_seal",
+  "aes256gcm_record_gather_fixed_vs_random_key_seal",
+]
 binsec = [
   "aead.symmetric_transform.aes_round_portable.all",
   "aead.symmetric_transform.ghash_block_portable.all",
@@ -2567,7 +2615,10 @@ binsec = [
 id = "aead.symmetric_transform.aes128gcmsiv"
 primitive = "aead.symmetric_transform"
 variant = "Aes128GcmSiv"
-dudect = ["aes128_gcm_siv_diag_ctr32_fixed_vs_random_key"]
+dudect = [
+  "aes128_gcm_siv_diag_ctr32_fixed_vs_random_key",
+  "aes128gcmsiv_fixed_vs_random_key_seal",
+]
 binsec = [
   "aead.symmetric_transform.aes_round_portable.all",
   "aead.symmetric_transform.polyval_reduce_portable.all",
@@ -2577,7 +2628,10 @@ binsec = [
 id = "aead.symmetric_transform.aes256gcmsiv"
 primitive = "aead.symmetric_transform"
 variant = "Aes256GcmSiv"
-dudect = ["aes256_gcm_siv_diag_ctr32_fixed_vs_random_key"]
+dudect = [
+  "aes256_gcm_siv_diag_ctr32_fixed_vs_random_key",
+  "aes256gcmsiv_fixed_vs_random_key_seal",
+]
 binsec = [
   "aead.symmetric_transform.aes_round_portable.all",
   "aead.symmetric_transform.polyval_reduce_portable.all",
@@ -2587,7 +2641,11 @@ binsec = [
 id = "aead.symmetric_transform.chacha20poly1305"
 primitive = "aead.symmetric_transform"
 variant = "ChaCha20Poly1305"
-dudect = ["ietf_chacha20poly1305_fixed_vs_random_key_seal"]
+dudect = [
+  "ietf_chacha20poly1305_fixed_vs_random_key_seal",
+  "chacha20poly1305_gather_fixed_vs_random_key_seal",
+  "chacha20poly1305_record_gather_fixed_vs_random_key_seal",
+]
 binsec = ["aead.symmetric_transform.chacha20poly1305_seal.portable.all"]
 
 [[evidence_unit]]
@@ -2657,10 +2715,7 @@ binsec = ["rng.chacha20.fill.portable.all"]
 id = "aead.symmetric_transform.aes_siv_cmac256"
 primitive = "aead.symmetric_transform"
 variant = "AesSivCmac256"
-dudect = [
-  "aes_siv_cmac256_fixed_vs_random_key_seal",
-  "aes_siv_cmac256_portable_s2v_seal_fixed_vs_random_key",
-]
+dudect = ["aes_siv_cmac256_fixed_vs_random_key_seal"]
 binsec = ["aead.symmetric_transform.aes_round_portable.all"]
 
 [[evidence_unit]]
@@ -3873,7 +3928,7 @@ backend = "llvm"
 linker = "platform-default-unpinned"
 claim = "ct-intended"
 physical_timing = "unsupported"
-physical_timing_reason = "MUSL targets are not part of the current published physical CT evidence lanes; GNU Linux native lanes carry release timing evidence until MUSL physical lanes are added."
+physical_timing_reason = "No CT workflow scans or measures MUSL builds, so this target has no CT evidence. The GNU Linux lanes measure their own binaries, which do not qualify a MUSL build."
 binsec = "unsupported"
 binsec_reason = "MUSL BINSEC evidence is deferred; current published BINSEC evidence runs on native GNU Linux targets."
 
@@ -3884,7 +3939,7 @@ backend = "llvm"
 linker = "platform-default-unpinned"
 claim = "ct-intended"
 physical_timing = "unsupported"
-physical_timing_reason = "MUSL targets are not part of the current published physical CT evidence lanes; GNU Linux native lanes carry release timing evidence until MUSL physical lanes are added."
+physical_timing_reason = "No CT workflow scans or measures MUSL builds, so this target has no CT evidence. The GNU Linux lanes measure their own binaries, which do not qualify a MUSL build."
 binsec = "unsupported"
 binsec_reason = "MUSL BINSEC evidence is deferred; current published BINSEC evidence runs on native GNU Linux targets."
 
@@ -3907,7 +3962,7 @@ backend = "llvm"
 linker = "msvc-link-unpinned"
 claim = "ct-intended"
 physical_timing = "unsupported"
-physical_timing_reason = "Windows physical CT evidence is deferred; Windows is not part of the current published CT/bench evidence lanes."
+physical_timing_reason = "No CT workflow scans or measures AArch64 Windows builds, so this target has no CT evidence. The x86-64 Windows lane does not qualify them."
 binsec = "unsupported"
 binsec_reason = "BINSEC PE/Windows evidence is not part of the current release evidence gate."
 
@@ -3966,7 +4021,7 @@ backend = "llvm"
 linker = "none-or-platform-default-unpinned"
 claim = "ct-intended"
 physical_timing = "unsupported"
-physical_timing_reason = "Bare-metal targets use artifact/heuristic CT evidence; no native physical DudeCT environment exists for this target."
+physical_timing_reason = "No CT evidence runs for this target. The CT harness needs std, full, parallel, and getrandom, so the artifact scan cannot build it, and no native DudeCT environment exists."
 binsec = "unsupported"
 binsec_reason = "Bare-metal targets do not run the native Linux BINSEC executable harness."
 
@@ -3977,7 +4032,7 @@ backend = "llvm"
 linker = "none-or-platform-default-unpinned"
 claim = "ct-intended"
 physical_timing = "unsupported"
-physical_timing_reason = "Bare-metal targets use artifact/heuristic CT evidence; no native physical DudeCT environment exists for this target."
+physical_timing_reason = "No CT evidence runs for this target. The CT harness needs std, full, parallel, and getrandom, so the artifact scan cannot build it, and no native DudeCT environment exists."
 binsec = "unsupported"
 binsec_reason = "Bare-metal targets do not run the native Linux BINSEC executable harness."
 
@@ -3988,7 +4043,7 @@ backend = "llvm"
 linker = "none-or-platform-default-unpinned"
 claim = "ct-intended"
 physical_timing = "unsupported"
-physical_timing_reason = "Bare-metal targets use artifact/heuristic CT evidence; no native physical DudeCT environment exists for this target."
+physical_timing_reason = "No CT evidence runs for this target. The CT harness needs std, full, parallel, and getrandom, so the artifact scan cannot build it, and no native DudeCT environment exists."
 binsec = "unsupported"
 binsec_reason = "Bare-metal targets do not run the native Linux BINSEC executable harness."
 
@@ -3999,7 +4054,7 @@ backend = "llvm"
 linker = "none-or-platform-default-unpinned"
 claim = "ct-intended"
 physical_timing = "unsupported"
-physical_timing_reason = "Bare-metal targets use artifact/heuristic CT evidence; no native physical DudeCT environment exists for this target."
+physical_timing_reason = "No CT evidence runs for this target. The CT harness needs std, full, parallel, and getrandom, so the artifact scan cannot build it, and no native DudeCT environment exists."
 binsec = "unsupported"
 binsec_reason = "Bare-metal targets do not run the native Linux BINSEC executable harness."
 
@@ -4010,7 +4065,7 @@ backend = "llvm"
 linker = "rust-lld-unpinned"
 claim = "ct-intended"
 physical_timing = "unsupported"
-physical_timing_reason = "WASM targets use artifact/heuristic CT evidence; native physical DudeCT timing requires a separate WASM host/runtime policy."
+physical_timing_reason = "No CT evidence runs for this target. The asm scanner reads native instruction sets only, and DudeCT timing needs a separate WASM runtime policy."
 binsec = "unsupported"
 binsec_reason = "WASM targets do not run the native Linux BINSEC executable harness."
 
@@ -4021,7 +4076,7 @@ backend = "llvm"
 linker = "rust-lld-unpinned"
 claim = "ct-intended"
 physical_timing = "unsupported"
-physical_timing_reason = "WASM targets use artifact/heuristic CT evidence; native physical DudeCT timing requires a separate WASM host/runtime policy."
+physical_timing_reason = "No CT evidence runs for this target. The asm scanner reads native instruction sets only, and DudeCT timing needs a separate WASM runtime policy."
 binsec = "unsupported"
 binsec_reason = "WASM targets do not run the native Linux BINSEC executable harness."
 
@@ -4080,7 +4135,7 @@ limitation = "SecretBytes and SecretVec intentionally provide no equality. Expli
 [[operation]]
 id = "secrets.owner_construction_and_exposure"
 api = [
-  "rscrypto::*Key::{from_bytes,try_from_slice,generate,try_generate,try_generate_with,duplicate_secret,as_bytes,expose_secret,display_secret}",
+  "rscrypto::*Key::{from_bytes,from_str,try_from_slice,generate,try_generate,try_generate_with,duplicate_secret,as_bytes,expose_secret,display_secret}",
   "rscrypto::*SharedSecret::{from_bytes,duplicate_secret,as_bytes,expose_secret,display_secret}",
   "rscrypto::MlKem*DecapsulationKey::{from_bytes,try_from_slice,duplicate_secret,as_bytes,expose_secret,display_secret}",
   "rscrypto::Poly1305OneTimeKey::{from_bytes,try_generate,try_generate_with,as_bytes,expose_secret}",
@@ -4157,7 +4212,7 @@ evidence = [
   "unit:aead.symmetric_transform.aes256gcm",
   "unit:aead.symmetric_transform.chacha20poly1305",
 ]
-limitation = "Component evidence does not qualify the composed gather path or compiler-made keystream copies. Composed-path gather timing cases are diagnostics; final-source native generated-code and cleanup review remain required. Slice lengths and iterator behavior are caller-controlled. Iterator panics run Rust unwind cleanup; an abort cannot run destructors."
+limitation = "Required DudeCT cases time the composed gather seal of random plaintext, for the 16385-byte partition and the TLS record shape. Component evidence does not qualify compiler-made keystream copies; final-source native generated-code and cleanup review remain required. Slice lengths and iterator behavior are caller-controlled. Iterator panics run Rust unwind cleanup; an abort cannot run destructors."
 
 [[operation]]
 id = "aead.header_protection"
@@ -5013,8 +5068,8 @@ limitation = "Target-specific fixed-base kernels require their own release artif
 [[operation]]
 id = "signature.ecdsa_public_derivation"
 api = [
-  "rscrypto::EcdsaP{256,384}SecretKey::try_public_key_blinded_with",
-  "rscrypto::EcdsaP{256,384}Keypair::try_from_secret_key_blinded_with",
+  "rscrypto::EcdsaP{256,384}SecretKey::{public_key,try_public_key_blinded_with}",
+  "rscrypto::EcdsaP{256,384}Keypair::{from_secret_key,try_from_secret_key_blinded_with}",
 ]
 features = ["ecdsa-p256", "ecdsa-p384"]
 targets = ["all-supported", "target-selected fixed-base backend"]
@@ -5031,8 +5086,10 @@ evidence = [
   "primitive:signature.ecdsa_p384_public_derivation",
   "harness:ct_entry_ecdsa_p256_public_key",
   "harness:ct_entry_ecdsa_p384_public_key",
+  "harness:ct_entry_ecdsa_p256_default_public_key",
+  "harness:ct_entry_ecdsa_p384_default_public_key",
 ]
-limitation = "Blinding callbacks and entropy-source behavior are external and complete before private scalar arithmetic. Exact arithmetic kernels require target-specific release evidence."
+limitation = "Blinding callbacks and entropy-source behavior are external and complete before private scalar arithmetic. The default derivation needs no callback. Exact arithmetic kernels require target-specific release evidence."
 
 [[operation]]
 id = "signature.ecdsa_signing"
@@ -5064,6 +5121,8 @@ evidence = [
   "primitive:signature.ecdsa_p384_sign",
   "harness:ct_entry_ecdsa_p256_sign",
   "harness:ct_entry_ecdsa_p384_sign",
+  "harness:ct_entry_ecdsa_p256_default_sign",
+  "harness:ct_entry_ecdsa_p384_default_sign",
 ]
 limitation = "Blinding callbacks and entropy-source behavior are external and complete before message hashing or private scalar arithmetic. Exact arithmetic kernels require target-specific release evidence."
 
@@ -5145,7 +5204,7 @@ evidence = [
   "harness:ct_entry_rsa_private_component_validation_32",
   "harness:ct_entry_rsa_private_key_pkcs8_roundtrip",
 ]
-limitation = "Prime generation is inherently variable-work and not a CT claim. Secret DER export is an explicit SecretVec escape hatch. The ct-intended claim covers fixed-shape private-component validation/import leaves tracked by evidence."
+limitation = "Prime generation is inherently variable-work and not a CT claim. From the accepted primes, key generation derives lcm(p - 1, q - 1) and d with fixed-work masked limb arithmetic: a binary GCD and long division with fixed iteration counts, and a full masked scan for d. No harness entry or DudeCT case measures that derivation. Secret DER export is an explicit SecretVec escape hatch. The ct-intended claim covers fixed-shape private-component validation/import leaves tracked by evidence."
 
 [[operation]]
 id = "rsa.private_sign_and_decrypt"
@@ -5351,13 +5410,14 @@ entrypoints = [
   "secret owner expose_secret methods",
   "secret owner display_secret methods",
   "secret owner Debug implementations",
+  "secret owner FromStr implementations",
 ]
 secrets = ["secret_bytes"]
 public = ["owner_type", "owner_length", "explicit_exposure_request"]
 may_leak = ["owner_type", "owner_length", "explicitly_exposed_secret"]
 must_not_leak_ref = "common_secret_data"
 required = ["classification"]
-notes = "Generic secret wrappers deliberately implement neither PartialEq nor Eq. Debug remains masked. expose, into_unprotected_vec, and display_secret are explicit caller-authorized declassification/lifecycle escape hatches, not constant-time claims."
+notes = "Generic secret wrappers deliberately implement neither PartialEq nor Eq. Debug remains masked. Secret-key FromStr decodes each hex character with masks; only a string that is not valid hex takes a branch, to report its first invalid character. expose, into_unprotected_vec, and display_secret are explicit caller-authorized declassification/lifecycle escape hatches, not constant-time claims."
 [primitive.harness]
 status = "covered"
 symbols = ["ct_entry_secret_bytes32_debug_masked"]
@@ -5810,7 +5870,9 @@ tier = "A"
 claim = "ct-intended"
 features = ["ecdsa-p256"]
 entrypoints = [
+  "EcdsaP256SecretKey::public_key",
   "EcdsaP256SecretKey::try_public_key_blinded_with",
+  "EcdsaP256Keypair::from_secret_key",
   "EcdsaP256Keypair::try_from_secret_key_blinded_with",
 ]
 secrets = ["secret_key", "coordinate_blinding", "projective_intermediates"]
@@ -5818,26 +5880,31 @@ public = ["public_key"]
 may_leak = ["public_key", "external_random_source_failure"]
 must_not_leak_ref = "common_secret_data"
 required = ["tier_a"]
-notes = "The external blinding callback completes before private scalar arithmetic and is outside the CT claim. Portable and target-selected fixed-base derivation share the same public result. Secret-derived public keys use constant-work verification-table precomputation; parsing an already-public SEC1 key retains its variable-time public precomputation path."
+notes = "The external blinding callback completes before private scalar arithmetic and is outside the CT claim. The default public_key and from_secret_key take their coordinate blinding from an HMAC of the secret key instead. Portable and target-selected fixed-base derivation share the same public result. Secret-derived public keys use constant-work verification-table precomputation; parsing an already-public SEC1 key retains its variable-time public precomputation path."
 [primitive.harness]
 status = "covered"
-symbols = ["ct_entry_ecdsa_p256_public_key"]
+symbols = ["ct_entry_ecdsa_p256_public_key", "ct_entry_ecdsa_p256_default_public_key"]
 
 [[primitive]]
 id = "signature.ecdsa_p256_sign"
 tier = "A"
 claim = "ct-intended"
 features = ["ecdsa-p256"]
-entrypoints = ["EcdsaP256SecretKey::try_sign_blinded_with", "EcdsaP256Keypair::try_sign_blinded_with"]
+entrypoints = [
+  "EcdsaP256SecretKey::try_sign",
+  "EcdsaP256SecretKey::try_sign_blinded_with",
+  "EcdsaP256Keypair::try_sign",
+  "EcdsaP256Keypair::try_sign_blinded_with",
+]
 secrets = ["secret_key", "nonce_material", "nonce_scalar", "private_scalar", "coordinate_blinding"]
 public = ["message", "message_length", "signature"]
 may_leak = ["message_length", "signature"]
 must_not_leak_ref = "common_secret_data"
 required = ["tier_a"]
-notes = "Release CT evidence covers the blinded signing APIs. Deterministic signing uses fixed-work HMAC-derived wide nonce reduction instead of RFC6979's secret-dependent rejection loop, while P-256 portable blinded signing adds a random multiple of the group order and blinds the projective accumulator before fixed-base multiplication, reblinds before affine conversion, and masks the private-scalar product. On s390x, a fixed-work algebraic fold reduces the wide nonce, fixed-iteration divsteps invert scalar-order values, and two independent caller-random scalars mask projective and order arithmetic. Secret-fed limb products use the top-bit-normalized hardware multiplier on riscv64, as riscv64 ECDH does (owner decision, 2026-10-21); riscv32 and s390x keep the fixed-work multiplier, because secret MLGR products failed native DudeCT on s390x (Constant-Time 39717348652). Native timing evidence qualifies each target."
+notes = "Release CT evidence covers the default and blinded signing APIs. Default signing takes no caller blinding, so its fixed-base multiplication and scalar-order arithmetic run unmasked on the deterministic nonce. Deterministic signing uses fixed-work HMAC-derived wide nonce reduction instead of RFC6979's secret-dependent rejection loop, while P-256 portable blinded signing adds a random multiple of the group order and blinds the projective accumulator before fixed-base multiplication, reblinds before affine conversion, and masks the private-scalar product. On s390x, a fixed-work algebraic fold reduces the wide nonce, fixed-iteration divsteps invert scalar-order values, and two independent caller-random scalars mask projective and order arithmetic. Secret-fed limb products use the top-bit-normalized hardware multiplier on riscv64, as riscv64 ECDH does (owner decision, 2026-10-21); riscv32 and s390x keep the fixed-work multiplier, because secret MLGR products failed native DudeCT on s390x (Constant-Time 39717348652). Native timing evidence qualifies each target."
 [primitive.harness]
 status = "covered"
-symbols = ["ct_entry_ecdsa_p256_sign"]
+symbols = ["ct_entry_ecdsa_p256_sign", "ct_entry_ecdsa_p256_default_sign"]
 
 [[primitive]]
 id = "signature.ecdsa_p384_public_derivation"
@@ -5845,7 +5912,9 @@ tier = "A"
 claim = "ct-intended"
 features = ["ecdsa-p384"]
 entrypoints = [
+  "EcdsaP384SecretKey::public_key",
   "EcdsaP384SecretKey::try_public_key_blinded_with",
+  "EcdsaP384Keypair::from_secret_key",
   "EcdsaP384Keypair::try_from_secret_key_blinded_with",
 ]
 secrets = ["secret_key", "coordinate_blinding", "projective_intermediates"]
@@ -5853,26 +5922,31 @@ public = ["public_key"]
 may_leak = ["public_key", "external_random_source_failure"]
 must_not_leak_ref = "common_secret_data"
 required = ["tier_a"]
-notes = "The external blinding callback completes before private scalar arithmetic and is outside the CT claim. Portable and target-selected fixed-base derivation share the same public result. Secret-derived public keys use constant-work verification-table precomputation; parsing an already-public SEC1 key retains its variable-time public precomputation path."
+notes = "The external blinding callback completes before private scalar arithmetic and is outside the CT claim. The default public_key and from_secret_key take their coordinate blinding from an HMAC of the secret key instead. Portable and target-selected fixed-base derivation share the same public result. Secret-derived public keys use constant-work verification-table precomputation; parsing an already-public SEC1 key retains its variable-time public precomputation path."
 [primitive.harness]
 status = "covered"
-symbols = ["ct_entry_ecdsa_p384_public_key"]
+symbols = ["ct_entry_ecdsa_p384_public_key", "ct_entry_ecdsa_p384_default_public_key"]
 
 [[primitive]]
 id = "signature.ecdsa_p384_sign"
 tier = "A"
 claim = "ct-intended"
 features = ["ecdsa-p384"]
-entrypoints = ["EcdsaP384SecretKey::try_sign_blinded_with", "EcdsaP384Keypair::try_sign_blinded_with"]
+entrypoints = [
+  "EcdsaP384SecretKey::try_sign",
+  "EcdsaP384SecretKey::try_sign_blinded_with",
+  "EcdsaP384Keypair::try_sign",
+  "EcdsaP384Keypair::try_sign_blinded_with",
+]
 secrets = ["secret_key", "nonce_material", "nonce_scalar", "private_scalar", "coordinate_blinding"]
 public = ["message", "message_length", "signature"]
 may_leak = ["message_length", "signature"]
 must_not_leak_ref = "common_secret_data"
 required = ["tier_a"]
-notes = "Release CT evidence covers the blinded signing APIs. Deterministic signing uses fixed-work HMAC-derived wide nonce reduction instead of RFC6979's secret-dependent rejection loop, while portable blinded signing blinds the projective accumulator before fixed-base multiplication, reblinds before affine conversion, and masks the private-scalar product. On s390x, a fixed-work algebraic fold reduces the wide nonce, fixed-iteration divsteps invert scalar-order values, and two independent caller-random scalars mask projective and order arithmetic. Secret-fed limb products use the top-bit-normalized hardware multiplier on riscv64, as riscv64 ECDH does (owner decision, 2026-10-21); riscv32 and s390x keep the fixed-work multiplier, because secret MLGR products failed native DudeCT on s390x (Constant-Time 39717348652). Native timing evidence qualifies each target."
+notes = "Release CT evidence covers the default and blinded signing APIs. Default signing takes no caller blinding, so its fixed-base multiplication and scalar-order arithmetic run unmasked on the deterministic nonce. Deterministic signing uses fixed-work HMAC-derived wide nonce reduction instead of RFC6979's secret-dependent rejection loop, while portable blinded signing blinds the projective accumulator before fixed-base multiplication, reblinds before affine conversion, and masks the private-scalar product. On s390x, a fixed-work algebraic fold reduces the wide nonce, fixed-iteration divsteps invert scalar-order values, and two independent caller-random scalars mask projective and order arithmetic. Secret-fed limb products use the top-bit-normalized hardware multiplier on riscv64, as riscv64 ECDH does (owner decision, 2026-10-21); riscv32 and s390x keep the fixed-work multiplier, because secret MLGR products failed native DudeCT on s390x (Constant-Time 39717348652). Native timing evidence qualifies each target."
 [primitive.harness]
 status = "covered"
-symbols = ["ct_entry_ecdsa_p384_sign"]
+symbols = ["ct_entry_ecdsa_p384_sign", "ct_entry_ecdsa_p384_default_sign"]
 
 [[primitive]]
 id = "signature.ed25519_verify_failure_shape"
@@ -7032,7 +7106,7 @@ variable_time_components = ["message and context hashing length", "public parsin
 permitted_leakage = ["public shapes", "opaque success or failure", "caller-authorized secret exposure"]
 claim = "best-effort"
 evidence = ["primitive:signature.slhdsa"]
-limitation = "Registration only. Key generation, signing, and secret-key import have no CT harness, DudeCT case, or binary review; target qualification is open. Secret-key import regenerates the public root, so its cost equals key generation."
+limitation = "DudeCT covers SLH-DSA-SHA2-128s key generation and deterministic signing. Secret-key import, hedged and pre-hash signing, and the other 11 parameter sets have no DudeCT case, and no CT harness or binary review covers SLH-DSA; target qualification is open. Secret-key import regenerates the public root, so its cost equals key generation."
 
 [[operation]]
 id = "signature.composite_mldsa"

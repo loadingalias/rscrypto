@@ -68,6 +68,7 @@ fuzz/corpus/aead_xchacha20poly1305/seed-basic
 fuzz/corpus/auth_argon2d/seed-basic
 fuzz/corpus/auth_argon2i/seed-basic
 fuzz/corpus/auth_argon2id/seed-basic
+fuzz/corpus/auth_chacha20_rng/seed-basic
 fuzz/corpus/auth_composite_mldsa/seed-ecdsa-p256-message
 fuzz/corpus/auth_composite_mldsa/seed-ecdsa-p256-pkcs8
 fuzz/corpus/auth_composite_mldsa/seed-ecdsa-p256-public-key
@@ -92,10 +93,13 @@ fuzz/corpus/auth_ed25519_verify/seed-basic
 fuzz/corpus/auth_ed25519_verify/seed-speccheck-mixed-order
 fuzz/corpus/auth_hkdf_sha256/seed-basic
 fuzz/corpus/auth_hkdf_sha384/seed-basic
+fuzz/corpus/auth_hkdf_sha512/seed-basic
 fuzz/corpus/auth_hmac_sha256/seed-basic
+fuzz/corpus/auth_hmac_sha3/seed-basic
 fuzz/corpus/auth_hmac_sha384/seed-basic
 fuzz/corpus/auth_hmac_sha512/seed-basic
 fuzz/corpus/auth_hpke/seed-basic
+fuzz/corpus/auth_kmac128/seed-basic
 fuzz/corpus/auth_kmac256/seed-basic
 fuzz/corpus/auth_kmac256/seed-exact-key-bytepad
 fuzz/corpus/auth_kmac256/seed-short-auth-tag
@@ -472,6 +476,7 @@ fuzz/corpus/auth_p256_ecdh/seed-basic
 fuzz/corpus/auth_p384_ecdh/seed-basic
 fuzz/corpus/auth_pbkdf2/seed-basic
 fuzz/corpus/auth_phc/seed-basic
+fuzz/corpus/auth_poly1305/seed-basic
 fuzz/corpus/auth_rsa_import/generated-pkcs1-bad-dp
 fuzz/corpus/auth_rsa_import/generated-pkcs1-bad-qinv
 fuzz/corpus/auth_rsa_import/generated-pkcs1-bitflip
@@ -573,6 +578,7 @@ fuzz/corpus/hash_blake2s/seed-basic
 fuzz/corpus/hash_blake3/seed-basic
 fuzz/corpus/hash_blake3_derive/seed-basic
 fuzz/corpus/hash_blake3_keyed/seed-basic
+fuzz/corpus/hash_cshake128/seed-basic
 fuzz/corpus/hash_cshake256/seed-basic
 fuzz/corpus/hash_cshake256/seed-bytepad-exact-rate
 fuzz/corpus/hash_sha2/seed-basic
@@ -585,4 +591,9 @@ fuzz/corpus/provider_quic_header/seed-basic
 fuzz/corpus/provider_quic_lb/seed-basic
 fuzz/corpus/provider_quic_retry/seed-basic
 fuzz/corpus/provider_quic_token/seed-basic
+fuzz/corpus/serde_secrets/seed-aes256gcm-key
+fuzz/corpus/serde_secrets/seed-ed25519-key
+fuzz/corpus/serde_secrets/seed-mldsa65-zero
+fuzz/corpus/serde_secrets/seed-mlkem768-zero
+fuzz/corpus/serde_secrets/seed-x25519-short
 fuzz/corpus/traits_io/seed-basic

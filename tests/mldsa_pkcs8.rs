@@ -1,6 +1,9 @@
 //! RFC 9881 PKCS #8 import and export of ML-DSA private keys.
 #![cfg(feature = "ml-dsa")]
 
+#[path = "common/openssl.rs"]
+mod openssl_oracle;
+
 use rscrypto::{
   MlDsa44, MlDsa44SecretKey, MlDsa44Seed, MlDsa65, MlDsa65SecretKey, MlDsa65Seed, MlDsa87, MlDsa87SecretKey,
   MlDsa87Seed, MlDsaKeyError,
@@ -506,7 +509,9 @@ fn pkcs8_matches_openssl_cli_when_available() {
   let supported = openssl(&["list", "-signature-algorithms"])
     .is_some_and(|list| String::from_utf8_lossy(&list).contains("id-ml-dsa-87"));
   if !supported {
-    eprintln!("skipping the OpenSSL ML-DSA PKCS #8 exchange because `openssl` lacks ML-DSA");
+    openssl_oracle::skip(format_args!(
+      "skipping the OpenSSL ML-DSA PKCS #8 exchange because `openssl` lacks ML-DSA"
+    ));
     return;
   }
   let directory = std::env::temp_dir().join(format!("rscrypto-mldsa-pkcs8-{}", std::process::id()));

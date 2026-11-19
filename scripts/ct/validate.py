@@ -25,7 +25,7 @@ from asm_heuristics import FINDINGS_EXIT, validate_public_inputs, validate_waive
 from provenance import ct_function_symbols, dudect_runner_sources, load_toml, sha256_file
 from manifest import (
   binsec_kernel_targets, binsec_required_targets, is_diagnostic_dudect_case, primitive_supports_physical_timing,
-  required_dudect_cases, dudect_confirmation_policy,
+  required_dudect_cases, dudect_confirmation_policy, dudect_min_median_ticks,
 )
 
 
@@ -641,10 +641,11 @@ def validate_manifest(root: Path, selected_target: str, errors: list[str], warni
     for symbol in sorted(enforced_roots.intersection(unreachable)):
       fail(errors, f"enforced CT root {symbol} cannot also be unreachable from the enforced roots")
 
-  try:
-    dudect_confirmation_policy(ct)
-  except ValueError as exc:
-    fail(errors, str(exc))
+  for policy in (dudect_confirmation_policy, dudect_min_median_ticks):
+    try:
+      policy(ct)
+    except ValueError as exc:
+      fail(errors, str(exc))
 
   dudect_names: set[str] = set()
   dudect_by_name: dict[str, dict] = {}

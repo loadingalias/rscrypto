@@ -12,6 +12,7 @@ import platform
 import re
 import shlex
 import shutil
+import statistics
 import subprocess
 import tomllib
 from datetime import datetime, timezone
@@ -23,11 +24,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
 
 import evidence_bundle as bundle
-from manifest import resolve_dudect_case
+from manifest import dudect_min_median_ticks, resolve_dudect_case
 from provenance import cfg_target_features, codegen_value, codegen_values, dudect_runner_sources, resolved_rustflags, sha256_file
 
 
 SEED_RE = re.compile(r"^bench\s+(?P<name>\S+)\s+seeded with (?P<seed>0x[0-9a-fA-F]+)$")
+TICK_RE = re.compile(r"^timer tick (?P<tick>[0-9]+) ns$")
+CALLS_RE = re.compile(r"^bench (?P<name>\S+) timed (?P<calls>[0-9]+) calls per sample$")
 RESULT_RE = re.compile(
   r"^bench (?P<name>\S+)\s+\.\.\. : n == (?P<n>[+-]?[0-9.]+)M, "
   r"max t = (?P<t>[+-]?[0-9.]+), max tau = (?P<tau>[+-]?[0-9.]+), "
@@ -60,8 +63,12 @@ def dudect_case_rows(
   *,
   threshold: float,
   requested_samples: int,
+  tick_ns: int,
+  min_median_ticks: int,
   filter_value: str = "",
 ) -> list[dict[str, Any]]:
+  """Decide each case: its |t| must stay under the threshold, and its median sample must span
+  at least `min_median_ticks` timer ticks, so that clock quantization cannot hide a difference."""
   requested = {name for name in manifest_cases if filter_value in name}
   if not requested:
     raise ValueError(f"DudeCT filter {filter_value!r} selects no manifest cases")
@@ -86,6 +93,10 @@ def dudect_case_rows(
       raise ValueError(f"DudeCT case {name!r} threshold must be finite and positive")
     limit = min(threshold, limit)
     passed = result["abs_max_t"] < limit if "threshold_abs_max_t" in metadata else result["abs_max_t"] <= limit
+    if tick_ns < 1 or "calls_per_sample" not in result:
+      raise ValueError(f"DudeCT case {name!r} has no timer tick or calls per sample")
+    median_ticks = raw["median_runtime_ns"] / tick_ns
+    resolved = median_ticks >= min_median_ticks
     diagnostic = gate == "diagnostic"
     cases.append(
       {
@@ -100,7 +111,11 @@ def dudect_case_rows(
         "raw_csv": raw,
         **result,
         "threshold_abs_max_t": limit,
-        "status": "pass" if passed else ("diagnostic-fail" if diagnostic else "fail"),
+        "timer_tick_ns": tick_ns,
+        "median_ticks": median_ticks,
+        "min_median_ticks": min_median_ticks,
+        "resolution": "pass" if resolved else "fail",
+        "status": "pass" if passed and resolved else ("diagnostic-fail" if diagnostic else "fail"),
       }
     )
   return cases
@@ -113,12 +128,20 @@ def rustc_verbose() -> str:
     return "unavailable"
 
 
-def parse_stdout(path: Path) -> tuple[dict[str, str], dict[str, dict]]:
+def parse_stdout(path: Path) -> tuple[dict[str, str], dict[str, dict], int]:
   seeds: dict[str, str] = {}
   results: dict[str, dict] = {}
+  calls: dict[str, int] = {}
+  tick_ns = 0
   for line in path.read_text(errors="replace").splitlines():
     if seed_match := SEED_RE.match(line):
       seeds[seed_match.group("name")] = seed_match.group("seed")
+      continue
+    if tick_match := TICK_RE.match(line):
+      tick_ns = int(tick_match.group("tick"))
+      continue
+    if calls_match := CALLS_RE.match(line):
+      calls[calls_match.group("name")] = int(calls_match.group("calls"))
       continue
     if result_match := RESULT_RE.match(line):
       name = result_match.group("name")
@@ -133,11 +156,15 @@ def parse_stdout(path: Path) -> tuple[dict[str, str], dict[str, dict]]:
         "max_tau": max_tau,
         "needed_samples_for_tau_threshold": int(result_match.group("needed")),
       }
-  return seeds, results
+  for name, count in calls.items():
+    if name in results:
+      results[name]["calls_per_sample"] = count
+  return seeds, results, tick_ns
 
 
 def raw_csv_rows(path: Path) -> dict[str, dict]:
   rows: dict[str, dict] = {}
+  runtimes: dict[str, list[int]] = {}
   with path.open(newline="") as fh:
     reader = csv.DictReader(fh)
     if reader.fieldnames != ["benchname", "sequence", "class", "runtime_ns"]:
@@ -154,6 +181,9 @@ def raw_csv_rows(path: Path) -> dict[str, dict]:
         raise ValueError(f"DudeCT raw CSV sequence for {name!r} is not contiguous at line {reader.line_num}")
       entry["row_count"] += 1
       entry["labels"][label] += 1
+      runtimes.setdefault(name, []).append(int(row["runtime_ns"]))
+  for name, entry in rows.items():
+    entry["median_runtime_ns"] = statistics.median_low(runtimes[name])
   return rows
 
 
@@ -452,12 +482,12 @@ def prepare_report(args):
     ],
   }
 
-  return {"metadata": report, "manifest_cases": manifest_cases}
+  return {"metadata": report, "manifest_cases": manifest_cases, "min_median_ticks": dudect_min_median_ticks(ct_manifest)}
 
 
 def case_report(prepared, args):
   manifest_cases = prepared["manifest_cases"]
-  seeds, results = parse_stdout(args.stdout)
+  seeds, results, tick_ns = parse_stdout(args.stdout)
   raw_rows = raw_csv_rows(args.csv)
   cases = dudect_case_rows(
     results,
@@ -466,6 +496,8 @@ def case_report(prepared, args):
     manifest_cases,
     threshold=args.threshold,
     requested_samples=args.samples,
+    tick_ns=tick_ns,
+    min_median_ticks=prepared["min_median_ticks"],
     filter_value=args.filter,
   )
 
@@ -501,8 +533,11 @@ def main() -> int:
     return 0
   # Validate measurements before collecting the (more expensive) binary provenance.
   with (Path(__file__).resolve().parents[2] / "ct.toml").open("rb") as source:
-    manifest_cases = manifest_dudect_cases(tomllib.load(source), args.target)
-  measurement = case_report({"metadata": {}, "manifest_cases": manifest_cases}, args)
+    ct = tomllib.load(source)
+  measurement = case_report(
+    {"metadata": {}, "manifest_cases": manifest_dudect_cases(ct, args.target), "min_median_ticks": dudect_min_median_ticks(ct)},
+    args,
+  )
   report = {**prepare_report(args)["metadata"], **measurement}
   write_report(args.out, report)
   print(f"dudect report: {args.out}")

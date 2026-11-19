@@ -854,6 +854,7 @@ name = "rscrypto"
 version = "0.12.0"
 dependencies = [
  "getrandom",
+ "serde",
 ]
 
 [[package]]
@@ -884,12 +885,14 @@ dependencies = [
  "p256",
  "p384",
  "pbkdf2",
+ "poly1305",
  "rapidhash",
  "rscrypto",
  "rscrypto-fuzz-support",
  "rscrypto-rustls",
  "rustls",
  "scrypt",
+ "serde",
  "sha1",
  "sha2",
  "sha3",

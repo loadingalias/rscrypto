@@ -247,6 +247,11 @@ jobs:
           source "$HOME/.local/share/rscrypto-tooling/environment.sh"
           # The Graviton4 row must run the SVE2 kernels. tests/platform_sve2.rs checks it.
           if [[ "$PLATFORM" == aarch64-linux ]]; then export RSCRYPTO_REQUIRE_SVE2=1; fi
+          # The OpenSSL differentials must run here. The pinned peer supports every algorithm that they compare.
+          if [[ "$PLATFORM" == x86_64-linux || "$PLATFORM" == aarch64-linux ]]; then
+            PATH="$(dirname "$(scripts/lib/python.sh scripts/lib/openssl_peer.py)"):$PATH"
+            export RSCRYPTO_REQUIRE_OPENSSL=1
+          fi
           # Measure first, so that a failing suite does not hide the stack evidence. The `stack` job judges it.
           just stack-allowances --output target/stack-paint/evidence
           just stack-worker --all-configurations --output target/stack-paint/evidence

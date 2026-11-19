@@ -607,3 +607,136 @@ mod partial_io {
     }
   }
 }
+
+/// Return whether an SP 800-185 `bytepad` of the encoded strings of `segments` fills whole `rate` blocks.
+///
+/// tiny-keccak 2.0.2 mishandles an exactly full bytepad block, so KMAC targets skip that oracle there.
+/// Independent fixed vectors cover those boundaries in the integration tests.
+pub fn kmac_bytepad_is_aligned(rate: usize, segments: &[usize]) -> bool {
+  let encoded_len = segments.iter().fold(2usize, |total, &len| {
+    let width = usize::BITS
+      .strict_sub(len.strict_mul(8).leading_zeros())
+      .div_ceil(8)
+      .max(1);
+    total
+      .strict_add(1)
+      .strict_add(usize::try_from(width).expect("the width fits usize"))
+      .strict_add(len)
+  });
+  encoded_len.is_multiple_of(rate)
+}
+
+/// Define `run` for a KMAC fuzz target: streaming, reset, verification policy, and tiny-keccak.
+#[macro_export]
+macro_rules! kmac_target {
+  ($kmac:ty, $oracle:ident, $rate:expr) => {
+    pub(super) fn run(data: &[u8]) {
+      let mut input = $crate::FuzzInput::new(data);
+      let split: u8 = $crate::some_or_return!(input.byte());
+      let key_split: u8 = $crate::some_or_return!(input.byte());
+      let out_len_byte: u8 = $crate::some_or_return!(input.byte());
+      let (key, remainder) = $crate::split_at_ratio(input.rest(), key_split);
+      let (custom, message) = $crate::split_at_ratio(remainder, split);
+      let out_len = usize::from(out_len_byte).rem_euclid(128).strict_add(1);
+
+      // Property: streaming equivalence
+      let mut expected = vec![0u8; out_len];
+      <$kmac>::mac_into(key, custom, message, &mut expected);
+      let (a, b) = $crate::split_at_ratio(message, split.wrapping_add(37));
+      let mut kmac = <$kmac>::new(key, custom);
+      kmac.update(a);
+      kmac.update(b);
+      let mut got = vec![0u8; out_len];
+      kmac.finalize_into(&mut got);
+      assert_eq!(expected, got, "streaming kmac mismatch");
+
+      // Property: reset restores initial state
+      kmac.reset();
+      kmac.update(message);
+      kmac.finalize_into(&mut got);
+      assert_eq!(expected, got, "kmac changed after reset");
+
+      // Property: the authentication API enforces its documented strength floor,
+      // while the primitive API accepts every nonempty KMAC output.
+      assert_eq!(
+        <$kmac>::verify_tag(key, custom, message, &expected).is_ok(),
+        out_len >= <$kmac>::MIN_AUTH_TAG_SIZE,
+        "kmac authentication policy mismatch"
+      );
+      <$kmac>::verify_tag_primitive(key, custom, message, &expected)
+        .expect("primitive verification must accept a correct nonempty output");
+      let mut corrupted = expected.clone();
+      corrupted[out_len / 2] ^= 1;
+      assert!(
+        <$kmac>::verify_tag_primitive(key, custom, message, &corrupted).is_err(),
+        "primitive verification accepted a corrupted output"
+      );
+      assert!(
+        <$kmac>::verify_tag(key, custom, message, &corrupted).is_err(),
+        "authentication verification accepted a corrupted tag"
+      );
+
+      // Differential: rscrypto ↔ tiny-keccak, away from its bytepad defect.
+      if !$crate::kmac_bytepad_is_aligned($rate, &[4, custom.len()])
+        && !$crate::kmac_bytepad_is_aligned($rate, &[key.len()])
+      {
+        use tiny_keccak::Hasher as _;
+        let mut oracle = tiny_keccak::Kmac::$oracle(key, custom);
+        oracle.update(message);
+        oracle.finalize(&mut got);
+        assert_eq!(expected, got, "tiny-keccak kmac oracle mismatch");
+      }
+    }
+  };
+}
+
+/// Define `run` for a cSHAKE fuzz target: RustCrypto oracle, split absorption and squeeze, reset, and one-shot.
+#[macro_export]
+macro_rules! cshake_target {
+  ($ours:ty, $oracle:ty) => {
+    pub(super) fn run(data: &[u8]) {
+      use cshake::digest::{ExtendableOutput as _, Update as _, XofReader as _};
+      use rscrypto::Xof as _;
+
+      let mut input = $crate::FuzzInput::new(data);
+      let name_split: u8 = $crate::some_or_return!(input.byte());
+      let custom_split: u8 = $crate::some_or_return!(input.byte());
+      let message_split: u8 = $crate::some_or_return!(input.byte());
+      let out_len = usize::from($crate::some_or_return!(input.byte()));
+      let squeeze_split = usize::from($crate::some_or_return!(input.byte()));
+      let (name, remainder) = $crate::split_at_ratio(input.rest(), name_split);
+      let (custom, message) = $crate::split_at_ratio(remainder, custom_split);
+      let split_out = out_len.strict_mul(squeeze_split) / 255;
+
+      // Differential: rscrypto ↔ RustCrypto cshake
+      let mut expected = vec![0u8; out_len];
+      let mut oracle = <$oracle>::new_with_function_name(name, custom);
+      oracle.update(message);
+      let mut oracle_reader = oracle.finalize_xof();
+      oracle_reader.read(&mut expected[..split_out]);
+      oracle_reader.read(&mut expected[split_out..]);
+
+      let (a, b) = $crate::split_at_ratio(message, message_split);
+      let mut hasher = <$ours>::new(name, custom);
+      hasher.update(a);
+      hasher.update(b);
+      hasher.update(&[]);
+      let mut got = vec![0u8; out_len];
+      let mut reader = hasher.finalize_xof();
+      reader.squeeze(&mut got[..split_out]);
+      reader.squeeze(&mut got[split_out..]);
+      reader.squeeze(&mut []);
+      assert_eq!(expected, got, "cshake streaming mismatch");
+
+      // Property: reset restores the initial cSHAKE prefix state.
+      hasher.reset();
+      hasher.update(message);
+      hasher.finalize_xof().squeeze(&mut got);
+      assert_eq!(expected, got, "cshake reset mismatch");
+
+      // Property: the one-shot helper matches the oracle too.
+      <$ours>::hash_into(name, custom, message, &mut got);
+      assert_eq!(expected, got, "cshake one-shot mismatch");
+    }
+  };
+}

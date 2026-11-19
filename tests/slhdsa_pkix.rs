@@ -1,6 +1,9 @@
 //! RFC 9909 SubjectPublicKeyInfo and PKCS #8 import and export of SLH-DSA keys.
 #![cfg(feature = "slh-dsa")]
 
+#[path = "common/openssl.rs"]
+mod openssl_oracle;
+
 use rscrypto::*;
 
 macro_rules! fixture {
@@ -692,7 +695,9 @@ fn pkix_and_signatures_match_openssl_cli_when_available() {
   let supported = openssl(&["list", "-signature-algorithms"])
     .is_some_and(|list| String::from_utf8_lossy(&list).contains("id-slh-dsa-shake-256f"));
   if !supported {
-    eprintln!("skipping the OpenSSL SLH-DSA exchange because `openssl` lacks SLH-DSA");
+    openssl_oracle::skip(format_args!(
+      "skipping the OpenSSL SLH-DSA exchange because `openssl` lacks SLH-DSA"
+    ));
     return;
   }
   let directory = std::env::temp_dir().join(format!("rscrypto-slhdsa-pkix-{}", std::process::id()));

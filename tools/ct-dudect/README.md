@@ -46,8 +46,8 @@ The CSV columns are `benchname,sequence,class,runtime_ns`.
 `vendor/dudect-bencher` keeps the selected upstream 0.7.0 source and its licenses.
 
 - `UPSTREAM.json` records the identity of the crate archive and the original file hashes.
-- Its `local_files` entries record the exact hashes of the two patched files: the documented whitespace
-  normalization in the macros, and the statistics change below. The identity test checks those hashes,
+- Its `local_files` entries record the exact hashes of the three patched files: `src/ctbench.rs`
+  (the timing loop), `src/macros.rs`, and `src/stats.rs`. The identity test checks every recorded hash,
   and keeps the originals.
 - The local patch records each duration and its class after the timed closure, in execution order,
   without branching on the class. It splits the durations by class only after the case completes,
@@ -60,12 +60,16 @@ The CSV columns are `benchname,sequence,class,runtime_ns`.
   duration has no variance, so its t is undefined. The RISC-V CI timer ticks every 333 ns, and equal tick
   counts convert to durations 1 ns apart, so such a crop gave t = -inf (CT 44476221075). The full test
   keeps every sample, so a constant difference between the classes still gives an infinite t.
+- The runner measures the smallest step of `Instant` at start and prints it as `timer tick N ns`.
+  On the first sample of a case, it doubles the calls of the operation in one sample until a sample
+  lasts twice `--min-ticks` ticks. Both classes use that count, which it prints as
+  `bench NAME timed N calls per sample`.
+- `--seed` replaces the seed of each selected case, so a confirmation measures new inputs.
 - Buffered output is flushed before a result is reported.
 - Clap's optional terminal color support is disabled to remove `atty` and
-  `ansi_term` from the tool. Argument parsing and the measurement code are unchanged.
-- The statistical implementation in `src/stats.rs` does not change.
+  `ansi_term` from the tool.
 - The export tests cover unequal classes, deterministic duration and order fixtures,
-  and replay of real measured samples through the same statistic.
+  replay of real measured samples through the same statistic, and the repetition of short operations.
 
 The local dependency is unpublished, and only this evidence harness uses it.
 Vendored code is excluded from automatic dependency-requirement rewriting

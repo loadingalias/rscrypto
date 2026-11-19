@@ -42,7 +42,7 @@ def repeat(prepared, args, cpu):
         write_report(directory / 'before.json', snapshot(cpu))
         invocation = argparse.Namespace(
             prepared=args.prepared, evidence_dir=directory, samples=samples,
-            smoke=False, threshold=10.0, filter=args.case,
+            smoke=False, threshold=10.0, filter=args.case, seed=None,
             timeout=case.get('timeout_seconds', 300), latest=None)
         print(f'Repetition {index + 1}/{args.repetitions}: {args.case}, {samples} samples, CPU {cpu}', flush=True)
         status = measure(prepared, invocation)

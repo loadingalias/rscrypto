@@ -43,19 +43,21 @@ pub type BenchFn = fn(&mut CtRunner, &mut BenchRng);
 #[derive(Clone)]
 enum BenchEvent {
     ContStart,
-    Begin(Vec<BenchName>),
+    Begin(Vec<BenchName>, u64),
     Wait(BenchName),
     Result(MonitorMsg),
     Seed(u64, BenchName),
 }
 
-type MonitorMsg = (BenchName, stats::CtSummary);
+type MonitorMsg = (BenchName, stats::CtSummary, u64);
 
 /// CtBencher is the primary interface for benchmarking. All setup for function inputs should be
 /// doen within the closure supplied to the `iter` method.
 struct CtBencher {
     samples: (Vec<u64>, Vec<u64>),
     order: Vec<Class>,
+    calls: u64,
+    min_sample_ns: u64,
     next_sequence: usize,
     ctx: Option<stats::CtCtx>,
     file_out: Option<BufWriter<File>>,
@@ -68,6 +70,8 @@ impl CtBencher {
         CtBencher {
             samples: (Vec::new(), Vec::new()),
             order: Vec::new(),
+            calls: 0,
+            min_sample_ns: 0,
             next_sequence: 0,
             ctx: None,
             file_out: None,
@@ -78,8 +82,12 @@ impl CtBencher {
     /// Runs the bench function and returns the CtSummary
     fn go(&mut self, f: BenchFn) -> stats::CtSummary {
         // This populates self.samples
-        let mut runner = CtRunner::default();
+        let mut runner = CtRunner {
+            min_sample_ns: self.min_sample_ns,
+            ..CtRunner::default()
+        };
         f(&mut runner, &mut self.rng);
+        self.calls = runner.calls.unwrap_or(0);
         (self.samples, self.order) = runner.into_samples();
 
         // Replace the old CtCtx with an updated one
@@ -89,6 +97,8 @@ impl CtBencher {
         // Copy the old stuff back in
         self.samples = old_self.samples;
         self.order = old_self.order;
+        self.calls = old_self.calls;
+        self.min_sample_ns = old_self.min_sample_ns;
         self.next_sequence = old_self.next_sequence;
         self.file_out = old_self.file_out;
         self.ctx = Some(new_ctx);
@@ -132,11 +142,16 @@ pub struct BenchMetadata {
 /// filter string as a substring will be executed.
 ///
 /// `file_out` is optionally the filename where CSV output of raw runtime data should be written
+///
+/// Each sample times enough calls to span at least twice `min_ticks` timer ticks. `seed`
+/// replaces the seed of each selected benchmark.
 #[derive(Default)]
 pub struct BenchOpts {
     pub continuous: bool,
     pub filter: Option<String>,
     pub file_out: Option<PathBuf>,
+    pub min_ticks: u64,
+    pub seed: Option<u64>,
 }
 
 struct ConsoleBenchState {
@@ -161,17 +176,17 @@ impl ConsoleBenchState {
         self.write_plain(&format!("bench {} seeded with 0x{:016x}\n", name, seed))
     }
 
-    fn write_run_start(&mut self, len: usize) -> io::Result<()> {
+    fn write_run_start(&mut self, len: usize, tick_ns: u64) -> io::Result<()> {
         let noun = if len != 1 { "benches" } else { "bench" };
-        self.write_plain(&format!("\nrunning {} {}\n", len, noun))
+        self.write_plain(&format!("\nrunning {} {}\ntimer tick {} ns\n", len, noun, tick_ns))
     }
 
     fn write_continuous_start(&mut self) -> io::Result<()> {
         self.write_plain("running 1 benchmark continuously\n")
     }
 
-    fn write_result(&mut self, summ: &stats::CtSummary) -> io::Result<()> {
-        self.write_plain(&format!(": {}\n", summ.fmt()))
+    fn write_result(&mut self, name: &BenchName, summ: &stats::CtSummary, calls: u64) -> io::Result<()> {
+        self.write_plain(&format!(": {}\nbench {} timed {} calls per sample\n", summ.fmt(), name.0, calls))
     }
 
     fn write_run_finish(&mut self) -> io::Result<()> {
@@ -186,12 +201,9 @@ pub fn run_benches_console(opts: BenchOpts, benches: Vec<BenchMetadata>) -> io::
     fn callback(event: &BenchEvent, st: &mut ConsoleBenchState) -> io::Result<()> {
         match (*event).clone() {
             BenchEvent::ContStart => st.write_continuous_start(),
-            BenchEvent::Begin(ref filtered_benches) => st.write_run_start(filtered_benches.len()),
+            BenchEvent::Begin(ref filtered_benches, tick_ns) => st.write_run_start(filtered_benches.len(), tick_ns),
             BenchEvent::Wait(ref b) => st.write_bench_start(b),
-            BenchEvent::Result(msg) => {
-                let (_, summ) = msg;
-                st.write_result(&summ)
-            }
+            BenchEvent::Result((name, summ, calls)) => st.write_result(&name, &summ, calls),
             BenchEvent::Seed(seed, ref name) => st.write_seed(seed, name),
         }
     }
@@ -239,9 +251,11 @@ where
     }
 
     // Make a bencher with the optional file output specified
+    let tick_ns = timer_tick_ns();
     let mut cb: CtBencher = {
         let mut d = CtBencher::new();
         d.file_out = file_out;
+        d.min_sample_ns = tick_ns.saturating_mul(opts.min_ticks).saturating_mul(2);
         d
     };
 
@@ -263,7 +277,7 @@ where
         let bench = filtered_benches.remove(0);
 
         // If a seed was specified for this bench, use it. Otherwise, use a random seed
-        let seed = bench.seed.unwrap_or_else(CtBencher::rand_seed);
+        let seed = opts.seed.or(bench.seed).unwrap_or_else(CtBencher::rand_seed);
         cb.seed_with(seed);
         callback(BenchEvent::Seed(seed, bench.name))?;
 
@@ -278,7 +292,7 @@ where
             }
         }
     } else {
-        callback(BenchEvent::Begin(filtered_names))?;
+        callback(BenchEvent::Begin(filtered_names, tick_ns))?;
 
         // Run different benches
         for bench in filtered_benches {
@@ -286,7 +300,7 @@ where
             cb.clear_data();
 
             // If a seed was specified for this bench, use it. Otherwise, use a random seed
-            let seed = bench.seed.unwrap_or_else(CtBencher::rand_seed);
+            let seed = opts.seed.or(bench.seed).unwrap_or_else(CtBencher::rand_seed);
             cb.seed_with(seed);
             callback(BenchEvent::Seed(seed, bench.name))?;
 
@@ -308,7 +322,7 @@ fn run_bench_with_bencher(name: &BenchName, benchfn: BenchFn, cb: &mut CtBencher
         f.flush().expect("Error flushing data to file");
     }
 
-    (*name, summ)
+    (*name, summ, cb.calls)
 }
 
 fn write_samples(
@@ -353,6 +367,43 @@ fn filter_benches(filter: &Option<String>, bs: Vec<BenchMetadata>) -> Vec<BenchM
     filtered
 }
 
+fn nanoseconds(duration: std::time::Duration) -> u64 {
+    u64::try_from(duration.as_nanos()).expect("sample duration fits u64 nanoseconds")
+}
+
+/// Return the smallest nonzero step between two `Instant` readings, in nanoseconds.
+fn timer_tick_ns() -> u64 {
+    (0..1000)
+        .map(|_| {
+            let start = Instant::now();
+            let mut now = Instant::now();
+            while now == start {
+                now = Instant::now();
+            }
+            nanoseconds(now.duration_since(start))
+        })
+        .min()
+        .expect("the tick search takes samples")
+}
+
+/// Return the smallest power of two of calls of `f` that last at least `min_ns`, after one
+/// untimed warm-up call.
+fn calls_per_sample<T>(f: &impl Fn() -> T, min_ns: u64) -> u64 {
+    const MAX_CALLS: u64 = 1 << 20;
+    black_box(f());
+    let mut calls = 1;
+    loop {
+        let start = Instant::now();
+        for _ in 0..calls {
+            black_box(f());
+        }
+        if nanoseconds(start.elapsed()) >= min_ns || calls >= MAX_CALLS {
+            return calls;
+        }
+        calls *= 2;
+    }
+}
+
 /// Specifies the distribution that a particular run belongs to
 #[derive(Copy, Clone)]
 pub enum Class {
@@ -366,24 +417,31 @@ pub struct CtRunner {
     // Runtimes in nanoseconds, in execution order; `order` labels each one
     runtimes: Vec<u64>,
     order: Vec<Class>,
+    // Calls of the operation in each sample, fixed by the first sample of the case
+    calls: Option<u64>,
+    min_sample_ns: u64,
 }
 
 impl CtRunner {
     /// Runs and times a single operation whose constant-timeness is in question
+    ///
+    /// Each sample times the same number of calls of `f`. The first sample of a case sets the
+    /// number, so that one sample lasts at least `min_sample_ns`; both classes use it.
     pub fn run_one<T, F>(&mut self, class: Class, f: F)
     where
         F: Fn() -> T,
     {
+        let min_sample_ns = self.min_sample_ns;
+        let calls = *self
+            .calls
+            .get_or_insert_with(|| calls_per_sample(&f, min_sample_ns));
         let start = Instant::now();
-        black_box(f());
+        for _ in 0..calls {
+            black_box(f());
+        }
         let end = Instant::now();
 
-        let runtime = {
-            let dur = end.duration_since(start);
-            dur.as_secs() * 1_000_000_000 + u64::from(dur.subsec_nanos())
-        };
-
-        self.record(class, runtime);
+        self.record(class, nanoseconds(end.duration_since(start)));
     }
 
     // Recording must not branch on the class. On Graviton5, a class branch here timed the
@@ -454,6 +512,22 @@ mod export_tests {
             String::from_utf8(out).unwrap(),
             "unequal,5,0,41\nunequal,6,0,42\n"
         );
+    }
+
+    #[test]
+    fn short_operations_repeat_until_a_sample_spans_the_minimum() {
+        // One trivial call cannot last 100 ms unless the host stalls the thread that long.
+        let mut runner = CtRunner {
+            min_sample_ns: 100_000_000,
+            ..CtRunner::default()
+        };
+        runner.run_one(Class::Left, || black_box(1));
+        runner.run_one(Class::Right, || black_box(2));
+        let calls = runner.calls.unwrap();
+        assert!(calls > 1 && calls.is_power_of_two());
+        let mut idle = CtRunner::default();
+        idle.run_one(Class::Left, || black_box(1));
+        assert_eq!(idle.calls, Some(1));
     }
 
     #[test]

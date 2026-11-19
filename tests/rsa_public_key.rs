@@ -1,5 +1,8 @@
 #![cfg(feature = "rsa")]
 
+#[path = "common/openssl.rs"]
+mod openssl_oracle;
+
 #[cfg(not(any(target_arch = "s390x", target_arch = "powerpc64")))]
 use core::{
   ffi::c_void,
@@ -1073,7 +1076,9 @@ fn assert_openssl_signature(
   expected: bool,
 ) {
   let Some(actual) = openssl_verify(digest_arg, spki, message, signature, sigopts) else {
-    eprintln!("skipping OpenSSL RSA differential check because `openssl` is not available");
+    openssl_oracle::skip(format_args!(
+      "skipping OpenSSL RSA differential check because `openssl` is not available"
+    ));
     return;
   };
 
@@ -1271,9 +1276,9 @@ fn assert_generated_pkcs1v15_encryption_external_oracles(
   if let Some(openssl_decrypted) = openssl_pkcs1v15_decrypt(pkcs1, &ciphertext) {
     assert_eq!(openssl_decrypted, plaintext);
   } else {
-    eprintln!(
+    openssl_oracle::skip(format_args!(
       "skipping OpenSSL generated {key_description} RSAES-PKCS1-v1_5 decrypt check because `openssl` is not available"
-    );
+    ));
   }
 
   if let Some(openssl_ciphertext) = openssl_pkcs1v15_encrypt(spki, plaintext) {
@@ -1283,9 +1288,9 @@ fn assert_generated_pkcs1v15_encryption_external_oracles(
       .expect("rscrypto must decrypt the matching OpenSSL PKCS#1 v1.5 ciphertext");
     assert_eq!(&rscrypto_decrypted[..rscrypto_decrypted_len], plaintext);
   } else {
-    eprintln!(
+    openssl_oracle::skip(format_args!(
       "skipping OpenSSL generated {key_description} RSAES-PKCS1-v1_5 encrypt check because `openssl` is not available"
-    );
+    ));
   }
 }
 
@@ -1482,12 +1487,16 @@ fn private_key_der_exports_roundtrip_with_rustcrypto_rsa() {
   if let Some(openssl_spki_from_pkcs1) = openssl_private_key_to_spki_der(&rscrypto_pkcs1) {
     assert_eq!(openssl_spki_from_pkcs1, rscrypto_spki);
   } else {
-    eprintln!("skipping OpenSSL RSA private-key PKCS#1 export check because `openssl` is not available");
+    openssl_oracle::skip(format_args!(
+      "skipping OpenSSL RSA private-key PKCS#1 export check because `openssl` is not available"
+    ));
   }
   if let Some(openssl_spki_from_pkcs8) = openssl_private_key_to_spki_der(&rscrypto_pkcs8) {
     assert_eq!(openssl_spki_from_pkcs8, rscrypto_spki);
   } else {
-    eprintln!("skipping OpenSSL RSA private-key PKCS#8 export check because `openssl` is not available");
+    openssl_oracle::skip(format_args!(
+      "skipping OpenSSL RSA private-key PKCS#8 export check because `openssl` is not available"
+    ));
   }
 
   let rustcrypto_public_from_pkcs1 =
@@ -1751,7 +1760,9 @@ fn private_key_outputs_verify_and_decrypt_with_rustcrypto_rsa() {
       if let Some(decrypted) = openssl_oaep_decrypt(rustcrypto_pkcs1.as_bytes(), &ciphertext, $digest) {
         assert_eq!(decrypted, openssl_plaintext);
       } else {
-        eprintln!("skipping OpenSSL RSA OAEP decrypt differential check because `openssl` is not available");
+        openssl_oracle::skip(format_args!(
+          "skipping OpenSSL RSA OAEP decrypt differential check because `openssl` is not available"
+        ));
       }
 
       if let Some(openssl_ciphertext) = openssl_oaep_encrypt(&rscrypto_public_spki, openssl_plaintext, $digest) {
@@ -1761,7 +1772,9 @@ fn private_key_outputs_verify_and_decrypt_with_rustcrypto_rsa() {
           .expect("rscrypto must decrypt the matching OpenSSL OAEP ciphertext");
         assert_eq!(&rscrypto_decrypted[..rscrypto_decrypted_len], openssl_plaintext);
       } else {
-        eprintln!("skipping OpenSSL RSA OAEP encrypt differential check because `openssl` is not available");
+        openssl_oracle::skip(format_args!(
+          "skipping OpenSSL RSA OAEP encrypt differential check because `openssl` is not available"
+        ));
       }
     }};
   }
@@ -1778,7 +1791,9 @@ fn private_key_outputs_verify_and_decrypt_with_rustcrypto_rsa() {
   if let Some(decrypted) = openssl_pkcs1v15_decrypt(rustcrypto_pkcs1.as_bytes(), &pkcs1v15_ciphertext) {
     assert_eq!(decrypted, pkcs1v15_plaintext);
   } else {
-    eprintln!("skipping OpenSSL RSA PKCS#1 v1.5 decrypt differential check because `openssl` is not available");
+    openssl_oracle::skip(format_args!(
+      "skipping OpenSSL RSA PKCS#1 v1.5 decrypt differential check because `openssl` is not available"
+    ));
   }
 
   if let Some(openssl_ciphertext) = openssl_pkcs1v15_encrypt(&rscrypto_public_spki, pkcs1v15_plaintext) {
@@ -1788,7 +1803,9 @@ fn private_key_outputs_verify_and_decrypt_with_rustcrypto_rsa() {
       .expect("rscrypto must decrypt the matching OpenSSL PKCS#1 v1.5 ciphertext");
     assert_eq!(&rscrypto_decrypted[..rscrypto_decrypted_len], pkcs1v15_plaintext);
   } else {
-    eprintln!("skipping OpenSSL RSA PKCS#1 v1.5 encrypt differential check because `openssl` is not available");
+    openssl_oracle::skip(format_args!(
+      "skipping OpenSSL RSA PKCS#1 v1.5 encrypt differential check because `openssl` is not available"
+    ));
   }
 }
 
@@ -1954,12 +1971,16 @@ fn generated_private_key_outputs_verify_and_decrypt_with_external_oracles() {
   if let Some(openssl_spki_from_pkcs1) = openssl_private_key_to_spki_der(&pkcs1) {
     assert_eq!(openssl_spki_from_pkcs1, spki);
   } else {
-    eprintln!("skipping OpenSSL generated RSA PKCS#1 private-key parse check because `openssl` is not available");
+    openssl_oracle::skip(format_args!(
+      "skipping OpenSSL generated RSA PKCS#1 private-key parse check because `openssl` is not available"
+    ));
   }
   if let Some(openssl_spki_from_pkcs8) = openssl_private_key_to_spki_der(&pkcs8) {
     assert_eq!(openssl_spki_from_pkcs8, spki);
   } else {
-    eprintln!("skipping OpenSSL generated RSA PKCS#8 private-key parse check because `openssl` is not available");
+    openssl_oracle::skip(format_args!(
+      "skipping OpenSSL generated RSA PKCS#8 private-key parse check because `openssl` is not available"
+    ));
   }
 
   macro_rules! assert_generated_profile {
@@ -2037,7 +2058,9 @@ fn generated_private_key_outputs_verify_and_decrypt_with_external_oracles() {
       if let Some(openssl_decrypted) = openssl_oaep_decrypt(&pkcs1, &ciphertext, $oaep_digest) {
         assert_eq!(openssl_decrypted, plaintext);
       } else {
-        eprintln!("skipping OpenSSL generated RSA OAEP decrypt check because `openssl` is not available");
+        openssl_oracle::skip(format_args!(
+          "skipping OpenSSL generated RSA OAEP decrypt check because `openssl` is not available"
+        ));
       }
 
       if let Some(openssl_ciphertext) = openssl_oaep_encrypt(&spki, plaintext, $oaep_digest) {
@@ -2047,7 +2070,9 @@ fn generated_private_key_outputs_verify_and_decrypt_with_external_oracles() {
           .expect("rscrypto must decrypt the matching OpenSSL OAEP ciphertext");
         assert_eq!(&rscrypto_decrypted[..rscrypto_decrypted_len], plaintext);
       } else {
-        eprintln!("skipping OpenSSL generated RSA OAEP encrypt check because `openssl` is not available");
+        openssl_oracle::skip(format_args!(
+          "skipping OpenSSL generated RSA OAEP encrypt check because `openssl` is not available"
+        ));
       }
     }};
   }
@@ -2126,16 +2151,16 @@ fn generated_modern_private_key_outputs_verify_and_decrypt_with_external_oracles
     if let Some(openssl_spki_from_pkcs1) = openssl_private_key_to_spki_der(&pkcs1) {
       assert_eq!(openssl_spki_from_pkcs1, spki);
     } else {
-      eprintln!(
+      openssl_oracle::skip(format_args!(
         "skipping OpenSSL generated RSA-{bits} PKCS#1 private-key parse check because `openssl` is not available"
-      );
+      ));
     }
     if let Some(openssl_spki_from_pkcs8) = openssl_private_key_to_spki_der(&pkcs8) {
       assert_eq!(openssl_spki_from_pkcs8, spki);
     } else {
-      eprintln!(
+      openssl_oracle::skip(format_args!(
         "skipping OpenSSL generated RSA-{bits} PKCS#8 private-key parse check because `openssl` is not available"
-      );
+      ));
     }
 
     macro_rules! assert_generated_modern_profile {
@@ -2213,7 +2238,9 @@ fn generated_modern_private_key_outputs_verify_and_decrypt_with_external_oracles
         if let Some(openssl_decrypted) = openssl_oaep_decrypt(&pkcs1, &ciphertext, $oaep_digest) {
           assert_eq!(openssl_decrypted, plaintext);
         } else {
-          eprintln!("skipping OpenSSL generated RSA-{bits} OAEP decrypt check because `openssl` is not available");
+          openssl_oracle::skip(format_args!(
+            "skipping OpenSSL generated RSA-{bits} OAEP decrypt check because `openssl` is not available"
+          ));
         }
 
         if let Some(openssl_ciphertext) = openssl_oaep_encrypt(&spki, plaintext, $oaep_digest) {
@@ -2223,7 +2250,9 @@ fn generated_modern_private_key_outputs_verify_and_decrypt_with_external_oracles
             .expect("rscrypto must decrypt the matching OpenSSL OAEP ciphertext");
           assert_eq!(&rscrypto_decrypted[..rscrypto_decrypted_len], plaintext);
         } else {
-          eprintln!("skipping OpenSSL generated RSA-{bits} OAEP encrypt check because `openssl` is not available");
+          openssl_oracle::skip(format_args!(
+            "skipping OpenSSL generated RSA-{bits} OAEP encrypt check because `openssl` is not available"
+          ));
         }
       }};
     }
@@ -5203,7 +5232,9 @@ fn nist_cavp_sha2_signatures_match_openssl_cli_when_available() {
       &[]
     };
     let Some(actual) = openssl_verify(digest_arg, &spki, &message, &signature, sigopts) else {
-      eprintln!("skipping OpenSSL CAVP RSA differential check because `openssl` is not available");
+      openssl_oracle::skip(format_args!(
+        "skipping OpenSSL CAVP RSA differential check because `openssl` is not available"
+      ));
       return;
     };
 

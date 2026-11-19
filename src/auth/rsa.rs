@@ -4768,6 +4768,11 @@ impl SecretLimbs {
     Self { limbs: vec![0; len] }
   }
 
+  #[cfg(feature = "getrandom")]
+  fn from_limbs(limbs: &[u64]) -> Self {
+    Self { limbs: limbs.to_vec() }
+  }
+
   #[inline]
   fn as_slice(&self) -> &[u64] {
     &self.limbs
@@ -8243,14 +8248,10 @@ fn keygen_build_private_key_from_primes(
     private_import_decrement_unsigned_be(prime_p.as_slice()).map_err(|_| RsaKeyGenerationError::ArithmeticFailure)?;
   let q_minus_one =
     private_import_decrement_unsigned_be(prime_q.as_slice()).map_err(|_| RsaKeyGenerationError::ArithmeticFailure)?;
-  let lambda = keygen_lcm_unsigned_be(p_minus_one.as_slice(), q_minus_one.as_slice())?;
-  let private_exponent = SecretBigEndianBuffer::new(keygen_inverse_small_mod_odd(
-    RSA_KEYGEN_PUBLIC_EXPONENT,
-    lambda.as_slice(),
-  )?);
-  if !keygen_private_exponent_is_large_enough(private_exponent.as_slice(), modulus_bits) {
+  let Some(private_exponent) = keygen_private_exponent(p_minus_one.as_slice(), q_minus_one.as_slice(), modulus_bits)
+  else {
     return Ok(None);
-  }
+  };
   let exponent_p = private_import_unsigned_be_mod(private_exponent.as_slice(), p_minus_one.as_slice());
   let exponent_q = private_import_unsigned_be_mod(private_exponent.as_slice(), q_minus_one.as_slice());
   let coefficient = SecretBigEndianBuffer::new(keygen_prime_mod_inverse(prime_q.as_slice(), prime_p.as_slice())?);
@@ -8364,14 +8365,6 @@ fn keygen_random_odd_candidate(drbg: &mut RsaKeygenDrbg, bits: usize) -> Vec<u8>
   candidate
 }
 
-#[cfg(all(feature = "getrandom", test))]
-fn keygen_candidate_has_fixed_shape(candidate: &[u8], bits: usize) -> bool {
-  unsigned_be_bit_len(candidate) == bits
-    && candidate.last().is_some_and(|last| last & 1 == 1)
-    && bits > 1
-    && keygen_bit_is_set(candidate, bits.strict_sub(1))
-}
-
 #[cfg(feature = "getrandom")]
 fn keygen_probable_prime_meets_fips_lower_bound(candidate: &[u8], bits: usize) -> bool {
   if bits.is_multiple_of(8)
@@ -8398,26 +8391,6 @@ fn keygen_mask_unused_top_bits(bytes: &mut [u8], bits: usize) {
   if let Some(first) = bytes.first_mut() {
     *first &= u8::MAX >> 8usize.strict_sub(used_top_bits);
   }
-}
-
-#[cfg(feature = "getrandom")]
-fn keygen_set_bit(bytes: &mut [u8], bit: usize) {
-  let byte_from_end = bit / 8;
-  let Some(byte_index) = bytes.len().checked_sub(byte_from_end.strict_add(1)) else {
-    return;
-  };
-  if let Some(byte) = bytes.get_mut(byte_index) {
-    *byte |= 1u8 << (bit % 8);
-  }
-}
-
-#[cfg(feature = "getrandom")]
-fn keygen_bit_is_set(bytes: &[u8], bit: usize) -> bool {
-  let byte_from_end = bit / 8;
-  let Some(byte_index) = bytes.len().checked_sub(byte_from_end.strict_add(1)) else {
-    return false;
-  };
-  bytes.get(byte_index).is_some_and(|byte| byte & (1u8 << (bit % 8)) != 0)
 }
 
 fn has_small_prime_factor(candidate: &[u8]) -> bool {
@@ -8598,153 +8571,164 @@ fn keygen_prime_mod_inverse(value: &[u8], prime_modulus: &[u8]) -> Result<Vec<u8
   result
 }
 
+/// Return the FIPS 186-5 private exponent `d = e⁻¹ mod lcm(p - 1, q - 1)` as a modulus-width
+/// big-endian value, or `None` when `d ≤ 2^(modulus_bits / 2)`.
+///
+/// The work depends only on the public widths of `p - 1` and `q - 1`.
 #[cfg(feature = "getrandom")]
-fn keygen_lcm_unsigned_be(left: &[u8], right: &[u8]) -> Result<SecretBigEndianBuffer, RsaKeyGenerationError> {
-  let gcd = keygen_gcd_unsigned_be(left, right)?;
-  let quotient = keygen_div_exact_unsigned_be(left, gcd.as_slice())?;
-  private_import_product_unsigned_be(quotient.as_slice(), right).ok_or(RsaKeyGenerationError::ArithmeticFailure)
+fn keygen_private_exponent(
+  p_minus_one: &[u8],
+  q_minus_one: &[u8],
+  modulus_bits: usize,
+) -> Option<SecretBigEndianBuffer> {
+  let limbs = p_minus_one.len().max(q_minus_one.len()).div_ceil(8);
+  let mut a = SecretLimbs::zeroed(limbs);
+  let mut b = SecretLimbs::zeroed(limbs);
+  limbs_from_be_into(p_minus_one, a.as_mut_slice());
+  limbs_from_be_into(q_minus_one, b.as_mut_slice());
+  let mut private_exponent = keygen_lcm(a.as_slice(), b.as_slice());
+  keygen_invert_public_exponent(private_exponent.as_mut_slice());
+
+  let half = modulus_bits / 2;
+  let mut minimum = vec![0u64; private_exponent.as_slice().len()];
+  minimum[half / 64] = 1 << (half % 64);
+  if !ct_limbs_lt(&minimum, private_exponent.as_slice()) {
+    return None;
+  }
+  let mut out = SecretBigEndianBuffer::zeroed(modulus_bits.div_ceil(8));
+  limbs_to_be(private_exponent.as_slice(), out.as_mut_slice());
+  Some(out)
 }
 
+/// Return `lcm(a, b)` in `2·L` limbs for nonzero `a` and `b` of `L` limbs each.
+///
+/// Write `gcd(a, b) = 2^s·h` with `h` odd, and `a = 2^s·a'`. Then `lcm(a, b) = (a' / h)·b`.
+/// Loop counts and indices depend only on `L`, and each choice is a mask.
 #[cfg(feature = "getrandom")]
-fn keygen_gcd_unsigned_be(left: &[u8], right: &[u8]) -> Result<SecretBigEndianBuffer, RsaKeyGenerationError> {
-  let mut a = keygen_canonical_vec(left.to_vec());
-  let mut b = keygen_canonical_vec(right.to_vec());
-  while !is_zero_unsigned_be(&b) {
-    let remainder = private_import_unsigned_be_mod(&a, &b);
-    ct::zeroize(&mut a);
-    a = b;
-    b = remainder.as_slice().to_vec();
+fn keygen_lcm(a: &[u64], b: &[u64]) -> SecretLimbs {
+  let limbs = a.len();
+  let bits = limbs.strict_mul(64);
+  let mut u = SecretLimbs::from_limbs(a);
+  let mut v = SecretLimbs::from_limbs(b);
+  let mut t = SecretLimbs::zeroed(limbs);
+  let (u, v, t) = (u.as_mut_slice(), v.as_mut_slice(), t.as_mut_slice());
+  for _ in 0..bits {
+    let both_even = !(u[0] | v[0]) & 1;
+    keygen_ct_halve(u, both_even);
+    keygen_ct_halve(v, both_even);
   }
-  ct::zeroize(&mut b);
-  Ok(SecretBigEndianBuffer::new(a))
-}
+  let reduced_a = SecretLimbs::from_limbs(u);
 
-#[cfg(feature = "getrandom")]
-fn keygen_div_exact_unsigned_be(
-  dividend: &[u8],
-  divisor: &[u8],
-) -> Result<SecretBigEndianBuffer, RsaKeyGenerationError> {
-  if is_zero_unsigned_be(divisor) {
-    return Err(RsaKeyGenerationError::ArithmeticFailure);
-  }
-  if unsigned_be_cmp(dividend, divisor) == core::cmp::Ordering::Less {
-    return Err(RsaKeyGenerationError::ArithmeticFailure);
+  // Stein's algorithm keeps `v` odd. Each step can replace `u` by `|u - v|` and `v` by
+  // `min(u, v)`, then halves `u`. The bit lengths of `u` and `v` lose at least one bit in
+  // total, so `2·bits` steps end with `u = 0` and `v = h`.
+  keygen_ct_swap(u, v, !v[0] & 1);
+  for _ in 0..bits.strict_mul(2) {
+    let u_odd = u[0] & 1;
+    t.copy_from_slice(u);
+    keygen_ct_swap(u, v, u_odd & sub_modulus_in_place(t, v));
+    t.copy_from_slice(u);
+    sub_modulus_in_place(t, v);
+    keygen_ct_swap(u, t, u_odd);
+    keygen_ct_halve(u, 1);
   }
 
-  let quotient_len = dividend.len();
-  let mut quotient = vec![0u8; quotient_len];
-  let mut remainder = vec![0u8; divisor.len().strict_add(1)];
-  let dividend_bits = unsigned_be_bit_len(dividend);
-  for bit_index in (0..dividend_bits).rev() {
-    keygen_shift_left_one_fixed(&mut remainder);
-    if keygen_bit_is_set(dividend, bit_index)
-      && let Some(last) = remainder.last_mut()
-    {
-      *last |= 1;
+  // Long division of `a'` by `h`. The zero `u` holds the remainder.
+  let mut quotient = SecretLimbs::zeroed(limbs);
+  let quotient_limbs = quotient.as_mut_slice();
+  for bit in (0..bits).rev() {
+    let mut carry = (reduced_a.as_slice()[bit / 64] >> (bit % 64)) & 1;
+    for limb in u.iter_mut() {
+      let next = *limb >> 63;
+      *limb = (*limb << 1) | carry;
+      carry = next;
     }
-    let remainder_canonical = keygen_canonical_vec(remainder.clone());
-    if unsigned_be_cmp(&remainder_canonical, divisor) != core::cmp::Ordering::Less {
-      let divisor_fixed = keygen_left_pad_vec(divisor, remainder.len())?;
-      let mut difference = vec![0u8; remainder.len()];
-      private_sub_unsigned_be_to_fixed(&remainder, divisor_fixed.as_slice(), &mut difference)
-        .map_err(|_| RsaKeyGenerationError::ArithmeticFailure)?;
-      remainder.copy_from_slice(&difference);
-      ct::zeroize(&mut difference);
-      keygen_set_bit(&mut quotient, bit_index);
+    t.copy_from_slice(u);
+    let take = carry | (sub_modulus_in_place(t, v) ^ 1);
+    keygen_ct_swap(u, t, take);
+    quotient_limbs[bit / 64] |= take << (bit % 64);
+  }
+
+  let mut lcm = SecretLimbs::zeroed(limbs.strict_mul(2));
+  let product = lcm.as_mut_slice();
+  for (index, &quotient_limb) in quotient_limbs.iter().enumerate() {
+    let mut carry = 0u64;
+    for (slot, &b_limb) in product[index..].iter_mut().zip(b) {
+      (*slot, carry) = mont_mac(*slot, quotient_limb, b_limb, carry);
     }
+    product[index.strict_add(limbs)] = carry;
   }
-
-  let remainder_canonical = keygen_canonical_vec(remainder.clone());
-  ct::zeroize(&mut remainder);
-  if !is_zero_unsigned_be(&remainder_canonical) {
-    ct::zeroize(&mut quotient);
-    return Err(RsaKeyGenerationError::ArithmeticFailure);
-  }
-
-  Ok(SecretBigEndianBuffer::new(keygen_canonical_vec(quotient)))
+  lcm
 }
 
+/// Replace `lambda` with `e⁻¹ mod lambda` for the public exponent `e`, or with 0 when `e`
+/// divides `lambda`.
+///
+/// Write `lambda = e·Q + r`. The `k < e` with `k·r ≡ -1 (mod e)` gives
+/// `e⁻¹ mod lambda = (1 + k·lambda) / e = k·Q + (1 + k·r) / e`. A masked scan over each `k`
+/// finds `k` and `(1 + k·r) / e`, so no step divides by a secret value.
 #[cfg(feature = "getrandom")]
-fn keygen_left_pad_vec(src: &[u8], len: usize) -> Result<Vec<u8>, RsaKeyGenerationError> {
-  if src.len() > len {
-    return Err(RsaKeyGenerationError::ArithmeticFailure);
-  }
-  let mut out = vec![0u8; len];
-  keygen_left_pad(src, &mut out)?;
-  Ok(out)
-}
-
-#[cfg(feature = "getrandom")]
-fn keygen_shift_left_one_fixed(bytes: &mut [u8]) {
-  let mut carry = 0u8;
-  for byte in bytes.iter_mut().rev() {
-    let next_carry = *byte >> 7;
-    *byte = (*byte << 1) | carry;
-    carry = next_carry;
-  }
-}
-
-#[cfg(feature = "getrandom")]
-fn keygen_private_exponent_is_large_enough(private_exponent: &[u8], modulus_bits: usize) -> bool {
-  let minimum_bit = modulus_bits / 2;
-  let mut minimum = vec![0u8; minimum_bit.strict_add(8) / 8];
-  keygen_set_bit(&mut minimum, minimum_bit);
-  unsigned_be_cmp(private_exponent, &minimum) == core::cmp::Ordering::Greater
-}
-
-#[cfg(feature = "getrandom")]
-fn keygen_inverse_small_mod_odd(exponent: u64, modulus: &[u8]) -> Result<Vec<u8>, RsaKeyGenerationError> {
-  let modulus_mod_exponent = unsigned_be_mod_u64(modulus, exponent);
-  if modulus_mod_exponent == 0 {
-    return Err(RsaKeyGenerationError::ArithmeticFailure);
-  }
-
-  for k in 1..exponent {
-    if 1u128
-      .strict_add(u128::from(k).strict_mul(u128::from(modulus_mod_exponent)))
-      .is_multiple_of(u128::from(exponent))
-    {
-      return keygen_mul_u64_add_one_div_u64(modulus, k, exponent);
+fn keygen_invert_public_exponent(lambda: &mut [u64]) {
+  const E: u64 = RSA_KEYGEN_PUBLIC_EXPONENT;
+  let mut remainder = 0u64;
+  for limb in lambda.iter_mut().rev() {
+    let mut quotient = 0u64;
+    for bit in (0..64).rev() {
+      remainder = (remainder << 1) | ((*limb >> bit) & 1);
+      let (reduced, borrow) = remainder.overflowing_sub(E);
+      let take = u64::from(borrow) ^ 1;
+      remainder ^= (remainder ^ reduced) & keygen_ct_mask(take);
+      quotient = (quotient << 1) | take;
     }
+    *limb = quotient;
   }
 
-  Err(RsaKeyGenerationError::ArithmeticFailure)
+  // `residue = k·r mod e` and `wraps = ⌊k·r / e⌋` stay below `2·e`, so no addition wraps.
+  let (mut residue, mut wraps, mut multiplier, mut addend) = (0u64, 0u64, 0u64, 0u64);
+  for k in 1..E {
+    residue = residue.wrapping_add(remainder);
+    let (reduced, borrow) = residue.overflowing_sub(E);
+    let wrap = u64::from(borrow) ^ 1;
+    residue ^= (residue ^ reduced) & keygen_ct_mask(wrap);
+    wraps = wraps.wrapping_add(wrap);
+    let found = keygen_ct_mask(ct_nonzero_u64(residue ^ (E - 1)) ^ 1);
+    multiplier |= k & found;
+    addend |= wraps.wrapping_add(1) & found;
+  }
+
+  let mut carry = addend;
+  for limb in lambda {
+    (*limb, carry) = mont_mac(0, *limb, multiplier, carry);
+  }
 }
 
 #[cfg(feature = "getrandom")]
-fn keygen_mul_u64_add_one_div_u64(
-  value: &[u8],
-  multiplier: u64,
-  divisor: u64,
-) -> Result<Vec<u8>, RsaKeyGenerationError> {
-  let mut product_rev = Vec::with_capacity(value.len().strict_add(8));
-  let mut carry = 1u128;
-  for &byte in value.iter().rev() {
-    let acc = u128::from(byte).strict_mul(u128::from(multiplier)).strict_add(carry);
-    product_rev.push(acc.to_le_bytes()[0]);
-    carry = acc >> 8;
-  }
-  while carry != 0 {
-    product_rev.push(carry.to_le_bytes()[0]);
-    carry >>= 8;
-  }
-  product_rev.reverse();
+fn keygen_ct_mask(choice: u64) -> u64 {
+  // SECURITY: An opaque mask keeps LLVM from turning a secret selection into a branch.
+  core::hint::black_box(0u64.wrapping_sub(choice & 1))
+}
 
-  let mut quotient = Vec::with_capacity(product_rev.len());
-  let mut remainder = 0u128;
-  let divisor = u128::from(divisor);
-  for &byte in &product_rev {
-    let acc = (remainder << 8).strict_add(u128::from(byte));
-    quotient.push(u8::try_from(acc.div_euclid(divisor)).map_err(|_| RsaKeyGenerationError::ArithmeticFailure)?);
-    remainder = acc.rem_euclid(divisor);
+/// Swap `left` and `right` when `choice` is 1.
+#[cfg(feature = "getrandom")]
+fn keygen_ct_swap(left: &mut [u64], right: &mut [u64], choice: u64) {
+  let mask = keygen_ct_mask(choice);
+  for (left, right) in left.iter_mut().zip(right) {
+    let difference = (*left ^ *right) & mask;
+    *left ^= difference;
+    *right ^= difference;
   }
-  ct::zeroize(&mut product_rev);
-  if remainder != 0 {
-    ct::zeroize(&mut quotient);
-    return Err(RsaKeyGenerationError::ArithmeticFailure);
-  }
+}
 
-  Ok(keygen_canonical_vec(quotient))
+/// Halve `value` when `choice` is 1.
+#[cfg(feature = "getrandom")]
+fn keygen_ct_halve(value: &mut [u64], choice: u64) {
+  let mask = keygen_ct_mask(choice);
+  let mut above = 0u64;
+  for limb in value.iter_mut().rev() {
+    let original = *limb;
+    *limb ^= (original ^ ((original >> 1) | (above << 63))) & mask;
+    above = original;
+  }
 }
 
 #[cfg(feature = "getrandom")]
@@ -10043,34 +10027,6 @@ fn private_sub_mod_unsigned_be_to_fixed(
   }
 
   Ok(())
-}
-
-#[cfg(feature = "getrandom")]
-fn private_sub_unsigned_be_to_fixed(left: &[u8], right: &[u8], out: &mut [u8]) -> Result<(), RsaPrivateOpError> {
-  if left.len() != right.len() || left.len() != out.len() || unsigned_be_cmp(left, right) == core::cmp::Ordering::Less {
-    return Err(RsaPrivateOpError::InvalidLength);
-  }
-
-  let mut borrow = 0i16;
-  for index in 0..out.len() {
-    let src = out.len().strict_sub(index).strict_sub(1);
-    let mut difference = i16::from(left[src])
-      .strict_sub(i16::from(right[src]))
-      .strict_sub(borrow);
-    if difference < 0 {
-      difference = difference.strict_add(256);
-      borrow = 1;
-    } else {
-      borrow = 0;
-    }
-    out[src] = difference.to_le_bytes()[0];
-  }
-
-  if borrow == 0 {
-    Ok(())
-  } else {
-    Err(RsaPrivateOpError::InvalidLength)
-  }
 }
 
 #[cfg(feature = "getrandom")]
@@ -17061,25 +17017,60 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
 
   #[cfg(feature = "getrandom")]
   #[test]
-  fn keygen_lcm_private_exponent_contract_is_enforced() {
-    let p_minus_one =
-      private_import_decrement_unsigned_be(&rsa_private_prime_p()).expect("fixture prime p must be greater than zero");
-    let q_minus_one =
-      private_import_decrement_unsigned_be(&rsa_private_prime_q()).expect("fixture prime q must be greater than zero");
-    let lambda = keygen_lcm_unsigned_be(p_minus_one.as_slice(), q_minus_one.as_slice())
-      .expect("fixture prime totients must have an LCM");
-    let phi = private_import_product_unsigned_be(p_minus_one.as_slice(), q_minus_one.as_slice())
-      .expect("fixture prime totient product must fit the supported width");
+  fn keygen_private_exponent_matches_euclid_and_bigint_inverse() {
+    // Oracle: Euclid's algorithm for the LCM and num-bigint for the modular inverse.
+    fn gcd(mut a: BigUint, mut b: BigUint) -> BigUint {
+      while b != BigUint::ZERO {
+        let remainder = &a % &b;
+        a = core::mem::replace(&mut b, remainder);
+      }
+      a
+    }
+    let pad = |value: &BigUint| {
+      let bytes = value.to_bytes_be();
+      let mut padded = vec![0u8; 64usize.strict_sub(bytes.len())];
+      padded.extend_from_slice(&bytes);
+      padded
+    };
+    let e = BigUint::from(RSA_KEYGEN_PUBLIC_EXPONENT);
+    let one = BigUint::from(1u8);
+    let minimum = &one << 512usize;
+    let mut cases = vec![
+      (BigUint::from(6u8), BigUint::from(4u8)),
+      (&e * 2u8, BigUint::from(4u8)),
+      (&one << 511usize, &one << 511usize),
+      ((&one << 511usize) - 2u8, (&one << 511usize) - 2u8),
+      ((&one << 400usize) * 3u8, (&one << 300usize) * 5u8),
+    ];
+    let mut drbg = test_keygen_drbg(b"private-exponent-oracle");
+    for _ in 0..48 {
+      let mut bytes = [0u8; 24 + 32 + 32 + 1];
+      drbg.fill(&mut bytes);
+      let common = BigUint::from_bytes_be(&bytes[..24]) << (usize::from(bytes[88]) % 64);
+      let a = (&common * BigUint::from_bytes_be(&bytes[24..56])).max(one.clone());
+      let b = (&common * BigUint::from_bytes_be(&bytes[56..88])).max(one.clone());
+      cases.push((a, b));
+    }
 
-    assert_eq!(
-      private_import_unsigned_be_mod(phi.as_slice(), lambda.as_slice()).as_slice(),
-      [0]
-    );
-    assert!(unsigned_be_cmp(lambda.as_slice(), phi.as_slice()) != core::cmp::Ordering::Greater);
-    assert!(keygen_private_exponent_is_large_enough(
-      &rsa_private_exponent(),
-      unsigned_be_bit_len(&rsa_private_modulus())
-    ));
+    let value = |limbs: &SecretLimbs| {
+      BigUint::from_bytes_le(
+        &limbs
+          .as_slice()
+          .iter()
+          .flat_map(|limb| limb.to_le_bytes())
+          .collect::<Vec<_>>(),
+      )
+    };
+    for (a, b) in cases {
+      let lambda = &a * &b / gcd(a.clone(), b.clone());
+      let mut actual = keygen_lcm(&limbs_from_be(&pad(&a)), &limbs_from_be(&pad(&b)));
+      assert_eq!(value(&actual), lambda, "a = {a:x}, b = {b:x}");
+      let inverse = e.modinv(&lambda).unwrap_or_default();
+      keygen_invert_public_exponent(actual.as_mut_slice());
+      assert_eq!(value(&actual), inverse, "a = {a:x}, b = {b:x}");
+      let exported = keygen_private_exponent(&pad(&a), &pad(&b), 1024).map(|d| BigUint::from_bytes_be(d.as_slice()));
+      assert_eq!(exported, Some(inverse).filter(|d| *d > minimum));
+    }
   }
 
   #[cfg(feature = "getrandom")]
@@ -17094,10 +17085,12 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
       }
     }
     let candidate = accepted.expect("deterministic search must find a FIPS-shaped candidate");
-    assert!(
-      keygen_candidate_has_fixed_shape(&candidate, 128),
-      "accepted FIPS A.1.3 candidate must be odd and full-width"
+    assert_eq!(
+      unsigned_be_bit_len(&candidate),
+      128,
+      "accepted FIPS A.1.3 candidate must be full-width"
     );
+    assert_eq!(candidate.last().copied().unwrap_or_default() & 1, 1);
   }
 
   #[cfg(feature = "getrandom")]

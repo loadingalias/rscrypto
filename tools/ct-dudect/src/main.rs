@@ -61,6 +61,7 @@ const BLAKE3_PARALLEL_MESSAGE_LEN: usize = 1024 * 1024;
 const MLKEM_Q: u16 = 3329;
 const AAD: &[u8] = b"rscrypto-ct";
 const AEAD_PLAINTEXT: [u8; 44] = *b"constant-time seal buffer for key validation";
+const AEAD_LEN: usize = AEAD_PLAINTEXT.len();
 const RSA_PKCS1_2048: &str = include_str!("../../../testdata/rsa/wycheproof/rsa_pkcs1_2048_test.json");
 const RSA_CT_KEY_A_INDEX: usize = 0;
 const RSA_CT_KEY_B_SAME_SHAPE_INDEX: usize = 2;
@@ -88,6 +89,12 @@ fn random_class(rng: &mut BenchRng) -> Class {
   }
 }
 
+/// Return `left` for the left class and `right` for the right class, through an index rather than
+/// a branch on the class.
+fn by_class<'a, T>(class: Class, left: &'a T, right: &'a T) -> &'a T {
+  [left, right][core::hint::black_box(usize::from(matches!(class, Class::Right))) & 1]
+}
+
 fn balanced_classes(rng: &mut BenchRng, count: usize) -> Vec<Class> {
   const BLOCK_LEN: usize = 32;
 
@@ -105,18 +112,6 @@ fn balanced_classes(rng: &mut BenchRng, count: usize) -> Vec<Class> {
     }
   }
   classes
-}
-
-const SHORT_KERNEL_REPETITIONS: usize = 64;
-
-#[inline(never)]
-fn repeat_short_kernel<T>(f: impl Fn() -> T) {
-  // A single accelerated kernel call can be shorter than the timer calls around it.
-  // Repetition keeps the production operation intact while making each statistical
-  // sample large enough that clock quantization does not dominate the distribution.
-  for _ in 0..SHORT_KERNEL_REPETITIONS {
-    core::hint::black_box(f());
-  }
 }
 
 fn mlkem_poly_from_seed(seed: u16) -> [u16; 256] {
@@ -326,6 +321,32 @@ fn secret_wrappers_debug_fixed_vs_random(runner: &mut CtRunner, rng: &mut BenchR
   }
 }
 
+/// Hex decoding of a secret key. The fixed key encodes to digits only; random keys mix digits and
+/// letters of both cases, so a decoder that branches on the character range separates the classes.
+fn secret_hex_from_str_fixed_vs_random(runner: &mut CtRunner, rng: &mut BenchRng) {
+  let mut inputs = Vec::with_capacity(samples());
+  for class in balanced_classes(rng, samples()) {
+    let key = if matches!(class, Class::Left) {
+      [0x42; Aes256GcmKey::LENGTH]
+    } else {
+      rand_array::<{ Aes256GcmKey::LENGTH }>(rng)
+    };
+    let hex: String = key
+      .iter()
+      .flat_map(|byte| [byte >> 4, byte & 0xf])
+      .map(|nibble| {
+        let digit = char::from_digit(u32::from(nibble), 16).expect("a nibble is a hex digit");
+        if rng.random::<bool>() { digit.to_ascii_uppercase() } else { digit }
+      })
+      .collect();
+    inputs.push((class, hex));
+  }
+
+  for (class, hex) in inputs {
+    runner.run_one(class, || hex.parse::<Aes256GcmKey>().is_ok());
+  }
+}
+
 fn poly1305_fixed_vs_random_key<const N: usize>(runner: &mut CtRunner, rng: &mut BenchRng) {
   let mut inputs = Vec::with_capacity(samples());
   for _ in 0..samples() {
@@ -496,7 +517,7 @@ macro_rules! aead_fixed_vs_random_key_open {
         };
         let key = <$key>::from_bytes(key);
         let cipher = <$cipher>::new(&key);
-        let mut ciphertext = AEAD_PLAINTEXT;
+        let mut ciphertext = rand_array::<AEAD_LEN>(rng);
         let tag = cipher
           .encrypt_in_place(&nonce, AAD, &mut ciphertext)
           .expect("fixed-size AEAD timing fixture must encrypt");
@@ -719,10 +740,6 @@ fn aes_siv_cmac256_portable_s2v_fixed_vs_random_key(runner: &mut CtRunner, rng: 
   }
 }
 
-fn aes_siv_cmac256_portable_s2v_seal_fixed_vs_random_key(runner: &mut CtRunner, rng: &mut BenchRng) {
-  aes_siv_cmac256_portable_s2v_fixed_vs_random_key(runner, rng);
-}
-
 fn aes_siv_cmac256_portable_open_fixed_vs_random_key(runner: &mut CtRunner, rng: &mut BenchRng) {
   let nonce_bytes = [0x65; 16];
   let nonce = AesSivCmac256Nonce::try_from(nonce_bytes.as_slice()).expect("timing nonce is non-empty");
@@ -854,9 +871,7 @@ fn aes128_gcm_siv_diag_derive_fixed_vs_random_key(runner: &mut CtRunner, rng: &m
   }
 
   for (class, cipher, nonce) in inputs {
-    runner.run_one(class, || {
-      repeat_short_kernel(|| diag_aes128gcmsiv_derive_keys(&cipher, &nonce));
-    });
+    runner.run_one(class, || diag_aes128gcmsiv_derive_keys(&cipher, &nonce));
   }
 }
 
@@ -873,9 +888,7 @@ fn aes256_gcm_siv_diag_derive_fixed_vs_random_key(runner: &mut CtRunner, rng: &m
   }
 
   for (class, cipher, nonce) in inputs {
-    runner.run_one(class, || {
-      repeat_short_kernel(|| diag_aes256gcmsiv_derive_keys(&cipher, &nonce));
-    });
+    runner.run_one(class, || diag_aes256gcmsiv_derive_keys(&cipher, &nonce));
   }
 }
 
@@ -2055,11 +2068,7 @@ fn xwing_decapsulate_fixed_vs_random_key(runner: &mut CtRunner, rng: &mut BenchR
 
   for (class, index) in inputs {
     let (fixed_copy, random) = &pool[index];
-    let key = if matches!(class, Class::Left) {
-      fixed_copy.duplicate_secret()
-    } else {
-      random.duplicate_secret()
-    };
+    let key = by_class(class, fixed_copy, random).duplicate_secret();
     runner.run_one(class, || {
       let shared_secret: XWingSharedSecret = key
         .decapsulate(core::hint::black_box(&ciphertext))
@@ -2124,11 +2133,7 @@ fn hpke_x25519_setup_receiver_fixed_vs_random_key(runner: &mut CtRunner, rng: &m
 
   for (class, index) in inputs {
     let (fixed_copy, random) = &pool[index];
-    let key = if matches!(class, Class::Left) {
-      fixed_copy.duplicate_secret()
-    } else {
-      random.duplicate_secret()
-    };
+    let key = by_class(class, fixed_copy, random).duplicate_secret();
     runner.run_one(class, || {
       let receiver =
         HpkeReceiver::<HpkeX25519HkdfSha256Aes128Gcm>::setup(core::hint::black_box(&encapsulation), &key, b"info")
@@ -2193,11 +2198,7 @@ fn hpke_xwing_setup_receiver_fixed_vs_random_key(runner: &mut CtRunner, rng: &mu
 
   for (class, index) in inputs {
     let (fixed_copy, random) = &pool[index];
-    let key = if matches!(class, Class::Left) {
-      fixed_copy.duplicate_secret()
-    } else {
-      random.duplicate_secret()
-    };
+    let key = by_class(class, fixed_copy, random).duplicate_secret();
     runner.run_one(class, || {
       let receiver =
         HpkeReceiver::<HpkeXWingHkdfSha256ChaCha20Poly1305>::setup(core::hint::black_box(&encapsulation), &key, b"info")
@@ -2219,9 +2220,7 @@ fn mlkem_arithmetic_ntt_fixed_vs_random_poly(runner: &mut CtRunner, rng: &mut Be
   }
 
   for (class, poly) in inputs {
-    runner.run_one(class, || {
-      repeat_short_kernel(|| diag_mlkem_ntt_input_digest(poly));
-    });
+    runner.run_one(class, || diag_mlkem_ntt_input_digest(poly));
   }
 }
 
@@ -2237,9 +2236,7 @@ fn mlkem_arithmetic_inverse_ntt_fixed_vs_random_poly(runner: &mut CtRunner, rng:
   }
 
   for (class, poly) in inputs {
-    runner.run_one(class, || {
-      repeat_short_kernel(|| diag_mlkem_inverse_ntt_montgomery_product_input_digest(poly));
-    });
+    runner.run_one(class, || diag_mlkem_inverse_ntt_montgomery_product_input_digest(poly));
   }
 }
 
@@ -2255,9 +2252,7 @@ fn mlkem_arithmetic_to_product_domain_fixed_vs_random_poly(runner: &mut CtRunner
   }
 
   for (class, poly) in inputs {
-    runner.run_one(class, || {
-      repeat_short_kernel(|| diag_mlkem_to_montgomery_product_domain_input_digest(poly));
-    });
+    runner.run_one(class, || diag_mlkem_to_montgomery_product_domain_input_digest(poly));
   }
 }
 
@@ -2273,9 +2268,7 @@ fn mlkem_arithmetic_from_product_domain_fixed_vs_random_poly(runner: &mut CtRunn
   }
 
   for (class, poly) in inputs {
-    runner.run_one(class, || {
-      repeat_short_kernel(|| diag_mlkem_from_montgomery_product_domain_input_digest(poly));
-    });
+    runner.run_one(class, || diag_mlkem_from_montgomery_product_domain_input_digest(poly));
   }
 }
 
@@ -2295,9 +2288,7 @@ fn mlkem_arithmetic_basemul_fixed_vs_random_operands(runner: &mut CtRunner, rng:
   }
 
   for (class, a, b, acc) in inputs {
-    runner.run_one(class, || {
-      repeat_short_kernel(|| diag_mlkem_multiply_ntts_add_assign_input_digest(a, b, acc));
-    });
+    runner.run_one(class, || diag_mlkem_multiply_ntts_add_assign_input_digest(a, b, acc));
   }
 }
 
@@ -2321,9 +2312,7 @@ fn mlkem1024_arithmetic_dot_fixed_vs_random_operands(runner: &mut CtRunner, rng:
   }
 
   for (class, a, b, acc) in inputs {
-    runner.run_one(class, || {
-      repeat_short_kernel(|| diag_mlkem1024_multiply_ntts_accumulate_input_digest(a, b, acc));
-    });
+    runner.run_one(class, || diag_mlkem1024_multiply_ntts_accumulate_input_digest(a, b, acc));
   }
 }
 
@@ -2457,86 +2446,61 @@ fn valid_p384_secret(rng: &mut BenchRng) -> [u8; EcdsaP384SecretKey::LENGTH] {
   secret
 }
 
-fn ecdsa_p256_public_key_fixed_vs_random_secret(runner: &mut CtRunner, rng: &mut BenchRng) {
-  let mut inputs = Vec::with_capacity(samples());
-  for class in balanced_classes(rng, samples()) {
-    let secret = if matches!(class, Class::Left) {
-      [0x42; EcdsaP256SecretKey::LENGTH]
-    } else {
-      valid_p256_secret(rng)
-    };
-    inputs.push((class, secret, rand_array::<64>(rng)));
-  }
-
-  for (class, secret, blind) in inputs {
-    let key = EcdsaP256SecretKey::from_bytes(secret).expect("generated P-256 secret scalar is valid");
-    runner.run_one(class, || {
-      core::hint::black_box(
-        key
-          .try_public_key_blinded_with(|out| {
-            out.copy_from_slice(&blind);
-            Ok::<(), core::convert::Infallible>(())
-          })
-          .expect("valid P-256 key and blinding input must derive a public key")
-          .to_sec1_bytes(),
-      );
-    });
+/// A fill callback that copies a prepared blinding input.
+fn copy_blind<const N: usize>(blind: &[u8; N]) -> impl FnOnce(&mut [u8; N]) -> Result<(), core::convert::Infallible> + '_ {
+  |out| {
+    out.copy_from_slice(blind);
+    Ok(())
   }
 }
 
-fn ecdsa_p384_public_key_fixed_vs_random_secret(runner: &mut CtRunner, rng: &mut BenchRng) {
-  let mut inputs = Vec::with_capacity(samples());
-  for class in balanced_classes(rng, samples()) {
-    let secret = if matches!(class, Class::Left) {
-      [0x42; EcdsaP384SecretKey::LENGTH]
-    } else {
-      valid_p384_secret(rng)
-    };
-    inputs.push((class, secret, rand_array::<96>(rng)));
-  }
+/// ECDSA with a fixed or random secret scalar. Both classes draw a fresh blinding input; the
+/// default derivation and signing paths ignore it.
+macro_rules! ecdsa_fixed_vs_random_secret {
+  ($name:ident, $key:ty, $valid_secret:ident, $blind_len:expr, |$secret_key:ident, $blind:ident| $operation:expr) => {
+    fn $name(runner: &mut CtRunner, rng: &mut BenchRng) {
+      let mut inputs = Vec::with_capacity(samples());
+      for class in balanced_classes(rng, samples()) {
+        let secret = if matches!(class, Class::Left) {
+          [0x42; <$key>::LENGTH]
+        } else {
+          $valid_secret(rng)
+        };
+        inputs.push((class, secret, rand_array::<$blind_len>(rng)));
+      }
 
-  for (class, secret, blind) in inputs {
-    let key = EcdsaP384SecretKey::from_bytes(secret).expect("generated P-384 secret scalar is valid");
-    runner.run_one(class, || {
-      core::hint::black_box(
-        key
-          .try_public_key_blinded_with(|out| {
-            out.copy_from_slice(&blind);
-            Ok::<(), core::convert::Infallible>(())
-          })
-          .expect("valid P-384 key and blinding input must derive a public key")
-          .to_sec1_bytes(),
-      );
-    });
-  }
+      for (class, secret, $blind) in inputs {
+        let $secret_key = <$key>::from_bytes(secret).expect("generated secret scalar is valid");
+        runner.run_one(class, || core::hint::black_box($operation));
+      }
+    }
+  };
 }
 
-fn ecdsa_p256_sign_fixed_vs_random_secret(runner: &mut CtRunner, rng: &mut BenchRng) {
-  let mut inputs = Vec::with_capacity(samples());
-  for class in balanced_classes(rng, samples()) {
-    let secret = if matches!(class, Class::Left) {
-      [0x42; EcdsaP256SecretKey::LENGTH]
-    } else {
-      valid_p256_secret(rng)
-    };
-    inputs.push((class, secret, rand_array::<64>(rng)));
-  }
-
-  for (class, secret, blind) in inputs {
-    let key = EcdsaP256SecretKey::from_bytes(secret).expect("generated P-256 secret scalar is valid");
-    runner.run_one(class, || {
-      core::hint::black_box(
-        key
-          .try_sign_blinded_with(MESSAGE, |out| {
-            out.copy_from_slice(&blind);
-            Ok::<(), core::convert::Infallible>(())
-          })
-          .expect("valid P-256 key and blinding input must sign")
-          .to_bytes(),
-      );
-    });
-  }
-}
+ecdsa_fixed_vs_random_secret!(ecdsa_p256_public_key_fixed_vs_random_secret, EcdsaP256SecretKey, valid_p256_secret, 64, |key, blind| {
+  key.try_public_key_blinded_with(copy_blind(&blind)).expect("blinded derivation").to_sec1_bytes()
+});
+ecdsa_fixed_vs_random_secret!(ecdsa_p384_public_key_fixed_vs_random_secret, EcdsaP384SecretKey, valid_p384_secret, 96, |key, blind| {
+  key.try_public_key_blinded_with(copy_blind(&blind)).expect("blinded derivation").to_sec1_bytes()
+});
+ecdsa_fixed_vs_random_secret!(ecdsa_p256_default_public_key_fixed_vs_random_secret, EcdsaP256SecretKey, valid_p256_secret, 64, |key, _blind| {
+  key.public_key().to_sec1_bytes()
+});
+ecdsa_fixed_vs_random_secret!(ecdsa_p384_default_public_key_fixed_vs_random_secret, EcdsaP384SecretKey, valid_p384_secret, 96, |key, _blind| {
+  key.public_key().to_sec1_bytes()
+});
+ecdsa_fixed_vs_random_secret!(ecdsa_p256_sign_fixed_vs_random_secret, EcdsaP256SecretKey, valid_p256_secret, 64, |key, blind| {
+  key.try_sign_blinded_with(MESSAGE, copy_blind(&blind)).expect("valid key must sign").to_bytes()
+});
+ecdsa_fixed_vs_random_secret!(ecdsa_p384_sign_fixed_vs_random_secret, EcdsaP384SecretKey, valid_p384_secret, 96, |key, blind| {
+  key.try_sign_blinded_with(MESSAGE, copy_blind(&blind)).expect("valid key must sign").to_bytes()
+});
+ecdsa_fixed_vs_random_secret!(ecdsa_p256_default_sign_fixed_vs_random_secret, EcdsaP256SecretKey, valid_p256_secret, 64, |key, _blind| {
+  key.try_sign(MESSAGE).expect("valid key must sign").to_bytes()
+});
+ecdsa_fixed_vs_random_secret!(ecdsa_p384_default_sign_fixed_vs_random_secret, EcdsaP384SecretKey, valid_p384_secret, 96, |key, _blind| {
+  key.try_sign(MESSAGE).expect("valid key must sign").to_bytes()
+});
 
 /// PK.seed of every SLH-DSA-SHA2-128s case key, so only SK.seed and SK.prf
 /// differ between the classes.
@@ -2672,33 +2636,6 @@ fn composite_mldsa65_ecdsa_p256_sign_fixed_vs_random_traditional(runner: &mut Ct
           .expect("valid composite key must sign")
           .as_bytes()
           .len(),
-      );
-    });
-  }
-}
-
-fn ecdsa_p384_sign_fixed_vs_random_secret(runner: &mut CtRunner, rng: &mut BenchRng) {
-  let mut inputs = Vec::with_capacity(samples());
-  for class in balanced_classes(rng, samples()) {
-    let secret = if matches!(class, Class::Left) {
-      [0x42; EcdsaP384SecretKey::LENGTH]
-    } else {
-      valid_p384_secret(rng)
-    };
-    inputs.push((class, secret, rand_array::<96>(rng)));
-  }
-
-  for (class, secret, blind) in inputs {
-    let key = EcdsaP384SecretKey::from_bytes(secret).expect("generated P-384 secret scalar is valid");
-    runner.run_one(class, || {
-      core::hint::black_box(
-        key
-          .try_sign_blinded_with(MESSAGE, |out| {
-            out.copy_from_slice(&blind);
-            Ok::<(), core::convert::Infallible>(())
-          })
-          .expect("valid P-384 key and blinding input must sign")
-          .to_bytes(),
       );
     });
   }
@@ -3965,13 +3902,13 @@ macro_rules! aead_fixed_vs_random_key_seal {
         } else {
           rand_array::<$key_len>(rng)
         };
-        inputs.push((class, <$key>::from_bytes(key), nonce));
+        inputs.push((class, <$key>::from_bytes(key), nonce, rand_array::<AEAD_LEN>(rng)));
       }
 
-      for (class, key, nonce) in inputs {
+      for (class, key, nonce, plaintext) in inputs {
         let cipher = <$cipher>::new(&key);
         runner.run_one(class, || {
-          let mut buffer = AEAD_PLAINTEXT;
+          let mut buffer = plaintext;
           cipher.encrypt_in_place(&nonce, AAD, &mut buffer).is_ok()
         });
       }
@@ -3992,18 +3929,19 @@ macro_rules! aead_gather_fixed_vs_random_key_seal {
         };
         inputs.push((class, <$key>::from_bytes(key)));
       }
-      let plaintext = [0x71; 16_385];
-      // One fixed public partition reaches wide native batches, a partial-block
-      // seam, an empty slice, and a shorter native batch before the final byte.
-      let chunks = [
-        &plaintext[..4096],
-        &plaintext[4096..4097],
-        &[],
-        &plaintext[4097..4112],
-        &plaintext[4112..4368],
-        &plaintext[4368..],
-      ];
+      let mut plaintext = [0u8; 16_385];
       for (class, key) in inputs {
+        rng.fill(&mut plaintext);
+        // One fixed public partition reaches wide native batches, a partial-block
+        // seam, an empty slice, and a shorter native batch before the final byte.
+        let chunks = [
+          &plaintext[..4096],
+          &plaintext[4096..4097],
+          &[],
+          &plaintext[4097..4112],
+          &plaintext[4112..4368],
+          &plaintext[4368..],
+        ];
         let cipher = <$cipher>::new(&key);
         runner.run_one(class, || {
           let mut out = [core::mem::MaybeUninit::uninit(); 16_385];
@@ -4033,9 +3971,10 @@ macro_rules! aead_record_gather_fixed_vs_random_key_seal {
         };
         inputs.push((class, <$key>::from_bytes(key)));
       }
-      let payload = [0x72; 1024];
+      let mut payload = [0u8; 1024];
       let content_type = [0x17];
       for (class, key) in inputs {
+        rng.fill(&mut payload);
         let cipher = <$cipher>::new(&key);
         runner.run_one(class, || {
           let mut out = [core::mem::MaybeUninit::uninit(); 1025];
@@ -4330,6 +4269,7 @@ ctbench_main_with_seeds!(
   (owner_eq_48_equal_vs_first_diff, Some(0x6f776e657234385f)),
   (owner_eq_64_equal_vs_first_diff, Some(0x6f776e657236345f)),
   (secret_wrappers_debug_fixed_vs_random, Some(0x7365637265745f77)),
+  (secret_hex_from_str_fixed_vs_random, Some(0x7365637265745f68)),
   (poly1305_short_fixed_vs_random_key, Some(0x706f6c795f736872)),
   (poly1305_bulk_fixed_vs_random_key, Some(0x706f6c795f62756c)),
   (siphash_short_fixed_vs_random_key, Some(0x736970685f736872)),
@@ -4523,7 +4463,11 @@ ctbench_main_with_seeds!(
   (ecdsa_p256_public_key_fixed_vs_random_secret, Some(0x703235365f707562)),
   (ecdsa_p384_public_key_fixed_vs_random_secret, Some(0x703338345f707562)),
   (ecdsa_p256_sign_fixed_vs_random_secret, Some(0x703235365f736967)),
+  (ecdsa_p256_default_sign_fixed_vs_random_secret, Some(0x7032353664736967)),
+  (ecdsa_p256_default_public_key_fixed_vs_random_secret, Some(0x7032353664707562)),
   (ecdsa_p384_sign_fixed_vs_random_secret, Some(0x703338345f736967)),
+  (ecdsa_p384_default_sign_fixed_vs_random_secret, Some(0x7033383464736967)),
+  (ecdsa_p384_default_public_key_fixed_vs_random_secret, Some(0x7033383464707562)),
   (
     composite_mldsa65_ed25519_sign_fixed_vs_random_traditional,
     Some(0x636d6c6473616535)
@@ -4747,10 +4691,6 @@ ctbench_main_with_seeds!(
   (
     aes_siv_cmac256_probe_seal_fixed_distinct_vs_random_key,
     Some(0x7369767072620002)
-  ),
-  (
-    aes_siv_cmac256_portable_s2v_seal_fixed_vs_random_key,
-    Some(0x7369765f73327673)
   ),
   (blake2b256_keyed_fixed_vs_random_key, Some(0x6232623235365f6b)),
   (blake2b512_keyed_fixed_vs_random_key, Some(0x6232623531325f6b)),

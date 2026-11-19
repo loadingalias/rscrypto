@@ -8,6 +8,7 @@ import json
 import os
 import platform
 import re
+import secrets
 import shutil
 import subprocess
 import sys
@@ -462,6 +463,7 @@ def dudect_case_result(
   timeout: int | None,
   prepared: Path,
   source: dict[str, str],
+  seed: str | None = None,
 ) -> dict[str, Any]:
   cases_dir = prepared.parent.parent / "cases"
   cases_dir.mkdir(parents=True, exist_ok=True)
@@ -473,6 +475,8 @@ def dudect_case_result(
   ]
   if timeout is not None:
     command += ["--timeout", str(timeout)]
+  if seed is not None:
+    command += ["--seed", seed]
   result = run_command(
     root, logs_dir, f"dudect-{evidence_dir.name}", command,
   )
@@ -534,6 +538,11 @@ def dudect_case_result(
       "threshold_abs_max_t",
       "samples_millions",
       "raw_csv",
+      "calls_per_sample",
+      "timer_tick_ns",
+      "median_ticks",
+      "min_median_ticks",
+      "resolution",
     ):
       if key in case_report:
         row[key] = case_report[key]
@@ -588,14 +597,12 @@ def dudect_case_result(
 def dudect_confirmation_reason(row: dict[str, Any], review_fraction: float) -> str | None:
   """Return why a screened required case needs a confirming measurement, if it does.
 
-  A failing case is confirmed before it fails the gate. A passing case within
-  `review_fraction` of its threshold is confirmed before it passes, so a real
-  difference that screening happened to underestimate is measured again too.
+  A passing case within `review_fraction` of its threshold is measured again before
+  it passes, so a real difference that screening underestimated is measured again
+  too. A failure is final: a confirmation cannot replace it.
   """
   if row.get("gate") == "diagnostic":
     return None
-  if row["status"] == "fail":
-    return "threshold"
   limit = row.get("threshold_abs_max_t")
   measured = row.get("abs_max_t")
   if (
@@ -653,8 +660,10 @@ def run_dudect_cases(
         flush=True,
       )
       screening = dudect_screening_record(row)
+      # A fresh seed gives the confirmation new inputs and a new class order.
       row = dudect_case_result(
-        root, logs_dir, samples * sample_factor, threshold, case, timeout_seconds * sample_factor, prepared, source
+        root, logs_dir, samples * sample_factor, threshold, case, timeout_seconds * sample_factor, prepared, source,
+        seed=f"0x{secrets.randbits(64):016x}",
       )
       row["confirmation_reason"] = reason
       row["screening"] = screening
@@ -1094,20 +1103,6 @@ def build_findings(
     )
 
   for case in dudect_cases:
-    screening = case.get("screening")
-    if case["status"] == "pass" and screening is not None and screening.get("status") == "fail":
-      diagnostics.append(
-        {
-          "kind": "dudect_unconfirmed",
-          "severity": "diagnostic",
-          "summary": (
-            f"{case['name']} exceeded its threshold at screening (abs_max_t={screening.get('abs_max_t')}, "
-            f"{screening.get('requested_samples')} samples) and passed confirmation "
-            f"(abs_max_t={case.get('abs_max_t')}, {case.get('requested_samples')} samples)"
-          ),
-          "primitive": case["primitive"],
-        }
-      )
     if case["status"] == "pass":
       continue
     if case.get("gate") == "diagnostic" and case["status"] in {"fail", "diagnostic-fail"}:
@@ -1136,6 +1131,19 @@ def build_findings(
           ),
           "primitive": case["primitive"],
           "timeout_seconds": case.get("timeout_seconds"),
+        }
+      )
+    elif case.get("resolution") == "fail":
+      findings.append(
+        {
+          "kind": "dudect_inconclusive",
+          "category": "evidence_inconclusive",
+          "severity": "blocker",
+          "summary": (
+            f"{case['name']} median sample spans {case.get('median_ticks'):.1f} timer ticks of "
+            f"{case.get('timer_tick_ns')} ns, fewer than {case.get('min_median_ticks')}"
+          ),
+          "primitive": case["primitive"],
         }
       )
     else:

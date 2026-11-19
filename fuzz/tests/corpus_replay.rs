@@ -9,6 +9,27 @@ fn corpus_dir(target: &str) -> PathBuf {
 #[path = "../target_impls/aead_aegis256.rs"]
 mod aead_aegis256;
 
+#[path = "../target_impls/auth_chacha20_rng.rs"]
+mod auth_chacha20_rng;
+
+#[path = "../target_impls/auth_hkdf_sha512.rs"]
+mod auth_hkdf_sha512;
+
+#[path = "../target_impls/auth_hmac_sha3.rs"]
+mod auth_hmac_sha3;
+
+#[path = "../target_impls/auth_kmac128.rs"]
+mod auth_kmac128;
+
+#[path = "../target_impls/auth_poly1305.rs"]
+mod auth_poly1305;
+
+#[path = "../target_impls/hash_cshake128.rs"]
+mod hash_cshake128;
+
+#[path = "../target_impls/serde_secrets.rs"]
+mod serde_secrets;
+
 #[path = "../target_impls/aead_aes128gcm.rs"]
 mod aead_aes128gcm;
 
@@ -732,4 +753,54 @@ fn replay_provider_quic_lb_corpus() {
     provider_quic_lb::run,
   );
   assert_ne!(replayed, 0, "provider_quic_lb corpus should not be empty");
+}
+
+#[test]
+fn replay_auth_chacha20_rng_corpus() {
+  let replayed = replay_corpus_dir(
+    "auth_chacha20_rng",
+    corpus_dir("auth_chacha20_rng"),
+    auth_chacha20_rng::run,
+  );
+  assert_ne!(replayed, 0, "auth_chacha20_rng corpus should not be empty");
+}
+
+#[test]
+fn replay_auth_hkdf_sha512_corpus() {
+  let replayed = replay_corpus_dir(
+    "auth_hkdf_sha512",
+    corpus_dir("auth_hkdf_sha512"),
+    auth_hkdf_sha512::run,
+  );
+  assert_ne!(replayed, 0, "auth_hkdf_sha512 corpus should not be empty");
+}
+
+#[test]
+fn replay_auth_hmac_sha3_corpus() {
+  let replayed = replay_corpus_dir("auth_hmac_sha3", corpus_dir("auth_hmac_sha3"), auth_hmac_sha3::run);
+  assert_ne!(replayed, 0, "auth_hmac_sha3 corpus should not be empty");
+}
+
+#[test]
+fn replay_auth_kmac128_corpus() {
+  let replayed = replay_corpus_dir("auth_kmac128", corpus_dir("auth_kmac128"), auth_kmac128::run);
+  assert_ne!(replayed, 0, "auth_kmac128 corpus should not be empty");
+}
+
+#[test]
+fn replay_auth_poly1305_corpus() {
+  let replayed = replay_corpus_dir("auth_poly1305", corpus_dir("auth_poly1305"), auth_poly1305::run);
+  assert_ne!(replayed, 0, "auth_poly1305 corpus should not be empty");
+}
+
+#[test]
+fn replay_hash_cshake128_corpus() {
+  let replayed = replay_corpus_dir("hash_cshake128", corpus_dir("hash_cshake128"), hash_cshake128::run);
+  assert_ne!(replayed, 0, "hash_cshake128 corpus should not be empty");
+}
+
+#[test]
+fn replay_serde_secrets_corpus() {
+  let replayed = replay_corpus_dir("serde_secrets", corpus_dir("serde_secrets"), serde_secrets::run);
+  assert_ne!(replayed, 0, "serde_secrets corpus should not be empty");
 }

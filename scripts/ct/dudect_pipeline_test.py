@@ -31,8 +31,11 @@ def main():
 import os, sys
 from pathlib import Path
 name = sys.argv[sys.argv.index('--filter') + 1]
+seed = sys.argv[sys.argv.index('--seed') + 1] if '--seed' in sys.argv else ''
 with Path('executions').open('a') as log:
   log.write(name + '\\n')
+with Path('seeds').open('a') as log:
+  log.write(seed + '\\n')
 mode = Path('mode').read_text()
 if mode == 'failure':
   sys.exit(1)
@@ -50,7 +53,9 @@ attempt = int(runs.read_text()) + 1 if runs.exists() else 1
 runs.write_text(str(attempt))
 t = {'timing': '+20.00', 'noise': '+20.00' if attempt == 1 else '+1.00',
      'near': '+8.00' if attempt == 1 else '+1.00', 'near-leak': '+8.00' if attempt == 1 else '+16.00'}.get(mode, '+1.00')
+print('timer tick ' + ('50' if mode == 'coarse' else '1') + ' ns')
 print(f'bench {name} ... : n == +0.01M, max t = {t}, max tau = +0.01, (5/tau)^2 = 250000')
+print(f'bench {name} timed 1 calls per sample')
 ''')
     runner.chmod(0o755)
     executable = runner
@@ -78,7 +83,7 @@ shutil.copy2(executable, binary)
 metadata = {'binary': {'path': str(binary), 'sha256': hashlib.sha256(binary.read_bytes()).hexdigest()},
             'source': {'commit': 'fixture', 'sha256': 'fixture'}}
 manifest = {'manifest_' + name: {'primitive': 'fixture', 'gate': 'required', 'left_class': 'left', 'right_class': 'right'} for name in ('alpha', 'beta')}
-(shared / 'prepared.json').write_text(json.dumps({'metadata': metadata, 'manifest_cases': manifest}))
+(shared / 'prepared.json').write_text(json.dumps({'metadata': metadata, 'manifest_cases': manifest, 'min_median_ticks': 100}))
 ''')
 
     def invoke(mode):
@@ -146,38 +151,40 @@ manifest = {'manifest_' + name: {'primitive': 'fixture', 'gate': 'required', 'le
     console = io.StringIO()
     with redirect_stdout(console), redirect_stderr(console):
       _, _, failed = invoke("timing")
-    # A screening failure that reproduces at four times the samples fails the gate.
+    # A screening failure is final: no confirmation runs, so none can replace it.
     assert len(failed) == 1 and failed[0]["status"] == "fail"
-    assert failed[0]["requested_samples"] == 16 and failed[0]["confirmation_reason"] == "threshold"
-    assert failed[0]["screening"]["status"] == "fail" and failed[0]["screening"]["requested_samples"] == 4
-    assert "screening fail (abs_max_t=20.0, threshold=10.0, samples=4); confirming with 16 samples" in console.getvalue()
-    assert "manifest_alpha: fail" in console.getvalue()
-    assert "abs_max_t=20.0, threshold=10.0, samples=16, confirmed" in console.getvalue()
+    assert failed[0]["requested_samples"] == 4 and failed[0].get("screening") is None
+    assert "manifest_alpha: fail" in console.getvalue() and "confirming" not in console.getvalue()
     assert "tooling-fail" not in console.getvalue()
     findings, diagnostics = full.build_findings([], failed, [], [])
     assert [finding["kind"] for finding in findings] == ["dudect_failure"] and not diagnostics
-    assert findings[0]["summary"].endswith("above the DudeCT threshold in its 16-sample confirmation")
-
-    # A screening failure that does not reproduce passes, and the report keeps it.
+    assert findings[0]["summary"].endswith("above the DudeCT threshold")
     with redirect_stdout(io.StringIO()):
       _, _, noisy = invoke("noise")
-    assert [row["status"] for row in noisy] == ["pass", "pass"]
-    assert all(row["confirmation_reason"] == "threshold" and row["screening"]["abs_max_t"] == 20.0 for row in noisy)
-    assert all(row["requested_samples"] == 16 and row["abs_max_t"] == 1.0 for row in noisy)
-    findings, diagnostics = full.build_findings([], noisy, [], [])
-    assert not findings and [item["kind"] for item in diagnostics] == ["dudect_unconfirmed"] * 2
+    assert [row["status"] for row in noisy] == ["fail"]
 
-    # A pass within 25% of the threshold is measured again before it passes.
+    # A median sample under the minimum timer ticks fails as inconclusive evidence.
+    with redirect_stdout(io.StringIO()):
+      _, _, coarse = invoke("coarse")
+    assert len(coarse) == 1 and coarse[0]["status"] == "fail" and coarse[0]["resolution"] == "fail"
+    assert coarse[0]["median_ticks"] == 2.0 and coarse[0]["timer_tick_ns"] == 50
+    findings, _ = full.build_findings([], coarse, [], [])
+    assert [finding["kind"] for finding in findings] == ["dudect_inconclusive"]
+    assert "spans 2.0 timer ticks of 50 ns, fewer than 100" in findings[0]["summary"]
+
+    # A pass within 25% of the threshold is measured again with a fresh seed, and both must pass.
+    (root / "seeds").unlink()
     with redirect_stdout(io.StringIO()):
       _, _, near = invoke("near")
     assert [row["status"] for row in near] == ["pass", "pass"]
     assert all(row["confirmation_reason"] == "near-threshold" for row in near)
+    seeds = (root / "seeds").read_text().splitlines()
+    assert seeds[0] == "" and seeds[1].startswith("0x") and seeds[1] != seeds[3]
     findings, diagnostics = full.build_findings([], near, [], [])
     assert not findings and not diagnostics
     # The job summary shows every confirmation, including passes that left no diagnostic.
-    summary = "\n".join(full.dudect_confirmation_lines(near + noisy))
+    summary = "\n".join(full.dudect_confirmation_lines(near))
     assert "| `manifest_alpha` | `near-threshold` | 8.0 (4) | 1.0 (16) | 10.0 | `pass` |" in summary
-    assert "| `manifest_alpha` | `threshold` | 20.0 (4) | 1.0 (16) | 10.0 | `pass` |" in summary
     assert full.dudect_confirmation_lines(rows) == []
 
     # A real difference that screening underestimated fails once it is measured with more samples.

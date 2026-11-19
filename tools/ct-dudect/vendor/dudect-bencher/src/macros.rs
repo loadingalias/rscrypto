@@ -54,6 +54,14 @@ macro_rules! ctbench_main_with_seeds {
                     "--out [FILE] \
                     'Appends raw benchmarking data in CSV format to FILE'"
                 )
+                .arg_from_usage(
+                    "--min-ticks [TICKS] \
+                    'Times enough calls in each sample to span twice TICKS timer ticks'"
+                )
+                .arg_from_usage(
+                    "--seed [SEED] \
+                    'Seeds every selected benchmark with the hexadecimal SEED'"
+                )
                 .get_matches();
 
             let mut test_opts = BenchOpts::default();
@@ -63,6 +71,12 @@ macro_rules! ctbench_main_with_seeds {
                 .map(|s| s.to_string());
             test_opts.continuous = matches.is_present("continuous");
             test_opts.file_out = matches.value_of("out").map(PathBuf::from);
+            test_opts.min_ticks = matches
+                .value_of("min-ticks")
+                .map_or(0, |ticks| ticks.parse().expect("--min-ticks takes an integer"));
+            test_opts.seed = matches.value_of("seed").map(|seed| {
+                u64::from_str_radix(seed.trim_start_matches("0x"), 16).expect("--seed takes a hexadecimal integer")
+            });
 
             run_benches_console(test_opts, benches).unwrap();
         }

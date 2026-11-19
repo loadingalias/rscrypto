@@ -1563,6 +1563,150 @@ pub unsafe extern "C" fn ct_entry_ecdsa_p384_sign(
   }
 }
 
+/// Derive an ECDSA/P-256 public key through the default path, which takes no caller blinding.
+///
+/// # Safety
+///
+/// - When non-null, `secret_key` must be valid for reads of 32 initialized bytes and immutable
+///   while copied. A null pointer is rejected.
+/// - When non-null, `out` must be valid for writes of 65 bytes and must not be accessed concurrently
+///   while written. A null pointer is rejected. It may overlap the input, which is read first.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ct_entry_ecdsa_p256_default_public_key(out: *mut u8, secret_key: *const u8) -> u8 {
+  // SAFETY: The function contract requires a non-null secret_key to expose 32 initialized,
+  // readable bytes that remain immutable while read_array copies them into owned storage.
+  let Some(secret_key) = (unsafe { read_array::<32>(secret_key) }) else {
+    return STATUS_ERR;
+  };
+  let Ok(secret_key) = EcdsaP256SecretKey::from_bytes(secret_key) else {
+    return STATUS_ERR;
+  };
+  let public_key = secret_key.public_key().to_sec1_bytes();
+  // SAFETY: The function contract requires a non-null out to expose 65 writable bytes without
+  // concurrent access. The input read has finished; write_array rejects null.
+  if unsafe { write_array(out, &public_key) } {
+    STATUS_OK
+  } else {
+    STATUS_ERR
+  }
+}
+
+/// Sign a message with ECDSA/P-256 through the default path, which takes no caller blinding.
+///
+/// # Safety
+///
+/// - When non-null, `secret_key` must be valid for reads of 32 initialized bytes and immutable
+///   while copied. A null pointer is rejected.
+/// - A null `message` represents an empty slice only when `message_len` is zero. When non-null,
+///   `message` must reference one allocation of `message_len` initialized bytes, `message_len`
+///   must not exceed `isize::MAX`, and the range must remain immutable while signing reads it.
+/// - When non-null, `out` must be valid for writes of 64 bytes and must not be accessed concurrently
+///   while written. A null pointer is rejected. It may overlap any input, which is read first.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ct_entry_ecdsa_p256_default_sign(
+  out: *mut u8,
+  secret_key: *const u8,
+  message: *const u8,
+  message_len: usize,
+) -> u8 {
+  // SAFETY: The function contract requires a non-null secret_key to expose 32 initialized,
+  // readable bytes that remain immutable while read_array copies them into owned storage.
+  let Some(secret_key) = (unsafe { read_array::<32>(secret_key) }) else {
+    return STATUS_ERR;
+  };
+  // SAFETY: The function contract establishes the allocation, length bound, initialization,
+  // immutability, and lifetime required for a non-null message; input_slice handles both null
+  // shapes.
+  let Some(message) = (unsafe { input_slice(message, message_len) }) else {
+    return STATUS_ERR;
+  };
+  let Ok(secret_key) = EcdsaP256SecretKey::from_bytes(secret_key) else {
+    return STATUS_ERR;
+  };
+  let Ok(signature) = secret_key.try_sign(message) else {
+    return STATUS_ERR;
+  };
+  // SAFETY: The function contract requires a non-null out to expose 64 writable bytes without
+  // concurrent access. All input reads have finished; write_array rejects null.
+  if unsafe { write_array(out, &signature.to_bytes()) } {
+    STATUS_OK
+  } else {
+    STATUS_ERR
+  }
+}
+
+/// Derive an ECDSA/P-384 public key through the default path, which takes no caller blinding.
+///
+/// # Safety
+///
+/// - When non-null, `secret_key` must be valid for reads of 48 initialized bytes and immutable
+///   while copied. A null pointer is rejected.
+/// - When non-null, `out` must be valid for writes of 97 bytes and must not be accessed concurrently
+///   while written. A null pointer is rejected. It may overlap the input, which is read first.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ct_entry_ecdsa_p384_default_public_key(out: *mut u8, secret_key: *const u8) -> u8 {
+  // SAFETY: The function contract requires a non-null secret_key to expose 48 initialized,
+  // readable bytes that remain immutable while read_array copies them into owned storage.
+  let Some(secret_key) = (unsafe { read_array::<48>(secret_key) }) else {
+    return STATUS_ERR;
+  };
+  let Ok(secret_key) = EcdsaP384SecretKey::from_bytes(secret_key) else {
+    return STATUS_ERR;
+  };
+  let public_key = secret_key.public_key().to_sec1_bytes();
+  // SAFETY: The function contract requires a non-null out to expose 97 writable bytes without
+  // concurrent access. The input read has finished; write_array rejects null.
+  if unsafe { write_array(out, &public_key) } {
+    STATUS_OK
+  } else {
+    STATUS_ERR
+  }
+}
+
+/// Sign a message with ECDSA/P-384 through the default path, which takes no caller blinding.
+///
+/// # Safety
+///
+/// - When non-null, `secret_key` must be valid for reads of 48 initialized bytes and immutable
+///   while copied. A null pointer is rejected.
+/// - A null `message` represents an empty slice only when `message_len` is zero. When non-null,
+///   `message` must reference one allocation of `message_len` initialized bytes, `message_len`
+///   must not exceed `isize::MAX`, and the range must remain immutable while signing reads it.
+/// - When non-null, `out` must be valid for writes of 96 bytes and must not be accessed concurrently
+///   while written. A null pointer is rejected. It may overlap any input, which is read first.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ct_entry_ecdsa_p384_default_sign(
+  out: *mut u8,
+  secret_key: *const u8,
+  message: *const u8,
+  message_len: usize,
+) -> u8 {
+  // SAFETY: The function contract requires a non-null secret_key to expose 48 initialized,
+  // readable bytes that remain immutable while read_array copies them into owned storage.
+  let Some(secret_key) = (unsafe { read_array::<48>(secret_key) }) else {
+    return STATUS_ERR;
+  };
+  // SAFETY: The function contract establishes the allocation, length bound, initialization,
+  // immutability, and lifetime required for a non-null message; input_slice handles both null
+  // shapes.
+  let Some(message) = (unsafe { input_slice(message, message_len) }) else {
+    return STATUS_ERR;
+  };
+  let Ok(secret_key) = EcdsaP384SecretKey::from_bytes(secret_key) else {
+    return STATUS_ERR;
+  };
+  let Ok(signature) = secret_key.try_sign(message) else {
+    return STATUS_ERR;
+  };
+  // SAFETY: The function contract requires a non-null out to expose 96 writable bytes without
+  // concurrent access. All input reads have finished; write_array rejects null.
+  if unsafe { write_array(out, &signature.to_bytes()) } {
+    STATUS_OK
+  } else {
+    STATUS_ERR
+  }
+}
+
 /// Verify a PBKDF2-HMAC-SHA256 password through the constant-time C ABI harness.
 ///
 /// # Safety

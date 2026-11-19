@@ -2,6 +2,9 @@
 //! export, and DER signatures for ECDSA P-256 and P-384.
 #![cfg(any(feature = "ecdsa-p256", feature = "ecdsa-p384"))]
 
+#[path = "common/openssl.rs"]
+mod openssl_oracle;
+
 use rscrypto::EcdsaError;
 
 mod common;
@@ -473,7 +476,9 @@ macro_rules! curve_tests {
         }
 
         if openssl(&["version"]).is_none() {
-          eprintln!("skipping the OpenSSL ECDSA key exchange because `openssl` is unavailable");
+          openssl_oracle::skip(format_args!(
+            "skipping the OpenSSL ECDSA key exchange because `openssl` is unavailable"
+          ));
           return;
         }
         let directory =

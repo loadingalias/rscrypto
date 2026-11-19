@@ -98,9 +98,9 @@ def dudect_sample_count(case, *, smoke=False, override=None, fallback=20000):
 def dudect_confirmation_policy(ct: dict) -> tuple[int, float]:
   """Return `(sample_factor, review_fraction)` from `[dudect_confirmation]`.
 
-  A required case whose screening |t| reaches `review_fraction` of its threshold
-  is measured again with `sample_factor` times its samples; that measurement
-  decides the case.
+  A required case that passes screening with |t| at or above `review_fraction` of
+  its threshold is measured again with a fresh seed and `sample_factor` times its
+  samples. Both measurements must pass; a screening failure is final.
   """
   policy = ct.get("dudect_confirmation")
   if not isinstance(policy, dict):
@@ -115,3 +115,12 @@ def dudect_confirmation_policy(ct: dict) -> tuple[int, float]:
   if not isinstance(rationale, str) or not rationale.strip():
     raise ValueError("dudect_confirmation requires a rationale")
   return factor, float(fraction)
+
+
+def dudect_min_median_ticks(ct: dict) -> int:
+  """Return `[dudect_resolution].min_median_ticks`: the fewest timer ticks that a case's median sample spans."""
+  policy = ct.get("dudect_resolution")
+  ticks = policy.get("min_median_ticks") if isinstance(policy, dict) else None
+  if isinstance(ticks, bool) or not isinstance(ticks, int) or ticks < 1 or not str(policy.get("rationale", "")).strip():
+    raise ValueError("ct.toml requires [dudect_resolution] with a positive integer min_median_ticks and a rationale")
+  return ticks

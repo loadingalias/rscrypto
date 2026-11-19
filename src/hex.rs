@@ -92,7 +92,9 @@ impl fmt::Display for InvalidHexError {
 ))]
 impl core::error::Error for InvalidHexError {}
 
-/// Decode a single hex character to its 4-bit value.
+/// Decode one hex character to its 4-bit value, with bit 8 set when the character is not hex.
+///
+/// Masks select the digit or letter range, so no branch or table index depends on `byte`.
 #[cfg(any(
   feature = "aegis256",
   feature = "aes-gcm",
@@ -106,18 +108,25 @@ impl core::error::Error for InvalidHexError {}
   feature = "xchacha20poly1305"
 ))]
 #[inline]
-const fn decode_nibble(byte: u8) -> Option<u8> {
-  match byte {
-    b'0'..=b'9' => Some(byte.strict_sub(b'0')),
-    b'a'..=b'f' => Some(byte.strict_sub(b'a').strict_add(10)),
-    b'A'..=b'F' => Some(byte.strict_sub(b'A').strict_add(10)),
-    _ => None,
-  }
+fn decode_nibble(byte: u8) -> u16 {
+  // 0xffff when `value` is in `low..=high`: a wrapped subtraction sets bit 15 out of range.
+  let in_range = |value: u16, low: u8, high: u8| {
+    (((value.wrapping_sub(u16::from(low)) | u16::from(high).wrapping_sub(value)) >> 15) ^ 1).wrapping_neg()
+  };
+  let byte = u16::from(byte);
+  let folded = byte | 0x20;
+  let digit = in_range(byte, b'0', b'9');
+  let letter = in_range(folded, b'a', b'f');
+  (digit & byte.wrapping_sub(u16::from(b'0')))
+    | (letter & folded.wrapping_sub(u16::from(b'a')).wrapping_add(10))
+    | (!(digit | letter) & 0x100)
 }
 
 /// Decode a hex string into `out`. Accepts mixed case, no `0x` prefix.
 ///
-/// Returns `InvalidHexError::InvalidLength` when `hex.len() != out.len() * 2`.
+/// Returns `InvalidHexError::InvalidLength` when `hex.len() != out.len() * 2`. The work for a
+/// valid string depends only on its length; only the error path searches for the first invalid
+/// character.
 #[cfg(any(
   feature = "aegis256",
   feature = "aes-gcm",
@@ -135,32 +144,23 @@ pub(crate) fn from_hex(hex: &str, out: &mut [u8]) -> Result<(), InvalidHexError>
   if hex.len() != out.len().strict_mul(2) {
     return Err(InvalidHexError::InvalidLength);
   }
-  let mut i = 0;
-  while i < out.len() {
-    let hi_idx = i.strict_mul(2);
-    let lo_idx = hi_idx.strict_add(1);
-    let hi = match decode_nibble(hex[hi_idx]) {
-      Some(v) => v,
-      None => {
-        return Err(InvalidHexError::InvalidChar {
-          byte: hex[hi_idx],
-          index: hi_idx,
-        });
-      }
-    };
-    let lo = match decode_nibble(hex[lo_idx]) {
-      Some(v) => v,
-      None => {
-        return Err(InvalidHexError::InvalidChar {
-          byte: hex[lo_idx],
-          index: lo_idx,
-        });
-      }
-    };
-    out[i] = (hi << 4) | lo;
-    i = i.strict_add(1);
+  let mut invalid = 0u16;
+  for (byte, &[high, low]) in out.iter_mut().zip(hex.as_chunks::<2>().0) {
+    let (high, low) = (decode_nibble(high), decode_nibble(low));
+    invalid |= high | low;
+    *byte = (((high << 4) | low) & 0xff) as u8;
   }
-  Ok(())
+  if invalid & 0x100 == 0 {
+    return Ok(());
+  }
+  let index = hex
+    .iter()
+    .position(|&byte| decode_nibble(byte) > 0xf)
+    .unwrap_or_default();
+  Err(InvalidHexError::InvalidChar {
+    byte: hex[index],
+    index,
+  })
 }
 
 /// Write each byte as two lowercase hex characters.
@@ -616,6 +616,16 @@ mod tests {
       }
     }
     assert_eq!(alloc::format!("{}", W([0xab, 0xcd])), "ABCD");
+  }
+
+  #[test]
+  fn decode_nibble_matches_char_to_digit_for_every_byte() {
+    for byte in 0..=u8::MAX {
+      let expected = char::from(byte)
+        .to_digit(16)
+        .map_or(0x100, |digit| u16::try_from(digit).expect("a hex digit fits u16"));
+      assert_eq!(decode_nibble(byte), expected, "byte {byte:#04x}");
+    }
   }
 
   #[test]

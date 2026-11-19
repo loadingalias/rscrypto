@@ -2,6 +2,9 @@
 //! Ed25519 keys.
 #![cfg(feature = "ed25519")]
 
+#[path = "common/openssl.rs"]
+mod openssl_oracle;
+
 use ring::{rand::SystemRandom, signature as ring_signature, signature::KeyPair as _};
 use rscrypto::{Ed25519KeyError, Ed25519PublicKey, Ed25519SecretKey};
 
@@ -248,7 +251,9 @@ fn keys_match_openssl_cli_when_available() {
   }
 
   if openssl(&["version"]).is_none() {
-    eprintln!("skipping the OpenSSL Ed25519 key exchange because `openssl` is unavailable");
+    openssl_oracle::skip(format_args!(
+      "skipping the OpenSSL Ed25519 key exchange because `openssl` is unavailable"
+    ));
     return;
   }
   let directory = std::env::temp_dir().join(format!("rscrypto-ed25519-pkix-{}", std::process::id()));

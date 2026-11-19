@@ -60,7 +60,7 @@ def case_report(prepared, args):
 if __name__ == '__main__':
   Path('report-flags.json').write_text(json.dumps(os.environ['CARGO_ENCODED_RUSTFLAGS'].split('\\x1f')))
   path = Path(sys.argv[sys.argv.index('--out') + 1])
-  path.write_text(json.dumps({'metadata': {'binary': {'path': sys.executable}}, 'manifest_cases': {
+  path.write_text(json.dumps({'metadata': {'binary': {'path': sys.executable}}, 'min_median_ticks': 100, 'manifest_cases': {
     'cheap': {'smoke_samples': 2000}, 'expensive': {'smoke_samples': 16}}}))
 '''.replace("'path': sys.executable", "'path': str(Path('bin/measurement').resolve())"))
     tool(binary / 'measurement', "print('fixture timing output')")

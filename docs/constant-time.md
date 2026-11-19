@@ -1456,27 +1456,33 @@ A manual run can skip RISC-V; see [Native evidence by platform](#native-evidence
 
 ### DudeCT decision
 
-Each required DudeCT case is decided in two steps on the same prepared binary.
+Each required DudeCT case is decided in up to two steps on the same prepared binary.
 
-1. A screening measurement runs with the case's sample budget.
-2. If its |t| reaches `review_fraction` of the threshold, or exceeds the threshold,
-   a confirmation measurement runs with `sample_factor` times the samples.
-   The confirmation decides the case.
+1. A screening measurement runs with the case's sample budget and its fixed seed.
+   A failure is final.
+2. If a passing |t| reaches `review_fraction` of the threshold, a confirmation measurement runs
+   with a fresh random seed and `sample_factor` times the samples.
+   The case passes only when both measurements pass.
 
 `[dudect_confirmation]` in `ct.toml` sets both values.
 Neither step changes a threshold.
 With stable distributions and independent samples, a fixed class difference grows
 expected |t| by about the square root of the sample ratio.
 Four times the samples therefore roughly doubles the expected |t|.
+The fresh seed gives the confirmation new inputs and a new class order.
 Each measurement launches a new process, immediately after the preceding step
 on the same host.
 Persistent host or measurement bias can survive confirmation.
 A confirmation result does not by itself distinguish that bias from
 secret-dependent behavior.
-The near-threshold rule also measures borderline passes again, so a real difference that screening
-underestimated can fail instead of passing on one draw.
 The report keeps the screening result under `screening`.
-A screening failure that the confirmation does not reproduce is reported as a `dudect_unconfirmed` diagnostic.
+
+A case also fails when its median sample spans fewer timer ticks than
+`[dudect_resolution].min_median_ticks`.
+At start, the runner measures the smallest step of its timer.
+On the first sample of each case, it doubles the calls of the operation in one sample
+until a sample spans twice that minimum, and both classes then use that count.
+The report records the tick, the calls per sample, and the median ticks of each case.
 
 ### ECDSA
 
