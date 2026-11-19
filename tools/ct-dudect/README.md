@@ -46,8 +46,9 @@ The CSV columns are `benchname,sequence,class,runtime_ns`.
 `vendor/dudect-bencher` keeps the selected upstream 0.7.0 source and its licenses.
 
 - `UPSTREAM.json` records the identity of the crate archive and the original file hashes.
-- Its `local_files` entry records the exact hash of the documented whitespace normalization in the macros.
-  The identity test checks that hash, and keeps the original.
+- Its `local_files` entries record the exact hashes of the two patched files: the documented whitespace
+  normalization in the macros, and the statistics change below. The identity test checks those hashes,
+  and keeps the originals.
 - The local patch records each duration and its class after the timed closure, in execution order,
   without branching on the class. It splits the durations by class only after the case completes,
   and exports every sample in execution order.
@@ -55,6 +56,10 @@ The CSV columns are `benchname,sequence,class,runtime_ns`.
   On Graviton5 that branch gave the classes different timings even when both ran identical work;
   label-independent recording removed the difference
   ([2026-10-09 record](../../benchmark_results/OVERVIEW.md#2026-10-09-graviton5-dudect-class-label-artifact)).
+- The maximum t skips a cropped test whose t is not finite. A crop where each class holds one repeated
+  duration has no variance, so its t is undefined. The RISC-V CI timer ticks every 333 ns, and equal tick
+  counts convert to durations 1 ns apart, so such a crop gave t = -inf (CT 44476221075). The full test
+  keeps every sample, so a constant difference between the classes still gives an infinite t.
 - Buffered output is flushed before a result is reported.
 - Clap's optional terminal color support is disabled to remove `atty` and
   `ansi_term` from the tool. Argument parsing and the measurement code are unchanged.
