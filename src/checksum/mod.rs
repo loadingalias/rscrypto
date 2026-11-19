@@ -49,10 +49,10 @@
 //! ```toml
 //! [dependencies]
 //! # Smallest CRC-32-only build
-//! rscrypto = { version = "0.10", default-features = false, features = ["crc32"] }
+//! rscrypto = { version = "0.13", default-features = false, features = ["crc32"] }
 //!
 //! # All checksum families
-//! rscrypto = { version = "0.10", default-features = false, features = ["checksums"] }
+//! rscrypto = { version = "0.13", default-features = false, features = ["checksums"] }
 //! ```
 //!
 //! # API Conventions
@@ -78,7 +78,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! rscrypto = { version = "0.10", default-features = false, features = ["crc32"] }
+//! rscrypto = { version = "0.13", default-features = false, features = ["crc32"] }
 //! ```
 
 // The CRC families share this support; Adler-32 needs none of it.

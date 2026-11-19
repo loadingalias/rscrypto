@@ -10,10 +10,10 @@ For `no_std`, disable the default features, then name each primitive you need:
 
 ```toml
 # no_std SHA-2
-rscrypto = { version = "0.12", default-features = false, features = ["sha2"] }
+rscrypto = { version = "0.13", default-features = false, features = ["sha2"] }
 
 # All primitives, with operating-system randomness
-rscrypto = { version = "0.12", features = ["full", "getrandom"] }
+rscrypto = { version = "0.13", features = ["full", "getrandom"] }
 ```
 
 Umbrella features are convenient, but they make the build larger:
@@ -65,6 +65,15 @@ Both are portable Rust and need neither `alloc` nor `std`.
 `Xxh32Hasher` and `Xxh64Hasher` hash incrementally in a fixed-size state that keeps at most one partial stripe of input.
 `rscrypto` has no frame parser; a codec reads the checksum fields and compares them.
 
+`siphash` gives SipHash-1-3 and SipHash-2-4, keyed with a 128-bit `SipHashKey` that clears on drop.
+`SipHash13` and `SipHash24` hash one byte string or act as a `core::hash::Hasher`.
+`SipRandomState` is a `BuildHasher` for `HashMap` and `HashSet` that keys SipHash-1-3.
+Use it for tables whose keys an attacker can choose, such as QUIC connection IDs.
+`try_new_with` takes the key from caller entropy, and `try_new` also needs `getrandom`.
+A 64-bit SipHash output is neither a collision-resistant hash nor a message authentication tag;
+use HMAC or KMAC to authenticate messages.
+The feature needs neither `alloc` nor `std`.
+
 `websocket-sha1` gives only the compatibility digest for WebSocket handshakes.
 No umbrella feature enables it, including `full`.
 Enable it by name.
@@ -94,6 +103,13 @@ The `aes-gcm` and `chacha20poly1305` leaves implement `AeadGather`. It encrypts 
 slices into one ciphertext without staging plaintext or allocating. Fresh-random-nonce sealing
 requires `getrandom`; caller-supplied nonces use `aead::expert::AeadWithNonce`. The append helper
 requires `alloc` and writes ciphertext directly into a vector's spare capacity.
+
+The `aes-gcm` leaf also gives `aead::expert::quic_lb`, the connection-ID cipher of
+[draft-ietf-quic-load-balancers-22](https://datatracker.ietf.org/doc/draft-ietf-quic-load-balancers/22/).
+`QuicLbCipher::new` takes a 16-byte `QuicLbKey`, a server-ID length of at least 1, and a nonce length of
+at least 4, with a total of at most 19. It returns `None` for other lengths.
+`encrypt` and `decrypt_server_id` work in place on a 19-byte buffer, do not allocate, and do not fail.
+The module gives no general AES block encryption or decryption.
 
 With `std` and `blake3`, `Blake3::update_reader` hashes through EOF with bounded
 input buffering. `Blake3::update_file` reads from a file's current position through
@@ -145,7 +161,8 @@ See [ML-DSA](mldsa.md) for the API, the memory costs, and the open qualification
 (RFC-to-be 10073): `id-MLDSA65-Ed25519-SHA512` and `id-MLDSA65-ECDSA-P256-SHA512`.
 They enable `ml-dsa` and `ed25519` or `ecdsa-p256`, need neither allocation nor operating-system entropy,
 and import and export the draft's raw, SubjectPublicKeyInfo, and PKCS #8 encodings.
-A signature is valid only if both components verify. `prepare_in` needs `alloc`.
+A signature is valid only if both components verify. `prepare_in` and the allocator-backed
+secret-key constructors (`generate_keypair_in`, `try_from_slice_in`, and `from_pkcs8_der_in`) need `alloc`.
 The `rscrypto::auth::composite_mldsa` module documentation describes the construction and its limits.
 
 `x-wing` gives the X-Wing hybrid KEM of ML-KEM-768 and X25519 from

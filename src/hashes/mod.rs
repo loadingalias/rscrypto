@@ -45,21 +45,21 @@
 //! ```toml
 //! [dependencies]
 //! # Smallest SHA-2-only build
-//! rscrypto = { version = "0.10", default-features = false, features = ["sha2"] }
+//! rscrypto = { version = "0.13", default-features = false, features = ["sha2"] }
 //!
 //! # All cryptographic hashes
-//! rscrypto = { version = "0.10", default-features = false, features = ["crypto-hashes"] }
+//! rscrypto = { version = "0.13", default-features = false, features = ["crypto-hashes"] }
 //!
 //! # Fast non-cryptographic hashes only
-//! rscrypto = { version = "0.10", default-features = false, features = ["fast-hashes"] }
+//! rscrypto = { version = "0.13", default-features = false, features = ["fast-hashes"] }
 //!
 //! # Everything hash-related
-//! rscrypto = { version = "0.10", default-features = false, features = ["hashes"] }
+//! rscrypto = { version = "0.13", default-features = false, features = ["hashes"] }
 //! ```
 //!
 //! The compatibility-only `websocket-sha1` feature is deliberately absent
 //! from `hashes`, `crypto-hashes`, and `full`. It exposes only the complete
-//! RFC 6455 accept-digest operation under [`legacy`].
+//! RFC 6455 accept-digest operation under `legacy`.
 //!
 //! # API Conventions
 //!
@@ -74,6 +74,9 @@
 //! - `crypto` - Cryptographic hash functions (safe by default).
 //! - `fast` - Non-cryptographic hashes (**NOT CRYPTO**).
 //! - `legacy` - Capability-confined compatibility operations; never general-purpose hashes.
+//! - `expert` (requires `blake3` feature) - BLAKE3 subtree hashing (`blake3_tree`), the Bao
+//!   combined-stream decoder (`bao`, requires `std`), and `BLAKE3_PORTABLE_SOURCE`, the source
+//!   text of the portable BLAKE3 compression function.
 //! - `introspect` (requires `diag` feature) - Advanced kernel selection reporting.
 //!
 //! # Advanced

@@ -16,8 +16,7 @@ The companion [`rscrypto-rustls`](#tls-and-quic-provider) supplies TLS and QUIC 
 
 ## Install
 
-`rscrypto` needs Rust 1.100.
-Until Rust 1.100 is stable, use the 1.100 beta or a newer nightly.
+`rscrypto` needs Rust 1.100 or later.
 Accelerated POWER, IBM Z, and RISC-V builds need a nightly compiler;
 `portable-only` builds support the declared MSRV.
 See [Toolchain](docs/platforms.md#toolchain).
@@ -26,14 +25,14 @@ Minimal `no_std` build with SHA-2 only:
 
 ```toml
 [dependencies]
-rscrypto = { version = "0.12", default-features = false, features = ["sha2"] }
+rscrypto = { version = "0.13", default-features = false, features = ["sha2"] }
 ```
 
 All primitives, with operating-system randomness:
 
 ```toml
 [dependencies]
-rscrypto = { version = "0.12", features = ["full", "getrandom"] }
+rscrypto = { version = "0.13", features = ["full", "getrandom"] }
 ```
 
 The default feature is `std`.
@@ -82,7 +81,9 @@ Signature and KEM keys import and export standard DER (PKCS #8 and SubjectPublic
 for ECDSA, Ed25519, RSA, ML-DSA, composite ML-DSA, ML-KEM, and SLH-DSA.
 
 `AeadGather` encrypts multiple plaintext slices into one ciphertext for AES-GCM and ChaCha20-Poly1305.
+With `aes-gcm`, `aead::expert::quic_lb` encrypts QUIC-LB connection IDs (draft-ietf-quic-load-balancers-22).
 BLAKE3 supports reader, file, and batch hashing, and an expert decoder verifies sequential unkeyed Bao combined streams.
+`hashes::expert::BLAKE3_PORTABLE_SOURCE` holds the source text of the portable BLAKE3 compression function.
 The [feature guide](docs/features.md#capability-features) describes these APIs and their allocation and `std` requirements.
 
 The WebSocket accept digest exists only for protocol compatibility.

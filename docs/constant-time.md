@@ -28,6 +28,11 @@ the RFC 8439 vector and its pointer/output bounds. This adds generated-code and 
 the existing best-effort inventory. It does not promote a general constant-time claim, provide a
 symbolic proof of the new kernels, or cover arbitrary secret messages and standalone verification.
 
+SipHash (`keyed_hash.siphash`) is also in the best-effort inventory. Its harness entry `ct_entry_siphash_hash`
+reaches the table hasher that `SipRandomState` builds, which hashes a length-prefixed byte key, and the
+SipHash-2-4 one-shot, including the Apple AArch64 `ror` rotation. Required DudeCT cases hash a 20-byte table key
+and a 16 KiB message and compare a zero key with random keys. This evidence does not promote a constant-time claim.
+
 Source code that looks branchless is not proof.
 Compiler lowering, inlining, target features, and linking can change machine behavior.
 For example, a checked `strict_*` operation on a secret-derived value tests that value.
@@ -1604,6 +1609,16 @@ These are requirements for candidate qualification.
 They do not state that every target has passed.
 Standard signing retries until the first accepted candidate, so it stays variable-time.
 Whole ML-DSA signing is best effort, with no strict constant-time claim.
+
+### Composite ML-DSA
+
+`ct.toml` registers `signature.composite_mldsa` as best effort.
+The composite builds its message representative from public data and calls the ML-DSA-65, Ed25519, and ECDSA P-256
+signing operations, whose own primitives carry their claims and evidence.
+Two DudeCT cases sign with a fixed ML-DSA-65 key, randomness, and message, and compare a fixed with a random
+Ed25519 or P-256 secret.
+No linked-root closure, BINSEC kernel, or key-generation or import timing case covers the composite entry points.
+Standard ML-DSA signing has variable retries, so composite signing has no whole-signing timing claim.
 
 ### SLH-DSA
 

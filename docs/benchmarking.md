@@ -621,6 +621,16 @@ An added comparator is a candidate for measurement, not a claim that it wins on 
   and an AVX-512 build, which the default Bench build is not.
 - XXH32 and XXH64 compare with the portable Rust `xxhash-rust` and `twox-hash` crates, with seed zero.
   The `chunk-64` streaming rows write 64-byte slices and include construction and the digest.
+- SipHash one-shot rows hash one byte string under a fixed key and compare with `siphasher`, and SipHash-2-4
+  also with std's deprecated `SipHasher`; std exposes no keyed SipHash-1-3.
+  The collection rows time `BuildHasher::hash_one`, the key's `Hash` implementation, and its `Hasher` writes,
+  with every key read at run time. rscrypto and `siphasher` must match before timing.
+  std's `RandomState`, SipHash-1-3 under a random key, must return the same hash on a second call.
+- X-Wing compares with `libcrux-kem` and RustCrypto `x-wing`; AWS-LC has no X-Wing.
+  HPKE compares with rust-hpke (`hpke` 0.15.1) for both suites, and with AWS-LC's `EVP_HPKE` for the X25519 suite.
+  Composite ML-DSA compares `id-MLDSA65-Ed25519-SHA512` with `darkbio-crypto` and `id-MLDSA65-ECDSA-P256-SHA512`
+  with `kryptering`; no other library implements them.
+  Each of these rows checks its output against another implementation before timing.
 - AWS-LC's POWER64LE GNU dependency was restored for ML-DSA in `ecde7e65`.
   The other benchmarks retained older gates and silently omitted their AWS-LC rows.
   All AWS-LC benchmark gates now share [one target definition](../benches/common/aws_lc.rs),

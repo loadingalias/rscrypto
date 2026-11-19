@@ -17,6 +17,7 @@ This guide does not establish a new security or qualification claim.
 | ECDSA, Ed25519, and elliptic-curve key agreement | Signatures or key agreement based on elliptic-curve problems. | Changing curves or increasing their size does not remove dependence on this family of problems. |
 | RSA | Signatures and encryption whose security relies on RSA-related number-theoretic assumptions. | Larger keys preserve those assumptions. |
 | ML-KEM and ML-DSA | Key establishment and signatures based on module-lattice problems. | They offer post-quantum alternatives to classical public-key schemes, with implementation and protocol requirements of their own. |
+| Composite ML-DSA and X-Wing | Hybrids of a lattice and an elliptic-curve component. A composite ML-DSA-65 signature verifies only if its ML-DSA-65 and its Ed25519 or ECDSA P-256 component verify. X-Wing derives one shared secret from ML-KEM-768 and X25519 with a SHA3-256 combiner. | Each follows the combiner of its IETF draft. The drafts are not final, so a later revision can change encodings and identifiers. HPKE can use X-Wing as its KEM. |
 | SLH-DSA | Signatures based on hash-function properties. | It offers a different foundation from curves and lattices. The `slh-dsa` feature implements all 12 FIPS 205 parameter sets. |
 | Symmetric encryption, MACs, and cryptographic hashes | Protect data using their construction-specific assumptions, keys, and usage bounds. | They remain necessary after public-key migration; they do not by themselves replace public-key authentication or key establishment. |
 

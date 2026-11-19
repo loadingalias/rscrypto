@@ -1,10 +1,10 @@
 //! Pure Rust cryptography with hardware acceleration. `no_std` first.
 //!
 //! `rscrypto` is a single-crate cryptography stack: hashes, AEADs, MACs, KDFs,
-//! password hashing, signatures, key exchange, and checksums. Enable one leaf
-//! feature for a minimal build (`sha2`, `aes-gcm`, `ed25519`, anything) or
-//! `full` for the entire primitive set. Zero default dependencies; `getrandom`,
-//! `serde`, and `rayon` are opt-in.
+//! password hashing, signatures, key exchange, random generation, and
+//! checksums. Enable one leaf feature for a minimal build (`sha2`, `aes-gcm`,
+//! `ed25519`, anything) or `full` for the entire primitive set. Zero default
+//! dependencies; `getrandom`, `rand_core`, `serde`, and `rayon` are opt-in.
 //!
 //! The portable Rust path is the byte-for-byte authority. SIMD and ASM kernels
 //! are accelerators, differential-tested against the portable path on every
@@ -14,7 +14,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! rscrypto = { version = "0.12", default-features = false, features = ["sha2"] }
+//! rscrypto = { version = "0.13", default-features = false, features = ["sha2"] }
 //! ```
 //!
 //! # Guides
@@ -101,10 +101,12 @@ assert!(
 //!
 //! - `checksums`: CRC families and Adler-32.
 //! - `hashes`: SHA-2, SHA-3, BLAKE2, BLAKE3, Ascon, XXH3, XXH32, XXH64, RapidHash.
-//! - `auth`: MACs, KDFs, password hashing, ECDSA signing/verification, Ed25519, RSA
-//!   signing/verification/OAEP, ML-DSA, SLH-DSA, P-256 and P-384 ECDH, X25519, ML-KEM.
-//! - `aead`: AES-GCM, AES-GCM-SIV, ChaCha20-Poly1305, XChaCha20-Poly1305, AEGIS-256, Ascon-AEAD128.
-//! - `chacha20-rng`: the seeded ChaCha20 random generator, [`ChaCha20Rng`].
+//! - `auth`: MACs (including SipHash), KDFs, password hashing, ECDSA signing/verification,
+//!   Ed25519, RSA signing/verification/OAEP, ML-DSA, SLH-DSA, composite ML-DSA-65, P-256 and
+//!   P-384 ECDH, X25519, ML-KEM, X-Wing, HPKE.
+//! - `aead`: AES-GCM, AES-GCM-SIV, AES-SIV-CMAC, ChaCha20-Poly1305, XChaCha20-Poly1305, AEGIS-256,
+//!   Ascon-AEAD128.
+//! - `chacha20-rng`: the seeded ChaCha20 random generator, `ChaCha20Rng`.
 //! - `full`: all public primitive families.
 //!
 //! Leaf features are available for size-conscious builds.

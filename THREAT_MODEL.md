@@ -25,6 +25,9 @@ The crate touches the system in these ways only:
 
 - With `getrandom`, some APIs get entropy from the operating system.
 - With `std`, runtime dispatch reads CPU and operating-system capability data.
+- With `std`, the CRC and Adler-32 dispatch reads its `RSCRYPTO_*_FORCE` environment variables.
+- With `std` on Unix targets, fork detection reads the process ID. On 64-bit Linux and Android, it maps
+  one page that the kernel clears in a fork child, and reads the process ID only if the kernel refuses that page.
 - The `parallel` feature uses Rayon for BLAKE3 and Argon2.
 
 The caller owns protocol composition, certificate validation, key storage and rotation,

@@ -33,11 +33,31 @@ even when CPUID reports them.
 The E-cores lack those instructions, so a thread that moves to an E-core during an AVX-512 kernel would fault.
 If every core implements AVX-512, for example with the E-cores disabled in firmware,
 call the `unsafe` `platform::expert::allow_hybrid_avx512()` before the first `platform::caps()` call to keep them.
+The former `RSCRYPTO_FORCE_AVX512` environment variable has no effect.
+
+x86-64 detection reports a capability only when the CPU also reports every feature that Rust's target feature
+implies for it. A CPUID mask, such as a hypervisor can set, therefore cannot select a kernel
+whose implied instructions the CPU lacks.
 
 Every accelerated path must give the same output as portable Rust for representative lengths,
 alignments, tails, and state transitions.
 Cross-compilation proves only that a target builds.
 Runtime behavior needs execution on the target.
+
+### Process forks
+
+`platform::ProcessOrigin` records the process that created a value, so that an owner of unique state can
+refuse a copy that a fork made. `NonceCounter`, the HPKE sender, and `RsaSigningWorkspace` use it, and
+`ChaCha20Rng::origin` reports it.
+
+- With `std` on 64-bit Linux and Android (x86-64, AArch64, POWER, RISC-V, and IBM Z), detection uses one
+  page that the kernel gives as zeros to a fork child (`MADV_WIPEONFORK`, Linux 4.14).
+  If the kernel refuses the page, detection compares process IDs.
+- With `std` on Apple and other Unix targets, detection compares process IDs.
+- Targets that cannot fork, such as Windows, WebAssembly, and bare-metal targets, always report the current process.
+- Without `std`, no fork is detected.
+
+A restored virtual-machine snapshot or another copied memory image is not detected.
 
 ### Notes by primitive
 
@@ -72,6 +92,17 @@ Runtime behavior needs execution on the target.
   backends that each target selects for those primitives.
 - **XXH32 and XXH64** are portable Rust on every target, with no accelerated backend or dispatch.
   They read input words little-endian on every target, as the specification requires.
+- **SipHash** is portable Rust on every target, with no runtime dispatch.
+  Apple AArch64 rotates each word with a separate `ror` instruction, unless `portable-only` or Miri is active.
+  Other AArch64 targets absorb two input words in each loop iteration.
+- **ChaCha20Rng** has no backend of its own. It runs the ChaCha20 keystream kernel that cached detection
+  selects for ChaCha20-Poly1305 on the target.
+- **QUIC-LB** runs on the AES-128 backends. On AES-NI and AES-CE, all Feistel passes run in one target-feature
+  scope with the round keys in registers. Single-pass decryption uses the AES-128 inverse cipher of each backend:
+  AES-NI, AES-CE, CPACF KM, POWER8, RISC-V Zvkned and Zknd, the portable cipher, and a bitsliced inverse
+  on RV64 and IBM Z without AES hardware.
+- **Composite ML-DSA** has no backend or dispatch of its own. It runs the ML-DSA-65, Ed25519, ECDSA P-256,
+  and SHA-512 backends that each target selects for those primitives.
 - **Scalar WebAssembly:** when `simd128` is disabled, hash, AEAD, and Argon2 dispatch exclude SIMD backends.
   This compile-time boundary is separate from `portable-only` runtime dispatch.
 - **BLAKE3 wasm32:** `simd128` enables four-lane chunk hashing, parent reduction, and equal-length
@@ -110,8 +141,7 @@ Evidence from one CPU does not qualify another CPU.
 ## Toolchain
 
 `rscrypto` needs Rust 1.100 (`rust-version = "1.100.0"`).
-Rust 1.100 becomes stable on 2026-11-12.
-Until then, build with the 1.100 beta or a newer nightly.
+Rust 1.100 became stable on 2026-11-12.
 The repository tests with the nightly pinned in [`rust-toolchain.toml`](../rust-toolchain.toml).
 It checks the MSRV with the exact 1.100 beta pinned in [`scripts/lib/toolchain.py`](../scripts/lib/toolchain.py).
 
@@ -146,7 +176,7 @@ The [CI workflow](../.github/workflows/ci.yml) and the [repository recipes](../s
 
 | Check              | Scope |
 | ------------------ | ----- |
-| `just check`       | Compilation and lint checks for the host and every catalog cross-target. |
+| `just check`       | Repairs formatting and lints, then checks this Mac. CI checks every other catalog target. |
 | Native CI          | Native and portable suites on Linux x86-64, AArch64, POWER, IBM Z, and RISC-V, and on Windows x86-64. Doctests run on the x86-64, AArch64, and Windows rows. POWER, IBM Z, and RISC-V build on x86-64 and run the transferred artifacts on native hardware, without doctests or the SLH-DSA small-set differentials. RISC-V is skipped on fork pull requests and when no donated runner starts it within 30 minutes; releases wait for it. |
 | `just check-macos` | Full local Apple Silicon qualification: native and portable release suites, doctests, internal evidence regressions, and physical RSA assembly checks. `just qualify-macos` queues it in the background before a push or release. |
 | `just test-musl`   | Native and portable suites, plus doctests, on a matching x86-64 or AArch64 Linux host. |
