@@ -903,13 +903,17 @@ mod tests {
   #[cfg(any(
     all(target_arch = "x86_64", target_feature = "sse2"),
     target_arch = "aarch64",
-    all(target_arch = "riscv64", not(feature = "portable-only"))
+    all(target_arch = "powerpc64", not(feature = "portable-only"), target_endian = "little"),
+    all(target_arch = "riscv64", not(feature = "portable-only")),
+    all(target_arch = "s390x", not(feature = "portable-only"))
   ))]
   use super::{ComputeBlockFn, authenticate_aead_with};
   #[cfg(any(
     all(target_arch = "x86_64", target_feature = "sse2"),
     target_arch = "aarch64",
-    all(target_arch = "riscv64", not(feature = "portable-only"))
+    all(target_arch = "powerpc64", not(feature = "portable-only"), target_endian = "little"),
+    all(target_arch = "riscv64", not(feature = "portable-only")),
+    all(target_arch = "s390x", not(feature = "portable-only"))
   ))]
   use crate::aead::AeadByteLengths;
   use crate::aead::targets::AeadPrimitive;
@@ -926,8 +930,12 @@ mod tests {
   }
   #[cfg(target_arch = "aarch64")]
   use crate::platform::caps::aarch64;
+  #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), target_endian = "little"))]
+  use crate::platform::caps::power;
   #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
   use crate::platform::caps::riscv;
+  #[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
+  use crate::platform::caps::s390x;
   #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   use crate::platform::caps::x86;
 
@@ -1010,7 +1018,9 @@ mod tests {
   #[cfg(any(
     all(target_arch = "x86_64", target_feature = "sse2"),
     target_arch = "aarch64",
-    all(target_arch = "riscv64", not(feature = "portable-only"))
+    all(target_arch = "powerpc64", not(feature = "portable-only"), target_endian = "little"),
+    all(target_arch = "riscv64", not(feature = "portable-only")),
+    all(target_arch = "s390x", not(feature = "portable-only"))
   ))]
   fn authenticate_aead_portable(aad: &[u8], ciphertext: &[u8], key: &[u8; 32]) -> [u8; 16] {
     let lengths = AeadByteLengths::from_usize(aad.len(), ciphertext.len());
@@ -1020,7 +1030,9 @@ mod tests {
   #[cfg(any(
     all(target_arch = "x86_64", target_feature = "sse2"),
     target_arch = "aarch64",
-    all(target_arch = "riscv64", not(feature = "portable-only"))
+    all(target_arch = "powerpc64", not(feature = "portable-only"), target_endian = "little"),
+    all(target_arch = "riscv64", not(feature = "portable-only")),
+    all(target_arch = "s390x", not(feature = "portable-only"))
   ))]
   fn exercise_backend(backend: ComputeBlockFn) {
     let key = [0x5au8; 32];
@@ -1117,6 +1129,26 @@ mod tests {
     }
 
     exercise_backend(super::riscv64_vector::compute_block);
+  }
+
+  #[test]
+  #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), target_endian = "little"))]
+  fn power_vsx_backend_matches_portable_when_available() {
+    if !crate::platform::caps().has(power::POWER8_VECTOR) {
+      return;
+    }
+
+    exercise_backend(super::power_vsx::compute_block);
+  }
+
+  #[test]
+  #[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
+  fn s390x_vector_backend_matches_portable_when_available() {
+    if !crate::platform::caps().has(s390x::VECTOR) {
+      return;
+    }
+
+    exercise_backend(super::s390x_vector::compute_block);
   }
 
   #[test]
