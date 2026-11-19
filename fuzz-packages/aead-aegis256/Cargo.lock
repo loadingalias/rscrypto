@@ -117,7 +117,3 @@ name = "softaes"
 version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c4fdfe13e1c42e45f497416afb8dc4e783bf0e25b7be9077c1c77c5fb14cb998"
-
-[[patch.unused]]
-name = "rscrypto-rustls"
-version = "0.1.0"

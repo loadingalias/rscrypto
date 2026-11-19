@@ -249,7 +249,3 @@ dependencies = [
  "crypto-common",
  "ctutils",
 ]
-
-[[patch.unused]]
-name = "rscrypto-rustls"
-version = "0.1.0"
