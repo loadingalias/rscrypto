@@ -1246,60 +1246,6 @@ pub fn diag_rsa_blinding_factor_inverse_with_scratch(
   clear_output_on_error(result, out)
 }
 
-/// Exercise caller-random RSA-PSS success cleanup for optimized-code evidence.
-#[cfg(all(rscrypto_internal, feature = "diag"))]
-#[doc(hidden)]
-#[unsafe(no_mangle)]
-#[inline(never)]
-pub fn diag_rsa_caller_random_signing_success(
-  key: &RsaPrivateKey,
-  out: &mut [u8],
-  scratch: &mut RsaPrivateScratch,
-) -> u8 {
-  let modulus_len = key.signature_len();
-  let result = key.sign_pss_with_random_fill_and_scratch(
-    RsaPssProfile::Sha256,
-    b"rscrypto RSA caller-random zeroize success evidence",
-    out,
-    scratch,
-    |random| {
-      if random.len() == modulus_len {
-        random.fill(0);
-        if let Some(last) = random.last_mut() {
-          *last = 1;
-        }
-      } else {
-        random.fill(0x5a);
-      }
-      Ok::<(), ()>(())
-    },
-  );
-  core::hint::black_box(u8::from(result.is_ok()) ^ out.first().copied().unwrap_or_default())
-}
-
-/// Exercise caller-random RSA-PSS error cleanup for optimized-code evidence.
-#[cfg(all(rscrypto_internal, feature = "diag"))]
-#[doc(hidden)]
-#[unsafe(no_mangle)]
-#[inline(never)]
-pub fn diag_rsa_caller_random_signing_error(
-  key: &RsaPrivateKey,
-  out: &mut [u8],
-  scratch: &mut RsaPrivateScratch,
-) -> u8 {
-  let result = key.sign_pss_with_random_fill_and_scratch(
-    RsaPssProfile::Sha256,
-    b"rscrypto RSA caller-random zeroize error evidence",
-    out,
-    scratch,
-    |random| {
-      random.fill(0xa5);
-      Err::<(), ()>(())
-    },
-  );
-  core::hint::black_box(u8::from(result == Err(RsaPrivateOpError::EntropyUnavailable)))
-}
-
 /// Public exponent policy for RSA public-key parsing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RsaPublicExponentPolicy {
