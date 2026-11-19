@@ -1,12 +1,12 @@
 //! Target-specific P-256 acceleration shared by ECDSA and ECDH.
 //!
-//! ECDH reaches the Apple and Linux AArch64 routines and the Linux System V or
-//! Windows Microsoft x64 BMI2/ADX and baseline routines. Their deterministic
-//! provenance transforms clear secret-derived stack frames, saved-register
-//! spill slots, and volatile integer registers. Other ECDH targets retain the
-//! portable authority until equivalent target-native evidence exists. The
-//! caller owns scalar validation, point validation, result typing, and
-//! Rust-side cleanup.
+//! ECDH reaches the Apple and Linux AArch64 routines and the x86-64 BMI2/ADX
+//! and baseline System V routines, which Linux and Windows both call through
+//! `extern "sysv64"`. Their deterministic provenance transforms clear
+//! secret-derived stack frames, saved-register spill slots, and volatile
+//! integer registers. Other ECDH targets retain the portable authority until
+//! equivalent target-native evidence exists. The caller owns scalar
+//! validation, point validation, result typing, and Rust-side cleanup.
 
 use core::arch::global_asm;
 
@@ -40,145 +40,105 @@ global_asm!(include_str!("asm/rscrypto_p256_scalarmul_alt_aarch64_unknown_linux.
 global_asm!(include_str!(
   "asm/rscrypto_p256_scalarmulbase_alt_aarch64_unknown_linux.s"
 ));
-#[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+#[cfg(target_arch = "x86_64")]
 global_asm!(
-  include_str!("asm/rscrypto_p256_scalarmulbase_x86_64_unknown_linux.S"),
+  include_str!("asm/rscrypto_p256_scalarmulbase_x86_64_sysv.S"),
+  elf = const ELF,
   options(att_syntax)
 );
-#[cfg(all(target_arch = "x86_64", target_os = "linux", feature = "p256-ecdh"))]
+#[cfg(all(target_arch = "x86_64", feature = "p256-ecdh"))]
 global_asm!(
-  include_str!("asm/rscrypto_p256_scalarmul_x86_64_unknown_linux.S"),
+  include_str!("asm/rscrypto_p256_scalarmul_x86_64_sysv.S"),
+  elf = const ELF,
   options(att_syntax)
 );
-#[cfg(all(target_arch = "x86_64", target_os = "linux", feature = "p256-ecdh"))]
+#[cfg(all(target_arch = "x86_64", feature = "p256-ecdh"))]
 global_asm!(
-  include_str!("asm/rscrypto_p256_scalarmul_alt_x86_64_unknown_linux.S"),
+  include_str!("asm/rscrypto_p256_scalarmul_alt_x86_64_sysv.S"),
+  elf = const ELF,
   options(att_syntax)
 );
-#[cfg(all(target_arch = "x86_64", target_os = "linux", feature = "p256-ecdh"))]
+#[cfg(all(target_arch = "x86_64", feature = "p256-ecdh"))]
 global_asm!(
-  include_str!("asm/rscrypto_bignum_tomont_p256_x86_64_unknown_linux.S"),
+  include_str!("asm/rscrypto_bignum_tomont_p256_x86_64_sysv.S"),
+  elf = const ELF,
   options(att_syntax)
 );
-#[cfg(all(target_arch = "x86_64", target_os = "linux", feature = "p256-ecdh"))]
+#[cfg(all(target_arch = "x86_64", feature = "p256-ecdh"))]
 global_asm!(
-  include_str!("asm/rscrypto_bignum_montsqr_p256_x86_64_unknown_linux.S"),
+  include_str!("asm/rscrypto_bignum_montsqr_p256_x86_64_sysv.S"),
+  elf = const ELF,
   options(att_syntax)
 );
-#[cfg(all(target_arch = "x86_64", target_os = "linux", feature = "p256-ecdh"))]
+#[cfg(all(target_arch = "x86_64", feature = "p256-ecdh"))]
 global_asm!(
-  include_str!("asm/rscrypto_bignum_montmul_p256_x86_64_unknown_linux.S"),
+  include_str!("asm/rscrypto_bignum_montmul_p256_x86_64_sysv.S"),
+  elf = const ELF,
   options(att_syntax)
 );
-#[cfg(all(target_arch = "x86_64", target_os = "linux", feature = "p256-ecdh"))]
+#[cfg(all(target_arch = "x86_64", feature = "p256-ecdh"))]
 global_asm!(
-  include_str!("asm/rscrypto_bignum_tomont_p256_alt_x86_64_unknown_linux.S"),
+  include_str!("asm/rscrypto_bignum_tomont_p256_alt_x86_64_sysv.S"),
+  elf = const ELF,
   options(att_syntax)
 );
-#[cfg(all(target_arch = "x86_64", target_os = "linux", feature = "p256-ecdh"))]
+#[cfg(all(target_arch = "x86_64", feature = "p256-ecdh"))]
 global_asm!(
-  include_str!("asm/rscrypto_bignum_montsqr_p256_alt_x86_64_unknown_linux.S"),
+  include_str!("asm/rscrypto_bignum_montsqr_p256_alt_x86_64_sysv.S"),
+  elf = const ELF,
   options(att_syntax)
 );
-#[cfg(all(target_arch = "x86_64", target_os = "linux", feature = "p256-ecdh"))]
+#[cfg(all(target_arch = "x86_64", feature = "p256-ecdh"))]
 global_asm!(
-  include_str!("asm/rscrypto_bignum_montmul_p256_alt_x86_64_unknown_linux.S"),
+  include_str!("asm/rscrypto_bignum_montmul_p256_alt_x86_64_sysv.S"),
+  elf = const ELF,
   options(att_syntax)
 );
-#[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+#[cfg(target_arch = "x86_64")]
 global_asm!(
-  include_str!("asm/rscrypto_p256_scalarmulbase_alt_x86_64_unknown_linux.S"),
-  options(att_syntax)
-);
-#[cfg(all(target_arch = "x86_64", target_os = "windows", feature = "p256-ecdh"))]
-global_asm!(
-  include_str!("asm/rscrypto_p256_scalarmulbase_x86_64_pc_windows_msvc.S"),
-  options(att_syntax)
-);
-#[cfg(all(target_arch = "x86_64", target_os = "windows", feature = "p256-ecdh"))]
-global_asm!(
-  include_str!("asm/rscrypto_p256_scalarmulbase_alt_x86_64_pc_windows_msvc.S"),
-  options(att_syntax)
-);
-#[cfg(all(target_arch = "x86_64", target_os = "windows", feature = "p256-ecdh"))]
-global_asm!(
-  include_str!("asm/rscrypto_p256_scalarmul_x86_64_pc_windows_msvc.S"),
-  options(att_syntax)
-);
-#[cfg(all(target_arch = "x86_64", target_os = "windows", feature = "p256-ecdh"))]
-global_asm!(
-  include_str!("asm/rscrypto_p256_scalarmul_alt_x86_64_pc_windows_msvc.S"),
-  options(att_syntax)
-);
-#[cfg(all(target_arch = "x86_64", target_os = "windows", feature = "p256-ecdh"))]
-global_asm!(
-  include_str!("asm/rscrypto_p256_curve_terms_x86_64_pc_windows_msvc.S"),
-  options(att_syntax)
-);
-#[cfg(all(target_arch = "x86_64", target_os = "windows", feature = "p256-ecdh"))]
-global_asm!(
-  include_str!("asm/rscrypto_p256_curve_terms_alt_x86_64_pc_windows_msvc.S"),
+  include_str!("asm/rscrypto_p256_scalarmulbase_alt_x86_64_sysv.S"),
+  elf = const ELF,
   options(att_syntax)
 );
 
+/// `1` when the System V bodies assemble as ELF; `0` drops their ELF-only
+/// `.type`, `.size`, and `.hidden` directives from the Windows COFF object.
+#[cfg(target_arch = "x86_64")]
+const ELF: u8 = cfg!(not(target_os = "windows")) as u8;
+
+#[cfg(target_arch = "aarch64")]
 unsafe extern "C" {
   fn rscrypto_p256_scalarmulbase_alt(out: *mut u64, scalar: *const u64, blocksize: u64, table: *const u64);
 }
 
-#[cfg(all(
-  feature = "p256-ecdh",
-  any(
-    all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
-    all(target_arch = "x86_64", target_os = "linux")
-  )
-))]
+#[cfg(all(target_arch = "aarch64", feature = "p256-ecdh"))]
 unsafe extern "C" {
   fn rscrypto_bignum_tomont_p256(out: *mut u64, input: *const u64);
   fn rscrypto_bignum_montsqr_p256(out: *mut u64, input: *const u64);
   fn rscrypto_bignum_montmul_p256(out: *mut u64, left: *const u64, right: *const u64);
-}
-
-#[cfg(all(
-  feature = "p256-ecdh",
-  any(
-    all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
-    all(target_arch = "x86_64", any(target_os = "linux", target_os = "windows"))
-  )
-))]
-unsafe extern "C" {
   fn rscrypto_p256_scalarmul_alt(out: *mut u64, scalar: *const u64, point: *const u64);
 }
 
-#[cfg(all(
-  target_arch = "x86_64",
-  any(target_os = "linux", target_os = "windows"),
-  feature = "p256-ecdh"
-))]
-unsafe extern "C" {
-  fn rscrypto_p256_scalarmul(out: *mut u64, scalar: *const u64, point: *const u64);
+#[cfg(target_arch = "x86_64")]
+unsafe extern "sysv64" {
+  fn rscrypto_p256_scalarmulbase(out: *mut u64, scalar: *const u64, blocksize: u64, table: *const u64);
+  fn rscrypto_p256_scalarmulbase_alt(out: *mut u64, scalar: *const u64, blocksize: u64, table: *const u64);
 }
 
-#[cfg(all(target_arch = "x86_64", target_os = "linux", feature = "p256-ecdh"))]
-unsafe extern "C" {
+#[cfg(all(target_arch = "x86_64", feature = "p256-ecdh"))]
+unsafe extern "sysv64" {
+  fn rscrypto_bignum_tomont_p256(out: *mut u64, input: *const u64);
+  fn rscrypto_bignum_montsqr_p256(out: *mut u64, input: *const u64);
+  fn rscrypto_bignum_montmul_p256(out: *mut u64, left: *const u64, right: *const u64);
   fn rscrypto_bignum_tomont_p256_alt(out: *mut u64, input: *const u64);
   fn rscrypto_bignum_montsqr_p256_alt(out: *mut u64, input: *const u64);
   fn rscrypto_bignum_montmul_p256_alt(out: *mut u64, left: *const u64, right: *const u64);
-}
-
-#[cfg(all(target_arch = "x86_64", target_os = "windows", feature = "p256-ecdh"))]
-unsafe extern "C" {
-  fn rscrypto_p256_curve_terms(out: *mut P256CurveTerms, words: *const u64);
-  fn rscrypto_p256_curve_terms_alt(out: *mut P256CurveTerms, words: *const u64);
-}
-
-#[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "windows")))]
-unsafe extern "C" {
-  fn rscrypto_p256_scalarmulbase(out: *mut u64, scalar: *const u64, blocksize: u64, table: *const u64);
+  fn rscrypto_p256_scalarmul(out: *mut u64, scalar: *const u64, point: *const u64);
+  fn rscrypto_p256_scalarmul_alt(out: *mut u64, scalar: *const u64, point: *const u64);
 }
 
 #[cfg(feature = "p256-ecdh")]
 #[cfg_attr(test, derive(Debug, PartialEq, Eq))]
-#[repr(C)]
 struct P256CurveTerms {
   x: [u64; 4],
   y: [u64; 4],
@@ -219,11 +179,7 @@ fn p256_curve_terms(words: &[u64; 8]) -> P256CurveTerms {
   terms
 }
 
-#[cfg(all(
-  feature = "p256-ecdh",
-  target_arch = "x86_64",
-  any(target_os = "linux", target_os = "windows")
-))]
+#[cfg(all(feature = "p256-ecdh", target_arch = "x86_64"))]
 #[inline(always)]
 fn p256_curve_terms_bmi2_adx(words: &[u64; 8]) -> P256CurveTerms {
   let mut terms = P256CurveTerms {
@@ -232,40 +188,28 @@ fn p256_curve_terms_bmi2_adx(words: &[u64; 8]) -> P256CurveTerms {
     y_squared: [0; 4],
     x_cubed: [0; 4],
   };
-  #[cfg(target_os = "linux")]
   let (x, y) = words.split_at(4);
-  #[cfg(target_os = "linux")]
   let mut x_squared = [0u64; 4];
 
   // SAFETY: the P-256 x86-64 public-field ABI is sound because:
   // 1. The caller has proved BMI2 and ADX support before entering this helper.
-  //    Linux calls each System V body directly. Windows calls one generated
-  //    Microsoft x64 batch wrapper around the same three upstream bodies.
+  //    Each System V body is declared `extern "sysv64"`, so Linux and Windows
+  //    callers use the ABI that the embedded body implements.
   // 2. Every pointer names a live, aligned four-limb array, and every output
-  //    is disjoint from its inputs. `P256CurveTerms` has the exact declared C
-  //    field layout consumed by the Windows wrapper.
+  //    is disjoint from its inputs.
   // 3. SEC1 parsing has established canonical public field inputs; the exact
   //    arithmetic and evidence scope match the AArch64 boundary above.
   unsafe {
-    #[cfg(target_os = "linux")]
-    {
-      rscrypto_bignum_tomont_p256(terms.x.as_mut_ptr(), x.as_ptr());
-      rscrypto_bignum_tomont_p256(terms.y.as_mut_ptr(), y.as_ptr());
-      rscrypto_bignum_montsqr_p256(terms.y_squared.as_mut_ptr(), terms.y.as_ptr());
-      rscrypto_bignum_montsqr_p256(x_squared.as_mut_ptr(), terms.x.as_ptr());
-      rscrypto_bignum_montmul_p256(terms.x_cubed.as_mut_ptr(), x_squared.as_ptr(), terms.x.as_ptr());
-    }
-    #[cfg(target_os = "windows")]
-    rscrypto_p256_curve_terms(&raw mut terms, words.as_ptr());
+    rscrypto_bignum_tomont_p256(terms.x.as_mut_ptr(), x.as_ptr());
+    rscrypto_bignum_tomont_p256(terms.y.as_mut_ptr(), y.as_ptr());
+    rscrypto_bignum_montsqr_p256(terms.y_squared.as_mut_ptr(), terms.y.as_ptr());
+    rscrypto_bignum_montsqr_p256(x_squared.as_mut_ptr(), terms.x.as_ptr());
+    rscrypto_bignum_montmul_p256(terms.x_cubed.as_mut_ptr(), x_squared.as_ptr(), terms.x.as_ptr());
   }
   terms
 }
 
-#[cfg(all(
-  feature = "p256-ecdh",
-  target_arch = "x86_64",
-  any(target_os = "linux", target_os = "windows")
-))]
+#[cfg(all(feature = "p256-ecdh", target_arch = "x86_64"))]
 #[inline(always)]
 fn p256_curve_terms_baseline(words: &[u64; 8]) -> P256CurveTerms {
   let mut terms = P256CurveTerms {
@@ -274,29 +218,20 @@ fn p256_curve_terms_baseline(words: &[u64; 8]) -> P256CurveTerms {
     y_squared: [0; 4],
     x_cubed: [0; 4],
   };
-  #[cfg(target_os = "linux")]
   let (x, y) = words.split_at(4);
-  #[cfg(target_os = "linux")]
   let mut x_squared = [0u64; 4];
 
   // SAFETY: the P-256 baseline x86-64 public-field ABI is sound because:
   // 1. The `_alt` routines require no optional CPU feature.
-  //    Linux calls each System V body directly. Windows calls one generated
-  //    Microsoft x64 batch wrapper around the same three upstream bodies.
-  // 2. Pointer validity, non-aliasing, canonical public inputs, arithmetic
-  //    semantics, declared C output layout, and evidence scope match the
-  //    boundary documented above.
+  // 2. The System V ABI declaration, pointer validity, non-aliasing,
+  //    canonical public inputs, arithmetic semantics, and evidence scope
+  //    match the boundary documented above.
   unsafe {
-    #[cfg(target_os = "linux")]
-    {
-      rscrypto_bignum_tomont_p256_alt(terms.x.as_mut_ptr(), x.as_ptr());
-      rscrypto_bignum_tomont_p256_alt(terms.y.as_mut_ptr(), y.as_ptr());
-      rscrypto_bignum_montsqr_p256_alt(terms.y_squared.as_mut_ptr(), terms.y.as_ptr());
-      rscrypto_bignum_montsqr_p256_alt(x_squared.as_mut_ptr(), terms.x.as_ptr());
-      rscrypto_bignum_montmul_p256_alt(terms.x_cubed.as_mut_ptr(), x_squared.as_ptr(), terms.x.as_ptr());
-    }
-    #[cfg(target_os = "windows")]
-    rscrypto_p256_curve_terms_alt(&raw mut terms, words.as_ptr());
+    rscrypto_bignum_tomont_p256_alt(terms.x.as_mut_ptr(), x.as_ptr());
+    rscrypto_bignum_tomont_p256_alt(terms.y.as_mut_ptr(), y.as_ptr());
+    rscrypto_bignum_montsqr_p256_alt(terms.y_squared.as_mut_ptr(), terms.y.as_ptr());
+    rscrypto_bignum_montsqr_p256_alt(x_squared.as_mut_ptr(), terms.x.as_ptr());
+    rscrypto_bignum_montmul_p256_alt(terms.x_cubed.as_mut_ptr(), x_squared.as_ptr(), terms.x.as_ptr());
   }
   terms
 }
@@ -309,7 +244,7 @@ pub(super) fn p256_public_point(words: &[u64; 8]) -> Option<PublicPoint> {
   #[cfg(target_arch = "aarch64")]
   let terms = p256_curve_terms(words);
 
-  #[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "windows")))]
+  #[cfg(target_arch = "x86_64")]
   let terms = {
     use crate::platform::caps::x86;
 
@@ -353,15 +288,15 @@ pub(super) fn p256_scalarmulbase_generator(scalar: &[u64; 4]) -> [u64; 8] {
     };
   }
 
-  #[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "windows")))]
+  #[cfg(target_arch = "x86_64")]
   {
     use crate::platform::caps::x86;
 
     let has_bmi2_adx = crate::platform::caps().has(x86::BMI2.union(x86::ADX));
     if has_bmi2_adx {
       // SAFETY: P-256 x86-64 fixed-base scalar multiplication because:
-      // 1. Linux calls the System V body directly; Windows calls the upstream
-      //    Microsoft x64 wrapper around that same body.
+      // 1. The body is declared `extern "sysv64"`, the ABI that it
+      //    implements, so Linux and Windows callers both match it.
       // 2. Runtime capability detection proves BMI2 and ADX before the
       //    accelerated symbol is called.
       // 3. Array layouts, table extent, scalar contract, and evidence scope
@@ -376,8 +311,8 @@ pub(super) fn p256_scalarmulbase_generator(scalar: &[u64; 4]) -> [u64; 8] {
       };
     } else {
       // SAFETY: Baseline P-256 x86-64 fixed-base multiplication because:
-      // 1. Linux calls the System V body directly; Windows calls the upstream
-      //    Microsoft x64 wrapper around that same body.
+      // 1. The body is declared `extern "sysv64"`, the ABI that it
+      //    implements, so Linux and Windows callers both match it.
       // 2. The `_alt` implementation requires no optional CPU feature.
       // 3. Array layouts, table extent, scalar contract, and evidence scope
       //    are identical to the AArch64 boundary documented above.
@@ -398,13 +333,7 @@ pub(super) fn p256_scalarmulbase_generator(scalar: &[u64; 4]) -> [u64; 8] {
 /// Multiply a validated affine P-256 point by a validated nonzero scalar.
 ///
 /// Inputs and output contain little-endian canonical affine limbs.
-#[cfg(all(
-  feature = "p256-ecdh",
-  any(
-    all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
-    all(target_arch = "x86_64", any(target_os = "linux", target_os = "windows"))
-  )
-))]
+#[cfg(feature = "p256-ecdh")]
 #[inline]
 pub(super) fn p256_scalarmul(scalar: &[u64; 4], point: &[u64; 8]) -> [u64; 8] {
   let mut out = [0u64; 8];
@@ -424,13 +353,13 @@ pub(super) fn p256_scalarmul(scalar: &[u64; 4], point: &[u64; 8]) -> [u64; 8] {
     unsafe { rscrypto_p256_scalarmul_alt(out.as_mut_ptr(), scalar.as_ptr(), point.as_ptr()) };
   }
 
-  #[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "windows")))]
+  #[cfg(target_arch = "x86_64")]
   {
     use crate::platform::caps::x86;
 
     // SAFETY: the P-256 x86-64 scalar-multiplication ABI is sound because:
-    // 1. Linux calls the System V body directly; Windows calls the upstream
-    //    Microsoft x64 wrapper around that same body.
+    // 1. The body is declared `extern "sysv64"`, the ABI that it
+    //    implements, so Linux and Windows callers both match it.
     // 2. Runtime capability detection proves BMI2 and ADX before selecting
     //    the accelerated routine; the `_alt` routine is baseline x86-64.
     // 3. Array layouts, validated scalar/point semantics, deterministic
@@ -506,7 +435,7 @@ mod tests {
     }
   }
 
-  #[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "windows")))]
+  #[cfg(target_arch = "x86_64")]
   #[test]
   fn x86_64_public_field_assembly_matches_portable_authority() {
     use crate::platform::caps::x86;
@@ -520,7 +449,7 @@ mod tests {
     }
   }
 
-  #[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "windows")))]
+  #[cfg(target_arch = "x86_64")]
   fn x86_64_scalarmulbase_backend(scalar: &[u64; 4], accelerated: bool) -> [u64; 8] {
     let mut out = [0u64; 8];
 
@@ -547,7 +476,7 @@ mod tests {
     out
   }
 
-  #[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "windows")))]
+  #[cfg(target_arch = "x86_64")]
   fn x86_64_scalarmul_backend(scalar: &[u64; 4], point: &[u64; 8], accelerated: bool) -> [u64; 8] {
     let mut out = [0u64; 8];
 
@@ -564,7 +493,7 @@ mod tests {
     out
   }
 
-  #[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "windows")))]
+  #[cfg(target_arch = "x86_64")]
   #[test]
   fn x86_64_scalar_assembly_backends_match_production_dispatch() {
     use crate::platform::caps::x86;

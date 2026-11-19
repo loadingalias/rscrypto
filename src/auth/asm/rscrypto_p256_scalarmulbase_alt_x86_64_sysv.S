@@ -3,28 +3,20 @@
 //
 // Adapted for rscrypto from s2n-bignum:
 // - x86_att/p256/p256_scalarmulbase_alt.S
-// - Microsoft x64 ABI wrapper plus deterministic secret-frame, saved-register-spill, and volatile-register cleanup
+// - deterministic secret-frame, saved-register-spill, and volatile-register cleanup
 //
 // The public symbol is renamed to the rscrypto namespace and embedded with Rust global_asm!.
 
  .globl rscrypto_p256_scalarmulbase_alt
+        .if {elf}
+        .type rscrypto_p256_scalarmulbase_alt, %function
+        .hidden rscrypto_p256_scalarmulbase_alt
+        .endif
         .text
         .balign 4
 rscrypto_p256_scalarmulbase_alt:
         .cfi_startproc
         .byte 0xf3,0x0f,0x1e,0xfa
-        pushq %rdi ; .cfi_adjust_cfa_offset 8 ; .cfi_rel_offset %rdi, 0
-        pushq %rsi ; .cfi_adjust_cfa_offset 8 ; .cfi_rel_offset %rsi, 0
-        movq %rcx, %rdi
-        movq %rdx, %rsi
-        movq %r8, %rdx
-        movq %r9, %rcx
-        callq Lrscrypto_p256_scalarmulbase_alt_standard
-        popq %rsi ; .cfi_adjust_cfa_offset -8 ; .cfi_restore %rsi
-        popq %rdi ; .cfi_adjust_cfa_offset -8 ; .cfi_restore %rdi
-        retq ; .cfi_endproc
-Lrscrypto_p256_scalarmulbase_alt_standard:
-        .cfi_startproc
         pushq %r15 ; .cfi_adjust_cfa_offset 8 ; .cfi_rel_offset %r15, 0
         pushq %r14 ; .cfi_adjust_cfa_offset 8 ; .cfi_rel_offset %r14, 0
         pushq %r13 ; .cfi_adjust_cfa_offset 8 ; .cfi_rel_offset %r13, 0
@@ -292,6 +284,10 @@ Lrscrypto_p256_scalarmulbase_alt_tabloop:
         movl $0, %r10d
         movl $0, %r11d
         retq ; .cfi_endproc
+.if {elf}
+.size rscrypto_p256_scalarmulbase_alt, .-rscrypto_p256_scalarmulbase_alt
+.type Lrscrypto_p256_scalarmulbase_alt_local_demont_p256, %function
+.endif
 Lrscrypto_p256_scalarmulbase_alt_local_demont_p256:
         .cfi_startproc
         movq (%rsi), %r8
@@ -354,6 +350,10 @@ Lrscrypto_p256_scalarmulbase_alt_local_demont_p256:
         movq %r9, 0x10(%rdi)
         movq %r10, 0x18(%rdi)
         retq ; .cfi_endproc
+.if {elf}
+.size Lrscrypto_p256_scalarmulbase_alt_local_demont_p256, .-Lrscrypto_p256_scalarmulbase_alt_local_demont_p256
+.type Lrscrypto_p256_scalarmulbase_alt_local_inv_p256, %function
+.endif
 Lrscrypto_p256_scalarmulbase_alt_local_inv_p256:
         .cfi_startproc
         pushq %rbx ; .cfi_adjust_cfa_offset 8 ; .cfi_rel_offset %rbx, 0
@@ -1824,6 +1824,10 @@ Lrscrypto_p256_scalarmulbase_alt_inv_midloop:
         movq $0, (%rsp)
         leaq 8(%rsp), %rsp ; .cfi_adjust_cfa_offset -8 ; .cfi_restore %rbx
         retq ; .cfi_endproc
+.if {elf}
+.size Lrscrypto_p256_scalarmulbase_alt_local_inv_p256, .-Lrscrypto_p256_scalarmulbase_alt_local_inv_p256
+.type Lrscrypto_p256_scalarmulbase_alt_local_montmul_p256, %function
+.endif
 Lrscrypto_p256_scalarmulbase_alt_local_montmul_p256:
         .cfi_startproc
         pushq %rbx ; .cfi_adjust_cfa_offset 8 ; .cfi_rel_offset %rbx, 0
@@ -2014,6 +2018,10 @@ Lrscrypto_p256_scalarmulbase_alt_local_montmul_p256:
         movq $0, (%rsp)
         leaq 8(%rsp), %rsp ; .cfi_adjust_cfa_offset -8 ; .cfi_restore %rbx
         retq ; .cfi_endproc
+.if {elf}
+.size Lrscrypto_p256_scalarmulbase_alt_local_montmul_p256, .-Lrscrypto_p256_scalarmulbase_alt_local_montmul_p256
+.type Lrscrypto_p256_scalarmulbase_alt_local_montsqr_p256, %function
+.endif
 Lrscrypto_p256_scalarmulbase_alt_local_montsqr_p256:
         .cfi_startproc
         pushq %rbx ; .cfi_adjust_cfa_offset 8 ; .cfi_rel_offset %rbx, 0
@@ -2174,6 +2182,10 @@ Lrscrypto_p256_scalarmulbase_alt_local_montsqr_p256:
         movq $0, (%rsp)
         leaq 8(%rsp), %rsp ; .cfi_adjust_cfa_offset -8 ; .cfi_restore %rbx
         retq ; .cfi_endproc
+.if {elf}
+.size Lrscrypto_p256_scalarmulbase_alt_local_montsqr_p256, .-Lrscrypto_p256_scalarmulbase_alt_local_montsqr_p256
+.type Lrscrypto_p256_scalarmulbase_alt_local_p256_montjmixadd, %function
+.endif
 Lrscrypto_p256_scalarmulbase_alt_local_p256_montjmixadd:
         .cfi_startproc
         pushq %rbx ; .cfi_adjust_cfa_offset 8 ; .cfi_rel_offset %rbx, 0
@@ -4167,3 +4179,6 @@ Lrscrypto_p256_scalarmulbase_alt_local_p256_montjmixadd:
         movq $0, (%rsp)
         leaq 8(%rsp), %rsp ; .cfi_adjust_cfa_offset -8 ; .cfi_restore %rbx
         retq ; .cfi_endproc
+.if {elf}
+.size Lrscrypto_p256_scalarmulbase_alt_local_p256_montjmixadd, .-Lrscrypto_p256_scalarmulbase_alt_local_p256_montjmixadd
+.endif

@@ -144,7 +144,11 @@ pub mod composite_mldsa;
           any(target_os = "macos", target_os = "linux"),
           not(feature = "portable-only")
         ),
-        all(target_arch = "x86_64", target_os = "linux", not(feature = "portable-only"))
+        all(
+          target_arch = "x86_64",
+          any(target_os = "linux", target_os = "windows"),
+          not(feature = "portable-only")
+        )
       ))
     )
   )
@@ -200,7 +204,7 @@ pub mod mlkem;
     feature = "ecdsa-p256",
     any(
       all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
-      all(target_arch = "x86_64", target_os = "linux")
+      all(target_arch = "x86_64", any(target_os = "linux", target_os = "windows"))
     )
   )
 ))]
@@ -215,7 +219,7 @@ pub mod p256_ecdh;
       feature = "ecdsa-p256",
       any(
         all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
-        all(target_arch = "x86_64", target_os = "linux")
+        all(target_arch = "x86_64", any(target_os = "linux", target_os = "windows"))
       )
     ),
     all(
@@ -235,7 +239,7 @@ mod p256_platform;
     any(feature = "portable-only", miri),
     any(
       all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
-      all(target_arch = "x86_64", target_os = "linux")
+      all(target_arch = "x86_64", any(target_os = "linux", target_os = "windows"))
     )
   )
 ))]

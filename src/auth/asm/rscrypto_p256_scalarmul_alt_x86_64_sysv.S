@@ -3,27 +3,20 @@
 //
 // Adapted for rscrypto from s2n-bignum:
 // - x86_att/p256/p256_scalarmul_alt.S
-// - Microsoft x64 ABI wrapper plus deterministic secret-frame, saved-register-spill, and volatile-register cleanup
+// - deterministic secret-frame, saved-register-spill, and volatile-register cleanup
 //
 // The public symbol is renamed to the rscrypto namespace and embedded with Rust global_asm!.
 
  .globl rscrypto_p256_scalarmul_alt
+        .if {elf}
+        .type rscrypto_p256_scalarmul_alt, %function
+        .hidden rscrypto_p256_scalarmul_alt
+        .endif
         .text
         .balign 4
 rscrypto_p256_scalarmul_alt:
         .cfi_startproc
         .byte 0xf3,0x0f,0x1e,0xfa
-        pushq %rdi ; .cfi_adjust_cfa_offset 8 ; .cfi_rel_offset %rdi, 0
-        pushq %rsi ; .cfi_adjust_cfa_offset 8 ; .cfi_rel_offset %rsi, 0
-        movq %rcx, %rdi
-        movq %rdx, %rsi
-        movq %r8, %rdx
-        callq Lrscrypto_p256_scalarmul_alt_standard
-        popq %rsi ; .cfi_adjust_cfa_offset -8 ; .cfi_restore %rsi
-        popq %rdi ; .cfi_adjust_cfa_offset -8 ; .cfi_restore %rdi
-        retq ; .cfi_endproc
-Lrscrypto_p256_scalarmul_alt_standard:
-        .cfi_startproc
         pushq %r15 ; .cfi_adjust_cfa_offset 8 ; .cfi_rel_offset %r15, 0
         pushq %r14 ; .cfi_adjust_cfa_offset 8 ; .cfi_rel_offset %r14, 0
         pushq %r13 ; .cfi_adjust_cfa_offset 8 ; .cfi_rel_offset %r13, 0
@@ -441,6 +434,9 @@ Lrscrypto_p256_scalarmul_alt_loop:
         movl $0, %r10d
         movl $0, %r11d
         retq ; .cfi_endproc
+.if {elf}
+.size rscrypto_p256_scalarmul_alt, .-rscrypto_p256_scalarmul_alt
+.endif
 Lrscrypto_p256_scalarmul_alt_local_demont_p256:
         .cfi_startproc
         movq (%rsi), %r8

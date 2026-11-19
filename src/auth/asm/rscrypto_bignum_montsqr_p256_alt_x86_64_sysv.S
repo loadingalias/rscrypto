@@ -7,8 +7,10 @@
 // Public symbol is renamed and embedded with Rust global_asm!.
 
  .globl rscrypto_bignum_montsqr_p256_alt
+        .if {elf}
         .type rscrypto_bignum_montsqr_p256_alt, %function
         .hidden rscrypto_bignum_montsqr_p256_alt
+        .endif
         .text
 rscrypto_bignum_montsqr_p256_alt:
         .cfi_startproc
@@ -112,4 +114,6 @@ rscrypto_bignum_montsqr_p256_alt:
         popq %r12 ; .cfi_adjust_cfa_offset -8 ; .cfi_restore %r12
         popq %rbx ; .cfi_adjust_cfa_offset -8 ; .cfi_restore %rbx
         retq ; .cfi_endproc
+.if {elf}
 .size rscrypto_bignum_montsqr_p256_alt, .-rscrypto_bignum_montsqr_p256_alt
+.endif

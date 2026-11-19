@@ -38,7 +38,11 @@ use core::{
       any(target_os = "macos", target_os = "linux"),
       not(feature = "portable-only")
     ),
-    all(target_arch = "x86_64", target_os = "linux", not(feature = "portable-only"))
+    all(
+      target_arch = "x86_64",
+      any(target_os = "linux", target_os = "windows"),
+      not(feature = "portable-only")
+    )
   )),
   miri,
   test
@@ -51,7 +55,11 @@ use crate::auth::curve25519_edwards;
       any(target_os = "macos", target_os = "linux"),
       not(feature = "portable-only")
     ),
-    all(target_arch = "x86_64", target_os = "linux", not(feature = "portable-only"))
+    all(
+      target_arch = "x86_64",
+      any(target_os = "linux", target_os = "windows"),
+      not(feature = "portable-only")
+    )
   )),
   miri,
   test
@@ -67,7 +75,11 @@ const POINT_LENGTH: usize = 32;
       any(target_os = "macos", target_os = "linux"),
       not(feature = "portable-only")
     ),
-    all(target_arch = "x86_64", target_os = "linux", not(feature = "portable-only"))
+    all(
+      target_arch = "x86_64",
+      any(target_os = "linux", target_os = "windows"),
+      not(feature = "portable-only")
+    )
   )),
   miri,
   test
@@ -80,7 +92,11 @@ const RADIX_BITS: u32 = 51;
       any(target_os = "macos", target_os = "linux"),
       not(feature = "portable-only")
     ),
-    all(target_arch = "x86_64", target_os = "linux", not(feature = "portable-only"))
+    all(
+      target_arch = "x86_64",
+      any(target_os = "linux", target_os = "windows"),
+      not(feature = "portable-only")
+    )
   )),
   miri,
   test
@@ -98,7 +114,11 @@ const BASEPOINT_BYTES: [u8; POINT_LENGTH] = {
       any(target_os = "macos", target_os = "linux"),
       not(feature = "portable-only")
     ),
-    all(target_arch = "x86_64", target_os = "linux", not(feature = "portable-only"))
+    all(
+      target_arch = "x86_64",
+      any(target_os = "linux", target_os = "windows"),
+      not(feature = "portable-only")
+    )
   )),
   miri,
   test
@@ -114,7 +134,7 @@ const A24: FieldElement = FieldElement::from_small(121665);
 mod aarch64_asm;
 #[cfg(all(
   target_arch = "x86_64",
-  target_os = "linux",
+  any(target_os = "linux", target_os = "windows"),
   not(feature = "portable-only"),
   not(miri)
 ))]
@@ -129,7 +149,7 @@ mod x86_64_asm;
 use aarch64_asm as platform_asm;
 #[cfg(all(
   target_arch = "x86_64",
-  target_os = "linux",
+  any(target_os = "linux", target_os = "windows"),
   not(feature = "portable-only"),
   not(miri)
 ))]
@@ -251,7 +271,7 @@ impl X25519SecretKey {
       ),
       all(
         target_arch = "x86_64",
-        target_os = "linux",
+        any(target_os = "linux", target_os = "windows"),
         not(feature = "portable-only"),
         not(miri)
       )
@@ -269,7 +289,7 @@ impl X25519SecretKey {
       ),
       all(
         target_arch = "x86_64",
-        target_os = "linux",
+        any(target_os = "linux", target_os = "windows"),
         not(feature = "portable-only"),
         not(miri)
       )
@@ -303,7 +323,11 @@ impl X25519SecretKey {
         any(target_os = "macos", target_os = "linux"),
         not(feature = "portable-only")
       ),
-      all(target_arch = "x86_64", target_os = "linux", not(feature = "portable-only"))
+      all(
+        target_arch = "x86_64",
+        any(target_os = "linux", target_os = "windows"),
+        not(feature = "portable-only")
+      )
     )),
     miri,
     test
@@ -322,7 +346,11 @@ impl X25519SecretKey {
       any(target_os = "macos", target_os = "linux"),
       not(feature = "portable-only")
     ),
-    all(target_arch = "x86_64", target_os = "linux", not(feature = "portable-only"))
+    all(
+      target_arch = "x86_64",
+      any(target_os = "linux", target_os = "windows"),
+      not(feature = "portable-only")
+    )
   )),
   miri,
   test
@@ -336,7 +364,11 @@ struct ClampedScalar([u8; POINT_LENGTH]);
       any(target_os = "macos", target_os = "linux"),
       not(feature = "portable-only")
     ),
-    all(target_arch = "x86_64", target_os = "linux", not(feature = "portable-only"))
+    all(
+      target_arch = "x86_64",
+      any(target_os = "linux", target_os = "windows"),
+      not(feature = "portable-only")
+    )
   )),
   miri,
   test
@@ -373,7 +405,11 @@ pub struct X25519PublicKey {
         any(target_os = "macos", target_os = "linux"),
         not(feature = "portable-only")
       ),
-      all(target_arch = "x86_64", target_os = "linux", not(feature = "portable-only"))
+      all(
+        target_arch = "x86_64",
+        any(target_os = "linux", target_os = "windows"),
+        not(feature = "portable-only")
+      )
     )),
     miri
   ))]
@@ -399,7 +435,11 @@ impl X25519PublicKey {
             any(target_os = "macos", target_os = "linux"),
             not(feature = "portable-only")
           ),
-          all(target_arch = "x86_64", target_os = "linux", not(feature = "portable-only"))
+          all(
+            target_arch = "x86_64",
+            any(target_os = "linux", target_os = "windows"),
+            not(feature = "portable-only")
+          )
         )),
         miri
       ))]
@@ -423,7 +463,11 @@ impl X25519PublicKey {
         any(target_os = "macos", target_os = "linux"),
         not(feature = "portable-only")
       ),
-      all(target_arch = "x86_64", target_os = "linux", not(feature = "portable-only"))
+      all(
+        target_arch = "x86_64",
+        any(target_os = "linux", target_os = "windows"),
+        not(feature = "portable-only")
+      )
     )),
     miri,
     test
@@ -438,7 +482,11 @@ impl X25519PublicKey {
             any(target_os = "macos", target_os = "linux"),
             not(feature = "portable-only")
           ),
-          all(target_arch = "x86_64", target_os = "linux", not(feature = "portable-only"))
+          all(
+            target_arch = "x86_64",
+            any(target_os = "linux", target_os = "windows"),
+            not(feature = "portable-only")
+          )
         )),
         miri
       ))]
@@ -570,7 +618,7 @@ impl X25519SharedSecret {
       ),
       all(
         target_arch = "x86_64",
-        target_os = "linux",
+        any(target_os = "linux", target_os = "windows"),
         not(feature = "portable-only"),
         not(miri)
       )
@@ -588,7 +636,7 @@ impl X25519SharedSecret {
       ),
       all(
         target_arch = "x86_64",
-        target_os = "linux",
+        any(target_os = "linux", target_os = "windows"),
         not(feature = "portable-only"),
         not(miri)
       )
@@ -627,7 +675,11 @@ impl Drop for X25519SharedSecret {
       any(target_os = "macos", target_os = "linux"),
       not(feature = "portable-only")
     ),
-    all(target_arch = "x86_64", target_os = "linux", not(feature = "portable-only"))
+    all(
+      target_arch = "x86_64",
+      any(target_os = "linux", target_os = "windows"),
+      not(feature = "portable-only")
+    )
   )),
   miri,
   test
@@ -687,7 +739,11 @@ fn montgomery_ladder(scalar_bytes: &[u8; POINT_LENGTH], u: &FieldElement) -> Fie
       any(target_os = "macos", target_os = "linux"),
       not(feature = "portable-only")
     ),
-    all(target_arch = "x86_64", target_os = "linux", not(feature = "portable-only"))
+    all(
+      target_arch = "x86_64",
+      any(target_os = "linux", target_os = "windows"),
+      not(feature = "portable-only")
+    )
   )),
   miri,
   test
@@ -714,7 +770,11 @@ fn is_all_zero(bytes: &[u8; POINT_LENGTH]) -> bool {
       any(target_os = "macos", target_os = "linux"),
       not(feature = "portable-only")
     ),
-    all(target_arch = "x86_64", target_os = "linux", not(feature = "portable-only"))
+    all(
+      target_arch = "x86_64",
+      any(target_os = "linux", target_os = "windows"),
+      not(feature = "portable-only")
+    )
   )),
   miri,
   test
@@ -771,7 +831,11 @@ mod tests {
         any(target_os = "macos", target_os = "linux"),
         not(feature = "portable-only")
       ),
-      all(target_arch = "x86_64", target_os = "linux", not(feature = "portable-only"))
+      all(
+        target_arch = "x86_64",
+        any(target_os = "linux", target_os = "windows"),
+        not(feature = "portable-only")
+      )
     )
   ))]
   mod asm {

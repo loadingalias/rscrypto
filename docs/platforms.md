@@ -87,7 +87,7 @@ A restored virtual-machine snapshot or another copied memory image is not detect
   - Other targets use the portable kernel.
 - **X-Wing** has no backend or dispatch of its own. It runs the ML-KEM-768, X25519, and SHA-3
   backends that each target selects for those primitives. X25519 assembly runs on Apple and Linux
-  AArch64 and on Linux x86-64; other targets use portable X25519.
+  AArch64 and on Linux and Windows x86-64; other targets use portable X25519.
 - **HPKE** has no backend or dispatch of its own. Each suite runs the KEM, HKDF-SHA256, and AEAD
   backends that each target selects for those primitives.
 - **XXH32 and XXH64** are portable Rust on every target, with no accelerated backend or dispatch.
@@ -112,10 +112,8 @@ A restored virtual-machine snapshot or another copied memory image is not detect
   supported target.
   - Apple and Linux AArch64 select embedded s2n-bignum fixed-base and arbitrary-point assembly
     at compile time, unless `portable-only` or Miri is active.
-  - Linux x86-64 selects the baseline or ADX/BMI2 ELF kernels after cached runtime detection.
-  - Windows x86-64 uses the same baseline or ADX/BMI2 arithmetic behind Microsoft x64 wrappers.
-    Public SEC1 validation crosses one batch boundary
-    for the target instead of five field-call wrappers.
+  - Linux and Windows x86-64 select the baseline or ADX/BMI2 System V kernels after cached runtime
+    detection. Windows calls them through `extern "sysv64"`, so both targets run the same bodies.
   - A deterministic provenance transform keeps these backends independent of the ECDSA feature.
     It also clears their secret-derived frames, saved-register spill slots,
     and volatile integer registers.

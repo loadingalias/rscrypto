@@ -7,8 +7,10 @@
 // Public symbol is renamed and embedded with Rust global_asm!.
 
  .globl rscrypto_bignum_mod_n256
+        .if {elf}
         .type rscrypto_bignum_mod_n256, %function
         .hidden rscrypto_bignum_mod_n256
+        .endif
         .text
 rscrypto_bignum_mod_n256:
         .cfi_startproc
@@ -106,4 +108,6 @@ Lrscrypto_bignum_mod_n256_shortinput:
         jz Lrscrypto_bignum_mod_n256_writeback
         movq 16(%rdx), %r10
         jmp Lrscrypto_bignum_mod_n256_writeback
+.if {elf}
 .size rscrypto_bignum_mod_n256, .-rscrypto_bignum_mod_n256
+.endif

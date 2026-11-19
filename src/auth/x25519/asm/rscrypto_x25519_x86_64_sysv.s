@@ -5,11 +5,15 @@
 // The symbols are renamed to the rscrypto namespace and embedded with Rust global_asm!.
 
  .globl rscrypto_curve25519_x25519
+        .if {elf}
         .type rscrypto_curve25519_x25519, %function
         .hidden rscrypto_curve25519_x25519
+        .endif
         .globl rscrypto_curve25519_x25519_byte
+        .if {elf}
         .type rscrypto_curve25519_x25519_byte, %function
         .hidden rscrypto_curve25519_x25519_byte
+        .endif
         .text
 rscrypto_curve25519_x25519:
 rscrypto_curve25519_x25519_byte:
@@ -1479,15 +1483,21 @@ Lcurve25519_x25519_midloop:
         popq %rbp ; .cfi_adjust_cfa_offset -8 ; .cfi_restore %rbp
         popq %rbx ; .cfi_adjust_cfa_offset -8 ; .cfi_restore %rbx
         retq ; .cfi_endproc
+.if {elf}
 .size rscrypto_curve25519_x25519, .-rscrypto_curve25519_x25519
 .size rscrypto_curve25519_x25519_byte, .-rscrypto_curve25519_x25519_byte
+.endif
 
  .globl rscrypto_curve25519_x25519base
+        .if {elf}
         .type rscrypto_curve25519_x25519base, %function
         .hidden rscrypto_curve25519_x25519base
+        .endif
         .globl rscrypto_curve25519_x25519base_byte
+        .if {elf}
         .type rscrypto_curve25519_x25519base_byte, %function
         .hidden rscrypto_curve25519_x25519base_byte
+        .endif
         .text
 rscrypto_curve25519_x25519base:
 rscrypto_curve25519_x25519base_byte:
@@ -3230,7 +3240,9 @@ Lcurve25519_x25519base_midloop:
         popq %rbp ; .cfi_adjust_cfa_offset -8 ; .cfi_restore %rbp
         popq %rbx ; .cfi_adjust_cfa_offset -8 ; .cfi_restore %rbx
         retq ; .cfi_endproc
+.if {elf}
 .size rscrypto_curve25519_x25519base, .-rscrypto_curve25519_x25519base
+.endif
 Lcurve25519_x25519base_edwards25519_0g:
         .quad 0x251037f7cf4e861d
         .quad 0x10ede0fb19fb128f
@@ -9308,11 +9320,15 @@ Lcurve25519_x25519base_edwards25519_gtable:
         .quad 0x7761455e7b1c669c
 
  .globl rscrypto_curve25519_x25519_alt
+        .if {elf}
         .type rscrypto_curve25519_x25519_alt, %function
         .hidden rscrypto_curve25519_x25519_alt
+        .endif
         .globl rscrypto_curve25519_x25519_byte_alt
+        .if {elf}
         .type rscrypto_curve25519_x25519_byte_alt, %function
         .hidden rscrypto_curve25519_x25519_byte_alt
+        .endif
         .text
 rscrypto_curve25519_x25519_alt:
 rscrypto_curve25519_x25519_byte_alt:
@@ -10782,15 +10798,21 @@ Lcurve25519_x25519_alt_midloop:
         popq %rbp ; .cfi_adjust_cfa_offset -8 ; .cfi_restore %rbp
         popq %rbx ; .cfi_adjust_cfa_offset -8 ; .cfi_restore %rbx
         retq ; .cfi_endproc
+.if {elf}
 .size rscrypto_curve25519_x25519_alt, .-rscrypto_curve25519_x25519_alt
 .size rscrypto_curve25519_x25519_byte_alt, .-rscrypto_curve25519_x25519_byte_alt
+.endif
 
  .globl rscrypto_curve25519_x25519base_alt
+        .if {elf}
         .type rscrypto_curve25519_x25519base_alt, %function
         .hidden rscrypto_curve25519_x25519base_alt
+        .endif
         .globl rscrypto_curve25519_x25519base_byte_alt
+        .if {elf}
         .type rscrypto_curve25519_x25519base_byte_alt, %function
         .hidden rscrypto_curve25519_x25519base_byte_alt
+        .endif
         .text
 rscrypto_curve25519_x25519base_alt:
 rscrypto_curve25519_x25519base_byte_alt:
@@ -12533,7 +12555,9 @@ Lcurve25519_x25519base_alt_midloop:
         popq %rbp ; .cfi_adjust_cfa_offset -8 ; .cfi_restore %rbp
         popq %rbx ; .cfi_adjust_cfa_offset -8 ; .cfi_restore %rbx
         retq ; .cfi_endproc
+.if {elf}
 .size rscrypto_curve25519_x25519base_alt, .-rscrypto_curve25519_x25519base_alt
+.endif
 Lcurve25519_x25519base_alt_edwards25519_0g:
         .quad 0x251037f7cf4e861d
         .quad 0x10ede0fb19fb128f
@@ -18610,4 +18634,6 @@ Lcurve25519_x25519base_alt_edwards25519_gtable:
         .quad 0xd09ef36267daba45
         .quad 0x7761455e7b1c669c
 
+.if {elf}
 .section .note.GNU-stack, "", %progbits
+.endif

@@ -39,7 +39,7 @@ mod ecdsa_aarch64_asm;
     ),
     all(
       target_arch = "x86_64",
-      target_os = "linux",
+      any(target_os = "linux", target_os = "windows"),
       not(feature = "portable-only"),
       not(miri)
     )
@@ -51,7 +51,7 @@ mod ecdsa_p384_field;
 mod ecdsa_safegcd;
 #[cfg(all(
   target_arch = "x86_64",
-  target_os = "linux",
+  any(target_os = "linux", target_os = "windows"),
   not(feature = "portable-only"),
   not(miri)
 ))]
@@ -78,7 +78,7 @@ use super::ecdsa_generator_tables::{
 use self::ecdsa_aarch64_asm as ecdsa_platform_asm;
 #[cfg(all(
   target_arch = "x86_64",
-  target_os = "linux",
+  any(target_os = "linux", target_os = "windows"),
   not(feature = "portable-only"),
   not(miri)
 ))]
@@ -1810,7 +1810,7 @@ fn mul_u64_low(lhs: u64, rhs: u64) -> u64 {
 
 #[cfg(any(
   all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
-  all(target_arch = "x86_64", target_os = "linux")
+  all(target_arch = "x86_64", any(target_os = "linux", target_os = "windows"))
 ))]
 struct ZeroizingWords<const N: usize> {
   value: [u64; N],
@@ -1818,7 +1818,7 @@ struct ZeroizingWords<const N: usize> {
 
 #[cfg(any(
   all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
-  all(target_arch = "x86_64", target_os = "linux")
+  all(target_arch = "x86_64", any(target_os = "linux", target_os = "windows"))
 ))]
 impl<const N: usize> ZeroizingWords<N> {
   #[cfg(any(
@@ -1830,7 +1830,7 @@ impl<const N: usize> ZeroizingWords<N> {
     ),
     all(
       target_arch = "x86_64",
-      target_os = "linux",
+      any(target_os = "linux", target_os = "windows"),
       not(feature = "portable-only"),
       not(miri)
     )
@@ -1854,7 +1854,7 @@ impl<const N: usize> ZeroizingWords<N> {
 
 #[cfg(any(
   all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
-  all(target_arch = "x86_64", target_os = "linux")
+  all(target_arch = "x86_64", any(target_os = "linux", target_os = "windows"))
 ))]
 impl<const N: usize> Drop for ZeroizingWords<N> {
   fn drop(&mut self) {
@@ -2165,7 +2165,7 @@ impl<const L: usize> Uint<L> {
       ),
       all(
         target_arch = "x86_64",
-        target_os = "linux",
+        any(target_os = "linux", target_os = "windows"),
         not(feature = "portable-only"),
         not(miri)
       )
@@ -2249,7 +2249,7 @@ impl<const L: usize> SecretScalar<L> {
 
   #[cfg(any(
     all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
-    all(target_arch = "x86_64", target_os = "linux")
+    all(target_arch = "x86_64", any(target_os = "linux", target_os = "windows"))
   ))]
   const fn words(&self) -> &[u64; L] {
     &self.value.0
@@ -2383,7 +2383,7 @@ impl<const L: usize> FieldElement<L> {
       ),
       all(
         target_arch = "x86_64",
-        target_os = "linux",
+        any(target_os = "linux", target_os = "windows"),
         not(feature = "portable-only"),
         not(miri)
       )
@@ -2608,7 +2608,7 @@ impl<const L: usize> Jacobian<L> {
   #[cfg(any(
     all(rscrypto_internal, feature = "diag"),
     all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
-    all(target_arch = "x86_64", target_os = "linux")
+    all(target_arch = "x86_64", any(target_os = "linux", target_os = "windows"))
   ))]
   fn to_affine_x_ct(self, exponent: Uint<L>) -> FieldElement<L> {
     let inv_z = self.z.inv_ct(exponent);
@@ -2776,7 +2776,7 @@ fn sign_digest_with_nonce<const L: usize>(
 
 #[cfg(any(
   all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
-  all(target_arch = "x86_64", target_os = "linux")
+  all(target_arch = "x86_64", any(target_os = "linux", target_os = "windows"))
 ))]
 fn sign_digest_with_nonce_backend<const L: usize>(
   curve: &Curve<L>,
@@ -2810,7 +2810,7 @@ fn sign_digest_with_nonce_backend<const L: usize>(
 
 #[cfg(not(any(
   all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
-  all(target_arch = "x86_64", target_os = "linux")
+  all(target_arch = "x86_64", any(target_os = "linux", target_os = "windows"))
 )))]
 fn sign_digest_with_nonce_backend<const L: usize>(
   _curve: &Curve<L>,
@@ -3026,7 +3026,7 @@ fn reduce_wide_order_nonzero<const L: usize, const N: usize>(bytes: &[u8; N], mo
     ),
     all(
       target_arch = "x86_64",
-      target_os = "linux",
+      any(target_os = "linux", target_os = "windows"),
       not(feature = "portable-only"),
       not(miri)
     )
@@ -3241,7 +3241,7 @@ fn p256_blinded_comb_scalar<const L: usize>(
 
 #[cfg(any(
   all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
-  all(target_arch = "x86_64", target_os = "linux")
+  all(target_arch = "x86_64", any(target_os = "linux", target_os = "windows"))
 ))]
 fn scalar_mul_basepoint_backend<const L: usize>(curve: &Curve<L>, scalar: &SecretScalar<L>) -> Option<Jacobian<L>> {
   if is_p384_curve(curve) {
@@ -3259,7 +3259,7 @@ fn scalar_mul_basepoint_backend<const L: usize>(curve: &Curve<L>, scalar: &Secre
 }
 
 #[cfg(any(
-  all(target_arch = "x86_64", target_os = "linux"),
+  all(target_arch = "x86_64", any(target_os = "linux", target_os = "windows")),
   all(
     target_arch = "aarch64",
     any(target_os = "macos", target_os = "linux"),
@@ -3291,7 +3291,7 @@ fn p384_scalar_mul_basepoint_platform<const L: usize>(curve: &Curve<L>, scalar: 
 
 #[cfg(any(
   all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
-  all(target_arch = "x86_64", target_os = "linux")
+  all(target_arch = "x86_64", any(target_os = "linux", target_os = "windows"))
 ))]
 fn p384_scalar_mul_basepoint_r_platform(scalar: &SecretScalar<6>) -> Uint<6> {
   p384_scalar_mul_basepoint_platform(&P384, scalar)
@@ -3302,7 +3302,7 @@ fn p384_scalar_mul_basepoint_r_platform(scalar: &SecretScalar<6>) -> Uint<6> {
 
 #[cfg(not(any(
   all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
-  all(target_arch = "x86_64", target_os = "linux")
+  all(target_arch = "x86_64", any(target_os = "linux", target_os = "windows"))
 )))]
 fn scalar_mul_basepoint_backend<const L: usize>(_curve: &Curve<L>, _scalar: &SecretScalar<L>) -> Option<Jacobian<L>> {
   None
@@ -3312,7 +3312,7 @@ fn scalar_mul_basepoint_backend<const L: usize>(_curve: &Curve<L>, _scalar: &Sec
   feature = "ecdsa-p256",
   any(
     all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
-    all(target_arch = "x86_64", target_os = "linux")
+    all(target_arch = "x86_64", any(target_os = "linux", target_os = "windows"))
   )
 ))]
 fn scalar_mul_basepoint_affine_backend<const L: usize>(
@@ -3333,7 +3333,7 @@ fn scalar_mul_basepoint_affine_backend<const L: usize>(
   not(feature = "ecdsa-p256"),
   any(
     all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
-    all(target_arch = "x86_64", target_os = "linux")
+    all(target_arch = "x86_64", any(target_os = "linux", target_os = "windows"))
   )
 ))]
 fn scalar_mul_basepoint_affine_backend<const L: usize>(
@@ -3345,7 +3345,7 @@ fn scalar_mul_basepoint_affine_backend<const L: usize>(
 
 #[cfg(not(any(
   all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
-  all(target_arch = "x86_64", target_os = "linux")
+  all(target_arch = "x86_64", any(target_os = "linux", target_os = "windows"))
 )))]
 fn scalar_mul_basepoint_affine_backend<const L: usize>(
   _curve: &Curve<L>,
@@ -3361,7 +3361,7 @@ fn is_p256_curve<const L: usize>(curve: &Curve<L>) -> bool {
 
 #[cfg(any(
   all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
-  all(target_arch = "x86_64", target_os = "linux")
+  all(target_arch = "x86_64", any(target_os = "linux", target_os = "windows"))
 ))]
 fn is_p384_curve<const L: usize>(curve: &Curve<L>) -> bool {
   L == 6
@@ -3372,7 +3372,7 @@ fn is_p384_curve<const L: usize>(curve: &Curve<L>) -> bool {
   feature = "ecdsa-p256",
   any(
     all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
-    all(target_arch = "x86_64", target_os = "linux")
+    all(target_arch = "x86_64", any(target_os = "linux", target_os = "windows"))
   )
 ))]
 fn affine_from_words<const L: usize>(modulus: &'static Modulus<L>, words: &[u64]) -> Affine<L> {
@@ -3568,7 +3568,7 @@ fn p384_field_mul_words(lhs: [u64; 6], rhs: [u64; 6]) -> [u64; 6] {
     ),
     all(
       target_arch = "x86_64",
-      target_os = "linux",
+      any(target_os = "linux", target_os = "windows"),
       not(feature = "portable-only"),
       not(miri)
     )
@@ -3586,7 +3586,7 @@ fn p384_field_mul_words(lhs: [u64; 6], rhs: [u64; 6]) -> [u64; 6] {
     ),
     all(
       target_arch = "x86_64",
-      target_os = "linux",
+      any(target_os = "linux", target_os = "windows"),
       not(feature = "portable-only"),
       not(miri)
     )
@@ -3607,7 +3607,7 @@ fn p384_field_square_words(value: [u64; 6]) -> [u64; 6] {
     ),
     all(
       target_arch = "x86_64",
-      target_os = "linux",
+      any(target_os = "linux", target_os = "windows"),
       not(feature = "portable-only"),
       not(miri)
     )
@@ -3625,7 +3625,7 @@ fn p384_field_square_words(value: [u64; 6]) -> [u64; 6] {
     ),
     all(
       target_arch = "x86_64",
-      target_os = "linux",
+      any(target_os = "linux", target_os = "windows"),
       not(feature = "portable-only"),
       not(miri)
     )
@@ -3910,7 +3910,7 @@ pub fn diag_ecdsa_p256_select_signing_generator_affine_limb_digest(digit: u8) ->
     ),
     all(
       target_arch = "x86_64",
-      target_os = "linux",
+      any(target_os = "linux", target_os = "windows"),
       not(feature = "portable-only"),
       not(miri)
     )
@@ -4756,7 +4756,7 @@ fn montgomery_mul<const L: usize>(lhs: Uint<L>, rhs: Uint<L>, modulus: &'static 
       ),
       all(
         target_arch = "x86_64",
-        target_os = "linux",
+        any(target_os = "linux", target_os = "windows"),
         not(feature = "portable-only"),
         not(miri)
       )
@@ -4771,7 +4771,7 @@ fn montgomery_mul<const L: usize>(lhs: Uint<L>, rhs: Uint<L>, modulus: &'static 
       ),
       all(
         target_arch = "x86_64",
-        target_os = "linux",
+        any(target_os = "linux", target_os = "windows"),
         not(feature = "portable-only"),
         not(miri)
       )
@@ -4853,7 +4853,7 @@ fn montgomery_square<const L: usize>(value: Uint<L>, modulus: &'static Modulus<L
       ),
       all(
         target_arch = "x86_64",
-        target_os = "linux",
+        any(target_os = "linux", target_os = "windows"),
         not(feature = "portable-only"),
         not(miri)
       )
@@ -4868,7 +4868,7 @@ fn montgomery_square<const L: usize>(value: Uint<L>, modulus: &'static Modulus<L
       ),
       all(
         target_arch = "x86_64",
-        target_os = "linux",
+        any(target_os = "linux", target_os = "windows"),
         not(feature = "portable-only"),
         not(miri)
       )
@@ -6319,7 +6319,7 @@ mod tests {
     feature = "ecdsa-p256",
     any(
       all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
-      all(target_arch = "x86_64", target_os = "linux")
+      all(target_arch = "x86_64", any(target_os = "linux", target_os = "windows"))
     )
   ))]
   #[test]
@@ -6353,7 +6353,7 @@ mod tests {
     ),
     all(
       target_arch = "x86_64",
-      target_os = "linux",
+      any(target_os = "linux", target_os = "windows"),
       not(feature = "portable-only"),
       not(miri)
     )
@@ -6386,7 +6386,7 @@ mod tests {
 
   #[cfg(any(
     all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
-    all(target_arch = "x86_64", target_os = "linux")
+    all(target_arch = "x86_64", any(target_os = "linux", target_os = "windows"))
   ))]
   #[test]
   fn p384_platform_basepoint_matches_portable_comb_for_sample_scalars() {

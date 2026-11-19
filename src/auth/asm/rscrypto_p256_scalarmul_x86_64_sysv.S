@@ -8,8 +8,10 @@
 // The public symbol is renamed to the rscrypto namespace and embedded with Rust global_asm!.
 
  .globl rscrypto_p256_scalarmul
+        .if {elf}
         .type rscrypto_p256_scalarmul, %function
         .hidden rscrypto_p256_scalarmul
+        .endif
         .text
         .balign 4
 rscrypto_p256_scalarmul:
@@ -432,7 +434,9 @@ Lrscrypto_p256_scalarmul_loop:
         movl $0, %r10d
         movl $0, %r11d
         retq ; .cfi_endproc
+.if {elf}
 .size rscrypto_p256_scalarmul, .-rscrypto_p256_scalarmul
+.endif
 Lrscrypto_p256_scalarmul_local_demont_p256:
         .cfi_startproc
         pushq %rbx ; .cfi_adjust_cfa_offset 8 ; .cfi_rel_offset %rbx, 0

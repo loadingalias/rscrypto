@@ -303,7 +303,11 @@ impl FieldElement {
           any(target_os = "macos", target_os = "linux"),
           not(feature = "portable-only")
         ),
-        all(target_arch = "x86_64", target_os = "linux", not(feature = "portable-only"))
+        all(
+          target_arch = "x86_64",
+          any(target_os = "linux", target_os = "windows"),
+          not(feature = "portable-only")
+        )
       ))
     )
   ))]

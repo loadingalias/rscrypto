@@ -1,44 +1,56 @@
-//! Linux x86-64 assembly backends for ECDSA curve operations.
+//! x86-64 System V assembly backends for ECDSA curve operations.
 //!
 //! The embedded routines are adapted from s2n-bignum x86-64 P-256 fixed-base,
-//! P-256 order reduction, P-384 field, and scalar-inversion backends. This
-//! module owns the ABI boundary; `ecdsa.rs` owns scalar validation, blinding,
-//! affine conversion, and public API semantics.
+//! P-256 order reduction, P-384 field, and scalar-inversion backends. Linux and
+//! Windows call them through `extern "sysv64"`. This module owns the ABI
+//! boundary; `ecdsa.rs` owns scalar validation, blinding, affine conversion,
+//! and public API semantics.
 
 use core::arch::global_asm;
 
 use super::ZeroizingWords;
 use crate::platform::{self, caps::x86};
 
+/// `1` when the System V bodies assemble as ELF; `0` drops their ELF-only
+/// `.type`, `.size`, and `.hidden` directives from the Windows COFF object.
+const ELF: u8 = cfg!(not(target_os = "windows")) as u8;
+
 global_asm!(
-  include_str!("asm/rscrypto_bignum_mod_n256_x86_64_unknown_linux.S"),
+  include_str!("asm/rscrypto_bignum_mod_n256_x86_64_sysv.S"),
+  elf = const ELF,
   options(att_syntax)
 );
 global_asm!(
-  include_str!("asm/rscrypto_bignum_modinv_x86_64_unknown_linux.S"),
+  include_str!("asm/rscrypto_bignum_modinv_x86_64_sysv.S"),
+  elf = const ELF,
   options(att_syntax)
 );
 global_asm!(
-  include_str!("asm/rscrypto_bignum_montmul_p384_x86_64_unknown_linux.S"),
+  include_str!("asm/rscrypto_bignum_montmul_p384_x86_64_sysv.S"),
+  elf = const ELF,
   options(att_syntax)
 );
 global_asm!(
-  include_str!("asm/rscrypto_bignum_montmul_p384_alt_x86_64_unknown_linux.S"),
+  include_str!("asm/rscrypto_bignum_montmul_p384_alt_x86_64_sysv.S"),
+  elf = const ELF,
   options(att_syntax)
 );
 global_asm!(
-  include_str!("asm/rscrypto_bignum_montsqr_p384_x86_64_unknown_linux.S"),
+  include_str!("asm/rscrypto_bignum_montsqr_p384_x86_64_sysv.S"),
+  elf = const ELF,
   options(att_syntax)
 );
 global_asm!(
-  include_str!("asm/rscrypto_bignum_montsqr_p384_alt_x86_64_unknown_linux.S"),
+  include_str!("asm/rscrypto_bignum_montsqr_p384_alt_x86_64_sysv.S"),
+  elf = const ELF,
   options(att_syntax)
 );
 global_asm!(
-  include_str!("asm/rscrypto_bignum_montinv_p384_x86_64_unknown_linux.S"),
+  include_str!("asm/rscrypto_bignum_montinv_p384_x86_64_sysv.S"),
+  elf = const ELF,
   options(att_syntax)
 );
-unsafe extern "C" {
+unsafe extern "sysv64" {
   fn rscrypto_bignum_mod_n256(out: *mut u64, len: u64, input: *const u64);
   fn rscrypto_bignum_modinv(k: u64, out: *mut u64, value: *const u64, modulus: *const u64, tmp: *mut u64);
   fn rscrypto_bignum_montmul_p384(out: *mut u64, lhs: *const u64, rhs: *const u64);
@@ -58,7 +70,7 @@ pub(super) fn p256_reduce_order_64(bytes: &[u8; 64]) -> [u64; 4] {
   let input = ZeroizingWords::new(words_from_be_bytes_reversed::<8, 64>(bytes));
   let mut out = [0u64; 4];
   // SAFETY: P-256 order reduction call because:
-  // 1. This module is compiled only for Linux x86-64 System V, matching the embedded assembly ABI.
+  // 1. The `extern "sysv64"` declaration matches the embedded System V assembly ABI.
   // 2. `out` has four `u64` limbs, which is the exact P-256 group-order output size.
   // 3. `input` has eight `u64` limbs and `len` is 8, so the assembly reads exactly the provided
   //    input.
@@ -73,7 +85,7 @@ pub(super) fn p384_field_mul(lhs: &[u64; 6], rhs: &[u64; 6]) -> [u64; 6] {
 
   if has_bmi2_adx() {
     // SAFETY: BMI2/ADX P-384 field Montgomery multiplication call because:
-    // 1. This module is compiled only for Linux x86-64 System V, matching the embedded assembly ABI.
+    // 1. The `extern "sysv64"` declaration matches the embedded System V assembly ABI.
     // 2. `out`, `lhs`, and `rhs` are six-limb arrays, which is the exact P-384 field size.
     // 3. Runtime capabilities prove BMI2 and ADX before selecting this backend.
     // 4. Callers route only P-384 field elements in Montgomery form through this wrapper.
@@ -82,7 +94,7 @@ pub(super) fn p384_field_mul(lhs: &[u64; 6], rhs: &[u64; 6]) -> [u64; 6] {
     unsafe { rscrypto_bignum_montmul_p384(out.as_mut_ptr(), lhs.as_ptr(), rhs.as_ptr()) };
   } else {
     // SAFETY: baseline P-384 field Montgomery multiplication call because:
-    // 1. This module is compiled only for Linux x86-64 System V, matching the embedded assembly ABI.
+    // 1. The `extern "sysv64"` declaration matches the embedded System V assembly ABI.
     // 2. `out`, `lhs`, and `rhs` are six-limb arrays, which is the exact P-384 field size.
     // 3. The `_alt` routine is the baseline x86-64 backend and does not require BMI2 or ADX.
     // 4. Callers route only P-384 field elements in Montgomery form through this wrapper.
@@ -100,7 +112,7 @@ pub(super) fn p384_field_square(value: &[u64; 6]) -> [u64; 6] {
 
   if has_bmi2_adx() {
     // SAFETY: BMI2/ADX P-384 field Montgomery square call because:
-    // 1. This module is compiled only for Linux x86-64 System V, matching the embedded assembly ABI.
+    // 1. The `extern "sysv64"` declaration matches the embedded System V assembly ABI.
     // 2. `out` and `value` are six-limb arrays, which is the exact P-384 field size.
     // 3. Runtime capabilities prove BMI2 and ADX before selecting this backend.
     // 4. Callers route only P-384 field elements in Montgomery form through this wrapper.
@@ -109,7 +121,7 @@ pub(super) fn p384_field_square(value: &[u64; 6]) -> [u64; 6] {
     unsafe { rscrypto_bignum_montsqr_p384(out.as_mut_ptr(), value.as_ptr()) };
   } else {
     // SAFETY: baseline P-384 field Montgomery square call because:
-    // 1. This module is compiled only for Linux x86-64 System V, matching the embedded assembly ABI.
+    // 1. The `extern "sysv64"` declaration matches the embedded System V assembly ABI.
     // 2. `out` and `value` are six-limb arrays, which is the exact P-384 field size.
     // 3. The `_alt` routine is the baseline x86-64 backend and does not require BMI2 or ADX.
     // 4. Callers route only P-384 field elements in Montgomery form through this wrapper.
@@ -125,7 +137,7 @@ pub(super) fn p384_field_square(value: &[u64; 6]) -> [u64; 6] {
 pub(super) fn p384_field_inverse(value: &[u64; 6]) -> [u64; 6] {
   let mut out = [0u64; 6];
   // SAFETY: P-384 field Montgomery inverse call because:
-  // 1. This module is compiled only for Linux x86-64 System V, matching the embedded assembly ABI.
+  // 1. The `extern "sysv64"` declaration matches the embedded System V assembly ABI.
   // 2. `out` and `value` are six-limb arrays, which is the exact P-384 field size.
   // 3. Callers route only P-384 field elements in Montgomery form through this wrapper.
   // 4. The routine has fixed public iteration structure and returns zero for zero input.
@@ -139,7 +151,7 @@ pub(super) fn scalar_inverse<const L: usize>(value: &[u64; L], modulus: &[u64; L
   let mut tmp = ZeroizingWords::<18>::zeroed();
   debug_assert!(L == 4 || L == 6);
   // SAFETY: scalar-order inverse call because:
-  // 1. This module is compiled only for Linux x86-64 System V, matching the embedded assembly ABI.
+  // 1. The `extern "sysv64"` declaration matches the embedded System V assembly ABI.
   // 2. The wrapper is called only with L = 4 or L = 6, and `tmp` has 3 * 6 limbs, enough for both
   //    sizes.
   // 3. `value`, `modulus`, and `out` have the same fixed limb count passed as `k`.

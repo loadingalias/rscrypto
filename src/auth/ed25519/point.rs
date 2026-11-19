@@ -416,7 +416,7 @@ impl ExtendedPoint {
         all(
           target_arch = "x86_64",
           target_feature = "sse2",
-          target_os = "linux",
+          any(target_os = "linux", target_os = "windows"),
           not(feature = "portable-only")
         )
       ))

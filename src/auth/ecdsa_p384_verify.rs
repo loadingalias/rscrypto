@@ -48,7 +48,7 @@ fn sbb(lhs: u64, rhs: u64, borrow: u64) -> (u64, u64) {
     all(target_arch = "aarch64", not(feature = "portable-only"), not(miri)),
     all(
       target_arch = "x86_64",
-      target_os = "linux",
+      any(target_os = "linux", target_os = "windows"),
       not(feature = "portable-only"),
       not(miri)
     )
@@ -98,7 +98,7 @@ impl Fe {
     }
     #[cfg(all(
       target_arch = "x86_64",
-      target_os = "linux",
+      any(target_os = "linux", target_os = "windows"),
       not(feature = "portable-only"),
       not(miri)
     ))]
@@ -109,7 +109,7 @@ impl Fe {
       all(target_arch = "aarch64", not(feature = "portable-only"), not(miri)),
       all(
         target_arch = "x86_64",
-        target_os = "linux",
+        any(target_os = "linux", target_os = "windows"),
         not(feature = "portable-only"),
         not(miri)
       )
@@ -127,7 +127,7 @@ impl Fe {
     }
     #[cfg(all(
       target_arch = "x86_64",
-      target_os = "linux",
+      any(target_os = "linux", target_os = "windows"),
       not(feature = "portable-only"),
       not(miri)
     ))]
@@ -138,7 +138,7 @@ impl Fe {
       all(target_arch = "aarch64", not(feature = "portable-only"), not(miri)),
       all(
         target_arch = "x86_64",
-        target_os = "linux",
+        any(target_os = "linux", target_os = "windows"),
         not(feature = "portable-only"),
         not(miri)
       )
@@ -203,7 +203,7 @@ impl Fe {
       all(target_arch = "aarch64", not(feature = "portable-only"), not(miri)),
       all(
         target_arch = "x86_64",
-        target_os = "linux",
+        any(target_os = "linux", target_os = "windows"),
         not(feature = "portable-only"),
         not(miri)
       )
@@ -231,7 +231,7 @@ impl Fe {
       all(target_arch = "aarch64", not(feature = "portable-only"), not(miri)),
       all(
         target_arch = "x86_64",
-        target_os = "linux",
+        any(target_os = "linux", target_os = "windows"),
         not(feature = "portable-only"),
         not(miri)
       )
@@ -285,7 +285,7 @@ impl Fe {
       all(target_arch = "aarch64", not(feature = "portable-only"), not(miri)),
       all(
         target_arch = "x86_64",
-        target_os = "linux",
+        any(target_os = "linux", target_os = "windows"),
         not(feature = "portable-only"),
         not(miri)
       )
