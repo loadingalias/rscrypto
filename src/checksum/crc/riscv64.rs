@@ -46,12 +46,14 @@ impl Clmul for Zbc {
   #[target_feature(enable = "zbc")]
   unsafe fn clmul(a: u64, b: u64) -> Lane {
     let (lo, hi): (u64, u64);
-    // SAFETY: the caller guarantees Zbc; the instructions read and write registers only.
+    // SAFETY: the caller guarantees Zbc; the instructions read and write registers only. `lo` is
+    // written before `clmulh` reads `a` and `b`, so it must not share their register (`out`, not
+    // `lateout`); `hi` is written last.
     unsafe {
       asm!(
         "clmul {lo}, {a}, {b}",
         "clmulh {hi}, {a}, {b}",
-        lo = lateout(reg) lo,
+        lo = out(reg) lo,
         hi = lateout(reg) hi,
         a = in(reg) a,
         b = in(reg) b,
