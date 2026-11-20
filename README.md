@@ -221,4 +221,5 @@ For a published version, use the matching [API documentation](https://docs.rs/rs
 
 ## License
 
-Licensed under [Apache-2.0](LICENSE).
+Licensed under [Apache-2.0](LICENSE). Three ChaCha20-Poly1305 assembly files adapted from AWS-LC and
+BoringSSL keep their [ISC](LICENSE-ISC) license, so the package license is `Apache-2.0 AND ISC`.
