@@ -311,8 +311,8 @@ fn root_surface_poly1305_exports_compile() {
 #[test]
 #[cfg(feature = "ml-kem")]
 fn root_surface_mlkem_exports_compile() {
-  let ek512 = MlKem512EncapsulationKey::from_bytes([0x11; MlKem512EncapsulationKey::LENGTH]);
-  let dk512 = MlKem512DecapsulationKey::from_bytes([0x12; MlKem512DecapsulationKey::LENGTH]);
+  let (ek512, dk512): (MlKem512EncapsulationKey, MlKem512DecapsulationKey) =
+    rscrypto::MlKem512Seed::from_bytes([0x11; 64]).keypair();
   let ct512 = MlKem512Ciphertext::from_bytes([0x13; MlKem512Ciphertext::LENGTH]);
   let ss512 = MlKem512SharedSecret::from_bytes([0x14; MlKem512SharedSecret::LENGTH]);
   assert_eq!(ek512.as_bytes().len(), MlKem512::ENCAPSULATION_KEY_SIZE);
@@ -328,8 +328,8 @@ fn root_surface_mlkem_exports_compile() {
     MlKem512::DECAPSULATION_KEY_SIZE
   );
 
-  let ek768 = MlKem768EncapsulationKey::from_bytes([0x21; MlKem768EncapsulationKey::LENGTH]);
-  let dk768 = MlKem768DecapsulationKey::from_bytes([0x22; MlKem768DecapsulationKey::LENGTH]);
+  let (ek768, dk768): (MlKem768EncapsulationKey, MlKem768DecapsulationKey) =
+    rscrypto::MlKem768Seed::from_bytes([0x21; 64]).keypair();
   let ct768 = MlKem768Ciphertext::from_bytes([0x23; MlKem768Ciphertext::LENGTH]);
   let ss768 = MlKem768SharedSecret::from_bytes([0x24; MlKem768SharedSecret::LENGTH]);
   assert_eq!(ek768.as_bytes().len(), MlKem768::ENCAPSULATION_KEY_SIZE);
@@ -345,8 +345,8 @@ fn root_surface_mlkem_exports_compile() {
     MlKem768::DECAPSULATION_KEY_SIZE
   );
 
-  let ek1024 = MlKem1024EncapsulationKey::from_bytes([0x31; MlKem1024EncapsulationKey::LENGTH]);
-  let dk1024 = MlKem1024DecapsulationKey::from_bytes([0x32; MlKem1024DecapsulationKey::LENGTH]);
+  let (ek1024, dk1024): (MlKem1024EncapsulationKey, MlKem1024DecapsulationKey) =
+    rscrypto::MlKem1024Seed::from_bytes([0x31; 64]).keypair();
   let ct1024 = MlKem1024Ciphertext::from_bytes([0x33; MlKem1024Ciphertext::LENGTH]);
   let ss1024 = MlKem1024SharedSecret::from_bytes([0x34; MlKem1024SharedSecret::LENGTH]);
   assert_eq!(ek1024.as_bytes().len(), MlKem1024::ENCAPSULATION_KEY_SIZE);

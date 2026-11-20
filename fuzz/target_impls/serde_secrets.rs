@@ -2,7 +2,7 @@ use rscrypto::{Aes256GcmKey, Ed25519SecretKey, MlDsa65SecretKey, MlKem768Decapsu
 use serde::de::value::{BytesDeserializer, Error, SeqDeserializer};
 
 /// Deserialize `data` as `T` through both serde visitor paths, bytes and a sequence of `u8`, and require each
-/// to agree with `oracle`: the fixed-array constructor for byte owners, and validated import for ML-DSA.
+/// to agree with `oracle`: the fixed-array constructor for byte owners, and validated import for ML-DSA and ML-KEM.
 fn check<T: serde::de::DeserializeOwned, B: PartialEq + core::fmt::Debug>(
   data: &[u8],
   oracle: impl Fn(&[u8]) -> Option<T>,
@@ -45,7 +45,7 @@ pub(super) fn run(data: &[u8]) {
     ),
     3 => check(
       data,
-      |data| data.try_into().ok().map(MlKem768DecapsulationKey::from_bytes),
+      |data| MlKem768DecapsulationKey::try_from_slice(data).ok(),
       |key| key.as_bytes().to_vec(),
     ),
     _ => check(

@@ -7,9 +7,10 @@ extern crate alloc;
 use alloc::alloc::Global;
 
 use rscrypto::{
-  Kem, MlKem512, MlKem512Ciphertext, MlKem512DecapsulationKey, MlKem512EncapsulationKey, MlKem768, MlKem768Ciphertext,
-  MlKem768DecapsulationKey, MlKem768EncapsulationKey, MlKem1024, MlKem1024Ciphertext, MlKem1024DecapsulationKey,
-  MlKem1024EncapsulationKey, MlKemError,
+  Kem, MlKem512, MlKem512Ciphertext, MlKem512DecapsulationKey, MlKem512EncapsulationKey,
+  MlKem512PreparedDecapsulationKey, MlKem768, MlKem768Ciphertext, MlKem768DecapsulationKey, MlKem768EncapsulationKey,
+  MlKem768PreparedDecapsulationKey, MlKem1024, MlKem1024Ciphertext, MlKem1024DecapsulationKey,
+  MlKem1024EncapsulationKey, MlKem1024PreparedDecapsulationKey, MlKemError,
 };
 use serde_json::Value;
 
@@ -76,7 +77,7 @@ fn total(suite: &Value) -> usize {
 macro_rules! wycheproof_suite {
   (
     $keygen:ident, $combined:ident, $encaps:ident, $decaps:ident,
-    $profile:ty, $ek:ty, $dk:ty, $ct:ty, $parameter_set:literal, $size:literal,
+    $profile:ty, $ek:ty, $dk:ty, $prepared_dk:ty, $ct:ty, $parameter_set:literal, $size:literal,
     keygen = $keygen_counts:expr, combined = $combined_counts:expr,
     encaps = $encaps_counts:expr, decaps = $decaps_counts:expr $(,)?
   ) => {
@@ -180,10 +181,8 @@ macro_rules! wycheproof_suite {
             );
             #[cfg(feature = "alloc")]
             {
-              let prepared = dk.prepare_in(Global).expect("a generated key must prepare");
-              let shared = prepared
-                .decapsulate(&ciphertext)
-                .expect("decapsulation of a well-formed input");
+              let prepared = dk.prepare_in(Global);
+              let shared = prepared.decapsulate(&ciphertext);
               assert!(
                 shared.expose_secret().as_bytes() == bytes(case, "K").as_slice(),
                 "combined prepare_in tcId {tc_id} K"
@@ -197,9 +196,7 @@ macro_rules! wycheproof_suite {
                 Global,
               )
               .expect("prepared key generation from a full seed must succeed");
-              let shared = generated
-                .decapsulate(&ciphertext)
-                .expect("decapsulation of a well-formed input");
+              let shared = generated.decapsulate(&ciphertext);
               assert!(
                 shared.expose_secret().as_bytes() == bytes(case, "K").as_slice(),
                 "combined prepared keygen tcId {tc_id} K"
@@ -283,10 +280,8 @@ macro_rules! wycheproof_suite {
             "decaps tcId {tc_id}: allocated import disagrees with import"
           );
           if let (true, Some(boxed), Some(ciphertext)) = (is_valid(case), &boxed, &ciphertext) {
-            let prepared = boxed.prepare_in(Global).expect("a valid key must prepare");
-            let shared = prepared
-              .decapsulate(ciphertext)
-              .expect("decapsulation of a well-formed input");
+            let prepared = boxed.prepare_in(Global);
+            let shared = prepared.decapsulate(ciphertext);
             assert!(
               shared.expose_secret().as_bytes() == bytes(case, "K").as_slice(),
               "decaps try_from_slice_in tcId {tc_id} K"
@@ -308,16 +303,13 @@ macro_rules! wycheproof_suite {
             shared.is_none(),
             "decaps tcId {tc_id}: invalid input produced a shared secret"
           );
-          // Preparation must reject a full-length corrupted key it is handed unvalidated.
-          #[cfg(feature = "alloc")]
-          if let Ok(raw) = <[u8; <$dk>::LENGTH]>::try_from(bytes(case, "dk").as_slice()) {
-            if key.is_none() {
-              assert_eq!(
-                <$dk>::from_bytes(raw).prepare_in(Global).err(),
-                Some(MlKemError::InvalidDecapsulationKey),
-                "decaps tcId {tc_id}: prepare_in accepted a corrupted key"
-              );
-            }
+          // The fused prepared import validates as the plain import does.
+          if key.is_none() {
+            assert_eq!(
+              <$prepared_dk>::try_from_slice(&bytes(case, "dk")).err(),
+              Some(MlKemError::InvalidDecapsulationKey),
+              "decaps tcId {tc_id}: the prepared import accepted a key that the plain import rejects"
+            );
           }
         }
         tally.record(is_valid(case));
@@ -338,6 +330,7 @@ mod mlkem512 {
     MlKem512,
     MlKem512EncapsulationKey,
     MlKem512DecapsulationKey,
+    MlKem512PreparedDecapsulationKey,
     MlKem512Ciphertext,
     "ML-KEM-512",
     "512",
@@ -364,6 +357,7 @@ mod mlkem768 {
     MlKem768,
     MlKem768EncapsulationKey,
     MlKem768DecapsulationKey,
+    MlKem768PreparedDecapsulationKey,
     MlKem768Ciphertext,
     "ML-KEM-768",
     "768",
@@ -390,6 +384,7 @@ mod mlkem1024 {
     MlKem1024,
     MlKem1024EncapsulationKey,
     MlKem1024DecapsulationKey,
+    MlKem1024PreparedDecapsulationKey,
     MlKem1024Ciphertext,
     "ML-KEM-1024",
     "1024",

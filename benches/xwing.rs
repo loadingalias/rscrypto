@@ -17,7 +17,7 @@ use bench_config::checked;
 use criterion::Criterion;
 use libcrux_kem::{Algorithm, Ct, PrivateKey, PublicKey, XWing as LibcruxXWing};
 use libcrux_traits::kem::arrayref::Kem as _;
-use rscrypto::{Kem, XWing, XWingCiphertext, XWingDecapsulationKey, XWingEncapsulationKey, XWingError};
+use rscrypto::{Kem, XWing, XWingCiphertext, XWingDecapsulationKey, XWingError, XWingPreparedEncapsulationKey};
 use x_wing::{Decapsulator as _, KeyExport as _, TryDecapsulate as _};
 
 const SEED: [u8; XWing::DECAPSULATION_KEY_SIZE] = [0x42; XWing::DECAPSULATION_KEY_SIZE];
@@ -110,9 +110,7 @@ fn xwing(c: &mut Criterion) {
   // rscrypto's prepared key holds the decoded ML-KEM key, its expanded matrix,
   // and H(ek). x-wing's key holds the decoded ML-KEM key and H(ek). libcrux's
   // array form takes the encoded key, so decoding and the matrix stay timed.
-  let prepared_key = XWingEncapsulationKey::from_bytes(expected_key)
-    .prepare()
-    .expect("key preparation");
+  let prepared_key = XWingPreparedEncapsulationKey::try_from_slice(&expected_key).expect("key preparation");
   let mut group = c.benchmark_group("xwing/encapsulate/derand-reuse-key");
   group.bench_function(
     "rscrypto",
@@ -149,7 +147,7 @@ fn xwing(c: &mut Criterion) {
   // Import and validate identical key bytes, then encapsulate. Each path must
   // reject the key with an unreduced coefficient.
   let rscrypto_import = |bytes: &[u8; XWing::ENCAPSULATION_KEY_SIZE]| -> Option<Encapsulated> {
-    let key = XWingEncapsulationKey::from_bytes(*bytes).prepare().ok()?;
+    let key = XWingPreparedEncapsulationKey::try_from_slice(bytes).ok()?;
     let (ciphertext, shared_secret) = key.encapsulate(filled(black_box(&RANDOMNESS))).ok()?;
     Some((ciphertext.to_bytes(), *shared_secret.as_bytes()))
   };

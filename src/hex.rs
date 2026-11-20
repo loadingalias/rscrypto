@@ -257,7 +257,7 @@ impl fmt::Debug for DisplaySecret<'_> {
 
 /// Implement `LowerHex`, `UpperHex`, `Display`, `Debug`, and `FromStr` for
 /// a public byte-array newtype that has `as_bytes()`, `from_bytes()`, and
-/// `LENGTH`.
+/// `LENGTH`. `@display` omits `FromStr`, for a type whose construction validates.
 #[cfg(any(
   feature = "aegis256",
   feature = "aes-gcm",
@@ -271,7 +271,7 @@ impl fmt::Debug for DisplaySecret<'_> {
   feature = "xchacha20poly1305"
 ))]
 macro_rules! impl_hex_fmt {
-  ($type:ty) => {
+  (@display $type:ty) => {
     impl core::fmt::LowerHex for $type {
       fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         crate::hex::fmt_hex_lower(self.as_bytes(), f)
@@ -289,6 +289,9 @@ macro_rules! impl_hex_fmt {
         core::fmt::LowerHex::fmt(self, f)
       }
     }
+  };
+  ($type:ty) => {
+    impl_hex_fmt!(@display $type);
 
     impl core::str::FromStr for $type {
       type Err = crate::hex::InvalidHexError;
@@ -304,7 +307,8 @@ macro_rules! impl_hex_fmt {
 
 /// Implement masked `Debug`, `FromStr`, and `display_secret()` for a secret
 /// key newtype. Does **not** implement `Display`, `LowerHex`, or `UpperHex`
-/// to prevent accidental logging of key material.
+/// to prevent accidental logging of key material. `@display` omits `FromStr`,
+/// for a type whose construction validates.
 #[cfg(any(
   feature = "aegis256",
   feature = "aes-gcm",
@@ -318,18 +322,7 @@ macro_rules! impl_hex_fmt {
   feature = "xchacha20poly1305"
 ))]
 macro_rules! impl_hex_fmt_secret {
-  ($type:ty) => {
-    impl core::str::FromStr for $type {
-      type Err = crate::hex::InvalidHexError;
-
-      #[inline]
-      fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let mut bytes = crate::secret::ZeroizingBytes::<{ Self::LENGTH }>::zeroed();
-        crate::hex::from_hex(s, bytes.as_mut_array())?;
-        Ok(Self::from_bytes(*bytes.as_array()))
-      }
-    }
-
+  (@display $type:ty) => {
     impl $type {
       /// Returns a wrapper that displays the key bytes as lowercase hex.
       ///
@@ -341,11 +334,26 @@ macro_rules! impl_hex_fmt_secret {
       }
     }
   };
+  ($type:ty) => {
+    impl_hex_fmt_secret!(@display $type);
+
+    impl core::str::FromStr for $type {
+      type Err = crate::hex::InvalidHexError;
+
+      #[inline]
+      fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let mut bytes = crate::secret::ZeroizingBytes::<{ Self::LENGTH }>::zeroed();
+        crate::hex::from_hex(s, bytes.as_mut_array())?;
+        Ok(Self::from_bytes(*bytes.as_array()))
+      }
+    }
+  };
 }
 
 /// Implement `serde::Serialize` and `serde::Deserialize` for a byte-array
 /// newtype with `as_bytes() -> &[u8; N]`, `from_bytes([u8; N]) -> Self`,
-/// and `LENGTH`.
+/// and `LENGTH`. `checked` builds through `try_from_slice` instead, so
+/// deserialization runs the type's validation.
 #[cfg(all(
   feature = "serde",
   any(
@@ -362,7 +370,7 @@ macro_rules! impl_hex_fmt_secret {
   )
 ))]
 macro_rules! impl_serde_bytes_inner {
-  ($type:ty, $feature:literal) => {
+  (@impl $type:ty, $feature:literal, $build:expr) => {
     #[cfg_attr(docsrs, doc(cfg(feature = $feature)))]
     impl serde::Serialize for $type {
       fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
@@ -384,7 +392,7 @@ macro_rules! impl_serde_bytes_inner {
 
           fn visit_bytes<E: serde::de::Error>(self, v: &[u8]) -> Result<Self::Value, E> {
             let arr: [u8; <$type>::LENGTH] = v.try_into().map_err(|_| E::invalid_length(v.len(), &self))?;
-            Ok(<$type>::from_bytes(arr))
+            ($build)(arr).map_err(E::custom)
           }
 
           fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
@@ -394,13 +402,21 @@ macro_rules! impl_serde_bytes_inner {
                 .next_element()?
                 .ok_or_else(|| serde::de::Error::invalid_length(i, &self))?;
             }
-            Ok(<$type>::from_bytes(arr))
+            ($build)(arr).map_err(serde::de::Error::custom)
           }
         }
 
         deserializer.deserialize_bytes(ByteVisitor)
       }
     }
+  };
+  ($type:ty, $feature:literal) => {
+    impl_serde_bytes_inner!(@impl $type, $feature, |bytes: [u8; <$type>::LENGTH]| Ok::<_, core::convert::Infallible>(
+      <$type>::from_bytes(bytes)
+    ));
+  };
+  ($type:ty, $feature:literal, checked) => {
+    impl_serde_bytes_inner!(@impl $type, $feature, |bytes: [u8; <$type>::LENGTH]| <$type>::try_from_slice(&bytes));
   };
 }
 
@@ -423,6 +439,9 @@ macro_rules! impl_serde_bytes {
   ($type:ty) => {
     impl_serde_bytes_inner!($type, "serde");
   };
+  ($type:ty, checked) => {
+    impl_serde_bytes_inner!($type, "serde", checked);
+  };
 }
 
 // No-op when serde feature is disabled.
@@ -443,10 +462,13 @@ macro_rules! impl_serde_bytes {
 ))]
 macro_rules! impl_serde_bytes {
   ($type:ty) => {};
+  ($type:ty, checked) => {};
 }
 
 /// Implement `serde` for secret material behind the explicit `serde-secrets`
 /// feature. This keeps broad DTO serialization from silently exporting keys.
+/// `checked` builds through `try_from_slice`, so deserialization runs the
+/// type's validation.
 #[cfg(all(
   feature = "serde-secrets",
   any(
@@ -463,7 +485,7 @@ macro_rules! impl_serde_bytes {
   )
 ))]
 macro_rules! impl_serde_secret_bytes {
-  ($type:ty) => {
+  (@impl $type:ty, $build:expr) => {
     #[cfg_attr(docsrs, doc(cfg(feature = "serde-secrets")))]
     impl serde::Serialize for $type {
       fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
@@ -486,7 +508,7 @@ macro_rules! impl_serde_secret_bytes {
           fn visit_bytes<E: serde::de::Error>(self, v: &[u8]) -> Result<Self::Value, E> {
             let array: [u8; <$type>::LENGTH] = v.try_into().map_err(|_| E::invalid_length(v.len(), &self))?;
             let bytes = crate::secret::ZeroizingBytes::new(array);
-            Ok(<$type>::from_bytes(*bytes.as_array()))
+            ($build)(bytes.as_array()).map_err(E::custom)
           }
 
           fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
@@ -496,13 +518,21 @@ macro_rules! impl_serde_secret_bytes {
                 .next_element()?
                 .ok_or_else(|| serde::de::Error::invalid_length(i, &self))?;
             }
-            Ok(<$type>::from_bytes(*bytes.as_array()))
+            ($build)(bytes.as_array()).map_err(serde::de::Error::custom)
           }
         }
 
         deserializer.deserialize_bytes(SecretByteVisitor)
       }
     }
+  };
+  ($type:ty) => {
+    impl_serde_secret_bytes!(@impl $type, |bytes: &[u8; <$type>::LENGTH]| Ok::<_, core::convert::Infallible>(
+      <$type>::from_bytes(*bytes)
+    ));
+  };
+  ($type:ty, checked) => {
+    impl_serde_secret_bytes!(@impl $type, |bytes: &[u8; <$type>::LENGTH]| <$type>::try_from_slice(bytes));
   };
 }
 
@@ -523,6 +553,7 @@ macro_rules! impl_serde_secret_bytes {
 ))]
 macro_rules! impl_serde_secret_bytes {
   ($type:ty) => {};
+  ($type:ty, checked) => {};
 }
 
 /// Generate a fallible constructor that fills `Self::LENGTH` bytes from the

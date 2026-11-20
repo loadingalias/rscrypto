@@ -240,3 +240,56 @@ fn secret_sequence_rejects_partial_and_wrong_length_inputs() {
   let key = serde_json::from_str::<Aes256GcmKey>(&encoded).expect("exact-length AES-256-GCM key must deserialize");
   assert_eq!(key.as_bytes(), exact.as_slice());
 }
+
+/// Deserialization runs the FIPS 203 input check, as `try_from_slice` does, so no invalid key value exists.
+#[cfg(feature = "ml-kem")]
+mod mlkem {
+  use rscrypto::{MlKem768EncapsulationKey, MlKem768Seed};
+
+  #[test]
+  fn encapsulation_key_deserialization_runs_the_modulus_check() {
+    let (key, _) = MlKem768Seed::from_bytes([0x5a; 64]).keypair();
+    let encoded = serde_json::to_string(&key).expect("serialize");
+    let recovered: MlKem768EncapsulationKey = serde_json::from_str(&encoded).expect("a real key must deserialize");
+    assert!(recovered == key);
+
+    // Every coefficient of an all-0xff key is above q.
+    let invalid = serde_json::to_string(&vec![0xffu8; MlKem768EncapsulationKey::LENGTH]).expect("serialize");
+    serde_json::from_str::<MlKem768EncapsulationKey>(&invalid).expect_err("an unreduced key must be rejected");
+  }
+
+  #[cfg(feature = "serde-secrets")]
+  #[test]
+  fn decapsulation_key_deserialization_runs_the_hash_check() {
+    use rscrypto::MlKem768DecapsulationKey;
+
+    let (_, key) = MlKem768Seed::from_bytes([0x5a; 64]).keypair();
+    let encoded = serde_json::to_string(&key).expect("serialize");
+    let recovered: MlKem768DecapsulationKey = serde_json::from_str(&encoded).expect("a real key must deserialize");
+    assert!(recovered.ct_eq(&key).declassify());
+
+    // The 32 bytes before z are H(ek).
+    let mut bytes = key.as_bytes().to_vec();
+    bytes[MlKem768DecapsulationKey::LENGTH - 64] ^= 1;
+    let invalid = serde_json::to_string(&bytes).expect("serialize");
+    serde_json::from_str::<MlKem768DecapsulationKey>(&invalid).expect_err("a changed H(ek) must be rejected");
+  }
+}
+
+#[cfg(feature = "x-wing")]
+#[test]
+fn xwing_encapsulation_key_deserialization_runs_the_modulus_check() {
+  use rscrypto::{XWingDecapsulationKey, XWingEncapsulationKey};
+
+  let key = XWingDecapsulationKey::from_bytes([0x5a; 32]).encapsulation_key();
+  let encoded = serde_json::to_string(&key).expect("serialize");
+  let recovered: XWingEncapsulationKey = serde_json::from_str(&encoded).expect("a real key must deserialize");
+  assert_eq!(recovered, key);
+
+  // Coefficient 0 of the ML-KEM-768 part becomes 4095, at least q = 3329.
+  let mut bytes = key.as_bytes().to_vec();
+  bytes[0] = 0xff;
+  bytes[1] |= 0x0f;
+  let invalid = serde_json::to_string(&bytes).expect("serialize");
+  serde_json::from_str::<XWingEncapsulationKey>(&invalid).expect_err("an unreduced ML-KEM part must be rejected");
+}

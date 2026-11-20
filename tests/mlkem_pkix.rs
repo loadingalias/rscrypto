@@ -162,8 +162,7 @@ fn rfc9935_inconsistent_examples_are_rejected() {
 fn pkcs8_import_rejects_a_secret_vector_that_the_hash_check_accepts() {
   let der = fixture!("mlkem512_pkcs8_inconsistent_s");
   let expanded = &der[der.len() - MlKem512DecapsulationKey::LENGTH..];
-  let raw = MlKem512DecapsulationKey::try_from_slice(expanded).expect("raw import runs only the FIPS 203 checks");
-  assert_eq!(raw.validate(), Ok(()));
+  MlKem512DecapsulationKey::try_from_slice(expanded).expect("raw import runs only the FIPS 203 checks");
   assert_eq!(
     MlKem512DecapsulationKey::from_pkcs8_der(der).err(),
     Some(MlKemKeyError::InvalidDecapsulationKey)

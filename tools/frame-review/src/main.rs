@@ -184,6 +184,27 @@ signing_boundaries!(
 );
 
 macro_rules! kem_boundaries {
+  // ML-KEM rejects implicitly, so its prepared decapsulation cannot fail.
+  (
+    $profile:ty,
+    $prepared_key:ty,
+    $error:ty,
+    $generate:ident,
+    $encapsulate:ident,
+    $decapsulate:ident,
+    $prepared_decapsulate:ident,
+    infallible
+  ) => {
+    kem_boundaries!(@common $profile, $error, $generate, $encapsulate, $decapsulate);
+
+    #[inline(never)]
+    fn $prepared_decapsulate(
+      key: &$prepared_key,
+      ciphertext: &<$profile as Kem>::Ciphertext,
+    ) -> <$profile as Kem>::SharedSecret {
+      key.decapsulate(ciphertext)
+    }
+  };
   (
     $profile:ty,
     $prepared_key:ty,
@@ -193,6 +214,17 @@ macro_rules! kem_boundaries {
     $decapsulate:ident,
     $prepared_decapsulate:ident
   ) => {
+    kem_boundaries!(@common $profile, $error, $generate, $encapsulate, $decapsulate);
+
+    #[inline(never)]
+    fn $prepared_decapsulate(
+      key: &$prepared_key,
+      ciphertext: &<$profile as Kem>::Ciphertext,
+    ) -> Result<<$profile as Kem>::SharedSecret, $error> {
+      key.decapsulate(ciphertext)
+    }
+  };
+  (@common $profile:ty, $error:ty, $generate:ident, $encapsulate:ident, $decapsulate:ident) => {
     #[inline(never)]
     fn $generate() -> Result<(<$profile as Kem>::EncapsulationKey, <$profile as Kem>::DecapsulationKey), $error> {
       <$profile>::generate_keypair(|out: &mut [u8]| {
@@ -218,14 +250,6 @@ macro_rules! kem_boundaries {
     ) -> Result<<$profile as Kem>::SharedSecret, $error> {
       <$profile>::decapsulate(key, ciphertext)
     }
-
-    #[inline(never)]
-    fn $prepared_decapsulate(
-      key: &$prepared_key,
-      ciphertext: &<$profile as Kem>::Ciphertext,
-    ) -> Result<<$profile as Kem>::SharedSecret, $error> {
-      key.decapsulate(ciphertext)
-    }
   };
 }
 
@@ -236,7 +260,8 @@ kem_boundaries!(
   mlkem_512_generate,
   mlkem_512_encapsulate,
   mlkem_512_decapsulate,
-  mlkem_512_prepared_decapsulate
+  mlkem_512_prepared_decapsulate,
+  infallible
 );
 kem_boundaries!(
   MlKem768,
@@ -245,7 +270,8 @@ kem_boundaries!(
   mlkem_768_generate,
   mlkem_768_encapsulate,
   mlkem_768_decapsulate,
-  mlkem_768_prepared_decapsulate
+  mlkem_768_prepared_decapsulate,
+  infallible
 );
 kem_boundaries!(
   MlKem1024,
@@ -254,7 +280,8 @@ kem_boundaries!(
   mlkem_1024_generate,
   mlkem_1024_encapsulate,
   mlkem_1024_decapsulate,
-  mlkem_1024_prepared_decapsulate
+  mlkem_1024_prepared_decapsulate,
+  infallible
 );
 kem_boundaries!(
   XWing,
@@ -558,8 +585,8 @@ macro_rules! mlkem {
     let (ciphertext, shared) = $encapsulate(&encapsulation_key).expect("ML-KEM encapsulation");
     let decapsulated = $decapsulate(&decapsulation_key, &ciphertext).expect("ML-KEM decapsulation");
     assert!(shared.ct_eq(&decapsulated).declassify());
-    let prepared = <$profile>::prepare_decapsulation_key(&decapsulation_key).expect("ML-KEM preparation");
-    let again = $prepared_decapsulate(&prepared, &ciphertext).expect("ML-KEM prepared decapsulation");
+    let prepared = <$profile>::prepare_decapsulation_key(&decapsulation_key);
+    let again = $prepared_decapsulate(&prepared, &ciphertext);
     assert!(shared.ct_eq(&again).declassify());
   }};
 }
@@ -711,7 +738,7 @@ fn main() {
     let encapsulation = hpke_x25519_sender_in(&recipient.public_key()).expect("HPKE X25519 sender setup");
     hpke_x25519_receiver_in(&encapsulation, &recipient).expect("HPKE X25519 receiver setup");
     let recipient = hpke_xwing_derive_keypair(black_box(&[9; 32]));
-    let public_key = recipient.encapsulation_key().prepare().expect("derived X-Wing key");
+    let public_key = recipient.encapsulation_key().prepare();
     let encapsulation = hpke_xwing_seal(&public_key, &plaintext, &mut ciphertext).expect("HPKE X-Wing seal");
     hpke_xwing_open(&encapsulation, &recipient, &ciphertext, &mut opened).expect("HPKE X-Wing open");
     assert_eq!(opened, plaintext);

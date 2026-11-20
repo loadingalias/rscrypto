@@ -1897,7 +1897,10 @@ macro_rules! mlkem_dudect_profile {
           decapsulation_key_bytes[..secret_key_len]
             .copy_from_slice(&random_decapsulation_key.as_bytes()[..secret_key_len]);
         }
-        inputs.push((class, <$decapsulation_key>::from_bytes(decapsulation_key_bytes)));
+        // Both classes keep the fixed ek and H(ek), so each key passes the FIPS 203 hash check.
+        let decapsulation_key =
+          <$decapsulation_key>::try_from_slice(&decapsulation_key_bytes).expect("the hash check covers only ek");
+        inputs.push((class, decapsulation_key));
       }
 
       for (class, decapsulation_key) in inputs {
@@ -1935,7 +1938,10 @@ macro_rules! mlkem_dudect_profile {
           let rejection_seed = rand_array::<{ <$profile>::SHARED_SECRET_SIZE }>(rng);
           decapsulation_key_bytes[z_start..].copy_from_slice(&rejection_seed);
         }
-        inputs.push((class, <$decapsulation_key>::from_bytes(decapsulation_key_bytes)));
+        // Both classes keep the fixed ek and H(ek), so each key passes the FIPS 203 hash check.
+        let decapsulation_key =
+          <$decapsulation_key>::try_from_slice(&decapsulation_key_bytes).expect("the hash check covers only ek");
+        inputs.push((class, decapsulation_key));
       }
 
       for (class, decapsulation_key) in inputs {
@@ -2051,7 +2057,6 @@ fn xwing_decapsulate_fixed_vs_random_key(runner: &mut CtRunner, rng: &mut BenchR
   let (ciphertext, _) = fixed
     .encapsulation_key()
     .prepare()
-    .expect("derived X-Wing key")
     .encapsulate(xwing_fill(&[0x92; XWing::ENCAPSULATION_RANDOM_SIZE]))
     .expect("X-Wing encapsulation");
   let pool: Vec<(XWingPreparedDecapsulationKey, XWingPreparedDecapsulationKey)> = (0..POOL)
@@ -2148,8 +2153,7 @@ fn hpke_x25519_setup_receiver_fixed_vs_random_key(runner: &mut CtRunner, rng: &m
 fn hpke_xwing_setup_sender_fixed_vs_random_coins(runner: &mut CtRunner, rng: &mut BenchRng) {
   let public_key = HpkeXWingHkdfSha256ChaCha20Poly1305::derive_keypair(&[0xb1; 32])
     .encapsulation_key()
-    .prepare()
-    .expect("derived X-Wing key");
+    .prepare();
   let mut inputs = Vec::with_capacity(samples());
   for _ in 0..samples() {
     let class = random_class(rng);
@@ -2177,7 +2181,7 @@ fn hpke_xwing_setup_sender_fixed_vs_random_coins(runner: &mut CtRunner, rng: &mu
 fn hpke_xwing_setup_receiver_fixed_vs_random_key(runner: &mut CtRunner, rng: &mut BenchRng) {
   const POOL: usize = 64;
   let fixed = XWingDecapsulationKey::from_bytes([0xb3; XWing::DECAPSULATION_KEY_SIZE]).prepare();
-  let public_key = fixed.encapsulation_key().prepare().expect("derived X-Wing key");
+  let public_key = fixed.encapsulation_key().prepare();
   let (encapsulation, _) = HpkeSender::<HpkeXWingHkdfSha256ChaCha20Poly1305>::setup(
     &public_key,
     b"info",

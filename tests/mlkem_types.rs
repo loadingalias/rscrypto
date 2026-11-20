@@ -1,9 +1,9 @@
 #![cfg(feature = "ml-kem")]
 
 use rscrypto::{
-  MlKem512, MlKem512Ciphertext, MlKem512DecapsulationKey, MlKem512EncapsulationKey, MlKem512SharedSecret, MlKem768,
-  MlKem768Ciphertext, MlKem768DecapsulationKey, MlKem768EncapsulationKey, MlKem768SharedSecret, MlKem1024,
-  MlKem1024Ciphertext, MlKem1024DecapsulationKey, MlKem1024EncapsulationKey, MlKem1024SharedSecret,
+  MlKem512, MlKem512Ciphertext, MlKem512DecapsulationKey, MlKem512EncapsulationKey, MlKem512Seed, MlKem512SharedSecret,
+  MlKem768, MlKem768Ciphertext, MlKem768DecapsulationKey, MlKem768Seed, MlKem768SharedSecret, MlKem1024,
+  MlKem1024Ciphertext, MlKem1024DecapsulationKey, MlKem1024EncapsulationKey, MlKem1024Seed, MlKem1024SharedSecret,
 };
 
 #[test]
@@ -43,42 +43,42 @@ fn mlkem_profile_randomness_and_security_strengths_match_fips203_table2() {
 
 #[test]
 fn mlkem_public_values_roundtrip_all_bytes() {
-  let ek512 = MlKem512EncapsulationKey::from_bytes([0x51; MlKem512EncapsulationKey::LENGTH]);
+  // A key is valid by construction, so it comes from a seed; its bytes import again.
+  let (ek512, _) = MlKem512Seed::from_bytes([0x51; 64]).keypair();
   let ct512 = MlKem512Ciphertext::from_bytes([0x52; MlKem512Ciphertext::LENGTH]);
-  assert_eq!(ek512.to_bytes(), [0x51; MlKem512EncapsulationKey::LENGTH]);
+  assert!(MlKem512EncapsulationKey::try_from_slice(&ek512.to_bytes()).expect("a generated key imports") == ek512);
   assert_eq!(ct512.to_bytes(), [0x52; MlKem512Ciphertext::LENGTH]);
-  assert!(ek512 == MlKem512EncapsulationKey::from_bytes([0x51; MlKem512EncapsulationKey::LENGTH]));
+  assert!(ek512 != MlKem512Seed::from_bytes([0x53; 64]).keypair().0);
   assert!(ct512 != MlKem512Ciphertext::from_bytes([0x53; MlKem512Ciphertext::LENGTH]));
 
-  let ek768 = MlKem768EncapsulationKey::from_bytes([0x61; MlKem768EncapsulationKey::LENGTH]);
+  let (ek768, _) = MlKem768Seed::from_bytes([0x61; 64]).keypair();
   let ct768 = MlKem768Ciphertext::from_bytes([0x62; MlKem768Ciphertext::LENGTH]);
-  assert_eq!(ek768.to_bytes(), [0x61; MlKem768EncapsulationKey::LENGTH]);
+  assert_eq!(ek768.to_bytes(), *ek768.as_bytes());
   assert_eq!(ct768.to_bytes(), [0x62; MlKem768Ciphertext::LENGTH]);
 
-  let ek1024 = MlKem1024EncapsulationKey::from_bytes([0x71; MlKem1024EncapsulationKey::LENGTH]);
+  let (ek1024, _) = MlKem1024Seed::from_bytes([0x71; 64]).keypair();
   let ct1024 = MlKem1024Ciphertext::from_bytes([0x72; MlKem1024Ciphertext::LENGTH]);
-  assert_eq!(ek1024.to_bytes(), [0x71; MlKem1024EncapsulationKey::LENGTH]);
+  assert!(MlKem1024EncapsulationKey::try_from_slice(&ek1024.to_bytes()).expect("a generated key imports") == ek1024);
   assert_eq!(ct1024.to_bytes(), [0x72; MlKem1024Ciphertext::LENGTH]);
 }
 
 #[test]
 fn mlkem_secret_values_redact_debug_and_require_explicit_extraction() {
-  let dk512 = MlKem512DecapsulationKey::from_bytes([0xa1; MlKem512DecapsulationKey::LENGTH]);
+  let (_, dk512) = MlKem512Seed::from_bytes([0xa1; 64]).keypair();
   let ss512 = MlKem512SharedSecret::from_bytes([0xa2; MlKem512SharedSecret::LENGTH]);
   assert_eq!(format!("{dk512:?}"), "MlKem512DecapsulationKey(****)");
   assert_eq!(format!("{ss512:?}"), "MlKem512SharedSecret(****)");
-  assert!(dk512.expose_secret().as_bytes().iter().all(|&byte| byte == 0xa1));
+  assert_eq!(dk512.expose_secret().as_bytes(), dk512.as_bytes());
+  MlKem512DecapsulationKey::try_from_slice(dk512.as_bytes()).expect("a generated key imports");
   assert!(ss512.expose_secret().as_bytes().iter().all(|&byte| byte == 0xa2));
 
-  let dk768 = MlKem768DecapsulationKey::from_bytes([0xb1; MlKem768DecapsulationKey::LENGTH]);
+  let (_, dk768) = MlKem768Seed::from_bytes([0xb1; 64]).keypair();
   let ss768 = MlKem768SharedSecret::from_bytes([0xb2; MlKem768SharedSecret::LENGTH]);
   assert_eq!(format!("{dk768:?}"), "MlKem768DecapsulationKey(****)");
   assert_eq!(format!("{ss768:?}"), "MlKem768SharedSecret(****)");
   assert!(
     dk768
-      .ct_eq(&MlKem768DecapsulationKey::from_bytes(
-        [0xb1; MlKem768DecapsulationKey::LENGTH]
-      ))
+      .ct_eq(&MlKem768DecapsulationKey::try_from_slice(dk768.as_bytes()).expect("a generated key imports"))
       .declassify()
   );
   assert!(
@@ -87,7 +87,7 @@ fn mlkem_secret_values_redact_debug_and_require_explicit_extraction() {
       .declassify()
   );
 
-  let dk1024 = MlKem1024DecapsulationKey::from_bytes([0xc1; MlKem1024DecapsulationKey::LENGTH]);
+  let (_, dk1024) = MlKem1024Seed::from_bytes([0xc1; 64]).keypair();
   let ss1024 = MlKem1024SharedSecret::from_bytes([0xc2; MlKem1024SharedSecret::LENGTH]);
   assert_eq!(format!("{dk1024:?}"), "MlKem1024DecapsulationKey(****)");
   assert_eq!(format!("{ss1024:?}"), "MlKem1024SharedSecret(****)");

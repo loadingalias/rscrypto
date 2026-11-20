@@ -870,7 +870,7 @@ Each parameter set has its own groups.
 | `encapsulate/derand-reuse-encoded` | Reused `rscrypto`, libcrux, or fips203 encoded-key wrapper; caller randomness; per-call decoding stays timed | The same ciphertext and secret arrays |
 | `encapsulate/derand-import-encoded` | Identical public-key bytes; each API's import, validation, and encapsulation with caller randomness | The same ciphertext and secret arrays |
 | `encapsulate/internal-entropy-import-encoded` | The same public-key bytes; AWS-LC import and internal entropy | Ciphertext and secret converted to fixed arrays |
-| `decapsulate/prepare-key` | `rscrypto` only: the preparation that its `reuse-key` row amortizes | A prepared key |
+| `decapsulate/prepare-key` | `rscrypto` only: the raw import that its `reuse-key` row amortizes, with the hash check | A prepared key |
 | `decapsulate/reuse-key` | Each library's best reused key, and the ciphertext | 32-byte shared-secret array |
 | `decapsulate/reuse-encoded` | Reused `rscrypto`, libcrux, or fips203 encoded-key wrapper and typed ciphertext; per-call decoding stays timed | 32-byte shared-secret array |
 | `decapsulate/import-encoded` | Identical expanded secret-key and ciphertext bytes; each API's import, validation, and decapsulation | 32-byte shared-secret array |
@@ -883,10 +883,11 @@ Each parameter set has its own groups.
   - AWS-LC cannot take caller randomness, so it joins only decapsulation.
     There it holds the encoded key and runs the hash check in each call.
 - The `reuse-encoded` groups compare equal key depth.
-  There, `rscrypto` also runs the FIPS 203 key check in every call, and libcrux and fips203 checked once outside timing.
+  Every key there was checked once outside timing.
+  An `rscrypto` key type holds only checked keys, so its operations do not repeat the FIPS 203 key check.
 - Import rows run the FIPS 203 checks inside timing.
   libcrux import does not check, so its rows call `validate_public_key` or `validate_private_key`.
-  `rscrypto` runs the check twice: in `try_from_slice`, and again in `Kem::encapsulate` or `Kem::decapsulate`.
+  `rscrypto` runs the check once, in `try_from_slice`.
   Each import check also requires the timed path to reject a key with a coefficient of at least q, or a changed H(ek).
 - All ML-KEM rows include output conversion and the destruction of per-call objects.
   `Criterion::iter` includes the destruction of returned arrays.

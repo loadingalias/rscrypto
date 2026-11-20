@@ -4188,6 +4188,7 @@ macro_rules! mlkem_profile_benches {
     $decapsulate_fn:ident,
     $group:literal,
     $profile:ty,
+    $prepared_dk:ty,
     $fips:ident,
     $libcrux:ident,
     $rustcrypto:ty,
@@ -4260,7 +4261,7 @@ macro_rules! mlkem_profile_benches {
           out.copy_from_slice(black_box(&key_random));
           Ok::<(), MlKemError>(())
         }, alloc::alloc::Global).expect("ML-KEM key generation");
-        (ek.to_bytes(), *dk.decapsulate(black_box(&share_ct)).expect("ML-KEM decapsulation").as_bytes())
+        (ek.to_bytes(), *dk.decapsulate(black_box(&share_ct)).as_bytes())
       }, |share| assert_eq!(share, share_expected())));
       g.bench_function("rscrypto-unprepared", checked(|| {
         let (ek, dk) = <$profile>::generate_keypair(|out| {
@@ -4319,7 +4320,7 @@ macro_rules! mlkem_profile_benches {
       let mut malformed_ek = ek_bytes;
       malformed_ek[0] = 0xff;
       malformed_ek[1] |= 0x0f;
-      let prepared_ek = ek.prepare().expect("ML-KEM key preparation");
+      let prepared_ek = ek.prepare();
       let rustcrypto_ek = rustcrypto_ml_kem::EncapsulationKey::<$rustcrypto>::new(&ek_bytes.into()).expect("RustCrypto key import");
       let fips_ek = $fips::EncapsKey::try_from_bytes(ek_bytes).expect("fips203 key import");
       let libcrux_ek = libcrux_ml_kem::MlKemPublicKey::from(ek_bytes);
@@ -4340,10 +4341,10 @@ macro_rules! mlkem_profile_benches {
       //   each call. libcrux and fips203 keys hold the encoded bytes, so decoding, matrix sampling, and H(ek) stay
       //   timed. AWS-LC is absent: it cannot take caller randomness.
       // - `derand-reuse-encoded`: every row reuses an encoded-key wrapper, so decoding, matrix sampling, and H(ek)
-      //   stay timed. rscrypto also runs the modulus check in every `Kem::encapsulate`; libcrux and fips203
-      //   checked the key once outside timing.
+      //   stay timed. Every key was checked once outside timing: rscrypto's at import, because its key type holds
+      //   only checked keys.
       // - `derand-import-encoded`: every row gets the same key bytes and runs the check inside timing. rscrypto runs
-      //   it twice, in `try_from_slice` and in `Kem::encapsulate`. libcrux import does not check, so its row calls
+      //   it once, in `try_from_slice`. libcrux import does not check, so its row calls
       //   `validate_public_key`. Each row's check requires the same path to reject a key with a coefficient of at
       //   least q.
       // - `internal-entropy-import-encoded`: AWS-LC only. It imports the key bytes, checks the key in
@@ -4463,7 +4464,7 @@ macro_rules! mlkem_profile_benches {
       let mut malformed_dk = dk_bytes;
       malformed_dk[dk_bytes.len().strict_sub(64)] ^= 1;
       let ct_bytes = ct.to_bytes();
-      let prepared_dk = dk.prepare().expect("ML-KEM key preparation");
+      let prepared_dk = dk.prepare();
       let rustcrypto_dk = RustCryptoMlKemDecapsulationKey::<$rustcrypto>::from_seed(RustCryptoMlKemSeed::from(key_random));
       let rustcrypto_ct = ct_bytes.into();
       let fips_dk = $fips::DecapsKey::try_from_bytes(dk_bytes).expect("fips203 key import");
@@ -4475,30 +4476,30 @@ macro_rules! mlkem_profile_benches {
       // The libcrux rows must instead reproduce fips203.
       let independent = || fips_dk.try_decaps(&fips_ct).expect("fips203 decapsulation").into_bytes();
       // Groups by key reuse. FIPS 203 Section 7.3 requires the hash check on a decapsulation key.
-      // - `prepare-key`: rscrypto only. It times the preparation that its `reuse-key` row amortizes: decoding the
-      //   key, expanding the public matrix, deriving the decryption mask, and the hash check.
+      // - `prepare-key`: rscrypto only. It times the raw import that its `reuse-key` row amortizes: the hash check,
+      //   decoding the key, expanding the public matrix, and deriving the decryption mask, in one pass.
       // - `reuse-key`: each library's best reusable key and ciphertext, built outside timing. The keys cache
       //   different work. rscrypto's prepared key holds the result of `prepare-key`. RustCrypto's key, built from
       //   the seed, holds the decoded keys and samples the matrix for re-encryption in each call. libcrux and
       //   fips203 keys hold the encoded bytes and were checked once, so decoding and matrix sampling stay timed.
       //   AWS-LC holds the encoded key, takes borrowed ciphertext bytes, and runs the hash check in each call.
       // - `reuse-encoded`: every row reuses an encoded-key wrapper, so decoding and matrix sampling stay timed.
-      //   rscrypto also runs the hash check in every `Kem::decapsulate`; libcrux and fips203 checked the key once
-      //   outside timing.
+      //   rscrypto, libcrux, and fips203 checked the key once outside timing; rscrypto's key type holds only
+      //   checked keys.
       // - `import-encoded`: every row gets the same key and ciphertext bytes and runs the check inside timing.
-      //   rscrypto runs it twice, in `try_from_slice` and in `Kem::decapsulate`; fips203 import also runs the
+      //   rscrypto runs it once, in `try_from_slice`; fips203 import also runs the
       //   modulus check on the embedded encapsulation key; AWS-LC runs it in decapsulation. libcrux import does
       //   not check, so its row calls `validate_private_key`. Each row's check requires the same path to reject a
       //   key with a changed H(ek).
       let mut g = c.benchmark_group(concat!($group, "/decapsulate/prepare-key"));
       g.bench_function("rscrypto", checked(
-        || black_box(black_box(&dk).prepare().expect("ML-KEM key preparation")),
-        |prepared| assert_eq!(*prepared.decapsulate(&ct).expect("ML-KEM decapsulation").as_bytes(), expected()),
+        || black_box(<$prepared_dk>::try_from_slice(black_box(&dk_bytes)).expect("ML-KEM key import")),
+        |prepared| assert_eq!(*prepared.decapsulate(&ct).as_bytes(), expected()),
       ));
       g.finish();
       let mut g = c.benchmark_group(concat!($group, "/decapsulate/reuse-key"));
       g.bench_function("rscrypto", checked(|| {
-        *black_box(&prepared_dk).decapsulate(black_box(&ct)).expect("ML-KEM decapsulation").as_bytes()
+        *black_box(&prepared_dk).decapsulate(black_box(&ct)).as_bytes()
       }, |secret| assert_eq!(secret, expected())));
       g.bench_function("rustcrypto", checked(|| {
         array_from_slice::<32>(black_box(&rustcrypto_dk).decapsulate(black_box(&rustcrypto_ct)).as_slice())
@@ -4576,6 +4577,7 @@ mlkem_profile_benches!(
   mlkem512_decapsulate,
   "mlkem512",
   MlKem512,
+  rscrypto::MlKem512PreparedDecapsulationKey,
   FipsMlKem512,
   LibcruxMlKem512,
   RustCryptoMlKem512,
@@ -4587,6 +4589,7 @@ mlkem_profile_benches!(
   mlkem768_decapsulate,
   "mlkem768",
   MlKem768,
+  rscrypto::MlKem768PreparedDecapsulationKey,
   FipsMlKem768,
   LibcruxMlKem768,
   RustCryptoMlKem768,
@@ -4598,6 +4601,7 @@ mlkem_profile_benches!(
   mlkem1024_decapsulate,
   "mlkem1024",
   MlKem1024,
+  rscrypto::MlKem1024PreparedDecapsulationKey,
   FipsMlKem1024,
   LibcruxMlKem1024,
   RustCryptoMlKem1024,

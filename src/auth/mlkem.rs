@@ -9,6 +9,12 @@
 //! such as [`MlKem768Seed`] keeps the recommended `d || z` seed form, and a
 //! decapsulation key exports the expanded form. PKCS #8 import of an expanded
 //! key adds a pairwise consistency check to the FIPS 203 checks of raw import.
+//!
+//! Every key value passed its FIPS 203 input check when it was built: import,
+//! deserialization, and key generation run it, and no constructor skips it.
+//! Encapsulation, decapsulation, and preparation therefore do not repeat it,
+//! as FIPS 203 sections 7.2 and 7.3 permit. Decapsulation cannot fail: a
+//! ciphertext's type check is its length, and ML-KEM rejects implicitly.
 
 mod operations;
 
@@ -114,7 +120,7 @@ impl KeyError for MlKemKeyError {
 }
 
 macro_rules! define_mlkem_public_bytes {
-  ($name:ident, $len:expr, $doc:expr) => {
+  (@common $name:ident, $len:expr, $doc:expr) => {
     #[doc = $doc]
     #[derive(Clone)]
     pub struct $name([u8; Self::LENGTH]);
@@ -122,13 +128,6 @@ macro_rules! define_mlkem_public_bytes {
     impl $name {
       /// Length in bytes.
       pub const LENGTH: usize = $len;
-
-      /// Construct the typed value from raw bytes.
-      #[inline]
-      #[must_use]
-      pub const fn from_bytes(bytes: [u8; Self::LENGTH]) -> Self {
-        Self(bytes)
-      }
 
       /// Return the wrapped bytes.
       #[inline]
@@ -175,6 +174,26 @@ macro_rules! define_mlkem_public_bytes {
         write!(f, ")")
       }
     }
+  };
+  // A key: every value passed its FIPS 203 input check, so only validating
+  // constructors are public.
+  ($name:ident, $len:expr, $doc:expr, checked) => {
+    define_mlkem_public_bytes!(@common $name, $len, $doc);
+
+    impl_hex_fmt!(@display $name);
+    impl_serde_bytes!($name, checked);
+  };
+  ($name:ident, $len:expr, $doc:expr) => {
+    define_mlkem_public_bytes!(@common $name, $len, $doc);
+
+    impl $name {
+      /// Construct the typed value from raw bytes.
+      #[inline]
+      #[must_use]
+      pub const fn from_bytes(bytes: [u8; Self::LENGTH]) -> Self {
+        Self(bytes)
+      }
+    }
 
     impl_hex_fmt!($name);
     impl_serde_bytes!($name);
@@ -182,7 +201,7 @@ macro_rules! define_mlkem_public_bytes {
 }
 
 macro_rules! define_mlkem_secret_bytes {
-  ($name:ident, $len:expr, $doc:expr) => {
+  (@common $name:ident, $len:expr, $doc:expr) => {
     #[doc = $doc]
     pub struct $name([u8; Self::LENGTH]);
 
@@ -194,13 +213,6 @@ macro_rules! define_mlkem_secret_bytes {
       #[inline]
       pub fn ct_eq(&self, other: &Self) -> ct::CtDecision {
         ct::fixed_eq(&self.0, &other.0)
-      }
-
-      /// Construct the typed value from raw bytes.
-      #[inline]
-      #[must_use]
-      pub const fn from_bytes(bytes: [u8; Self::LENGTH]) -> Self {
-        Self(bytes)
       }
 
       /// Explicitly extract the secret bytes into a zeroizing wrapper.
@@ -241,6 +253,26 @@ macro_rules! define_mlkem_secret_bytes {
     impl Drop for $name {
       fn drop(&mut self) {
         ct::zeroize(&mut self.0);
+      }
+    }
+  };
+  // A key: every value passed its FIPS 203 input check, so only validating
+  // constructors are public.
+  ($name:ident, $len:expr, $doc:expr, checked) => {
+    define_mlkem_secret_bytes!(@common $name, $len, $doc);
+
+    impl_hex_fmt_secret!(@display $name);
+    impl_serde_secret_bytes!($name, checked);
+  };
+  ($name:ident, $len:expr, $doc:expr) => {
+    define_mlkem_secret_bytes!(@common $name, $len, $doc);
+
+    impl $name {
+      /// Construct the typed value from raw bytes.
+      #[inline]
+      #[must_use]
+      pub const fn from_bytes(bytes: [u8; Self::LENGTH]) -> Self {
+        Self(bytes)
       }
     }
 
@@ -296,12 +328,22 @@ macro_rules! define_mlkem_profile {
     define_mlkem_public_bytes!(
       $encapsulation_key,
       $encapsulation_key_len,
-      concat!($doc_name, " encapsulation key bytes.")
+      concat!(
+        $doc_name,
+        " encapsulation key. Every value passed the FIPS 203 encapsulation key check (type and modulus), ",
+        "so encapsulation does not repeat it."
+      ),
+      checked
     );
     define_mlkem_secret_bytes!(
       $decapsulation_key,
       $decapsulation_key_len,
-      concat!($doc_name, " decapsulation key bytes.")
+      concat!(
+        $doc_name,
+        " decapsulation key. Every value passed the FIPS 203 decapsulation key check (type and hash), ",
+        "so decapsulation does not repeat it."
+      ),
+      checked
     );
     define_mlkem_public_bytes!($ciphertext, $ciphertext_len, concat!($doc_name, " ciphertext bytes."));
     define_mlkem_secret_bytes!(
@@ -337,15 +379,23 @@ macro_rules! define_mlkem_prepared_keys {
       pub const LENGTH: usize = $encapsulation_key::LENGTH;
 
       /// Parse, validate, and prepare an encapsulation key from raw bytes.
+      ///
+      /// # Errors
+      ///
+      /// Returns [`MlKemError::InvalidEncapsulationKey`] for a wrong length or a
+      /// failed FIPS 203 modulus check.
       #[inline]
       pub fn try_from_slice(bytes: &[u8]) -> Result<Self, MlKemError> {
-        if bytes.len() != Self::LENGTH {
-          return Err(MlKemError::InvalidEncapsulationKey);
-        }
-
-        let mut key = [0u8; Self::LENGTH];
-        key.copy_from_slice(bytes);
-        Self::try_from($encapsulation_key::from_bytes(key))
+        let key: [u8; Self::LENGTH] = bytes.try_into().map_err(|_| MlKemError::InvalidEncapsulationKey)?;
+        // The modulus check runs inside the decoding that preparation needs, and a rejected
+        // key never leaves this function.
+        let mut prepared = Self::unprepared($encapsulation_key(key));
+        operations::validate_and_prepare_encapsulation_key_into::<$k, $ek_bytes>(
+          prepared.key.as_bytes(),
+          &mut prepared.arithmetic,
+        )?;
+        prepared.key_hash = operations::encapsulation_key_hash(prepared.key.as_bytes());
+        Ok(prepared)
       }
 
       /// Return the validated encapsulation key.
@@ -386,35 +436,27 @@ macro_rules! define_mlkem_prepared_keys {
         }
       }
 
-      /// Validate the wrapped key and write its hash and arithmetic in place,
-      /// so that the prepared key is not moved through temporaries.
-      pub(crate) fn prepare_in_place(&mut self) -> Result<(), MlKemError> {
-        operations::validate_and_prepare_encapsulation_key_into::<$k, $ek_bytes>(
-          self.key.as_bytes(),
-          &mut self.arithmetic,
-        )?;
+      /// Write the hash and arithmetic of the wrapped key in place, so that the
+      /// prepared key is not moved through temporaries.
+      pub(crate) fn prepare_in_place(&mut self) {
+        operations::prepare_encapsulation_key_into::<$k, $ek_bytes>(self.key.as_bytes(), &mut self.arithmetic);
         self.key_hash = operations::encapsulation_key_hash(self.key.as_bytes());
-        Ok(())
       }
     }
 
-    impl core::convert::TryFrom<$encapsulation_key> for $prepared_encapsulation_key {
-      type Error = MlKemError;
-
+    impl From<$encapsulation_key> for $prepared_encapsulation_key {
       #[inline]
-      fn try_from(key: $encapsulation_key) -> Result<Self, Self::Error> {
+      fn from(key: $encapsulation_key) -> Self {
         let mut prepared = Self::unprepared(key);
-        prepared.prepare_in_place()?;
-        Ok(prepared)
+        prepared.prepare_in_place();
+        prepared
       }
     }
 
-    impl core::convert::TryFrom<&$encapsulation_key> for $prepared_encapsulation_key {
-      type Error = MlKemError;
-
+    impl From<&$encapsulation_key> for $prepared_encapsulation_key {
       #[inline]
-      fn try_from(key: &$encapsulation_key) -> Result<Self, Self::Error> {
-        Self::try_from(key.clone())
+      fn from(key: &$encapsulation_key) -> Self {
+        Self::from(key.clone())
       }
     }
 
@@ -460,15 +502,23 @@ macro_rules! define_mlkem_prepared_keys {
       pub const LENGTH: usize = $decapsulation_key::LENGTH;
 
       /// Parse, validate, and prepare a decapsulation key from raw bytes.
+      ///
+      /// # Errors
+      ///
+      /// Returns [`MlKemError::InvalidDecapsulationKey`] for a wrong length or a
+      /// failed FIPS 203 hash check.
       #[inline]
       pub fn try_from_slice(bytes: &[u8]) -> Result<Self, MlKemError> {
         if bytes.len() != Self::LENGTH {
           return Err(MlKemError::InvalidDecapsulationKey);
         }
-
-        let mut key = [0u8; Self::LENGTH];
-        key.copy_from_slice(bytes);
-        Self::try_from($decapsulation_key::from_bytes(key))
+        // A rejected key never leaves this function, and its owner clears it on drop.
+        let mut key = $decapsulation_key([0; $dk_bytes]);
+        key.0.copy_from_slice(bytes);
+        let arithmetic = operations::validate_and_prepare_decapsulation_key::<$k, $dk_pke_bytes, $ek_bytes, $dk_bytes>(
+          key.as_bytes(),
+        )?;
+        Ok(Self { key, arithmetic })
       }
 
       /// Return the validated decapsulation key.
@@ -509,30 +559,24 @@ macro_rules! define_mlkem_prepared_keys {
       }
     }
 
-    impl core::convert::TryFrom<$decapsulation_key> for $prepared_decapsulation_key {
-      type Error = MlKemError;
-
+    impl From<$decapsulation_key> for $prepared_decapsulation_key {
       #[inline]
-      fn try_from(key: $decapsulation_key) -> Result<Self, Self::Error> {
-        let arithmetic = operations::validate_and_prepare_decapsulation_key::<$k, $dk_pke_bytes, $ek_bytes, $dk_bytes>(
-          key.as_bytes(),
-        )?;
-        Ok(Self { key, arithmetic })
+      fn from(key: $decapsulation_key) -> Self {
+        let arithmetic =
+          operations::prepare_decapsulation_key::<$k, $dk_pke_bytes, $ek_bytes, $dk_bytes>(key.as_bytes());
+        Self { key, arithmetic }
       }
     }
 
-    impl core::convert::TryFrom<&$decapsulation_key> for $prepared_decapsulation_key {
-      type Error = MlKemError;
-
+    impl From<&$decapsulation_key> for $prepared_decapsulation_key {
       #[inline]
-      fn try_from(key: &$decapsulation_key) -> Result<Self, Self::Error> {
-        let arithmetic = operations::validate_and_prepare_decapsulation_key::<$k, $dk_pke_bytes, $ek_bytes, $dk_bytes>(
-          key.as_bytes(),
-        )?;
-        Ok(Self {
+      fn from(key: &$decapsulation_key) -> Self {
+        let arithmetic =
+          operations::prepare_decapsulation_key::<$k, $dk_pke_bytes, $ek_bytes, $dk_bytes>(key.as_bytes());
+        Self {
           key: key.duplicate_secret(),
           arithmetic,
-        })
+        }
       }
     }
 
@@ -592,6 +636,15 @@ define_mlkem_profile!(
   256,
   "ML-KEM-1024"
 );
+
+#[cfg(feature = "x-wing")]
+impl MlKem768EncapsulationKey {
+  /// Wrap the ML-KEM-768 part of an X-Wing encapsulation key, which passed
+  /// the same FIPS 203 check when the X-Wing key was built.
+  pub(crate) const fn from_checked_bytes(bytes: [u8; Self::LENGTH]) -> Self {
+    Self(bytes)
+  }
+}
 
 define_mlkem_prepared_keys!(
   MlKem512PreparedEncapsulationKey,
@@ -676,9 +729,10 @@ macro_rules! impl_mlkem_profile_ops {
       /// for a wrong length or a failed modulus check; and
       /// [`MlKemKeyError::MalformedDer`] for any other encoding.
       pub fn from_spki_der(der: &[u8]) -> Result<Self, MlKemKeyError> {
-        let key = Self::from_bytes(*pkix::decode_spki::<MlKemKeyError, _, $ek_bytes>(der, &Self::SPKI_HEADER)?);
-        key.validate().map_err(|_| MlKemKeyError::InvalidEncapsulationKey)?;
-        Ok(key)
+        let key = *pkix::decode_spki::<MlKemKeyError, _, $ek_bytes>(der, &Self::SPKI_HEADER)?;
+        operations::validate_encapsulation_key::<$k, $ek_bytes>(&key)
+          .map_err(|_| MlKemKeyError::InvalidEncapsulationKey)?;
+        Ok(Self(key))
       }
 
       /// Encode the RFC 9935 SubjectPublicKeyInfo DER. No heap allocation.
@@ -688,49 +742,52 @@ macro_rules! impl_mlkem_profile_ops {
       }
 
       #[doc = concat!("Parse and validate an ", $doc_name, " encapsulation key from raw bytes.")]
+      ///
+      /// Runs the FIPS 203 type and modulus checks (section 7.2) once, so
+      /// encapsulation with the key does not repeat them.
+      ///
+      /// # Errors
+      ///
+      /// Returns [`MlKemError::InvalidEncapsulationKey`] for a wrong length or a
+      /// failed modulus check.
       #[inline]
       pub fn try_from_slice(bytes: &[u8]) -> Result<Self, MlKemError> {
-        if bytes.len() != Self::LENGTH {
-          return Err(MlKemError::InvalidEncapsulationKey);
-        }
-
-        let mut key = [0u8; Self::LENGTH];
-        key.copy_from_slice(bytes);
-        let key = Self::from_bytes(key);
-        key.validate()?;
-        Ok(key)
+        let key: [u8; Self::LENGTH] = bytes.try_into().map_err(|_| MlKemError::InvalidEncapsulationKey)?;
+        operations::validate_encapsulation_key::<$k, $ek_bytes>(&key)?;
+        Ok(Self(key))
       }
 
-      /// Validate this encapsulation key using the FIPS 203 modulus check.
+      /// Prepare this key for repeated encapsulation.
       #[inline]
-      pub fn validate(&self) -> Result<(), MlKemError> {
-        operations::validate_encapsulation_key::<$k, $ek_bytes>(self.as_bytes())
-      }
-
-      /// Validate once and prepare this key for repeated encapsulation.
-      #[inline]
-      pub fn prepare(&self) -> Result<$prepared_encapsulation_key, MlKemError> {
-        $prepared_encapsulation_key::try_from(self)
+      #[must_use]
+      pub fn prepare(&self) -> $prepared_encapsulation_key {
+        $prepared_encapsulation_key::from(self)
       }
     }
 
     impl $decapsulation_key {
       #[doc = concat!("Parse and validate an ", $doc_name, " decapsulation key from raw bytes.")]
       ///
-      /// Runs the FIPS 203 length and hash checks, which do not detect a secret
-      /// vector that disagrees with the embedded encapsulation key. PKCS #8
-      /// import of an expanded key adds a pairwise consistency check; see
-      /// [`Self::from_pkcs8_der`].
+      /// Runs the FIPS 203 type and hash checks (section 7.3) once, so
+      /// decapsulation with the key does not repeat them. They do not detect a
+      /// secret vector that disagrees with the embedded encapsulation key.
+      /// PKCS #8 import of an expanded key adds a pairwise consistency check;
+      /// see [`Self::from_pkcs8_der`]. The caller retains responsibility for
+      /// clearing `bytes`.
+      ///
+      /// # Errors
+      ///
+      /// Returns [`MlKemError::InvalidDecapsulationKey`] for a wrong length or a
+      /// failed hash check.
       #[inline]
       pub fn try_from_slice(bytes: &[u8]) -> Result<Self, MlKemError> {
         if bytes.len() != Self::LENGTH {
           return Err(MlKemError::InvalidDecapsulationKey);
         }
-
-        let mut key = [0u8; Self::LENGTH];
-        key.copy_from_slice(bytes);
-        let key = Self::from_bytes(key);
-        key.validate()?;
+        // A rejected key never leaves this function, and its owner clears it on drop.
+        let mut key = Self([0; Self::LENGTH]);
+        key.0.copy_from_slice(bytes);
+        operations::validate_decapsulation_key::<$dk_pke_bytes, $ek_bytes, $dk_bytes>(&key.0)?;
         Ok(key)
       }
 
@@ -750,9 +807,9 @@ macro_rules! impl_mlkem_profile_ops {
         if bytes.len() != Self::LENGTH {
           return Err(MlKemError::InvalidDecapsulationKey);
         }
-        let mut key = Box::new_in(Self::from_bytes([0; Self::LENGTH]), alloc);
+        let mut key = Box::new_in(Self([0; Self::LENGTH]), alloc);
         key.0.copy_from_slice(bytes);
-        key.validate()?;
+        operations::validate_decapsulation_key::<$dk_pke_bytes, $ek_bytes, $dk_bytes>(&key.0)?;
         Ok(key)
       }
 
@@ -878,34 +935,29 @@ macro_rules! impl_mlkem_profile_ops {
         Ok(())
       }
 
-      /// Validate this decapsulation key using the FIPS 203 embedded-key hash check.
+      /// Prepare this key for repeated decapsulation.
       #[inline]
-      pub fn validate(&self) -> Result<(), MlKemError> {
-        operations::validate_decapsulation_key::<$dk_pke_bytes, $ek_bytes, $dk_bytes>(self.as_bytes())
-      }
-
-      /// Validate once and prepare this key for repeated decapsulation.
-      #[inline]
-      pub fn prepare(&self) -> Result<$prepared_decapsulation_key, MlKemError> {
-        $prepared_decapsulation_key::try_from(self)
+      #[must_use]
+      pub fn prepare(&self) -> $prepared_decapsulation_key {
+        $prepared_decapsulation_key::from(self)
       }
 
       /// Like [`Self::prepare`], with the prepared key in memory from `alloc`.
       ///
-      /// The key is validated and prepared directly into its allocation, so
-      /// moving the box moves only a pointer and no by-value copy of the
-      /// prepared secrets is left behind. The box clears them on drop; a
-      /// rejected key returns before they are written. Allocation failure is
+      /// The key is prepared directly into its allocation, so moving the box
+      /// moves only a pointer and no by-value copy of the prepared secrets is
+      /// left behind. The box clears them on drop. Allocation failure is
       /// handled as by [`Box::new_in`].
       #[cfg(feature = "alloc")]
-      pub fn prepare_in<A: Allocator>(&self, alloc: A) -> Result<Box<$prepared_decapsulation_key, A>, MlKemError> {
+      #[must_use]
+      pub fn prepare_in<A: Allocator>(&self, alloc: A) -> Box<$prepared_decapsulation_key, A> {
         let mut prepared = Box::new_in($prepared_decapsulation_key::zeroed(), alloc);
-        operations::validate_and_prepare_decapsulation_key_into::<$k, $dk_pke_bytes, $ek_bytes, $dk_bytes>(
+        operations::prepare_decapsulation_key_into::<$k, $dk_pke_bytes, $ek_bytes, $dk_bytes>(
           self.as_bytes(),
           &mut prepared.arithmetic,
-        )?;
+        );
         prepared.key.0.copy_from_slice(self.as_bytes());
-        Ok(prepared)
+        prepared
       }
     }
 
@@ -914,7 +966,7 @@ macro_rules! impl_mlkem_profile_ops {
       #[cfg(feature = "alloc")]
       const fn zeroed() -> Self {
         Self {
-          key: $decapsulation_key::from_bytes([0; $dk_bytes]),
+          key: $decapsulation_key([0; $dk_bytes]),
           arithmetic: operations::PreparedDecapsulationArithmetic::zeroed(),
         }
       }
@@ -933,25 +985,17 @@ macro_rules! impl_mlkem_profile_ops {
         Ok(Self::from_bytes(ciphertext))
       }
 
-      /// Validate this ciphertext's FIPS 203 type check.
-      ///
-      /// ML-KEM ciphertext validation is only a length/type check. The typed wrapper
-      /// already enforces that invariant, so every constructed value is valid.
-      #[inline]
-      pub const fn validate(&self) -> Result<(), MlKemError> {
-        let _ = self;
-        Ok(())
-      }
     }
 
     impl $profile {
       #[doc = concat!("RFC 9935 `id-alg-ml-kem-*` identifier: 2.16.840.1.101.3.4.4.", stringify!($arc), ".")]
       const ALGORITHM: pkix::Algorithm = pkix::Algorithm { family: 4, arc: $arc };
 
-      /// FIPS 203 ML-KEM.KeyGen_internal from a `d || z` seed.
+      /// FIPS 203 ML-KEM.KeyGen_internal from a `d || z` seed. Its output passes
+      /// both input checks, because it encodes reduced coefficients and stores `H(ek)`.
       fn keypair_from_seed(seed: &[u8; ML_KEM_KEY_GENERATION_RANDOM_SIZE]) -> ($encapsulation_key, $decapsulation_key) {
         let (ek, dk) = $keygen(seed);
-        ($encapsulation_key::from_bytes(ek), $decapsulation_key::from_bytes(dk))
+        ($encapsulation_key(ek), $decapsulation_key(dk))
       }
 
       /// Like [`Self::keypair_from_seed`], with the decapsulation key generated
@@ -962,13 +1006,13 @@ macro_rules! impl_mlkem_profile_ops {
         alloc: A,
       ) -> ($encapsulation_key, Box<$decapsulation_key, A>) {
         let mut encapsulation_key = [0u8; $ek_bytes];
-        let mut decapsulation_key = Box::new_in($decapsulation_key::from_bytes([0; $dk_bytes]), alloc);
+        let mut decapsulation_key = Box::new_in($decapsulation_key([0; $dk_bytes]), alloc);
         operations::keygen_into::<$k, $k_u8, $eta1_random_bytes, $dk_pke_bytes, $ek_bytes, $dk_bytes>(
           seed,
           &mut encapsulation_key,
           &mut decapsulation_key.0,
         );
-        ($encapsulation_key::from_bytes(encapsulation_key), decapsulation_key)
+        ($encapsulation_key(encapsulation_key), decapsulation_key)
       }
 
       /// Like [`Kem::generate_keypair`], with the decapsulation key in memory
@@ -990,13 +1034,13 @@ macro_rules! impl_mlkem_profile_ops {
         let mut random = ZeroizingBytes::<{ Self::KEY_GENERATION_RANDOM_SIZE }>::zeroed();
         fill_random(random.as_mut_array())?;
         let mut encapsulation_key = [0u8; $ek_bytes];
-        let mut decapsulation_key = Box::new_in($decapsulation_key::from_bytes([0; $dk_bytes]), alloc);
+        let mut decapsulation_key = Box::new_in($decapsulation_key([0; $dk_bytes]), alloc);
         operations::keygen_into::<$k, $k_u8, $eta1_random_bytes, $dk_pke_bytes, $ek_bytes, $dk_bytes>(
           random.as_array(),
           &mut encapsulation_key,
           &mut decapsulation_key.0,
         );
-        Ok(($encapsulation_key::from_bytes(encapsulation_key), decapsulation_key))
+        Ok(($encapsulation_key(encapsulation_key), decapsulation_key))
       }
 
       /// Like [`Self::generate_keypair_in`], with the decapsulation key prepared
@@ -1031,7 +1075,7 @@ macro_rules! impl_mlkem_profile_ops {
           &mut key.0,
           arithmetic,
         );
-        Ok(($encapsulation_key::from_bytes(encapsulation_key), prepared))
+        Ok(($encapsulation_key(encapsulation_key), prepared))
       }
 
       /// Like [`Self::try_generate_keypair`], with the decapsulation key in
@@ -1065,8 +1109,7 @@ macro_rules! impl_mlkem_profile_ops {
       #[doc = concat!("Encapsulate to an ", $doc_name, " key with platform entropy.")]
       /// # Errors
       ///
-      /// Returns [`MlKemError`] if the encapsulation key is invalid or the entropy source is
-      /// unavailable.
+      /// Returns [`MlKemError::RandomGenerationFailed`] if the entropy source is unavailable.
       #[cfg(feature = "getrandom")]
       #[cfg_attr(docsrs, doc(cfg(feature = "getrandom")))]
       #[inline]
@@ -1078,19 +1121,17 @@ macro_rules! impl_mlkem_profile_ops {
         })
       }
 
-      #[doc = concat!("Validate and prepare an ", $doc_name, " encapsulation key for repeated operations.")]
+      #[doc = concat!("Prepare an ", $doc_name, " encapsulation key for repeated operations.")]
       #[inline]
-      pub fn prepare_encapsulation_key(
-        encapsulation_key: &$encapsulation_key,
-      ) -> Result<$prepared_encapsulation_key, MlKemError> {
+      #[must_use]
+      pub fn prepare_encapsulation_key(encapsulation_key: &$encapsulation_key) -> $prepared_encapsulation_key {
         encapsulation_key.prepare()
       }
 
-      #[doc = concat!("Validate and prepare an ", $doc_name, " decapsulation key for repeated operations.")]
+      #[doc = concat!("Prepare an ", $doc_name, " decapsulation key for repeated operations.")]
       #[inline]
-      pub fn prepare_decapsulation_key(
-        decapsulation_key: &$decapsulation_key,
-      ) -> Result<$prepared_decapsulation_key, MlKemError> {
+      #[must_use]
+      pub fn prepare_decapsulation_key(decapsulation_key: &$decapsulation_key) -> $prepared_decapsulation_key {
         decapsulation_key.prepare()
       }
 
@@ -1105,10 +1146,11 @@ macro_rules! impl_mlkem_profile_ops {
 
       #[doc = concat!("Decapsulate with a prepared ", $doc_name, " decapsulation key.")]
       #[inline]
+      #[must_use]
       pub fn decapsulate_prepared(
         decapsulation_key: &$prepared_decapsulation_key,
         ciphertext: &$ciphertext,
-      ) -> Result<$shared_secret, MlKemError> {
+      ) -> $shared_secret {
         decapsulation_key.decapsulate(ciphertext)
       }
     }
@@ -1131,14 +1173,19 @@ macro_rules! impl_mlkem_profile_ops {
     }
     impl $prepared_decapsulation_key {
       #[doc = concat!("Decapsulate with this prepared ", $doc_name, " decapsulation key.")]
+      ///
+      /// Both inputs passed their FIPS 203 checks when they were built: the
+      /// ciphertext type check is its length. A ciphertext that was not produced
+      /// for this key decapsulates to the implicit-rejection key, so this cannot
+      /// fail.
       #[inline]
-      pub fn decapsulate(&self, ciphertext: &$ciphertext) -> Result<$shared_secret, MlKemError> {
-        ciphertext.validate()?;
-        Ok($shared_secret::from_bytes($decapsulate_prepared(
+      #[must_use]
+      pub fn decapsulate(&self, ciphertext: &$ciphertext) -> $shared_secret {
+        $shared_secret::from_bytes($decapsulate_prepared(
           self.as_bytes(),
           &self.arithmetic,
           ciphertext.as_bytes(),
-        )))
+        ))
       }
     }
     impl Kem for $profile {
@@ -1161,15 +1208,13 @@ macro_rules! impl_mlkem_profile_ops {
         let mut random = ZeroizingBytes::<{ Self::KEY_GENERATION_RANDOM_SIZE }>::zeroed();
         fill_random(random.as_mut_array())?;
         let (ek, dk) = $keygen(random.as_array());
-        Ok(($encapsulation_key::from_bytes(ek), $decapsulation_key::from_bytes(dk)))
+        Ok(($encapsulation_key(ek), $decapsulation_key(dk)))
       }
 
       fn encapsulate(
         encapsulation_key: &Self::EncapsulationKey,
         mut fill_random: impl FnMut(&mut [u8]) -> Result<(), Self::EncapsulationError>,
       ) -> Result<(Self::Ciphertext, Self::SharedSecret), Self::EncapsulationError> {
-        encapsulation_key.validate()?;
-
         let mut random = ZeroizingBytes::<{ Self::ENCAPSULATION_RANDOM_SIZE }>::zeroed();
         fill_random(random.as_mut_array())?;
         let (ciphertext, shared_secret) = operations::encapsulate::<
@@ -1193,8 +1238,6 @@ macro_rules! impl_mlkem_profile_ops {
         decapsulation_key: &Self::DecapsulationKey,
         ciphertext: &Self::Ciphertext,
       ) -> Result<Self::SharedSecret, Self::DecapsulationError> {
-        decapsulation_key.validate()?;
-        ciphertext.validate()?;
         Ok($shared_secret::from_bytes(operations::decapsulate::<
           $k,
           $eta1_random_bytes,
@@ -1402,7 +1445,7 @@ impl MlKem768PreparedDecapsulationKey {
   /// All-zero owner that [`Self::expand_seed`] fills in place.
   pub(crate) const fn unexpanded() -> Self {
     Self {
-      key: MlKem768DecapsulationKey::from_bytes([0; 2400]),
+      key: MlKem768DecapsulationKey([0; 2400]),
       arithmetic: operations::PreparedDecapsulationArithmetic::zeroed(),
     }
   }

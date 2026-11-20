@@ -12,7 +12,9 @@ extern crate alloc;
 #[cfg(feature = "alloc")]
 use alloc::alloc::Global;
 
-use rscrypto::{Kem, XWing, XWingCiphertext, XWingDecapsulationKey, XWingEncapsulationKey, XWingError};
+use rscrypto::{
+  Kem, XWing, XWingCiphertext, XWingDecapsulationKey, XWingEncapsulationKey, XWingError, XWingPreparedEncapsulationKey,
+};
 use serde_json::Value;
 
 mod common;
@@ -104,7 +106,7 @@ fn vectors_match_on_every_path() {
     );
 
     let parsed = XWingEncapsulationKey::try_from_slice(&vector.encapsulation_key).expect("vector key");
-    let prepared_encapsulation_key = parsed.prepare().expect("vector key");
+    let prepared_encapsulation_key = parsed.prepare();
     assert_eq!(prepared_encapsulation_key.encapsulation_key(), parsed);
     for (path, (ciphertext, shared_secret)) in [
       (
@@ -187,13 +189,14 @@ fn small_order_x25519_parts_are_rejected() {
     let mut encapsulation_key: [u8; XWing::ENCAPSULATION_KEY_SIZE] =
       vector.encapsulation_key.clone().try_into().expect("vector key length");
     encapsulation_key[key_x25519_offset..].copy_from_slice(&point);
-    let encapsulation_key = XWingEncapsulationKey::from_bytes(encapsulation_key);
+    let encapsulation_key =
+      XWingEncapsulationKey::try_from_slice(&encapsulation_key).expect("the ML-KEM part is valid");
     assert_eq!(
       XWing::encapsulate(&encapsulation_key, filled(&vector.randomness)).err(),
       Some(XWingError::InvalidEncapsulationKey),
       "{point:02x?}"
     );
-    let prepared_encapsulation_key = encapsulation_key.prepare().expect("the ML-KEM part is valid");
+    let prepared_encapsulation_key = encapsulation_key.prepare();
     assert_eq!(
       prepared_encapsulation_key.encapsulate(filled(&vector.randomness)).err(),
       Some(XWingError::InvalidEncapsulationKey),
@@ -203,9 +206,9 @@ fn small_order_x25519_parts_are_rejected() {
 }
 
 /// FIPS 203 section 7.2: an ML-KEM coefficient of at least q makes the key
-/// invalid, and encapsulation must reject it before it asks for randomness.
+/// invalid. Import rejects it, so no invalid key reaches encapsulation.
 #[test]
-fn unreduced_ml_kem_coefficient_is_rejected_before_randomness() {
+fn unreduced_ml_kem_coefficient_is_rejected_at_import() {
   let mut bytes: [u8; XWing::ENCAPSULATION_KEY_SIZE] = vectors()[0]
     .encapsulation_key
     .clone()
@@ -214,18 +217,9 @@ fn unreduced_ml_kem_coefficient_is_rejected_before_randomness() {
   // Coefficient 0 becomes 4095, at least q = 3329.
   bytes[0] = 0xff;
   bytes[1] |= 0x0f;
-  let encapsulation_key = XWingEncapsulationKey::from_bytes(bytes);
   let invalid = Some(XWingError::InvalidEncapsulationKey);
   assert_eq!(XWingEncapsulationKey::try_from_slice(&bytes).err(), invalid);
-  assert_eq!(encapsulation_key.validate().err(), invalid);
-  assert_eq!(encapsulation_key.prepare().err(), invalid);
-  let mut asked = false;
-  let result = XWing::encapsulate(&encapsulation_key, |_| {
-    asked = true;
-    Ok(())
-  });
-  assert_eq!(result.err(), invalid);
-  assert!(!asked, "randomness was drawn for an invalid key");
+  assert_eq!(XWingPreparedEncapsulationKey::try_from_slice(&bytes).err(), invalid);
 }
 
 /// Raw imports accept only the exact lengths.

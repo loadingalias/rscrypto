@@ -130,7 +130,7 @@ fn accumulated_mlkem768(iterations: usize) -> [u8; 32] {
     })
     .expect("key generation");
     accumulator.update(ek.as_bytes());
-    let prepared = dk.prepare().expect("key preparation");
+    let prepared = dk.prepare();
 
     let mut message = [0u8; MlKem768::ENCAPSULATION_RANDOM_SIZE];
     source.squeeze(&mut message);
@@ -144,14 +144,14 @@ fn accumulated_mlkem768(iterations: usize) -> [u8; 32] {
 
     let decapsulated = MlKem768::decapsulate(&dk, &ciphertext).expect("decapsulation");
     assert!(decapsulated.expose_secret().as_bytes() == shared.expose_secret().as_bytes());
-    let decapsulated = prepared.decapsulate(&ciphertext).expect("prepared decapsulation");
+    let decapsulated = prepared.decapsulate(&ciphertext);
     assert!(decapsulated.expose_secret().as_bytes() == shared.expose_secret().as_bytes());
 
     let mut random = [0u8; MlKem768::CIPHERTEXT_SIZE];
     source.squeeze(&mut random);
     let random = MlKem768Ciphertext::try_from_slice(&random).expect("any ciphertext bytes are well-formed");
     let rejected = MlKem768::decapsulate(&dk, &random).expect("decapsulation");
-    let prepared_rejected = prepared.decapsulate(&random).expect("prepared decapsulation");
+    let prepared_rejected = prepared.decapsulate(&random);
     assert!(prepared_rejected.expose_secret().as_bytes() == rejected.expose_secret().as_bytes());
     accumulator.update(rejected.expose_secret().as_bytes());
   }

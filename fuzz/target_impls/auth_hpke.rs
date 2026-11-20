@@ -28,7 +28,7 @@ pub(super) fn run(data: &[u8]) {
       recipient.encapsulation_key().as_bytes().as_slice(),
       oracle_public.to_bytes().as_slice()
     );
-    let public_key = recipient.encapsulation_key().prepare().expect("a derived key is valid");
+    let public_key = recipient.encapsulation_key().prepare();
     let (encapsulation, mut sender) =
       HpkeSender::<XWingSuite>::setup(&public_key, info, fill).expect("a derived key encapsulates");
     let ciphertext = sender.seal_to_vec(aad, plaintext).expect("seal");

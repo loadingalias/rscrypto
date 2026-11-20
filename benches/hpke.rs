@@ -565,7 +565,7 @@ fn xwing(c: &mut Criterion) {
     return;
   }
   let recipient = XWingSuite::derive_keypair(b"rscrypto HPKE benchmark recipient");
-  let public_key = recipient.encapsulation_key().prepare().expect("derived key");
+  let public_key = recipient.encapsulation_key().prepare();
   let (oracle_secret, oracle_public) = hpke::kem::XWing::derive_keypair(b"rscrypto HPKE benchmark recipient");
   let (encapsulation, _) = HpkeSender::<XWingSuite>::setup(&public_key, INFO, filled(&SEED)).expect("setup");
   let oracle_encapsulation =

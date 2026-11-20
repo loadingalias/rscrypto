@@ -30,7 +30,7 @@ use rscrypto::{
   Poly1305, Poly1305OneTimeKey, RsaBlindingPair, RsaOaepProfile, RsaPkcs1v15Profile, RsaPrivateKey, RsaPssProfile,
   RsaPublicKeyPolicy, Scrypt, ScryptParams, SecretBytes, Sha256, SipHash24, SipHashKey, SipRandomState,
   X25519PublicKey, X25519SecretKey, XChaCha20Poly1305, XChaCha20Poly1305Key, XWing, XWingCiphertext,
-  XWingDecapsulationKey, XWingEncapsulationKey, XWingError,
+  XWingDecapsulationKey, XWingEncapsulationKey, XWingError, XWingPreparedEncapsulationKey,
   aead::{Nonce96, Nonce128, Nonce192, Nonce256, diag_aes_siv_cmac256_open_portable},
   checksum::Checksum,
   traits::Kem as _,
@@ -822,7 +822,10 @@ macro_rules! kem_ct_harness {
       let Some(ciphertext) = (unsafe { read_array::<{ <$profile>::CIPHERTEXT_SIZE }>(ciphertext) }) else {
         return STATUS_ERR;
       };
-      let decapsulation_key = <$decapsulation_key>::from_bytes(decapsulation_key);
+      // Import runs the FIPS 203 hash check that decapsulation then relies on.
+      let Ok(decapsulation_key) = <$decapsulation_key>::try_from_slice(&decapsulation_key) else {
+        return STATUS_ERR;
+      };
       let ciphertext = <$ciphertext>::from_bytes(ciphertext);
       let Ok(shared_secret) = <$profile>::decapsulate(&decapsulation_key, &ciphertext) else {
         return STATUS_ERR;
@@ -1054,7 +1057,7 @@ hpke_ct_harness!(
   ct_entry_hpke_xwing_seal,
   ct_entry_hpke_xwing_open,
   HpkeXWingHkdfSha256ChaCha20Poly1305,
-  public_key: XWing::ENCAPSULATION_KEY_SIZE, |bytes| XWingEncapsulationKey::from_bytes(bytes).prepare().ok(),
+  public_key: XWing::ENCAPSULATION_KEY_SIZE, |bytes| XWingPreparedEncapsulationKey::try_from_slice(&bytes).ok(),
   private_key: |seed| XWingDecapsulationKey::from_bytes(seed).prepare(),
   encapsulation: XWing::CIPHERTEXT_SIZE, |encoded| XWingCiphertext::from_bytes(encoded),
   random: XWing::ENCAPSULATION_RANDOM_SIZE,
@@ -1804,7 +1807,7 @@ fixed_tag_verify_entry!(ct_entry_hmac_sha384_verify, HmacSha384, HmacSha384Tag, 
 fixed_tag_verify_entry!(ct_entry_hmac_sha512_verify, HmacSha512, HmacSha512Tag, 64);
 
 macro_rules! fixed_owner_eq_entry {
-  ($name:ident, $type:ty, $len:expr) => {
+  (@entry $name:ident, $len:expr, $compare:expr) => {
     #[doc = "Compare two fixed-size secret-owning values through the constant-time C ABI harness."]
     #[doc = ""]
     #[doc = "# Safety"]
@@ -1826,8 +1829,22 @@ macro_rules! fixed_owner_eq_entry {
         return STATUS_ERR;
       };
 
-      u8::from(<$type>::from_bytes(a).ct_eq(&<$type>::from_bytes(b)).declassify())
+      ($compare)(a, b)
     }
+  };
+  // An owner whose construction validates, as an ML-KEM key's does; invalid bytes return `STATUS_ERR`.
+  ($name:ident, $type:ty, $len:expr, checked) => {
+    fixed_owner_eq_entry!(@entry $name, $len, |a: [u8; $len], b: [u8; $len]| {
+      let (Ok(a), Ok(b)) = (<$type>::try_from_slice(&a), <$type>::try_from_slice(&b)) else {
+        return STATUS_ERR;
+      };
+      u8::from(a.ct_eq(&b).declassify())
+    });
+  };
+  ($name:ident, $type:ty, $len:expr) => {
+    fixed_owner_eq_entry!(@entry $name, $len, |a: [u8; $len], b: [u8; $len]| {
+      u8::from(<$type>::from_bytes(a).ct_eq(&<$type>::from_bytes(b)).declassify())
+    });
   };
 }
 
@@ -1836,9 +1853,9 @@ fixed_owner_eq_entry!(ct_entry_owner_eq_28, HmacSha3_224Tag, 28);
 fixed_owner_eq_entry!(ct_entry_owner_eq_32, X25519SecretKey, 32);
 fixed_owner_eq_entry!(ct_entry_owner_eq_48, HmacSha384Tag, 48);
 fixed_owner_eq_entry!(ct_entry_owner_eq_64, HmacSha512Tag, 64);
-fixed_owner_eq_entry!(ct_entry_owner_eq_1632, MlKem512DecapsulationKey, 1632);
-fixed_owner_eq_entry!(ct_entry_owner_eq_2400, MlKem768DecapsulationKey, 2400);
-fixed_owner_eq_entry!(ct_entry_owner_eq_3168, MlKem1024DecapsulationKey, 3168);
+fixed_owner_eq_entry!(ct_entry_owner_eq_1632, MlKem512DecapsulationKey, 1632, checked);
+fixed_owner_eq_entry!(ct_entry_owner_eq_2400, MlKem768DecapsulationKey, 2400, checked);
+fixed_owner_eq_entry!(ct_entry_owner_eq_3168, MlKem1024DecapsulationKey, 3168, checked);
 
 /// Check that a 32-byte secret's `Debug` representation remains redacted.
 ///

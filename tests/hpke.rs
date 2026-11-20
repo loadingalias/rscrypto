@@ -169,7 +169,7 @@ fn in_place_forms_match_vectors() {
   let recipient = XWingSuite::derive_keypair_in(&field(&case, "ikmR"), Global);
   assert_eq!(recipient.decapsulation_key().as_bytes(), &array::<32>(&case, "skRm"));
   let info = field(&case, "info");
-  let public_key = recipient.encapsulation_key().prepare().expect("vector key");
+  let public_key = recipient.encapsulation_key().prepare();
   let (encapsulation, mut sender) =
     HpkeSender::<XWingSuite>::setup_in(&public_key, &info, filled(&field(&case, "ikmE")), Global).expect("setup");
   assert_eq!(encapsulation.as_bytes().as_slice(), field(&case, "enc"));
@@ -189,7 +189,7 @@ fn xwing_vector_matches() {
   );
   let info = field(&case, "info");
 
-  let public_key = recipient.encapsulation_key().prepare().expect("vector key");
+  let public_key = recipient.encapsulation_key().prepare();
   let (encapsulation, mut sender) =
     HpkeSender::<XWingSuite>::setup(&public_key, &info, filled(&field(&case, "ikmE"))).expect("setup");
   assert_eq!(encapsulation.as_bytes().as_slice(), field(&case, "enc"));
@@ -229,12 +229,9 @@ fn small_order_inputs_are_rejected() {
   assert_eq!(points.len(), 14);
   let recipient = X25519Suite::derive_keypair(&[0x11; 32]);
   let xwing_recipient = XWingSuite::derive_keypair(&[0x22; 32]);
-  let (xwing_encapsulation, _) = HpkeSender::<XWingSuite>::setup(
-    &xwing_recipient.encapsulation_key().prepare().expect("derived key"),
-    b"",
-    filled(&[0x33; 64]),
-  )
-  .expect("setup");
+  let (xwing_encapsulation, _) =
+    HpkeSender::<XWingSuite>::setup(&xwing_recipient.encapsulation_key().prepare(), b"", filled(&[0x33; 64]))
+      .expect("setup");
 
   for point in points {
     assert_eq!(
@@ -250,9 +247,7 @@ fn small_order_inputs_are_rejected() {
 
     let mut key = xwing_recipient.encapsulation_key().to_bytes();
     key[XWing::ENCAPSULATION_KEY_SIZE - 32..].copy_from_slice(&point);
-    let key = rscrypto::XWingEncapsulationKey::from_bytes(key)
-      .prepare()
-      .expect("valid ML-KEM part");
+    let key = rscrypto::XWingPreparedEncapsulationKey::try_from_slice(&key).expect("valid ML-KEM part");
     assert_eq!(
       HpkeSender::<XWingSuite>::setup(&key, b"", filled(&[0x33; 64])).err(),
       Some(HpkeError::EncapsulationFailed),
@@ -352,8 +347,7 @@ fn random_source_failure_is_returned() {
   );
   let xwing = XWingDecapsulationKey::from_bytes([0xaa; 32])
     .encapsulation_key()
-    .prepare()
-    .expect("derived key");
+    .prepare();
   assert_eq!(
     HpkeSender::<XWingSuite>::setup(&xwing, b"", failing).err(),
     Some(HpkeError::RandomGenerationFailed)

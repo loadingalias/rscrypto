@@ -822,9 +822,7 @@ pub(crate) mod tests {
         core::hint::black_box(crate::MlKem768::decapsulate(&dk, &ciphertext))
       });
       let mut prepared = None;
-      covered("ML-KEM key preparation", || {
-        prepared = Some(dk.prepare().expect("prepare"))
-      });
+      covered("ML-KEM key preparation", || prepared = Some(dk.prepare()));
       let prepared = prepared.expect("prepared key");
       covered("ML-KEM prepared decapsulation", || {
         core::hint::black_box(prepared.decapsulate(&ciphertext))

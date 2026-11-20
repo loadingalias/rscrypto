@@ -292,18 +292,22 @@ pub(super) fn validate_encapsulation_key<const K: usize, const EK_BYTES: usize>(
   }
 }
 
+/// The FIPS 203 hash check: the stored `H(ek)` equals the hash of the embedded `ek`.
+#[inline]
+fn decapsulation_key_hash_matches<const DK_PKE_BYTES: usize, const EK_BYTES: usize, const DK_BYTES: usize>(
+  dk: &[u8; DK_BYTES],
+) -> bool {
+  let ek_end = DK_PKE_BYTES.strict_add(EK_BYTES);
+  let expected = h(&dk[DK_PKE_BYTES..ek_end]);
+  ct_eq_mask(&expected, &dk[ek_end..ek_end.strict_add(HASH_BYTES)]) == 0xff
+}
+
 #[inline]
 pub(super) fn validate_decapsulation_key<const DK_PKE_BYTES: usize, const EK_BYTES: usize, const DK_BYTES: usize>(
   dk: &[u8; DK_BYTES],
 ) -> Result<(), MlKemError> {
   crate::traits::ct::with_data_independent_timing(|| {
-    let ek_start = DK_PKE_BYTES;
-    let ek_end = ek_start.strict_add(EK_BYTES);
-    let h_start = ek_end;
-    let h_end = h_start.strict_add(HASH_BYTES);
-    let expected = h(&dk[ek_start..ek_end]);
-
-    if ct_eq_mask(&expected, &dk[h_start..h_end]) == 0xff {
+    if decapsulation_key_hash_matches::<DK_PKE_BYTES, EK_BYTES, DK_BYTES>(dk) {
       Ok(())
     } else {
       Err(MlKemError::InvalidDecapsulationKey)
@@ -395,6 +399,39 @@ pub(super) fn validate_and_prepare_encapsulation_key_into<const K: usize, const 
   }
 }
 
+/// The prepared arithmetic of a decapsulation key that passed the hash check.
+pub(super) fn prepare_decapsulation_key<
+  const K: usize,
+  const DK_PKE_BYTES: usize,
+  const EK_BYTES: usize,
+  const DK_BYTES: usize,
+>(
+  dk: &[u8; DK_BYTES],
+) -> PreparedDecapsulationArithmetic<K> {
+  crate::traits::ct::with_data_independent_timing(|| {
+    let mut arithmetic = PreparedDecapsulationArithmetic::zeroed();
+    write_prepared_decapsulation_key::<K, DK_PKE_BYTES, EK_BYTES, DK_BYTES>(dk, &mut arithmetic);
+    arithmetic
+  })
+}
+
+/// Write the prepared arithmetic of a decapsulation key that passed the hash
+/// check into `out` without moving secret state.
+#[cfg(feature = "alloc")]
+pub(super) fn prepare_decapsulation_key_into<
+  const K: usize,
+  const DK_PKE_BYTES: usize,
+  const EK_BYTES: usize,
+  const DK_BYTES: usize,
+>(
+  dk: &[u8; DK_BYTES],
+  out: &mut PreparedDecapsulationArithmetic<K>,
+) {
+  crate::traits::ct::with_data_independent_timing(|| {
+    write_prepared_decapsulation_key::<K, DK_PKE_BYTES, EK_BYTES, DK_BYTES>(dk, out);
+  });
+}
+
 pub(super) fn validate_and_prepare_decapsulation_key<
   const K: usize,
   const DK_PKE_BYTES: usize,
@@ -422,23 +459,33 @@ pub(super) fn validate_and_prepare_decapsulation_key_into<
   out: &mut PreparedDecapsulationArithmetic<K>,
 ) -> Result<(), MlKemError> {
   crate::traits::ct::with_data_independent_timing(|| {
-    let ek_start = DK_PKE_BYTES;
-    let ek_end = ek_start.strict_add(EK_BYTES);
-    let h_start = ek_end;
-    let h_end = h_start.strict_add(HASH_BYTES);
-    let expected = h(&dk[ek_start..ek_end]);
-
-    if ct_eq_mask(&expected, &dk[h_start..h_end]) != 0xff {
+    if !decapsulation_key_hash_matches::<DK_PKE_BYTES, EK_BYTES, DK_BYTES>(dk) {
       return Err(MlKemError::InvalidDecapsulationKey);
     }
-
-    let ek = <&[u8; EK_BYTES]>::try_from(&dk[ek_start..ek_end]).map_err(|_| MlKemError::InvalidDecapsulationKey)?;
-    let z = <&[u8; SEED_BYTES]>::try_from(&dk[h_end..]).map_err(|_| MlKemError::InvalidDecapsulationKey)?;
-    prepare_decapsulation_key_slice_into::<K, DK_PKE_BYTES>(&dk[..DK_PKE_BYTES], &mut out.s_hat);
-    decryption_mask_into(z, &mut out.mask);
-    prepare_encapsulation_key_into::<K, EK_BYTES>(ek, &mut out.encapsulation);
+    write_prepared_decapsulation_key::<K, DK_PKE_BYTES, EK_BYTES, DK_BYTES>(dk, out);
     Ok(())
   })
+}
+
+/// The preparation of [`prepare_decapsulation_key_into`], without its DIT scope.
+fn write_prepared_decapsulation_key<
+  const K: usize,
+  const DK_PKE_BYTES: usize,
+  const EK_BYTES: usize,
+  const DK_BYTES: usize,
+>(
+  dk: &[u8; DK_BYTES],
+  out: &mut PreparedDecapsulationArithmetic<K>,
+) {
+  let ek_end = DK_PKE_BYTES.strict_add(EK_BYTES);
+  let h_end = ek_end.strict_add(HASH_BYTES);
+  let ek = dk[DK_PKE_BYTES..ek_end]
+    .as_array::<EK_BYTES>()
+    .expect("dk embeds a whole ek");
+  let z = dk[h_end..].as_array::<SEED_BYTES>().expect("dk ends with z");
+  prepare_decapsulation_key_slice_into::<K, DK_PKE_BYTES>(&dk[..DK_PKE_BYTES], &mut out.s_hat);
+  decryption_mask_into(z, &mut out.mask);
+  prepare_encapsulation_key_into::<K, EK_BYTES>(ek, &mut out.encapsulation);
 }
 
 fn prepare_encapsulation_key<const K: usize, const EK_BYTES: usize>(
@@ -449,7 +496,7 @@ fn prepare_encapsulation_key<const K: usize, const EK_BYTES: usize>(
   arithmetic
 }
 
-fn prepare_encapsulation_key_into<const K: usize, const EK_BYTES: usize>(
+pub(super) fn prepare_encapsulation_key_into<const K: usize, const EK_BYTES: usize>(
   ek: &[u8; EK_BYTES],
   out: &mut PreparedEncapsulationArithmetic<K>,
 ) {

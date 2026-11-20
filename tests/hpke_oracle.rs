@@ -107,8 +107,7 @@ proptest! {
 
     let public_key = XWingEncapsulationKey::try_from_slice(&oracle_public.to_bytes())
       .expect("oracle key")
-      .prepare()
-      .expect("oracle key");
+      .prepare();
     let mut randomness = [0u8; 64];
     randomness[..32].copy_from_slice(&random);
     randomness[32..].copy_from_slice(&random);

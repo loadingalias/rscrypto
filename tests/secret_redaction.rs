@@ -324,15 +324,15 @@ fn private_key_and_shared_secret_debug_snapshots_are_redacted() {
   #[cfg(feature = "ml-kem")]
   {
     assert_debug_snapshot(
-      &rscrypto::MlKem512DecapsulationKey::from_bytes([0x53; rscrypto::MlKem512DecapsulationKey::LENGTH]),
+      &rscrypto::MlKem512Seed::from_bytes([0x53; 64]).keypair().1,
       "MlKem512DecapsulationKey(****)",
     );
     assert_debug_snapshot(
-      &rscrypto::MlKem768DecapsulationKey::from_bytes([0x53; rscrypto::MlKem768DecapsulationKey::LENGTH]),
+      &rscrypto::MlKem768Seed::from_bytes([0x53; 64]).keypair().1,
       "MlKem768DecapsulationKey(****)",
     );
     assert_debug_snapshot(
-      &rscrypto::MlKem1024DecapsulationKey::from_bytes([0x53; rscrypto::MlKem1024DecapsulationKey::LENGTH]),
+      &rscrypto::MlKem1024Seed::from_bytes([0x53; 64]).keypair().1,
       "MlKem1024DecapsulationKey(****)",
     );
     assert_debug_snapshot(
@@ -360,7 +360,7 @@ fn private_key_and_shared_secret_debug_snapshots_are_redacted() {
           Ok::<(), rscrypto::MlKemError>(())
         })
         .expect("deterministic ML-KEM key generation must succeed");
-        let prepared = key.prepare().expect("generated ML-KEM key must validate");
+        let prepared = key.prepare();
         assert_debug_snapshot(&prepared, $expected);
       }};
     }

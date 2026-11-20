@@ -764,8 +764,7 @@ mod hpke {
   pub(super) fn xwing_sender() {
     let public_key = XWingEncapsulationKey::try_from_slice(XWING.input("pkRm"))
       .expect("encapsulation key")
-      .prepare()
-      .expect("valid key");
+      .prepare();
     send::<XWingSuite>(&XWING, &public_key);
   }
 
@@ -825,8 +824,7 @@ mod hpke {
   pub(super) fn xwing_sender_in() {
     let public_key = XWingEncapsulationKey::try_from_slice(XWING.input("pkRm"))
       .expect("encapsulation key")
-      .prepare()
-      .expect("valid key");
+      .prepare();
     send_in::<XWingSuite>(&XWING, &public_key);
   }
 

@@ -112,7 +112,7 @@ impl fmt::Display for XWingError {
 impl Error for XWingError {}
 
 macro_rules! define_public_bytes {
-  ($name:ident, $len:expr, $doc:literal) => {
+  (@common $name:ident, $len:expr, $doc:literal) => {
     #[doc = $doc]
     #[derive(Clone, PartialEq, Eq, Hash)]
     pub struct $name([u8; Self::LENGTH]);
@@ -120,13 +120,6 @@ macro_rules! define_public_bytes {
     impl $name {
       /// Length in bytes.
       pub const LENGTH: usize = $len;
-
-      /// Wrap raw bytes without validation.
-      #[inline]
-      #[must_use]
-      pub const fn from_bytes(bytes: [u8; Self::LENGTH]) -> Self {
-        Self(bytes)
-      }
 
       /// Return the wrapped bytes.
       #[inline]
@@ -155,6 +148,25 @@ macro_rules! define_public_bytes {
         write!(f, "{}(", stringify!($name))?;
         crate::hex::fmt_hex_lower(&self.0, f)?;
         write!(f, ")")
+      }
+    }
+  };
+  // A key: every value passed its check, so only validating constructors are public.
+  ($name:ident, $len:expr, $doc:literal, checked) => {
+    define_public_bytes!(@common $name, $len, $doc);
+
+    impl_hex_fmt!(@display $name);
+    impl_serde_bytes!($name, checked);
+  };
+  ($name:ident, $len:expr, $doc:literal) => {
+    define_public_bytes!(@common $name, $len, $doc);
+
+    impl $name {
+      /// Wrap raw bytes.
+      #[inline]
+      #[must_use]
+      pub const fn from_bytes(bytes: [u8; Self::LENGTH]) -> Self {
+        Self(bytes)
       }
     }
 
@@ -234,7 +246,8 @@ macro_rules! define_secret_bytes {
 define_public_bytes!(
   XWingEncapsulationKey,
   ML_KEM_ENCAPSULATION_KEY_SIZE + X25519PublicKey::LENGTH,
-  "X-Wing encapsulation key: the ML-KEM-768 encapsulation key, then the X25519 public key."
+  "X-Wing encapsulation key: the ML-KEM-768 encapsulation key, then the X25519 public key.\n\nEvery value passed the FIPS 203 modulus check of its ML-KEM-768 part, so encapsulation does not repeat it.",
+  checked
 );
 define_public_bytes!(
   XWingCiphertext,
@@ -336,7 +349,7 @@ impl Kem for XWing {
     encapsulation_key: &Self::EncapsulationKey,
     fill_random: impl FnMut(&mut [u8]) -> Result<(), Self::EncapsulationError>,
   ) -> Result<(Self::Ciphertext, Self::SharedSecret), Self::EncapsulationError> {
-    encapsulation_key.prepare()?.encapsulate(fill_random)
+    encapsulation_key.prepare().encapsulate(fill_random)
   }
 
   /// `Decapsulate` of the draft, which expands the key on each call. See
@@ -352,54 +365,41 @@ impl Kem for XWing {
 }
 
 impl XWingEncapsulationKey {
-  /// Parse and validate an encapsulation key from raw bytes. See [`Self::validate`].
+  /// Parse and validate an encapsulation key from raw bytes.
+  ///
+  /// Runs the FIPS 203 modulus check of the ML-KEM-768 part once, so
+  /// encapsulation with the key does not repeat it. Every X25519 part passes.
+  /// Encapsulation rejects an X25519 part of small order, because only its
+  /// all-zero shared secret identifies it.
   ///
   /// # Errors
   ///
   /// Returns [`XWingError::InvalidEncapsulationKey`] for a wrong length or a
-  /// failed FIPS 203 modulus check.
+  /// failed modulus check.
   pub fn try_from_slice(bytes: &[u8]) -> Result<Self, XWingError> {
-    let key = Self(bytes.try_into().map_err(|_| XWingError::InvalidEncapsulationKey)?);
-    key.validate()?;
-    Ok(key)
+    let key: [u8; Self::LENGTH] = bytes.try_into().map_err(|_| XWingError::InvalidEncapsulationKey)?;
+    let (ml_kem, _) = key
+      .split_first_chunk::<ML_KEM_ENCAPSULATION_KEY_SIZE>()
+      .expect("the ML-KEM part fits the key");
+    MlKem768EncapsulationKey::try_from_slice(ml_kem).map_err(|_| XWingError::InvalidEncapsulationKey)?;
+    Ok(Self(key))
   }
 
-  /// Validate the ML-KEM-768 part with the FIPS 203 modulus check.
-  ///
-  /// Every X25519 part passes. Encapsulation rejects an X25519 part of small
-  /// order, because only its all-zero shared secret identifies it.
-  ///
-  /// # Errors
-  ///
-  /// Returns [`XWingError::InvalidEncapsulationKey`] for a failed modulus check.
-  pub fn validate(&self) -> Result<(), XWingError> {
-    self
-      .ml_kem()
-      .validate()
-      .map_err(|_| XWingError::InvalidEncapsulationKey)
-  }
-
-  /// Validate one time and prepare this key for repeated encapsulation.
-  ///
-  /// # Errors
-  ///
-  /// As [`Self::validate`].
-  pub fn prepare(&self) -> Result<XWingPreparedEncapsulationKey, XWingError> {
+  /// Prepare this key for repeated encapsulation.
+  #[must_use]
+  pub fn prepare(&self) -> XWingPreparedEncapsulationKey {
     // Prepare in the returned owner, so the prepared ML-KEM key is not moved
     // through temporaries.
     let mut prepared = XWingPreparedEncapsulationKey {
       ml_kem: MlKem768PreparedEncapsulationKey::unprepared(self.ml_kem()),
       x25519: X25519PublicKey::from_bytes(*self.x25519()),
     };
+    prepared.ml_kem.prepare_in_place();
     prepared
-      .ml_kem
-      .prepare_in_place()
-      .map_err(|_| XWingError::InvalidEncapsulationKey)?;
-    Ok(prepared)
   }
 
   fn ml_kem(&self) -> MlKem768EncapsulationKey {
-    MlKem768EncapsulationKey::from_bytes(*self.0.first_chunk().expect("the ML-KEM part fits the key"))
+    MlKem768EncapsulationKey::from_checked_bytes(*self.0.first_chunk().expect("the ML-KEM part fits the key"))
   }
 
   fn x25519(&self) -> &[u8; X25519PublicKey::LENGTH] {
@@ -511,6 +511,28 @@ pub struct XWingPreparedEncapsulationKey {
 }
 
 impl XWingPreparedEncapsulationKey {
+  /// Parse, validate, and prepare an encapsulation key from raw bytes.
+  ///
+  /// The FIPS 203 modulus check of the ML-KEM-768 part runs inside the decoding
+  /// that preparation needs, so raw bytes take one pass.
+  ///
+  /// # Errors
+  ///
+  /// Returns [`XWingError::InvalidEncapsulationKey`] for a wrong length or a
+  /// failed modulus check.
+  pub fn try_from_slice(bytes: &[u8]) -> Result<Self, XWingError> {
+    let key: &[u8; XWingEncapsulationKey::LENGTH] =
+      bytes.try_into().map_err(|_| XWingError::InvalidEncapsulationKey)?;
+    let (ml_kem, x25519) = key
+      .split_first_chunk::<ML_KEM_ENCAPSULATION_KEY_SIZE>()
+      .expect("the ML-KEM part fits the key");
+    Ok(Self {
+      ml_kem: MlKem768PreparedEncapsulationKey::try_from_slice(ml_kem)
+        .map_err(|_| XWingError::InvalidEncapsulationKey)?,
+      x25519: X25519PublicKey::from_bytes(*x25519.as_array().expect("the X25519 part fits the key")),
+    })
+  }
+
   /// Return the encapsulation key.
   #[must_use]
   pub fn encapsulation_key(&self) -> XWingEncapsulationKey {

@@ -258,27 +258,6 @@ mod implementation {
     secp384r1
   );
 
-  /// Report an ML-KEM decapsulation failure after the share length checks.
-  ///
-  /// RFC 10024, section 4.2, and draft-ietf-tls-mlkem-11 require an
-  /// `internal_error` alert. rustls sends that alert over TCP, and the QUIC
-  /// adapter sends the corresponding CRYPTO_ERROR. A typed ciphertext cannot
-  /// fail decapsulation (ML-KEM rejects implicitly), so this path is unreachable.
-  #[cfg(feature = "ml-kem")]
-  pub(crate) fn decapsulation_failed(error: rscrypto::MlKemError) -> Error {
-    Error::Other(rustls::error::OtherError::new(error))
-  }
-
-  /// Map encapsulation failure: entropy failure is local; anything else is
-  /// an invalid peer encapsulation key.
-  #[cfg(feature = "ml-kem")]
-  fn encapsulation_failed(error: rscrypto::MlKemError) -> Error {
-    match error {
-      rscrypto::MlKemError::RandomGenerationFailed => Error::FailedToGetRandomBytes,
-      _ => Error::PeerMisbehaved(PeerMisbehaved::InvalidKeyShare),
-    }
-  }
-
   /// One RFC 10024 hybrid: an ML-KEM profile and a classical exchange.
   ///
   /// `post_quantum_first` selects the component order in both key shares and
@@ -401,7 +380,8 @@ mod implementation {
                 .fill(output)
                 .map_err(|_| MlKemError::RandomGenerationFailed)
             })
-            .map_err(encapsulation_failed)?;
+            // The peer key passed its FIPS 203 check at import, so only entropy can fail.
+            .map_err(|_| Error::FailedToGetRandomBytes)?;
             Ok(CompletedKeyExchange {
               group: self.name(),
               pub_key: concat(ciphertext.as_bytes(), &classical_public),
@@ -430,10 +410,8 @@ mod implementation {
               split(server_share, SERVER_SHARE_LEN).ok_or(PeerMisbehaved::InvalidKeyShare)?;
             let ciphertext = $ciphertext::try_from_slice(kem_share).map_err(|_| PeerMisbehaved::InvalidKeyShare)?;
             let classical_secret = self.classical.agree(classical_share)?;
-            let kem_secret = self
-              .secret
-              .decapsulate(&ciphertext)
-              .map_err(decapsulation_failed)?;
+            // ML-KEM rejects implicitly, so a typed ciphertext cannot fail decapsulation.
+            let kem_secret = self.secret.decapsulate(&ciphertext);
             Ok(SharedSecret::from(concat(
               kem_secret.as_bytes(),
               classical_secret.as_bytes(),
@@ -540,7 +518,8 @@ mod implementation {
                 .fill(output)
                 .map_err(|_| MlKemError::RandomGenerationFailed)
             })
-            .map_err(encapsulation_failed)?;
+            // The peer key passed its FIPS 203 check at import, so only entropy can fail.
+            .map_err(|_| Error::FailedToGetRandomBytes)?;
             Ok(CompletedKeyExchange {
               group: self.name(),
               pub_key: ciphertext.as_bytes().to_vec(),
@@ -565,10 +544,8 @@ mod implementation {
         impl ActiveKeyExchange for Exchange {
           fn complete(self: Box<Self>, server_share: &[u8]) -> Result<SharedSecret, Error> {
             let ciphertext = $ciphertext::try_from_slice(server_share).map_err(|_| PeerMisbehaved::InvalidKeyShare)?;
-            let secret = self
-              .secret
-              .decapsulate(&ciphertext)
-              .map_err(decapsulation_failed)?;
+            // ML-KEM rejects implicitly, so a typed ciphertext cannot fail decapsulation.
+            let secret = self.secret.decapsulate(&ciphertext);
             Ok(SharedSecret::from(secret.as_bytes().as_slice()))
           }
 
@@ -667,85 +644,6 @@ mod implementation {
   #[cfg(all(test, feature = "ml-kem", feature = "x25519"))]
   mod hybrid_tests {
     use super::*;
-    use rscrypto::MlKemError;
-
-    #[test]
-    fn decapsulation_failure_is_local_and_maps_to_internal_error() {
-      let error = decapsulation_failed(MlKemError::InvalidCiphertext);
-      assert!(matches!(error, Error::Other(_)));
-      assert_eq!(
-        rustls::error::AlertDescription::try_from(&error),
-        Ok(rustls::error::AlertDescription::InternalError)
-      );
-    }
-
-    #[cfg(all(
-      feature = "hkdf",
-      any(feature = "aes-gcm", feature = "chacha20poly1305"),
-      feature = "ecdsa-p256"
-    ))]
-    #[test]
-    fn hybrid_decapsulation_failure_sends_tcp_internal_error() {
-      use crate::tests::tls;
-      use alloc::sync::Arc;
-
-      #[derive(Debug)]
-      struct FailingGroup;
-      struct FailingExchange(Box<dyn ActiveKeyExchange>);
-
-      impl SupportedKxGroup for FailingGroup {
-        fn start(&self) -> Result<StartedKeyExchange, Error> {
-          let exchange = X25519MlKem768Group::new(&crate::tests::RANDOM).start()?.into_single();
-          Ok(StartedKeyExchange::Single(Box::new(FailingExchange(exchange))))
-        }
-
-        fn name(&self) -> NamedGroup {
-          NamedGroup::X25519MLKEM768
-        }
-
-        fn ffdhe_group(&self) -> Option<FfdheGroup<'static>> {
-          None
-        }
-      }
-
-      impl ActiveKeyExchange for FailingExchange {
-        fn complete(self: Box<Self>, peer_pub_key: &[u8]) -> Result<SharedSecret, Error> {
-          // Complete the real exchange before injecting the otherwise unreachable
-          // local failure at rustls's key-exchange boundary.
-          self.0.complete(peer_pub_key)?;
-          Err(decapsulation_failed(MlKemError::InvalidCiphertext))
-        }
-
-        fn pub_key(&self) -> &[u8] {
-          self.0.pub_key()
-        }
-
-        fn group(&self) -> NamedGroup {
-          self.0.group()
-        }
-
-        fn ffdhe_group(&self) -> Option<FfdheGroup<'static>> {
-          None
-        }
-      }
-
-      let mut client_provider = tls::provider();
-      client_provider.kx_groups = vec![&FailingGroup as &dyn SupportedKxGroup].into();
-      let (client, server) = tls::configs(client_provider, tls::provider(), tls::Credential::P256, false);
-      let (mut client, mut server) = tls::connections_from_configs(Arc::new(client), Arc::new(server));
-      tls::transfer(&mut client, &mut server, |_, _| Ok(())).expect("ClientHello");
-      assert!(matches!(
-        tls::transfer(&mut server, &mut client, |_, _| Ok(())),
-        Err(Error::Other(_))
-      ));
-      // The failure precedes traffic keys, so the alert is plaintext:
-      // fatal (2), internal_error (80).
-      assert!(client.output.ends_with(&[2, 80]));
-      assert!(matches!(
-        tls::transfer(&mut client, &mut server, |_, _| Ok(())),
-        Err(Error::AlertReceived(rustls::error::AlertDescription::InternalError))
-      ));
-    }
 
     #[test]
     fn hybrid_entropy_failure_and_key_validation_precedence() {

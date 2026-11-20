@@ -886,7 +886,7 @@ fn assert_hpke_vectors() {
     .expect("the A.5 vector");
   let recipient = HpkeXWingHkdfSha256ChaCha20Poly1305::derive_keypair(&hex_vec(field(vector, "ikmR")));
   assert_hex(recipient.encapsulation_key().as_bytes(), field(vector, "pkRm"));
-  let public_key = recipient.encapsulation_key().prepare().expect("X-Wing vector key");
+  let public_key = recipient.encapsulation_key().prepare();
   let count = contexts::<HpkeXWingHkdfSha256ChaCha20Poly1305>(vector, &public_key, &recipient, |enc| enc.as_bytes());
   assert_eq!(count, 10);
 }
