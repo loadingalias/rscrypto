@@ -140,32 +140,33 @@ impl P256EphemeralSecret {
   /// Derive the matching canonical uncompressed public key.
   #[must_use]
   pub fn public_key(&self) -> P256PublicKey {
-    let _dit = crate::traits::ct::DataIndependentTiming::enter();
-    #[cfg(all(
-      not(feature = "portable-only"),
-      not(miri),
-      any(
-        all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
-        all(target_arch = "x86_64", any(target_os = "linux", target_os = "windows"))
-      )
-    ))]
-    {
-      let scalar = ZeroizingNativeWords(native_words(&self.0));
-      let words = super::p256_core::scalar_mul_generator_words(&scalar.0);
-      P256PublicKey::from_point(PublicPoint::from_affine_words(words))
-    }
+    crate::traits::ct::with_data_independent_timing(|| {
+      #[cfg(all(
+        not(feature = "portable-only"),
+        not(miri),
+        any(
+          all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
+          all(target_arch = "x86_64", any(target_os = "linux", target_os = "windows"))
+        )
+      ))]
+      {
+        let scalar = ZeroizingNativeWords(native_words(&self.0));
+        let words = super::p256_core::scalar_mul_generator_words(&scalar.0);
+        P256PublicKey::from_point(PublicPoint::from_affine_words(words))
+      }
 
-    #[cfg(not(all(
-      not(feature = "portable-only"),
-      not(miri),
-      any(
-        all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
-        all(target_arch = "x86_64", any(target_os = "linux", target_os = "windows"))
-      )
-    )))]
-    {
-      P256PublicKey::from_point(p256_portable::public_key_from_scalar(&self.0))
-    }
+      #[cfg(not(all(
+        not(feature = "portable-only"),
+        not(miri),
+        any(
+          all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
+          all(target_arch = "x86_64", any(target_os = "linux", target_os = "windows"))
+        )
+      )))]
+      {
+        P256PublicKey::from_point(p256_portable::public_key_from_scalar(&self.0))
+      }
+    })
   }
 
   /// Consume this ephemeral scalar and derive the peer agreement value.
@@ -177,37 +178,38 @@ impl P256EphemeralSecret {
   /// application keys with a protocol-specific KDF.
   #[must_use]
   pub fn diffie_hellman(self, public: &P256PublicKey) -> P256SharedSecret {
-    let _dit = crate::traits::ct::DataIndependentTiming::enter();
-    #[cfg(all(
-      not(feature = "portable-only"),
-      not(miri),
-      any(
-        all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
-        all(target_arch = "x86_64", any(target_os = "linux", target_os = "windows"))
-      )
-    ))]
-    {
-      let scalar = ZeroizingNativeWords(native_words(&self.0));
-      let point = public.point.to_affine_words();
-      let output = ZeroizingNativeWords(super::p256_core::scalar_mul_words(&scalar.0, &point));
-      let mut shared = [0u8; FIELD_BYTES];
-      for (chunk, word) in shared.rchunks_exact_mut(8).zip(output.0[..4].iter().copied()) {
-        chunk.copy_from_slice(&word.to_be_bytes());
+    crate::traits::ct::with_data_independent_timing(|| {
+      #[cfg(all(
+        not(feature = "portable-only"),
+        not(miri),
+        any(
+          all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
+          all(target_arch = "x86_64", any(target_os = "linux", target_os = "windows"))
+        )
+      ))]
+      {
+        let scalar = ZeroizingNativeWords(native_words(&self.0));
+        let point = public.point.to_affine_words();
+        let output = ZeroizingNativeWords(super::p256_core::scalar_mul_words(&scalar.0, &point));
+        let mut shared = [0u8; FIELD_BYTES];
+        for (chunk, word) in shared.rchunks_exact_mut(8).zip(output.0[..4].iter().copied()) {
+          chunk.copy_from_slice(&word.to_be_bytes());
+        }
+        P256SharedSecret(shared)
       }
-      P256SharedSecret(shared)
-    }
 
-    #[cfg(not(all(
-      not(feature = "portable-only"),
-      not(miri),
-      any(
-        all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
-        all(target_arch = "x86_64", any(target_os = "linux", target_os = "windows"))
-      )
-    )))]
-    {
-      P256SharedSecret(p256_portable::agree(&self.0, public.point))
-    }
+      #[cfg(not(all(
+        not(feature = "portable-only"),
+        not(miri),
+        any(
+          all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
+          all(target_arch = "x86_64", any(target_os = "linux", target_os = "windows"))
+        )
+      )))]
+      {
+        P256SharedSecret(p256_portable::agree(&self.0, public.point))
+      }
+    })
   }
 }
 

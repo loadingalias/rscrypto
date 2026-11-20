@@ -55,7 +55,7 @@ use crate::backend::{
 };
 use crate::hashes::crypto::{Sha256, Sha512, Shake128, Shake256};
 use crate::secret::ZeroizingBytes;
-use crate::traits::ct::DataIndependentTiming;
+use crate::traits::ct::with_data_independent_timing;
 use crate::{SecretBytes, VerificationError, Verifier};
 use core::fmt;
 
@@ -192,26 +192,27 @@ fn sign_message<S: Suite<N>, const N: usize>(
   randomize: impl FnOnce(&mut [u8; N]) -> Result<(), SlhDsaError>,
   signature: &mut [u8],
 ) -> Result<(), SlhDsaError> {
-  let _dit = DataIndependentTiming::enter();
-  let result = domain(separator, context)
-    .ok_or(SlhDsaError::ContextTooLong)
-    .and_then(|prefix| {
-      let mut opt_rand = ZeroizingBytes::<N>::zeroed();
-      randomize(opt_rand.as_mut_array())?;
-      let (nodes, _) = signature.as_chunks_mut::<N>();
-      scheme::sign::<S, N>(
-        p,
-        key,
-        &[&prefix, context, body[0], body[1]],
-        opt_rand.as_array(),
-        nodes,
-      );
-      Ok(())
-    });
-  if result.is_err() {
-    signature.fill(0);
-  }
-  result
+  with_data_independent_timing(|| {
+    let result = domain(separator, context)
+      .ok_or(SlhDsaError::ContextTooLong)
+      .and_then(|prefix| {
+        let mut opt_rand = ZeroizingBytes::<N>::zeroed();
+        randomize(opt_rand.as_mut_array())?;
+        let (nodes, _) = signature.as_chunks_mut::<N>();
+        scheme::sign::<S, N>(
+          p,
+          key,
+          &[&prefix, context, body[0], body[1]],
+          opt_rand.as_array(),
+          nodes,
+        );
+        Ok(())
+      });
+    if result.is_err() {
+      signature.fill(0);
+    }
+    result
+  })
 }
 
 /// Verify a signature on M' (FIPS 205 Algorithms 24 and 25).
@@ -501,18 +502,19 @@ macro_rules! profile {
       pub fn generate_keypair(
         mut fill_random: impl FnMut(&mut [u8]) -> Result<(), SlhDsaError>,
       ) -> Result<($public, $secret), SlhDsaError> {
-        let _dit = DataIndependentTiming::enter();
-        let mut seeds = ZeroizingBytes::<$seeds>::zeroed();
-        fill_random(seeds.as_mut_array())?;
-        let (fields, _) = seeds.as_array().as_chunks::<$n>();
-        let mut secret = $secret::zeroed();
-        secret.seed.as_mut_array().copy_from_slice(&fields[0]);
-        secret.prf.as_mut_array().copy_from_slice(&fields[1]);
-        secret.public.0[..$n].copy_from_slice(&fields[2]);
-        let mut root = [0; $n];
-        secret.root(&mut root);
-        secret.public.0[$n..].copy_from_slice(&root);
-        Ok((secret.public.clone(), secret))
+        with_data_independent_timing(|| {
+          let mut seeds = ZeroizingBytes::<$seeds>::zeroed();
+          fill_random(seeds.as_mut_array())?;
+          let (fields, _) = seeds.as_array().as_chunks::<$n>();
+          let mut secret = $secret::zeroed();
+          secret.seed.as_mut_array().copy_from_slice(&fields[0]);
+          secret.prf.as_mut_array().copy_from_slice(&fields[1]);
+          secret.public.0[..$n].copy_from_slice(&fields[2]);
+          let mut root = [0; $n];
+          secret.root(&mut root);
+          secret.public.0[$n..].copy_from_slice(&root);
+          Ok((secret.public.clone(), secret))
+        })
       }
 
       /// Generate a key pair using OS entropy.
@@ -635,22 +637,23 @@ macro_rules! profile {
       /// responsibility for clearing `input`; a rejected key is cleared
       /// before returning.
       pub fn try_from_slice(input: &[u8]) -> Result<Self, SlhDsaKeyError> {
-        let _dit = DataIndependentTiming::enter();
-        if input.len() != $sk {
-          return Err(SlhDsaKeyError::InvalidSecretKey);
-        }
-        let (fields, _) = input.as_chunks::<$n>();
-        let mut secret = Self::zeroed();
-        secret.seed.as_mut_array().copy_from_slice(&fields[0]);
-        secret.prf.as_mut_array().copy_from_slice(&fields[1]);
-        secret.public.0[..$n].copy_from_slice(&fields[2]);
-        secret.public.0[$n..].copy_from_slice(&fields[3]);
-        let mut root = [0; $n];
-        secret.root(&mut root);
-        if root != fields[3] {
-          return Err(SlhDsaKeyError::InvalidSecretKey);
-        }
-        Ok(secret)
+        with_data_independent_timing(|| {
+          if input.len() != $sk {
+            return Err(SlhDsaKeyError::InvalidSecretKey);
+          }
+          let (fields, _) = input.as_chunks::<$n>();
+          let mut secret = Self::zeroed();
+          secret.seed.as_mut_array().copy_from_slice(&fields[0]);
+          secret.prf.as_mut_array().copy_from_slice(&fields[1]);
+          secret.public.0[..$n].copy_from_slice(&fields[2]);
+          secret.public.0[$n..].copy_from_slice(&fields[3]);
+          let mut root = [0; $n];
+          secret.root(&mut root);
+          if root != fields[3] {
+            return Err(SlhDsaKeyError::InvalidSecretKey);
+          }
+          Ok(secret)
+        })
       }
 
       /// Import an RFC 9909 private key from RFC 5958 OneAsymmetricKey
@@ -672,13 +675,14 @@ macro_rules! profile {
       /// inconsistent key or a foreign public key; and
       /// [`SlhDsaKeyError::InvalidPublicKey`] for a wrong-length public key.
       pub fn from_pkcs8_der(der: &[u8]) -> Result<Self, SlhDsaKeyError> {
-        let _dit = DataIndependentTiming::enter();
-        let (key, public) = pkix::decode_pkcs8_raw::<SlhDsaKeyError, $sk, $pk>(der, $profile::ALGORITHM)?;
-        let secret = Self::try_from_slice(key)?;
-        if public.is_some_and(|public| *public != secret.public.0) {
-          return Err(SlhDsaKeyError::InvalidSecretKey);
-        }
-        Ok(secret)
+        with_data_independent_timing(|| {
+          let (key, public) = pkix::decode_pkcs8_raw::<SlhDsaKeyError, $sk, $pk>(der, $profile::ALGORITHM)?;
+          let secret = Self::try_from_slice(key)?;
+          if public.is_some_and(|public| *public != secret.public.0) {
+            return Err(SlhDsaKeyError::InvalidSecretKey);
+          }
+          Ok(secret)
+        })
       }
 
       /// Write this key as a version 1 RFC 9909 PKCS #8 private key. No heap

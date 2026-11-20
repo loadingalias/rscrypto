@@ -291,56 +291,57 @@ pub(super) fn keygen<const K: usize, const L: usize>(
   public: &mut [u8],
   secret: &mut [u8],
 ) -> Result<(), MlDsaError> {
-  let _dit = crate::traits::ct::DataIndependentTiming::enter();
-  let mut expanded = ZeroizingBytes::<128>::zeroed();
-  sampling::hash(&[seed, &[index_byte(K), index_byte(L)]], expanded.as_mut_array());
-  let bytes = expanded.as_array();
-  let rho = &bytes[..32];
-  public[..32].copy_from_slice(rho);
-  secret[..32].copy_from_slice(rho);
-  secret[32..64].copy_from_slice(&bytes[96..]);
-  let noise_bytes = p.eta_bits.strict_mul(32);
-  let s2_start = 128usize.strict_add(L.strict_mul(noise_bytes));
-  let t0_start = s2_start.strict_add(K.strict_mul(noise_bytes));
-  let blinding = NttBlinding::new(&bytes[96..]);
-  let mut s1 = vector::<L>();
-  for (i, poly) in s1.iter_mut().enumerate() {
-    sampling::noise(&bytes[32..96], nonce(i), p.eta, poly)?;
-    let start = 128usize.strict_add(i.strict_mul(noise_bytes));
-    encoding::pack(
-      poly,
-      p.eta_bits,
-      Some(p.eta),
-      &mut secret[start..start.strict_add(noise_bytes)],
-    );
-    blinding.ntt(poly);
-  }
-  let mut row = Poly::zero();
-  let mut s2 = Poly::zero();
-  let mut high = Poly::zero();
-  let mut low = Poly::zero();
-  for i in 0..K {
-    sampling::noise(&bytes[32..96], nonce(L.strict_add(i)), p.eta, &mut s2)?;
-    let start = s2_start.strict_add(i.strict_mul(noise_bytes));
-    encoding::pack(
-      &s2,
-      p.eta_bits,
-      Some(p.eta),
-      &mut secret[start..start.strict_add(noise_bytes)],
-    );
-    matrix_row_ntt(rho, i, &s1, &mut row)?;
-    row.inverse_ntt();
-    row.add_assign(&s2);
-    for ((&coefficient, high), low) in row.0.iter().zip(&mut high.0).zip(&mut low.0) {
-      (*high, *low) = power2_round(coefficient);
+  crate::traits::ct::with_data_independent_timing(|| {
+    let mut expanded = ZeroizingBytes::<128>::zeroed();
+    sampling::hash(&[seed, &[index_byte(K), index_byte(L)]], expanded.as_mut_array());
+    let bytes = expanded.as_array();
+    let rho = &bytes[..32];
+    public[..32].copy_from_slice(rho);
+    secret[..32].copy_from_slice(rho);
+    secret[32..64].copy_from_slice(&bytes[96..]);
+    let noise_bytes = p.eta_bits.strict_mul(32);
+    let s2_start = 128usize.strict_add(L.strict_mul(noise_bytes));
+    let t0_start = s2_start.strict_add(K.strict_mul(noise_bytes));
+    let blinding = NttBlinding::new(&bytes[96..]);
+    let mut s1 = vector::<L>();
+    for (i, poly) in s1.iter_mut().enumerate() {
+      sampling::noise(&bytes[32..96], nonce(i), p.eta, poly)?;
+      let start = 128usize.strict_add(i.strict_mul(noise_bytes));
+      encoding::pack(
+        poly,
+        p.eta_bits,
+        Some(p.eta),
+        &mut secret[start..start.strict_add(noise_bytes)],
+      );
+      blinding.ntt(poly);
     }
-    let pk_start = 32usize.strict_add(i.strict_mul(320));
-    encoding::pack(&high, 10, None, &mut public[pk_start..pk_start.strict_add(320)]);
-    let sk_start = t0_start.strict_add(i.strict_mul(416));
-    encoding::pack(&low, 13, Some(4096), &mut secret[sk_start..sk_start.strict_add(416)]);
-  }
-  sampling::hash(&[public], &mut secret[64..128]);
-  Ok(())
+    let mut row = Poly::zero();
+    let mut s2 = Poly::zero();
+    let mut high = Poly::zero();
+    let mut low = Poly::zero();
+    for i in 0..K {
+      sampling::noise(&bytes[32..96], nonce(L.strict_add(i)), p.eta, &mut s2)?;
+      let start = s2_start.strict_add(i.strict_mul(noise_bytes));
+      encoding::pack(
+        &s2,
+        p.eta_bits,
+        Some(p.eta),
+        &mut secret[start..start.strict_add(noise_bytes)],
+      );
+      matrix_row_ntt(rho, i, &s1, &mut row)?;
+      row.inverse_ntt();
+      row.add_assign(&s2);
+      for ((&coefficient, high), low) in row.0.iter().zip(&mut high.0).zip(&mut low.0) {
+        (*high, *low) = power2_round(coefficient);
+      }
+      let pk_start = 32usize.strict_add(i.strict_mul(320));
+      encoding::pack(&high, 10, None, &mut public[pk_start..pk_start.strict_add(320)]);
+      let sk_start = t0_start.strict_add(i.strict_mul(416));
+      encoding::pack(&low, 13, Some(4096), &mut secret[sk_start..sk_start.strict_add(416)]);
+    }
+    sampling::hash(&[public], &mut secret[64..128]);
+    Ok(())
+  })
 }
 
 pub(super) struct SigningState<const K: usize, const L: usize> {
@@ -379,22 +380,23 @@ impl<const K: usize, const L: usize> SigningState<K, L> {
   /// coefficient was in range; the result is computed without early exit.
   #[must_use]
   pub(super) fn decode(&mut self, secret: &[u8], p: Parameters) -> bool {
-    let _dit = crate::traits::ct::DataIndependentTiming::enter();
-    let mut offset = 128usize;
-    let size = p.eta_bits.strict_mul(32);
-    let mut valid = true;
-    let blinding = NttBlinding::new(&secret[32..64]);
-    for poly in self.s1.iter_mut().chain(self.s2.iter_mut()) {
-      valid &= encoding::decode_noise(&secret[offset..offset.strict_add(size)], p, poly);
-      offset = offset.strict_add(size);
-      blinding.ntt(poly);
-    }
-    for poly in &mut self.t0 {
-      encoding::unpack(&secret[offset..offset.strict_add(416)], 13, 4096, poly);
-      offset = offset.strict_add(416);
-      blinding.ntt(poly);
-    }
-    valid
+    crate::traits::ct::with_data_independent_timing(|| {
+      let mut offset = 128usize;
+      let size = p.eta_bits.strict_mul(32);
+      let mut valid = true;
+      let blinding = NttBlinding::new(&secret[32..64]);
+      for poly in self.s1.iter_mut().chain(self.s2.iter_mut()) {
+        valid &= encoding::decode_noise(&secret[offset..offset.strict_add(size)], p, poly);
+        offset = offset.strict_add(size);
+        blinding.ntt(poly);
+      }
+      for poly in &mut self.t0 {
+        encoding::unpack(&secret[offset..offset.strict_add(416)], 13, 4096, poly);
+        offset = offset.strict_add(416);
+        blinding.ntt(poly);
+      }
+      valid
+    })
   }
 }
 
@@ -404,41 +406,42 @@ pub(super) fn validate_secret<const K: usize, const L: usize>(
   p: Parameters,
   public: &mut [u8],
 ) -> Result<(), MlDsaKeyError> {
-  let _dit = crate::traits::ct::DataIndependentTiming::enter();
-  let mut state = SigningState::<K, L>::zero();
-  if !state.decode(secret, p) {
-    return Err(MlDsaKeyError::InvalidSecretKey);
-  }
-  public[..32].copy_from_slice(&secret[..32]);
-  let mut difference = 0u32;
-  let mut row = Poly::zero();
-  let mut low = Poly::zero();
-  let mut high = Poly::zero();
-  for i in 0..K {
-    // Matrix expansion fails only by exhausting its FIPS 204 sampling bound.
-    matrix_row_ntt(&secret[..32], i, &state.s1, &mut row).map_err(|_| MlDsaKeyError::RejectionLimit)?;
-    // Both terms are NTT-domain Montgomery residues; one inverse transform covers their sum.
-    row.add_assign(&state.s2[i]);
-    row.inverse_ntt();
-    low.copy_from(&state.t0[i]);
-    low.inverse_ntt();
-    for ((&x, &expected_low), high) in row.0.iter().zip(&low.0).zip(&mut high.0) {
-      let (h, l) = power2_round(x);
-      *high = h;
-      difference |= l ^ expected_low;
+  crate::traits::ct::with_data_independent_timing(|| {
+    let mut state = SigningState::<K, L>::zero();
+    if !state.decode(secret, p) {
+      return Err(MlDsaKeyError::InvalidSecretKey);
     }
-    let start = 32usize.strict_add(i.strict_mul(320));
-    encoding::pack(&high, 10, None, &mut public[start..start.strict_add(320)]);
-  }
-  let mut tr = [0u8; 64];
-  sampling::hash(&[public], &mut tr);
-  for (&a, &b) in tr.iter().zip(&secret[64..128]) {
-    difference |= u32::from(a ^ b);
-  }
-  if difference != 0 {
-    return Err(MlDsaKeyError::InvalidSecretKey);
-  }
-  Ok(())
+    public[..32].copy_from_slice(&secret[..32]);
+    let mut difference = 0u32;
+    let mut row = Poly::zero();
+    let mut low = Poly::zero();
+    let mut high = Poly::zero();
+    for i in 0..K {
+      // Matrix expansion fails only by exhausting its FIPS 204 sampling bound.
+      matrix_row_ntt(&secret[..32], i, &state.s1, &mut row).map_err(|_| MlDsaKeyError::RejectionLimit)?;
+      // Both terms are NTT-domain Montgomery residues; one inverse transform covers their sum.
+      row.add_assign(&state.s2[i]);
+      row.inverse_ntt();
+      low.copy_from(&state.t0[i]);
+      low.inverse_ntt();
+      for ((&x, &expected_low), high) in row.0.iter().zip(&low.0).zip(&mut high.0) {
+        let (h, l) = power2_round(x);
+        *high = h;
+        difference |= l ^ expected_low;
+      }
+      let start = 32usize.strict_add(i.strict_mul(320));
+      encoding::pack(&high, 10, None, &mut public[start..start.strict_add(320)]);
+    }
+    let mut tr = [0u8; 64];
+    sampling::hash(&[public], &mut tr);
+    for (&a, &b) in tr.iter().zip(&secret[64..128]) {
+      difference |= u32::from(a ^ b);
+    }
+    if difference != 0 {
+      return Err(MlDsaKeyError::InvalidSecretKey);
+    }
+    Ok(())
+  })
 }
 
 /// Sign an already domain-separated message representative (Algorithm 7).
@@ -450,12 +453,13 @@ pub(super) fn sign<const K: usize, const L: usize>(
   p: Parameters,
   signature: &mut [u8],
 ) -> Result<(), MlDsaError> {
-  let _dit = crate::traits::ct::DataIndependentTiming::enter();
-  let mut state = SigningState::<K, L>::zero();
-  if !state.decode(secret, p) {
-    return Err(MlDsaError::InvalidSecretKey);
-  }
-  sign_with_state(secret, mu, random, p, signature, &state, None)
+  crate::traits::ct::with_data_independent_timing(|| {
+    let mut state = SigningState::<K, L>::zero();
+    if !state.decode(secret, p) {
+      return Err(MlDsaError::InvalidSecretKey);
+    }
+    sign_with_state(secret, mu, random, p, signature, &state, None)
+  })
 }
 
 /// Signing-attempt counter for the signing-tail baseline (`tools/mldsa-tail`).
@@ -493,123 +497,124 @@ pub(super) fn sign_with_state<const K: usize, const L: usize>(
   state: &SigningState<K, L>,
   matrix: Option<&Matrix<K, L>>,
 ) -> Result<(), MlDsaError> {
-  let _dit = crate::traits::ct::DataIndependentTiming::enter();
-  let mut rho_prime = ZeroizingBytes::<64>::zeroed();
-  sampling::hash(&[&secret[32..64], random, mu], rho_prime.as_mut_array());
-  let mut y = vector::<L>();
-  let mut z = vector::<L>();
-  let mut w = vector::<K>();
-  let mut challenge = Poly::zero();
-  let mut work = Poly::zero();
-  let mut high = Poly::zero();
-  let mut packed_high = ZeroizingBytes::<192>::zeroed();
-  let w1_len = p.w1_bits.strict_mul(32);
-  let z_len = p.z_bits.strict_mul(32);
-  let hints_start = p.challenge_bytes.strict_add(L.strict_mul(z_len));
-  let mut commitment = ZeroizingBytes::<64>::zeroed();
+  crate::traits::ct::with_data_independent_timing(|| {
+    let mut rho_prime = ZeroizingBytes::<64>::zeroed();
+    sampling::hash(&[&secret[32..64], random, mu], rho_prime.as_mut_array());
+    let mut y = vector::<L>();
+    let mut z = vector::<L>();
+    let mut w = vector::<K>();
+    let mut challenge = Poly::zero();
+    let mut work = Poly::zero();
+    let mut high = Poly::zero();
+    let mut packed_high = ZeroizingBytes::<192>::zeroed();
+    let w1_len = p.w1_bits.strict_mul(32);
+    let z_len = p.z_bits.strict_mul(32);
+    let hints_start = p.challenge_bytes.strict_add(L.strict_mul(z_len));
+    let mut commitment = ZeroizingBytes::<64>::zeroed();
 
-  // FIPS 204 potential corrections (2026-07-31): the minimum cap is 821.
-  // Each attempt consumes L nonces; 821*7 remains below 2^16.
-  for attempt in 0usize..821 {
-    #[cfg(rscrypto_mldsa_attempts)]
-    attempts::record();
-    signature.fill(0);
-    // Nonces stay attempt·L + i; consecutive pairs share one two-state Keccak schedule.
-    let first_nonce = attempt.strict_mul(L);
-    let (pairs, last) = y.as_chunks_mut::<2>();
-    for (pair_index, [first, second]) in pairs.iter_mut().enumerate() {
-      let i = first_nonce.strict_add(pair_index.strict_mul(2));
-      sampling::mask_pair(
-        rho_prime.as_array(),
-        [nonce(i), nonce(i.strict_add(1))],
-        p,
-        [first, second],
-      );
-    }
-    if let Some(y) = last.first_mut() {
-      sampling::mask(
-        rho_prime.as_array(),
-        nonce(first_nonce.strict_add(L).strict_sub(1)),
-        p,
-        y,
-      );
-    }
-    for (z, y) in z.iter_mut().zip(&y) {
-      z.copy_from(y);
-      z.ntt();
-    }
-    let mut hash = crate::hashes::crypto::keccak::KeccakCore::<136>::default();
-    hash.update(mu);
-    for (i, row) in w.iter_mut().enumerate() {
-      if let Some(matrix) = matrix {
-        matrix.row_ntt(i, &z, row);
-      } else {
-        matrix_row_ntt(&secret[..32], i, &z, row)?;
+    // FIPS 204 potential corrections (2026-07-31): the minimum cap is 821.
+    // Each attempt consumes L nonces; 821*7 remains below 2^16.
+    for attempt in 0usize..821 {
+      #[cfg(rscrypto_mldsa_attempts)]
+      attempts::record();
+      signature.fill(0);
+      // Nonces stay attempt·L + i; consecutive pairs share one two-state Keccak schedule.
+      let first_nonce = attempt.strict_mul(L);
+      let (pairs, last) = y.as_chunks_mut::<2>();
+      for (pair_index, [first, second]) in pairs.iter_mut().enumerate() {
+        let i = first_nonce.strict_add(pair_index.strict_mul(2));
+        sampling::mask_pair(
+          rho_prime.as_array(),
+          [nonce(i), nonce(i.strict_add(1))],
+          p,
+          [first, second],
+        );
       }
-      row.inverse_ntt();
-      row.high_bits_into(p.gamma2, &mut high);
-      encoding::pack(&high, p.w1_bits, None, &mut packed_high.as_mut_array()[..w1_len]);
-      hash.update(&packed_high.as_array()[..w1_len]);
-    }
-    hash
-      .finalize_xof(0x1f)
-      .squeeze_into(&mut commitment.as_mut_array()[..p.challenge_bytes]);
-    sampling::challenge(&commitment.as_array()[..p.challenge_bytes], p.tau, &mut challenge)?;
-    challenge.ntt();
-    let mut invalid = 0u32;
-    for ((z, y), s1) in z.iter_mut().zip(&y).zip(&state.s1) {
-      z.product(&challenge, &s1.0);
-      z.inverse_ntt();
-      z.add_assign(y);
-      invalid |= z.exceeds_bound(p.gamma1.strict_sub(p.beta));
-    }
-    for (row, s2) in w.iter_mut().zip(&state.s2) {
-      work.product(&challenge, &s2.0);
-      work.inverse_ntt();
-      row.sub_assign(&work);
-      row.low_bits_into(p.gamma2, &mut high);
-      invalid |= high.exceeds_bound(p.gamma2.strict_sub(p.beta));
-    }
-    // This is the scheme's aggregate rejection decision, never an error oracle.
-    if invalid != 0 {
-      continue;
-    }
-    let mut count = 0usize;
-    for (row, t0) in w.iter_mut().zip(&state.t0) {
-      work.product(&challenge, &t0.0);
-      work.inverse_ntt();
-      invalid |= work.exceeds_bound(p.gamma2);
-      // Candidate hints remain in the zeroizing polynomial owner until every
-      // rejection check passes. The candidate controls no output addresses.
-      count = count.strict_add(row.make_hints(&work, p.gamma2));
-    }
-    if invalid != 0 || count > p.omega {
-      continue;
-    }
-    // The accepted hint positions are part of the public signature.
-    count = 0;
-    for (i, row) in w.iter().enumerate() {
-      for (j, &hint) in row.0.iter().enumerate() {
-        if hint != 0 {
-          signature[hints_start.strict_add(count)] = index_byte(j);
-          count = count.strict_add(1);
+      if let Some(y) = last.first_mut() {
+        sampling::mask(
+          rho_prime.as_array(),
+          nonce(first_nonce.strict_add(L).strict_sub(1)),
+          p,
+          y,
+        );
+      }
+      for (z, y) in z.iter_mut().zip(&y) {
+        z.copy_from(y);
+        z.ntt();
+      }
+      let mut hash = crate::hashes::crypto::keccak::KeccakCore::<136>::default();
+      hash.update(mu);
+      for (i, row) in w.iter_mut().enumerate() {
+        if let Some(matrix) = matrix {
+          matrix.row_ntt(i, &z, row);
+        } else {
+          matrix_row_ntt(&secret[..32], i, &z, row)?;
         }
+        row.inverse_ntt();
+        row.high_bits_into(p.gamma2, &mut high);
+        encoding::pack(&high, p.w1_bits, None, &mut packed_high.as_mut_array()[..w1_len]);
+        hash.update(&packed_high.as_array()[..w1_len]);
       }
-      signature[hints_start.strict_add(p.omega).strict_add(i)] = index_byte(count);
+      hash
+        .finalize_xof(0x1f)
+        .squeeze_into(&mut commitment.as_mut_array()[..p.challenge_bytes]);
+      sampling::challenge(&commitment.as_array()[..p.challenge_bytes], p.tau, &mut challenge)?;
+      challenge.ntt();
+      let mut invalid = 0u32;
+      for ((z, y), s1) in z.iter_mut().zip(&y).zip(&state.s1) {
+        z.product(&challenge, &s1.0);
+        z.inverse_ntt();
+        z.add_assign(y);
+        invalid |= z.exceeds_bound(p.gamma1.strict_sub(p.beta));
+      }
+      for (row, s2) in w.iter_mut().zip(&state.s2) {
+        work.product(&challenge, &s2.0);
+        work.inverse_ntt();
+        row.sub_assign(&work);
+        row.low_bits_into(p.gamma2, &mut high);
+        invalid |= high.exceeds_bound(p.gamma2.strict_sub(p.beta));
+      }
+      // This is the scheme's aggregate rejection decision, never an error oracle.
+      if invalid != 0 {
+        continue;
+      }
+      let mut count = 0usize;
+      for (row, t0) in w.iter_mut().zip(&state.t0) {
+        work.product(&challenge, &t0.0);
+        work.inverse_ntt();
+        invalid |= work.exceeds_bound(p.gamma2);
+        // Candidate hints remain in the zeroizing polynomial owner until every
+        // rejection check passes. The candidate controls no output addresses.
+        count = count.strict_add(row.make_hints(&work, p.gamma2));
+      }
+      if invalid != 0 || count > p.omega {
+        continue;
+      }
+      // The accepted hint positions are part of the public signature.
+      count = 0;
+      for (i, row) in w.iter().enumerate() {
+        for (j, &hint) in row.0.iter().enumerate() {
+          if hint != 0 {
+            signature[hints_start.strict_add(count)] = index_byte(j);
+            count = count.strict_add(1);
+          }
+        }
+        signature[hints_start.strict_add(p.omega).strict_add(i)] = index_byte(count);
+      }
+      signature[..p.challenge_bytes].copy_from_slice(&commitment.as_array()[..p.challenge_bytes]);
+      for (i, z) in z.iter().enumerate() {
+        let start = p.challenge_bytes.strict_add(i.strict_mul(z_len));
+        encoding::pack(
+          z,
+          p.z_bits,
+          Some(p.gamma1),
+          &mut signature[start..start.strict_add(z_len)],
+        );
+      }
+      return Ok(());
     }
-    signature[..p.challenge_bytes].copy_from_slice(&commitment.as_array()[..p.challenge_bytes]);
-    for (i, z) in z.iter().enumerate() {
-      let start = p.challenge_bytes.strict_add(i.strict_mul(z_len));
-      encoding::pack(
-        z,
-        p.z_bits,
-        Some(p.gamma1),
-        &mut signature[start..start.strict_add(z_len)],
-      );
-    }
-    return Ok(());
-  }
-  Err(MlDsaError::RejectionLimit)
+    Err(MlDsaError::RejectionLimit)
+  })
 }
 
 pub(super) fn verify<const K: usize, const L: usize>(

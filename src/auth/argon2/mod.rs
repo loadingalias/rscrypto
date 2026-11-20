@@ -1804,106 +1804,107 @@ fn argon2_hash_with_kernel_inner(
   backend: HashBackend,
   memory: Option<&mut [Argon2Block]>,
 ) -> Result<(), Argon2Error> {
-  let _dit = crate::traits::ct::DataIndependentTiming::enter();
-  Argon2Params::check_inputs(password, salt, context)?;
-  if out.len() < MIN_OUTPUT_LEN || out.len() as u64 > MAX_VAR_BYTES {
-    return Err(Argon2Error::InvalidOutputLen);
-  }
-
-  // Acquire the matrix before deriving H0 so allocation failure or short
-  // caller memory cannot leave a password-derived digest in an unwinding
-  // stack frame. `owned` is declared first so it is freed after `matrix`
-  // clears it.
-  let mut owned;
-  let memory = match memory {
-    Some(memory) => memory,
-    None => {
-      owned = allocate_blocks(*params)?;
-      owned.as_mut_slice()
+  crate::traits::ct::with_data_independent_timing(|| {
+    Argon2Params::check_inputs(password, salt, context)?;
+    if out.len() < MIN_OUTPUT_LEN || out.len() as u64 > MAX_VAR_BYTES {
+      return Err(Argon2Error::InvalidOutputLen);
     }
-  };
-  let mut matrix = Matrix::new(*params, memory)?;
-  let lane_len = matrix.lane_len;
-  let lanes = matrix.lanes;
 
-  // Compute H0 only after all fallible resource acquisition is complete.
-  let mut h0 = {
-    #[cfg(all(rscrypto_internal, feature = "diag"))]
-    {
-      if backend.diag_blake2b {
-        compute_h0_diag_blake2b_portable(params, context, password, salt, variant, out.len())
-      } else {
+    // Acquire the matrix before deriving H0 so allocation failure or short
+    // caller memory cannot leave a password-derived digest in an unwinding
+    // stack frame. `owned` is declared first so it is freed after `matrix`
+    // clears it.
+    let mut owned;
+    let memory = match memory {
+      Some(memory) => memory,
+      None => {
+        owned = allocate_blocks(*params)?;
+        owned.as_mut_slice()
+      }
+    };
+    let mut matrix = Matrix::new(*params, memory)?;
+    let lane_len = matrix.lane_len;
+    let lanes = matrix.lanes;
+
+    // Compute H0 only after all fallible resource acquisition is complete.
+    let mut h0 = {
+      #[cfg(all(rscrypto_internal, feature = "diag"))]
+      {
+        if backend.diag_blake2b {
+          compute_h0_diag_blake2b_portable(params, context, password, salt, variant, out.len())
+        } else {
+          compute_h0(params, context, password, salt, variant, out.len())
+        }
+      }
+      #[cfg(not(all(rscrypto_internal, feature = "diag")))]
+      {
         compute_h0(params, context, password, salt, variant, out.len())
       }
-    }
-    #[cfg(not(all(rscrypto_internal, feature = "diag")))]
-    {
-      compute_h0(params, context, password, salt, variant, out.len())
-    }
-  };
+    };
 
-  // Initialise first two blocks per lane.
-  for lane in 0..lanes {
-    let mut buf = [0u8; BLOCK_SIZE];
-    // B[lane][0] = H'(H0 || LE32(0) || LE32(lane), BLOCK_SIZE)
-    let lane_le = lane.to_le_bytes();
-    #[cfg(all(rscrypto_internal, feature = "diag"))]
-    if backend.diag_blake2b {
-      h_prime_diag_blake2b_portable(&[&h0, &0u32.to_le_bytes(), &lane_le], &mut buf);
-    } else {
+    // Initialise first two blocks per lane.
+    for lane in 0..lanes {
+      let mut buf = [0u8; BLOCK_SIZE];
+      // B[lane][0] = H'(H0 || LE32(0) || LE32(lane), BLOCK_SIZE)
+      let lane_le = lane.to_le_bytes();
+      #[cfg(all(rscrypto_internal, feature = "diag"))]
+      if backend.diag_blake2b {
+        h_prime_diag_blake2b_portable(&[&h0, &0u32.to_le_bytes(), &lane_le], &mut buf);
+      } else {
+        h_prime(&[&h0, &0u32.to_le_bytes(), &lane_le], &mut buf);
+      }
+      #[cfg(not(all(rscrypto_internal, feature = "diag")))]
       h_prime(&[&h0, &0u32.to_le_bytes(), &lane_le], &mut buf);
-    }
-    #[cfg(not(all(rscrypto_internal, feature = "diag")))]
-    h_prime(&[&h0, &0u32.to_le_bytes(), &lane_le], &mut buf);
-    matrix.set(lane, 0, block_from_bytes(&buf));
+      matrix.set(lane, 0, block_from_bytes(&buf));
 
-    // B[lane][1] = H'(H0 || LE32(1) || LE32(lane), BLOCK_SIZE)
+      // B[lane][1] = H'(H0 || LE32(1) || LE32(lane), BLOCK_SIZE)
+      #[cfg(all(rscrypto_internal, feature = "diag"))]
+      if backend.diag_blake2b {
+        h_prime_diag_blake2b_portable(&[&h0, &1u32.to_le_bytes(), &lane_le], &mut buf);
+      } else {
+        h_prime(&[&h0, &1u32.to_le_bytes(), &lane_le], &mut buf);
+      }
+      #[cfg(not(all(rscrypto_internal, feature = "diag")))]
+      h_prime(&[&h0, &1u32.to_le_bytes(), &lane_le], &mut buf);
+      matrix.set(lane, 1, block_from_bytes(&buf));
+      ct::zeroize(&mut buf);
+    }
+
+    // Main fill loop: pass × slice × (lanes synchronised at slice boundaries).
+    // Lane parallelism within a slice is gated on the `parallel` feature and
+    // skipped when `parallelism == 1` to avoid rayon overhead.
+    for pass in 0..params.time_cost {
+      for slice in 0..SYNC_POINTS {
+        fill_slice(&mut matrix, backend.compress, pass, slice, variant, params.time_cost);
+      }
+    }
+
+    // Finalisation: C = XOR of last block of each lane; output = H'(C, T).
+    let last_block = lane_len.strict_sub(1);
+    let mut acc = *matrix.get(0, last_block);
+    for lane in 1..lanes {
+      let blk = matrix.get(lane, last_block);
+      for i in 0..BLOCK_WORDS {
+        acc[i] ^= blk[i];
+      }
+    }
+    let mut acc_bytes = block_to_bytes(&acc);
     #[cfg(all(rscrypto_internal, feature = "diag"))]
     if backend.diag_blake2b {
-      h_prime_diag_blake2b_portable(&[&h0, &1u32.to_le_bytes(), &lane_le], &mut buf);
+      h_prime_diag_blake2b_portable(&[&acc_bytes], out);
     } else {
-      h_prime(&[&h0, &1u32.to_le_bytes(), &lane_le], &mut buf);
+      h_prime(&[&acc_bytes], out);
     }
     #[cfg(not(all(rscrypto_internal, feature = "diag")))]
-    h_prime(&[&h0, &1u32.to_le_bytes(), &lane_le], &mut buf);
-    matrix.set(lane, 1, block_from_bytes(&buf));
-    ct::zeroize(&mut buf);
-  }
-
-  // Main fill loop: pass × slice × (lanes synchronised at slice boundaries).
-  // Lane parallelism within a slice is gated on the `parallel` feature and
-  // skipped when `parallelism == 1` to avoid rayon overhead.
-  for pass in 0..params.time_cost {
-    for slice in 0..SYNC_POINTS {
-      fill_slice(&mut matrix, backend.compress, pass, slice, variant, params.time_cost);
-    }
-  }
-
-  // Finalisation: C = XOR of last block of each lane; output = H'(C, T).
-  let last_block = lane_len.strict_sub(1);
-  let mut acc = *matrix.get(0, last_block);
-  for lane in 1..lanes {
-    let blk = matrix.get(lane, last_block);
-    for i in 0..BLOCK_WORDS {
-      acc[i] ^= blk[i];
-    }
-  }
-  let mut acc_bytes = block_to_bytes(&acc);
-  #[cfg(all(rscrypto_internal, feature = "diag"))]
-  if backend.diag_blake2b {
-    h_prime_diag_blake2b_portable(&[&acc_bytes], out);
-  } else {
     h_prime(&[&acc_bytes], out);
-  }
-  #[cfg(not(all(rscrypto_internal, feature = "diag")))]
-  h_prime(&[&acc_bytes], out);
 
-  // Wipe scratch
-  ct::zeroize(&mut h0);
-  zeroize_u64_slice(&mut acc);
-  ct::zeroize(&mut acc_bytes);
-  // Matrix zeroized via Drop
-  Ok(())
+    // Wipe scratch
+    ct::zeroize(&mut h0);
+    zeroize_u64_slice(&mut acc);
+    ct::zeroize(&mut acc_bytes);
+    // Matrix zeroized via Drop
+    Ok(())
+  })
 }
 
 fn argon2_verify(
@@ -2245,8 +2246,7 @@ impl Argon2idPassword {
     encoded: &str,
     context: Argon2Context<'_>,
   ) -> Result<crate::auth::PasswordStatus, VerificationError> {
-    let _dit = ct::DataIndependentTiming::enter();
-    self.verify_password_inner(password, encoded, context, None)
+    ct::with_data_independent_timing(|| self.verify_password_inner(password, encoded, context, None))
   }
 
   /// Verify a PHC password record using caller-provided work memory.
@@ -2295,8 +2295,7 @@ impl Argon2idPassword {
     context: Argon2Context<'_>,
     memory: &mut [Argon2Block],
   ) -> Result<crate::auth::PasswordStatus, VerificationError> {
-    let _dit = ct::DataIndependentTiming::enter();
-    self.verify_password_inner(password, encoded, context, Some(memory))
+    ct::with_data_independent_timing(|| self.verify_password_inner(password, encoded, context, Some(memory)))
   }
 
   fn verify_password_inner(

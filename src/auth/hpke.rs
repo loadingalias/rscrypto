@@ -75,7 +75,7 @@ use crate::{
   secret::ZeroizingBytes,
   traits::{
     Aead,
-    ct::{self, DataIndependentTiming},
+    ct::{self, with_data_independent_timing},
   },
 };
 
@@ -494,15 +494,16 @@ impl<S: HpkeSuite> HpkeSender<S> {
     info: &[u8],
     mut fill_random: impl FnMut(&mut [u8]) -> Result<(), HpkeError>,
   ) -> Result<(S::Encapsulation, Self), HpkeError> {
-    let _dit = DataIndependentTiming::enter();
-    let mut shared_secret = ZeroizingBytes::<SHARED_SECRET_SIZE>::zeroed();
-    let encapsulation = S::__encap(
-      public_key,
-      &mut fill_random,
-      shared_secret.as_mut_array(),
-      HpkeSuiteToken(()),
-    )?;
-    Ok((encapsulation, Self(Context::new(shared_secret.as_array(), info))))
+    with_data_independent_timing(|| {
+      let mut shared_secret = ZeroizingBytes::<SHARED_SECRET_SIZE>::zeroed();
+      let encapsulation = S::__encap(
+        public_key,
+        &mut fill_random,
+        shared_secret.as_mut_array(),
+        HpkeSuiteToken(()),
+      )?;
+      Ok((encapsulation, Self(Context::new(shared_secret.as_array(), info))))
+    })
   }
 
   /// Like [`Self::setup`], with the context built in place in memory from
@@ -521,17 +522,18 @@ impl<S: HpkeSuite> HpkeSender<S> {
     mut fill_random: impl FnMut(&mut [u8]) -> Result<(), HpkeError>,
     alloc: A,
   ) -> Result<(S::Encapsulation, Box<Self, A>), HpkeError> {
-    let _dit = DataIndependentTiming::enter();
-    let mut shared_secret = ZeroizingBytes::<SHARED_SECRET_SIZE>::zeroed();
-    let encapsulation = S::__encap(
-      public_key,
-      &mut fill_random,
-      shared_secret.as_mut_array(),
-      HpkeSuiteToken(()),
-    )?;
-    let mut sender = Box::new_in(Self(Context::unkeyed()), alloc);
-    sender.0.schedule(shared_secret.as_array(), info);
-    Ok((encapsulation, sender))
+    with_data_independent_timing(|| {
+      let mut shared_secret = ZeroizingBytes::<SHARED_SECRET_SIZE>::zeroed();
+      let encapsulation = S::__encap(
+        public_key,
+        &mut fill_random,
+        shared_secret.as_mut_array(),
+        HpkeSuiteToken(()),
+      )?;
+      let mut sender = Box::new_in(Self(Context::unkeyed()), alloc);
+      sender.0.schedule(shared_secret.as_array(), info);
+      Ok((encapsulation, sender))
+    })
   }
 
   /// `Context.Seal(aad, pt)`: seal `plaintext` into `out` as `ciphertext || tag`.
@@ -579,15 +581,16 @@ impl<S: HpkeSuite> HpkeReceiver<S> {
   /// Returns [`HpkeError::DecapsulationFailed`] when the KEM rejects
   /// `encapsulation`.
   pub fn setup(encapsulation: &S::Encapsulation, private_key: &S::PrivateKey, info: &[u8]) -> Result<Self, HpkeError> {
-    let _dit = DataIndependentTiming::enter();
-    let mut shared_secret = ZeroizingBytes::<SHARED_SECRET_SIZE>::zeroed();
-    S::__decap(
-      encapsulation,
-      private_key,
-      shared_secret.as_mut_array(),
-      HpkeSuiteToken(()),
-    )?;
-    Ok(Self(Context::new(shared_secret.as_array(), info)))
+    with_data_independent_timing(|| {
+      let mut shared_secret = ZeroizingBytes::<SHARED_SECRET_SIZE>::zeroed();
+      S::__decap(
+        encapsulation,
+        private_key,
+        shared_secret.as_mut_array(),
+        HpkeSuiteToken(()),
+      )?;
+      Ok(Self(Context::new(shared_secret.as_array(), info)))
+    })
   }
 
   /// Like [`Self::setup`], with the context built in place in memory from
@@ -606,17 +609,18 @@ impl<S: HpkeSuite> HpkeReceiver<S> {
     info: &[u8],
     alloc: A,
   ) -> Result<Box<Self, A>, HpkeError> {
-    let _dit = DataIndependentTiming::enter();
-    let mut shared_secret = ZeroizingBytes::<SHARED_SECRET_SIZE>::zeroed();
-    S::__decap(
-      encapsulation,
-      private_key,
-      shared_secret.as_mut_array(),
-      HpkeSuiteToken(()),
-    )?;
-    let mut receiver = Box::new_in(Self(Context::unkeyed()), alloc);
-    receiver.0.schedule(shared_secret.as_array(), info);
-    Ok(receiver)
+    with_data_independent_timing(|| {
+      let mut shared_secret = ZeroizingBytes::<SHARED_SECRET_SIZE>::zeroed();
+      S::__decap(
+        encapsulation,
+        private_key,
+        shared_secret.as_mut_array(),
+        HpkeSuiteToken(()),
+      )?;
+      let mut receiver = Box::new_in(Self(Context::unkeyed()), alloc);
+      receiver.0.schedule(shared_secret.as_array(), info);
+      Ok(receiver)
+    })
   }
 
   /// `Context.Open(aad, ct)`: open `ciphertext || tag` into `out`.
@@ -676,7 +680,7 @@ mod x25519_aes128gcm {
   };
   use crate::{
     Aes128Gcm, Aes128GcmKey, X25519PublicKey, X25519SecretKey, X25519SharedSecret, secret::ZeroizingBytes,
-    traits::ct::DataIndependentTiming,
+    traits::ct::with_data_independent_timing,
   };
 
   const KEM_ID: u16 = 0x0020;
@@ -745,10 +749,11 @@ mod x25519_aes128gcm {
 
     /// `DeriveKeyPair(ikm)`, written in place.
     fn derive(&mut self, ikm: &[u8]) {
-      let _dit = DataIndependentTiming::enter();
-      let prk = labeled_extract(&KEM_SUITE_ID, b"", b"dkp_prk", ikm);
-      labeled_expand(&prk, &KEM_SUITE_ID, b"sk", [b"", b""], self.secret.as_mut_bytes());
-      self.public = self.secret.public_key();
+      with_data_independent_timing(|| {
+        let prk = labeled_extract(&KEM_SUITE_ID, b"", b"dkp_prk", ikm);
+        labeled_expand(&prk, &KEM_SUITE_ID, b"sk", [b"", b""], self.secret.as_mut_bytes());
+        self.public = self.secret.public_key();
+      })
     }
   }
 
@@ -861,7 +866,7 @@ mod xwing_chacha20poly1305 {
   use crate::{
     ChaCha20Poly1305, ChaCha20Poly1305Key, XWingCiphertext, XWingDecapsulationKey, XWingError,
     XWingPreparedDecapsulationKey, XWingPreparedEncapsulationKey, hashes::crypto::keccak::secret,
-    traits::ct::DataIndependentTiming,
+    traits::ct::with_data_independent_timing,
   };
 
   const KEM_ID: u16 = 0x647A;
@@ -870,26 +875,27 @@ mod xwing_chacha20poly1305 {
 
   /// `DeriveKeyPair(ikm)`, expanded in place into `key`.
   fn derive(ikm: &[u8], key: &mut XWingPreparedDecapsulationKey) {
-    let _dit = DataIndependentTiming::enter();
-    let label_length = u16::try_from(DERIVE_LABEL.len())
-      .expect("the label is short")
-      .to_be_bytes();
-    let output_length = u16::try_from(XWingDecapsulationKey::LENGTH)
-      .expect("the seed is short")
-      .to_be_bytes();
-    let mut seed = XWingDecapsulationKey::from_bytes([0; XWingDecapsulationKey::LENGTH]);
-    secret::shake256(
-      &[
-        ikm,
-        VERSION_LABEL,
-        &KEM_SUITE_ID,
-        &label_length,
-        DERIVE_LABEL,
-        &output_length,
-      ],
-      seed.as_mut_bytes(),
-    );
-    key.expand(&seed);
+    with_data_independent_timing(|| {
+      let label_length = u16::try_from(DERIVE_LABEL.len())
+        .expect("the label is short")
+        .to_be_bytes();
+      let output_length = u16::try_from(XWingDecapsulationKey::LENGTH)
+        .expect("the seed is short")
+        .to_be_bytes();
+      let mut seed = XWingDecapsulationKey::from_bytes([0; XWingDecapsulationKey::LENGTH]);
+      secret::shake256(
+        &[
+          ikm,
+          VERSION_LABEL,
+          &KEM_SUITE_ID,
+          &label_length,
+          DERIVE_LABEL,
+          &output_length,
+        ],
+        seed.as_mut_bytes(),
+      );
+      key.expand(&seed);
+    })
   }
 
   /// HPKE suite X-Wing, HKDF-SHA256, ChaCha20Poly1305.

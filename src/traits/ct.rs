@@ -426,9 +426,15 @@ pub(crate) fn zeroize_words<T: WordZero>(words: &mut [T]) {
 /// to cover it for one toggle per scope. Gather encryption enters it for the complete
 /// message, including all slices and output initialization.
 ///
+/// Compiler barriers keep the work of `f` between the two DIT writes. `f` reads
+/// its captures after DIT is set, and its result is complete before DIT is restored.
+///
 /// The previous state is restored when `f` returns or unwinds. On other
 /// architectures, on cores without `FEAT_DIT`, and under Miri, this calls `f`
-/// unchanged. It adds no constant-time claim beyond `ct.toml`.
+/// unchanged. Without `std`, Linux and Android read `FEAT_DIT` from `getauxval`,
+/// and Apple targets read it from `sysctlbyname`. Other targets without `std` set
+/// DIT only when the build enables the `dit` target feature. This function adds no
+/// constant-time claim beyond `ct.toml`.
 ///
 /// # Examples
 ///
@@ -439,22 +445,43 @@ pub(crate) fn zeroize_words<T: WordZero>(words: &mut [T]) {
 /// assert_eq!(sum, 4);
 /// ```
 #[inline]
-pub fn with_data_independent_timing<R>(f: impl FnOnce() -> R) -> R {
-  let _guard = DataIndependentTiming::enter();
-  f()
+pub fn with_data_independent_timing<R>(mut f: impl FnOnce() -> R) -> R {
+  let _dit = DataIndependentTiming::enter();
+  DataIndependentTiming::barrier(&mut f);
+  let mut result = f();
+  DataIndependentTiming::barrier(&mut result);
+  result
 }
 
 /// Holds `PSTATE.DIT` set on AArch64 and restores the previous state when dropped.
 #[must_use = "the guard must stay alive for the whole secret-dependent operation"]
-pub(crate) struct DataIndependentTiming {
+struct DataIndependentTiming {
   #[cfg(all(target_arch = "aarch64", not(miri)))]
   restore_disabled: bool,
 }
 
 impl DataIndependentTiming {
+  /// Keep all work on `value` on its side of the `PSTATE.DIT` writes.
+  ///
+  /// A DIT write orders memory and other side effects, but not register arithmetic. This block can
+  /// read and write `*value`, so the compiler must store `value` before it and reload it after it.
+  /// Blocks without `pure` keep their program order. Thus the closure reads its captures after
+  /// `msr DIT, #1`, and its result is complete before `msr DIT, #0`.
+  #[inline(always)]
+  fn barrier<T>(value: &mut T) {
+    #[cfg(all(target_arch = "aarch64", not(miri)))]
+    // SAFETY: The template is a comment, so the block executes no instruction. It leaves `*value`,
+    // the stack, and the flags unchanged. The pointer comes from a live `&mut T`.
+    unsafe {
+      core::arch::asm!("/* {0} */", in(reg) core::ptr::from_mut(value), options(nostack, preserves_flags));
+    }
+    #[cfg(not(all(target_arch = "aarch64", not(miri))))]
+    let _ = value;
+  }
+
   /// Set `PSTATE.DIT` where `FEAT_DIT` exists; a no-op elsewhere.
   #[inline]
-  pub(crate) fn enter() -> Self {
+  fn enter() -> Self {
     #[cfg(test)]
     tests::DIT_ENTRIES.with(|entries| entries.set(entries.get().strict_add(1)));
     #[cfg(all(target_arch = "aarch64", not(miri)))]
@@ -482,32 +509,18 @@ impl DataIndependentTiming {
     }
   }
 
-  #[cfg(all(target_arch = "aarch64", not(miri)))]
-  #[inline]
-  fn supported() -> bool {
-    #[cfg(feature = "std")]
-    {
-      crate::platform::detect::dit_supported()
-    }
-    #[cfg(not(feature = "std"))]
-    {
-      cfg!(target_feature = "dit")
-    }
-  }
-
   /// Read `PSTATE.DIT` when `FEAT_DIT` exists.
   #[cfg(all(target_arch = "aarch64", not(miri)))]
   #[inline]
-  pub(crate) fn state_if_supported() -> Option<u64> {
-    if !Self::supported() {
+  fn state_if_supported() -> Option<u64> {
+    if !crate::platform::detect::dit_supported() {
       return None;
     }
     let state: u64;
-    // SAFETY: `supported` establishes FEAT_DIT before the DIT system register is
-    // accessed. `.inst 0xd53b42a8` encodes `mrs x8, DIT`; the explicit late
+    // SAFETY: `dit_supported` establishes FEAT_DIT before the DIT system register
+    // is accessed. `.inst 0xd53b42a8` encodes `mrs x8, DIT`; the explicit late
     // output declares the complete register effect. MRS DIT is available at
-    // EL0, touches no memory or stack, and the conservative asm options keep it
-    // ordered with the guarded arithmetic.
+    // EL0 and touches no memory or stack.
     unsafe {
       core::arch::asm!(
         ".inst 0xd53b42a8",

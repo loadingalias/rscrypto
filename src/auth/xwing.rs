@@ -67,7 +67,7 @@ use crate::{
   secret::ZeroizingBytes,
   traits::{
     Kem,
-    ct::{self, DataIndependentTiming},
+    ct::{self, with_data_independent_timing},
   },
 };
 
@@ -545,35 +545,36 @@ impl XWingPreparedEncapsulationKey {
     mut fill_random: impl FnMut(&mut [u8]) -> Result<(), XWingError>,
     shared: &mut [u8; XWingSharedSecret::LENGTH],
   ) -> Result<XWingCiphertext, XWingError> {
-    let _dit = DataIndependentTiming::enter();
-    let mut random = ZeroizingBytes::<ENCAPSULATION_RANDOM_SIZE>::zeroed();
-    fill_random(random.as_mut_array())?;
-    let (coins, x25519_secret) = random
-      .as_array()
-      .split_first_chunk::<ML_KEM_COINS_SIZE>()
-      .expect("the coins fit the encapsulation randomness");
-    let mut ephemeral = X25519SecretKey::from_bytes([0; X25519SecretKey::LENGTH]);
-    ephemeral.as_mut_bytes().copy_from_slice(x25519_secret);
+    with_data_independent_timing(|| {
+      let mut random = ZeroizingBytes::<ENCAPSULATION_RANDOM_SIZE>::zeroed();
+      fill_random(random.as_mut_array())?;
+      let (coins, x25519_secret) = random
+        .as_array()
+        .split_first_chunk::<ML_KEM_COINS_SIZE>()
+        .expect("the coins fit the encapsulation randomness");
+      let mut ephemeral = X25519SecretKey::from_bytes([0; X25519SecretKey::LENGTH]);
+      ephemeral.as_mut_bytes().copy_from_slice(x25519_secret);
 
-    let mut x25519_shared = ZeroizingBytes::<{ X25519SharedSecret::LENGTH }>::zeroed();
-    ephemeral
-      .diffie_hellman_into(&self.x25519, x25519_shared.as_mut_array())
-      .map_err(|_| XWingError::InvalidEncapsulationKey)?;
-    let x25519_ciphertext = ephemeral.public_key();
-    let (ml_kem_ciphertext, ml_kem_shared) = self.ml_kem.encapsulate_internal(coins);
+      let mut x25519_shared = ZeroizingBytes::<{ X25519SharedSecret::LENGTH }>::zeroed();
+      ephemeral
+        .diffie_hellman_into(&self.x25519, x25519_shared.as_mut_array())
+        .map_err(|_| XWingError::InvalidEncapsulationKey)?;
+      let x25519_ciphertext = ephemeral.public_key();
+      let (ml_kem_ciphertext, ml_kem_shared) = self.ml_kem.encapsulate_internal(coins);
 
-    let mut ciphertext = [0u8; XWingCiphertext::LENGTH];
-    let (ml_kem_part, x25519_part) = ciphertext.split_at_mut(ML_KEM_CIPHERTEXT_SIZE);
-    ml_kem_part.copy_from_slice(ml_kem_ciphertext.as_bytes());
-    x25519_part.copy_from_slice(x25519_ciphertext.as_bytes());
-    combine(
-      &ml_kem_shared,
-      x25519_shared.as_array(),
-      x25519_ciphertext.as_bytes(),
-      self.x25519.as_bytes(),
-      shared,
-    );
-    Ok(XWingCiphertext(ciphertext))
+      let mut ciphertext = [0u8; XWingCiphertext::LENGTH];
+      let (ml_kem_part, x25519_part) = ciphertext.split_at_mut(ML_KEM_CIPHERTEXT_SIZE);
+      ml_kem_part.copy_from_slice(ml_kem_ciphertext.as_bytes());
+      x25519_part.copy_from_slice(x25519_ciphertext.as_bytes());
+      combine(
+        &ml_kem_shared,
+        x25519_shared.as_array(),
+        x25519_ciphertext.as_bytes(),
+        self.x25519.as_bytes(),
+        shared,
+      );
+      Ok(XWingCiphertext(ciphertext))
+    })
   }
 }
 
@@ -649,25 +650,26 @@ impl XWingPreparedDecapsulationKey {
     ciphertext: &XWingCiphertext,
     shared: &mut [u8; XWingSharedSecret::LENGTH],
   ) -> Result<(), XWingError> {
-    let _dit = DataIndependentTiming::enter();
-    let x25519_ciphertext = ciphertext.x25519();
-    let mut x25519_shared = ZeroizingBytes::<{ X25519SharedSecret::LENGTH }>::zeroed();
-    self
-      .x25519
-      .diffie_hellman_into(
-        &X25519PublicKey::from_bytes(*x25519_ciphertext),
-        x25519_shared.as_mut_array(),
-      )
-      .map_err(|_| XWingError::InvalidCiphertext)?;
-    let ml_kem_shared = self.ml_kem.decapsulate_internal(ciphertext.ml_kem());
-    combine(
-      &ml_kem_shared,
-      x25519_shared.as_array(),
-      x25519_ciphertext,
-      self.x25519_public.as_bytes(),
-      shared,
-    );
-    Ok(())
+    with_data_independent_timing(|| {
+      let x25519_ciphertext = ciphertext.x25519();
+      let mut x25519_shared = ZeroizingBytes::<{ X25519SharedSecret::LENGTH }>::zeroed();
+      self
+        .x25519
+        .diffie_hellman_into(
+          &X25519PublicKey::from_bytes(*x25519_ciphertext),
+          x25519_shared.as_mut_array(),
+        )
+        .map_err(|_| XWingError::InvalidCiphertext)?;
+      let ml_kem_shared = self.ml_kem.decapsulate_internal(ciphertext.ml_kem());
+      combine(
+        &ml_kem_shared,
+        x25519_shared.as_array(),
+        x25519_ciphertext,
+        self.x25519_public.as_bytes(),
+        shared,
+      );
+      Ok(())
+    })
   }
 
   /// All-zero owner that [`Self::expand`] fills in place.
@@ -682,17 +684,18 @@ impl XWingPreparedDecapsulationKey {
 
   /// `expandDecapsulationKey` of the draft, written in place.
   pub(crate) fn expand(&mut self, key: &XWingDecapsulationKey) {
-    let _dit = DataIndependentTiming::enter();
-    let mut expanded = ZeroizingBytes::<EXPANDED_SIZE>::zeroed();
-    secret::shake256(&[key.as_bytes().as_slice()], expanded.as_mut_array());
-    let (ml_kem_seed, x25519_secret) = expanded
-      .as_array()
-      .split_first_chunk::<ML_KEM_SEED_SIZE>()
-      .expect("the ML-KEM seed fits the expansion");
-    self.ml_kem.expand_seed(ml_kem_seed);
-    self.x25519.as_mut_bytes().copy_from_slice(x25519_secret);
-    self.x25519_public = self.x25519.public_key();
-    self.key.0 = key.0;
+    with_data_independent_timing(|| {
+      let mut expanded = ZeroizingBytes::<EXPANDED_SIZE>::zeroed();
+      secret::shake256(&[key.as_bytes().as_slice()], expanded.as_mut_array());
+      let (ml_kem_seed, x25519_secret) = expanded
+        .as_array()
+        .split_first_chunk::<ML_KEM_SEED_SIZE>()
+        .expect("the ML-KEM seed fits the expansion");
+      self.ml_kem.expand_seed(ml_kem_seed);
+      self.x25519.as_mut_bytes().copy_from_slice(x25519_secret);
+      self.x25519_public = self.x25519.public_key();
+      self.key.0 = key.0;
+    })
   }
 }
 

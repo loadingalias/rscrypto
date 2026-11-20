@@ -261,42 +261,43 @@ impl X25519SecretKey {
   /// Derive the matching public key.
   #[must_use]
   pub fn public_key(&self) -> X25519PublicKey {
-    let _dit = crate::traits::ct::DataIndependentTiming::enter();
-    #[cfg(any(
-      all(
-        target_arch = "aarch64",
-        any(target_os = "macos", target_os = "linux"),
-        not(feature = "portable-only"),
-        not(miri)
-      ),
-      all(
-        target_arch = "x86_64",
-        any(target_os = "linux", target_os = "windows"),
-        not(feature = "portable-only"),
-        not(miri)
-      )
-    ))]
-    {
-      X25519PublicKey::from_bytes(platform_asm::x25519_base(&self.0))
-    }
+    crate::traits::ct::with_data_independent_timing(|| {
+      #[cfg(any(
+        all(
+          target_arch = "aarch64",
+          any(target_os = "macos", target_os = "linux"),
+          not(feature = "portable-only"),
+          not(miri)
+        ),
+        all(
+          target_arch = "x86_64",
+          any(target_os = "linux", target_os = "windows"),
+          not(feature = "portable-only"),
+          not(miri)
+        )
+      ))]
+      {
+        X25519PublicKey::from_bytes(platform_asm::x25519_base(&self.0))
+      }
 
-    #[cfg(not(any(
-      all(
-        target_arch = "aarch64",
-        any(target_os = "macos", target_os = "linux"),
-        not(feature = "portable-only"),
-        not(miri)
-      ),
-      all(
-        target_arch = "x86_64",
-        any(target_os = "linux", target_os = "windows"),
-        not(feature = "portable-only"),
-        not(miri)
-      )
-    )))]
-    {
-      self.with_clamped_scalar(public_key_from_scalar)
-    }
+      #[cfg(not(any(
+        all(
+          target_arch = "aarch64",
+          any(target_os = "macos", target_os = "linux"),
+          not(feature = "portable-only"),
+          not(miri)
+        ),
+        all(
+          target_arch = "x86_64",
+          any(target_os = "linux", target_os = "windows"),
+          not(feature = "portable-only"),
+          not(miri)
+        )
+      )))]
+      {
+        self.with_clamped_scalar(public_key_from_scalar)
+      }
+    })
   }
 
   /// Compute an X25519 shared secret with `public`.
@@ -608,47 +609,48 @@ impl X25519SharedSecret {
     public: &X25519PublicKey,
     out: &mut [u8; Self::LENGTH],
   ) -> Result<(), X25519Error> {
-    let _dit = crate::traits::ct::DataIndependentTiming::enter();
-    #[cfg(any(
-      all(
-        target_arch = "aarch64",
-        any(target_os = "macos", target_os = "linux"),
-        not(feature = "portable-only"),
-        not(miri)
-      ),
-      all(
-        target_arch = "x86_64",
-        any(target_os = "linux", target_os = "windows"),
-        not(feature = "portable-only"),
-        not(miri)
-      )
-    ))]
-    {
-      *out = platform_asm::x25519(&secret.0, &public.bytes);
-    }
+    crate::traits::ct::with_data_independent_timing(|| {
+      #[cfg(any(
+        all(
+          target_arch = "aarch64",
+          any(target_os = "macos", target_os = "linux"),
+          not(feature = "portable-only"),
+          not(miri)
+        ),
+        all(
+          target_arch = "x86_64",
+          any(target_os = "linux", target_os = "windows"),
+          not(feature = "portable-only"),
+          not(miri)
+        )
+      ))]
+      {
+        *out = platform_asm::x25519(&secret.0, &public.bytes);
+      }
 
-    #[cfg(not(any(
-      all(
-        target_arch = "aarch64",
-        any(target_os = "macos", target_os = "linux"),
-        not(feature = "portable-only"),
-        not(miri)
-      ),
-      all(
-        target_arch = "x86_64",
-        any(target_os = "linux", target_os = "windows"),
-        not(feature = "portable-only"),
-        not(miri)
-      )
-    )))]
-    {
-      *out = secret.with_clamped_scalar(|scalar| montgomery_ladder(scalar, &public.u).to_bytes());
-    }
+      #[cfg(not(any(
+        all(
+          target_arch = "aarch64",
+          any(target_os = "macos", target_os = "linux"),
+          not(feature = "portable-only"),
+          not(miri)
+        ),
+        all(
+          target_arch = "x86_64",
+          any(target_os = "linux", target_os = "windows"),
+          not(feature = "portable-only"),
+          not(miri)
+        )
+      )))]
+      {
+        *out = secret.with_clamped_scalar(|scalar| montgomery_ladder(scalar, &public.u).to_bytes());
+      }
 
-    if is_all_zero(out) {
-      return Err(X25519Error::new());
-    }
-    Ok(())
+      if is_all_zero(out) {
+        return Err(X25519Error::new());
+      }
+      Ok(())
+    })
   }
 }
 

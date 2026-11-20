@@ -53,7 +53,7 @@ use crate::backend::{
   pkix::{self, KeyError},
 };
 use crate::secret::ZeroizingBytes;
-use crate::traits::ct::{self, DataIndependentTiming};
+use crate::traits::ct::{self, with_data_independent_timing};
 use crate::{SecretBytes, VerificationError, Verifier};
 #[cfg(feature = "alloc")]
 use alloc::boxed::Box;
@@ -707,15 +707,16 @@ macro_rules! parameter_set {
       /// for a wrong-length public key; and [`MlDsaKeyError::RejectionLimit`]
       /// if expansion exhausts its sampling bound.
       pub fn from_pkcs8_der(der: &[u8]) -> Result<Self, MlDsaKeyError> {
-        let _dit = DataIndependentTiming::enter();
-        let decoded = pkix::decode_pkcs8::<MlDsaKeyError, SEED_LENGTH, $sk, $pk>(der, $profile::ALGORITHM)?;
-        let (secret, expanded) = match decoded.private_key {
-          pkix::PrivateKey::Seed(seed) => (Self::from_seed(seed)?, None),
-          pkix::PrivateKey::Expanded(expanded) => (Self::try_from_slice(expanded)?, None),
-          pkix::PrivateKey::Both { seed, expanded } => (Self::from_seed(seed)?, Some(expanded)),
-        };
-        secret.check_redundant(expanded, decoded.public_key)?;
-        Ok(secret)
+        with_data_independent_timing(|| {
+          let decoded = pkix::decode_pkcs8::<MlDsaKeyError, SEED_LENGTH, $sk, $pk>(der, $profile::ALGORITHM)?;
+          let (secret, expanded) = match decoded.private_key {
+            pkix::PrivateKey::Seed(seed) => (Self::from_seed(seed)?, None),
+            pkix::PrivateKey::Expanded(expanded) => (Self::try_from_slice(expanded)?, None),
+            pkix::PrivateKey::Both { seed, expanded } => (Self::from_seed(seed)?, Some(expanded)),
+          };
+          secret.check_redundant(expanded, decoded.public_key)?;
+          Ok(secret)
+        })
       }
 
       /// Like [`Self::from_pkcs8_der`], with the key in memory from `alloc`.
@@ -726,15 +727,16 @@ macro_rules! parameter_set {
       /// handled as by [`Box::new_in`].
       #[cfg(feature = "alloc")]
       pub fn from_pkcs8_der_in<A: Allocator>(der: &[u8], alloc: A) -> Result<Box<Self, A>, MlDsaKeyError> {
-        let _dit = DataIndependentTiming::enter();
-        let decoded = pkix::decode_pkcs8::<MlDsaKeyError, SEED_LENGTH, $sk, $pk>(der, $profile::ALGORITHM)?;
-        let (secret, expanded) = match decoded.private_key {
-          pkix::PrivateKey::Seed(seed) => (Self::from_seed_in(seed, alloc)?, None),
-          pkix::PrivateKey::Expanded(expanded) => (Self::try_from_slice_in(expanded, alloc)?, None),
-          pkix::PrivateKey::Both { seed, expanded } => (Self::from_seed_in(seed, alloc)?, Some(expanded)),
-        };
-        secret.check_redundant(expanded, decoded.public_key)?;
-        Ok(secret)
+        with_data_independent_timing(|| {
+          let decoded = pkix::decode_pkcs8::<MlDsaKeyError, SEED_LENGTH, $sk, $pk>(der, $profile::ALGORITHM)?;
+          let (secret, expanded) = match decoded.private_key {
+            pkix::PrivateKey::Seed(seed) => (Self::from_seed_in(seed, alloc)?, None),
+            pkix::PrivateKey::Expanded(expanded) => (Self::try_from_slice_in(expanded, alloc)?, None),
+            pkix::PrivateKey::Both { seed, expanded } => (Self::from_seed_in(seed, alloc)?, Some(expanded)),
+          };
+          secret.check_redundant(expanded, decoded.public_key)?;
+          Ok(secret)
+        })
       }
 
       /// Write this key as an RFC 9881 expanded-form private key in version 1
@@ -908,18 +910,19 @@ macro_rules! parameter_set {
       #[doc = concat!("As [`", stringify!($secret), "::from_pkcs8_der`], and [`MlDsaKeyError::UnsupportedEncoding`]")]
       /// for an expanded-only key: expansion cannot recover a discarded seed.
       pub fn from_pkcs8_der(der: &[u8]) -> Result<Self, MlDsaKeyError> {
-        let _dit = DataIndependentTiming::enter();
-        let decoded = pkix::decode_pkcs8::<MlDsaKeyError, SEED_LENGTH, $sk, $pk>(der, $profile::ALGORITHM)?;
-        let (seed, expanded) = match decoded.private_key {
-          pkix::PrivateKey::Seed(seed) => (seed, None),
-          pkix::PrivateKey::Both { seed, expanded } => (seed, Some(expanded)),
-          pkix::PrivateKey::Expanded(_) => return Err(MlDsaKeyError::UnsupportedEncoding),
-        };
-        let owner = Self(ZeroizingBytes::new(*seed));
-        if expanded.is_some() || decoded.public_key.is_some() {
-          $secret::from_seed(owner.0.as_array())?.check_redundant(expanded, decoded.public_key)?;
-        }
-        Ok(owner)
+        with_data_independent_timing(|| {
+          let decoded = pkix::decode_pkcs8::<MlDsaKeyError, SEED_LENGTH, $sk, $pk>(der, $profile::ALGORITHM)?;
+          let (seed, expanded) = match decoded.private_key {
+            pkix::PrivateKey::Seed(seed) => (seed, None),
+            pkix::PrivateKey::Both { seed, expanded } => (seed, Some(expanded)),
+            pkix::PrivateKey::Expanded(_) => return Err(MlDsaKeyError::UnsupportedEncoding),
+          };
+          let owner = Self(ZeroizingBytes::new(*seed));
+          if expanded.is_some() || decoded.public_key.is_some() {
+            $secret::from_seed(owner.0.as_array())?.check_redundant(expanded, decoded.public_key)?;
+          }
+          Ok(owner)
+        })
       }
 
       /// Write the seed as an RFC 9881 seed-form private key in version 1
@@ -1243,11 +1246,12 @@ pub use diagnostics::{
 #[cfg(all(rscrypto_internal, feature = "diag"))]
 #[must_use]
 pub fn diag_mldsa_inverse_ntt(input: &[u32; 256]) -> u32 {
-  let _dit = crate::traits::ct::DataIndependentTiming::enter();
-  let mut value = poly::Poly::zero();
-  value.0.copy_from_slice(input);
-  value.inverse_ntt();
-  core::hint::black_box(&value.0).iter().fold(0, |digest, x| digest ^ x)
+  crate::traits::ct::with_data_independent_timing(|| {
+    let mut value = poly::Poly::zero();
+    value.0.copy_from_slice(input);
+    value.inverse_ntt();
+    core::hint::black_box(&value.0).iter().fold(0, |digest, x| digest ^ x)
+  })
 }
 
 /// Diagnostic execution of the production scalar inverse NTT, bypassing dispatch.
@@ -1256,11 +1260,12 @@ pub fn diag_mldsa_inverse_ntt(input: &[u32; 256]) -> u32 {
 #[cfg(all(rscrypto_internal, feature = "diag"))]
 #[must_use]
 pub fn diag_mldsa_inverse_ntt_portable(input: &[u32; 256]) -> u32 {
-  let _dit = crate::traits::ct::DataIndependentTiming::enter();
-  let mut value = poly::Poly::zero();
-  value.0.copy_from_slice(input);
-  value.inverse_ntt_scalar::<false>();
-  core::hint::black_box(&value.0).iter().fold(0, |digest, x| digest ^ x)
+  crate::traits::ct::with_data_independent_timing(|| {
+    let mut value = poly::Poly::zero();
+    value.0.copy_from_slice(input);
+    value.inverse_ntt_scalar::<false>();
+    core::hint::black_box(&value.0).iter().fold(0, |digest, x| digest ^ x)
+  })
 }
 
 /// Diagnostic execution of the production secret-noise sampler.
@@ -1269,13 +1274,14 @@ pub fn diag_mldsa_inverse_ntt_portable(input: &[u32; 256]) -> u32 {
 #[cfg(all(rscrypto_internal, feature = "diag"))]
 #[must_use]
 pub fn diag_mldsa_noise(seed: &[u8; 64], eta: u32) -> (bool, u32) {
-  let _dit = crate::traits::ct::DataIndependentTiming::enter();
-  let mut value = poly::Poly::zero();
-  let valid = sampling::noise(seed, 0, eta, &mut value).is_ok();
-  (
-    valid,
-    core::hint::black_box(&value.0).iter().fold(0, |digest, x| digest ^ x),
-  )
+  crate::traits::ct::with_data_independent_timing(|| {
+    let mut value = poly::Poly::zero();
+    let valid = sampling::noise(seed, 0, eta, &mut value).is_ok();
+    (
+      valid,
+      core::hint::black_box(&value.0).iter().fold(0, |digest, x| digest ^ x),
+    )
+  })
 }
 
 /// Diagnostic execution of the production unpublished-challenge sampler.
@@ -1284,11 +1290,12 @@ pub fn diag_mldsa_noise(seed: &[u8; 64], eta: u32) -> (bool, u32) {
 #[cfg(all(rscrypto_internal, feature = "diag"))]
 #[must_use]
 pub fn diag_mldsa_challenge(seed: &[u8], tau: usize) -> (bool, u32) {
-  let _dit = crate::traits::ct::DataIndependentTiming::enter();
-  let mut value = poly::Poly::zero();
-  let valid = sampling::challenge(seed, tau, &mut value).is_ok();
-  (
-    valid,
-    core::hint::black_box(&value.0).iter().fold(0, |digest, x| digest ^ x),
-  )
+  crate::traits::ct::with_data_independent_timing(|| {
+    let mut value = poly::Poly::zero();
+    let valid = sampling::challenge(seed, tau, &mut value).is_ok();
+    (
+      valid,
+      core::hint::black_box(&value.0).iter().fold(0, |digest, x| digest ^ x),
+    )
+  })
 }

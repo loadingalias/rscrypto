@@ -387,7 +387,7 @@ fn runtime_aarch64() -> Caps {
 /// Whether the Apple `sysctl` key `name` reads as a nonzero 32-bit value. A missing key is false.
 #[cfg(all(
   target_arch = "aarch64",
-  feature = "std",
+  any(feature = "std", not(miri)),
   any(target_os = "macos", target_os = "ios", target_os = "tvos", target_os = "watchos")
 ))]
 fn apple_sysctl_flag(name: &core::ffi::CStr) -> bool {
@@ -422,11 +422,11 @@ fn apple_sysctl_flag(name: &core::ffi::CStr) -> bool {
 }
 
 /// The FEAT_DIT cache: zero until probed, then `DIT_KNOWN`, plus `DIT_PRESENT` when the CPU has it.
-#[cfg(all(target_arch = "aarch64", feature = "std", not(miri)))]
+#[cfg(all(target_arch = "aarch64", not(miri)))]
 static DIT_STATE: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
-#[cfg(all(target_arch = "aarch64", feature = "std", not(miri)))]
+#[cfg(all(target_arch = "aarch64", not(miri)))]
 const DIT_KNOWN: u8 = 1;
-#[cfg(all(target_arch = "aarch64", feature = "std", not(miri)))]
+#[cfg(all(target_arch = "aarch64", not(miri)))]
 const DIT_PRESENT: u8 = 2;
 
 /// Whether the CPU implements FEAT_DIT (data-independent timing), probed once per process.
@@ -435,12 +435,12 @@ const DIT_PRESENT: u8 = 2;
 /// `portable-only`: DIT is a timing mitigation, not a backend choice. Racing first callers each
 /// run the same idempotent probe, so a relaxed byte is the whole cache. Every probed state is
 /// nonzero, so an inlined check is one load, a zero test, and a bit test.
-#[cfg(all(target_arch = "aarch64", feature = "std", not(miri)))]
+#[cfg(all(target_arch = "aarch64", not(miri)))]
 #[inline]
 pub(crate) fn dit_supported() -> bool {
   use core::sync::atomic::Ordering;
 
-  // A compile-time DIT target (every Apple AArch64 target) needs no runtime check at all.
+  // A compile-time DIT target, such as `aarch64-apple-darwin`, needs no runtime check.
   if cfg!(target_feature = "dit") {
     return true;
   }
@@ -451,7 +451,7 @@ pub(crate) fn dit_supported() -> bool {
   state & DIT_PRESENT != 0
 }
 
-#[cfg(all(target_arch = "aarch64", feature = "std", not(miri)))]
+#[cfg(all(target_arch = "aarch64", not(miri)))]
 #[cold]
 #[inline(never)]
 fn probe_and_cache_dit() -> bool {
@@ -463,7 +463,9 @@ fn probe_and_cache_dit() -> bool {
 }
 
 /// FEAT_DIT from the same sources as `std::arch::is_aarch64_feature_detected!("dit")`.
-#[cfg(all(target_arch = "aarch64", feature = "std", not(miri)))]
+///
+/// The Linux and Apple probes call the C library, not `std`, so `no_std` builds run them too.
+#[cfg(all(target_arch = "aarch64", not(miri)))]
 #[cold]
 fn probe_dit() -> bool {
   if cfg!(target_feature = "dit") {
@@ -491,7 +493,15 @@ fn probe_dit() -> bool {
     target_os = "watchos"
   )))]
   {
-    std::arch::is_aarch64_feature_detected!("dit")
+    // Without `std`, these targets have no safe probe: a read of an ID register or of DIT can trap.
+    #[cfg(feature = "std")]
+    {
+      std::arch::is_aarch64_feature_detected!("dit")
+    }
+    #[cfg(not(feature = "std"))]
+    {
+      false
+    }
   }
 }
 
@@ -502,13 +512,7 @@ fn probe_dit() -> bool {
   not(miri),
   target_arch = "aarch64",
   feature = "std",
-  any(
-    test,
-    feature = "crc16",
-    feature = "crc24",
-    feature = "crc32",
-    feature = "crc64"
-  ),
+  any(test, feature = "crc16", feature = "crc24", feature = "crc32", feature = "crc64"),
   any(target_os = "macos", target_os = "ios", target_os = "tvos", target_os = "watchos")
 ))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -531,12 +535,7 @@ enum AppleSiliconGen {
   not(miri),
   target_arch = "aarch64",
   feature = "std",
-  any(
-    feature = "crc16",
-    feature = "crc24",
-    feature = "crc32",
-    feature = "crc64"
-  )
+  any(feature = "crc16", feature = "crc24", feature = "crc32", feature = "crc64")
 ))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Aarch64TuneFamily {
@@ -562,13 +561,7 @@ pub(crate) enum Aarch64TuneFamily {
   not(miri),
   target_arch = "aarch64",
   feature = "std",
-  any(
-    test,
-    feature = "crc16",
-    feature = "crc24",
-    feature = "crc32",
-    feature = "crc64"
-  ),
+  any(test, feature = "crc16", feature = "crc24", feature = "crc32", feature = "crc64"),
   any(target_os = "macos", target_os = "ios", target_os = "tvos", target_os = "watchos")
 ))]
 fn detect_apple_silicon_gen() -> Option<AppleSiliconGen> {
@@ -651,12 +644,7 @@ fn detect_apple_silicon_gen() -> Option<AppleSiliconGen> {
   not(miri),
   target_arch = "aarch64",
   feature = "std",
-  any(
-    feature = "crc16",
-    feature = "crc24",
-    feature = "crc32",
-    feature = "crc64"
-  )
+  any(feature = "crc16", feature = "crc24", feature = "crc32", feature = "crc64")
 ))]
 #[must_use]
 pub(crate) fn detect_aarch64_tune_family() -> Option<Aarch64TuneFamily> {
@@ -730,12 +718,7 @@ fn detect_apple_sme_features() -> Caps {
   target_arch = "aarch64",
   feature = "std",
   any(target_os = "linux", target_os = "android"),
-  any(
-    feature = "crc16",
-    feature = "crc24",
-    feature = "crc32",
-    feature = "crc64"
-  )
+  any(feature = "crc16", feature = "crc24", feature = "crc32", feature = "crc64")
 ))]
 const MIDR_IMPLEMENTER_SHIFT: u32 = 24;
 #[cfg(all(
@@ -743,12 +726,7 @@ const MIDR_IMPLEMENTER_SHIFT: u32 = 24;
   target_arch = "aarch64",
   feature = "std",
   any(target_os = "linux", target_os = "android"),
-  any(
-    feature = "crc16",
-    feature = "crc24",
-    feature = "crc32",
-    feature = "crc64"
-  )
+  any(feature = "crc16", feature = "crc24", feature = "crc32", feature = "crc64")
 ))]
 const MIDR_PARTNUM_SHIFT: u32 = 4;
 
@@ -757,12 +735,7 @@ const MIDR_PARTNUM_SHIFT: u32 = 4;
   target_arch = "aarch64",
   feature = "std",
   any(target_os = "linux", target_os = "android"),
-  any(
-    feature = "crc16",
-    feature = "crc24",
-    feature = "crc32",
-    feature = "crc64"
-  )
+  any(feature = "crc16", feature = "crc24", feature = "crc32", feature = "crc64")
 ))]
 const ARM_CPU_IMP_ARM: u32 = 0x41;
 #[cfg(all(
@@ -770,12 +743,7 @@ const ARM_CPU_IMP_ARM: u32 = 0x41;
   target_arch = "aarch64",
   feature = "std",
   any(target_os = "linux", target_os = "android"),
-  any(
-    feature = "crc16",
-    feature = "crc24",
-    feature = "crc32",
-    feature = "crc64"
-  )
+  any(feature = "crc16", feature = "crc24", feature = "crc32", feature = "crc64")
 ))]
 const ARM_CPU_PART_NEOVERSE_N1: u32 = 0xD0C;
 #[cfg(all(
@@ -783,12 +751,7 @@ const ARM_CPU_PART_NEOVERSE_N1: u32 = 0xD0C;
   target_arch = "aarch64",
   feature = "std",
   any(target_os = "linux", target_os = "android"),
-  any(
-    feature = "crc16",
-    feature = "crc24",
-    feature = "crc32",
-    feature = "crc64"
-  )
+  any(feature = "crc16", feature = "crc24", feature = "crc32", feature = "crc64")
 ))]
 const ARM_CPU_PART_NEOVERSE_V1: u32 = 0xD40;
 #[cfg(all(
@@ -796,12 +759,7 @@ const ARM_CPU_PART_NEOVERSE_V1: u32 = 0xD40;
   target_arch = "aarch64",
   feature = "std",
   any(target_os = "linux", target_os = "android"),
-  any(
-    feature = "crc16",
-    feature = "crc24",
-    feature = "crc32",
-    feature = "crc64"
-  )
+  any(feature = "crc16", feature = "crc24", feature = "crc32", feature = "crc64")
 ))]
 const ARM_CPU_PART_NEOVERSE_V2: u32 = 0xD4F;
 
@@ -810,12 +768,7 @@ const ARM_CPU_PART_NEOVERSE_V2: u32 = 0xD4F;
   target_arch = "aarch64",
   feature = "std",
   any(target_os = "linux", target_os = "android"),
-  any(
-    feature = "crc16",
-    feature = "crc24",
-    feature = "crc32",
-    feature = "crc64"
-  )
+  any(feature = "crc16", feature = "crc24", feature = "crc32", feature = "crc64")
 ))]
 #[inline]
 fn midr_implementer(midr: u32) -> u32 {
@@ -827,12 +780,7 @@ fn midr_implementer(midr: u32) -> u32 {
   target_arch = "aarch64",
   feature = "std",
   any(target_os = "linux", target_os = "android"),
-  any(
-    feature = "crc16",
-    feature = "crc24",
-    feature = "crc32",
-    feature = "crc64"
-  )
+  any(feature = "crc16", feature = "crc24", feature = "crc32", feature = "crc64")
 ))]
 #[inline]
 fn midr_partnum(midr: u32) -> u32 {
@@ -844,12 +792,7 @@ fn midr_partnum(midr: u32) -> u32 {
   target_arch = "aarch64",
   feature = "std",
   any(target_os = "linux", target_os = "android"),
-  any(
-    feature = "crc16",
-    feature = "crc24",
-    feature = "crc32",
-    feature = "crc64"
-  )
+  any(feature = "crc16", feature = "crc24", feature = "crc32", feature = "crc64")
 ))]
 fn parse_u32_auto_radix(value: &str) -> Option<u32> {
   let value = value.trim();
@@ -868,12 +811,7 @@ fn parse_u32_auto_radix(value: &str) -> Option<u32> {
   target_arch = "aarch64",
   feature = "std",
   any(target_os = "linux", target_os = "android"),
-  any(
-    feature = "crc16",
-    feature = "crc24",
-    feature = "crc32",
-    feature = "crc64"
-  )
+  any(feature = "crc16", feature = "crc24", feature = "crc32", feature = "crc64")
 ))]
 fn read_linux_midr_sysfs() -> Option<u32> {
   let paths = [
@@ -897,12 +835,7 @@ fn read_linux_midr_sysfs() -> Option<u32> {
   target_arch = "aarch64",
   feature = "std",
   any(target_os = "linux", target_os = "android"),
-  any(
-    feature = "crc16",
-    feature = "crc24",
-    feature = "crc32",
-    feature = "crc64"
-  )
+  any(feature = "crc16", feature = "crc24", feature = "crc32", feature = "crc64")
 ))]
 fn read_linux_midr_cpuinfo() -> Option<u32> {
   let cpuinfo = std::fs::read_to_string("/proc/cpuinfo").ok()?;
@@ -935,12 +868,7 @@ fn read_linux_midr_cpuinfo() -> Option<u32> {
   target_arch = "aarch64",
   feature = "std",
   any(target_os = "linux", target_os = "android"),
-  any(
-    feature = "crc16",
-    feature = "crc24",
-    feature = "crc32",
-    feature = "crc64"
-  )
+  any(feature = "crc16", feature = "crc24", feature = "crc32", feature = "crc64")
 ))]
 #[inline]
 fn map_linux_midr_to_tune_family(midr: u32) -> Option<Aarch64TuneFamily> {
@@ -961,12 +889,7 @@ fn map_linux_midr_to_tune_family(midr: u32) -> Option<Aarch64TuneFamily> {
   target_arch = "aarch64",
   feature = "std",
   any(target_os = "linux", target_os = "android"),
-  any(
-    feature = "crc16",
-    feature = "crc24",
-    feature = "crc32",
-    feature = "crc64"
-  )
+  any(feature = "crc16", feature = "crc24", feature = "crc32", feature = "crc64")
 ))]
 fn detect_linux_aarch64_tune_family() -> Option<Aarch64TuneFamily> {
   let midr = read_linux_midr_sysfs().or_else(read_linux_midr_cpuinfo)?;

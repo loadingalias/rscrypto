@@ -404,50 +404,51 @@ macro_rules! define_pbkdf2_sha2 {
         iterations: u32,
         okm: &mut [u8],
       ) -> Result<(), Pbkdf2Error> {
-        let _dit = crate::traits::ct::DataIndependentTiming::enter();
-        if iterations == 0 {
-          return Err(Pbkdf2Error::InvalidIterations);
-        }
-        if okm.is_empty() {
-          return Ok(());
-        }
-        let num_blocks = u32::try_from(okm.len().div_ceil($output_size_const))
-          .map_err(|_| Pbkdf2Error::OutputTooLong)?;
+        crate::traits::ct::with_data_independent_timing(|| {
+          if iterations == 0 {
+            return Err(Pbkdf2Error::InvalidIterations);
+          }
+          if okm.is_empty() {
+            return Ok(());
+          }
+          let num_blocks = u32::try_from(okm.len().div_ceil($output_size_const))
+            .map_err(|_| Pbkdf2Error::OutputTooLong)?;
 
-        if iterations == 1 {
-          $iter1_fn(compress, inner_init, outer_init, salt, num_blocks, okm);
-          return Ok(());
-        }
+          if iterations == 1 {
+            $iter1_fn(compress, inner_init, outer_init, salt, num_blocks, okm);
+            return Ok(());
+          }
 
-        let (chunks, tail) = okm.as_chunks_mut::<$output_size_const>();
+          let (chunks, tail) = okm.as_chunks_mut::<$output_size_const>();
 
-        for (block_index, chunk) in (1..=num_blocks).zip(chunks) {
-          $f_fn(
-            compress,
-            inner_init,
-            outer_init,
-            salt,
-            iterations,
-            block_index,
-            chunk,
-          );
-        }
+          for (block_index, chunk) in (1..=num_blocks).zip(chunks) {
+            $f_fn(
+              compress,
+              inner_init,
+              outer_init,
+              salt,
+              iterations,
+              block_index,
+              chunk,
+            );
+          }
 
-        if !tail.is_empty() {
-          let mut block_out = [0u8; $output_size_const];
-          $f_fn(
-            compress,
-            inner_init,
-            outer_init,
-            salt,
-            iterations,
-            num_blocks,
-            &mut block_out,
-          );
-          tail.copy_from_slice(&block_out[..tail.len()]);
-          ct::zeroize(&mut block_out);
-        }
-        Ok(())
+          if !tail.is_empty() {
+            let mut block_out = [0u8; $output_size_const];
+            $f_fn(
+              compress,
+              inner_init,
+              outer_init,
+              salt,
+              iterations,
+              num_blocks,
+              &mut block_out,
+            );
+            tail.copy_from_slice(&block_out[..tail.len()]);
+            ct::zeroize(&mut block_out);
+          }
+          Ok(())
+        })
       }
 
       /// Derive a key into a fixed-size array.
@@ -532,8 +533,9 @@ macro_rules! define_pbkdf2_sha2 {
       /// [`verify_password`](Self::verify_password).
       #[must_use = "password verification must be checked; a dropped Result silently accepts the wrong password"]
       pub fn verify_primitive(&self, salt: &[u8], iterations: u32, expected: &[u8]) -> Result<(), VerificationError> {
-        let _dit = crate::traits::ct::DataIndependentTiming::enter();
-        self.verify_primitive_unguarded(salt, iterations, expected)
+        crate::traits::ct::with_data_independent_timing(|| {
+          self.verify_primitive_unguarded(salt, iterations, expected)
+        })
       }
 
       /// [`verify_primitive`](Self::verify_primitive) without the Arm DIT mode switch,
@@ -602,11 +604,12 @@ macro_rules! define_pbkdf2_sha2 {
       /// [`derive_key_with_params`](Self::derive_key_with_params).
       #[inline]
       pub fn derive_key_primitive(password: &[u8], salt: &[u8], iterations: u32, okm: &mut [u8]) -> Result<(), Pbkdf2Error> {
-        let _dit = crate::traits::ct::DataIndependentTiming::enter();
-        if $derive_key_fast_path(password, salt, iterations, okm)? {
-          return Ok(());
-        }
-        Self::new(password).derive(salt, iterations, okm)
+        crate::traits::ct::with_data_independent_timing(|| {
+          if $derive_key_fast_path(password, salt, iterations, okm)? {
+            return Ok(());
+          }
+          Self::new(password).derive(salt, iterations, okm)
+        })
       }
 
       /// Derive a password key into a fixed-size array in one shot using the
@@ -694,8 +697,9 @@ macro_rules! define_pbkdf2_sha2 {
         iterations: u32,
         expected: &[u8],
       ) -> Result<(), VerificationError> {
-        let _dit = crate::traits::ct::DataIndependentTiming::enter();
-        Self::new(password).verify_primitive(salt, iterations, expected)
+        crate::traits::ct::with_data_independent_timing(|| {
+          Self::new(password).verify_primitive(salt, iterations, expected)
+        })
       }
 
       /// Build with a specific digest compress function for tests and internal proofs.

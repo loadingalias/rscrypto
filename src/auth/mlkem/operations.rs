@@ -296,18 +296,19 @@ pub(super) fn validate_encapsulation_key<const K: usize, const EK_BYTES: usize>(
 pub(super) fn validate_decapsulation_key<const DK_PKE_BYTES: usize, const EK_BYTES: usize, const DK_BYTES: usize>(
   dk: &[u8; DK_BYTES],
 ) -> Result<(), MlKemError> {
-  let _dit = crate::traits::ct::DataIndependentTiming::enter();
-  let ek_start = DK_PKE_BYTES;
-  let ek_end = ek_start.strict_add(EK_BYTES);
-  let h_start = ek_end;
-  let h_end = h_start.strict_add(HASH_BYTES);
-  let expected = h(&dk[ek_start..ek_end]);
+  crate::traits::ct::with_data_independent_timing(|| {
+    let ek_start = DK_PKE_BYTES;
+    let ek_end = ek_start.strict_add(EK_BYTES);
+    let h_start = ek_end;
+    let h_end = h_start.strict_add(HASH_BYTES);
+    let expected = h(&dk[ek_start..ek_end]);
 
-  if ct_eq_mask(&expected, &dk[h_start..h_end]) == 0xff {
-    Ok(())
-  } else {
-    Err(MlKemError::InvalidDecapsulationKey)
-  }
+    if ct_eq_mask(&expected, &dk[h_start..h_end]) == 0xff {
+      Ok(())
+    } else {
+      Err(MlKemError::InvalidDecapsulationKey)
+    }
+  })
 }
 
 /// Pairwise consistency check of a PKCS #8 expanded decapsulation key: encapsulate to
@@ -330,37 +331,38 @@ pub(super) fn check_decapsulation_key_pair<
 >(
   dk: &[u8; DK_BYTES],
 ) -> Result<(), MlKemError> {
-  let _dit = crate::traits::ct::DataIndependentTiming::enter();
-  let ek_end = DK_PKE_BYTES.strict_add(EK_BYTES);
-  let ek = <&[u8; EK_BYTES]>::try_from(&dk[DK_PKE_BYTES..ek_end]).map_err(|_| MlKemError::InvalidDecapsulationKey)?;
-  let coins = <&[u8; SEED_BYTES]>::try_from(&dk[ek_end..ek_end.strict_add(HASH_BYTES)])
-    .map_err(|_| MlKemError::InvalidDecapsulationKey)?;
-  // Encapsulation requires the modulus check that the hash check does not cover.
-  validate_encapsulation_key::<K, EK_BYTES>(ek).map_err(|_| MlKemError::InvalidDecapsulationKey)?;
-  let (ciphertext, mut expected) =
-    encapsulate::<K, ETA1_RANDOM_BYTES, DK_PKE_BYTES, EK_BYTES, CT_BYTES, DU, DV, POLY_DU_BYTES, POLY_DV_BYTES>(
-      ek, coins,
-    );
-  let mut recovered = decapsulate::<
-    K,
-    ETA1_RANDOM_BYTES,
-    DK_PKE_BYTES,
-    EK_BYTES,
-    DK_BYTES,
-    CT_BYTES,
-    DU,
-    DV,
-    POLY_DU_BYTES,
-    POLY_DV_BYTES,
-  >(dk, &ciphertext)?;
-  let consistent = ct_eq_mask(&expected, &recovered) == 0xff;
-  ct::zeroize(&mut expected);
-  ct::zeroize(&mut recovered);
-  if consistent {
-    Ok(())
-  } else {
-    Err(MlKemError::InvalidDecapsulationKey)
-  }
+  crate::traits::ct::with_data_independent_timing(|| {
+    let ek_end = DK_PKE_BYTES.strict_add(EK_BYTES);
+    let ek = <&[u8; EK_BYTES]>::try_from(&dk[DK_PKE_BYTES..ek_end]).map_err(|_| MlKemError::InvalidDecapsulationKey)?;
+    let coins = <&[u8; SEED_BYTES]>::try_from(&dk[ek_end..ek_end.strict_add(HASH_BYTES)])
+      .map_err(|_| MlKemError::InvalidDecapsulationKey)?;
+    // Encapsulation requires the modulus check that the hash check does not cover.
+    validate_encapsulation_key::<K, EK_BYTES>(ek).map_err(|_| MlKemError::InvalidDecapsulationKey)?;
+    let (ciphertext, mut expected) =
+      encapsulate::<K, ETA1_RANDOM_BYTES, DK_PKE_BYTES, EK_BYTES, CT_BYTES, DU, DV, POLY_DU_BYTES, POLY_DV_BYTES>(
+        ek, coins,
+      );
+    let mut recovered = decapsulate::<
+      K,
+      ETA1_RANDOM_BYTES,
+      DK_PKE_BYTES,
+      EK_BYTES,
+      DK_BYTES,
+      CT_BYTES,
+      DU,
+      DV,
+      POLY_DU_BYTES,
+      POLY_DV_BYTES,
+    >(dk, &ciphertext)?;
+    let consistent = ct_eq_mask(&expected, &recovered) == 0xff;
+    ct::zeroize(&mut expected);
+    ct::zeroize(&mut recovered);
+    if consistent {
+      Ok(())
+    } else {
+      Err(MlKemError::InvalidDecapsulationKey)
+    }
+  })
 }
 
 #[inline]
@@ -401,10 +403,11 @@ pub(super) fn validate_and_prepare_decapsulation_key<
 >(
   dk: &[u8; DK_BYTES],
 ) -> Result<PreparedDecapsulationArithmetic<K>, MlKemError> {
-  let _dit = crate::traits::ct::DataIndependentTiming::enter();
-  let mut arithmetic = PreparedDecapsulationArithmetic::zeroed();
-  validate_and_prepare_decapsulation_key_into::<K, DK_PKE_BYTES, EK_BYTES, DK_BYTES>(dk, &mut arithmetic)?;
-  Ok(arithmetic)
+  crate::traits::ct::with_data_independent_timing(|| {
+    let mut arithmetic = PreparedDecapsulationArithmetic::zeroed();
+    validate_and_prepare_decapsulation_key_into::<K, DK_PKE_BYTES, EK_BYTES, DK_BYTES>(dk, &mut arithmetic)?;
+    Ok(arithmetic)
+  })
 }
 
 /// Validate `dk` and write its prepared arithmetic into `out` without moving
@@ -418,23 +421,24 @@ pub(super) fn validate_and_prepare_decapsulation_key_into<
   dk: &[u8; DK_BYTES],
   out: &mut PreparedDecapsulationArithmetic<K>,
 ) -> Result<(), MlKemError> {
-  let _dit = crate::traits::ct::DataIndependentTiming::enter();
-  let ek_start = DK_PKE_BYTES;
-  let ek_end = ek_start.strict_add(EK_BYTES);
-  let h_start = ek_end;
-  let h_end = h_start.strict_add(HASH_BYTES);
-  let expected = h(&dk[ek_start..ek_end]);
+  crate::traits::ct::with_data_independent_timing(|| {
+    let ek_start = DK_PKE_BYTES;
+    let ek_end = ek_start.strict_add(EK_BYTES);
+    let h_start = ek_end;
+    let h_end = h_start.strict_add(HASH_BYTES);
+    let expected = h(&dk[ek_start..ek_end]);
 
-  if ct_eq_mask(&expected, &dk[h_start..h_end]) != 0xff {
-    return Err(MlKemError::InvalidDecapsulationKey);
-  }
+    if ct_eq_mask(&expected, &dk[h_start..h_end]) != 0xff {
+      return Err(MlKemError::InvalidDecapsulationKey);
+    }
 
-  let ek = <&[u8; EK_BYTES]>::try_from(&dk[ek_start..ek_end]).map_err(|_| MlKemError::InvalidDecapsulationKey)?;
-  let z = <&[u8; SEED_BYTES]>::try_from(&dk[h_end..]).map_err(|_| MlKemError::InvalidDecapsulationKey)?;
-  prepare_decapsulation_key_slice_into::<K, DK_PKE_BYTES>(&dk[..DK_PKE_BYTES], &mut out.s_hat);
-  decryption_mask_into(z, &mut out.mask);
-  prepare_encapsulation_key_into::<K, EK_BYTES>(ek, &mut out.encapsulation);
-  Ok(())
+    let ek = <&[u8; EK_BYTES]>::try_from(&dk[ek_start..ek_end]).map_err(|_| MlKemError::InvalidDecapsulationKey)?;
+    let z = <&[u8; SEED_BYTES]>::try_from(&dk[h_end..]).map_err(|_| MlKemError::InvalidDecapsulationKey)?;
+    prepare_decapsulation_key_slice_into::<K, DK_PKE_BYTES>(&dk[..DK_PKE_BYTES], &mut out.s_hat);
+    decryption_mask_into(z, &mut out.mask);
+    prepare_encapsulation_key_into::<K, EK_BYTES>(ek, &mut out.encapsulation);
+    Ok(())
+  })
 }
 
 fn prepare_encapsulation_key<const K: usize, const EK_BYTES: usize>(
@@ -512,11 +516,12 @@ pub(super) fn keygen<
 >(
   random: &[u8; 64],
 ) -> ([u8; EK_BYTES], [u8; DK_BYTES]) {
-  let _dit = crate::traits::ct::DataIndependentTiming::enter();
-  let mut ek = [0u8; EK_BYTES];
-  let mut dk = [0u8; DK_BYTES];
-  keygen_into::<K, K_U8, ETA1_RANDOM_BYTES, DK_PKE_BYTES, EK_BYTES, DK_BYTES>(random, &mut ek, &mut dk);
-  (ek, dk)
+  crate::traits::ct::with_data_independent_timing(|| {
+    let mut ek = [0u8; EK_BYTES];
+    let mut dk = [0u8; DK_BYTES];
+    keygen_into::<K, K_U8, ETA1_RANDOM_BYTES, DK_PKE_BYTES, EK_BYTES, DK_BYTES>(random, &mut ek, &mut dk);
+    (ek, dk)
+  })
 }
 
 /// Generate a keypair directly into `ek` and `dk`, so no secret key bytes are
@@ -533,22 +538,23 @@ pub(super) fn keygen_into<
   ek: &mut [u8; EK_BYTES],
   dk: &mut [u8; DK_BYTES],
 ) {
-  let _dit = crate::traits::ct::DataIndependentTiming::enter();
-  let mut d = [0u8; SEED_BYTES];
-  let mut z = [0u8; SEED_BYTES];
-  d.copy_from_slice(&random[..SEED_BYTES]);
-  z.copy_from_slice(&random[SEED_BYTES..]);
+  crate::traits::ct::with_data_independent_timing(|| {
+    let mut d = [0u8; SEED_BYTES];
+    let mut z = [0u8; SEED_BYTES];
+    d.copy_from_slice(&random[..SEED_BYTES]);
+    z.copy_from_slice(&random[SEED_BYTES..]);
 
-  let (dk_pke, tail) = dk.split_at_mut(DK_PKE_BYTES);
-  pke_keygen_into::<K, K_U8, ETA1_RANDOM_BYTES, DK_PKE_BYTES, EK_BYTES>(&d, ek, dk_pke);
-  let (dk_ek, tail) = tail.split_at_mut(EK_BYTES);
-  dk_ek.copy_from_slice(ek);
-  let (dk_hash, dk_z) = tail.split_at_mut(HASH_BYTES);
-  dk_hash.copy_from_slice(&h(ek));
-  dk_z.copy_from_slice(&z);
+    let (dk_pke, tail) = dk.split_at_mut(DK_PKE_BYTES);
+    pke_keygen_into::<K, K_U8, ETA1_RANDOM_BYTES, DK_PKE_BYTES, EK_BYTES>(&d, ek, dk_pke);
+    let (dk_ek, tail) = tail.split_at_mut(EK_BYTES);
+    dk_ek.copy_from_slice(ek);
+    let (dk_hash, dk_z) = tail.split_at_mut(HASH_BYTES);
+    dk_hash.copy_from_slice(&h(ek));
+    dk_z.copy_from_slice(&z);
 
-  ct::zeroize(&mut d);
-  ct::zeroize(&mut z);
+    ct::zeroize(&mut d);
+    ct::zeroize(&mut z);
+  })
 }
 
 /// Generate a key pair and its prepared decapsulation arithmetic from one matrix expansion.
@@ -571,21 +577,24 @@ pub(super) fn keygen_prepared_into<
   dk: &mut [u8; DK_BYTES],
   out: &mut PreparedDecapsulationArithmetic<K>,
 ) {
-  let _dit = crate::traits::ct::DataIndependentTiming::enter();
-  let mut seed = [0u8; 33];
-  seed[..SEED_BYTES].copy_from_slice(&random[..SEED_BYTES]);
-  seed[SEED_BYTES] = K_U8;
-  let mut expanded = g(&seed);
-  let mut rho = [0u8; SEED_BYTES];
-  let mut sigma = [0u8; SEED_BYTES];
-  rho.copy_from_slice(&expanded[..SEED_BYTES]);
-  sigma.copy_from_slice(&expanded[SEED_BYTES..]);
-  let z = random.last_chunk().expect("the implicit-rejection seed is 32 bytes");
-  keygen_prepared_expanded_into::<K, ETA1_RANDOM_BYTES, DK_PKE_BYTES, EK_BYTES, DK_BYTES>(&rho, &sigma, z, ek, dk, out);
+  crate::traits::ct::with_data_independent_timing(|| {
+    let mut seed = [0u8; 33];
+    seed[..SEED_BYTES].copy_from_slice(&random[..SEED_BYTES]);
+    seed[SEED_BYTES] = K_U8;
+    let mut expanded = g(&seed);
+    let mut rho = [0u8; SEED_BYTES];
+    let mut sigma = [0u8; SEED_BYTES];
+    rho.copy_from_slice(&expanded[..SEED_BYTES]);
+    sigma.copy_from_slice(&expanded[SEED_BYTES..]);
+    let z = random.last_chunk().expect("the implicit-rejection seed is 32 bytes");
+    keygen_prepared_expanded_into::<K, ETA1_RANDOM_BYTES, DK_PKE_BYTES, EK_BYTES, DK_BYTES>(
+      &rho, &sigma, z, ek, dk, out,
+    );
 
-  ct::zeroize(&mut seed);
-  ct::zeroize(&mut expanded);
-  ct::zeroize(&mut sigma);
+    ct::zeroize(&mut seed);
+    ct::zeroize(&mut expanded);
+    ct::zeroize(&mut sigma);
+  })
 }
 
 /// [`keygen_prepared_into`] after `G`: the key pair and its prepared arithmetic
@@ -606,43 +615,44 @@ fn keygen_prepared_expanded_into<
   dk: &mut [u8; DK_BYTES],
   out: &mut PreparedDecapsulationArithmetic<K>,
 ) {
-  let _dit = crate::traits::ct::DataIndependentTiming::enter();
-  let mut s_hat = [[0u16; N]; K];
-  let mut t_hat = [[0u16; N]; K];
-  keygen_sample_noise::<K, ETA1_RANDOM_BYTES>(sigma, &mut s_hat, &mut t_hat);
-  keygen_ntt_noise::<K>(&mut s_hat, &mut t_hat);
-  // Row r of A is column r of the stored transpose; the matrix is public.
-  prepare_matrix_transpose_into::<K>(rho, &mut out.encapsulation.a_transpose_hat);
-  let mut row = [[0u16; N]; K];
-  for (r, t_hat_r) in t_hat.iter_mut().enumerate() {
-    for (entry, column) in row.iter_mut().zip(&out.encapsulation.a_transpose_hat) {
-      *entry = column[r];
+  crate::traits::ct::with_data_independent_timing(|| {
+    let mut s_hat = [[0u16; N]; K];
+    let mut t_hat = [[0u16; N]; K];
+    keygen_sample_noise::<K, ETA1_RANDOM_BYTES>(sigma, &mut s_hat, &mut t_hat);
+    keygen_ntt_noise::<K>(&mut s_hat, &mut t_hat);
+    // Row r of A is column r of the stored transpose; the matrix is public.
+    prepare_matrix_transpose_into::<K>(rho, &mut out.encapsulation.a_transpose_hat);
+    let mut row = [[0u16; N]; K];
+    for (r, t_hat_r) in t_hat.iter_mut().enumerate() {
+      for (entry, column) in row.iter_mut().zip(&out.encapsulation.a_transpose_hat) {
+        *entry = column[r];
+      }
+      multiply_ntts_accumulate(t_hat_r, &row, &s_hat);
     }
-    multiply_ntts_accumulate(t_hat_r, &row, &s_hat);
-  }
-  keygen_from_product_domain::<K>(&mut t_hat);
+    keygen_from_product_domain::<K>(&mut t_hat);
 
-  let (dk_pke, tail) = dk.split_at_mut(DK_PKE_BYTES);
-  keygen_encode_into::<K, DK_PKE_BYTES, EK_BYTES>(rho, &s_hat, &t_hat, ek, dk_pke);
-  prepare_decapsulation_key_slice_into::<K, DK_PKE_BYTES>(dk_pke, &mut out.s_hat);
-  for (i, poly) in out.encapsulation.t_hat.iter_mut().enumerate() {
-    let start = i.strict_mul(POLY_BYTES);
-    byte_decode::<12>(&ek[start..start.strict_add(POLY_BYTES)], poly);
-  }
-  #[cfg(test)]
-  {
-    out.encapsulation.rho = *rho;
-  }
-  let (dk_ek, tail) = tail.split_at_mut(EK_BYTES);
-  dk_ek.copy_from_slice(ek);
-  let (dk_hash, dk_z) = tail.split_at_mut(HASH_BYTES);
-  dk_hash.copy_from_slice(&h(ek));
-  dk_z.copy_from_slice(z);
-  let z = <&[u8; SEED_BYTES]>::try_from(&*dk_z).expect("the implicit-rejection seed is 32 bytes");
-  decryption_mask_into(z, &mut out.mask);
+    let (dk_pke, tail) = dk.split_at_mut(DK_PKE_BYTES);
+    keygen_encode_into::<K, DK_PKE_BYTES, EK_BYTES>(rho, &s_hat, &t_hat, ek, dk_pke);
+    prepare_decapsulation_key_slice_into::<K, DK_PKE_BYTES>(dk_pke, &mut out.s_hat);
+    for (i, poly) in out.encapsulation.t_hat.iter_mut().enumerate() {
+      let start = i.strict_mul(POLY_BYTES);
+      byte_decode::<12>(&ek[start..start.strict_add(POLY_BYTES)], poly);
+    }
+    #[cfg(test)]
+    {
+      out.encapsulation.rho = *rho;
+    }
+    let (dk_ek, tail) = tail.split_at_mut(EK_BYTES);
+    dk_ek.copy_from_slice(ek);
+    let (dk_hash, dk_z) = tail.split_at_mut(HASH_BYTES);
+    dk_hash.copy_from_slice(&h(ek));
+    dk_z.copy_from_slice(z);
+    let z = <&[u8; SEED_BYTES]>::try_from(&*dk_z).expect("the implicit-rejection seed is 32 bytes");
+    decryption_mask_into(z, &mut out.mask);
 
-  zeroize_polyvec(&mut s_hat);
-  zeroize_polyvec(&mut t_hat);
+    zeroize_polyvec(&mut s_hat);
+    zeroize_polyvec(&mut t_hat);
+  })
 }
 
 pub(super) fn encapsulate<
@@ -659,10 +669,15 @@ pub(super) fn encapsulate<
   ek: &[u8; EK_BYTES],
   m: &[u8; SEED_BYTES],
 ) -> ([u8; CT_BYTES], [u8; SHARED_SECRET_BYTES]) {
-  let _dit = crate::traits::ct::DataIndependentTiming::enter();
-  let ek_hash = encapsulation_key_hash(ek);
-  let arithmetic = prepare_encapsulation_key::<K, EK_BYTES>(ek);
-  encapsulate_prepared::<K, ETA1_RANDOM_BYTES, CT_BYTES, DU, DV, POLY_DU_BYTES, POLY_DV_BYTES>(&arithmetic, &ek_hash, m)
+  crate::traits::ct::with_data_independent_timing(|| {
+    let ek_hash = encapsulation_key_hash(ek);
+    let arithmetic = prepare_encapsulation_key::<K, EK_BYTES>(ek);
+    encapsulate_prepared::<K, ETA1_RANDOM_BYTES, CT_BYTES, DU, DV, POLY_DU_BYTES, POLY_DV_BYTES>(
+      &arithmetic,
+      &ek_hash,
+      m,
+    )
+  })
 }
 
 pub(super) fn encapsulate_prepared<
@@ -678,23 +693,24 @@ pub(super) fn encapsulate_prepared<
   ek_hash: &[u8; HASH_BYTES],
   m: &[u8; SEED_BYTES],
 ) -> ([u8; CT_BYTES], [u8; SHARED_SECRET_BYTES]) {
-  let _dit = crate::traits::ct::DataIndependentTiming::enter();
-  let mut input = [0u8; 64];
-  input[..SEED_BYTES].copy_from_slice(m);
-  input[SEED_BYTES..].copy_from_slice(ek_hash);
+  crate::traits::ct::with_data_independent_timing(|| {
+    let mut input = [0u8; 64];
+    input[..SEED_BYTES].copy_from_slice(m);
+    input[SEED_BYTES..].copy_from_slice(ek_hash);
 
-  let mut expanded = g(&input);
-  let mut shared = [0u8; SHARED_SECRET_BYTES];
-  let mut r = [0u8; SEED_BYTES];
-  shared.copy_from_slice(&expanded[..SHARED_SECRET_BYTES]);
-  r.copy_from_slice(&expanded[SHARED_SECRET_BYTES..]);
+    let mut expanded = g(&input);
+    let mut shared = [0u8; SHARED_SECRET_BYTES];
+    let mut r = [0u8; SEED_BYTES];
+    shared.copy_from_slice(&expanded[..SHARED_SECRET_BYTES]);
+    r.copy_from_slice(&expanded[SHARED_SECRET_BYTES..]);
 
-  let ciphertext =
-    pke_encrypt_prepared::<K, ETA1_RANDOM_BYTES, CT_BYTES, DU, DV, POLY_DU_BYTES, POLY_DV_BYTES>(ek, m, &r);
-  ct::zeroize(&mut input);
-  ct::zeroize(&mut expanded);
-  ct::zeroize(&mut r);
-  (ciphertext, shared)
+    let ciphertext =
+      pke_encrypt_prepared::<K, ETA1_RANDOM_BYTES, CT_BYTES, DU, DV, POLY_DU_BYTES, POLY_DV_BYTES>(ek, m, &r);
+    ct::zeroize(&mut input);
+    ct::zeroize(&mut expanded);
+    ct::zeroize(&mut r);
+    (ciphertext, shared)
+  })
 }
 
 pub(super) fn encapsulate_prepared_512(
@@ -702,8 +718,9 @@ pub(super) fn encapsulate_prepared_512(
   ek_hash: &[u8; HASH_BYTES],
   m: &[u8; SEED_BYTES],
 ) -> ([u8; 768], [u8; SHARED_SECRET_BYTES]) {
-  let _dit = crate::traits::ct::DataIndependentTiming::enter();
-  encapsulate_prepared::<2, 192, 768, 10, 4, 320, 128>(ek, ek_hash, m)
+  crate::traits::ct::with_data_independent_timing(|| {
+    encapsulate_prepared::<2, 192, 768, 10, 4, 320, 128>(ek, ek_hash, m)
+  })
 }
 
 pub(super) fn encapsulate_prepared_768(
@@ -711,22 +728,23 @@ pub(super) fn encapsulate_prepared_768(
   ek_hash: &[u8; HASH_BYTES],
   m: &[u8; SEED_BYTES],
 ) -> ([u8; 1088], [u8; SHARED_SECRET_BYTES]) {
-  let _dit = crate::traits::ct::DataIndependentTiming::enter();
-  let mut input = [0u8; 64];
-  input[..SEED_BYTES].copy_from_slice(m);
-  input[SEED_BYTES..].copy_from_slice(ek_hash);
+  crate::traits::ct::with_data_independent_timing(|| {
+    let mut input = [0u8; 64];
+    input[..SEED_BYTES].copy_from_slice(m);
+    input[SEED_BYTES..].copy_from_slice(ek_hash);
 
-  let mut expanded = g(&input);
-  let mut shared = [0u8; SHARED_SECRET_BYTES];
-  let mut r = [0u8; SEED_BYTES];
-  shared.copy_from_slice(&expanded[..SHARED_SECRET_BYTES]);
-  r.copy_from_slice(&expanded[SHARED_SECRET_BYTES..]);
+    let mut expanded = g(&input);
+    let mut shared = [0u8; SHARED_SECRET_BYTES];
+    let mut r = [0u8; SEED_BYTES];
+    shared.copy_from_slice(&expanded[..SHARED_SECRET_BYTES]);
+    r.copy_from_slice(&expanded[SHARED_SECRET_BYTES..]);
 
-  let ciphertext = pke_encrypt_prepared_768(ek, m, &r);
-  ct::zeroize(&mut input);
-  ct::zeroize(&mut expanded);
-  ct::zeroize(&mut r);
-  (ciphertext, shared)
+    let ciphertext = pke_encrypt_prepared_768(ek, m, &r);
+    ct::zeroize(&mut input);
+    ct::zeroize(&mut expanded);
+    ct::zeroize(&mut r);
+    (ciphertext, shared)
+  })
 }
 
 pub(super) fn encapsulate_prepared_1024(
@@ -734,22 +752,23 @@ pub(super) fn encapsulate_prepared_1024(
   ek_hash: &[u8; HASH_BYTES],
   m: &[u8; SEED_BYTES],
 ) -> ([u8; 1568], [u8; SHARED_SECRET_BYTES]) {
-  let _dit = crate::traits::ct::DataIndependentTiming::enter();
-  let mut input = [0u8; 64];
-  input[..SEED_BYTES].copy_from_slice(m);
-  input[SEED_BYTES..].copy_from_slice(ek_hash);
+  crate::traits::ct::with_data_independent_timing(|| {
+    let mut input = [0u8; 64];
+    input[..SEED_BYTES].copy_from_slice(m);
+    input[SEED_BYTES..].copy_from_slice(ek_hash);
 
-  let mut expanded = g(&input);
-  let mut shared = [0u8; SHARED_SECRET_BYTES];
-  let mut r = [0u8; SEED_BYTES];
-  shared.copy_from_slice(&expanded[..SHARED_SECRET_BYTES]);
-  r.copy_from_slice(&expanded[SHARED_SECRET_BYTES..]);
+    let mut expanded = g(&input);
+    let mut shared = [0u8; SHARED_SECRET_BYTES];
+    let mut r = [0u8; SEED_BYTES];
+    shared.copy_from_slice(&expanded[..SHARED_SECRET_BYTES]);
+    r.copy_from_slice(&expanded[SHARED_SECRET_BYTES..]);
 
-  let ciphertext = pke_encrypt_prepared_1024(ek, m, &r);
-  ct::zeroize(&mut input);
-  ct::zeroize(&mut expanded);
-  ct::zeroize(&mut r);
-  (ciphertext, shared)
+    let ciphertext = pke_encrypt_prepared_1024(ek, m, &r);
+    ct::zeroize(&mut input);
+    ct::zeroize(&mut expanded);
+    ct::zeroize(&mut r);
+    (ciphertext, shared)
+  })
 }
 
 /// Return K' when the re-encryption matched and the implicit-rejection key
@@ -777,35 +796,36 @@ pub(super) fn decapsulate_prepared_512(
   prepared: &PreparedDecapsulationArithmetic<2>,
   c: &[u8; 768],
 ) -> [u8; SHARED_SECRET_BYTES] {
-  let _dit = crate::traits::ct::DataIndependentTiming::enter();
-  let h_start = 768usize.strict_add(800);
-  let h_stored = &dk[h_start..h_start.strict_add(HASH_BYTES)];
-  let z = &dk[h_start.strict_add(HASH_BYTES)..];
+  crate::traits::ct::with_data_independent_timing(|| {
+    let h_start = 768usize.strict_add(800);
+    let h_stored = &dk[h_start..h_start.strict_add(HASH_BYTES)];
+    let z = &dk[h_start.strict_add(HASH_BYTES)..];
 
-  let mut m_prime = pke_decrypt_prepared::<2, 768, 10, 4, 320, 128>(&prepared.s_hat, Some(&prepared.mask), c);
-  let mut input = [0u8; 64];
-  input[..SEED_BYTES].copy_from_slice(&m_prime);
-  input[SEED_BYTES..].copy_from_slice(h_stored);
+    let mut m_prime = pke_decrypt_prepared::<2, 768, 10, 4, 320, 128>(&prepared.s_hat, Some(&prepared.mask), c);
+    let mut input = [0u8; 64];
+    input[..SEED_BYTES].copy_from_slice(&m_prime);
+    input[SEED_BYTES..].copy_from_slice(h_stored);
 
-  let mut expanded = g(&input);
-  let mut k_prime = [0u8; SHARED_SECRET_BYTES];
-  let mut r_prime = [0u8; SEED_BYTES];
-  k_prime.copy_from_slice(&expanded[..SHARED_SECRET_BYTES]);
-  r_prime.copy_from_slice(&expanded[SHARED_SECRET_BYTES..]);
+    let mut expanded = g(&input);
+    let mut k_prime = [0u8; SHARED_SECRET_BYTES];
+    let mut r_prime = [0u8; SEED_BYTES];
+    k_prime.copy_from_slice(&expanded[..SHARED_SECRET_BYTES]);
+    r_prime.copy_from_slice(&expanded[SHARED_SECRET_BYTES..]);
 
-  let mut k_bar = j(z, c);
-  let mut match_mask = pke_encrypt_prepared_512_compare(&prepared.encapsulation, &m_prime, &r_prime, c);
-  let shared = select_shared_secret(&k_prime, &k_bar, match_mask);
+    let mut k_bar = j(z, c);
+    let mut match_mask = pke_encrypt_prepared_512_compare(&prepared.encapsulation, &m_prime, &r_prime, c);
+    let shared = select_shared_secret(&k_prime, &k_bar, match_mask);
 
-  ct::zeroize(&mut m_prime);
-  ct::zeroize(&mut input);
-  ct::zeroize(&mut expanded);
-  ct::zeroize(&mut k_prime);
-  ct::zeroize(&mut r_prime);
-  ct::zeroize(&mut k_bar);
-  ct::zeroize(core::slice::from_mut(&mut match_mask));
+    ct::zeroize(&mut m_prime);
+    ct::zeroize(&mut input);
+    ct::zeroize(&mut expanded);
+    ct::zeroize(&mut k_prime);
+    ct::zeroize(&mut r_prime);
+    ct::zeroize(&mut k_bar);
+    ct::zeroize(core::slice::from_mut(&mut match_mask));
 
-  shared
+    shared
+  })
 }
 
 pub(super) fn decapsulate_prepared_768(
@@ -813,35 +833,36 @@ pub(super) fn decapsulate_prepared_768(
   prepared: &PreparedDecapsulationArithmetic<3>,
   c: &[u8; 1088],
 ) -> [u8; SHARED_SECRET_BYTES] {
-  let _dit = crate::traits::ct::DataIndependentTiming::enter();
-  let h_start = 1152usize.strict_add(1184);
-  let h_stored = &dk[h_start..h_start.strict_add(HASH_BYTES)];
-  let z = &dk[h_start.strict_add(HASH_BYTES)..];
+  crate::traits::ct::with_data_independent_timing(|| {
+    let h_start = 1152usize.strict_add(1184);
+    let h_stored = &dk[h_start..h_start.strict_add(HASH_BYTES)];
+    let z = &dk[h_start.strict_add(HASH_BYTES)..];
 
-  let mut m_prime = pke_decrypt_prepared::<3, 1088, 10, 4, 320, 128>(&prepared.s_hat, Some(&prepared.mask), c);
-  let mut input = [0u8; 64];
-  input[..SEED_BYTES].copy_from_slice(&m_prime);
-  input[SEED_BYTES..].copy_from_slice(h_stored);
+    let mut m_prime = pke_decrypt_prepared::<3, 1088, 10, 4, 320, 128>(&prepared.s_hat, Some(&prepared.mask), c);
+    let mut input = [0u8; 64];
+    input[..SEED_BYTES].copy_from_slice(&m_prime);
+    input[SEED_BYTES..].copy_from_slice(h_stored);
 
-  let mut expanded = g(&input);
-  let mut k_prime = [0u8; SHARED_SECRET_BYTES];
-  let mut r_prime = [0u8; SEED_BYTES];
-  k_prime.copy_from_slice(&expanded[..SHARED_SECRET_BYTES]);
-  r_prime.copy_from_slice(&expanded[SHARED_SECRET_BYTES..]);
+    let mut expanded = g(&input);
+    let mut k_prime = [0u8; SHARED_SECRET_BYTES];
+    let mut r_prime = [0u8; SEED_BYTES];
+    k_prime.copy_from_slice(&expanded[..SHARED_SECRET_BYTES]);
+    r_prime.copy_from_slice(&expanded[SHARED_SECRET_BYTES..]);
 
-  let mut k_bar = j(z, c);
-  let mut match_mask = pke_encrypt_prepared_768_compare(&prepared.encapsulation, &m_prime, &r_prime, c);
-  let shared = select_shared_secret(&k_prime, &k_bar, match_mask);
+    let mut k_bar = j(z, c);
+    let mut match_mask = pke_encrypt_prepared_768_compare(&prepared.encapsulation, &m_prime, &r_prime, c);
+    let shared = select_shared_secret(&k_prime, &k_bar, match_mask);
 
-  ct::zeroize(&mut m_prime);
-  ct::zeroize(&mut input);
-  ct::zeroize(&mut expanded);
-  ct::zeroize(&mut k_prime);
-  ct::zeroize(&mut r_prime);
-  ct::zeroize(&mut k_bar);
-  ct::zeroize(core::slice::from_mut(&mut match_mask));
+    ct::zeroize(&mut m_prime);
+    ct::zeroize(&mut input);
+    ct::zeroize(&mut expanded);
+    ct::zeroize(&mut k_prime);
+    ct::zeroize(&mut r_prime);
+    ct::zeroize(&mut k_bar);
+    ct::zeroize(core::slice::from_mut(&mut match_mask));
 
-  shared
+    shared
+  })
 }
 
 pub(super) fn decapsulate_prepared_1024(
@@ -849,35 +870,36 @@ pub(super) fn decapsulate_prepared_1024(
   prepared: &PreparedDecapsulationArithmetic<4>,
   c: &[u8; 1568],
 ) -> [u8; SHARED_SECRET_BYTES] {
-  let _dit = crate::traits::ct::DataIndependentTiming::enter();
-  let h_start = 1536usize.strict_add(1568);
-  let h_stored = &dk[h_start..h_start.strict_add(HASH_BYTES)];
-  let z = &dk[h_start.strict_add(HASH_BYTES)..];
+  crate::traits::ct::with_data_independent_timing(|| {
+    let h_start = 1536usize.strict_add(1568);
+    let h_stored = &dk[h_start..h_start.strict_add(HASH_BYTES)];
+    let z = &dk[h_start.strict_add(HASH_BYTES)..];
 
-  let mut m_prime = pke_decrypt_prepared::<4, 1568, 11, 5, 352, 160>(&prepared.s_hat, Some(&prepared.mask), c);
-  let mut input = [0u8; 64];
-  input[..SEED_BYTES].copy_from_slice(&m_prime);
-  input[SEED_BYTES..].copy_from_slice(h_stored);
+    let mut m_prime = pke_decrypt_prepared::<4, 1568, 11, 5, 352, 160>(&prepared.s_hat, Some(&prepared.mask), c);
+    let mut input = [0u8; 64];
+    input[..SEED_BYTES].copy_from_slice(&m_prime);
+    input[SEED_BYTES..].copy_from_slice(h_stored);
 
-  let mut expanded = g(&input);
-  let mut k_prime = [0u8; SHARED_SECRET_BYTES];
-  let mut r_prime = [0u8; SEED_BYTES];
-  k_prime.copy_from_slice(&expanded[..SHARED_SECRET_BYTES]);
-  r_prime.copy_from_slice(&expanded[SHARED_SECRET_BYTES..]);
+    let mut expanded = g(&input);
+    let mut k_prime = [0u8; SHARED_SECRET_BYTES];
+    let mut r_prime = [0u8; SEED_BYTES];
+    k_prime.copy_from_slice(&expanded[..SHARED_SECRET_BYTES]);
+    r_prime.copy_from_slice(&expanded[SHARED_SECRET_BYTES..]);
 
-  let mut k_bar = j(z, c);
-  let mut match_mask = pke_encrypt_prepared_1024_compare(&prepared.encapsulation, &m_prime, &r_prime, c);
-  let shared = select_shared_secret(&k_prime, &k_bar, match_mask);
+    let mut k_bar = j(z, c);
+    let mut match_mask = pke_encrypt_prepared_1024_compare(&prepared.encapsulation, &m_prime, &r_prime, c);
+    let shared = select_shared_secret(&k_prime, &k_bar, match_mask);
 
-  ct::zeroize(&mut m_prime);
-  ct::zeroize(&mut input);
-  ct::zeroize(&mut expanded);
-  ct::zeroize(&mut k_prime);
-  ct::zeroize(&mut r_prime);
-  ct::zeroize(&mut k_bar);
-  ct::zeroize(core::slice::from_mut(&mut match_mask));
+    ct::zeroize(&mut m_prime);
+    ct::zeroize(&mut input);
+    ct::zeroize(&mut expanded);
+    ct::zeroize(&mut k_prime);
+    ct::zeroize(&mut r_prime);
+    ct::zeroize(&mut k_bar);
+    ct::zeroize(core::slice::from_mut(&mut match_mask));
 
-  shared
+    shared
+  })
 }
 
 pub(super) fn decapsulate<
@@ -895,43 +917,44 @@ pub(super) fn decapsulate<
   dk: &[u8; DK_BYTES],
   c: &[u8; CT_BYTES],
 ) -> Result<[u8; SHARED_SECRET_BYTES], MlKemError> {
-  let _dit = crate::traits::ct::DataIndependentTiming::enter();
-  let dk_pke = &dk[..DK_PKE_BYTES];
-  let ek_start = DK_PKE_BYTES;
-  let ek_end = ek_start.strict_add(EK_BYTES);
-  let ek = <&[u8; EK_BYTES]>::try_from(&dk[ek_start..ek_end]).map_err(|_| MlKemError::InvalidDecapsulationKey)?;
-  let h_start = ek_end;
-  let h_stored = &dk[h_start..h_start.strict_add(HASH_BYTES)];
-  let z = &dk[h_start.strict_add(HASH_BYTES)..];
+  crate::traits::ct::with_data_independent_timing(|| {
+    let dk_pke = &dk[..DK_PKE_BYTES];
+    let ek_start = DK_PKE_BYTES;
+    let ek_end = ek_start.strict_add(EK_BYTES);
+    let ek = <&[u8; EK_BYTES]>::try_from(&dk[ek_start..ek_end]).map_err(|_| MlKemError::InvalidDecapsulationKey)?;
+    let h_start = ek_end;
+    let h_stored = &dk[h_start..h_start.strict_add(HASH_BYTES)];
+    let z = &dk[h_start.strict_add(HASH_BYTES)..];
 
-  let mut m_prime = pke_decrypt::<K, DK_PKE_BYTES, CT_BYTES, DU, DV, POLY_DU_BYTES, POLY_DV_BYTES>(dk_pke, c);
-  let mut input = [0u8; 64];
-  input[..SEED_BYTES].copy_from_slice(&m_prime);
-  input[SEED_BYTES..].copy_from_slice(h_stored);
+    let mut m_prime = pke_decrypt::<K, DK_PKE_BYTES, CT_BYTES, DU, DV, POLY_DU_BYTES, POLY_DV_BYTES>(dk_pke, c);
+    let mut input = [0u8; 64];
+    input[..SEED_BYTES].copy_from_slice(&m_prime);
+    input[SEED_BYTES..].copy_from_slice(h_stored);
 
-  let mut expanded = g(&input);
-  let mut k_prime = [0u8; SHARED_SECRET_BYTES];
-  let mut r_prime = [0u8; SEED_BYTES];
-  k_prime.copy_from_slice(&expanded[..SHARED_SECRET_BYTES]);
-  r_prime.copy_from_slice(&expanded[SHARED_SECRET_BYTES..]);
+    let mut expanded = g(&input);
+    let mut k_prime = [0u8; SHARED_SECRET_BYTES];
+    let mut r_prime = [0u8; SEED_BYTES];
+    k_prime.copy_from_slice(&expanded[..SHARED_SECRET_BYTES]);
+    r_prime.copy_from_slice(&expanded[SHARED_SECRET_BYTES..]);
 
-  let mut k_bar = j(z, c);
-  let mut c_prime = pke_encrypt::<K, ETA1_RANDOM_BYTES, EK_BYTES, CT_BYTES, DU, DV, POLY_DU_BYTES, POLY_DV_BYTES>(
-    ek, &m_prime, &r_prime,
-  );
-  let mut match_mask = ct_eq_mask(c, &c_prime);
-  let shared = select_shared_secret(&k_prime, &k_bar, match_mask);
+    let mut k_bar = j(z, c);
+    let mut c_prime = pke_encrypt::<K, ETA1_RANDOM_BYTES, EK_BYTES, CT_BYTES, DU, DV, POLY_DU_BYTES, POLY_DV_BYTES>(
+      ek, &m_prime, &r_prime,
+    );
+    let mut match_mask = ct_eq_mask(c, &c_prime);
+    let shared = select_shared_secret(&k_prime, &k_bar, match_mask);
 
-  ct::zeroize(&mut m_prime);
-  ct::zeroize(&mut input);
-  ct::zeroize(&mut expanded);
-  ct::zeroize(&mut k_prime);
-  ct::zeroize(&mut r_prime);
-  ct::zeroize(&mut k_bar);
-  ct::zeroize(&mut c_prime);
-  ct::zeroize(core::slice::from_mut(&mut match_mask));
+    ct::zeroize(&mut m_prime);
+    ct::zeroize(&mut input);
+    ct::zeroize(&mut expanded);
+    ct::zeroize(&mut k_prime);
+    ct::zeroize(&mut r_prime);
+    ct::zeroize(&mut k_bar);
+    ct::zeroize(&mut c_prime);
+    ct::zeroize(core::slice::from_mut(&mut match_mask));
 
-  Ok(shared)
+    Ok(shared)
+  })
 }
 
 fn pke_keygen_into<
@@ -1118,8 +1141,7 @@ fn keygen_encode_into<const K: usize, const DK_PKE_BYTES: usize, const EK_BYTES:
 
 #[inline]
 pub(super) fn keygen_1024(random: &[u8; 64]) -> ([u8; 1568], [u8; 3168]) {
-  let _dit = crate::traits::ct::DataIndependentTiming::enter();
-  keygen::<4, 4, 128, 1536, 1568, 3168>(random)
+  crate::traits::ct::with_data_independent_timing(|| keygen::<4, 4, 128, 1536, 1568, 3168>(random))
 }
 
 #[cfg(all(rscrypto_internal, feature = "diag"))]

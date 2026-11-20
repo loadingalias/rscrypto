@@ -31,7 +31,7 @@ use crate::{
   secret::ZeroizingBytes,
   traits::{
     Kem,
-    ct::{self, DataIndependentTiming},
+    ct::{self, with_data_independent_timing},
   },
 };
 
@@ -802,22 +802,23 @@ macro_rules! impl_mlkem_profile_ops {
       /// invalid key, or redundant fields that disagree; and
       /// [`MlKemKeyError::InvalidEncapsulationKey`] for a wrong-length public key.
       pub fn from_pkcs8_der(der: &[u8]) -> Result<Self, MlKemKeyError> {
-        let _dit = DataIndependentTiming::enter();
-        let decoded = pkix::decode_pkcs8::<MlKemKeyError, ML_KEM_KEY_GENERATION_RANDOM_SIZE, $dk_bytes, $ek_bytes>(
-          der,
-          $profile::ALGORITHM,
-        )?;
-        let (key, expanded) = match decoded.private_key {
-          pkix::PrivateKey::Seed(seed) => ($profile::keypair_from_seed(seed).1, None),
-          pkix::PrivateKey::Expanded(expanded) => {
-            let key = Self::try_from_slice(expanded).map_err(expanded_import_error)?;
-            key.check_key_pair()?;
-            (key, None)
-          }
-          pkix::PrivateKey::Both { seed, expanded } => ($profile::keypair_from_seed(seed).1, Some(expanded)),
-        };
-        key.check_redundant(expanded, decoded.public_key)?;
-        Ok(key)
+        with_data_independent_timing(|| {
+          let decoded = pkix::decode_pkcs8::<MlKemKeyError, ML_KEM_KEY_GENERATION_RANDOM_SIZE, $dk_bytes, $ek_bytes>(
+            der,
+            $profile::ALGORITHM,
+          )?;
+          let (key, expanded) = match decoded.private_key {
+            pkix::PrivateKey::Seed(seed) => ($profile::keypair_from_seed(seed).1, None),
+            pkix::PrivateKey::Expanded(expanded) => {
+              let key = Self::try_from_slice(expanded).map_err(expanded_import_error)?;
+              key.check_key_pair()?;
+              (key, None)
+            }
+            pkix::PrivateKey::Both { seed, expanded } => ($profile::keypair_from_seed(seed).1, Some(expanded)),
+          };
+          key.check_redundant(expanded, decoded.public_key)?;
+          Ok(key)
+        })
       }
 
       /// Like [`Self::from_pkcs8_der`], with the key in memory from `alloc`.
@@ -828,22 +829,23 @@ macro_rules! impl_mlkem_profile_ops {
       /// handled as by [`Box::new_in`].
       #[cfg(feature = "alloc")]
       pub fn from_pkcs8_der_in<A: Allocator>(der: &[u8], alloc: A) -> Result<Box<Self, A>, MlKemKeyError> {
-        let _dit = DataIndependentTiming::enter();
-        let decoded = pkix::decode_pkcs8::<MlKemKeyError, ML_KEM_KEY_GENERATION_RANDOM_SIZE, $dk_bytes, $ek_bytes>(
-          der,
-          $profile::ALGORITHM,
-        )?;
-        let (key, expanded) = match decoded.private_key {
-          pkix::PrivateKey::Seed(seed) => ($profile::keypair_from_seed_in(seed, alloc).1, None),
-          pkix::PrivateKey::Expanded(expanded) => {
-            let key = Self::try_from_slice_in(expanded, alloc).map_err(expanded_import_error)?;
-            key.check_key_pair()?;
-            (key, None)
-          }
-          pkix::PrivateKey::Both { seed, expanded } => ($profile::keypair_from_seed_in(seed, alloc).1, Some(expanded)),
-        };
-        key.check_redundant(expanded, decoded.public_key)?;
-        Ok(key)
+        with_data_independent_timing(|| {
+          let decoded = pkix::decode_pkcs8::<MlKemKeyError, ML_KEM_KEY_GENERATION_RANDOM_SIZE, $dk_bytes, $ek_bytes>(
+            der,
+            $profile::ALGORITHM,
+          )?;
+          let (key, expanded) = match decoded.private_key {
+            pkix::PrivateKey::Seed(seed) => ($profile::keypair_from_seed_in(seed, alloc).1, None),
+            pkix::PrivateKey::Expanded(expanded) => {
+              let key = Self::try_from_slice_in(expanded, alloc).map_err(expanded_import_error)?;
+              key.check_key_pair()?;
+              (key, None)
+            }
+            pkix::PrivateKey::Both { seed, expanded } => ($profile::keypair_from_seed_in(seed, alloc).1, Some(expanded)),
+          };
+          key.check_redundant(expanded, decoded.public_key)?;
+          Ok(key)
+        })
       }
 
       /// Write this key as an RFC 9935 expanded-form private key in version 1
@@ -1283,21 +1285,22 @@ macro_rules! impl_mlkem_profile_ops {
       #[doc = concat!("As [`", stringify!($decapsulation_key), "::from_pkcs8_der`], and [`MlKemKeyError::UnsupportedEncoding`]")]
       /// for an expanded-only key: expansion cannot recover a discarded seed.
       pub fn from_pkcs8_der(der: &[u8]) -> Result<Self, MlKemKeyError> {
-        let _dit = DataIndependentTiming::enter();
-        let decoded = pkix::decode_pkcs8::<MlKemKeyError, ML_KEM_KEY_GENERATION_RANDOM_SIZE, $dk_bytes, $ek_bytes>(
-          der,
-          $profile::ALGORITHM,
-        )?;
-        let (seed, expanded) = match decoded.private_key {
-          pkix::PrivateKey::Seed(seed) => (seed, None),
-          pkix::PrivateKey::Both { seed, expanded } => (seed, Some(expanded)),
-          pkix::PrivateKey::Expanded(_) => return Err(MlKemKeyError::UnsupportedEncoding),
-        };
-        let owner = Self(ZeroizingBytes::new(*seed));
-        if expanded.is_some() || decoded.public_key.is_some() {
-          owner.keypair().1.check_redundant(expanded, decoded.public_key)?;
-        }
-        Ok(owner)
+        with_data_independent_timing(|| {
+          let decoded = pkix::decode_pkcs8::<MlKemKeyError, ML_KEM_KEY_GENERATION_RANDOM_SIZE, $dk_bytes, $ek_bytes>(
+            der,
+            $profile::ALGORITHM,
+          )?;
+          let (seed, expanded) = match decoded.private_key {
+            pkix::PrivateKey::Seed(seed) => (seed, None),
+            pkix::PrivateKey::Both { seed, expanded } => (seed, Some(expanded)),
+            pkix::PrivateKey::Expanded(_) => return Err(MlKemKeyError::UnsupportedEncoding),
+          };
+          let owner = Self(ZeroizingBytes::new(*seed));
+          if expanded.is_some() || decoded.public_key.is_some() {
+            owner.keypair().1.check_redundant(expanded, decoded.public_key)?;
+          }
+          Ok(owner)
+        })
       }
 
       /// Write the seed as an RFC 9935 seed-form private key in version 1

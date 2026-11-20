@@ -230,14 +230,17 @@ impl Ed25519SecretKey {
   /// a public key that is not its own; and
   /// [`Ed25519KeyError::InvalidPublicKey`] for a wrong-length public key.
   pub fn from_pkcs8_der(der: &[u8]) -> Result<Self, Ed25519KeyError> {
-    let _dit = crate::traits::ct::DataIndependentTiming::enter();
-    let (key, public) =
-      pkix::decode_pkcs8_wrapped::<Ed25519KeyError, { Self::LENGTH }, { Ed25519PublicKey::LENGTH }>(der, &ED25519_OID)?;
-    let secret = Self::from_bytes(*key);
-    if public.is_some_and(|public| public != secret.public_key().as_bytes()) {
-      return Err(Ed25519KeyError::InvalidSecretKey);
-    }
-    Ok(secret)
+    crate::traits::ct::with_data_independent_timing(|| {
+      let (key, public) = pkix::decode_pkcs8_wrapped::<Ed25519KeyError, { Self::LENGTH }, { Ed25519PublicKey::LENGTH }>(
+        der,
+        &ED25519_OID,
+      )?;
+      let secret = Self::from_bytes(*key);
+      if public.is_some_and(|public| public != secret.public_key().as_bytes()) {
+        return Err(Ed25519KeyError::InvalidSecretKey);
+      }
+      Ok(secret)
+    })
   }
 
   /// Write this key as a version 1 RFC 8410 PKCS #8 private key without a
@@ -272,18 +275,20 @@ impl Ed25519SecretKey {
   /// Derive the matching Ed25519 public key.
   #[must_use]
   pub fn public_key(&self) -> Ed25519PublicKey {
-    let _dit = crate::traits::ct::DataIndependentTiming::enter();
-    let expanded = hash::ExpandedSecret::from_secret_key(self);
-    public_key_from_scalar(expanded.scalar_bytes())
+    crate::traits::ct::with_data_independent_timing(|| {
+      let expanded = hash::ExpandedSecret::from_secret_key(self);
+      public_key_from_scalar(expanded.scalar_bytes())
+    })
   }
 
   /// Sign a message with this secret key.
   #[must_use]
   pub fn sign(&self, message: &[u8]) -> Ed25519Signature {
-    let _dit = crate::traits::ct::DataIndependentTiming::enter();
-    let expanded = hash::ExpandedSecret::from_secret_key(self);
-    let public = public_key_from_scalar(expanded.scalar_bytes());
-    sign_with_expanded(&expanded, &public, message)
+    crate::traits::ct::with_data_independent_timing(|| {
+      let expanded = hash::ExpandedSecret::from_secret_key(self);
+      let public = public_key_from_scalar(expanded.scalar_bytes());
+      sign_with_expanded(&expanded, &public, message)
+    })
   }
 }
 
@@ -653,9 +658,10 @@ impl Ed25519Keypair {
 
   /// Derive the expansion and the public key from `self.secret` in place.
   fn derive_in_place(&mut self) {
-    let _dit = crate::traits::ct::DataIndependentTiming::enter();
-    self.expanded.expand_into(&self.secret);
-    self.public = public_key_from_scalar(self.expanded.scalar_bytes());
+    crate::traits::ct::with_data_independent_timing(|| {
+      self.expanded.expand_into(&self.secret);
+      self.public = public_key_from_scalar(self.expanded.scalar_bytes());
+    })
   }
 
   /// Borrow the secret key.
@@ -673,8 +679,7 @@ impl Ed25519Keypair {
   /// Sign a message with the keypair secret key.
   #[must_use]
   pub fn sign(&self, message: &[u8]) -> Ed25519Signature {
-    let _dit = crate::traits::ct::DataIndependentTiming::enter();
-    sign_with_expanded(&self.expanded, &self.public, message)
+    crate::traits::ct::with_data_independent_timing(|| sign_with_expanded(&self.expanded, &self.public, message))
   }
 }
 
@@ -924,8 +929,9 @@ pub fn diag_ed25519_sign_inputs(secret: &Ed25519SecretKey, message: &[u8]) -> Di
 #[doc(hidden)]
 #[must_use]
 pub fn diag_ed25519_sign_nonce_reduce(nonce_digest: &[u8; 64]) -> [u8; SECRET_KEY_LENGTH] {
-  let _dit = crate::traits::ct::DataIndependentTiming::enter();
-  scalar::to_bytes(&scalar::reduce_64_bytes_mod_order_secret(nonce_digest))
+  crate::traits::ct::with_data_independent_timing(|| {
+    scalar::to_bytes(&scalar::reduce_64_bytes_mod_order_secret(nonce_digest))
+  })
 }
 
 /// Execute the production signing commitment `R = r·B`.
@@ -933,8 +939,7 @@ pub fn diag_ed25519_sign_nonce_reduce(nonce_digest: &[u8; 64]) -> [u8; SECRET_KE
 #[doc(hidden)]
 #[must_use]
 pub fn diag_ed25519_sign_commitment(nonce: &[u8; SECRET_KEY_LENGTH]) -> [u8; PUBLIC_KEY_LENGTH] {
-  let _dit = crate::traits::ct::DataIndependentTiming::enter();
-  basepoint_mul_encoded_dispatch(nonce)
+  crate::traits::ct::with_data_independent_timing(|| basepoint_mul_encoded_dispatch(nonce))
 }
 
 /// Execute the production signing response `S = k·a + r (mod L)`.
@@ -942,11 +947,12 @@ pub fn diag_ed25519_sign_commitment(nonce: &[u8; SECRET_KEY_LENGTH]) -> [u8; PUB
 #[doc(hidden)]
 #[must_use]
 pub fn diag_ed25519_sign_response(inputs: &DiagEd25519SignInputs) -> [u8; SECRET_KEY_LENGTH] {
-  let _dit = crate::traits::ct::DataIndependentTiming::enter();
-  let challenge = scalar::decode_words_le(&inputs.challenge);
-  let secret_scalar = scalar::decode_words_le(&inputs.secret_scalar);
-  let nonce = scalar::decode_words_le(&inputs.nonce);
-  scalar::to_bytes(&scalar::mul_add_mod_secret(&challenge, &secret_scalar, &nonce))
+  crate::traits::ct::with_data_independent_timing(|| {
+    let challenge = scalar::decode_words_le(&inputs.challenge);
+    let secret_scalar = scalar::decode_words_le(&inputs.secret_scalar);
+    let nonce = scalar::decode_words_le(&inputs.nonce);
+    scalar::to_bytes(&scalar::mul_add_mod_secret(&challenge, &secret_scalar, &nonce))
+  })
 }
 
 #[cfg(all(rscrypto_internal, feature = "diag"))]

@@ -2751,16 +2751,17 @@ pub mod expert {
 impl expert::RsaPkcs1v15Decrypt for RsaPrivateKey {
   #[cfg(feature = "getrandom")]
   fn decrypt_pkcs1v15(&self, ciphertext: &[u8], out: &mut [u8]) -> Result<usize, RsaPrivateOpError> {
-    let _dit = crate::traits::ct::DataIndependentTiming::enter();
-    self.reject_short_decryption_output(RSAES_PKCS1V15_OVERHEAD, out)?;
-    let result = self.components.random_blinding_factor().and_then(|blinding| {
-      self.components.decrypt_pkcs1v15_with_blinding_factor(
-        ciphertext,
-        RsaBlindingPair::trusted(blinding.factor(), blinding.inverse()),
-        out,
-      )
-    });
-    clear_output_on_error(result, out)
+    crate::traits::ct::with_data_independent_timing(|| {
+      self.reject_short_decryption_output(RSAES_PKCS1V15_OVERHEAD, out)?;
+      let result = self.components.random_blinding_factor().and_then(|blinding| {
+        self.components.decrypt_pkcs1v15_with_blinding_factor(
+          ciphertext,
+          RsaBlindingPair::trusted(blinding.factor(), blinding.inverse()),
+          out,
+        )
+      });
+      clear_output_on_error(result, out)
+    })
   }
 
   #[cfg(feature = "getrandom")]
@@ -2770,18 +2771,19 @@ impl expert::RsaPkcs1v15Decrypt for RsaPrivateKey {
     out: &mut [u8],
     scratch: &mut RsaPrivateScratch,
   ) -> Result<usize, RsaPrivateOpError> {
-    let _dit = crate::traits::ct::DataIndependentTiming::enter();
-    self.reject_short_decryption_output(RSAES_PKCS1V15_OVERHEAD, out)?;
-    let result = self
-      .components
-      .random_blinding_factor_into_scratch(scratch)
-      .and_then(|()| {
-        self
-          .components
-          .decrypt_pkcs1v15_with_stored_blinding_and_scratch(ciphertext, out, scratch)
-      });
-    scratch.clear();
-    clear_decryption_output_on_error(result, out)
+    crate::traits::ct::with_data_independent_timing(|| {
+      self.reject_short_decryption_output(RSAES_PKCS1V15_OVERHEAD, out)?;
+      let result = self
+        .components
+        .random_blinding_factor_into_scratch(scratch)
+        .and_then(|()| {
+          self
+            .components
+            .decrypt_pkcs1v15_with_stored_blinding_and_scratch(ciphertext, out, scratch)
+        });
+      scratch.clear();
+      clear_decryption_output_on_error(result, out)
+    })
   }
 
   fn decrypt_pkcs1v15_with_blinding_factor(
@@ -2790,12 +2792,13 @@ impl expert::RsaPkcs1v15Decrypt for RsaPrivateKey {
     blinding: RsaBlindingPair<'_>,
     out: &mut [u8],
   ) -> Result<usize, RsaPrivateOpError> {
-    let _dit = crate::traits::ct::DataIndependentTiming::enter();
-    self.reject_short_decryption_output(RSAES_PKCS1V15_OVERHEAD, out)?;
-    let result = self
-      .components
-      .decrypt_pkcs1v15_with_blinding_factor(ciphertext, blinding, out);
-    clear_decryption_output_on_error(result, out)
+    crate::traits::ct::with_data_independent_timing(|| {
+      self.reject_short_decryption_output(RSAES_PKCS1V15_OVERHEAD, out)?;
+      let result = self
+        .components
+        .decrypt_pkcs1v15_with_blinding_factor(ciphertext, blinding, out);
+      clear_decryption_output_on_error(result, out)
+    })
   }
 
   fn decrypt_pkcs1v15_with_blinding_factor_and_scratch(
@@ -2805,12 +2808,13 @@ impl expert::RsaPkcs1v15Decrypt for RsaPrivateKey {
     out: &mut [u8],
     scratch: &mut RsaPrivateScratch,
   ) -> Result<usize, RsaPrivateOpError> {
-    let _dit = crate::traits::ct::DataIndependentTiming::enter();
-    self.reject_short_decryption_output(RSAES_PKCS1V15_OVERHEAD, out)?;
-    let result = self
-      .components
-      .decrypt_pkcs1v15_with_blinding_factor_and_scratch(ciphertext, blinding, out, scratch);
-    clear_decryption_output_on_error(result, out)
+    crate::traits::ct::with_data_independent_timing(|| {
+      self.reject_short_decryption_output(RSAES_PKCS1V15_OVERHEAD, out)?;
+      let result = self
+        .components
+        .decrypt_pkcs1v15_with_blinding_factor_and_scratch(ciphertext, blinding, out, scratch);
+      clear_decryption_output_on_error(result, out)
+    })
   }
 }
 
@@ -3366,32 +3370,33 @@ impl RsaPrivateKeyComponents {
   /// `blinding_inverse = (factor · mask · R⁻¹)⁻¹ · mask · R⁻¹ mod n`, with `checked` as the masked value.
   fn masked_inverse_steps(&self, scratch: &mut RsaPrivateScratch) -> Result<(), RsaPrivateOpError> {
     // The products read the secret factor and mask, so they run under DIT like the inverse.
-    let _dit = crate::traits::ct::DataIndependentTiming::enter();
-    mont_mul_representatives_with_scratch(
-      &self.public.modulus,
-      scratch.blinding_factor.as_slice(),
-      scratch.inverse_mask.as_slice(),
-      scratch.checked.as_mut_slice(),
-      &mut scratch.mul_scratch,
-    )?;
-    private_modular_inverse_odd(
-      &self.public.modulus,
-      scratch.checked.as_slice(),
-      scratch.blinding_inverse.as_mut_slice(),
-      &mut scratch.inverse_scratch,
-    )?;
-    mont_mul_representatives_with_scratch(
-      &self.public.modulus,
-      scratch.blinding_inverse.as_slice(),
-      scratch.inverse_mask.as_slice(),
-      scratch.checked.as_mut_slice(),
-      &mut scratch.mul_scratch,
-    )?;
-    scratch
-      .blinding_inverse
-      .as_mut_slice()
-      .copy_from_slice(scratch.checked.as_slice());
-    Ok(())
+    crate::traits::ct::with_data_independent_timing(|| {
+      mont_mul_representatives_with_scratch(
+        &self.public.modulus,
+        scratch.blinding_factor.as_slice(),
+        scratch.inverse_mask.as_slice(),
+        scratch.checked.as_mut_slice(),
+        &mut scratch.mul_scratch,
+      )?;
+      private_modular_inverse_odd(
+        &self.public.modulus,
+        scratch.checked.as_slice(),
+        scratch.blinding_inverse.as_mut_slice(),
+        &mut scratch.inverse_scratch,
+      )?;
+      mont_mul_representatives_with_scratch(
+        &self.public.modulus,
+        scratch.blinding_inverse.as_slice(),
+        scratch.inverse_mask.as_slice(),
+        scratch.checked.as_mut_slice(),
+        &mut scratch.mul_scratch,
+      )?;
+      scratch
+        .blinding_inverse
+        .as_mut_slice()
+        .copy_from_slice(scratch.checked.as_slice());
+      Ok(())
+    })
   }
 
   fn sign_pkcs1v15_with_blinding_factor(
@@ -4407,18 +4412,19 @@ impl RsaPrivateKey {
     fill_salt: impl FnOnce(&mut [u8]) -> Result<(), E>,
     fill_blinding: impl FnMut(&mut [u8]) -> Result<(), F>,
   ) -> Result<(), RsaPrivateOpError> {
-    let _dit = crate::traits::ct::DataIndependentTiming::enter();
-    let result = if workspace.belongs_to(self.public_key()) {
-      self.sign_with_workspace(profile, message, out, workspace, fill_salt, fill_blinding)
-    } else {
-      Err(RsaPrivateOpError::InvalidScratch)
-    };
-    workspace.scratch.clear();
-    match &result {
-      Ok(remaining) => workspace.remaining = *remaining,
-      Err(_) => workspace.clear_pair(),
-    }
-    clear_output_on_error(result.map(|_| ()), out)
+    crate::traits::ct::with_data_independent_timing(|| {
+      let result = if workspace.belongs_to(self.public_key()) {
+        self.sign_with_workspace(profile, message, out, workspace, fill_salt, fill_blinding)
+      } else {
+        Err(RsaPrivateOpError::InvalidScratch)
+      };
+      workspace.scratch.clear();
+      match &result {
+        Ok(remaining) => workspace.remaining = *remaining,
+        Err(_) => workspace.clear_pair(),
+      }
+      clear_output_on_error(result.map(|_| ()), out)
+    })
   }
 
   /// Encode and sign `message` into `out` with the next blinding pair of
@@ -10029,28 +10035,28 @@ fn private_modular_inverse_odd(
   out: &mut [u8],
   scratch: &mut RsaPrivateInverseScratch,
 ) -> Result<(), RsaPrivateOpError> {
-  let _dit = crate::traits::ct::DataIndependentTiming::enter();
+  crate::traits::ct::with_data_independent_timing(|| {
+    let bytes = modulus.bytes.len();
+    if input.len() != bytes || out.len() != bytes || modulus.limbs.first().copied().unwrap_or(0) & 1 == 0 {
+      ct::zeroize(out);
+      return Err(RsaPrivateOpError::InvalidLength);
+    }
+    if !private_valid_blinding_factor(input, &modulus.bytes) {
+      ct::zeroize(out);
+      return Err(RsaPrivateOpError::InvalidBlindingFactor);
+    }
 
-  let bytes = modulus.bytes.len();
-  if input.len() != bytes || out.len() != bytes || modulus.limbs.first().copied().unwrap_or(0) & 1 == 0 {
-    ct::zeroize(out);
-    return Err(RsaPrivateOpError::InvalidLength);
-  }
-  if !private_valid_blinding_factor(input, &modulus.bytes) {
-    ct::zeroize(out);
-    return Err(RsaPrivateOpError::InvalidBlindingFactor);
-  }
+    #[cfg(any(target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x"))]
+    let result = private_modular_inverse_odd_i31(modulus, input, out, scratch);
+    #[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x")))]
+    let result = private_modular_inverse_odd_s62(modulus, input, out, scratch);
 
-  #[cfg(any(target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x"))]
-  let result = private_modular_inverse_odd_i31(modulus, input, out, scratch);
-  #[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x")))]
-  let result = private_modular_inverse_odd_s62(modulus, input, out, scratch);
-
-  scratch.clear();
-  if result.is_err() {
-    ct::zeroize(out);
-  }
-  result
+    scratch.clear();
+    if result.is_err() {
+      ct::zeroize(out);
+    }
+    result
+  })
 }
 
 /// Invert a valid blinding factor with the 31-bit batched extended binary GCD.
@@ -10802,77 +10808,77 @@ fn private_exponentiate_representative(
   input: &[u8],
   out: &mut [u8],
 ) -> Result<(), RsaPrivateOpError> {
-  let _dit = crate::traits::ct::DataIndependentTiming::enter();
+  crate::traits::ct::with_data_independent_timing(|| {
+    let bytes = modulus.bytes.len();
+    let limbs = modulus.limbs.len();
+    if input.len() != bytes || out.len() != bytes || exponent.len() != bytes {
+      return Err(RsaPrivateOpError::InvalidLength);
+    }
+    let r2 = modulus
+      .montgomery_r2()
+      .ok_or(RsaPrivateOpError::RepresentativeOutOfRange)?;
 
-  let bytes = modulus.bytes.len();
-  let limbs = modulus.limbs.len();
-  if input.len() != bytes || out.len() != bytes || exponent.len() != bytes {
-    return Err(RsaPrivateOpError::InvalidLength);
-  }
-  let r2 = modulus
-    .montgomery_r2()
-    .ok_or(RsaPrivateOpError::RepresentativeOutOfRange)?;
+    let mut t = SecretLimbs::zeroed(limbs.strict_mul(2).strict_add(2));
+    let mut representative = SecretLimbs::zeroed(limbs);
+    let mut one = SecretLimbs::zeroed(limbs);
+    let mut base = SecretLimbs::zeroed(limbs);
+    let mut acc = SecretLimbs::zeroed(limbs);
+    let mut squared = SecretLimbs::zeroed(limbs);
+    let mut multiplied = SecretLimbs::zeroed(limbs);
+    let mut selected = SecretLimbs::zeroed(limbs);
+    let mut reduced = SecretLimbs::zeroed(limbs);
 
-  let mut t = SecretLimbs::zeroed(limbs.strict_mul(2).strict_add(2));
-  let mut representative = SecretLimbs::zeroed(limbs);
-  let mut one = SecretLimbs::zeroed(limbs);
-  let mut base = SecretLimbs::zeroed(limbs);
-  let mut acc = SecretLimbs::zeroed(limbs);
-  let mut squared = SecretLimbs::zeroed(limbs);
-  let mut multiplied = SecretLimbs::zeroed(limbs);
-  let mut selected = SecretLimbs::zeroed(limbs);
-  let mut reduced = SecretLimbs::zeroed(limbs);
+    limbs_from_be_into(input, representative.as_mut_slice());
+    if !ct_limbs_lt(representative.as_slice(), &modulus.limbs) {
+      return Err(RsaPrivateOpError::RepresentativeOutOfRange);
+    }
 
-  limbs_from_be_into(input, representative.as_mut_slice());
-  if !ct_limbs_lt(representative.as_slice(), &modulus.limbs) {
-    return Err(RsaPrivateOpError::RepresentativeOutOfRange);
-  }
-
-  one.as_mut_slice()[0] = 1;
-  private_mont_mul(
-    base.as_mut_slice(),
-    representative.as_slice(),
-    r2,
-    modulus,
-    t.as_mut_slice(),
-  );
-  private_mont_mul(acc.as_mut_slice(), one.as_slice(), r2, modulus, t.as_mut_slice());
-
-  let mut table = private_fixed_window_table(base.as_slice(), acc.as_slice(), modulus, t.as_mut_slice());
-  let mut index = 0;
-  while index < bytes {
-    let exponent_byte = exponent[index];
-    private_exponentiate_window(
-      &table,
-      exponent_byte >> 4,
+    one.as_mut_slice()[0] = 1;
+    private_mont_mul(
+      base.as_mut_slice(),
+      representative.as_slice(),
+      r2,
       modulus,
-      RsaPrivateWindowWorkspace {
-        t: t.as_mut_slice(),
-        acc: acc.as_mut_slice(),
-        squared: squared.as_mut_slice(),
-        multiplied: multiplied.as_mut_slice(),
-        selected: selected.as_mut_slice(),
-      },
+      t.as_mut_slice(),
     );
-    private_exponentiate_window(
-      &table,
-      exponent_byte & 0x0f,
-      modulus,
-      RsaPrivateWindowWorkspace {
-        t: t.as_mut_slice(),
-        acc: acc.as_mut_slice(),
-        squared: squared.as_mut_slice(),
-        multiplied: multiplied.as_mut_slice(),
-        selected: selected.as_mut_slice(),
-      },
-    );
-    index = index.strict_add(1);
-  }
+    private_mont_mul(acc.as_mut_slice(), one.as_slice(), r2, modulus, t.as_mut_slice());
 
-  ct::zeroize_words(table.as_mut_slice());
-  private_mont_reduce(reduced.as_mut_slice(), acc.as_slice(), modulus, t.as_mut_slice());
-  limbs_to_be(reduced.as_slice(), out);
-  Ok(())
+    let mut table = private_fixed_window_table(base.as_slice(), acc.as_slice(), modulus, t.as_mut_slice());
+    let mut index = 0;
+    while index < bytes {
+      let exponent_byte = exponent[index];
+      private_exponentiate_window(
+        &table,
+        exponent_byte >> 4,
+        modulus,
+        RsaPrivateWindowWorkspace {
+          t: t.as_mut_slice(),
+          acc: acc.as_mut_slice(),
+          squared: squared.as_mut_slice(),
+          multiplied: multiplied.as_mut_slice(),
+          selected: selected.as_mut_slice(),
+        },
+      );
+      private_exponentiate_window(
+        &table,
+        exponent_byte & 0x0f,
+        modulus,
+        RsaPrivateWindowWorkspace {
+          t: t.as_mut_slice(),
+          acc: acc.as_mut_slice(),
+          squared: squared.as_mut_slice(),
+          multiplied: multiplied.as_mut_slice(),
+          selected: selected.as_mut_slice(),
+        },
+      );
+      index = index.strict_add(1);
+    }
+
+    ct::zeroize_words(table.as_mut_slice());
+    private_mont_reduce(reduced.as_mut_slice(), acc.as_slice(), modulus, t.as_mut_slice());
+    limbs_to_be(reduced.as_slice(), out);
+    Ok(())
+  })
 }
 
 /// IFMA workspace words for CRT primes of up to `max_limb_count` limbs; zero without the backend.
@@ -10991,82 +10997,82 @@ fn private_exponentiate_crt_pair_ifma(
   shape: (usize, usize),
   scratch: &mut RsaPrivateExponentScratch,
 ) -> Result<(), RsaPrivateOpError> {
-  let _dit = crate::traits::ct::DataIndependentTiming::enter();
-
-  let (modulus_p, exponent_p, input_p, out_p) = first;
-  let (modulus_q, exponent_q, input_q, out_q) = second;
-  let bytes = modulus_p.bytes.len();
-  let limbs = modulus_p.limbs.len();
-  if input_p.len() != bytes || out_p.len() != bytes || exponent_p.len() != bytes {
-    return Err(RsaPrivateOpError::InvalidLength);
-  }
-  let r2_p = modulus_p
-    .montgomery_r2()
-    .ok_or(RsaPrivateOpError::RepresentativeOutOfRange)?;
-  let RsaPrivateExponentWorkspace {
-    representative: base_p,
-    reduced: r2_ifma_p,
-    acc: result_p,
-    base: base_q,
-    squared: r2_ifma_q,
-    multiplied: result_q,
-    ifma,
-    ..
-  } = scratch.workspace(limbs)?;
-  limbs_from_be_into(input_p, base_p);
-  if !ct_limbs_lt(base_p, &modulus_p.limbs) {
-    return Err(RsaPrivateOpError::RepresentativeOutOfRange);
-  }
-  if input_q.len() != bytes || out_q.len() != bytes || exponent_q.len() != bytes {
-    return Err(RsaPrivateOpError::InvalidLength);
-  }
-  let r2_q = modulus_q
-    .montgomery_r2()
-    .ok_or(RsaPrivateOpError::RepresentativeOutOfRange)?;
-  limbs_from_be_into(input_q, base_q);
-  if !ct_limbs_lt(base_q, &modulus_q.limbs) {
-    return Err(RsaPrivateOpError::RepresentativeOutOfRange);
-  }
-
-  // R = 2^(52·digits) for the radix-2^52 kernel: R² mod m is the cached 2^(128·limbs) mod m
-  // doubled 2·(52·digits - 64·limbs) times.
-  let doublings = shape.0.strict_mul(52).strict_sub(limbs.strict_mul(64)).strict_mul(2);
-  for (r2_ifma, r2, modulus) in [(&mut *r2_ifma_p, r2_p, modulus_p), (&mut *r2_ifma_q, r2_q, modulus_q)] {
-    r2_ifma.copy_from_slice(r2);
-    for _ in 0..doublings {
-      double_mod_in_place(r2_ifma, &modulus.limbs);
+  crate::traits::ct::with_data_independent_timing(|| {
+    let (modulus_p, exponent_p, input_p, out_p) = first;
+    let (modulus_q, exponent_q, input_q, out_q) = second;
+    let bytes = modulus_p.bytes.len();
+    let limbs = modulus_p.limbs.len();
+    if input_p.len() != bytes || out_p.len() != bytes || exponent_p.len() != bytes {
+      return Err(RsaPrivateOpError::InvalidLength);
     }
-  }
-  // SAFETY: `shape` returned Some for the shared limb count, so AVX-512F and AVX-512 IFMA are
-  // present and the width has a kernel. Every limb slice has `limbs` limbs, both exponents have
-  // `bytes` bytes, and the caller checked that the workspace has `workspace_words(limbs)` words.
-  unsafe {
-    rsa_x86_64_ifma::exponentiate_pair(
-      [
-        rsa_x86_64_ifma::Operands {
-          out: &mut *result_p,
-          base: base_p,
-          exponent: exponent_p,
-          m: &modulus_p.limbs,
-          r2: r2_ifma_p,
-          k0: modulus_p.n0 & (u64::MAX >> 12),
-        },
-        rsa_x86_64_ifma::Operands {
-          out: &mut *result_q,
-          base: base_q,
-          exponent: exponent_q,
-          m: &modulus_q.limbs,
-          r2: r2_ifma_q,
-          k0: modulus_q.n0 & (u64::MAX >> 12),
-        },
-      ],
-      shape,
+    let r2_p = modulus_p
+      .montgomery_r2()
+      .ok_or(RsaPrivateOpError::RepresentativeOutOfRange)?;
+    let RsaPrivateExponentWorkspace {
+      representative: base_p,
+      reduced: r2_ifma_p,
+      acc: result_p,
+      base: base_q,
+      squared: r2_ifma_q,
+      multiplied: result_q,
       ifma,
-    );
-  }
-  limbs_to_be(result_p, out_p);
-  limbs_to_be(result_q, out_q);
-  Ok(())
+      ..
+    } = scratch.workspace(limbs)?;
+    limbs_from_be_into(input_p, base_p);
+    if !ct_limbs_lt(base_p, &modulus_p.limbs) {
+      return Err(RsaPrivateOpError::RepresentativeOutOfRange);
+    }
+    if input_q.len() != bytes || out_q.len() != bytes || exponent_q.len() != bytes {
+      return Err(RsaPrivateOpError::InvalidLength);
+    }
+    let r2_q = modulus_q
+      .montgomery_r2()
+      .ok_or(RsaPrivateOpError::RepresentativeOutOfRange)?;
+    limbs_from_be_into(input_q, base_q);
+    if !ct_limbs_lt(base_q, &modulus_q.limbs) {
+      return Err(RsaPrivateOpError::RepresentativeOutOfRange);
+    }
+
+    // R = 2^(52·digits) for the radix-2^52 kernel: R² mod m is the cached 2^(128·limbs) mod m
+    // doubled 2·(52·digits - 64·limbs) times.
+    let doublings = shape.0.strict_mul(52).strict_sub(limbs.strict_mul(64)).strict_mul(2);
+    for (r2_ifma, r2, modulus) in [(&mut *r2_ifma_p, r2_p, modulus_p), (&mut *r2_ifma_q, r2_q, modulus_q)] {
+      r2_ifma.copy_from_slice(r2);
+      for _ in 0..doublings {
+        double_mod_in_place(r2_ifma, &modulus.limbs);
+      }
+    }
+    // SAFETY: `shape` returned Some for the shared limb count, so AVX-512F and AVX-512 IFMA are
+    // present and the width has a kernel. Every limb slice has `limbs` limbs, both exponents have
+    // `bytes` bytes, and the caller checked that the workspace has `workspace_words(limbs)` words.
+    unsafe {
+      rsa_x86_64_ifma::exponentiate_pair(
+        [
+          rsa_x86_64_ifma::Operands {
+            out: &mut *result_p,
+            base: base_p,
+            exponent: exponent_p,
+            m: &modulus_p.limbs,
+            r2: r2_ifma_p,
+            k0: modulus_p.n0 & (u64::MAX >> 12),
+          },
+          rsa_x86_64_ifma::Operands {
+            out: &mut *result_q,
+            base: base_q,
+            exponent: exponent_q,
+            m: &modulus_q.limbs,
+            r2: r2_ifma_q,
+            k0: modulus_q.n0 & (u64::MAX >> 12),
+          },
+        ],
+        shape,
+        ifma,
+      );
+    }
+    limbs_to_be(result_p, out_p);
+    limbs_to_be(result_q, out_q);
+    Ok(())
+  })
 }
 
 /// The paired NEON digit count for a CRT pair, when both primes have one width that the engine
@@ -11103,77 +11109,77 @@ fn private_exponentiate_crt_pair_neon(
   digits: usize,
   scratch: &mut RsaPrivateExponentScratch,
 ) -> Result<(), RsaPrivateOpError> {
-  let _dit = crate::traits::ct::DataIndependentTiming::enter();
-
-  let (modulus_p, exponent_p, input_p, out_p) = first;
-  let (modulus_q, exponent_q, input_q, out_q) = second;
-  let bytes = modulus_p.bytes.len();
-  let limbs = modulus_p.limbs.len();
-  if input_p.len() != bytes || out_p.len() != bytes || exponent_p.len() != bytes {
-    return Err(RsaPrivateOpError::InvalidLength);
-  }
-  let r2_p = modulus_p
-    .montgomery_r2()
-    .ok_or(RsaPrivateOpError::RepresentativeOutOfRange)?;
-  let RsaPrivateExponentWorkspace {
-    representative: base_p,
-    reduced: r2_pair_p,
-    acc: result_p,
-    base: base_q,
-    squared: r2_pair_q,
-    multiplied: result_q,
-    pair,
-    ..
-  } = scratch.workspace(limbs)?;
-  limbs_from_be_into(input_p, base_p);
-  if !ct_limbs_lt(base_p, &modulus_p.limbs) {
-    return Err(RsaPrivateOpError::RepresentativeOutOfRange);
-  }
-  if input_q.len() != bytes || out_q.len() != bytes || exponent_q.len() != bytes {
-    return Err(RsaPrivateOpError::InvalidLength);
-  }
-  let r2_q = modulus_q
-    .montgomery_r2()
-    .ok_or(RsaPrivateOpError::RepresentativeOutOfRange)?;
-  limbs_from_be_into(input_q, base_q);
-  if !ct_limbs_lt(base_q, &modulus_q.limbs) {
-    return Err(RsaPrivateOpError::RepresentativeOutOfRange);
-  }
-
-  // R = 2^(28·digits) for the paired engine: R² mod m is the cached 2^(128·limbs) mod m doubled
-  // 2·(28·digits - 64·limbs) times.
-  let doublings = digits.strict_mul(28).strict_sub(limbs.strict_mul(64)).strict_mul(2);
-  for (r2_pair, r2, modulus) in [(&mut *r2_pair_p, r2_p, modulus_p), (&mut *r2_pair_q, r2_q, modulus_q)] {
-    r2_pair.copy_from_slice(r2);
-    for _ in 0..doublings {
-      double_mod_in_place(r2_pair, &modulus.limbs);
+  crate::traits::ct::with_data_independent_timing(|| {
+    let (modulus_p, exponent_p, input_p, out_p) = first;
+    let (modulus_q, exponent_q, input_q, out_q) = second;
+    let bytes = modulus_p.bytes.len();
+    let limbs = modulus_p.limbs.len();
+    if input_p.len() != bytes || out_p.len() != bytes || exponent_p.len() != bytes {
+      return Err(RsaPrivateOpError::InvalidLength);
     }
-  }
-  rsa_aarch64_pair::exponentiate_pair(
-    [
-      rsa_aarch64_pair::Operands {
-        out: &mut *result_p,
-        base: base_p,
-        exponent: exponent_p,
-        m: &modulus_p.limbs,
-        r2: r2_pair_p,
-        n0: modulus_p.n0,
-      },
-      rsa_aarch64_pair::Operands {
-        out: &mut *result_q,
-        base: base_q,
-        exponent: exponent_q,
-        m: &modulus_q.limbs,
-        r2: r2_pair_q,
-        n0: modulus_q.n0,
-      },
-    ],
-    digits,
-    pair,
-  );
-  limbs_to_be(result_p, out_p);
-  limbs_to_be(result_q, out_q);
-  Ok(())
+    let r2_p = modulus_p
+      .montgomery_r2()
+      .ok_or(RsaPrivateOpError::RepresentativeOutOfRange)?;
+    let RsaPrivateExponentWorkspace {
+      representative: base_p,
+      reduced: r2_pair_p,
+      acc: result_p,
+      base: base_q,
+      squared: r2_pair_q,
+      multiplied: result_q,
+      pair,
+      ..
+    } = scratch.workspace(limbs)?;
+    limbs_from_be_into(input_p, base_p);
+    if !ct_limbs_lt(base_p, &modulus_p.limbs) {
+      return Err(RsaPrivateOpError::RepresentativeOutOfRange);
+    }
+    if input_q.len() != bytes || out_q.len() != bytes || exponent_q.len() != bytes {
+      return Err(RsaPrivateOpError::InvalidLength);
+    }
+    let r2_q = modulus_q
+      .montgomery_r2()
+      .ok_or(RsaPrivateOpError::RepresentativeOutOfRange)?;
+    limbs_from_be_into(input_q, base_q);
+    if !ct_limbs_lt(base_q, &modulus_q.limbs) {
+      return Err(RsaPrivateOpError::RepresentativeOutOfRange);
+    }
+
+    // R = 2^(28·digits) for the paired engine: R² mod m is the cached 2^(128·limbs) mod m doubled
+    // 2·(28·digits - 64·limbs) times.
+    let doublings = digits.strict_mul(28).strict_sub(limbs.strict_mul(64)).strict_mul(2);
+    for (r2_pair, r2, modulus) in [(&mut *r2_pair_p, r2_p, modulus_p), (&mut *r2_pair_q, r2_q, modulus_q)] {
+      r2_pair.copy_from_slice(r2);
+      for _ in 0..doublings {
+        double_mod_in_place(r2_pair, &modulus.limbs);
+      }
+    }
+    rsa_aarch64_pair::exponentiate_pair(
+      [
+        rsa_aarch64_pair::Operands {
+          out: &mut *result_p,
+          base: base_p,
+          exponent: exponent_p,
+          m: &modulus_p.limbs,
+          r2: r2_pair_p,
+          n0: modulus_p.n0,
+        },
+        rsa_aarch64_pair::Operands {
+          out: &mut *result_q,
+          base: base_q,
+          exponent: exponent_q,
+          m: &modulus_q.limbs,
+          r2: r2_pair_q,
+          n0: modulus_q.n0,
+        },
+      ],
+      digits,
+      pair,
+    );
+    limbs_to_be(result_p, out_p);
+    limbs_to_be(result_q, out_q);
+    Ok(())
+  })
 }
 
 fn private_exponentiate_representative_with_scratch(
@@ -11183,168 +11189,168 @@ fn private_exponentiate_representative_with_scratch(
   out: &mut [u8],
   scratch: &mut RsaPrivateExponentScratch,
 ) -> Result<(), RsaPrivateOpError> {
-  let _dit = crate::traits::ct::DataIndependentTiming::enter();
-
-  let bytes = modulus.bytes.len();
-  let limbs = modulus.limbs.len();
-  if input.len() != bytes || out.len() != bytes || exponent.len() != bytes {
-    return Err(RsaPrivateOpError::InvalidLength);
-  }
-  let r2 = modulus
-    .montgomery_r2()
-    .ok_or(RsaPrivateOpError::RepresentativeOutOfRange)?;
-  // A balanced CRT prime's 32-entry table fits the existing allocation. Check actual capacity
-  // so direct exponentiation and wider components retain the 16-entry fallback when necessary.
-  #[cfg(all(
-    target_arch = "aarch64",
-    target_os = "linux",
-    not(feature = "portable-only"),
-    not(miri)
-  ))]
-  let five_bit_supported = rsa_aarch64_mont::supports(limbs);
-  #[cfg(not(all(
-    target_arch = "aarch64",
-    target_os = "linux",
-    not(feature = "portable-only"),
-    not(miri)
-  )))]
-  let five_bit_supported = cfg!(any(
-    target_arch = "powerpc64",
-    target_arch = "s390x",
-    target_arch = "riscv64"
-  ));
-  let use_five_bit = five_bit_supported && scratch.table.as_slice().len() >= limbs.strict_mul(32);
-  let RsaPrivateExponentWorkspace {
-    t,
-    representative,
-    one,
-    base,
-    acc,
-    squared,
-    multiplied,
-    selected,
-    reduced,
-    table,
-    ifma: scratch_ifma,
+  crate::traits::ct::with_data_independent_timing(|| {
+    let bytes = modulus.bytes.len();
+    let limbs = modulus.limbs.len();
+    if input.len() != bytes || out.len() != bytes || exponent.len() != bytes {
+      return Err(RsaPrivateOpError::InvalidLength);
+    }
+    let r2 = modulus
+      .montgomery_r2()
+      .ok_or(RsaPrivateOpError::RepresentativeOutOfRange)?;
+    // A balanced CRT prime's 32-entry table fits the existing allocation. Check actual capacity
+    // so direct exponentiation and wider components retain the 16-entry fallback when necessary.
     #[cfg(all(
       target_arch = "aarch64",
-      target_vendor = "apple",
+      target_os = "linux",
       not(feature = "portable-only"),
       not(miri)
     ))]
-      pair: _,
-  } = if use_five_bit {
-    scratch.workspace_with_table_entries::<32>(limbs)?
-  } else {
-    scratch.workspace(limbs)?
-  };
-  #[cfg(not(all(
-    target_arch = "x86_64",
-    target_feature = "sse2",
-    not(feature = "portable-only"),
-    not(miri)
-  )))]
-  let _ = scratch_ifma;
-
-  limbs_from_be_into(input, representative);
-  if !ct_limbs_lt(representative, &modulus.limbs) {
-    return Err(RsaPrivateOpError::RepresentativeOutOfRange);
-  }
-
-  #[cfg(all(
-    target_arch = "x86_64",
-    target_feature = "sse2",
-    not(feature = "portable-only"),
-    not(miri)
-  ))]
-  if let Some(shape) = rsa_x86_64_ifma::shape(limbs)
-    && scratch_ifma.len() >= rsa_x86_64_ifma::workspace_words(limbs)
-  {
-    // R = 2^(52·digits) for the radix-2^52 kernel: R² mod m is the cached 2^(128·limbs) mod m
-    // doubled 2·(52·digits - 64·limbs) times.
-    reduced.copy_from_slice(r2);
-    for _ in 0..shape.0.strict_mul(52).strict_sub(limbs.strict_mul(64)).strict_mul(2) {
-      double_mod_in_place(reduced, &modulus.limbs);
-    }
-    // SAFETY: `shape` returned Some, so AVX-512F and AVX-512 IFMA are present and the limb count
-    // has a kernel. Every slice has `limbs` limbs, the exponent has `bytes` bytes, and the
-    // workspace has at least `workspace_words(limbs)` words.
-    unsafe {
-      rsa_x86_64_ifma::exponentiate(
-        rsa_x86_64_ifma::Operands {
-          out: &mut *acc,
-          base: representative,
-          exponent,
-          m: &modulus.limbs,
-          r2: reduced,
-          k0: modulus.n0 & (u64::MAX >> 12),
-        },
-        shape,
-        scratch_ifma,
-      );
-    }
-    limbs_to_be(acc, out);
-    return Ok(());
-  }
-
-  one.fill(0);
-  one[0] = 1;
-  private_mont_mul(base, representative, r2, modulus, t);
-  private_mont_mul(acc, one, r2, modulus, t);
-
-  if use_five_bit {
-    private_fixed_window_table_into_entries(table, base, acc, modulus, t, 32);
-    private_exponentiate_five_bit(
+    let five_bit_supported = rsa_aarch64_mont::supports(limbs);
+    #[cfg(not(all(
+      target_arch = "aarch64",
+      target_os = "linux",
+      not(feature = "portable-only"),
+      not(miri)
+    )))]
+    let five_bit_supported = cfg!(any(
+      target_arch = "powerpc64",
+      target_arch = "s390x",
+      target_arch = "riscv64"
+    ));
+    let use_five_bit = five_bit_supported && scratch.table.as_slice().len() >= limbs.strict_mul(32);
+    let RsaPrivateExponentWorkspace {
+      t,
+      representative,
+      one,
+      base,
+      acc,
+      squared,
+      multiplied,
+      selected,
+      reduced,
       table,
-      exponent,
-      modulus,
-      RsaPrivateWindowWorkspace {
-        t: &mut *t,
-        acc: &mut *acc,
-        squared: &mut *squared,
-        multiplied: &mut *multiplied,
-        selected: &mut *selected,
-      },
-    );
+      ifma: scratch_ifma,
+      #[cfg(all(
+        target_arch = "aarch64",
+        target_vendor = "apple",
+        not(feature = "portable-only"),
+        not(miri)
+      ))]
+        pair: _,
+    } = if use_five_bit {
+      scratch.workspace_with_table_entries::<32>(limbs)?
+    } else {
+      scratch.workspace(limbs)?
+    };
+    #[cfg(not(all(
+      target_arch = "x86_64",
+      target_feature = "sse2",
+      not(feature = "portable-only"),
+      not(miri)
+    )))]
+    let _ = scratch_ifma;
+
+    limbs_from_be_into(input, representative);
+    if !ct_limbs_lt(representative, &modulus.limbs) {
+      return Err(RsaPrivateOpError::RepresentativeOutOfRange);
+    }
+
+    #[cfg(all(
+      target_arch = "x86_64",
+      target_feature = "sse2",
+      not(feature = "portable-only"),
+      not(miri)
+    ))]
+    if let Some(shape) = rsa_x86_64_ifma::shape(limbs)
+      && scratch_ifma.len() >= rsa_x86_64_ifma::workspace_words(limbs)
+    {
+      // R = 2^(52·digits) for the radix-2^52 kernel: R² mod m is the cached 2^(128·limbs) mod m
+      // doubled 2·(52·digits - 64·limbs) times.
+      reduced.copy_from_slice(r2);
+      for _ in 0..shape.0.strict_mul(52).strict_sub(limbs.strict_mul(64)).strict_mul(2) {
+        double_mod_in_place(reduced, &modulus.limbs);
+      }
+      // SAFETY: `shape` returned Some, so AVX-512F and AVX-512 IFMA are present and the limb count
+      // has a kernel. Every slice has `limbs` limbs, the exponent has `bytes` bytes, and the
+      // workspace has at least `workspace_words(limbs)` words.
+      unsafe {
+        rsa_x86_64_ifma::exponentiate(
+          rsa_x86_64_ifma::Operands {
+            out: &mut *acc,
+            base: representative,
+            exponent,
+            m: &modulus.limbs,
+            r2: reduced,
+            k0: modulus.n0 & (u64::MAX >> 12),
+          },
+          shape,
+          scratch_ifma,
+        );
+      }
+      limbs_to_be(acc, out);
+      return Ok(());
+    }
+
+    one.fill(0);
+    one[0] = 1;
+    private_mont_mul(base, representative, r2, modulus, t);
+    private_mont_mul(acc, one, r2, modulus, t);
+
+    if use_five_bit {
+      private_fixed_window_table_into_entries(table, base, acc, modulus, t, 32);
+      private_exponentiate_five_bit(
+        table,
+        exponent,
+        modulus,
+        RsaPrivateWindowWorkspace {
+          t: &mut *t,
+          acc: &mut *acc,
+          squared: &mut *squared,
+          multiplied: &mut *multiplied,
+          selected: &mut *selected,
+        },
+      );
+      private_mont_reduce(reduced, acc, modulus, t);
+      limbs_to_be(reduced, out);
+      return Ok(());
+    }
+
+    private_fixed_window_table_into(table, base, acc, modulus, t);
+    let mut index = 0;
+    while index < bytes {
+      let exponent_byte = exponent[index];
+      private_exponentiate_window(
+        table,
+        exponent_byte >> 4,
+        modulus,
+        RsaPrivateWindowWorkspace {
+          t: &mut *t,
+          acc: &mut *acc,
+          squared: &mut *squared,
+          multiplied: &mut *multiplied,
+          selected: &mut *selected,
+        },
+      );
+      private_exponentiate_window(
+        table,
+        exponent_byte & 0x0f,
+        modulus,
+        RsaPrivateWindowWorkspace {
+          t: &mut *t,
+          acc: &mut *acc,
+          squared: &mut *squared,
+          multiplied: &mut *multiplied,
+          selected: &mut *selected,
+        },
+      );
+      index = index.strict_add(1);
+    }
+
     private_mont_reduce(reduced, acc, modulus, t);
     limbs_to_be(reduced, out);
-    return Ok(());
-  }
-
-  private_fixed_window_table_into(table, base, acc, modulus, t);
-  let mut index = 0;
-  while index < bytes {
-    let exponent_byte = exponent[index];
-    private_exponentiate_window(
-      table,
-      exponent_byte >> 4,
-      modulus,
-      RsaPrivateWindowWorkspace {
-        t: &mut *t,
-        acc: &mut *acc,
-        squared: &mut *squared,
-        multiplied: &mut *multiplied,
-        selected: &mut *selected,
-      },
-    );
-    private_exponentiate_window(
-      table,
-      exponent_byte & 0x0f,
-      modulus,
-      RsaPrivateWindowWorkspace {
-        t: &mut *t,
-        acc: &mut *acc,
-        squared: &mut *squared,
-        multiplied: &mut *multiplied,
-        selected: &mut *selected,
-      },
-    );
-    index = index.strict_add(1);
-  }
-
-  private_mont_reduce(reduced, acc, modulus, t);
-  limbs_to_be(reduced, out);
-  Ok(())
+    Ok(())
+  })
 }
 
 fn private_fixed_window_table(

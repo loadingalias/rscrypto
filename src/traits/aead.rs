@@ -422,8 +422,9 @@ pub trait AeadWithNonce: Aead {
   where
     Self: AeadGather,
   {
-    let _dit = super::ct::DataIndependentTiming::enter();
-    self.__encrypt_gather_with_nonce(nonce, aad, plaintext, out, SealToken::new())
+    super::ct::with_data_independent_timing(|| {
+      self.__encrypt_gather_with_nonce(nonce, aad, plaintext, out, SealToken::new())
+    })
   }
 
   /// Append gathered ciphertext to `out` and return its detached tag.

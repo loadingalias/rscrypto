@@ -71,7 +71,7 @@ use crate::backend::{
 };
 use crate::hashes::crypto::Sha512;
 use crate::secret::ZeroizingBytes;
-use crate::traits::ct::DataIndependentTiming;
+use crate::traits::ct::with_data_independent_timing;
 use crate::{
   MlDsa65PreparedSecretKey, MlDsa65PreparedSecretKeyStorage, MlDsa65PublicKey, MlDsa65SecretKey, MlDsa65Signature,
   MlDsaError, SecretBytes, VerificationError, Verifier,
@@ -520,10 +520,11 @@ macro_rules! composite {
       /// Import the raw encoding into this owner in place: the traditional
       /// key first, then the ML-DSA-65 seed.
       fn import_into(&mut self, input: &[u8; Self::LENGTH]) -> Result<(), CompositeMlDsaKeyError> {
-        let _dit = DataIndependentTiming::enter();
-        let (seed, trad) = input.split_first_chunk::<ML_DSA_SEED_LENGTH>().expect("fixed length");
-        self.trad.import_into(trad.try_into().expect("fixed length"))?;
-        self.ml_dsa.import_into(seed)
+        with_data_independent_timing(|| {
+          let (seed, trad) = input.split_first_chunk::<ML_DSA_SEED_LENGTH>().expect("fixed length");
+          self.trad.import_into(trad.try_into().expect("fixed length"))?;
+          self.ml_dsa.import_into(seed)
+        })
       }
 
       /// Generate into this owner in place: the ML-DSA-65 key first, then the
@@ -532,9 +533,10 @@ macro_rules! composite {
         &mut self,
         fill_random: &mut impl FnMut(&mut [u8]) -> Result<(), CompositeMlDsaError>,
       ) -> Result<(), CompositeMlDsaError> {
-        let _dit = DataIndependentTiming::enter();
-        self.ml_dsa.generate_into(fill_random)?;
-        self.trad.generate_into(fill_random)
+        with_data_independent_timing(|| {
+          self.ml_dsa.generate_into(fill_random)?;
+          self.trad.generate_into(fill_random)
+        })
       }
 
       /// Reject a carried public key that is not this key's own.
@@ -604,14 +606,16 @@ macro_rules! composite {
       /// with [`CompositeMlDsaKeyError::InvalidSecretKey`] for a public key
       /// that is not its own.
       pub fn from_pkcs8_der(der: &[u8]) -> Result<Self, CompositeMlDsaKeyError> {
-        let _dit = DataIndependentTiming::enter();
-        let (key, public) = pkix::decode_pkcs8_raw_oid::<CompositeMlDsaKeyError, { Self::LENGTH }, { $public::LENGTH }>(
-          der,
-          &$profile::OID_CONTENTS,
-        )?;
-        let secret = Self::from_bytes(key)?;
-        secret.check_public(public)?;
-        Ok(secret)
+        with_data_independent_timing(|| {
+          let (key, public) = pkix::decode_pkcs8_raw_oid::<
+            CompositeMlDsaKeyError,
+            { Self::LENGTH },
+            { $public::LENGTH },
+          >(der, &$profile::OID_CONTENTS)?;
+          let secret = Self::from_bytes(key)?;
+          secret.check_public(public)?;
+          Ok(secret)
+        })
       }
 
       /// Like [`Self::from_pkcs8_der`], with the key in memory from `alloc`.
@@ -623,15 +627,17 @@ macro_rules! composite {
       /// handled as by [`Box::new_in`].
       #[cfg(feature = "alloc")]
       pub fn from_pkcs8_der_in<A: Allocator>(der: &[u8], alloc: A) -> Result<Box<Self, A>, CompositeMlDsaKeyError> {
-        let _dit = DataIndependentTiming::enter();
-        let (key, public) = pkix::decode_pkcs8_raw_oid::<CompositeMlDsaKeyError, { Self::LENGTH }, { $public::LENGTH }>(
-          der,
-          &$profile::OID_CONTENTS,
-        )?;
-        let mut secret = Box::new_in(Self::zeroed(), alloc);
-        secret.import_into(key)?;
-        secret.check_public(public)?;
-        Ok(secret)
+        with_data_independent_timing(|| {
+          let (key, public) = pkix::decode_pkcs8_raw_oid::<
+            CompositeMlDsaKeyError,
+            { Self::LENGTH },
+            { $public::LENGTH },
+          >(der, &$profile::OID_CONTENTS)?;
+          let mut secret = Box::new_in(Self::zeroed(), alloc);
+          secret.import_into(key)?;
+          secret.check_public(public)?;
+          Ok(secret)
+        })
       }
 
       /// Write this key as a version 1 PKCS #8 private key. No heap
@@ -833,8 +839,7 @@ macro_rules! composite_signing_methods {
       context: &[u8],
     ) -> Result<$signature, CompositeMlDsaError> {
       let representative = Representative::new($profile::LABEL, context, prehash)?;
-      let _dit = DataIndependentTiming::enter();
-      self.sign_components(&representative, None)
+      with_data_independent_timing(|| self.sign_components(&representative, None))
     }
 
     /// Hedged signing over a caller-computed SHA-512 digest of the message,
@@ -848,8 +853,7 @@ macro_rules! composite_signing_methods {
       let representative = Representative::new($profile::LABEL, context, prehash)?;
       let mut random = ZeroizingBytes::<{ $random_len }>::zeroed();
       fill_random(random.as_mut_array())?;
-      let _dit = DataIndependentTiming::enter();
-      self.sign_components(&representative, Some(random.as_array()))
+      with_data_independent_timing(|| self.sign_components(&representative, Some(random.as_array())))
     }
   };
 }

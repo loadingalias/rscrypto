@@ -95,8 +95,9 @@ impl P384EphemeralSecret {
   /// Derive the matching canonical uncompressed public key.
   #[must_use]
   pub fn public_key(&self) -> P384PublicKey {
-    let _dit = crate::traits::ct::DataIndependentTiming::enter();
-    P384PublicKey::from_point(p384_portable::public_key_from_scalar(&self.0))
+    crate::traits::ct::with_data_independent_timing(|| {
+      P384PublicKey::from_point(p384_portable::public_key_from_scalar(&self.0))
+    })
   }
 
   /// Consume this ephemeral scalar and derive the peer agreement value.
@@ -108,10 +109,11 @@ impl P384EphemeralSecret {
   /// application keys with a protocol-specific KDF.
   #[must_use]
   pub fn diffie_hellman(self, public: &P384PublicKey) -> P384SharedSecret {
-    let _dit = crate::traits::ct::DataIndependentTiming::enter();
-    let mut shared = P384SharedSecret([0u8; FIELD_BYTES]);
-    p384_portable::agree(&self.0, public.point, &mut shared.0);
-    shared
+    crate::traits::ct::with_data_independent_timing(|| {
+      let mut shared = P384SharedSecret([0u8; FIELD_BYTES]);
+      p384_portable::agree(&self.0, public.point, &mut shared.0);
+      shared
+    })
   }
 }
 

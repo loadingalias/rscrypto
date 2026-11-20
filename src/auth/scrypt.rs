@@ -909,33 +909,34 @@ fn scrypt_hash(
   out: &mut [u8],
   memory: Option<&mut [ScryptBlock]>,
 ) -> Result<(), ScryptError> {
-  let _dit = crate::traits::ct::DataIndependentTiming::enter();
-  if out.len() < MIN_OUTPUT_LEN {
-    return Err(ScryptError::InvalidOutputLen);
-  }
-  let shape = scrypt_shape(params)?;
-  // `owned` is declared first so it is freed after `work` clears it.
-  let mut owned;
-  let memory = match memory {
-    Some(memory) => memory,
-    None => {
-      owned = alloc_blocks(shape.memory_blocks)?;
-      owned.as_mut_slice()
+  crate::traits::ct::with_data_independent_timing(|| {
+    if out.len() < MIN_OUTPUT_LEN {
+      return Err(ScryptError::InvalidOutputLen);
     }
-  };
-  let work = ScryptWork::new(memory, &shape)?;
+    let shape = scrypt_shape(params)?;
+    // `owned` is declared first so it is freed after `work` clears it.
+    let mut owned;
+    let memory = match memory {
+      Some(memory) => memory,
+      None => {
+        owned = alloc_blocks(shape.memory_blocks)?;
+        owned.as_mut_slice()
+      }
+    };
+    let work = ScryptWork::new(memory, &shape)?;
 
-  // Pre-compute the HMAC prefix state from `password` once; both PBKDF2
-  // legs use the same key and `Pbkdf2Sha256::new` hashes the password
-  // plus runs the inner/outer compress eagerly. Reusing the state saves
-  // one password hash and two compress calls on the second leg. `prf`
-  // zeroises its HMAC prefix state on drop per `Pbkdf2Sha256::Drop`.
-  let prf = Pbkdf2Sha256::new(password);
-  match active_kernel() {
-    #[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
-    KernelId::X86Sse2 => scrypt_hash_x86_sse2(&prf, salt, out, shape, work.blocks),
-    KernelId::Portable => scrypt_hash_portable(&prf, salt, out, shape, work.blocks),
-  }
+    // Pre-compute the HMAC prefix state from `password` once; both PBKDF2
+    // legs use the same key and `Pbkdf2Sha256::new` hashes the password
+    // plus runs the inner/outer compress eagerly. Reusing the state saves
+    // one password hash and two compress calls on the second leg. `prf`
+    // zeroises its HMAC prefix state on drop per `Pbkdf2Sha256::Drop`.
+    let prf = Pbkdf2Sha256::new(password);
+    match active_kernel() {
+      #[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
+      KernelId::X86Sse2 => scrypt_hash_x86_sse2(&prf, salt, out, shape, work.blocks),
+      KernelId::Portable => scrypt_hash_portable(&prf, salt, out, shape, work.blocks),
+    }
+  })
 }
 
 fn scrypt_verify(
@@ -1162,8 +1163,7 @@ impl ScryptPassword {
     password: &[u8],
     encoded: &str,
   ) -> Result<crate::auth::PasswordStatus, VerificationError> {
-    let _dit = ct::DataIndependentTiming::enter();
-    self.verify_password_inner(password, encoded, None)
+    ct::with_data_independent_timing(|| self.verify_password_inner(password, encoded, None))
   }
 
   /// Verify a PHC password record using caller-provided work memory.
@@ -1192,8 +1192,7 @@ impl ScryptPassword {
     encoded: &str,
     memory: &mut [ScryptBlock],
   ) -> Result<crate::auth::PasswordStatus, VerificationError> {
-    let _dit = ct::DataIndependentTiming::enter();
-    self.verify_password_inner(password, encoded, Some(memory))
+    ct::with_data_independent_timing(|| self.verify_password_inner(password, encoded, Some(memory)))
   }
 
   fn verify_password_inner(

@@ -566,13 +566,14 @@ impl EcdsaP256SecretKey {
   /// out-of-range scalar, or a public key that is not its own; and
   /// [`EcdsaError::InvalidPublicKey`] for a public key of the wrong length.
   pub fn from_pkcs8_der(der: &[u8]) -> Result<Self, EcdsaError> {
-    let _dit = crate::traits::ct::DataIndependentTiming::enter();
-    let (key, container_public) = pkix::decode_pkcs8_ec::<
-      EcdsaError,
-      { Self::LENGTH },
-      { EcdsaP256PublicKey::SEC1_LENGTH },
-    >(der, ID_EC_PUBLIC_KEY_OID, SECP256R1_OID)?;
-    Self::from_ec_private_key(&key, container_public)
+    crate::traits::ct::with_data_independent_timing(|| {
+      let (key, container_public) = pkix::decode_pkcs8_ec::<
+        EcdsaError,
+        { Self::LENGTH },
+        { EcdsaP256PublicKey::SEC1_LENGTH },
+      >(der, ID_EC_PUBLIC_KEY_OID, SECP256R1_OID)?;
+      Self::from_ec_private_key(&key, container_public)
+    })
   }
 
   /// Import a P-256 private key from an RFC 5915 `ECPrivateKey` (SEC1) DER
@@ -591,12 +592,13 @@ impl EcdsaP256SecretKey {
   /// zero, or out-of-range scalar, or a public key that is not its own; and
   /// [`EcdsaError::InvalidPublicKey`] for a public key of the wrong length.
   pub fn from_sec1_der(der: &[u8]) -> Result<Self, EcdsaError> {
-    let _dit = crate::traits::ct::DataIndependentTiming::enter();
-    let key = pkix::decode_ec_private_key::<EcdsaError, { Self::LENGTH }, { EcdsaP256PublicKey::SEC1_LENGTH }>(
-      der,
-      SECP256R1_OID,
-    )?;
-    Self::from_ec_private_key(&key, None)
+    crate::traits::ct::with_data_independent_timing(|| {
+      let key = pkix::decode_ec_private_key::<EcdsaError, { Self::LENGTH }, { EcdsaP256PublicKey::SEC1_LENGTH }>(
+        der,
+        SECP256R1_OID,
+      )?;
+      Self::from_ec_private_key(&key, None)
+    })
   }
 
   fn from_ec_private_key(
@@ -684,10 +686,9 @@ impl EcdsaP256SecretKey {
   /// Derive the matching P-256 public key.
   #[must_use]
   pub fn public_key(&self) -> EcdsaP256PublicKey {
-    let _dit = crate::traits::ct::DataIndependentTiming::enter();
-    EcdsaP256PublicKey {
+    crate::traits::ct::with_data_independent_timing(|| EcdsaP256PublicKey {
       point: public_key_from_secret_p256(&self.0),
-    }
+    })
   }
 
   /// Try to derive the matching P-256 public key with caller-supplied blinding.
@@ -705,11 +706,12 @@ impl EcdsaP256SecretKey {
     &self,
     fill: impl FnOnce(&mut [u8; 64]) -> Result<(), E>,
   ) -> Result<EcdsaP256PublicKey, E> {
-    let _dit = crate::traits::ct::DataIndependentTiming::enter();
-    let mut blind = ZeroizingBytes::zeroed();
-    fill(blind.as_mut_array())?;
-    Ok(EcdsaP256PublicKey {
-      point: public_key_from_secret_p256_blinded(&self.0, blind.as_array()),
+    crate::traits::ct::with_data_independent_timing(|| {
+      let mut blind = ZeroizingBytes::zeroed();
+      fill(blind.as_mut_array())?;
+      Ok(EcdsaP256PublicKey {
+        point: public_key_from_secret_p256_blinded(&self.0, blind.as_array()),
+      })
     })
   }
 
@@ -721,9 +723,10 @@ impl EcdsaP256SecretKey {
   /// produces an invalid ECDSA scalar. This is cryptographically negligible,
   /// but the API reports it instead of panicking.
   pub fn try_sign(&self, message: &[u8]) -> Result<EcdsaP256Signature, EcdsaError> {
-    let _dit = crate::traits::ct::DataIndependentTiming::enter();
-    let digest = Sha256::digest(message);
-    sign_digest_p256(&self.0, &digest)
+    crate::traits::ct::with_data_independent_timing(|| {
+      let digest = Sha256::digest(message);
+      sign_digest_p256(&self.0, &digest)
+    })
   }
 
   /// Try to sign a message with P-256/SHA-256 and caller-supplied blinding.
@@ -744,11 +747,12 @@ impl EcdsaP256SecretKey {
     message: &[u8],
     fill: impl FnOnce(&mut [u8; 64]) -> Result<(), E>,
   ) -> Result<EcdsaP256Signature, EcdsaBlindedSigningError<E>> {
-    let _dit = crate::traits::ct::DataIndependentTiming::enter();
-    let mut blind = ZeroizingBytes::zeroed();
-    fill(blind.as_mut_array()).map_err(EcdsaBlindedSigningError::Random)?;
-    let digest = Sha256::digest(message);
-    sign_digest_p256_blinded(&self.0, &digest, blind.as_array()).map_err(EcdsaBlindedSigningError::Signing)
+    crate::traits::ct::with_data_independent_timing(|| {
+      let mut blind = ZeroizingBytes::zeroed();
+      fill(blind.as_mut_array()).map_err(EcdsaBlindedSigningError::Random)?;
+      let digest = Sha256::digest(message);
+      sign_digest_p256_blinded(&self.0, &digest, blind.as_array()).map_err(EcdsaBlindedSigningError::Signing)
+    })
   }
 
   /// Returns a wrapper that displays the secret key bytes as lowercase hex.
@@ -811,13 +815,14 @@ impl EcdsaP384SecretKey {
   /// out-of-range scalar, or a public key that is not its own; and
   /// [`EcdsaError::InvalidPublicKey`] for a public key of the wrong length.
   pub fn from_pkcs8_der(der: &[u8]) -> Result<Self, EcdsaError> {
-    let _dit = crate::traits::ct::DataIndependentTiming::enter();
-    let (key, container_public) = pkix::decode_pkcs8_ec::<
-      EcdsaError,
-      { Self::LENGTH },
-      { EcdsaP384PublicKey::SEC1_LENGTH },
-    >(der, ID_EC_PUBLIC_KEY_OID, SECP384R1_OID)?;
-    Self::from_ec_private_key(&key, container_public)
+    crate::traits::ct::with_data_independent_timing(|| {
+      let (key, container_public) = pkix::decode_pkcs8_ec::<
+        EcdsaError,
+        { Self::LENGTH },
+        { EcdsaP384PublicKey::SEC1_LENGTH },
+      >(der, ID_EC_PUBLIC_KEY_OID, SECP384R1_OID)?;
+      Self::from_ec_private_key(&key, container_public)
+    })
   }
 
   /// Import a P-384 private key from an RFC 5915 `ECPrivateKey` (SEC1) DER
@@ -836,12 +841,13 @@ impl EcdsaP384SecretKey {
   /// zero, or out-of-range scalar, or a public key that is not its own; and
   /// [`EcdsaError::InvalidPublicKey`] for a public key of the wrong length.
   pub fn from_sec1_der(der: &[u8]) -> Result<Self, EcdsaError> {
-    let _dit = crate::traits::ct::DataIndependentTiming::enter();
-    let key = pkix::decode_ec_private_key::<EcdsaError, { Self::LENGTH }, { EcdsaP384PublicKey::SEC1_LENGTH }>(
-      der,
-      SECP384R1_OID,
-    )?;
-    Self::from_ec_private_key(&key, None)
+    crate::traits::ct::with_data_independent_timing(|| {
+      let key = pkix::decode_ec_private_key::<EcdsaError, { Self::LENGTH }, { EcdsaP384PublicKey::SEC1_LENGTH }>(
+        der,
+        SECP384R1_OID,
+      )?;
+      Self::from_ec_private_key(&key, None)
+    })
   }
 
   fn from_ec_private_key(
@@ -944,10 +950,9 @@ impl EcdsaP384SecretKey {
   /// Derive the matching P-384 public key.
   #[must_use]
   pub fn public_key(&self) -> EcdsaP384PublicKey {
-    let _dit = crate::traits::ct::DataIndependentTiming::enter();
-    EcdsaP384PublicKey {
+    crate::traits::ct::with_data_independent_timing(|| EcdsaP384PublicKey {
       point: public_key_from_secret_p384(&self.0),
-    }
+    })
   }
 
   /// Try to derive the matching P-384 public key with caller-supplied blinding.
@@ -965,11 +970,12 @@ impl EcdsaP384SecretKey {
     &self,
     fill: impl FnOnce(&mut [u8; 96]) -> Result<(), E>,
   ) -> Result<EcdsaP384PublicKey, E> {
-    let _dit = crate::traits::ct::DataIndependentTiming::enter();
-    let mut blind = ZeroizingBytes::zeroed();
-    fill(blind.as_mut_array())?;
-    Ok(EcdsaP384PublicKey {
-      point: public_key_from_secret_p384_blinded(&self.0, blind.as_array()),
+    crate::traits::ct::with_data_independent_timing(|| {
+      let mut blind = ZeroizingBytes::zeroed();
+      fill(blind.as_mut_array())?;
+      Ok(EcdsaP384PublicKey {
+        point: public_key_from_secret_p384_blinded(&self.0, blind.as_array()),
+      })
     })
   }
 
@@ -981,9 +987,10 @@ impl EcdsaP384SecretKey {
   /// produces an invalid ECDSA scalar. This is cryptographically negligible,
   /// but the API reports it instead of panicking.
   pub fn try_sign(&self, message: &[u8]) -> Result<EcdsaP384Signature, EcdsaError> {
-    let _dit = crate::traits::ct::DataIndependentTiming::enter();
-    let digest = Sha384::digest(message);
-    sign_digest_p384(&self.0, &digest)
+    crate::traits::ct::with_data_independent_timing(|| {
+      let digest = Sha384::digest(message);
+      sign_digest_p384(&self.0, &digest)
+    })
   }
 
   /// Try to sign a message with P-384/SHA-384 and caller-supplied blinding.
@@ -1004,11 +1011,12 @@ impl EcdsaP384SecretKey {
     message: &[u8],
     fill: impl FnOnce(&mut [u8; 96]) -> Result<(), E>,
   ) -> Result<EcdsaP384Signature, EcdsaBlindedSigningError<E>> {
-    let _dit = crate::traits::ct::DataIndependentTiming::enter();
-    let mut blind = ZeroizingBytes::zeroed();
-    fill(blind.as_mut_array()).map_err(EcdsaBlindedSigningError::Random)?;
-    let digest = Sha384::digest(message);
-    sign_digest_p384_blinded(&self.0, &digest, blind.as_array()).map_err(EcdsaBlindedSigningError::Signing)
+    crate::traits::ct::with_data_independent_timing(|| {
+      let mut blind = ZeroizingBytes::zeroed();
+      fill(blind.as_mut_array()).map_err(EcdsaBlindedSigningError::Random)?;
+      let digest = Sha384::digest(message);
+      sign_digest_p384_blinded(&self.0, &digest, blind.as_array()).map_err(EcdsaBlindedSigningError::Signing)
+    })
   }
 
   /// Returns a wrapper that displays the secret key bytes as lowercase hex.

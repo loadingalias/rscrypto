@@ -227,7 +227,7 @@ pub fn detect_uncached() -> Detected {
 /// Absent entries read as zero. This replaces reading `/proc/self/auxv` through `std::fs`:
 /// one libc call per entry, with no file, allocation, or formatting on the detection path.
 #[cfg(all(
-  feature = "std",
+  any(feature = "std", all(target_arch = "aarch64", not(miri))),
   any(target_arch = "aarch64", target_arch = "powerpc64", target_arch = "s390x"),
   any(target_os = "linux", target_os = "android")
 ))]

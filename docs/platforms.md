@@ -16,6 +16,8 @@ Dispatch has three tiers:
 1. If neither selects a backend, the portable implementation runs.
 
 `no_std` builds use only compile-time selection.
+The Arm DIT guard is a timing mitigation, not a backend.
+Without `std`, it still detects `FEAT_DIT` at run time on Linux, Android, and Apple targets.
 `portable-only` makes runtime detection report no accelerated capabilities.
 It also turns off assembly that the crate selects at compile time from the target alone,
 such as the RSA, elliptic-curve, ML-KEM, and ML-DSA backends.

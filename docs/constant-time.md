@@ -1692,6 +1692,10 @@ keyed hashes, HKDF, HPKE context seal, open, and export, and fixed-size `ct_eq`.
 For them, a toggle would cost between 14% and 15×.
 To use DIT there, wrap the work, or a whole worker loop, in `rscrypto::traits::ct::with_data_independent_timing`.
 A unit test checks that every covered operation enters the guard.
+Every guarded operation runs as a closure between two compiler barriers.
+Thus the compiler cannot move its work out of the DIT scope.
+Without `std`, Linux and Android read `FEAT_DIT` from `getauxval`, and Apple targets read it from `sysctlbyname`.
+Other targets without `std` set DIT only when the build enables the `dit` target feature.
 DIT is hardening.
 It does not replace the evidence in `ct.toml`.
 Cores without `FEAT_DIT` run unchanged.
