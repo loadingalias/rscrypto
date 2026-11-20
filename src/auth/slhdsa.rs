@@ -704,13 +704,11 @@ macro_rules! profile {
       /// Explicitly export the encoded secret key into a zeroizing owner.
       #[must_use]
       pub fn expose_secret(&self) -> SecretBytes<$sk> {
-        match SecretBytes::try_fill_with(|out| {
+        let Ok(secret) = SecretBytes::try_fill_with(|out| {
           self.write_encoding(out);
-          Ok::<(), core::convert::Infallible>(())
-        }) {
-          Ok(secret) => secret,
-          Err(never) => match never {},
-        }
+          Ok::<(), !>(())
+        });
+        secret
       }
 
       $($signing)*
