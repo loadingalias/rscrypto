@@ -44,7 +44,10 @@ pub(super) fn run(data: &[u8]) {
         .expect("valid deterministic signature");
       let mut storage = Default::default();
       let prepared = secret.prepare(&mut storage).expect("prepare secret");
-      assert_eq!(signature, prepared.sign_with(message, context, hedged).expect("prepared"));
+      assert_eq!(
+        signature,
+        prepared.sign_with(message, context, hedged).expect("prepared")
+      );
       drop(prepared);
 
       let mut changed = signature.as_ref().to_vec();
@@ -62,7 +65,11 @@ pub(super) fn run(data: &[u8]) {
       mutation.apply(&mut spki);
       for candidate in [spki.as_slice(), message] {
         if let Ok(parsed) = $public::from_spki_der(candidate) {
-          assert_eq!(parsed.to_spki_der().as_slice(), candidate, "accepted SPKI must be canonical");
+          assert_eq!(
+            parsed.to_spki_der().as_slice(),
+            candidate,
+            "accepted SPKI must be canonical"
+          );
         }
       }
       let mut pkcs8 = [0; $secret::PKCS8_DER_LENGTH];
@@ -95,8 +102,18 @@ pub(super) fn run(data: &[u8]) {
     }};
   }
   if selector & 1 == 0 {
-    exercise!(MlDsa65Ed25519, MlDsa65Ed25519PublicKey, MlDsa65Ed25519SecretKey, MlDsa65Ed25519Signature);
+    exercise!(
+      MlDsa65Ed25519,
+      MlDsa65Ed25519PublicKey,
+      MlDsa65Ed25519SecretKey,
+      MlDsa65Ed25519Signature
+    );
   } else {
-    exercise!(MlDsa65EcdsaP256, MlDsa65EcdsaP256PublicKey, MlDsa65EcdsaP256SecretKey, MlDsa65EcdsaP256Signature);
+    exercise!(
+      MlDsa65EcdsaP256,
+      MlDsa65EcdsaP256PublicKey,
+      MlDsa65EcdsaP256SecretKey,
+      MlDsa65EcdsaP256Signature
+    );
   }
 }

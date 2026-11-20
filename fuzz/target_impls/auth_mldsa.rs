@@ -81,7 +81,11 @@ pub(super) fn run(data: &[u8]) {
           if candidate.len() == $secret::PKCS8_DER_LENGTH {
             let mut encoded = [0; $secret::PKCS8_DER_LENGTH];
             parsed.to_pkcs8_der_into(&mut encoded);
-            assert_eq!(encoded.as_slice(), candidate, "accepted expanded form must be canonical");
+            assert_eq!(
+              encoded.as_slice(),
+              candidate,
+              "accepted expanded form must be canonical"
+            );
           }
           if let Ok(parsed_seed) = parsed_seed {
             let (seed_public, _) = parsed_seed.keypair().expect("accepted seed expansion");
@@ -96,8 +100,26 @@ pub(super) fn run(data: &[u8]) {
     }};
   }
   match seed[0] % 3 {
-    0 => exercise!(MlDsa44, MlDsa44PublicKey, MlDsa44SecretKey, MlDsa44Seed, MlDsa44Signature),
-    1 => exercise!(MlDsa65, MlDsa65PublicKey, MlDsa65SecretKey, MlDsa65Seed, MlDsa65Signature),
-    _ => exercise!(MlDsa87, MlDsa87PublicKey, MlDsa87SecretKey, MlDsa87Seed, MlDsa87Signature),
+    0 => exercise!(
+      MlDsa44,
+      MlDsa44PublicKey,
+      MlDsa44SecretKey,
+      MlDsa44Seed,
+      MlDsa44Signature
+    ),
+    1 => exercise!(
+      MlDsa65,
+      MlDsa65PublicKey,
+      MlDsa65SecretKey,
+      MlDsa65Seed,
+      MlDsa65Signature
+    ),
+    _ => exercise!(
+      MlDsa87,
+      MlDsa87PublicKey,
+      MlDsa87SecretKey,
+      MlDsa87Seed,
+      MlDsa87Signature
+    ),
   }
 }
