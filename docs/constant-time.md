@@ -1418,6 +1418,22 @@ These operations are outside the constant-time claims on purpose:
 
 Authentication failures stay opaque, also when their inputs are public.
 
+### Best-effort rows
+
+`ct.toml` registers ten primitives with `claim = "best-effort"`.
+The owner signed them off for v0.13 on 2026-11-20, in three groups.
+
+- **Variable time by specification.** These rows stay best effort.
+  `password.argon2d_argon2id` and `password.scrypt` use password-derived memory access.
+  `signature.mldsa` and `signature.composite_mldsa` retry signing until the first accepted candidate.
+- **No secret arithmetic to claim.** `public_hashes_and_checksums` takes no secret.
+  `signature.ed25519_verify_failure_shape` is public-key work, and only its failure shape is checked.
+  `secret_wrappers.exposure_and_display` covers the shape of the wrapper API, not arithmetic.
+- **Constant time by construction, with the claim waiting for evidence.**
+  `mac.poly1305_authenticate` and `keyed_hash.siphash` have required native DudeCT cases.
+  `signature.slhdsa` has DudeCT cases for SHA2-128s key generation and signing.
+  Each row becomes `ct-intended` when its cases pass on every lane and the assembly scan of its roots is clean.
+
 ### P-256 ECDH
 
 Scalar sampling and canonical SEC1 validation are public prelude operations.

@@ -1,6 +1,9 @@
 name: Fuzz
 
 on:
+  # The daily rotation runs every day on main. A release still needs a manual full smoke run.
+  schedule:
+    - cron: '17 6 * * *'
   workflow_dispatch:
     inputs:
       campaign:
@@ -40,7 +43,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        platform: ${{ fromJSON(inputs.architectures == 'all' && '["x86_64-linux","aarch64-linux"]' || inputs.architectures == 'aarch64-linux' && '["aarch64-linux"]' || '["x86_64-linux"]') }}
+        platform: ${{ fromJSON((inputs.architectures || 'all') == 'all' && '["x86_64-linux","aarch64-linux"]' || inputs.architectures == 'aarch64-linux' && '["aarch64-linux"]' || '["x86_64-linux"]') }}
         task: [fuzz]
         include:
           - platform: x86_64-linux
@@ -69,7 +72,7 @@ jobs:
         env:
           FUZZ_TARGETS: ${{ inputs.targets }}
           FUZZ_DURATION: ${{ inputs.duration }}
-          FUZZ_CAMPAIGN: ${{ inputs.campaign }}
+          FUZZ_CAMPAIGN: ${{ inputs.campaign || 'daily' }}
         run: |
           source "$HOME/.local/share/rscrypto-tooling/environment.sh"
           scripts/lib/python.sh scripts/test/fuzz_ci.py plan

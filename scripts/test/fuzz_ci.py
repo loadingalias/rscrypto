@@ -38,12 +38,14 @@ def plan(root, env, now):
     rows = inventory(root)
     names = sorted({row['target'] for row in rows})
     event = env.get('GITHUB_EVENT_NAME', 'workflow_dispatch')
-    if event != 'workflow_dispatch':
-        raise ValueError('fuzz campaigns require explicit manual dispatch')
+    if event not in ('workflow_dispatch', 'schedule'):
+        raise ValueError('fuzz campaigns require a manual dispatch or the daily schedule')
     campaign = env.get('FUZZ_CAMPAIGN', '') or 'smoke'
     if campaign not in ('smoke', 'daily'):
         raise ValueError('campaign must be smoke or daily')
     daily = campaign == 'daily'
+    if event == 'schedule' and not daily:
+        raise ValueError('the schedule runs only the daily campaign')
     requested = env.get('FUZZ_TARGETS', '')
     if requested:
         selected = requested.split(',')

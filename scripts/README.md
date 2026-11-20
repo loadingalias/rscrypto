@@ -359,7 +359,7 @@ They do not detect a compromised producer that forges its own metadata.
 - Use `just test-miri --rsa` for the focused RSA scope.
 - Use `just test-fuzz --targets A,B` for an explicit group of fuzz targets.
 - `just test-fuzz --build` builds every fuzz target without starting fuzzing.
-- `fuzz_ci.py plan` (CI only) accepts only a manual dispatch.
+- `fuzz_ci.py plan` (CI only) accepts a manual dispatch, or the schedule with the daily campaign.
   It selects the requested exact target names, the daily rotation, or every target,
   in every package that contains each name, and validates the live-fuzzing budget.
 - `fuzz_ci.py restore` merges the corpus checkpoint into the working corpora by SHA256.
@@ -1077,8 +1077,8 @@ No package is published.
 
 **`fuzz.yml`** uses `--ci-fuzz` for ASan corpus replay and bounded live fuzzing.
 
-- It runs only through an explicit manual dispatch of Fuzz.
-  Pushes, pull requests, schedules, and Release do not start it.
+- It runs through a manual dispatch of Fuzz, and every day at 06:17 UTC on `main` with the daily rotation
+  on both architectures. Pushes, pull requests, and Release do not start it.
 - Manual runs select x86-64, ARM64, or both, exact target names, and a duration for each target.
   Blank target names select every target.
   Every run builds all fuzz targets and replays committed and restored inputs under ASan
@@ -1086,7 +1086,7 @@ No package is published.
 - Smoke campaigns default to 120 seconds per selected target.
   All campaigns have a planned live-fuzzing budget of 30 minutes
   per architecture, with eight concurrent package/target pairs.
-- Manual runs with `campaign=daily` rotate eight target names according to the UTC date.
+- Scheduled runs, and manual runs with `campaign=daily`, rotate eight target names according to the UTC date.
   They divide the same 30-minute budget across the selected package/target batches,
   then minimize those corpora and retain source and branch coverage for each one.
   Repeated runs across dates cover the rotation; reports from earlier cohorts retain their original

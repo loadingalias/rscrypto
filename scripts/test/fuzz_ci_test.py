@@ -50,14 +50,19 @@ class FuzzCI(unittest.TestCase):
             corpus.mkdir(parents=True, exist_ok=True)
             (corpus / 'seed').write_bytes(b'abc')
 
-    def test_manual_selection_covers_every_target_and_rejects_automatic_events(self):
+    def test_manual_selection_covers_every_target_and_rejects_other_events(self):
         env = {'GITHUB_EVENT_NAME': 'workflow_dispatch'}
         self.assertEqual(ci.plan(self.root, env, self.now)['targets'], ['decrypt', 'parser'])
         selected = ci.plan(self.root, {**env, 'FUZZ_TARGETS': 'parser'}, self.now)
         self.assertEqual(selected['pairs'], [{'package': 'fuzz', 'target': 'parser'}])
-        for event in ('push', 'pull_request', 'schedule', 'workflow_call'):
-            with self.subTest(event=event), self.assertRaisesRegex(ValueError, 'manual dispatch'):
+        for event in ('push', 'pull_request', 'workflow_call'):
+            with self.subTest(event=event), self.assertRaisesRegex(ValueError, 'manual dispatch or the daily schedule'):
                 ci.plan(self.root, {'GITHUB_EVENT_NAME': event}, self.now)
+        # The schedule runs the daily rotation and nothing else.
+        scheduled = ci.plan(self.root, {'GITHUB_EVENT_NAME': 'schedule', 'FUZZ_CAMPAIGN': 'daily'}, self.now)
+        self.assertEqual((scheduled['event'], scheduled['campaign']), ('schedule', 'daily'))
+        with self.assertRaisesRegex(ValueError, 'only the daily campaign'):
+            ci.plan(self.root, {'GITHUB_EVENT_NAME': 'schedule', 'FUZZ_CAMPAIGN': 'smoke'}, self.now)
 
     def test_daily_rotation_covers_every_target_with_bounded_work(self):
         self.package('fuzz', [f'target_{i:02}' for i in range(67)])
@@ -180,9 +185,10 @@ elif sys.argv[1:3] == ['fuzz', 'coverage']:
             self.assertFalse((self.logs / 'campaign.json').exists())
             self.assertEqual(ci.inputs(self.cache / 'fuzz/corpus/parser'), old)
 
-    def test_only_explicit_manual_workflows_build_and_replay_before_fuzzing(self):
+    def test_only_dispatched_or_scheduled_workflows_build_and_replay_before_fuzzing(self):
         workflow = yaml.load((ci.ROOT / '.github/workflows/fuzz.yml').read_text(), Loader=yaml.BaseLoader)
-        self.assertEqual(set(workflow['on']), {'workflow_dispatch'})
+        self.assertEqual(set(workflow['on']), {'workflow_dispatch', 'schedule'})
+        self.assertEqual(len(workflow['on']['schedule']), 1)
         for path in (ci.ROOT / '.github/workflows').glob('*.yml'):
             caller = yaml.load(path.read_text(), Loader=yaml.BaseLoader)
             self.assertFalse(any(job.get('uses') == './.github/workflows/fuzz.yml' for job in caller['jobs'].values()), path)
@@ -190,7 +196,7 @@ elif sys.argv[1:3] == ['fuzz', 'coverage']:
         job = workflow['jobs']['fuzz']
         # Each architecture and Miri is its own signal: one failure must not cancel the others.
         self.assertEqual(job['strategy']['fail-fast'], 'false')
-        self.assertIn("inputs.architectures == 'all'", job['strategy']['matrix']['platform'])
+        self.assertIn("(inputs.architectures || 'all') == 'all'", job['strategy']['matrix']['platform'])
         self.assertNotIn('github.event_name', job['strategy']['matrix']['platform'])
         steps = job['steps']
         build, = [step for step in steps if 'just test-fuzz --build' in step.get('run', '')]
