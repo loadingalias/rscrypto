@@ -41,7 +41,7 @@ def portable_targets():
 
 def install():
     channels = {toolchain.channel(): {*targets(), *portable_targets()}}
-    channels.setdefault(toolchain.msrv_channel(), set()).update(['thumbv6m-none-eabi', *portable_targets()])
+    channels.setdefault(toolchain.msrv(), set()).update(['thumbv6m-none-eabi', *portable_targets()])
     channels.setdefault(EMBED_CHANNEL, set()).add(toolchain.host())
     for channel, selected in channels.items():
         subprocess.run(['rustup', 'toolchain', 'install', channel, '--profile', 'minimal',
@@ -66,7 +66,7 @@ def cases():
     manifest = read('Cargo.toml')
     graph = manifest['features']
     canonical = toolchain.channel()
-    msrv = toolchain.msrv_channel()
+    msrv = toolchain.msrv()
     host = toolchain.host()
 
     def check(channel, target, features, operation='check'):
@@ -79,7 +79,6 @@ def cases():
         return command
 
     # Standalone features include umbrella aliases: they are also public contracts.
-    # While the MSRV is unreleased, its lane is its own nightly or its exact beta.
     for channel in dict.fromkeys([canonical, msrv]):
         for feature in ['', *sorted(graph)]:
             yield f'{channel}-{feature or "empty"}', [check(channel, host, [feature] if feature else [])], {}

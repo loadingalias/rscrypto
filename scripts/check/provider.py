@@ -192,7 +192,7 @@ def main():
                  *(['--release'] if name == 'native' else []), *feature_args(features),
                  *(['--fix', '--allow-dirty', '--allow-staged'] if args.fix else [])])
         return
-    for channel in dict.fromkeys([toolchain.channel(), toolchain.msrv_channel()]):
+    for channel in dict.fromkeys([toolchain.channel(), toolchain.msrv()]):
         for name, features in matrix:
             print(f'Provider features: {channel} / {target} / {name}', flush=True)
             run(['cargo', '+' + channel, 'check', '--locked', '-p', PACKAGE, '--lib',

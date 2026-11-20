@@ -9,7 +9,6 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
-from unittest import mock
 
 spec = importlib.util.spec_from_file_location('compat', Path(__file__).with_name('compat.py'))
 compat = importlib.util.module_from_spec(spec)
@@ -62,7 +61,7 @@ sys.exit(7 if count == int(os.environ['FAIL_AT']) else 0)
         names = [name for name, _, _ in plan]
         self.assertEqual(len(names), len(set(names)))
         manifest = compat.read('Cargo.toml')
-        for channel in (compat.toolchain.channel(), compat.toolchain.msrv_channel()):
+        for channel in (compat.toolchain.channel(), compat.toolchain.msrv()):
             for feature in manifest['features']:
                 self.assertIn(f'{channel}-{feature}', names)
             for boundary in ('core', 'alloc'):
@@ -82,7 +81,7 @@ sys.exit(7 if count == int(os.environ['FAIL_AT']) else 0)
             for boundary in ('core', 'alloc', 'build'):
                 _, commands, _ = next(row for row in plan if row[0] == f'{target}-portable-{boundary}')
                 command, = commands
-                self.assertEqual(command[1], '+' + compat.toolchain.msrv_channel())
+                self.assertEqual(command[1], '+' + compat.toolchain.msrv())
                 self.assertEqual(command[command.index('--target') + 1], target)
                 features = set(command[command.index('--features') + 1].split(','))
                 self.assertIn('portable-only', features)
@@ -104,22 +103,6 @@ sys.exit(7 if count == int(os.environ['FAIL_AT']) else 0)
         self.assertEqual(len(wasm), 4)
         self.assertTrue(all(commands[1][:2] == ['wasmtime', 'run'] for commands, _ in wasm))
         self.assertEqual(sum('--invoke' in commands[1] for commands, _ in wasm), 2)
-
-    def test_msrv_lane_follows_the_release_train(self):
-        # Nightly N means beta N-1 and stable N-2; the lane must never run on a newer compiler.
-        selector = compat.toolchain
-        with mock.patch.object(selector, 'channel', return_value='nightly-2026-01-01'), \
-             mock.patch.object(selector, 'msrv', return_value='1.50.0'), \
-             mock.patch.object(selector, 'MSRV_PREVIEW', '1.50.0-beta.3'):
-            for current, expected in (('1.50.0-nightly', 'nightly-2026-01-01'),
-                                      ('1.51.0-nightly', '1.50.0-beta.3'),
-                                      ('1.52.0-nightly', '1.50.0')):
-                with mock.patch.object(selector, 'release', return_value=current):
-                    self.assertEqual(selector.msrv_channel(), expected)
-            with mock.patch.object(selector, 'release', return_value='1.51.0-nightly'), \
-                 mock.patch.object(selector, 'MSRV_PREVIEW', '1.49.0-beta.3'):
-                with self.assertRaises(ValueError):
-                    selector.msrv_channel()
 
     def test_failure_kills_running_sibling_and_skips_pending_work(self):
         with tempfile.TemporaryDirectory() as temporary:

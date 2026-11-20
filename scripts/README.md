@@ -975,11 +975,8 @@ fuzzing, coverage, and CT evidence.
 `lib/toolchain.py` reads that pin.
 Build, check, test, and benchmark entry points use it, not an ambient `RUSTUP_TOOLCHAIN`.
 
-The MSRV lane uses `rust-version` from `Cargo.toml`.
-While that Rust release is unpublished,
-a canonical nightly of the same release runs the MSRV lane itself.
-When the canonical nightly is one release ahead, the MSRV is in beta,
-and the lane runs on the exact beta in `MSRV_PREVIEW` (`lib/toolchain.py`).
+The MSRV lane uses the released Rust toolchain that `rust-version` in `Cargo.toml` names.
+The lane does not run on a nightly or a beta, so it fails until that release exists.
 
 ### Installers
 
