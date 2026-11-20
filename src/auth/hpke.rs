@@ -65,7 +65,7 @@
 #[cfg(feature = "alloc")]
 use alloc::{boxed::Box, vec::Vec};
 #[cfg(feature = "alloc")]
-use core::alloc::Allocator;
+use core::{alloc::Allocator, mem::DropGuard};
 use core::{error::Error, fmt};
 
 use crate::{
@@ -566,9 +566,9 @@ impl<S: HpkeSuite> HpkeSender<S> {
   #[cfg(feature = "alloc")]
   pub fn seal_to_vec(&mut self, aad: &[u8], plaintext: &[u8]) -> Result<Vec<u8>, HpkeError> {
     let length = S::Aead::ciphertext_len(plaintext.len()).map_err(|_| HpkeError::InvalidLength)?;
-    let mut out = alloc::vec![0u8; length];
+    let mut out = DropGuard::new(alloc::vec![0u8; length], |mut out| ct::zeroize(&mut out));
     self.seal(aad, plaintext, &mut out)?;
-    Ok(out)
+    Ok(DropGuard::dismiss(out))
   }
 }
 
@@ -660,9 +660,9 @@ impl<S: HpkeSuite> HpkeReceiver<S> {
   #[cfg(feature = "alloc")]
   pub fn open_to_vec(&mut self, aad: &[u8], ciphertext: &[u8]) -> Result<Vec<u8>, HpkeError> {
     let length = S::Aead::plaintext_len(ciphertext.len()).map_err(|_| HpkeError::InvalidLength)?;
-    let mut out = alloc::vec![0u8; length];
+    let mut out = DropGuard::new(alloc::vec![0u8; length], |mut out| ct::zeroize(&mut out));
     self.open(aad, ciphertext, &mut out)?;
-    Ok(out)
+    Ok(DropGuard::dismiss(out))
   }
 }
 

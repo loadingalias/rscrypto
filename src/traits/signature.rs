@@ -6,6 +6,8 @@
 
 #[cfg(feature = "alloc")]
 use alloc::{vec, vec::Vec};
+#[cfg(feature = "alloc")]
+use core::mem::DropGuard;
 
 use crate::traits::VerificationError;
 
@@ -60,18 +62,13 @@ pub trait TrySignerInto {
   /// # Errors
   ///
   /// Returns the implementation-specific signing error. The temporary output
-  /// buffer is cleared before returning an error.
+  /// buffer is cleared on error or unwind.
   #[cfg(feature = "alloc")]
   #[cfg_attr(docsrs, doc(cfg(feature = "alloc")))]
   #[inline]
   fn try_sign_to_vec(&self, message: &[u8]) -> Result<Vec<u8>, Self::Error> {
-    let mut out = vec![0u8; self.signature_len()];
-    match self.try_sign_into(message, &mut out) {
-      Ok(()) => Ok(out),
-      Err(err) => {
-        super::ct::zeroize(&mut out);
-        Err(err)
-      }
-    }
+    let mut out = DropGuard::new(vec![0u8; self.signature_len()], |mut out| super::ct::zeroize(&mut out));
+    self.try_sign_into(message, &mut out)?;
+    Ok(DropGuard::dismiss(out))
   }
 }

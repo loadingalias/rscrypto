@@ -37,18 +37,32 @@ impl Aead for DirtyRejectingAead {
     bytes.try_into().map_err(|_| AeadBufferError::new())
   }
 
+  #[expect(
+    clippy::panic,
+    reason = "exercise owned-output cleanup when an external implementation unwinds"
+  )]
   fn __encrypt_in_place_with_nonce(
     &self,
-    _: &Self::Nonce,
+    nonce: &Self::Nonce,
     _: &[u8],
     _: &mut [u8],
     _: rscrypto::aead::__SealToken,
   ) -> Result<Self::Tag, rscrypto::aead::SealError> {
+    if nonce.as_bytes()[0] == 2 {
+      panic!("external implementation panics while the buffer holds plaintext");
+    }
     Err(rscrypto::aead::SealError::buffer())
   }
 
-  fn decrypt_in_place(&self, _: &Self::Nonce, _: &[u8], buffer: &mut [u8], _: &Self::Tag) -> Result<(), OpenError> {
+  #[expect(
+    clippy::panic,
+    reason = "exercise owned-output cleanup when an external implementation unwinds"
+  )]
+  fn decrypt_in_place(&self, nonce: &Self::Nonce, _: &[u8], buffer: &mut [u8], _: &Self::Tag) -> Result<(), OpenError> {
     buffer.fill(0xA5);
+    if nonce.as_bytes()[0] == 2 {
+      panic!("external implementation panics after it writes plaintext");
+    }
     Err(OpenError::verification())
   }
 }
@@ -102,6 +116,62 @@ fn gather_initialized_adapter_reinitializes_after_an_external_implementation() {
       );
     }
     assert_eq!(bytes, [0; 8]);
+  }
+}
+
+/// Owned-output cleanup when an external implementation unwinds, observed at deallocation.
+#[cfg(all(feature = "aead", feature = "alloc"))]
+mod unwind_cleanup {
+  use core::{
+    alloc::{GlobalAlloc, Layout},
+    sync::atomic::{AtomicUsize, Ordering},
+  };
+  use std::alloc::System;
+
+  use super::{Aead, AeadWithNonce, DirtyRejectingAead, Nonce96};
+
+  /// No other allocation in this test binary has this size.
+  const WATCHED_LEN: usize = 1031;
+
+  /// Frees of `WATCHED_LEN`-byte blocks that still hold the `0xA5` plaintext of [`DirtyRejectingAead`].
+  static DIRTY_FREES: AtomicUsize = AtomicUsize::new(0);
+
+  struct FreedOutputCheck;
+
+  // SAFETY: every call forwards to `System` with its original layout.
+  unsafe impl GlobalAlloc for FreedOutputCheck {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+      // SAFETY: the caller's layout is forwarded unchanged.
+      unsafe { System.alloc(layout) }
+    }
+
+    unsafe fn dealloc(&self, pointer: *mut u8, layout: Layout) {
+      // SAFETY: only the helpers' zero-initialized `Vec<u8>` outputs have `WATCHED_LEN` bytes, and
+      // the block stays allocated until `System.dealloc` below.
+      if layout.size() == WATCHED_LEN && unsafe { core::slice::from_raw_parts(pointer, WATCHED_LEN) }.contains(&0xA5) {
+        DIRTY_FREES.fetch_add(1, Ordering::Relaxed);
+      }
+      // SAFETY: `pointer` and `layout` identify a block from `System.alloc`.
+      unsafe { System.dealloc(pointer, layout) }
+    }
+  }
+
+  #[global_allocator]
+  static ALLOCATOR: FreedOutputCheck = FreedOutputCheck;
+
+  #[test]
+  fn allocating_helpers_clear_output_when_an_external_implementation_unwinds() {
+    let nonce = Nonce96::from_bytes([2; Nonce96::LENGTH]);
+    let plaintext = [0xA5; WATCHED_LEN - DirtyRejectingAead::TAG_SIZE];
+    let ciphertext_and_tag = [0x11; WATCHED_LEN + DirtyRejectingAead::TAG_SIZE];
+    let seal = std::panic::catch_unwind(|| DirtyRejectingAead.encrypt_to_vec(&nonce, b"", &plaintext));
+    let open = std::panic::catch_unwind(|| DirtyRejectingAead.decrypt_to_vec(&nonce, b"", &ciphertext_and_tag));
+    assert!(seal.is_err() && open.is_err(), "both external calls unwind");
+    assert_eq!(
+      DIRTY_FREES.load(Ordering::Relaxed),
+      0,
+      "an unwinding helper must clear its plaintext before it frees it"
+    );
   }
 }
 

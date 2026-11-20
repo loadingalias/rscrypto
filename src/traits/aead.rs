@@ -6,6 +6,8 @@
 
 #[cfg(feature = "alloc")]
 use alloc::{vec, vec::Vec};
+#[cfg(feature = "alloc")]
+use core::mem::DropGuard;
 use core::{fmt::Debug, mem::MaybeUninit};
 
 #[cfg(feature = "getrandom")]
@@ -126,14 +128,9 @@ pub trait Aead {
   #[inline]
   fn seal_random_to_vec(&self, aad: &[u8], plaintext: &[u8]) -> Result<(Self::Nonce, Vec<u8>), RandomSealError> {
     let len = Self::ciphertext_len(plaintext.len()).map_err(SealError::from)?;
-    let mut out = vec![0u8; len];
-    match self.seal_random(aad, plaintext, &mut out) {
-      Ok(nonce) => Ok((nonce, out)),
-      Err(err) => {
-        super::ct::zeroize(&mut out);
-        Err(err)
-      }
-    }
+    let mut out = DropGuard::new(vec![0u8; len], |mut out| super::ct::zeroize(&mut out));
+    let nonce = self.seal_random(aad, plaintext, &mut out)?;
+    Ok((nonce, DropGuard::dismiss(out)))
   }
 
   /// Encrypt `buffer` in place with a fresh random nonce and return the nonce and detached tag.
@@ -243,20 +240,15 @@ pub trait Aead {
   /// # Errors
   ///
   /// Returns [`OpenError`] if the input is malformed or authentication fails.
-  /// Any allocated plaintext buffer is cleared before returning an error.
+  /// The allocated plaintext buffer is cleared on error or unwind.
   #[cfg(feature = "alloc")]
   #[cfg_attr(docsrs, doc(cfg(feature = "alloc")))]
   #[inline]
   fn decrypt_to_vec(&self, nonce: &Self::Nonce, aad: &[u8], ciphertext_and_tag: &[u8]) -> Result<Vec<u8>, OpenError> {
     let len = Self::plaintext_len(ciphertext_and_tag.len())?;
-    let mut out = vec![0u8; len];
-    match self.decrypt(nonce, aad, ciphertext_and_tag, &mut out) {
-      Ok(()) => Ok(out),
-      Err(err) => {
-        super::ct::zeroize(&mut out);
-        Err(err)
-      }
-    }
+    let mut out = DropGuard::new(vec![0u8; len], |mut out| super::ct::zeroize(&mut out));
+    self.decrypt(nonce, aad, ciphertext_and_tag, &mut out)?;
+    Ok(DropGuard::dismiss(out))
   }
 }
 
@@ -533,14 +525,9 @@ pub trait AeadWithNonce: Aead {
   #[inline]
   fn encrypt_to_vec(&self, nonce: &Self::Nonce, aad: &[u8], plaintext: &[u8]) -> Result<Vec<u8>, SealError> {
     let len = Self::ciphertext_len(plaintext.len()).map_err(SealError::from)?;
-    let mut out = vec![0u8; len];
-    match self.encrypt(nonce, aad, plaintext, &mut out) {
-      Ok(()) => Ok(out),
-      Err(err) => {
-        super::ct::zeroize(&mut out);
-        Err(err)
-      }
-    }
+    let mut out = DropGuard::new(vec![0u8; len], |mut out| super::ct::zeroize(&mut out));
+    self.encrypt(nonce, aad, plaintext, &mut out)?;
+    Ok(DropGuard::dismiss(out))
   }
 }
 
