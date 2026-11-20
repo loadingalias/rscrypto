@@ -78,7 +78,7 @@ never exposes the pair. See [cleanup boundaries](secret-lifecycle.md#rsa-signing
 ### x86-64 AES-GCM power table
 
 Each x86-64 AES-128-GCM and AES-256-GCM context retains one private, 64-byte-aligned table of
-reversed GHASH powers: 128 powers on Linux and 16 on other x86-64 targets. Every GHASH window
+reversed GHASH powers: 128 powers on Linux and Windows and 16 on other x86-64 targets. Every GHASH window
 borrows a suffix of this table. The context retains cleanup ownership and clears the whole table
 on drop. The table adds no copy, formatting, or export API. Compiler-created construction copies
 remain outside this inventory's proof.

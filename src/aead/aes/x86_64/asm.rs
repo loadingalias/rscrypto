@@ -1,8 +1,14 @@
-//! Linux x86-64 rscrypto-owned AES-GCM assembly kernels.
+//! System V x86-64 rscrypto-owned AES-GCM assembly kernels.
+//!
+//! Linux and Windows call them through `extern "sysv64"`, so one body serves both.
 
 use core::arch::global_asm;
 
-global_asm!(include_str!("asm/rscrypto_aes_gcm_x86_64_linux.s"));
+/// `1` when the System V body assembles as ELF; `0` drops its ELF-only `.type`, `.size`, and
+/// section-flag directives from the Windows COFF object.
+const ELF: u8 = cfg!(not(target_os = "windows")) as u8;
+
+global_asm!(include_str!("asm/rscrypto_aes_gcm_x86_64_sysv.s"), elf = const ELF);
 
 #[repr(C)]
 #[cfg(feature = "aes-gcm")]
@@ -63,8 +69,8 @@ impl AesGcmX86State {
 }
 
 #[cfg(feature = "aes-gcm")]
-unsafe extern "C" {
-  pub(super) fn rscrypto_aes128_gcm_seal_16x_vaes512_x86_64_linux(
+unsafe extern "sysv64" {
+  pub(super) fn rscrypto_aes128_gcm_seal_16x_vaes512_x86_64_sysv(
     round_keys: *const u8,
     initial_counter: *const u8,
     data: *mut u8,
@@ -73,7 +79,7 @@ unsafe extern "C" {
     state: *mut AesGcmX86State,
   );
 
-  pub(super) fn rscrypto_aes128_gcm_open_16x_vaes512_x86_64_linux(
+  pub(super) fn rscrypto_aes128_gcm_open_16x_vaes512_x86_64_sysv(
     round_keys: *const u8,
     initial_counter: *const u8,
     data: *mut u8,
@@ -82,7 +88,7 @@ unsafe extern "C" {
     state: *mut AesGcmX86State,
   );
 
-  pub(super) fn rscrypto_aes128_gcm_seal_64x_vaes512_x86_64_linux(
+  pub(super) fn rscrypto_aes128_gcm_seal_64x_vaes512_x86_64_sysv(
     round_keys: *const u8,
     initial_counter: *const u8,
     data: *mut u8,
@@ -91,7 +97,7 @@ unsafe extern "C" {
     state: *mut AesGcmX86State,
   );
 
-  pub(super) fn rscrypto_aes128_gcm_open_64x_vaes512_x86_64_linux(
+  pub(super) fn rscrypto_aes128_gcm_open_64x_vaes512_x86_64_sysv(
     round_keys: *const u8,
     initial_counter: *const u8,
     data: *mut u8,
@@ -100,7 +106,7 @@ unsafe extern "C" {
     state: *mut AesGcmX86State,
   );
 
-  pub(super) fn rscrypto_aes128_gcm_seal_128x_vaes512_x86_64_linux(
+  pub(super) fn rscrypto_aes128_gcm_seal_128x_vaes512_x86_64_sysv(
     round_keys: *const u8,
     initial_counter: *const u8,
     data: *mut u8,
@@ -109,7 +115,7 @@ unsafe extern "C" {
     state: *mut AesGcmX86State,
   );
 
-  pub(super) fn rscrypto_aes128_gcm_open_128x_vaes512_x86_64_linux(
+  pub(super) fn rscrypto_aes128_gcm_open_128x_vaes512_x86_64_sysv(
     round_keys: *const u8,
     initial_counter: *const u8,
     data: *mut u8,
@@ -118,7 +124,7 @@ unsafe extern "C" {
     state: *mut AesGcmX86State,
   );
 
-  pub(super) fn rscrypto_aes256_gcm_seal_16x_vaes512_x86_64_linux(
+  pub(super) fn rscrypto_aes256_gcm_seal_16x_vaes512_x86_64_sysv(
     round_keys: *const u8,
     initial_counter: *const u8,
     data: *mut u8,
@@ -127,7 +133,7 @@ unsafe extern "C" {
     state: *mut AesGcmX86State,
   );
 
-  pub(super) fn rscrypto_aes256_gcm_open_16x_vaes512_x86_64_linux(
+  pub(super) fn rscrypto_aes256_gcm_open_16x_vaes512_x86_64_sysv(
     round_keys: *const u8,
     initial_counter: *const u8,
     data: *mut u8,
@@ -136,7 +142,7 @@ unsafe extern "C" {
     state: *mut AesGcmX86State,
   );
 
-  pub(super) fn rscrypto_aes256_gcm_seal_64x_vaes512_x86_64_linux(
+  pub(super) fn rscrypto_aes256_gcm_seal_64x_vaes512_x86_64_sysv(
     round_keys: *const u8,
     initial_counter: *const u8,
     data: *mut u8,
@@ -145,7 +151,7 @@ unsafe extern "C" {
     state: *mut AesGcmX86State,
   );
 
-  pub(super) fn rscrypto_aes256_gcm_open_64x_vaes512_x86_64_linux(
+  pub(super) fn rscrypto_aes256_gcm_open_64x_vaes512_x86_64_sysv(
     round_keys: *const u8,
     initial_counter: *const u8,
     data: *mut u8,
@@ -154,7 +160,7 @@ unsafe extern "C" {
     state: *mut AesGcmX86State,
   );
 
-  pub(super) fn rscrypto_aes256_gcm_seal_128x_vaes512_x86_64_linux(
+  pub(super) fn rscrypto_aes256_gcm_seal_128x_vaes512_x86_64_sysv(
     round_keys: *const u8,
     initial_counter: *const u8,
     data: *mut u8,
@@ -163,7 +169,7 @@ unsafe extern "C" {
     state: *mut AesGcmX86State,
   );
 
-  pub(super) fn rscrypto_aes256_gcm_open_128x_vaes512_x86_64_linux(
+  pub(super) fn rscrypto_aes256_gcm_open_128x_vaes512_x86_64_sysv(
     round_keys: *const u8,
     initial_counter: *const u8,
     data: *mut u8,
@@ -174,15 +180,15 @@ unsafe extern "C" {
 }
 
 #[cfg(feature = "aes-gcm-siv")]
-unsafe extern "C" {
-  pub(super) fn rscrypto_aes128_gcmsiv_ctr_16x_vaes512_x86_64_linux(
+unsafe extern "sysv64" {
+  pub(super) fn rscrypto_aes128_gcmsiv_ctr_16x_vaes512_x86_64_sysv(
     round_keys: *const u8,
     initial_counter: *const u8,
     data: *mut u8,
     len: usize,
   ) -> usize;
 
-  pub(super) fn rscrypto_aes256_gcmsiv_ctr_16x_vaes512_x86_64_linux(
+  pub(super) fn rscrypto_aes256_gcmsiv_ctr_16x_vaes512_x86_64_sysv(
     round_keys: *const u8,
     initial_counter: *const u8,
     data: *mut u8,

@@ -1,7 +1,9 @@
 // Copyright (c) 2026 rscrypto contributors
 // SPDX-License-Identifier: Apache-2.0
 //
-// rscrypto-owned Linux x86-64 AES-GCM fused CTR/GHASH kernels.
+// rscrypto-owned System V x86-64 AES-GCM fused CTR/GHASH kernels. Linux and
+// Windows call them through extern "sysv64". The `elf` argument is 0 for the
+// Windows COFF object, which drops the ELF-only .type, .size, and section flags.
 // Provenance: introduced in rscrypto local history by commit 11ebc4a and
 // widened in commits 56f75c5, 1818785, and 819da76 for the rscrypto AES-GCM ABI.
 
@@ -812,7 +814,9 @@
 .macro AES_GCM_16X_FUNC name, aes256, open
   .p2align 5
   .globl \name
+  .if {elf}
   .type \name, @function
+  .endif
 \name:
   push r12
   push r13
@@ -976,13 +980,17 @@
   mov QWORD PTR [rsp - 16], 0
   mov QWORD PTR [rsp - 8], 0
   ret
+  .if {elf}
   .size \name, . - \name
+  .endif
 .endm
 
 .macro AES_GCM_64X_FUNC name, aes256, open
   .p2align 5
   .globl \name
+  .if {elf}
   .type \name, @function
+  .endif
 \name:
   push r12
   push r13
@@ -1188,13 +1196,17 @@
   mov QWORD PTR [rsp - 16], 0
   mov QWORD PTR [rsp - 8], 0
   ret
+  .if {elf}
   .size \name, . - \name
+  .endif
 .endm
 
 .macro AES_GCM_128X_FUNC name, aes256, open
   .p2align 5
   .globl \name
+  .if {elf}
   .type \name, @function
+  .endif
 \name:
   push r12
   push r13
@@ -1447,13 +1459,17 @@
   mov QWORD PTR [rsp - 16], 0
   mov QWORD PTR [rsp - 8], 0
   ret
+  .if {elf}
   .size \name, . - \name
+  .endif
 .endm
 
 .macro AES_GCMSIV_CTR_16X_FUNC name, aes256
   .p2align 5
   .globl \name
+  .if {elf}
   .type \name, @function
+  .endif
 \name:
   xor r11d, r11d
   cmp rcx, 256
@@ -1485,26 +1501,32 @@
   mov rax, r11
   vzeroupper
   ret
+  .if {elf}
   .size \name, . - \name
+  .endif
 .endm
 
 
-AES_GCM_16X_FUNC rscrypto_aes128_gcm_seal_16x_vaes512_x86_64_linux, 0, 0
-AES_GCM_16X_FUNC rscrypto_aes128_gcm_open_16x_vaes512_x86_64_linux, 0, 1
-AES_GCM_16X_FUNC rscrypto_aes256_gcm_seal_16x_vaes512_x86_64_linux, 1, 0
-AES_GCM_16X_FUNC rscrypto_aes256_gcm_open_16x_vaes512_x86_64_linux, 1, 1
-AES_GCM_64X_FUNC rscrypto_aes128_gcm_seal_64x_vaes512_x86_64_linux, 0, 0
-AES_GCM_64X_FUNC rscrypto_aes128_gcm_open_64x_vaes512_x86_64_linux, 0, 1
-AES_GCM_64X_FUNC rscrypto_aes256_gcm_seal_64x_vaes512_x86_64_linux, 1, 0
-AES_GCM_64X_FUNC rscrypto_aes256_gcm_open_64x_vaes512_x86_64_linux, 1, 1
-AES_GCM_128X_FUNC rscrypto_aes128_gcm_seal_128x_vaes512_x86_64_linux, 0, 0
-AES_GCM_128X_FUNC rscrypto_aes128_gcm_open_128x_vaes512_x86_64_linux, 0, 1
-AES_GCM_128X_FUNC rscrypto_aes256_gcm_seal_128x_vaes512_x86_64_linux, 1, 0
-AES_GCM_128X_FUNC rscrypto_aes256_gcm_open_128x_vaes512_x86_64_linux, 1, 1
-AES_GCMSIV_CTR_16X_FUNC rscrypto_aes128_gcmsiv_ctr_16x_vaes512_x86_64_linux, 0
-AES_GCMSIV_CTR_16X_FUNC rscrypto_aes256_gcmsiv_ctr_16x_vaes512_x86_64_linux, 1
+AES_GCM_16X_FUNC rscrypto_aes128_gcm_seal_16x_vaes512_x86_64_sysv, 0, 0
+AES_GCM_16X_FUNC rscrypto_aes128_gcm_open_16x_vaes512_x86_64_sysv, 0, 1
+AES_GCM_16X_FUNC rscrypto_aes256_gcm_seal_16x_vaes512_x86_64_sysv, 1, 0
+AES_GCM_16X_FUNC rscrypto_aes256_gcm_open_16x_vaes512_x86_64_sysv, 1, 1
+AES_GCM_64X_FUNC rscrypto_aes128_gcm_seal_64x_vaes512_x86_64_sysv, 0, 0
+AES_GCM_64X_FUNC rscrypto_aes128_gcm_open_64x_vaes512_x86_64_sysv, 0, 1
+AES_GCM_64X_FUNC rscrypto_aes256_gcm_seal_64x_vaes512_x86_64_sysv, 1, 0
+AES_GCM_64X_FUNC rscrypto_aes256_gcm_open_64x_vaes512_x86_64_sysv, 1, 1
+AES_GCM_128X_FUNC rscrypto_aes128_gcm_seal_128x_vaes512_x86_64_sysv, 0, 0
+AES_GCM_128X_FUNC rscrypto_aes128_gcm_open_128x_vaes512_x86_64_sysv, 0, 1
+AES_GCM_128X_FUNC rscrypto_aes256_gcm_seal_128x_vaes512_x86_64_sysv, 1, 0
+AES_GCM_128X_FUNC rscrypto_aes256_gcm_open_128x_vaes512_x86_64_sysv, 1, 1
+AES_GCMSIV_CTR_16X_FUNC rscrypto_aes128_gcmsiv_ctr_16x_vaes512_x86_64_sysv, 0
+AES_GCMSIV_CTR_16X_FUNC rscrypto_aes256_gcmsiv_ctr_16x_vaes512_x86_64_sysv, 1
 
+.if {elf}
 .section .rodata.cst64,"aM",@progbits,64
+.else
+.section .rdata,"dr"
+.endif
 .p2align 6
 .Lrscrypto_x86_gcm_bswap:
   .byte 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0

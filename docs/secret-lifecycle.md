@@ -515,7 +515,7 @@ construction scrub addresses copies within its reviewed stack region; constructi
 through other callers, live registers, and unrelated object padding retain their
 separate qualification limits.
 
-The native AES-GCM ABI state clears its named GHASH accumulator on drop. Linux x86-64 assembly
+The native AES-GCM ABI state clears its named GHASH accumulator on drop. The x86-64 assembly
 clears its explicit 512-, 1024-, or 2048-byte GHASH power workspace before releasing it, and
 the native kernels clear saved-register slots after restoring the caller's registers. Input
 descriptor arrays contain public pointers and lengths only. These clears do not cover every live register

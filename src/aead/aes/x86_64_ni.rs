@@ -7,7 +7,10 @@ pub(in crate::aead) struct NiRoundKeys {
 }
 
 impl NiRoundKeys {
-  #[cfg(all(target_os = "linux", any(feature = "aes-gcm", feature = "aes-gcm-siv")))]
+  #[cfg(all(
+    any(target_os = "linux", target_os = "windows"),
+    any(feature = "aes-gcm", feature = "aes-gcm-siv")
+  ))]
   #[inline]
   pub(super) fn as_ptr(&self) -> *const u8 {
     self.rk.as_ptr().cast()
@@ -296,7 +299,10 @@ pub(in crate::aead) struct Ni128RoundKeys {
 }
 
 impl Ni128RoundKeys {
-  #[cfg(all(target_os = "linux", any(feature = "aes-gcm", feature = "aes-gcm-siv")))]
+  #[cfg(all(
+    any(target_os = "linux", target_os = "windows"),
+    any(feature = "aes-gcm", feature = "aes-gcm-siv")
+  ))]
   #[inline]
   pub(super) fn as_ptr(&self) -> *const u8 {
     self.rk.as_ptr().cast()

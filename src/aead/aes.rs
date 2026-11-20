@@ -78,7 +78,7 @@ mod rv_aes;
 mod rv_scalar_aes;
 #[cfg(all(
   all(target_arch = "x86_64", target_feature = "sse2"),
-  target_os = "linux",
+  any(target_os = "linux", target_os = "windows"),
   any(feature = "aes-gcm", feature = "aes-gcm-siv")
 ))]
 #[path = "aes/x86_64/asm.rs"]
@@ -95,7 +95,7 @@ pub(crate) use x86_short::MAX_TAIL as X86_SHORT_GCM_MAX_TAIL;
 #[cfg(all(
   target_arch = "x86_64",
   target_feature = "sse2",
-  target_os = "linux",
+  any(target_os = "linux", target_os = "windows"),
   feature = "aes-gcm"
 ))]
 const X86_GCM_BATCH_MIN: usize = 512;
@@ -104,18 +104,18 @@ const X86_GCM_BATCH_MIN: usize = 512;
 #[cfg(all(
   target_arch = "x86_64",
   target_feature = "sse2",
-  target_os = "linux",
+  any(target_os = "linux", target_os = "windows"),
   feature = "aes-gcm"
 ))]
 type X86GcmKernel =
-  unsafe extern "C" fn(*const u8, *const u8, *mut u8, usize, *const u128, *mut x86_64_asm::AesGcmX86State);
+  unsafe extern "sysv64" fn(*const u8, *const u8, *mut u8, usize, *const u128, *mut x86_64_asm::AesGcmX86State);
 
 /// The Linux VAES-512 seal or open kernels of one key size, by batch width.
 /// They are constants, so each batch calls its kernel directly.
 #[cfg(all(
   target_arch = "x86_64",
   target_feature = "sse2",
-  target_os = "linux",
+  any(target_os = "linux", target_os = "windows"),
   feature = "aes-gcm"
 ))]
 trait X86GcmKernels {
@@ -138,7 +138,7 @@ trait X86GcmKernels {
 #[cfg(all(
   target_arch = "x86_64",
   target_feature = "sse2",
-  target_os = "linux",
+  any(target_os = "linux", target_os = "windows"),
   feature = "aes-gcm"
 ))]
 #[inline]
@@ -237,11 +237,11 @@ macro_rules! x86_gcm_message {
         return None;
       };
       let tail_len = tail.iter().fold(0usize, |len, span| len.strict_add(span.len()));
-      #[cfg(target_os = "linux")]
+      #[cfg(any(target_os = "linux", target_os = "windows"))]
       let (mut acc, mut done) = (acc, 0usize);
-      #[cfg(not(target_os = "linux"))]
+      #[cfg(not(any(target_os = "linux", target_os = "windows")))]
       let done = 0usize;
-      #[cfg(target_os = "linux")]
+      #[cfg(any(target_os = "linux", target_os = "windows"))]
       if src_len.strict_add(tail_len) > X86_GCM_BATCH_MIN {
         struct Seal;
         impl X86GcmKernels for Seal {
@@ -253,7 +253,7 @@ macro_rules! x86_gcm_message {
         // the batches cover only `src`, never the tail.
         done = unsafe { x86_gcm_bulk_asm::<Seal>(rk.as_ptr(), counter_block, src, dst, src_len, &mut acc, tables) };
       }
-      #[cfg(not(target_os = "linux"))]
+      #[cfg(not(any(target_os = "linux", target_os = "windows")))]
       let _ = (counter_block, tail_len);
       let first = u32::try_from(done.strict_div(BLOCK_SIZE)).ok()?.checked_add(2)?;
       // SAFETY: the rest starts `done` bytes into both ranges.
@@ -303,11 +303,11 @@ macro_rules! x86_gcm_message {
       let $inner(rk) = &ek.inner else {
         return None;
       };
-      #[cfg(target_os = "linux")]
+      #[cfg(any(target_os = "linux", target_os = "windows"))]
       let (mut acc, mut done) = (acc, 0usize);
-      #[cfg(not(target_os = "linux"))]
+      #[cfg(not(any(target_os = "linux", target_os = "windows")))]
       let done = 0usize;
-      #[cfg(target_os = "linux")]
+      #[cfg(any(target_os = "linux", target_os = "windows"))]
       if len > X86_GCM_BATCH_MIN {
         struct Open;
         impl X86GcmKernels for Open {
@@ -318,7 +318,7 @@ macro_rules! x86_gcm_message {
         // SAFETY: the caller's contract covers the features and the range.
         done = unsafe { x86_gcm_bulk_asm::<Open>(rk.as_ptr(), counter_block, data, data, len, &mut acc, tables) };
       }
-      #[cfg(not(target_os = "linux"))]
+      #[cfg(not(any(target_os = "linux", target_os = "windows")))]
       let _ = counter_block;
       let first = u32::try_from(done.strict_div(BLOCK_SIZE)).ok()?.checked_add(2)?;
       // SAFETY: the rest starts `done` bytes into `data`.
@@ -348,27 +348,27 @@ macro_rules! x86_gcm_message {
 x86_gcm_message!(
   aes128_gcm_seal_x86, aes128_gcm_open_x86, Aes128EncKey, Key128Inner::X86AesNi, 11,
   seal: (
-    x86_64_asm::rscrypto_aes128_gcm_seal_16x_vaes512_x86_64_linux,
-    x86_64_asm::rscrypto_aes128_gcm_seal_64x_vaes512_x86_64_linux,
-    x86_64_asm::rscrypto_aes128_gcm_seal_128x_vaes512_x86_64_linux
+    x86_64_asm::rscrypto_aes128_gcm_seal_16x_vaes512_x86_64_sysv,
+    x86_64_asm::rscrypto_aes128_gcm_seal_64x_vaes512_x86_64_sysv,
+    x86_64_asm::rscrypto_aes128_gcm_seal_128x_vaes512_x86_64_sysv
   ),
   open: (
-    x86_64_asm::rscrypto_aes128_gcm_open_16x_vaes512_x86_64_linux,
-    x86_64_asm::rscrypto_aes128_gcm_open_64x_vaes512_x86_64_linux,
-    x86_64_asm::rscrypto_aes128_gcm_open_128x_vaes512_x86_64_linux
+    x86_64_asm::rscrypto_aes128_gcm_open_16x_vaes512_x86_64_sysv,
+    x86_64_asm::rscrypto_aes128_gcm_open_64x_vaes512_x86_64_sysv,
+    x86_64_asm::rscrypto_aes128_gcm_open_128x_vaes512_x86_64_sysv
   )
 );
 x86_gcm_message!(
   aes256_gcm_seal_x86, aes256_gcm_open_x86, Aes256EncKey, KeyInner::X86AesNi, 15,
   seal: (
-    x86_64_asm::rscrypto_aes256_gcm_seal_16x_vaes512_x86_64_linux,
-    x86_64_asm::rscrypto_aes256_gcm_seal_64x_vaes512_x86_64_linux,
-    x86_64_asm::rscrypto_aes256_gcm_seal_128x_vaes512_x86_64_linux
+    x86_64_asm::rscrypto_aes256_gcm_seal_16x_vaes512_x86_64_sysv,
+    x86_64_asm::rscrypto_aes256_gcm_seal_64x_vaes512_x86_64_sysv,
+    x86_64_asm::rscrypto_aes256_gcm_seal_128x_vaes512_x86_64_sysv
   ),
   open: (
-    x86_64_asm::rscrypto_aes256_gcm_open_16x_vaes512_x86_64_linux,
-    x86_64_asm::rscrypto_aes256_gcm_open_64x_vaes512_x86_64_linux,
-    x86_64_asm::rscrypto_aes256_gcm_open_128x_vaes512_x86_64_linux
+    x86_64_asm::rscrypto_aes256_gcm_open_16x_vaes512_x86_64_sysv,
+    x86_64_asm::rscrypto_aes256_gcm_open_64x_vaes512_x86_64_sysv,
+    x86_64_asm::rscrypto_aes256_gcm_open_128x_vaes512_x86_64_sysv
   )
 );
 
@@ -426,11 +426,11 @@ pub(crate) struct X86GcmTables<'a> {
   pub(crate) h_polyval: u128,
   pub(crate) h_powers_rev: &'a [u128; 4],
   pub(crate) h_powers_rev_16: &'a [u128; 16],
-  #[cfg(target_os = "linux")]
+  #[cfg(any(target_os = "linux", target_os = "windows"))]
   pub(crate) h_powers_rev_32: &'a [u128; 32],
-  #[cfg(target_os = "linux")]
+  #[cfg(any(target_os = "linux", target_os = "windows"))]
   pub(crate) h_powers_rev_64: &'a [u128; 64],
-  #[cfg(target_os = "linux")]
+  #[cfg(any(target_os = "linux", target_os = "windows"))]
   pub(crate) h_powers_rev_128: &'a [u128; 128],
 }
 
@@ -697,7 +697,7 @@ pub(super) trait AesKey: Sized {
   #[cfg(all(
     target_arch = "x86_64",
     target_feature = "sse2",
-    target_os = "linux",
+    any(target_os = "linux", target_os = "windows"),
     feature = "aes-gcm"
   ))]
   unsafe fn ctr32_encrypt_be_gather_wide_ghash<'output>(
@@ -1072,7 +1072,7 @@ impl AesKey for Aes128EncKey {
   #[cfg(all(
     target_arch = "x86_64",
     target_feature = "sse2",
-    target_os = "linux",
+    any(target_os = "linux", target_os = "windows"),
     feature = "aes-gcm"
   ))]
   #[inline(always)]
@@ -1453,7 +1453,7 @@ impl AesKey for Aes256EncKey {
   #[cfg(all(
     target_arch = "x86_64",
     target_feature = "sse2",
-    target_os = "linux",
+    any(target_os = "linux", target_os = "windows"),
     feature = "aes-gcm"
   ))]
   #[inline(always)]
@@ -5496,7 +5496,7 @@ pub(crate) unsafe fn aes128_ctr32_decrypt_be_aesni_pclmul_ghash(
 #[cfg(all(
   target_arch = "x86_64",
   target_feature = "sse2",
-  target_os = "linux",
+  any(target_os = "linux", target_os = "windows"),
   feature = "aes-gcm-siv"
 ))]
 #[inline(always)]
@@ -5541,7 +5541,7 @@ macro_rules! define_x86_gcmsiv_ctr {
         ]);
         let mut offset = 0usize;
 
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
         if data.len() >= 256 {
           let processed = x86_64_asm::$asm(ni_rk.as_ptr(), initial_counter.as_ptr(), data.as_mut_ptr(), data.len());
           ctr = ctr.wrapping_add(usize_low_u32(processed.strict_div(BLOCK_SIZE)));
@@ -5584,7 +5584,7 @@ define_x86_gcmsiv_ctr!(
   /// AES-128-GCM-SIV CTR over AES-NI round keys, for any length.
   x86_ctr32_le_xor_128,
   ni::Ni128RoundKeys,
-  rscrypto_aes128_gcmsiv_ctr_16x_vaes512_x86_64_linux,
+  rscrypto_aes128_gcmsiv_ctr_16x_vaes512_x86_64_sysv,
   encrypt_16blocks_128,
   encrypt_4blocks_128,
   ctr32_le_xor_short_128
@@ -5594,7 +5594,7 @@ define_x86_gcmsiv_ctr!(
   /// AES-256-GCM-SIV CTR over AES-NI round keys, for any length.
   x86_ctr32_le_xor_256,
   ni::NiRoundKeys,
-  rscrypto_aes256_gcmsiv_ctr_16x_vaes512_x86_64_linux,
+  rscrypto_aes256_gcmsiv_ctr_16x_vaes512_x86_64_sysv,
   encrypt_16blocks,
   encrypt_4blocks,
   ctr32_le_xor_short_256
@@ -5611,7 +5611,7 @@ define_x86_gcmsiv_ctr!(
 #[cfg(all(
   target_arch = "x86_64",
   target_feature = "sse2",
-  target_os = "linux",
+  any(target_os = "linux", target_os = "windows"),
   feature = "aes-gcm"
 ))]
 #[target_feature(enable = "aes,sse2,avx512f,avx512vl,avx512bw,avx512dq,vaes,vpclmulqdq,pclmulqdq")]
@@ -5642,7 +5642,7 @@ pub(crate) unsafe fn aes128_ctr32_encrypt_be_gather_wide_ghash<'output>(
     // assembly preserves r12 and restores its aligned scratch stack on all exits.
     unsafe {
       if whole_message_aligned && plaintext.byte_len() >= 4096 && plaintext.byte_len().is_multiple_of(2048) {
-        x86_64_asm::rscrypto_aes128_gcm_seal_128x_vaes512_x86_64_linux(
+        x86_64_asm::rscrypto_aes128_gcm_seal_128x_vaes512_x86_64_sysv(
           rk.as_ptr(),
           initial_counter.as_ptr(),
           out.as_mut_ptr().cast(),
@@ -5651,7 +5651,7 @@ pub(crate) unsafe fn aes128_ctr32_encrypt_be_gather_wide_ghash<'output>(
           core::ptr::from_mut(&mut state),
         );
       } else if plaintext.byte_len() >= 1024 {
-        x86_64_asm::rscrypto_aes128_gcm_seal_64x_vaes512_x86_64_linux(
+        x86_64_asm::rscrypto_aes128_gcm_seal_64x_vaes512_x86_64_sysv(
           rk.as_ptr(),
           initial_counter.as_ptr(),
           out.as_mut_ptr().cast(),
@@ -5660,7 +5660,7 @@ pub(crate) unsafe fn aes128_ctr32_encrypt_be_gather_wide_ghash<'output>(
           core::ptr::from_mut(&mut state),
         );
       } else {
-        x86_64_asm::rscrypto_aes128_gcm_seal_16x_vaes512_x86_64_linux(
+        x86_64_asm::rscrypto_aes128_gcm_seal_16x_vaes512_x86_64_sysv(
           rk.as_ptr(),
           initial_counter.as_ptr(),
           out.as_mut_ptr().cast(),
@@ -5689,7 +5689,7 @@ pub(crate) unsafe fn aes128_ctr32_encrypt_be_gather_wide_ghash<'output>(
 #[cfg(all(
   target_arch = "x86_64",
   target_feature = "sse2",
-  target_os = "linux",
+  any(target_os = "linux", target_os = "windows"),
   feature = "aes-gcm"
 ))]
 #[target_feature(enable = "aes,sse2,avx512f,avx512vl,avx512bw,avx512dq,vaes,vpclmulqdq,pclmulqdq")]
@@ -5720,7 +5720,7 @@ pub(crate) unsafe fn aes256_ctr32_encrypt_be_gather_wide_ghash<'output>(
     // assembly preserves r12 and restores its aligned scratch stack on all exits.
     unsafe {
       if whole_message_aligned && plaintext.byte_len() >= 4096 && plaintext.byte_len().is_multiple_of(2048) {
-        x86_64_asm::rscrypto_aes256_gcm_seal_128x_vaes512_x86_64_linux(
+        x86_64_asm::rscrypto_aes256_gcm_seal_128x_vaes512_x86_64_sysv(
           rk.as_ptr(),
           initial_counter.as_ptr(),
           out.as_mut_ptr().cast(),
@@ -5729,7 +5729,7 @@ pub(crate) unsafe fn aes256_ctr32_encrypt_be_gather_wide_ghash<'output>(
           core::ptr::from_mut(&mut state),
         );
       } else if plaintext.byte_len() >= 1024 {
-        x86_64_asm::rscrypto_aes256_gcm_seal_64x_vaes512_x86_64_linux(
+        x86_64_asm::rscrypto_aes256_gcm_seal_64x_vaes512_x86_64_sysv(
           rk.as_ptr(),
           initial_counter.as_ptr(),
           out.as_mut_ptr().cast(),
@@ -5738,7 +5738,7 @@ pub(crate) unsafe fn aes256_ctr32_encrypt_be_gather_wide_ghash<'output>(
           core::ptr::from_mut(&mut state),
         );
       } else {
-        x86_64_asm::rscrypto_aes256_gcm_seal_16x_vaes512_x86_64_linux(
+        x86_64_asm::rscrypto_aes256_gcm_seal_16x_vaes512_x86_64_sysv(
           rk.as_ptr(),
           initial_counter.as_ptr(),
           out.as_mut_ptr().cast(),
@@ -6480,11 +6480,11 @@ mod tests {
     h_polyval: u128,
     h_powers_rev: [u128; 4],
     h_powers_rev_16: [u128; 16],
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     h_powers_rev_32: [u128; 32],
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     h_powers_rev_64: [u128; 64],
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     h_powers_rev_128: [u128; 128],
   }
 
@@ -6495,11 +6495,11 @@ mod tests {
         h_polyval: self.h_polyval,
         h_powers_rev: &self.h_powers_rev,
         h_powers_rev_16: &self.h_powers_rev_16,
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
         h_powers_rev_32: &self.h_powers_rev_32,
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
         h_powers_rev_64: &self.h_powers_rev_64,
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
         h_powers_rev_128: &self.h_powers_rev_128,
       }
     }
@@ -6516,16 +6516,16 @@ mod tests {
         powers[15], powers[14], powers[13], powers[12], powers[11], powers[10], powers[9], powers[8], powers[7],
         powers[6], powers[5], powers[4], powers[3], powers[2], powers[1], powers[0],
       ],
-      #[cfg(target_os = "linux")]
+      #[cfg(any(target_os = "linux", target_os = "windows"))]
       h_powers_rev_32: [
         powers[31], powers[30], powers[29], powers[28], powers[27], powers[26], powers[25], powers[24], powers[23],
         powers[22], powers[21], powers[20], powers[19], powers[18], powers[17], powers[16], powers[15], powers[14],
         powers[13], powers[12], powers[11], powers[10], powers[9], powers[8], powers[7], powers[6], powers[5],
         powers[4], powers[3], powers[2], powers[1], powers[0],
       ],
-      #[cfg(target_os = "linux")]
+      #[cfg(any(target_os = "linux", target_os = "windows"))]
       h_powers_rev_64: core::array::from_fn(|i| powers[63usize.strict_sub(i)]),
-      #[cfg(target_os = "linux")]
+      #[cfg(any(target_os = "linux", target_os = "windows"))]
       h_powers_rev_128: core::array::from_fn(|i| powers[127usize.strict_sub(i)]),
     }
   }

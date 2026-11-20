@@ -15,7 +15,11 @@ impl<'a> Output<'a> {
   #[cfg(all(
     feature = "aes-gcm",
     any(
-      all(feature = "aes-gcm", target_arch = "x86_64", target_os = "linux"),
+      all(
+        feature = "aes-gcm",
+        target_arch = "x86_64",
+        any(target_os = "linux", target_os = "windows")
+      ),
       all(
         feature = "aes-gcm",
         target_arch = "aarch64",
@@ -333,7 +337,11 @@ where
 #[cfg(all(
   feature = "aes-gcm",
   any(
-    all(feature = "aes-gcm", target_arch = "x86_64", target_os = "linux"),
+    all(
+      feature = "aes-gcm",
+      target_arch = "x86_64",
+      any(target_os = "linux", target_os = "windows")
+    ),
     all(
       feature = "aes-gcm",
       target_arch = "aarch64",
@@ -350,7 +358,11 @@ pub(super) struct InputBatch<'input, const UNIT: usize> {
 #[cfg(all(
   feature = "aes-gcm",
   any(
-    all(feature = "aes-gcm", target_arch = "x86_64", target_os = "linux"),
+    all(
+      feature = "aes-gcm",
+      target_arch = "x86_64",
+      any(target_os = "linux", target_os = "windows")
+    ),
     all(
       feature = "aes-gcm",
       target_arch = "aarch64",
@@ -429,7 +441,11 @@ impl<'input, const UNIT: usize> InputBatch<'input, UNIT> {
 #[cfg(all(
   feature = "aes-gcm",
   any(
-    all(feature = "aes-gcm", target_arch = "x86_64", target_os = "linux"),
+    all(
+      feature = "aes-gcm",
+      target_arch = "x86_64",
+      any(target_os = "linux", target_os = "windows")
+    ),
     all(
       feature = "aes-gcm",
       target_arch = "aarch64",
@@ -445,7 +461,11 @@ pub(super) enum Input<'input, const UNIT: usize> {
 #[cfg(all(
   feature = "aes-gcm",
   any(
-    all(feature = "aes-gcm", target_arch = "x86_64", target_os = "linux"),
+    all(
+      feature = "aes-gcm",
+      target_arch = "x86_64",
+      any(target_os = "linux", target_os = "windows")
+    ),
     all(
       feature = "aes-gcm",
       target_arch = "aarch64",
@@ -474,7 +494,11 @@ impl<const UNIT: usize> Input<'_, UNIT> {
 #[cfg(all(
   feature = "aes-gcm",
   any(
-    all(feature = "aes-gcm", target_arch = "x86_64", target_os = "linux"),
+    all(
+      feature = "aes-gcm",
+      target_arch = "x86_64",
+      any(target_os = "linux", target_os = "windows")
+    ),
     all(
       feature = "aes-gcm",
       target_arch = "aarch64",
@@ -732,7 +756,7 @@ mod tests {
   #[test]
   fn miri_gather_initialization_and_length_failure() {
     #[cfg(any(
-      all(target_arch = "x86_64", target_os = "linux"),
+      all(target_arch = "x86_64", any(target_os = "linux", target_os = "windows")),
       all(
         feature = "aes-gcm",
         target_arch = "aarch64",

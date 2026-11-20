@@ -25,7 +25,11 @@ const NONCE_SIZE: usize = Nonce96::LENGTH;
 /// In practice the portable CTR uses a 32-bit counter, limiting to (2^32 - 2) blocks.
 const MAX_PLAINTEXT_LEN: u64 = ((1u64 << 32).strict_sub(2)).strict_mul(16); // ~64 GiB
 
-#[cfg(all(target_arch = "x86_64", target_feature = "sse2", target_os = "linux"))]
+#[cfg(all(
+  target_arch = "x86_64",
+  target_feature = "sse2",
+  any(target_os = "linux", target_os = "windows")
+))]
 const X86_VAES_GCM_MIN_LEN: usize = 64;
 #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 const X86_AESNI_GCM_MIN_LEN: usize = 64;
@@ -164,11 +168,11 @@ impl<K: AesKey> Gcm<K> {
       h_polyval: self.h_powers_4()[3],
       h_powers_rev: self.h_powers_4(),
       h_powers_rev_16: self.powers.window::<16>(),
-      #[cfg(target_os = "linux")]
+      #[cfg(any(target_os = "linux", target_os = "windows"))]
       h_powers_rev_32: self.powers.window::<32>(),
-      #[cfg(target_os = "linux")]
+      #[cfg(any(target_os = "linux", target_os = "windows"))]
       h_powers_rev_64: self.powers.window::<64>(),
-      #[cfg(target_os = "linux")]
+      #[cfg(any(target_os = "linux", target_os = "windows"))]
       h_powers_rev_128: self.powers.window::<128>(),
     }
   }
@@ -713,7 +717,11 @@ impl<K: AesKey> Gcm<K> {
       return Ok((self.encrypt_j0_tag(&j0, acc.0), ciphertext));
     }
 
-    #[cfg(all(target_arch = "x86_64", target_feature = "sse2", target_os = "linux"))]
+    #[cfg(all(
+      target_arch = "x86_64",
+      target_feature = "sse2",
+      any(target_os = "linux", target_os = "windows")
+    ))]
     if self.backend == AeadBackend::X86VaesVpclmul && out.len() >= X86_VAES_GCM_MIN_LEN {
       let length_block = super::seal_bit_lengths(aad.len(), out.len())?.to_be_bits_block();
       let tables = self.x86_gcm_tables();
@@ -1012,7 +1020,7 @@ macro_rules! define_aes_gcm {
       #[cfg_attr(
         all(
           target_arch = "aarch64",
-          target_os = "linux",
+          any(target_os = "linux", target_os = "windows"),
           target_env = "gnu",
           feature = "std",
           not(debug_assertions)

@@ -1902,7 +1902,11 @@ pub(super) fn precompute_powers(h: u128) -> [u128; 4] {
 /// Number of reversed GHASH powers an x86-64 AES-GCM key keeps. Linux runs the 128-block kernels;
 /// other x86-64 targets use windows of at most 16 blocks.
 #[cfg(all(feature = "aes-gcm", target_arch = "x86_64", target_feature = "sse2"))]
-pub(super) const X86_GCM_POWERS: usize = if cfg!(target_os = "linux") { 128 } else { 16 };
+pub(super) const X86_GCM_POWERS: usize = if cfg!(any(target_os = "linux", target_os = "windows")) {
+  128
+} else {
+  16
+};
 
 /// `[H^N, ..., H^2, H]` in the POLYVAL domain for x86-64 GHASH.
 ///

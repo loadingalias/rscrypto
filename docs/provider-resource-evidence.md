@@ -214,7 +214,7 @@ portable, with the number of roots that have one:
 AEAD records call their kernels directly. The `polyval` multiplication, the
 Poly1305 block function, and the ChaCha20 keystream each test the cached
 capabilities and call the selected kernel; none stores a function pointer. The
-x86-64 Linux VAES-512 batch loop calls each kernel width in its own branch. No
+x86-64 VAES-512 batch loop calls each kernel width in its own branch. No
 AEAD graph, on any target or configuration, reaches the standard library's
 `Once`, a futex, an indirect call, or unwinding. Earlier trees routed every
 AEAD root through a std `OnceLock` of function pointers, which ran `Once`
@@ -240,7 +240,7 @@ updates that file in the same commit
 Every AEAD root has an owned bound on every target and configuration. Owned
 assembly has no compiler frame record, so the tool derives its frames from the
 instructions and lists each one among the report's assumptions (scripts guide,
-"Frame review"). The twelve x86-64 Linux VAES-512 GCM kernels are leaves of
+"Frame review"). The twelve x86-64 VAES-512 GCM kernels are leaves of
 648, 1,160, and 2,184 B for 16-, 64-, and 128-block batches: two pushes, a
 constant subtraction, at most 56 B to align `rsp` to 64 bytes, and a reload of
 `rsp` from the slot that saved it. Portable builds link them too, because a key
