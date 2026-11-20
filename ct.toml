@@ -7328,41 +7328,26 @@ reviewed_at = "2026-10-24"
 [[asm_waiver]]
 target = "x86_64-pc-windows-msvc"
 primitive = "kx.p256_ecdh"
-symbol = "<rscrypto::auth::p256_ecdh::P256EphemeralSecret>::diffie_hellman"
+symbol = "ct_entry_p256_ecdh_agree"
 kind = "select_branch"
-slice_sha256 = "5959b8860047f1a3a6066f10e35689a1302c53d98d965fd908955ad52d5b820e"
-source = "src/auth/p256_ecdh.rs P256EphemeralSecret::drop; src/traits/ct.rs zeroize_no_fence, align_to_mut and suffix zeroization"
+slice_sha256 = "c1ec8c0742ce96bf950c021e6a8c082abd175db04bf56dc00c8e2a5a68769b2f"
+source = "tools/ct-harness/src/lib.rs ct_entry_p256_ecdh_agree; ct_entry_p256_ecdh_agree diffie_hellman; write_array"
 classification = "public"
-rationale = "Entry rdx is consumed P256EphemeralSecret storage; +0x15 copies it into rsi. +0x153..+0x16e compute aligned_start=(rsi+7)&-8, prefix=aligned_start-rsi, and edx=(32-prefix)&7. No scalar bytes feed edx after that assignment. cmp edx,6 at+0x2fb and je+0x2fe select whether the seventh trailing zero-byte store executes."
-reviewer = "rscrypto selection-hardening review"
-reviewed_at = "2026-10-15"
+rationale = "Public output-pointer guard. Entry RCX=out is stored at rsp+0x130 (+0x14b); no other instruction of the function writes that slot. +0xaf7 reloads it into RAX after the result scratch is cleared (+0xb00..+0xb13). test RAX,RAX (+0xb15) and je (+0xb18) select the 32-byte copy from rsp+0x20 into the caller output and the status. No shared-result byte feeds the predicate. The System V P-256 kernels now run under extern \"sysv64\" (4ef34693), which moved this guard from +0x8b7."
+reviewer = "rscrypto final CI artifact review"
+reviewed_at = "2026-11-19"
 
 [[asm_waiver]]
 target = "x86_64-pc-windows-msvc"
 primitive = "kx.p256_ecdh"
-symbol = "ct_entry_p256_ecdh_agree"
+symbol = "ct_entry_p256_ecdh_public_key"
 kind = "select_branch"
-slice_sha256 = "668acce6bb38a0d4269ef644d3b0a4155b4dd010499ca9b14512190c510a393c"
-source = "tools/ct-harness/src/lib.rs ct_entry_p256_ecdh_agree; ct_entry_p256_ecdh_agree diffie_hellman; write_array; linked IR dereferenceable(32)/dereferenceable(136)"
+slice_sha256 = "7ace01336784dfcee9942b70952c5288272cfdd8e8d9c4ded5f2a2f5ab1cdb8d"
+source = "tools/ct-harness/src/lib.rs ct_entry_p256_ecdh_public_key; write_array"
 classification = "public"
-rationale = "Public output-pointer guard. Entry RCX=out is saved once at rsp+0x138 (+0x116). After diffie_hellman (+0x8a7), +0x8ac reloads it into RAX; test RAX,RAX (+0x8b4) and je (+0x8b7) select the 32-byte caller copy/status. The current linked IR declares result=32 bytes at rsp+0xc0, secret=32 bytes at rsp+0x100, and readonly public=136 bytes at rsp+0x30; these objects do not overlap the saved pointer slot. Intervening calls receive only their bounded objects and do not receive rsp+0x138. The later bounded result clears target rsp+0xc0..0xdf. Shared-result bytes are first loaded after the null branch and never feed its predicate."
+rationale = "Public output-pointer guard. Entry RCX=out moves to RBX at +0x22f; no instruction before it writes RCX. test RBX,RBX (+0x38f) and je (+0x392) select the 65-byte SEC1 store through RBX (+0x3ac..+0x3cb) and the status. The tested register is the base of that store, so the predicate is the caller's destination pointer; no scalar or coordinate byte feeds it."
 reviewer = "rscrypto final CI artifact review"
-reviewed_at = "2026-11-04"
-
-[[asm_waiver]]
-target = "x86_64-pc-windows-msvc"
-primitive = "kx.p256_ecdh"
-symbol = "ct_entry_p256_ecdh_agree"
-kind = "select_branch"
-slice_sha256 = "0f4e8d18474ba4a5e0d2c6ee9337732d742bfec571435655fa2f3c79464c022f"
-source = "src/auth/p256_ecdh.rs P256SharedSecret::drop; src/traits/ct.rs zeroize_no_fence, align_to_mut and suffix zeroization"
-classification = "public"
-rationale = "Current RSI=rsp+0xc0 +0x88f is the 32-byte agreement-result return object passed to diffie_hellman +0x8a7. After optional caller output copy, +0x8da/+0x8e2 computes aligned_start=(rsp+0xc7)&~7; +0x8e6/+0x8e9 derives prefix=aligned_start-RSI; immediate R8D=32 +0x8ec, subtraction +0x8f2 and mask +0x8fb derive R8D=(32-prefix)&7. cmp R8D,6 +0x9c0 / je +0x9c4 skips only seventh suffix zero +0x9c6. Byte-prefix zeros +0x910/+0x92c..+0x947, fixed word loop +0x970 and suffix stores +0x985..+0x9c6 are retained. No secret result byte feeds the predicate. The old +0x9b4 used result at rsp+0xd0; current +0x9c4 is the corresponding result cleanup at rsp+0xc0. Candidate +0x8b7 instead tests saved caller output pointer at rsp+0x138 after reloading RAX +0x8ac; it is rejected as a replacement for this cleanup waiver."
-reviewer = "rscrypto final CI artifact review"
-reviewed_at = "2026-10-24"
-
-# RSA implicit-rejection and OAEP linked-code review, 2026-10-15.
-# Each classification applies only to this target, instruction, and complete function digest.
+reviewed_at = "2026-11-19"
 
 [[asm_waiver]]
 target = "aarch64-apple-darwin"
@@ -12938,30 +12923,6 @@ classification = "public"
 rationale = "Implication filter (x86.rs:651). r10 is the complement of the decoded capability word (+0x580..+0x583). r9 is the read-only IMPLIED table in .rdata (x86.rs:602), bound by contents (+0x579). r8 runs from 0 (+0x576) in steps of 0x80 (+0x590) and stops at 0x780 (+0x594). So 0x60(%r8,%r9) at +0x5ba reads only that table, and je +0x5bf keeps the feature when all its implied capabilities are present. The capability word comes only from CPUID results and XCR0. The open leaves are the _xgetbv result and frame bytes. No frame address escapes, and _xgetbv (+0x15a) receives no pointer and writes no memory. detect_uncached takes only its result pointer, rcx, which +0x10 saves and only the final store at +0x60e uses. No condition reads it. The asm_public_input rule cannot accept this branch: only range analysis of the loop counter can show that the indexed IMPLIED load reads only the table, and the scanner has none."
 reviewer = "rscrypto exact-artifact condition review"
 reviewed_at = "2026-11-12"
-
-[[asm_waiver]]
-target = "x86_64-pc-windows-msvc"
-primitive = "kx.p384_ecdh"
-symbol = "rscrypto::platform::detect::detect_uncached"
-kind = "select_branch"
-slice_sha256 = "20e86ab451584a257c95e00e60531ad0bf72a42e536c81dd14e26e091a9a7cd1"
-source = "src/platform/detect/arch/x86.rs close_x86_implications"
-classification = "public"
-rationale = "Implication filter (x86.rs:651). r10 is the complement of the decoded capability word (+0x580..+0x583). r9 is the read-only IMPLIED table in .rdata (x86.rs:602), bound by contents (+0x579). r8 runs from 0 (+0x576) in steps of 0x80 (+0x590) and stops at 0x780 (+0x594). So 0x60(%r8,%r9) at +0x5ba reads only that table, and je +0x5bf keeps the feature when all its implied capabilities are present. The capability word comes only from CPUID results and XCR0. The open leaves are the _xgetbv result and frame bytes. No frame address escapes, and _xgetbv (+0x15a) receives no pointer and writes no memory. detect_uncached takes only its result pointer, rcx, which +0x10 saves and only the final store at +0x60e uses. No condition reads it. The asm_public_input rule cannot accept this branch: only range analysis of the loop counter can show that the indexed IMPLIED load reads only the table, and the scanner has none."
-reviewer = "rscrypto exact-artifact condition review"
-reviewed_at = "2026-11-12"
-
-[[asm_waiver]]
-target = "x86_64-pc-windows-msvc"
-primitive = "kx.x25519"
-symbol = "rscrypto::platform::detect::detect_uncached"
-kind = "select_branch"
-slice_sha256 = "20e86ab451584a257c95e00e60531ad0bf72a42e536c81dd14e26e091a9a7cd1"
-source = "src/platform/detect/arch/x86.rs close_x86_implications"
-classification = "public"
-rationale = "Implication filter (x86.rs:651). r10 is the complement of the decoded capability word (+0x580..+0x583). r9 is the read-only IMPLIED table in .rdata (x86.rs:602), bound by contents (+0x579). r8 runs from 0 (+0x576) in steps of 0x80 (+0x590) and stops at 0x780 (+0x594). So 0x60(%r8,%r9) at +0x5ba reads only that table, and je +0x5bf keeps the feature when all its implied capabilities are present. The capability word comes only from CPUID results and XCR0. The open leaves are the _xgetbv result and frame bytes. No frame address escapes, and _xgetbv (+0x15a) receives no pointer and writes no memory. detect_uncached takes only its result pointer, rcx, which +0x10 saves and only the final store at +0x60e uses. No condition reads it. The asm_public_input rule cannot accept this branch: only range analysis of the loop counter can show that the indexed IMPLIED load reads only the table, and the scanner has none."
-reviewer = "rscrypto exact-artifact condition review"
-reviewed_at = "2026-11-15"
 
 [[asm_waiver]]
 target = "x86_64-pc-windows-msvc"
