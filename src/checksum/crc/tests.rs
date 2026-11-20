@@ -6,7 +6,7 @@
 
 use alloc::{boxed::Box, vec::Vec};
 
-use super::{Crc, Keys, SLICES, Spec, Word, combine_powers, reference, wide_table};
+use super::{Crc, SLICES, Spec, Word, combine_powers, reference, wide_table};
 
 /// The shipped CRCs with their published check values over `"123456789"`.
 const CATALOG: [(Spec, u64); 7] = [
@@ -88,20 +88,7 @@ fn data<W: Word>(spec: Spec) -> Box<Crc<W>> {
       *entry = W::narrow(value);
     }
   }
-  Box::new(Crc {
-    spec,
-    table: *table,
-    #[cfg(any(
-      target_arch = "aarch64",
-      all(target_arch = "x86_64", target_feature = "sse2"),
-      all(
-        any(target_arch = "powerpc64", target_arch = "riscv64", target_arch = "s390x"),
-        not(feature = "portable-only")
-      )
-    ))]
-    keys: Keys::new(&spec),
-    powers: combine_powers(&spec),
-  })
+  Box::new(Crc::new(spec, *table, combine_powers(&spec)))
 }
 
 fn specs() -> Vec<Spec> {
@@ -150,99 +137,106 @@ fn portable_matches_reference() {
 }
 
 /// The `combine` multipliers that this CPU runs, as `(name, reflected, multiplier)`.
-type Shift<'a> = Box<dyn Fn(bool, u64, usize, &[u64; 64], &Keys) -> u64 + 'a>;
+type Shift<'a> = Box<dyn Fn(u64, usize, &Crc<u64>) -> u64 + 'a>;
 
 fn shifts() -> Vec<(&'static str, Shift<'static>)> {
-  #[cfg_attr(
-    not(any(
-      target_arch = "aarch64",
-      all(target_arch = "x86_64", target_feature = "sse2"),
-      all(
-        any(target_arch = "powerpc64", target_arch = "s390x", target_arch = "riscv64"),
-        not(feature = "portable-only")
-      )
-    )),
-    expect(unused_mut, reason = "accelerated multipliers exist on some architectures only")
-  )]
-  let mut shifts: Vec<(&'static str, Shift<'static>)> = Vec::new();
+  // Each architecture's block extends the list, so no binding needs `mut` where none exists.
+  let shifts: Vec<(&'static str, Shift<'static>)> = Vec::new();
   #[cfg(target_arch = "aarch64")]
-  if crate::platform::caps().has(crate::platform::caps::aarch64::PMULL_READY) {
-    shifts.push((
-      "pmull",
-      Box::new(|reflected, value, len, powers, keys| {
-        // SAFETY: PMULL support is checked above.
-        unsafe {
-          if reflected {
-            super::aarch64::shift::<true>(value, len, powers, keys)
-          } else {
-            super::aarch64::shift::<false>(value, len, powers, keys)
+  let shifts = {
+    let mut shifts = shifts;
+    if crate::platform::caps().has(crate::platform::caps::aarch64::PMULL_READY) {
+      shifts.push((
+        "pmull",
+        Box::new(|value, len, crc: &Crc<u64>| {
+          // SAFETY: PMULL support is checked above.
+          unsafe {
+            if crc.spec.reflected {
+              super::aarch64::shift::<true>(value, len, &crc.powers, &crc.keys)
+            } else {
+              super::aarch64::shift::<false>(value, len, &crc.powers, &crc.keys)
+            }
           }
-        }
-      }),
-    ));
-  }
+        }),
+      ));
+    }
+    shifts
+  };
   #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
-  if crate::platform::caps().has(crate::platform::caps::x86::PCLMUL_READY) {
-    shifts.push((
-      "pclmul",
-      Box::new(|reflected, value, len, powers, keys| {
-        // SAFETY: PCLMULQDQ support is checked above.
-        unsafe {
-          if reflected {
-            super::x86_64::shift::<true>(value, len, powers, keys)
-          } else {
-            super::x86_64::shift::<false>(value, len, powers, keys)
+  let shifts = {
+    let mut shifts = shifts;
+    if crate::platform::caps().has(crate::platform::caps::x86::PCLMUL_READY) {
+      shifts.push((
+        "pclmul",
+        Box::new(|value, len, crc: &Crc<u64>| {
+          // SAFETY: PCLMULQDQ support is checked above.
+          unsafe {
+            if crc.spec.reflected {
+              super::x86_64::shift::<true>(value, len, &crc.powers, &crc.keys)
+            } else {
+              super::x86_64::shift::<false>(value, len, &crc.powers, &crc.keys)
+            }
           }
-        }
-      }),
-    ));
-  }
+        }),
+      ));
+    }
+    shifts
+  };
   #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
-  if crate::platform::caps().has(crate::platform::caps::power::VPMSUM_READY) {
-    shifts.push((
-      "vpmsum",
-      Box::new(|reflected, value, len, powers, keys| {
-        // SAFETY: POWER8 vector crypto support is checked above.
-        unsafe {
-          if reflected {
-            super::power::shift::<true>(value, len, powers, keys)
-          } else {
-            super::power::shift::<false>(value, len, powers, keys)
+  let shifts = {
+    let mut shifts = shifts;
+    if crate::platform::caps().has(crate::platform::caps::power::VPMSUM_READY) {
+      shifts.push((
+        "vpmsum",
+        Box::new(|value, len, crc: &Crc<u64>| {
+          // SAFETY: POWER8 vector crypto support is checked above.
+          unsafe {
+            if crc.spec.reflected {
+              super::power::shift::<true>(value, len, &crc.powers, &crc.keys)
+            } else {
+              super::power::shift::<false>(value, len, &crc.powers, &crc.keys)
+            }
           }
-        }
-      }),
-    ));
-  }
+        }),
+      ));
+    }
+    shifts
+  };
   #[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
-  if crate::platform::caps().has(crate::platform::caps::s390x::VECTOR) {
-    shifts.push((
-      "vgfm",
-      Box::new(|reflected, value, len, powers, keys| {
-        // SAFETY: vector facility support is checked above.
-        unsafe {
-          if reflected {
-            super::s390x::shift::<true>(value, len, powers, keys)
-          } else {
-            super::s390x::shift::<false>(value, len, powers, keys)
+  let shifts = {
+    let mut shifts = shifts;
+    if crate::platform::caps().has(crate::platform::caps::s390x::VECTOR) {
+      shifts.push((
+        "vgfm",
+        Box::new(|value, len, crc: &Crc<u64>| {
+          // SAFETY: vector facility support is checked above.
+          unsafe {
+            if crc.spec.reflected {
+              super::s390x::shift::<true>(value, len, &crc.powers, &crc.keys)
+            } else {
+              super::s390x::shift::<false>(value, len, &crc.powers, &crc.keys)
+            }
           }
-        }
-      }),
-    ));
-  }
+        }),
+      ));
+    }
+    shifts
+  };
   #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
-  {
+  let shifts = {
+    let mut shifts = shifts;
     use crate::platform::caps::riscv;
     let caps = crate::platform::caps();
     if caps.has(riscv::ZBC) {
       shifts.push((
         "zbc",
-        Box::new(|reflected, value, len, powers, keys| {
+        Box::new(|value, len, crc: &Crc<u64>| {
           // SAFETY: Zbc support is checked above.
           unsafe {
-            if reflected {
-              super::riscv64::shift_zbc::<true>(value, len, powers, keys)
+            if crc.spec.reflected {
+              super::riscv64::shift_zbc::<true>(value, len, &crc.powers, &crc.keys)
             } else {
-              super::riscv64::shift_zbc::<false>(value, len, powers, keys)
+              super::riscv64::shift_zbc::<false>(value, len, &crc.powers, &crc.keys)
             }
           }
         }),
@@ -251,19 +245,20 @@ fn shifts() -> Vec<(&'static str, Shift<'static>)> {
     if caps.has(riscv::V.union(riscv::ZVBC)) {
       shifts.push((
         "zvbc",
-        Box::new(|reflected, value, len, powers, keys| {
+        Box::new(|value, len, crc: &Crc<u64>| {
           // SAFETY: V and Zvbc support is checked above.
           unsafe {
-            if reflected {
-              super::riscv64::shift_zvbc::<true>(value, len, powers, keys)
+            if crc.spec.reflected {
+              super::riscv64::shift_zvbc::<true>(value, len, &crc.powers, &crc.keys)
             } else {
-              super::riscv64::shift_zvbc::<false>(value, len, powers, keys)
+              super::riscv64::shift_zvbc::<false>(value, len, &crc.powers, &crc.keys)
             }
           }
         }),
       ));
     }
-  }
+    shifts
+  };
   shifts
 }
 
@@ -281,7 +276,7 @@ fn combine_matches_reference() {
       let combined = crc.combine(check(&spec, a), check(&spec, b), b.len(), portable);
       assert_eq!(combined, expected, "portable: {spec:?} split={split} total={total}");
       for (name, shift) in &accelerated {
-        let shift = |value, len| shift(spec.reflected, value, len, &crc.powers, &crc.keys);
+        let shift = |value, len| shift(value, len, &crc);
         let combined = crc.combine(check(&spec, a), check(&spec, b), b.len(), shift);
         assert_eq!(combined, expected, "{name}: {spec:?} split={split} total={total}");
       }
@@ -309,51 +304,35 @@ fn combine_long_lengths_match_direct_exponentiation() {
       let portable = super::shift_by(value, len, &crc.powers, |v, p| crc.multiply_portable(v, p));
       assert_eq!(portable, expected, "portable: {spec:?} len={len}");
       for (name, shift) in &accelerated {
-        assert_eq!(
-          shift(spec.reflected, value, len, &crc.powers, &crc.keys),
-          expected,
-          "{name}: {spec:?} len={len}"
-        );
+        assert_eq!(shift(value, len, &crc), expected, "{name}: {spec:?} len={len}");
       }
     }
   }
 }
 
-/// A folding engine under test: `(reflected, state, data, keys)` to the new state.
-#[cfg(any(
-  target_arch = "aarch64",
-  all(target_arch = "x86_64", target_feature = "sse2"),
-  all(
-    any(target_arch = "powerpc64", target_arch = "s390x", target_arch = "riscv64"),
-    not(feature = "portable-only")
-  )
-))]
-type Engine<'a> = dyn Fn(bool, u64, &[u8], &Keys) -> u64 + 'a;
+engine! {
+  if {
+    /// A folding engine under test: `(reflected, state, data, keys)` to the new state.
+    type Engine<'a> = dyn Fn(bool, u64, &[u8], &super::Keys) -> u64 + 'a;
 
-/// Checks an accelerated engine over every specification, length, alignment, and state.
-#[cfg(any(
-  target_arch = "aarch64",
-  all(target_arch = "x86_64", target_feature = "sse2"),
-  all(
-    any(target_arch = "powerpc64", target_arch = "s390x", target_arch = "riscv64"),
-    not(feature = "portable-only")
-  )
-))]
-fn engine_matches(name: &str, engine: &Engine<'_>) {
-  let mut rng = Rng(3);
-  let input = rng.bytes(4200);
-  for spec in specs() {
-    let keys = Keys::new(&spec);
-    for len in lengths().into_iter().filter(|&len| len >= 16) {
-      for offset in [0usize, 1, 7, 8] {
-        let part = &input[offset..offset.strict_add(len)];
-        let start = rng.next() & super::mask(spec.width);
-        let got = spec.register(engine(spec.reflected, spec.domain(start), part, &keys));
-        assert_eq!(
-          got,
-          reference(&spec, start, part),
-          "{name}: {spec:?} len={len} offset={offset}"
-        );
+    /// Checks an accelerated engine over every specification, length, alignment, and state.
+    fn engine_matches(name: &str, engine: &Engine<'_>) {
+      let mut rng = Rng(3);
+      let input = rng.bytes(4200);
+      for spec in specs() {
+        let keys = super::Keys::new(&spec);
+        for len in lengths().into_iter().filter(|&len| len >= 16) {
+          for offset in [0usize, 1, 7, 8] {
+            let part = &input[offset..offset.strict_add(len)];
+            let start = rng.next() & super::mask(spec.width);
+            let got = spec.register(engine(spec.reflected, spec.domain(start), part, &keys));
+            assert_eq!(
+              got,
+              reference(&spec, start, part),
+              "{name}: {spec:?} len={len} offset={offset}"
+            );
+          }
+        }
       }
     }
   }
@@ -486,16 +465,20 @@ fn riscv64_engines_match_reference() {
   }
 }
 
-/// The derived CRC-64/XZ keys equal the constants that TiKV's `crc64fast` publishes.
-#[test]
-fn crc64_xz_keys_match_published_constants() {
-  let keys = Keys::new(&CATALOG[5].0);
-  assert_eq!(keys.poly, 0x92d8_af2b_af0e_1e85);
-  assert_eq!(keys.mu, 0x9c3e_466c_1729_63d5);
-  // 128-byte fold: (K_1087, K_1023) as (lo, hi).
-  assert_eq!(keys.fold[7], [0x8757_d71d_4fcc_1000, 0xd7d8_6b2a_f73d_e740]);
-  // 16-byte fold: (K_191, K_127).
-  assert_eq!(keys.fold[0], [0xe05d_d497_ca39_3ae4, 0xdabe_95af_c787_5f40]);
+engine! {
+  if {
+    /// The derived CRC-64/XZ keys equal the constants that TiKV's `crc64fast` publishes.
+    #[test]
+    fn crc64_xz_keys_match_published_constants() {
+      let keys = super::Keys::new(&CATALOG[5].0);
+      assert_eq!(keys.poly, 0x92d8_af2b_af0e_1e85);
+      assert_eq!(keys.mu, 0x9c3e_466c_1729_63d5);
+      // 128-byte fold: (K_1087, K_1023) as (lo, hi).
+      assert_eq!(keys.fold[7], [0x8757_d71d_4fcc_1000, 0xd7d8_6b2a_f73d_e740]);
+      // 16-byte fold: (K_191, K_127).
+      assert_eq!(keys.fold[0], [0xe05d_d497_ca39_3ae4, 0xdabe_95af_c787_5f40]);
+    }
+  }
 }
 
 /// Every tier that this CPU runs, for every shipped CRC, against the reference.

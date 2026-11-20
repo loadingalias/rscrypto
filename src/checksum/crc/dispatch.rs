@@ -4,14 +4,6 @@
 //! selection depends only on the CPU and the force request.
 
 use super::{Algo, Hw, portable, reference};
-#[cfg(any(
-  target_arch = "aarch64",
-  all(target_arch = "x86_64", target_feature = "sse2"),
-  all(target_arch = "powerpc64", not(feature = "portable-only")),
-  all(target_arch = "riscv64", not(feature = "portable-only")),
-  all(target_arch = "s390x", not(feature = "portable-only"))
-))]
-use crate::platform::Caps;
 
 /// A CRC kernel: the word-domain register after `data`.
 pub(in crate::checksum) type Kernel<W> = fn(W, &[u8]) -> W;
@@ -153,37 +145,31 @@ const TIERS: &[CrcForce] = &[
 
 /// Returns `true` when this CPU can run `tier` for a CRC with instruction support `hw`.
 pub(in crate::checksum) fn available(tier: CrcForce, hw: Hw) -> bool {
-  #[cfg(any(
-    target_arch = "aarch64",
-    all(target_arch = "x86_64", target_feature = "sse2"),
-    all(target_arch = "powerpc64", not(feature = "portable-only")),
-    all(target_arch = "riscv64", not(feature = "portable-only")),
-    all(target_arch = "s390x", not(feature = "portable-only"))
-  ))]
-  let caps: Caps = crate::platform::caps();
   let _ = hw;
   match tier {
     CrcForce::Reference | CrcForce::Portable => true,
     #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
-    CrcForce::Pclmul => caps.has(crate::platform::caps::x86::PCLMUL_READY),
+    CrcForce::Pclmul => crate::platform::caps().has(crate::platform::caps::x86::PCLMUL_READY),
     #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
-    CrcForce::Vpclmul => caps.has(crate::platform::caps::x86::VPCLMUL_READY),
+    CrcForce::Vpclmul => crate::platform::caps().has(crate::platform::caps::x86::VPCLMUL_READY),
     #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
-    CrcForce::Hwcrc => hw == Hw::Crc32c && caps.has(crate::platform::caps::x86::CRC32C_READY),
+    CrcForce::Hwcrc => hw == Hw::Crc32c && crate::platform::caps().has(crate::platform::caps::x86::CRC32C_READY),
     #[cfg(target_arch = "aarch64")]
-    CrcForce::Pmull => caps.has(crate::platform::caps::aarch64::PMULL_READY),
+    CrcForce::Pmull => crate::platform::caps().has(crate::platform::caps::aarch64::PMULL_READY),
     #[cfg(target_arch = "aarch64")]
-    CrcForce::PmullEor3 => caps.has(crate::platform::caps::aarch64::PMULL_EOR3_READY),
+    CrcForce::PmullEor3 => crate::platform::caps().has(crate::platform::caps::aarch64::PMULL_EOR3_READY),
     #[cfg(target_arch = "aarch64")]
-    CrcForce::Hwcrc => hw != Hw::None && caps.has(crate::platform::caps::aarch64::CRC_READY),
+    CrcForce::Hwcrc => hw != Hw::None && crate::platform::caps().has(crate::platform::caps::aarch64::CRC_READY),
     #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
-    CrcForce::Vpmsum => caps.has(crate::platform::caps::power::VPMSUM_READY),
+    CrcForce::Vpmsum => crate::platform::caps().has(crate::platform::caps::power::VPMSUM_READY),
     #[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
-    CrcForce::Vgfm => caps.has(crate::platform::caps::s390x::VECTOR),
+    CrcForce::Vgfm => crate::platform::caps().has(crate::platform::caps::s390x::VECTOR),
     #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
-    CrcForce::Zbc => caps.has(crate::platform::caps::riscv::ZBC),
+    CrcForce::Zbc => crate::platform::caps().has(crate::platform::caps::riscv::ZBC),
     #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
-    CrcForce::Zvbc => caps.has(crate::platform::caps::riscv::V.union(crate::platform::caps::riscv::ZVBC)),
+    CrcForce::Zvbc => {
+      crate::platform::caps().has(crate::platform::caps::riscv::V.union(crate::platform::caps::riscv::ZVBC))
+    }
     _ => false,
   }
 }
@@ -299,7 +285,7 @@ pub(in crate::checksum) const fn tier_name(tier: CrcForce) -> &'static str {
 pub(in crate::checksum) fn kernel_name(tier: CrcForce, hw: Hw, len: usize) -> &'static str {
   match tier {
     CrcForce::Auto | CrcForce::Reference | CrcForce::Portable | CrcForce::Hwcrc => tier_name(tier),
-    _ if len < 16 && available(CrcForce::Hwcrc, hw) => tier_name(CrcForce::Hwcrc),
+    _ if len < 16 && hw != Hw::None && available(CrcForce::Hwcrc, hw) => tier_name(CrcForce::Hwcrc),
     _ if len < 16 => tier_name(CrcForce::Portable),
     _ => tier_name(tier),
   }
@@ -316,37 +302,34 @@ fn reference_kernel<A: Algo>(register: A::W, data: &[u8]) -> A::W {
   crc.register_to_word(reference(&crc.spec, crc.word_to_register(register), data))
 }
 
-/// Runs a 64-bit-domain folding engine for CRC `A`, with the portable kernel below 16 bytes.
-///
-/// # Safety
-///
-/// The CPU must support the instructions of `reflected` and `msb`.
-#[cfg(any(
-  target_arch = "aarch64",
-  all(target_arch = "x86_64", target_feature = "sse2"),
-  all(target_arch = "powerpc64", not(feature = "portable-only")),
-  all(target_arch = "riscv64", not(feature = "portable-only")),
-  all(target_arch = "s390x", not(feature = "portable-only"))
-))]
-#[inline(always)]
-pub(in crate::checksum) unsafe fn fold_with<A: Algo>(
-  register: A::W,
-  data: &[u8],
-  reflected: unsafe fn(u64, &[u8], &super::Keys) -> u64,
-  msb: unsafe fn(u64, &[u8], &super::Keys) -> u64,
-) -> A::W {
-  if data.len() < 16 {
-    return portable::update(A::CRC, register, data);
-  }
-  let crc = A::CRC;
-  let state = crc.word_to_domain(register);
-  // SAFETY: the caller guarantees the instructions, and `data` holds at least 16 bytes.
-  let state = unsafe {
-    if crc.spec.reflected {
-      reflected(state, data, &crc.keys)
-    } else {
-      msb(state, data, &crc.keys)
+engine! {
+  if {
+    /// Runs a 64-bit-domain folding engine for CRC `A`, with the portable kernel below 16 bytes.
+    ///
+    /// # Safety
+    ///
+    /// The CPU must support the instructions of `reflected` and `msb`.
+    #[inline(always)]
+    pub(in crate::checksum) unsafe fn fold_with<A: Algo>(
+      register: A::W,
+      data: &[u8],
+      reflected: unsafe fn(u64, &[u8], &super::Keys) -> u64,
+      msb: unsafe fn(u64, &[u8], &super::Keys) -> u64,
+    ) -> A::W {
+      if data.len() < 16 {
+        return portable::update(A::CRC, register, data);
+      }
+      let crc = A::CRC;
+      let state = crc.word_to_domain(register);
+      // SAFETY: the caller guarantees the instructions, and `data` holds at least 16 bytes.
+      let state = unsafe {
+        if crc.spec.reflected {
+          reflected(state, data, &crc.keys)
+        } else {
+          msb(state, data, &crc.keys)
+        }
+      };
+      crc.domain_to_word(state)
     }
-  };
-  crc.domain_to_word(state)
+  }
 }

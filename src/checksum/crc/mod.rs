@@ -22,6 +22,36 @@
 //! `u64`. A reflected register sits in the low bits of the word, an MSB-first register in the top
 //! bits. Tables use this word domain.
 
+/// Expands the `if` items on targets with a carryless-multiply folding engine, and the `else`
+/// items elsewhere. This is the one statement of that condition: AArch64, x86-64 with SSE2, and
+/// POWER, IBM Z, and RISC-V without `portable-only`.
+macro_rules! engine {
+  (if { $($yes:item)* } $(else { $($no:item)* })?) => {
+    $(
+      #[cfg(any(
+        target_arch = "aarch64",
+        all(target_arch = "x86_64", target_feature = "sse2"),
+        all(
+          any(target_arch = "powerpc64", target_arch = "riscv64", target_arch = "s390x"),
+          not(feature = "portable-only")
+        )
+      ))]
+      $yes
+    )*
+    $($(
+      #[cfg(not(any(
+        target_arch = "aarch64",
+        all(target_arch = "x86_64", target_feature = "sse2"),
+        all(
+          any(target_arch = "powerpc64", target_arch = "riscv64", target_arch = "s390x"),
+          not(feature = "portable-only")
+        )
+      )))]
+      $no
+    )*)?
+  };
+}
+
 pub(in crate::checksum) mod api;
 pub(in crate::checksum) mod dispatch;
 pub(in crate::checksum) mod portable;
@@ -179,155 +209,130 @@ const fn xpow(e: u64, g: u64) -> u64 {
   result
 }
 
-#[cfg(any(
-  target_arch = "aarch64",
-  all(target_arch = "x86_64", target_feature = "sse2"),
-  all(
-    any(target_arch = "powerpc64", target_arch = "riscv64", target_arch = "s390x"),
-    not(feature = "portable-only")
-  )
-))]
-/// The low 64 coefficients of `floor(x^128 / (x^64 + g))`.
-#[must_use]
-const fn barrett_quotient(g: u64) -> u64 {
-  // x^128 minus x^64 * G' leaves g * x^64; continue the long division from degree 127.
-  let mut rem = (g as u128) << 64;
-  let mut quotient = 0u64;
-  let modulus = (1u128 << 64) | g as u128;
-  let mut i = 127u32;
-  while i >= 64 {
-    if (rem >> i) & 1 == 1 {
-      quotient |= 1u64 << (i.strict_sub(64));
-      rem ^= modulus << (i.strict_sub(64));
+engine! {
+  if {
+  /// The low 64 coefficients of `floor(x^128 / (x^64 + g))`.
+  #[must_use]
+  const fn barrett_quotient(g: u64) -> u64 {
+    // x^128 minus x^64 * G' leaves g * x^64; continue the long division from degree 127.
+    let mut rem = (g as u128) << 64;
+    let mut quotient = 0u64;
+    let modulus = (1u128 << 64) | g as u128;
+    let mut i = 127u32;
+    while i >= 64 {
+      if (rem >> i) & 1 == 1 {
+        quotient |= 1u64 << (i.strict_sub(64));
+        rem ^= modulus << (i.strict_sub(64));
+      }
+      i = i.strict_sub(1);
     }
-    i = i.strict_sub(1);
+    quotient
   }
-  quotient
-}
 
-#[cfg(any(
-  target_arch = "aarch64",
-  all(target_arch = "x86_64", target_feature = "sse2"),
-  all(
-    any(target_arch = "powerpc64", target_arch = "riscv64", target_arch = "s390x"),
-    not(feature = "portable-only")
-  )
-))]
-/// The inverse of an odd polynomial modulo `z^64`, as a power series.
-#[must_use]
-const fn inverse_mod_z64(p: u64) -> u64 {
-  let mut inverse = 1u64;
-  let mut k = 1u32;
-  while k < 64 {
-    // Coefficient k of p * inverse must be zero.
-    let mut sum = 0u64;
-    let mut i = 1u32;
-    while i <= k {
-      sum ^= ((p >> i) & 1) & ((inverse >> (k.strict_sub(i))) & 1);
+  /// The inverse of an odd polynomial modulo `z^64`, as a power series.
+  #[must_use]
+  const fn inverse_mod_z64(p: u64) -> u64 {
+    let mut inverse = 1u64;
+    let mut k = 1u32;
+    while k < 64 {
+      // Coefficient k of p * inverse must be zero.
+      let mut sum = 0u64;
+      let mut i = 1u32;
+      while i <= k {
+        sum ^= ((p >> i) & 1) & ((inverse >> (k.strict_sub(i))) & 1);
+        i = i.strict_add(1);
+      }
+      inverse |= sum << k;
+      k = k.strict_add(1);
+    }
+    inverse
+  }
+
+  /// Constants for the carryless-multiply folding engines.
+  ///
+  /// A 16-byte lane is a 128-bit value: `lo` is its low 64 bits, `hi` its high 64 bits. A fold by `d`
+  /// bits computes `clmul(lane.lo, key[0]) ^ clmul(lane.hi, key[1])`, which every engine uses for
+  /// both bit orders.
+  #[derive(Clone, Copy, Debug)]
+  pub(in crate::checksum) struct Keys {
+    /// `fold[m - 1]` folds a lane by `16 * m` bytes.
+    pub fold: [[u64; 2]; 32],
+    /// `tail[r]` folds a lane by `r` bytes; `tail[8]` also starts the final reduction.
+    pub tail: [[u64; 2]; 16],
+    /// Barrett constant: the quotient (MSB-first) or the inverse of `poly` (reflected).
+    pub mu: u64,
+    /// Barrett polynomial: `g` (MSB-first) or the reversed `G'` without its top bit (reflected).
+    pub poly: u64,
+    /// All ones when a reflected reduction needs the `z^64` term of the reversed `G'` (width 64).
+    pub top: u64,
+  }
+
+  impl Keys {
+    /// Derives the keys of `spec`.
+    #[must_use]
+    pub(in crate::checksum) const fn new(spec: &Spec) -> Self {
+      let g = spec.poly64();
+      let mut fold = [[0u64; 2]; 32];
+      let mut m = 0usize;
+      while m < 32 {
+        fold[m] = fold_key(spec, ((m as u64).strict_add(1)).strict_mul(128));
+        m = m.strict_add(1);
+      }
+      let mut tail = [[0u64; 2]; 16];
+      let mut r = 1usize;
+      while r < 16 {
+        tail[r] = fold_key(spec, (r as u64).strict_mul(8));
+        r = r.strict_add(1);
+      }
+      if spec.reflected {
+        let poly = (g.reverse_bits() << 1) | 1;
+        Self {
+          fold,
+          tail,
+          mu: inverse_mod_z64(poly),
+          poly,
+          top: if spec.width == 64 { !0 } else { 0 },
+        }
+      } else {
+        Self {
+          fold,
+          tail,
+          mu: barrett_quotient(g),
+          poly: g,
+          top: 0,
+        }
+      }
+    }
+  }
+
+  /// The key pair that folds a lane by `d` bits (`d >= 8`).
+  ///
+  /// MSB-first: `lane = hi * x^64 + lo`, so `lane * x^d = hi * x^(d+64) + lo * x^d`. Reflected: the
+  /// low half holds the high-degree coefficients, and a carryless product of reversed operands is
+  /// the reversed product times `x`, so the exponents drop by one.
+  #[must_use]
+  const fn fold_key(spec: &Spec, d: u64) -> [u64; 2] {
+    let g = spec.poly64();
+    if spec.reflected {
+      [
+        xpow(d.strict_add(63), g).reverse_bits(),
+        xpow(d.strict_sub(1), g).reverse_bits(),
+      ]
+    } else {
+      [xpow(d, g), xpow(d.strict_add(64), g)]
+    }
+  }
+
+  /// `MASK[r..r + 16]` keeps the last `r` bytes of a 16-byte block, for the engines' partial blocks.
+  pub(in crate::checksum) const MASK: [u8; 32] = {
+    let mut mask = [0u8; 32];
+    let mut i = 16usize;
+    while i < 32 {
+      mask[i] = 0xFF;
       i = i.strict_add(1);
     }
-    inverse |= sum << k;
-    k = k.strict_add(1);
-  }
-  inverse
-}
-
-#[cfg(any(
-  target_arch = "aarch64",
-  all(target_arch = "x86_64", target_feature = "sse2"),
-  all(
-    any(target_arch = "powerpc64", target_arch = "riscv64", target_arch = "s390x"),
-    not(feature = "portable-only")
-  )
-))]
-/// Constants for the carryless-multiply folding engines.
-///
-/// A 16-byte lane is a 128-bit value: `lo` is its low 64 bits, `hi` its high 64 bits. A fold by `d`
-/// bits computes `clmul(lane.lo, key[0]) ^ clmul(lane.hi, key[1])`, which every engine uses for
-/// both bit orders.
-#[derive(Clone, Copy, Debug)]
-pub(in crate::checksum) struct Keys {
-  /// `fold[m - 1]` folds a lane by `16 * m` bytes.
-  pub fold: [[u64; 2]; 32],
-  /// `tail[r]` folds a lane by `r` bytes; `tail[8]` also starts the final reduction.
-  pub tail: [[u64; 2]; 16],
-  /// Barrett constant: the quotient (MSB-first) or the inverse of `poly` (reflected).
-  pub mu: u64,
-  /// Barrett polynomial: `g` (MSB-first) or the reversed `G'` without its top bit (reflected).
-  pub poly: u64,
-  /// All ones when a reflected reduction needs the `z^64` term of the reversed `G'` (width 64).
-  pub top: u64,
-}
-
-#[cfg(any(
-  target_arch = "aarch64",
-  all(target_arch = "x86_64", target_feature = "sse2"),
-  all(
-    any(target_arch = "powerpc64", target_arch = "riscv64", target_arch = "s390x"),
-    not(feature = "portable-only")
-  )
-))]
-impl Keys {
-  /// Derives the keys of `spec`.
-  #[must_use]
-  pub(in crate::checksum) const fn new(spec: &Spec) -> Self {
-    let g = spec.poly64();
-    let mut fold = [[0u64; 2]; 32];
-    let mut m = 0usize;
-    while m < 32 {
-      fold[m] = fold_key(spec, ((m as u64).strict_add(1)).strict_mul(128));
-      m = m.strict_add(1);
-    }
-    let mut tail = [[0u64; 2]; 16];
-    let mut r = 1usize;
-    while r < 16 {
-      tail[r] = fold_key(spec, (r as u64).strict_mul(8));
-      r = r.strict_add(1);
-    }
-    if spec.reflected {
-      let poly = (g.reverse_bits() << 1) | 1;
-      Self {
-        fold,
-        tail,
-        mu: inverse_mod_z64(poly),
-        poly,
-        top: if spec.width == 64 { !0 } else { 0 },
-      }
-    } else {
-      Self {
-        fold,
-        tail,
-        mu: barrett_quotient(g),
-        poly: g,
-        top: 0,
-      }
-    }
-  }
-}
-
-#[cfg(any(
-  target_arch = "aarch64",
-  all(target_arch = "x86_64", target_feature = "sse2"),
-  all(
-    any(target_arch = "powerpc64", target_arch = "riscv64", target_arch = "s390x"),
-    not(feature = "portable-only")
-  )
-))]
-/// The key pair that folds a lane by `d` bits (`d >= 8`).
-///
-/// MSB-first: `lane = hi * x^64 + lo`, so `lane * x^d = hi * x^(d+64) + lo * x^d`. Reflected: the
-/// low half holds the high-degree coefficients, and a carryless product of reversed operands is
-/// the reversed product times `x`, so the exponents drop by one.
-#[must_use]
-const fn fold_key(spec: &Spec, d: u64) -> [u64; 2] {
-  let g = spec.poly64();
-  if spec.reflected {
-    [
-      xpow(d.strict_add(63), g).reverse_bits(),
-      xpow(d.strict_sub(1), g).reverse_bits(),
-    ]
-  } else {
-    [xpow(d, g), xpow(d.strict_add(64), g)]
+    mask
+  };
   }
 }
 
@@ -380,44 +385,53 @@ fn clmul_soft(a: u64, b: u64) -> u128 {
   product
 }
 
-#[cfg(any(
-  target_arch = "aarch64",
-  all(target_arch = "x86_64", target_feature = "sse2"),
-  all(
-    any(target_arch = "powerpc64", target_arch = "riscv64", target_arch = "s390x"),
-    not(feature = "portable-only")
-  )
-))]
-/// `MASK[r..r + 16]` keeps the last `r` bytes of a 16-byte block, for the engines' partial blocks.
-pub(in crate::checksum) const MASK: [u8; 32] = {
-  let mut mask = [0u8; 32];
-  let mut i = 16usize;
-  while i < 32 {
-    mask[i] = 0xFF;
-    i = i.strict_add(1);
-  }
-  mask
-};
-
 /// Tables per CRC for slice-by-16.
 pub(in crate::checksum) const SLICES: usize = 16;
 
-/// Everything one CRC needs at run time, derived from its [`Spec`] at compile time.
-///
-/// `W` is the portable register word.
-pub(in crate::checksum) struct Crc<W: 'static> {
-  pub spec: Spec,
-  pub table: [[W; 256]; SLICES],
-  #[cfg(any(
-    target_arch = "aarch64",
-    all(target_arch = "x86_64", target_feature = "sse2"),
-    all(
-      any(target_arch = "powerpc64", target_arch = "riscv64", target_arch = "s390x"),
-      not(feature = "portable-only")
-    )
-  ))]
-  pub keys: Keys,
-  pub powers: [u64; 64],
+engine! {
+  if {
+    /// Everything one CRC needs at run time, derived from its [`Spec`] at compile time.
+    ///
+    /// `W` is the portable register word.
+    pub(in crate::checksum) struct Crc<W: 'static> {
+      pub spec: Spec,
+      pub table: [[W; 256]; SLICES],
+      pub powers: [u64; 64],
+      /// Folding constants.
+      pub keys: Keys,
+    }
+
+    impl<W: 'static> Crc<W> {
+      /// Assembles the data of `spec` around its tables and combine powers.
+      #[must_use]
+      pub(in crate::checksum) const fn new(spec: Spec, table: [[W; 256]; SLICES], powers: [u64; 64]) -> Self {
+        Self {
+          spec,
+          table,
+          powers,
+          keys: Keys::new(&spec),
+        }
+      }
+    }
+  } else {
+    /// Everything one CRC needs at run time, derived from its [`Spec`] at compile time.
+    ///
+    /// `W` is the portable register word. A target without a folding engine keeps no folding
+    /// constants.
+    pub(in crate::checksum) struct Crc<W: 'static> {
+      pub spec: Spec,
+      pub table: [[W; 256]; SLICES],
+      pub powers: [u64; 64],
+    }
+
+    impl<W: 'static> Crc<W> {
+      /// Assembles the data of `spec` around its tables and combine powers.
+      #[must_use]
+      pub(in crate::checksum) const fn new(spec: Spec, table: [[W; 256]; SLICES], powers: [u64; 64]) -> Self {
+        Self { spec, table, powers }
+      }
+    }
+  }
 }
 
 /// Which CRC-32 instruction computes a CRC, if any.
@@ -453,9 +467,9 @@ macro_rules! crc_data {
     const CRC_SPEC: $crate::checksum::crc::Spec = $spec;
     const WIDE: [[u64; 256]; $crate::checksum::crc::SLICES] =
       $crate::checksum::crc::wide_table::<{ $crate::checksum::crc::SLICES }>(&CRC_SPEC, <$word>::BITS);
-    $crate::checksum::crc::Crc::<$word> {
-      spec: CRC_SPEC,
-      table: {
+    $crate::checksum::crc::Crc::<$word>::new(
+      CRC_SPEC,
+      {
         let mut table: [[$word; 256]; $crate::checksum::crc::SLICES] = [[0; 256]; $crate::checksum::crc::SLICES];
         let mut k = 0usize;
         while k < $crate::checksum::crc::SLICES {
@@ -474,17 +488,8 @@ macro_rules! crc_data {
         }
         table
       },
-      #[cfg(any(
-        target_arch = "aarch64",
-        all(target_arch = "x86_64", target_feature = "sse2"),
-        all(
-          any(target_arch = "powerpc64", target_arch = "riscv64", target_arch = "s390x"),
-          not(feature = "portable-only")
-        )
-      ))]
-      keys: $crate::checksum::crc::Keys::new(&CRC_SPEC),
-      powers: $crate::checksum::crc::combine_powers(&CRC_SPEC),
-    }
+      $crate::checksum::crc::combine_powers(&CRC_SPEC),
+    )
   }};
 }
 pub(in crate::checksum) use crc_data;
