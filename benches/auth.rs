@@ -1114,14 +1114,14 @@ fn ed25519_public_key(c: &mut Criterion) {
 // check requires a rejection once the last byte of r changes.
 //
 // `ecdsa-p256/verify/reuse-key`: each library's key object is built outside timing. Timed: verification.
-// - rscrypto reuses a parsed key with its precomputed verification table, and a parsed signature.
+// - rscrypto reuses a prepared key, which holds its verification table, and a parsed signature.
 // - RustCrypto reuses a `VerifyingKey` and a parsed signature.
 // - aws-lc-rs reuses a `ParsedPublicKey`. It takes the signature bytes and re-encodes them as DER in each call.
 // - ring is absent: it has no API that reuses a parsed key.
 //
 // `ecdsa-p256/verify/import-key`: every row gets the same 65-byte uncompressed SEC1 key and 64-byte signature.
 // Timed: key parsing and validation, signature parsing, verification, and drop of per-call objects.
-// - rscrypto uses its single-use SEC1 verification, which builds no verification table.
+// - rscrypto parses the key, which builds no verification table, and verifies once.
 // - aws-lc-rs allocates an EVP_PKEY and re-encodes the signature as DER.
 // Each row's check also requires the same path to reject a key that is not on the curve.
 fn ecdsa_p256_verify(c: &mut Criterion) {
@@ -1138,8 +1138,9 @@ fn ecdsa_p256_verify(c: &mut Criterion) {
     .to_sec1_bytes();
   let off_curve = flip_last_bit(sec1);
   p256::PublicKey::from_sec1_bytes(&off_curve).expect_err("RustCrypto must reject the changed point");
-  let public =
-    EcdsaP256PublicKey::from_sec1_bytes(&sec1).expect("valid authentication benchmark operation must succeed");
+  let public = EcdsaP256PublicKey::from_sec1_bytes(&sec1)
+    .expect("valid authentication benchmark operation must succeed")
+    .prepare();
   aws_lc_bench! {
     let aws_key = aws_lc_rs::signature::ParsedPublicKey::new(&aws_lc_rs::signature::ECDSA_P256_SHA256_FIXED, sec1)
       .expect("valid authentication benchmark operation must succeed");
@@ -1223,8 +1224,9 @@ fn ecdsa_p256_verify(c: &mut Criterion) {
 
   // Each closure is one row's timed import-and-verify path.
   let rscrypto_import = |key: &[u8; 65], message: &[u8], signature: &[u8; 64]| {
-    EcdsaP256Signature::from_bytes(*signature)
-      .is_ok_and(|signature| EcdsaP256PublicKey::verify_sec1(key, message, &signature).is_ok())
+    EcdsaP256PublicKey::from_sec1_bytes(key).is_ok_and(|key| {
+      EcdsaP256Signature::from_bytes(*signature).is_ok_and(|signature| key.verify(message, &signature).is_ok())
+    })
   };
   let rustcrypto_import = |key: &[u8; 65], message: &[u8], signature: &[u8; 64]| {
     let (Ok(key), Ok(signature)) = (
@@ -1405,8 +1407,7 @@ fn ecdsa_p256_sign(c: &mut Criterion) {
 }
 
 // ECDSA P-256 public key from a secret key held outside timing. Timed: the fixed-base scalar multiplication and the
-// library's public-key object. rscrypto's object also precomputes its verification table; RustCrypto's holds
-// only the affine point. `rscrypto-blinded` adds caller-supplied scalar blinding. Every row must return the NIST
+// library's public-key object, which holds only the affine point in both libraries. `rscrypto-blinded` adds caller-supplied scalar blinding. Every row must return the NIST
 // CAVP public key for the NIST private key.
 fn ecdsa_p256_public_key(c: &mut Criterion) {
   if !bench_config::selected("ecdsa-p256/public-key") {
@@ -1456,14 +1457,14 @@ fn ecdsa_p256_public_key(c: &mut Criterion) {
 // check requires a rejection once the last byte of r changes.
 //
 // `ecdsa-p384/verify/reuse-key`: each library's key object is built outside timing. Timed: verification.
-// - rscrypto reuses a parsed key with its precomputed verification table, and a parsed signature.
+// - rscrypto reuses a prepared key, which holds its verification table, and a parsed signature.
 // - RustCrypto reuses a `VerifyingKey` and a parsed signature.
 // - aws-lc-rs reuses a `ParsedPublicKey`. It takes the signature bytes and re-encodes them as DER in each call.
 // - ring is absent: it has no API that reuses a parsed key.
 //
 // `ecdsa-p384/verify/import-key`: every row gets the same 97-byte uncompressed SEC1 key and 96-byte signature.
 // Timed: key parsing and validation, signature parsing, verification, and drop of per-call objects.
-// - rscrypto uses its single-use SEC1 verification, which builds no verification table.
+// - rscrypto parses the key, which builds no verification table, and verifies once.
 // - aws-lc-rs allocates an EVP_PKEY and re-encodes the signature as DER.
 // Each row's check also requires the same path to reject a key that is not on the curve.
 fn ecdsa_p384_verify(c: &mut Criterion) {
@@ -1480,8 +1481,9 @@ fn ecdsa_p384_verify(c: &mut Criterion) {
     .to_sec1_bytes();
   let off_curve = flip_last_bit(sec1);
   p384::PublicKey::from_sec1_bytes(&off_curve).expect_err("RustCrypto must reject the changed point");
-  let public =
-    EcdsaP384PublicKey::from_sec1_bytes(&sec1).expect("valid authentication benchmark operation must succeed");
+  let public = EcdsaP384PublicKey::from_sec1_bytes(&sec1)
+    .expect("valid authentication benchmark operation must succeed")
+    .prepare();
   aws_lc_bench! {
     let aws_key = aws_lc_rs::signature::ParsedPublicKey::new(&aws_lc_rs::signature::ECDSA_P384_SHA384_FIXED, sec1)
       .expect("valid authentication benchmark operation must succeed");
@@ -1565,8 +1567,9 @@ fn ecdsa_p384_verify(c: &mut Criterion) {
 
   // Each closure is one row's timed import-and-verify path.
   let rscrypto_import = |key: &[u8; 97], message: &[u8], signature: &[u8; 96]| {
-    EcdsaP384Signature::from_bytes(*signature)
-      .is_ok_and(|signature| EcdsaP384PublicKey::verify_sec1(key, message, &signature).is_ok())
+    EcdsaP384PublicKey::from_sec1_bytes(key).is_ok_and(|key| {
+      EcdsaP384Signature::from_bytes(*signature).is_ok_and(|signature| key.verify(message, &signature).is_ok())
+    })
   };
   let rustcrypto_import = |key: &[u8; 97], message: &[u8], signature: &[u8; 96]| {
     let (Ok(key), Ok(signature)) = (
@@ -1747,8 +1750,7 @@ fn ecdsa_p384_sign(c: &mut Criterion) {
 }
 
 // ECDSA P-384 public key from a secret key held outside timing. Timed: the fixed-base scalar multiplication and the
-// library's public-key object. rscrypto's object also precomputes its verification table; RustCrypto's holds
-// only the affine point. `rscrypto-blinded` adds caller-supplied scalar blinding. Every row must return the NIST
+// library's public-key object, which holds only the affine point in both libraries. `rscrypto-blinded` adds caller-supplied scalar blinding. Every row must return the NIST
 // CAVP public key for the NIST private key.
 fn ecdsa_p384_public_key(c: &mut Criterion) {
   if !bench_config::selected("ecdsa-p384/public-key") {
@@ -1816,16 +1818,15 @@ fn verify_der_row<'a>(
 
 // DER signature parsing, message hashing and verification are timed in both groups.
 // Reuse amortizes each parsed key; ring only participates in import because its public API reparses the key.
-// Import gives every library the same uncompressed SEC1 bytes once per call, as a TLS certificate check does:
-// `rscrypto` is `verify_sec1`, which skips the verification table a parsed key builds for reuse, and
-// `rscrypto-parse-key` is `from_sec1_bytes` followed by `verify`, which builds it.
+// Import gives every library the same uncompressed SEC1 bytes once per call, as a TLS certificate check does;
+// rscrypto parses the key and verifies once, and its reuse rows verify with a prepared key.
 // The `verify-der-<hash>` groups repeat both tasks with the curve's other TLS hash: P-256 with SHA-384 and
 // P-384 with SHA-256. RustCrypto has no message API for a hash other than the curve's own, so it hashes the
 // message on the timed path and verifies the digest through `PrehashVerifier`.
 macro_rules! ecdsa_verify_der {
   (
     $function:ident, $group:literal, $curve:ident, $public:ty, $signature:ty, $oracle:ty, $secret:expr, $algorithm:ident,
-    $cross:literal, $digest:ty, $cross_verify:ident, $cross_sec1:ident, $cross_algorithm:ident
+    $cross:literal, $digest:ty, $cross_verify:ident, $cross_algorithm:ident
   ) => {
     fn $function(c: &mut Criterion) {
       if !bench_config::selected(concat!($group, "/verify-der")) {
@@ -1834,7 +1835,7 @@ macro_rules! ecdsa_verify_der {
       let signing = $curve::ecdsa::SigningKey::from_slice(&$secret).expect("benchmark signing key");
       let oracle = signing.verifying_key();
       let sec1 = oracle.to_sec1_point(false);
-      let public = <$public>::from_sec1_bytes(sec1.as_bytes()).expect("benchmark public key");
+      let public = <$public>::from_sec1_bytes(sec1.as_bytes()).expect("benchmark public key").prepare();
       aws_lc_bench! {
         let aws = aws_lc_rs::signature::ParsedPublicKey::new(&aws_lc_rs::signature::$algorithm, sec1.as_bytes())
           .expect("benchmark public key");
@@ -1882,18 +1883,9 @@ macro_rules! ecdsa_verify_der {
         import.bench_function(
           BenchmarkId::new("rscrypto", len),
           verify_der_row(
-            |message, bytes| <$signature>::from_der(bytes)
-              .is_ok_and(|sig| <$public>::verify_sec1(black_box(sec1.as_bytes()), message, &sig).is_ok()),
-            data, signature.as_bytes(), tampered.as_bytes(),
-          ),
-        );
-        import.bench_function(
-          BenchmarkId::new("rscrypto-parse-key", len),
-          verify_der_row(
-            |message, bytes| {
-              let key = <$public>::from_sec1_bytes(black_box(sec1.as_bytes())).expect("benchmark public key");
+            |message, bytes| <$public>::from_sec1_bytes(black_box(sec1.as_bytes())).is_ok_and(|key| {
               <$signature>::from_der(bytes).is_ok_and(|sig| key.verify(message, &sig).is_ok())
-            },
+            }),
             data, signature.as_bytes(), tampered.as_bytes(),
           ),
         );
@@ -1978,18 +1970,9 @@ macro_rules! ecdsa_verify_der {
         import.bench_function(
           BenchmarkId::new("rscrypto", len),
           verify_der_row(
-            |message, bytes| <$signature>::from_der(bytes)
-              .is_ok_and(|sig| <$public>::$cross_sec1(black_box(sec1.as_bytes()), message, &sig).is_ok()),
-            data, signature.as_bytes(), tampered.as_bytes(),
-          ),
-        );
-        import.bench_function(
-          BenchmarkId::new("rscrypto-parse-key", len),
-          verify_der_row(
-            |message, bytes| {
-              let key = <$public>::from_sec1_bytes(black_box(sec1.as_bytes())).expect("benchmark public key");
+            |message, bytes| <$public>::from_sec1_bytes(black_box(sec1.as_bytes())).is_ok_and(|key| {
               <$signature>::from_der(bytes).is_ok_and(|sig| key.$cross_verify(message, &sig).is_ok())
-            },
+            }),
             data, signature.as_bytes(), tampered.as_bytes(),
           ),
         );
@@ -2039,7 +2022,6 @@ ecdsa_verify_der!(
   "sha384",
   sha2::Sha384,
   verify_sha384,
-  verify_sec1_sha384,
   ECDSA_P256_SHA384_ASN1
 );
 ecdsa_verify_der!(
@@ -2054,7 +2036,6 @@ ecdsa_verify_der!(
   "sha256",
   sha2::Sha256,
   verify_sha256,
-  verify_sec1_sha256,
   ECDSA_P384_SHA256_ASN1
 );
 

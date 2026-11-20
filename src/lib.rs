@@ -327,9 +327,13 @@ pub use auth::{CompositeMlDsaError, CompositeMlDsaKeyError};
 #[cfg(any(feature = "ecdsa-p256", feature = "ecdsa-p384"))]
 pub use auth::{EcdsaBlindedSigningError, EcdsaError, EcdsaKeyGenerationError};
 #[cfg(feature = "ecdsa-p256")]
-pub use auth::{EcdsaP256Keypair, EcdsaP256PublicKey, EcdsaP256SecretKey, EcdsaP256Signature};
+pub use auth::{
+  EcdsaP256Keypair, EcdsaP256PreparedPublicKey, EcdsaP256PublicKey, EcdsaP256SecretKey, EcdsaP256Signature,
+};
 #[cfg(feature = "ecdsa-p384")]
-pub use auth::{EcdsaP384Keypair, EcdsaP384PublicKey, EcdsaP384SecretKey, EcdsaP384Signature};
+pub use auth::{
+  EcdsaP384Keypair, EcdsaP384PreparedPublicKey, EcdsaP384PublicKey, EcdsaP384SecretKey, EcdsaP384Signature,
+};
 #[cfg(feature = "ed25519")]
 pub use auth::{Ed25519KeyError, Ed25519Keypair, Ed25519PublicKey, Ed25519SecretKey, Ed25519Signature};
 #[cfg(feature = "slh-dsa")]

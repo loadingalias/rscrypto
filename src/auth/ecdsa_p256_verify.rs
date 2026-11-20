@@ -2,9 +2,59 @@
 //! (`R = 2^256`), for [`super::verify`]'s point layer.
 //!
 //! The portable Rust is the authority. AArch64 runs flag-chained assembly for multiplication,
-//! squaring, addition and subtraction.
+//! squaring, addition and subtraction. x86-64 CPUs with BMI2 and ADX run generated `MULX`
+//! assembly through [`FeAdx`], which only this module's dispatch functions use.
 
-use super::{Modulus, P256_FIELD_MODULUS, verify::VerifyField};
+use super::{
+  Affine, COMB_TABLE_SIZE, Curve, Jacobian, Modulus, P256_FIELD_MODULUS, Uint,
+  verify::{self, VerifyField},
+};
+
+/// `generator_scalar·G + point_scalar·Q` for a key Q used once, on this CPU's fastest field.
+pub(super) fn scalar_mul_two_single(
+  curve: &Curve<4>,
+  generator_scalar: Uint<4>,
+  point_scalar: Uint<4>,
+  point: Affine<4>,
+) -> Jacobian<4> {
+  #[cfg(all(target_arch = "x86_64", not(feature = "portable-only"), not(miri)))]
+  if has_bmi2_adx() {
+    return verify::scalar_mul_two_single::<FeAdx, 4>(curve, generator_scalar, point_scalar, point);
+  }
+  verify::scalar_mul_two_single::<Fe, 4>(curve, generator_scalar, point_scalar, point)
+}
+
+/// `generator_scalar·G + point_scalar·Q` with Q's comb table, on this CPU's fastest field.
+pub(super) fn scalar_mul_two(
+  curve: &Curve<4>,
+  generator_scalar: Uint<4>,
+  point_scalar: Uint<4>,
+  point_table: &[Affine<4>; COMB_TABLE_SIZE],
+) -> Jacobian<4> {
+  #[cfg(all(target_arch = "x86_64", not(feature = "portable-only"), not(miri)))]
+  if has_bmi2_adx() {
+    return verify::scalar_mul_two::<FeAdx, 4>(curve, generator_scalar, point_scalar, point_table);
+  }
+  verify::scalar_mul_two::<Fe, 4>(curve, generator_scalar, point_scalar, point_table)
+}
+
+/// The comb table of a public point, on this CPU's fastest field.
+pub(super) fn comb_table(point: Affine<4>) -> [Affine<4>; COMB_TABLE_SIZE] {
+  #[cfg(all(target_arch = "x86_64", not(feature = "portable-only"), not(miri)))]
+  if has_bmi2_adx() {
+    return verify::comb_table::<FeAdx, 4>(point);
+  }
+  verify::comb_table::<Fe, 4>(point)
+}
+
+/// Whether the cached CPU capabilities include BMI2 and ADX.
+#[cfg(all(target_arch = "x86_64", not(feature = "portable-only"), not(miri)))]
+#[inline(always)]
+fn has_bmi2_adx() -> bool {
+  use crate::platform::caps::x86;
+  // A build that already requires BMI2 and ADX folds the check away.
+  cfg!(all(target_feature = "bmi2", target_feature = "adx")) || crate::platform::caps().has(x86::BMI2.union(x86::ADX))
+}
 
 /// A P-256 field element in Montgomery form, as canonical limbs below p.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -657,6 +707,400 @@ impl VerifyField<4> for Fe {
   }
 }
 
+/// A P-256 field element whose multiplication and squaring run the BMI2/ADX kernels.
+///
+/// Only [`scalar_mul_two_single`], [`scalar_mul_two`] and [`comb_table`] run the point layer on
+/// this type, and each first confirms BMI2 and ADX. No other code can name it.
+#[cfg(all(target_arch = "x86_64", not(feature = "portable-only"), not(miri)))]
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct FeAdx([u64; 4]);
+
+#[cfg(all(target_arch = "x86_64", not(feature = "portable-only"), not(miri)))]
+impl VerifyField<4> for FeAdx {
+  const ZERO: Self = Self([0; 4]);
+  const ONE: Self = Self(FIELD_ONE);
+  const MODULUS: &'static Modulus<4> = &P256_FIELD_MODULUS;
+
+  #[inline(always)]
+  fn from_limbs(limbs: [u64; 4]) -> Self {
+    Self(limbs)
+  }
+
+  #[inline(always)]
+  fn limbs(self) -> [u64; 4] {
+    self.0
+  }
+
+  #[inline(always)]
+  fn add(self, rhs: Self) -> Self {
+    Self(x86_64::add_mod(self.0, &rhs.0))
+  }
+
+  #[inline(always)]
+  fn sub(self, rhs: Self) -> Self {
+    Self(x86_64::sub_mod(self.0, &rhs.0))
+  }
+
+  #[inline(always)]
+  fn mul(self, rhs: Self) -> Self {
+    // SAFETY: Only this module's dispatch functions use `FeAdx`, after they confirm BMI2 and ADX.
+    Self(unsafe { x86_64::montgomery_mul_bmi2_adx(&self.0, &rhs.0) })
+  }
+
+  #[inline(always)]
+  fn square(self) -> Self {
+    // SAFETY: Only this module's dispatch functions use `FeAdx`, after they confirm BMI2 and ADX.
+    Self(unsafe { x86_64::montgomery_square_bmi2_adx(&self.0) })
+  }
+}
+
+/// x86-64 field kernels with the canonical results of [`Fe`]'s portable authority.
+///
+/// `scripts/asm/p256.py` generates the `asm!` templates from `scripts/asm/p256_x86_64.py`, and
+/// its `simulate` mode checks them against Python integers. Multiplication and squaring need
+/// BMI2 `MULX` and the ADX `ADCX`/`ADOX` pair, so that each product row runs its low-half and
+/// high-half carry chains through CF and OF. Addition and subtraction need only the x86-64
+/// baseline. Every block keeps the operands and the 512-bit product in the 13 registers that
+/// Rust inline assembly leaves, and reads memory only at fixed offsets from its operands.
+#[cfg(all(target_arch = "x86_64", not(feature = "portable-only"), not(miri)))]
+mod x86_64 {
+  /// Return `a·b·2^-256 mod p` for canonical inputs below `p`.
+  ///
+  /// # Safety
+  ///
+  /// The CPU must support BMI2 and ADX.
+  #[inline(always)]
+  pub(super) unsafe fn montgomery_mul_bmi2_adx(a: &[u64; 4], b: &[u64; 4]) -> [u64; 4] {
+    let (r0, r1, r2, r3): (u64, u64, u64, u64);
+    // SAFETY: The caller guarantees BMI2 and ADX. The block reads 32 bytes from each live,
+    // 8-byte-aligned operand at fixed offsets, writes no memory, and uses no stack. Every
+    // register it writes is a declared output, and flags are clobbered by default.
+    unsafe {
+      core::arch::asm!(
+        "mov rdx, qword ptr [{a}]",
+        "mulx {w1}, {w0}, qword ptr [{b}]",
+        "mulx {w2}, {lo}, qword ptr [{b} + 8]",
+        "add {w1}, {lo}",
+        "mulx {w3}, {lo}, qword ptr [{b} + 16]",
+        "adc {w2}, {lo}",
+        "mulx {w4}, {lo}, qword ptr [{b} + 24]",
+        "adc {w3}, {lo}",
+        "adc {w4}, 0",
+        "mov rdx, qword ptr [{a} + 8]",
+        "xor {w5}, {w5}",
+        "mulx {hi}, {lo}, qword ptr [{b}]",
+        "adcx {w1}, {lo}",
+        "adox {w2}, {hi}",
+        "mulx {hi}, {lo}, qword ptr [{b} + 8]",
+        "adcx {w2}, {lo}",
+        "adox {w3}, {hi}",
+        "mulx {hi}, {lo}, qword ptr [{b} + 16]",
+        "adcx {w3}, {lo}",
+        "adox {w4}, {hi}",
+        "mulx {hi}, {lo}, qword ptr [{b} + 24]",
+        "adcx {w4}, {lo}",
+        "adox {w5}, {hi}",
+        "adc {w5}, 0",
+        "mov rdx, qword ptr [{a} + 16]",
+        "xor {w6}, {w6}",
+        "mulx {hi}, {lo}, qword ptr [{b}]",
+        "adcx {w2}, {lo}",
+        "adox {w3}, {hi}",
+        "mulx {hi}, {lo}, qword ptr [{b} + 8]",
+        "adcx {w3}, {lo}",
+        "adox {w4}, {hi}",
+        "mulx {hi}, {lo}, qword ptr [{b} + 16]",
+        "adcx {w4}, {lo}",
+        "adox {w5}, {hi}",
+        "mulx {hi}, {lo}, qword ptr [{b} + 24]",
+        "adcx {w5}, {lo}",
+        "adox {w6}, {hi}",
+        "adc {w6}, 0",
+        "mov rdx, qword ptr [{a} + 24]",
+        "xor {w7}, {w7}",
+        "mulx {hi}, {lo}, qword ptr [{b}]",
+        "adcx {w3}, {lo}",
+        "adox {w4}, {hi}",
+        "mulx {hi}, {lo}, qword ptr [{b} + 8]",
+        "adcx {w4}, {lo}",
+        "adox {w5}, {hi}",
+        "mulx {hi}, {lo}, qword ptr [{b} + 16]",
+        "adcx {w5}, {lo}",
+        "adox {w6}, {hi}",
+        "mulx {hi}, {lo}, qword ptr [{b} + 24]",
+        "adcx {w6}, {lo}",
+        "adox {w7}, {hi}",
+        "adc {w7}, 0",
+        "mov {lo}, {w0}",
+        "shl {lo}, 32",
+        "mov {hi}, {w0}",
+        "shr {hi}, 32",
+        "mov rdx, 18446744069414584321",
+        "mulx {b}, {a}, {w0}",
+        "add {w1}, {lo}",
+        "adc {w2}, {hi}",
+        "adc {w3}, {a}",
+        "adc {w4}, {b}",
+        "sbb {w0}, {w0}",
+        "mov {lo}, {w1}",
+        "shl {lo}, 32",
+        "mov {hi}, {w1}",
+        "shr {hi}, 32",
+        "mov rdx, 18446744069414584321",
+        "mulx {b}, {a}, {w1}",
+        "sub {b}, {w0}",
+        "add {w2}, {lo}",
+        "adc {w3}, {hi}",
+        "adc {w4}, {a}",
+        "adc {w5}, {b}",
+        "sbb {w1}, {w1}",
+        "mov {lo}, {w2}",
+        "shl {lo}, 32",
+        "mov {hi}, {w2}",
+        "shr {hi}, 32",
+        "mov rdx, 18446744069414584321",
+        "mulx {b}, {a}, {w2}",
+        "sub {b}, {w1}",
+        "add {w3}, {lo}",
+        "adc {w4}, {hi}",
+        "adc {w5}, {a}",
+        "adc {w6}, {b}",
+        "sbb {w2}, {w2}",
+        "mov {lo}, {w3}",
+        "shl {lo}, 32",
+        "mov {hi}, {w3}",
+        "shr {hi}, 32",
+        "mov rdx, 18446744069414584321",
+        "mulx {b}, {a}, {w3}",
+        "sub {b}, {w2}",
+        "add {w4}, {lo}",
+        "adc {w5}, {hi}",
+        "adc {w6}, {a}",
+        "adc {w7}, {b}",
+        "sbb {w3}, {w3}",
+        "mov {lo}, 18446744069414584321",
+        "mov {hi:e}, 4294967295",
+        "sub {w4}, -1",
+        "sbb {w5}, {hi}",
+        "sbb {w6}, 0",
+        "sbb {w7}, {lo}",
+        "sbb {a}, {a}",
+        "sub {a}, {w3}",
+        "mov {b:e}, {a:e}",
+        "xor {lo}, {lo}",
+        "sub {lo}, {b}",
+        "add {w4}, {a}",
+        "adc {w5}, {b}",
+        "adc {w6}, 0",
+        "adc {w7}, {lo}",
+        a = inout(reg) a.as_ptr() => _,
+        b = inout(reg) b.as_ptr() => _,
+        w0 = out(reg) _, w1 = out(reg) _, w2 = out(reg) _, w3 = out(reg) _,
+        w4 = out(reg) r0, w5 = out(reg) r1, w6 = out(reg) r2, w7 = out(reg) r3,
+        lo = out(reg) _, hi = out(reg) _,
+        out("rdx") _,
+        options(pure, readonly, nostack),
+      );
+    }
+    [r0, r1, r2, r3]
+  }
+
+  /// Return `a²·2^-256 mod p` for a canonical input below `p`.
+  ///
+  /// # Safety
+  ///
+  /// The CPU must support BMI2 and ADX.
+  #[inline(always)]
+  pub(super) unsafe fn montgomery_square_bmi2_adx(a: &[u64; 4]) -> [u64; 4] {
+    let (r0, r1, r2, r3): (u64, u64, u64, u64);
+    // SAFETY: As for `montgomery_mul_bmi2_adx`, with one 32-byte operand.
+    unsafe {
+      core::arch::asm!(
+        "mov rdx, qword ptr [{a}]",
+        "mulx {w2}, {w1}, qword ptr [{a} + 8]",
+        "mulx {w3}, {lo}, qword ptr [{a} + 16]",
+        "add {w2}, {lo}",
+        "mulx {w4}, {lo}, qword ptr [{a} + 24]",
+        "adc {w3}, {lo}",
+        "adc {w4}, 0",
+        "mov rdx, qword ptr [{a} + 8]",
+        "xor {w5}, {w5}",
+        "mulx {hi}, {lo}, qword ptr [{a} + 16]",
+        "adcx {w3}, {lo}",
+        "adox {w4}, {hi}",
+        "mulx {hi}, {lo}, qword ptr [{a} + 24]",
+        "adcx {w4}, {lo}",
+        "adox {w5}, {hi}",
+        "adc {w5}, 0",
+        "mov rdx, qword ptr [{a} + 16]",
+        "mulx {w6}, {lo}, qword ptr [{a} + 24]",
+        "add {w5}, {lo}",
+        "adc {w6}, 0",
+        "add {w1}, {w1}",
+        "adc {w2}, {w2}",
+        "adc {w3}, {w3}",
+        "adc {w4}, {w4}",
+        "adc {w5}, {w5}",
+        "adc {w6}, {w6}",
+        "mov {w7:e}, 0",
+        "adc {w7}, 0",
+        "mov rdx, qword ptr [{a}]",
+        "mulx {hi}, {w0}, rdx",
+        "add {w1}, {hi}",
+        "mov rdx, qword ptr [{a} + 8]",
+        "mulx {hi}, {lo}, rdx",
+        "adc {w2}, {lo}",
+        "adc {w3}, {hi}",
+        "mov rdx, qword ptr [{a} + 16]",
+        "mulx {hi}, {lo}, rdx",
+        "adc {w4}, {lo}",
+        "adc {w5}, {hi}",
+        "mov rdx, qword ptr [{a} + 24]",
+        "mulx {hi}, {lo}, rdx",
+        "adc {w6}, {lo}",
+        "adc {w7}, {hi}",
+        "mov {lo}, {w0}",
+        "shl {lo}, 32",
+        "mov {hi}, {w0}",
+        "shr {hi}, 32",
+        "mov rdx, 18446744069414584321",
+        "mulx {t}, {a}, {w0}",
+        "add {w1}, {lo}",
+        "adc {w2}, {hi}",
+        "adc {w3}, {a}",
+        "adc {w4}, {t}",
+        "sbb {w0}, {w0}",
+        "mov {lo}, {w1}",
+        "shl {lo}, 32",
+        "mov {hi}, {w1}",
+        "shr {hi}, 32",
+        "mov rdx, 18446744069414584321",
+        "mulx {t}, {a}, {w1}",
+        "sub {t}, {w0}",
+        "add {w2}, {lo}",
+        "adc {w3}, {hi}",
+        "adc {w4}, {a}",
+        "adc {w5}, {t}",
+        "sbb {w1}, {w1}",
+        "mov {lo}, {w2}",
+        "shl {lo}, 32",
+        "mov {hi}, {w2}",
+        "shr {hi}, 32",
+        "mov rdx, 18446744069414584321",
+        "mulx {t}, {a}, {w2}",
+        "sub {t}, {w1}",
+        "add {w3}, {lo}",
+        "adc {w4}, {hi}",
+        "adc {w5}, {a}",
+        "adc {w6}, {t}",
+        "sbb {w2}, {w2}",
+        "mov {lo}, {w3}",
+        "shl {lo}, 32",
+        "mov {hi}, {w3}",
+        "shr {hi}, 32",
+        "mov rdx, 18446744069414584321",
+        "mulx {t}, {a}, {w3}",
+        "sub {t}, {w2}",
+        "add {w4}, {lo}",
+        "adc {w5}, {hi}",
+        "adc {w6}, {a}",
+        "adc {w7}, {t}",
+        "sbb {w3}, {w3}",
+        "mov {lo}, 18446744069414584321",
+        "mov {hi:e}, 4294967295",
+        "sub {w4}, -1",
+        "sbb {w5}, {hi}",
+        "sbb {w6}, 0",
+        "sbb {w7}, {lo}",
+        "sbb {a}, {a}",
+        "sub {a}, {w3}",
+        "mov {t:e}, {a:e}",
+        "xor {lo}, {lo}",
+        "sub {lo}, {t}",
+        "add {w4}, {a}",
+        "adc {w5}, {t}",
+        "adc {w6}, 0",
+        "adc {w7}, {lo}",
+        a = inout(reg) a.as_ptr() => _,
+        t = out(reg) _,
+        w0 = out(reg) _, w1 = out(reg) _, w2 = out(reg) _, w3 = out(reg) _,
+        w4 = out(reg) r0, w5 = out(reg) r1, w6 = out(reg) r2, w7 = out(reg) r3,
+        lo = out(reg) _, hi = out(reg) _,
+        out("rdx") _,
+        options(pure, readonly, nostack),
+      );
+    }
+    [r0, r1, r2, r3]
+  }
+
+  /// Return `left + right mod p` for canonical inputs below `p`.
+  #[inline(always)]
+  pub(super) fn add_mod(left: [u64; 4], right: &[u64; 4]) -> [u64; 4] {
+    let [mut d0, mut d1, mut d2, mut d3] = left;
+    // SAFETY: The block reads 32 bytes from the live, 8-byte-aligned operand at fixed offsets,
+    // writes no memory, uses no stack, and runs only baseline x86-64 instructions. Every register
+    // it writes is a declared output, and flags are clobbered by default.
+    unsafe {
+      core::arch::asm!(
+        "add {d0}, qword ptr [{right}]",
+        "adc {d1}, qword ptr [{right} + 8]",
+        "adc {d2}, qword ptr [{right} + 16]",
+        "adc {d3}, qword ptr [{right} + 24]",
+        "mov {cs:e}, 0",
+        "adc {cs}, 0",
+        "mov {t3}, 18446744069414584321",
+        "mov {t1:e}, 4294967295",
+        "sub {d0}, -1",
+        "sbb {d1}, {t1}",
+        "sbb {d2}, 0",
+        "sbb {d3}, {t3}",
+        "sbb {m}, {m}",
+        "add {m}, {cs}",
+        "mov {t1:e}, {m:e}",
+        "xor {t3}, {t3}",
+        "sub {t3}, {t1}",
+        "add {d0}, {m}",
+        "adc {d1}, {t1}",
+        "adc {d2}, 0",
+        "adc {d3}, {t3}",
+        right = in(reg) right.as_ptr(),
+        d0 = inout(reg) d0, d1 = inout(reg) d1, d2 = inout(reg) d2, d3 = inout(reg) d3,
+        cs = out(reg) _, m = out(reg) _, t1 = out(reg) _, t3 = out(reg) _,
+        options(pure, readonly, nostack),
+      );
+    }
+    [d0, d1, d2, d3]
+  }
+
+  /// Return `left - right mod p` for canonical inputs below `p`.
+  #[inline(always)]
+  pub(super) fn sub_mod(left: [u64; 4], right: &[u64; 4]) -> [u64; 4] {
+    let [mut d0, mut d1, mut d2, mut d3] = left;
+    // SAFETY: As for `add_mod`.
+    unsafe {
+      core::arch::asm!(
+        "sub {d0}, qword ptr [{right}]",
+        "sbb {d1}, qword ptr [{right} + 8]",
+        "sbb {d2}, qword ptr [{right} + 16]",
+        "sbb {d3}, qword ptr [{right} + 24]",
+        "sbb {m}, {m}",
+        "mov {t1:e}, {m:e}",
+        "xor {t3}, {t3}",
+        "sub {t3}, {t1}",
+        "add {d0}, {m}",
+        "adc {d1}, {t1}",
+        "adc {d2}, 0",
+        "adc {d3}, {t3}",
+        right = in(reg) right.as_ptr(),
+        d0 = inout(reg) d0, d1 = inout(reg) d1, d2 = inout(reg) d2, d3 = inout(reg) d3,
+        m = out(reg) _, t1 = out(reg) _, t3 = out(reg) _,
+        options(pure, readonly, nostack),
+      );
+    }
+    [d0, d1, d2, d3]
+  }
+}
+
 #[cfg(test)]
 mod tests {
   use super::super::P256_FIELD;
@@ -700,6 +1144,19 @@ mod tests {
       }
       assert!(a.square() == a.square_portable(), "{:x?}²", a.0);
       assert!(a.square() == a.mul_portable(a), "{:x?}² as a product", a.0);
+      #[cfg(all(target_arch = "x86_64", not(feature = "portable-only")))]
+      if super::has_bmi2_adx() {
+        use super::super::verify::VerifyField as _;
+        let x = super::FeAdx(a.0);
+        for b in [previous, Fe(edges[index % edges.len()])] {
+          let y = super::FeAdx(b.0);
+          assert!(x.mul(y).0 == a.mul_portable(b).0, "{:x?} · {:x?}", a.0, b.0);
+          assert!(x.add(y).0 == a.add_portable(b).0, "{:x?} + {:x?}", a.0, b.0);
+          assert!(x.sub(y).0 == a.sub_portable(b).0, "{:x?} - {:x?}", a.0, b.0);
+          assert!(y.sub(x).0 == b.sub_portable(a).0, "{:x?} - {:x?}", b.0, a.0);
+        }
+        assert!(x.square().0 == a.square_portable().0, "{:x?}²", a.0);
+      }
       previous = a;
     }
   }

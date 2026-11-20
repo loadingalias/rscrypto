@@ -382,6 +382,7 @@ pub(super) fn invert_montgomery(value: &[u64; 6]) -> [u64; 6] {
 /// bits; the multiple uses `f^-1 mod 2^6`, so one pass clears at most six.
 /// Matrix entries are tracked modulo 2^64; the module bounds make the final
 /// values exact.
+#[cfg(feature = "p384-ecdh")]
 fn divsteps_vartime(mut delta: i64, mut f: u64, mut g: u64) -> (i64, Transition) {
   let (mut u, mut v, mut q, mut r) = (1u64, 0u64, 0u64, 1u64);
   let mut remaining = BATCH_STEPS_U32;
@@ -427,6 +428,7 @@ fn divsteps_vartime(mut delta: i64, mut f: u64, mut g: u64) -> (i64, Transition)
 ///
 /// SECURITY: Run time depends on `value`. Pass only values derived from public
 /// data.
+#[cfg(feature = "p384-ecdh")]
 pub(super) fn invert_montgomery_vartime(value: &[u64; 6]) -> [u64; 6] {
   let mut f = MODULUS;
   let mut g = to_signed62(value);

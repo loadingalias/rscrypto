@@ -115,6 +115,7 @@ fi
 run_checks verify
 [[ "$mode" != targets ]] || exit 0
 
+"$python" scripts/asm/p256.py check
 "$python" scripts/asm/p384.py check
 "$python" scripts/asm/rsa_pair.py check
 "$python" scripts/asm/provenance.py check

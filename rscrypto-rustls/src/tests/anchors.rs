@@ -180,9 +180,9 @@ fn ecdsa_and_mldsa_anchor_keys_are_retained() {
   for &kind in CREDENTIALS {
     let expected = match kind {
       #[cfg(feature = "ecdsa-p256")]
-      Credential::P256 => 65 + size_of::<rscrypto::EcdsaP256PublicKey>(),
+      Credential::P256 => 65 + size_of::<rscrypto::EcdsaP256PreparedPublicKey>(),
       #[cfg(feature = "ecdsa-p384")]
-      Credential::P384 => 97 + size_of::<rscrypto::EcdsaP384PublicKey>(),
+      Credential::P384 => 97 + size_of::<rscrypto::EcdsaP384PreparedPublicKey>(),
       #[cfg(feature = "ml-dsa")]
       Credential::MlDsa65 => {
         1952

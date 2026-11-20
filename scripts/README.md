@@ -18,6 +18,7 @@ Those entry points call the supporting modules.
 | `check/qualified.py`                   | local qualification reuse and release status identity |
 | `check/dependencies.sh`                | `just check`, CI x86-64 Linux row |
 | `check/lint-independent-workspaces.sh` | `check/check.sh` |
+| `asm/p256.py check`                    | `check/check.sh` |
 | `asm/p384.py check`                    | `check/check.sh` |
 | `asm/rsa_pair.py check`                | `check/check.sh` |
 | `asm/provenance.py check`              | `check/check.sh` |
@@ -84,6 +85,16 @@ The other assembly in those files is written by hand.
 
 `asm/p384_test.py` (part of `just test-scripts`) checks that edits and single dropped carries are detected.
 Native differential tests against the portable implementation are the runtime evidence.
+
+## Generated P-256 verification assembly
+
+`asm/p256_x86_64.py` generates the x86-64 field kernels in `src/auth/ecdsa_p256_verify.rs`: BMI2/ADX
+multiplication and squaring, and baseline addition and subtraction for public-input ECDSA verification.
+`asm/p256.py` has the same `check`, `write`, and `simulate [--cases N]` modes as `asm/p384.py`, and simulates
+the kernels in the same bit-exact x86-64 model against Python integers.
+`asm/p256_test.py` (part of `just test-scripts`) checks that template edits and each kernel's first and last
+dropped carry are detected.
+Native differential tests against the portable field are the runtime evidence.
 
 ## Generated paired RSA assembly
 

@@ -128,6 +128,13 @@ A restored virtual-machine snapshot or another copied memory image is not detect
     it selects BMI2/ADX field multiplication and squaring and fused in-place point doubling.
     CPUs without BMI2 and ADX use the portable multiplication and point formulas.
   - Other targets use the safe Rust reference implementation.
+- **ECDSA P-256** signing and key derivation run the P-256 fixed-base assembly on Apple and Linux AArch64 and on
+  Linux and Windows x86-64, unless `portable-only` or Miri is active. Verification of public inputs runs owned field
+  kernels: flag-chained assembly on AArch64, and on x86-64 BMI2/ADX `MULX` assembly after cached runtime detection.
+  Other CPUs and targets use the portable field.
+- **ECDSA P-384** signing and key derivation run the AArch64 fixed-base assembly on Apple and Linux AArch64, and the
+  P-384 ECDH fixed-base kernel on Linux and Windows x86-64. Other targets, `portable-only`, and Miri use the portable
+  comb.
 
 The [P-256 ECDH development snapshot](../benchmark_results/OVERVIEW.md#p-256-ecdh-development-snapshot) records the September 2026 results for Graviton3, Graviton4,
 and Intel Granite Rapids on Linux and Windows, with their source identities.

@@ -246,7 +246,16 @@ mod p256_platform;
 mod p256_portable;
 #[cfg(feature = "p384-ecdh")]
 pub mod p384_ecdh;
-#[cfg(feature = "p384-ecdh")]
+#[cfg(any(
+  feature = "p384-ecdh",
+  all(
+    feature = "ecdsa-p384",
+    target_arch = "x86_64",
+    any(target_os = "linux", target_os = "windows"),
+    not(feature = "portable-only"),
+    not(miri)
+  )
+))]
 mod p384_portable;
 #[cfg(feature = "pbkdf2")]
 pub mod pbkdf2;
@@ -353,9 +362,13 @@ pub use curve25519_edwards::{
 #[cfg(any(feature = "ecdsa-p256", feature = "ecdsa-p384"))]
 pub use ecdsa::{EcdsaBlindedSigningError, EcdsaError, EcdsaKeyGenerationError};
 #[cfg(feature = "ecdsa-p256")]
-pub use ecdsa::{EcdsaP256Keypair, EcdsaP256PublicKey, EcdsaP256SecretKey, EcdsaP256Signature};
+pub use ecdsa::{
+  EcdsaP256Keypair, EcdsaP256PreparedPublicKey, EcdsaP256PublicKey, EcdsaP256SecretKey, EcdsaP256Signature,
+};
 #[cfg(feature = "ecdsa-p384")]
-pub use ecdsa::{EcdsaP384Keypair, EcdsaP384PublicKey, EcdsaP384SecretKey, EcdsaP384Signature};
+pub use ecdsa::{
+  EcdsaP384Keypair, EcdsaP384PreparedPublicKey, EcdsaP384PublicKey, EcdsaP384SecretKey, EcdsaP384Signature,
+};
 #[cfg(all(rscrypto_internal, feature = "diag", feature = "ecdsa-p256"))]
 pub use ecdsa::{
   diag_ecdsa_p256_basepoint_blinded_limb_digest, diag_ecdsa_p256_final_multiply_limb_digest,

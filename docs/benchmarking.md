@@ -681,16 +681,16 @@ the default Bench workflow does not provision them and excludes this optional ta
     and a chunk.
 - Ed25519 and ECDSA verification has two tasks.
   - `verify/reuse-key` builds each library's key object outside timing and times verification.
-    `rscrypto` and Dalek reuse the decoded Ed25519 point. `rscrypto` reuses its ECDSA verification table,
-    and RustCrypto reuses a `VerifyingKey`.
+    `rscrypto` and Dalek reuse the decoded Ed25519 point. `rscrypto` reuses an ECDSA prepared key, which holds
+    its verification table, and RustCrypto reuses a `VerifyingKey`.
     aws-lc-rs reuses a `ParsedPublicKey`, which saves parsing and allocation.
     AWS-LC still decodes the Ed25519 point in each call, and re-encodes an ECDSA signature as DER in each call.
     ring and dryoc have no API that reuses a parsed key, so they are absent.
   - `verify/import-key` gives every library the same encoded key and signature bytes,
     and times key import and validation, signature parsing, verification, and destruction,
     as a TLS certificate or handshake check does.
-    ECDSA `rscrypto` is `verify_sec1`, which skips the verification table that key reuse amortizes,
-    as rscrypto-rustls does for a key that verifies once. aws-lc-rs allocates an `EVP_PKEY`.
+    ECDSA `rscrypto` parses the key, which builds no verification table, and verifies once,
+    as rscrypto-rustls does for a key that is not a trust anchor. aws-lc-rs allocates an `EVP_PKEY`.
   - Each check also requires the timed path to reject a key that is not a curve point.
   - The diagnostic `verify-phase/portable-double-scalar` and `verify-phase/aarch64-asm-double-scalar` rows
     include portable public-point decoding and result encoding; they do not measure cached-key verification alone.
@@ -820,11 +820,10 @@ the default Bench workflow does not provision them and excludes this optional ta
   AWS-LC receives its native ASN.1 signature form,
   so it does not convert fixed-width signatures to DER.
   `verify-der/import-key` also imports the same uncompressed SEC1 key and includes ring's ASN.1 verifier.
-  Its `rscrypto` row is `verify_sec1`, the single-use path rscrypto-rustls takes;
-  `rscrypto-parse-key` is `from_sec1_bytes` followed by `verify`, which also builds the verification table.
+  Its `rscrypto` row is `from_sec1_bytes` followed by `verify`, the single-use path that rscrypto-rustls takes.
   Ring has no parsed-key reuse API and is absent from the reuse group.
   `verify-der-sha384` (P-256) and `verify-der-sha256` (P-384) repeat both tasks with the curve's other TLS hash.
-  There `rscrypto` is `verify_sha384`/`verify_sha256` and `verify_sec1_sha384`/`verify_sec1_sha256`;
+  There `rscrypto` is `verify_sha384`/`verify_sha256` on a prepared key and on a parsed key;
   RustCrypto hashes the message on the timed path and calls `PrehashVerifier::verify_prehash`,
   because its message API uses only the curve's own hash.
   Every row verifies an independently generated signature and rejects changed scalars

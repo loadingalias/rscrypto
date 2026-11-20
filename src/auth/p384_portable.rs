@@ -1,4 +1,5 @@
-//! Portable P-384 arithmetic and encoding authority for ephemeral ECDH.
+//! Portable P-384 arithmetic and encoding authority for ephemeral ECDH, and the fixed-base
+//! product of x86-64 ECDSA P-384.
 //!
 //! AArch64 builds route field multiplication, squaring, addition,
 //! subtraction, small multiples, and the fixed-base comb scan through
@@ -14,6 +15,7 @@
 //! full-table masked scans and never choose a branch or memory address. This
 //! is a source-level property; timing claims require target binary evidence.
 
+#[cfg(feature = "p384-ecdh")]
 use core::cmp::Ordering;
 
 use super::ecdsa_generator_tables::{
@@ -30,17 +32,23 @@ mod divsteps;
 #[path = "p384_x86_64.rs"]
 mod x86_64;
 
+#[cfg(feature = "p384-ecdh")]
 pub(super) const FIELD_BYTES: usize = 48;
+#[cfg(feature = "p384-ecdh")]
 pub(super) const SEC1_BYTES: usize = 97;
 const LIMBS: usize = 6;
 const WIDE_LIMBS: usize = 2 * LIMBS;
 /// Signed radix-32 digits cover 385 bits so the top digit absorbs the final carry.
+#[cfg(feature = "p384-ecdh")]
 const WINDOW_BITS: usize = 5;
+#[cfg(feature = "p384-ecdh")]
 const WINDOW_DIGITS: usize = 77;
 /// Precomputed multiples `1P..=16P` for signed digits in `[-15, 16]`.
+#[cfg(feature = "p384-ecdh")]
 const WINDOW_TABLE_SIZE: usize = 16;
 const COMB_ROWS: usize = 48;
 
+#[cfg(feature = "p384-ecdh")]
 const _: () = assert!(WINDOW_DIGITS * WINDOW_BITS >= 385);
 const _: () = assert!(COMB_ROWS * P384_SIGNING_COMB_WIDTH == 384);
 
@@ -52,6 +60,7 @@ const FIELD_MODULUS: Uint = Uint([
   0xffff_ffff_ffff_ffff,
   0xffff_ffff_ffff_ffff,
 ]);
+#[cfg(feature = "p384-ecdh")]
 const SCALAR_MODULUS: Uint = Uint([
   0xecec_196a_ccc5_2973,
   0x581a_0db2_48b0_a77a,
@@ -78,6 +87,7 @@ const FIELD_ONE_MONTGOMERY: Uint = Uint([
   0x0000_0000_0000_0000,
   0x0000_0000_0000_0000,
 ]);
+#[cfg(feature = "p384-ecdh")]
 const CURVE_B_MONTGOMERY: Uint = Uint([
   0x0811_8871_9d41_2dcc,
   0xf729_add8_7a4c_32ec,
@@ -94,6 +104,7 @@ struct Uint([u64; LIMBS]);
 impl Uint {
   const ZERO: Self = Self([0; LIMBS]);
 
+  #[cfg(feature = "p384-ecdh")]
   fn from_be_bytes(bytes: &[u8; FIELD_BYTES]) -> Self {
     let mut limbs = [0u64; LIMBS];
     for (limb, chunk) in limbs.iter_mut().zip(bytes.rchunks_exact(8)) {
@@ -104,6 +115,7 @@ impl Uint {
     Self(limbs)
   }
 
+  #[cfg(feature = "p384-ecdh")]
   fn write_be(self, out: &mut [u8; FIELD_BYTES]) {
     for (chunk, limb) in out.rchunks_exact_mut(8).zip(self.0) {
       chunk.copy_from_slice(&limb.to_be_bytes());
@@ -111,6 +123,7 @@ impl Uint {
   }
 
   /// Variable-time comparison for public values and rejection sampling.
+  #[cfg(feature = "p384-ecdh")]
   fn cmp_vartime(&self, other: &Self) -> Ordering {
     for (&left, &right) in self.0.iter().zip(other.0.iter()).rev() {
       if left != right {
@@ -211,6 +224,7 @@ impl Uint {
 
   /// Return `candidate` when `mask` is all ones and zero when it is all zeros.
   #[inline(always)]
+  #[cfg(feature = "p384-ecdh")]
   fn masked(candidate: &[u64; LIMBS], mask: u64) -> Self {
     Self(candidate.map(|limb| limb & mask))
   }
@@ -232,6 +246,7 @@ impl Uint {
 struct Scalar(Uint);
 
 impl Scalar {
+  #[cfg(feature = "p384-ecdh")]
   fn from_bytes(bytes: &[u8; FIELD_BYTES]) -> Self {
     Self(Uint::from_be_bytes(bytes))
   }
@@ -243,6 +258,7 @@ impl Scalar {
   }
 
   /// Recode into signed radix-32 digits in `[-15, 16]`, stored as two's complement.
+  #[cfg(feature = "p384-ecdh")]
   fn signed_window_digits(&self) -> WindowDigits {
     let mut digits = WindowDigits([0u8; WINDOW_DIGITS]);
     let mut carry = 0u64;
@@ -281,8 +297,10 @@ impl Drop for Scalar {
   }
 }
 
+#[cfg(feature = "p384-ecdh")]
 struct WindowDigits([u8; WINDOW_DIGITS]);
 
+#[cfg(feature = "p384-ecdh")]
 impl Drop for WindowDigits {
   fn drop(&mut self) {
     ct::zeroize(&mut self.0);
@@ -297,6 +315,7 @@ impl FieldElement {
   const ZERO: Self = Self(Uint::ZERO);
   const ONE: Self = Self(FIELD_ONE_MONTGOMERY);
 
+  #[cfg(feature = "p384-ecdh")]
   fn from_uint(value: Uint) -> Self {
     Self(montgomery_mul(value, FIELD_R2))
   }
@@ -354,6 +373,7 @@ impl FieldElement {
   }
 
   #[inline(always)]
+  #[cfg(feature = "p384-ecdh")]
   fn negate(self) -> Self {
     Self::ZERO.sub(self)
   }
@@ -467,6 +487,7 @@ impl FieldElement {
   /// Return the inverse of a nonzero public element and zero for zero.
   ///
   /// SECURITY: Variable time. Pass only values derived from public data.
+  #[cfg(feature = "p384-ecdh")]
   fn invert_public(self) -> Self {
     Self(Uint(divsteps::invert_montgomery_vartime(&self.0.0)))
   }
@@ -523,6 +544,7 @@ struct Affine {
 }
 
 impl Affine {
+  #[cfg(feature = "p384-ecdh")]
   fn is_on_curve(self) -> bool {
     let lhs = self.y.square();
     let rhs = self
@@ -534,6 +556,7 @@ impl Affine {
     lhs == rhs
   }
 
+  #[cfg(feature = "p384-ecdh")]
   fn encode_sec1(self) -> [u8; SEC1_BYTES] {
     let mut bytes = [0u8; SEC1_BYTES];
     bytes[0] = 0x04;
@@ -548,6 +571,7 @@ impl Affine {
 
   /// Select `sign(digit) * table[|digit| - 1]` and report whether `digit` is
   /// zero, in which case the point is meaningless.
+  #[cfg(feature = "p384-ecdh")]
   fn select_signed(table: &[Self; WINDOW_TABLE_SIZE], digit: u8) -> (Self, u64) {
     let sign = 0u8.wrapping_sub(digit >> 7);
     let magnitude = usize::from((digit ^ sign).wrapping_sub(sign));
@@ -661,6 +685,7 @@ impl Jacobian {
   }
 
   /// Return the double of this point; see [`Self::double_formula`].
+  #[cfg(feature = "p384-ecdh")]
   fn double(self) -> Self {
     let mut point = self;
     point.double_in_place();
@@ -749,6 +774,7 @@ impl Jacobian {
 
   /// Add an affine point to any point. Either operand may be infinity, and the
   /// finite operands may be equal.
+  #[cfg(feature = "p384-ecdh")]
   fn add_mixed_complete(self, rhs: Affine, rhs_infinity_mask: u64) -> Self {
     let (sum, equal) = self.add_mixed_formula_with_equality(rhs);
     let sum = Self::select(sum, self.double(), equal);
@@ -769,6 +795,7 @@ impl Jacobian {
     }
   }
 
+  #[cfg(feature = "p384-ecdh")]
   fn affine_x(self) -> FieldElement {
     self.x.mul(self.z.invert().square())
   }
@@ -809,6 +836,7 @@ fn scalar_mul_generator(scalar: &Scalar) -> SecretJacobian {
 /// The entries depend only on the public point, so one variable-time inversion
 /// normalizes them all (Montgomery's batch trick). Affine entries make every
 /// window addition mixed and halve the coordinates the secret scan reads.
+#[cfg(feature = "p384-ecdh")]
 fn precompute_window_table(point: Affine) -> [Affine; WINDOW_TABLE_SIZE] {
   let base = Jacobian::from_affine(point);
   let mut multiples = [base; WINDOW_TABLE_SIZE];
@@ -837,6 +865,7 @@ fn precompute_window_table(point: Affine) -> [Affine; WINDOW_TABLE_SIZE] {
 }
 
 /// Multiply a public point by a secret scalar with a fixed signed window.
+#[cfg(feature = "p384-ecdh")]
 fn scalar_mul_window(scalar: &Scalar, table: &[Affine; WINDOW_TABLE_SIZE]) -> SecretJacobian {
   let digits = scalar.signed_window_digits();
   let (top, top_infinity) = Affine::select_signed(table, digits.0[WINDOW_DIGITS - 1]);
@@ -867,8 +896,10 @@ fn scalar_mul_window(scalar: &Scalar, table: &[Affine; WINDOW_TABLE_SIZE]) -> Se
 
 /// Validated finite public point on P-384.
 #[derive(Clone, Copy)]
+#[cfg(feature = "p384-ecdh")]
 pub(super) struct PublicPoint(Affine);
 
+#[cfg(feature = "p384-ecdh")]
 impl PublicPoint {
   /// Parse canonical uncompressed SEC1 and reject off-curve points.
   pub(super) fn from_sec1_bytes(bytes: &[u8]) -> Option<Self> {
@@ -897,18 +928,40 @@ impl PublicPoint {
 ///
 /// This comparison is variable time. It is used only for rejection sampling,
 /// whose outcome is outside the constant-time claim.
+#[cfg(feature = "p384-ecdh")]
 pub(super) fn scalar_is_canonical_nonzero(bytes: &[u8; FIELD_BYTES]) -> bool {
   let candidate = Uint::from_be_bytes(bytes);
   candidate.zero_mask() == 0 && candidate.cmp_vartime(&SCALAR_MODULUS).is_lt()
 }
 
+/// The affine `k·G` for a canonical nonzero scalar `k` in little-endian limbs, as canonical
+/// little-endian limbs `x || y`. ECDSA signing and public-key derivation take their fixed-base
+/// product here.
+#[cfg(all(
+  feature = "ecdsa-p384",
+  target_arch = "x86_64",
+  any(target_os = "linux", target_os = "windows"),
+  not(feature = "portable-only"),
+  not(miri)
+))]
+pub(super) fn scalar_mul_generator_words(scalar: &[u64; LIMBS]) -> [u64; 2 * LIMBS] {
+  let point = scalar_mul_generator(&Scalar(Uint(*scalar))).0.to_affine();
+  let mut out = [0u64; 2 * LIMBS];
+  let (x, y) = out.split_at_mut(LIMBS);
+  x.copy_from_slice(&point.x.to_uint().0);
+  y.copy_from_slice(&point.y.to_uint().0);
+  out
+}
+
 /// Derive the public point for a canonical nonzero scalar.
+#[cfg(feature = "p384-ecdh")]
 pub(super) fn public_key_from_scalar(bytes: &[u8; FIELD_BYTES]) -> PublicPoint {
   let scalar = Scalar::from_bytes(bytes);
   PublicPoint(scalar_mul_generator(&scalar).0.to_affine())
 }
 
 /// Write the ECC CDH x-coordinate for a canonical nonzero scalar.
+#[cfg(feature = "p384-ecdh")]
 pub(super) fn agree(bytes: &[u8; FIELD_BYTES], public: PublicPoint, shared: &mut [u8; FIELD_BYTES]) {
   let table = precompute_window_table(public.0);
   let scalar = Scalar::from_bytes(bytes);

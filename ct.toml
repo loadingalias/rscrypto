@@ -3904,8 +3904,8 @@ name = "x86_64-unknown-linux-gnu"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 3747
-compiler_api_sha256 = "127b875fd1acdfd27a77871e77dda6072d7171a1581fc79dbcb4457950eb4dfe"
+compiler_api_item_count = 3757
+compiler_api_sha256 = "c99ac4ee1e8eb05bc92250045e17be8aec0f7a04b458b149bc0163a4216d853d"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "required"
@@ -3915,8 +3915,8 @@ name = "aarch64-unknown-linux-gnu"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 3747
-compiler_api_sha256 = "127b875fd1acdfd27a77871e77dda6072d7171a1581fc79dbcb4457950eb4dfe"
+compiler_api_item_count = 3757
+compiler_api_sha256 = "c99ac4ee1e8eb05bc92250045e17be8aec0f7a04b458b149bc0163a4216d853d"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "required"
@@ -3949,8 +3949,8 @@ group = "win"
 backend = "llvm"
 linker = "msvc-link-unpinned"
 claim = "ct-intended"
-compiler_api_item_count = 3747
-compiler_api_sha256 = "127b875fd1acdfd27a77871e77dda6072d7171a1581fc79dbcb4457950eb4dfe"
+compiler_api_item_count = 3757
+compiler_api_sha256 = "c99ac4ee1e8eb05bc92250045e17be8aec0f7a04b458b149bc0163a4216d853d"
 physical_timing = "required"
 binsec = "unsupported"
 binsec_reason = "BINSEC PE/Windows evidence is not part of the current release evidence gate."
@@ -3971,8 +3971,8 @@ name = "aarch64-apple-darwin"
 group = "macos"
 backend = "llvm"
 linker = "apple-ld-unpinned"
-compiler_api_item_count = 3747
-compiler_api_sha256 = "127b875fd1acdfd27a77871e77dda6072d7171a1581fc79dbcb4457950eb4dfe"
+compiler_api_item_count = 3757
+compiler_api_sha256 = "c99ac4ee1e8eb05bc92250045e17be8aec0f7a04b458b149bc0163a4216d853d"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -3983,8 +3983,8 @@ name = "s390x-unknown-linux-gnu"
 group = "ibm"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 3747
-compiler_api_sha256 = "127b875fd1acdfd27a77871e77dda6072d7171a1581fc79dbcb4457950eb4dfe"
+compiler_api_item_count = 3757
+compiler_api_sha256 = "c99ac4ee1e8eb05bc92250045e17be8aec0f7a04b458b149bc0163a4216d853d"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -3995,8 +3995,8 @@ name = "powerpc64le-unknown-linux-gnu"
 group = "ibm"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 3747
-compiler_api_sha256 = "127b875fd1acdfd27a77871e77dda6072d7171a1581fc79dbcb4457950eb4dfe"
+compiler_api_item_count = 3757
+compiler_api_sha256 = "c99ac4ee1e8eb05bc92250045e17be8aec0f7a04b458b149bc0163a4216d853d"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -4007,8 +4007,8 @@ name = "riscv64gc-unknown-linux-gnu"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 3747
-compiler_api_sha256 = "127b875fd1acdfd27a77871e77dda6072d7171a1581fc79dbcb4457950eb4dfe"
+compiler_api_item_count = 3757
+compiler_api_sha256 = "c99ac4ee1e8eb05bc92250045e17be8aec0f7a04b458b149bc0163a4216d853d"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -5130,8 +5130,11 @@ limitation = "Blinding callbacks and entropy-source behavior are external and co
 id = "signature.public_parse_serialize_and_verify"
 api = [
   "rscrypto::{Ed25519,EcdsaP256,EcdsaP384}PublicKey::{from_bytes,to_bytes,as_bytes,verify}",
-  "rscrypto::EcdsaP256PublicKey::{verify_sha384,verify_sec1,verify_sec1_sha384}",
-  "rscrypto::EcdsaP384PublicKey::{verify_sha256,verify_sec1,verify_sec1_sha256}",
+  "rscrypto::EcdsaP256PublicKey::{verify_sha384,prepare}",
+  "rscrypto::EcdsaP384PublicKey::{verify_sha256,prepare}",
+  "rscrypto::{EcdsaP256,EcdsaP384}PreparedPublicKey::{public_key,verify}",
+  "rscrypto::EcdsaP256PreparedPublicKey::verify_sha384",
+  "rscrypto::EcdsaP384PreparedPublicKey::verify_sha256",
   "rscrypto::{Ed25519,EcdsaP256,EcdsaP384}Signature::{from_bytes,from_der,to_bytes,as_bytes}",
   "rscrypto::{Ed25519,EcdsaP256,EcdsaP384}PublicKey::{from_spki_der,to_spki_der}",
   "rscrypto::{EcdsaP256,EcdsaP384}Signature::to_der_into",
@@ -5880,7 +5883,7 @@ public = ["public_key"]
 may_leak = ["public_key", "external_random_source_failure"]
 must_not_leak_ref = "common_secret_data"
 required = ["tier_a"]
-notes = "The external blinding callback completes before private scalar arithmetic and is outside the CT claim. The default public_key and from_secret_key take their coordinate blinding from an HMAC of the secret key instead. Portable and target-selected fixed-base derivation share the same public result. Secret-derived public keys use constant-work verification-table precomputation; parsing an already-public SEC1 key retains its variable-time public precomputation path."
+notes = "The external blinding callback completes before private scalar arithmetic and is outside the CT claim. Where fixed-base assembly is selected, derivation runs it with no blind and returns its affine result; elsewhere the default public_key and from_secret_key take their coordinate blinding from an HMAC of the secret key instead. Portable and target-selected fixed-base derivation share the same public result. Derivation builds no verification table; EcdsaP256PublicKey::prepare builds one from the public point with variable-time public arithmetic."
 [primitive.harness]
 status = "covered"
 symbols = ["ct_entry_ecdsa_p256_public_key", "ct_entry_ecdsa_p256_default_public_key"]
@@ -5922,7 +5925,7 @@ public = ["public_key"]
 may_leak = ["public_key", "external_random_source_failure"]
 must_not_leak_ref = "common_secret_data"
 required = ["tier_a"]
-notes = "The external blinding callback completes before private scalar arithmetic and is outside the CT claim. The default public_key and from_secret_key take their coordinate blinding from an HMAC of the secret key instead. Portable and target-selected fixed-base derivation share the same public result. Secret-derived public keys use constant-work verification-table precomputation; parsing an already-public SEC1 key retains its variable-time public precomputation path."
+notes = "The external blinding callback completes before private scalar arithmetic and is outside the CT claim. On x86-64 Linux and Windows, derivation runs the P-384 ECDH fixed-base kernel with no blind and returns its affine result; elsewhere the default public_key and from_secret_key take their coordinate blinding from an HMAC of the secret key instead. Portable and target-selected fixed-base derivation share the same public result. Derivation builds no verification table; EcdsaP384PublicKey::prepare builds one from the public point with variable-time public arithmetic."
 [primitive.harness]
 status = "covered"
 symbols = ["ct_entry_ecdsa_p384_public_key", "ct_entry_ecdsa_p384_default_public_key"]

@@ -685,7 +685,9 @@ impl EcdsaP256SecretKey {
   #[must_use]
   pub fn public_key(&self) -> EcdsaP256PublicKey {
     let _dit = crate::traits::ct::DataIndependentTiming::enter();
-    EcdsaP256PublicKey::from_secret_affine_ct(public_key_from_secret_p256(&self.0))
+    EcdsaP256PublicKey {
+      point: public_key_from_secret_p256(&self.0),
+    }
   }
 
   /// Try to derive the matching P-256 public key with caller-supplied blinding.
@@ -706,9 +708,9 @@ impl EcdsaP256SecretKey {
     let _dit = crate::traits::ct::DataIndependentTiming::enter();
     let mut blind = ZeroizingBytes::zeroed();
     fill(blind.as_mut_array())?;
-    Ok(EcdsaP256PublicKey::from_secret_affine_ct(
-      public_key_from_secret_p256_blinded(&self.0, blind.as_array()),
-    ))
+    Ok(EcdsaP256PublicKey {
+      point: public_key_from_secret_p256_blinded(&self.0, blind.as_array()),
+    })
   }
 
   /// Sign a message with P-256/SHA-256.
@@ -943,7 +945,9 @@ impl EcdsaP384SecretKey {
   #[must_use]
   pub fn public_key(&self) -> EcdsaP384PublicKey {
     let _dit = crate::traits::ct::DataIndependentTiming::enter();
-    EcdsaP384PublicKey::from_secret_affine_ct(public_key_from_secret_p384(&self.0))
+    EcdsaP384PublicKey {
+      point: public_key_from_secret_p384(&self.0),
+    }
   }
 
   /// Try to derive the matching P-384 public key with caller-supplied blinding.
@@ -964,9 +968,9 @@ impl EcdsaP384SecretKey {
     let _dit = crate::traits::ct::DataIndependentTiming::enter();
     let mut blind = ZeroizingBytes::zeroed();
     fill(blind.as_mut_array())?;
-    Ok(EcdsaP384PublicKey::from_secret_affine_ct(
-      public_key_from_secret_p384_blinded(&self.0, blind.as_array()),
-    ))
+    Ok(EcdsaP384PublicKey {
+      point: public_key_from_secret_p384_blinded(&self.0, blind.as_array()),
+    })
   }
 
   /// Sign a message with P-384/SHA-384.
@@ -1059,7 +1063,7 @@ impl EcdsaP256Keypair {
   pub fn duplicate_secret(&self) -> Self {
     Self {
       secret: self.secret.duplicate_secret(),
-      public: self.public.clone(),
+      public: self.public,
     }
   }
 
@@ -1112,7 +1116,7 @@ impl EcdsaP256Keypair {
   /// Return the public key.
   #[must_use]
   pub fn public_key(&self) -> EcdsaP256PublicKey {
-    self.public.clone()
+    self.public
   }
 
   /// Sign a message with P-256/SHA-256.
@@ -1162,7 +1166,7 @@ impl EcdsaP384Keypair {
   pub fn duplicate_secret(&self) -> Self {
     Self {
       secret: self.secret.duplicate_secret(),
-      public: self.public.clone(),
+      public: self.public,
     }
   }
 
@@ -1215,7 +1219,7 @@ impl EcdsaP384Keypair {
   /// Return the public key.
   #[must_use]
   pub fn public_key(&self) -> EcdsaP384PublicKey {
-    self.public.clone()
+    self.public
   }
 
   /// Sign a message with P-384/SHA-384.
@@ -1253,40 +1257,23 @@ impl fmt::Debug for EcdsaP384Keypair {
 }
 
 /// P-256 ECDSA public key.
-#[derive(Clone)]
+///
+/// Verification computes the key term from the point alone, so a key that verifies one
+/// signature, such as a TLS peer's certificate key, costs nothing to parse beyond point
+/// validation. [`Self::prepare`] builds a verification table for a key that verifies many
+/// signatures.
+#[derive(Clone, Copy)]
 pub struct EcdsaP256PublicKey {
   point: Affine<4>,
-  table: [Affine<4>; COMB_TABLE_SIZE],
 }
 
 impl EcdsaP256PublicKey {
   /// Uncompressed SEC1 public-key length in bytes.
   pub const SEC1_LENGTH: usize = 65;
 
-  fn from_affine(point: Affine<4>) -> Self {
-    Self {
-      point,
-      table: verify::comb_table::<p256_verify::Fe, 4>(point),
-    }
-  }
-
-  fn from_secret_affine_ct(point: Affine<4>) -> Self {
-    Self {
-      point,
-      table: precompute_comb_table_ct(point, P256_FIELD_MINUS_TWO),
-    }
-  }
-
   /// Parse an uncompressed SEC1 P-256 public key.
   pub fn from_sec1_bytes(bytes: &[u8]) -> Result<Self, EcdsaError> {
-    parse_public_key::<p256_verify::Fe, 4>(bytes, &P256).map(Self::from_affine)
-  }
-
-  /// Whether `bytes` is an uncompressed SEC1 point on P-256, as
-  /// [`Self::from_sec1_bytes`] checks, without building its verification table.
-  #[cfg(feature = "mldsa65-ecdsa-p256")]
-  pub(crate) fn is_valid_sec1(bytes: &[u8]) -> bool {
-    parse_public_key::<p256_verify::Fe, 4>(bytes, &P256).is_ok()
+    parse_public_key::<p256_verify::Fe, 4>(bytes, &P256).map(|point| Self { point })
   }
 
   /// Parse a P-256 SubjectPublicKeyInfo public key.
@@ -1312,15 +1299,24 @@ impl EcdsaP256PublicKey {
     encode_sec1(&self.point)
   }
 
+  /// Build this key's verification table, for a key that verifies many signatures.
+  ///
+  /// The table costs about one verification to build and makes each later
+  /// verification about twice as fast.
+  #[must_use]
+  pub fn prepare(&self) -> EcdsaP256PreparedPublicKey {
+    EcdsaP256PreparedPublicKey {
+      public: *self,
+      table: p256_verify::comb_table(self.point),
+    }
+  }
+
   /// Verify a message against a P-256/SHA-256 ECDSA signature.
   ///
   /// Use [`Self::verify_sha384`] when the protocol specifies P-256/SHA-384.
   #[must_use = "signature verification must be checked; a dropped Result silently accepts a forged signature"]
   pub fn verify(&self, message: &[u8], signature: &EcdsaP256Signature) -> Result<(), VerificationError> {
-    let digest = Sha256::digest(message);
-    verify_digest(&P256, signature.r, signature.s, &digest, |u1, u2| {
-      verify::scalar_mul_two::<p256_verify::Fe, 4>(&P256, u1, u2, &self.table)
-    })
+    self.verify_digest(&Sha256::digest(message), signature)
   }
 
   /// Verify a message against a P-256/SHA-384 ECDSA signature.
@@ -1332,41 +1328,12 @@ impl EcdsaP256PublicKey {
   /// Returns [`VerificationError`] if the signature does not verify.
   #[must_use = "signature verification must be checked; a dropped Result silently accepts a forged signature"]
   pub fn verify_sha384(&self, message: &[u8], signature: &EcdsaP256Signature) -> Result<(), VerificationError> {
-    let digest = Sha384::digest(message);
-    verify_digest(&P256, signature.r, signature.s, &digest[..32], |u1, u2| {
-      verify::scalar_mul_two::<p256_verify::Fe, 4>(&P256, u1, u2, &self.table)
-    })
+    self.verify_digest(&Sha384::digest(message)[..32], signature)
   }
 
-  /// Verify a P-256/SHA-256 signature with an uncompressed SEC1 key used once.
-  ///
-  /// The result equals [`Self::from_sec1_bytes`] followed by [`Self::verify`]; a key that
-  /// does not parse fails verification. It skips the verification table that a parsed key
-  /// builds for repeated use, so it is faster for a key that verifies one signature, such as
-  /// a TLS peer's certificate key. Keep a parsed key for repeated verification.
-  #[must_use = "signature verification must be checked; a dropped Result silently accepts a forged signature"]
-  pub fn verify_sec1(sec1: &[u8], message: &[u8], signature: &EcdsaP256Signature) -> Result<(), VerificationError> {
-    let digest = Sha256::digest(message);
-    Self::verify_sec1_digest(sec1, &digest, signature)
-  }
-
-  /// Verify a P-256/SHA-384 signature with an uncompressed SEC1 key used once.
-  ///
-  /// As [`Self::verify_sec1`], with the digest of [`Self::verify_sha384`].
-  #[must_use = "signature verification must be checked; a dropped Result silently accepts a forged signature"]
-  pub fn verify_sec1_sha384(
-    sec1: &[u8],
-    message: &[u8],
-    signature: &EcdsaP256Signature,
-  ) -> Result<(), VerificationError> {
-    let digest = Sha384::digest(message);
-    Self::verify_sec1_digest(sec1, &digest[..32], signature)
-  }
-
-  fn verify_sec1_digest(sec1: &[u8], digest: &[u8], signature: &EcdsaP256Signature) -> Result<(), VerificationError> {
-    let point = parse_public_key::<p256_verify::Fe, 4>(sec1, &P256).map_err(|_| VerificationError::new())?;
+  fn verify_digest(&self, digest: &[u8], signature: &EcdsaP256Signature) -> Result<(), VerificationError> {
     verify_digest(&P256, signature.r, signature.s, digest, |u1, u2| {
-      verify::scalar_mul_two_single::<p256_verify::Fe, 4>(&P256, u1, u2, point)
+      p256_verify::scalar_mul_two_single(&P256, u1, u2, self.point)
     })
   }
 }
@@ -1393,34 +1360,68 @@ impl fmt::Debug for EcdsaP256PublicKey {
   }
 }
 
-/// P-384 ECDSA public key.
+/// A P-256 ECDSA public key with its verification table, from
+/// [`EcdsaP256PublicKey::prepare`].
+///
+/// It verifies the same signatures as the key it came from, about twice as fast.
 #[derive(Clone)]
+pub struct EcdsaP256PreparedPublicKey {
+  public: EcdsaP256PublicKey,
+  table: [Affine<4>; COMB_TABLE_SIZE],
+}
+
+impl EcdsaP256PreparedPublicKey {
+  /// The public key that this table was built from.
+  #[must_use]
+  pub const fn public_key(&self) -> &EcdsaP256PublicKey {
+    &self.public
+  }
+
+  /// Verify a message against a P-256/SHA-256 ECDSA signature, as
+  /// [`EcdsaP256PublicKey::verify`] does.
+  #[must_use = "signature verification must be checked; a dropped Result silently accepts a forged signature"]
+  pub fn verify(&self, message: &[u8], signature: &EcdsaP256Signature) -> Result<(), VerificationError> {
+    self.verify_digest(&Sha256::digest(message), signature)
+  }
+
+  /// Verify a message against a P-256/SHA-384 ECDSA signature, as
+  /// [`EcdsaP256PublicKey::verify_sha384`] does.
+  #[must_use = "signature verification must be checked; a dropped Result silently accepts a forged signature"]
+  pub fn verify_sha384(&self, message: &[u8], signature: &EcdsaP256Signature) -> Result<(), VerificationError> {
+    self.verify_digest(&Sha384::digest(message)[..32], signature)
+  }
+
+  fn verify_digest(&self, digest: &[u8], signature: &EcdsaP256Signature) -> Result<(), VerificationError> {
+    verify_digest(&P256, signature.r, signature.s, digest, |u1, u2| {
+      p256_verify::scalar_mul_two(&P256, u1, u2, &self.table)
+    })
+  }
+}
+
+impl fmt::Debug for EcdsaP256PreparedPublicKey {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    f.debug_tuple("EcdsaP256PreparedPublicKey").field(&self.public).finish()
+  }
+}
+
+/// P-384 ECDSA public key.
+///
+/// Verification computes the key term from the point alone, so a key that verifies one
+/// signature, such as a TLS peer's certificate key, costs nothing to parse beyond point
+/// validation. [`Self::prepare`] builds a verification table for a key that verifies many
+/// signatures.
+#[derive(Clone, Copy)]
 pub struct EcdsaP384PublicKey {
   point: Affine<6>,
-  table: [Affine<6>; COMB_TABLE_SIZE],
 }
 
 impl EcdsaP384PublicKey {
   /// Uncompressed SEC1 public-key length in bytes.
   pub const SEC1_LENGTH: usize = 97;
 
-  fn from_affine(point: Affine<6>) -> Self {
-    Self {
-      point,
-      table: verify::comb_table::<p384_verify::Fe, 6>(point),
-    }
-  }
-
-  fn from_secret_affine_ct(point: Affine<6>) -> Self {
-    Self {
-      point,
-      table: precompute_comb_table_ct(point, P384_FIELD_MINUS_TWO),
-    }
-  }
-
   /// Parse an uncompressed SEC1 P-384 public key.
   pub fn from_sec1_bytes(bytes: &[u8]) -> Result<Self, EcdsaError> {
-    parse_public_key::<p384_verify::Fe, 6>(bytes, &P384).map(Self::from_affine)
+    parse_public_key::<p384_verify::Fe, 6>(bytes, &P384).map(|point| Self { point })
   }
 
   /// Parse a P-384 SubjectPublicKeyInfo public key.
@@ -1446,15 +1447,24 @@ impl EcdsaP384PublicKey {
     encode_sec1(&self.point)
   }
 
+  /// Build this key's verification table, for a key that verifies many signatures.
+  ///
+  /// The table costs about one verification to build and makes each later
+  /// verification about twice as fast.
+  #[must_use]
+  pub fn prepare(&self) -> EcdsaP384PreparedPublicKey {
+    EcdsaP384PreparedPublicKey {
+      public: *self,
+      table: verify::comb_table::<p384_verify::Fe, 6>(self.point),
+    }
+  }
+
   /// Verify a message against a P-384/SHA-384 ECDSA signature.
   ///
   /// Use [`Self::verify_sha256`] when the protocol specifies P-384/SHA-256.
   #[must_use = "signature verification must be checked; a dropped Result silently accepts a forged signature"]
   pub fn verify(&self, message: &[u8], signature: &EcdsaP384Signature) -> Result<(), VerificationError> {
-    let digest = Sha384::digest(message);
-    verify_digest(&P384, signature.r, signature.s, &digest, |u1, u2| {
-      verify::scalar_mul_two::<p384_verify::Fe, 6>(&P384, u1, u2, &self.table)
-    })
+    self.verify_digest(&Sha384::digest(message), signature)
   }
 
   /// Verify a message against a P-384/SHA-256 ECDSA signature.
@@ -1466,41 +1476,12 @@ impl EcdsaP384PublicKey {
   /// Returns [`VerificationError`] if the signature does not verify.
   #[must_use = "signature verification must be checked; a dropped Result silently accepts a forged signature"]
   pub fn verify_sha256(&self, message: &[u8], signature: &EcdsaP384Signature) -> Result<(), VerificationError> {
-    let digest = Sha256::digest(message);
-    verify_digest(&P384, signature.r, signature.s, &digest, |u1, u2| {
-      verify::scalar_mul_two::<p384_verify::Fe, 6>(&P384, u1, u2, &self.table)
-    })
+    self.verify_digest(&Sha256::digest(message), signature)
   }
 
-  /// Verify a P-384/SHA-384 signature with an uncompressed SEC1 key used once.
-  ///
-  /// The result equals [`Self::from_sec1_bytes`] followed by [`Self::verify`]; a key that
-  /// does not parse fails verification. It skips the verification table that a parsed key
-  /// builds for repeated use, so it is faster for a key that verifies one signature, such as
-  /// a TLS peer's certificate key. Keep a parsed key for repeated verification.
-  #[must_use = "signature verification must be checked; a dropped Result silently accepts a forged signature"]
-  pub fn verify_sec1(sec1: &[u8], message: &[u8], signature: &EcdsaP384Signature) -> Result<(), VerificationError> {
-    let digest = Sha384::digest(message);
-    Self::verify_sec1_digest(sec1, &digest, signature)
-  }
-
-  /// Verify a P-384/SHA-256 signature with an uncompressed SEC1 key used once.
-  ///
-  /// As [`Self::verify_sec1`], with the digest of [`Self::verify_sha256`].
-  #[must_use = "signature verification must be checked; a dropped Result silently accepts a forged signature"]
-  pub fn verify_sec1_sha256(
-    sec1: &[u8],
-    message: &[u8],
-    signature: &EcdsaP384Signature,
-  ) -> Result<(), VerificationError> {
-    let digest = Sha256::digest(message);
-    Self::verify_sec1_digest(sec1, &digest, signature)
-  }
-
-  fn verify_sec1_digest(sec1: &[u8], digest: &[u8], signature: &EcdsaP384Signature) -> Result<(), VerificationError> {
-    let point = parse_public_key::<p384_verify::Fe, 6>(sec1, &P384).map_err(|_| VerificationError::new())?;
+  fn verify_digest(&self, digest: &[u8], signature: &EcdsaP384Signature) -> Result<(), VerificationError> {
     verify_digest(&P384, signature.r, signature.s, digest, |u1, u2| {
-      verify::scalar_mul_two_single::<p384_verify::Fe, 6>(&P384, u1, u2, point)
+      verify::scalar_mul_two_single::<p384_verify::Fe, 6>(&P384, u1, u2, self.point)
     })
   }
 }
@@ -1527,6 +1508,50 @@ impl fmt::Debug for EcdsaP384PublicKey {
   }
 }
 
+/// A P-384 ECDSA public key with its verification table, from
+/// [`EcdsaP384PublicKey::prepare`].
+///
+/// It verifies the same signatures as the key it came from, about twice as fast.
+#[derive(Clone)]
+pub struct EcdsaP384PreparedPublicKey {
+  public: EcdsaP384PublicKey,
+  table: [Affine<6>; COMB_TABLE_SIZE],
+}
+
+impl EcdsaP384PreparedPublicKey {
+  /// The public key that this table was built from.
+  #[must_use]
+  pub const fn public_key(&self) -> &EcdsaP384PublicKey {
+    &self.public
+  }
+
+  /// Verify a message against a P-384/SHA-384 ECDSA signature, as
+  /// [`EcdsaP384PublicKey::verify`] does.
+  #[must_use = "signature verification must be checked; a dropped Result silently accepts a forged signature"]
+  pub fn verify(&self, message: &[u8], signature: &EcdsaP384Signature) -> Result<(), VerificationError> {
+    self.verify_digest(&Sha384::digest(message), signature)
+  }
+
+  /// Verify a message against a P-384/SHA-256 ECDSA signature, as
+  /// [`EcdsaP384PublicKey::verify_sha256`] does.
+  #[must_use = "signature verification must be checked; a dropped Result silently accepts a forged signature"]
+  pub fn verify_sha256(&self, message: &[u8], signature: &EcdsaP384Signature) -> Result<(), VerificationError> {
+    self.verify_digest(&Sha256::digest(message), signature)
+  }
+
+  fn verify_digest(&self, digest: &[u8], signature: &EcdsaP384Signature) -> Result<(), VerificationError> {
+    verify_digest(&P384, signature.r, signature.s, digest, |u1, u2| {
+      verify::scalar_mul_two::<p384_verify::Fe, 6>(&P384, u1, u2, &self.table)
+    })
+  }
+}
+
+impl fmt::Debug for EcdsaP384PreparedPublicKey {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    f.debug_tuple("EcdsaP384PreparedPublicKey").field(&self.public).finish()
+  }
+}
+
 impl crate::traits::Verifier<EcdsaP256Signature> for EcdsaP256PublicKey {
   #[inline]
   fn verify(&self, message: &[u8], signature: &EcdsaP256Signature) -> Result<(), VerificationError> {
@@ -1538,6 +1563,20 @@ impl crate::traits::Verifier<EcdsaP384Signature> for EcdsaP384PublicKey {
   #[inline]
   fn verify(&self, message: &[u8], signature: &EcdsaP384Signature) -> Result<(), VerificationError> {
     EcdsaP384PublicKey::verify(self, message, signature)
+  }
+}
+
+impl crate::traits::Verifier<EcdsaP256Signature> for EcdsaP256PreparedPublicKey {
+  #[inline]
+  fn verify(&self, message: &[u8], signature: &EcdsaP256Signature) -> Result<(), VerificationError> {
+    EcdsaP256PreparedPublicKey::verify(self, message, signature)
+  }
+}
+
+impl crate::traits::Verifier<EcdsaP384Signature> for EcdsaP384PreparedPublicKey {
+  #[inline]
+  fn verify(&self, message: &[u8], signature: &EcdsaP384Signature) -> Result<(), VerificationError> {
+    EcdsaP384PreparedPublicKey::verify(self, message, signature)
   }
 }
 
@@ -2608,7 +2647,11 @@ impl<const L: usize> Jacobian<L> {
   #[cfg(any(
     all(rscrypto_internal, feature = "diag"),
     all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
-    all(target_arch = "x86_64", any(target_os = "linux", target_os = "windows"))
+    all(
+      target_arch = "x86_64",
+      any(target_os = "linux", target_os = "windows"),
+      not(all(feature = "ecdsa-p384", not(feature = "portable-only"), not(miri)))
+    )
   ))]
   fn to_affine_x_ct(self, exponent: Uint<L>) -> FieldElement<L> {
     let inv_z = self.z.inv_ct(exponent);
@@ -2970,17 +3013,20 @@ fn blinded_nonce_inverse_montgomery<const L: usize>(
 }
 
 fn public_key_from_secret_p256(secret: &[u8; 32]) -> Affine<4> {
-  let mut wide = ZeroizingBytes::zeroed();
-  hmac_expand_p256_public_blind(secret, wide.as_mut_array());
-  let mask = SecretScalar::new(reduce_wide_order_nonzero(wide.as_array(), &P256_ORDER_MODULUS));
   let secret_scalar = SecretScalar::from_be_bytes(secret);
-  public_key_from_secret_blinded(&P256, &secret_scalar, &mask, P256_FIELD_MINUS_TWO)
+  // The fixed-base assembly takes no blind, so only the portable comb derives one.
+  scalar_mul_basepoint_affine_backend(&P256, &secret_scalar).unwrap_or_else(|| {
+    let mut wide = ZeroizingBytes::zeroed();
+    hmac_expand_p256_public_blind(secret, wide.as_mut_array());
+    let mask = SecretScalar::new(reduce_wide_order_nonzero(wide.as_array(), &P256_ORDER_MODULUS));
+    scalar_mul_basepoint_blinded(&P256, &secret_scalar, &mask, P256_FIELD_MINUS_TWO)
+  })
 }
 
 fn public_key_from_secret_p256_blinded(secret: &[u8; 32], blind: &[u8; 64]) -> Affine<4> {
   let mask = SecretScalar::new(reduce_wide_order_nonzero(blind, &P256_ORDER_MODULUS));
   let secret_scalar = SecretScalar::from_be_bytes(secret);
-  public_key_from_secret_blinded(&P256, &secret_scalar, &mask, P256_FIELD_MINUS_TWO)
+  scalar_mul_basepoint_blinded(&P256, &secret_scalar, &mask, P256_FIELD_MINUS_TWO)
 }
 
 fn public_key_from_secret_p384(secret: &[u8; 48]) -> Affine<6> {
@@ -2988,22 +3034,13 @@ fn public_key_from_secret_p384(secret: &[u8; 48]) -> Affine<6> {
   hmac_expand_p384_public_blind(secret, wide.as_mut_array());
   let mask = SecretScalar::new(reduce_wide_order_nonzero(wide.as_array(), &P384_ORDER_MODULUS));
   let secret_scalar = SecretScalar::from_be_bytes(secret);
-  public_key_from_secret_blinded(&P384, &secret_scalar, &mask, P384_FIELD_MINUS_TWO)
+  scalar_mul_basepoint_blinded(&P384, &secret_scalar, &mask, P384_FIELD_MINUS_TWO)
 }
 
 fn public_key_from_secret_p384_blinded(secret: &[u8; 48], blind: &[u8; 96]) -> Affine<6> {
   let mask = SecretScalar::new(reduce_wide_order_nonzero(blind, &P384_ORDER_MODULUS));
   let secret_scalar = SecretScalar::from_be_bytes(secret);
-  public_key_from_secret_blinded(&P384, &secret_scalar, &mask, P384_FIELD_MINUS_TWO)
-}
-
-fn public_key_from_secret_blinded<const L: usize>(
-  curve: &Curve<L>,
-  secret_scalar: &SecretScalar<L>,
-  mask: &SecretScalar<L>,
-  field_inverse_exponent: Uint<L>,
-) -> Affine<L> {
-  scalar_mul_basepoint_blinded(curve, secret_scalar, mask, field_inverse_exponent)
+  scalar_mul_basepoint_blinded(&P384, &secret_scalar, &mask, P384_FIELD_MINUS_TWO)
 }
 
 fn reduce_digest_for_scalar<const L: usize>(digest: &[u8], modulus: Uint<L>) -> Uint<L> {
@@ -3190,6 +3227,11 @@ fn scalar_mul_basepoint_blinded<const L: usize>(
   blind: &SecretScalar<L>,
   field_inverse_exponent: Uint<L>,
 ) -> Affine<L> {
+  // The fixed-base assembly returns canonical affine coordinates; a projective
+  // blind and a second inversion would only recompute them.
+  if let Some(point) = scalar_mul_basepoint_affine_backend(curve, scalar) {
+    return point;
+  }
   let z = FieldElement::from_uint(blind.value(), curve.field_modulus);
   scalar_mul_basepoint_backend(curve, scalar)
     .unwrap_or_else(|| {
@@ -3258,20 +3300,60 @@ fn scalar_mul_basepoint_backend<const L: usize>(curve: &Curve<L>, scalar: &Secre
   }
 }
 
-#[cfg(any(
-  all(target_arch = "x86_64", any(target_os = "linux", target_os = "windows")),
-  all(
-    target_arch = "aarch64",
-    any(target_os = "macos", target_os = "linux"),
-    any(feature = "portable-only", miri)
+#[cfg(all(
+  feature = "ecdsa-p384",
+  target_arch = "x86_64",
+  any(target_os = "linux", target_os = "windows"),
+  not(feature = "portable-only"),
+  not(miri)
+))]
+fn p384_scalar_mul_basepoint_platform<const L: usize>(curve: &Curve<L>, scalar: &SecretScalar<L>) -> Jacobian<L> {
+  Jacobian::from_affine(p384_scalar_mul_basepoint_affine_x86(curve, scalar))
+}
+
+#[cfg(all(
+  not(all(
+    feature = "ecdsa-p384",
+    target_arch = "x86_64",
+    any(target_os = "linux", target_os = "windows"),
+    not(feature = "portable-only"),
+    not(miri)
+  )),
+  any(
+    all(target_arch = "x86_64", any(target_os = "linux", target_os = "windows")),
+    all(
+      target_arch = "aarch64",
+      any(target_os = "macos", target_os = "linux"),
+      any(feature = "portable-only", miri)
+    )
   )
 ))]
 fn p384_scalar_mul_basepoint_platform<const L: usize>(curve: &Curve<L>, scalar: &SecretScalar<L>) -> Jacobian<L> {
-  // The x86 nonexceptional comb backend showed measurable DudeCT separation on
-  // Zen4/Ice Lake P-384 signing. Keep the complete comb path until that backend
-  // has architecture-specific CT evidence. Portable-only and Miri AArch64
-  // builds use the same portable comb.
+  // Portable-only, Miri, and ECDSA builds without P-384 use the complete comb.
   scalar_mul_basepoint_comb_ct_secret(curve, scalar)
+}
+
+/// The affine `k·G` from the owned x86-64 P-384 fixed-base kernel that P-384 ECDH also runs: the
+/// signing comb with full-table masked selection, BMI2/ADX field multiplication when the CPU has
+/// it, fused doubling, and divstep inversion.
+///
+/// It replaced the generic comb, which runs about 2.7 times slower. An earlier x86
+/// nonexceptional comb over the generic field showed DudeCT separation on Zen 4 and Ice Lake;
+/// this kernel keeps every selection and conditional in masks and assembly.
+#[cfg(all(
+  feature = "ecdsa-p384",
+  target_arch = "x86_64",
+  any(target_os = "linux", target_os = "windows"),
+  not(feature = "portable-only"),
+  not(miri)
+))]
+fn p384_scalar_mul_basepoint_affine_x86<const L: usize>(curve: &Curve<L>, scalar: &SecretScalar<L>) -> Affine<L> {
+  let mut scalar_words = ZeroizingWords::zeroed();
+  scalar_words.as_mut_array().copy_from_slice(&scalar.words()[..6]);
+  let point = ZeroizingWords::new(super::p384_portable::scalar_mul_generator_words(
+    scalar_words.as_array(),
+  ));
+  affine_from_words(curve.field_modulus, point.as_array())
 }
 
 #[cfg(all(
@@ -3294,10 +3376,23 @@ fn p384_scalar_mul_basepoint_platform<const L: usize>(curve: &Curve<L>, scalar: 
   all(target_arch = "x86_64", any(target_os = "linux", target_os = "windows"))
 ))]
 fn p384_scalar_mul_basepoint_r_platform(scalar: &SecretScalar<6>) -> Uint<6> {
-  p384_scalar_mul_basepoint_platform(&P384, scalar)
-    .to_affine_x_ct(P384_FIELD_MINUS_TWO)
-    .to_uint()
-    .reduce_once_ct(P384_ORDER_MODULUS.value)
+  #[cfg(all(
+    feature = "ecdsa-p384",
+    target_arch = "x86_64",
+    any(target_os = "linux", target_os = "windows"),
+    not(feature = "portable-only"),
+    not(miri)
+  ))]
+  let x = p384_scalar_mul_basepoint_affine_x86(&P384, scalar).x;
+  #[cfg(not(all(
+    feature = "ecdsa-p384",
+    target_arch = "x86_64",
+    any(target_os = "linux", target_os = "windows"),
+    not(feature = "portable-only"),
+    not(miri)
+  )))]
+  let x = p384_scalar_mul_basepoint_platform(&P384, scalar).to_affine_x_ct(P384_FIELD_MINUS_TWO);
+  x.to_uint().reduce_once_ct(P384_ORDER_MODULUS.value)
 }
 
 #[cfg(not(any(
@@ -3308,17 +3403,15 @@ fn scalar_mul_basepoint_backend<const L: usize>(_curve: &Curve<L>, _scalar: &Sec
   None
 }
 
-#[cfg(all(
-  feature = "ecdsa-p256",
-  any(
-    all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
-    all(target_arch = "x86_64", any(target_os = "linux", target_os = "windows"))
-  )
+#[cfg(any(
+  all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
+  all(target_arch = "x86_64", any(target_os = "linux", target_os = "windows"))
 ))]
 fn scalar_mul_basepoint_affine_backend<const L: usize>(
   curve: &Curve<L>,
   scalar: &SecretScalar<L>,
 ) -> Option<Affine<L>> {
+  #[cfg(feature = "ecdsa-p256")]
   if is_p256_curve(curve) {
     let mut scalar_words = ZeroizingWords::zeroed();
     scalar_words.as_mut_array().copy_from_slice(&scalar.words()[..4]);
@@ -3326,20 +3419,18 @@ fn scalar_mul_basepoint_affine_backend<const L: usize>(
     return Some(affine_from_words(curve.field_modulus, &out));
   }
 
-  None
-}
+  #[cfg(all(
+    feature = "ecdsa-p384",
+    target_arch = "x86_64",
+    any(target_os = "linux", target_os = "windows"),
+    not(feature = "portable-only"),
+    not(miri)
+  ))]
+  if is_p384_curve(curve) {
+    return Some(p384_scalar_mul_basepoint_affine_x86(curve, scalar));
+  }
 
-#[cfg(all(
-  not(feature = "ecdsa-p256"),
-  any(
-    all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
-    all(target_arch = "x86_64", any(target_os = "linux", target_os = "windows"))
-  )
-))]
-fn scalar_mul_basepoint_affine_backend<const L: usize>(
-  _curve: &Curve<L>,
-  _scalar: &SecretScalar<L>,
-) -> Option<Affine<L>> {
+  let _ = (curve, scalar);
   None
 }
 
@@ -3368,11 +3459,20 @@ fn is_p384_curve<const L: usize>(curve: &Curve<L>) -> bool {
     && core::ptr::from_ref(curve.field_modulus).cast::<()>() == core::ptr::from_ref(&P384_FIELD_MODULUS).cast::<()>()
 }
 
-#[cfg(all(
-  feature = "ecdsa-p256",
-  any(
-    all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
-    all(target_arch = "x86_64", any(target_os = "linux", target_os = "windows"))
+#[cfg(any(
+  all(
+    feature = "ecdsa-p256",
+    any(
+      all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
+      all(target_arch = "x86_64", any(target_os = "linux", target_os = "windows"))
+    )
+  ),
+  all(
+    feature = "ecdsa-p384",
+    target_arch = "x86_64",
+    any(target_os = "linux", target_os = "windows"),
+    not(feature = "portable-only"),
+    not(miri)
   )
 ))]
 fn affine_from_words<const L: usize>(modulus: &'static Modulus<L>, words: &[u64]) -> Affine<L> {
@@ -4453,42 +4553,6 @@ fn precompute_comb_table<const L: usize>(point: Affine<L>) -> [Affine<L>; COMB_T
   normalize_jacobian_table(table)
 }
 
-fn precompute_comb_table_ct<const L: usize>(
-  point: Affine<L>,
-  field_inverse_exponent: Uint<L>,
-) -> [Affine<L>; COMB_TABLE_SIZE] {
-  let rows = comb_rows::<L>();
-  let mut column_points = [Jacobian::from_affine(point); COMB_WIDTH];
-  let mut current = Jacobian::from_affine(point);
-  // Fixed integer bounds avoid pointer-distance divisions lowered to scalar
-  // multiplies by LLVM on RISC-V, where the CT instruction gate rejects them.
-  let mut column = 1;
-  while column < COMB_WIDTH {
-    for _ in 0..rows {
-      current = current.double_ct();
-    }
-    column_points[column] = current;
-    column = column.strict_add(1);
-  }
-  let columns = normalize_jacobian_table_ct(column_points, field_inverse_exponent);
-
-  let mut table = [Jacobian::from_affine(point); COMB_TABLE_SIZE];
-  let mut mask = 1;
-  while mask < COMB_TABLE_SIZE {
-    let mut acc = Jacobian::infinity(point.x.modulus);
-    let mut column = 0;
-    while column < COMB_WIDTH {
-      if mask & (1usize << column) != 0 {
-        acc = acc.add_mixed_ct(columns[column], 0);
-      }
-      column = column.strict_add(1);
-    }
-    table[mask] = acc;
-    mask = mask.strict_add(1);
-  }
-  normalize_jacobian_table_ct(table, field_inverse_exponent)
-}
-
 #[cfg(test)]
 fn normalize_jacobian_table<const L: usize, const N: usize>(table: [Jacobian<L>; N]) -> [Affine<L>; N] {
   let modulus = table
@@ -4513,44 +4577,6 @@ fn normalize_jacobian_table<const L: usize, const N: usize>(table: [Jacobian<L>;
     let z2 = z_inv.square();
     let z3 = z2.mul(z_inv);
     *output = Affine {
-      x: point.x.mul(z2),
-      y: point.y.mul(z3),
-    };
-  }
-  out
-}
-
-fn normalize_jacobian_table_ct<const L: usize, const N: usize>(
-  table: [Jacobian<L>; N],
-  field_inverse_exponent: Uint<L>,
-) -> [Affine<L>; N] {
-  let modulus = table
-    .first()
-    .map(|point| point.x.modulus)
-    .expect("ECDSA comb tables are nonempty");
-  let mut prefixes = [FieldElement::one(modulus); N];
-  let mut acc = FieldElement::one(modulus);
-  let mut index = 0;
-  while index < N {
-    prefixes[index] = acc;
-    acc = acc.mul(table[index].z);
-    index = index.strict_add(1);
-  }
-
-  let mut acc_inv = acc.inv_ct(field_inverse_exponent);
-  let mut out = [Affine {
-    x: FieldElement::zero(modulus),
-    y: FieldElement::zero(modulus),
-  }; N];
-  let mut index = N;
-  while index != 0 {
-    index = index.strict_sub(1);
-    let point = &table[index];
-    let z_inv = acc_inv.mul(prefixes[index]);
-    acc_inv = acc_inv.mul(point.z);
-    let z2 = z_inv.square();
-    let z3 = z2.mul(z_inv);
-    out[index] = Affine {
       x: point.x.mul(z2),
       y: point.y.mul(z3),
     };
@@ -5888,39 +5914,6 @@ mod tests {
         .expect("infallible P-384 blinding must derive a public key"),
       p384_public_key()
     );
-  }
-
-  #[test]
-  fn secret_derived_constant_work_tables_match_public_precomputation() {
-    for bytes in [[0x01; 32], [0x42; 32], [0x7f; 32]] {
-      let secret = EcdsaP256SecretKey::from_bytes(bytes).expect("fixture is a valid P-256 secret scalar");
-      let derived = secret.public_key();
-      let parsed =
-        EcdsaP256PublicKey::from_sec1_bytes(&derived.to_sec1_bytes()).expect("derived P-256 public key must parse");
-      assert!(derived.point == parsed.point);
-      assert!(
-        derived
-          .table
-          .iter()
-          .zip(parsed.table.iter())
-          .all(|(left, right)| left == right)
-      );
-    }
-
-    for bytes in [[0x01; 48], [0x24; 48], [0x7f; 48]] {
-      let secret = EcdsaP384SecretKey::from_bytes(bytes).expect("fixture is a valid P-384 secret scalar");
-      let derived = secret.public_key();
-      let parsed =
-        EcdsaP384PublicKey::from_sec1_bytes(&derived.to_sec1_bytes()).expect("derived P-384 public key must parse");
-      assert!(derived.point == parsed.point);
-      assert!(
-        derived
-          .table
-          .iter()
-          .zip(parsed.table.iter())
-          .all(|(left, right)| left == right)
-      );
-    }
   }
 
   #[test]

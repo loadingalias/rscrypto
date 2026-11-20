@@ -363,9 +363,9 @@ mod implementation {
   use alloc::boxed::Box;
   use alloc::vec::Vec;
   #[cfg(feature = "ecdsa-p256")]
-  use rscrypto::{EcdsaP256PublicKey, EcdsaP256Signature};
+  use rscrypto::{EcdsaP256PreparedPublicKey, EcdsaP256PublicKey, EcdsaP256Signature};
   #[cfg(feature = "ecdsa-p384")]
-  use rscrypto::{EcdsaP384PublicKey, EcdsaP384Signature};
+  use rscrypto::{EcdsaP384PreparedPublicKey, EcdsaP384PublicKey, EcdsaP384Signature};
   #[cfg(feature = "ed25519")]
   use rscrypto::{Ed25519PublicKey, Ed25519Signature};
   #[cfg(feature = "ml-dsa")]
@@ -454,9 +454,15 @@ mod implementation {
         match (anchors.and_then(|anchors| anchors.p256.get(key)), operation) {
           (Some(prepared), Operation::P256Sha256) => prepared.verify(message, &signature),
           (Some(prepared), _) => prepared.verify_sha384(message, &signature),
-          // A key that is not a prepared anchor verifies once, so skip its table.
-          (None, Operation::P256Sha256) => EcdsaP256PublicKey::verify_sec1(key, message, &signature),
-          (None, _) => EcdsaP256PublicKey::verify_sec1_sha384(key, message, &signature),
+          // A key that is not a prepared anchor verifies once, so it builds no table.
+          (None, operation) => {
+            let key = EcdsaP256PublicKey::from_sec1_bytes(key).map_err(|_| InvalidSignature)?;
+            if matches!(operation, Operation::P256Sha256) {
+              key.verify(message, &signature)
+            } else {
+              key.verify_sha384(message, &signature)
+            }
+          }
         }
       }
       #[cfg(feature = "ecdsa-p384")]
@@ -465,9 +471,15 @@ mod implementation {
         match (anchors.and_then(|anchors| anchors.p384.get(key)), operation) {
           (Some(prepared), Operation::P384Sha384) => prepared.verify(message, &signature),
           (Some(prepared), _) => prepared.verify_sha256(message, &signature),
-          // A key that is not a prepared anchor verifies once, so skip its table.
-          (None, Operation::P384Sha384) => EcdsaP384PublicKey::verify_sec1(key, message, &signature),
-          (None, _) => EcdsaP384PublicKey::verify_sec1_sha256(key, message, &signature),
+          // A key that is not a prepared anchor verifies once, so it builds no table.
+          (None, operation) => {
+            let key = EcdsaP384PublicKey::from_sec1_bytes(key).map_err(|_| InvalidSignature)?;
+            if matches!(operation, Operation::P384Sha384) {
+              key.verify(message, &signature)
+            } else {
+              key.verify_sha256(message, &signature)
+            }
+          }
         }
       }
       #[cfg(feature = "ed25519")]
@@ -536,15 +548,15 @@ mod implementation {
   ///
   /// Each map is keyed by the anchor's exact subjectPublicKey bytes, which
   /// webpki passes back unchanged when that anchor issues a certificate.
-  /// Peer-supplied keys are never inserted. ECDSA import builds a per-key
+  /// Peer-supplied keys are never inserted. ECDSA preparation builds a per-key
   /// table, and ML-DSA preparation expands the matrix and transformed key;
   /// RSA and Ed25519 anchors keep the import path.
   #[derive(Debug, Default)]
   pub(super) struct Anchors {
     #[cfg(feature = "ecdsa-p256")]
-    p256: HashMap<Box<[u8]>, EcdsaP256PublicKey>,
+    p256: HashMap<Box<[u8]>, EcdsaP256PreparedPublicKey>,
     #[cfg(feature = "ecdsa-p384")]
-    p384: HashMap<Box<[u8]>, EcdsaP384PublicKey>,
+    p384: HashMap<Box<[u8]>, EcdsaP384PreparedPublicKey>,
     #[cfg(feature = "ml-dsa")]
     ml_dsa_44: HashMap<Box<[u8]>, MlDsa44PreparedPublicKey<Box<MlDsa44PreparedPublicKeyStorage>>>,
     #[cfg(feature = "ml-dsa")]
@@ -571,23 +583,23 @@ mod implementation {
       let _ = (algorithm, key);
       #[cfg(feature = "ecdsa-p256")]
       if algorithm == alg_id::ECDSA_P256.as_ref()
-        && let Ok(prepared) = EcdsaP256PublicKey::from_sec1_bytes(key)
-        && self.p256.insert(key.into(), prepared).is_none()
+        && let Ok(public) = EcdsaP256PublicKey::from_sec1_bytes(key)
+        && self.p256.insert(key.into(), public.prepare()).is_none()
       {
         self.retained = self
           .retained
           .strict_add(key.len())
-          .strict_add(size_of::<EcdsaP256PublicKey>());
+          .strict_add(size_of::<EcdsaP256PreparedPublicKey>());
       }
       #[cfg(feature = "ecdsa-p384")]
       if algorithm == alg_id::ECDSA_P384.as_ref()
-        && let Ok(prepared) = EcdsaP384PublicKey::from_sec1_bytes(key)
-        && self.p384.insert(key.into(), prepared).is_none()
+        && let Ok(public) = EcdsaP384PublicKey::from_sec1_bytes(key)
+        && self.p384.insert(key.into(), public.prepare()).is_none()
       {
         self.retained = self
           .retained
           .strict_add(key.len())
-          .strict_add(size_of::<EcdsaP384PublicKey>());
+          .strict_add(size_of::<EcdsaP384PreparedPublicKey>());
       }
       #[cfg(feature = "ml-dsa")]
       {

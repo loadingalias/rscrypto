@@ -223,6 +223,22 @@ impl<F> Point<F> {
     }
   }
 
+  /// Add the signing-comb generator entry of `scalar`'s digit for `row`, when the comb has that
+  /// row and the digit is nonzero.
+  #[inline(always)]
+  fn add_generator_digit<const L: usize>(self, curve: &Curve<L>, scalar: Uint<L>, row: usize) -> Self
+  where
+    F: VerifyField<L>,
+  {
+    if row >= curve.signing_comb_rows {
+      return self;
+    }
+    match comb_digit(scalar, row, curve.signing_comb_rows, curve.signing_comb_width) {
+      0 => self,
+      digit => self.add_mixed(AffinePoint::generator(curve, digit)),
+    }
+  }
+
   #[inline(always)]
   fn negate<const L: usize>(self) -> Self
   where
@@ -302,9 +318,9 @@ pub(super) fn comb_table<F: VerifyField<L>, const L: usize>(point: Affine<L>) ->
 /// `generator_scalar·G + point_scalar·Q` with the signing generator comb and the public-key comb
 /// table of Q, using the digits of `super::scalar_mul_two`.
 ///
-/// The generator and key terms accumulate in separate chains, combined by one addition, so the
-/// core overlaps their doublings and additions instead of serializing every addition on one
-/// accumulator.
+/// Both terms share one accumulator. The generator comb has fewer rows, so its digit for row
+/// `r` joins at row `r`, and the remaining `r` doublings scale it by `2^r`, as signing's own
+/// doublings do; the generator term needs no doublings of its own.
 pub(super) fn scalar_mul_two<F: VerifyField<L>, const L: usize>(
   curve: &Curve<L>,
   generator_scalar: Uint<L>,
@@ -313,23 +329,16 @@ pub(super) fn scalar_mul_two<F: VerifyField<L>, const L: usize>(
 ) -> Jacobian<L> {
   let rows = comb_rows::<L>();
   let table = point_table.map(AffinePoint::<F>::from_affine);
-  let mut generator = Point::infinity();
-  let mut key = Point::infinity();
+  let mut acc = Point::infinity();
   for row in (0..rows).rev() {
-    if row < curve.signing_comb_rows {
-      generator = generator.double();
-      let digit = comb_digit(generator_scalar, row, curve.signing_comb_rows, curve.signing_comb_width);
-      if digit != 0 {
-        generator = generator.add_mixed(AffinePoint::generator(curve, digit));
-      }
-    }
-    key = key.double();
+    acc = acc.double();
     let digit = comb_digit(point_scalar, row, rows, COMB_WIDTH);
     if digit != 0 {
-      key = key.add_mixed(table[digit]);
+      acc = acc.add_mixed(table[digit]);
     }
+    acc = acc.add_generator_digit(curve, generator_scalar, row);
   }
-  generator.add(key).to_jacobian()
+  acc.to_jacobian()
 }
 
 /// Width-5 non-adjacent form of a scalar below `2^(64·L)`, for `L <= 6`: digit `i` is zero or
@@ -370,8 +379,8 @@ pub(super) fn naf5<const L: usize>(scalar: Uint<L>) -> [i8; 385] {
 /// `generator_scalar·G + point_scalar·Q` for a point Q used once, without its comb table.
 ///
 /// The key term runs a width-5 NAF of `point_scalar` over the Jacobian odd multiples
-/// Q, 3Q, ..., 15Q, which cost one doubling and seven additions; the generator term runs the
-/// signing comb in an independent chain, as in [`scalar_mul_two`].
+/// Q, 3Q, ..., 15Q, which cost one doubling and seven additions. The generator digits join the
+/// same accumulator at their rows, as in [`scalar_mul_two`].
 pub(super) fn scalar_mul_two_single<F: VerifyField<L>, const L: usize>(
   curve: &Curve<L>,
   generator_scalar: Uint<L>,
@@ -386,23 +395,16 @@ pub(super) fn scalar_mul_two_single<F: VerifyField<L>, const L: usize>(
   }
 
   let digits = naf5(point_scalar);
-  let mut generator = Point::infinity();
-  let mut key = Point::infinity();
+  let mut acc = Point::infinity();
   for (row, &digit) in digits[..L.strict_mul(64).strict_add(1)].iter().enumerate().rev() {
-    if row < curve.signing_comb_rows {
-      generator = generator.double();
-      let comb = comb_digit(generator_scalar, row, curve.signing_comb_rows, curve.signing_comb_width);
-      if comb != 0 {
-        generator = generator.add_mixed(AffinePoint::generator(curve, comb));
-      }
-    }
-    key = key.double();
+    acc = acc.double();
     if digit != 0 {
       let entry = odd[usize::from(digit.unsigned_abs() >> 1)];
-      key = key.add(if digit > 0 { entry } else { entry.negate() });
+      acc = acc.add(if digit > 0 { entry } else { entry.negate() });
     }
+    acc = acc.add_generator_digit(curve, generator_scalar, row);
   }
-  generator.add(key).to_jacobian()
+  acc.to_jacobian()
 }
 
 #[cfg(test)]

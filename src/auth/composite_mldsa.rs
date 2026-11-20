@@ -1119,7 +1119,7 @@ mod ecdsa_p256_composite {
   impl MlDsa65EcdsaP256PublicKey {
     /// An uncompressed SEC1 point on the curve.
     fn traditional_is_valid(point: &[u8; EcdsaP256PublicKey::SEC1_LENGTH]) -> bool {
-      EcdsaP256PublicKey::is_valid_sec1(point)
+      EcdsaP256PublicKey::from_sec1_bytes(point).is_ok()
     }
 
     fn verify_traditional(
@@ -1127,7 +1127,9 @@ mod ecdsa_p256_composite {
       representative: &[u8],
       signature: &MlDsa65EcdsaP256Signature,
     ) -> Result<(), VerificationError> {
-      EcdsaP256PublicKey::verify_sec1(&self.trad, representative, &signature.ecdsa()?)
+      EcdsaP256PublicKey::from_sec1_bytes(&self.trad)
+        .map_err(|_| VerificationError::new())?
+        .verify(representative, &signature.ecdsa()?)
     }
   }
 
