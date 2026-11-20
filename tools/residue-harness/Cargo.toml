@@ -5,20 +5,6 @@ edition = "2024"
 publish = false
 license = "Apache-2.0"
 
-[workspace]
-
-[profile.release]
-codegen-units = 1
-debug = false
-lto = "fat"
-opt-level = 3
-overflow-checks = true
-panic = "abort"
-strip = false
-
-[profile.dev]
-panic = "abort"
-
 [dependencies]
 rscrypto = { path = "../..", default-features = false, features = ["alloc", "blake3", "hkdf", "ml-dsa", "ml-kem", "mldsa65-ecdsa-p256", "mldsa65-ed25519", "slh-dsa", "x-wing", "hpke", "aes-gcm", "chacha20poly1305"] }
 sha2 = { version = "=0.11.1", default-features = false }

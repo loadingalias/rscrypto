@@ -172,6 +172,7 @@ class RunnerTests(unittest.TestCase):
     (self.root / "benches").symlink_to(ROOT / "benches", target_is_directory=True)
     (self.root / 'tools/provider-bench').mkdir(parents=True)
     shutil.copy2(ROOT / 'tools/provider-bench/Cargo.toml', self.root / 'tools/provider-bench/Cargo.toml')
+    shutil.copy2(ROOT / 'tools/Cargo.toml', self.root / 'tools/Cargo.toml')
     shutil.copytree(ROOT / 'tools/provider-bench/benches', self.root / 'tools/provider-bench/benches')
     (self.root / "bin").mkdir()
     self.env = {key: value for key, value in os.environ.items()

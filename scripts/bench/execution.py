@@ -123,11 +123,7 @@ def build_identity() -> dict:
     "rustc": subprocess.check_output([os.environ.get("RUSTC", "rustc"), "-Vv"], text=True).strip(),
     "cargo": subprocess.check_output(["cargo", "-V"], text=True).strip(),
     "profiles": tomllib.loads((root / "Cargo.toml").read_text()).get("profile", {}),
-    "benchmark_workspace_profiles": {
-      str(path.relative_to(root)): tomllib.loads(path.read_text()).get("profile", {})
-      for path in sorted((root / "tools").glob("*/Cargo.toml"))
-      if tomllib.loads(path.read_text()).get("bench")
-    },
+    "benchmark_workspace_profiles": {"tools/Cargo.toml": tomllib.loads((root / "tools/Cargo.toml").read_text())["profile"]},
     "cargo_config_sha256": configs,
     "host": hardware(),
   }

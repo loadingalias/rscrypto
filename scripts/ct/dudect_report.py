@@ -350,9 +350,9 @@ def prepare_report(args):
   manifest_cases = manifest_dudect_cases(ct_manifest, args.target)
   dudect_manifest_path = root / "tools" / "ct-dudect" / "Cargo.toml"
   harness_manifest_path = root / "tools" / "ct-harness" / "Cargo.toml"
-  dudect_lockfile_path = root / "tools" / "ct-dudect" / "Cargo.lock"
-  with dudect_manifest_path.open("rb") as source:
-    dudect_manifest = tomllib.load(source)
+  dudect_lockfile_path = root / "tools" / "Cargo.lock"
+  with (root / "tools" / "Cargo.toml").open("rb") as source:
+    tools_manifest = tomllib.load(source)
   configured_rustflags, environment_rustflags, effective_rustflags, rustflags_source = resolved_rustflags(
     root, args.target
   )
@@ -414,7 +414,7 @@ def prepare_report(args):
     "target": args.target,
     "target_triple": args.target,
     "profile": args.profile,
-    "profile_settings": dudect_manifest.get("profile", {}).get(args.profile, {}),
+    "profile_settings": tools_manifest.get("profile", {}).get(args.profile, {}),
     "features": release_binary["features"],
     "default_features": release_binary["default_features"],
     "backend": release_binary["backend"],

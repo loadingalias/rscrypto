@@ -81,10 +81,10 @@ def build(root: Path, target: Path, backend: str, feature: str, log: Path, binar
   env.pop("RUSTFLAGS", None)
   env.pop("CARGO_ENCODED_RUSTFLAGS", None)
   command([
-    "cargo", "build", "--locked", "--release", "--manifest-path", str(root / CRATE / "Cargo.toml"),
+    "cargo", "build", "--locked", "--profile", "release-symbols", "--manifest-path", str(root / CRATE / "Cargo.toml"),
     "--bin", binary, "--features", ",".join(features), "--target-dir", str(target),
   ], cwd=root, log=log, env=env)
-  return target / "release" / binary
+  return target / "release-symbols" / binary
 
 
 def parse(path: Path) -> dict[str, dict]:
@@ -260,7 +260,7 @@ def main(argv: list[str] | None = None) -> int:
     "build_input_sha256": {
       name: sha256(ROOT / name) for name in [
         "Cargo.toml", "Cargo.lock", "rust-toolchain.toml", ".cargo/config.toml", ".config/target-matrix.json",
-        "tools/residue-harness/Cargo.toml", "tools/residue-harness/Cargo.lock",
+        "tools/Cargo.toml", "tools/Cargo.lock", "tools/residue-harness/Cargo.toml",
         "tools/residue-harness/src/mldsa_native.rs", "tools/residue-harness/src/native_stack.rs",
         "scripts/stack/mldsa_residue.py",
       ]

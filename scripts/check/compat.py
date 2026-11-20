@@ -17,6 +17,11 @@ toolchain = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(toolchain)
 # The oldest Rust that the text of `hashes::expert::BLAKE3_PORTABLE_SOURCE` supports.
 EMBED_CHANNEL = '1.85'
+# The single-feature test lane skips the umbrellas of docs/features.md and the features that add
+# no primitive. Every other feature runs its own tests alone.
+UMBRELLAS = {'aead', 'auth', 'checksums', 'crypto-hashes', 'default', 'ecdsa', 'fast-hashes', 'full', 'hashes',
+             'kdfs', 'key-exchange', 'macs', 'password-hashing', 'signatures'}
+NOT_PRIMITIVES = {'alloc', 'diag', 'getrandom', 'portable-only', 'rand_core', 'serde', 'serde-secrets', 'std'}
 
 
 def read(path):
@@ -84,6 +89,13 @@ def cases():
         native = sorted(set(graph) - {'portable-only'})
         yield f'{channel}-broad', [check(channel, host, native), check(channel, host, [*native, 'portable-only'])], {}
 
+    # Each primitive passes its own tests with only `std`, so a gate that needs another feature fails.
+    unknown = (UMBRELLAS | NOT_PRIMITIVES) - set(graph)
+    if unknown:
+        raise SystemExit(f'compat.py names features that Cargo.toml lacks: {sorted(unknown)}')
+    for feature in sorted(set(graph) - UMBRELLAS - NOT_PRIMITIVES):
+        yield f'{canonical}-test-{feature}', [check(canonical, host, ['std', feature], 'test')], {}
+
     # Portable builds must not compile the nightly-only backend modules, even
     # when every primitive is enabled. Check both allocation boundaries, then
     # generate code with all features supported by the target.
@@ -116,11 +128,11 @@ def cases():
     for target in ('wasm32-unknown-unknown', 'wasm32-wasip1'):
         for simd in (False, True):
             name = f'{target}-{"simd" if simd else "scalar"}'
-            build = ['cargo', '+' + canonical, 'build', '--locked', '--release', '--manifest-path',
+            build = ['cargo', '+' + canonical, 'build', '--locked', '--profile', 'wasm-vectors', '--manifest-path',
                      'tools/wasm-runtime-vectors/Cargo.toml', '--target', target]
             invoke = ['--invoke', 'run_vectors'] if target.endswith('unknown-unknown') else []
             run = ['wasmtime', 'run', '-W', f'simd={"y" if simd else "n"},relaxed-simd=n',
-                   *invoke, '{target_dir}/' + target + '/release/rscrypto-wasm-runtime-vectors.wasm']
+                   *invoke, '{target_dir}/' + target + '/wasm-vectors/rscrypto-wasm-runtime-vectors.wasm']
             yield name, [build, run], {'RUSTFLAGS': '-Ctarget-feature=' + ('+simd128,-relaxed-simd' if simd else '-simd128,-relaxed-simd')}
 
 

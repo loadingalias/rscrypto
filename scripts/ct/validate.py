@@ -395,8 +395,6 @@ def validate_manifest(root: Path, selected_target: str, errors: list[str], warni
   harness_bins = [row for row in harness_manifest.get("bin", []) if row.get("name") == release_binary.get("name")]
   if len(harness_bins) != 1:
     fail(errors, "CT harness must define exactly one equality release binary")
-  if harness_manifest.get("profile", {}).get("release") != dudect_manifest.get("profile", {}).get("release"):
-    fail(errors, "CT harness and DudeCT release profiles must match")
   owner_widths = release_binary.get("owner_widths", [])
   owner_symbols = release_binary.get("owner_symbols", [])
   public_len_symbols = release_binary.get("public_len_symbols", [])
@@ -1202,12 +1200,7 @@ def validate_artifacts(root: Path, target: str, profile: str, ct: dict, errors: 
       if not isinstance(component_locks, list) or not component_locks:
         fail(errors, "provenance component_lockfiles must be a non-empty list")
       else:
-        expected_lock_paths = {
-          "Cargo.lock",
-          "tools/ct-harness/Cargo.lock",
-          "tools/ct-dudect/Cargo.lock",
-          "tools/ct-binsec-harness/Cargo.lock",
-        }
+        expected_lock_paths = {"Cargo.lock", "tools/Cargo.lock"}
         actual_lock_paths = [record.get("path") for record in component_locks]
         if len(actual_lock_paths) != len(set(actual_lock_paths)) or set(actual_lock_paths) != expected_lock_paths:
           fail(errors, "provenance component_lockfiles does not match the required lockfile set")
@@ -1509,7 +1502,7 @@ def validate_dudect(root: Path, target: str, profile: str, ct: dict, errors: lis
     fail(errors, "dudect cargo does not match lane provenance")
   dudect_manifest = root / "tools" / "ct-dudect" / "Cargo.toml"
   harness_manifest = root / "tools" / "ct-harness" / "Cargo.toml"
-  dudect_lockfile = root / "tools" / "ct-dudect" / "Cargo.lock"
+  dudect_lockfile = root / "tools" / "Cargo.lock"
   for key, path in (
     ("dudect_manifest_sha256", dudect_manifest),
     ("harness_manifest_sha256", harness_manifest),
@@ -1517,10 +1510,10 @@ def validate_dudect(root: Path, target: str, profile: str, ct: dict, errors: lis
   ):
     if report.get(key) != sha256_file(path):
       fail(errors, f"dudect {key} mismatch")
-  with dudect_manifest.open("rb") as source:
+  with (root / "tools" / "Cargo.toml").open("rb") as source:
     expected_profile_settings = tomllib.load(source).get("profile", {}).get(profile, {})
   if report.get("profile_settings") != expected_profile_settings:
-    fail(errors, "dudect profile settings do not match its manifest")
+    fail(errors, "dudect profile settings do not match the tools workspace manifest")
 
   if report.get("dudect_runner_sources") != dudect_runner_sources(root):
     fail(errors, "dudect runner source identity mismatch")

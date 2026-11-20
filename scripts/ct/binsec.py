@@ -31,6 +31,8 @@ def candidate_identity() -> dict[str, object]:
     crate = tomllib.load(source)
   with HARNESS_MANIFEST.open("rb") as source:
     harness = tomllib.load(source)
+  with (ROOT / "tools" / "Cargo.toml").open("rb") as source:
+    profiles = tomllib.load(source)["profile"]
   dependency = harness["dependencies"]["rscrypto"]
   rustc_verbose = run(["rustc", "-vV"]).stdout.strip()
   status = run(["git", "status", "--short", "--untracked-files=all"]).stdout.splitlines()
@@ -41,12 +43,13 @@ def candidate_identity() -> dict[str, object]:
     "git_status": status,
     "ct_manifest_sha256": sha256_file(ROOT / "ct.toml"),
     "harness_manifest_sha256": sha256_file(HARNESS_MANIFEST),
-    "harness_lockfile_sha256": sha256_file(ROOT / "tools" / "ct-binsec-harness" / "Cargo.lock"),
+    "harness_lockfile_sha256": sha256_file(ROOT / "tools" / "Cargo.lock"),
     "rustc_verbose": rustc_verbose,
     "cargo": run(["cargo", "-V"]).stdout.strip(),
     "features": dependency["features"],
     "default_features": dependency.get("default-features", True),
-    "profile_settings": harness.get("profile", {}).get("release", {}),
+    # The `binsec` Cargo profile: the release settings with its own overrides.
+    "profile_settings": {**profiles["release"], **{k: v for k, v in profiles["binsec"].items() if k != "inherits"}},
   }
 
 
@@ -223,7 +226,8 @@ def build_harness(target: str, profile: str, rustflags: list[str]) -> tuple[Path
     str(target_dir),
     "--target",
     target,
-    "--release",
+    "--profile",
+    "binsec",
   ]
   proof_flags = list(rustflags) if rustflags else default_target_rustflags(target)
   proof_flags.extend(binsec_proof_rustflags(target))
@@ -234,7 +238,7 @@ def build_harness(target: str, profile: str, rustflags: list[str]) -> tuple[Path
     raise SystemExit(result.returncode)
 
   suffix = ".exe" if "windows" in target else ""
-  binary = target_dir / target / "release" / f"{HARNESS_BIN}{suffix}"
+  binary = target_dir / target / "binsec" / f"{HARNESS_BIN}{suffix}"
   if not binary.exists():
     raise SystemExit(f"BINSEC harness binary missing: {binary}")
   return binary, effective_rustflags

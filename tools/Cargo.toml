@@ -1,0 +1,66 @@
+# Development tools share one workspace and one lockfile. Each tool builds with the profile
+# that its evidence needs.
+[workspace]
+resolver = "3"
+members = [
+  "ct-binsec-harness",
+  "ct-dudect",
+  "ct-harness",
+  "frame-review",
+  "mldsa-tail",
+  "provider-bench",
+  "provider-size",
+  "residue-harness",
+  "stack-paint",
+  "wasm-runtime-vectors",
+]
+
+# rscrypto-rustls pins these exact versions; the tools use the same pins.
+[workspace.dependencies]
+rustls = { version = "=0.24.0-dev.3", default-features = false }
+rustls-aws-lc-rs = "=0.24.0-dev.3"
+rustls-ring = "=0.24.0-dev.3"
+
+# The CT harnesses and the provider benchmarks build as rscrypto ships: the root release profile.
+[profile.release]
+opt-level = 3
+debug = false
+strip = "debuginfo"
+overflow-checks = true
+lto = "fat"
+panic = "abort"
+codegen-units = 1
+
+[profile.bench]
+inherits = "release"
+debug = true
+strip = "none"
+
+# Frame, stack, residue, and ML-DSA tail reviews keep every symbol.
+[profile.release-symbols]
+inherits = "release"
+strip = false
+
+# BINSEC analyzes the CT entry points without link-time optimization.
+[profile.binsec]
+inherits = "release"
+lto = false
+strip = false
+overflow-checks = false
+
+# The provider size measures a consumer's binary: top-secret's release profile, which unwinds.
+[profile.consumer]
+inherits = "release"
+panic = "unwind"
+
+# The WebAssembly vector runs keep Cargo's default release settings.
+[profile.wasm-vectors]
+inherits = "release"
+lto = false
+codegen-units = 16
+panic = "unwind"
+overflow-checks = false
+
+# The bare-metal residue harness cannot unwind. Tests and benchmarks ignore this setting.
+[profile.dev]
+panic = "abort"

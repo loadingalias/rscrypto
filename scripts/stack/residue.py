@@ -214,7 +214,8 @@ def build(board: Board, backend: str) -> Path:
     "cargo",
     "build",
     "--locked",
-    "--release",
+    "--profile",
+    "release-symbols",
     "--manifest-path",
     str(CRATE / "Cargo.toml"),
     "--target",
@@ -225,7 +226,7 @@ def build(board: Board, backend: str) -> Path:
   if backend == "portable":
     command += ["--features", "portable-only"]
   subprocess.run(command, check=True, env=environment, cwd=ROOT)
-  return target_dir / board.target / "release" / BINARY
+  return target_dir / board.target / "release-symbols" / BINARY
 
 
 def boot(board: Board, binary: Path, timeout: float) -> str:

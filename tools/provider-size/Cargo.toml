@@ -6,8 +6,6 @@ rust-version = "1.100.0"
 publish = false
 license = "Apache-2.0"
 
-[workspace]
-
 [features]
 # Link `default_provider()` and OS entropy instead of `ClientProvider` over caller entropy.
 default-provider = ["rscrypto-rustls/getrandom"]
@@ -29,10 +27,4 @@ rscrypto-rustls = { path = "../../rscrypto-rustls", default-features = false, fe
   "ed25519",
   "rsa",
 ] }
-rustls = { version = "=0.24.0-dev.3", default-features = false, features = ["std", "webpki"] }
-
-# The release profile of top-secret.
-[profile.release]
-overflow-checks = true
-lto = "fat"
-codegen-units = 1
+rustls = { workspace = true, features = ["std", "webpki"] }

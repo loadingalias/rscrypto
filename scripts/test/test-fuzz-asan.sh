@@ -5,18 +5,16 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 cd "$REPO_ROOT"
 
-# shellcheck source=../lib/fuzz-packages.sh
-source "$SCRIPT_DIR/../lib/fuzz-packages.sh"
+# shellcheck source=../lib/fuzz.sh
+source "$SCRIPT_DIR/../lib/fuzz.sh"
 
 RUSTUP_TOOLCHAIN=$("$SCRIPT_DIR/../lib/toolchain.sh")
 export RUSTUP_TOOLCHAIN
 export CARGO_RAIL_CACHE=off
 
-PACKAGE_SCOPE="full"
-
 usage() {
   cat >&2 <<EOF
-Usage: scripts/test/test-fuzz-asan.sh [--full|--scoped|--all]
+Usage: scripts/test/test-fuzz-asan.sh
 
 Replays committed fuzz corpora under AddressSanitizer.
 
@@ -26,37 +24,16 @@ Environment:
 EOF
 }
 
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --full)
-      PACKAGE_SCOPE="full"
-      ;;
-    --scoped)
-      PACKAGE_SCOPE="scoped"
-      ;;
-    --all)
-      PACKAGE_SCOPE="all"
-      ;;
-    -h|--help)
-      usage
-      exit 0
-      ;;
-    *)
-      echo "unknown argument: $1" >&2
-      usage
-      exit 2
-      ;;
-  esac
-  shift
-done
+case "${1:-}" in
+  '') ;;
+  -h|--help) usage; exit 0 ;;
+  *) echo "unknown argument: $1" >&2; usage; exit 2 ;;
+esac
 
 if ! cargo fuzz --version &>/dev/null; then
   echo "cargo-fuzz is required for ASan fuzz replay" >&2
   exit 1
 fi
-
-discover_fuzz_packages
-fuzz_select_packages "$PACKAGE_SCOPE"
 
 export ASAN_OPTIONS="${ASAN_OPTIONS:-detect_leaks=0:abort_on_error=1:strict_init_order=1}"
 export RUSTFLAGS="${RUSTFLAGS:-} -Zsanitizer=address -Cforce-frame-pointers=yes"
@@ -69,66 +46,36 @@ fi
 export RUSTDOCFLAGS="${RUSTDOCFLAGS:-} -Zsanitizer=address"
 export CARGO_TARGET_DIR="${RSCRYPTO_ASAN_TARGET_DIR:-$FUZZ_ROOT/target-asan}"
 
-failed=0
-total=0
-for package_dir in "${SELECTED_FUZZ_PACKAGES[@]:+${SELECTED_FUZZ_PACKAGES[@]}}"; do
-  package_failed=0
-  targets=$(fuzz_list_targets "$package_dir") || exit 2
-  while IFS= read -r target; do
-    [[ -z "$target" ]] && continue
-    corpus_dir="$package_dir/corpus/$target"
-    if [[ ! -d "$corpus_dir" ]]; then
-      echo "missing ASan corpus: $(fuzz_package_label "$package_dir")/$target ($corpus_dir)" >&2
-      failed=1
-      package_failed=1
-      continue
-    fi
-  done <<<"$targets"
+targets=$(fuzz_list_targets) || exit 2
+missing=0
+while IFS= read -r target; do
+  [[ -z "$target" ]] && continue
+  if [[ ! -d "$FUZZ_ROOT/corpus/$target" ]]; then
+    echo "missing ASan corpus: $target ($FUZZ_ROOT/corpus/$target)" >&2
+    missing=1
+  fi
+done <<<"$targets"
+[[ "$missing" -eq 0 ]] || { echo "ASan fuzz corpus replay failed" >&2; exit 1; }
 
-  if [[ "$package_failed" -ne 0 ]]; then
-    continue
-  fi
-
-  echo "ASan corpus replay package: $(fuzz_package_label "$package_dir")"
-  # The library under test builds at opt-level 1, the usual level for ASan. Unoptimized, the
-  # unrolled AArch64 Keccak rounds keep every temporary in memory, and the SLH-DSA replay alone
-  # exceeded the CI job limit. Debug assertions and overflow checks stay on.
-  cargo_test=(cargo test
-    --locked
-    -Zbuild-std
-    --config 'profile.test.package.rscrypto.opt-level=1'
-    --target "$(fuzz_host_target)"
-    --manifest-path "$package_dir/Cargo.toml"
-    --all-features
-    --test corpus_replay)
-  if ! replay_list=$("${cargo_test[@]}" -- --list --format terse); then
-    failed=1
-    continue
-  fi
-  expected=$(printf '%s\n' "$targets" | sed '/^$/d; s/^/replay_/; s/$/_corpus: test/' | LC_ALL=C sort)
-  actual=$(printf '%s\n' "$replay_list" | sed -n '/: test$/p' | LC_ALL=C sort)
-  if [[ "$expected" != "$actual" ]]; then
-    echo "ASan replay inventory mismatch: $(fuzz_package_label "$package_dir")" >&2
-    diff -u <(printf '%s\n' "$expected") <(printf '%s\n' "$actual") >&2 || true
-    failed=1
-    continue
-  fi
-  if "${cargo_test[@]}" -- --include-ignored --nocapture; then
-    package_total=$(printf '%s\n' "$actual" | wc -l)
-    total=$((total + package_total))
-  else
-    failed=1
-  fi
-done
-
-if [[ "$failed" -ne 0 ]]; then
-  echo "ASan fuzz corpus replay failed" >&2
+# The library under test builds at opt-level 1, the usual level for ASan. Unoptimized, the
+# unrolled AArch64 Keccak rounds keep every temporary in memory, and the SLH-DSA replay alone
+# exceeded the CI job limit. Debug assertions and overflow checks stay on.
+cargo_test=(cargo test
+  --locked
+  -Zbuild-std
+  --config 'profile.test.package.rscrypto.opt-level=1'
+  --target "$(fuzz_host_target)"
+  --manifest-path "$FUZZ_ROOT/Cargo.toml"
+  --all-features
+  --test corpus_replay)
+replay_list=$("${cargo_test[@]}" -- --list --format terse) || { echo "ASan fuzz corpus replay failed" >&2; exit 1; }
+expected=$(printf '%s\n' "$targets" | sed '/^$/d; s/^/replay_/; s/$/_corpus: test/' | LC_ALL=C sort)
+actual=$(printf '%s\n' "$replay_list" | sed -n '/: test$/p' | LC_ALL=C sort)
+if [[ "$expected" != "$actual" ]]; then
+  echo "ASan replay inventory mismatch" >&2
+  diff -u <(printf '%s\n' "$expected") <(printf '%s\n' "$actual") >&2 || true
   exit 1
 fi
-
-if [[ "$total" -eq 0 ]]; then
-  echo "no fuzz targets selected for ASan replay" >&2
-  exit 1
-fi
-
+"${cargo_test[@]}" -- --include-ignored --nocapture || { echo "ASan fuzz corpus replay failed" >&2; exit 1; }
+total=$(printf '%s\n' "$actual" | wc -l | tr -d ' ')
 echo "ASan fuzz corpus replay passed for $total targets"

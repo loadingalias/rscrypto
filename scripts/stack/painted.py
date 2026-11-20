@@ -48,7 +48,7 @@ def executable(name: str) -> str:
 
 def build(target: str, portable: bool) -> Path:
   directory = ROOT / "target" / "stack-paint" / ("portable" if portable else "native")
-  command = ["cargo", "build", "--locked", "--release", "--manifest-path", str(CRATE / "Cargo.toml"),
+  command = ["cargo", "build", "--locked", "--profile", "release-symbols", "--manifest-path", str(CRATE / "Cargo.toml"),
              "--target", target, "--target-dir", str(directory)]
   if portable:
     command += ["--features", "portable-only"]
@@ -57,7 +57,7 @@ def build(target: str, portable: bool) -> Path:
   environment.pop("RUSTFLAGS", None)
   environment.pop("CARGO_ENCODED_RUSTFLAGS", None)
   subprocess.run(command, check=True, cwd=ROOT, env=environment)
-  return directory / target / "release"
+  return directory / target / "release-symbols"
 
 
 def sha256(path: Path) -> str:

@@ -268,12 +268,7 @@ def dudect_runner_sources(root: Path) -> dict[str, str]:
 
 
 def component_lockfiles(root: Path) -> list[dict[str, str]]:
-  paths = (
-    "Cargo.lock",
-    "tools/ct-harness/Cargo.lock",
-    "tools/ct-dudect/Cargo.lock",
-    "tools/ct-binsec-harness/Cargo.lock",
-  )
+  paths = ("Cargo.lock", "tools/Cargo.lock")
   return [{"path": path, "sha256": sha256_file(root / path)} for path in paths]
 
 
@@ -398,9 +393,9 @@ def main() -> int:
   reports = report_records(args.out_dir)
   write_artifact_hashes(args.out_dir, artifacts)
 
-  dependency_lockfile = root / "tools" / "ct-harness" / "Cargo.lock"
+  dependency_lockfile = root / "tools" / "Cargo.lock"
   workspace_lockfile = root / "Cargo.lock"
-  profile = harness_manifest.get("profile", {}).get(args.profile, {})
+  profile = load_toml(root / "tools" / "Cargo.toml").get("profile", {}).get(args.profile, {})
   status_entries = git_status(root)
   feature_list = [feature for feature in args.features.split(",") if feature]
 
@@ -471,7 +466,7 @@ def main() -> int:
     "strip": profile.get("strip", "unknown"),
     "features": feature_list,
     "default_features": False,
-    "dependency_lockfile": "tools/ct-harness/Cargo.lock",
+    "dependency_lockfile": "tools/Cargo.lock",
     "dependency_lockfile_sha256": sha256_file(dependency_lockfile),
     "workspace_lockfile": "Cargo.lock",
     "workspace_lockfile_sha256": sha256_file(workspace_lockfile),

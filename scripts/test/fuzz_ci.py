@@ -27,19 +27,11 @@ NAME = re.compile(r'[a-z0-9_]+')
 
 
 def inventory(root):
-    result = []
-    for manifest in [root / 'fuzz/Cargo.toml', *sorted(root.glob('fuzz-packages/*/Cargo.toml'))]:
-        data = tomllib.loads(manifest.read_text())
-        if not data['package'].get('metadata', {}).get('cargo-fuzz'):
-            continue
-        names = [entry['name'] for entry in data.get('bin', [])]
-        if not names or len(names) != len(set(names)) or any(not NAME.fullmatch(name) for name in names):
-            raise ValueError(f'invalid fuzz target inventory: {manifest}')
-        result.extend({'package': manifest.parent.relative_to(root).as_posix(), 'target': name}
-                      for name in sorted(names))
-    if not result:
-        raise ValueError('no fuzz targets found')
-    return result
+    manifest = root / 'fuzz/Cargo.toml'
+    names = [entry['name'] for entry in tomllib.loads(manifest.read_text()).get('bin', [])]
+    if not names or len(names) != len(set(names)) or any(not NAME.fullmatch(name) for name in names):
+        raise ValueError(f'invalid fuzz target inventory: {manifest}')
+    return [{'package': 'fuzz', 'target': name} for name in sorted(names)]
 
 
 def plan(root, env, now):

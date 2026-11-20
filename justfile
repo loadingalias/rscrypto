@@ -198,7 +198,7 @@ test-rsa-macos-asm:
 test-rsa-linux-asm:
     @scripts/test/test-rsa-asm.sh linux
 
-# Run live fuzzing; --all includes the full and scoped fuzz packages.
+# Run live fuzzing on every fuzz target, or on the named targets.
 [group('tests')]
 test-fuzz *args:
     @scripts/test/test-fuzz.sh "$@"

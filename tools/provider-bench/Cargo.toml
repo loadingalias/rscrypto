@@ -7,8 +7,6 @@ publish = false
 license = "Apache-2.0"
 autobenches = false
 
-[workspace]
-
 [features]
 ml-dsa = ["rscrypto-rustls/ml-dsa"]
 mldsa65-ed25519 = ["rscrypto-rustls/mldsa65-ed25519"]
@@ -24,9 +22,9 @@ vendored-openssl = ["openssl/vendored"]
 [dependencies]
 rscrypto = { path = "../..", default-features = false, features = ["std", "sha2", "sha3", "aes-gcm"], optional = true }
 rscrypto-rustls = { path = "../../rscrypto-rustls" }
-rustls = { version = "=0.24.0-dev.3", default-features = false, features = ["webpki"] }
-rustls-aws-lc-rs = "=0.24.0-dev.3"
-rustls-ring = "=0.24.0-dev.3"
+rustls = { workspace = true, features = ["webpki"] }
+rustls-aws-lc-rs = { workspace = true }
+rustls-ring = { workspace = true }
 openssl = "=0.10.82"
 libc = "0.2.191"
 serde_json = "1.0.154"
@@ -53,16 +51,3 @@ name = "openssl_primitives"
 harness = false
 required-features = ["primitives"]
 
-[profile.release]
-opt-level = 3
-debug = false
-strip = "debuginfo"
-overflow-checks = true
-lto = "fat"
-panic = "abort"
-codegen-units = 1
-
-[profile.bench]
-inherits = "release"
-debug = true
-strip = "none"

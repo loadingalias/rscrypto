@@ -1,5 +1,5 @@
 #!/usr/bin/env -S uv run python
-"""Check provider features, its own normal/build dependency graph, and the tools' rustls pins."""
+"""Check provider features, its own normal/build dependency graph, and the rustls pins of the tools and fuzz."""
 
 import argparse
 import json
@@ -70,24 +70,25 @@ def rustls_pins(manifest):
     """Map each `rustls` or `rustls-*` crate that `manifest` names to its pin keys."""
     data = tomllib.loads(manifest.read_text())
     pins = {}
-    for table in (data, *data.get('target', {}).values()):
+    for table in (data, data.get('workspace', {}), *data.get('target', {}).values()):
         for kind in ('dependencies', 'dev-dependencies', 'build-dependencies'):
             for key, dependency in table.get(kind, {}).items():
                 if isinstance(dependency, str):
                     dependency = {'version': dependency}
                 name = dependency.get('package', key)
-                if name == 'rustls' or name.startswith('rustls-'):
+                # A `workspace = true` dependency takes the pin of its workspace manifest.
+                if (name == 'rustls' or name.startswith('rustls-')) and not dependency.get('workspace'):
                     pins[name] = {field: dependency[field] for field in PIN_KEYS if field in dependency}
     return pins
 
 
 def check_tool_pins(root=ROOT):
-    """Require each independent tool or fuzz workspace to pin rustls crates exactly as the provider does.
+    """Require the tools and fuzz workspaces to pin rustls crates exactly as the provider does.
 
-    Each one has its own lockfile, so Cargo cannot share the provider's pin with it.
+    Each workspace has its own lockfile, so Cargo cannot share the provider's pin with it.
     """
     provider = rustls_pins(root / PACKAGE / 'Cargo.toml')
-    for manifest in [*sorted((root / 'tools').glob('*/Cargo.toml')), root / 'fuzz/Cargo.toml']:
+    for manifest in [root / 'tools/Cargo.toml', *sorted((root / 'tools').glob('*/Cargo.toml')), root / 'fuzz/Cargo.toml']:
         path = manifest.relative_to(root)
         for name, pin in rustls_pins(manifest).items():
             if name not in provider:

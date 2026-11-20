@@ -96,7 +96,8 @@ def prepare(target, archive):
         metadata['stack_paint'] = {}
         for configuration in ('native', 'portable'):
             build_dir = ROOT / 'target/stack-paint' / configuration
-            command = ['cargo', 'build', '--locked', '--release', '--manifest-path', str(STACK_PAINT / 'Cargo.toml'),
+            command = ['cargo', 'build', '--locked', '--profile', 'release-symbols', '--manifest-path',
+                       str(STACK_PAINT / 'Cargo.toml'),
                        '--target', target, '--target-dir', str(build_dir)]
             if configuration == 'portable':
                 command += ['--features', 'portable-only']
@@ -104,7 +105,7 @@ def prepare(target, archive):
             destination = out / 'stack-paint' / configuration
             destination.mkdir(parents=True)
             for name in STACK_BINARIES:
-                shutil.copy2(build_dir / target / 'release' / name, destination / name)
+                shutil.copy2(build_dir / target / 'release-symbols' / name, destination / name)
             metadata['stack_paint'][configuration] = {'command': command}
         build_dir = ROOT / 'target/introspect'
         command = ['cargo', 'build', '--locked', '--release', '--target', target, '--target-dir', str(build_dir),

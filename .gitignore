@@ -46,13 +46,6 @@ docs/llvm-ppc64le-readvolatile-issue.md
 !/fuzz/corpus/
 !/fuzz/corpus/**/
 !/fuzz/corpus/**/seed-*
-/fuzz-packages/*/artifacts/
-/fuzz-packages/*/coverage/
-/fuzz-packages/*/target/
-/fuzz-packages/*/corpus/**
-!/fuzz-packages/*/corpus/
-!/fuzz-packages/*/corpus/**/
-!/fuzz-packages/*/corpus/**/seed-*
 
 # Testing
 /coverage/

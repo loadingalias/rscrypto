@@ -24,7 +24,8 @@ BINARY = 'rscrypto-mldsa-tail'
 
 def build(output, name, rustflags, portable):
   target_dir = ROOT / 'target' / 'mldsa-tail' / name
-  command = ['cargo', 'build', '--locked', '--release', '--manifest-path', str(MANIFEST), '--target-dir', str(target_dir)]
+  command = ['cargo', 'build', '--locked', '--profile', 'release-symbols', '--manifest-path', str(MANIFEST),
+             '--target-dir', str(target_dir)]
   if portable:
     command += ['--features', 'portable-only']
   environment = dict(os.environ)
@@ -32,7 +33,7 @@ def build(output, name, rustflags, portable):
     environment['RUSTFLAGS'] = ' '.join(filter(None, [environment.get('RUSTFLAGS', ''), rustflags]))
   with (output / f'build-{name}.log').open('wb') as log:
     subprocess.run(command, stdout=log, stderr=subprocess.STDOUT, check=True, timeout=1200, env=environment)
-  binary = target_dir / 'release' / (BINARY + ('.exe' if os.name == 'nt' else ''))
+  binary = target_dir / 'release-symbols' / (BINARY + ('.exe' if os.name == 'nt' else ''))
   return command, binary
 
 

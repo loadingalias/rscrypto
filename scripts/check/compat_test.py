@@ -68,6 +68,15 @@ sys.exit(7 if count == int(os.environ['FAIL_AT']) else 0)
             for boundary in ('core', 'alloc'):
                 self.assertIn(f'{channel}-thumb-{boundary}', names)
         self.assertTrue(set(compat.targets()) <= set(names))
+        tested = {name.removeprefix(f'{compat.toolchain.channel()}-test-') for name in names
+                  if name.startswith(f'{compat.toolchain.channel()}-test-')}
+        self.assertEqual(tested, set(manifest['features']) - compat.UMBRELLAS - compat.NOT_PRIMITIVES)
+        self.assertTrue({'sha2', 'crc32', 'slh-dsa', 'x-wing', 'parallel'} <= tested)
+        for feature in tested:
+            _, commands, _ = next(row for row in plan if row[0] == f'{compat.toolchain.channel()}-test-{feature}')
+            command, = commands
+            self.assertEqual(command[2], 'test')
+            self.assertEqual(command[command.index('--features') + 1], f'std,{feature}')
         for target in ('powerpc64le-unknown-linux-gnu', 's390x-unknown-linux-gnu',
                        'riscv64gc-unknown-linux-gnu', 'riscv32imac-unknown-none-elf'):
             for boundary in ('core', 'alloc', 'build'):

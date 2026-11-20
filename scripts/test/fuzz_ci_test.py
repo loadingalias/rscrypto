@@ -37,10 +37,8 @@ class FuzzCI(unittest.TestCase):
         source.start()
         self.addCleanup(source.stop)
         self.package('fuzz', ['parser', 'decrypt'])
-        self.package('fuzz-packages/parser', ['parser'])
         (self.root / 'rust-toolchain.toml').write_text('[toolchain]\nchannel = "fixture-nightly"\n')
-        (self.root / 'fuzz/committed-seeds.txt').write_text(
-            'fuzz/corpus/parser/seed\nfuzz/corpus/decrypt/seed\nfuzz-packages/parser/corpus/parser/seed\n')
+        (self.root / 'fuzz/committed-seeds.txt').write_text('fuzz/corpus/parser/seed\nfuzz/corpus/decrypt/seed\n')
 
     def package(self, name, targets):
         directory = self.root / name
@@ -52,14 +50,11 @@ class FuzzCI(unittest.TestCase):
             corpus.mkdir(parents=True, exist_ok=True)
             (corpus / 'seed').write_bytes(b'abc')
 
-    def test_manual_selection_covers_every_package_and_rejects_automatic_events(self):
+    def test_manual_selection_covers_every_target_and_rejects_automatic_events(self):
         env = {'GITHUB_EVENT_NAME': 'workflow_dispatch'}
         self.assertEqual(ci.plan(self.root, env, self.now)['targets'], ['decrypt', 'parser'])
         selected = ci.plan(self.root, {**env, 'FUZZ_TARGETS': 'parser'}, self.now)
-        self.assertEqual(selected['pairs'], [
-            {'package': 'fuzz', 'target': 'parser'},
-            {'package': 'fuzz-packages/parser', 'target': 'parser'},
-        ])
+        self.assertEqual(selected['pairs'], [{'package': 'fuzz', 'target': 'parser'}])
         for event in ('push', 'pull_request', 'schedule', 'workflow_call'):
             with self.subTest(event=event), self.assertRaisesRegex(ValueError, 'manual dispatch'):
                 ci.plan(self.root, {'GITHUB_EVENT_NAME': event}, self.now)
@@ -198,9 +193,9 @@ elif sys.argv[1:3] == ['fuzz', 'coverage']:
         self.assertIn("inputs.architectures == 'all'", job['strategy']['matrix']['platform'])
         self.assertNotIn('github.event_name', job['strategy']['matrix']['platform'])
         steps = job['steps']
-        build, = [step for step in steps if 'just test-fuzz --build --all' in step.get('run', '')]
+        build, = [step for step in steps if 'just test-fuzz --build' in step.get('run', '')]
         self.assertEqual(build['if'], "matrix.task == 'fuzz'")
-        self.assertIn('RSCRYPTO_FUZZ_CORPUS=local just test-fuzz-asan --all', build['run'])
+        self.assertIn('RSCRYPTO_FUZZ_CORPUS=local just test-fuzz-asan', build['run'])
         live, = [step for step in steps if step.get('name') == 'Fuzz selected targets']
         self.assertEqual(live['env']['RSCRYPTO_FUZZ_TARGET_CONCURRENCY'], '${{ steps.plan.outputs.concurrency }}')
         self.assertEqual(live['env']['RSCRYPTO_FUZZ_BUDGET_SECS'], '${{ steps.plan.outputs.budget }}')
@@ -232,7 +227,7 @@ elif sys.argv[1:3] == ['fuzz', 'coverage']:
                                      'source() { :; }\n' + build['run']],
                                     cwd=self.root, env=env, capture_output=True, text=True)
             self.assertEqual(result.returncode, int(status), result.stderr)
-            self.assertEqual('test-fuzz-asan --all' in commands.read_text(), status == '0')
+            self.assertEqual('test-fuzz-asan' in commands.read_text(), status == '0')
 
 
 if __name__ == '__main__':

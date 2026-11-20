@@ -71,12 +71,11 @@ if sys.argv[1] == 'scripts/ct/provenance.py':
 ''')
         (root / "scripts/ct").mkdir()
         shutil.copy2(ROOT / "scripts/ct/provenance.py", root / "scripts/ct/provenance.py")
-        for path in ("Cargo.toml", "tools/ct-harness/Cargo.toml"):
+        for path in ("Cargo.toml", "tools/Cargo.toml", "tools/ct-harness/Cargo.toml"):
           manifest = root / path
           manifest.parent.mkdir(parents=True, exist_ok=True)
           manifest.write_text('[package]\nname = "fixture"\nversion = "0.0.0"\n')
-        for path in ("ct.toml", "Cargo.lock", "tools/ct-harness/Cargo.lock",
-                     "tools/ct-dudect/Cargo.lock", "tools/ct-binsec-harness/Cargo.lock"):
+        for path in ("ct.toml", "Cargo.lock", "tools/Cargo.lock"):
           lockfile = root / path
           lockfile.parent.mkdir(parents=True, exist_ok=True)
           lockfile.touch()

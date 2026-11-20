@@ -1815,7 +1815,8 @@ def build(target: str, portable: bool, rustflags: list[str]) -> Path:
     "cargo",
     "build",
     "--locked",
-    "--release",
+    "--profile",
+    "release-symbols",
     "--manifest-path",
     str(CRATE / "Cargo.toml"),
     "--target",
@@ -1826,7 +1827,7 @@ def build(target: str, portable: bool, rustflags: list[str]) -> Path:
   if portable:
     command += ["--features", "portable-only"]
   subprocess.run(command, check=True, env=environment, cwd=ROOT)
-  return target_dir / target / "release" / BINARY
+  return target_dir / target / "release-symbols" / BINARY
 
 
 def markdown(report: dict[str, object]) -> str:

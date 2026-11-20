@@ -78,7 +78,7 @@ class InternalBuildTests(unittest.TestCase):
   def test_binsec_build_records_the_flags_it_uses(self):
     with tempfile.TemporaryDirectory() as temporary:
       root = Path(temporary)
-      binary = root / 'target/ct-binsec-build' / TARGET / 'release' / binsec.HARNESS_BIN
+      binary = root / 'target/ct-binsec-build' / TARGET / 'binsec' / binsec.HARNESS_BIN
       binary.parent.mkdir(parents=True)
       binary.touch()
       for status in (0, 7):

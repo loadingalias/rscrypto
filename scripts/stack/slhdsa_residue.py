@@ -24,7 +24,7 @@ from mldsa_residue import ROOT, build, command, sha256
 BINARY = "rscrypto-slhdsa-residue-native"
 INPUTS = [
   "Cargo.toml", "Cargo.lock", "rust-toolchain.toml", ".cargo/config.toml",
-  "tools/residue-harness/Cargo.toml", "tools/residue-harness/Cargo.lock",
+  "tools/Cargo.toml", "tools/Cargo.lock", "tools/residue-harness/Cargo.toml",
   "tools/residue-harness/src/slhdsa_native.rs", "tools/residue-harness/src/native_stack.rs",
   "scripts/stack/slhdsa_residue.py", "scripts/stack/mldsa_residue.py",
 ]

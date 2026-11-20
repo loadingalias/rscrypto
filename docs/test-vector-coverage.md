@@ -101,7 +101,7 @@ The OpenSSL exchanges run only where `openssl` is installed.
 
 ```bash
 just test --all
-just test-fuzz --all
+just test-fuzz
 ```
 
 `just --list` shows the specialized Miri, target, constant-time, and leakage recipes.

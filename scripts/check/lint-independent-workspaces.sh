@@ -133,7 +133,8 @@ for manifest in "${manifests[@]}"; do
     compiler_flags+=(--cap-lints "$LINT_CAP")
   fi
 
-  if [[ "$relative_manifest" == tools/ct-binsec-harness/Cargo.toml || "$relative_manifest" == tools/ct-dudect/Cargo.toml || "$relative_manifest" == tools/ct-harness/Cargo.toml ]]; then
+  # The CT tools in the tools workspace need rscrypto's internal evidence surface.
+  if [[ "$relative_manifest" == tools/Cargo.toml ]]; then
     target="${CARGO_BUILD_TARGET:-$("$REPO_ROOT/scripts/lib/toolchain.sh" --print-host)}"
     CARGO_TARGET_DIR="$TARGET_DIR" "$REPO_ROOT/scripts/lib/python.sh" "$REPO_ROOT/scripts/ct/internal.py" \
       --target "$target" -- cargo "${cargo_args[@]}" -- "${compiler_flags[@]}"

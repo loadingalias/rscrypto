@@ -47,60 +47,8 @@ crates = ["rscrypto", "rscrypto-rustls"]
 semver_check = "deny"
 # Keep the existing `v<version>` tag line, so planning finds the previous release.
 tag_format = "v{version}"
-# Keep standalone fuzz and evidence-tool lockfiles on the released package version.
-auxiliary_cargo_manifests = [
-  "fuzz-packages/aead-aegis256/Cargo.toml",
-  "fuzz-packages/aead-aes-siv-cmac256/Cargo.toml",
-  "fuzz-packages/aead-aes128gcm/Cargo.toml",
-  "fuzz-packages/aead-aes128gcmsiv/Cargo.toml",
-  "fuzz-packages/aead-aes256gcm/Cargo.toml",
-  "fuzz-packages/aead-aes256gcmsiv/Cargo.toml",
-  "fuzz-packages/aead-ascon128/Cargo.toml",
-  "fuzz-packages/aead-chacha20poly1305/Cargo.toml",
-  "fuzz-packages/aead-header-protection/Cargo.toml",
-  "fuzz-packages/aead-nonce-counter/Cargo.toml",
-  "fuzz-packages/aead-xchacha20poly1305/Cargo.toml",
-  "fuzz-packages/auth-argon2/Cargo.toml",
-  "fuzz-packages/auth-ed25519/Cargo.toml",
-  "fuzz-packages/auth-hkdf/Cargo.toml",
-  "fuzz-packages/auth-hmac/Cargo.toml",
-  "fuzz-packages/auth-kmac256/Cargo.toml",
-  "fuzz-packages/auth-p256-ecdh/Cargo.toml",
-  "fuzz-packages/auth-p384-ecdh/Cargo.toml",
-  "fuzz-packages/auth-pbkdf2/Cargo.toml",
-  "fuzz-packages/auth-phc/Cargo.toml",
-  "fuzz-packages/auth-scrypt/Cargo.toml",
-  "fuzz-packages/auth-siphash/Cargo.toml",
-  "fuzz-packages/auth-x25519/Cargo.toml",
-  "fuzz-packages/checksums-adler32/Cargo.toml",
-  "fuzz-packages/checksums-crc16/Cargo.toml",
-  "fuzz-packages/checksums-crc24/Cargo.toml",
-  "fuzz-packages/checksums-crc32/Cargo.toml",
-  "fuzz-packages/checksums-crc64/Cargo.toml",
-  "fuzz-packages/fast-rapidhash/Cargo.toml",
-  "fuzz-packages/fast-xxh3/Cargo.toml",
-  "fuzz-packages/fast-xxh32/Cargo.toml",
-  "fuzz-packages/fast-xxh64/Cargo.toml",
-  "fuzz-packages/hash-ascon/Cargo.toml",
-  "fuzz-packages/hash-blake2/Cargo.toml",
-  "fuzz-packages/hash-blake3/Cargo.toml",
-  "fuzz-packages/hash-sha2/Cargo.toml",
-  "fuzz-packages/hash-sha3/Cargo.toml",
-  "fuzz-packages/hash-websocket-sha1/Cargo.toml",
-  "fuzz-packages/surface-hex-parse/Cargo.toml",
-  "fuzz-packages/traits-io/Cargo.toml",
-  "fuzz/Cargo.toml",
-  "tools/ct-binsec-harness/Cargo.toml",
-  "tools/ct-dudect/Cargo.toml",
-  "tools/ct-harness/Cargo.toml",
-  "tools/frame-review/Cargo.toml",
-  "tools/mldsa-tail/Cargo.toml",
-  "tools/provider-bench/Cargo.toml",
-  "tools/provider-size/Cargo.toml",
-  "tools/residue-harness/Cargo.toml",
-  "tools/stack-paint/Cargo.toml",
-  "tools/wasm-runtime-vectors/Cargo.toml",
-]
+# Keep the fuzz and tools lockfiles on the released package version.
+auxiliary_cargo_manifests = ["fuzz/Cargo.toml", "tools/Cargo.toml"]
 
 [crates.rscrypto-rustls.release]
 tag_format = "{crate}-v{version}"

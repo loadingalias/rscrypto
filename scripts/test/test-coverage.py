@@ -183,8 +183,7 @@ def collect(root, work, env):
         ('native', root / 'Cargo.toml', ['-p', 'rscrypto', '--no-default-features', '--features', ','.join(native)]),
         ('portable', root / 'Cargo.toml', ['-p', 'rscrypto', '--all-features']),
     ]
-    manifests = [root / 'fuzz/Cargo.toml', *sorted(root.glob('fuzz-packages/*/Cargo.toml'))]
-    suites.extend((str(p.parent.relative_to(root)), p, ['--all-features', '--test', 'corpus_replay']) for p in manifests)
+    suites.append(('fuzz', root / 'fuzz/Cargo.toml', ['--all-features', '--test', 'corpus_replay']))
     objects = {}
     profiles = []
     collected = []

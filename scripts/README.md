@@ -50,11 +50,12 @@ The all-features row contains every additive dependency feature, so its graph
 covers arbitrary feature combinations as well as the compiled rows.
 The shared lockfile is not the gate: it includes rscrypto's dev-only crypto oracles.
 
-Every `check/provider.py` mode, so `just check` as well, also requires each
-`tools/*/Cargo.toml` to pin each `rustls` or `rustls-*` crate that it names with the same version and source
-keys as `rscrypto-rustls/Cargo.toml`; features may differ. A tool may not name a rustls crate that the provider
-does not pin. Each tool has its own lockfile, so a pin change, such as the swap from rustls `0.24.0-dev.3` to
-`0.24.0`, makes the same edit in the provider and in each tool manifest, then refreshes each lockfile.
+Every `check/provider.py` mode, so `just check` as well, also requires `tools/Cargo.toml`, each tool manifest,
+and `fuzz/Cargo.toml` to pin each `rustls` or `rustls-*` crate that they name with the same version and source
+keys as `rscrypto-rustls/Cargo.toml`; features may differ. A tool inherits the pins of `tools/Cargo.toml` with
+`workspace = true`, and no manifest may name a rustls crate that the provider does not pin. The tools and fuzz
+workspaces have their own lockfiles, so a pin change, such as the swap from rustls `0.24.0-dev.3` to `0.24.0`,
+makes the same edit in the provider, `tools/Cargo.toml`, and `fuzz/Cargo.toml`, then refreshes those two lockfiles.
 
 Dependency policy checks duplicate versions without dev edges, matching the
 existing exclusion of dev-only duplicates. This keeps oracle-only features on
@@ -186,9 +187,9 @@ It does not download upstream archives.
 - The `provider_quic_*` fuzz targets call the provider's public QUIC API.
   Ordinary builds compile and lint them, and `just test-fuzz-asan` replays their
   committed corpora. Live campaigns use the normal
-  `just test-fuzz --full --targets` front door with explicit duration and limits.
+  `just test-fuzz --targets` front door with explicit duration and limits.
 - The `tls-provider` benchmark selector and `just bench-provider-scorecard`
-  use the independent [provider benchmark workspace](../tools/provider-bench/README.md).
+  use the [provider benchmark package](../tools/provider-bench/README.md) in the tools workspace.
   Its catalog target declares OpenSSL 4.0.3 as an external prerequisite,
   so default runs omit it and the Bench workflow rejects it; run it locally.
   Criterion measures complete TLS pairs and application records; the supplementary
@@ -357,11 +358,7 @@ They do not detect a compromised producer that forges its own metadata.
 - Example names and feature requirements come from Cargo metadata.
 - Use `just test-miri --rsa` for the focused RSA scope.
 - Use `just test-fuzz --targets A,B` for an explicit group of fuzz targets.
-- Package scope is selected before targets.
-  `--all` includes matching targets from the full and scoped packages.
-  `--full` and `--scoped` limit the scope.
-  The default is full, including named targets.
-- `just test-fuzz --build --all` builds every fuzz package without starting fuzzing.
+- `just test-fuzz --build` builds every fuzz target without starting fuzzing.
 - `fuzz_ci.py plan` (CI only) accepts only a manual dispatch.
   It selects the requested exact target names, the daily rotation, or every target,
   in every package that contains each name, and validates the live-fuzzing budget.
@@ -922,7 +919,7 @@ Check, Miri, and fuzz commands run independently of that plan.
 | Script                                 | Sourced or called by |
 | -------------------------------------- | -------------------- |
 | `lib/rail-plan.sh`                     | `test/test.sh`       |
-| `lib/fuzz-packages.sh`                 | Fuzz scripts         |
+| `lib/fuzz.sh`                          | Fuzz scripts         |
 | `lib/python.sh`                        | Python-based check, test, CT, and benchmark scripts, through uv |
 | `lib/dispatched_run.py`                | The CI and CT `riscv64-linux` jobs |
 | `lib/toolchain.py`, `lib/toolchain.sh` | Shared toolchain selection for installers, builds, checks, tests, and benchmarks |

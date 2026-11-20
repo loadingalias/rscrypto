@@ -39,10 +39,10 @@ def packages(features):
 
 
 def measure(target, command, features, output):
-    subprocess.run(['cargo', '+' + toolchain.channel(), *command, '--locked', '--release', '--manifest-path',
+    subprocess.run(['cargo', '+' + toolchain.channel(), *command, '--locked', '--profile', 'consumer', '--manifest-path',
                     str(MANIFEST), '--target', target, *features], cwd=ROOT, check=True)
     suffix = '.exe' if 'windows' in target else ''
-    built = MANIFEST.parent / 'target' / target / 'release' / (BINARY + suffix)
+    built = ROOT / 'tools/target' / target / 'consumer' / (BINARY + suffix)
     linked = output / f'{target}-{"default" if features else "client"}{suffix}'
     shutil.copyfile(built, linked)
     stripped = linked.with_name(linked.name + '.stripped')

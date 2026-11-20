@@ -86,8 +86,8 @@ jobs:
         run: |
           source "$HOME/.local/share/rscrypto-tooling/environment.sh"
           scripts/lib/python.sh scripts/test/fuzz_ci.py restore
-          just test-fuzz --build --all
-          RSCRYPTO_FUZZ_CORPUS=local just test-fuzz-asan --all
+          just test-fuzz --build
+          RSCRYPTO_FUZZ_CORPUS=local just test-fuzz-asan
       - name: Fuzz selected targets
         if: matrix.task == 'fuzz' && steps.plan.outputs.live == 'true'
         env:
@@ -97,7 +97,7 @@ jobs:
           RSCRYPTO_FUZZ_BUDGET_SECS: ${{ steps.plan.outputs.budget }}
         run: |
           source "$HOME/.local/share/rscrypto-tooling/environment.sh"
-          just test-fuzz --all --targets "$TARGETS"
+          just test-fuzz --targets "$TARGETS"
       - name: Prepare corpus checkpoint
         if: matrix.task == 'fuzz'
         run: |
@@ -124,8 +124,6 @@ jobs:
             target/fuzz-corpus/
             fuzz/artifacts/
             fuzz/corpus/
-            fuzz-packages/*/artifacts/
-            fuzz-packages/*/corpus/
           if-no-files-found: ignore
           retention-days: 30
 

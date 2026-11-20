@@ -91,12 +91,23 @@ class ToolPins(unittest.TestCase):
         valid = (f'[dependencies]\nrustls = {{ {GIT}, features = ["webpki", "std"] }}\n'
                  f"[target.'cfg(unix)'.dev-dependencies]\nrustls-ring = {{ {GIT} }}\n"
                  'webpki = { package = "rustls-webpki", version = "=0.104.0-alpha.8" }\n')
-        for workspace in ('tools/bench', 'fuzz'):
+        for workspace in ('tools/bench', 'tools/inherit', 'fuzz'):
             (root / workspace).mkdir(parents=True)
             (root / workspace / 'Cargo.toml').write_text(valid)
+        # The tools workspace owns the shared pins; a member inherits them with `workspace = true`.
+        (root / 'tools/Cargo.toml').write_text(
+            f'[workspace.dependencies]\nrustls = {{ {GIT}, default-features = false }}\nrustls-ring = {{ {GIT} }}\n')
+        (root / 'tools/inherit/Cargo.toml').write_text('[dependencies]\nrustls = { workspace = true, features = ["std"] }\n')
         provider.check_tool_pins(root)
         (root / 'tools/bench/Cargo.toml').write_text(edit(valid))
         return root
+
+    def test_the_tools_workspace_on_another_rustls_revision_fails(self):
+        root = self.tool(lambda valid: valid)
+        manifest = root / 'tools/Cargo.toml'
+        manifest.write_text(manifest.read_text().replace('rev = "0419f479', 'rev = "e7506724', 1))
+        with self.assertRaisesRegex(ValueError, r'tools/Cargo\.toml pins rustls as'):
+            provider.check_tool_pins(root)
 
     def test_a_tool_on_another_rustls_revision_fails(self):
         root = self.tool(lambda valid: valid.replace('rev = "0419f479', 'rev = "e7506724', 1))

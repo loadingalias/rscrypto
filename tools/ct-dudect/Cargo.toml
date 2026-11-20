@@ -5,17 +5,6 @@ edition = "2024"
 publish = false
 license = "Apache-2.0"
 
-[workspace]
-
-[profile.release]
-opt-level = 3
-debug = false
-strip = "debuginfo"
-overflow-checks = true
-lto = "fat"
-panic = "abort"
-codegen-units = 1
-
 [dependencies]
 dudect-bencher = { version = "=0.7.0", path = "vendor/dudect-bencher" }
 rscrypto = { path = "../..", default-features = false, features = [

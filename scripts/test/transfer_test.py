@@ -278,7 +278,8 @@ with Path(os.environ['TRANSFER_TEST_LOG']).open('a') as log:
 if name=='cargo' and args==['nextest','--version']:
     print('cargo-nextest '+os.environ['TRANSFER_NEXTEST'])
 elif name=='cargo' and args[0]=='build':
-    release = Path(args[args.index('--target-dir')+1]) / args[args.index('--target')+1] / 'release'
+    profile = args[args.index('--profile')+1] if '--profile' in args else 'release'
+    release = Path(args[args.index('--target-dir')+1]) / args[args.index('--target')+1] / profile
     binaries = ('examples/introspect',) if '--example' in args else ('rscrypto-stack-edges', 'rscrypto-stack-worker')
     for binary in binaries:
         (release / binary).parent.mkdir(parents=True, exist_ok=True)
@@ -328,7 +329,8 @@ elif name.endswith('gcc'): print('gcc pinned fixture')
             # The painted-stack binaries travel in the same sealed bundle.
             stack = [row for row in calls if row[:2] == ['cargo', 'build'] and '--example' not in row]
             self.assertEqual(len(stack), 2)
-            self.assertTrue(all('--locked' in row and '--release' in row and row[row.index('--target') + 1] == target
+            self.assertTrue(all('--locked' in row and row[row.index('--profile') + 1] == 'release-symbols'
+                                and row[row.index('--target') + 1] == target
                                 and row[row.index('--manifest-path') + 1].endswith('tools/stack-paint/Cargo.toml')
                                 for row in stack))
             self.assertEqual(['--features' in row for row in stack], [False, True])

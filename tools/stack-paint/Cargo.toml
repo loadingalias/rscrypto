@@ -5,22 +5,9 @@ edition = "2024"
 publish = false
 license = "Apache-2.0"
 
-[workspace]
-
-# The provider's shipping release settings, as in tools/frame-review: measured
-# frames must come from the same inlining and layout decisions.
-[profile.release]
-codegen-units = 1
-debug = false
-lto = "fat"
-opt-level = 3
-overflow-checks = true
-panic = "abort"
-strip = false
-
 [dependencies]
 rscrypto-rustls = { path = "../../rscrypto-rustls", features = ["ml-dsa"] }
-rustls = { version = "=0.24.0-dev.3", default-features = false, features = ["std", "webpki"] }
+rustls = { workspace = true, features = ["std", "webpki"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2.191"

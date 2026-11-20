@@ -7,7 +7,6 @@
 
 # Fuzz inputs must retain their exact bytes on every host.
 fuzz/corpus/** binary
-fuzz-packages/*/corpus/** binary
 
 # Unified-diff context lines preserve blank-line spaces and upstream tabs.
 scripts/test/*.patch whitespace=-blank-at-eol,-blank-at-eof,-space-before-tab
