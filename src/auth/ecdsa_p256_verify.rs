@@ -76,29 +76,6 @@ fn sbb(lhs: u64, rhs: u64, borrow: u64) -> (u64, u64) {
   (difference, u64::from(overflow0 | overflow1))
 }
 
-/// The low and high words of a 128-bit value. Every input here is public, so the plain wide
-/// multiplication serves targets whose secret arithmetic avoids it.
-#[cfg(any(test, not(all(target_arch = "aarch64", not(feature = "portable-only"), not(miri)))))]
-#[inline(always)]
-fn split(value: u128) -> (u64, u64) {
-  let bytes = value.to_le_bytes();
-  let (low, high) = bytes.split_at(8);
-  (
-    u64::from_le_bytes(low.try_into().expect("eight low bytes")),
-    u64::from_le_bytes(high.try_into().expect("eight high bytes")),
-  )
-}
-
-/// `acc + lhs·rhs + carry` as `(low, high)`; the sum is at most `2^128 - 1`.
-#[cfg(any(test, not(all(target_arch = "aarch64", not(feature = "portable-only"), not(miri)))))]
-#[inline(always)]
-fn mac(acc: u64, lhs: u64, rhs: u64, carry: u64) -> (u64, u64) {
-  let (low, high) = split(u128::from(lhs).strict_mul(u128::from(rhs)));
-  let (low, carry0) = adc(low, acc, 0);
-  let (low, carry1) = adc(low, carry, 0);
-  (low, high.wrapping_add(carry0).wrapping_add(carry1))
-}
-
 impl Fe {
   #[inline(always)]
   fn add(self, rhs: Self) -> Self {
@@ -204,25 +181,25 @@ impl Fe {
   fn mul_portable(self, rhs: Self) -> Self {
     let [a0, a1, a2, a3] = self.0;
     let [b0, b1, b2, b3] = rhs.0;
-    let (w0, carry) = mac(0, a0, b0, 0);
-    let (w1, carry) = mac(0, a0, b1, carry);
-    let (w2, carry) = mac(0, a0, b2, carry);
-    let (w3, w4) = mac(0, a0, b3, carry);
+    let (w0, carry) = a0.carrying_mul(b0, 0);
+    let (w1, carry) = a0.carrying_mul(b1, carry);
+    let (w2, carry) = a0.carrying_mul(b2, carry);
+    let (w3, w4) = a0.carrying_mul(b3, carry);
 
-    let (w1, carry) = mac(w1, a1, b0, 0);
-    let (w2, carry) = mac(w2, a1, b1, carry);
-    let (w3, carry) = mac(w3, a1, b2, carry);
-    let (w4, w5) = mac(w4, a1, b3, carry);
+    let (w1, carry) = a1.carrying_mul_add(b0, 0, w1);
+    let (w2, carry) = a1.carrying_mul_add(b1, carry, w2);
+    let (w3, carry) = a1.carrying_mul_add(b2, carry, w3);
+    let (w4, w5) = a1.carrying_mul_add(b3, carry, w4);
 
-    let (w2, carry) = mac(w2, a2, b0, 0);
-    let (w3, carry) = mac(w3, a2, b1, carry);
-    let (w4, carry) = mac(w4, a2, b2, carry);
-    let (w5, w6) = mac(w5, a2, b3, carry);
+    let (w2, carry) = a2.carrying_mul_add(b0, 0, w2);
+    let (w3, carry) = a2.carrying_mul_add(b1, carry, w3);
+    let (w4, carry) = a2.carrying_mul_add(b2, carry, w4);
+    let (w5, w6) = a2.carrying_mul_add(b3, carry, w5);
 
-    let (w3, carry) = mac(w3, a3, b0, 0);
-    let (w4, carry) = mac(w4, a3, b1, carry);
-    let (w5, carry) = mac(w5, a3, b2, carry);
-    let (w6, w7) = mac(w6, a3, b3, carry);
+    let (w3, carry) = a3.carrying_mul_add(b0, 0, w3);
+    let (w4, carry) = a3.carrying_mul_add(b1, carry, w4);
+    let (w5, carry) = a3.carrying_mul_add(b2, carry, w5);
+    let (w6, w7) = a3.carrying_mul_add(b3, carry, w6);
 
     Self::reduce([w0, w1, w2, w3, w4, w5, w6, w7])
   }
@@ -231,12 +208,12 @@ impl Fe {
   #[inline(always)]
   fn square_portable(self) -> Self {
     let [a0, a1, a2, a3] = self.0;
-    let (w1, carry) = mac(0, a0, a1, 0);
-    let (w2, carry) = mac(0, a0, a2, carry);
-    let (w3, w4) = mac(0, a0, a3, carry);
-    let (w3, carry) = mac(w3, a1, a2, 0);
-    let (w4, w5) = mac(w4, a1, a3, carry);
-    let (w5, w6) = mac(w5, a2, a3, 0);
+    let (w1, carry) = a0.carrying_mul(a1, 0);
+    let (w2, carry) = a0.carrying_mul(a2, carry);
+    let (w3, w4) = a0.carrying_mul(a3, carry);
+    let (w3, carry) = a1.carrying_mul_add(a2, 0, w3);
+    let (w4, w5) = a1.carrying_mul_add(a3, carry, w4);
+    let (w5, w6) = a2.carrying_mul_add(a3, 0, w5);
 
     // The cross terms are below 2^448, so the doubled sum keeps its top bit in w7.
     let w7 = w6 >> 63;
@@ -247,10 +224,10 @@ impl Fe {
     let w2 = (w2 << 1) | (w1 >> 63);
     let w1 = w1 << 1;
 
-    let (s0_low, s0_high) = split(u128::from(a0).strict_mul(u128::from(a0)));
-    let (s1_low, s1_high) = split(u128::from(a1).strict_mul(u128::from(a1)));
-    let (s2_low, s2_high) = split(u128::from(a2).strict_mul(u128::from(a2)));
-    let (s3_low, s3_high) = split(u128::from(a3).strict_mul(u128::from(a3)));
+    let (s0_low, s0_high) = a0.carrying_mul(a0, 0);
+    let (s1_low, s1_high) = a1.carrying_mul(a1, 0);
+    let (s2_low, s2_high) = a2.carrying_mul(a2, 0);
+    let (s3_low, s3_high) = a3.carrying_mul(a3, 0);
     let (w1, carry) = adc(w1, s0_high, 0);
     let (w2, carry) = adc(w2, s1_low, carry);
     let (w3, carry) = adc(w3, s1_high, carry);

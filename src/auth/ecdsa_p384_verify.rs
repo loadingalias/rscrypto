@@ -40,31 +40,6 @@ fn sbb(lhs: u64, rhs: u64, borrow: u64) -> (u64, u64) {
   (difference, u64::from(overflow0 | overflow1))
 }
 
-/// `acc + lhs·rhs + carry` as `(low, high)`; the sum is at most `2^128 - 1`. Every input here is
-/// public, so the plain wide multiplication serves every target.
-#[cfg(any(
-  test,
-  not(any(
-    all(target_arch = "aarch64", not(feature = "portable-only"), not(miri)),
-    all(
-      target_arch = "x86_64",
-      any(target_os = "linux", target_os = "windows"),
-      not(feature = "portable-only"),
-      not(miri)
-    )
-  ))
-))]
-#[inline(always)]
-fn mac(acc: u64, lhs: u64, rhs: u64, carry: u64) -> (u64, u64) {
-  let bytes = u128::from(lhs).strict_mul(u128::from(rhs)).to_le_bytes();
-  let (low, high) = bytes.split_at(8);
-  let low = u64::from_le_bytes(low.try_into().expect("eight low bytes"));
-  let high = u64::from_le_bytes(high.try_into().expect("eight high bytes"));
-  let (low, carry0) = adc(low, acc, 0);
-  let (low, carry1) = adc(low, carry, 0);
-  (low, high.wrapping_add(carry0).wrapping_add(carry1))
-}
-
 impl Fe {
   #[inline(always)]
   fn add(self, rhs: Self) -> Self {
@@ -215,7 +190,7 @@ impl Fe {
     for (row, &b) in rhs.0.iter().enumerate() {
       let mut carry = 0u64;
       for (limb, &a) in product[row..].iter_mut().zip(&self.0) {
-        (*limb, carry) = mac(*limb, a, b, carry);
+        (*limb, carry) = a.carrying_mul_add(b, carry, *limb);
       }
       // Earlier rows end below limb `row + 6`.
       product[row.strict_add(6)] = carry;
@@ -246,7 +221,7 @@ impl Fe {
       let next = row.strict_add(1);
       let mut carry = 0u64;
       for (limb, &aj) in product[row.strict_add(next)..].iter_mut().zip(&a[next..]) {
-        (*limb, carry) = mac(*limb, ai, aj, carry);
+        (*limb, carry) = ai.carrying_mul_add(aj, carry, *limb);
       }
       product[row.strict_add(6)] = carry;
     }
@@ -261,7 +236,7 @@ impl Fe {
 
     let mut carry = 0u64;
     for ([low, high], &ai) in product.as_chunks_mut::<2>().0.iter_mut().zip(&a) {
-      let (square_low, square_high) = mac(0, ai, ai, 0);
+      let (square_low, square_high) = ai.carrying_mul(ai, 0);
       (*low, carry) = adc(*low, square_low, carry);
       (*high, carry) = adc(*high, square_high, carry);
     }
