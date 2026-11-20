@@ -111,34 +111,39 @@ for manifest in "${manifests[@]}"; do
     echo "Linting independent workspace: $relative_manifest"
   fi
 
-  cargo_args=(
-    clippy
-    --locked
-    --manifest-path "$manifest"
-    --workspace
-    --all-targets
-    --all-features
-    --no-deps
-  )
-  while IFS= read -r -d '' vendored_package; do
-    cargo_args+=(--exclude "$vendored_package")
-  done < <(cargo metadata --locked --no-deps --format-version 1 --manifest-path "$manifest" |
-    jq --raw-output0 '.packages[] | select(.manifest_path | split("\\") | join("/") | contains("/vendor/")) | .name')
-  if [[ "$MESSAGE_FORMAT" == json ]]; then
-    cargo_args+=(--message-format=json)
-  fi
-
   compiler_flags=("${lint_flags[@]}" "${check_cfg_flags[@]}")
   if [[ -n "$LINT_CAP" ]]; then
     compiler_flags+=(--cap-lints "$LINT_CAP")
   fi
 
-  # The CT tools in the tools workspace need rscrypto's internal evidence surface.
-  if [[ "$relative_manifest" == tools/Cargo.toml ]]; then
-    target="${CARGO_BUILD_TARGET:-$("$REPO_ROOT/scripts/lib/toolchain.sh" --print-host)}"
-    CARGO_TARGET_DIR="$TARGET_DIR" "$REPO_ROOT/scripts/lib/python.sh" "$REPO_ROOT/scripts/ct/internal.py" \
-      --target "$target" -- cargo "${cargo_args[@]}" -- "${compiler_flags[@]}"
-  else
-    CARGO_TARGET_DIR="$TARGET_DIR" cargo "${cargo_args[@]}" -- "${compiler_flags[@]}"
-  fi
+  # Lint each package alone, as it builds. One workspace selection would unify the members'
+  # rscrypto features, so portable-only from one tool would remove the backends of another.
+  packages=()
+  while IFS= read -r -d '' package; do
+    packages+=("$package")
+  done < <(cargo metadata --locked --no-deps --format-version 1 --manifest-path "$manifest" |
+    jq --raw-output0 '.packages[] | select(.manifest_path | split("\\") | join("/") | contains("/vendor/") | not) | .name')
+  for package in "${packages[@]}"; do
+    cargo_args=(
+      clippy
+      --locked
+      --manifest-path "$manifest"
+      --package "$package"
+      --all-targets
+      --all-features
+      --no-deps
+    )
+    if [[ "$MESSAGE_FORMAT" == json ]]; then
+      cargo_args+=(--message-format=json)
+    fi
+
+    # The CT tools in the tools workspace need rscrypto's internal evidence surface.
+    if [[ "$relative_manifest" == tools/Cargo.toml ]]; then
+      target="${CARGO_BUILD_TARGET:-$("$REPO_ROOT/scripts/lib/toolchain.sh" --print-host)}"
+      CARGO_TARGET_DIR="$TARGET_DIR" "$REPO_ROOT/scripts/lib/python.sh" "$REPO_ROOT/scripts/ct/internal.py" \
+        --target "$target" -- cargo "${cargo_args[@]}" -- "${compiler_flags[@]}"
+    else
+      CARGO_TARGET_DIR="$TARGET_DIR" cargo "${cargo_args[@]}" -- "${compiler_flags[@]}"
+    fi
+  done
 done

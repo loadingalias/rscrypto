@@ -44,7 +44,8 @@ if args[0] == 'metadata':
                            ('vendor-tools', 'vendor-tools/Cargo.toml')]
     ]}))
 else:
-    Path(os.environ['CHECK_LOG']).write_text(json.dumps(args))
+    with Path(os.environ['CHECK_LOG']).open('a') as log:
+        log.write(json.dumps(args) + '\\n')
     if os.environ.get('CHECK_FLAG_LOG'):
         with Path(os.environ['CHECK_FLAG_LOG']).open('a') as log:
             log.write(json.dumps([manifest.parent.name, os.environ.get('CARGO_ENCODED_RUSTFLAGS')]) + '\\n')
@@ -59,20 +60,24 @@ else:
     # The fixture holds no tooling catalog, so its Python helpers run on this interpreter.
     environment.update({'GIT_CONFIG_GLOBAL': os.devnull, 'GIT_CONFIG_NOSYSTEM': '1', 'PYTHON': sys.executable})
     subprocess.run(['git', 'init', '-q', str(root)], check=True, env=environment)
-    log = root / 'commands.json'
+    log = root / 'commands.jsonl'
     for prefix, separator in [('/repo/tools/harness/', '/'), ('C:\\repo\\tools\\harness\\', '\\')]:
+      log.write_text('')
       result = subprocess.run(['bash', str(script)], cwd=root, capture_output=True, text=True, timeout=30,
                               env={**environment, 'PATH': f'{binary}:{os.environ["PATH"]}',
                                    'CHECK_LOG': str(log), 'METADATA_PREFIX': prefix,
                                    'REAL_JQ': shutil.which('jq'),
                                    'METADATA_SEPARATOR': separator})
       assert result.returncode == 0, result.stderr
-      command = json.loads(log.read_text())
-      excluded = [command[i + 1] for i, arg in enumerate(command) if arg == '--exclude']
-      assert excluded == ['upstream'], (prefix, command)
-      assert '--workspace' in command and '--all-targets' in command and '--no-deps' in command
-      assert {'-Dwarnings', '-Dclippy::arithmetic_side_effects',
-              '-Dclippy::undocumented_unsafe_blocks'} <= set(command), command
+      # Each package is linted alone, so no member's features reach another, and vendored code is skipped.
+      commands = [json.loads(line) for line in log.read_text().splitlines()]
+      packages = [command[command.index('--package') + 1] for command in commands]
+      assert packages == ['harness', 'vendor-tools'], (prefix, commands)
+      for command in commands:
+        assert '--workspace' not in command and '--exclude' not in command, command
+        assert '--all-targets' in command and '--all-features' in command and '--no-deps' in command
+        assert {'-Dwarnings', '-Dclippy::arithmetic_side_effects',
+                '-Dclippy::undocumented_unsafe_blocks'} <= set(command), command
 
     # Ignored manifests are local scratch, not repository policy, even when broken. Untracked
     # unignored manifests are linted before commit; tracked manifests deleted from the working
@@ -103,7 +108,7 @@ else:
                                  'REAL_JQ': shutil.which('jq'), 'METADATA_SEPARATOR': '/',
                                  'CHECK_FAIL_WORKSPACE': 'harness'})
     assert result.returncode == 7, (result.returncode, result.stderr)
-    command = json.loads(log.read_text())
+    command = json.loads(log.read_text().splitlines()[-1])
     assert Path(command[command.index('--manifest-path') + 1]).resolve() == (workspace / 'Cargo.toml').resolve(), command
     assert 'Linting independent workspace: tools/later/' not in result.stdout
 
@@ -127,9 +132,10 @@ else:
                                    'CHECK_FLAG_LOG': str(flag_log), 'CHECK_FAIL_WORKSPACE': failure})
       assert result.returncode == expected_status, result.stderr
       flags = [json.loads(line) for line in flag_log.read_text().splitlines()]
+      # A failed package stops the lint; otherwise each workspace lints its two unvendored packages.
       expected = [['tools', '-C\x1ftarget-cpu=generic\x1f--cfg\x1frscrypto_internal']]
       if not failure:
-        expected.append(['later', '-C\x1ftarget-cpu=generic'])
+        expected = 2 * expected + 2 * [['later', '-C\x1ftarget-cpu=generic']]
       assert flags == expected, flags
 
 
