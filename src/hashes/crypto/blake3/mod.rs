@@ -665,13 +665,6 @@ fn hash_power_of_two_subtree_roots_parallel_rayon(req: SubtreeRootsRequest<'_>) 
 }
 
 #[inline(always)]
-fn uninit_cv_stack() -> [MaybeUninit<[u32; 8]>; CV_STACK_LEN] {
-  // SAFETY: An uninitialized `[MaybeUninit<_>; N]` is valid, because
-  // `MaybeUninit<T>` permits any bit pattern.
-  unsafe { MaybeUninit::<[MaybeUninit<[u32; 8]>; CV_STACK_LEN]>::uninit().assume_init() }
-}
-
-#[inline(always)]
 fn words8_from_le_bytes_32(bytes: &[u8; 32]) -> [u32; 8] {
   if cfg!(target_endian = "little") {
     // SAFETY: `bytes` is exactly 32 bytes, and `read_unaligned` supports the
@@ -2304,7 +2297,7 @@ fn root_output_oneshot(
   }
 
   // Local CV stack to avoid constructing a full streaming hasher.
-  let mut cv_stack: [MaybeUninit<[u32; 8]>; CV_STACK_LEN] = uninit_cv_stack();
+  let mut cv_stack = [MaybeUninit::uninit(); CV_STACK_LEN];
   let mut cv_stack_len = 0usize;
   let mut right_cv = {
     #[cfg(target_endian = "little")]
@@ -3260,7 +3253,7 @@ impl Blake3 {
       pending_chunk_cv: None,
       pending_cv_chunks: 0,
       key_words,
-      cv_stack: uninit_cv_stack(),
+      cv_stack: [MaybeUninit::uninit(); CV_STACK_LEN],
       cv_stack_len: 0,
     };
     if flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
@@ -3316,10 +3309,7 @@ impl Blake3 {
 
     // Hash all chunks in the subtree into uninitialized scratch. The kernel
     // writes every committed CV slot, so pre-zeroing the whole buffer is waste.
-    let mut cvs: [MaybeUninit<[u32; 8]>; MAX_SUBTREE_CHUNKS] =
-      // SAFETY: `[MaybeUninit<T>; N]` may be left uninitialized because
-      // `MaybeUninit<T>` permits any bit pattern.
-      unsafe { MaybeUninit::<[MaybeUninit<[u32; 8]>; MAX_SUBTREE_CHUNKS]>::uninit().assume_init() };
+    let mut cvs: [MaybeUninit<[u32; 8]>; MAX_SUBTREE_CHUNKS] = [MaybeUninit::uninit(); MAX_SUBTREE_CHUNKS];
     // SAFETY: `input` has at least `subtree_len` bytes, `cvs` has
     // `subtree_chunks` CV slots, and the kernel's CPU features are available.
     unsafe {
