@@ -24,10 +24,10 @@ pub(super) fn load(
   let der = der.secret_pkcs8_der();
   macro_rules! load {
     ($key:ident, $variant:ident) => {
-      if let Ok(key) = $key::from_pkcs8_der(der) {
+      if let Ok(key) = $key::from_pkcs8_der_in(der, Global) {
         let spki = key.public_key().to_spki_der().to_vec();
         let form = if compact {
-          Form::Compact(Box::new(key))
+          Form::Compact(key)
         } else {
           Form::Prepared(Box::new(key.prepare_in(Global).ok()?))
         };
