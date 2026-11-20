@@ -1144,7 +1144,7 @@ mod tests {
       }
       assert!(a.square() == a.square_portable(), "{:x?}²", a.0);
       assert!(a.square() == a.mul_portable(a), "{:x?}² as a product", a.0);
-      #[cfg(all(target_arch = "x86_64", not(feature = "portable-only")))]
+      #[cfg(all(target_arch = "x86_64", not(feature = "portable-only"), not(miri)))]
       if super::has_bmi2_adx() {
         use super::super::verify::VerifyField as _;
         let x = super::FeAdx(a.0);
