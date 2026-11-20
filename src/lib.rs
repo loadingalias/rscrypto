@@ -134,22 +134,22 @@ assert!(
 //! limits, and platform fallback notes.
 
 // NIGHTLY: the POWER, IBM Z, and RV64 backends use these unstable features. Each build for these
-// targets enables all of them unless `portable-only` excludes the backends, so a build with few
-// backends leaves some unused. The other targets and `portable-only` builds compile on the MSRV.
+// targets enables all of them unless `portable-only` excludes the backends. The other targets and
+// `portable-only` builds compile on the MSRV.
 #![cfg_attr(
   all(target_arch = "powerpc64", not(feature = "portable-only")),
   feature(portable_simd, powerpc_target_feature),
-  allow(unused_features)
+  allow(unused_features, reason = "a build with few backends leaves some unused")
 )]
 #![cfg_attr(
   all(target_arch = "s390x", not(feature = "portable-only")),
   feature(asm_experimental_reg, portable_simd, stdarch_s390x),
-  allow(unused_features)
+  allow(unused_features, reason = "a build with few backends leaves some unused")
 )]
 #![cfg_attr(
   all(target_arch = "riscv64", not(feature = "portable-only")),
   feature(asm_experimental_reg, portable_simd, riscv_ext_intrinsics, riscv_target_feature),
-  allow(unused_features)
+  allow(unused_features, reason = "a build with few backends leaves some unused")
 )]
 #![cfg_attr(
   all(target_arch = "riscv32", feature = "sha2", not(feature = "portable-only")),
