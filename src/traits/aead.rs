@@ -119,9 +119,8 @@ pub trait Aead {
   ///
   /// # Errors
   ///
-  /// Returns [`RandomSealError`] if nonce generation fails, allocation length
-  /// calculation overflows, the output length would be invalid, or sealing
-  /// fails.
+  /// Returns [`RandomSealError`] if nonce generation fails, the output length
+  /// exceeds `isize::MAX`, or sealing fails.
   #[cfg(all(feature = "alloc", feature = "getrandom"))]
   #[cfg_attr(docsrs, doc(cfg(all(feature = "alloc", feature = "getrandom"))))]
   #[inline]
@@ -185,11 +184,13 @@ pub trait Aead {
   ///
   /// # Errors
   ///
-  /// Returns [`AeadBufferError`] if the requested length overflows `usize`.
+  /// Returns [`AeadBufferError`] if the length exceeds `isize::MAX`, the
+  /// largest length that a byte buffer can have.
   #[inline]
   fn ciphertext_len(plaintext_len: usize) -> Result<usize, AeadBufferError> {
     plaintext_len
       .checked_add(Self::TAG_SIZE)
+      .filter(|len| *len <= isize::MAX.cast_unsigned())
       .ok_or_else(AeadBufferError::new)
   }
 

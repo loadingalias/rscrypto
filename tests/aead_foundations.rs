@@ -354,4 +354,13 @@ fn aead_length_helpers_reject_invalid_sizes() {
     5
   );
   assert_eq!(ChaCha20Poly1305::plaintext_len(15), Err(AeadBufferError::new()));
+  // `Vec<u8>` and `[u8]` hold at most `isize::MAX` bytes, so the allocating seal helpers
+  // must reject a larger output instead of panicking in the allocation (32-bit targets).
+  let largest = isize::MAX.cast_unsigned();
+  let fits = largest.strict_sub(ChaCha20Poly1305::TAG_SIZE);
+  assert_eq!(ChaCha20Poly1305::ciphertext_len(fits), Ok(largest));
+  assert_eq!(
+    ChaCha20Poly1305::ciphertext_len(fits.strict_add(1)),
+    Err(AeadBufferError::new())
+  );
 }
