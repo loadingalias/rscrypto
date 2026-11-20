@@ -34,6 +34,12 @@ records the reviewed compiler/target scope. Existing Portable state, outer
 by-value keys, native fallbacks, plain-array unwind, returned outputs and
 compiler/register/spill copies remain separate limitations.
 
+On AArch64, `with_data_independent_timing` passes the result of each scope through a compiler
+barrier, so the result gets its own stack slot inside the call. When a scope returns a secret by
+value, as the sender and receiver `setup` of HPKE do, that slot is one more copy that nothing
+clears. The `*_in` forms return a pointer, so they make no such copy. The residue boards have no
+DIT, so no residue run measures this path.
+
 The Bao decoder clears its fixed input buffer on returned errors and on drop.
 A caught reader panic permanently disables decoding; the buffer is cleared
 when the decoder drops. No claim covers the underlying reader or bytes already
