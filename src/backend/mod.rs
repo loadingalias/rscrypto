@@ -15,7 +15,6 @@ pub(crate) mod ascon;
   feature = "argon2",
   feature = "sha2",
   feature = "websocket-sha1",
-  all(feature = "sha3", any(test, feature = "diag")),
   all(
     any(feature = "blake2b", feature = "blake2s"),
     not(all(target_arch = "aarch64", target_os = "macos"))

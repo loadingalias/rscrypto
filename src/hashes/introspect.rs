@@ -94,42 +94,42 @@ impl_hash_kernel_introspect!(
 #[cfg(feature = "sha3")]
 impl_hash_kernel_introspect!(
   crate::hashes::crypto::Sha3_224,
-  crate::hashes::crypto::keccak::dispatch::kernel_name_for_len
+  crate::hashes::crypto::keccak::kernel_name_for_len
 );
 #[cfg(feature = "sha3")]
 impl_hash_kernel_introspect!(
   crate::hashes::crypto::Sha3_256,
-  crate::hashes::crypto::keccak::dispatch::kernel_name_for_len
+  crate::hashes::crypto::keccak::kernel_name_for_len
 );
 #[cfg(feature = "sha3")]
 impl_hash_kernel_introspect!(
   crate::hashes::crypto::Sha3_384,
-  crate::hashes::crypto::keccak::dispatch::kernel_name_for_len
+  crate::hashes::crypto::keccak::kernel_name_for_len
 );
 #[cfg(feature = "sha3")]
 impl_hash_kernel_introspect!(
   crate::hashes::crypto::Sha3_512,
-  crate::hashes::crypto::keccak::dispatch::kernel_name_for_len
+  crate::hashes::crypto::keccak::kernel_name_for_len
 );
 #[cfg(feature = "sha3")]
 impl_hash_kernel_introspect!(
   crate::hashes::crypto::Shake128,
-  crate::hashes::crypto::keccak::dispatch::kernel_name_for_len
+  crate::hashes::crypto::keccak::kernel_name_for_len
 );
 #[cfg(feature = "sha3")]
 impl_hash_kernel_introspect!(
   crate::hashes::crypto::Shake256,
-  crate::hashes::crypto::keccak::dispatch::kernel_name_for_len
+  crate::hashes::crypto::keccak::kernel_name_for_len
 );
 #[cfg(feature = "sha3")]
 impl_hash_kernel_introspect!(
   crate::hashes::crypto::Cshake128,
-  crate::hashes::crypto::keccak::dispatch::kernel_name_for_len
+  crate::hashes::crypto::keccak::kernel_name_for_len
 );
 #[cfg(feature = "sha3")]
 impl_hash_kernel_introspect!(
   crate::hashes::crypto::Cshake256,
-  crate::hashes::crypto::keccak::dispatch::kernel_name_for_len
+  crate::hashes::crypto::keccak::kernel_name_for_len
 );
 
 #[cfg(feature = "blake3")]
@@ -221,5 +221,16 @@ mod tests {
   fn kernel_for_blake2s_is_not_empty() {
     let kernel = super::kernel_for::<crate::hashes::crypto::Blake2s256>(1024);
     assert!(!kernel.is_empty());
+  }
+
+  /// Apple AArch64 always has the SHA3 instructions, and production Keccak runs its SHA3 rounds
+  /// there. The report once read a separate table and said "portable".
+  #[test]
+  #[cfg(all(feature = "sha3", target_vendor = "apple", target_feature = "sha3"))]
+  fn keccak_reports_the_kernel_that_runs() {
+    for len in [0, 136, 4096, 1 << 20] {
+      assert_eq!(super::kernel_for::<crate::Sha3_256>(len), "aarch64-sha3");
+      assert_eq!(super::kernel_for::<crate::Shake256>(len), "aarch64-sha3");
+    }
   }
 }

@@ -5,15 +5,9 @@
 
 #[cfg(all(target_arch = "aarch64", not(miri)))]
 pub(crate) mod aarch64;
-#[cfg(feature = "diag")]
-#[doc(hidden)]
-pub(crate) mod dispatch;
-#[cfg(feature = "diag")]
-#[doc(hidden)]
-pub(crate) mod dispatch_tables;
 #[cfg(test)]
 pub(crate) mod kernel_test;
-#[cfg(any(test, feature = "diag"))]
+#[cfg(test)]
 pub(crate) mod kernels;
 #[cfg(any(test, all(target_arch = "aarch64", not(miri))))]
 mod lazy_rotation;
@@ -565,6 +559,10 @@ fn keccakf_absorb_aarch64_scalar<const RATE: usize>(state: &mut [u64; 25], block
 pub(crate) trait Permuter: Copy {
   fn permute(self, state: &mut [u64; 25], len_hint: usize);
 
+  /// The kernel that [`Self::permute`] runs on this CPU, for introspection.
+  #[cfg(feature = "diag")]
+  fn kernel_name(self) -> &'static str;
+
   /// Absorb one complete rate block and permute.
   #[inline(always)]
   fn absorb_block<const RATE: usize>(self, state: &mut [u64; 25], block: &[u8; RATE]) {
@@ -642,6 +640,11 @@ impl Permuter for InlinePermuter {
   fn permute(self, state: &mut [u64; 25], _len_hint: usize) {
     keccakf_portable(state);
   }
+
+  #[cfg(feature = "diag")]
+  fn kernel_name(self) -> &'static str {
+    "portable"
+  }
 }
 
 /// x86_64 permuter: the AVX-512 single-state rounds on Intel CPUs with
@@ -687,6 +690,17 @@ impl Permuter for X86Permuter {
       unsafe { x86_64::keccakf_x86_bmi(state) };
     } else {
       keccakf_portable(state);
+    }
+  }
+
+  #[cfg(feature = "diag")]
+  fn kernel_name(self) -> &'static str {
+    if self.single_avx512 {
+      "x86-avx512"
+    } else if self.has_bmi {
+      "x86-bmi"
+    } else {
+      "portable"
     }
   }
 
@@ -795,6 +809,15 @@ impl Permuter for Aarch64Permuter {
     }
   }
 
+  #[cfg(feature = "diag")]
+  fn kernel_name(self) -> &'static str {
+    if cfg!(target_vendor = "apple") {
+      "aarch64-sha3"
+    } else {
+      "lazy-rotation"
+    }
+  }
+
   #[inline(always)]
   fn absorb_block<const RATE: usize>(self, state: &mut [u64; 25], block: &[u8; RATE]) {
     if cfg!(target_vendor = "apple") {
@@ -883,6 +906,15 @@ impl Permuter for Aarch64Permuter {
       aarch64::keccakf_aarch64_sha3_single(state);
     } else {
       keccakf_aarch64_scalar(state);
+    }
+  }
+
+  #[cfg(feature = "diag")]
+  fn kernel_name(self) -> &'static str {
+    if cfg!(target_vendor = "apple") && self.has_sha3 {
+      "aarch64-sha3"
+    } else {
+      "lazy-rotation"
     }
   }
 
@@ -982,6 +1014,12 @@ impl Permuter for S390xPermuter {
     keccakf_portable(state);
   }
 
+  /// KIMD absorbs whole blocks, and the portable rounds permute the rest.
+  #[cfg(feature = "diag")]
+  fn kernel_name(self) -> &'static str {
+    if self.has_kimd { "s390x-kimd" } else { "portable" }
+  }
+
   #[inline(always)]
   fn try_absorb_blocks(self, state: &mut [u64; 25], blocks: &[u8], rate: usize) -> bool {
     if self.has_kimd
@@ -1017,6 +1055,13 @@ pub(crate) type PlatformPermuter = S390xPermuter;
   ))
 ))]
 pub(crate) type PlatformPermuter = InlinePermuter;
+
+/// The kernel that production Keccak selects on this CPU. The selection does
+/// not depend on the input length.
+#[cfg(feature = "diag")]
+pub(crate) fn kernel_name_for_len(_len: usize) -> &'static str {
+  PlatformPermuter::default().kernel_name()
+}
 
 pub(crate) type KeccakCore<const RATE: usize> = KeccakCoreImpl<RATE, PlatformPermuter, true>;
 pub(crate) type PublicKeccakCore<const RATE: usize> = KeccakCoreImpl<RATE, PlatformPermuter, false>;
