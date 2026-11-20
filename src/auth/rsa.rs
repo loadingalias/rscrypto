@@ -7787,6 +7787,9 @@ fn validate_private_key_import(
   let modulus_bits = validate_modulus(components.modulus, policy)?;
   validate_private_prime_factor(components.prime_p)?;
   validate_private_prime_factor(components.prime_q)?;
+  if !is_canonical_positive_unsigned_be(components.private_exponent) {
+    return Err(RsaKeyError::InvalidModulus);
+  }
 
   let factor_bits = modulus_bits.strict_add(1) / 2;
   if unsigned_be_bit_len(components.prime_p) != factor_bits || unsigned_be_bit_len(components.prime_q) != factor_bits {
@@ -7828,8 +7831,9 @@ fn validate_private_key_components_through_stage(
     coefficient,
   } = *components;
 
-  if !is_canonical_positive_unsigned_be(private_exponent) || !ct_unsigned_be_lt_public_shape(private_exponent, modulus)
-  {
+  // Import checks that `d` is canonical. Key generation passes `d` at the modulus width, so a
+  // short `d` starts with zero bytes.
+  if is_zero_unsigned_be(private_exponent) || !ct_unsigned_be_lt_public_shape(private_exponent, modulus) {
     return Err(RsaKeyError::InvalidModulus);
   }
   validate_private_prime_factor(prime_p)?;
@@ -17160,6 +17164,71 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
       )
       .expect("fixture-prime PKCS#1 v1.5 ciphertext must decrypt");
     assert_eq!(&decrypted[..decrypted_len], pkcs1v15_plaintext);
+  }
+
+  /// Probable primes from a key generation run whose `d` is below `2^(2048 - 8)`, so its
+  /// modulus-width encoding starts with a zero byte. About 1 key in 20 has such a `d`.
+  #[cfg(feature = "getrandom")]
+  #[test]
+  fn keygen_accepts_a_private_exponent_shorter_than_the_modulus() {
+    let prime_p = hex_to_vec(
+      &[
+        "f3a3c18ce6a9a56d1e388c01d5d2b30a91906629bab8df0f3661560602bdda8463eafbe9116d60d0f6075ee0562b14a0",
+        "3ab01cab931eec9947f0289793bd765db08afa99fcbf920debf67c51afdd1c07c1167772d9d67f17e0e5fc94e9e7b5ba",
+        "e6dc01dba9bd649ddf2c8066f67f3db42ca88fc80a3ad544ccfcee563fe61099",
+      ]
+      .concat(),
+    );
+    let prime_q = hex_to_vec(
+      &[
+        "fe2f31be4b89c9a7eddcc93f9291687352fb06c640e09d473144306ec53c018bcbcea38eb0cc5bd3084a9e636bc66fb1",
+        "319fdb64b281988adef848107020408a1cdf9f18fb10ef5030bd066a9693dcb61eff6686aa11119d54e5f2d1a90623b0",
+        "ae2d9c19bb2e2ba05f59dee57367a6d4bebf10717cc00a29d0f2d3bb0199f161",
+      ]
+      .concat(),
+    );
+    let oracle = rsa::PrivateKey::from_p_q(
+      rsa::BoxedUint::from_be_slice_vartime(&prime_p),
+      rsa::BoxedUint::from_be_slice_vartime(&prime_q),
+      rsa::BoxedUint::from(RSA_KEYGEN_PUBLIC_EXPONENT),
+    )
+    .expect("fixture primes form a valid key");
+    let private_exponent = rustcrypto_be(oracle.d());
+    assert!(
+      private_exponent.len() < 2048 / 8,
+      "the fixture needs a short private exponent"
+    );
+
+    let policy = RsaPublicKeyPolicy::modulus_2048_to_8192();
+    let components = keygen_build_private_key_from_primes(2048, &policy, prime_p, prime_q)
+      .expect("a short private exponent is valid")
+      .expect("fixture primes produce a 2048-bit modulus");
+    let key = RsaPrivateKey { components };
+    assert_eq!(key.components.private_exponent.as_bytes()[0], 0);
+    assert_eq!(
+      BigUint::from_bytes_be(key.components.private_exponent.as_bytes()),
+      BigUint::from_bytes_be(&private_exponent)
+    );
+    assert_eq!(key.public_key().modulus(), rustcrypto_be(oracle.n()));
+
+    let imported = RsaPrivateKey::from_pkcs1_der_with_policy(&key.to_pkcs1_der(), &policy)
+      .expect("the generated PKCS#1 private key re-imports");
+    assert_eq!(imported.public_key(), key.public_key());
+    let message = b"rscrypto short private exponent";
+    let (blinding_factor, blinding_factor_inverse) = factor_two_and_inverse(key.public_key().modulus());
+    let mut signature = vec![0u8; key.signature_len()];
+    imported
+      .sign_pkcs1v15_with_blinding_factor(
+        RsaPkcs1v15Profile::Sha256,
+        message,
+        RsaBlindingPair::new(&blinding_factor, &blinding_factor_inverse),
+        &mut signature,
+      )
+      .expect("the re-imported key signs");
+    key
+      .public_key()
+      .verify_pkcs1v15(RsaPkcs1v15Profile::Sha256, message, &signature)
+      .expect("the signature verifies");
   }
 
   #[cfg(feature = "getrandom")]
