@@ -373,6 +373,57 @@ DYNAMIC RELOCATION RECORDS
   missing_relocation_counts = owner_call_site_counts(missing_relocation, expected, symbols_by_address)
   assert missing_relocation_counts["ct_entry_owner_eq_16"] == 0
 
+  # LLVM can load each entry from its slot once into a callee-saved register and call through it.
+  x86_register_disassembly = """\
+DYNAMIC RELOCATION RECORDS
+00000000003733a0 R_X86_64_RELATIVE        *ABS*+0x1dad60
+00000000003733a8 R_X86_64_RELATIVE        *ABS*+0x1dadf0
+00000000003733b0 R_X86_64_RELATIVE        *ABS*+0x1daed0
+00000000003733b8 R_X86_64_RELATIVE        *ABS*+0x1daf60
+
+0000000000010000 <caller>:
+   10010: 4c 8b 25 89 33 36 00    movq 0x363389(%rip), %r12 # 0x3733a0 <I+0x3733a0>
+   10017: 4c 8b 2d 8a 33 36 00    movq 0x36338a(%rip), %r13 # 0x3733a8 <I+0x3733a8>
+   1001e: 4c 8b 35 8b 33 36 00    movq 0x36338b(%rip), %r14 # 0x3733b0 <I+0x3733b0>
+   10025: 4c 8b 3d 8c 33 36 00    movq 0x36338c(%rip), %r15 # 0x3733b8 <I+0x3733b8>
+   1002c: ff 15 00 00 01 00       callq *0x10000(%rip) # 0x2002c <I+0x2002c>
+   10032: 4c 89 f7                movq %r14, %rdi
+   10035: 41 ff d4                callq *%r12
+   10038: 41 ff d5                callq *%r13
+   1003b: 41 ff d6                callq *%r14
+   1003e: 41 ff d7                callq *%r15
+"""
+  assert owner_call_site_counts(x86_register_disassembly, expected, symbols_by_address) == {
+    symbol: 1 for symbol in sorted(expected)
+  }
+  # A register that another instruction writes no longer holds the entry.
+  overwritten = x86_register_disassembly.replace(
+    "   10032: 4c 89 f7                movq %r14, %rdi\n",
+    "   10032: 41 be 01 00 00 00       movl $0x1, %r14d\n",
+  )
+  assert owner_call_site_counts(overwritten, expected, symbols_by_address)["ct_entry_owner_eq_48"] == 0
+  # A call may clobber a caller-saved register, and each function starts with no loaded register.
+  caller_saved = """\
+DYNAMIC RELOCATION RECORDS
+00000000003733a0 R_X86_64_RELATIVE        *ABS*+0x1dad60
+
+0000000000010000 <caller>:
+   10010: 48 8b 05 89 33 36 00    movq 0x363389(%rip), %rax # 0x3733a0 <I+0x3733a0>
+   10017: e8 e4 ff 00 00          callq 0x20000 <other>
+   1001c: ff d0                   callq *%rax
+"""
+  assert owner_call_site_counts(caller_saved, expected, symbols_by_address)["ct_entry_owner_eq_16"] == 0
+  assert owner_call_site_counts(
+    caller_saved.replace("   10017: e8 e4 ff 00 00          callq 0x20000 <other>\n", ""),
+    expected,
+    symbols_by_address,
+  )["ct_entry_owner_eq_16"] == 1
+  other_function = caller_saved.replace(
+    "   10017: e8 e4 ff 00 00          callq 0x20000 <other>\n",
+    "0000000000010017 <second>:\n",
+  )
+  assert owner_call_site_counts(other_function, expected, symbols_by_address)["ct_entry_owner_eq_16"] == 0
+
 
 if __name__ == "__main__":
   main()

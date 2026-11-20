@@ -203,6 +203,26 @@ def owner_symbol_evidence(
   return counts, addresses
 
 
+# Each x86-64 operand name, mapped to the general register that it writes.
+X86_REGISTERS = {
+  name: register
+  for register, names in {
+    "rax": ("rax", "eax", "ax", "al", "ah"),
+    "rbx": ("rbx", "ebx", "bx", "bl", "bh"),
+    "rcx": ("rcx", "ecx", "cx", "cl", "ch"),
+    "rdx": ("rdx", "edx", "dx", "dl", "dh"),
+    "rsi": ("rsi", "esi", "si", "sil"),
+    "rdi": ("rdi", "edi", "di", "dil"),
+    "rbp": ("rbp", "ebp", "bp", "bpl"),
+    "rsp": ("rsp", "esp", "sp", "spl"),
+    **{f"r{n}": (f"r{n}", f"r{n}d", f"r{n}w", f"r{n}b") for n in range(8, 16)},
+  }.items()
+  for name in names
+}
+# A System V call preserves these registers.
+X86_CALLEE_SAVED = {"rbx", "rbp", "rsp", "r12", "r13", "r14", "r15"}
+
+
 def owner_call_site_counts(
   disassembly_text: str,
   expected_symbols: set[str],
@@ -219,6 +239,11 @@ def owner_call_site_counts(
       relative_relocations[int(match.group(1), 16)] = int(match.group(2), 16)
 
   current_symbol = ""
+  # x86-64 registers that hold an owner entry, loaded from its relocated slot in this function.
+  loaded: dict[str, str] = {}
+  slot_load = re.compile(r"\bmovq?\s+-?0x[0-9a-fA-F]+\(%rip\),\s*%([a-z0-9]+)\s*#\s*0x([0-9a-fA-F]+)\b")
+  register_call = re.compile(r"\bcallq?\s+\*%([a-z0-9]+)\s*$")
+  last_register = re.compile(r"%([a-z0-9]+)\s*(?:#.*)?$")
   function_label = re.compile(r"^[0-9a-fA-F]+ <(.+)>:$")
   instruction_pattern = re.compile(r"\b(?:bl|brasl|call|callq|jal|jalr)\b")
   instruction_address = re.compile(r"^\s*([0-9a-fA-F]+):")
@@ -228,6 +253,15 @@ def owner_call_site_counts(
   for line in disassembly_text.splitlines():
     if match := function_label.match(line.strip()):
       current_symbol = match.group(1).removeprefix("_")
+      loaded = {}
+      continue
+    if match := slot_load.search(line):
+      if register := X86_REGISTERS.get(match.group(1)):
+        target_address = relative_relocations.get(int(match.group(2), 16))
+        if symbol := symbols_by_address.get(target_address):
+          loaded[register] = symbol
+        else:
+          loaded.pop(register, None)
       continue
     if match := coff_owner_relocation.match(line):
       symbol = match.group(2)
@@ -240,6 +274,12 @@ def owner_call_site_counts(
       continue
     instruction = instruction_pattern.search(line)
     if instruction is None:
+      # The last register operand is the destination. An exchange also writes its other operands.
+      written = [last.group(1)] if (last := last_register.search(line)) else []
+      if re.search(r"\b(?:xchg|xadd|cmpxchg)", line):
+        written = re.findall(r"%([a-z0-9]+)", line)
+      for name in written:
+        loaded.pop(X86_REGISTERS.get(name, name), None)
       continue
 
     if instruction.group(0) in ("call", "callq") and (address := instruction_address.match(line)):
@@ -259,9 +299,14 @@ def owner_call_site_counts(
       if target_address := relative_relocations.get(int(slot.group(1), 16)):
         if symbol := symbols_by_address.get(target_address):
           called.add(symbol)
+    if (target := register_call.search(line)) and (register := X86_REGISTERS.get(target.group(1))):
+      if symbol := loaded.get(register):
+        called.add(symbol)
     for symbol in called:
       if current_symbol != symbol:
         counts[symbol] += 1
+    if instruction.group(0) in ("call", "callq"):
+      loaded = {register: symbol for register, symbol in loaded.items() if register in X86_CALLEE_SAVED}
   return counts
 
 
