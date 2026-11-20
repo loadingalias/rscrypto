@@ -11,15 +11,13 @@
 
 use core::arch::x86_64::*;
 
+use super::Adler32Fn;
 use super::{
   blocks::{BLOCK, CHUNK_BLOCKS, Step, WEIGHTS, finish, fold},
   config::Adler32Force,
   portable,
 };
-use crate::{
-  checksum::dispatchers::Adler32Fn,
-  platform::{Caps, caps::x86},
-};
+use crate::platform::{Caps, caps::x86};
 
 /// One x86-64 kernel: its force, required capabilities, entry point, and canonical name.
 pub(in crate::checksum) struct Kernel {

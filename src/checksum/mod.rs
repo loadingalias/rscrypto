@@ -81,20 +81,23 @@
 //! rscrypto = { version = "0.13", default-features = false, features = ["crc32"] }
 //! ```
 
-// The CRC families share this support; Adler-32 needs none of it.
-#[cfg(any(feature = "crc16", feature = "crc24", feature = "crc32", feature = "crc64"))]
-mod common;
-
 // Internal macros must be declared before modules that use them.
-#[cfg(any(
-  feature = "crc16",
-  feature = "crc24",
-  feature = "crc32",
-  feature = "crc64",
-  feature = "adler32"
+#[cfg(all(
+  feature = "alloc",
+  any(
+    feature = "crc16",
+    feature = "crc24",
+    feature = "crc32",
+    feature = "crc64",
+    feature = "adler32"
+  )
 ))]
 #[macro_use]
 mod macros;
+
+// The CRC families share this engine; Adler-32 needs none of it.
+#[cfg(any(feature = "crc16", feature = "crc24", feature = "crc32", feature = "crc64"))]
+mod crc;
 
 #[cfg(feature = "adler32")]
 mod adler32;
@@ -111,22 +114,10 @@ mod crc64;
   any(feature = "crc16", feature = "crc24", feature = "crc32", feature = "crc64")
 ))]
 pub mod diag;
-#[cfg(any(
-  feature = "crc16",
-  feature = "crc24",
-  feature = "crc32",
-  feature = "crc64",
-  feature = "adler32"
-))]
-#[doc(hidden)]
-pub(crate) mod dispatchers;
 #[cfg(feature = "diag")]
 pub mod introspect;
 #[cfg(feature = "std")]
 pub mod io;
-#[cfg(any(feature = "crc16", feature = "crc24", feature = "crc32", feature = "crc64"))]
-#[doc(hidden)]
-pub(crate) mod kernel_table;
 #[cfg(feature = "alloc")]
 /// Buffered checksum adapters for workloads composed of many short updates.
 pub mod buffered {
@@ -146,14 +137,8 @@ pub mod buffered {
 pub mod config {
   #[cfg(feature = "adler32")]
   pub use crate::checksum::adler32::{Adler32Config, Adler32Force};
-  #[cfg(feature = "crc16")]
-  pub use crate::checksum::crc16::{Crc16Config, Crc16Force};
-  #[cfg(feature = "crc24")]
-  pub use crate::checksum::crc24::{Crc24Config, Crc24Force};
-  #[cfg(feature = "crc32")]
-  pub use crate::checksum::crc32::{Crc32Config, Crc32Force};
-  #[cfg(feature = "crc64")]
-  pub use crate::checksum::crc64::{Crc64Config, Crc64Force};
+  #[cfg(any(feature = "crc16", feature = "crc24", feature = "crc32", feature = "crc64"))]
+  pub use crate::checksum::crc::dispatch::{CrcConfig, CrcForce};
 }
 
 // Re-export public types

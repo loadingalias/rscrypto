@@ -14,7 +14,7 @@
 //! ```
 
 #[cfg(any(feature = "crc16", feature = "crc24", feature = "crc32", feature = "crc64"))]
-pub use crate::checksum::kernel_table::is_hardware_accelerated;
+pub use crate::checksum::crc::dispatch::is_hardware_accelerated;
 pub use crate::platform::{DispatchInfo, KernelIntrospect};
 
 /// Returns the kernel name selected for a specific algorithm and buffer size.

@@ -39,12 +39,13 @@ use crate::traits::{Checksum, ChecksumCombine};
 
 // Dispatch
 
-type Adler32DispatchFn = crate::checksum::dispatchers::Adler32Fn;
+/// An Adler-32 kernel: the value after `data`, from a value with both sums reduced.
+pub(in crate::checksum) type Adler32Fn = fn(u32, &[u8]) -> u32;
 
 /// One Adler-32 kernel: its entry point and its canonical name.
 #[derive(Clone, Copy)]
 struct Kernel {
-  update: Adler32DispatchFn,
+  update: Adler32Fn,
   name: &'static str,
 }
 
@@ -215,7 +216,7 @@ fn adler32_dispatch(adler: u32, data: &[u8]) -> u32 {
 #[derive(Clone, Copy)]
 pub struct Adler32 {
   state: u32,
-  dispatch: Adler32DispatchFn,
+  dispatch: Adler32Fn,
 }
 
 impl Adler32 {
@@ -480,12 +481,12 @@ fn automatic_selection_runs_the_kernel_that_the_capabilities_call_for() {
 mod tests {
   use alloc::{vec, vec::Vec};
 
+  use super::Adler32Fn;
   #[cfg(target_arch = "aarch64")]
   use super::aarch64;
   use super::portable;
   #[cfg(target_arch = "riscv64")]
   use super::riscv64;
-  use crate::checksum::dispatchers::Adler32Fn;
 
   /// The aarch64 kernels that this CPU can run, with their names.
   #[cfg(target_arch = "aarch64")]

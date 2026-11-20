@@ -26,9 +26,7 @@ use rscrypto::auth::rsa::expert::RsaPkcs1v15Decrypt;
 #[cfg(all(feature = "checksums", feature = "alloc"))]
 use rscrypto::checksum::buffered::BufferedCrc32C;
 #[cfg(all(feature = "checksums", feature = "diag"))]
-use rscrypto::checksum::config::{
-  Crc16Config, Crc16Force, Crc24Config, Crc24Force, Crc32Config, Crc32Force, Crc64Config, Crc64Force,
-};
+use rscrypto::checksum::config::{CrcConfig, CrcForce};
 #[cfg(all(feature = "checksums", feature = "diag"))]
 use rscrypto::checksum::introspect::{DispatchInfo, KernelIntrospect, is_hardware_accelerated, kernel_for};
 #[cfg(feature = "checksums")]
@@ -1056,14 +1054,11 @@ fn digest_reader_writer_round_trip() {
 fn advanced_checksum_modules_compile() {
   fn assert_kernel_introspect<T: KernelIntrospect>() {}
 
-  let _crc16_config: Crc16Config = Crc16Ccitt::config();
-  let _crc24_config: Crc24Config = Crc24OpenPgp::config();
-  let _crc32_config: Crc32Config = Crc32::config();
-  let _crc64_config: Crc64Config = Crc64::config();
-  let _crc16_force = Crc16Force::Auto;
-  let _crc24_force = Crc24Force::Auto;
-  let _crc32_force = Crc32Force::Auto;
-  let _crc64_force = Crc64Force::Auto;
+  let _crc16_config: CrcConfig = Crc16Ccitt::config();
+  let _crc24_config: CrcConfig = Crc24OpenPgp::config();
+  let _crc32_config: CrcConfig = Crc32::config();
+  let _crc64_config: CrcConfig = Crc64::config();
+  let _force = CrcForce::Auto;
   let _dispatch = DispatchInfo::current();
   let _kernel = kernel_for::<Crc32>(64);
   let _accelerated = is_hardware_accelerated();

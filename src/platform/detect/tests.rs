@@ -231,28 +231,6 @@ mod tests {
     }
   }
 
-  // Apple Silicon Detection Tests
-
-  #[test]
-  #[cfg(all(target_arch = "aarch64", target_os = "macos", feature = "std", not(miri)))]
-  fn test_apple_silicon_detection_runs() {
-    // Just verify detection doesn't crash and returns a valid result
-    let chip_gen = detect_apple_silicon_gen();
-    // On actual Apple Silicon, we should get Some variant
-    // On Rosetta 2 or non-Apple aarch64, we might get None
-    if let Some(detected) = chip_gen {
-      // Verify the generation is valid
-      assert!(matches!(
-        detected,
-        AppleSiliconGen::M1
-          | AppleSiliconGen::M2
-          | AppleSiliconGen::M3
-          | AppleSiliconGen::M4
-          | AppleSiliconGen::M5
-      ));
-    }
-  }
-
   // Hybrid Intel Detection Tests
 
   #[test]

@@ -1,0 +1,5 @@
+---
+"rscrypto" = "minor"
+---
+
+Rebuild the CRC engine. Every CRC runs one carryless-multiply folding engine per architecture, which takes the width (8 to 64 bits), the polynomial, and the bit order. Compile-time code derives every table and constant from the polynomial. CRC-24/OpenPGP folds MSB-first natively and no longer reverses the bits of each byte. CRC-32 and CRC-32C fuse the AArch64 CRC instructions, and CRC-32C fuses the x86-64 SSE4.2 instruction, with folding in rounds. Each CRC selects one kernel per process, and the kernel handles every input length. combine multiplies by precomputed powers of x instead of exponentiating a GF(2) matrix. Breaking: checksum::config::CrcForce and CrcConfig replace Crc16Force, Crc24Force, Crc32Force, Crc64Force, and their Config types. The Sve2Pmull force is removed, because no SVE2 kernel existed. The RSCRYPTO_*_FORCE variables keep their names and values, and clmul names the base carryless-multiply tier of the architecture. Kernel names that kernel_name_for_len and checksum::diag report change. CRC outputs are unchanged.

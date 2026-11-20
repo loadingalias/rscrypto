@@ -584,7 +584,7 @@ pub struct ReadmeDoctests;
 #[doc(hidden)]
 #[doc = r#"
 ```compile_fail
-use rscrypto::Crc32Config;
+use rscrypto::CrcConfig;
 ```
 
 ```compile_fail
@@ -652,7 +652,7 @@ use rscrypto::diag_hmac_sha256_verify_portable;
 ```
 
 ```rust
-use rscrypto::checksum::config::Crc32Config;
+use rscrypto::checksum::config::CrcConfig;
 use rscrypto::checksum::buffered::BufferedCrc32C;
 use rscrypto::checksum::introspect::{DispatchInfo, kernel_for};
 use rscrypto::checksum::{Crc32Castagnoli, Crc32Ieee, Crc64Xz};
@@ -664,7 +664,7 @@ use rscrypto::{AsconXof, AsconXofReader, Xxh3};
 fn assert_hash_introspect<T: KernelIntrospect>() {}
 
 let _ = rscrypto::platform::describe();
-let _: Crc32Config = rscrypto::Crc32::config();
+let _: CrcConfig = rscrypto::Crc32::config();
 let _ = kernel_for::<rscrypto::Crc32>(64);
 let _ = DispatchInfo::current();
 let _ = hash_kernel_for::<rscrypto::Sha256>(1024);
@@ -1415,25 +1415,13 @@ mod send_sync_assertions {
     // CRC-16
     assert_send_sync::<Crc16Ccitt>();
     assert_send_sync::<Crc16Ibm>();
-    assert_send_sync::<checksum::config::Crc16Force>();
-    assert_send_sync::<checksum::config::Crc16Config>();
-
-    // CRC-24
     assert_send_sync::<Crc24OpenPgp>();
-    assert_send_sync::<checksum::config::Crc24Force>();
-    assert_send_sync::<checksum::config::Crc24Config>();
-
-    // CRC-32
     assert_send_sync::<Crc32>();
     assert_send_sync::<Crc32C>();
-    assert_send_sync::<checksum::config::Crc32Force>();
-    assert_send_sync::<checksum::config::Crc32Config>();
-
-    // CRC-64
     assert_send_sync::<Crc64>();
     assert_send_sync::<Crc64Nvme>();
-    assert_send_sync::<checksum::config::Crc64Force>();
-    assert_send_sync::<checksum::config::Crc64Config>();
+    assert_send_sync::<checksum::config::CrcForce>();
+    assert_send_sync::<checksum::config::CrcConfig>();
 
     // Adler-32
     assert_send_sync::<Adler32>();
@@ -1562,14 +1550,8 @@ mod send_sync_assertions {
     assert_clone::<Crc32C>();
     assert_clone::<Crc64>();
     assert_clone::<Crc64Nvme>();
-    assert_clone::<checksum::config::Crc16Force>();
-    assert_clone::<checksum::config::Crc16Config>();
-    assert_clone::<checksum::config::Crc24Force>();
-    assert_clone::<checksum::config::Crc24Config>();
-    assert_clone::<checksum::config::Crc32Force>();
-    assert_clone::<checksum::config::Crc32Config>();
-    assert_clone::<checksum::config::Crc64Force>();
-    assert_clone::<checksum::config::Crc64Config>();
+    assert_clone::<checksum::config::CrcForce>();
+    assert_clone::<checksum::config::CrcConfig>();
     assert_debug::<Crc16Ccitt>();
     assert_debug::<Crc16Ibm>();
     assert_debug::<Crc24OpenPgp>();
@@ -1577,14 +1559,8 @@ mod send_sync_assertions {
     assert_debug::<Crc32C>();
     assert_debug::<Crc64>();
     assert_debug::<Crc64Nvme>();
-    assert_debug::<checksum::config::Crc16Force>();
-    assert_debug::<checksum::config::Crc16Config>();
-    assert_debug::<checksum::config::Crc24Force>();
-    assert_debug::<checksum::config::Crc24Config>();
-    assert_debug::<checksum::config::Crc32Force>();
-    assert_debug::<checksum::config::Crc32Config>();
-    assert_debug::<checksum::config::Crc64Force>();
-    assert_debug::<checksum::config::Crc64Config>();
+    assert_debug::<checksum::config::CrcForce>();
+    assert_debug::<checksum::config::CrcConfig>();
     assert_clone::<Adler32>();
     assert_debug::<Adler32>();
     assert_clone::<checksum::config::Adler32Force>();
