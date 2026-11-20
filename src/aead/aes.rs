@@ -599,6 +599,1134 @@ impl Drop for Aes128EncKey {
   }
 }
 
+/// One AES key size behind the AES modes: its raw key, its expanded encryption schedule, and the
+/// kernels that use that schedule. GCM and GCM-SIV are generic over this trait, so each key size
+/// compiles its own copy of each mode. The `unsafe` methods require the CPU features of the kernel
+/// that they name; backend selection establishes them.
+#[cfg(any(feature = "aes-gcm", feature = "aes-gcm-siv"))]
+pub(super) trait AesKey: Sized {
+  /// The raw key, `[u8; 16]` or `[u8; 32]`.
+  type Bytes: Copy + Default + AsRef<[u8]> + AsMut<[u8]>;
+
+  /// The IBM Z KM function code that encrypts with a raw key of this size.
+  #[cfg(all(target_arch = "s390x", not(feature = "portable-only"), feature = "aes-gcm-siv"))]
+  const KM_FUNCTION: u64;
+
+  /// Expand `key` into the schedule of the best available backend.
+  fn expand(key: &Self::Bytes) -> Self;
+
+  /// Encrypt one block.
+  fn encrypt_block(&self, block: &mut [u8; BLOCK_SIZE]);
+
+  /// Encrypt independent blocks in place.
+  fn encrypt_blocks_ecb(&self, blocks: &mut [[u8; BLOCK_SIZE]]);
+
+  /// AES-CTR with the big-endian 32-bit counter in bytes 12..16 (GCM).
+  #[cfg(feature = "aes-gcm")]
+  fn ctr32_encrypt_be(&self, initial_counter: &[u8; BLOCK_SIZE], data: &mut [u8]);
+
+  /// Seal a whole message with the VAES kernels; see [`aes128_gcm_seal_x86`].
+  ///
+  /// # Safety
+  /// The contract of [`aes128_gcm_seal_x86`].
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm"))]
+  #[expect(clippy::too_many_arguments, reason = "the arguments of the forwarded kernel")]
+  unsafe fn gcm_seal_x86(
+    &self,
+    j0: &[u8; BLOCK_SIZE],
+    counter_block: &[u8; BLOCK_SIZE],
+    acc: u128,
+    src: *const u8,
+    src_len: usize,
+    tail: &[&[u8]],
+    dst: *mut u8,
+    length_block: &[u8; BLOCK_SIZE],
+    tables: X86GcmTables<'_>,
+  ) -> Option<[u8; BLOCK_SIZE]>;
+
+  /// Open a whole message in place with the VAES kernels; see [`aes128_gcm_open_x86`].
+  ///
+  /// # Safety
+  /// The contract of [`aes128_gcm_open_x86`].
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm"))]
+  #[expect(clippy::too_many_arguments, reason = "the arguments of the forwarded kernel")]
+  unsafe fn gcm_open_x86(
+    &self,
+    j0: &[u8; BLOCK_SIZE],
+    counter_block: &[u8; BLOCK_SIZE],
+    acc: u128,
+    data: *mut u8,
+    len: usize,
+    length_block: &[u8; BLOCK_SIZE],
+    tables: X86GcmTables<'_>,
+    expected: &[u8; BLOCK_SIZE],
+  ) -> Option<bool>;
+
+  /// Encrypt `data` in place with AES-NI CTR and fold the ciphertext into `acc` with PCLMULQDQ.
+  ///
+  /// # Safety
+  /// The CPU must support AES-NI, PCLMULQDQ, SSE2, and SSSE3.
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm"))]
+  unsafe fn ctr32_encrypt_be_aesni_pclmul_ghash(
+    &self,
+    initial_counter: &[u8; BLOCK_SIZE],
+    data: &mut [u8],
+    acc: u128,
+    h_polyval: u128,
+    h_powers_rev: &[u128; 4],
+  ) -> u128;
+
+  /// Fold the ciphertext `data` into `acc` with PCLMULQDQ and decrypt it in place with AES-NI CTR.
+  ///
+  /// # Safety
+  /// The CPU must support AES-NI, PCLMULQDQ, SSE2, and SSSE3.
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm"))]
+  unsafe fn ctr32_decrypt_be_aesni_pclmul_ghash(
+    &self,
+    initial_counter: &[u8; BLOCK_SIZE],
+    data: &mut [u8],
+    acc: u128,
+    h_polyval: u128,
+    h_powers_rev: &[u128; 4],
+  ) -> u128;
+
+  /// Seal one gather batch with the VAES kernels and fold its ciphertext into `acc`.
+  ///
+  /// # Safety
+  /// The contract of [`aes128_ctr32_encrypt_be_gather_wide_ghash`].
+  #[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "sse2",
+    target_os = "linux",
+    feature = "aes-gcm"
+  ))]
+  unsafe fn ctr32_encrypt_be_gather_wide_ghash<'output>(
+    &self,
+    initial_counter: &[u8; BLOCK_SIZE],
+    plaintext: &super::gather::Input<'_, 256>,
+    whole_message_aligned: bool,
+    out: &'output mut [core::mem::MaybeUninit<u8>],
+    acc: &mut u128,
+    tables: X86GcmTables<'_>,
+  ) -> &'output mut [u8];
+
+  /// Encrypt `data` in place with AES-CE CTR and fold the ciphertext into `acc` with PMULL.
+  ///
+  /// # Safety
+  /// The CPU must support AES, PMULL, and NEON.
+  #[cfg(all(target_arch = "aarch64", feature = "aes-gcm"))]
+  unsafe fn ctr32_encrypt_be_aarch64_ghash(
+    &self,
+    initial_counter: &[u8; BLOCK_SIZE],
+    data: &mut [u8],
+    acc: &mut u128,
+    tables: &Aarch64GcmTables<'_>,
+  );
+
+  /// Fold the ciphertext `data` into `acc` with PMULL and decrypt it in place with AES-CE CTR.
+  ///
+  /// # Safety
+  /// The CPU must support AES, PMULL, and NEON.
+  #[cfg(all(target_arch = "aarch64", feature = "aes-gcm"))]
+  unsafe fn ctr32_decrypt_be_aarch64_ghash(
+    &self,
+    initial_counter: &[u8; BLOCK_SIZE],
+    data: &mut [u8],
+    acc: &mut u128,
+    tables: &Aarch64GcmTables<'_>,
+  );
+
+  /// Seal one gather batch with AES-CE and PMULL and fold its ciphertext into `acc`.
+  ///
+  /// # Safety
+  /// The contract of [`aes128_ctr32_encrypt_be_gather_aarch64_ghash`].
+  #[cfg(all(
+    target_arch = "aarch64",
+    any(target_os = "macos", target_os = "linux"),
+    feature = "aes-gcm"
+  ))]
+  unsafe fn ctr32_encrypt_be_gather_aarch64_ghash<'output>(
+    &self,
+    initial_counter: &[u8; BLOCK_SIZE],
+    plaintext: &super::gather::Input<'_, 128>,
+    out: &'output mut [core::mem::MaybeUninit<u8>],
+    acc: &mut u128,
+    tables: &Aarch64GcmTables<'_>,
+  ) -> &'output mut [u8];
+
+  /// Seal or open a message of at most three blocks in one POWER pass; see [`gcm_short_ppc`].
+  ///
+  /// # Safety
+  /// The CPU must support POWER8 crypto.
+  #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), feature = "aes-gcm"))]
+  unsafe fn gcm_short_ppc<const OPEN: bool>(
+    &self,
+    j0: &[u8; BLOCK_SIZE],
+    aad: &[u8],
+    data: &mut [u8],
+    length_block: &[u8; BLOCK_SIZE],
+    h_powers_rev: &[u128; 4],
+  ) -> Option<[u8; BLOCK_SIZE]>;
+
+  /// Encrypt `data` in place with POWER CTR and fold the ciphertext into `acc` with VPMSUMD.
+  ///
+  /// # Safety
+  /// The CPU must support POWER8 crypto.
+  #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), feature = "aes-gcm"))]
+  unsafe fn ctr32_encrypt_be_ppc_ghash(
+    &self,
+    initial_counter: &[u8; BLOCK_SIZE],
+    data: &mut [u8],
+    acc: u128,
+    h_polyval: u128,
+    h_powers_rev: &[u128; 4],
+    h_powers_rev_8: &[u128; 8],
+  ) -> u128;
+
+  /// Fold the ciphertext `data` into `acc` with VPMSUMD and decrypt it in place with POWER CTR.
+  ///
+  /// # Safety
+  /// The CPU must support POWER8 crypto.
+  #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), feature = "aes-gcm"))]
+  unsafe fn ctr32_decrypt_be_ppc_ghash(
+    &self,
+    initial_counter: &[u8; BLOCK_SIZE],
+    data: &mut [u8],
+    acc: u128,
+    h_polyval: u128,
+    h_powers_rev: &[u128; 4],
+    h_powers_rev_8: &[u128; 8],
+  ) -> u128;
+
+  /// AES-CTR with the little-endian 32-bit counter in bytes 0..4 (GCM-SIV).
+  #[cfg(feature = "aes-gcm-siv")]
+  fn ctr32_encrypt(&self, initial_counter: &[u8; BLOCK_SIZE], data: &mut [u8]);
+
+  /// Derive the RFC 8452 section 4 per-nonce keys: the authentication key and an encryption key
+  /// of this size. One batch encrypts every counter block, which is one KM call on IBM Z.
+  #[cfg(feature = "aes-gcm-siv")]
+  #[inline]
+  fn gcmsiv_derive_keys(&self, nonce: &[u8; 12]) -> ([u8; 16], Self::Bytes) {
+    // Two blocks give the authentication key, and each 8 bytes of the encryption key one more.
+    let mut storage = [[0u8; BLOCK_SIZE]; 6];
+    let blocks = &mut storage[..2usize.strict_add(core::mem::size_of::<Self::Bytes>().strict_div(8))];
+    for (counter, block) in (0u32..).zip(blocks.iter_mut()) {
+      block[..4].copy_from_slice(&counter.to_le_bytes());
+      block[4..].copy_from_slice(nonce);
+    }
+    self.encrypt_blocks_ecb(blocks);
+
+    let mut auth_key = [0u8; 16];
+    let mut enc_key = Self::Bytes::default();
+    let halves = auth_key
+      .as_chunks_mut::<8>()
+      .0
+      .iter_mut()
+      .chain(enc_key.as_mut().as_chunks_mut::<8>().0);
+    for (half, block) in halves.zip(blocks.iter()) {
+      half.copy_from_slice(&block[..8]);
+    }
+    crate::traits::ct::zeroize(blocks.as_flattened_mut());
+    (auth_key, enc_key)
+  }
+
+  /// Expand `key` into the RISC-V vector-crypto schedule.
+  #[cfg(all(target_arch = "riscv64", not(feature = "portable-only"), feature = "aes-gcm-siv"))]
+  fn expand_riscv_vector(key: &Self::Bytes) -> Self;
+
+  /// Expand `key` into the RISC-V scalar-crypto schedule.
+  #[cfg(all(target_arch = "riscv64", not(feature = "portable-only"), feature = "aes-gcm-siv"))]
+  fn expand_riscv_scalar(key: &Self::Bytes) -> Self;
+
+  /// Expand `key` into the table-free fixslice schedule.
+  #[cfg(all(target_arch = "riscv64", not(feature = "portable-only"), feature = "aes-gcm-siv"))]
+  fn expand_riscv_fixslice(key: &Self::Bytes) -> Self;
+
+  /// The AES-NI schedule of one per-message GCM-SIV key.
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm-siv"))]
+  type X86Keys;
+
+  /// Derive the per-nonce keys with four-lane VAES. Returns `None` when the master schedule is
+  /// not AES-NI.
+  ///
+  /// # Safety
+  /// The CPU must support AES-NI, SSE2, AVX-512F, AVX-512VL, and VAES.
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm-siv"))]
+  unsafe fn x86_gcmsiv_derive_keys(&self, nonce: &[u8; 12]) -> Option<([u8; 16], Self::Bytes)>;
+
+  /// Expand one per-message key into the AES-NI schedule.
+  ///
+  /// # Safety
+  /// The CPU must support AES-NI and SSE2.
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm-siv"))]
+  unsafe fn x86_expand(key: &Self::Bytes) -> Self::X86Keys;
+
+  /// Encrypt one block with an AES-NI schedule.
+  ///
+  /// # Safety
+  /// The CPU must support AES-NI and SSE2.
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm-siv"))]
+  unsafe fn x86_encrypt_block(keys: &Self::X86Keys, block: &mut [u8; BLOCK_SIZE]);
+
+  /// GCM-SIV CTR over an AES-NI schedule, for any length.
+  ///
+  /// # Safety
+  /// The CPU must support AES-NI, SSE2, AVX-512F, AVX-512VL, and VAES.
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm-siv"))]
+  unsafe fn x86_ctr32_le_xor(keys: &Self::X86Keys, initial_counter: &[u8; BLOCK_SIZE], data: &mut [u8]);
+
+  /// The AES-CE schedule of one per-message GCM-SIV key.
+  #[cfg(all(target_arch = "aarch64", feature = "aes-gcm-siv"))]
+  type Aarch64Keys;
+
+  /// Derive the per-nonce keys with AES-CE, or with [`Self::gcmsiv_derive_keys`] when the master
+  /// schedule is not AES-CE.
+  ///
+  /// # Safety
+  /// The CPU must support AES and NEON.
+  #[cfg(all(target_arch = "aarch64", feature = "aes-gcm-siv"))]
+  unsafe fn aarch64_gcmsiv_derive_keys(&self, nonce: &[u8; 12]) -> ([u8; 16], Self::Bytes);
+
+  /// Expand one per-message key into the AES-CE schedule.
+  ///
+  /// # Safety
+  /// The CPU must support AES and NEON.
+  #[cfg(all(target_arch = "aarch64", feature = "aes-gcm-siv"))]
+  unsafe fn aarch64_expand(key: &Self::Bytes) -> Self::Aarch64Keys;
+
+  /// Encrypt one block with an AES-CE schedule.
+  ///
+  /// # Safety
+  /// The CPU must support AES and NEON.
+  #[cfg(all(target_arch = "aarch64", feature = "aes-gcm-siv"))]
+  unsafe fn aarch64_encrypt_block(keys: &Self::Aarch64Keys, block: &mut [u8; BLOCK_SIZE]);
+
+  /// XOR four GCM-SIV CTR blocks into `data[..64]`.
+  ///
+  /// # Safety
+  /// The CPU must support AES and NEON, and `data` must hold at least 64 bytes.
+  #[cfg(all(target_arch = "aarch64", feature = "aes-gcm-siv"))]
+  unsafe fn aarch64_ctr32_le_xor_4blocks(keys: &Self::Aarch64Keys, iv_suffix: &[u8; 12], ctr: u32, data: &mut [u8]);
+
+  /// XOR eight GCM-SIV CTR blocks into `data[..128]`.
+  ///
+  /// # Safety
+  /// The CPU must support AES and NEON, and `data` must hold at least 128 bytes.
+  #[cfg(all(target_arch = "aarch64", feature = "aes-gcm-siv"))]
+  unsafe fn aarch64_ctr32_le_xor_8blocks(keys: &Self::Aarch64Keys, iv_suffix: &[u8; 12], ctr: u32, data: &mut [u8]);
+
+  /// The POWER schedule of one per-message GCM-SIV key.
+  #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), feature = "aes-gcm-siv"))]
+  type PpcKeys;
+
+  /// Expand one per-message key into the POWER schedule.
+  ///
+  /// # Safety
+  /// The CPU must support POWER8 crypto.
+  #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), feature = "aes-gcm-siv"))]
+  unsafe fn ppc_expand(key: &Self::Bytes) -> Self::PpcKeys;
+
+  /// Encrypt one block with a POWER schedule.
+  ///
+  /// # Safety
+  /// The CPU must support POWER8 crypto.
+  #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), feature = "aes-gcm-siv"))]
+  unsafe fn ppc_encrypt_block(keys: &Self::PpcKeys, block: &mut [u8; BLOCK_SIZE]);
+
+  /// GCM-SIV CTR over a POWER schedule, four blocks per batch; see
+  /// [`ctr32_le_xor_four_block_batches`].
+  ///
+  /// # Safety
+  /// The CPU must support POWER8 crypto.
+  #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), feature = "aes-gcm-siv"))]
+  unsafe fn ppc_ctr32_le_xor(keys: &Self::PpcKeys, initial_counter: &[u8; BLOCK_SIZE], data: &mut [u8]);
+
+  /// Encrypt one block with KM and a raw key, without a key schedule.
+  ///
+  /// # Safety
+  /// The CPU must support MSA.
+  #[cfg(all(target_arch = "s390x", not(feature = "portable-only"), feature = "aes-gcm-siv"))]
+  #[inline(always)]
+  unsafe fn s390x_encrypt_block_raw(key: &Self::Bytes, block: &mut [u8; BLOCK_SIZE]) {
+    // SAFETY: the caller establishes MSA, and `KM_FUNCTION` takes a raw key of this size.
+    unsafe { km::encrypt_block_raw(Self::KM_FUNCTION, key.as_ref().as_ptr(), block) }
+  }
+
+  /// Encrypt the first `count` blocks of `blocks` with KM and a raw key.
+  ///
+  /// # Safety
+  /// The CPU must support MSA, and `blocks` must hold exactly `count` blocks.
+  #[cfg(all(target_arch = "s390x", not(feature = "portable-only"), feature = "aes-gcm-siv"))]
+  #[inline(always)]
+  unsafe fn s390x_encrypt_blocks_raw(key: &Self::Bytes, blocks: &mut [u8], count: usize) {
+    // SAFETY: the caller establishes MSA and the block count, and `KM_FUNCTION` takes a raw key of
+    // this size.
+    unsafe { km::encrypt_blocks_raw(Self::KM_FUNCTION, key.as_ref().as_ptr(), blocks, count) }
+  }
+}
+
+#[cfg(any(feature = "aes-gcm", feature = "aes-gcm-siv"))]
+impl AesKey for Aes128EncKey {
+  type Bytes = [u8; KEY_SIZE_128];
+
+  #[cfg(all(target_arch = "s390x", not(feature = "portable-only"), feature = "aes-gcm-siv"))]
+  const KM_FUNCTION: u64 = km::AES_128;
+
+  #[inline(always)]
+  fn expand(key: &Self::Bytes) -> Self {
+    aes128_expand_key(key)
+  }
+
+  #[inline(always)]
+  fn encrypt_block(&self, block: &mut [u8; BLOCK_SIZE]) {
+    aes128_encrypt_block(self, block);
+  }
+
+  #[inline(always)]
+  fn encrypt_blocks_ecb(&self, blocks: &mut [[u8; BLOCK_SIZE]]) {
+    aes128_encrypt_blocks_ecb(self, blocks);
+  }
+
+  #[cfg(feature = "aes-gcm")]
+  #[inline(always)]
+  fn ctr32_encrypt_be(&self, initial_counter: &[u8; BLOCK_SIZE], data: &mut [u8]) {
+    aes128_ctr32_encrypt_be(self, initial_counter, data);
+  }
+
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm"))]
+  #[inline(always)]
+  unsafe fn gcm_seal_x86(
+    &self,
+    j0: &[u8; BLOCK_SIZE],
+    counter_block: &[u8; BLOCK_SIZE],
+    acc: u128,
+    src: *const u8,
+    src_len: usize,
+    tail: &[&[u8]],
+    dst: *mut u8,
+    length_block: &[u8; BLOCK_SIZE],
+    tables: X86GcmTables<'_>,
+  ) -> Option<[u8; BLOCK_SIZE]> {
+    // SAFETY: the caller upholds the kernel's contract.
+    unsafe {
+      aes128_gcm_seal_x86(
+        self,
+        j0,
+        counter_block,
+        acc,
+        src,
+        src_len,
+        tail,
+        dst,
+        length_block,
+        tables,
+      )
+    }
+  }
+
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm"))]
+  #[inline(always)]
+  unsafe fn gcm_open_x86(
+    &self,
+    j0: &[u8; BLOCK_SIZE],
+    counter_block: &[u8; BLOCK_SIZE],
+    acc: u128,
+    data: *mut u8,
+    len: usize,
+    length_block: &[u8; BLOCK_SIZE],
+    tables: X86GcmTables<'_>,
+    expected: &[u8; BLOCK_SIZE],
+  ) -> Option<bool> {
+    // SAFETY: the caller upholds the kernel's contract.
+    unsafe { aes128_gcm_open_x86(self, j0, counter_block, acc, data, len, length_block, tables, expected) }
+  }
+
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm"))]
+  #[inline(always)]
+  unsafe fn ctr32_encrypt_be_aesni_pclmul_ghash(
+    &self,
+    initial_counter: &[u8; BLOCK_SIZE],
+    data: &mut [u8],
+    acc: u128,
+    h_polyval: u128,
+    h_powers_rev: &[u128; 4],
+  ) -> u128 {
+    // SAFETY: the caller establishes the kernel's CPU features.
+    unsafe { aes128_ctr32_encrypt_be_aesni_pclmul_ghash(self, initial_counter, data, acc, h_polyval, h_powers_rev) }
+  }
+
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm"))]
+  #[inline(always)]
+  unsafe fn ctr32_decrypt_be_aesni_pclmul_ghash(
+    &self,
+    initial_counter: &[u8; BLOCK_SIZE],
+    data: &mut [u8],
+    acc: u128,
+    h_polyval: u128,
+    h_powers_rev: &[u128; 4],
+  ) -> u128 {
+    // SAFETY: the caller establishes the kernel's CPU features.
+    unsafe { aes128_ctr32_decrypt_be_aesni_pclmul_ghash(self, initial_counter, data, acc, h_polyval, h_powers_rev) }
+  }
+
+  #[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "sse2",
+    target_os = "linux",
+    feature = "aes-gcm"
+  ))]
+  #[inline(always)]
+  unsafe fn ctr32_encrypt_be_gather_wide_ghash<'output>(
+    &self,
+    initial_counter: &[u8; BLOCK_SIZE],
+    plaintext: &super::gather::Input<'_, 256>,
+    whole_message_aligned: bool,
+    out: &'output mut [core::mem::MaybeUninit<u8>],
+    acc: &mut u128,
+    tables: X86GcmTables<'_>,
+  ) -> &'output mut [u8] {
+    // SAFETY: the caller upholds the kernel's contract.
+    unsafe {
+      aes128_ctr32_encrypt_be_gather_wide_ghash(
+        self,
+        initial_counter,
+        plaintext,
+        whole_message_aligned,
+        out,
+        acc,
+        tables,
+      )
+    }
+  }
+
+  #[cfg(all(target_arch = "aarch64", feature = "aes-gcm"))]
+  #[inline(always)]
+  unsafe fn ctr32_encrypt_be_aarch64_ghash(
+    &self,
+    initial_counter: &[u8; BLOCK_SIZE],
+    data: &mut [u8],
+    acc: &mut u128,
+    tables: &Aarch64GcmTables<'_>,
+  ) {
+    // SAFETY: the caller establishes the kernel's CPU features.
+    unsafe { aes128_ctr32_encrypt_be_aarch64_ghash(self, initial_counter, data, acc, tables) }
+  }
+
+  #[cfg(all(target_arch = "aarch64", feature = "aes-gcm"))]
+  #[inline(always)]
+  unsafe fn ctr32_decrypt_be_aarch64_ghash(
+    &self,
+    initial_counter: &[u8; BLOCK_SIZE],
+    data: &mut [u8],
+    acc: &mut u128,
+    tables: &Aarch64GcmTables<'_>,
+  ) {
+    // SAFETY: the caller establishes the kernel's CPU features.
+    unsafe { aes128_ctr32_decrypt_be_aarch64_ghash(self, initial_counter, data, acc, tables) }
+  }
+
+  #[cfg(all(
+    target_arch = "aarch64",
+    any(target_os = "macos", target_os = "linux"),
+    feature = "aes-gcm"
+  ))]
+  #[inline(always)]
+  unsafe fn ctr32_encrypt_be_gather_aarch64_ghash<'output>(
+    &self,
+    initial_counter: &[u8; BLOCK_SIZE],
+    plaintext: &super::gather::Input<'_, 128>,
+    out: &'output mut [core::mem::MaybeUninit<u8>],
+    acc: &mut u128,
+    tables: &Aarch64GcmTables<'_>,
+  ) -> &'output mut [u8] {
+    // SAFETY: the caller upholds the kernel's contract.
+    unsafe { aes128_ctr32_encrypt_be_gather_aarch64_ghash(self, initial_counter, plaintext, out, acc, tables) }
+  }
+
+  #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), feature = "aes-gcm"))]
+  #[inline(always)]
+  unsafe fn gcm_short_ppc<const OPEN: bool>(
+    &self,
+    j0: &[u8; BLOCK_SIZE],
+    aad: &[u8],
+    data: &mut [u8],
+    length_block: &[u8; BLOCK_SIZE],
+    h_powers_rev: &[u128; 4],
+  ) -> Option<[u8; BLOCK_SIZE]> {
+    // SAFETY: the caller establishes the kernel's CPU features.
+    unsafe { aes128_gcm_short_ppc::<OPEN>(self, j0, aad, data, length_block, h_powers_rev) }
+  }
+
+  #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), feature = "aes-gcm"))]
+  #[inline(always)]
+  unsafe fn ctr32_encrypt_be_ppc_ghash(
+    &self,
+    initial_counter: &[u8; BLOCK_SIZE],
+    data: &mut [u8],
+    acc: u128,
+    h_polyval: u128,
+    h_powers_rev: &[u128; 4],
+    h_powers_rev_8: &[u128; 8],
+  ) -> u128 {
+    // SAFETY: the caller establishes the kernel's CPU features.
+    unsafe {
+      aes128_ctr32_encrypt_be_ppc_ghash(
+        self,
+        initial_counter,
+        data,
+        acc,
+        h_polyval,
+        h_powers_rev,
+        h_powers_rev_8,
+      )
+    }
+  }
+
+  #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), feature = "aes-gcm"))]
+  #[inline(always)]
+  unsafe fn ctr32_decrypt_be_ppc_ghash(
+    &self,
+    initial_counter: &[u8; BLOCK_SIZE],
+    data: &mut [u8],
+    acc: u128,
+    h_polyval: u128,
+    h_powers_rev: &[u128; 4],
+    h_powers_rev_8: &[u128; 8],
+  ) -> u128 {
+    // SAFETY: the caller establishes the kernel's CPU features.
+    unsafe {
+      aes128_ctr32_decrypt_be_ppc_ghash(
+        self,
+        initial_counter,
+        data,
+        acc,
+        h_polyval,
+        h_powers_rev,
+        h_powers_rev_8,
+      )
+    }
+  }
+
+  #[cfg(feature = "aes-gcm-siv")]
+  #[inline(always)]
+  fn ctr32_encrypt(&self, initial_counter: &[u8; BLOCK_SIZE], data: &mut [u8]) {
+    aes128_ctr32_encrypt(self, initial_counter, data);
+  }
+
+  #[cfg(all(target_arch = "riscv64", not(feature = "portable-only"), feature = "aes-gcm-siv"))]
+  #[inline]
+  fn expand_riscv_vector(key: &Self::Bytes) -> Self {
+    let mut portable_rk = aes128_expand_key_portable(key);
+    let rv_keys = rv_aes::from_portable_128(&portable_rk);
+    zeroize_expanded_key_words_128(&mut portable_rk);
+    Self {
+      inner: Key128Inner::VectorCrypto(rv_keys),
+    }
+  }
+
+  #[cfg(all(target_arch = "riscv64", not(feature = "portable-only"), feature = "aes-gcm-siv"))]
+  #[inline]
+  fn expand_riscv_scalar(key: &Self::Bytes) -> Self {
+    let mut portable_rk = aes128_expand_key_portable(key);
+    let rv_keys = rv_scalar_aes::from_portable_128(&portable_rk);
+    zeroize_expanded_key_words_128(&mut portable_rk);
+    Self {
+      inner: Key128Inner::ScalarCrypto(rv_keys),
+    }
+  }
+
+  #[cfg(all(target_arch = "riscv64", not(feature = "portable-only"), feature = "aes-gcm-siv"))]
+  #[inline]
+  fn expand_riscv_fixslice(key: &Self::Bytes) -> Self {
+    Self {
+      inner: fixslice64_key_inner_128(key),
+    }
+  }
+
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm-siv"))]
+  type X86Keys = ni::Ni128RoundKeys;
+
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm-siv"))]
+  #[inline(always)]
+  unsafe fn x86_gcmsiv_derive_keys(&self, nonce: &[u8; 12]) -> Option<([u8; 16], Self::Bytes)> {
+    let Key128Inner::X86AesNi(ni_rk) = &self.inner else {
+      return None;
+    };
+    // SAFETY: the caller establishes the kernel's CPU features, and the variant holds AES-NI round keys.
+    Some(unsafe { ni::gcmsiv_derive_keys_128(ni_rk, nonce) })
+  }
+
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm-siv"))]
+  #[inline(always)]
+  unsafe fn x86_expand(key: &Self::Bytes) -> Self::X86Keys {
+    // SAFETY: the caller establishes AES-NI and SSE2.
+    unsafe { ni::expand_key_128(key) }
+  }
+
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm-siv"))]
+  #[inline(always)]
+  unsafe fn x86_encrypt_block(keys: &Self::X86Keys, block: &mut [u8; BLOCK_SIZE]) {
+    // SAFETY: the caller establishes AES-NI and SSE2.
+    unsafe { ni::encrypt_block_128(keys, block) }
+  }
+
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm-siv"))]
+  #[inline(always)]
+  unsafe fn x86_ctr32_le_xor(keys: &Self::X86Keys, initial_counter: &[u8; BLOCK_SIZE], data: &mut [u8]) {
+    // SAFETY: the caller establishes the kernel's CPU features.
+    unsafe { x86_ctr32_le_xor_128(keys, initial_counter, data) }
+  }
+
+  #[cfg(all(target_arch = "aarch64", feature = "aes-gcm-siv"))]
+  type Aarch64Keys = ce::Ce128RoundKeys;
+
+  #[cfg(all(target_arch = "aarch64", feature = "aes-gcm-siv"))]
+  #[inline(always)]
+  unsafe fn aarch64_gcmsiv_derive_keys(&self, nonce: &[u8; 12]) -> ([u8; 16], Self::Bytes) {
+    let Key128Inner::Aarch64Aes(ce_rk) = &self.inner else {
+      return self.gcmsiv_derive_keys(nonce);
+    };
+    // SAFETY: the caller establishes AES-CE, and the variant holds AES-CE round keys.
+    unsafe { ce::gcmsiv_derive_keys_128_core(ce_rk, nonce) }
+  }
+
+  #[cfg(all(target_arch = "aarch64", feature = "aes-gcm-siv"))]
+  #[inline(always)]
+  unsafe fn aarch64_expand(key: &Self::Bytes) -> Self::Aarch64Keys {
+    // SAFETY: the caller establishes AES-CE and NEON.
+    unsafe { ce::expand_key_128_hw(key) }
+  }
+
+  #[cfg(all(target_arch = "aarch64", feature = "aes-gcm-siv"))]
+  #[inline(always)]
+  unsafe fn aarch64_encrypt_block(keys: &Self::Aarch64Keys, block: &mut [u8; BLOCK_SIZE]) {
+    // SAFETY: the caller establishes AES-CE and NEON.
+    unsafe { ce::encrypt_block_128_core(keys, block) }
+  }
+
+  #[cfg(all(target_arch = "aarch64", feature = "aes-gcm-siv"))]
+  #[inline(always)]
+  unsafe fn aarch64_ctr32_le_xor_4blocks(keys: &Self::Aarch64Keys, iv_suffix: &[u8; 12], ctr: u32, data: &mut [u8]) {
+    // SAFETY: the caller establishes AES-CE and the 64-byte length.
+    unsafe { ce::encrypt_ctr32_le_xor_4blocks_128_core(keys, iv_suffix, ctr, data) }
+  }
+
+  #[cfg(all(target_arch = "aarch64", feature = "aes-gcm-siv"))]
+  #[inline(always)]
+  unsafe fn aarch64_ctr32_le_xor_8blocks(keys: &Self::Aarch64Keys, iv_suffix: &[u8; 12], ctr: u32, data: &mut [u8]) {
+    // SAFETY: the caller establishes AES-CE and the 128-byte length.
+    unsafe { ce::encrypt_ctr32_le_xor_8blocks_128_core(keys, iv_suffix, ctr, data) }
+  }
+
+  #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), feature = "aes-gcm-siv"))]
+  type PpcKeys = ppc::Ppc128RoundKeys;
+
+  #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), feature = "aes-gcm-siv"))]
+  #[inline(always)]
+  unsafe fn ppc_expand(key: &Self::Bytes) -> Self::PpcKeys {
+    // SAFETY: the caller establishes POWER8 crypto.
+    unsafe { ppc::expand_key_128_hw(key) }
+  }
+
+  #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), feature = "aes-gcm-siv"))]
+  #[inline(always)]
+  unsafe fn ppc_encrypt_block(keys: &Self::PpcKeys, block: &mut [u8; BLOCK_SIZE]) {
+    // SAFETY: the caller establishes POWER8 crypto.
+    unsafe { ppc::encrypt_block_128_core(keys, block) }
+  }
+
+  #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), feature = "aes-gcm-siv"))]
+  #[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
+  #[inline]
+  unsafe fn ppc_ctr32_le_xor(keys: &Self::PpcKeys, initial_counter: &[u8; BLOCK_SIZE], data: &mut [u8]) {
+    ctr32_le_xor_four_block_batches(initial_counter, data, |blocks| {
+      // SAFETY: the caller establishes POWER8 crypto, and `blocks` holds four initialized blocks.
+      unsafe { ppc::encrypt_4blocks_128_core(keys, blocks) }
+    });
+  }
+}
+
+#[cfg(any(feature = "aes-gcm", feature = "aes-gcm-siv"))]
+impl AesKey for Aes256EncKey {
+  type Bytes = [u8; KEY_SIZE];
+
+  #[cfg(all(target_arch = "s390x", not(feature = "portable-only"), feature = "aes-gcm-siv"))]
+  const KM_FUNCTION: u64 = km::AES_256;
+
+  #[inline(always)]
+  fn expand(key: &Self::Bytes) -> Self {
+    aes256_expand_key(key)
+  }
+
+  #[inline(always)]
+  fn encrypt_block(&self, block: &mut [u8; BLOCK_SIZE]) {
+    aes256_encrypt_block(self, block);
+  }
+
+  #[inline(always)]
+  fn encrypt_blocks_ecb(&self, blocks: &mut [[u8; BLOCK_SIZE]]) {
+    aes256_encrypt_blocks_ecb(self, blocks);
+  }
+
+  #[cfg(feature = "aes-gcm")]
+  #[inline(always)]
+  fn ctr32_encrypt_be(&self, initial_counter: &[u8; BLOCK_SIZE], data: &mut [u8]) {
+    aes256_ctr32_encrypt_be(self, initial_counter, data);
+  }
+
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm"))]
+  #[inline(always)]
+  unsafe fn gcm_seal_x86(
+    &self,
+    j0: &[u8; BLOCK_SIZE],
+    counter_block: &[u8; BLOCK_SIZE],
+    acc: u128,
+    src: *const u8,
+    src_len: usize,
+    tail: &[&[u8]],
+    dst: *mut u8,
+    length_block: &[u8; BLOCK_SIZE],
+    tables: X86GcmTables<'_>,
+  ) -> Option<[u8; BLOCK_SIZE]> {
+    // SAFETY: the caller upholds the kernel's contract.
+    unsafe {
+      aes256_gcm_seal_x86(
+        self,
+        j0,
+        counter_block,
+        acc,
+        src,
+        src_len,
+        tail,
+        dst,
+        length_block,
+        tables,
+      )
+    }
+  }
+
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm"))]
+  #[inline(always)]
+  unsafe fn gcm_open_x86(
+    &self,
+    j0: &[u8; BLOCK_SIZE],
+    counter_block: &[u8; BLOCK_SIZE],
+    acc: u128,
+    data: *mut u8,
+    len: usize,
+    length_block: &[u8; BLOCK_SIZE],
+    tables: X86GcmTables<'_>,
+    expected: &[u8; BLOCK_SIZE],
+  ) -> Option<bool> {
+    // SAFETY: the caller upholds the kernel's contract.
+    unsafe { aes256_gcm_open_x86(self, j0, counter_block, acc, data, len, length_block, tables, expected) }
+  }
+
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm"))]
+  #[inline(always)]
+  unsafe fn ctr32_encrypt_be_aesni_pclmul_ghash(
+    &self,
+    initial_counter: &[u8; BLOCK_SIZE],
+    data: &mut [u8],
+    acc: u128,
+    h_polyval: u128,
+    h_powers_rev: &[u128; 4],
+  ) -> u128 {
+    // SAFETY: the caller establishes the kernel's CPU features.
+    unsafe { aes256_ctr32_encrypt_be_aesni_pclmul_ghash(self, initial_counter, data, acc, h_polyval, h_powers_rev) }
+  }
+
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm"))]
+  #[inline(always)]
+  unsafe fn ctr32_decrypt_be_aesni_pclmul_ghash(
+    &self,
+    initial_counter: &[u8; BLOCK_SIZE],
+    data: &mut [u8],
+    acc: u128,
+    h_polyval: u128,
+    h_powers_rev: &[u128; 4],
+  ) -> u128 {
+    // SAFETY: the caller establishes the kernel's CPU features.
+    unsafe { aes256_ctr32_decrypt_be_aesni_pclmul_ghash(self, initial_counter, data, acc, h_polyval, h_powers_rev) }
+  }
+
+  #[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "sse2",
+    target_os = "linux",
+    feature = "aes-gcm"
+  ))]
+  #[inline(always)]
+  unsafe fn ctr32_encrypt_be_gather_wide_ghash<'output>(
+    &self,
+    initial_counter: &[u8; BLOCK_SIZE],
+    plaintext: &super::gather::Input<'_, 256>,
+    whole_message_aligned: bool,
+    out: &'output mut [core::mem::MaybeUninit<u8>],
+    acc: &mut u128,
+    tables: X86GcmTables<'_>,
+  ) -> &'output mut [u8] {
+    // SAFETY: the caller upholds the kernel's contract.
+    unsafe {
+      aes256_ctr32_encrypt_be_gather_wide_ghash(
+        self,
+        initial_counter,
+        plaintext,
+        whole_message_aligned,
+        out,
+        acc,
+        tables,
+      )
+    }
+  }
+
+  #[cfg(all(target_arch = "aarch64", feature = "aes-gcm"))]
+  #[inline(always)]
+  unsafe fn ctr32_encrypt_be_aarch64_ghash(
+    &self,
+    initial_counter: &[u8; BLOCK_SIZE],
+    data: &mut [u8],
+    acc: &mut u128,
+    tables: &Aarch64GcmTables<'_>,
+  ) {
+    // SAFETY: the caller establishes the kernel's CPU features.
+    unsafe { aes256_ctr32_encrypt_be_aarch64_ghash(self, initial_counter, data, acc, tables) }
+  }
+
+  #[cfg(all(target_arch = "aarch64", feature = "aes-gcm"))]
+  #[inline(always)]
+  unsafe fn ctr32_decrypt_be_aarch64_ghash(
+    &self,
+    initial_counter: &[u8; BLOCK_SIZE],
+    data: &mut [u8],
+    acc: &mut u128,
+    tables: &Aarch64GcmTables<'_>,
+  ) {
+    // SAFETY: the caller establishes the kernel's CPU features.
+    unsafe { aes256_ctr32_decrypt_be_aarch64_ghash(self, initial_counter, data, acc, tables) }
+  }
+
+  #[cfg(all(
+    target_arch = "aarch64",
+    any(target_os = "macos", target_os = "linux"),
+    feature = "aes-gcm"
+  ))]
+  #[inline(always)]
+  unsafe fn ctr32_encrypt_be_gather_aarch64_ghash<'output>(
+    &self,
+    initial_counter: &[u8; BLOCK_SIZE],
+    plaintext: &super::gather::Input<'_, 128>,
+    out: &'output mut [core::mem::MaybeUninit<u8>],
+    acc: &mut u128,
+    tables: &Aarch64GcmTables<'_>,
+  ) -> &'output mut [u8] {
+    // SAFETY: the caller upholds the kernel's contract.
+    unsafe { aes256_ctr32_encrypt_be_gather_aarch64_ghash(self, initial_counter, plaintext, out, acc, tables) }
+  }
+
+  #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), feature = "aes-gcm"))]
+  #[inline(always)]
+  unsafe fn gcm_short_ppc<const OPEN: bool>(
+    &self,
+    j0: &[u8; BLOCK_SIZE],
+    aad: &[u8],
+    data: &mut [u8],
+    length_block: &[u8; BLOCK_SIZE],
+    h_powers_rev: &[u128; 4],
+  ) -> Option<[u8; BLOCK_SIZE]> {
+    // SAFETY: the caller establishes the kernel's CPU features.
+    unsafe { aes256_gcm_short_ppc::<OPEN>(self, j0, aad, data, length_block, h_powers_rev) }
+  }
+
+  #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), feature = "aes-gcm"))]
+  #[inline(always)]
+  unsafe fn ctr32_encrypt_be_ppc_ghash(
+    &self,
+    initial_counter: &[u8; BLOCK_SIZE],
+    data: &mut [u8],
+    acc: u128,
+    h_polyval: u128,
+    h_powers_rev: &[u128; 4],
+    h_powers_rev_8: &[u128; 8],
+  ) -> u128 {
+    // SAFETY: the caller establishes the kernel's CPU features.
+    unsafe {
+      aes256_ctr32_encrypt_be_ppc_ghash(
+        self,
+        initial_counter,
+        data,
+        acc,
+        h_polyval,
+        h_powers_rev,
+        h_powers_rev_8,
+      )
+    }
+  }
+
+  #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), feature = "aes-gcm"))]
+  #[inline(always)]
+  unsafe fn ctr32_decrypt_be_ppc_ghash(
+    &self,
+    initial_counter: &[u8; BLOCK_SIZE],
+    data: &mut [u8],
+    acc: u128,
+    h_polyval: u128,
+    h_powers_rev: &[u128; 4],
+    h_powers_rev_8: &[u128; 8],
+  ) -> u128 {
+    // SAFETY: the caller establishes the kernel's CPU features.
+    unsafe {
+      aes256_ctr32_decrypt_be_ppc_ghash(
+        self,
+        initial_counter,
+        data,
+        acc,
+        h_polyval,
+        h_powers_rev,
+        h_powers_rev_8,
+      )
+    }
+  }
+
+  #[cfg(feature = "aes-gcm-siv")]
+  #[inline(always)]
+  fn ctr32_encrypt(&self, initial_counter: &[u8; BLOCK_SIZE], data: &mut [u8]) {
+    aes256_ctr32_encrypt(self, initial_counter, data);
+  }
+
+  #[cfg(all(target_arch = "riscv64", not(feature = "portable-only"), feature = "aes-gcm-siv"))]
+  #[inline]
+  fn expand_riscv_vector(key: &Self::Bytes) -> Self {
+    let mut portable_rk = aes256_expand_key_portable(key);
+    let rv_keys = rv_aes::from_portable(&portable_rk);
+    zeroize_expanded_key_words(&mut portable_rk);
+    Self {
+      inner: KeyInner::VectorCrypto(rv_keys),
+    }
+  }
+
+  #[cfg(all(target_arch = "riscv64", not(feature = "portable-only"), feature = "aes-gcm-siv"))]
+  #[inline]
+  fn expand_riscv_scalar(key: &Self::Bytes) -> Self {
+    let mut portable_rk = aes256_expand_key_portable(key);
+    let rv_keys = rv_scalar_aes::from_portable(&portable_rk);
+    zeroize_expanded_key_words(&mut portable_rk);
+    Self {
+      inner: KeyInner::ScalarCrypto(rv_keys),
+    }
+  }
+
+  #[cfg(all(target_arch = "riscv64", not(feature = "portable-only"), feature = "aes-gcm-siv"))]
+  #[inline]
+  fn expand_riscv_fixslice(key: &Self::Bytes) -> Self {
+    Self {
+      inner: fixslice64_key_inner(key),
+    }
+  }
+
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm-siv"))]
+  type X86Keys = ni::NiRoundKeys;
+
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm-siv"))]
+  #[inline(always)]
+  unsafe fn x86_gcmsiv_derive_keys(&self, nonce: &[u8; 12]) -> Option<([u8; 16], Self::Bytes)> {
+    let KeyInner::X86AesNi(ni_rk) = &self.inner else {
+      return None;
+    };
+    // SAFETY: the caller establishes the kernel's CPU features, and the variant holds AES-NI round keys.
+    Some(unsafe { ni::gcmsiv_derive_keys_256(ni_rk, nonce) })
+  }
+
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm-siv"))]
+  #[inline(always)]
+  unsafe fn x86_expand(key: &Self::Bytes) -> Self::X86Keys {
+    // SAFETY: the caller establishes AES-NI and SSE2.
+    unsafe { ni::expand_key(key) }
+  }
+
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm-siv"))]
+  #[inline(always)]
+  unsafe fn x86_encrypt_block(keys: &Self::X86Keys, block: &mut [u8; BLOCK_SIZE]) {
+    // SAFETY: the caller establishes AES-NI and SSE2.
+    unsafe { ni::encrypt_block(keys, block) }
+  }
+
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm-siv"))]
+  #[inline(always)]
+  unsafe fn x86_ctr32_le_xor(keys: &Self::X86Keys, initial_counter: &[u8; BLOCK_SIZE], data: &mut [u8]) {
+    // SAFETY: the caller establishes the kernel's CPU features.
+    unsafe { x86_ctr32_le_xor_256(keys, initial_counter, data) }
+  }
+
+  #[cfg(all(target_arch = "aarch64", feature = "aes-gcm-siv"))]
+  type Aarch64Keys = ce::CeRoundKeys;
+
+  #[cfg(all(target_arch = "aarch64", feature = "aes-gcm-siv"))]
+  #[inline(always)]
+  unsafe fn aarch64_gcmsiv_derive_keys(&self, nonce: &[u8; 12]) -> ([u8; 16], Self::Bytes) {
+    let KeyInner::Aarch64Aes(ce_rk) = &self.inner else {
+      return self.gcmsiv_derive_keys(nonce);
+    };
+    // SAFETY: the caller establishes AES-CE, and the variant holds AES-CE round keys.
+    unsafe { ce::gcmsiv_derive_keys_core(ce_rk, nonce) }
+  }
+
+  #[cfg(all(target_arch = "aarch64", feature = "aes-gcm-siv"))]
+  #[inline(always)]
+  unsafe fn aarch64_expand(key: &Self::Bytes) -> Self::Aarch64Keys {
+    // SAFETY: the caller establishes AES-CE and NEON.
+    unsafe { ce::expand_key_hw(key) }
+  }
+
+  #[cfg(all(target_arch = "aarch64", feature = "aes-gcm-siv"))]
+  #[inline(always)]
+  unsafe fn aarch64_encrypt_block(keys: &Self::Aarch64Keys, block: &mut [u8; BLOCK_SIZE]) {
+    // SAFETY: the caller establishes AES-CE and NEON.
+    unsafe { ce::encrypt_block_core(keys, block) }
+  }
+
+  #[cfg(all(target_arch = "aarch64", feature = "aes-gcm-siv"))]
+  #[inline(always)]
+  unsafe fn aarch64_ctr32_le_xor_4blocks(keys: &Self::Aarch64Keys, iv_suffix: &[u8; 12], ctr: u32, data: &mut [u8]) {
+    // SAFETY: the caller establishes AES-CE and the 64-byte length.
+    unsafe { ce::encrypt_ctr32_le_xor_4blocks_core(keys, iv_suffix, ctr, data) }
+  }
+
+  #[cfg(all(target_arch = "aarch64", feature = "aes-gcm-siv"))]
+  #[inline(always)]
+  unsafe fn aarch64_ctr32_le_xor_8blocks(keys: &Self::Aarch64Keys, iv_suffix: &[u8; 12], ctr: u32, data: &mut [u8]) {
+    // SAFETY: the caller establishes AES-CE and the 128-byte length.
+    unsafe { ce::encrypt_ctr32_le_xor_8blocks_core(keys, iv_suffix, ctr, data) }
+  }
+
+  #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), feature = "aes-gcm-siv"))]
+  type PpcKeys = ppc::PpcRoundKeys;
+
+  #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), feature = "aes-gcm-siv"))]
+  #[inline(always)]
+  unsafe fn ppc_expand(key: &Self::Bytes) -> Self::PpcKeys {
+    // SAFETY: the caller establishes POWER8 crypto.
+    unsafe { ppc::expand_key_hw(key) }
+  }
+
+  #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), feature = "aes-gcm-siv"))]
+  #[inline(always)]
+  unsafe fn ppc_encrypt_block(keys: &Self::PpcKeys, block: &mut [u8; BLOCK_SIZE]) {
+    // SAFETY: the caller establishes POWER8 crypto.
+    unsafe { ppc::encrypt_block_core(keys, block) }
+  }
+
+  #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), feature = "aes-gcm-siv"))]
+  #[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
+  #[inline]
+  unsafe fn ppc_ctr32_le_xor(keys: &Self::PpcKeys, initial_counter: &[u8; BLOCK_SIZE], data: &mut [u8]) {
+    ctr32_le_xor_four_block_batches(initial_counter, data, |blocks| {
+      // SAFETY: the caller establishes POWER8 crypto, and `blocks` holds four initialized blocks.
+      unsafe { ppc::encrypt_4blocks_core(keys, blocks) }
+    });
+  }
+}
+
 // Fixed-schedule GF(2^8) arithmetic for the AES S-box.
 
 /// Multiply two elements in GF(2^8) mod the AES irreducible polynomial
@@ -1036,205 +2164,7 @@ pub(crate) fn aes128_expand_key_forced_portable(key: &[u8; KEY_SIZE_128]) -> Aes
   }
 }
 
-#[cfg(all(target_arch = "riscv64", not(feature = "portable-only"), feature = "aes-gcm-siv"))]
-#[inline]
-pub(crate) fn aes256_expand_key_riscv_vector(key: &[u8; KEY_SIZE]) -> Aes256EncKey {
-  let mut portable_rk = aes256_expand_key_portable(key);
-  let rv_keys = rv_aes::from_portable(&portable_rk);
-  zeroize_expanded_key_words(&mut portable_rk);
-  Aes256EncKey {
-    inner: KeyInner::VectorCrypto(rv_keys),
-  }
-}
-
-#[cfg(all(target_arch = "riscv64", not(feature = "portable-only"), feature = "aes-gcm-siv"))]
-#[inline]
-pub(crate) fn aes256_expand_key_riscv_scalar(key: &[u8; KEY_SIZE]) -> Aes256EncKey {
-  let mut portable_rk = aes256_expand_key_portable(key);
-  let rv_keys = rv_scalar_aes::from_portable(&portable_rk);
-  zeroize_expanded_key_words(&mut portable_rk);
-  Aes256EncKey {
-    inner: KeyInner::ScalarCrypto(rv_keys),
-  }
-}
-
-#[cfg(all(target_arch = "riscv64", not(feature = "portable-only"), feature = "aes-gcm-siv"))]
-#[inline]
-pub(crate) fn aes256_expand_key_riscv_ttable(key: &[u8; KEY_SIZE]) -> Aes256EncKey {
-  // Preserve the old RISC-V ttable entry point while routing to the table-free fixslice schedule.
-  Aes256EncKey {
-    inner: fixslice64_key_inner(key),
-  }
-}
-
-#[cfg(all(target_arch = "riscv64", not(feature = "portable-only"), feature = "aes-gcm-siv"))]
-#[inline]
-pub(crate) fn aes128_expand_key_riscv_vector(key: &[u8; KEY_SIZE_128]) -> Aes128EncKey {
-  let mut portable_rk = aes128_expand_key_portable(key);
-  let rv_keys = rv_aes::from_portable_128(&portable_rk);
-  zeroize_expanded_key_words_128(&mut portable_rk);
-  Aes128EncKey {
-    inner: Key128Inner::VectorCrypto(rv_keys),
-  }
-}
-
-#[cfg(all(target_arch = "riscv64", not(feature = "portable-only"), feature = "aes-gcm-siv"))]
-#[inline]
-pub(crate) fn aes128_expand_key_riscv_scalar(key: &[u8; KEY_SIZE_128]) -> Aes128EncKey {
-  let mut portable_rk = aes128_expand_key_portable(key);
-  let rv_keys = rv_scalar_aes::from_portable_128(&portable_rk);
-  zeroize_expanded_key_words_128(&mut portable_rk);
-  Aes128EncKey {
-    inner: Key128Inner::ScalarCrypto(rv_keys),
-  }
-}
-
-#[cfg(all(target_arch = "riscv64", not(feature = "portable-only"), feature = "aes-gcm-siv"))]
-#[inline]
-pub(crate) fn aes128_expand_key_riscv_ttable(key: &[u8; KEY_SIZE_128]) -> Aes128EncKey {
-  // Preserve the old RISC-V ttable entry point while routing to the table-free fixslice schedule.
-  Aes128EncKey {
-    inner: fixslice64_key_inner_128(key),
-  }
-}
-
-// x86_64: direct AES-128 helpers for the fused short GCM-SIV path.
-
-/// Derive AES-128-GCM-SIV per-message keys directly with four-lane VAES.
-///
-/// Returns `None` if `master_ek` does not contain the AES-NI schedule required by the
-/// `X86VaesVpclmul` backend.
-///
-/// # Safety
-/// Caller must ensure AVX-512F + AVX-512VL + VAES + AES + SSE2.
-#[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm-siv"))]
-#[target_feature(enable = "aes,sse2,avx512f,avx512vl,vaes")]
-#[inline]
-pub(super) unsafe fn x86_gcmsiv_derive_keys_128_inline(
-  master_ek: &Aes128EncKey,
-  nonce: &[u8; 12],
-) -> Option<([u8; 16], [u8; 16])> {
-  let Key128Inner::X86AesNi(ni_rk) = &master_ek.inner else {
-    return None;
-  };
-  // SAFETY: direct x86 AES-128-GCM-SIV KDF because:
-  // 1. This function's caller guarantees every required x86 feature.
-  // 2. The matched key variant proves the master schedule uses AES-NI round-key layout.
-  // 3. `nonce` is exactly the 96-bit GCM-SIV nonce.
-  Some(unsafe { ni::gcmsiv_derive_keys_128(ni_rk, nonce) })
-}
-
-/// Expand one AES-128 key directly into the AES-NI round-key representation.
-///
-/// # Safety
-/// Caller must ensure AES-NI and SSE2 are available.
-#[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm-siv"))]
-#[target_feature(enable = "aes,sse2")]
-#[inline]
-pub(super) unsafe fn x86_expand_key_128_inline(key: &[u8; KEY_SIZE_128]) -> ni::Ni128RoundKeys {
-  // SAFETY: the function's target features and caller contract establish AES-NI + SSE2.
-  unsafe { ni::expand_key_128(key) }
-}
-
-/// Derive the AES-256-GCM-SIV per-message keys from an AES-NI master schedule.
-///
-/// Returns `None` if `master_ek` does not contain the AES-NI schedule required by the
-/// `X86VaesVpclmul` backend.
-///
-/// # Safety
-/// Caller must ensure AVX-512F + AVX-512VL + VAES + AES + SSE2.
-#[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm-siv"))]
-#[target_feature(enable = "aes,sse2,avx512f,avx512vl,vaes")]
-#[inline]
-pub(super) unsafe fn x86_gcmsiv_derive_keys_256_inline(
-  master_ek: &Aes256EncKey,
-  nonce: &[u8; 12],
-) -> Option<([u8; 16], [u8; KEY_SIZE])> {
-  let KeyInner::X86AesNi(ni_rk) = &master_ek.inner else {
-    return None;
-  };
-  // SAFETY: direct x86 AES-256-GCM-SIV KDF because:
-  // 1. This function's caller guarantees every required x86 feature.
-  // 2. The matched key variant proves the master schedule uses AES-NI round-key layout.
-  // 3. `nonce` is exactly the 96-bit GCM-SIV nonce.
-  Some(unsafe { ni::gcmsiv_derive_keys_256(ni_rk, nonce) })
-}
-
-/// Expand one AES-256 key directly into the AES-NI round-key representation.
-///
-/// # Safety
-/// Caller must ensure AES-NI and SSE2 are available.
-#[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm-siv"))]
-#[target_feature(enable = "aes,sse2")]
-#[inline]
-pub(super) unsafe fn x86_expand_key_256_inline(key: &[u8; KEY_SIZE]) -> ni::NiRoundKeys {
-  // SAFETY: the function's target features and caller contract establish AES-NI + SSE2.
-  unsafe { ni::expand_key(key) }
-}
-
-/// Encrypt one AES-256 block directly with an AES-NI round-key schedule.
-///
-/// # Safety
-/// Caller must ensure AES-NI and SSE2 are available.
-#[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm-siv"))]
-#[target_feature(enable = "aes,sse2")]
-#[inline]
-pub(super) unsafe fn x86_encrypt_block_256_inline(keys: &ni::NiRoundKeys, block: &mut [u8; BLOCK_SIZE]) {
-  // SAFETY: the function's target features and fixed-size block satisfy the AES-NI helper.
-  unsafe { ni::encrypt_block(keys, block) }
-}
-
-/// Encrypt one AES-128 block directly with an AES-NI round-key schedule.
-///
-/// # Safety
-/// Caller must ensure AES-NI and SSE2 are available.
-#[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm-siv"))]
-#[target_feature(enable = "aes,sse2")]
-#[inline]
-pub(super) unsafe fn x86_encrypt_block_128_inline(keys: &ni::Ni128RoundKeys, block: &mut [u8; BLOCK_SIZE]) {
-  // SAFETY: the function's target features and fixed-size block satisfy the AES-NI helper.
-  unsafe { ni::encrypt_block_128(keys, block) }
-}
-
-// aarch64: inline helpers for fused paths (#[target_feature] + #[inline(always)])
-//
-// aarch64 intrinsics are `#[inline(always)]` with `#[target_feature]`, so
-// callers must also have matching features (unlike x86). We use both
-// `#[target_feature]` (for intrinsic compatibility) and `#[inline(always)]`
-// (to guarantee inlining → no function boundary → no register spills).
-
-/// Expand AES-256 key directly to AES-CE round keys.
-///
-/// This is the hot-path helper used from fused
-/// `#[target_feature(enable = "aes,neon")]` scopes.
-///
-/// # Safety
-/// Caller must ensure AES-CE is available.
-#[cfg(all(target_arch = "aarch64", feature = "aes-gcm-siv"))]
-#[target_feature(enable = "aes,neon")]
-#[inline]
-pub(super) unsafe fn aarch64_expand_key_inline(key: &[u8; KEY_SIZE]) -> ce::CeRoundKeys {
-  // SAFETY: AES-CE key expansion because:
-  // 1. This helper is only callable from an `aes,neon` target-feature scope.
-  // 2. The caller guarantees the current CPU supports AES-CE.
-  // 3. `key` is a fixed 32-byte AES-256 key.
-  unsafe { ce::expand_key_hw(key) }
-}
-
-/// Encrypt a single AES-256 block with AES-CE.
-///
-/// # Safety
-/// Caller must ensure AES-CE is available.
-#[cfg(all(target_arch = "aarch64", feature = "aes-gcm-siv"))]
-#[target_feature(enable = "aes,neon")]
-#[inline]
-pub(super) unsafe fn aarch64_encrypt_block_inline(keys: &ce::CeRoundKeys, block: &mut [u8; BLOCK_SIZE]) {
-  // SAFETY: AES-CE block encryption because:
-  // 1. This helper is only callable from an `aes,neon` target-feature scope.
-  // 2. The caller guarantees the current CPU supports AES-CE.
-  // 3. `block` is exactly one initialized 16-byte AES block.
-  unsafe { ce::encrypt_block_core(keys, block) }
-}
+// aarch64: block-batch helpers inside one AES-CE target scope
 
 /// Encrypt multiple AES-256 blocks inside one AES-CE target scope.
 ///
@@ -1284,122 +2214,6 @@ unsafe fn aarch64_encrypt_blocks_inline(keys: &ce::CeRoundKeys, blocks: &mut [[u
   }
 }
 
-#[cfg(all(target_arch = "aarch64", feature = "aes-gcm-siv"))]
-#[inline]
-fn gcmsiv_derive_keys_fallback(master_ek: &Aes256EncKey, nonce: &[u8; 12]) -> ([u8; 16], [u8; 32]) {
-  let mut blocks = [[0u8; BLOCK_SIZE]; 6];
-  for (counter, block) in (0u32..6).zip(&mut blocks) {
-    block[..4].copy_from_slice(&counter.to_le_bytes());
-    block[4..].copy_from_slice(nonce);
-  }
-  aes256_encrypt_blocks_ecb(master_ek, &mut blocks);
-
-  let mut auth_key = [0u8; 16];
-  let mut enc_key = [0u8; 32];
-  auth_key[..8].copy_from_slice(&blocks[0][..8]);
-  auth_key[8..].copy_from_slice(&blocks[1][..8]);
-  enc_key[..8].copy_from_slice(&blocks[2][..8]);
-  enc_key[8..16].copy_from_slice(&blocks[3][..8]);
-  enc_key[16..24].copy_from_slice(&blocks[4][..8]);
-  enc_key[24..].copy_from_slice(&blocks[5][..8]);
-  crate::traits::ct::zeroize(blocks.as_flattened_mut());
-  (auth_key, enc_key)
-}
-
-/// Derive AES-256-GCM-SIV per-message keys directly with AES-CE.
-///
-/// # Safety
-/// Caller must ensure AES-CE is available.
-#[cfg(all(target_arch = "aarch64", feature = "aes-gcm-siv"))]
-#[target_feature(enable = "aes,neon")]
-#[inline]
-pub(super) unsafe fn aarch64_gcmsiv_derive_keys_inline(
-  master_ek: &Aes256EncKey,
-  nonce: &[u8; 12],
-) -> ([u8; 16], [u8; 32]) {
-  let KeyInner::Aarch64Aes(ce_rk) = &master_ek.inner else {
-    return gcmsiv_derive_keys_fallback(master_ek, nonce);
-  };
-  // SAFETY: direct AES-CE GCM-SIV KDF because:
-  // 1. This function's caller must guarantee AES-CE availability.
-  // 2. The matched key variant proves the master key schedule is AES-CE compatible.
-  // 3. `nonce` is exactly the 96-bit GCM-SIV nonce.
-  unsafe { ce::gcmsiv_derive_keys_core(ce_rk, nonce) }
-}
-
-/// XOR four AES-256 GCM-SIV CTR blocks inside one AES-CE target scope.
-///
-/// # Safety
-/// Caller must ensure AES-CE is available and `data` has at least 64 bytes.
-#[cfg(all(target_arch = "aarch64", feature = "aes-gcm-siv"))]
-#[target_feature(enable = "aes,neon")]
-#[inline]
-pub(super) unsafe fn aarch64_ctr32_le_xor_4blocks_inline(
-  keys: &ce::CeRoundKeys,
-  iv_suffix: &[u8; 12],
-  ctr: u32,
-  data: &mut [u8],
-) {
-  // SAFETY: four-block AES-CE CTR XOR because:
-  // 1. This helper is only callable from an `aes,neon` target-feature scope.
-  // 2. The caller guarantees `data` has at least 64 writable bytes.
-  // 3. `iv_suffix` is exactly the 96-bit GCM-SIV nonce suffix.
-  unsafe { ce::encrypt_ctr32_le_xor_4blocks_core(keys, iv_suffix, ctr, data) }
-}
-
-/// XOR eight AES-256 GCM-SIV CTR blocks inside one AES-CE target scope.
-///
-/// # Safety
-/// Caller must ensure AES-CE is available and `data` has at least 128 bytes.
-#[cfg(all(target_arch = "aarch64", feature = "aes-gcm-siv"))]
-#[target_feature(enable = "aes,neon")]
-#[inline]
-pub(super) unsafe fn aarch64_ctr32_le_xor_8blocks_inline(
-  keys: &ce::CeRoundKeys,
-  iv_suffix: &[u8; 12],
-  ctr: u32,
-  data: &mut [u8],
-) {
-  // SAFETY: eight-block AES-CE CTR XOR because:
-  // 1. This helper is only callable from an `aes,neon` target-feature scope.
-  // 2. The caller guarantees `data` has at least 128 writable bytes.
-  // 3. `iv_suffix` is exactly the 96-bit GCM-SIV nonce suffix.
-  unsafe { ce::encrypt_ctr32_le_xor_8blocks_core(keys, iv_suffix, ctr, data) }
-}
-
-/// Expand AES-128 key directly to AES-CE round keys.
-///
-/// AES-128 sibling of [`aarch64_expand_key_inline`]. Used by the fused
-/// AES-128-GCM-SIV path on aarch64.
-///
-/// # Safety
-/// Caller must ensure AES-CE is available.
-#[cfg(all(target_arch = "aarch64", feature = "aes-gcm-siv"))]
-#[target_feature(enable = "aes,neon")]
-#[inline]
-pub(super) unsafe fn aarch64_expand_key_128_inline(key: &[u8; KEY_SIZE_128]) -> ce::Ce128RoundKeys {
-  // SAFETY: AES-CE AES-128 key expansion because:
-  // 1. This helper is only callable from an `aes,neon` target-feature scope.
-  // 2. The caller guarantees the current CPU supports AES-CE.
-  // 3. `key` is a fixed 16-byte AES-128 key.
-  unsafe { ce::expand_key_128(key) }
-}
-
-/// Encrypt a single AES-128 block with AES-CE.
-///
-/// # Safety
-/// Caller must ensure AES-CE is available.
-#[cfg(all(target_arch = "aarch64", feature = "aes-gcm-siv"))]
-#[target_feature(enable = "aes,neon")]
-#[inline]
-pub(super) unsafe fn aarch64_encrypt_block_128_inline(keys: &ce::Ce128RoundKeys, block: &mut [u8; BLOCK_SIZE]) {
-  // SAFETY: AES-CE AES-128 block encryption because:
-  // 1. This helper is only callable from an `aes,neon` target-feature scope.
-  // 2. The caller guarantees the current CPU supports AES-CE.
-  // 3. `block` is exactly one initialized 16-byte AES block.
-  unsafe { ce::encrypt_block_128_core(keys, block) }
-}
-
 /// Encrypt multiple AES-128 blocks inside one AES-CE target scope.
 ///
 /// # Safety
@@ -1440,118 +2254,7 @@ unsafe fn aarch64_encrypt_blocks_128_inline(keys: &ce::Ce128RoundKeys, blocks: &
   }
 }
 
-#[cfg(all(target_arch = "aarch64", feature = "aes-gcm-siv"))]
-#[inline]
-fn gcmsiv_derive_keys_128_fallback(master_ek: &Aes128EncKey, nonce: &[u8; 12]) -> ([u8; 16], [u8; 16]) {
-  let mut blocks = [[0u8; BLOCK_SIZE]; 4];
-  for (counter, block) in (0u32..4).zip(&mut blocks) {
-    block[..4].copy_from_slice(&counter.to_le_bytes());
-    block[4..].copy_from_slice(nonce);
-  }
-  aes128_encrypt_blocks_ecb(master_ek, &mut blocks);
-
-  let mut auth_key = [0u8; 16];
-  let mut enc_key = [0u8; 16];
-  auth_key[..8].copy_from_slice(&blocks[0][..8]);
-  auth_key[8..].copy_from_slice(&blocks[1][..8]);
-  enc_key[..8].copy_from_slice(&blocks[2][..8]);
-  enc_key[8..].copy_from_slice(&blocks[3][..8]);
-  crate::traits::ct::zeroize(blocks.as_flattened_mut());
-  (auth_key, enc_key)
-}
-
-/// Derive AES-128-GCM-SIV per-message keys directly with AES-CE.
-///
-/// # Safety
-/// Caller must ensure AES-CE is available.
-#[cfg(all(target_arch = "aarch64", feature = "aes-gcm-siv"))]
-#[target_feature(enable = "aes,neon")]
-#[inline]
-pub(super) unsafe fn aarch64_gcmsiv_derive_keys_128_inline(
-  master_ek: &Aes128EncKey,
-  nonce: &[u8; 12],
-) -> ([u8; 16], [u8; 16]) {
-  let Key128Inner::Aarch64Aes(ce_rk) = &master_ek.inner else {
-    return gcmsiv_derive_keys_128_fallback(master_ek, nonce);
-  };
-  // SAFETY: direct AES-CE GCM-SIV KDF because:
-  // 1. This function's caller must guarantee AES-CE availability.
-  // 2. The matched key variant proves the master key schedule is AES-CE compatible.
-  // 3. `nonce` is exactly the 96-bit GCM-SIV nonce.
-  unsafe { ce::gcmsiv_derive_keys_128_core(ce_rk, nonce) }
-}
-
-/// XOR four AES-128 GCM-SIV CTR blocks inside one AES-CE target scope.
-///
-/// # Safety
-/// Caller must ensure AES-CE is available and `data` has at least 64 bytes.
-#[cfg(all(target_arch = "aarch64", feature = "aes-gcm-siv"))]
-#[target_feature(enable = "aes,neon")]
-#[inline]
-pub(super) unsafe fn aarch64_ctr32_le_xor_4blocks_128_inline(
-  keys: &ce::Ce128RoundKeys,
-  iv_suffix: &[u8; 12],
-  ctr: u32,
-  data: &mut [u8],
-) {
-  // SAFETY: four-block AES-CE AES-128 CTR XOR because:
-  // 1. This helper is only callable from an `aes,neon` target-feature scope.
-  // 2. The caller guarantees `data` has at least 64 writable bytes.
-  // 3. `iv_suffix` is exactly the 96-bit GCM-SIV nonce suffix.
-  unsafe { ce::encrypt_ctr32_le_xor_4blocks_128_core(keys, iv_suffix, ctr, data) }
-}
-
-/// XOR eight AES-128 GCM-SIV CTR blocks inside one AES-CE target scope.
-///
-/// # Safety
-/// Caller must ensure AES-CE is available and `data` has at least 128 bytes.
-#[cfg(all(target_arch = "aarch64", feature = "aes-gcm-siv"))]
-#[target_feature(enable = "aes,neon")]
-#[inline]
-pub(super) unsafe fn aarch64_ctr32_le_xor_8blocks_128_inline(
-  keys: &ce::Ce128RoundKeys,
-  iv_suffix: &[u8; 12],
-  ctr: u32,
-  data: &mut [u8],
-) {
-  // SAFETY: eight-block AES-CE AES-128 CTR XOR because:
-  // 1. This helper is only callable from an `aes,neon` target-feature scope.
-  // 2. The caller guarantees `data` has at least 128 writable bytes.
-  // 3. `iv_suffix` is exactly the 96-bit GCM-SIV nonce suffix.
-  unsafe { ce::encrypt_ctr32_le_xor_8blocks_128_core(keys, iv_suffix, ctr, data) }
-}
-
-// powerpc64: hot-path helpers for fused target-feature scopes
-
-/// Expand AES-256 key directly to POWER round keys.
-///
-/// # Safety
-/// Caller must ensure POWER8 crypto is available.
-#[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), feature = "aes-gcm-siv"))]
-#[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
-#[inline]
-pub(super) unsafe fn ppc_expand_key_inline(key: &[u8; KEY_SIZE]) -> ppc::PpcRoundKeys {
-  // SAFETY: POWER8 AES-256 key expansion because:
-  // 1. This helper is only callable from a POWER8 crypto target-feature scope.
-  // 2. The caller guarantees the current CPU supports POWER8 crypto.
-  // 3. `key` is a fixed 32-byte AES-256 key.
-  unsafe { ppc::expand_key_hw(key) }
-}
-
-/// Encrypt a single AES-256 block with POWER crypto.
-///
-/// # Safety
-/// Caller must ensure POWER8 crypto is available.
-#[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), feature = "aes-gcm-siv"))]
-#[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
-#[inline]
-pub(super) unsafe fn ppc_encrypt_block_inline(keys: &ppc::PpcRoundKeys, block: &mut [u8; BLOCK_SIZE]) {
-  // SAFETY: POWER8 AES-256 block encryption because:
-  // 1. This helper is only callable from a POWER8 crypto target-feature scope.
-  // 2. The caller guarantees the current CPU supports POWER8 crypto.
-  // 3. `block` is exactly one initialized 16-byte AES block.
-  unsafe { ppc::encrypt_block_core(keys, block) }
-}
+// powerpc64: block-batch helpers inside one POWER crypto target scope
 
 /// Encrypt multiple AES-256 blocks inside one POWER crypto target scope.
 ///
@@ -1642,77 +2345,6 @@ fn fill_ctr32_le_blocks(blocks: &mut [[u8; BLOCK_SIZE]; 4], initial_counter: &[u
     block[..4].copy_from_slice(&ctr.wrapping_add(lane).to_le_bytes());
     lane = lane.strict_add(1);
   }
-}
-
-/// [`ctr32_le_xor_four_block_batches`] with POWER AES-256.
-///
-/// # Safety
-/// Caller must ensure POWER8 crypto is available.
-#[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), feature = "aes-gcm-siv"))]
-#[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
-#[inline]
-pub(super) unsafe fn ppc_ctr32_le_xor_inline(
-  keys: &ppc::PpcRoundKeys,
-  initial_counter: &[u8; BLOCK_SIZE],
-  data: &mut [u8],
-) {
-  ctr32_le_xor_four_block_batches(initial_counter, data, |blocks| {
-    // SAFETY: this function's caller guarantees POWER8 crypto, and `blocks`
-    // is a live mutable reference to four initialized AES blocks.
-    unsafe { ppc::encrypt_4blocks_core(keys, blocks) }
-  });
-}
-
-/// [`ctr32_le_xor_four_block_batches`] with POWER AES-128.
-///
-/// # Safety
-/// Caller must ensure POWER8 crypto is available.
-#[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), feature = "aes-gcm-siv"))]
-#[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
-#[inline]
-pub(super) unsafe fn ppc_ctr32_le_xor_128_inline(
-  keys: &ppc::Ppc128RoundKeys,
-  initial_counter: &[u8; BLOCK_SIZE],
-  data: &mut [u8],
-) {
-  ctr32_le_xor_four_block_batches(initial_counter, data, |blocks| {
-    // SAFETY: this function's caller guarantees POWER8 crypto, and `blocks`
-    // is a live mutable reference to four initialized AES blocks.
-    unsafe { ppc::encrypt_4blocks_128_core(keys, blocks) }
-  });
-}
-
-/// Expand AES-128 key directly to POWER round keys.
-///
-/// AES-128 sibling of [`ppc_expand_key_inline`]. Used by the fused
-/// AES-128-GCM-SIV path on powerpc64.
-///
-/// # Safety
-/// Caller must ensure POWER8 crypto is available.
-#[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), feature = "aes-gcm-siv"))]
-#[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
-#[inline]
-pub(super) unsafe fn ppc_expand_key_128_inline(key: &[u8; KEY_SIZE_128]) -> ppc::Ppc128RoundKeys {
-  // SAFETY: POWER8 AES-128 key expansion because:
-  // 1. This helper is only callable from a POWER8 crypto target-feature scope.
-  // 2. The caller guarantees the current CPU supports POWER8 crypto.
-  // 3. `key` is a fixed 16-byte AES-128 key.
-  unsafe { ppc::expand_key_128(key) }
-}
-
-/// Encrypt a single AES-128 block with POWER crypto.
-///
-/// # Safety
-/// Caller must ensure POWER8 crypto is available.
-#[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), feature = "aes-gcm-siv"))]
-#[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
-#[inline]
-pub(super) unsafe fn ppc_encrypt_block_128_inline(keys: &ppc::Ppc128RoundKeys, block: &mut [u8; BLOCK_SIZE]) {
-  // SAFETY: POWER8 AES-128 block encryption because:
-  // 1. This helper is only callable from a POWER8 crypto target-feature scope.
-  // 2. The caller guarantees the current CPU supports POWER8 crypto.
-  // 3. `block` is exactly one initialized 16-byte AES block.
-  unsafe { ppc::encrypt_block_128_core(keys, block) }
 }
 
 /// Encrypt multiple AES-128 blocks inside one POWER crypto target scope.
@@ -2425,35 +3057,7 @@ pub(crate) unsafe fn aes128_ctr32_decrypt_be_ppc_ghash(
   }
 }
 
-// s390x: inline helpers for fused paths (#[inline(always)])
-
-/// Encrypt a single AES-256 block with s390x KM using a raw 32-byte key.
-///
-/// # Safety
-/// Caller must ensure MSA is available.
-#[cfg(all(target_arch = "s390x", not(feature = "portable-only"), feature = "aes-gcm-siv"))]
-#[inline(always)]
-pub(super) unsafe fn s390x_encrypt_block_raw_inline(raw_key: &[u8; KEY_SIZE], block: &mut [u8; BLOCK_SIZE]) {
-  // SAFETY: s390x KM AES-256 block encryption because:
-  // 1. The caller guarantees MSA/CPACF availability.
-  // 2. `raw_key` is a fixed 32-byte AES-256 key.
-  // 3. `block` is exactly one initialized 16-byte AES block.
-  unsafe { km::encrypt_block_raw(raw_key, block) }
-}
-
-/// Encrypt multiple AES-256 blocks with s390x KM using a raw 32-byte key.
-///
-/// # Safety
-/// Caller must ensure MSA is available.
-#[cfg(all(target_arch = "s390x", not(feature = "portable-only"), feature = "aes-gcm-siv"))]
-#[inline(always)]
-pub(super) unsafe fn s390x_encrypt_blocks_raw_inline(raw_key: &[u8; KEY_SIZE], blocks: &mut [u8], count: usize) {
-  // SAFETY: s390x KM AES-256 raw-key block batch because:
-  // 1. The caller guarantees MSA/CPACF availability.
-  // 2. `blocks` is valid for at least `count * 16` writable bytes.
-  // 3. `raw_key` is a fixed 32-byte AES-256 key.
-  unsafe { km::encrypt_blocks_raw(raw_key, blocks, count) }
-}
+// s390x: KM block-batch helpers
 
 /// Encrypt multiple AES-256 blocks with KM (batch), guaranteed to inline.
 ///
@@ -2467,41 +3071,6 @@ pub(super) unsafe fn s390x_encrypt_blocks_inline(key: &km::KmKey, blocks: &mut [
   // 2. `blocks` is valid for at least `count * 16` writable bytes.
   // 3. `key` is an initialized AES-256 KM key descriptor.
   unsafe { km::encrypt_blocks(key, blocks, count) }
-}
-
-/// Encrypt a single AES-128 block with s390x KM using a raw 16-byte key.
-///
-/// AES-128 sibling of [`s390x_encrypt_block_raw_inline`]. Used by the fused
-/// AES-128-GCM-SIV path on s390x.
-///
-/// # Safety
-/// Caller must ensure MSA is available.
-#[cfg(all(target_arch = "s390x", not(feature = "portable-only"), feature = "aes-gcm-siv"))]
-#[inline(always)]
-pub(super) unsafe fn s390x_encrypt_block_raw_128_inline(raw_key: &[u8; KEY_SIZE_128], block: &mut [u8; BLOCK_SIZE]) {
-  // SAFETY: s390x KM AES-128 block encryption because:
-  // 1. The caller guarantees MSA/CPACF availability.
-  // 2. `raw_key` is a fixed 16-byte AES-128 key.
-  // 3. `block` is exactly one initialized 16-byte AES block.
-  unsafe { km::encrypt_block_raw_128(raw_key, block) }
-}
-
-/// Encrypt multiple AES-128 blocks with s390x KM using a raw 16-byte key.
-///
-/// # Safety
-/// Caller must ensure MSA is available.
-#[cfg(all(target_arch = "s390x", not(feature = "portable-only"), feature = "aes-gcm-siv"))]
-#[inline(always)]
-pub(super) unsafe fn s390x_encrypt_blocks_raw_128_inline(
-  raw_key: &[u8; KEY_SIZE_128],
-  blocks: &mut [u8],
-  count: usize,
-) {
-  // SAFETY: s390x KM AES-128 raw-key block batch because:
-  // 1. The caller guarantees MSA/CPACF availability.
-  // 2. `blocks` is valid for at least `count * 16` writable bytes.
-  // 3. `raw_key` is a fixed 16-byte AES-128 key.
-  unsafe { km::encrypt_blocks_raw_128(raw_key, blocks, count) }
 }
 
 /// Encrypt multiple AES-128 blocks with KM (batch), guaranteed to inline.
@@ -5410,15 +5979,15 @@ mod tests {
     };
 
     // SAFETY: runtime capabilities above confirm AES-CE before both target-feature calls.
-    let expected_128 = unsafe { aarch64_gcmsiv_derive_keys_128_inline(&accelerated_128, &nonce) };
+    let expected_128 = unsafe { accelerated_128.aarch64_gcmsiv_derive_keys(&nonce) };
     // SAFETY: runtime capabilities above confirm AES-CE; the portable key exercises the safe fallback.
-    let actual_128 = unsafe { aarch64_gcmsiv_derive_keys_128_inline(&portable_128, &nonce) };
+    let actual_128 = unsafe { portable_128.aarch64_gcmsiv_derive_keys(&nonce) };
     assert_eq!(actual_128, expected_128);
 
     // SAFETY: runtime capabilities above confirm AES-CE before both target-feature calls.
-    let expected_256 = unsafe { aarch64_gcmsiv_derive_keys_inline(&accelerated_256, &nonce) };
+    let expected_256 = unsafe { accelerated_256.aarch64_gcmsiv_derive_keys(&nonce) };
     // SAFETY: runtime capabilities above confirm AES-CE; the portable key exercises the safe fallback.
-    let actual_256 = unsafe { aarch64_gcmsiv_derive_keys_inline(&portable_256, &nonce) };
+    let actual_256 = unsafe { portable_256.aarch64_gcmsiv_derive_keys(&nonce) };
     assert_eq!(actual_256, expected_256);
   }
 
@@ -6259,7 +6828,7 @@ mod tests {
 
           let mut raw_128 = input.clone();
           // SAFETY: same MSA and block proof as above; the raw key is the 16-byte KM parameter block.
-          unsafe { km::encrypt_blocks_raw_128(&key_128, &mut raw_128[offset..], count) };
+          unsafe { <Aes128EncKey as AesKey>::s390x_encrypt_blocks_raw(&key_128, &mut raw_128[offset..], count) };
           assert_eq!(
             &raw_128[offset..],
             expected_128,
@@ -6267,7 +6836,7 @@ mod tests {
           );
           let mut raw_256 = input;
           // SAFETY: same MSA and block proof as above; the raw key is the 32-byte KM parameter block.
-          unsafe { km::encrypt_blocks_raw(&key_256, &mut raw_256[offset..], count) };
+          unsafe { <Aes256EncKey as AesKey>::s390x_encrypt_blocks_raw(&key_256, &mut raw_256[offset..], count) };
           assert_eq!(
             &raw_256[offset..],
             expected_256,

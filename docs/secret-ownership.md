@@ -104,7 +104,8 @@ AES-GCM-SIV also clears its per-message power array and digest copy.
 
 On little-endian AArch64 macOS/Linux, each AES-GCM context retains one 16-power
 GHASH table and one packed pair table. Its four/eight-power windows and 64-bit
-middle halves borrow those owners. Drop clears both complete tables and raw H.
+middle halves borrow those owners. Drop clears both complete tables. The context keeps no
+raw H; construction clears its copy after it derives the power table.
 Private AES-CE schedules retain exactly 176/240 initialized bytes at 16-byte alignment.
 
 Internal AArch64 GCM table descriptors borrow the context's H-power arrays. The enclosing

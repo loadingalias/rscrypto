@@ -107,14 +107,6 @@ mod aegis256;
   expect(dead_code, reason = "isolated AES-SIV leaf reuses the shared AES-128 authority")
 )]
 mod aes;
-#[cfg(feature = "aes-gcm")]
-mod aes128gcm;
-#[cfg(feature = "aes-gcm-siv")]
-mod aes128gcmsiv;
-#[cfg(feature = "aes-gcm")]
-mod aes256gcm;
-#[cfg(feature = "aes-gcm-siv")]
-mod aes256gcmsiv;
 #[cfg(any(
   all(
     any(feature = "aes-gcm", feature = "aes-gcm-siv", feature = "aes-siv"),
@@ -124,6 +116,10 @@ mod aes256gcmsiv;
 ))]
 #[path = "aes/fixslice64/round.rs"]
 mod aes_fixslice_round;
+#[cfg(feature = "aes-gcm")]
+mod aes_gcm;
+#[cfg(feature = "aes-gcm-siv")]
+mod aes_gcm_siv;
 #[cfg(any(
   feature = "aegis256",
   all(
@@ -240,6 +236,20 @@ pub use crate::backend::chacha20::diag_chacha20_xor_keystream_aarch64_neon;
 pub use aegis256::diag_aegis256_update_portable;
 #[cfg(feature = "aegis256")]
 pub use aegis256::{Aegis256, Aegis256Key, Aegis256Tag};
+#[cfg(feature = "aes-gcm")]
+pub use aes_gcm::{Aes128Gcm, Aes128GcmKey, Aes128GcmTag, Aes256Gcm, Aes256GcmKey, Aes256GcmTag};
+#[cfg(all(rscrypto_internal, feature = "diag", feature = "aes-gcm"))]
+pub use aes_gcm::{
+  diag_aes128gcm_ctr32_be, diag_aes128gcm_ghash, diag_aes128gcm_tag_aes, diag_aes256gcm_ctr32_be, diag_aes256gcm_ghash,
+  diag_aes256gcm_tag_aes,
+};
+#[cfg(feature = "aes-gcm-siv")]
+pub use aes_gcm_siv::{Aes128GcmSiv, Aes128GcmSivKey, Aes128GcmSivTag, Aes256GcmSiv, Aes256GcmSivKey, Aes256GcmSivTag};
+#[cfg(all(rscrypto_internal, feature = "diag", feature = "aes-gcm-siv"))]
+pub use aes_gcm_siv::{
+  diag_aes128gcmsiv_ctr32, diag_aes128gcmsiv_derive_keys, diag_aes128gcmsiv_polyval_digest,
+  diag_aes128gcmsiv_raw_tag_aes, diag_aes256gcmsiv_ctr32, diag_aes256gcmsiv_derive_keys, diag_aes256gcmsiv_raw_tag_aes,
+};
 #[cfg(all(rscrypto_internal, feature = "diag", feature = "aegis256"))]
 pub use aes_round::diag_aes_enc_round_portable;
 #[cfg(feature = "aes-siv")]
@@ -248,25 +258,6 @@ pub use aes_siv_cmac256::{
 };
 #[cfg(all(rscrypto_internal, feature = "diag", feature = "aes-siv"))]
 pub use aes_siv_cmac256::{diag_aes_siv_cmac256_open_portable, diag_aes_siv_cmac256_s2v_portable};
-#[cfg(feature = "aes-gcm")]
-pub use aes128gcm::{Aes128Gcm, Aes128GcmKey, Aes128GcmTag};
-#[cfg(all(rscrypto_internal, feature = "diag", feature = "aes-gcm"))]
-pub use aes128gcm::{diag_aes128gcm_ctr32_be, diag_aes128gcm_ghash, diag_aes128gcm_tag_aes};
-#[cfg(feature = "aes-gcm-siv")]
-pub use aes128gcmsiv::{Aes128GcmSiv, Aes128GcmSivKey, Aes128GcmSivTag};
-#[cfg(all(rscrypto_internal, feature = "diag", feature = "aes-gcm-siv"))]
-pub use aes128gcmsiv::{
-  diag_aes128gcmsiv_ctr32, diag_aes128gcmsiv_derive_keys, diag_aes128gcmsiv_polyval_digest,
-  diag_aes128gcmsiv_raw_tag_aes,
-};
-#[cfg(feature = "aes-gcm")]
-pub use aes256gcm::{Aes256Gcm, Aes256GcmKey, Aes256GcmTag};
-#[cfg(all(rscrypto_internal, feature = "diag", feature = "aes-gcm"))]
-pub use aes256gcm::{diag_aes256gcm_ctr32_be, diag_aes256gcm_ghash, diag_aes256gcm_tag_aes};
-#[cfg(feature = "aes-gcm-siv")]
-pub use aes256gcmsiv::{Aes256GcmSiv, Aes256GcmSivKey, Aes256GcmSivTag};
-#[cfg(all(rscrypto_internal, feature = "diag", feature = "aes-gcm-siv"))]
-pub use aes256gcmsiv::{diag_aes256gcmsiv_ctr32, diag_aes256gcmsiv_derive_keys, diag_aes256gcmsiv_raw_tag_aes};
 #[cfg(all(rscrypto_internal, feature = "diag", feature = "ascon-aead"))]
 pub use ascon128::diag_ascon_aead128_tag_portable;
 #[cfg(feature = "ascon-aead")]
@@ -898,6 +889,26 @@ pub(crate) fn open_bounded_length_as_u64(len: usize, max: u64) -> Result<u64, Op
 #[inline]
 pub(crate) fn open_bit_lengths(aad_len: usize, text_len: usize) -> Result<AeadByteLengths, OpenError> {
   AeadByteLengths::try_new_bit_lengths(aad_len, text_len).map_err(|_| OpenError::too_large())
+}
+
+/// Fold diagnostic output to one block, so a CT harness compares 16 bytes.
+#[cfg(all(
+  rscrypto_internal,
+  feature = "diag",
+  any(feature = "aes-gcm", feature = "aes-gcm-siv")
+))]
+fn diag_fold16(data: &[u8]) -> [u8; 16] {
+  let (blocks, tail) = data.as_chunks::<16>();
+  let mut acc = 0u128;
+  for block in blocks {
+    acc ^= u128::from_ne_bytes(*block);
+  }
+  if !tail.is_empty() {
+    let mut block = [0u8; 16];
+    block[..tail.len()].copy_from_slice(tail);
+    acc ^= u128::from_ne_bytes(block);
+  }
+  acc.to_ne_bytes()
 }
 
 #[cfg(test)]

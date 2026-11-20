@@ -385,7 +385,7 @@ pub(super) fn from_portable_128(rk: &[u32; 44]) -> Ppc128RoundKeys {
 /// # Safety
 ///
 /// Caller must ensure POWER8 vector crypto support is available.
-unsafe fn expand_key_128_hw(key: &[u8; 16]) -> Ppc128RoundKeys {
+pub(super) unsafe fn expand_key_128_hw(key: &[u8; 16]) -> Ppc128RoundKeys {
   // SAFETY: caller guarantees POWER8 crypto availability.
   unsafe {
     let mut rk = [0u32; super::EXPANDED_KEY_WORDS_128];

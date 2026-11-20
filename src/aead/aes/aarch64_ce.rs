@@ -1536,11 +1536,6 @@ pub(super) unsafe fn encrypt_block_prefix_5(keys: &CeRoundKeys, block: &[u8; 16]
 // AES-128 (11 round keys, 10 rounds)
 
 /// AES-128 round keys stored as 11 × 128-bit NEON vectors for AES-CE.
-///
-/// Visibility mirrors [`CeRoundKeys`]: `pub(in crate::aead)` so the fused
-/// AES-128-GCM-SIV path in `aes128gcmsiv.rs` can hold these round keys
-/// across the `#[target_feature(enable = "aes,neon")]` scope via
-/// `aes::aarch64_expand_key_128_inline` / `aes::aarch64_encrypt_block_128_inline`.
 #[repr(C, align(16))]
 pub(in crate::aead) struct Ce128RoundKeys {
   rk: [uint8x16_t; 11],
@@ -1567,7 +1562,7 @@ impl Drop for Ce128RoundKeys {
 /// # Safety
 ///
 /// Caller must ensure the CPU supports `aes` and `neon`.
-unsafe fn expand_key_128_hw(key: &[u8; 16]) -> Ce128RoundKeys {
+pub(super) unsafe fn expand_key_128_hw(key: &[u8; 16]) -> Ce128RoundKeys {
   // SAFETY: AES-128 key expansion with AES-CE because:
   // 1. This function's caller guarantees AES-CE + NEON availability.
   // 2. `key` is exactly 16 initialized bytes and the vector load is in bounds.
