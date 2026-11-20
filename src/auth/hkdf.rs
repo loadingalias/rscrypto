@@ -966,7 +966,7 @@ impl HkdfSha512 {
     &self.prk
   }
 
-  #[cfg(any(test, all(rscrypto_internal, feature = "diag")))]
+  #[cfg(test)]
   pub(crate) fn extract_with_compress_for_test(
     salt: &[u8],
     input_key_material: &[u8],
@@ -976,19 +976,6 @@ impl HkdfSha512 {
       *prk = HmacSha512::mac_with_compress_for_test(salt, input_key_material, compress);
     })
   }
-}
-
-#[cfg(all(rscrypto_internal, feature = "diag"))]
-#[unsafe(no_mangle)]
-#[inline(never)]
-/// Derive a portable HKDF-SHA512 diagnostic output using fixed `b"salt"` and `b"info"` inputs.
-pub fn diag_hkdf_sha512_derive_portable(input_key_material: &[u8; SHA512_OUTPUT_SIZE]) -> [u8; SHA512_OUTPUT_SIZE] {
-  let compress = crate::hashes::crypto::sha512::kernels::compress_blocks_fn(
-    crate::hashes::crypto::sha512::kernels::Sha512KernelId::Portable,
-  );
-  HkdfSha512::extract_with_compress_for_test(b"salt", input_key_material, compress)
-    .expand_array::<SHA512_OUTPUT_SIZE>(b"info")
-    .unwrap_or([0u8; SHA512_OUTPUT_SIZE])
 }
 
 impl Drop for HkdfSha512 {

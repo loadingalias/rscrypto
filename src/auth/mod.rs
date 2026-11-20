@@ -407,7 +407,7 @@ pub use ed25519::{Ed25519KeyError, Ed25519Keypair, Ed25519PublicKey, Ed25519Secr
 #[cfg(feature = "hkdf")]
 pub use hkdf::{HkdfOutputLengthError, HkdfSha256, HkdfSha384, HkdfSha512};
 #[cfg(all(rscrypto_internal, feature = "diag", feature = "hkdf"))]
-pub use hkdf::{diag_hkdf_sha256_derive_portable, diag_hkdf_sha384_derive_portable, diag_hkdf_sha512_derive_portable};
+pub use hkdf::{diag_hkdf_sha256_derive_portable, diag_hkdf_sha384_derive_portable};
 #[cfg(feature = "hmac")]
 pub use hmac::{HmacSha256, HmacSha256Tag, HmacSha384, HmacSha384Tag, HmacSha512, HmacSha512Tag};
 #[cfg(all(rscrypto_internal, feature = "diag", feature = "hmac"))]

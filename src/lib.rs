@@ -1763,19 +1763,11 @@ use rscrypto::auth::diag_hkdf_sha384_derive_portable;
 ```
 
 ```compile_fail,E0432
-use rscrypto::auth::diag_hkdf_sha512_derive_portable;
-```
-
-```compile_fail,E0432
 use rscrypto::auth::hkdf::diag_hkdf_sha256_derive_portable;
 ```
 
 ```compile_fail,E0432
 use rscrypto::auth::hkdf::diag_hkdf_sha384_derive_portable;
-```
-
-```compile_fail,E0432
-use rscrypto::auth::hkdf::diag_hkdf_sha512_derive_portable;
 ```
 "#]
 pub struct __HkdfEvidenceBoundary;
