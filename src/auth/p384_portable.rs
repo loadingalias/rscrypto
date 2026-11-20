@@ -171,7 +171,7 @@ impl Uint {
 
   #[inline(always)]
   #[cfg(any(
-    test,
+    all(test, feature = "p384-ecdh"),
     not(any(
       all(target_arch = "aarch64", not(feature = "portable-only"), not(miri)),
       all(target_arch = "x86_64", not(feature = "portable-only"), not(miri))
@@ -185,7 +185,7 @@ impl Uint {
 
   #[inline(always)]
   #[cfg(any(
-    test,
+    all(test, feature = "p384-ecdh"),
     not(any(
       all(target_arch = "aarch64", not(feature = "portable-only"), not(miri)),
       all(target_arch = "x86_64", not(feature = "portable-only"), not(miri))
@@ -390,7 +390,7 @@ impl FieldElement {
 
   #[inline(always)]
   #[cfg(any(
-    test,
+    all(test, feature = "p384-ecdh"),
     not(any(
       all(target_arch = "aarch64", not(feature = "portable-only"), not(miri)),
       all(target_arch = "x86_64", not(feature = "portable-only"), not(miri))
@@ -494,7 +494,7 @@ impl FieldElement {
 
   /// Return `self^(p - 2)`, the inverse of a nonzero element and zero for zero.
   #[cfg(any(
-    test,
+    all(test, feature = "p384-ecdh"),
     not(any(
       all(target_arch = "aarch64", not(feature = "portable-only"), not(miri)),
       all(target_arch = "x86_64", not(feature = "portable-only"), not(miri))
@@ -624,7 +624,10 @@ impl Affine {
   }
 
   /// Portable full-table scan behind [`Self::select_generator_comb`].
-  #[cfg(any(test, not(all(target_arch = "aarch64", not(feature = "portable-only"), not(miri)))))]
+  #[cfg(any(
+    all(test, feature = "p384-ecdh"),
+    not(all(target_arch = "aarch64", not(feature = "portable-only"), not(miri)))
+  ))]
   fn select_generator_comb_limbs(digit: usize) -> (Uint, Uint) {
     let mut x = Uint::ZERO;
     let mut y = Uint::ZERO;
@@ -1079,7 +1082,7 @@ fn sbb_limb(left: u64, right: u64, borrow: u64) -> (u64, u64) {
   }
 }
 
-#[cfg(any(test, target_arch = "riscv32", target_arch = "s390x"))]
+#[cfg(any(all(test, feature = "p384-ecdh"), target_arch = "riscv32", target_arch = "s390x"))]
 #[inline(never)]
 fn ct_mul_u64_wide(left: u64, right: u64) -> (u64, u64) {
   let mut product_low = 0u64;
@@ -1111,7 +1114,7 @@ fn ct_mul_u64_wide(left: u64, right: u64) -> (u64, u64) {
 /// Some RV64 multipliers finish early for operands with leading zeros.
 /// Multiplying normalized operands and subtracting the correction terms keeps
 /// the hardware multiply operand width fixed.
-#[cfg(any(test, target_arch = "riscv64"))]
+#[cfg(any(all(test, feature = "p384-ecdh"), target_arch = "riscv64"))]
 #[derive(Clone, Copy)]
 struct Riscv64MulLimb {
   normalized: u64,
@@ -1120,7 +1123,7 @@ struct Riscv64MulLimb {
   shift_high: u64,
 }
 
-#[cfg(any(test, target_arch = "riscv64"))]
+#[cfg(any(all(test, feature = "p384-ecdh"), target_arch = "riscv64"))]
 impl Riscv64MulLimb {
   #[inline(always)]
   fn new(value: u64) -> Self {
@@ -1135,7 +1138,7 @@ impl Riscv64MulLimb {
   }
 }
 
-#[cfg(any(test, target_arch = "riscv64"))]
+#[cfg(any(all(test, feature = "p384-ecdh"), target_arch = "riscv64"))]
 #[inline(always)]
 fn ct_mul_riscv64_limbs(left: Riscv64MulLimb, right: Riscv64MulLimb) -> (u64, u64) {
   const HIGH_BIT: u64 = 1 << 63;
@@ -1160,7 +1163,10 @@ fn ct_mul_riscv64_limbs(left: Riscv64MulLimb, right: Riscv64MulLimb) -> (u64, u6
 
 #[inline(always)]
 #[cfg(not(target_arch = "riscv64"))]
-#[cfg(any(test, not(all(target_arch = "aarch64", not(feature = "portable-only"), not(miri)))))]
+#[cfg(any(
+  all(test, feature = "p384-ecdh"),
+  not(all(target_arch = "aarch64", not(feature = "portable-only"), not(miri)))
+))]
 fn mul_u64_wide(left: u64, right: u64) -> (u64, u64) {
   #[cfg(any(target_arch = "riscv32", target_arch = "s390x"))]
   {
@@ -1174,8 +1180,14 @@ fn mul_u64_wide(left: u64, right: u64) -> (u64, u64) {
 }
 
 #[inline(always)]
-#[cfg(any(test, not(any(target_arch = "riscv32", target_arch = "s390x"))))]
-#[cfg(any(test, not(all(target_arch = "aarch64", not(feature = "portable-only"), not(miri)))))]
+#[cfg(any(
+  all(test, feature = "p384-ecdh"),
+  not(any(target_arch = "riscv32", target_arch = "s390x"))
+))]
+#[cfg(any(
+  all(test, feature = "p384-ecdh"),
+  not(all(target_arch = "aarch64", not(feature = "portable-only"), not(miri)))
+))]
 fn split_u128(value: u128) -> (u64, u64) {
   let [b0, b1, b2, b3, b4, b5, b6, b7, b8, b9, b10, b11, b12, b13, b14, b15] = value.to_le_bytes();
   (
@@ -1186,7 +1198,10 @@ fn split_u128(value: u128) -> (u64, u64) {
 
 /// Return `acc + product + carry` as a low limb and a high limb.
 #[inline(always)]
-#[cfg(any(test, not(all(target_arch = "aarch64", not(feature = "portable-only"), not(miri)))))]
+#[cfg(any(
+  all(test, feature = "p384-ecdh"),
+  not(all(target_arch = "aarch64", not(feature = "portable-only"), not(miri)))
+))]
 fn mac_wide(acc: u64, product_low: u64, product_high: u64, carry: u64) -> (u64, u64) {
   let (result, carry0) = adc_limb(product_low, acc, 0);
   let (result, carry1) = adc_limb(result, carry, 0);
@@ -1198,20 +1213,23 @@ fn mac_wide(acc: u64, product_low: u64, product_high: u64, carry: u64) -> (u64, 
 
 #[inline(always)]
 #[cfg(not(target_arch = "riscv64"))]
-#[cfg(any(test, not(all(target_arch = "aarch64", not(feature = "portable-only"), not(miri)))))]
+#[cfg(any(
+  all(test, feature = "p384-ecdh"),
+  not(all(target_arch = "aarch64", not(feature = "portable-only"), not(miri)))
+))]
 fn mac_limb(acc: u64, left: u64, right: u64, carry: u64) -> (u64, u64) {
   let (product_low, product_high) = mul_u64_wide(left, right);
   mac_wide(acc, product_low, product_high, carry)
 }
 
-#[cfg(any(test, target_arch = "riscv64"))]
+#[cfg(any(all(test, feature = "p384-ecdh"), target_arch = "riscv64"))]
 #[inline(always)]
 fn mac_riscv64_limb(acc: u64, left: Riscv64MulLimb, right: Riscv64MulLimb, carry: u64) -> (u64, u64) {
   let (product_low, product_high) = ct_mul_riscv64_limbs(left, right);
   mac_wide(acc, product_low, product_high, carry)
 }
 
-#[cfg(any(test, target_arch = "riscv64"))]
+#[cfg(any(all(test, feature = "p384-ecdh"), target_arch = "riscv64"))]
 #[inline(always)]
 fn riscv64_mul_limbs(value: Uint) -> [Riscv64MulLimb; LIMBS] {
   value.0.map(Riscv64MulLimb::new)
@@ -1224,7 +1242,10 @@ fn riscv64_mul_limbs(value: Uint) -> [Riscv64MulLimb; LIMBS] {
 /// keeps the accumulator in registers instead of carrying a rolled loop
 /// through stack memory.
 #[inline(always)]
-#[cfg(any(test, not(all(target_arch = "aarch64", not(feature = "portable-only"), not(miri)))))]
+#[cfg(any(
+  all(test, feature = "p384-ecdh"),
+  not(all(target_arch = "aarch64", not(feature = "portable-only"), not(miri)))
+))]
 fn multiply_row<T: Copy, const ROW: usize>(
   wide: &mut [u64; WIDE_LIMBS],
   left: T,
@@ -1241,7 +1262,10 @@ fn multiply_row<T: Copy, const ROW: usize>(
 
 /// Schoolbook 384 x 384 -> 768-bit product.
 #[inline(always)]
-#[cfg(any(test, not(all(target_arch = "aarch64", not(feature = "portable-only"), not(miri)))))]
+#[cfg(any(
+  all(test, feature = "p384-ecdh"),
+  not(all(target_arch = "aarch64", not(feature = "portable-only"), not(miri)))
+))]
 fn multiply_wide<T: Copy>(
   left: [T; LIMBS],
   right: [T; LIMBS],
@@ -1259,7 +1283,10 @@ fn multiply_wide<T: Copy>(
 
 /// Accumulate the cross products `value[ROW] * value[ROW + 1..]`.
 #[inline(always)]
-#[cfg(any(test, not(all(target_arch = "aarch64", not(feature = "portable-only"), not(miri)))))]
+#[cfg(any(
+  all(test, feature = "p384-ecdh"),
+  not(all(target_arch = "aarch64", not(feature = "portable-only"), not(miri)))
+))]
 fn square_cross_row<T: Copy, const ROW: usize>(
   wide: &mut [u64; WIDE_LIMBS],
   value: &[T; LIMBS],
@@ -1275,7 +1302,10 @@ fn square_cross_row<T: Copy, const ROW: usize>(
 
 /// 384-bit square with 15 cross products and 6 diagonal products.
 #[inline(always)]
-#[cfg(any(test, not(all(target_arch = "aarch64", not(feature = "portable-only"), not(miri)))))]
+#[cfg(any(
+  all(test, feature = "p384-ecdh"),
+  not(all(target_arch = "aarch64", not(feature = "portable-only"), not(miri)))
+))]
 fn square_wide<T: Copy>(
   value: [T; LIMBS],
   mul: impl Fn(T, T) -> (u64, u64),
@@ -1368,7 +1398,10 @@ fn montgomery_square(value: Uint) -> Uint {
   }
 }
 
-#[cfg(any(test, not(all(target_arch = "aarch64", not(feature = "portable-only"), not(miri)))))]
+#[cfg(any(
+  all(test, feature = "p384-ecdh"),
+  not(all(target_arch = "aarch64", not(feature = "portable-only"), not(miri)))
+))]
 fn montgomery_mul_portable(left: Uint, right: Uint) -> Uint {
   #[cfg(target_arch = "riscv64")]
   {
@@ -1385,7 +1418,10 @@ fn montgomery_mul_portable(left: Uint, right: Uint) -> Uint {
   }
 }
 
-#[cfg(any(test, not(all(target_arch = "aarch64", not(feature = "portable-only"), not(miri)))))]
+#[cfg(any(
+  all(test, feature = "p384-ecdh"),
+  not(all(target_arch = "aarch64", not(feature = "portable-only"), not(miri)))
+))]
 fn montgomery_square_portable(value: Uint) -> Uint {
   #[cfg(target_arch = "riscv64")]
   {
