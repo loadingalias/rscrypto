@@ -1497,7 +1497,10 @@ A case also fails when its median sample spans fewer timer ticks than
 `[dudect_resolution].min_median_ticks`.
 At start, the runner measures the smallest step of its timer.
 On the first sample of each case, it doubles the calls of the operation in one sample
-until a sample spans twice that minimum, and both classes then use that count.
+until each of 16 timed samples spans twice `min_median_ticks` ticks, and both classes then use that count.
+A count set by one timed sample failed at CT 44865874535.
+That first sample lasted 2.2 to 3.7 times the later median,
+so three cases timed one call per sample and their medians fell below the floor.
 The report records the tick, the calls per sample, and the median ticks of each case.
 
 ### ECDSA

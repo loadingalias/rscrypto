@@ -386,22 +386,31 @@ fn timer_tick_ns() -> u64 {
         .expect("the tick search takes samples")
 }
 
-/// Return the smallest power of two of calls of `f` that last at least `min_ns`, after one
-/// untimed warm-up call.
+/// Return the smallest power of two of calls of `f` for which each of `TRIALS` timed samples
+/// lasts at least `min_ns`, after one untimed warm-up call.
+///
+/// Cold caches and preemption make one sample longer than the samples of the measurement. In
+/// CT 44865874535, the first sample after the warm-up lasted 2.2 to 3.7 times the median
+/// sample, so one call per sample left three cases below the median tick floor. The fastest
+/// trial is the closest to the steady state, and each trial must reach `min_ns`.
 fn calls_per_sample<T>(f: &impl Fn() -> T, min_ns: u64) -> u64 {
     const MAX_CALLS: u64 = 1 << 20;
+    const TRIALS: usize = 16;
+    let each_trial_lasts = |calls| {
+        (0..TRIALS).all(|_| {
+            let start = Instant::now();
+            for _ in 0..calls {
+                black_box(f());
+            }
+            nanoseconds(start.elapsed()) >= min_ns
+        })
+    };
     black_box(f());
     let mut calls = 1;
-    loop {
-        let start = Instant::now();
-        for _ in 0..calls {
-            black_box(f());
-        }
-        if nanoseconds(start.elapsed()) >= min_ns || calls >= MAX_CALLS {
-            return calls;
-        }
+    while calls < MAX_CALLS && !each_trial_lasts(calls) {
         calls *= 2;
     }
+    calls
 }
 
 /// Specifies the distribution that a particular run belongs to
@@ -528,6 +537,24 @@ mod export_tests {
         let mut idle = CtRunner::default();
         idle.run_one(Class::Left, || black_box(1));
         assert_eq!(idle.calls, Some(1));
+    }
+
+    #[test]
+    fn one_slow_sample_does_not_set_the_calls_per_sample() {
+        // The first timed call stalls for 1 ms, as a cold first sample can. Fifteen
+        // single calls cannot each last 100 µs unless the host stalls each one that long.
+        let calls_made = std::cell::Cell::new(0_u64);
+        let mut runner = CtRunner {
+            min_sample_ns: 100_000,
+            ..CtRunner::default()
+        };
+        runner.run_one(Class::Left, || {
+            calls_made.set(calls_made.get() + 1);
+            if calls_made.get() == 2 {
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+        });
+        assert!(runner.calls.unwrap() > 1);
     }
 
     #[test]

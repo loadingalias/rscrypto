@@ -61,9 +61,9 @@ The CSV columns are `benchname,sequence,class,runtime_ns`.
   counts convert to durations 1 ns apart, so such a crop gave t = -inf (CT 44476221075). The full test
   keeps every sample, so a constant difference between the classes still gives an infinite t.
 - The runner measures the smallest step of `Instant` at start and prints it as `timer tick N ns`.
-  On the first sample of a case, it doubles the calls of the operation in one sample until a sample
-  lasts twice `--min-ticks` ticks. Both classes use that count, which it prints as
-  `bench NAME timed N calls per sample`.
+  On the first sample of a case, it doubles the calls of the operation in one sample until each of
+  16 timed samples lasts twice `--min-ticks` ticks. One cold or preempted sample therefore cannot
+  set the count. Both classes use that count, which it prints as `bench NAME timed N calls per sample`.
 - `--seed` replaces the seed of each selected case, so a confirmation measures new inputs.
 - Buffered output is flushed before a result is reported.
 - Clap's optional terminal color support is disabled to remove `atty` and
