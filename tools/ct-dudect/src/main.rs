@@ -1,6 +1,7 @@
 use core::cell::RefCell;
 
 use dudect_bencher::{BenchRng, Class, CtRunner, ctbench_main_with_seeds, rand::RngExt};
+use rscrypto::AeadGather;
 use rscrypto::aead::expert::AeadWithNonce;
 use rscrypto::aead::expert::header_protection::{
   Aes128HeaderProtection, Aes128HeaderProtectionKey, Aes256HeaderProtection, Aes256HeaderProtectionKey,
@@ -3992,6 +3993,58 @@ macro_rules! aead_record_gather_fixed_vs_random_key_seal {
   };
 }
 
+/// One 16385-byte message opened in place across a fixed public partition: a
+/// seam inside a block between two native ranges, and an empty segment.
+macro_rules! aead_segments_fixed_vs_random_key_open {
+  ($name:ident, $cipher:ty, $key:ty, $key_len:expr) => {
+    fn $name(runner: &mut CtRunner, rng: &mut BenchRng) {
+      let nonce = Nonce96::from_bytes([0x77; 12]);
+      let mut inputs = Vec::with_capacity(samples());
+      for class in balanced_classes(rng, samples()) {
+        let key = if matches!(class, Class::Left) {
+          [0x37; $key_len]
+        } else {
+          rand_array::<$key_len>(rng)
+        };
+        inputs.push((class, <$key>::from_bytes(key)));
+      }
+      let mut ciphertext = [0u8; 16_385];
+      for (class, key) in inputs {
+        rng.fill(&mut ciphertext);
+        let cipher = <$cipher>::new(&key);
+        let tag = cipher
+          .encrypt_in_place(&nonce, AAD, &mut ciphertext)
+          .expect("fixed-size segmented open fixture must encrypt");
+        runner.run_one(class, || {
+          let mut buffer = ciphertext;
+          let (first, second) = buffer.split_at_mut(8195);
+          cipher
+            .decrypt_in_place_segments(&nonce, AAD, &mut [first, &mut [], second], &tag)
+            .is_ok()
+        });
+      }
+    }
+  };
+}
+
+aead_segments_fixed_vs_random_key_open!(
+  aes128gcm_segments_fixed_vs_random_key_open,
+  Aes128Gcm,
+  Aes128GcmKey,
+  16
+);
+aead_segments_fixed_vs_random_key_open!(
+  aes256gcm_segments_fixed_vs_random_key_open,
+  Aes256Gcm,
+  Aes256GcmKey,
+  32
+);
+aead_segments_fixed_vs_random_key_open!(
+  chacha20poly1305_segments_fixed_vs_random_key_open,
+  ChaCha20Poly1305,
+  ChaCha20Poly1305Key,
+  32
+);
 aead_record_gather_fixed_vs_random_key_seal!(
   aes128gcm_record_gather_fixed_vs_random_key_seal,
   Aes128Gcm,
@@ -4679,6 +4732,12 @@ ctbench_main_with_seeds!(
   (
     chacha20poly1305_record_gather_fixed_vs_random_key_seal,
     Some(0x6368616372656367)
+  ),
+  (aes128gcm_segments_fixed_vs_random_key_open, Some(0x6131323873656773)),
+  (aes256gcm_segments_fixed_vs_random_key_open, Some(0x6132353673656773)),
+  (
+    chacha20poly1305_segments_fixed_vs_random_key_open,
+    Some(0x6368616373656773)
   ),
   (aes128gcmsiv_fixed_vs_random_key_seal, Some(0x6131323867737365)),
   (aes256gcmsiv_fixed_vs_random_key_seal, Some(0x6132353667737365)),

@@ -7,6 +7,7 @@
 use core::{arch::global_asm, mem};
 
 use super::KEY_SIZE;
+use crate::aead::segments::Span;
 
 global_asm!(
   include_str!("asm/rscrypto_chacha20_poly1305_x86_64_linux.s"),
@@ -55,6 +56,15 @@ const _: () = assert!(mem::size_of::<SealData>() == 64);
 const _: () = assert!(mem::align_of::<SealData>() == 16);
 
 unsafe extern "C" {
+  fn rscrypto_chacha20_poly1305_open_scatter_x86_64(
+    out_spans: *const Span,
+    in_spans: *const Span,
+    len: usize,
+    aad: *const u8,
+    aad_len: usize,
+    data: *mut OpenData,
+  );
+
   fn rscrypto_chacha20_poly1305_open_x86_64(
     out_plaintext: *mut u8,
     ciphertext: *const u8,
@@ -220,6 +230,48 @@ pub(super) unsafe fn open_in_place(key: &[u8; KEY_SIZE], nonce: &[u8; 12], aad: 
       buffer.as_mut_ptr(),
       buffer.as_ptr(),
       buffer.len(),
+      aad.as_ptr(),
+      aad.len(),
+      core::ptr::from_mut(&mut data),
+    );
+    crate::traits::ct::zeroize(&mut data.input.key[16..]);
+    data.out.tag
+  }
+}
+
+/// Open the ciphertext of `spans` in place, in order, and return the computed
+/// tag. The caller compares it, and on a mismatch clears every span.
+///
+/// # Safety
+///
+/// The caller must ensure that AVX2 and BMI2 are available and that the spans
+/// hold more than 320 bytes within ChaCha20's 2³²-block limit.
+pub(super) unsafe fn open_scatter(key: &[u8; KEY_SIZE], nonce: &[u8; 12], aad: &[u8], spans: &[Span]) -> [u8; 16] {
+  let len = spans.iter().fold(0usize, |len, span| len.strict_add(span.len()));
+  assert!(len > 320);
+  let mut data = OpenData {
+    input: OpenDataIn {
+      key: *key,
+      counter: 0,
+      nonce: *nonce,
+    },
+  };
+  // SAFETY: integrated x86_64 Linux span open because:
+  // 1. The caller establishes AVX2 and BMI2, and the length exceeds the short
+  //    paths, which the span regions do not cover.
+  // 2. Each repr(C) span holds the pointer and length of a nonempty segment
+  //    borrowed exclusively for this call; the spans do not overlap, and their
+  //    checked total is `len`. Each region runs on the span that holds it or on
+  //    the frame stage, which the assembly scatters back and clears.
+  // 3. `aad` is valid for `aad.len()` bytes; `data` has the aligned union
+  //    layout of `open_in_place`, and the assembly writes all 16 tag bytes.
+  // 4. The tag overwrites the first half of the copied key; the second half
+  //    is cleared before the stack slot expires.
+  unsafe {
+    rscrypto_chacha20_poly1305_open_scatter_x86_64(
+      spans.as_ptr(),
+      spans.as_ptr(),
+      len,
       aad.as_ptr(),
       aad.len(),
       core::ptr::from_mut(&mut data),

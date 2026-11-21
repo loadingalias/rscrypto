@@ -80,7 +80,8 @@ X25519, ML-KEM, password hashing, and backend introspection.
 Signature and KEM keys import and export standard DER (PKCS #8 and SubjectPublicKeyInfo)
 for ECDSA, Ed25519, RSA, ML-DSA, composite ML-DSA, ML-KEM, and SLH-DSA.
 
-`AeadGather` encrypts multiple plaintext slices into one ciphertext for AES-GCM and ChaCha20-Poly1305.
+`AeadGather` encrypts multiple plaintext slices into one ciphertext, and decrypts one ciphertext in place across
+ordered segments, for AES-GCM and ChaCha20-Poly1305.
 With `aes-gcm`, `aead::expert::quic_lb` encrypts QUIC-LB connection IDs (draft-ietf-quic-load-balancers-22).
 BLAKE3 supports reader, file, and batch hashing, and an expert decoder verifies sequential unkeyed Bao combined streams.
 `hashes::expert::BLAKE3_PORTABLE_SOURCE` holds the source text of the portable BLAKE3 compression function.

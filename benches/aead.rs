@@ -38,6 +38,44 @@ fn sealed(ciphertext: &[u8], tag: impl AsRef<[u8]>) -> Vec<u8> {
   [ciphertext, tag.as_ref()].concat()
 }
 
+/// The `rscrypto-segments` row beside `rscrypto`: the input restores into two
+/// separate buffers split inside a cipher block, then opens in place across
+/// both. Its difference from the `rscrypto` row is the cost of the seam.
+fn segments_row<C: rscrypto::AeadGather<Nonce = rscrypto::aead::Nonce96>>(
+  g: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
+  cipher: &C,
+  nonce: &rscrypto::aead::Nonce96,
+  ciphertext: &[u8],
+  tag: &C::Tag,
+  plaintext: &[u8],
+) {
+  if ciphertext.len() < 2 {
+    return;
+  }
+  // An odd split never falls on a 16- or 64-byte block boundary.
+  let (head, tail) = ciphertext.split_at((ciphertext.len() / 2) | 1);
+  g.bench_function(
+    BenchmarkId::new("rscrypto-segments", ciphertext.len()),
+    checked_with(
+      (head.to_vec(), tail.to_vec()),
+      |(first, second)| {
+        first.copy_from_slice(head);
+        second.copy_from_slice(tail);
+        cipher
+          .decrypt_in_place_segments(
+            black_box(nonce),
+            black_box(AAD),
+            black_box(&mut [first.as_mut_slice(), second.as_mut_slice()]),
+            black_box(tag),
+          )
+          .expect("valid AEAD benchmark operation must succeed");
+        black_box((&*first, &*second));
+      },
+      |(), (first, second)| assert_eq!([first.as_slice(), second.as_slice()].concat(), plaintext),
+    ),
+  );
+}
+
 // XChaCha20-Poly1305
 
 // dryoc 0.7.2 does not expose `crypto_aead_xchacha20poly1305_ietf` as a single-shot AEAD;
@@ -381,6 +419,7 @@ fn chacha20_poly1305_decrypt(c: &mut Criterion) {
         |(), buf| assert_eq!(buf, data),
       ),
     );
+    segments_row(&mut g, &cipher_rs, &nonce_rs, &ciphertext, &tag_rs, data);
 
     #[cfg(all(rscrypto_internal, feature = "diag"))]
     g.bench_function(
@@ -1116,6 +1155,7 @@ fn aes256_gcm_decrypt(c: &mut Criterion) {
         |(), buf| assert_eq!(buf, data),
       ),
     );
+    segments_row(&mut g, &cipher_rs, &nonce_rs, &ciphertext, &tag_rs, data);
 
     g.bench_function(
       BenchmarkId::new("rustcrypto", len),
@@ -1353,6 +1393,7 @@ fn aes128_gcm_decrypt(c: &mut Criterion) {
         |(), buf| assert_eq!(buf, data),
       ),
     );
+    segments_row(&mut g, &cipher_rs, &nonce_rs, &ciphertext, &tag_rs, data);
 
     g.bench_function(
       BenchmarkId::new("rustcrypto", len),

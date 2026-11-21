@@ -423,8 +423,8 @@ pub(crate) fn zeroize_words<T: WordZero>(words: &mut [T]) {
 /// costs well under 1% at realistic parameters. Short symmetric operations such as MACs, AEADs, and
 /// fixed-size comparisons do not toggle it per call, because a toggle costs about
 /// 30 ns on Apple Silicon. Wrap that work, or a whole worker loop, in this function
-/// to cover it for one toggle per scope. Gather encryption enters it for the complete
-/// message, including all slices and output initialization.
+/// to cover it for one toggle per scope. Gather encryption and segmented decryption enter it
+/// for the complete message, including all slices and output initialization.
 ///
 /// Compiler barriers keep the work of `f` between the two DIT writes. `f` reads
 /// its captures after DIT is set, and its result is complete before DIT is restored.

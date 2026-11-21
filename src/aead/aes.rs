@@ -200,7 +200,7 @@ unsafe fn x86_gcm_bulk_asm<K: X86GcmKernels>(
 
 macro_rules! x86_gcm_message {
   (
-    $seal:ident, $open:ident, $key:ty, $inner:path, $rounds:literal,
+    $seal:ident, $open:ident, $open_bulk:ident, $key:ty, $inner:path, $rounds:literal,
     seal: ($s16:path, $s64:path, $s128:path), open: ($o16:path, $o64:path, $o128:path)
   ) => {
     /// Seal a whole message with the VAES kernels: plaintext `src[..src_len]`
@@ -273,7 +273,8 @@ macro_rules! x86_gcm_message {
       })
     }
 
-    /// Open a whole message in place with the VAES kernels.
+    /// Open the rest of a message in place with the VAES kernels: `data[..len]`
+    /// from the counter of `counter_block` on, then the tag.
     ///
     /// Returns `None` when the key does not use the AES-NI schedule, and
     /// otherwise whether the tag matched. On a mismatch every byte of `data` is
@@ -282,7 +283,8 @@ macro_rules! x86_gcm_message {
     /// # Safety
     /// The caller must establish the features of the seal function, `data`
     /// valid for `len` reads and writes within GCM's length bound, `acc` GHASH
-    /// over the AAD, and `length_block` encoding both bit lengths.
+    /// over the AAD and any ciphertext before `data`, and `length_block`
+    /// encoding both bit lengths of the whole message.
     #[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm"))]
     #[expect(
       clippy::too_many_arguments,
@@ -309,18 +311,16 @@ macro_rules! x86_gcm_message {
       let done = 0usize;
       #[cfg(any(target_os = "linux", target_os = "windows"))]
       if len > X86_GCM_BATCH_MIN {
-        struct Open;
-        impl X86GcmKernels for Open {
-          const X16: X86GcmKernel = $o16;
-          const X64: X86GcmKernel = $o64;
-          const X128: X86GcmKernel = $o128;
-        }
         // SAFETY: the caller's contract covers the features and the range.
-        done = unsafe { x86_gcm_bulk_asm::<Open>(rk.as_ptr(), counter_block, data, data, len, &mut acc, tables) };
+        done = unsafe { $open_bulk(ek, counter_block, data, len, &mut acc, tables) }?;
       }
-      #[cfg(not(any(target_os = "linux", target_os = "windows")))]
-      let _ = counter_block;
-      let first = u32::try_from(done.strict_div(BLOCK_SIZE)).ok()?.checked_add(2)?;
+      let counter = u32::from_be_bytes([
+        counter_block[12],
+        counter_block[13],
+        counter_block[14],
+        counter_block[15],
+      ]);
+      let first = u32::try_from(done.strict_div(BLOCK_SIZE)).ok()?.checked_add(counter)?;
       // SAFETY: the rest starts `done` bytes into `data`.
       let matched = unsafe {
         x86_short::open::<$rounds>(
@@ -342,11 +342,48 @@ macro_rules! x86_gcm_message {
       }
       Some(matched)
     }
+
+    /// Decrypt every whole 256-byte batch of `data[..len]` in place with the
+    /// VAES kernels, from the counter of `counter_block` on, and fold its
+    /// ciphertext into `acc`. Returns the bytes processed, or `None` when the
+    /// key does not use the AES-NI schedule.
+    ///
+    /// # Safety
+    /// The caller must establish the features of the seal function, `data`
+    /// valid for `len` reads and writes, and the counters of `data` within
+    /// GCM's 32-bit counter range.
+    #[cfg(all(
+      target_arch = "x86_64",
+      target_feature = "sse2",
+      any(target_os = "linux", target_os = "windows"),
+      feature = "aes-gcm"
+    ))]
+    #[target_feature(enable = "aes,sse2,ssse3,avx512f,avx512vl,avx512bw,avx512dq,vaes,vpclmulqdq,pclmulqdq")]
+    pub(crate) unsafe fn $open_bulk(
+      ek: &$key,
+      counter_block: &[u8; BLOCK_SIZE],
+      data: *mut u8,
+      len: usize,
+      acc: &mut u128,
+      tables: X86GcmTables<'_>,
+    ) -> Option<usize> {
+      let $inner(rk) = &ek.inner else {
+        return None;
+      };
+      struct Open;
+      impl X86GcmKernels for Open {
+        const X16: X86GcmKernel = $o16;
+        const X64: X86GcmKernel = $o64;
+        const X128: X86GcmKernel = $o128;
+      }
+      // SAFETY: the caller's contract covers the features and the range.
+      Some(unsafe { x86_gcm_bulk_asm::<Open>(rk.as_ptr(), counter_block, data, data, len, acc, tables) })
+    }
   };
 }
 
 x86_gcm_message!(
-  aes128_gcm_seal_x86, aes128_gcm_open_x86, Aes128EncKey, Key128Inner::X86AesNi, 11,
+  aes128_gcm_seal_x86, aes128_gcm_open_x86, aes128_gcm_open_bulk_x86, Aes128EncKey, Key128Inner::X86AesNi, 11,
   seal: (
     x86_64_asm::rscrypto_aes128_gcm_seal_16x_vaes512_x86_64_sysv,
     x86_64_asm::rscrypto_aes128_gcm_seal_64x_vaes512_x86_64_sysv,
@@ -359,7 +396,7 @@ x86_gcm_message!(
   )
 );
 x86_gcm_message!(
-  aes256_gcm_seal_x86, aes256_gcm_open_x86, Aes256EncKey, KeyInner::X86AesNi, 15,
+  aes256_gcm_seal_x86, aes256_gcm_open_x86, aes256_gcm_open_bulk_x86, Aes256EncKey, KeyInner::X86AesNi, 15,
   seal: (
     x86_64_asm::rscrypto_aes256_gcm_seal_16x_vaes512_x86_64_sysv,
     x86_64_asm::rscrypto_aes256_gcm_seal_64x_vaes512_x86_64_sysv,
@@ -644,7 +681,7 @@ pub(super) trait AesKey: Sized {
     tables: X86GcmTables<'_>,
   ) -> Option<[u8; BLOCK_SIZE]>;
 
-  /// Open a whole message in place with the VAES kernels; see [`aes128_gcm_open_x86`].
+  /// Open the rest of a message in place with the VAES kernels; see [`aes128_gcm_open_x86`].
   ///
   /// # Safety
   /// The contract of [`aes128_gcm_open_x86`].
@@ -661,6 +698,26 @@ pub(super) trait AesKey: Sized {
     tables: X86GcmTables<'_>,
     expected: &[u8; BLOCK_SIZE],
   ) -> Option<bool>;
+
+  /// Decrypt the whole 256-byte batches of a range in place with the VAES kernels; see
+  /// [`aes128_gcm_open_bulk_x86`].
+  ///
+  /// # Safety
+  /// The contract of [`aes128_gcm_open_bulk_x86`].
+  #[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "sse2",
+    any(target_os = "linux", target_os = "windows"),
+    feature = "aes-gcm"
+  ))]
+  unsafe fn gcm_open_bulk_x86(
+    &self,
+    counter_block: &[u8; BLOCK_SIZE],
+    data: *mut u8,
+    len: usize,
+    acc: &mut u128,
+    tables: X86GcmTables<'_>,
+  ) -> Option<usize>;
 
   /// Encrypt `data` in place with AES-NI CTR and fold the ciphertext into `acc` with PCLMULQDQ.
   ///
@@ -1039,6 +1096,25 @@ impl AesKey for Aes128EncKey {
   ) -> Option<bool> {
     // SAFETY: the caller upholds the kernel's contract.
     unsafe { aes128_gcm_open_x86(self, j0, counter_block, acc, data, len, length_block, tables, expected) }
+  }
+
+  #[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "sse2",
+    any(target_os = "linux", target_os = "windows"),
+    feature = "aes-gcm"
+  ))]
+  #[inline(always)]
+  unsafe fn gcm_open_bulk_x86(
+    &self,
+    counter_block: &[u8; BLOCK_SIZE],
+    data: *mut u8,
+    len: usize,
+    acc: &mut u128,
+    tables: X86GcmTables<'_>,
+  ) -> Option<usize> {
+    // SAFETY: the caller upholds the kernel's contract.
+    unsafe { aes128_gcm_open_bulk_x86(self, counter_block, data, len, acc, tables) }
   }
 
   #[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm"))]
@@ -1420,6 +1496,25 @@ impl AesKey for Aes256EncKey {
   ) -> Option<bool> {
     // SAFETY: the caller upholds the kernel's contract.
     unsafe { aes256_gcm_open_x86(self, j0, counter_block, acc, data, len, length_block, tables, expected) }
+  }
+
+  #[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "sse2",
+    any(target_os = "linux", target_os = "windows"),
+    feature = "aes-gcm"
+  ))]
+  #[inline(always)]
+  unsafe fn gcm_open_bulk_x86(
+    &self,
+    counter_block: &[u8; BLOCK_SIZE],
+    data: *mut u8,
+    len: usize,
+    acc: &mut u128,
+    tables: X86GcmTables<'_>,
+  ) -> Option<usize> {
+    // SAFETY: the caller upholds the kernel's contract.
+    unsafe { aes256_gcm_open_bulk_x86(self, counter_block, data, len, acc, tables) }
   }
 
   #[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm"))]

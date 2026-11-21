@@ -103,6 +103,9 @@ The `aes-gcm` and `chacha20poly1305` leaves implement `AeadGather`. It encrypts 
 slices into one ciphertext without staging plaintext or allocating. Fresh-random-nonce sealing
 requires `getrandom`; caller-supplied nonces use `aead::expert::AeadWithNonce`. The append helper
 requires `alloc` and writes ciphertext directly into a vector's spare capacity.
+`AeadGather::decrypt_in_place_segments` decrypts one ciphertext in place across ordered segments,
+such as a TLS record split between two receive buffers. It needs no allocation. A failed tag check
+zeroes every segment.
 
 The `aes-gcm` leaf also gives `aead::expert::quic_lb`, the connection-ID cipher of
 [draft-ietf-quic-load-balancers-22](https://datatracker.ietf.org/doc/draft-ietf-quic-load-balancers/22/).

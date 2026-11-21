@@ -1,5 +1,5 @@
 //! The AES-NI/PCLMUL tier of AES-GCM and AES-GCM-SIV matches Wycheproof and
-//! RustCrypto.
+//! RustCrypto, including gather encryption and segmented decryption.
 //!
 //! x86-64 hosts without AVX-512 select this tier: Intel hybrid parts, where
 //! detection removes AVX-512, and AMD parts before Zen 4. Every CI x86-64 host
@@ -182,6 +182,24 @@ fn check_gather<C: AeadGather<Nonce = Nonce96>>(name: &str, cipher: &C, oracle: 
       (output.as_slice(), tag.as_ref()),
       expected.split_at(len),
       "{name} gather, len={len}, aad={aad_len}"
+    );
+    // The oracle ciphertext opens in place across the same odd-length thirds.
+    let (ciphertext, tag) = expected.split_at(len);
+    let tag = C::tag_from_slice(tag).expect("16-byte tag");
+    let (mut first, rest) = (ciphertext[..len / 3].to_vec(), &ciphertext[len / 3..]);
+    let (mut second, mut third) = (rest[..len / 3].to_vec(), rest[len / 3..].to_vec());
+    cipher
+      .decrypt_in_place_segments(
+        &Nonce96::from_bytes(nonce),
+        &aad,
+        &mut [&mut first, &mut second, &mut third],
+        &tag,
+      )
+      .expect("valid segmented open");
+    assert_eq!(
+      [first, second, third].concat(),
+      plaintext,
+      "{name} segments, len={len}, aad={aad_len}"
     );
   }
 }

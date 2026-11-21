@@ -311,82 +311,109 @@ fn add_lanes(h: Lanes, m: Lanes) -> Lanes {
   Lanes(out)
 }
 
-/// Poly1305 tag of the ChaCha20-Poly1305 message for `aad` and `ciphertext` under `key`.
-///
-/// # Safety
-/// The caller must establish AVX-512F and AVX-512 IFMA.
-#[target_feature(enable = "avx512f,avx512ifma")]
-pub(super) unsafe fn authenticate_aead_ifma(
-  aad: &[u8],
-  ciphertext: &[u8],
-  key: &[u8; 32],
-  lengths: AeadByteLengths,
-) -> [u8; 16] {
-  let (r_bytes, s_bytes) = key.split_at(16);
-  let r_value = u128::from_le_bytes(r_bytes.try_into().expect("16-byte r")) & 0x0fff_fffc_0fff_fffc_0fff_fffc_0fff_ffff;
-  let r = Limbs::from_u128(r_value, 0);
-  let r20 = r.times20();
-  // r^1 ... r^8, each partially reduced.
-  let mut powers = [r; 8];
-  let mut previous = r;
-  for power in powers.iter_mut().skip(1) {
-    previous = previous.mul(r, r20);
-    *power = previous;
-  }
-  let mut scalar = Scalar {
-    h: Limbs([0; 3]),
-    r,
-    r20,
-  };
-  scalar.absorb_padded(aad);
+/// The eight-way Poly1305 state of one ChaCha20-Poly1305 message, fed after
+/// its AAD in text ranges. It holds the clamped key, its powers, and the pad,
+/// so it clears itself on drop.
+pub(super) struct Aead {
+  scalar: Scalar,
+  /// r^1 ... r^8, each partially reduced.
+  powers: [Limbs; 8],
+  pad: [u8; 16],
+}
 
-  let (groups, rest) = ciphertext.as_chunks::<128>();
-  if let Some((last, leading)) = groups.split_last() {
-    let r8 = powers[7];
-    let step = Multiplier {
-      r: broadcast(r8),
-      r20: broadcast(r8.times20()),
-    };
-    // Lane j of the last group multiplies by r^(8-j).
-    let mut tail_powers = [r; 8];
-    for (lane, power) in tail_powers.iter_mut().enumerate() {
-      *power = powers[7usize.strict_sub(lane)];
-    }
-    let mut tail_powers20 = tail_powers;
-    for power in &mut tail_powers20 {
-      *power = power.times20();
-    }
-    let finish = Multiplier {
-      r: per_lane(&tail_powers),
-      r20: per_lane(&tail_powers20),
-    };
-    // The AAD's running value enters lane 0 with the first text block.
-    let mut h = per_lane(&[
-      scalar.h,
-      Limbs([0; 3]),
-      Limbs([0; 3]),
-      Limbs([0; 3]),
-      Limbs([0; 3]),
-      Limbs([0; 3]),
-      Limbs([0; 3]),
-      Limbs([0; 3]),
-    ]);
-    for group in leading {
-      let blocks = group.as_chunks::<16>().0.try_into().expect("eight blocks per group");
-      let m = load_blocks(blocks);
-      h = multiply(add_lanes(h, m), step);
-    }
-    let blocks = last.as_chunks::<16>().0.try_into().expect("eight blocks per group");
-    let m = load_blocks(blocks);
-    h = multiply(add_lanes(h, m), finish);
-    scalar.h = sum_lanes(h);
-    clear_powers(&mut tail_powers);
-    clear_powers(&mut tail_powers20);
+impl Drop for Aead {
+  fn drop(&mut self) {
+    clear_powers(&mut self.powers);
+    crate::traits::ct::zeroize(&mut self.pad);
   }
-  clear_powers(&mut powers);
-  scalar.absorb_padded(rest);
-  scalar.absorb(&lengths.to_le_bytes_block());
-  finalize(scalar.h, s_bytes)
+}
+
+impl Aead {
+  /// Begin the message under `key` and absorb `aad` on the scalar path.
+  pub(super) fn new(key: &[u8; 32], aad: &[u8]) -> Self {
+    let (r_bytes, s_bytes) = key.split_at(16);
+    let r_value =
+      u128::from_le_bytes(r_bytes.try_into().expect("16-byte r")) & 0x0fff_fffc_0fff_fffc_0fff_fffc_0fff_ffff;
+    let r = Limbs::from_u128(r_value, 0);
+    let r20 = r.times20();
+    let mut powers = [r; 8];
+    let mut previous = r;
+    for power in powers.iter_mut().skip(1) {
+      previous = previous.mul(r, r20);
+      *power = previous;
+    }
+    let mut pad = [0u8; 16];
+    pad.copy_from_slice(s_bytes);
+    let mut scalar = Scalar {
+      h: Limbs([0; 3]),
+      r,
+      r20,
+    };
+    scalar.absorb_padded(aad);
+    Self { scalar, powers, pad }
+  }
+
+  /// Absorb a text range: its full groups of eight blocks in the lanes, then
+  /// the rest on the scalar path with its final partial block zero-padded. A
+  /// range that continues the text must follow a whole number of blocks.
+  ///
+  /// # Safety
+  /// The caller must establish AVX-512F and AVX-512 IFMA.
+  #[target_feature(enable = "avx512f,avx512ifma")]
+  pub(super) unsafe fn update(&mut self, text: &[u8]) {
+    let (groups, rest) = text.as_chunks::<128>();
+    if let Some((last, leading)) = groups.split_last() {
+      let powers = &self.powers;
+      let r = powers[0];
+      let r8 = powers[7];
+      let step = Multiplier {
+        r: broadcast(r8),
+        r20: broadcast(r8.times20()),
+      };
+      // Lane j of the last group multiplies by r^(8-j).
+      let mut tail_powers = [r; 8];
+      for (lane, power) in tail_powers.iter_mut().enumerate() {
+        *power = powers[7usize.strict_sub(lane)];
+      }
+      let mut tail_powers20 = tail_powers;
+      for power in &mut tail_powers20 {
+        *power = power.times20();
+      }
+      let finish = Multiplier {
+        r: per_lane(&tail_powers),
+        r20: per_lane(&tail_powers20),
+      };
+      // The running value enters lane 0 with the range's first block.
+      let mut h = per_lane(&[
+        self.scalar.h,
+        Limbs([0; 3]),
+        Limbs([0; 3]),
+        Limbs([0; 3]),
+        Limbs([0; 3]),
+        Limbs([0; 3]),
+        Limbs([0; 3]),
+        Limbs([0; 3]),
+      ]);
+      for group in leading {
+        let blocks = group.as_chunks::<16>().0.try_into().expect("eight blocks per group");
+        let m = load_blocks(blocks);
+        h = multiply(add_lanes(h, m), step);
+      }
+      let blocks = last.as_chunks::<16>().0.try_into().expect("eight blocks per group");
+      let m = load_blocks(blocks);
+      h = multiply(add_lanes(h, m), finish);
+      self.scalar.h = sum_lanes(h);
+      clear_powers(&mut tail_powers);
+      clear_powers(&mut tail_powers20);
+    }
+    self.scalar.absorb_padded(rest);
+  }
+
+  /// Absorb the length block and return the tag.
+  pub(super) fn finish(mut self, lengths: AeadByteLengths) -> [u8; 16] {
+    self.scalar.absorb(&lengths.to_le_bytes_block());
+    finalize(self.scalar.h, &self.pad)
+  }
 }
 
 /// Reduce `h` (limbs below 2^56) fully modulo `2^130 - 5` and add `s` modulo 2^128.

@@ -195,6 +195,8 @@ mod poly1305;
 mod polyval;
 #[cfg(feature = "aes-gcm")]
 mod quic_lb;
+#[cfg(any(feature = "aes-gcm", feature = "chacha20poly1305"))]
+mod segments;
 #[cfg(any(
   feature = "aes-gcm",
   feature = "chacha20poly1305",
@@ -322,7 +324,8 @@ pub use chacha20poly1305::{
   target_os = "linux"
 ))]
 pub use chacha20poly1305::{
-  diag_chacha20poly1305_decrypt_in_place_x86_64_asm, diag_chacha20poly1305_encrypt_in_place_x86_64_asm,
+  diag_chacha20poly1305_decrypt_in_place_x86_64_asm, diag_chacha20poly1305_decrypt_segments_x86_64_asm,
+  diag_chacha20poly1305_encrypt_in_place_x86_64_asm,
 };
 #[cfg(all(rscrypto_internal, feature = "diag", feature = "aes-gcm"))]
 pub use ghash::diag_ghash_block_portable;

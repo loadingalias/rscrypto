@@ -7,6 +7,7 @@
 use core::{arch::global_asm, mem};
 
 use super::KEY_SIZE;
+use crate::aead::segments::Span;
 
 #[cfg(target_os = "macos")]
 global_asm!(include_str!("asm/rscrypto_chacha20_poly1305_aarch64_apple_darwin.s"));
@@ -90,6 +91,26 @@ unsafe extern "C" {
     out_plaintext: *mut u8,
     ciphertext: *const u8,
     plaintext_len: usize,
+    aad: *const u8,
+    aad_len: usize,
+    data: *mut OpenData,
+  );
+
+  #[cfg(target_os = "macos")]
+  fn rscrypto_chacha20_poly1305_open_scatter_aarch64_apple_darwin(
+    out_spans: *const Span,
+    in_spans: *const Span,
+    len: usize,
+    aad: *const u8,
+    aad_len: usize,
+    data: *mut OpenData,
+  );
+
+  #[cfg(target_os = "linux")]
+  fn rscrypto_chacha20_poly1305_open_scatter_aarch64(
+    out_spans: *const Span,
+    in_spans: *const Span,
+    len: usize,
     aad: *const u8,
     aad_len: usize,
     data: *mut OpenData,
@@ -264,6 +285,53 @@ pub(super) fn open_in_place(key: &[u8; KEY_SIZE], nonce: &[u8; 12], aad: &[u8], 
       buffer.as_mut_ptr(),
       buffer.as_ptr(),
       buffer.len(),
+      aad.as_ptr(),
+      aad.len(),
+      core::ptr::from_mut(&mut data),
+    );
+    crate::traits::ct::zeroize(&mut data.input.key[16..]);
+    data.out.tag
+  }
+}
+
+/// Open the ciphertext of `spans` in place, in order, and return the computed
+/// tag. The caller compares it, and on a mismatch clears every span.
+pub(super) fn open_scatter(key: &[u8; KEY_SIZE], nonce: &[u8; 12], aad: &[u8], spans: &[Span]) -> [u8; 16] {
+  assert!(!spans.is_empty());
+  let len = spans.iter().fold(0usize, |len, span| len.strict_add(span.len()));
+  let mut data = OpenData {
+    input: OpenDataIn {
+      key: *key,
+      counter: 0,
+      nonce: *nonce,
+    },
+  };
+  // SAFETY: integrated aarch64 span open because:
+  // 1. NEON is part of the macOS/Linux aarch64 baseline ABI.
+  // 2. Each repr(C) span holds the pointer and length of a nonempty segment
+  //    borrowed exclusively for this call; the spans do not overlap, and their
+  //    checked total is `len`, which the public entry validated against
+  //    ChaCha20's block bound. The read, hash, and write cursors walk the same
+  //    spans in order and touch only their bytes; seams stay in registers.
+  // 3. `aad` is valid for `aad.len()` bytes; `data` has the aligned union
+  //    layout of `open_in_place`, and the assembly writes all 16 tag bytes.
+  // 4. The tag overwrites the first half of the copied key; the second half
+  //    is cleared before the stack slot expires.
+  unsafe {
+    #[cfg(target_os = "macos")]
+    rscrypto_chacha20_poly1305_open_scatter_aarch64_apple_darwin(
+      spans.as_ptr(),
+      spans.as_ptr(),
+      len,
+      aad.as_ptr(),
+      aad.len(),
+      core::ptr::from_mut(&mut data),
+    );
+    #[cfg(target_os = "linux")]
+    rscrypto_chacha20_poly1305_open_scatter_aarch64(
+      spans.as_ptr(),
+      spans.as_ptr(),
+      len,
       aad.as_ptr(),
       aad.len(),
       core::ptr::from_mut(&mut data),

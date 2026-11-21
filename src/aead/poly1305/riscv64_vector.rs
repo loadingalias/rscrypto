@@ -60,61 +60,100 @@ impl Powers {
   }
 }
 
-pub(super) fn authenticate_aead_par4(
-  aad: &[u8],
-  ciphertext: &[u8],
-  key: &[u8; 32],
-  lengths: AeadByteLengths,
-) -> [u8; 16] {
-  // SAFETY: RVV AEAD authenticator dispatch because:
-  // 1. The caller verifies `platform::caps().has(riscv::V)` before selecting this authenticator.
-  // 2. `lengths` is derived from the same `aad` and `ciphertext` slices.
-  unsafe { authenticate_aead_par4_impl(aad, ciphertext, key, lengths) }
+/// The RVV four-block Poly1305 state of one AEAD message, fed segment by segment.
+///
+/// The caller selects it only after `platform::caps().has(riscv::V)`.
+pub(super) struct Aead {
+  state: State,
+  powers: Powers,
+  cached: [[u8; 16]; 4],
+  num_cached: usize,
 }
 
-/// Authenticate AEAD input four Poly1305 blocks at a time.
-///
-/// # Safety
-///
-/// The executing CPU must support the RISC-V V extension, and `lengths` must
-/// encode the byte lengths of `aad` and `ciphertext`.
-#[target_feature(enable = "v")]
-unsafe fn authenticate_aead_par4_impl(
-  aad: &[u8],
-  ciphertext: &[u8],
-  key: &[u8; 32],
-  lengths: AeadByteLengths,
-) -> [u8; 16] {
-  let mut state = State::new(key);
-  let powers = Powers::new(state.r);
-  let mut cached = [[0u8; 16]; 4];
-  let mut num_cached = 0usize;
+impl Aead {
+  pub(super) fn new(key: &[u8; 32]) -> Self {
+    let state = State::new(key);
+    let powers = Powers::new(state.r);
+    Self {
+      state,
+      powers,
+      cached: [[0u8; 16]; 4],
+      num_cached: 0,
+    }
+  }
 
-  let mut segment_index = 0usize;
-  while segment_index < 2 {
-    let segment = if segment_index == 0 { aad } else { ciphertext };
+  /// Absorb one AEAD segment and zero-pad its final partial block. A segment
+  /// that continues the previous one must follow a whole number of blocks.
+  pub(super) fn update_padded(&mut self, segment: &[u8]) {
+    // SAFETY: the caller selected this state only after it verified the RISC-V V extension.
+    unsafe { self.update_padded_rvv(segment) }
+  }
+
+  /// Absorb the length block and return the tag.
+  pub(super) fn finish(mut self, lengths: AeadByteLengths) -> [u8; 16] {
+    // SAFETY: RVV cached-block push because:
+    // 1. The caller selected this state only after it verified the RISC-V V extension.
+    // 2. The AEAD length encoding is exactly one full Poly1305 block.
+    unsafe {
+      push_cached(
+        &mut self.cached,
+        &mut self.num_cached,
+        &mut self.state,
+        &self.powers,
+        lengths.to_le_bytes_block(),
+      )
+    };
+
+    for block in self.cached.iter().take(self.num_cached) {
+      self.state.compute_block_portable(block, false);
+    }
+
+    let tag = self.state.clone().finalize();
+    ct::zeroize(self.cached.as_flattened_mut());
+    tag
+  }
+
+  /// # Safety
+  ///
+  /// The executing CPU must support the RISC-V V extension.
+  #[target_feature(enable = "v")]
+  unsafe fn update_padded_rvv(&mut self, segment: &[u8]) {
     let mut offset = 0usize;
 
-    while num_cached != 0 && offset.strict_add(16) <= segment.len() {
+    while self.num_cached != 0 && offset.strict_add(16) <= segment.len() {
       let mut block = [0u8; 16];
       block.copy_from_slice(&segment[offset..offset.strict_add(16)]);
       // SAFETY: RVV cached-block push because:
-      // 1. This entry point is compiled with the RISC-V V target feature.
+      // 1. This function is compiled with the RISC-V V target feature.
       // 2. `block` is a full AEAD block.
-      unsafe { push_cached(&mut cached, &mut num_cached, &mut state, &powers, block) };
+      unsafe {
+        push_cached(
+          &mut self.cached,
+          &mut self.num_cached,
+          &mut self.state,
+          &self.powers,
+          block,
+        )
+      };
       offset = offset.strict_add(16);
     }
 
-    if num_cached == 0 {
+    if self.num_cached == 0 {
       let group_len = segment.len().strict_sub(offset).strict_div(64).strict_mul(64);
       let group_end = offset.strict_add(group_len);
       for group in segment[offset..group_end].as_chunks::<64>().0 {
         let blocks = group.as_chunks::<16>().0;
         // SAFETY: direct four-block accumulation because:
         // 1. `group` is a 64-byte exact chunk split into four full Poly1305 blocks.
-        // 2. This entry point is compiled with the RISC-V V target feature.
+        // 2. This function is compiled with the RISC-V V target feature.
         // 3. `num_cached == 0`, so direct accumulation preserves AEAD block order.
-        unsafe { accumulate_4_block_refs([&blocks[0], &blocks[1], &blocks[2], &blocks[3]], &mut state, &powers) };
+        unsafe {
+          accumulate_4_block_refs(
+            [&blocks[0], &blocks[1], &blocks[2], &blocks[3]],
+            &mut self.state,
+            &self.powers,
+          )
+        };
       }
       offset = group_end;
     }
@@ -123,9 +162,17 @@ unsafe fn authenticate_aead_par4_impl(
       let mut block = [0u8; 16];
       block.copy_from_slice(&segment[offset..offset.strict_add(16)]);
       // SAFETY: RVV cached-block push because:
-      // 1. This entry point is compiled with the RISC-V V target feature.
+      // 1. This function is compiled with the RISC-V V target feature.
       // 2. `block` is a full AEAD block.
-      unsafe { push_cached(&mut cached, &mut num_cached, &mut state, &powers, block) };
+      unsafe {
+        push_cached(
+          &mut self.cached,
+          &mut self.num_cached,
+          &mut self.state,
+          &self.powers,
+          block,
+        )
+      };
       offset = offset.strict_add(16);
     }
 
@@ -134,34 +181,19 @@ unsafe fn authenticate_aead_par4_impl(
       let mut block = [0u8; 16];
       block[..rem.len()].copy_from_slice(rem);
       // SAFETY: RVV cached-block push because:
-      // 1. This entry point is compiled with the RISC-V V target feature.
+      // 1. This function is compiled with the RISC-V V target feature.
       // 2. AEAD zero-padding makes this a full block.
-      unsafe { push_cached(&mut cached, &mut num_cached, &mut state, &powers, block) };
+      unsafe {
+        push_cached(
+          &mut self.cached,
+          &mut self.num_cached,
+          &mut self.state,
+          &self.powers,
+          block,
+        )
+      };
     }
-
-    segment_index = segment_index.strict_add(1);
   }
-
-  // SAFETY: RVV cached-block push because:
-  // 1. This entry point is compiled with the RISC-V V target feature.
-  // 2. The AEAD length encoding is exactly one full Poly1305 block.
-  unsafe {
-    push_cached(
-      &mut cached,
-      &mut num_cached,
-      &mut state,
-      &powers,
-      lengths.to_le_bytes_block(),
-    )
-  };
-
-  for block in cached.iter().take(num_cached) {
-    state.compute_block_portable(block, false);
-  }
-
-  let tag = state.clone().finalize();
-  ct::zeroize(cached.as_flattened_mut());
-  tag
 }
 
 /// Queue one full Poly1305 block and fold the queue when it reaches four blocks.

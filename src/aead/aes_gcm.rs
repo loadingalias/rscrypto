@@ -611,6 +611,251 @@ impl<K: AesKey> Gcm<K> {
     Ok(())
   }
 
+  // The wrapper's `AeadGather` method holds this body.
+  #[inline(always)]
+  fn open_segments(
+    &self,
+    nonce: &Nonce96,
+    aad: &[u8],
+    segments: &mut [&mut [u8]],
+    tag: &[u8; TAG_SIZE],
+  ) -> Result<(), OpenError> {
+    if let Some(buffer) = super::segments::contiguous(segments) {
+      return self.open(nonce, aad, buffer, tag);
+    }
+    let len = super::segments::total_len(segments).ok_or_else(OpenError::too_large)?;
+    super::open_bounded_length_as_u64(len, MAX_PLAINTEXT_LEN)?;
+    let length_block = super::open_bit_lengths(aad.len(), len)?.to_be_bits_block();
+    let (j0, _) = make_j0_and_ctr(nonce);
+
+    // VAES: the batch kernels open each segment's whole batches and AES-NI its
+    // other whole blocks; the short kernel opens the rest and checks the tag.
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+    if self.backend == AeadBackend::X86VaesVpclmul {
+      let tables = self.x86_gcm_tables();
+      let state = OpenState {
+        // SAFETY: the selected backend establishes VPCLMULQDQ and its AVX-512 prerequisites.
+        acc: GhashAccumulator(unsafe { ghash_update_padded_wide_x86(0, tables.h_polyval, tables.h_powers_rev, aad) }),
+        counter: 2,
+      };
+      let matched = super::segments::open::<16, _>(
+        segments,
+        len,
+        state,
+        |state, data| {
+          #[cfg(any(target_os = "linux", target_os = "windows"))]
+          // SAFETY: X86VaesVpclmul establishes every kernel feature, and `data` is
+          // an exclusive range whose counters the validated length bounds.
+          let done = unsafe {
+            self.ek.gcm_open_bulk_x86(
+              &state.counter_block(nonce),
+              data.as_mut_ptr(),
+              data.len(),
+              &mut state.acc.0,
+              tables,
+            )
+          }
+          .unwrap_or(0);
+          #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+          let done = 0;
+          state.advance(done);
+          let rest = &mut data[done..];
+          // SAFETY: X86VaesVpclmul establishes AES-NI, PCLMULQDQ, SSE2, and SSSE3.
+          state.acc.0 = unsafe {
+            self.ek.ctr32_decrypt_be_aesni_pclmul_ghash(
+              &state.counter_block(nonce),
+              rest,
+              state.acc.0,
+              tables.h_polyval,
+              tables.h_powers_rev,
+            )
+          };
+          state.advance(rest.len());
+        },
+        |state, rest| {
+          // SAFETY: X86VaesVpclmul establishes every kernel feature. `rest` is the
+          // exclusive rest of the validated message, and `acc` covers everything before it.
+          // This backend's key has the AES-NI schedule; as in the gather seal, a key
+          // without it fails closed.
+          unsafe {
+            self.ek.gcm_open_x86(
+              &j0,
+              &state.counter_block(nonce),
+              state.acc.0,
+              rest.as_mut_ptr(),
+              rest.len(),
+              &length_block,
+              tables,
+              tag,
+            )
+          }
+          .unwrap_or(false)
+        },
+      );
+      return super::segments::verdict(segments, matched);
+    }
+
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+    if self.backend == AeadBackend::X86AesniPclmul
+      && len >= X86_AESNI_GCM_MIN_LEN
+      && crate::platform::caps().has(crate::platform::caps::x86::PCLMUL_READY)
+    {
+      let h_polyval = self.h_powers_4()[3];
+      let acc = ghash_update_padded_wide(0, h_polyval, self.h_powers_4(), aad);
+      let matched = self.open_segments_fused(
+        nonce,
+        &j0,
+        segments,
+        len,
+        &length_block,
+        acc,
+        tag,
+        // SAFETY: backend resolution selected X86AesniPclmul after CPUID confirmed
+        // AES-NI and PCLMULQDQ, and PCLMUL_READY confirms SSSE3.
+        |acc, counter_block, data| unsafe {
+          self
+            .ek
+            .ctr32_decrypt_be_aesni_pclmul_ghash(counter_block, data, acc, h_polyval, self.h_powers_4())
+        },
+        // SAFETY: PCLMUL_READY was checked above.
+        |acc| unsafe { polyval::x86_clmul128_reduce_inline(acc, h_polyval) },
+      );
+      return super::segments::verdict(segments, matched);
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    if matches!(
+      self.backend,
+      AeadBackend::Aarch64AesPmull | AeadBackend::Aarch64Sve2AesPmull
+    ) {
+      let tables = self.aarch64_gcm_tables();
+      let mut acc = GhashAccumulator(0);
+      // SAFETY: backend resolution established AES-CE and PMULL; `aad` is a valid slice.
+      unsafe { aes::aarch64_gcm_update(&tables, &mut acc.0, aad) };
+      let matched = self.open_segments_fused(
+        nonce,
+        &j0,
+        segments,
+        len,
+        &length_block,
+        acc.0,
+        tag,
+        |mut acc, counter_block, data| {
+          // SAFETY: backend resolution established AES-CE and PMULL; the helper
+          // GHASHes each ciphertext block before it decrypts it in place.
+          unsafe {
+            self
+              .ek
+              .ctr32_decrypt_be_aarch64_ghash(counter_block, data, &mut acc, &tables)
+          };
+          acc
+        },
+        // SAFETY: backend resolution established PMULL.
+        |acc| unsafe { aes::aarch64_gcm_multiply(&tables, acc) },
+      );
+      return super::segments::verdict(segments, matched);
+    }
+
+    #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
+    if self.backend == AeadBackend::Power8Crypto {
+      let h_polyval = self.h_powers_4()[3];
+      // SAFETY: backend resolution selected `Power8Crypto` after runtime detection confirmed POWER8 crypto.
+      let acc = unsafe { ghash_update_padded_wide_ppc(0, h_polyval, self.h_powers_4(), aad) };
+      let matched = self.open_segments_fused(
+        nonce,
+        &j0,
+        segments,
+        len,
+        &length_block,
+        acc,
+        tag,
+        // SAFETY: backend resolution confirmed POWER8 crypto; the helper GHASHes
+        // ciphertext before it decrypts the range in place.
+        |acc, counter_block, data| unsafe {
+          self.ek.ctr32_decrypt_be_ppc_ghash(
+            counter_block,
+            data,
+            acc,
+            h_polyval,
+            self.h_powers_4(),
+            self.h_powers_8(),
+          )
+        },
+        // SAFETY: backend resolution confirmed POWER8 crypto.
+        |acc| unsafe { polyval::ppc_clmul128_reduce_inline(acc, h_polyval) },
+      );
+      return super::segments::verdict(segments, matched);
+    }
+
+    // GHASH, then CTR, over each range.
+    let h_powers_rev = self.h_powers_4();
+    let h_polyval = h_powers_rev[3];
+    let wide = self.should_use_wide_ghash(aad.len(), len);
+    let ghash = |acc, data: &[u8]| {
+      if wide {
+        ghash_update_padded_wide(acc, h_polyval, h_powers_rev, data)
+      } else {
+        ghash_update_padded(acc, h_polyval, data)
+      }
+    };
+    let matched = self.open_segments_fused(
+      nonce,
+      &j0,
+      segments,
+      len,
+      &length_block,
+      ghash(0, aad),
+      tag,
+      |acc, counter_block, data| {
+        let acc = ghash(acc, data);
+        self.ek.ctr32_encrypt_be(counter_block, data);
+        acc
+      },
+      |acc| polyval::clmul128_reduce(acc, h_polyval),
+    );
+    super::segments::verdict(segments, matched)
+  }
+
+  /// Open `segments` with `fold`, which GHASHes a contiguous ciphertext range
+  /// and decrypts it in place from a counter block, and `reduce`, the final
+  /// GHASH multiply. Returns whether the tag matched.
+  #[expect(
+    clippy::too_many_arguments,
+    reason = "a message boundary: nonce, segments, lengths, GHASH state, tag, and kernels"
+  )]
+  #[inline(always)]
+  fn open_segments_fused(
+    &self,
+    nonce: &Nonce96,
+    j0: &[u8; 16],
+    segments: &mut [&mut [u8]],
+    len: usize,
+    length_block: &[u8; 16],
+    acc: u128,
+    tag: &[u8; TAG_SIZE],
+    fold: impl Fn(u128, &[u8; 16], &mut [u8]) -> u128,
+    reduce: impl FnOnce(u128) -> u128,
+  ) -> bool {
+    let state = OpenState {
+      acc: GhashAccumulator(acc),
+      counter: 2,
+    };
+    super::segments::open::<16, _>(
+      segments,
+      len,
+      state,
+      |state, data| {
+        state.acc.0 = fold(state.acc.0, &state.counter_block(nonce), data);
+        state.advance(data.len());
+      },
+      |mut state, rest| {
+        state.acc.0 = fold(state.acc.0, &state.counter_block(nonce), rest) ^ u128::from_be_bytes(*length_block);
+        state.acc.0 = reduce(state.acc.0);
+        ct::fixed_eq(&self.encrypt_j0_tag(j0, state.acc.0), tag).declassify()
+      },
+    )
+  }
+
   // The wrapper's `AeadGather` method holds this body, as the per-key-size method did.
   #[inline(always)]
   fn seal_gather<'input, 'output>(
@@ -851,6 +1096,31 @@ impl<K> Drop for Gcm<K> {
   }
 }
 
+/// The GHASH state and the next block counter of a segmented open.
+struct OpenState {
+  acc: GhashAccumulator,
+  counter: u32,
+}
+
+impl OpenState {
+  /// The counter block of the next ciphertext block.
+  #[inline(always)]
+  fn counter_block(&self, nonce: &Nonce96) -> [u8; 16] {
+    let mut block = [0u8; 16];
+    block[..12].copy_from_slice(nonce.as_bytes());
+    block[12..].copy_from_slice(&self.counter.to_be_bytes());
+    block
+  }
+
+  /// Count the whole blocks of `len` opened bytes. GCM's inc32 is modulo 2^32,
+  /// and the validated message length keeps every counter distinct.
+  #[inline(always)]
+  fn advance(&mut self, len: usize) {
+    let blocks = u32::try_from(len.strict_div(16)).expect("validated GCM length fits the 32-bit counter");
+    self.counter = self.counter.wrapping_add(blocks);
+  }
+}
+
 /// Build the initial counter block J0 and first CTR block for a 96-bit IV.
 ///
 /// J0 = IV || 0x00000001 (NIST SP 800-38D § 7.1, when len(IV) = 96).
@@ -1074,6 +1344,16 @@ macro_rules! define_aes_gcm {
       ) -> Result<(Self::Tag, &'output mut [u8]), SealError> {
         let (tag, ciphertext) = self.inner.seal_gather(nonce, aad, plaintext, out)?;
         Ok(($tag::from_bytes(tag), ciphertext))
+      }
+
+      fn __decrypt_segments_in_place(
+        &self,
+        nonce: &Self::Nonce,
+        aad: &[u8],
+        segments: &mut [&mut [u8]],
+        tag: &Self::Tag,
+      ) -> Result<(), OpenError> {
+        self.inner.open_segments(nonce, aad, segments, tag.as_bytes())
       }
     }
   };

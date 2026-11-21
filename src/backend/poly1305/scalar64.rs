@@ -363,37 +363,34 @@ impl State {
 }
 
 /// The ChaCha20-Poly1305 tag of `aad` and `ciphertext` (RFC 8439 §2.8): both
-/// zero-padded to 16-byte blocks, then the little-endian byte lengths. One
-/// scalar chain, or four for long messages; the intermediate state clears on drop.
-#[cfg(all(feature = "chacha20poly1305", target_arch = "x86_64", target_feature = "sse2"))]
-#[inline]
-pub(crate) fn aead_tag(key: &[u8; 32], aad: &[u8], ciphertext: &[u8], lengths: &[u8; 16]) -> [u8; 16] {
-  aead_tag_chains::<true>(key, aad, ciphertext, lengths)
-}
-
-/// [`aead_tag`] with one chain at every length. It always inlines, so a caller
-/// can hold vector state across it without a call that spills that state.
+/// zero-padded to 16-byte blocks, then the little-endian byte lengths, on one
+/// scalar chain; the intermediate state clears on drop. It always inlines, so
+/// a caller can hold vector state across it without a call that spills that state.
 #[cfg(all(feature = "chacha20poly1305", target_arch = "x86_64", target_feature = "sse2"))]
 #[inline(always)]
 pub(crate) fn aead_tag_one_chain(key: &[u8; 32], aad: &[u8], ciphertext: &[u8], lengths: &[u8; 16]) -> [u8; 16] {
-  aead_tag_chains::<false>(key, aad, ciphertext, lengths)
+  let mut state = State::new(key);
+  state.update_padded::<false>(aad);
+  state.update_padded::<false>(ciphertext);
+  state.absorb_blocks(&[*lengths]);
+  state.tag()
 }
 
 #[cfg(all(feature = "chacha20poly1305", target_arch = "x86_64", target_feature = "sse2"))]
-#[inline(always)]
-fn aead_tag_chains<const WIDE: bool>(key: &[u8; 32], aad: &[u8], ciphertext: &[u8], lengths: &[u8; 16]) -> [u8; 16] {
-  let mut state = State::new(key);
-  for segment in [aad, ciphertext] {
+impl State {
+  /// Absorb one AEAD segment and zero-pad its final partial block. With
+  /// `WIDE`, long segments take four chains. A segment that continues the
+  /// previous one must follow a whole number of blocks.
+  #[inline(always)]
+  pub(crate) fn update_padded<const WIDE: bool>(&mut self, segment: &[u8]) {
     let (blocks, rest) = segment.as_chunks::<16>();
     if WIDE && blocks.len() >= WIDE_MIN_BLOCKS {
-      state.absorb_blocks_wide(blocks);
+      self.absorb_blocks_wide(blocks);
     } else {
-      state.absorb_blocks(blocks);
+      self.absorb_blocks(blocks);
     }
     if !rest.is_empty() {
-      state.absorb_zero_padded(rest);
+      self.absorb_zero_padded(rest);
     }
   }
-  state.absorb_blocks(&[*lengths]);
-  state.tag()
 }

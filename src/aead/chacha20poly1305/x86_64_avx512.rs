@@ -17,7 +17,7 @@ use crate::{
   aead::targets::AeadPrimitive,
   backend::{
     chacha20::{KEY_SIZE, NONCE_SIZE, X86Source, x86_byte_mask, x86_rows, x86_xor_from},
-    poly1305::{aead_tag_scalar, aead_tag_scalar_one_chain},
+    poly1305::aead_tag_scalar_one_chain,
     stack::scrub_dead_stack_avx512,
   },
   traits::ct,
@@ -36,11 +36,20 @@ const ONE_PASS_STACK_SCRUB_WORDS: usize = 40;
 /// RFC 8439 Poly1305 over `aad` and `ciphertext` with the one-time `poly_key`.
 #[inline]
 fn tag(poly_key: &[u8; 32], aad: &[u8], ciphertext: &[u8]) -> [u8; 16] {
-  if ciphertext.len() >= VECTOR_POLY_MIN {
-    poly1305::authenticate_aead(AeadPrimitive::ChaCha20Poly1305, aad, ciphertext, poly_key)
+  let mut mac = mac(poly_key, aad, ciphertext.len());
+  mac.update(ciphertext);
+  mac.finish()
+}
+
+/// The Poly1305 state of a message with `aad` and `len` ciphertext bytes under
+/// the one-time `poly_key`: the vector kernels from [`VECTOR_POLY_MIN`] bytes
+/// of ciphertext on, and the scalar chains below.
+#[inline]
+pub(super) fn mac(poly_key: &[u8; 32], aad: &[u8], len: usize) -> poly1305::AeadMac {
+  if len >= VECTOR_POLY_MIN {
+    poly1305::AeadMac::new(AeadPrimitive::ChaCha20Poly1305, poly_key, aad, len)
   } else {
-    let lengths = super::super::AeadByteLengths::from_usize(aad.len(), ciphertext.len()).to_le_bytes_block();
-    aead_tag_scalar(poly_key, aad, ciphertext, &lengths)
+    poly1305::AeadMac::scalar(poly_key, aad, len)
   }
 }
 

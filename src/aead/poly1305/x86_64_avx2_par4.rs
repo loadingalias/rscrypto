@@ -669,61 +669,124 @@ struct Par4State {
   r4: PrecomputedMultiplier,
 }
 
-/// Authenticate `(aad, ciphertext)` using the AVX2 4-way Poly1305 kernel.
-///
-/// Uses its own AVX2 kernel — ignores the per-block `ComputeBlockFn` dispatch.
-/// `lengths` must encode the lengths of `aad` and `ciphertext`.
-///
-/// # Safety
-///
-/// The caller must ensure that AVX2 is available.
-#[target_feature(enable = "avx2")]
-pub(super) unsafe fn authenticate_aead_par4(
-  aad: &[u8],
-  ciphertext: &[u8],
-  key: &[u8; 32],
-  lengths: AeadByteLengths,
-) -> [u8; 16] {
-  let state = State::new(key);
+/// The AVX2 4-way Poly1305 state of one AEAD message, fed segment by segment.
+pub(super) struct Aead {
+  state: State,
+  r1: PrecomputedMultiplier,
+  r2: PrecomputedMultiplier,
+  /// The 4-block accumulator, initialized by the first 4-block group.
+  acc: Option<Par4State>,
+  cached: [[u8; 16]; 4],
+  num_cached: usize,
+}
 
-  // Precompute R¹, R² as AVX2 multipliers.
-  // SAFETY: the caller guarantees AVX2. `State::new` produces a clamped multiplier, and each nested helper preserves
-  // the bounded representation while deriving consecutive powers from that same key.
-  let (r1, r2) = unsafe {
-    let r = Aligned130::from_limbs(state.r);
-    let r1 = PrecomputedMultiplier::from_aligned(r);
-    let r2 = PrecomputedMultiplier::from_aligned(mul_single(Aligned130(r1.a), r1).reduce());
-    (r1, r2)
-  };
+impl Aead {
+  /// # Safety
+  ///
+  /// The caller must ensure that AVX2 is available.
+  #[target_feature(enable = "avx2")]
+  pub(super) unsafe fn new(key: &[u8; 32]) -> Self {
+    let state = State::new(key);
+    // Precompute R¹, R² as AVX2 multipliers.
+    // SAFETY: the caller guarantees AVX2. `State::new` produces a clamped multiplier, and each nested helper
+    // preserves the bounded representation while deriving consecutive powers from that same key.
+    let (r1, r2) = unsafe {
+      let r = Aligned130::from_limbs(state.r);
+      let r1 = PrecomputedMultiplier::from_aligned(r);
+      let r2 = PrecomputedMultiplier::from_aligned(mul_single(Aligned130(r1.a), r1).reduce());
+      (r1, r2)
+    };
+    Self {
+      state,
+      r1,
+      r2,
+      acc: None,
+      cached: [[0u8; 16]; 4],
+      num_cached: 0,
+    }
+  }
 
-  // 4-block accumulator (initialized on first 4-block group).
-  let mut acc: Option<Par4State> = None;
-  let mut cached = [[0u8; 16]; 4];
-  let mut num_cached = 0usize;
-
-  // Reimplements padded-segment logic from `update_padded_segment` for 4-way batching.
-  for segment in [aad, ciphertext] {
+  /// Absorb one AEAD segment and zero-pad its final partial block. A segment
+  /// that continues the previous one must follow a whole number of blocks.
+  ///
+  /// # Safety
+  ///
+  /// The caller must ensure that AVX2 is available.
+  #[target_feature(enable = "avx2")]
+  pub(super) unsafe fn update_padded(&mut self, segment: &[u8]) {
     let (chunks, rem) = segment.as_chunks::<16>();
     for chunk in chunks {
       // SAFETY: the caller guarantees AVX2. The loop produces consecutive full blocks; `push_block` preserves
       // `num_cached < 4` and keeps the cache, powers, and accumulator in the same key stream.
-      num_cached = unsafe { push_block(*chunk, &mut cached, num_cached, &mut acc, r1, r2) };
+      self.num_cached = unsafe {
+        push_block(
+          *chunk,
+          &mut self.cached,
+          self.num_cached,
+          &mut self.acc,
+          self.r1,
+          self.r2,
+        )
+      };
     }
     if !rem.is_empty() {
       let mut block = [0u8; 16];
       block[..rem.len()].copy_from_slice(rem);
       // SAFETY: the caller guarantees AVX2. Zero padding completes the segment's final full AEAD block, and the
       // established cache and matching-key invariants still hold.
-      num_cached = unsafe { push_block(block, &mut cached, num_cached, &mut acc, r1, r2) };
+      self.num_cached = unsafe {
+        push_block(
+          block,
+          &mut self.cached,
+          self.num_cached,
+          &mut self.acc,
+          self.r1,
+          self.r2,
+        )
+      };
     }
   }
 
-  // Process lengths block.
-  let length_block = lengths.to_le_bytes_block();
-  // SAFETY: the caller guarantees AVX2. The length encoding is the final full AEAD block, and the established cache
-  // and matching-key invariants still hold.
-  num_cached = unsafe { push_block(length_block, &mut cached, num_cached, &mut acc, r1, r2) };
+  /// Absorb the length block and return the tag.
+  ///
+  /// # Safety
+  ///
+  /// The caller must ensure that AVX2 is available.
+  #[target_feature(enable = "avx2")]
+  pub(super) unsafe fn finish(self, lengths: AeadByteLengths) -> [u8; 16] {
+    let Self {
+      state,
+      r1,
+      r2,
+      mut acc,
+      mut cached,
+      mut num_cached,
+    } = self;
+    // Process lengths block.
+    let length_block = lengths.to_le_bytes_block();
+    // SAFETY: the caller guarantees AVX2. The length encoding is the final full AEAD block, and the established
+    // cache and matching-key invariants still hold.
+    num_cached = unsafe { push_block(length_block, &mut cached, num_cached, &mut acc, r1, r2) };
+    // SAFETY: the caller guarantees AVX2, and the state belongs to one key stream.
+    unsafe { finish(state, r1, r2, acc, cached, num_cached) }
+  }
+}
 
+/// Merge the four lanes, absorb the cached blocks, and return the tag.
+///
+/// # Safety
+///
+/// The caller must ensure that AVX2 is available, and every argument must belong to the same key stream with
+/// `num_cached < 4`.
+#[target_feature(enable = "avx2")]
+unsafe fn finish(
+  state: State,
+  r1: PrecomputedMultiplier,
+  r2: PrecomputedMultiplier,
+  acc: Option<Par4State>,
+  mut cached: [[u8; 16]; 4],
+  mut num_cached: usize,
+) -> [u8; 16] {
   // Finalize: merge 4 lanes, process remaining blocks.
   let mut p: Option<Aligned130> = acc.map(|s| {
     // SAFETY: the caller guarantees AVX2, and `accumulate_4_blocks` constructed `poly` and `spaced` from matching

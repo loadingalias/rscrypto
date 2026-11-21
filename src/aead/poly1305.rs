@@ -131,46 +131,231 @@ fn current_caps() -> Caps {
   }
 }
 
-/// Authenticate with the block backend that `select_backend` chooses. Each arm
-/// passes its block function as a type, so every block calls it directly.
-#[inline]
-fn authenticate_aead_selected(
-  primitive: AeadPrimitive,
-  aad: &[u8],
-  ciphertext: &[u8],
-  key: &[u8; 32],
+/// The one-block kernel of the backend that `select_backend` chooses.
+#[derive(Clone, Copy)]
+enum BlockKernel {
+  Portable,
+  #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+  WasmSimd128,
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+  X86Avx512,
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+  X86Avx2,
+  #[cfg(target_arch = "aarch64")]
+  Aarch64Neon,
+  #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), target_endian = "little"))]
+  PowerVector,
+  #[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
+  S390xVector,
+  #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
+  Riscv64Vector,
+}
+
+impl BlockKernel {
+  #[inline]
+  fn select(primitive: AeadPrimitive) -> Self {
+    match select_backend(primitive, Arch::current(), current_caps()) {
+      #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+      crate::aead::targets::AeadBackend::WasmSimd128 => Self::WasmSimd128,
+      #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+      crate::aead::targets::AeadBackend::X86Avx512 => Self::X86Avx512,
+      #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+      crate::aead::targets::AeadBackend::X86Avx2 => Self::X86Avx2,
+      #[cfg(target_arch = "aarch64")]
+      crate::aead::targets::AeadBackend::Aarch64Neon => Self::Aarch64Neon,
+      #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), target_endian = "little"))]
+      crate::aead::targets::AeadBackend::PowerVector => Self::PowerVector,
+      #[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
+      crate::aead::targets::AeadBackend::S390xVector => Self::S390xVector,
+      #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
+      crate::aead::targets::AeadBackend::Riscv64Vector => Self::Riscv64Vector,
+      _ => Self::Portable,
+    }
+  }
+
+  /// Absorb `segment` into `state` and zero-pad its final partial block. Each
+  /// arm passes its block function as a type, so every block calls it directly.
+  #[inline]
+  fn update(self, state: &mut State, segment: &[u8]) {
+    match self {
+      Self::Portable => state.update_padded_segment(segment, State::compute_block_portable),
+      #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+      Self::WasmSimd128 => state.update_padded_segment(segment, wasm_simd128::compute_block),
+      #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+      Self::X86Avx512 => state.update_padded_segment(segment, x86_avx512::compute_block),
+      #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+      Self::X86Avx2 => state.update_padded_segment(segment, x86_avx2::compute_block),
+      #[cfg(target_arch = "aarch64")]
+      Self::Aarch64Neon => state.update_padded_segment(segment, aarch64_neon::compute_block),
+      #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), target_endian = "little"))]
+      Self::PowerVector => state.update_padded_segment(segment, power_vsx::compute_block),
+      #[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
+      Self::S390xVector => state.update_padded_segment(segment, s390x_vector::compute_block),
+      #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
+      Self::Riscv64Vector => state.update_padded_segment(segment, riscv64_vector::compute_block),
+    }
+  }
+}
+
+/// RFC 8439 Poly1305 over one AEAD message: the zero-padded AAD, then the
+/// zero-padded text in ordered ranges, then the length block.
+///
+/// Every text range but the last must hold whole 16-byte blocks. The kernel
+/// is chosen once for the message's lengths, so a message fed in ranges takes
+/// the kernel that [`authenticate_aead`] takes for it.
+pub(crate) struct AeadMac {
+  mac: Mac,
   lengths: super::AeadByteLengths,
-) -> [u8; 16] {
-  match select_backend(primitive, Arch::current(), current_caps()) {
-    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
-    crate::aead::targets::AeadBackend::WasmSimd128 => {
-      authenticate_aead_with(aad, ciphertext, key, wasm_simd128::compute_block, lengths)
-    }
+}
+
+#[cfg_attr(
+  all(target_arch = "x86_64", target_feature = "sse2"),
+  expect(
+    clippy::large_enum_variant,
+    reason = "one message's kernel state lives on the caller's stack, and no_std cannot box it"
+  )
+)]
+enum Mac {
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+  Ifma(avx512_ifma::Aead),
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+  Avx2(avx2_par4::Aead),
+  #[cfg(all(
+    feature = "chacha20poly1305",
+    target_arch = "x86_64",
+    target_feature = "sse2",
+    not(feature = "portable-only")
+  ))]
+  Scalar(crate::backend::poly1305::Scalar64),
+  #[cfg(target_arch = "aarch64")]
+  Neon(aarch64_neon::AeadPar4),
+  #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
+  Rvv(riscv64_vector::Aead),
+  Blocks(State, BlockKernel),
+}
+
+impl AeadMac {
+  /// Begin a message of `aad` and `text_len` text bytes under the one-time `key`, and absorb `aad`.
+  #[inline]
+  pub(crate) fn new(primitive: AeadPrimitive, key: &[u8; 32], aad: &[u8], text_len: usize) -> Self {
+    let lengths = super::AeadByteLengths::from_usize(aad.len(), text_len);
+    let begin = |mac| Self { mac, lengths };
     #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
-    crate::aead::targets::AeadBackend::X86Avx512 => {
-      authenticate_aead_with(aad, ciphertext, key, x86_avx512::compute_block, lengths)
-    }
-    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
-    crate::aead::targets::AeadBackend::X86Avx2 => {
-      authenticate_aead_with(aad, ciphertext, key, x86_avx2::compute_block, lengths)
+    {
+      use crate::platform::caps::x86;
+      // The eight-lane IFMA kernel takes text of at least `AVX512_IFMA_MIN_TEXT` bytes, two
+      // 128-byte groups; shorter text keeps the four-lane kernel, whose setup is cheaper.
+      if text_len >= AVX512_IFMA_MIN_TEXT && current_caps().has(x86::AVX512F.union(x86::AVX512IFMA)) {
+        return begin(Mac::Ifma(avx512_ifma::Aead::new(key, aad)));
+      }
+      if lengths.total_at_least(64) && current_caps().has(x86::AVX2) {
+        // SAFETY: this branch verifies AVX2 before selecting the x86-64 parallel kernel.
+        let avx2 = unsafe {
+          let mut avx2 = avx2_par4::Aead::new(key);
+          avx2.update_padded(aad);
+          avx2
+        };
+        return begin(Mac::Avx2(avx2));
+      }
     }
     #[cfg(target_arch = "aarch64")]
-    crate::aead::targets::AeadBackend::Aarch64Neon => {
-      authenticate_aead_with(aad, ciphertext, key, aarch64_neon::compute_block, lengths)
-    }
-    #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), target_endian = "little"))]
-    crate::aead::targets::AeadBackend::PowerVector => {
-      authenticate_aead_with(aad, ciphertext, key, power_vsx::compute_block, lengths)
-    }
-    #[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
-    crate::aead::targets::AeadBackend::S390xVector => {
-      authenticate_aead_with(aad, ciphertext, key, s390x_vector::compute_block, lengths)
+    {
+      use crate::platform::caps::aarch64;
+      if lengths.total_at_least(64) && current_caps().has(aarch64::NEON) {
+        let mut neon = aarch64_neon::AeadPar4::new(key);
+        neon.update_padded_segment(aad);
+        return begin(Mac::Neon(neon));
+      }
     }
     #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
-    crate::aead::targets::AeadBackend::Riscv64Vector => {
-      authenticate_aead_with(aad, ciphertext, key, riscv64_vector::compute_block, lengths)
+    {
+      use crate::platform::caps::riscv;
+      if lengths.total_at_least(RISCV64_PAR4_MIN) && current_caps().has(riscv::V) {
+        let mut rvv = riscv64_vector::Aead::new(key);
+        rvv.update_padded(aad);
+        return begin(Mac::Rvv(rvv));
+      }
     }
-    _ => authenticate_aead_with(aad, ciphertext, key, State::compute_block_portable, lengths),
+    let kernel = BlockKernel::select(primitive);
+    let mut state = State::new(key);
+    kernel.update(&mut state, aad);
+    begin(Mac::Blocks(state, kernel))
+  }
+
+  /// Begin a message of `aad` and `text_len` text bytes under the one-time
+  /// `key` on the scalar 64-bit chains, and absorb `aad`.
+  #[cfg(all(
+    feature = "chacha20poly1305",
+    target_arch = "x86_64",
+    target_feature = "sse2",
+    not(feature = "portable-only")
+  ))]
+  #[inline]
+  pub(crate) fn scalar(key: &[u8; 32], aad: &[u8], text_len: usize) -> Self {
+    let mut state = crate::backend::poly1305::Scalar64::new(key);
+    state.update_padded::<true>(aad);
+    Self {
+      mac: Mac::Scalar(state),
+      lengths: super::AeadByteLengths::from_usize(aad.len(), text_len),
+    }
+  }
+
+  /// Absorb the next text range and zero-pad its final partial block.
+  #[inline]
+  pub(crate) fn update(&mut self, text: &[u8]) {
+    match &mut self.mac {
+      #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+      // SAFETY: `new` selected this kernel only after it verified AVX-512F and AVX-512 IFMA.
+      Mac::Ifma(mac) => unsafe { mac.update(text) },
+      #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+      // SAFETY: `new` selected this kernel only after it verified AVX2.
+      Mac::Avx2(mac) => unsafe { mac.update_padded(text) },
+      #[cfg(all(
+        feature = "chacha20poly1305",
+        target_arch = "x86_64",
+        target_feature = "sse2",
+        not(feature = "portable-only")
+      ))]
+      Mac::Scalar(state) => state.update_padded::<true>(text),
+      #[cfg(target_arch = "aarch64")]
+      Mac::Neon(mac) => mac.update_padded_segment(text),
+      #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
+      Mac::Rvv(mac) => mac.update_padded(text),
+      Mac::Blocks(state, kernel) => kernel.update(state, text),
+    }
+  }
+
+  /// Absorb the length block and return the tag.
+  #[inline]
+  pub(crate) fn finish(self) -> [u8; 16] {
+    let lengths = self.lengths;
+    match self.mac {
+      #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+      Mac::Ifma(mac) => mac.finish(lengths),
+      #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+      // SAFETY: `new` selected this kernel only after it verified AVX2.
+      Mac::Avx2(mac) => unsafe { mac.finish(lengths) },
+      #[cfg(all(
+        feature = "chacha20poly1305",
+        target_arch = "x86_64",
+        target_feature = "sse2",
+        not(feature = "portable-only")
+      ))]
+      Mac::Scalar(mut state) => {
+        state.absorb_blocks(&[lengths.to_le_bytes_block()]);
+        state.tag()
+      }
+      #[cfg(target_arch = "aarch64")]
+      Mac::Neon(mac) => mac.finalize(lengths),
+      #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
+      Mac::Rvv(mac) => mac.finish(lengths),
+      Mac::Blocks(mut state, kernel) => {
+        let mut length_block = lengths.to_le_bytes_block();
+        kernel.update(&mut state, &length_block);
+        ct::zeroize(&mut length_block);
+        state.finalize()
+      }
+    }
   }
 }
 
@@ -718,37 +903,9 @@ pub(crate) fn authenticate(message: &[u8], key: &[u8; 32]) -> [u8; 16] {
 }
 
 pub(crate) fn authenticate_aead(primitive: AeadPrimitive, aad: &[u8], ciphertext: &[u8], key: &[u8; 32]) -> [u8; 16] {
-  let lengths = super::AeadByteLengths::from_usize(aad.len(), ciphertext.len());
-
-  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
-  {
-    use crate::platform::caps::x86;
-    // The eight-lane IFMA kernel takes text of at least `AVX512_IFMA_MIN_TEXT` bytes, two
-    // 128-byte groups; shorter text keeps the four-lane kernel, whose setup is cheaper.
-    if ciphertext.len() >= AVX512_IFMA_MIN_TEXT && current_caps().has(x86::AVX512F.union(x86::AVX512IFMA)) {
-      // SAFETY: this branch verifies AVX-512F and AVX-512 IFMA before selecting the kernel.
-      return unsafe { avx512_ifma::authenticate_aead_ifma(aad, ciphertext, key, lengths) };
-    }
-    if lengths.total_at_least(64) && current_caps().has(x86::AVX2) {
-      // SAFETY: this branch verifies AVX2 before selecting the x86-64 parallel kernel.
-      return unsafe { avx2_par4::authenticate_aead_par4(aad, ciphertext, key, lengths) };
-    }
-  }
-  #[cfg(target_arch = "aarch64")]
-  {
-    use crate::platform::caps::aarch64;
-    if lengths.total_at_least(64) && current_caps().has(aarch64::NEON) {
-      return aarch64_neon::authenticate_aead_par4(aad, ciphertext, key, lengths);
-    }
-  }
-  #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
-  {
-    use crate::platform::caps::riscv;
-    if lengths.total_at_least(RISCV64_PAR4_MIN) && current_caps().has(riscv::V) {
-      return riscv64_vector::authenticate_aead_par4(aad, ciphertext, key, lengths);
-    }
-  }
-  authenticate_aead_selected(primitive, aad, ciphertext, key, lengths)
+  let mut mac = AeadMac::new(primitive, key, aad, ciphertext.len());
+  mac.update(ciphertext);
+  mac.finish()
 }
 
 #[cfg(any(
@@ -842,27 +999,10 @@ pub fn diag_chacha20poly1305_authenticate_aead_aarch64_neon_par4(
   ciphertext: &[u8],
   key: &[u8; 32],
 ) -> [u8; 16] {
-  let lengths = super::AeadByteLengths::from_usize(aad.len(), ciphertext.len());
-  aarch64_neon::authenticate_aead_par4(aad, ciphertext, key, lengths)
-}
-
-fn authenticate_aead_with(
-  aad: &[u8],
-  ciphertext: &[u8],
-  key: &[u8; 32],
-  compute_block: impl Fn(&mut State, &[u8; 16], bool) + Copy,
-  lengths: super::AeadByteLengths,
-) -> [u8; 16] {
-  let mut state = State::new(key);
-  state.update_padded_segment(aad, compute_block);
-  state.update_padded_segment(ciphertext, compute_block);
-
-  let mut length_block = lengths.to_le_bytes_block();
-  compute_block(&mut state, &length_block, false);
-
-  let tag = state.finalize();
-  ct::zeroize(&mut length_block);
-  tag
+  let mut mac = aarch64_neon::AeadPar4::new(key);
+  mac.update_padded_segment(aad);
+  mac.update_padded_segment(ciphertext);
+  mac.finalize(super::AeadByteLengths::from_usize(aad.len(), ciphertext.len()))
 }
 
 #[cfg(target_arch = "aarch64")]
@@ -907,7 +1047,7 @@ mod tests {
     all(target_arch = "riscv64", not(feature = "portable-only")),
     all(target_arch = "s390x", not(feature = "portable-only"))
   ))]
-  use super::{ComputeBlockFn, authenticate_aead_with};
+  use super::{AeadMac, BlockKernel, Mac, State};
   #[cfg(any(
     all(target_arch = "x86_64", target_feature = "sse2"),
     target_arch = "aarch64",
@@ -1027,6 +1167,45 @@ mod tests {
     super::authenticate_aead_portable_blocks(aad, ciphertext, key, lengths)
   }
 
+  /// The AVX-512 IFMA tag of one message; the caller checks AVX-512F and AVX-512 IFMA.
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+  fn ifma(aad: &[u8], ciphertext: &[u8], key: &[u8; 32]) -> [u8; 16] {
+    let mut mac = super::avx512_ifma::Aead::new(key, aad);
+    // SAFETY: each caller checks AVX-512F and AVX-512 IFMA first.
+    unsafe { mac.update(ciphertext) };
+    mac.finish(AeadByteLengths::from_usize(aad.len(), ciphertext.len()))
+  }
+
+  /// The AVX2 four-way tag of one message; the caller checks AVX2.
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+  fn par4_x86(aad: &[u8], ciphertext: &[u8], key: &[u8; 32]) -> [u8; 16] {
+    // SAFETY: each caller checks AVX2 first.
+    unsafe {
+      let mut mac = super::avx2_par4::Aead::new(key);
+      mac.update_padded(aad);
+      mac.update_padded(ciphertext);
+      mac.finish(AeadByteLengths::from_usize(aad.len(), ciphertext.len()))
+    }
+  }
+
+  /// The NEON four-way tag of one message; the caller checks NEON.
+  #[cfg(target_arch = "aarch64")]
+  fn par4_neon(aad: &[u8], ciphertext: &[u8], key: &[u8; 32]) -> [u8; 16] {
+    let mut mac = super::aarch64_neon::AeadPar4::new(key);
+    mac.update_padded_segment(aad);
+    mac.update_padded_segment(ciphertext);
+    mac.finalize(AeadByteLengths::from_usize(aad.len(), ciphertext.len()))
+  }
+
+  /// The RVV four-way tag of one message; the caller checks V.
+  #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
+  fn par4_rvv(aad: &[u8], ciphertext: &[u8], key: &[u8; 32]) -> [u8; 16] {
+    let mut mac = super::riscv64_vector::Aead::new(key);
+    mac.update_padded(aad);
+    mac.update_padded(ciphertext);
+    mac.finish(AeadByteLengths::from_usize(aad.len(), ciphertext.len()))
+  }
+
   #[cfg(any(
     all(target_arch = "x86_64", target_feature = "sse2"),
     target_arch = "aarch64",
@@ -1034,15 +1213,21 @@ mod tests {
     all(target_arch = "riscv64", not(feature = "portable-only")),
     all(target_arch = "s390x", not(feature = "portable-only"))
   ))]
-  fn exercise_backend(backend: ComputeBlockFn) {
+  fn exercise_backend(kernel: BlockKernel) {
     let key = [0x5au8; 32];
     for aad_len in [0usize, 1, 15, 16, 17, 31, 32, 33, 80] {
       for ciphertext_len in [0usize, 1, 15, 16, 17, 31, 32, 33, 191, 256] {
         let aad = patterned_bytes(aad_len, 11, 7);
         let ciphertext = patterned_bytes(ciphertext_len, 17, 3);
         let portable = authenticate_aead_portable(&aad, &ciphertext, &key);
-        let lengths = AeadByteLengths::from_usize(aad.len(), ciphertext.len());
-        let accelerated = authenticate_aead_with(&aad, &ciphertext, &key, backend, lengths);
+        let mut state = State::new(&key);
+        kernel.update(&mut state, &aad);
+        let mut mac = AeadMac {
+          mac: Mac::Blocks(state, kernel),
+          lengths: AeadByteLengths::from_usize(aad.len(), ciphertext.len()),
+        };
+        mac.update(&ciphertext);
+        let accelerated = mac.finish();
         assert_eq!(accelerated, portable);
       }
     }
@@ -1055,7 +1240,7 @@ mod tests {
       return;
     }
 
-    exercise_backend(super::x86_avx512::compute_block);
+    exercise_backend(BlockKernel::X86Avx512);
   }
 
   // Text lengths straddle the 128-byte groups and the scalar tail; AAD lengths straddle the
@@ -1075,9 +1260,7 @@ mod tests {
           let aad = patterned_bytes(aad_len, 11, 7);
           let ciphertext = patterned_bytes(ciphertext_len, 17, 3);
           let portable = authenticate_aead_portable(&aad, &ciphertext, key);
-          let lengths = AeadByteLengths::from_usize(aad.len(), ciphertext.len());
-          // SAFETY: the capability check above establishes AVX-512F and AVX-512 IFMA.
-          let accelerated = unsafe { super::avx512_ifma::authenticate_aead_ifma(&aad, &ciphertext, key, lengths) };
+          let accelerated = ifma(&aad, &ciphertext, key);
           assert_eq!(accelerated, portable, "aad {aad_len}, text {ciphertext_len}");
         }
       }
@@ -1085,9 +1268,7 @@ mod tests {
     // Messages of all-ones blocks keep every limb at its bound through the lanes.
     let ones = alloc::vec![0xffu8; 4096];
     for key in &keys {
-      let lengths = AeadByteLengths::from_usize(0, ones.len());
-      // SAFETY: as above.
-      let accelerated = unsafe { super::avx512_ifma::authenticate_aead_ifma(&[], &ones, key, lengths) };
+      let accelerated = ifma(&[], &ones, key);
       assert_eq!(accelerated, authenticate_aead_portable(&[], &ones, key));
     }
   }
@@ -1108,7 +1289,7 @@ mod tests {
       return;
     }
 
-    exercise_backend(super::x86_avx2::compute_block);
+    exercise_backend(BlockKernel::X86Avx2);
   }
 
   #[test]
@@ -1118,7 +1299,7 @@ mod tests {
       return;
     }
 
-    exercise_backend(super::aarch64_neon::compute_block);
+    exercise_backend(BlockKernel::Aarch64Neon);
   }
 
   #[test]
@@ -1128,7 +1309,7 @@ mod tests {
       return;
     }
 
-    exercise_backend(super::riscv64_vector::compute_block);
+    exercise_backend(BlockKernel::Riscv64Vector);
   }
 
   #[test]
@@ -1138,7 +1319,7 @@ mod tests {
       return;
     }
 
-    exercise_backend(super::power_vsx::compute_block);
+    exercise_backend(BlockKernel::PowerVector);
   }
 
   #[test]
@@ -1148,7 +1329,7 @@ mod tests {
       return;
     }
 
-    exercise_backend(super::s390x_vector::compute_block);
+    exercise_backend(BlockKernel::S390xVector);
   }
 
   #[test]
@@ -1163,10 +1344,8 @@ mod tests {
       for ct_len in [0usize, 1, 15, 16, 17, 31, 32, 33, 63, 64, 65, 191, 256, 1024, 4096] {
         let aad = patterned_bytes(aad_len, 11, 7);
         let ct = patterned_bytes(ct_len, 17, 3);
-        let lengths = AeadByteLengths::from_usize(aad.len(), ct.len());
         let portable = authenticate_aead_portable(&aad, &ct, &key);
-        // SAFETY: the test returned above unless AVX2 is available.
-        let parallel = unsafe { super::avx2_par4::authenticate_aead_par4(&aad, &ct, &key, lengths) };
+        let parallel = par4_x86(&aad, &ct, &key);
         assert_eq!(parallel, portable, "mismatch at aad={aad_len} ct={ct_len}");
       }
     }
@@ -1184,9 +1363,8 @@ mod tests {
       for ct_len in [0usize, 1, 15, 16, 17, 31, 32, 33, 63, 64, 65, 191, 256, 1024, 4096] {
         let aad = patterned_bytes(aad_len, 11, 7);
         let ct = patterned_bytes(ct_len, 17, 3);
-        let lengths = AeadByteLengths::from_usize(aad.len(), ct.len());
         let portable = authenticate_aead_portable(&aad, &ct, &key);
-        let parallel = super::aarch64_neon::authenticate_aead_par4(&aad, &ct, &key, lengths);
+        let parallel = par4_neon(&aad, &ct, &key);
         assert_eq!(parallel, portable, "mismatch at aad={aad_len} ct={ct_len}");
       }
     }
@@ -1204,9 +1382,8 @@ mod tests {
       for ct_len in [0usize, 1, 15, 16, 17, 31, 32, 33, 63, 64, 65, 191, 256, 1024, 4096] {
         let aad = patterned_bytes(aad_len, 11, 7);
         let ct = patterned_bytes(ct_len, 17, 3);
-        let lengths = AeadByteLengths::from_usize(aad.len(), ct.len());
         let portable = authenticate_aead_portable(&aad, &ct, &key);
-        let parallel = super::riscv64_vector::authenticate_aead_par4(&aad, &ct, &key, lengths);
+        let parallel = par4_rvv(&aad, &ct, &key);
         assert_eq!(parallel, portable, "mismatch at aad={aad_len} ct={ct_len}");
       }
     }
@@ -1222,11 +1399,8 @@ mod tests {
     let key = [0xffu8; 32];
     let aad = [0xffu8; 257];
     let ct = [0xffu8; 4112];
-    let lengths = AeadByteLengths::from_usize(aad.len(), ct.len());
-
     let portable = authenticate_aead_portable(&aad, &ct, &key);
-    // SAFETY: the test returned above unless AVX2 is available.
-    let parallel = unsafe { super::avx2_par4::authenticate_aead_par4(&aad, &ct, &key, lengths) };
+    let parallel = par4_x86(&aad, &ct, &key);
     assert_eq!(parallel, portable);
   }
 
@@ -1240,10 +1414,8 @@ mod tests {
     let key = [0xffu8; 32];
     let aad = [0xffu8; 257];
     let ct = [0xffu8; 4096];
-    let lengths = AeadByteLengths::from_usize(aad.len(), ct.len());
-
     let portable = authenticate_aead_portable(&aad, &ct, &key);
-    let parallel = super::aarch64_neon::authenticate_aead_par4(&aad, &ct, &key, lengths);
+    let parallel = par4_neon(&aad, &ct, &key);
     assert_eq!(parallel, portable);
   }
 
@@ -1257,10 +1429,8 @@ mod tests {
     let key = [0xffu8; 32];
     let aad = [0xffu8; 257];
     let ct = [0xffu8; 4096];
-    let lengths = AeadByteLengths::from_usize(aad.len(), ct.len());
-
     let portable = authenticate_aead_portable(&aad, &ct, &key);
-    let parallel = super::riscv64_vector::authenticate_aead_par4(&aad, &ct, &key, lengths);
+    let parallel = par4_rvv(&aad, &ct, &key);
     assert_eq!(parallel, portable);
   }
 
@@ -1289,9 +1459,7 @@ mod tests {
       0x1a, 0xe1, 0x0b, 0x59, 0x4f, 0x09, 0xe2, 0x6a, 0x7e, 0x90, 0x2e, 0xcb, 0xd0, 0x60, 0x06, 0x91,
     ];
 
-    let lengths = AeadByteLengths::from_usize(aad.len(), ciphertext.len());
-    // SAFETY: the test returned above unless AVX2 is available.
-    let result = unsafe { super::avx2_par4::authenticate_aead_par4(&aad, &ciphertext, &poly_key, lengths) };
+    let result = par4_x86(&aad, &ciphertext, &poly_key);
     assert_eq!(result, expected);
   }
 
@@ -1320,8 +1488,7 @@ mod tests {
       0x1a, 0xe1, 0x0b, 0x59, 0x4f, 0x09, 0xe2, 0x6a, 0x7e, 0x90, 0x2e, 0xcb, 0xd0, 0x60, 0x06, 0x91,
     ];
 
-    let lengths = AeadByteLengths::from_usize(aad.len(), ciphertext.len());
-    let result = super::aarch64_neon::authenticate_aead_par4(&aad, &ciphertext, &poly_key, lengths);
+    let result = par4_neon(&aad, &ciphertext, &poly_key);
     assert_eq!(result, expected);
   }
 }

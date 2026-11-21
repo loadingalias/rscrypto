@@ -4,7 +4,7 @@
 // Adapted for rscrypto from the generated AWS-LC/BoringSSL aarch64
 // ChaCha20-Poly1305 assembly. Symbols are namespaced to avoid collisions.
 
-// rscrypto span-input loads and saved-slot cleanup extend the existing ABI.
+// rscrypto span-input loads, span-cursor opens, and saved-slot cleanup extend the existing ABI.
 // Cipher rounds and Poly1305 arithmetic retain their recorded upstream provenance.
 
 
@@ -77,6 +77,105 @@ Lrscrypto_load16_seam\@:
 Lrscrypto_load16_fast\@:
     ld1 {{v20.16b}}, [x1], #16
 Lrscrypto_load16_done\@:
+.endm
+
+// Open cursors over the same ordered spans, each (pointer, bytes left,
+// descriptor): read x1/x20/x19, hash x3/x26/x25, write x0/x24/x23. A normal
+// open sets every count to usize::MAX. A count reaching zero loads the next
+// nonempty descriptor. Seams pass bytes between registers and valid span bytes only.
+
+// Append the next cursor byte to x11:x12 at bit x22. Uses x13, x14, x21; clobbers flags.
+.macro RSCRYPTO_COMPOSE_BYTE ptr, left, desc
+    cbnz \left, Lrscrypto_compose_byte\@
+    ldp \ptr, \left, [\desc], #16
+Lrscrypto_compose_byte\@:
+    ldrb w21, [\ptr], #1
+    sub \left, \left, #1
+    lsl x13, x21, x22
+    cmp x22, #64
+    csel x14, x13, xzr, lo
+    orr x11, x11, x14
+    csel x14, xzr, x13, lo
+    orr x12, x12, x14
+    add x22, x22, #8
+.endm
+
+// Load the next 16 ciphertext bytes to hash into x11:x12.
+.macro RSCRYPTO_HASH16
+Lrscrypto_hash16_retry\@:
+    subs x26, x26, #16
+    b.hs Lrscrypto_hash16_fast\@
+    add x26, x26, #16
+    cbnz x26, Lrscrypto_hash16_seam_start\@
+    ldp x3, x26, [x25], #16
+    b Lrscrypto_hash16_retry\@
+Lrscrypto_hash16_seam_start\@:
+    mov x11, #0
+    mov x12, #0
+    mov x22, #0
+Lrscrypto_hash16_seam\@:
+    RSCRYPTO_COMPOSE_BYTE x3, x26, x25
+    cmp x22, #128
+    b.ne Lrscrypto_hash16_seam\@
+    b Lrscrypto_hash16_done\@
+Lrscrypto_hash16_fast\@:
+    ldp x11, x12, [x3], 16
+Lrscrypto_hash16_done\@:
+.endm
+
+// Start the hash cursor at the read cursor.
+.macro RSCRYPTO_HASH_AT_READ
+    mov x3, x1
+    mov x26, x20
+    mov x25, x19
+.endm
+
+.macro RSCRYPTO_WRITE_BYTES reg
+    mov x22, #16
+Lrscrypto_write_loop\@:
+    cbnz x24, Lrscrypto_write_byte\@
+    ldp x0, x24, [x23], #16
+Lrscrypto_write_byte\@:
+    st1 {{\reg\().b}}[0], [x0], #1
+    ext \reg\().16b, \reg\().16b, \reg\().16b, #1
+    sub x24, x24, #1
+    subs x22, x22, #1
+    b.ne Lrscrypto_write_loop\@
+.endm
+
+.macro RSCRYPTO_STORE64
+Lrscrypto_store64_retry\@:
+    subs x24, x24, #64
+    b.hs Lrscrypto_store64_fast\@
+    add x24, x24, #64
+    cbnz x24, Lrscrypto_store64_seam\@
+    ldp x0, x24, [x23], #16
+    b Lrscrypto_store64_retry\@
+Lrscrypto_store64_seam\@:
+    RSCRYPTO_WRITE_BYTES v20
+    RSCRYPTO_WRITE_BYTES v21
+    RSCRYPTO_WRITE_BYTES v22
+    RSCRYPTO_WRITE_BYTES v23
+    b Lrscrypto_store64_done\@
+Lrscrypto_store64_fast\@:
+    st1 {{v20.16b - v23.16b}}, [x0], #64
+Lrscrypto_store64_done\@:
+.endm
+
+.macro RSCRYPTO_STORE16
+Lrscrypto_store16_retry\@:
+    subs x24, x24, #16
+    b.hs Lrscrypto_store16_fast\@
+    add x24, x24, #16
+    cbnz x24, Lrscrypto_store16_seam\@
+    ldp x0, x24, [x23], #16
+    b Lrscrypto_store16_retry\@
+Lrscrypto_store16_seam\@:
+    RSCRYPTO_WRITE_BYTES v20
+    b Lrscrypto_store16_done\@
+Lrscrypto_store16_fast\@:
+    st1 {{v20.16b}}, [x0], #16
+Lrscrypto_store16_done\@:
 .endm
 
 Lpoly_hash_ad_internal:
@@ -1586,28 +1685,60 @@ Lseal_128_rounds:
 
 .align	6
 rscrypto_chacha20_poly1305_open_aarch64:
+	mov x6, #0
+	mov x7, #0
+	b Lopen_entry
+
+// void open_scatter(const span *out, const span *in, size_t len_in, uint8_t *ad, size_t len_ad, union open_data *aead_data);
+.globl rscrypto_chacha20_poly1305_open_scatter_aarch64
+.align 6
+rscrypto_chacha20_poly1305_open_scatter_aarch64:
+	mov x6, x0
+	mov x7, x1
+Lopen_entry:
 	hint	#25
 .cfi_startproc
-	stp	x29, x30, [sp, #-80]!
-.cfi_def_cfa_offset	80
-.cfi_offset	w30, -72
-.cfi_offset	w29, -80
+	stp	x29, x30, [sp, #-144]!
+.cfi_def_cfa_offset	144
+.cfi_offset	w30, -136
+.cfi_offset	w29, -144
 	mov	x29, sp
-    // We probably could do .cfi_def_cfa w29, 80 at this point, but since
+    // We probably could do .cfi_def_cfa w29, 144 at this point, but since
     // we don't actually use the frame pointer like that, it's probably not
     // worth bothering.
 	stp	d8, d9, [sp, #16]
 	stp	d10, d11, [sp, #32]
 	stp	d12, d13, [sp, #48]
 	stp	d14, d15, [sp, #64]
-.cfi_offset	b15, -8
-.cfi_offset	b14, -16
-.cfi_offset	b13, -24
-.cfi_offset	b12, -32
-.cfi_offset	b11, -40
-.cfi_offset	b10, -48
-.cfi_offset	b9, -56
-.cfi_offset	b8, -64
+.cfi_offset	b15, -72
+.cfi_offset	b14, -80
+.cfi_offset	b13, -88
+.cfi_offset	b12, -96
+.cfi_offset	b11, -104
+.cfi_offset	b10, -112
+.cfi_offset	b9, -120
+.cfi_offset	b8, -128
+
+    stp x19, x20, [sp, #80]
+    stp x21, x22, [sp, #96]
+    stp x23, x24, [sp, #112]
+    stp x25, x26, [sp, #128]
+.cfi_offset w19, -64
+.cfi_offset w20, -56
+.cfi_offset w21, -48
+.cfi_offset w22, -40
+.cfi_offset w23, -32
+.cfi_offset w24, -24
+.cfi_offset w25, -16
+.cfi_offset w26, -8
+    mov x23, x6
+    mov x19, x7
+    mov x24, #-1
+    mov x20, #-1
+    cbz x23, Lopen_spans_ready
+    ldp x0, x24, [x23], #16
+    ldp x1, x20, [x19], #16
+Lopen_spans_ready:
 
 	adrp	x11, Lchacha20_consts
 	add	x11, x11, :lo12:Lchacha20_consts
@@ -1688,7 +1819,7 @@ Lopen_init_rounds:
 	bl	Lpoly_hash_ad_internal
 
 Lopen_ad_done:
-	mov	x3, x1
+	RSCRYPTO_HASH_AT_READ
 
 // Each iteration of the loop hash 320 bytes, and prepare stream for 320 bytes
 Lopen_main_loop:
@@ -1731,7 +1862,7 @@ Lopen_main_loop:
 
 .align	5
 Lopen_main_loop_rounds:
-	ldp	x11, x12, [x3], 16
+	RSCRYPTO_HASH16
 	adds	x8, x8, x11
 	adcs	x9, x9, x12
 	adc	x10, x10, x15
@@ -1847,7 +1978,7 @@ Lopen_main_loop_rounds_short:
 	ext	v9.16b, v9.16b, v9.16b, #4
 	ext	v14.16b, v14.16b, v14.16b, #8
 	ext	v19.16b, v19.16b, v19.16b, #12
-	ldp	x11, x12, [x3], 16
+	RSCRYPTO_HASH16
 	adds	x8, x8, x11
 	adcs	x9, x9, x12
 	adc	x10, x10, x15
@@ -2044,26 +2175,26 @@ Lopen_main_loop_rounds_short:
 	add	v19.4s, v19.4s, v30.4s
 
     // We can always safely store 192 bytes
-	ld1	{{v20.16b - v23.16b}}, [x1], #64
+	RSCRYPTO_LOAD64
 	eor	v20.16b, v20.16b, v0.16b
 	eor	v21.16b, v21.16b, v5.16b
 	eor	v22.16b, v22.16b, v10.16b
 	eor	v23.16b, v23.16b, v15.16b
-	st1	{{v20.16b - v23.16b}}, [x0], #64
+	RSCRYPTO_STORE64
 
-	ld1	{{v20.16b - v23.16b}}, [x1], #64
+	RSCRYPTO_LOAD64
 	eor	v20.16b, v20.16b, v1.16b
 	eor	v21.16b, v21.16b, v6.16b
 	eor	v22.16b, v22.16b, v11.16b
 	eor	v23.16b, v23.16b, v16.16b
-	st1	{{v20.16b - v23.16b}}, [x0], #64
+	RSCRYPTO_STORE64
 
-	ld1	{{v20.16b - v23.16b}}, [x1], #64
+	RSCRYPTO_LOAD64
 	eor	v20.16b, v20.16b, v2.16b
 	eor	v21.16b, v21.16b, v7.16b
 	eor	v22.16b, v22.16b, v12.16b
 	eor	v23.16b, v23.16b, v17.16b
-	st1	{{v20.16b - v23.16b}}, [x0], #64
+	RSCRYPTO_STORE64
 
 	sub	x2, x2, #192
 
@@ -2075,12 +2206,12 @@ Lopen_main_loop_rounds_short:
 	cmp	x2, #64
 	b.lt	Lopen_tail_64_store
 
-	ld1	{{v20.16b - v23.16b}}, [x1], #64
+	RSCRYPTO_LOAD64
 	eor	v20.16b, v20.16b, v3.16b
 	eor	v21.16b, v21.16b, v8.16b
 	eor	v22.16b, v22.16b, v13.16b
 	eor	v23.16b, v23.16b, v18.16b
-	st1	{{v20.16b - v23.16b}}, [x0], #64
+	RSCRYPTO_STORE64
 
 	sub	x2, x2, #64
 
@@ -2092,12 +2223,12 @@ Lopen_main_loop_rounds_short:
 	cmp	x2, #64
 	b.lt	Lopen_tail_64_store
 
-	ld1	{{v20.16b - v23.16b}}, [x1], #64
+	RSCRYPTO_LOAD64
 	eor	v20.16b, v20.16b, v4.16b
 	eor	v21.16b, v21.16b, v9.16b
 	eor	v22.16b, v22.16b, v14.16b
 	eor	v23.16b, v23.16b, v19.16b
-	st1	{{v20.16b - v23.16b}}, [x0], #64
+	RSCRYPTO_STORE64
 
 	sub	x2, x2, #64
 	b	Lopen_main_loop
@@ -2147,7 +2278,7 @@ Lopen_tail_192:
 	cbz	x7, Lopen_tail_192_rounds_no_hash
 
 Lopen_tail_192_rounds:
-	ldp	x11, x12, [x3], 16
+	RSCRYPTO_HASH16
 	adds	x8, x8, x11
 	adcs	x9, x9, x12
 	adc	x10, x10, x15
@@ -2300,7 +2431,7 @@ Lopen_tail_192_rounds_no_hash:
     // We hashed 160 bytes at most, may still have 32 bytes left
 Lopen_tail_192_hash:
 	cbz	x4, Lopen_tail_192_hash_done
-	ldp	x11, x12, [x3], 16
+	RSCRYPTO_HASH16
 	adds	x8, x8, x11
 	adcs	x9, x9, x12
 	adc	x10, x10, x15
@@ -2352,23 +2483,23 @@ Lopen_tail_192_hash_done:
 	add	v16.4s, v16.4s, v23.4s
 	add	v17.4s, v17.4s, v22.4s
 
-	ld1	{{v20.16b - v23.16b}}, [x1], #64
+	RSCRYPTO_LOAD64
 
 	eor	v20.16b, v20.16b, v1.16b
 	eor	v21.16b, v21.16b, v6.16b
 	eor	v22.16b, v22.16b, v11.16b
 	eor	v23.16b, v23.16b, v16.16b
 
-	st1	{{v20.16b - v23.16b}}, [x0], #64
+	RSCRYPTO_STORE64
 
-	ld1	{{v20.16b - v23.16b}}, [x1], #64
+	RSCRYPTO_LOAD64
 
 	eor	v20.16b, v20.16b, v2.16b
 	eor	v21.16b, v21.16b, v7.16b
 	eor	v22.16b, v22.16b, v12.16b
 	eor	v23.16b, v23.16b, v17.16b
 
-	st1	{{v20.16b - v23.16b}}, [x0], #64
+	RSCRYPTO_STORE64
 
 	sub	x2, x2, #128
 	b	Lopen_tail_64_store
@@ -2476,7 +2607,7 @@ Lopen_tail_128_rounds:
 	b.gt	Lopen_tail_128_rounds
 	cbz	x4, Lopen_tail_128_rounds_done
 	subs	x4, x4, #1
-	ldp	x11, x12, [x3], 16
+	RSCRYPTO_HASH16
 	adds	x8, x8, x11
 	adcs	x9, x9, x12
 	adc	x10, x10, x15
@@ -2520,14 +2651,14 @@ Lopen_tail_128_rounds_done:
 	add	v15.4s, v15.4s, v22.4s
 	add	v16.4s, v16.4s, v23.4s
 
-	ld1	{{v20.16b - v23.16b}}, [x1], #64
+	RSCRYPTO_LOAD64
 
 	eor	v20.16b, v20.16b, v1.16b
 	eor	v21.16b, v21.16b, v6.16b
 	eor	v22.16b, v22.16b, v11.16b
 	eor	v23.16b, v23.16b, v16.16b
 
-	st1	{{v20.16b - v23.16b}}, [x0], #64
+	RSCRYPTO_STORE64
 	sub	x2, x2, #64
 
 	b	Lopen_tail_64_store
@@ -2588,7 +2719,7 @@ Lopen_tail_64_rounds:
 	b.gt	Lopen_tail_64_rounds
 	cbz	x4, Lopen_tail_64_rounds_done
 	subs	x4, x4, #1
-	ldp	x11, x12, [x3], 16
+	RSCRYPTO_HASH16
 	adds	x8, x8, x11
 	adcs	x9, x9, x12
 	adc	x10, x10, x15
@@ -2631,9 +2762,9 @@ Lopen_tail_64_store:
 	cmp	x2, #16
 	b.lt	Lopen_tail_16
 
-	ld1	{{v20.16b}}, [x1], #16
+	RSCRYPTO_LOAD16
 	eor	v20.16b, v20.16b, v0.16b
-	st1	{{v20.16b}}, [x0], #16
+	RSCRYPTO_STORE16
 	mov	v0.16b, v5.16b
 	mov	v5.16b, v10.16b
 	mov	v10.16b, v15.16b
@@ -2644,25 +2775,19 @@ Lopen_tail_16:
     // Here we handle the last [0,16) bytes that require a padded block
 	cbz	x2, Lopen_finalize
 
-	eor	v20.16b, v20.16b, v20.16b // Use T0 to load the ciphertext
-	eor	v21.16b, v21.16b, v21.16b // Use T1 to generate an AND mask
-	not	v22.16b, v20.16b
-
-	add	x7, x1, x2
 	mov	x6, x2
+	mov	x11, #0
+	mov	x12, #0
+	mov	x22, #0
 
 Lopen_tail_16_compose:
-	ext	v20.16b, v20.16b, v20.16b, #15
-	ldrb	w11, [x7, #-1]!
-	mov	v20.b[0], w11
-	ext	v21.16b, v22.16b, v21.16b, #15
+	RSCRYPTO_COMPOSE_BYTE x1, x20, x19
 	subs	x2, x2, #1
 	b.gt	Lopen_tail_16_compose
 
-	and	v20.16b, v20.16b, v21.16b
+	mov	v20.d[0], x11
+	mov	v20.d[1], x12
     // Hash in the final padded block
-	mov	x11, v20.d[0]
-	mov	x12, v20.d[1]
 	adds	x8, x8, x11
 	adcs	x9, x9, x12
 	adc	x10, x10, x15
@@ -2695,8 +2820,12 @@ Lopen_tail_16_compose:
 	eor	v20.16b, v20.16b, v0.16b
 
 Lopen_tail_16_store:
+	cbnz	x24, Lopen_tail_16_store_byte
+	ldp	x0, x24, [x23], #16
+Lopen_tail_16_store_byte:
 	umov	w11, v20.b[0]
 	strb	w11, [x0], #1
+	sub	x24, x24, #1
 	ext	v20.16b, v20.16b, v20.16b, #1
 	subs	x6, x6, #1
 	b.gt	Lopen_tail_16_store
@@ -2750,6 +2879,7 @@ Lopen_finalize:
 
 	stp	x8, x9, [x5]
 
+.cfi_remember_state
 	ldp	d8, d9, [sp, #16]
 	ldp	d10, d11, [sp, #32]
 	ldp	d12, d13, [sp, #48]
@@ -2762,13 +2892,34 @@ Lopen_finalize:
 .cfi_restore	b10
 .cfi_restore	b9
 .cfi_restore	b8
-	ldp	x29, x30, [sp], 80
+    ldp x19, x20, [sp, #80]
+    ldp x21, x22, [sp, #96]
+    ldp x23, x24, [sp, #112]
+    ldp x25, x26, [sp, #128]
+.cfi_restore w19
+.cfi_restore w20
+.cfi_restore w21
+.cfi_restore w22
+.cfi_restore w23
+.cfi_restore w24
+.cfi_restore w25
+.cfi_restore w26
+    stp xzr, xzr, [sp, #16]
+    stp xzr, xzr, [sp, #32]
+    stp xzr, xzr, [sp, #48]
+    stp xzr, xzr, [sp, #64]
+    stp xzr, xzr, [sp, #80]
+    stp xzr, xzr, [sp, #96]
+    stp xzr, xzr, [sp, #112]
+    stp xzr, xzr, [sp, #128]
+	ldp	x29, x30, [sp], 144
 .cfi_restore	w29
 .cfi_restore	w30
 .cfi_def_cfa_offset	0
 	hint	#29
 	ret
 
+.cfi_restore_state
 Lopen_128:
     // On some architectures preparing 5 blocks for small buffers is wasteful
 	eor	v25.16b, v25.16b, v25.16b
@@ -2934,7 +3085,7 @@ Lopen_128_store:
 	cmp	x2, #64
 	b.lt	Lopen_128_store_64
 
-	ld1	{{v20.16b - v23.16b}}, [x1], #64
+	RSCRYPTO_LOAD64
 
 	mov	x11, v20.d[0]
 	mov	x12, v20.d[1]
@@ -3066,7 +3217,7 @@ Lopen_128_store:
 	eor	v22.16b, v22.16b, v10.16b
 	eor	v23.16b, v23.16b, v15.16b
 
-	st1	{{v20.16b - v23.16b}}, [x0], #64
+	RSCRYPTO_STORE64
 
 	sub	x2, x2, #64
 
@@ -3078,11 +3229,11 @@ Lopen_128_store:
 Lopen_128_store_64:
 
 	lsr	x4, x2, #4
-	mov	x3, x1
+	RSCRYPTO_HASH_AT_READ
 
 Lopen_128_hash_64:
 	cbz	x4, Lopen_tail_64_store
-	ldp	x11, x12, [x3], 16
+	RSCRYPTO_HASH16
 	adds	x8, x8, x11
 	adcs	x9, x9, x12
 	adc	x10, x10, x15

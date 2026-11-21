@@ -741,6 +741,38 @@ pub fn diag_chacha20poly1305_decrypt_in_place_x86_64_asm(
   cipher.decrypt_in_place_asm_x86_64_forced(nonce, aad, buffer, tag)
 }
 
+#[cfg(all(
+  rscrypto_internal,
+  feature = "diag",
+  all(target_arch = "x86_64", target_feature = "sse2"),
+  target_os = "linux"
+))]
+/// Authenticates and decrypts in place across `segments` through the Linux x86-64 span assembly when it is available.
+///
+/// Returns `None` when the current CPU cannot execute the assembly backend, the message holds at most 320 bytes, or
+/// more than 128 segments hold bytes. Authentication failure zeroes every segment.
+pub fn diag_chacha20poly1305_decrypt_segments_x86_64_asm(
+  cipher: &ChaCha20Poly1305,
+  nonce: &Nonce96,
+  aad: &[u8],
+  segments: &mut [&mut [u8]],
+  tag: &ChaCha20Poly1305Tag,
+) -> Option<Result<(), OpenError>> {
+  let len = super::segments::total_len(segments)?;
+  if let Err(err) = super::open_bounded_length_as_u64(len, MAX_PLAINTEXT_LEN) {
+    return Some(Err(err));
+  }
+  if len <= 320 || !ChaCha20Poly1305::x86_64_asm_caps_available(crate::platform::caps()) {
+    return None;
+  }
+  let expected = super::segments::spans(segments, |spans| {
+    // SAFETY: the checks above prove AVX2, BMI2, more than 320 bytes, and the ChaCha20 length bound.
+    unsafe { x86_64_asm::open_scatter(cipher.key.as_bytes(), nonce.as_bytes(), aad, spans) }
+  })?;
+  let matched = ct::fixed_eq(&expected, tag.as_bytes()).declassify();
+  Some(super::segments::verdict(segments, matched))
+}
+
 /// Authenticates and decrypts in place without using a platform-specific integrated ChaCha20-Poly1305 assembly
 /// entrypoint.
 ///
@@ -762,6 +794,57 @@ impl AeadGather for ChaCha20Poly1305 {
   fn __validate_gather_lengths(_aad_len: usize, plaintext_len: usize) -> Result<(), SealError> {
     super::seal_bounded_length_as_u64(plaintext_len, MAX_PLAINTEXT_LEN)?;
     Ok(())
+  }
+
+  fn __decrypt_segments_in_place(
+    &self,
+    nonce: &Self::Nonce,
+    aad: &[u8],
+    segments: &mut [&mut [u8]],
+    tag: &Self::Tag,
+  ) -> Result<(), OpenError> {
+    if let Some(buffer) = super::segments::contiguous(segments) {
+      return <Self as Aead>::decrypt_in_place(self, nonce, aad, buffer, tag);
+    }
+    let len = super::segments::total_len(segments).ok_or_else(OpenError::too_large)?;
+    super::open_bounded_length_as_u64(len, MAX_PLAINTEXT_LEN)?;
+    if Self::whole_message_open(len) {
+      let matched = super::segments::staged::<STAGED_OPEN_MAX>(segments, len, |message| {
+        <Self as Aead>::decrypt_in_place(self, nonce, aad, message, tag).is_ok()
+      });
+      return super::segments::verdict(segments, matched);
+    }
+    #[cfg(all(
+      target_arch = "x86_64",
+      target_feature = "sse2",
+      target_os = "linux",
+      not(debug_assertions),
+      not(feature = "portable-only")
+    ))]
+    if Self::x86_64_open_asm_selected(len)
+      && let Some(expected) = super::segments::spans(segments, |spans| {
+        // SAFETY: the selection proves AVX2 and BMI2, the length exceeds the
+        // staged short messages, and the public entry validated its bound.
+        unsafe { x86_64_asm::open_scatter(self.key.as_bytes(), nonce.as_bytes(), aad, spans) }
+      })
+    {
+      let matched = ct::fixed_eq(&expected, tag.as_bytes()).declassify();
+      return super::segments::verdict(segments, matched);
+    }
+    #[cfg(all(
+      target_arch = "aarch64",
+      any(target_os = "linux", target_os = "macos"),
+      not(debug_assertions),
+      not(feature = "portable-only")
+    ))]
+    if let Some(expected) = super::segments::spans(segments, |spans| {
+      aarch64_asm::open_scatter(self.key.as_bytes(), nonce.as_bytes(), aad, spans)
+    }) {
+      let matched = ct::fixed_eq(&expected, tag.as_bytes()).declassify();
+      return super::segments::verdict(segments, matched);
+    }
+    let matched = self.open_segments_composed(nonce, aad, segments, len, tag);
+    super::segments::verdict(segments, matched)
   }
 
   fn __encrypt_gather_with_nonce<'input, 'output>(
@@ -865,7 +948,109 @@ impl AeadGather for ChaCha20Poly1305 {
   }
 }
 
+/// Longest segmented message that opens on a staged copy: the AVX-512 one-pass open.
+const STAGED_OPEN_MAX: usize = 448;
+
+/// XOR the keystream from block `counter` into `data`, a range of a validated message.
+#[inline(always)]
+fn xor_message_range(key: &ChaCha20Poly1305Key, nonce: &Nonce96, counter: u64, data: &mut [u8]) {
+  if data.is_empty() {
+    return;
+  }
+  let counter = u32::try_from(counter).expect("a message block's counter fits 32 bits");
+  chacha20::xor_keystream(key.as_bytes(), counter, nonce.as_bytes(), data)
+    .expect("the validated message length bounds every block counter");
+}
+
 impl ChaCha20Poly1305 {
+  /// Whether `decrypt_in_place` opens a `len`-byte message of at most
+  /// [`STAGED_OPEN_MAX`] bytes with a whole-message kernel that cannot run per
+  /// segment. Such a message opens on a staged copy.
+  #[inline]
+  fn whole_message_open(len: usize) -> bool {
+    if len > STAGED_OPEN_MAX {
+      return false;
+    }
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2", not(feature = "portable-only")))]
+    if Self::x86_64_avx512_available() {
+      return len <= x86_64_avx512::ONE_PASS_MAX;
+    }
+    #[cfg(all(
+      target_arch = "x86_64",
+      target_feature = "sse2",
+      target_os = "linux",
+      not(debug_assertions),
+      not(feature = "portable-only")
+    ))]
+    if Self::x86_64_open_asm_selected(len) {
+      return true;
+    }
+    #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), target_endian = "little"))]
+    if len <= POWER_SHORT_FAST_MAX {
+      return true;
+    }
+    false
+  }
+
+  /// Whether `decrypt_in_place` opens a `len`-byte message with the integrated
+  /// x86-64 assembly: AVX-512 is absent and the assembly is recommended.
+  #[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "sse2",
+    target_os = "linux",
+    not(debug_assertions),
+    not(feature = "portable-only")
+  ))]
+  #[inline]
+  fn x86_64_open_asm_selected(len: usize) -> bool {
+    #[cfg(feature = "std")]
+    let caps = crate::platform::caps();
+    #[cfg(not(feature = "std"))]
+    let caps = crate::platform::caps_static();
+    !Self::x86_64_avx512_available() && Self::x86_64_open_asm_recommended(caps, len)
+  }
+
+  /// Open `len` ciphertext bytes across `segments` with the selected Poly1305
+  /// and ChaCha20 kernels: each range is authenticated, then decrypted in place.
+  fn open_segments_composed(
+    &self,
+    nonce: &Nonce96,
+    aad: &[u8],
+    segments: &mut [&mut [u8]],
+    len: usize,
+    tag: &ChaCha20Poly1305Tag,
+  ) -> bool {
+    let mut poly_key = chacha20::poly1305_key_gen(self.key.as_bytes(), nonce.as_bytes());
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2", not(feature = "portable-only")))]
+    let mac = if Self::x86_64_avx512_available() {
+      x86_64_avx512::mac(&poly_key, aad, len)
+    } else {
+      poly1305::AeadMac::new(AeadPrimitive::ChaCha20Poly1305, &poly_key, aad, len)
+    };
+    #[cfg(not(all(target_arch = "x86_64", target_feature = "sse2", not(feature = "portable-only"))))]
+    let mac = poly1305::AeadMac::new(AeadPrimitive::ChaCha20Poly1305, &poly_key, aad, len);
+    ct::zeroize(&mut poly_key);
+    // The block counter starts at 1; block 0 gave the Poly1305 key.
+    super::segments::open::<{ chacha20::BLOCK_SIZE }, _>(
+      segments,
+      len,
+      (mac, 1u64),
+      |(mac, counter), data| {
+        mac.update(data);
+        xor_message_range(&self.key, nonce, *counter, data);
+        *counter = counter.strict_add(data.len().strict_div(chacha20::BLOCK_SIZE) as u64);
+      },
+      |(mut mac, counter), rest| {
+        mac.update(rest);
+        let matched = ct::fixed_eq(&mac.finish(), tag.as_bytes()).declassify();
+        if matched {
+          xor_message_range(&self.key, nonce, counter, rest);
+        }
+        matched
+      },
+    )
+  }
+
   fn __seal_gather_fallback<'input, 'output>(
     &self,
     nonce: &Nonce96,

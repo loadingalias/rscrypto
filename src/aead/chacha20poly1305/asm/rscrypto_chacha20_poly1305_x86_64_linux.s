@@ -7,6 +7,105 @@
 // ChaCha20-Poly1305 assembly. Symbols are namespaced to avoid collisions,
 // C preprocessor directives are removed for Rust `global_asm!`, and the
 // OpenSSL CPU capability word is replaced with a local AVX2+BMI2 selector.
+// rscrypto span regions let the AVX2 open read and write ordered spans.
+
+// Span-cursor regions of the AVX2 open. A normal open leaves the mode slot
+// zero and every macro falls through. In span mode the cursor walks ordered
+// nonempty (pointer, length) descriptors; only public lengths choose paths.
+.set RSCRYPTO_STAGE, 288
+.set RSCRYPTO_PTR, 800
+.set RSCRYPTO_LEFT, 808
+.set RSCRYPTO_DESC, 816
+.set RSCRYPTO_MODE, 824
+.set RSCRYPTO_RLEN, 832
+.set RSCRYPTO_RPTR, 840
+.set RSCRYPTO_RLEFT, 848
+.set RSCRYPTO_RDESC, 856
+
+// Load the next descriptor into the cursor (\ptr, \left, \desc) slots. Uses %rax and %rcx.
+.macro RSCRYPTO_NEXT_SPAN ptr, left, desc
+	movq	\desc(%rbp),%rax
+	movq	(%rax),%rcx
+	movq	%rcx,\ptr(%rbp)
+	movq	8(%rax),%rcx
+	movq	%rcx,\left(%rbp)
+	addq	$16,%rax
+	movq	%rax,\desc(%rbp)
+.endm
+
+// Copy %rdx bytes between the cursor (\ptr, \left, \desc) and %rdi (gather) or
+// %rsi (scatter), advancing the cursor. Uses %rax, %rcx, %rsi, %rdi; clobbers flags.
+.macro RSCRYPTO_COPY ptr, left, desc, gather
+Lrscrypto_copy\@:
+	cmpq	$0,\left(%rbp)
+	jne	Lrscrypto_copy_part\@
+	RSCRYPTO_NEXT_SPAN \ptr, \left, \desc
+Lrscrypto_copy_part\@:
+	movq	\left(%rbp),%rcx
+	cmpq	%rdx,%rcx
+	cmovaq	%rdx,%rcx
+	.if \gather
+	movq	\ptr(%rbp),%rsi
+	.else
+	movq	\ptr(%rbp),%rdi
+	.endif
+	addq	%rcx,\ptr(%rbp)
+	subq	%rcx,\left(%rbp)
+	subq	%rcx,%rdx
+	rep movsb
+	testq	%rdx,%rdx
+	jnz	Lrscrypto_copy\@
+.endm
+
+// Point %rsi and %rdi at the next \len message bytes: the current span when it
+// holds them, else the gathered stage. Uses %rax, %rcx, %rdx; clobbers flags.
+.macro RSCRYPTO_REGION len
+	cmpq	$0,RSCRYPTO_MODE(%rbp)
+	je	Lrscrypto_region_done\@
+	movq	\len,%rdx
+	testq	%rdx,%rdx
+	jz	Lrscrypto_region_done\@
+	cmpq	$0,RSCRYPTO_LEFT(%rbp)
+	jne	Lrscrypto_region_have\@
+	RSCRYPTO_NEXT_SPAN RSCRYPTO_PTR, RSCRYPTO_LEFT, RSCRYPTO_DESC
+Lrscrypto_region_have\@:
+	cmpq	%rdx,RSCRYPTO_LEFT(%rbp)
+	jb	Lrscrypto_region_stage\@
+	movq	RSCRYPTO_PTR(%rbp),%rsi
+	movq	%rsi,%rdi
+	addq	%rdx,RSCRYPTO_PTR(%rbp)
+	subq	%rdx,RSCRYPTO_LEFT(%rbp)
+	jmp	Lrscrypto_region_done\@
+Lrscrypto_region_stage\@:
+	movq	%rdx,RSCRYPTO_RLEN(%rbp)
+	movq	RSCRYPTO_PTR(%rbp),%rax
+	movq	%rax,RSCRYPTO_RPTR(%rbp)
+	movq	RSCRYPTO_LEFT(%rbp),%rax
+	movq	%rax,RSCRYPTO_RLEFT(%rbp)
+	movq	RSCRYPTO_DESC(%rbp),%rax
+	movq	%rax,RSCRYPTO_RDESC(%rbp)
+	leaq	RSCRYPTO_STAGE(%rbp),%rdi
+	RSCRYPTO_COPY RSCRYPTO_PTR, RSCRYPTO_LEFT, RSCRYPTO_DESC, 1
+	leaq	RSCRYPTO_STAGE(%rbp),%rsi
+	movq	%rsi,%rdi
+Lrscrypto_region_done\@:
+.endm
+
+// Scatter a staged region back to its spans and clear the stage. Uses %rax,
+// %rcx, %rdx, %rsi, %rdi; clobbers flags.
+.macro RSCRYPTO_UNREGION
+	movq	RSCRYPTO_RLEN(%rbp),%rdx
+	testq	%rdx,%rdx
+	jz	Lrscrypto_unregion_done\@
+	movq	$0,RSCRYPTO_RLEN(%rbp)
+	leaq	RSCRYPTO_STAGE(%rbp),%rsi
+	RSCRYPTO_COPY RSCRYPTO_RPTR, RSCRYPTO_RLEFT, RSCRYPTO_RDESC, 0
+	leaq	RSCRYPTO_STAGE(%rbp),%rdi
+	movl	$512,%ecx
+	xorl	%eax,%eax
+	rep stosb
+Lrscrypto_unregion_done\@:
+.endm
 // Rust dispatch must gate calls on x86_64 AVX2 and BMI2.
 
 
@@ -224,11 +323,25 @@ rscrypto_chacha20_poly1305_poly_hash_ad_internal_x86_64:
 .cfi_endproc	
 .size	rscrypto_chacha20_poly1305_poly_hash_ad_internal_x86_64, .-rscrypto_chacha20_poly1305_poly_hash_ad_internal_x86_64
 
+// void open_scatter(const span *out, const span *in, size_t len_in, uint8_t *ad, size_t len_ad, union open_data *aead_data);
+// The output and input spans are the same in-place descriptors, len_in is
+// above 320 bytes, and the caller establishes AVX2 and BMI2.
+.globl	rscrypto_chacha20_poly1305_open_scatter_x86_64
+.hidden rscrypto_chacha20_poly1305_open_scatter_x86_64
+.type	rscrypto_chacha20_poly1305_open_scatter_x86_64,@function
+.align	64
+rscrypto_chacha20_poly1305_open_scatter_x86_64:
+	movq	%rsi,%rax
+	jmp	.Lopen_entry
+.size	rscrypto_chacha20_poly1305_open_scatter_x86_64, .-rscrypto_chacha20_poly1305_open_scatter_x86_64
+
 .globl	rscrypto_chacha20_poly1305_open_x86_64
 .hidden rscrypto_chacha20_poly1305_open_x86_64
 .type	rscrypto_chacha20_poly1305_open_x86_64,@function
 .align	64
 rscrypto_chacha20_poly1305_open_x86_64:
+	xorl	%eax,%eax
+.Lopen_entry:
 .cfi_startproc	
 	pushq	%rbp
 .cfi_adjust_cfa_offset	8
@@ -253,8 +366,8 @@ rscrypto_chacha20_poly1305_open_x86_64:
 	pushq	%r9
 .cfi_adjust_cfa_offset	8
 .cfi_offset	%r9,-64
-	subq	$288 + 0 + 32,%rsp
-.cfi_adjust_cfa_offset	288 + 32
+	subq	$288 + 0 + 32 + 576,%rsp
+.cfi_adjust_cfa_offset	288 + 32 + 576
 
 	leaq	32(%rsp),%rbp
 	andq	$-32,%rbp
@@ -262,6 +375,11 @@ rscrypto_chacha20_poly1305_open_x86_64:
 	movq	%rdx,%rbx
 	movq	%r8,0+0+32(%rbp)
 	movq	%rbx,8+0+32(%rbp)
+
+	movq	%rax,RSCRYPTO_MODE(%rbp)
+	movq	%rax,RSCRYPTO_DESC(%rbp)
+	movq	$0,RSCRYPTO_LEFT(%rbp)
+	movq	$0,RSCRYPTO_RLEN(%rbp)
 
 	movl	rscrypto_chacha20_poly1305_x86_64_caps+8(%rip),%eax
 	andl	$288,%eax
@@ -1786,6 +1904,7 @@ rscrypto_chacha20_poly1305_open_x86_64:
 
 
 .Lopen_sse_finalize:
+	RSCRYPTO_UNREGION
 	addq	0+0+32(%rbp),%r10
 	adcq	8+0+32(%rbp),%r11
 	adcq	$1,%r12
@@ -1842,8 +1961,8 @@ rscrypto_chacha20_poly1305_open_x86_64:
 	adcq	8+0+16(%rbp),%r11
 
 .cfi_remember_state	
-	addq	$288 + 0 + 32,%rsp
-.cfi_adjust_cfa_offset	-(288 + 32)
+	addq	$288 + 0 + 32 + 576,%rsp
+.cfi_adjust_cfa_offset	-(288 + 32 + 576)
 
 	popq	%r9
 .cfi_adjust_cfa_offset	-8
@@ -4129,7 +4248,7 @@ rscrypto_chacha20_poly1305_open_avx2_x86_64:
 .cfi_offset	%r15,-56
 .cfi_adjust_cfa_offset	8
 .cfi_offset	%r9,-64
-.cfi_adjust_cfa_offset	288 + 32
+.cfi_adjust_cfa_offset	288 + 32 + 576
 
 	vzeroupper
 	vmovdqa	.Lchacha20_consts(%rip),%ymm0
@@ -4204,6 +4323,7 @@ rscrypto_chacha20_poly1305_open_avx2_x86_64:
 	movq	%r8,%r8
 	call	rscrypto_chacha20_poly1305_poly_hash_ad_internal_x86_64
 
+	RSCRYPTO_REGION $64
 	xorq	%rcx,%rcx
 .Lopen_avx2_init_hash:
 	addq	0+0(%rsi,%rcx,1),%r10
@@ -4259,10 +4379,12 @@ rscrypto_chacha20_poly1305_open_avx2_x86_64:
 	leaq	64(%rsi),%rsi
 	leaq	64(%rdi),%rdi
 	subq	$64,%rbx
+	RSCRYPTO_UNREGION
 .Lopen_avx2_main_loop:
 
 	cmpq	$512,%rbx
 	jb	.Lopen_avx2_main_loop_done
+	RSCRYPTO_REGION $512
 	vmovdqa	.Lchacha20_consts(%rip),%ymm0
 	vmovdqa	0+64(%rbp),%ymm4
 	vmovdqa	0+96(%rbp),%ymm8
@@ -4707,8 +4829,10 @@ rscrypto_chacha20_poly1305_open_avx2_x86_64:
 	leaq	512(%rsi),%rsi
 	leaq	512(%rdi),%rdi
 	subq	$512,%rbx
+	RSCRYPTO_UNREGION
 	jmp	.Lopen_avx2_main_loop
 .Lopen_avx2_main_loop_done:
+	RSCRYPTO_REGION %rbx
 	testq	%rbx,%rbx
 	vzeroupper
 	je	.Lopen_sse_finalize

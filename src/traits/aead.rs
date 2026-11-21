@@ -252,17 +252,18 @@ pub trait Aead {
   }
 }
 
-/// AEAD encryption from ordered plaintext slices into one ciphertext buffer.
+/// AEAD over one message held in ordered slices: gather encryption from plaintext
+/// slices, and in-place decryption across ciphertext segments.
 ///
 /// Slice boundaries do not change the message, counter sequence, padding, or tag.
 /// AES-128-GCM, AES-256-GCM, and ChaCha20-Poly1305 implement this capability.
 /// Encryption reads the plaintext slices directly and does not stage plaintext
-/// in the output. The core operation needs no allocation.
+/// in the output. The core operations need no allocation.
 ///
 /// ```
 /// # #[cfg(feature = "aes-gcm")]
 /// # {
-/// use rscrypto::{Aes128Gcm, Aes128GcmKey, aead::NonceCounter};
+/// use rscrypto::{AeadGather, Aes128Gcm, Aes128GcmKey, aead::NonceCounter};
 ///
 /// let cipher = Aes128Gcm::new(&Aes128GcmKey::from_bytes([0x42; 16]));
 /// let mut nonces = NonceCounter::<Aes128Gcm>::new(*b"sess");
@@ -270,7 +271,8 @@ pub trait Aead {
 /// let (nonce, tag) = nonces.encrypt_gather(
 ///     &cipher, b"header", [b"he".as_slice(), b"llo".as_slice()], &mut ciphertext,
 /// )?;
-/// cipher.decrypt_in_place(&nonce, b"header", &mut ciphertext, &tag)?;
+/// let (first, second) = ciphertext.split_at_mut(3);
+/// cipher.decrypt_in_place_segments(&nonce, b"header", &mut [first, second], &tag)?;
 /// assert_eq!(&ciphertext, b"hello");
 /// # }
 /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -290,6 +292,39 @@ pub trait AeadGather: Aead {
     out: &'output mut [MaybeUninit<u8>],
     token: SealToken,
   ) -> Result<(Self::Tag, &'output mut [u8]), SealError>;
+
+  /// Internal segmented decryption behind [`decrypt_in_place_segments`](Self::decrypt_in_place_segments).
+  #[doc(hidden)]
+  fn __decrypt_segments_in_place(
+    &self,
+    nonce: &Self::Nonce,
+    aad: &[u8],
+    segments: &mut [&mut [u8]],
+    tag: &Self::Tag,
+  ) -> Result<(), OpenError>;
+
+  /// Decrypt one ciphertext in place across ordered segments and verify its detached tag.
+  ///
+  /// The ciphertext is the concatenation of `segments`, and each segment receives
+  /// its own plaintext. Segment boundaries do not change the message, counter
+  /// sequence, padding, or tag. Empty segments are allowed. Like gather
+  /// encryption, the call runs inside one data-independent-timing scope.
+  ///
+  /// # Errors
+  ///
+  /// Returns [`OpenError`] when authentication fails or the total length exceeds
+  /// the algorithm's supported bound. A failed tag check zeroes every segment.
+  /// Length rejection leaves every segment unchanged.
+  #[inline]
+  fn decrypt_in_place_segments(
+    &self,
+    nonce: &Self::Nonce,
+    aad: &[u8],
+    segments: &mut [&mut [u8]],
+    tag: &Self::Tag,
+  ) -> Result<(), OpenError> {
+    super::ct::with_data_independent_timing(|| self.__decrypt_segments_in_place(nonce, aad, segments, tag))
+  }
 
   /// Encrypt ordered plaintext slices with a fresh random nonce.
   ///

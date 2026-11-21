@@ -337,7 +337,7 @@ mod scalar64;
   target_feature = "sse2",
   not(feature = "portable-only")
 ))]
-pub(crate) use scalar64::{aead_tag as aead_tag_scalar, aead_tag_one_chain as aead_tag_scalar_one_chain};
+pub(crate) use scalar64::{State as Scalar64, aead_tag_one_chain as aead_tag_scalar_one_chain};
 #[cfg(feature = "poly1305")]
 pub(crate) mod standalone;
 #[cfg(all(

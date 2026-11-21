@@ -95,6 +95,16 @@ impl rscrypto::AeadGather for DirtyRejectingAead {
     }
     Ok(([0; 16], &mut []))
   }
+
+  fn __decrypt_segments_in_place(
+    &self,
+    _: &Self::Nonce,
+    _: &[u8],
+    _: &mut [&mut [u8]],
+    _: &Self::Tag,
+  ) -> Result<(), OpenError> {
+    Err(OpenError::verification())
+  }
 }
 
 #[cfg(feature = "aead")]

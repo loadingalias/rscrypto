@@ -223,7 +223,8 @@ pub fn assert_aead_against_oracle<A, EncFn, DecFn>(
 }
 
 #[cfg(feature = "aead")]
-/// Compare production gather encryption and its output adapters with an independent combined ciphertext/tag.
+/// Compare production gather encryption, its output adapters, and segmented
+/// decryption with an independent combined ciphertext/tag.
 pub fn assert_aead_gather_against_oracle<A: rscrypto::AeadGather>(
   cipher: &A,
   nonce: &A::Nonce,
@@ -306,6 +307,60 @@ pub fn assert_aead_gather_against_oracle<A: rscrypto::AeadGather>(
     .expect_err("gather rejects a mismatched output length");
   assert_eq!(error, rscrypto::aead::SealError::buffer());
   assert!(wrong.iter().all(|&byte| byte == 0));
+
+  // The oracle ciphertext opens in place across the same guarded fragments,
+  // and a changed bit fails and zeroes every fragment.
+  let tag = A::tag_from_slice(expected_tag).expect("oracle tag has the tag length");
+  let mut opened = guarded_like(&storage, expected_text);
+  open_guarded(cipher, nonce, aad, &mut opened, &tag).expect("segmented open accepts the oracle ciphertext");
+  assert_eq!(opened, storage);
+  if !plaintext.is_empty() {
+    let mut forged = expected_text.to_vec();
+    let flip = usize::from(control).rem_euclid(forged.len());
+    forged[flip] ^= 0x01;
+    let mut opened = guarded_like(&storage, &forged);
+    let error = open_guarded(cipher, nonce, aad, &mut opened, &tag).expect_err("segmented open rejects a changed bit");
+    assert_eq!(error, rscrypto::aead::OpenError::verification());
+    for (bytes, fragment) in opened.iter().zip(&storage) {
+      let end = bytes.len().strict_sub(1);
+      assert!(bytes[1..end].iter().all(|&byte| byte == 0));
+      assert_eq!((bytes[0], bytes[end]), (fragment[0], fragment[end]));
+    }
+  }
+}
+
+/// `text` split like the guarded `fragments`, with the same guard bytes.
+#[cfg(feature = "aead")]
+fn guarded_like(fragments: &[Vec<u8>], text: &[u8]) -> Vec<Vec<u8>> {
+  let mut start = 0usize;
+  fragments
+    .iter()
+    .map(|fragment| {
+      let end = start.strict_add(fragment.len().strict_sub(2));
+      let mut bytes = vec![fragment[0]];
+      bytes.extend_from_slice(&text[start..end]);
+      bytes.push(fragment[fragment.len().strict_sub(1)]);
+      start = end;
+      bytes
+    })
+    .collect()
+}
+
+/// Open the guarded fragments in place as one segmented message, between empty segments.
+#[cfg(feature = "aead")]
+fn open_guarded<A: rscrypto::AeadGather>(
+  cipher: &A,
+  nonce: &A::Nonce,
+  aad: &[u8],
+  fragments: &mut [Vec<u8>],
+  tag: &A::Tag,
+) -> Result<(), rscrypto::aead::OpenError> {
+  let mut segments: Vec<&mut [u8]> = vec![&mut []];
+  for bytes in fragments.iter_mut() {
+    let end = bytes.len().strict_sub(1);
+    segments.push(&mut bytes[1..end]);
+  }
+  cipher.decrypt_in_place_segments(nonce, aad, &mut segments, tag)
 }
 
 #[cfg(feature = "aead")]

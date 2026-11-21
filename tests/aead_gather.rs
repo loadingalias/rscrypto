@@ -1,4 +1,4 @@
-//! Gather encryption preserves one message across arbitrary slice boundaries.
+//! Gather encryption and segmented decryption preserve one message across arbitrary slice boundaries.
 
 #![cfg(any(feature = "aes-gcm", feature = "chacha20poly1305"))]
 
@@ -6,7 +6,7 @@ use aes_gcm::aead::{KeyInit, Payload, array::Array};
 use proptest::prelude::*;
 use rscrypto::{
   AeadGather,
-  aead::{Nonce96, SealError, expert::AeadWithNonce},
+  aead::{Nonce96, OpenError, SealError, expert::AeadWithNonce},
 };
 
 fn check<C: AeadGather<Nonce = Nonce96>>(
@@ -98,6 +98,37 @@ fn check_chunks<C: AeadGather<Nonce = Nonce96>>(
       .encrypt_gather(&nonce, aad, core::iter::empty(), &mut [])
       .expect("empty iterator is an empty message");
     assert_eq!(tag.as_ref(), expected_tag);
+  }
+
+  // The oracle ciphertext opens in place across the same partition. Guarded
+  // independent allocations keep each segment a separate physical range.
+  let mut start = 0usize;
+  let mut storage: Vec<_> = chunks
+    .iter()
+    .map(|chunk| {
+      let end = start.strict_add(chunk.len());
+      let mut bytes = vec![0xa5];
+      bytes.extend_from_slice(&expected_text[start..end]);
+      bytes.push(0x5a);
+      start = end;
+      bytes
+    })
+    .collect();
+  let mut segments: Vec<_> = storage
+    .iter_mut()
+    .map(|bytes| {
+      let end = bytes.len().strict_sub(1);
+      &mut bytes[1..end]
+    })
+    .collect();
+  let tag = C::tag_from_slice(expected_tag).expect("oracle tag");
+  cipher
+    .decrypt_in_place_segments(&nonce, aad, &mut segments, &tag)
+    .expect("authentic segmented ciphertext");
+  for (bytes, chunk) in storage.iter().zip(chunks) {
+    let end = bytes.len().strict_sub(1);
+    assert_eq!(&bytes[1..end], *chunk);
+    assert_eq!((bytes[0], bytes[end]), (0xa5, 0x5a));
   }
 }
 
@@ -425,6 +456,63 @@ fn mismatched_lengths_and_iterator_unwind_clear_output() {
   }
   #[cfg(feature = "chacha20poly1305")]
   failure_cleanup(&rscrypto::ChaCha20Poly1305::new(
+    &rscrypto::ChaCha20Poly1305Key::from_bytes([0x42; 32]),
+  ));
+}
+
+/// A changed bit in any segment, the AAD, or the tag fails the open, and then
+/// no segment keeps unauthenticated plaintext.
+fn rejection_zeroes_every_segment<C: AeadGather<Nonce = Nonce96>>(cipher: &C) {
+  let nonce = Nonce96::from_bytes([0x5c; 12]);
+  let aad = [0x17; 13];
+  for len in [2usize, 300, 2049] {
+    let mut sealed: Vec<_> = (0..len).map(|i| i.to_le_bytes()[0]).collect();
+    let tag = cipher
+      .encrypt_in_place(&nonce, &aad, &mut sealed)
+      .expect("seal fixture");
+    for cut in [1, 16, 17, 64, 65, len.strict_sub(1)]
+      .into_iter()
+      .filter(|cut| *cut < len)
+    {
+      for flip in [0, cut.strict_sub(1), cut, len.strict_sub(1), len, len.strict_add(1)] {
+        let mut ciphertext = sealed.clone();
+        let mut aad = aad;
+        let mut tag_bytes = tag.as_ref().to_vec();
+        match flip.cmp(&len) {
+          core::cmp::Ordering::Less => ciphertext[flip] ^= 0x80,
+          core::cmp::Ordering::Equal => aad[5] ^= 0x01,
+          core::cmp::Ordering::Greater => tag_bytes[15] ^= 0x40,
+        }
+        let tag = C::tag_from_slice(&tag_bytes).expect("16-byte tag");
+        let (first, second) = ciphertext.split_at_mut(cut);
+        let result = cipher.decrypt_in_place_segments(&nonce, &aad, &mut [first, &mut [], second], &tag);
+        assert_eq!(
+          result,
+          Err(OpenError::verification()),
+          "len {len}, cut {cut}, flip {flip}"
+        );
+        assert!(
+          ciphertext.iter().all(|byte| *byte == 0),
+          "len {len}, cut {cut}, flip {flip}"
+        );
+      }
+    }
+  }
+}
+
+#[test]
+fn segmented_open_rejects_any_changed_bit_and_zeroes_every_segment() {
+  #[cfg(feature = "aes-gcm")]
+  {
+    rejection_zeroes_every_segment(&rscrypto::Aes128Gcm::new(&rscrypto::Aes128GcmKey::from_bytes(
+      [0x42; 16],
+    )));
+    rejection_zeroes_every_segment(&rscrypto::Aes256Gcm::new(&rscrypto::Aes256GcmKey::from_bytes(
+      [0x42; 32],
+    )));
+  }
+  #[cfg(feature = "chacha20poly1305")]
+  rejection_zeroes_every_segment(&rscrypto::ChaCha20Poly1305::new(
     &rscrypto::ChaCha20Poly1305Key::from_bytes([0x42; 32]),
   ));
 }

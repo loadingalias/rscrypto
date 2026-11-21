@@ -2058,6 +2058,33 @@ samples = 20000
 smoke_samples = 2000
 
 [[dudect_case]]
+name = "aes128gcm_segments_fixed_vs_random_key_open"
+primitive = "aead.open_authentication"
+filter = "aes128gcm_segments_fixed_vs_random_key_open"
+left_class = "16385-byte valid open across a fixed public partition, with a seam inside a block, under a fixed secret key"
+right_class = "the same segmented open with random secret key"
+samples = 20000
+smoke_samples = 2000
+
+[[dudect_case]]
+name = "aes256gcm_segments_fixed_vs_random_key_open"
+primitive = "aead.open_authentication"
+filter = "aes256gcm_segments_fixed_vs_random_key_open"
+left_class = "16385-byte valid open across a fixed public partition, with a seam inside a block, under a fixed secret key"
+right_class = "the same segmented open with random secret key"
+samples = 20000
+smoke_samples = 2000
+
+[[dudect_case]]
+name = "chacha20poly1305_segments_fixed_vs_random_key_open"
+primitive = "aead.open_authentication"
+filter = "chacha20poly1305_segments_fixed_vs_random_key_open"
+left_class = "16385-byte valid open across a fixed public partition, with a seam inside a block, under a fixed secret key"
+right_class = "the same segmented open with random secret key"
+samples = 20000
+smoke_samples = 2000
+
+[[dudect_case]]
 name = "aes128gcm_record_gather_fixed_vs_random_key_seal"
 primitive = "aead.symmetric_transform"
 filter = "aes128gcm_record_gather_fixed_vs_random_key_seal"
@@ -2490,6 +2517,7 @@ dudect = [
   "aes128_gcm_diag_ghash_fixed_vs_random_h",
   "aes128_gcm_diag_tag_aes_fixed_vs_random_key",
   "aes128gcm_fixed_vs_random_key_open",
+  "aes128gcm_segments_fixed_vs_random_key_open",
 ]
 binsec = [
   "aead.open_authentication.aes_round_portable.all",
@@ -2504,6 +2532,7 @@ dudect = [
   "aes256_gcm_diag_ghash_fixed_vs_random_h",
   "aes256_gcm_diag_tag_aes_fixed_vs_random_key",
   "aes256gcm_fixed_vs_random_key_open",
+  "aes256gcm_segments_fixed_vs_random_key_open",
 ]
 binsec = [
   "aead.open_authentication.aes_round_portable.all",
@@ -2544,7 +2573,10 @@ binsec = [
 id = "aead.open_authentication.chacha20poly1305"
 primitive = "aead.open_authentication"
 variant = "ChaCha20Poly1305"
-dudect = ["ietf_chacha20poly1305_fixed_vs_random_key_open"]
+dudect = [
+  "ietf_chacha20poly1305_fixed_vs_random_key_open",
+  "chacha20poly1305_segments_fixed_vs_random_key_open",
+]
 binsec = ["aead.open_authentication.poly1305_block_portable.all"]
 
 [[evidence_unit]]

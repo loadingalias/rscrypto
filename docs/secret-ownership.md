@@ -119,6 +119,16 @@ plaintext buffer. The initialized-output and spare-capacity APIs return the same
 detached tag. The allocating append helper preserves existing output and extends its length only
 after checking that the returned initialized slice covers its complete reserved tail.
 
+Segmented decryption borrows the caller's segments exclusively and retains no key. Its
+operation-local `ZeroizingBytes` owner holds the one block that crosses a segment boundary, first
+as ciphertext and then as plaintext. A ChaCha20-Poly1305 message of at most 448 bytes that takes a
+whole-message kernel opens on a 448-byte `ZeroizingBytes` stage. Both owners clear on return or
+unwind. The native AArch64 and x86-64 Linux ChaCha20-Poly1305 opens retain at most 128 nonempty
+segments as public pointer/length pairs. The AArch64 open passes seam bytes between registers and the
+segments only. The x86-64 open runs a 512-byte region that crosses a seam on a frame stage, then
+copies it back to the segments and clears the stage before it returns. More segments continue
+through the segment driver.
+
 Native AES-GCM batches retain public input pointers, with no copied plaintext. Native
 little-endian AArch64 ChaCha20 gathers retain at most 128 nonempty input spans as public
 pointer/length pairs. Longer iterators continue through the stream-based gather fallback.

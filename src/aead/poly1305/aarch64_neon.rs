@@ -148,18 +148,6 @@ impl AeadPar4 {
   }
 }
 
-pub(super) fn authenticate_aead_par4(
-  aad: &[u8],
-  ciphertext: &[u8],
-  key: &[u8; 32],
-  lengths: AeadByteLengths,
-) -> [u8; 16] {
-  let mut authenticator = AeadPar4::new(key);
-  authenticator.update_padded_segment(aad);
-  authenticator.update_padded_segment(ciphertext);
-  authenticator.finalize(lengths)
-}
-
 /// Accumulates four consecutive full blocks into `state`.
 ///
 /// # Safety
