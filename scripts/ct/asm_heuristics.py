@@ -19,7 +19,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from linked_image import LinkedImage, load_linked_image
 from provenance import load_toml, sha256_file
-from symbolize_linked_binary import demangle_table
 
 # Arm Architecture Reference Manual (Arm ARM) C6.2: B.cond and BC.cond (FEAT_HBC) test the condition flags;
 # their AL and NV conditions branch always, so those forms are unconditional (DIRECT_TAIL_MNEMONICS).
@@ -711,15 +710,6 @@ def apply_waivers(findings: list[dict[str, Any]], configured: list[dict[str, Any
   ]
 
 
-def parse_symbol_addresses(artifact_dir: Path) -> dict[str, int]:
-  symbols: dict[str, int] = {}
-  for path in sorted([*artifact_dir.glob("*.o.symbols.txt"), *artifact_dir.glob("*.obj.symbols.txt")]):
-    for line in path.read_text(errors="replace").splitlines():
-      if match := re.match(r"^([0-9a-fA-F]+)\s+\S+\s+(_?ct_entry_[A-Za-z0-9_]+)\b", line.strip()):
-        symbols[normalize_symbol(match.group(2))] = int(match.group(1), 16)
-  return symbols
-
-
 def parse_asm_aliases(artifact_dir: Path) -> list[tuple[str, str]]:
   aliases: list[tuple[str, str]] = []
   alias_re = re.compile(r"^\s*(_?ct_entry_[A-Za-z0-9_]+)\s*=\s*(_?ct_entry_[A-Za-z0-9_]+)\s*$")
@@ -898,7 +888,7 @@ def closure_roots(
   return by_primitive
 
 
-def final_equality_closure(
+def linked_closure(
   roots: set[str], functions: dict[str, FunctionBody], artifact: Path, target: str | None = None,
 ) -> dict[str, Any]:
   call_graph = build_call_graph(functions)
@@ -2027,17 +2017,19 @@ def aarch64_reference_identities(
 def riscv_reference_identities(
   target: str, rows: list[DecodedLine], body: FunctionBody, image: LinkedImage, extents: dict[int, int],
 ) -> dict[int, str]:
+  def without_annotation(operands: str) -> str:
+    return re.sub(r"\s+<.*>$", "", operands)
+
   def base(row: DecodedLine) -> tuple[str, int] | None:
-    match = re.fullmatch(r"(\w+), 0x([0-9a-fA-F]+)", row.operands) if row.mnemonic == "auipc" else None
+    # A linked listing can annotate the high part with the symbol nearest to `pc + (imm << 12)`.
+    operands = without_annotation(row.operands)
+    match = re.fullmatch(r"(\w+), 0x([0-9a-fA-F]+)", operands) if row.mnemonic == "auipc" else None
     if match is None:
       return None
     immediate = int(match.group(2), 16) & 0xFFFFF
     if immediate & 0x80000:
       immediate -= 0x100000
     return match.group(1), row.address + (immediate << 12)
-
-  def without_annotation(operands: str) -> str:
-    return re.sub(r"\s+<.*>$", "", operands)
 
   def consumer(row: DecodedLine, register: str, high: int):
     operands = without_annotation(row.operands)
@@ -3098,51 +3090,35 @@ def main() -> int:
     for error in waiver_errors:
       print(error)
     return 2
-  functions: dict[str, FunctionBody] = {}
   findings: list[dict[str, Any]] = []
-  disassembly_files = sorted([*args.artifact_dir.glob("*.o.disasm.txt"), *args.artifact_dir.glob("*.obj.disasm.txt")])
   final_disassembly_files = sorted(args.artifact_dir.glob("*.binary.disasm.txt"))
   if len(final_disassembly_files) != 1:
     print(f"expected exactly one final binary disassembly, found {len(final_disassembly_files)}")
     return 2
-  disassembly_files.extend(final_disassembly_files)
-  symbol_addresses = parse_symbol_addresses(args.artifact_dir)
-  symbol_names = demangle_table(args.artifact_dir)
-  aliases = parse_asm_aliases(args.artifact_dir)
+  final_path = final_disassembly_files[0]
+  # The linked binary is the only scanned listing. It holds one body for each root, with resolved calls; a
+  # pre-link object holds a second, thinner body whose calls leave the object.
+  functions, _ = parse_disassembly(final_path)
+  apply_alias_bodies(functions, parse_asm_aliases(args.artifact_dir))
 
-  for path in disassembly_files:
-    by_label, by_address = parse_disassembly(path, symbol_names)
-    functions.update(by_label)
-    for symbol in sorted(symbols):
-      if symbol in functions:
-        continue
-      address = symbol_addresses.get(symbol)
-      bodies = by_address.get(address, []) if address is not None else []
-      if len(bodies) == 1:
-        functions[symbol] = bodies[0]
-    apply_alias_bodies(functions, aliases)
-
-  final_functions, _ = parse_disassembly(final_disassembly_files[0])
-  final_equality = final_equality_closure(equality_roots, final_functions, final_disassembly_files[0], args.target)
-  if final_equality["missing_root_symbols"] or final_equality["unresolved_internal_calls"]:
-    for symbol in final_equality["missing_root_symbols"]:
-      print(f"final equality binary is missing root {symbol}")
-    for call in final_equality["unresolved_internal_calls"]:
-      print(f"final equality closure cannot resolve {call['caller']} -> {call['target']}")
+  ct_roots = {symbol for roots in ct_roots_by_primitive.values() for symbol in roots}
+  linked = linked_closure(ct_roots | equality_roots, functions, final_path, args.target)
+  if linked["missing_root_symbols"] or linked["unresolved_internal_calls"]:
+    for symbol in linked["missing_root_symbols"]:
+      print(f"linked CT binary is missing root {symbol}")
+    for call in linked["unresolved_internal_calls"]:
+      print(f"linked CT closure cannot resolve {call['caller']} -> {call['target']}")
     return 2
+  final_equality = linked_closure(equality_roots, functions, final_path, args.target)
 
   enforced_roots = {
     symbol for primitive in select_branch_enforced_primitives(root)
     for symbol in ct_roots_by_primitive.get(primitive, set())
   }
-  final_enforced = final_equality_closure(enforced_roots, final_functions, final_disassembly_files[0], args.target)
+  final_enforced = linked_closure(enforced_roots, functions, final_path, args.target)
   final_enforced["unreachable_symbols"] = enforced_unreachable_symbols(root)
-  unreachable_errors = unreachable_symbol_errors(enforced_roots, final_enforced["unreachable_symbols"], final_functions)
-  if final_enforced["missing_root_symbols"] or final_enforced["unresolved_internal_calls"] or unreachable_errors:
-    for symbol in final_enforced["missing_root_symbols"]:
-      print(f"enforced CT closure is missing linked root {symbol}")
-    for call in final_enforced["unresolved_internal_calls"]:
-      print(f"enforced CT closure cannot resolve {call['caller']} -> {call['target']}")
+  unreachable_errors = unreachable_symbol_errors(enforced_roots, final_enforced["unreachable_symbols"], functions)
+  if unreachable_errors:
     for error in unreachable_errors:
       print(error)
     return 2
@@ -3156,11 +3132,9 @@ def main() -> int:
   if image is None:
     print("cannot read the linked binary for placement-independent instruction identities")
     return 2
-  prepare_linked_image(args.target, final_functions, image)
-  final_path = final_disassembly_files[0]
+  prepare_linked_image(args.target, functions, image)
 
-  call_graph = build_call_graph(functions)
-  closures = closure_roots(ct_roots_by_primitive, call_graph)
+  closures = closure_roots(ct_roots_by_primitive, build_call_graph(functions))
   closure_symbols = {symbol for roots in closures.values() for symbols_for_root in roots.values() for symbol in symbols_for_root}
   root_symbols_by_symbol: dict[str, set[str]] = {}
   primitive_ids_by_symbol: dict[str, set[str]] = {symbol: set(ids) for symbol, ids in symbol_primitives.items()}
@@ -3171,16 +3145,11 @@ def main() -> int:
         primitive_ids_by_symbol.setdefault(symbol, set()).add(primitive_id)
 
   local_symbols = set(functions)
-  enforced_symbols = {
-    symbol for primitive in select_branch_enforced_primitives(root)
-    for reachable in closures.get(primitive, {}).values() for symbol in reachable
-  }
   closed_world = closed_world_errors(
     args.target,
-    {symbol: functions[symbol] for symbol in symbols | closure_symbols if symbol in functions}
-    | {symbol: final_functions[symbol] for symbol in final_equality["reachable_symbols"]}
-    | {symbol: final_functions[symbol] for symbol in final_enforced["reachable_symbols"]},
-    {symbol: functions[symbol] for symbol in enforced_symbols if symbol in functions},
+    {symbol: functions[symbol] for symbol in symbols | closure_symbols | set(final_equality["reachable_symbols"])
+     if symbol in functions},
+    {symbol: functions[symbol] for symbol in final_enforced["reachable_symbols"]},
     local_symbols, image, final_path,
   )
   if closed_world:
@@ -3201,7 +3170,7 @@ def main() -> int:
         scope=scope,
         primitive_ids=sorted(primitive_ids_by_symbol.get(symbol, [])),
         roots=sorted(root_symbols_by_symbol.get(symbol, [])),
-        image=image if body.path == final_path else None,
+        image=image,
       )
     )
 
@@ -3241,7 +3210,7 @@ def main() -> int:
     if item.get("operand_class") not in {"public", "secret", "unproven"}
     or item.get("disposition") not in {"accepted", "needs-fix", "needs-binsec"}
   ]
-  final_artifact = final_disassembly_files[0].name
+  final_artifact = final_path.name
   final_reachable = set(final_equality["reachable_symbols"])
   final_equality["terminal_call_sites"] = [
     {
@@ -3265,7 +3234,7 @@ def main() -> int:
     "profile": args.profile,
     "scan_scope": {
       "entry_symbols": "all manifest ct_entry_* symbols",
-      "call_closure": "direct local call closure for ct-intended primitive harness roots",
+      "call_closure": "linked-binary call closure of every ct-intended primitive harness root",
       "non_ct_intended_primitives": "entry-symbol scan only",
     },
     "policy": {
@@ -3285,13 +3254,7 @@ def main() -> int:
         "variable_latency_multiply_review",
       ],
     },
-    "disassembly_files": [
-      {
-        "path": f"artifacts/{path.name}",
-        "sha256": sha256_file(path),
-      }
-      for path in disassembly_files
-    ],
+    "disassembly_files": [{"path": f"artifacts/{final_path.name}", "sha256": sha256_file(final_path)}],
     "symbol_summary": summarize(symbols, functions, findings),
     "ct_intended_call_closure": {
       "primitive_summary": summarize_closure(closures, functions, findings),

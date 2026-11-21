@@ -626,18 +626,22 @@ def validate_manifest(root: Path, selected_target: str, errors: list[str], warni
     claimed = {primitive.get("id") for primitive in ct.get("primitive", []) if primitive.get("claim") == "ct-intended"}
     for primitive_id in sorted(set(enforced) - claimed):
       fail(errors, f"asm_select_branch enforces {primitive_id}, which is not a ct-intended primitive")
-    retained = {
-      symbol for block in re.findall(r"retain!\((.*?)\n  \);", evidence_main.read_text(), re.DOTALL)
-      for symbol in re.findall(r"\bct_entry_[A-Za-z0-9_]+\b", block)
-    }
     enforced_roots = {
       symbol for primitive_id in enforced
       for symbol in primitive_by_id.get(primitive_id, {}).get("harness", {}).get("symbols", [])
     }
-    for symbol in sorted(enforced_roots - retained):
-      fail(errors, f"enforced CT root {symbol} is not retained in the linked harness")
     for symbol in sorted(enforced_roots.intersection(unreachable)):
       fail(errors, f"enforced CT root {symbol} cannot also be unreachable from the enforced roots")
+  # The asm scan reads only the linked binary, so the evidence binary must retain every manifest root.
+  retained = {
+    symbol for block in re.findall(r"retain!\((.*?)\n  \);", evidence_main.read_text(), re.DOTALL)
+    for symbol in re.findall(r"\bct_entry_[A-Za-z0-9_]+\b", block)
+  }
+  manifest_roots = {
+    symbol for primitive in ct.get("primitive", []) for symbol in primitive.get("harness", {}).get("symbols", [])
+  } | {symbol for harness in ct.get("harness", []) for symbol in harness.get("symbols", [])}
+  for symbol in sorted(manifest_roots - retained):
+    fail(errors, f"CT root {symbol} is not retained in the linked harness")
 
   for policy in (dudect_confirmation_policy, dudect_min_median_ticks):
     try:

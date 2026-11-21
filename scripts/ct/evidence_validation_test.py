@@ -586,6 +586,10 @@ def main() -> None:
       lambda manifest: manifest["asm_select_branch"]["unreachable_symbols"].append("ct_entry_rsa_pss_sign_fixed_blinding")
     )
   )
+  # The scan reads only the linked binary, so a root that the linker drops has no body to scan.
+  assert "CT root ct_entry_not_retained is not retained in the linked harness" in manifest_errors(
+    lambda manifest: manifest["primitive"][0]["harness"]["symbols"].append("ct_entry_not_retained")
+  )
 
   def public_operand_unknown_target(manifest) -> None:
     manifest["asm_public_operand"][0]["targets"] = ["unknown-target"]

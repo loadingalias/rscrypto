@@ -21,7 +21,7 @@ from asm_heuristics import (
   control_errors,
   direct_callees,
   effect_errors,
-  final_equality_closure,
+  linked_closure,
   is_call_relocation,
   is_conditional_branch,
   is_riscv_conditional_branch,
@@ -720,6 +720,7 @@ def placement_regressions() -> None:
   merge_table_regressions()
   riscv_live_high_part_regression()
   riscv_zero_low_part_regression()
+  riscv_annotated_jump_table_regression()
 
 
 POWER = "powerpc64le-unknown-linux-gnu"
@@ -1239,6 +1240,40 @@ def riscv_zero_low_part_regression() -> None:
   assert "mv" not in "\n".join(instruction_identities(target, body, {body.symbol}, image).values())
 
 
+def riscv_annotated_jump_table_regression() -> None:
+  """A linked `auipc` that llvm-objdump annotates with a nearby symbol still forms its table address.
+
+  `HkdfSha256::extract` in the RISC-V linked evidence binary (d9776202): the `match padded` of `HmacSha256::mac_into`
+  jumps through `.LJTI453_0` on the block count (s1 + 0x88) >> 6. Without the annotation the pair resolves, so the
+  annotation must not change the identity or turn the table jump into an unknown indirect jump.
+  """
+  target = "riscv64gc-unknown-linux-gnu"
+
+  def build(text: int, table: int, annotation: str):
+    high = table - (text + 8)
+    low = high & 0xFFF
+    return linked_fixture(text, [
+      f"{text:x}: 08848513\taddi\ta0, s1, 0x88",
+      f"{text + 4:x}: 8119    \tsrli\ta0, a0, 0x6",
+      f"{text + 8:x}: 00000597\tauipc\ta1, 0x{(high >> 12) & 0xFFFFF:x}{annotation}",
+      f"{text + 0xc:x}: 050a    \tslli\ta0, a0, 0x2",
+      f"{text + 0xe:x}: 00058593\taddi\ta1, a1, 0x{low:x}",
+      f"{text + 0x12:x}: 952e    \tadd\ta0, a0, a1",
+      f"{text + 0x14:x}: ff852503\tlw\ta0, -0x8(a0)",
+      f"{text + 0x18:x}: 952e    \tadd\ta0, a0, a1",
+      f"{text + 0x1a:x}: 8502    \tjr\ta0",
+    ], {table: bytes(0x14)}, units=[(table, table + 0x14, None)])
+
+  plain = build(0x10000, 0x30170, "")
+  annotated = build(0x50000, 0x91170, " <<rscrypto::aead::ascon128::AsconAead128>::finalize+0x753>")
+  assert fixture_hash(target, plain) == fixture_hash(target, annotated)
+  body, image = annotated
+  [found] = [row for row in scan_symbol(target, body.symbol, body, {body.symbol}, scope="entry",
+                                        primitive_ids=["kdf.hkdf"], roots=[body.symbol], image=image)
+             if row["kind"] in {"conditional_branch", "indirect_jump"}]
+  assert found["kind"] == "conditional_branch", found
+
+
 def main() -> None:
   relocation = "0000000000000060:  R_RISCV_CALL_PLT\trscrypto::auth::ecdsa::sign_digest_p256_blinded"
   assert is_call_relocation(relocation)
@@ -1384,7 +1419,7 @@ def main() -> None:
       "4: d65f03c0\tret\n"
     )
     functions, _ = parse_disassembly(artifact)
-    unresolved = final_equality_closure({"ct_entry_p256_ecdh_agree"}, functions, artifact)
+    unresolved = linked_closure({"ct_entry_p256_ecdh_agree"}, functions, artifact)
     assert unresolved["unresolved_internal_calls"] == [{"caller": "ct_entry_p256_ecdh_agree", "target": ".text"}]
     for section in (".text", ".plt", ".glink"):
       artifact.write_text(
@@ -1393,7 +1428,7 @@ def main() -> None:
         "4: 20 00 80 4e\tblr\n"
       )
       functions, _ = parse_disassembly(artifact)
-      unresolved = final_equality_closure({"ct_entry_p256_ecdh_agree"}, functions, artifact, "powerpc64le-unknown-linux-gnu")
+      unresolved = linked_closure({"ct_entry_p256_ecdh_agree"}, functions, artifact, "powerpc64le-unknown-linux-gnu")
       assert unresolved["unresolved_internal_calls"] == [{"caller": "ct_entry_p256_ecdh_agree", "target": section}]
 
     # Missing Linux ELF GOT evidence must not quietly shrink the linked closure.
@@ -1406,17 +1441,17 @@ def main() -> None:
           f"fcc20: ff {opcode} 2a 85 06 00\t{transfer}{annotation}\n"
         )
         functions, _ = parse_disassembly(artifact)
-        result = final_equality_closure({"ct_entry_p256_ecdh_agree"}, functions, artifact, "x86_64-unknown-linux-gnu")
+        result = linked_closure({"ct_entry_p256_ecdh_agree"}, functions, artifact, "x86_64-unknown-linux-gnu")
         assert len(result["unresolved_internal_calls"]) == unresolved_count
-        result = final_equality_closure({"ct_entry_p256_ecdh_agree"}, functions, artifact, "x86_64-pc-windows-msvc")
+        result = linked_closure({"ct_entry_p256_ecdh_agree"}, functions, artifact, "x86_64-pc-windows-msvc")
         assert result["unresolved_internal_calls"] == []
       artifact.write_text(artifact.read_text().replace("# ", "# GOT "))
       functions, _ = parse_disassembly(artifact)
-      result = final_equality_closure({"ct_entry_p256_ecdh_agree"}, functions, artifact, "x86_64-unknown-linux-gnu")
+      result = linked_closure({"ct_entry_p256_ecdh_agree"}, functions, artifact, "x86_64-unknown-linux-gnu")
       assert result["unresolved_internal_calls"] == []
     artifact.write_text("000fcc20 <ct_entry_p256_ecdh_agree>:\nfcc20: ff d0\tcallq *%rax\n")
     functions, _ = parse_disassembly(artifact)
-    assert final_equality_closure({"ct_entry_p256_ecdh_agree"}, functions, artifact, "x86_64-unknown-linux-gnu")["unresolved_internal_calls"] == []
+    assert linked_closure({"ct_entry_p256_ecdh_agree"}, functions, artifact, "x86_64-unknown-linux-gnu")["unresolved_internal_calls"] == []
 
   # Key import must stay outside the linked enforced closure. A reached symbol
   # reports its call path; an absent symbol cannot satisfy the check.

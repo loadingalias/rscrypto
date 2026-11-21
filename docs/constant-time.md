@@ -45,6 +45,8 @@ LLVM can also turn a masked selection back into a branch on the mask.
 The binary inspection reports a conditional branch whose two paths rejoin after straight-line code
 as `select_branch`, the shape of that lowering.
 For the primitives under `[asm_select_branch]` in `ct.toml`, an unclassified `select_branch` fails the gate.
+The scanner reads only the linked evidence binary, which retains every manifest root.
+Each closure follows direct calls and tail transfers there, and a call that it cannot resolve stops the scanner.
 The inspection classifies each control transfer by the forms that its ISA manual defines.
 Every conditional transfer is a conditional branch: also a POWER conditional return (`bclr`, `beqlr`),
 a jump through CTR (`bcctr`), a conditional trap (POWER `tweq`, IBM Z `cgrte`), and x86 `xbegin`.
