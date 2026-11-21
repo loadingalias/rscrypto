@@ -1560,6 +1560,9 @@ RISC-V generator-table loads stay unconditional under LLVM optimization.
 On RISC-V and IBM Z, the Fiat P-384 field multiply and square keep their final reduction mask opaque.
 Without that barrier, RISC-V LLVM branched on the secret reduction borrow in each field operation.
 CT 44887249434 at `e4b2e395` then failed `ecdsa_p384_default_public_key_fixed_vs_random_secret` on RISC-V (t = −11.5).
+On RISC-V and IBM Z, the safegcd order inversion also keeps its selection mask opaque.
+Without that barrier, RISC-V LLVM branched on the sign of the final `f` when it chose the P-256 and P-384 inverse.
+The complete linked-binary closure found that branch; DudeCT did not, because it skips a few cycles once per inversion.
 These changes keep signature behavior the same.
 They do not establish a timing claim for a release or a downstream build by themselves.
 

@@ -233,9 +233,10 @@ fn divstep(state: &mut DivstepState, modulus: &[u32; MAX_DIGITS], digits: usize)
 #[inline(always)]
 fn selection_mask(choice: u32) -> u32 {
   let mask = 0u32.wrapping_sub(choice & 1);
-  #[cfg(target_arch = "s390x")]
-  // SECURITY: Keep the divstep choices opaque. IBM Z codegen otherwise
-  // replaces digit selection with secret-dependent branches and addresses.
+  #[cfg(any(target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x"))]
+  // SECURITY: Keep the divstep choices opaque. RISC-V codegen otherwise branches on the
+  // sign of the final `f`, and IBM Z codegen replaces digit selection with secret-dependent
+  // branches and addresses.
   let mask = core::hint::black_box(mask);
   mask
 }
