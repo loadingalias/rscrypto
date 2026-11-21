@@ -1798,6 +1798,9 @@ Lrscrypto_edwards25519_scalarmulbase_midloop:
         popq %rbx ; .cfi_adjust_cfa_offset -8 ; .cfi_restore %rbx
         retq ; .cfi_endproc
 .size rscrypto_edwards25519_scalarmulbase, .-rscrypto_edwards25519_scalarmulbase
+        .section .rodata.rscrypto_edwards25519_scalarmulbase, "a", %progbits
+// The tables are read-only data: in .text, a disassembler would read them as instructions.
+        .p2align 3
 Lrscrypto_edwards25519_scalarmulbase_0g:
         .quad 0x0000000000000000
         .quad 0x0000000000000000

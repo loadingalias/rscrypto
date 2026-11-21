@@ -3242,7 +3242,12 @@ Lcurve25519_x25519base_midloop:
         retq ; .cfi_endproc
 .if {elf}
 .size rscrypto_curve25519_x25519base, .-rscrypto_curve25519_x25519base
+        .section .rodata.rscrypto_curve25519_x25519base, "a", %progbits
+.else
+        .section .rdata, "dr"
 .endif
+// The tables are read-only data: in .text, a disassembler would read them as instructions.
+        .p2align 3
 Lcurve25519_x25519base_edwards25519_0g:
         .quad 0x251037f7cf4e861d
         .quad 0x10ede0fb19fb128f
@@ -12557,7 +12562,12 @@ Lcurve25519_x25519base_alt_midloop:
         retq ; .cfi_endproc
 .if {elf}
 .size rscrypto_curve25519_x25519base_alt, .-rscrypto_curve25519_x25519base_alt
+        .section .rodata.rscrypto_curve25519_x25519base_alt, "a", %progbits
+.else
+        .section .rdata, "dr"
 .endif
+// The tables are read-only data: in .text, a disassembler would read them as instructions.
+        .p2align 3
 Lcurve25519_x25519base_alt_edwards25519_0g:
         .quad 0x251037f7cf4e861d
         .quad 0x10ede0fb19fb128f
