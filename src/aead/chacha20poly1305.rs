@@ -962,6 +962,49 @@ fn xor_message_range(key: &ChaCha20Poly1305Key, nonce: &Nonce96, counter: u64, d
     .expect("the validated message length bounds every block counter");
 }
 
+/// The segmented open over the Poly1305 state of its message: each range is
+/// authenticated, then decrypted in place. Returns whether the tag matched.
+struct OpenSegments<'a, 'b> {
+  key: &'a ChaCha20Poly1305Key,
+  nonce: &'a Nonce96,
+  segments: &'a mut [&'b mut [u8]],
+  len: usize,
+  tag: &'a ChaCha20Poly1305Tag,
+}
+
+impl poly1305::WithAeadMac for OpenSegments<'_, '_> {
+  type Output = bool;
+
+  fn run<K: poly1305::AeadKernel>(self, mac: poly1305::AeadMac<'_, K>) -> bool {
+    let Self {
+      key,
+      nonce,
+      segments,
+      len,
+      tag,
+    } = self;
+    // The block counter starts at 1; block 0 gave the Poly1305 key.
+    super::segments::open::<{ chacha20::BLOCK_SIZE }, _>(
+      segments,
+      len,
+      (mac, 1u64),
+      |(mac, counter), data| {
+        mac.update(data);
+        xor_message_range(key, nonce, *counter, data);
+        *counter = counter.strict_add(data.len().strict_div(chacha20::BLOCK_SIZE) as u64);
+      },
+      |(mut mac, counter), rest| {
+        mac.update(rest);
+        let matched = ct::fixed_eq(&mac.finish(), tag.as_bytes()).declassify();
+        if matched {
+          xor_message_range(key, nonce, counter, rest);
+        }
+        matched
+      },
+    )
+  }
+}
+
 impl ChaCha20Poly1305 {
   /// Whether `decrypt_in_place` opens a `len`-byte message of at most
   /// [`STAGED_OPEN_MAX`] bytes with a whole-message kernel that cannot run per
@@ -1021,34 +1064,23 @@ impl ChaCha20Poly1305 {
     tag: &ChaCha20Poly1305Tag,
   ) -> bool {
     let mut poly_key = chacha20::poly1305_key_gen(self.key.as_bytes(), nonce.as_bytes());
-    #[cfg(all(target_arch = "x86_64", target_feature = "sse2", not(feature = "portable-only")))]
-    let mac = if Self::x86_64_avx512_available() {
-      x86_64_avx512::mac(&poly_key, aad, len)
-    } else {
-      poly1305::AeadMac::new(AeadPrimitive::ChaCha20Poly1305, &poly_key, aad, len)
-    };
-    #[cfg(not(all(target_arch = "x86_64", target_feature = "sse2", not(feature = "portable-only"))))]
-    let mac = poly1305::AeadMac::new(AeadPrimitive::ChaCha20Poly1305, &poly_key, aad, len);
-    ct::zeroize(&mut poly_key);
-    // The block counter starts at 1; block 0 gave the Poly1305 key.
-    super::segments::open::<{ chacha20::BLOCK_SIZE }, _>(
+    let open = OpenSegments {
+      key: &self.key,
+      nonce,
       segments,
       len,
-      (mac, 1u64),
-      |(mac, counter), data| {
-        mac.update(data);
-        xor_message_range(&self.key, nonce, *counter, data);
-        *counter = counter.strict_add(data.len().strict_div(chacha20::BLOCK_SIZE) as u64);
-      },
-      |(mut mac, counter), rest| {
-        mac.update(rest);
-        let matched = ct::fixed_eq(&mac.finish(), tag.as_bytes()).declassify();
-        if matched {
-          xor_message_range(&self.key, nonce, counter, rest);
-        }
-        matched
-      },
-    )
+      tag,
+    };
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2", not(feature = "portable-only")))]
+    let matched = if Self::x86_64_avx512_available() {
+      x86_64_avx512::with_mac(&poly_key, aad, len, open)
+    } else {
+      poly1305::with_aead_mac(AeadPrimitive::ChaCha20Poly1305, &poly_key, aad, len, open)
+    };
+    #[cfg(not(all(target_arch = "x86_64", target_feature = "sse2", not(feature = "portable-only"))))]
+    let matched = poly1305::with_aead_mac(AeadPrimitive::ChaCha20Poly1305, &poly_key, aad, len, open);
+    ct::zeroize(&mut poly_key);
+    matched
   }
 
   fn __seal_gather_fallback<'input, 'output>(

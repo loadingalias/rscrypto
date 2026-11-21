@@ -36,20 +36,18 @@ const ONE_PASS_STACK_SCRUB_WORDS: usize = 40;
 /// RFC 8439 Poly1305 over `aad` and `ciphertext` with the one-time `poly_key`.
 #[inline]
 fn tag(poly_key: &[u8; 32], aad: &[u8], ciphertext: &[u8]) -> [u8; 16] {
-  let mut mac = mac(poly_key, aad, ciphertext.len());
-  mac.update(ciphertext);
-  mac.finish()
+  with_mac(poly_key, aad, ciphertext.len(), poly1305::OneShot(ciphertext))
 }
 
-/// The Poly1305 state of a message with `aad` and `len` ciphertext bytes under
-/// the one-time `poly_key`: the vector kernels from [`VECTOR_POLY_MIN`] bytes
-/// of ciphertext on, and the scalar chains below.
+/// Run `work` over the Poly1305 state of a message with `aad` and `len`
+/// ciphertext bytes under the one-time `poly_key`: the vector kernels from
+/// [`VECTOR_POLY_MIN`] bytes of ciphertext on, and the scalar chains below.
 #[inline]
-pub(super) fn mac(poly_key: &[u8; 32], aad: &[u8], len: usize) -> poly1305::AeadMac {
+pub(super) fn with_mac<W: poly1305::WithAeadMac>(poly_key: &[u8; 32], aad: &[u8], len: usize, work: W) -> W::Output {
   if len >= VECTOR_POLY_MIN {
-    poly1305::AeadMac::new(AeadPrimitive::ChaCha20Poly1305, poly_key, aad, len)
+    poly1305::with_aead_mac(AeadPrimitive::ChaCha20Poly1305, poly_key, aad, len, work)
   } else {
-    poly1305::AeadMac::scalar(poly_key, aad, len)
+    poly1305::with_scalar_aead_mac(poly_key, aad, len, work)
   }
 }
 

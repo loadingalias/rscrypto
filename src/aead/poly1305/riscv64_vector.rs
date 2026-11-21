@@ -90,9 +90,18 @@ impl Aead {
   }
 
   /// Absorb the length block and return the tag.
-  pub(super) fn finish(mut self, lengths: AeadByteLengths) -> [u8; 16] {
+  pub(super) fn finish(&mut self, lengths: AeadByteLengths) -> [u8; 16] {
+    // SAFETY: the caller selected this state only after it verified the RISC-V V extension.
+    unsafe { self.finish_rvv(lengths) }
+  }
+
+  /// # Safety
+  ///
+  /// The executing CPU must support the RISC-V V extension.
+  #[target_feature(enable = "v")]
+  unsafe fn finish_rvv(&mut self, lengths: AeadByteLengths) -> [u8; 16] {
     // SAFETY: RVV cached-block push because:
-    // 1. The caller selected this state only after it verified the RISC-V V extension.
+    // 1. This function is compiled with the RISC-V V target feature.
     // 2. The AEAD length encoding is exactly one full Poly1305 block.
     unsafe {
       push_cached(
@@ -108,7 +117,7 @@ impl Aead {
       self.state.compute_block_portable(block, false);
     }
 
-    let tag = self.state.clone().finalize();
+    let tag = self.state.tag();
     ct::zeroize(self.cached.as_flattened_mut());
     tag
   }

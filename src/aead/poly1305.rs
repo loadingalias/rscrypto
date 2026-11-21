@@ -197,165 +197,244 @@ impl BlockKernel {
   }
 }
 
-/// RFC 8439 Poly1305 over one AEAD message: the zero-padded AAD, then the
-/// zero-padded text in ordered ranges, then the length block.
+/// The Poly1305 state of one AEAD message under one kernel. It absorbs the
+/// zero-padded AAD, then the zero-padded text in ordered ranges, then the
+/// length block. Every range but the last of the AAD or the text holds whole
+/// 16-byte blocks.
+pub(crate) trait AeadKernel {
+  /// Absorb the next range and zero-pad its final partial block.
+  fn update(&mut self, range: &[u8]);
+
+  /// Absorb the length block and return the tag. The state is then spent, and
+  /// its owner clears it on drop.
+  fn finish(&mut self, lengths: super::AeadByteLengths) -> [u8; 16];
+}
+
+/// RFC 8439 Poly1305 over one AEAD message, after its AAD.
 ///
-/// Every text range but the last must hold whole 16-byte blocks. The kernel
-/// is chosen once for the message's lengths, so a message fed in ranges takes
-/// the kernel that [`authenticate_aead`] takes for it.
-pub(crate) struct AeadMac {
-  mac: Mac,
+/// It borrows the kernel state from the frame that selected the kernel. So
+/// the state exists once, in that frame, and no call moves or copies it.
+pub(crate) struct AeadMac<'a, K> {
+  kernel: &'a mut K,
   lengths: super::AeadByteLengths,
 }
 
-#[cfg_attr(
-  all(target_arch = "x86_64", target_feature = "sse2"),
-  expect(
-    clippy::large_enum_variant,
-    reason = "one message's kernel state lives on the caller's stack, and no_std cannot box it"
-  )
-)]
-enum Mac {
-  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
-  Ifma(avx512_ifma::Aead),
-  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
-  Avx2(avx2_par4::Aead),
-  #[cfg(all(
-    feature = "chacha20poly1305",
-    target_arch = "x86_64",
-    target_feature = "sse2",
-    not(feature = "portable-only")
-  ))]
-  Scalar(crate::backend::poly1305::Scalar64),
-  #[cfg(target_arch = "aarch64")]
-  Neon(aarch64_neon::AeadPar4),
-  #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
-  Rvv(riscv64_vector::Aead),
-  Blocks(State, BlockKernel),
-}
-
-impl AeadMac {
-  /// Begin a message of `aad` and `text_len` text bytes under the one-time `key`, and absorb `aad`.
-  #[inline]
-  pub(crate) fn new(primitive: AeadPrimitive, key: &[u8; 32], aad: &[u8], text_len: usize) -> Self {
-    let lengths = super::AeadByteLengths::from_usize(aad.len(), text_len);
-    let begin = |mac| Self { mac, lengths };
-    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
-    {
-      use crate::platform::caps::x86;
-      // The eight-lane IFMA kernel takes text of at least `AVX512_IFMA_MIN_TEXT` bytes, two
-      // 128-byte groups; shorter text keeps the four-lane kernel, whose setup is cheaper.
-      if text_len >= AVX512_IFMA_MIN_TEXT && current_caps().has(x86::AVX512F.union(x86::AVX512IFMA)) {
-        return begin(Mac::Ifma(avx512_ifma::Aead::new(key, aad)));
-      }
-      if lengths.total_at_least(64) && current_caps().has(x86::AVX2) {
-        // SAFETY: this branch verifies AVX2 before selecting the x86-64 parallel kernel.
-        let avx2 = unsafe {
-          let mut avx2 = avx2_par4::Aead::new(key);
-          avx2.update_padded(aad);
-          avx2
-        };
-        return begin(Mac::Avx2(avx2));
-      }
-    }
-    #[cfg(target_arch = "aarch64")]
-    {
-      use crate::platform::caps::aarch64;
-      if lengths.total_at_least(64) && current_caps().has(aarch64::NEON) {
-        let mut neon = aarch64_neon::AeadPar4::new(key);
-        neon.update_padded_segment(aad);
-        return begin(Mac::Neon(neon));
-      }
-    }
-    #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
-    {
-      use crate::platform::caps::riscv;
-      if lengths.total_at_least(RISCV64_PAR4_MIN) && current_caps().has(riscv::V) {
-        let mut rvv = riscv64_vector::Aead::new(key);
-        rvv.update_padded(aad);
-        return begin(Mac::Rvv(rvv));
-      }
-    }
-    let kernel = BlockKernel::select(primitive);
-    let mut state = State::new(key);
-    kernel.update(&mut state, aad);
-    begin(Mac::Blocks(state, kernel))
-  }
-
-  /// Begin a message of `aad` and `text_len` text bytes under the one-time
-  /// `key` on the scalar 64-bit chains, and absorb `aad`.
-  #[cfg(all(
-    feature = "chacha20poly1305",
-    target_arch = "x86_64",
-    target_feature = "sse2",
-    not(feature = "portable-only")
-  ))]
-  #[inline]
-  pub(crate) fn scalar(key: &[u8; 32], aad: &[u8], text_len: usize) -> Self {
-    let mut state = crate::backend::poly1305::Scalar64::new(key);
-    state.update_padded::<true>(aad);
-    Self {
-      mac: Mac::Scalar(state),
-      lengths: super::AeadByteLengths::from_usize(aad.len(), text_len),
-    }
-  }
-
+impl<K: AeadKernel> AeadMac<'_, K> {
   /// Absorb the next text range and zero-pad its final partial block.
   #[inline]
   pub(crate) fn update(&mut self, text: &[u8]) {
-    match &mut self.mac {
-      #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
-      // SAFETY: `new` selected this kernel only after it verified AVX-512F and AVX-512 IFMA.
-      Mac::Ifma(mac) => unsafe { mac.update(text) },
-      #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
-      // SAFETY: `new` selected this kernel only after it verified AVX2.
-      Mac::Avx2(mac) => unsafe { mac.update_padded(text) },
-      #[cfg(all(
-        feature = "chacha20poly1305",
-        target_arch = "x86_64",
-        target_feature = "sse2",
-        not(feature = "portable-only")
-      ))]
-      Mac::Scalar(state) => state.update_padded::<true>(text),
-      #[cfg(target_arch = "aarch64")]
-      Mac::Neon(mac) => mac.update_padded_segment(text),
-      #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
-      Mac::Rvv(mac) => mac.update_padded(text),
-      Mac::Blocks(state, kernel) => kernel.update(state, text),
-    }
+    self.kernel.update(text);
   }
 
   /// Absorb the length block and return the tag.
   #[inline]
   pub(crate) fn finish(self) -> [u8; 16] {
-    let lengths = self.lengths;
-    match self.mac {
-      #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
-      Mac::Ifma(mac) => mac.finish(lengths),
-      #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
-      // SAFETY: `new` selected this kernel only after it verified AVX2.
-      Mac::Avx2(mac) => unsafe { mac.finish(lengths) },
-      #[cfg(all(
-        feature = "chacha20poly1305",
-        target_arch = "x86_64",
-        target_feature = "sse2",
-        not(feature = "portable-only")
-      ))]
-      Mac::Scalar(mut state) => {
-        state.absorb_blocks(&[lengths.to_le_bytes_block()]);
-        state.tag()
-      }
-      #[cfg(target_arch = "aarch64")]
-      Mac::Neon(mac) => mac.finalize(lengths),
-      #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
-      Mac::Rvv(mac) => mac.finish(lengths),
-      Mac::Blocks(mut state, kernel) => {
-        let mut length_block = lengths.to_le_bytes_block();
-        kernel.update(&mut state, &length_block);
-        ct::zeroize(&mut length_block);
-        state.finalize()
-      }
+    self.kernel.finish(self.lengths)
+  }
+}
+
+/// Work over the Poly1305 state of one AEAD message, for every kernel.
+pub(crate) trait WithAeadMac {
+  type Output;
+
+  fn run<K: AeadKernel>(self, mac: AeadMac<'_, K>) -> Self::Output;
+}
+
+/// Work that absorbs one whole text and returns its tag.
+pub(crate) struct OneShot<'a>(pub(crate) &'a [u8]);
+
+impl WithAeadMac for OneShot<'_> {
+  type Output = [u8; 16];
+
+  #[inline]
+  fn run<K: AeadKernel>(self, mut mac: AeadMac<'_, K>) -> [u8; 16] {
+    mac.update(self.0);
+    mac.finish()
+  }
+}
+
+/// Build a kernel state with `new` in this frame, absorb `aad`, and run `work` over it.
+///
+/// Out of line on purpose: each kernel's state then has its own frame, and the
+/// selecting frame holds none. Inlined, LLVM kept every kernel's state in one
+/// frame: 880 bytes for the RISC-V tag, against 1,024 bytes for the whole seal.
+#[inline(never)]
+fn run<K: AeadKernel, W: WithAeadMac>(
+  new: impl FnOnce() -> K,
+  aad: &[u8],
+  lengths: super::AeadByteLengths,
+  work: W,
+) -> W::Output {
+  let mut kernel = new();
+  kernel.update(aad);
+  work.run(AeadMac {
+    kernel: &mut kernel,
+    lengths,
+  })
+}
+
+/// Run `work` over the Poly1305 state of a message of `aad` and `text_len`
+/// text bytes under the one-time `key`, after its AAD.
+///
+/// The kernel is chosen once, for the lengths of the whole message, so a
+/// message fed in ranges takes the kernel of the same message fed at once.
+#[inline]
+pub(crate) fn with_aead_mac<W: WithAeadMac>(
+  primitive: AeadPrimitive,
+  key: &[u8; 32],
+  aad: &[u8],
+  text_len: usize,
+  work: W,
+) -> W::Output {
+  let lengths = super::AeadByteLengths::from_usize(aad.len(), text_len);
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+  {
+    use crate::platform::caps::x86;
+    // The eight-lane IFMA kernel takes text of at least `AVX512_IFMA_MIN_TEXT` bytes, two
+    // 128-byte groups; shorter text keeps the four-lane kernel, whose setup is cheaper.
+    if text_len >= AVX512_IFMA_MIN_TEXT && current_caps().has(x86::AVX512F.union(x86::AVX512IFMA)) {
+      return run(|| avx512_ifma::Aead::new(key), aad, lengths, work);
     }
+    if lengths.total_at_least(64) && current_caps().has(x86::AVX2) {
+      // SAFETY: this branch verifies AVX2 before it builds the x86-64 parallel kernel.
+      return run(|| unsafe { avx2_par4::Aead::new(key) }, aad, lengths, work);
+    }
+  }
+  #[cfg(target_arch = "aarch64")]
+  {
+    use crate::platform::caps::aarch64;
+    if lengths.total_at_least(64) && current_caps().has(aarch64::NEON) {
+      return run(|| aarch64_neon::AeadPar4::new(key), aad, lengths, work);
+    }
+  }
+  #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
+  {
+    use crate::platform::caps::riscv;
+    if lengths.total_at_least(RISCV64_PAR4_MIN) && current_caps().has(riscv::V) {
+      return run(|| riscv64_vector::Aead::new(key), aad, lengths, work);
+    }
+  }
+  let kernel = BlockKernel::select(primitive);
+  run(
+    || Blocks {
+      state: State::new(key),
+      kernel,
+    },
+    aad,
+    lengths,
+    work,
+  )
+}
+
+/// [`with_aead_mac`] on the scalar 64-bit chains.
+#[cfg(all(
+  feature = "chacha20poly1305",
+  target_arch = "x86_64",
+  target_feature = "sse2",
+  not(feature = "portable-only")
+))]
+#[inline]
+pub(crate) fn with_scalar_aead_mac<W: WithAeadMac>(key: &[u8; 32], aad: &[u8], text_len: usize, work: W) -> W::Output {
+  run(
+    || crate::backend::poly1305::Scalar64::new(key),
+    aad,
+    super::AeadByteLengths::from_usize(aad.len(), text_len),
+    work,
+  )
+}
+
+/// The portable state with the one-block kernel that `select_backend` chooses.
+struct Blocks {
+  state: State,
+  kernel: BlockKernel,
+}
+
+impl AeadKernel for Blocks {
+  #[inline]
+  fn update(&mut self, range: &[u8]) {
+    self.kernel.update(&mut self.state, range);
+  }
+
+  #[inline]
+  fn finish(&mut self, lengths: super::AeadByteLengths) -> [u8; 16] {
+    let mut length_block = lengths.to_le_bytes_block();
+    self.kernel.update(&mut self.state, &length_block);
+    ct::zeroize(&mut length_block);
+    self.state.tag()
+  }
+}
+
+#[cfg(all(
+  feature = "chacha20poly1305",
+  target_arch = "x86_64",
+  target_feature = "sse2",
+  not(feature = "portable-only")
+))]
+impl AeadKernel for crate::backend::poly1305::Scalar64 {
+  #[inline]
+  fn update(&mut self, range: &[u8]) {
+    self.update_padded::<true>(range);
+  }
+
+  #[inline]
+  fn finish(&mut self, lengths: super::AeadByteLengths) -> [u8; 16] {
+    self.absorb_blocks(&[lengths.to_le_bytes_block()]);
+    self.tag()
+  }
+}
+
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+impl AeadKernel for avx512_ifma::Aead {
+  #[inline]
+  fn update(&mut self, range: &[u8]) {
+    // SAFETY: `with_aead_mac` builds this kernel only after it verifies AVX-512F and AVX-512 IFMA.
+    unsafe { avx512_ifma::Aead::update(self, range) }
+  }
+
+  #[inline]
+  fn finish(&mut self, lengths: super::AeadByteLengths) -> [u8; 16] {
+    avx512_ifma::Aead::finish(self, lengths)
+  }
+}
+
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+impl AeadKernel for avx2_par4::Aead {
+  #[inline]
+  fn update(&mut self, range: &[u8]) {
+    // SAFETY: the constructor of this kernel requires AVX2, so the kernel exists only where AVX2 runs.
+    unsafe { self.update_padded(range) }
+  }
+
+  #[inline]
+  fn finish(&mut self, lengths: super::AeadByteLengths) -> [u8; 16] {
+    // SAFETY: as in `update`.
+    unsafe { avx2_par4::Aead::finish(self, lengths) }
+  }
+}
+
+#[cfg(target_arch = "aarch64")]
+impl AeadKernel for aarch64_neon::AeadPar4 {
+  #[inline]
+  fn update(&mut self, range: &[u8]) {
+    self.update_padded_segment(range);
+  }
+
+  #[inline]
+  fn finish(&mut self, lengths: super::AeadByteLengths) -> [u8; 16] {
+    self.finalize(lengths)
+  }
+}
+
+#[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
+impl AeadKernel for riscv64_vector::Aead {
+  #[inline]
+  fn update(&mut self, range: &[u8]) {
+    self.update_padded(range);
+  }
+
+  #[inline]
+  fn finish(&mut self, lengths: super::AeadByteLengths) -> [u8; 16] {
+    riscv64_vector::Aead::finish(self, lengths)
   }
 }
 
@@ -899,13 +978,11 @@ impl State {
 pub(crate) fn authenticate(message: &[u8], key: &[u8; 32]) -> [u8; 16] {
   let mut state = State::new(key);
   state.update_message(message, State::compute_block_portable);
-  state.finalize()
+  state.tag()
 }
 
 pub(crate) fn authenticate_aead(primitive: AeadPrimitive, aad: &[u8], ciphertext: &[u8], key: &[u8; 32]) -> [u8; 16] {
-  let mut mac = AeadMac::new(primitive, key, aad, ciphertext.len());
-  mac.update(ciphertext);
-  mac.finish()
+  with_aead_mac(primitive, key, aad, ciphertext.len(), OneShot(ciphertext))
 }
 
 #[cfg(any(
@@ -931,7 +1008,7 @@ fn authenticate_aead_portable_blocks(
   let mut length_block = lengths.to_le_bytes_block();
   state.compute_block_portable(&length_block, false);
 
-  let tag = state.finalize();
+  let tag = state.tag();
   ct::zeroize(&mut length_block);
   tag
 }
@@ -984,7 +1061,7 @@ pub fn diag_chacha20poly1305_authenticate_aead(aad: &[u8], ciphertext: &[u8], ke
 pub fn diag_poly1305_block_portable_digest(key: &[u8; 32], block: &[u8; 16], partial: bool) -> [u8; 16] {
   let mut state = State::new(key);
   state.compute_block_portable(block, partial);
-  state.finalize()
+  state.tag()
 }
 
 #[cfg(all(
@@ -1047,7 +1124,7 @@ mod tests {
     all(target_arch = "riscv64", not(feature = "portable-only")),
     all(target_arch = "s390x", not(feature = "portable-only"))
   ))]
-  use super::{AeadMac, BlockKernel, Mac, State};
+  use super::{AeadKernel, BlockKernel, Blocks, State};
   #[cfg(any(
     all(target_arch = "x86_64", target_feature = "sse2"),
     target_arch = "aarch64",
@@ -1170,9 +1247,12 @@ mod tests {
   /// The AVX-512 IFMA tag of one message; the caller checks AVX-512F and AVX-512 IFMA.
   #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   fn ifma(aad: &[u8], ciphertext: &[u8], key: &[u8; 32]) -> [u8; 16] {
-    let mut mac = super::avx512_ifma::Aead::new(key, aad);
+    let mut mac = super::avx512_ifma::Aead::new(key);
     // SAFETY: each caller checks AVX-512F and AVX-512 IFMA first.
-    unsafe { mac.update(ciphertext) };
+    unsafe {
+      mac.update(aad);
+      mac.update(ciphertext);
+    }
     mac.finish(AeadByteLengths::from_usize(aad.len(), ciphertext.len()))
   }
 
@@ -1220,14 +1300,13 @@ mod tests {
         let aad = patterned_bytes(aad_len, 11, 7);
         let ciphertext = patterned_bytes(ciphertext_len, 17, 3);
         let portable = authenticate_aead_portable(&aad, &ciphertext, &key);
-        let mut state = State::new(&key);
-        kernel.update(&mut state, &aad);
-        let mut mac = AeadMac {
-          mac: Mac::Blocks(state, kernel),
-          lengths: AeadByteLengths::from_usize(aad.len(), ciphertext.len()),
+        let mut blocks = Blocks {
+          state: State::new(&key),
+          kernel,
         };
-        mac.update(&ciphertext);
-        let accelerated = mac.finish();
+        blocks.update(&aad);
+        blocks.update(&ciphertext);
+        let accelerated = blocks.finish(AeadByteLengths::from_usize(aad.len(), ciphertext.len()));
         assert_eq!(accelerated, portable);
       }
     }
@@ -1243,8 +1322,8 @@ mod tests {
     exercise_backend(BlockKernel::X86Avx512);
   }
 
-  // Text lengths straddle the 128-byte groups and the scalar tail; AAD lengths straddle the
-  // padded scalar prefix that enters lane 0.
+  // Text lengths straddle the 128-byte groups and the scalar tail. AAD takes the same `update`,
+  // so its lengths straddle the zero-padded scalar tail and one 128-byte group in the lanes.
   #[test]
   #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   fn avx512_ifma_authenticator_matches_portable_when_available() {

@@ -329,8 +329,8 @@ impl Drop for Aead {
 }
 
 impl Aead {
-  /// Begin the message under `key` and absorb `aad` on the scalar path.
-  pub(super) fn new(key: &[u8; 32], aad: &[u8]) -> Self {
+  /// Begin a message under `key`.
+  pub(super) fn new(key: &[u8; 32]) -> Self {
     let (r_bytes, s_bytes) = key.split_at(16);
     let r_value =
       u128::from_le_bytes(r_bytes.try_into().expect("16-byte r")) & 0x0fff_fffc_0fff_fffc_0fff_fffc_0fff_ffff;
@@ -344,12 +344,11 @@ impl Aead {
     }
     let mut pad = [0u8; 16];
     pad.copy_from_slice(s_bytes);
-    let mut scalar = Scalar {
+    let scalar = Scalar {
       h: Limbs([0; 3]),
       r,
       r20,
     };
-    scalar.absorb_padded(aad);
     Self { scalar, powers, pad }
   }
 
@@ -410,7 +409,7 @@ impl Aead {
   }
 
   /// Absorb the length block and return the tag.
-  pub(super) fn finish(mut self, lengths: AeadByteLengths) -> [u8; 16] {
+  pub(super) fn finish(&mut self, lengths: AeadByteLengths) -> [u8; 16] {
     self.scalar.absorb(&lengths.to_le_bytes_block());
     finalize(self.scalar.h, &self.pad)
   }

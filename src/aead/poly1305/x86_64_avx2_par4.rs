@@ -753,22 +753,32 @@ impl Aead {
   ///
   /// The caller must ensure that AVX2 is available.
   #[target_feature(enable = "avx2")]
-  pub(super) unsafe fn finish(self, lengths: AeadByteLengths) -> [u8; 16] {
-    let Self {
-      state,
-      r1,
-      r2,
-      mut acc,
-      mut cached,
-      mut num_cached,
-    } = self;
+  pub(super) unsafe fn finish(&mut self, lengths: AeadByteLengths) -> [u8; 16] {
     // Process lengths block.
     let length_block = lengths.to_le_bytes_block();
     // SAFETY: the caller guarantees AVX2. The length encoding is the final full AEAD block, and the established
     // cache and matching-key invariants still hold.
-    num_cached = unsafe { push_block(length_block, &mut cached, num_cached, &mut acc, r1, r2) };
+    let num_cached = unsafe {
+      push_block(
+        length_block,
+        &mut self.cached,
+        self.num_cached,
+        &mut self.acc,
+        self.r1,
+        self.r2,
+      )
+    };
     // SAFETY: the caller guarantees AVX2, and the state belongs to one key stream.
-    unsafe { finish(state, r1, r2, acc, cached, num_cached) }
+    unsafe {
+      finish(
+        &mut self.state,
+        self.r1,
+        self.r2,
+        self.acc,
+        &mut self.cached,
+        num_cached,
+      )
+    }
   }
 }
 
@@ -780,11 +790,11 @@ impl Aead {
 /// `num_cached < 4`.
 #[target_feature(enable = "avx2")]
 unsafe fn finish(
-  state: State,
+  state: &mut State,
   r1: PrecomputedMultiplier,
   r2: PrecomputedMultiplier,
   acc: Option<Par4State>,
-  mut cached: [[u8; 16]; 4],
+  cached: &mut [[u8; 16]; 4],
   mut num_cached: usize,
 ) -> [u8; 16] {
   // Finalize: merge 4 lanes, process remaining blocks.
@@ -832,12 +842,11 @@ unsafe fn finish(
   }
 
   // Convert AVX2 result back to scalar and finalize.
-  let mut final_state = state;
   if let Some(pv) = p {
     // SAFETY: the caller guarantees AVX2, and `pv` is the bounded result of this kernel's reduction chain.
-    final_state.h = unsafe { pv.into_limbs() };
+    state.h = unsafe { pv.into_limbs() };
   }
-  let tag = final_state.finalize();
+  let tag = state.tag();
   ct::zeroize(cached.as_flattened_mut());
   tag
 }

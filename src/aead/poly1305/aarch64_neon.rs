@@ -60,7 +60,7 @@ impl AeadPar4 {
   }
 
   #[inline]
-  pub(crate) fn finalize(mut self, lengths: AeadByteLengths) -> [u8; 16] {
+  pub(crate) fn finalize(&mut self, lengths: AeadByteLengths) -> [u8; 16] {
     // SAFETY: caller selected this updater only after NEON availability was confirmed. The length
     // encoding is a full AEAD block.
     unsafe { self.push(lengths.to_le_bytes_block()) };
@@ -70,7 +70,7 @@ impl AeadPar4 {
       unsafe { compute_block_aarch64_neon(&mut self.state, block, false) };
     }
 
-    let tag = self.state.clone().finalize();
+    let tag = self.state.tag();
     ct::zeroize(self.cached.as_flattened_mut());
     tag
   }

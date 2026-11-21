@@ -189,14 +189,17 @@ impl State {
     self.h = [h0, h1, h2, h3, h4];
   }
 
-  #[cfg(any(feature = "chacha20poly1305", feature = "xchacha20poly1305"))]
+  /// Computes the tag without consuming the owner, whose drop still clears it.
+  #[cfg(any(
+    feature = "chacha20poly1305",
+    feature = "xchacha20poly1305",
+    all(
+      feature = "poly1305",
+      any(test, not(all(target_pointer_width = "64", not(feature = "portable-only"))))
+    )
+  ))]
   #[inline(always)]
-  pub(crate) fn finalize(self) -> [u8; 16] {
-    self.finalize_in_place()
-  }
-
-  #[inline(always)]
-  fn finalize_in_place(&self) -> [u8; 16] {
+  pub(crate) fn tag(&self) -> [u8; 16] {
     #[inline(always)]
     fn fivefold_carry(carry: u32) -> u32 {
       const MAX_UNSCALED: u32 = 858_993_459;
@@ -291,16 +294,6 @@ impl State {
     tag[8..12].copy_from_slice(&h2.to_le_bytes());
     tag[12..16].copy_from_slice(&h3.to_le_bytes());
     tag
-  }
-
-  /// Computes the tag without consuming the owner, whose drop still clears it.
-  #[cfg(all(
-    feature = "poly1305",
-    any(test, not(all(target_pointer_width = "64", not(feature = "portable-only"))))
-  ))]
-  #[inline(always)]
-  pub(crate) fn tag(&self) -> [u8; 16] {
-    self.finalize_in_place()
   }
 }
 
