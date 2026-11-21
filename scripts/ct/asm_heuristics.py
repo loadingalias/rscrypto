@@ -791,7 +791,12 @@ def follows_destination(inst: str | None) -> bool:
 
 
 def all_direct_callees(body: FunctionBody) -> set[str]:
-  callees = {target for _, line in body.lines if follows_destination(mnemonic(line)) for target in direct_call_targets(line)}
+  """The destinations that the listing names. An x86 transfer through memory, `callq *disp(%rip)`, names the slot it
+  reads, such as a dispatch cache, not its callee; only a slot that resolves to an import names the callee."""
+  callees = {target for _, line in body.lines
+             if follows_destination(mnemonic(line))
+             and (not instruction_text(line)[1].startswith("*") or X86_RESOLVED_SLOT.search(line) is not None)
+             for target in direct_call_targets(line)}
   callees.discard(body.symbol)
   return callees
 

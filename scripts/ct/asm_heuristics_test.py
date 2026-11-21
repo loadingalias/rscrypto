@@ -1355,10 +1355,16 @@ def main() -> None:
       result = linked_closure({"ct_entry_p256_ecdh_agree"}, functions, artifact, "x86_64-unknown-linux-gnu")
       assert result["unresolved_internal_calls"] == []
     # A dispatch cache in writable data is set at run time: an indirect call, not an import. The 2026-11-21 BLAKE2
-    # keyed roots call their compression kernel through such a slot. A GOT slot must still name its import.
-    artifact.write_text("000fcc20 <ct_entry_p256_ecdh_agree>:\nfcc20: ff 15 2a 85 06 00\tcallq\t*0x6852a(%rip)\t# 0x165150\n")
-    functions, _ = parse_disassembly(artifact)
-    for name, writable, slot_table, unresolved_count in ((".bss", True, False, 0), (".got", False, True, 1)):
+    # keyed roots call their compression kernel through such a slot, which a CI binary names
+    # (`<rscrypto::hashes::crypto::blake2b::dispatch::ACTIVE>`); the name is the slot, not a callee. A GOT slot must
+    # still name its import.
+    slot = "<rscrypto::hashes::crypto::blake2b::dispatch::ACTIVE>"
+    for annotation, name, writable, slot_table, unresolved_count in (
+        ("", ".bss", True, False, 0), (f" {slot}", ".bss", True, False, 0), ("", ".got", False, True, 1)):
+      artifact.write_text("000fcc20 <ct_entry_p256_ecdh_agree>:\n"
+                          f"fcc20: ff 15 2a 85 06 00\tcallq\t*0x6852a(%rip)\t# 0x165150{annotation}\n")
+      functions, _ = parse_disassembly(artifact)
+      assert all_direct_callees(functions["ct_entry_p256_ecdh_agree"]) == set(), annotation
       image = LinkedImage(bytes(16), [Section(name, 0x165150, 16, None, False, writable, slot_table)], True)
       result = linked_closure({"ct_entry_p256_ecdh_agree"}, functions, artifact, "x86_64-unknown-linux-gnu", image)
       assert len(result["unresolved_internal_calls"]) == unresolved_count, name

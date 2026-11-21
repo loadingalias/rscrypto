@@ -1469,11 +1469,16 @@ Local zig cross-builds are not renewal evidence: they differ from CI, and the lo
 | `riscv64gc-unknown-linux-gnu` | 0 | 0 | 0 |
 | `s390x-unknown-linux-gnu` | 0 | 0 | 0 |
 | `aarch64-unknown-linux-gnu` and MUSL | 0 | 0 | 0 |
+| `x86_64-unknown-linux-gnu` | 0 | 0 | 17 |
 
 - Apple: `diffie_hellman`, `public_key`, and `encode_pss_with_mask` are inlined into their harness entries, so their
   waivers move there. The six deleted waivers covered two zeroization tails, a DIT restore, and two status mappings,
   which no longer branch, and one paired CRT error return that now shares the success restore.
   The new waiver covers the DIT entry test of the PKCS#1 v1.5 decryption entry.
+- x86-64 Linux: the closures of 17 more primitives reach the CPUID implication filter of `detect_uncached` through
+  backend dispatch. Each takes the reviewed public rationale of its 11 peers; the slice is unchanged.
+  The CI binary names the BLAKE2 dispatch slot (`dispatch::ACTIVE`) in the `callq *disp(%rip)` comment. That name is
+  the slot, not a callee, so the call graph no longer follows it.
 - POWER: each slice is unchanged. Each function differs only in four trailing alignment `nop` rows, which moved
   between functions. The function identity binds that placement. This renewal keeps the slices, and the identity fix
   follows v0.13.
