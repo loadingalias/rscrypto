@@ -1454,6 +1454,35 @@ No condition depends on a key, limb, scalar, padding, or message byte.
 On the seven artifact sets, the gate scanner reports no needs-fix, stale, or unclassified finding.
 542 waivers remain. The Apple waivers were not reviewed, because CI does not build that target.
 
+### Renewal on CT 44959985571, 2026-11-21
+
+`39ff8593` and `1d0409e5` scan only the linked evidence binary, which retains every manifest root.
+The complete closures moved the waived conditions into new functions and offsets.
+The renewal reads the CI artifacts of [Constant-Time 44959985571](https://github.com/loadingalias/rscrypto/actions/runs/44959985571)
+at `1d0409e5`, and the local Apple artifacts at the same commit.
+Local zig cross-builds are not renewal evidence: they differ from CI, and the local x86-64 binary is stripped.
+
+| Target | Renewed | Deleted | New |
+|---|---:|---:|---:|
+| `aarch64-apple-darwin` | 32 | 6 | 1 |
+| `powerpc64le-unknown-linux-gnu` | 11 | 0 | 0 |
+| `riscv64gc-unknown-linux-gnu` | 0 | 0 | 0 |
+| `s390x-unknown-linux-gnu` | 0 | 0 | 0 |
+| `aarch64-unknown-linux-gnu` and MUSL | 0 | 0 | 0 |
+
+- Apple: `diffie_hellman`, `public_key`, and `encode_pss_with_mask` are inlined into their harness entries, so their
+  waivers move there. The six deleted waivers covered two zeroization tails, a DIT restore, and two status mappings,
+  which no longer branch, and one paired CRT error return that now shares the success restore.
+  The new waiver covers the DIT entry test of the PKCS#1 v1.5 decryption entry.
+- POWER: each slice is unchanged. Each function differs only in four trailing alignment `nop` rows, which moved
+  between functions. The function identity binds that placement. This renewal keeps the slices, and the identity fix
+  follows v0.13.
+
+All renewed conditions are public: saved DIT state, output-pointer guards, zeroization extents of public addresses and
+lengths, the PSS unused-top-bits test, the `to_pair` and `from_pair` limb bounds of the AArch64 RSA pair, and the
+PKCS#1 implicit-rejection window bound. On these lanes, the gate scanner reports no needs-fix, stale, or unclassified
+finding.
+
 ## Public decisions and exclusions
 
 Ordinary equality is allowed for public values, such as nonces, encoded public keys,
