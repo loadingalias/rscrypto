@@ -52,6 +52,8 @@ Every conditional transfer is a conditional branch: also a POWER conditional ret
 a jump through CTR (`bcctr`), a conditional trap (POWER `tweq`, IBM Z `cgrte`), and x86 `xbegin`.
 A call or a jump through a register or memory is an indirect call or jump: POWER `bctrl` and `bctr`,
 IBM Z `basr`, RISC-V `jalr a1` and `jr a5`, AArch64 `blraa`, and x86 far transfers.
+An x86 call through a register, or through a slot in writable data such as a dispatch cache, is an indirect call.
+An x86 call through a GOT slot must name its import, or the scanner stops.
 A register form of IBM Z BRANCH ON CONDITION or ON COUNT with R2 zero is no transfer:
 `br 0` (BCR 15,0) and `bnor 0` (BCR 14,0) serialize, and `bctr %r1, 0` only decrements r1.
 A jump table is a multi-way branch, so its indirect jump is a `conditional_branch` whose slice holds the index.
@@ -67,9 +69,10 @@ The scanner works in a closed world. It stops with status 2 on a row that it can
   without the mnemonic tables. Each such row needs a control rule, and a transfer that encodes its destination
   needs a mnemonic whose destination the call graph follows. A missed transfer could drop a function from a closure.
   An IBM Z `exrl` transfers when the instruction that it executes does. The linked binary holds that instruction at
-  the operand. In an object listing, the relocation after the `exrl` names it as a row of the same listing.
+  the operand. An x86 `rep retq` (F3 C3) is a return.
 - Bytes that do not decode, such as `.word` data or `<unknown>` padding, pass only when no edge from the entry reaches
   them. An indirect jump can reach any row, so such bytes in its function stop the scanner.
+  A table in `.text` would decode as code, so assembly keeps its constants in read-only data sections.
 - In the closure of each primitive under `[asm_select_branch]`, each row must also match an explicit effect rule:
   the registers, flags, and memory that it reads and writes.
   The IBM Z `exrl` rule reads the instruction that it executes from the linked binary.
@@ -186,6 +189,8 @@ A read-only LLVM global-merge unit (`_MergedGlobals`, on POWER) holds many objec
 The assembly that the same compilation emits gives each object as an alias with a size:
 `.Lanon.1 = .L_MergedGlobals.2+411` and `.size .Lanon.1, 7`.
 Each linked unit must match exactly one assembly unit by its bytes, except the bytes that relocations give.
+Only the evidence crate's assembly holds member tables. A unit of another object, such as the libunwind that zig
+links on POWER, is one allocation.
 A reference then binds the object that it designates, so other functions and other objects do not change it.
 A unit without exactly one match, or an assembly unit that matches two units, stops the scanner with status 2.
 An address in alignment padding, or an access past the end of its object, binds the whole unit.

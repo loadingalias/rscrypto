@@ -62,7 +62,7 @@ downstream_limitation = "Evidence binds this final linked harness executable and
 
 [[asm_public_operand]]
 primitives = ["password.argon2i"]
-roots = ["ct_entry_argon2i_verify"]
+roots = ["ct_entry_argon2i_hash", "ct_entry_argon2i_verify"]
 symbol = "rscrypto::auth::argon2::argon2_hash_with_kernel_inner"
 kind = "variable_latency_division"
 max_count = 3
@@ -71,12 +71,35 @@ rationale = "The divisions derive matrix dimensions and iteration bounds from va
 
 [[asm_public_operand]]
 primitives = ["password.argon2i"]
-roots = ["ct_entry_argon2i_verify"]
+roots = ["ct_entry_argon2i_hash", "ct_entry_argon2i_verify"]
 symbol = "rscrypto::auth::argon2::fill_segment_inner"
 kind = "variable_latency_division"
 max_count = 2
 source = "src/auth/argon2/mod.rs fill_segment_inner"
 rationale = "For the Argon2i retained root, address generation and segment positions are data-independent; these divisions use public lane, segment, and matrix dimensions rather than password-derived contents."
+
+[[asm_public_operand]]
+primitives = ["keyed_hash.blake2_blake3", "keyed_hash.blake3_verify"]
+roots = ["ct_entry_blake3_keyed_digest", "ct_entry_blake3_verify_keyed"]
+symbol = "rscrypto::hashes::crypto::blake3::control::parallel_admission_decision"
+kind = "variable_latency_division"
+max_count = 1
+source = "src/hashes/crypto/blake3/control.rs parallel_admission_decision"
+rationale = "ceil_div_usize divides the public merge-cost constant of the dispatch table by a divisor from the public input chunk count and the thread count. Key and message contents do not feed the operands."
+
+[[asm_public_operand]]
+primitives = ["rsa.private_ops"]
+roots = [
+  "ct_entry_rsa_oaep_decrypt_fixed_blinding",
+  "ct_entry_rsa_pkcs1v15_decrypt_fixed_blinding",
+  "ct_entry_rsa_pkcs1v15_sign_fixed_blinding",
+  "ct_entry_rsa_pss_sign_fixed_blinding",
+]
+symbol = "rscrypto::auth::rsa::rsa_aarch64_pair::exponentiate_pair"
+kind = "variable_latency_division"
+max_count = 1
+source = "src/auth/rsa_aarch64_pair.rs exponentiate_pair"
+rationale = "chunks_exact_mut divides the public window-table length by the public word count of the modulus. Private exponent and limb contents do not feed the operands."
 
 [[asm_public_operand]]
 primitives = ["mac.kmac256_verify"]

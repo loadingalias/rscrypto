@@ -1116,7 +1116,6 @@ def validate_artifacts(root: Path, target: str, profile: str, ct: dict, errors: 
     (".ll",),
     (".s",),
     (".o", ".obj"),
-    (".o.disasm.txt", ".obj.disasm.txt"),
     (".o.symbols.txt", ".obj.symbols.txt"),
     (".o.size.txt", ".obj.size.txt"),
     (".binary.disasm.txt",),

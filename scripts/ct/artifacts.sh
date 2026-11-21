@@ -276,7 +276,6 @@ elif [[ "$TARGET" == riscv64* ]]; then
 fi
 for obj in "${OBJECTS[@]}"; do
   base="$(basename "$obj")"
-  "$LLVM_OBJDUMP" "${objdump_args[@]}" "$obj" > "$ARTIFACT_DIR/$base.disasm.txt"
   "$LLVM_NM" --defined-only "$obj" > "$ARTIFACT_DIR/$base.raw-symbols.txt"
   "$LLVM_NM" --defined-only --demangle "$obj" > "$ARTIFACT_DIR/$base.symbols.txt"
   "$LLVM_SIZE" "$obj" > "$ARTIFACT_DIR/$base.size.txt"

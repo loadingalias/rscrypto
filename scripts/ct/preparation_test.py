@@ -162,7 +162,7 @@ if '--bin' in args:
         if not failure:
           disassemblies = [json.loads(line) for line in (root / "objdump-calls.jsonl").read_text().splitlines()
                            if "--disassemble" in json.loads(line)]
-          self.assertEqual(len(disassemblies), 3)  # Two objects and the final linked binary.
+          self.assertEqual(len(disassemblies), 1)  # The final linked binary.
           for command in disassemblies:
             self.assertEqual("--mattr=+vector" in command, target == "s390x-unknown-linux-gnu", command)
             # llvm-objdump decodes only the RISC-V extensions it is given: each one that the IR enables.
@@ -175,13 +175,13 @@ if '--bin' in args:
             "std_lib_sha256": hashlib.sha256(b"// fixture rust-src\n").hexdigest(),
           })
           tools = provenance["tools"]
-          for tool, suffix, expected in (
-            ("llvm_objdump", "disasm", "override objdump"),
-            ("llvm_nm", "raw-symbols", "override nm"),
-            ("llvm_size", "size", "sysroot llvm-size"),
+          for tool, output_name, expected in (
+            ("llvm_objdump", f"{binary}.binary.raw-disasm.txt", "override objdump"),
+            ("llvm_nm", "rscrypto_ct_harness.o.raw-symbols.txt", "override nm"),
+            ("llvm_size", "rscrypto_ct_harness.o.size.txt", "sysroot llvm-size"),
           ):
             self.assertEqual(tools[tool], expected)
-            self.assertEqual((artifacts / f"rscrypto_ct_harness.o.{suffix}.txt").read_text().strip(), expected)
+            self.assertEqual((artifacts / output_name).read_text().strip(), expected)
 
   def test_binsec_selection_preserves_unrelated_results(self):
     manifest = {

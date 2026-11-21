@@ -222,8 +222,6 @@ def artifact_kind(path: Path) -> str:
     return "linked_binary"
   if name.endswith((".o.raw-symbols.txt", ".obj.raw-symbols.txt")):
     return "raw_symbol_map"
-  if name.endswith((".o.disasm.txt", ".obj.disasm.txt")):
-    return "object_disassembly"
   if name.endswith((".o.symbols.txt.rustfilt.txt", ".obj.symbols.txt.rustfilt.txt")):
     return "demangled_symbol_map"
   if name.endswith((".o.symbols.txt", ".obj.symbols.txt")):

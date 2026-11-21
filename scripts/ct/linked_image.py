@@ -521,27 +521,32 @@ def merge_unit_members(image: LinkedImage, units: list[AssemblyUnit]) -> list[tu
   return members
 
 
+def evidence_crate(binary: Path) -> str:
+  """The crate name of the linked binary, which names its objects and its assembly."""
+  return binary.name.split(".")[0].replace("-", "_")
+
+
 def evidence_assembly(artifact_dir: Path, binary: Path) -> Path:
   """The assembly that the compilation of the linked binary's own crate emitted."""
-  crate = binary.name.split(".")[0].replace("-", "_")
+  crate = evidence_crate(binary)
   paths = sorted(path for path in artifact_dir.glob("*.s") if re.split(r"[.-]", path.name)[0] == crate)
   if len(paths) != 1:
     raise ValueError(f"expected one assembly file of crate {crate} in {artifact_dir}, found {len(paths)}")
   return paths[0]
 
 
-def link_map_extents(path: Path) -> list[tuple[int, int, str]]:
-  """Return (start, size, input section) rows from a GNU ld or lld ELF map."""
+def link_map_extents(path: Path) -> list[tuple[int, int, str, str]]:
+  """Return (start, size, input section, input file) rows from a GNU ld or lld ELF map."""
   if not path.is_file():
     return []
   text = path.read_text(errors="replace")
   if "Publics by Value" in text:
     return []
-  rows: list[tuple[int, int, str]] = []
-  lld_row = re.compile(r"^\s*([0-9a-fA-F]+)\s+[0-9a-fA-F]+\s+([0-9a-fA-F]+)\s+\d+\s+\S.*:\((\S+)\)\s*$")
-  gnu_row = re.compile(r"^ (\.\S+)\s+0x([0-9a-fA-F]+)\s+0x([0-9a-fA-F]+)\s+\S")
+  rows: list[tuple[int, int, str, str]] = []
+  lld_row = re.compile(r"^\s*([0-9a-fA-F]+)\s+[0-9a-fA-F]+\s+([0-9a-fA-F]+)\s+\d+\s+(\S.*):\((\S+)\)\s*$")
+  gnu_row = re.compile(r"^ (\.\S+)\s+0x([0-9a-fA-F]+)\s+0x([0-9a-fA-F]+)\s+(\S.*)$")
   gnu_name = re.compile(r"^ (\.\S+)\s*$")
-  gnu_address = re.compile(r"^\s+0x([0-9a-fA-F]+)\s+0x([0-9a-fA-F]+)\s+\S")
+  gnu_address = re.compile(r"^\s+0x([0-9a-fA-F]+)\s+0x([0-9a-fA-F]+)\s+(\S.*)$")
   pending: str | None = None
   discarded = False
   for line in text.splitlines():
@@ -555,19 +560,19 @@ def link_map_extents(path: Path) -> list[tuple[int, int, str]]:
     if discarded:
       continue
     if match := lld_row.match(line):
-      rows.append((int(match.group(1), 16), int(match.group(2), 16), match.group(3)))
+      rows.append((int(match.group(1), 16), int(match.group(2), 16), match.group(4), match.group(3).strip()))
       pending = None
     elif match := gnu_row.match(line):
-      rows.append((int(match.group(2), 16), int(match.group(3), 16), match.group(1)))
+      rows.append((int(match.group(2), 16), int(match.group(3), 16), match.group(1), match.group(4).strip()))
       pending = None
     elif match := gnu_name.match(line):
       pending = match.group(1)
     elif (match := gnu_address.match(line)) and pending is not None:
-      rows.append((int(match.group(1), 16), int(match.group(2), 16), pending))
+      rows.append((int(match.group(1), 16), int(match.group(2), 16), pending, match.group(3).strip()))
       pending = None
     else:
       pending = None
-  return [(start, size, name) for start, size, name in rows if start > 0 and size > 0]
+  return [row for row in rows if row[0] > 0 and row[1] > 0]
 
 
 def msvc_link_map_starts(path: Path, names: dict[str, str]) -> dict[int, str | None]:
@@ -648,7 +653,8 @@ def load_elf(data: bytes, artifact_dir: Path, binary: Path) -> LinkedImage:
         continue
       name = stable_name(demangled.get(value, [])) if not is_anonymous(raw) else None
       starts[value] = starts.get(value) or name
-  for start, size, input_section in link_map_extents(artifact_dir / f"{binary.name}.link-map.txt"):
+  crate = evidence_crate(binary)
+  for start, size, input_section, input_file in link_map_extents(artifact_dir / f"{binary.name}.link-map.txt"):
     # Thread-local templates use offsets that overlap ordinary data, and relocation input sections
     # take the names of the sections they relocate; neither is an object that code addresses.
     if input_section.startswith((".tbss", ".tdata", ".rela", ".rel.")):
@@ -658,8 +664,11 @@ def load_elf(data: bytes, artifact_dir: Path, binary: Path) -> LinkedImage:
       continue
     starts.setdefault(start, None)
     element = merged_element(input_section)
-    # Writable data binds its symbol, not its contents, so only read-only merge units split into members.
-    extents.append((start, start + size, None if element == MERGED and section.writable else element))
+    # Writable data binds its symbol, not its contents, so only read-only merge units split into members. Only the
+    # evidence crate's assembly holds member tables: a unit of another object, such as the libunwind that zig links
+    # for POWER, is one allocation.
+    owned = re.split(r"[.-]", Path(input_file).name)[0] == crate
+    extents.append((start, start + size, None if element == MERGED and (section.writable or not owned) else element))
 
   slots: dict[int, Slot] = {}
   for header in headers:

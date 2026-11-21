@@ -22,7 +22,6 @@ from asm_heuristics import (
   direct_callees,
   effect_errors,
   linked_closure,
-  is_call_relocation,
   is_conditional_branch,
   is_riscv_conditional_branch,
   is_rsa_inverse_scope,
@@ -34,11 +33,10 @@ from asm_heuristics import (
   validate_public_inputs,
 )
 from linked_image import MERGED, LinkedImage, Section, Slot, assembly_merge_units, merge_unit_members
-from symbolize_linked_binary import demangle_table
 
 
 def branch_kinds(target: str, symbol: str, lines: list[str], primitive_ids: list[str]) -> list[tuple[str, str]]:
-  body = FunctionBody(symbol=symbol, path=Path("fixture.o.disasm.txt"), address=0,
+  body = FunctionBody(symbol=symbol, path=Path("fixture.binary.disasm.txt"), address=0,
                       lines=list(enumerate(lines, start=1)))
   findings = scan_symbol(target, symbol, body, {symbol}, scope="ct_intended_call_closure",
                          primitive_ids=primitive_ids, roots=[symbol])
@@ -48,7 +46,7 @@ def branch_kinds(target: str, symbol: str, lines: list[str], primitive_ids: list
 
 
 def multiply_kinds(target: str, symbol: str, line: str, primitive_ids: list[str]) -> list[tuple[str, str]]:
-  body = FunctionBody(symbol=symbol, path=Path("fixture.o.disasm.txt"), address=0, lines=[(1, line)])
+  body = FunctionBody(symbol=symbol, path=Path("fixture.binary.disasm.txt"), address=0, lines=[(1, line)])
   findings = scan_symbol(target, symbol, body, {symbol}, scope="ct_intended_call_closure",
                          primitive_ids=primitive_ids, roots=[symbol])
   return [(row["kind"], row["severity"]) for row in findings if "multiply" in row["kind"]]
@@ -186,14 +184,6 @@ def select_branch_regressions() -> None:
     " 280: a7 f4 ff a2  \tj\t0x1c4",
     " 284: e3 d0 f8 e8 00 24    \tstg\t%r13, 2280(%r15)",
   ], ["kx.p256_ecdh"]) == [("conditional_branch", "warn"), ("select_branch", "fail")]
-  # An address operand followed by a relocation names another function.
-  assert branch_kinds("s390x-unknown-linux-gnu", recode, [
-    "   0: ec 28 00 03 00 7c    \tcgije\t%r2, 0, 0x6",
-    "   6: c0 f4 00 00 00 00    \tjg\t0x6",
-    "\t\t0000000000000008:  R_390_PC32DBL\trscrypto::other+0x2",
-    "   c: a7 f4 00 00  \tj\t0x0",
-  ], ["kx.p256_ecdh"]) == [("conditional_branch", "warn")]
-
   # POWER uses `bt`/`bf` condition-register branches.
   zeroize_tail = "<rscrypto::auth::p256_ecdh::P256EphemeralSecret>::diffie_hellman"
   assert is_conditional_branch("powerpc64le-unknown-linux-gnu", "bt")
@@ -1093,22 +1083,10 @@ def closed_world_regressions() -> None:
   assert control_errors(x86, vector, None) == []
   assert effect_errors(x86, vector, {vector.symbol}, None) == [
     "rscrypto::fixture+0x0: vpermq $0x4e, %zmm1, %zmm0: no effect rule"]
-
-  # In an object listing, the relocation after an IBM Z `exrl` names its template, a row of `.text`; its addend counts
-  # from the relocated field, 2 bytes into the `exrl` (`Sha512::update` at 466c3556). An MVC continues; a BRC jumps.
-  def executed(template: str) -> list[str]:
-    with TemporaryDirectory() as directory:
-      listing = Path(directory) / "fixture.o.disasm.txt"
-      listing.write_text("\n".join([
-        "Disassembly of section .text:", "", "0000000000000000 <.text>:", f"      48: {template}", "",
-        "Disassembly of section .text.update:", "", "0000000000000000 <rscrypto::fixture>:",
-        "     174: c6 20 00 00 00 00    \texrl\t%r2, 0x174", "\t\t0000000000000176:  R_390_PC32DBL\t.text+0x4a",
-        "     17a: 07 fe    \tbr\t%r14"]) + "\n")
-      functions, _ = parse_disassembly(listing)
-      return control_errors("s390x-unknown-linux-gnu", functions["rscrypto::fixture"], None)
-  assert executed("d2 00 30 00 40 00    \tmvc\t0(1,%r3), 0(%r4)") == []
-  assert executed("a7 f4 00 08          \tj\t0x58") == [
-    "rscrypto::fixture+0x174: exrl %r2, 0x174: a transfer of control without a control rule"]
+  # The ChaCha20-Poly1305 assembly returns with `.byte 0xf3,0xc3`, which llvm-objdump prints as `rep retq`.
+  assert control_errors(x86, fixture(["1000: f3 c3\trep\t\tretq", "1002: cd 1f\tint\t$0x1f"]), None) == [
+    "rscrypto::fixture+0x2: int $0x1f: a transfer of control without a control rule"]
+  assert row_successors(x86, fixture(["1000: f3 c3\trep\t\tretq"]), decode_lines(fixture(["1000: f3 c3\trep\t\tretq"]))) == [[]]
 
   # z/Architecture BRANCH ON CONDITION: with R2 zero, BCR does not branch. `bnor 0` (BCR 14,0) serializes, so it is
   # no conditional branch, and it continues at the next row.
@@ -1119,10 +1097,10 @@ def closed_world_regressions() -> None:
   assert row_successors(target, fence, decode_lines(fence))[0] == [1]
 
 
-def jump_finding(target: str, body: FunctionBody) -> dict:
+def jump_finding(target: str, body: FunctionBody, image: LinkedImage) -> dict:
   """The finding of the jump in `body`; the table load also has a register-indexed operand."""
   [found] = [row for row in scan_symbol(target, body.symbol, body, {body.symbol}, scope="entry",
-                                        primitive_ids=["mac.hmac_verify"], roots=[body.symbol])
+                                        primitive_ids=["mac.hmac_verify"], roots=[body.symbol], image=image)
              if row["kind"] in {"conditional_branch", "indirect_jump"}]
   return found
 
@@ -1132,38 +1110,23 @@ def jump_table_regressions() -> None:
   jump fails."""
   from condition_slice import FunctionSlices
 
-  cases = {
-    # `HkdfSha256::extract` in `rscrypto_ct_evidence.o` (RISC-V, ddf3a965): the `match padded` of
-    # `HmacSha256::mac_into` (src/auth/hmac.rs), on the block count (s1 + 0x88) >> 6.
-    "riscv64gc-unknown-linux-gnu": (0x382, [
-      "     382: 08848513     \taddi\ta0, s1, 0x88", "     386: 8119         \tsrli\ta0, a0, 0x6",
-      "0000000000000388 <.Lpcrel_hi1689>:", "     388: 00000597     \tauipc\ta1, 0x0",
-      "\t\t0000000000000388:  R_RISCV_PCREL_HI20\t.LJTI533_0", "     38c: 050a         \tslli\ta0, a0, 0x2",
-      "     38e: 00058593     \tmv\ta1, a1", "\t\t000000000000038e:  R_RISCV_PCREL_LO12_I\t.Lpcrel_hi1689",
-      "     392: 952e         \tadd\ta0, a0, a1", "     394: ff852503     \tlw\ta0, -0x8(a0)",
-      "     398: 952e         \tadd\ta0, a0, a1", "     39a: 8502         \tjr\ta0",
-    ], "entry s1", ("     38e: 00058593     \tmv\ta1, a1", "     38e: 0005b583     \tld\ta1, 0x0(a1)")),
-    # `ct_entry_hmac_sha384_verify` in the x86-64 Linux harness object (ddf3a965): the same `match padded`.
-    "x86_64-unknown-linux-gnu": (0x19d, [
-      "     19d: 40 0f b6 c5                  \tmovzbl\t%bpl, %eax",
-      "     1a1: 48 8d 0d 00 00 00 00         \tleaq\t(%rip), %rcx            # 0x1a8 <rscrypto::fixture+0xb>",
-      "\t\t00000000000001a4:  R_X86_64_PC32\t.rodata.ct_entry_hmac_sha384_verify-0x4",
-      "     1a8: 48 63 04 81                  \tmovslq\t(%rcx,%rax,4), %rax",
-      "     1ac: 48 01 c8                     \taddq\t%rcx, %rax", "     1af: ff e0                        \tjmpq\t*%rax",
-    ], "entry rbp", ("\t\t00000000000001a4:  R_X86_64_PC32\t.rodata.ct_entry_hmac_sha384_verify-0x4",
-                     "\t\t00000000000001a4:  R_X86_64_PC32\t.data.rscrypto_dispatch-0x4")),
-  }
-  for target, (address, lines, index, (original, mutated)) in cases.items():
-    for listing, expected in ((lines, "conditional_branch"), ([mutated if line == original else line for line in lines],
-                                                              "indirect_jump")):
-      body = FunctionBody("rscrypto::fixture", Path("fixture.o.disasm.txt"), address, list(enumerate(listing, start=1)))
-      assert jump_finding(target, body)["kind"] == expected, (target, expected)
-    # The table entry is public read-only data, so the slice reaches the index and no other input.
-    body = FunctionBody("rscrypto::fixture", Path("fixture.o.disasm.txt"), address, list(enumerate(lines, start=1)))
-    found = jump_finding(target, body)
-    analysis = FunctionSlices(target, body, None, {body.symbol})
-    result = analysis.slice(found["line"], frozenset(analysis.index_by_line[line] for line in found["table_loads"]))
-    assert set(result.leaves) == {index, "incomplete control flow"}, (target, result.leaves, result.canonical)
+  # `ct_entry_hmac_sha384_verify` on x86-64 Linux (ddf3a965): the `match padded` of `HmacSha256::mac_into`
+  # (src/auth/hmac.rs), on the block count in %bpl. RISC-V is `riscv_annotated_jump_table_regression`.
+  target = "x86_64-unknown-linux-gnu"
+  lines = ["1000: 40 0f b6 c5\tmovzbl\t%bpl, %eax", "1004: 48 8d 0d f5 0f 00 00\tleaq\t0xff5(%rip), %rcx\t# 0x2000",
+           "100b: 48 63 04 81\tmovslq\t(%rcx,%rax,4), %rax", "100f: 48 01 c8\taddq\t%rcx, %rax", "1012: ff e0\tjmpq\t*%rax"]
+  body, image = linked_fixture(0x1000, lines, {0x2000: bytes(16)}, units=[(0x2000, 0x2010, None)])
+  found = jump_finding(target, body, image)
+  assert found["kind"] == "conditional_branch", found
+  # The table entry is public read-only data, so the slice reaches the index and no other input.
+  analysis = FunctionSlices(target, body, image, {body.symbol})
+  result = analysis.slice(found["line"], frozenset(analysis.index_by_line[line] for line in found["table_loads"]))
+  assert set(result.leaves) == {"entry rbp", "incomplete control flow"}, (result.leaves, result.canonical)
+  # A table in writable data can hold any target.
+  writable = LinkedImage(bytes(16), [Section(".text", 0x1000, 0x100, None, True, False),
+                                     Section(".data", 0x2000, 16, 0, False, True)], True, extents=[(0x2000, 0x2010, None)])
+  writable.set_functions(image.functions)
+  assert jump_finding(target, body, writable)["kind"] == "indirect_jump"
 
 
 def merge_table_regressions() -> None:
@@ -1275,8 +1238,6 @@ def riscv_annotated_jump_table_regression() -> None:
 
 
 def main() -> None:
-  relocation = "0000000000000060:  R_RISCV_CALL_PLT\trscrypto::auth::ecdsa::sign_digest_p256_blinded"
-  assert is_call_relocation(relocation)
   assert is_riscv_conditional_branch("riscv64gc-unknown-linux-gnu", "bnez")
   assert not is_riscv_conditional_branch("x86_64-unknown-linux-gnu", "bnez")
   assert is_rsa_inverse_scope(
@@ -1292,22 +1253,6 @@ def main() -> None:
     "rscrypto::auth::rsa::private_i31_co_reduce_mod",
   )
 
-  callee = "rscrypto::auth::ecdsa::sign_digest_p256_blinded"
-  root = FunctionBody(
-    symbol="ct_entry_ecdsa_p256_sign",
-    path=Path("fixture.disasm.txt"),
-    address=0,
-    lines=[
-      (1, relocation),
-      (2, "64: 000080e7\tjalr\tra <ct_entry_ecdsa_p256_sign+0x64>"),
-    ],
-  )
-  functions = {
-    root.symbol: root,
-    callee: FunctionBody(symbol=callee, path=root.path, address=0x100, lines=[]),
-  }
-  assert direct_callees(root, functions) == {callee}
-
   final_root = FunctionBody(
     symbol="ct_entry_owner_eq_16",
     path=Path("final.binary.disasm.txt"),
@@ -1318,6 +1263,17 @@ def main() -> None:
     ],
   )
   assert all_direct_callees(final_root) == {"rscrypto::fixed_eq"}
+
+  # A linked RISC-V `auipc` and `jalr` pair names its callee: a call edge, not an indirect call.
+  callee = "rscrypto::auth::ecdsa::sign_digest_p256_blinded"
+  root = FunctionBody("ct_entry_ecdsa_p256_sign", final_root.path, 0x1000, [
+    (1, "1000: 00000097\tauipc\tra, 0x0"), (2, f"1004: 100080e7\tjalr\t0x100(ra) <{callee}>"),
+    (3, "1008: 9502\tjalr\ta0"), (4, "100a: 8082\tret")])
+  functions = {root.symbol: root, callee: FunctionBody(callee, root.path, 0x1100, [])}
+  assert direct_callees(root, functions) == {callee}
+  assert [row["kind"] for row in scan_symbol("riscv64gc-unknown-linux-gnu", root.symbol, root, set(functions),
+                                             scope="entry", primitive_ids=["signature.ecdsa"],
+                                             roots=[root.symbol])] == ["indirect_call"]
 
   # The linked ML-DSA mask and rounding roots use AArch64 `b`, not `bl`.
   # Missing that edge would scan only the null guard and silently omit the kernel.
@@ -1341,41 +1297,9 @@ def main() -> None:
     assert any(row["symbol"] == leaf and row["kind"] == "variable_latency_division"
                and row["severity"] == "fail" for row in findings)
 
-  relocated_tail = FunctionBody(
-    symbol="ct_entry_mldsa_mask17", path=Path("fixture.o.disasm.txt"), address=0,
-    lines=[(1, "0: 14000000\tb\t0x0 <ct_entry_mldsa_mask17>"),
-           (2, f"0: R_AARCH64_JUMP26 {leaf}")],
-  )
-  assert all_direct_callees(relocated_tail) == {leaf}
-
-  # Mach-O relocations retain mangled names even with llvm-objdump -C.
-  # The P-256 root used to appear to have no production callees on Darwin.
   with TemporaryDirectory() as temporary:
     artifact_dir = Path(temporary)
-    callee = "<rscrypto::auth::p256_ecdh::P256EphemeralSecret>::diffie_hellman"
-    mangled = "__RNvM_fixture_P256EphemeralSecret_diffie_hellman"
-    (artifact_dir / "fixture.o.raw-symbols.txt").write_text(f"00000100 t {mangled}\n")
-    (artifact_dir / "fixture.o.symbols.txt").write_text(f"00000100 t {callee}\n")
-    names = demangle_table(artifact_dir)
-    artifact = artifact_dir / "fixture.o.disasm.txt"
-    for relocation_kind, instruction in (
-      ("ARM64_RELOC_BRANCH26", "bl"),
-      ("X86_64_RELOC_BRANCH", "callq"),
-      ("IMAGE_REL_AMD64_REL32", "callq"),
-    ):
-      artifact.write_text(
-        "00000000 <_ct_entry_p256_ecdh_agree>:\n"
-        f"  0: 94000000\t{instruction}\t0x0 <_ct_entry_p256_ecdh_agree>\n"
-        f"  0: {relocation_kind}\t{mangled}\n"
-        "  4: d65f03c0\tret\n"
-        f"00000100 <{callee}>:\n"
-        "100: d65f03c0\tret\n"
-      )
-      functions, _ = parse_disassembly(artifact, names)
-      assert reachable_closure("ct_entry_p256_ecdh_agree", build_call_graph(functions)) == {
-        "ct_entry_p256_ecdh_agree", callee,
-      }
-
+    artifact = artifact_dir / "fixture.binary.disasm.txt"
     # The next section's crate disambiguator is not part of this function.
     hashes = []
     for next_section in ("crate_hash_one", "crate_hash_two"):
@@ -1393,25 +1317,6 @@ def main() -> None:
                              scope="entry", primitive_ids=["kx.p256_ecdh"], roots=[root.symbol])
       hashes.append(findings[0]["function_sha256"])
     assert hashes[0] == hashes[1]
-
-    # Object-local outlined names are reused for different bodies.
-    combined = {}
-    for name in ("one", "two"):
-      outlined = artifact_dir / f"{name}.o.disasm.txt"
-      outlined.write_text(
-        f"00000000 <ct_entry_{name}>:\n"
-        "  0: 94000001\tbl\t0x4 <_OUTLINED_FUNCTION_0>\n"
-        "00000004 <_OUTLINED_FUNCTION_0>:\n"
-        f"  4: 94000001\tbl\t0x8 <rscrypto::{name}>\n"
-        f"00000008 <rscrypto::{name}>:\n"
-        "  8: d65f03c0\tret\n"
-      )
-      parsed, _ = parse_disassembly(outlined)
-      combined.update(parsed)
-    for name in ("one", "two"):
-      assert reachable_closure(f"ct_entry_{name}", build_call_graph(combined)) == {
-        f"ct_entry_{name}", f"{name}.o.disasm.txt::OUTLINED_FUNCTION_0", f"rscrypto::{name}",
-      }
 
     artifact.write_text(
       "00000000 <ct_entry_p256_ecdh_agree>:\n"
@@ -1449,6 +1354,18 @@ def main() -> None:
       functions, _ = parse_disassembly(artifact)
       result = linked_closure({"ct_entry_p256_ecdh_agree"}, functions, artifact, "x86_64-unknown-linux-gnu")
       assert result["unresolved_internal_calls"] == []
+    # A dispatch cache in writable data is set at run time: an indirect call, not an import. The 2026-11-21 BLAKE2
+    # keyed roots call their compression kernel through such a slot. A GOT slot must still name its import.
+    artifact.write_text("000fcc20 <ct_entry_p256_ecdh_agree>:\nfcc20: ff 15 2a 85 06 00\tcallq\t*0x6852a(%rip)\t# 0x165150\n")
+    functions, _ = parse_disassembly(artifact)
+    for name, writable, slot_table, unresolved_count in ((".bss", True, False, 0), (".got", False, True, 1)):
+      image = LinkedImage(bytes(16), [Section(name, 0x165150, 16, None, False, writable, slot_table)], True)
+      result = linked_closure({"ct_entry_p256_ecdh_agree"}, functions, artifact, "x86_64-unknown-linux-gnu", image)
+      assert len(result["unresolved_internal_calls"]) == unresolved_count, name
+      findings = scan_symbol("x86_64-unknown-linux-gnu", "ct_entry_p256_ecdh_agree",
+                             functions["ct_entry_p256_ecdh_agree"], set(functions), scope="entry",
+                             primitive_ids=["kx.p256_ecdh"], roots=["ct_entry_p256_ecdh_agree"], image=image)
+      assert [row["kind"] for row in findings] == ["indirect_call"], name
     artifact.write_text("000fcc20 <ct_entry_p256_ecdh_agree>:\nfcc20: ff d0\tcallq *%rax\n")
     functions, _ = parse_disassembly(artifact)
     assert linked_closure({"ct_entry_p256_ecdh_agree"}, functions, artifact, "x86_64-unknown-linux-gnu")["unresolved_internal_calls"] == []

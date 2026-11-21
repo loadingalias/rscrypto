@@ -4,12 +4,11 @@
 from __future__ import annotations
 
 import argparse
-import functools
 import sys
 import hashlib
 import json
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -270,22 +269,9 @@ CONTROL_FLOW_STOP_MNEMONICS = {
 # branchy lowering of ML-KEM's 32-byte implicit-rejection select spans 39
 # instructions.
 SELECT_BRANCH_MAX_ARM = 64
-RELOCATION_LINE = re.compile(r"^\s*[0-9a-fA-F]+:\s+(?:R_|IMAGE_REL_|ARM64_RELOC_|X86_64_RELOC_)")
 INSTRUCTION_ADDRESS = re.compile(r"^\s*([0-9a-fA-F]+):")
 BRANCH_TARGET_SYMBOL = re.compile(r"\s<(.+?)(?:\+0x([0-9a-fA-F]+))?>\s*$")
 BRANCH_TARGET_ADDRESS = re.compile(r"\b0x([0-9a-fA-F]+)\s*$")
-SUSPICIOUS_CALL_TARGETS = (
-  "panic",
-  "panic_bounds_check",
-  "__rust_alloc",
-  "__rust_dealloc",
-  "__rust_realloc",
-  "__rust_alloc_error_handler",
-  "alloc::alloc",
-  "memcmp",
-  "bcmp",
-  "strcmp",
-)
 MLKEM_ARITHMETIC_SYMBOL_FRAGMENTS = (
   "rscrypto::auth::mlkem::operations::s390x::",
   "rscrypto::auth::mlkem::operations::base_case",
@@ -323,19 +309,10 @@ class FunctionBody:
   path: Path
   address: int
   lines: list[tuple[int, str]]
-  symbol_names: dict[str, str] = field(default_factory=dict, repr=False)
 
 
 def normalize_symbol(symbol: str) -> str:
   return symbol[1:] if symbol.startswith(("_ct_entry_", "_rscrypto_", "_OUTLINED_FUNCTION_")) else symbol
-
-
-def scoped_symbol(symbol: str, path: Path) -> str:
-  # LLVM reuses outlined helper names in independent objects. Only the linked
-  # artifact provides one namespace for them.
-  if symbol.startswith("OUTLINED_FUNCTION_") and path.name.endswith((".o.disasm.txt", ".obj.disasm.txt")):
-    return f"{path.name}::{symbol}"
-  return symbol
 
 
 def expected_symbols(root: Path) -> set[str]:
@@ -751,9 +728,7 @@ def apply_alias_bodies(functions: dict[str, FunctionBody], aliases: list[tuple[s
       functions.setdefault(symbol, body)
 
 
-def parse_disassembly(
-  path: Path, symbol_names: dict[str, str] | None = None,
-) -> tuple[dict[str, FunctionBody], dict[int, list[FunctionBody]]]:
+def parse_disassembly(path: Path) -> tuple[dict[str, FunctionBody], dict[int, list[FunctionBody]]]:
   functions_by_label: dict[str, FunctionBody] = {}
   functions_by_address: dict[int, list[FunctionBody]] = {}
   current: FunctionBody | None = None
@@ -763,13 +738,13 @@ def parse_disassembly(
       current = None
       continue
     if match := label_re.match(line.strip()):
-      symbol = scoped_symbol(normalize_symbol(match.group(2)), path)
+      symbol = normalize_symbol(match.group(2))
       if symbol.startswith((".", "LBB", "Ltmp")):
         if current is not None:
           current.lines.append((line_number, line))
         continue
       address = int(match.group(1), 16)
-      current = FunctionBody(symbol=symbol, path=path, address=address, lines=[], symbol_names=symbol_names or {})
+      current = FunctionBody(symbol=symbol, path=path, address=address, lines=[])
       functions_by_address.setdefault(address, []).append(current)
       functions_by_label.setdefault(symbol, current)
       continue
@@ -797,24 +772,11 @@ def symbol_target_base(symbol: str) -> str:
   return normalize_symbol(symbol)
 
 
-def direct_call_targets(line: str, symbol_names: dict[str, str] | None = None) -> set[str]:
-  targets = set()
-  if match := re.search(r"<(.+)>", line):
-    targets.add(symbol_target_base(match.group(1)))
-  targets.update(
-    symbol_target_base(match.group(1))
-    for match in re.finditer(
-      r"\b(?:R_[A-Z0-9_]+|ARM64_RELOC_BRANCH26|X86_64_RELOC_BRANCH|IMAGE_REL_[A-Z0-9_]+)\s+(.+?)(?:\+0x[0-9a-fA-F]+)?\s*$",
-      line,
-    )
-  )
-  if symbol_names:
-    targets = {normalize_symbol(symbol_names.get(target, target)) for target in targets}
-  return {target for target in targets if target and not target.startswith(("Ltmp", "LBB"))}
-
-
-def is_call_relocation(line: str) -> bool:
-  return bool(re.search(r"\b(?:R_[A-Z0-9_]*(?:CALL(?:_PLT)?|PLT32)|ARM64_RELOC_BRANCH26|X86_64_RELOC_BRANCH)\b", line))
+def direct_call_targets(line: str) -> set[str]:
+  """The symbol that the linked listing names as the destination of `line`."""
+  match = re.search(r"<(.+)>", line)
+  target = symbol_target_base(match.group(1)) if match else ""
+  return {target} if target and not target.startswith(("Ltmp", "LBB")) else set()
 
 
 # Targets whose conditional branch tables, together, name every conditional transfer mnemonic. The call graph does
@@ -829,20 +791,7 @@ def follows_destination(inst: str | None) -> bool:
 
 
 def all_direct_callees(body: FunctionBody) -> set[str]:
-  callees: set[str] = set()
-  for index, (_, line) in enumerate(body.lines):
-    inst = mnemonic(line)
-    if not follows_destination(inst) and not is_call_relocation(line):
-      continue
-    targets = direct_call_targets(line, body.symbol_names)
-    if inst in DIRECT_CALL_MNEMONICS | DIRECT_TAIL_MNEMONICS and index + 1 < len(body.lines):
-      next_line = body.lines[index + 1][1]
-      # A relocation immediately following this instruction supplies its target.
-      # Tail transfers use architecture-specific jump/relative relocations, not
-      # necessarily the CALL relocations recognized on standalone lines.
-      if is_call_relocation(next_line) or re.search(r"\b(?:R_|IMAGE_REL_)[A-Z0-9_]+\b", next_line):
-        targets.update(direct_call_targets(next_line, body.symbol_names))
-    callees.update(scoped_symbol(target, body.path) for target in targets)
+  callees = {target for _, line in body.lines if follows_destination(mnemonic(line)) for target in direct_call_targets(line)}
   callees.discard(body.symbol)
   return callees
 
@@ -857,8 +806,7 @@ def direct_callees(body: FunctionBody, functions: dict[str, FunctionBody]) -> se
 
 def is_ct_internal_symbol(symbol: str) -> bool:
   return (
-    "rscrypto::" in symbol or "::OUTLINED_FUNCTION_" in symbol
-    or symbol.startswith(("rscrypto_", "ct_entry_", "OUTLINED_FUNCTION_"))
+    "rscrypto::" in symbol or symbol.startswith(("rscrypto_", "ct_entry_", "OUTLINED_FUNCTION_"))
   )
 
 
@@ -890,6 +838,7 @@ def closure_roots(
 
 def linked_closure(
   roots: set[str], functions: dict[str, FunctionBody], artifact: Path, target: str | None = None,
+  image: LinkedImage | None = None,
 ) -> dict[str, Any]:
   call_graph = build_call_graph(functions)
   by_root = {root: reachable_closure(root, call_graph) for root in sorted(roots) if root in functions}
@@ -907,7 +856,7 @@ def linked_closure(
         unresolved_internal_calls.append({"caller": symbol, "target": callee})
     if target == "x86_64-unknown-linux-gnu":
       for _, line in functions[symbol].lines:
-        if re.search(r"\b(?:callq?|jmpq?)\s+\*[^\s]*\(%rip\)", line):
+        if re.search(r"\b(?:callq?|jmpq?)\s+\*[^\s]*\(%rip\)", line) and not x86_writable_slot(target, image, line):
           targets = direct_call_targets(line)
           if (not re.search(r"# GOT 0x[0-9a-fA-F]+\s+<.+>\s*$", line)
               or not targets or any(name.startswith(".") for name in targets)):
@@ -959,19 +908,16 @@ def is_s390x_return(target: str, inst: str, line: str) -> bool:
   return target.startswith("s390x-") and inst == "br" and re.search(r"\bbr\s+%r14\b", line.lower()) is not None
 
 
-# An x86 jump through a slot that the listing resolves to an import: `jmpq *0x10(%rip) # GOT 0x18f538 <free>`, a
-# Windows import-table slot `<__imp_free>`, or in an object listing the slot relocation that names the import.
+# An x86 jump through a slot that the listing resolves to an import: `jmpq *0x10(%rip) # GOT 0x18f538 <free>`, or a
+# Windows import-table slot `<__imp_free>`.
 X86_RESOLVED_SLOT = re.compile(r"#\s+(?:GOT\s+0x[0-9a-fA-F]+\s+<[^>]+>|0x[0-9a-fA-F]+\s+<__imp_[^>]+>)\s*$")
-X86_SLOT_RELOCATION = re.compile(r"\s(?:R_X86_64_(?:REX_)?GOTPCRELX?|R_X86_64_GOTPCREL|IMAGE_REL_AMD64_REL32)\s+(?:__imp_)?\S+")
 
 
-def is_indirect_jump(target: str, inst: str, operands: str = "", relocation: str = "") -> bool:
+def is_indirect_jump(target: str, inst: str, operands: str = "") -> bool:
   """A jump through a register or memory: a jump table, or a tail transfer to a computed address."""
   if target.startswith(("x86_64-", "i686-")):
     if inst in {"jmp", "jmpq"} and operands.strip().startswith("*"):
-      slot = "(%rip)" in operands and (X86_SLOT_RELOCATION.search(relocation) is not None
-                                       and ("GOTPCREL" in relocation or "__imp_" in relocation))
-      return X86_RESOLVED_SLOT.search(operands) is None and not slot
+      return X86_RESOLVED_SLOT.search(operands) is None
     return inst in INDIRECT_JUMP_MNEMONICS
   if target.startswith("s390x-"):
     # `br %r14` returns. z/Architecture Principles of Operation, chapter 7, BRANCH ON CONDITION: with R2 zero, BCR does
@@ -992,15 +938,31 @@ def is_indirect_jump(target: str, inst: str, operands: str = "", relocation: str
   return True
 
 
-def x86_import_slot(target: str, image: LinkedImage | None, line: str) -> bool:
-  """Whether an x86 `jmpq *disp(%rip)` reads an import slot that the loader fills, such as a Windows IAT entry."""
+def x86_rip_slot(target: str, line: str) -> int | None:
+  """The address that an x86 `*disp(%rip)` operand reads: the end of the instruction plus `disp`."""
   match = re.search(r"\*(-?0x[0-9a-fA-F]+)\(%rip\)", line)
   address = INSTRUCTION_ADDRESS.match(line)
-  if not target.startswith(("x86_64-", "i686-")) or image is None or match is None or address is None:
-    return False
+  if not target.startswith(("x86_64-", "i686-")) or match is None or address is None:
+    return None
   encoded = line.split("\t")[0].split(":", 1)[1].split()
-  slot = image.slots.get(int(address.group(1), 16) + len(encoded) + int(match.group(1), 16))
+  return int(address.group(1), 16) + len(encoded) + int(match.group(1), 16)
+
+
+def x86_import_slot(target: str, image: LinkedImage | None, line: str) -> bool:
+  """Whether an x86 `jmpq *disp(%rip)` reads an import slot that the loader fills, such as a Windows IAT entry."""
+  slot = image.slots.get(address) if image is not None and (address := x86_rip_slot(target, line)) is not None else None
   return slot is not None and slot.symbol is not None
+
+
+def x86_writable_slot(target: str, image: LinkedImage | None, line: str) -> bool:
+  """Whether an x86 `*disp(%rip)` operand reads writable data that is not a GOT, such as a dispatch cache.
+
+  The process writes such a slot at run time, so its target is an indirect transfer. A GOT slot stays strict: the
+  listing must name its import.
+  """
+  address = x86_rip_slot(target, line) if image is not None else None
+  section = image.section_at(address) if address is not None else None
+  return section is not None and section.writable and not section.slot_table
 
 
 def is_indirect_call(target: str, inst: str) -> bool:
@@ -1136,23 +1098,20 @@ def parse_instructions(body: FunctionBody) -> list[Instruction]:
   """Decode instruction lines with offsets and same-function branch targets.
 
   llvm-objdump names most branch targets as `<symbol+offset>`; s390x prints
-  only the address. An address operand followed by a relocation is not local.
+  only the address.
   """
   instructions = []
-  lines = [line for _, line in body.lines]
-  for index, line in enumerate(lines):
+  for _, line in body.lines:
     address = INSTRUCTION_ADDRESS.match(line)
     inst = mnemonic(line)
-    if address is None or inst is None or RELOCATION_LINE.match(line):
+    if address is None or inst is None:
       continue
     local_target = None
     if symbol_target := BRANCH_TARGET_SYMBOL.search(line):
-      if scoped_symbol(normalize_symbol(symbol_target.group(1)), body.path) == body.symbol:
+      if normalize_symbol(symbol_target.group(1)) == body.symbol:
         local_target = int(symbol_target.group(2) or "0", 16)
     elif address_target := BRANCH_TARGET_ADDRESS.search(line):
-      relocated = index + 1 < len(lines) and RELOCATION_LINE.match(lines[index + 1]) is not None
-      if not relocated:
-        local_target = int(address_target.group(1), 16) - body.address
+      local_target = int(address_target.group(1), 16) - body.address
     instructions.append(Instruction(int(address.group(1), 16) - body.address, inst, local_target,
                                     instruction_text(line)[1]))
   return instructions
@@ -1375,7 +1334,7 @@ def decode_lines(body: FunctionBody) -> list[DecodedLine]:
   decoded = []
   for number, line in body.lines:
     address = INSTRUCTION_ADDRESS.match(line)
-    if address is None or RELOCATION_LINE.match(line):
+    if address is None:
       continue
     fields = [part.strip() for part in line.split("\t") if part.strip()]
     if len(fields) < 2 or ":" not in fields[0]:
@@ -1474,10 +1433,11 @@ def is_return_or_trap(target: str, row: DecodedLine) -> bool:
   """Whether control leaves the function or stops at `row` without a local successor."""
   mnemonic = row.mnemonic
   if target.startswith(("x86_64-", "i686-")):
-    # Near and far returns, interrupt and system returns, and traps (Intel SDM Vol. 2).
+    # Near and far returns, interrupt and system returns, and traps (Intel SDM Vol. 2). A REP prefix on RET, which
+    # llvm-objdump prints as `rep retq`, does not change the return (the `.byte 0xf3,0xc3` of older assembly).
     return mnemonic in {"ret", "retq", "retl", "lret", "lretl", "lretq", "lretw", "iret", "iretl", "iretq", "iretw",
                         "sysret", "sysretl", "sysretq", "sysexit", "sysexitl", "sysexitq", "ud0", "ud1", "ud2", "int3",
-                        "int1", "hlt"}
+                        "int1", "hlt"} or (mnemonic in {"rep", "repz", "repe"} and row.operands in {"ret", "retq"})
   if target.startswith("aarch64-"):
     return mnemonic in {"ret", "retaa", "retab", "eret", "eretaa", "eretab", "brk", "udf", "hlt"}
   if target.startswith("riscv64"):
@@ -1695,39 +1655,19 @@ def s390x_transfer(code: bytes) -> str | None:
   return None
 
 
-@functools.cache
-def listing_bytes(path: Path) -> dict[tuple[str, int], bytes]:
-  """The encoded bytes of each row of a disassembly listing, by section and address."""
-  rows, section = {}, ""
-  for line in path.read_text(errors="replace").splitlines():
-    if line.startswith("Disassembly of section "):
-      section = line.removeprefix("Disassembly of section ").rstrip(":")
-    elif (match := re.match(r"^\s*([0-9a-fA-F]+):\s+((?:[0-9a-fA-F]{2} )+)", line)) and not RELOCATION_LINE.match(line):
-      rows[(section, int(match.group(1), 16))] = bytes.fromhex(match.group(2))
-  return rows
+def executed_bytes(row: DecodedLine, image: LinkedImage | None) -> bytes | None:
+  """The bytes of the instruction that an IBM Z `exrl` executes, which the linked image holds at the operand address.
 
-
-def executed_bytes(body: FunctionBody, row: DecodedLine, image: LinkedImage | None) -> bytes | None:
-  """The bytes of the instruction that an IBM Z `exrl` executes.
-
-  The linked image holds them at the operand address. An object listing names the template with the relocation on
-  the next line, `R_390_PC32DBL .text+0x4a`, whose addend counts from the relocated field, 2 bytes into the `exrl`.
-  The template is a row of that section in the same listing. An EXECUTE through a register (`ex`) has neither.
+  An EXECUTE through a register (`ex`) names no template.
   """
-  if row.mnemonic != "exrl":
+  if row.mnemonic != "exrl" or image is None:
     return None
-  if image is not None:
-    match = re.fullmatch(r"%r\d+, 0x([0-9a-fA-F]+)(?: <.*>)?", row.operands)
-    first = image.read(int(match.group(1), 16), 1) if match else None
-    return image.read(int(match.group(1), 16), (2, 4, 4, 6)[first[0] >> 6]) if first else None
-  following = next((line for number, line in body.lines if number > row.number), "")
-  relocation = re.search(r"\bR_390_PC32DBL\s+(\S+)\+0x([0-9a-fA-F]+)\s*$", following)
-  if not RELOCATION_LINE.match(following) or relocation is None:
-    return None
-  return listing_bytes(body.path).get((relocation.group(1), int(relocation.group(2), 16) - 2))
+  match = re.fullmatch(r"%r\d+, 0x([0-9a-fA-F]+)(?: <.*>)?", row.operands)
+  first = image.read(int(match.group(1), 16), 1) if match else None
+  return image.read(int(match.group(1), 16), (2, 4, 4, 6)[first[0] >> 6]) if first else None
 
 
-def transfer_encoding(target: str, body: FunctionBody, row: DecodedLine, image: LinkedImage | None) -> str | None:
+def transfer_encoding(target: str, row: DecodedLine, image: LinkedImage | None) -> str | None:
   """Classify `row` by its encoding, independent of the mnemonic tables: "direct" for a transfer whose instruction
   holds its destination, "transfer" for any other transfer of control (through a register or memory, a return, a
   system call, or a trap), and None for an instruction that continues at the next one."""
@@ -1743,7 +1683,7 @@ def transfer_encoding(target: str, body: FunctionBody, row: DecodedLine, image: 
   if kind != "execute":
     return kind
   # The executed instruction must not transfer, and an instruction that the scanner cannot read may.
-  executed = executed_bytes(body, row, image)
+  executed = executed_bytes(row, image)
   return "transfer" if executed is None or s390x_transfer(executed) is not None else None
 
 
@@ -1781,7 +1721,7 @@ def control_errors(target: str, body: FunctionBody, image: LinkedImage | None) -
   rows = decode_lines(body)
   decoded = {row.number for row in rows}
   errors = [f"{body.symbol}: line {number} does not decode: {line.strip()}" for number, line in body.lines
-            if INSTRUCTION_ADDRESS.match(line) and not RELOCATION_LINE.match(line) and number not in decoded]
+            if INSTRUCTION_ADDRESS.match(line) and number not in decoded]
   reachable = None if not any(row.mnemonic in PADDING_MNEMONICS for row in rows) else reachable_rows(target, body, rows)
   for index, row in enumerate(rows):
     where = f"{body.symbol}+0x{row.offset:x}: {row.mnemonic} {row.operands}".rstrip()
@@ -1789,7 +1729,7 @@ def control_errors(target: str, body: FunctionBody, image: LinkedImage | None) -
       if reachable is None or index in reachable:
         errors.append(f"{where}: an edge can reach bytes that do not decode")
       continue
-    kind = transfer_encoding(target, body, row, image)
+    kind = transfer_encoding(target, row, image)
     if kind is not None and not has_control_rule(target, row):
       errors.append(f"{where}: a transfer of control without a control rule")
     elif kind == "direct" and not follows_destination(row.mnemonic):
@@ -2631,41 +2571,9 @@ def scan_symbol(
   index_by_offset = {instruction.offset: position for position, instruction in enumerate(instructions)}
   # The slice analysis that classifies indirect jumps, made at the first one.
   tables = None
-  for line_index, (line_number, line) in enumerate(body.lines):
+  for line_number, line in body.lines:
     inst = mnemonic(line)
     if not inst:
-      callees = direct_call_targets(line, body.symbol_names)
-      if is_call_relocation(line) and callees and not callees <= local_symbols:
-        findings.append(
-          finding(
-            symbol,
-            body.path,
-            line_number,
-            line,
-            "call",
-            "warn",
-            "Direct-call relocation leaves the local CT artifact; callee operand provenance is unproven.",
-            scope=scope,
-            primitive_ids=primitive_ids,
-            roots=roots,
-          )
-        )
-      lowered = line.lower()
-      if any(target in lowered for target in SUSPICIOUS_CALL_TARGETS):
-        findings.append(
-          finding(
-            symbol,
-            body.path,
-            line_number,
-            line,
-            "suspicious_relocation_target",
-            "warn",
-            "Relocation or symbol text references a panic, allocation, or C comparison routine.",
-            scope=scope,
-            primitive_ids=primitive_ids,
-            roots=roots,
-          )
-        )
       continue
 
     if inst in DIV_MNEMONICS or (
@@ -2804,8 +2712,7 @@ def scan_symbol(
       )
     elif is_s390x_return(target, inst, line):
       continue
-    elif is_indirect_jump(target, inst, line.split("\t")[-1] if line.count("\t") >= 2 else "",
-                          body.lines[line_index + 1][1] if line_index + 1 < len(body.lines) else "") \
+    elif is_indirect_jump(target, inst, line.split("\t")[-1] if line.count("\t") >= 2 else "") \
         and not x86_import_slot(target, image, line):
       if tables is None:
         from condition_slice import FunctionSlices
@@ -2858,7 +2765,14 @@ def scan_symbol(
             roots=roots,
           )
         )
-    elif inst in DIRECT_CALL_MNEMONICS | DIRECT_TAIL_MNEMONICS:
+    elif (target.startswith(("x86_64-", "i686-")) and inst in {"call", "callq"} and instruction_text(line)[1].startswith("*")
+          and X86_RESOLVED_SLOT.search(line) is None and not x86_import_slot(target, image, line)):
+      findings.append(finding(symbol, body.path, line_number, line, "indirect_call", "warn",
+                              "Indirect call through a register or a writable slot, such as a dispatch cache. "
+                              "The dispatch source must be public.",
+                              scope=scope, primitive_ids=primitive_ids, roots=roots))
+    elif inst in DIRECT_CALL_MNEMONICS | DIRECT_TAIL_MNEMONICS or (inst in {"jalr", "c.jalr"} and "<" in line):
+      # A RISC-V `auipc` and `jalr` pair names its destination in the linked listing, as a direct call does.
       callees = direct_call_targets(line)
       if inst in DIRECT_TAIL_MNEMONICS and callees == {symbol}:
         continue
@@ -2879,9 +2793,6 @@ def scan_symbol(
         )
       )
     elif inst in {"jalr", "c.jalr"}:
-      relocation_window = [previous_line for _, previous_line in body.lines[max(0, line_index - 2) : line_index]]
-      if any("R_RISCV_CALL" in previous_line for previous_line in relocation_window):
-        continue
       findings.append(
         finding(
           symbol,
@@ -3100,29 +3011,6 @@ def main() -> int:
   # pre-link object holds a second, thinner body whose calls leave the object.
   functions, _ = parse_disassembly(final_path)
   apply_alias_bodies(functions, parse_asm_aliases(args.artifact_dir))
-
-  ct_roots = {symbol for roots in ct_roots_by_primitive.values() for symbol in roots}
-  linked = linked_closure(ct_roots | equality_roots, functions, final_path, args.target)
-  if linked["missing_root_symbols"] or linked["unresolved_internal_calls"]:
-    for symbol in linked["missing_root_symbols"]:
-      print(f"linked CT binary is missing root {symbol}")
-    for call in linked["unresolved_internal_calls"]:
-      print(f"linked CT closure cannot resolve {call['caller']} -> {call['target']}")
-    return 2
-  final_equality = linked_closure(equality_roots, functions, final_path, args.target)
-
-  enforced_roots = {
-    symbol for primitive in select_branch_enforced_primitives(root)
-    for symbol in ct_roots_by_primitive.get(primitive, set())
-  }
-  final_enforced = linked_closure(enforced_roots, functions, final_path, args.target)
-  final_enforced["unreachable_symbols"] = enforced_unreachable_symbols(root)
-  unreachable_errors = unreachable_symbol_errors(enforced_roots, final_enforced["unreachable_symbols"], functions)
-  if unreachable_errors:
-    for error in unreachable_errors:
-      print(error)
-    return 2
-
   try:
     image = load_linked_image(args.artifact_dir)
   except ValueError as error:
@@ -3131,6 +3019,28 @@ def main() -> int:
     return 2
   if image is None:
     print("cannot read the linked binary for placement-independent instruction identities")
+    return 2
+
+  ct_roots = {symbol for roots in ct_roots_by_primitive.values() for symbol in roots}
+  linked = linked_closure(ct_roots | equality_roots, functions, final_path, args.target, image)
+  if linked["missing_root_symbols"] or linked["unresolved_internal_calls"]:
+    for symbol in linked["missing_root_symbols"]:
+      print(f"linked CT binary is missing root {symbol}")
+    for call in linked["unresolved_internal_calls"]:
+      print(f"linked CT closure cannot resolve {call['caller']} -> {call['target']}")
+    return 2
+  final_equality = linked_closure(equality_roots, functions, final_path, args.target, image)
+
+  enforced_roots = {
+    symbol for primitive in select_branch_enforced_primitives(root)
+    for symbol in ct_roots_by_primitive.get(primitive, set())
+  }
+  final_enforced = linked_closure(enforced_roots, functions, final_path, args.target, image)
+  final_enforced["unreachable_symbols"] = enforced_unreachable_symbols(root)
+  unreachable_errors = unreachable_symbol_errors(enforced_roots, final_enforced["unreachable_symbols"], functions)
+  if unreachable_errors:
+    for error in unreachable_errors:
+      print(error)
     return 2
   prepare_linked_image(args.target, functions, image)
 
@@ -3249,7 +3159,6 @@ def main() -> int:
         "register_indexed_memory",
         "s390x_division_review",
         "s390x_vector_multiply_review",
-        "suspicious_relocation_target",
         "variable_latency_division_review",
         "variable_latency_multiply_review",
       ],

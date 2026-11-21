@@ -1820,15 +1820,6 @@ class FunctionSlices:
     self.states = pointer_values(rows, successors, self.row_effects, self.row_memory, self.frame)
     self.escaped = frame_escapes(target, rows, self.row_effects, self.row_memory, self.states, self.frame, image)
     self.cyclic = cyclic_rows(successors, len(rows))
-    # The relocation that an object listing prints after an instruction, by row.
-    relocated, previous = {}, None
-    for number, line in body.lines:
-      if scanner.RELOCATION_LINE.match(line) and previous is not None:
-        relocated[previous] = line
-      elif number in self.index_by_line:
-        previous = self.index_by_line[number]
-    self.relocated = relocated
-    self.linked = image is not None
 
   def reaching(self, index: int, register: str) -> list[int]:
     """The rows whose definition of `register` can reach rows[index], and `ENTRY` for its entry value."""
@@ -1919,22 +1910,9 @@ class FunctionSlices:
     return True
 
   def read_only_address(self, index: int) -> bool:
-    """Whether rows[index] forms the address of read-only data or code, such as a jump table.
-
-    A linked listing describes the address (`<const:...>`, `<code:...>`, a global-merge base). An object listing
-    names the table section or label in the relocation (`.rodata.<function>`, `.rdata`, `.LJTI0_0`, `$JT0_0`,
-    `.Lswitch.table`), and an x86 RIP-relative address without a relocation is in the same code section.
-    """
-    row = self.rows[index]
-    identity = self.identities[row.number]
-    relocation = self.relocated.get(index)
-    if re.search(r"<(?:[\w-]+:)?(?:const:|code:|merged)", identity) is not None:
-      return True
-    if self.linked:
-      return False
-    if relocation is None:
-      return "(%rip)" in row.operands
-    return re.search(r"\s(?:\.rodata\S*|\.rdata\S*|\$JT\S*|\.LJTI\S*|\.Lswitch\.table\S*)\s*$", relocation) is not None
+    """Whether rows[index] forms the address of read-only data or code, such as a jump table, which the linked
+    listing describes (`<const:...>`, `<code:...>`, a global-merge base)."""
+    return re.search(r"<(?:[\w-]+:)?(?:const:|code:|merged)", self.identities[self.rows[index].number]) is not None
 
   def table_loads(self, line_number: int) -> frozenset[int] | None:
     """The read-only table loads that give the indirect jump on `line_number` its target, or None.

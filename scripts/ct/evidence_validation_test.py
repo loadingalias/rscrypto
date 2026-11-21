@@ -433,7 +433,7 @@ def test_msvc_flagless_assembly() -> None:
       "0000000140001000 0000000000000020 T rscrypto_p256_scalarmul",
       "0000000140001020 0000000000000010 T ct_entry_p256_ecdh_agree",
     ]
-    functions, _ = parse_disassembly(root / "out", {})
+    functions, _ = parse_disassembly(root / "out")
     assert reachable_closure("ct_entry_p256_ecdh_agree", build_call_graph(functions)) == {
       "ct_entry_p256_ecdh_agree", "rscrypto_p256_scalarmul",
     }
