@@ -345,13 +345,13 @@ pub use argon2::{Argon2VerificationLimits, Argon2idPassword};
 pub use composite_mldsa::{CompositeMlDsaError, CompositeMlDsaKeyError};
 #[cfg(feature = "mldsa65-ecdsa-p256")]
 pub use composite_mldsa::{
-  MlDsa65EcdsaP256, MlDsa65EcdsaP256PreparedSecretKey, MlDsa65EcdsaP256PublicKey, MlDsa65EcdsaP256SecretKey,
-  MlDsa65EcdsaP256Signature,
+  MlDsa65EcdsaP256, MlDsa65EcdsaP256PreparedSecretKey, MlDsa65EcdsaP256PreparedSecretKeyStorage,
+  MlDsa65EcdsaP256PublicKey, MlDsa65EcdsaP256SecretKey, MlDsa65EcdsaP256Signature,
 };
 #[cfg(feature = "mldsa65-ed25519")]
 pub use composite_mldsa::{
-  MlDsa65Ed25519, MlDsa65Ed25519PreparedSecretKey, MlDsa65Ed25519PublicKey, MlDsa65Ed25519SecretKey,
-  MlDsa65Ed25519Signature,
+  MlDsa65Ed25519, MlDsa65Ed25519PreparedSecretKey, MlDsa65Ed25519PreparedSecretKeyStorage, MlDsa65Ed25519PublicKey,
+  MlDsa65Ed25519SecretKey, MlDsa65Ed25519Signature,
 };
 #[cfg(all(rscrypto_internal, feature = "diag", feature = "ed25519"))]
 pub use curve25519_edwards::diag_ed25519_select_basepoint_cached_limb_digest;

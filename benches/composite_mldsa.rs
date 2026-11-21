@@ -19,9 +19,10 @@ use criterion::Criterion;
 use kryptering::traits::{Signer as _, Verifier as _};
 use kryptering::{CompositeMlDsaVariant, SignatureAlgorithm, SoftwareKey, SoftwareSigner, SoftwareVerifier};
 use rscrypto::{
-  CompositeMlDsaError, EcdsaP256Signature, MlDsa65EcdsaP256, MlDsa65EcdsaP256PublicKey, MlDsa65EcdsaP256SecretKey,
-  MlDsa65EcdsaP256Signature, MlDsa65Ed25519, MlDsa65Ed25519PublicKey, MlDsa65Ed25519SecretKey, MlDsa65Ed25519Signature,
-  MlDsa65PreparedSecretKeyStorage, MlDsa65Signature,
+  CompositeMlDsaError, EcdsaP256Signature, MlDsa65EcdsaP256, MlDsa65EcdsaP256PreparedSecretKeyStorage,
+  MlDsa65EcdsaP256PublicKey, MlDsa65EcdsaP256SecretKey, MlDsa65EcdsaP256Signature, MlDsa65Ed25519,
+  MlDsa65Ed25519PreparedSecretKeyStorage, MlDsa65Ed25519PublicKey, MlDsa65Ed25519SecretKey, MlDsa65Ed25519Signature,
+  MlDsa65Signature,
 };
 
 const MESSAGE: [u8; 32] = [0xa5; 32];
@@ -53,7 +54,7 @@ fn ed25519(c: &mut Criterion) {
   let expected = oracle.sign(&MESSAGE).to_bytes();
   let mut tampered = expected;
   tampered[0] ^= 1;
-  let mut storage = Box::new(MlDsa65PreparedSecretKeyStorage::new());
+  let mut storage = Box::new(MlDsa65Ed25519PreparedSecretKeyStorage::new());
   let prepared = secret.prepare(&mut storage).expect("prepare");
 
   // Seeds to the encoded public key: expand both components and encode.
@@ -238,7 +239,7 @@ fn ecdsa_p256(c: &mut Criterion) {
   tampered[0] ^= 1;
   let mut tampered_raw = raw.clone();
   tampered_raw[0] ^= 1;
-  let mut storage = Box::new(MlDsa65PreparedSecretKeyStorage::new());
+  let mut storage = Box::new(MlDsa65EcdsaP256PreparedSecretKeyStorage::new());
   let prepared = secret.prepare(&mut storage).expect("prepare");
 
   // Hedged signing with each library's best reused key. kryptering keeps the

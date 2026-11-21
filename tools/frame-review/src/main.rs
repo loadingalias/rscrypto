@@ -21,9 +21,9 @@ use rscrypto::{
   Aead, Aes128Gcm, Aes128GcmKey, Aes256Gcm, Aes256GcmKey, ChaCha20Poly1305, ChaCha20Poly1305Key, CompositeMlDsaError,
   HpkeError, HpkeReceiver, HpkeSender, HpkeSuite, HpkeX25519HkdfSha256Aes128Gcm, HpkeXWingHkdfSha256ChaCha20Poly1305,
   Kem, MlDsa44, MlDsa44PreparedSecretKey, MlDsa44PreparedSecretKeyStorage, MlDsa44PublicKey, MlDsa44SecretKey,
-  MlDsa44Signature, MlDsa65, MlDsa65EcdsaP256, MlDsa65EcdsaP256PreparedSecretKey, MlDsa65EcdsaP256PublicKey,
+  MlDsa44Signature, MlDsa65, MlDsa65EcdsaP256, MlDsa65EcdsaP256PreparedSecretKey, MlDsa65EcdsaP256PreparedSecretKeyStorage, MlDsa65EcdsaP256PublicKey,
   MlDsa65EcdsaP256SecretKey, MlDsa65EcdsaP256Signature, MlDsa65Ed25519, MlDsa65Ed25519PreparedSecretKey,
-  MlDsa65Ed25519PublicKey, MlDsa65Ed25519SecretKey, MlDsa65Ed25519Signature, MlDsa65PreparedSecretKey,
+  MlDsa65Ed25519PreparedSecretKeyStorage, MlDsa65Ed25519PublicKey, MlDsa65Ed25519SecretKey, MlDsa65Ed25519Signature, MlDsa65PreparedSecretKey,
   MlDsa65PreparedSecretKeyStorage, MlDsa65PublicKey, MlDsa65SecretKey, MlDsa65Signature, MlDsa87,
   MlDsa87PreparedSecretKey, MlDsa87PreparedSecretKeyStorage, MlDsa87PublicKey, MlDsa87SecretKey, MlDsa87Signature,
   MlDsaError, MlKem512, MlKem512PreparedDecapsulationKey, MlKem768, MlKem768PreparedDecapsulationKey, MlKem1024,
@@ -478,8 +478,8 @@ record_boundaries!(ChaCha20Poly1305, seal_chacha20poly1305, open_chacha20poly130
 // prepared key, and verification.
 macro_rules! composite_boundaries {
   (
-    $secret:ty, $prepared:ident, $public:ty, $signature:ty, $sign:ident, $sign_hedged:ident, $sign_prepared:ident,
-    $verify:ident
+    $secret:ty, $prepared:ident, $storage:ty, $public:ty, $signature:ty, $sign:ident, $sign_hedged:ident,
+    $sign_prepared:ident, $verify:ident
   ) => {
     #[inline(never)]
     fn $sign(key: &$secret, message: &[u8]) -> Result<$signature, CompositeMlDsaError> {
@@ -496,7 +496,7 @@ macro_rules! composite_boundaries {
 
     #[inline(never)]
     fn $sign_prepared(
-      key: &$prepared<Box<MlDsa65PreparedSecretKeyStorage>>,
+      key: &$prepared<Box<$storage>>,
       message: &[u8],
     ) -> Result<$signature, CompositeMlDsaError> {
       key.sign_deterministic(message, b"frame review")
@@ -512,6 +512,7 @@ macro_rules! composite_boundaries {
 composite_boundaries!(
   MlDsa65Ed25519SecretKey,
   MlDsa65Ed25519PreparedSecretKey,
+  MlDsa65Ed25519PreparedSecretKeyStorage,
   MlDsa65Ed25519PublicKey,
   MlDsa65Ed25519Signature,
   composite_ed25519_sign,
@@ -522,6 +523,7 @@ composite_boundaries!(
 composite_boundaries!(
   MlDsa65EcdsaP256SecretKey,
   MlDsa65EcdsaP256PreparedSecretKey,
+  MlDsa65EcdsaP256PreparedSecretKeyStorage,
   MlDsa65EcdsaP256PublicKey,
   MlDsa65EcdsaP256Signature,
   composite_p256_sign,

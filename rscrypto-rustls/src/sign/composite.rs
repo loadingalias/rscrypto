@@ -2,11 +2,13 @@
 //! empty composite context that TLS requires and hedged ML-DSA.
 
 use alloc::{alloc::Global, boxed::Box, sync::Arc, vec::Vec};
-use rscrypto::{CompositeMlDsaError, MlDsa65PreparedSecretKeyStorage};
+use rscrypto::CompositeMlDsaError;
 #[cfg(feature = "mldsa65-ecdsa-p256")]
-use rscrypto::{MlDsa65EcdsaP256PreparedSecretKey, MlDsa65EcdsaP256SecretKey};
+use rscrypto::{
+  MlDsa65EcdsaP256PreparedSecretKey, MlDsa65EcdsaP256PreparedSecretKeyStorage, MlDsa65EcdsaP256SecretKey,
+};
 #[cfg(feature = "mldsa65-ed25519")]
-use rscrypto::{MlDsa65Ed25519PreparedSecretKey, MlDsa65Ed25519SecretKey};
+use rscrypto::{MlDsa65Ed25519PreparedSecretKey, MlDsa65Ed25519PreparedSecretKeyStorage, MlDsa65Ed25519SecretKey};
 use rustls::Error;
 use rustls::crypto::SignatureScheme;
 use rustls::crypto::{Signer, SigningKey};
@@ -29,7 +31,7 @@ pub(super) fn load(
         let form = if compact {
           Form::Compact(key)
         } else {
-          Form::Prepared(Box::new(key.prepare_in(Global).ok()?))
+          Form::Prepared(key.prepare_in(Global).ok()?)
         };
         return Some(Key {
           secret: Arc::new(Secret::$variant(form)),
@@ -47,20 +49,21 @@ pub(super) fn load(
 }
 
 /// A loaded key: the compact key, or its prepared form, which owns its
-/// ML-DSA storage and a copy of the traditional key. Both forms are boxed,
-/// so the larger prepared Ed25519 form does not set the size of the ECDSA form.
+/// storage and keeps no compact copy.
 #[derive(Debug)]
 enum Form<C, P> {
   Compact(Box<C>),
-  Prepared(Box<P>),
+  Prepared(P),
 }
 
 #[derive(Debug)]
 enum Secret {
   #[cfg(feature = "mldsa65-ed25519")]
-  Ed25519(Form<MlDsa65Ed25519SecretKey, MlDsa65Ed25519PreparedSecretKey<Box<MlDsa65PreparedSecretKeyStorage>>>),
+  Ed25519(Form<MlDsa65Ed25519SecretKey, MlDsa65Ed25519PreparedSecretKey<Box<MlDsa65Ed25519PreparedSecretKeyStorage>>>),
   #[cfg(feature = "mldsa65-ecdsa-p256")]
-  EcdsaP256(Form<MlDsa65EcdsaP256SecretKey, MlDsa65EcdsaP256PreparedSecretKey<Box<MlDsa65PreparedSecretKeyStorage>>>),
+  EcdsaP256(
+    Form<MlDsa65EcdsaP256SecretKey, MlDsa65EcdsaP256PreparedSecretKey<Box<MlDsa65EcdsaP256PreparedSecretKeyStorage>>>,
+  ),
 }
 
 impl Secret {

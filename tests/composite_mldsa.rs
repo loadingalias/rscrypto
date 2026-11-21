@@ -391,7 +391,7 @@ macro_rules! composite_tests {
           hedged
         );
 
-        let mut storage = MlDsa65PreparedSecretKeyStorage::new();
+        let mut storage = Default::default();
         let prepared = secret.prepare(&mut storage).expect("prepare");
         assert_eq!(
           prepared

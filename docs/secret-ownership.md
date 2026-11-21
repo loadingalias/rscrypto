@@ -241,9 +241,9 @@ signature leaves a retained prepared key unchanged.
 The composite ML-DSA loader imports a composite key directly into allocator-backed
 storage with `from_pkcs8_der_in`. By default it then prepares the key once with
 `prepare_in` and drops the imported key, which clears its owners. The prepared composite
-key owns its `MlDsa65PreparedSecretKeyStorage` box and an explicit `duplicate_secret`
-copy of the Ed25519 or P-256 key. The loader boxes it; signers share it through `Arc`
-and return public signatures. With `sign::Provider::compact`, the loader keeps the
+key owns its `MlDsa65Ed25519PreparedSecretKeyStorage` or `MlDsa65EcdsaP256PreparedSecretKeyStorage`
+box, which holds the prepared ML-DSA-65 key and the copy of the Ed25519 or P-256 key. Signers
+share the prepared key through `Arc` and return public signatures. With `sign::Provider::compact`, the loader keeps the
 imported box instead, and each signature prepares a temporary prepared key with
 `prepare_in`. Hedged signing draws its randomness
 into a zeroizing owner before any secret computation.
@@ -361,8 +361,11 @@ their existing lifetimes; this boundary adds no secret owner or allocation.
   copy it into the returned `SecretBytes` or the caller's buffer.
 - Hedged signing draws all randomness into one zeroizing owner before any secret computation.
   The message representative holds only public data.
-- `prepare` and `prepare_in` prepare the ML-DSA key as [ML-DSA storage](#ml-dsa-storage) describes,
-  and keep an explicit `duplicate_secret` copy of the traditional key, which the prepared key owns.
+- `prepare` and `prepare_in` fill one composite storage owner in place: its ML-DSA-65 field as
+  [ML-DSA storage](#ml-dsa-storage) describes, then an explicit `duplicate_secret` copy of the
+  traditional key. The prepared key holds only the storage borrow or box, so moving it moves no
+  secret. Dropping it clears the traditional copy, then the ML-DSA-65 field; a failed preparation
+  clears what it wrote.
 - With `alloc`, `generate_keypair_in`, `try_generate_keypair_in`, `SecretKey::try_from_slice_in`,
   and `SecretKey::from_pkcs8_der_in` fill the key in an allocation from a caller-selected
   `Allocator` and return `Box<SecretKey, A>`. Signing through the box reads the key in place.

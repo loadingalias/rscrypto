@@ -63,7 +63,7 @@ use alloc::boxed::Box;
 #[cfg(feature = "alloc")]
 use core::alloc::Allocator;
 use core::fmt;
-use core::ops::DerefMut;
+use core::ops::{Deref, DerefMut};
 
 use crate::backend::{
   der::MalformedDer,
@@ -276,6 +276,7 @@ macro_rules! composite {
     secret: $secret:ident,
     signature: $signature:ident,
     prepared: $prepared:ident,
+    storage: $storage:ident,
     name: $name:literal,
     label: $label:literal,
     arc: $arc:literal,
@@ -669,8 +670,8 @@ macro_rules! composite {
         }
       }
 
-      /// Expand the ML-DSA-65 key into caller-owned storage for repeated
-      /// signing.
+      /// Expand the ML-DSA-65 key and copy the traditional key into
+      /// caller-owned storage for repeated signing.
       ///
       /// The returned key borrows `storage`; it clears the prepared secrets
       /// when dropped, and a failed preparation clears them before returning.
@@ -679,39 +680,20 @@ macro_rules! composite {
       /// # Errors
       ///
       /// Returns [`CompositeMlDsaError::SigningFailed`] if preparation fails.
-      pub fn prepare<'a>(
-        &self,
-        storage: &'a mut MlDsa65PreparedSecretKeyStorage,
-      ) -> Result<$prepared<&'a mut MlDsa65PreparedSecretKeyStorage>, CompositeMlDsaError> {
-        Ok($prepared {
-          ml_dsa: self
-            .ml_dsa
-            .secret
-            .prepare(storage)
-            .map_err(|_| CompositeMlDsaError::SigningFailed)?,
-          trad: self.trad.duplicate(),
-        })
+      pub fn prepare<'a>(&self, storage: &'a mut $storage) -> Result<$prepared<&'a mut $storage>, CompositeMlDsaError> {
+        $prepared::prepare(self, storage)
       }
 
       /// Like [`Self::prepare`], with storage allocated from `alloc`.
       ///
-      /// The prepared key owns its storage and a copy of the traditional
-      /// key, so it can be kept independently of this key. Dropping it clears
-      /// the secrets before the allocation is freed. Allocation failure is
-      /// handled as by [`Box::new_in`].
+      /// The prepared key owns its storage, so it can be kept independently
+      /// of this key. The storage is prepared in place, and moving the
+      /// prepared key moves only the box. Dropping it clears the secrets
+      /// before the allocation is freed. Allocation failure is handled as by
+      /// [`Box::new_in`].
       #[cfg(feature = "alloc")]
-      pub fn prepare_in<A: Allocator>(
-        &self,
-        alloc: A,
-      ) -> Result<$prepared<Box<MlDsa65PreparedSecretKeyStorage, A>>, CompositeMlDsaError> {
-        Ok($prepared {
-          ml_dsa: self
-            .ml_dsa
-            .secret
-            .prepare_in(alloc)
-            .map_err(|_| CompositeMlDsaError::SigningFailed)?,
-          trad: self.trad.duplicate(),
-        })
+      pub fn prepare_in<A: Allocator>(&self, alloc: A) -> Result<$prepared<Box<$storage, A>>, CompositeMlDsaError> {
+        $prepared::prepare(self, Box::new_in($storage::new(), alloc))
       }
 
       composite_signing_methods!($profile, $signature, $random_len);
@@ -743,18 +725,86 @@ macro_rules! composite {
       }
     }
 
-    #[doc = concat!("`", $name, "` signing key prepared for repeated signing, in ML-DSA-65 storage `S`.")]
+    #[doc = concat!("Storage for a prepared `", $name, "` signing key.")]
     ///
-    /// `S` is caller-owned storage borrowed from `prepare`, or a box
-    /// allocated by `prepare_in`. Signatures equal those of the secret key it
-    /// was prepared from. The prepared ML-DSA secrets are cleared on drop.
-    /// Not `Clone` or `Copy`.
-    pub struct $prepared<S: DerefMut<Target = MlDsa65PreparedSecretKeyStorage>> {
-      ml_dsa: MlDsa65PreparedSecretKey<S>,
+    /// Holds the prepared ML-DSA-65 secrets and a copy of the traditional key.
+    /// The prepared key clears both when it drops, so the storage can be
+    /// reused. `Debug` is redacted.
+    pub struct $storage {
+      ml_dsa: MlDsa65PreparedSecretKeyStorage,
       trad: Traditional,
     }
 
-    impl<S: DerefMut<Target = MlDsa65PreparedSecretKeyStorage>> $prepared<S> {
+    impl $storage {
+      /// Empty storage; the size is fixed by the algorithm.
+      #[must_use]
+      pub const fn new() -> Self {
+        Self {
+          ml_dsa: MlDsa65PreparedSecretKeyStorage::new(),
+          trad: Traditional::zeroed(),
+        }
+      }
+    }
+
+    impl Default for $storage {
+      fn default() -> Self {
+        Self::new()
+      }
+    }
+
+    impl fmt::Debug for $storage {
+      fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(concat!(stringify!($storage), "(****)"))
+      }
+    }
+
+    /// The ML-DSA-65 field of composite storage `S`, as the storage of the
+    /// prepared ML-DSA-65 key.
+    struct PreparedMlDsa<S>(S);
+
+    impl<S: DerefMut<Target = $storage>> Deref for PreparedMlDsa<S> {
+      type Target = MlDsa65PreparedSecretKeyStorage;
+
+      fn deref(&self) -> &Self::Target {
+        &self.0.ml_dsa
+      }
+    }
+
+    impl<S: DerefMut<Target = $storage>> DerefMut for PreparedMlDsa<S> {
+      fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0.ml_dsa
+      }
+    }
+
+    #[doc = concat!("`", $name, "` signing key prepared for repeated signing, in storage `S`.")]
+    ///
+    #[doc = concat!("`S` is a caller-owned [`", stringify!($storage), "`] borrowed from `prepare`, or a box")]
+    /// allocated by `prepare_in`. Every secret stays in `S`, so moving the
+    /// prepared key moves only `S`. Signatures equal those of the secret key it
+    /// was prepared from. The secrets are cleared on drop. Not `Clone` or `Copy`.
+    pub struct $prepared<S: DerefMut<Target = $storage>> {
+      ml_dsa: MlDsa65PreparedSecretKey<PreparedMlDsa<S>>,
+    }
+
+    impl<S: DerefMut<Target = $storage>> Drop for $prepared<S> {
+      fn drop(&mut self) {
+        // The ML-DSA-65 key clears its own field when it drops after this.
+        self.ml_dsa.storage_mut().0.trad = Traditional::zeroed();
+      }
+    }
+
+    impl<S: DerefMut<Target = $storage>> $prepared<S> {
+      /// Fill `storage` from `key` in place. On failure, dropping the partly
+      /// prepared key clears what was written.
+      fn prepare(key: &$secret, storage: S) -> Result<Self, CompositeMlDsaError> {
+        let mut prepared = Self {
+          ml_dsa: MlDsa65PreparedSecretKey::prepare(&key.ml_dsa.secret, PreparedMlDsa(storage))
+            .map_err(|_| CompositeMlDsaError::SigningFailed)?,
+        };
+        prepared.ml_dsa.storage_mut().0.trad = key.trad.duplicate();
+        Ok(prepared)
+      }
+
       composite_signing_methods!($profile, $signature, $random_len);
 
       fn sign_components(
@@ -774,11 +824,11 @@ macro_rules! composite {
           $profile::LABEL,
           random.map(|random| random.first_chunk::<32>().expect("ML-DSA randomness")),
         )?;
-        $signature::from_components(&ml_dsa, &self.trad, representative, random)
+        $signature::from_components(&ml_dsa, &self.ml_dsa.storage().0.trad, representative, random)
       }
     }
 
-    impl<S: DerefMut<Target = MlDsa65PreparedSecretKeyStorage>> fmt::Debug for $prepared<S> {
+    impl<S: DerefMut<Target = $storage>> fmt::Debug for $prepared<S> {
       fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(concat!(stringify!($prepared), "(****)"))
       }
@@ -860,8 +910,8 @@ macro_rules! composite_signing_methods {
 
 #[cfg(feature = "mldsa65-ed25519")]
 pub use ed25519_composite::{
-  MlDsa65Ed25519, MlDsa65Ed25519PreparedSecretKey, MlDsa65Ed25519PublicKey, MlDsa65Ed25519SecretKey,
-  MlDsa65Ed25519Signature,
+  MlDsa65Ed25519, MlDsa65Ed25519PreparedSecretKey, MlDsa65Ed25519PreparedSecretKeyStorage, MlDsa65Ed25519PublicKey,
+  MlDsa65Ed25519SecretKey, MlDsa65Ed25519Signature,
 };
 
 #[cfg(feature = "mldsa65-ed25519")]
@@ -905,6 +955,7 @@ mod ed25519_composite {
     secret: MlDsa65Ed25519SecretKey,
     signature: MlDsa65Ed25519Signature,
     prepared: MlDsa65Ed25519PreparedSecretKey,
+    storage: MlDsa65Ed25519PreparedSecretKeyStorage,
     name: "id-MLDSA65-Ed25519-SHA512",
     label: b"COMPSIG-MLDSA65-Ed25519-SHA512",
     arc: 48,
@@ -1002,12 +1053,30 @@ mod ed25519_composite {
         .finish()
     }
   }
+
+  #[cfg(test)]
+  mod tests {
+    use super::*;
+
+    #[test]
+    fn dropping_a_prepared_key_clears_the_traditional_copy_in_its_storage() {
+      let (_, secret) = MlDsa65Ed25519::generate_keypair(|out: &mut [u8]| {
+        out.fill(7);
+        Ok(())
+      })
+      .expect("keypair");
+      let mut storage = MlDsa65Ed25519PreparedSecretKeyStorage::new();
+      let prepared = secret.prepare(&mut storage).expect("prepare");
+      drop(prepared);
+      assert_eq!(storage.trad.0.secret_key().as_bytes(), &[0; Ed25519SecretKey::LENGTH]);
+    }
+  }
 }
 
 #[cfg(feature = "mldsa65-ecdsa-p256")]
 pub use ecdsa_p256_composite::{
-  MlDsa65EcdsaP256, MlDsa65EcdsaP256PreparedSecretKey, MlDsa65EcdsaP256PublicKey, MlDsa65EcdsaP256SecretKey,
-  MlDsa65EcdsaP256Signature,
+  MlDsa65EcdsaP256, MlDsa65EcdsaP256PreparedSecretKey, MlDsa65EcdsaP256PreparedSecretKeyStorage,
+  MlDsa65EcdsaP256PublicKey, MlDsa65EcdsaP256SecretKey, MlDsa65EcdsaP256Signature,
 };
 
 #[cfg(feature = "mldsa65-ecdsa-p256")]
@@ -1112,6 +1181,7 @@ mod ecdsa_p256_composite {
     secret: MlDsa65EcdsaP256SecretKey,
     signature: MlDsa65EcdsaP256Signature,
     prepared: MlDsa65EcdsaP256PreparedSecretKey,
+    storage: MlDsa65EcdsaP256PreparedSecretKeyStorage,
     name: "id-MLDSA65-ECDSA-P256-SHA512",
     label: b"COMPSIG-MLDSA65-ECDSA-P256-SHA512",
     arc: 45,

@@ -1007,7 +1007,7 @@ macro_rules! parameter_set {
     impl<S: DerefMut<Target = $secret_storage>> $prepared_secret<S> {
       /// Fill `storage` from a validated key. On failure, dropping the
       /// partially prepared key clears what was written.
-      fn prepare(key: &$secret, storage: S) -> Result<Self, MlDsaError> {
+      pub(crate) fn prepare(key: &$secret, storage: S) -> Result<Self, MlDsaError> {
         let mut prepared = Self { storage };
         let encoded = key.bytes.as_array();
         if !prepared.storage.state.decode(encoded, $p) {
@@ -1219,6 +1219,19 @@ parameter_set!(
   4627,
   19
 );
+
+/// Composite ML-DSA-65 keeps its traditional key in the same storage, beside
+/// the ML-DSA-65 field that this key reads.
+#[cfg(any(feature = "mldsa65-ed25519", feature = "mldsa65-ecdsa-p256"))]
+impl<S: DerefMut<Target = MlDsa65PreparedSecretKeyStorage>> MlDsa65PreparedSecretKey<S> {
+  pub(crate) fn storage(&self) -> &S {
+    &self.storage
+  }
+
+  pub(crate) fn storage_mut(&mut self) -> &mut S {
+    &mut self.storage
+  }
+}
 
 #[cfg(all(rscrypto_internal, feature = "diag"))]
 mod diagnostics;
