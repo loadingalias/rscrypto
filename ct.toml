@@ -3936,8 +3936,8 @@ name = "x86_64-unknown-linux-gnu"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 3732
-compiler_api_sha256 = "485aa276c76408581e958f8f5da8e911b29874dd2ba53c9f0c968c7bdd49733b"
+compiler_api_item_count = 3813
+compiler_api_sha256 = "056747a25a6769ec4618edab009cb56d4a31830e0f2b5187668ea970f7b4be38"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "required"
@@ -3947,8 +3947,8 @@ name = "aarch64-unknown-linux-gnu"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 3732
-compiler_api_sha256 = "485aa276c76408581e958f8f5da8e911b29874dd2ba53c9f0c968c7bdd49733b"
+compiler_api_item_count = 3813
+compiler_api_sha256 = "056747a25a6769ec4618edab009cb56d4a31830e0f2b5187668ea970f7b4be38"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "required"
@@ -3969,8 +3969,8 @@ name = "aarch64-unknown-linux-musl"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 3732
-compiler_api_sha256 = "485aa276c76408581e958f8f5da8e911b29874dd2ba53c9f0c968c7bdd49733b"
+compiler_api_item_count = 3813
+compiler_api_sha256 = "056747a25a6769ec4618edab009cb56d4a31830e0f2b5187668ea970f7b4be38"
 claim = "ct-intended"
 physical_timing = "unsupported"
 physical_timing_reason = "The AArch64 Linux CT job scans the artifacts of this target without timing. Its code differs from GNU's in 253 functions, because five GNU-only gates select other AES-GCM and clearing paths, so the GNU timing evidence does not cover them."
@@ -3983,8 +3983,8 @@ group = "win"
 backend = "llvm"
 linker = "msvc-link-unpinned"
 claim = "ct-intended"
-compiler_api_item_count = 3732
-compiler_api_sha256 = "485aa276c76408581e958f8f5da8e911b29874dd2ba53c9f0c968c7bdd49733b"
+compiler_api_item_count = 3813
+compiler_api_sha256 = "056747a25a6769ec4618edab009cb56d4a31830e0f2b5187668ea970f7b4be38"
 physical_timing = "required"
 binsec = "unsupported"
 binsec_reason = "BINSEC PE/Windows evidence is not part of the current release evidence gate."
@@ -4005,8 +4005,8 @@ name = "aarch64-apple-darwin"
 group = "macos"
 backend = "llvm"
 linker = "apple-ld-unpinned"
-compiler_api_item_count = 3732
-compiler_api_sha256 = "485aa276c76408581e958f8f5da8e911b29874dd2ba53c9f0c968c7bdd49733b"
+compiler_api_item_count = 3813
+compiler_api_sha256 = "056747a25a6769ec4618edab009cb56d4a31830e0f2b5187668ea970f7b4be38"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -4017,8 +4017,8 @@ name = "s390x-unknown-linux-gnu"
 group = "ibm"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 3732
-compiler_api_sha256 = "485aa276c76408581e958f8f5da8e911b29874dd2ba53c9f0c968c7bdd49733b"
+compiler_api_item_count = 3813
+compiler_api_sha256 = "056747a25a6769ec4618edab009cb56d4a31830e0f2b5187668ea970f7b4be38"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -4029,8 +4029,8 @@ name = "powerpc64le-unknown-linux-gnu"
 group = "ibm"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 3732
-compiler_api_sha256 = "485aa276c76408581e958f8f5da8e911b29874dd2ba53c9f0c968c7bdd49733b"
+compiler_api_item_count = 3813
+compiler_api_sha256 = "056747a25a6769ec4618edab009cb56d4a31830e0f2b5187668ea970f7b4be38"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -4041,8 +4041,8 @@ name = "riscv64gc-unknown-linux-gnu"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 3732
-compiler_api_sha256 = "485aa276c76408581e958f8f5da8e911b29874dd2ba53c9f0c968c7bdd49733b"
+compiler_api_item_count = 3813
+compiler_api_sha256 = "056747a25a6769ec4618edab009cb56d4a31830e0f2b5187668ea970f7b4be38"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -4312,18 +4312,19 @@ api = [
   "rscrypto::Aead::{decrypt_in_place,decrypt,open}",
   "rscrypto::{Aes128Gcm,Aes256Gcm,Aes128GcmSiv,Aes256GcmSiv,ChaCha20Poly1305,XChaCha20Poly1305,Aegis256,AsconAead128}::{decrypt_in_place,decrypt}",
   "rscrypto::AesSivCmac256::{open_in_place,open}",
+  "rscrypto::AeadGather::decrypt_in_place_segments",
 ]
 features = ["aead algorithm feature", "alloc/std for allocating helpers"]
 targets = ["all-supported", "backend selected by public target capabilities"]
 secret_inputs = ["key", "derived authentication/encryption subkeys", "authenticated plaintext"]
-public_inputs = ["nonce", "AAD", "ciphertext", "tag owner", "lengths", "backend capabilities"]
+public_inputs = ["nonce", "AAD", "ciphertext", "tag owner", "lengths", "segment boundaries", "backend capabilities"]
 variable_time_components = [
   "public-length loops",
   "public buffer-shape rejection",
   "public backend dispatch",
   "opaque authentication result",
 ]
-permitted_leakage = ["algorithm", "lengths", "nonce", "AAD", "backend", "opaque success/failure"]
+permitted_leakage = ["algorithm", "lengths", "segment boundaries", "nonce", "AAD", "backend", "opaque success/failure"]
 claim = "ct-intended"
 evidence = [
   "primitive:aead.open_authentication",
@@ -4332,8 +4333,11 @@ evidence = [
   "unit:aead.open_authentication.ascon_aead128",
   "unit:aead.open_authentication.aes_siv_cmac256",
   "unit:aead.symmetric_transform.aes_siv_cmac256",
+  "dudect:aes128gcm_segments_fixed_vs_random_key_open",
+  "dudect:aes256gcm_segments_fixed_vs_random_key_open",
+  "dudect:chacha20poly1305_segments_fixed_vs_random_key_open",
 ]
-limitation = "The bool-like authentication decision is surfaced only as an opaque Result, but exact release-machine-code evidence remains T3.3 work."
+limitation = "The bool-like authentication decision is surfaced only as an opaque Result, but exact release-machine-code evidence remains T3.3 work. Segmented open, for AES-128-GCM, AES-256-GCM, and ChaCha20-Poly1305, stages only the block that crosses a seam, in a clearing owner, and a failed tag check zeroes every segment; its DudeCT cases time a 16385-byte open across one fixed partition."
 
 [[operation]]
 id = "aead.public_nonce_tag_and_error_values"
@@ -7127,15 +7131,15 @@ limitation = "Fixed-work arithmetic, secret samplers, and valid-key preparation 
 [[operation]]
 id = "signature.slhdsa"
 api = [
-  "rscrypto::{SlhDsa,HashSlhDsa}*::{generate_keypair,try_generate_keypair,SIGNATURE_LENGTH}",
-  "rscrypto::{SlhDsa,HashSlhDsa}*SecretKey::{sign_deterministic,sign_with,try_sign,public_key,expose_secret,try_from_slice,from_pkcs8_der,to_pkcs8_der_into}",
+  "rscrypto::{SlhDsa,HashSlhDsa}*::{generate_keypair,try_generate_keypair,generate_keypair_in,SIGNATURE_LENGTH}",
+  "rscrypto::{SlhDsa,HashSlhDsa}*SecretKey::{sign_deterministic,sign_with,try_sign,public_key,expose_secret,try_from_slice,try_from_slice_in,from_pkcs8_der,from_pkcs8_der_in,to_pkcs8_der_into}",
   "rscrypto::HashSlhDsa*SecretKey::{sign_prehash_deterministic,sign_prehash_with}",
   "rscrypto::{SlhDsa,HashSlhDsa}*PublicKey::{verify,verify_with_context,as_bytes,to_bytes,from_bytes,try_from_slice,from_spki_der,to_spki_der}",
   "rscrypto::HashSlhDsa*PublicKey::verify_prehash",
   "rscrypto::{SlhDsa,HashSlhDsa}*::{Debug,Clone,Default,PartialEq,AsRef,Verifier}",
   "rscrypto::SlhDsa{Error,KeyError}",
 ]
-features = ["slh-dsa", "getrandom"]
+features = ["slh-dsa", "getrandom", "alloc"]
 targets = ["all-supported", "portable implementation"]
 secret_inputs = ["SK.seed", "SK.prf", "PKCS #8 private-key contents", "signing randomness", "WOTS+ chain values and FORS leaf secrets"]
 public_inputs = ["parameter set and profile", "message and context lengths", "public key", "signature", "PKCS #8 container structure"]
@@ -7143,7 +7147,7 @@ variable_time_components = ["message and context hashing length", "public parsin
 permitted_leakage = ["public shapes", "opaque success or failure", "caller-authorized secret exposure"]
 claim = "best-effort"
 evidence = ["primitive:signature.slhdsa"]
-limitation = "DudeCT covers SLH-DSA-SHA2-128s key generation and deterministic signing. Secret-key import, hedged and pre-hash signing, and the other 11 parameter sets have no DudeCT case, and no CT harness or binary review covers SLH-DSA; target qualification is open. Secret-key import regenerates the public root, so its cost equals key generation."
+limitation = "DudeCT covers SLH-DSA-SHA2-128s key generation and deterministic signing. Secret-key import, hedged and pre-hash signing, and the other 11 parameter sets have no DudeCT case, and no CT harness or binary review covers SLH-DSA; target qualification is open. Secret-key import regenerates the public root, so its cost equals key generation. The alloc-gated _in constructors run the generation and import code of the by-value forms in a caller's allocation; no DudeCT case calls them."
 
 [[operation]]
 id = "signature.composite_mldsa"
@@ -7151,9 +7155,10 @@ api = [
   "rscrypto::MlDsa65{Ed25519,EcdsaP256}::{generate_keypair,try_generate_keypair,generate_keypair_in,try_generate_keypair_in,OID,LABEL}",
   "rscrypto::MlDsa65{Ed25519,EcdsaP256}SecretKey::{sign_deterministic,sign_with,try_sign,sign_prehash_deterministic,sign_prehash_with,prepare,prepare_in,public_key,expose_secret,from_bytes,try_from_slice,try_from_slice_in,from_pkcs8_der,from_pkcs8_der_in,to_pkcs8_der_into,LENGTH,PKCS8_DER_LENGTH}",
   "rscrypto::MlDsa65{Ed25519,EcdsaP256}PreparedSecretKey::{sign_deterministic,sign_with,try_sign,sign_prehash_deterministic,sign_prehash_with}",
+  "rscrypto::MlDsa65{Ed25519,EcdsaP256}PreparedSecretKeyStorage::new",
   "rscrypto::MlDsa65{Ed25519,EcdsaP256}PublicKey::{verify,verify_with_context,verify_prehash,from_bytes,try_from_slice,to_bytes,from_spki_der,to_spki_der,LENGTH,SPKI_DER_LENGTH}",
   "rscrypto::MlDsa65{Ed25519,EcdsaP256}Signature::{as_bytes,to_bytes,try_from_slice,LENGTH,MAX_LENGTH}",
-  "rscrypto::MlDsa65{Ed25519,EcdsaP256}*::{Debug,Clone,Default,PartialEq,AsRef,Verifier}",
+  "rscrypto::MlDsa65{Ed25519,EcdsaP256}*::{Debug,Clone,Default,PartialEq,AsRef,Verifier,Drop}",
   "rscrypto::CompositeMlDsa{Error,KeyError}",
 ]
 features = ["mldsa65-ed25519", "mldsa65-ecdsa-p256", "getrandom"]
