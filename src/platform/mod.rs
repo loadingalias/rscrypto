@@ -47,7 +47,7 @@ mod target_matrix;
 
 pub use caps::{Arch, Caps};
 pub use detect::Detected;
-pub use process::ProcessOrigin;
+pub use process::{ProcessOrigin, ProcessOriginUnavailable};
 
 // Architecture-specific feature constants are available via submodules:
 // - `caps::x86` - x86-64 features (SSE, AVX, AVX-512, etc.)

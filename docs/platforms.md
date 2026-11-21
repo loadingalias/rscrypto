@@ -54,10 +54,17 @@ refuse a copy that a fork made. `NonceCounter`, the HPKE sender, and `RsaSigning
 
 - With `std` on 64-bit Linux and Android (x86-64, AArch64, POWER, RISC-V, and IBM Z), detection uses one
   page that the kernel gives as zeros to a fork child (`MADV_WIPEONFORK`, Linux 4.14).
-  If the kernel refuses the page, detection compares process IDs.
-- With `std` on Apple and other Unix targets, detection compares process IDs.
+- With `std` on Apple targets, detection uses one word that a fork handler (`pthread_atfork`) clears in
+  each fork child. A fork that does not go through `fork`, such as a raw system call, is not detected.
+- The page or word holds a generation above the generations of all ancestors, so a descendant never
+  matches an ancestor's origin, even with the same process ID.
+- If the kernel refuses the page or Apple refuses the handler, detection compares process IDs.
+  Other Unix targets with `std` always compare process IDs.
+  A process-ID comparison accepts a descendant that receives the recycled ID of a dead ancestor.
 - Targets that cannot fork, such as Windows, WebAssembly, and bare-metal targets, always report the current process.
 - Without `std`, no fork is detected.
+- `ProcessOrigin::try_current` returns `ProcessOriginUnavailable` where detection compares process IDs, or
+  where a Unix build has no `std`. Use it for state that no descendant may continue.
 
 A restored virtual-machine snapshot or another copied memory image is not detected.
 

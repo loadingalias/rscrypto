@@ -22,13 +22,22 @@ use core::fmt;
 ///
 /// - Linux and Android on x86-64, AArch64, 64-bit POWER, 64-bit RISC-V, and
 ///   IBM Z use a page that the kernel gives as zeros to a fork child
-///   (`MADV_WIPEONFORK`, Linux 4.14). The check is one function call with one
-///   atomic load. If the kernel refuses the page, as before Linux 4.14, under
-///   an emulator that ignores the request, or under a seccomp filter, the
-///   process compares process IDs.
-/// - Apple targets and other Unix targets compare process IDs.
+///   (`MADV_WIPEONFORK`, Linux 4.14).
+/// - Apple targets use a word that a fork handler (`pthread_atfork`) clears in
+///   each fork child.
+/// - The page or word holds a generation that each process takes above those
+///   of its ancestors. So a descendant never matches an ancestor's origin, even
+///   with the same process ID. The check is one function call with one atomic
+///   load.
+/// - If the kernel refuses the page, as before Linux 4.14, under an emulator
+///   that ignores the request, or under a seccomp filter, or if Apple refuses
+///   the handler, the process compares process IDs. Other Unix targets always
+///   compare process IDs.
 /// - Targets that cannot fork, such as Windows, WebAssembly, and bare-metal
 ///   targets, always report the current process.
+///
+/// [`try_current`](Self::try_current) returns an error where a descendant can
+/// match an ancestor's origin.
 ///
 /// # Limits
 ///
@@ -36,7 +45,10 @@ use core::fmt;
 ///   the current process.
 /// - A process-ID comparison accepts a copy in a descendant that receives the
 ///   recycled process ID of a dead ancestor, or the same ID in a new PID
-///   namespace. The page detection does not depend on process IDs.
+///   namespace.
+/// - On Apple, a fork that does not go through `fork`, such as a raw system
+///   call, runs no handler and is not detected. A child handler that other code
+///   registered first runs before the word is cleared.
 /// - A copied memory image, such as a restored virtual-machine snapshot, is
 ///   not detected.
 #[derive(Clone, Copy)]
@@ -44,16 +56,42 @@ pub struct ProcessOrigin(imp::Origin);
 
 impl ProcessOrigin {
   /// The origin of a value that the calling process creates now.
+  ///
+  /// Where no generation is available, the origin compares process IDs or
+  /// detects no fork. See [Detection](Self#detection).
   #[inline]
   #[must_use]
   pub fn current() -> Self {
     Self(imp::Origin::current())
   }
 
+  /// The origin of a value that the calling process creates now, only if no
+  /// descendant can match it.
+  ///
+  /// Use it for state whose copy must be refused in every descendant, also in
+  /// one that has the process ID of the creator.
+  ///
+  /// # Errors
+  ///
+  /// Returns [`ProcessOriginUnavailable`] where the origin would compare
+  /// process IDs or detect no fork: on Linux when the kernel refuses the page,
+  /// on Apple when it refuses the fork handler, on other Unix targets, and in a
+  /// Unix build without `std`. See [Detection](Self#detection).
+  #[inline]
+  pub fn try_current() -> Result<Self, ProcessOriginUnavailable> {
+    let origin = imp::Origin::current();
+    if origin.distinguishes_descendants() {
+      Ok(Self(origin))
+    } else {
+      Err(ProcessOriginUnavailable::new())
+    }
+  }
+
   /// Whether the calling process created this origin.
   ///
   /// A fork between [`current`](Self::current) and this call makes it
-  /// `false` in the child. See [Limits](Self#limits).
+  /// `false` in the child. See [Limits](Self#limits). The call is
+  /// async-signal-safe: it reads one atomic word or the process ID.
   #[inline]
   #[must_use]
   pub fn is_current(&self) -> bool {
@@ -62,64 +100,52 @@ impl ProcessOrigin {
 }
 
 impl fmt::Debug for ProcessOrigin {
-  // The page address would reveal the address-space layout, so `Debug` shows no field.
+  // The word address would reveal the address-space layout, so `Debug` shows no field.
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     f.debug_struct("ProcessOrigin").finish_non_exhaustive()
   }
 }
 
-// The detection mechanism of each target: the wipe-on-fork page, a process-ID comparison, or none.
+define_unit_error! {
+  /// No detection on this host tells every fork descendant from its ancestors.
+  ///
+  /// [`ProcessOrigin::try_current`] returns it.
+  pub struct ProcessOriginUnavailable;
+  "no fork detection that distinguishes descendants"
+}
+
+// The detection mechanism of each target: a generation word that a fork child gets as zero, a
+// process-ID comparison, or none.
 core::cfg_select! {
   all(
     feature = "std",
     not(miri),
-    any(target_os = "linux", target_os = "android"),
-    target_pointer_width = "64",
     any(
-      target_arch = "x86_64",
-      target_arch = "aarch64",
-      target_arch = "powerpc64",
-      target_arch = "riscv64",
-      target_arch = "s390x"
+      target_vendor = "apple",
+      all(
+        any(target_os = "linux", target_os = "android"),
+        target_pointer_width = "64",
+        any(
+          target_arch = "x86_64",
+          target_arch = "aarch64",
+          target_arch = "powerpc64",
+          target_arch = "riscv64",
+          target_arch = "s390x"
+        )
+      )
     )
   ) => {
     mod imp {
-      use core::ffi::{c_int, c_void};
       use core::ptr;
       use core::sync::atomic::{AtomicPtr, AtomicU64, Ordering};
 
-      // Linux v6.12 uapi. `include/uapi/asm-generic/mman-common.h` defines PROT_READ 0x1,
-      // PROT_WRITE 0x2, MAP_ANONYMOUS 0x20, and MADV_WIPEONFORK 18. `include/uapi/linux/mman.h`
-      // defines MAP_PRIVATE 0x02. The x86 and arm64 `asm/mman.h` include `asm-generic/mman.h`, the
-      // powerpc `asm/mman.h` includes `asm-generic/mman-common.h` and overrides none of these names,
-      // and riscv and s390 have no `asm/mman.h`, so they get the mandatory generic header
-      // (`include/uapi/asm-generic/Kbuild`). MAP_FAILED is `(void *) -1` in glibc 2.39, musl 1.2.5,
-      // and bionic.
-      const PROT_READ: c_int = 0x1;
-      const PROT_WRITE: c_int = 0x2;
-      const MAP_PRIVATE: c_int = 0x02;
-      const MAP_ANONYMOUS: c_int = 0x20;
-      const MADV_WIPEONFORK: c_int = 18;
-      /// The kernel rounds the length up to one page (`mm/mmap.c` and `mm/madvise.c`, `PAGE_ALIGN`).
-      const LEN: usize = size_of::<AtomicU64>();
-
-      // glibc 2.39 `misc/sys/mman.h`, musl 1.2.5 `include/sys/mman.h`, and bionic
-      // `libc/include/sys/mman.h` declare `void *mmap(void *, size_t, int, int, int, off_t)` and
-      // `int madvise(void *, size_t, int)`. `off_t` is 64 bits on every 64-bit target this module
-      // admits.
-      unsafe extern "C" {
-        fn mmap(addr: *mut c_void, len: usize, prot: c_int, flags: c_int, fd: c_int, offset: i64) -> *mut c_void;
-        fn madvise(addr: *mut c_void, len: usize, advice: c_int) -> c_int;
-      }
-
-      /// A sentinel for "compare process IDs": address 8, the alignment of `AtomicU64`. `mmap`
-      /// without `MAP_FIXED` returns only page-aligned addresses, and address 8 is not page-aligned,
-      /// so no page is ever this sentinel.
+      /// A sentinel for "compare process IDs": address 8, the alignment of `AtomicU64`. No word is
+      /// ever at address 8: Linux `mmap` without `MAP_FIXED` returns only page-aligned addresses,
+      /// and on Apple no static is in the `__PAGEZERO` segment, which covers address 8.
       const PID_MODE: *mut AtomicU64 = ptr::dangling_mut();
 
-      /// Null until this process image completes its setup. Then the wipe-on-fork page, or
-      /// [`PID_MODE`]. A fork copies the value, so a child of a process with a page keeps the page,
-      /// which the kernel gives the child as zeros.
+      /// Null until this process image completes its setup. Then the generation word, or
+      /// [`PID_MODE`]. A fork copies the value, so a child keeps the word, which it gets as zero.
       static STATE: AtomicPtr<AtomicU64> = AtomicPtr::new(ptr::null_mut());
       /// The latest generation that this lineage took. A fork copies it, so a child continues above
       /// every generation of its ancestors.
@@ -127,29 +153,29 @@ core::cfg_select! {
 
       #[derive(Clone, Copy)]
       pub(super) struct Origin {
-        /// The page whose value was `value` when this origin was recorded, or `None` to compare
+        /// The word whose value was `value` when this origin was recorded, or `None` to compare
         /// process IDs.
-        page: Option<&'static AtomicU64>,
+        word: Option<&'static AtomicU64>,
         value: u64,
       }
 
       impl Origin {
         #[inline]
         pub(super) fn current() -> Self {
-          let Some(page) = page() else {
+          let Some(word) = word() else {
             return Self {
-              page: None,
+              word: None,
               value: u64::from(std::process::id()),
             };
           };
-          let generation = page.load(Ordering::Relaxed);
+          let generation = word.load(Ordering::Relaxed);
           let value = if generation != 0 {
             generation
           } else {
-            new_generation(page)
+            new_generation(word)
           };
           Self {
-            page: Some(page),
+            word: Some(word),
             value,
           }
         }
@@ -159,66 +185,61 @@ core::cfg_select! {
         // 13% longer on x86-64. As one call, it takes 1.5% longer.
         #[inline(never)]
         pub(super) fn is_current(&self) -> bool {
-          match self.page {
-            // The kernel gives the page as zeros to a fork child, and every later generation in that
-            // child is higher than `value` (see `new_generation`).
-            Some(page) => page.load(Ordering::Relaxed) == self.value,
+          match self.word {
+            // A fork child gets the word as zero, and every later generation in that child is higher
+            // than `value` (see `new_generation`).
+            Some(word) => word.load(Ordering::Relaxed) == self.value,
             None => u64::from(std::process::id()) == self.value,
           }
         }
+
+        #[inline]
+        pub(super) const fn distinguishes_descendants(&self) -> bool {
+          self.word.is_some()
+        }
       }
 
-      /// The generation of a fork child whose page the kernel gave as zeros.
+      /// The generation of a process whose word is zero: a fork child, or the first origin of this
+      /// process image.
       #[cold]
       #[inline(never)]
-      fn new_generation(page: &AtomicU64) -> u64 {
+      fn new_generation(word: &AtomicU64) -> u64 {
         // Take the generation from `LAST` before the CAS publishes it. A fork between the two steps
         // then copies a `LAST` that already holds it, so the grandchild takes a higher value.
         let next = LAST.fetch_add(1, Ordering::Relaxed).strict_add(1);
-        // Racing threads of this child each take a value. The first CAS wins, and the others adopt the
-        // winner's value, so every origin of this process records one generation.
-        match page.compare_exchange(0, next, Ordering::Relaxed, Ordering::Relaxed) {
+        // Racing threads of this process each take a value. The first CAS wins, and the others adopt
+        // the winner's value, so every origin of this process records one generation.
+        match word.compare_exchange(0, next, Ordering::Relaxed, Ordering::Relaxed) {
           Ok(_) => next,
           Err(winner) => winner,
         }
       }
 
-      /// The wipe-on-fork page of this process, or `None` to compare process IDs.
+      /// The generation word of this process, or `None` to compare process IDs.
       #[inline]
-      fn page() -> Option<&'static AtomicU64> {
+      fn word() -> Option<&'static AtomicU64> {
         let state = STATE.load(Ordering::Acquire);
         let state = if state.is_null() { setup() } else { state };
         if state == PID_MODE {
           return None;
         }
         // SAFETY: Every non-null `STATE` other than `PID_MODE` came from `setup`, which publishes only
-        // a non-null page that `map_wipe_on_fork_page` mapped readable and writable for the rest of the
-        // process, page-aligned (so aligned for `AtomicU64`), and zero-filled before its first
-        // generation (all bit patterns are valid `AtomicU64` values). The page is never unmapped, so
-        // the reference is valid for `'static`. Every access is atomic, so shared references may mutate
-        // it. A fork child keeps the mapping at the same address.
+        // a `&'static AtomicU64` from `wipe_on_fork_word`. That word stays valid and aligned for the
+        // rest of the process, and a fork child keeps it at the same address.
         Some(unsafe { &*state })
       }
 
-      /// Map and advise a page, then publish it, or publish [`PID_MODE`] if the kernel refuses.
+      /// Get a generation word and publish it, or publish [`PID_MODE`] if the system refuses one.
       ///
-      /// There is no "setup in progress" state. Each racing thread maps its own page, and the first
-      /// CAS publishes one result. A losing thread adopts the winner and leaks its own page: one page,
-      /// once, in a rare race. A fork during the setup copies a null `STATE`, because nothing is
-      /// published before the CAS. The child then runs the setup itself, and it never waits for a
-      /// thread that the fork did not copy.
+      /// There is no "setup in progress" state. Racing threads each get a word, and the first CAS
+      /// publishes one result. A losing thread adopts the winner: on Linux it leaks its own page, and
+      /// on Apple its handler registration stays. Both happen once, in a rare race. A fork during the
+      /// setup copies a null `STATE`, because nothing is published before the CAS. The child then
+      /// runs the setup itself, and it never waits for a thread that the fork did not copy.
       #[cold]
       #[inline(never)]
       fn setup() -> *mut AtomicU64 {
-        let mine = match map_wipe_on_fork_page() {
-          Some(page) => {
-            let first = LAST.fetch_add(1, Ordering::Relaxed).strict_add(1);
-            page.store(first, Ordering::Relaxed);
-            ptr::from_ref(page).cast_mut()
-          }
-          None => PID_MODE,
-        };
-        // Release publishes the first generation with the page.
+        let mine = wipe_on_fork_word().map_or(PID_MODE, |word| ptr::from_ref(word).cast_mut());
         match STATE.compare_exchange(ptr::null_mut(), mine, Ordering::AcqRel, Ordering::Acquire) {
           Ok(_) => mine,
           Err(winner) => winner,
@@ -226,7 +247,34 @@ core::cfg_select! {
       }
 
       /// One private anonymous page with `MADV_WIPEONFORK`, or `None` if the kernel refuses.
-      fn map_wipe_on_fork_page() -> Option<&'static AtomicU64> {
+      #[cfg(not(target_vendor = "apple"))]
+      fn wipe_on_fork_word() -> Option<&'static AtomicU64> {
+        use core::ffi::{c_int, c_void};
+
+        // Linux v6.12 uapi. `include/uapi/asm-generic/mman-common.h` defines PROT_READ 0x1,
+        // PROT_WRITE 0x2, MAP_ANONYMOUS 0x20, and MADV_WIPEONFORK 18. `include/uapi/linux/mman.h`
+        // defines MAP_PRIVATE 0x02. The x86 and arm64 `asm/mman.h` include `asm-generic/mman.h`, the
+        // powerpc `asm/mman.h` includes `asm-generic/mman-common.h` and overrides none of these names,
+        // and riscv and s390 have no `asm/mman.h`, so they get the mandatory generic header
+        // (`include/uapi/asm-generic/Kbuild`). MAP_FAILED is `(void *) -1` in glibc 2.39, musl 1.2.5,
+        // and bionic.
+        const PROT_READ: c_int = 0x1;
+        const PROT_WRITE: c_int = 0x2;
+        const MAP_PRIVATE: c_int = 0x02;
+        const MAP_ANONYMOUS: c_int = 0x20;
+        const MADV_WIPEONFORK: c_int = 18;
+        /// The kernel rounds the length up to one page (`mm/mmap.c` and `mm/madvise.c`, `PAGE_ALIGN`).
+        const LEN: usize = size_of::<AtomicU64>();
+
+        // glibc 2.39 `misc/sys/mman.h`, musl 1.2.5 `include/sys/mman.h`, and bionic
+        // `libc/include/sys/mman.h` declare `void *mmap(void *, size_t, int, int, int, off_t)` and
+        // `int madvise(void *, size_t, int)`. `off_t` is 64 bits on every 64-bit target this module
+        // admits.
+        unsafe extern "C" {
+          fn mmap(addr: *mut c_void, len: usize, prot: c_int, flags: c_int, fd: c_int, offset: i64) -> *mut c_void;
+          fn madvise(addr: *mut c_void, len: usize, advice: c_int) -> c_int;
+        }
+
         // SAFETY: `mmap` with a null hint and no `MAP_FIXED` cannot replace an existing mapping. A
         // private anonymous mapping takes no file descriptor (`-1`) and offset 0. The kernel returns a
         // new page-aligned, zero-filled, readable and writable mapping, or `MAP_FAILED`.
@@ -255,16 +303,44 @@ core::cfg_select! {
           // The unused page stays mapped: one page, once for each process.
           return None;
         }
-        // SAFETY: `page` is a live, non-null, page-aligned, zero-filled mapping that this module never
-        // unmaps; see `page` for the reference proof.
+        // SAFETY: `page` is a live, non-null mapping that is never unmapped, page-aligned (so aligned
+        // for `AtomicU64`), and zero-filled (all bit patterns are valid `AtomicU64` values). Every
+        // access is atomic, so shared references may mutate it.
         Some(unsafe { &*page.cast::<AtomicU64>() })
+      }
+
+      /// A static word with a fork handler that clears it in each child, or `None` if the system
+      /// refuses the handler.
+      #[cfg(target_vendor = "apple")]
+      fn wipe_on_fork_word() -> Option<&'static AtomicU64> {
+        static WORD: AtomicU64 = AtomicU64::new(0);
+
+        /// Runs in each fork child before `fork` returns there, with only the forking thread alive.
+        extern "C" fn clear() {
+          WORD.store(0, Ordering::Relaxed);
+        }
+
+        // Apple `<pthread.h>`: `int pthread_atfork(void (*)(void), void (*)(void), void (*)(void))`.
+        // Each argument may be null. `Option<extern "C" fn()>` has the layout of a nullable C
+        // function pointer.
+        unsafe extern "C" {
+          fn pthread_atfork(
+            prepare: Option<extern "C" fn()>,
+            parent: Option<extern "C" fn()>,
+            child: Option<extern "C" fn()>,
+          ) -> core::ffi::c_int;
+        }
+
+        // SAFETY: `clear` is a valid `extern "C" fn()` for the life of the process. It cannot unwind,
+        // and it only stores to an atomic, which is safe in a fork child. `pthread_atfork` keeps the
+        // pointer and returns 0, or an error number and registers nothing.
+        (unsafe { pthread_atfork(None, None, Some(clear)) } == 0).then_some(&WORD)
       }
     }
   }
   all(feature = "std", unix) => {
     mod imp {
-      /// The ID of the process that recorded the origin. Apple's libSystem caches the ID and sets it
-      /// again in a fork child, so the comparison costs no system call there.
+      /// The ID of the process that recorded the origin.
       #[derive(Clone, Copy)]
       pub(super) struct Origin(u32);
 
@@ -277,6 +353,11 @@ core::cfg_select! {
         #[inline]
         pub(super) fn is_current(&self) -> bool {
           std::process::id() == self.0
+        }
+
+        #[inline]
+        pub(super) const fn distinguishes_descendants(&self) -> bool {
+          false
         }
       }
     }
@@ -296,6 +377,12 @@ core::cfg_select! {
         #[inline]
         pub(super) const fn is_current(&self) -> bool {
           true
+        }
+
+        /// A target that cannot fork has no descendant. A Unix build without `std` detects no fork.
+        #[inline]
+        pub(super) const fn distinguishes_descendants(&self) -> bool {
+          !cfg!(unix)
         }
       }
     }

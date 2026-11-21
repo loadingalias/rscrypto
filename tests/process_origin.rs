@@ -74,6 +74,11 @@ fn finish(before: usize, code: u8) -> ! {
 ///
 /// The child code comes only from `child` or from [`finish`]. It never panics.
 fn fork_child(child: impl FnOnce() -> u8) -> u8 {
+  fork_child_with(fork, child)
+}
+
+/// [`fork_child`] with another fork function of the same signature.
+fn fork_child_with(fork: unsafe extern "C" fn() -> c_int, child: impl FnOnce() -> u8) -> u8 {
   // SAFETY: `fork` takes no arguments. The child runs only `child` and `finish`, which use
   // atomics and the calls under test, and it never returns into libtest.
   let pid = unsafe { fork() };
@@ -101,11 +106,12 @@ fn wait(pid: c_int) -> Option<u8> {
 fn a_forked_child_reports_another_process_origin() {
   let origin = ProcessOrigin::current();
   let code = fork_child(|| {
-    if origin.is_current() {
-      return 1;
-    }
     if !ProcessOrigin::current().is_current() {
       return 2;
+    }
+    // The child's own origin must not make its parent's origin current again.
+    if origin.is_current() {
+      return 1;
     }
     0
   });
@@ -149,6 +155,142 @@ fn a_grandchild_differs_from_its_parent_child() {
     "1: the grandchild accepts the child's origin; 2: the grandchild rejects its own origin; 3: fork failed; 4: \
      the child lost its origin; 5: a signal ended the grandchild; 255: a child allocated"
   );
+}
+
+/// The family targets: Apple, and Linux 4.14 or later on x86-64 and AArch64. Each gives a fork child
+/// its generation word as zero, so each process can take a strict origin.
+#[cfg(any(
+  target_vendor = "apple",
+  all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"))
+))]
+#[test]
+fn each_process_of_a_family_target_takes_a_strict_origin() {
+  let parent = ProcessOrigin::try_current().expect("the parent takes a strict origin");
+  let code = fork_child(|| match ProcessOrigin::try_current() {
+    Ok(child) if child.is_current() && !parent.is_current() => 0,
+    Ok(_) => 1,
+    Err(_) => 2,
+  });
+  assert_eq!(
+    code, 0,
+    "1: the child's origin is not current, or its parent's is; 2: the child takes no strict origin; 255: the \
+     child allocated"
+  );
+  assert!(parent.is_current(), "the parent keeps its origin");
+}
+
+/// `_Fork` (POSIX.1-2024, glibc 2.34, musl 1.2.3) runs no fork handler, so only the kernel can clear
+/// the generation of its child.
+#[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+#[test]
+fn a_child_of_underscore_fork_reports_another_process_origin() {
+  // glibc 2.34 and musl 1.2.3 `<unistd.h>`: `pid_t _Fork(void)`, where `pid_t` is `int`.
+  unsafe extern "C" {
+    fn _Fork() -> c_int;
+  }
+  let parent = ProcessOrigin::try_current().expect("the parent takes a strict origin");
+  let code = fork_child_with(_Fork, || match ProcessOrigin::try_current() {
+    Ok(child) if child.is_current() && !parent.is_current() => 0,
+    Ok(_) => 1,
+    Err(_) => 2,
+  });
+  assert_eq!(
+    code, 0,
+    "1: the child's origin is not current, or its parent's is; 2: the child takes no strict origin; 255: the \
+     child allocated"
+  );
+}
+
+/// A sandbox can refuse `madvise`. The kernel then gives no page, so no origin is strict.
+#[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+#[test]
+fn a_process_that_cannot_advise_takes_no_strict_origin() {
+  // The test process takes no origin, so the child sets up the first origin of its image.
+  let code = fork_child(|| {
+    if !refuse_madvise() {
+      return 3;
+    }
+    if ProcessOrigin::try_current().is_ok() {
+      return 1;
+    }
+    if !ProcessOrigin::current().is_current() {
+      return 2;
+    }
+    0
+  });
+  assert_eq!(
+    code, 0,
+    "1: a strict origin without the page; 2: the fallback origin is not current; 3: the filter failed; 255: the \
+     child allocated"
+  );
+}
+
+/// Install a seccomp filter that fails each `madvise` call with `EPERM` in this process.
+#[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+fn refuse_madvise() -> bool {
+  use core::ffi::c_ulong;
+
+  // Linux uapi `<linux/filter.h>`: `struct sock_filter { __u16 code; __u8 jt; __u8 jf; __u32 k; }`
+  // and `struct sock_fprog { unsigned short len; struct sock_filter *filter; }`.
+  #[repr(C)]
+  struct SockFilter {
+    code: u16,
+    jt: u8,
+    jf: u8,
+    k: u32,
+  }
+  #[repr(C)]
+  struct SockFprog {
+    len: u16,
+    filter: *const SockFilter,
+  }
+  // `<linux/bpf_common.h>`: BPF_LD | BPF_W | BPF_ABS is 0x20, BPF_JMP | BPF_JEQ | BPF_K is 0x15, and
+  // BPF_RET | BPF_K is 0x06. `<linux/seccomp.h>`: `seccomp_data.nr` is at offset 0,
+  // SECCOMP_RET_ERRNO is 0x0005_0000, and SECCOMP_RET_ALLOW is 0x7fff_0000. `<asm/unistd.h>`:
+  // `madvise` is 28 on x86-64 and 233 on AArch64 (asm-generic). EPERM is 1.
+  const MADVISE: u32 = if cfg!(target_arch = "x86_64") { 28 } else { 233 };
+  let filter = [
+    SockFilter {
+      code: 0x20,
+      jt: 0,
+      jf: 0,
+      k: 0,
+    },
+    SockFilter {
+      code: 0x15,
+      jt: 0,
+      jf: 1,
+      k: MADVISE,
+    },
+    SockFilter {
+      code: 0x06,
+      jt: 0,
+      jf: 0,
+      k: 0x0005_0001,
+    },
+    SockFilter {
+      code: 0x06,
+      jt: 0,
+      jf: 0,
+      k: 0x7fff_0000,
+    },
+  ];
+  let program = SockFprog {
+    len: 4,
+    filter: filter.as_ptr(),
+  };
+  // glibc and musl `<sys/prctl.h>`: `int prctl(int, ...)`. `<linux/prctl.h>`: PR_SET_NO_NEW_PRIVS is
+  // 38 and PR_SET_SECCOMP is 22. `<linux/seccomp.h>`: SECCOMP_MODE_FILTER is 2.
+  unsafe extern "C" {
+    fn prctl(option: c_int, ...) -> c_int;
+  }
+  // SAFETY: PR_SET_NO_NEW_PRIVS takes four `unsigned long` arguments, the first 1 and the others 0.
+  // PR_SET_SECCOMP with SECCOMP_MODE_FILTER takes a pointer to a `sock_fprog`; `program` and
+  // `filter` outlive the call, and the kernel copies the program.
+  unsafe {
+    prctl(38, c_ulong::from(1u8), c_ulong::MIN, c_ulong::MIN, c_ulong::MIN) == 0
+      && prctl(22, c_ulong::from(2u8), &raw const program) == 0
+  }
 }
 
 #[cfg(feature = "aes-gcm")]
