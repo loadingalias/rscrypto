@@ -1400,6 +1400,53 @@ They time single-pass and four-pass encryption and decryption.
 QUIC-LB is not an `[asm_select_branch]` primitive, as the other AES-based primitives are not.
 In a local Apple build, its closure has no failing finding, and 2 of its 11 select-shaped branches decide from constants.
 
+### Renewal on CT 44865874535, 2026-11-21
+
+[Constant-Time 44865874535](https://github.com/loadingalias/rscrypto/actions/runs/44865874535) at `9375ede5`
+failed on all seven CI targets. The run had two causes.
+
+- On Windows, POWER, and IBM Z, the DudeCT gate stopped at one case below the timer floor.
+  `300837f0` fixed the calibration; see [the DudeCT decision](#dudect-decision).
+- The asm scans found unwaived select branches and stale waivers. The code had changed after the last review:
+  - `12901dc9` keeps the AArch64 DIT save and restore inside each scope.
+  - The compiler now inlines `diffie_hellman`, `encode_pss_with_mask`, and the five-bit window loop into their callers.
+  - Since `455c61e2`, the ML-KEM owner-equality roots reach `detect_uncached`, because `try_from_slice` hashes the key.
+  - Since `c3513d2e`, CI scans AArch64 MUSL, which had no waivers.
+    MUSL has no 64-byte zeroization fast path, so each `RsaPrivateScratch` buffer clear has its own suffix test.
+
+Each finding was reviewed in the linked binary of that run.
+For RISC-V, the review used the run's prepared bundle.
+
+| Target | Renewed | Deleted | New |
+|---|---:|---:|---:|
+| `x86_64-unknown-linux-gnu` | 3 | 2 | 2 |
+| `x86_64-pc-windows-msvc` | 2 | 0 | 1 |
+| `powerpc64le-unknown-linux-gnu` | 5 | 2 | 1 |
+| `s390x-unknown-linux-gnu` | 6 | 0 | 1 |
+| `aarch64-unknown-linux-gnu` | 27 | 4 | 0 |
+| `aarch64-unknown-linux-musl` | 0 | 0 | 53 |
+| `riscv64gc-unknown-linux-gnu` | 4 | 1 | 0 |
+
+Each deleted waiver's branch is gone or now decides from constants alone: cleanup suffixes, a status mapping, and a merged DIT restore.
+The RISC-V ECDSA closure no longer reaches the `Sha256::update_impl` branch that its waiver covered.
+Ten MUSL waivers copy a GNU rationale.
+In six of them, the function is identical. In the other four, the rationale cites no offset, or each cited instruction is the same at the same offset.
+
+All reviewed conditions are public:
+
+- the output, scratch, and fixed frame-object zeroization tests of public addresses and lengths;
+- the output-pointer guards;
+- the saved DIT state;
+- the PSS unused-top-bits test, from the modulus bit length;
+- the P-256 final-window and comb row bounds;
+- the five-bit window next-byte test, from the exponent length;
+- the PKCS#1 implicit-rejection window bound;
+- the CPUID implication filter.
+
+No condition depends on a key, limb, scalar, padding, or message byte.
+On the seven artifact sets, the gate scanner reports no needs-fix, stale, or unclassified finding.
+542 waivers remain. The Apple waivers were not reviewed, because CI does not build that target.
+
 ## Public decisions and exclusions
 
 Ordinary equality is allowed for public values, such as nonces, encoded public keys,
