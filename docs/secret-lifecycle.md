@@ -386,6 +386,9 @@ erasure of every compiler-created copy, register, or spill.
 - Signing and verification leave no SK.seed, SK.prf, or `addrnd` bytes in the measured RV32 and
   Cortex-M runs, in byte or word order; key generation and both imports return the key by value and
   leave moved-from copies.
+- With `alloc`, `generate_keypair_in`, `try_from_slice_in`, and `from_pkcs8_der_in` fill a box that
+  the caller allocated, in place, and return only the pointer.
+  No residue run measures these constructors yet.
 - In the measured native runs of SLH-DSA-SHA2-128s on macOS AArch64 and Linux x86-64 and AArch64,
   signing also leaves no unrevealed WOTS+ chain value or FORS leaf secret, and key generation and
   import leave no WOTS+ chain value.

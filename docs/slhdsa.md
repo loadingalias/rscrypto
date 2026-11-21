@@ -42,7 +42,8 @@ and a context over 255 bytes return the same opaque `VerificationError`.
 
 Secret keys are not `Clone`. Their SK.seed and SK.prf are cleared on drop, and `expose_secret` is
 the only way to read them. Importing a secret key recomputes its public root, which costs one key
-generation.
+generation. With `alloc`, `generate_keypair_in`, `try_from_slice_in`, and `from_pkcs8_der_in` build
+the secret key in a box from the caller's allocator. Moving the box then leaves no copy of the key.
 
 ## Evidence
 

@@ -228,6 +228,10 @@ struct Public {
   prehash: &'static str,
   /// `seeds -> (PK, SK)`.
   generate: PublicGenerate,
+  /// `seeds -> (PK, SK)` through the in-place forms: generation, then raw and
+  /// PKCS #8 import of the generated key.
+  #[cfg(feature = "alloc")]
+  generate_in: PublicGenerate,
   /// `(mode, SK, message, context, addrnd) -> SIG`.
   sign: PublicSign,
   /// `(mode, PK, message, context, SIG) -> accepted`.
@@ -255,6 +259,23 @@ macro_rules! public {
         })
         .expect("key generation");
         (public.to_bytes().to_vec(), secret.expose_secret().as_bytes().to_vec())
+      },
+      #[cfg(feature = "alloc")]
+      generate_in: |seeds| {
+        use alloc::alloc::Global;
+        let (public, generated) = $profile::generate_keypair_in(
+          |out| {
+            out.copy_from_slice(seeds);
+            Ok(())
+          },
+          Global,
+        )
+        .expect("in-place key generation");
+        let raw = $secret::try_from_slice_in(generated.expose_secret().as_bytes(), Global).expect("in-place import");
+        let mut der = [0; $secret::PKCS8_DER_LENGTH];
+        raw.to_pkcs8_der_into(&mut der);
+        let imported = $secret::from_pkcs8_der_in(&der, Global).expect("in-place PKCS #8 import");
+        (public.to_bytes().to_vec(), imported.expose_secret().as_bytes().to_vec())
       },
       sign: |mode, sk, message, context, addrnd| {
         let mut signature = vec![0; $profile::SIGNATURE_LENGTH];
@@ -471,7 +492,7 @@ fn acvp_key_generation_matches_all_cases() {
   let mut count = 0usize;
   for group in groups(&prompt) {
     let internal = internal(group["parameterSet"].as_str().expect("parameter set"));
-    for case in cases(group) {
+    for (index, case) in cases(group).iter().enumerate() {
       let want = expected(&results, group, case);
       let (sk_seed, sk_prf, pk_seed) = (hex(&case["skSeed"]), hex(&case["skPrf"]), hex(&case["pkSeed"]));
       let pk_root = (internal.keygen)(&sk_seed, &pk_seed);
@@ -487,11 +508,21 @@ fn acvp_key_generation_matches_all_cases() {
         "tcId {}",
         case["tcId"]
       );
-      let (public_key, secret_key) = (public(group["parameterSet"].as_str().expect("parameter set")).generate)(
-        &[sk_seed.as_slice(), &sk_prf, &pk_seed].concat(),
-      );
+      let profile = public(group["parameterSet"].as_str().expect("parameter set"));
+      let seeds = [sk_seed.as_slice(), &sk_prf, &pk_seed].concat();
+      let (public_key, secret_key) = (profile.generate)(&seeds);
       assert_eq!(public_key, hex(&want["pk"]), "tcId {}", case["tcId"]);
       assert_eq!(secret_key, hex(&want["sk"]), "tcId {}", case["tcId"]);
+      // One case of each parameter set: the chain costs three key generations.
+      #[cfg(feature = "alloc")]
+      if index == 0 {
+        assert_eq!(
+          (profile.generate_in)(&seeds),
+          (public_key, secret_key),
+          "tcId {}",
+          case["tcId"]
+        );
+      }
       assert_eq!(internal.n, pk_root.len());
       count = count.strict_add(1);
     }

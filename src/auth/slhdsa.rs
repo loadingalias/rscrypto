@@ -18,8 +18,9 @@
 //! `SIGNATURE_LENGTH` bytes, 7,856 to 49,856 depending on the set; verification
 //! takes the signature as a byte slice and rejects any other length. Key
 //! generation, signing, and verification allocate nothing and need no OS
-//! entropy. Their work is fixed by the parameter set, apart from hashing the
-//! message. The small (`s`) sets compute larger trees, so they sign much more
+//! entropy. With `alloc`, the `_in` key constructors build the secret key in
+//! memory from a caller's allocator, so moving the key leaves no copy. Their
+//! work is fixed by the parameter set, apart from hashing the message. The small (`s`) sets compute larger trees, so they sign much more
 //! slowly than the fast (`f`) sets. Importing a secret key costs one key
 //! generation, because it recomputes the public root as FIPS 205 Section 3.1
 //! specifies.
@@ -57,6 +58,10 @@ use crate::hashes::crypto::{Sha256, Sha512, Shake128, Shake256};
 use crate::secret::ZeroizingBytes;
 use crate::traits::ct::with_data_independent_timing;
 use crate::{SecretBytes, VerificationError, Verifier};
+#[cfg(feature = "alloc")]
+use alloc::boxed::Box;
+#[cfg(feature = "alloc")]
+use core::alloc::Allocator;
 use core::fmt;
 
 /// SLH-DSA key generation or signing failure.
@@ -500,21 +505,27 @@ macro_rules! profile {
       /// strength. Failure clears even a partially filled buffer and returns
       /// no key material.
       pub fn generate_keypair(
-        mut fill_random: impl FnMut(&mut [u8]) -> Result<(), SlhDsaError>,
+        fill_random: impl FnMut(&mut [u8]) -> Result<(), SlhDsaError>,
       ) -> Result<($public, $secret), SlhDsaError> {
-        with_data_independent_timing(|| {
-          let mut seeds = ZeroizingBytes::<$seeds>::zeroed();
-          fill_random(seeds.as_mut_array())?;
-          let (fields, _) = seeds.as_array().as_chunks::<$n>();
-          let mut secret = $secret::zeroed();
-          secret.seed.as_mut_array().copy_from_slice(&fields[0]);
-          secret.prf.as_mut_array().copy_from_slice(&fields[1]);
-          secret.public.0[..$n].copy_from_slice(&fields[2]);
-          let mut root = [0; $n];
-          secret.root(&mut root);
-          secret.public.0[$n..].copy_from_slice(&root);
-          Ok((secret.public.clone(), secret))
-        })
+        let mut secret = $secret::zeroed();
+        secret.generate_into(fill_random)?;
+        Ok((secret.public.clone(), secret))
+      }
+
+      /// Like [`Self::generate_keypair`], with the secret key in memory from `alloc`.
+      ///
+      /// The key is generated directly into its allocation, so moving the box
+      /// moves only a pointer and no by-value copy of the key is left behind.
+      /// The box clears the key on drop; failure clears it before returning.
+      /// Allocation failure is handled as by [`Box::new_in`].
+      #[cfg(feature = "alloc")]
+      pub fn generate_keypair_in<A: Allocator>(
+        fill_random: impl FnMut(&mut [u8]) -> Result<(), SlhDsaError>,
+        alloc: A,
+      ) -> Result<($public, Box<$secret, A>), SlhDsaError> {
+        let mut secret = Box::new_in($secret::zeroed(), alloc);
+        secret.generate_into(fill_random)?;
+        Ok((secret.public.clone(), secret))
       }
 
       /// Generate a key pair using OS entropy.
@@ -637,23 +648,22 @@ macro_rules! profile {
       /// responsibility for clearing `input`; a rejected key is cleared
       /// before returning.
       pub fn try_from_slice(input: &[u8]) -> Result<Self, SlhDsaKeyError> {
-        with_data_independent_timing(|| {
-          if input.len() != $sk {
-            return Err(SlhDsaKeyError::InvalidSecretKey);
-          }
-          let (fields, _) = input.as_chunks::<$n>();
-          let mut secret = Self::zeroed();
-          secret.seed.as_mut_array().copy_from_slice(&fields[0]);
-          secret.prf.as_mut_array().copy_from_slice(&fields[1]);
-          secret.public.0[..$n].copy_from_slice(&fields[2]);
-          secret.public.0[$n..].copy_from_slice(&fields[3]);
-          let mut root = [0; $n];
-          secret.root(&mut root);
-          if root != fields[3] {
-            return Err(SlhDsaKeyError::InvalidSecretKey);
-          }
-          Ok(secret)
-        })
+        let mut secret = Self::zeroed();
+        secret.import_into(input)?;
+        Ok(secret)
+      }
+
+      /// Like [`Self::try_from_slice`], with the key imported into memory from `alloc`.
+      ///
+      /// The key is copied directly into its allocation, so moving the box moves
+      /// only a pointer. The box clears the key on drop; a rejected key is
+      /// cleared before returning. Allocation failure is handled as by
+      /// [`Box::new_in`]. The caller retains responsibility for clearing `input`.
+      #[cfg(feature = "alloc")]
+      pub fn try_from_slice_in<A: Allocator>(input: &[u8], alloc: A) -> Result<Box<Self, A>, SlhDsaKeyError> {
+        let mut secret = Box::new_in(Self::zeroed(), alloc);
+        secret.import_into(input)?;
+        Ok(secret)
       }
 
       /// Import an RFC 9909 private key from RFC 5958 OneAsymmetricKey
@@ -675,14 +685,18 @@ macro_rules! profile {
       /// inconsistent key or a foreign public key; and
       /// [`SlhDsaKeyError::InvalidPublicKey`] for a wrong-length public key.
       pub fn from_pkcs8_der(der: &[u8]) -> Result<Self, SlhDsaKeyError> {
-        with_data_independent_timing(|| {
-          let (key, public) = pkix::decode_pkcs8_raw::<SlhDsaKeyError, $sk, $pk>(der, $profile::ALGORITHM)?;
-          let secret = Self::try_from_slice(key)?;
-          if public.is_some_and(|public| *public != secret.public.0) {
-            return Err(SlhDsaKeyError::InvalidSecretKey);
-          }
-          Ok(secret)
-        })
+        let mut secret = Self::zeroed();
+        secret.pkcs8_into(der)?;
+        Ok(secret)
+      }
+
+      /// Like [`Self::from_pkcs8_der`], with the key imported into memory from `alloc`.
+      /// See [`Self::try_from_slice_in`].
+      #[cfg(feature = "alloc")]
+      pub fn from_pkcs8_der_in<A: Allocator>(der: &[u8], alloc: A) -> Result<Box<Self, A>, SlhDsaKeyError> {
+        let mut secret = Box::new_in(Self::zeroed(), alloc);
+        secret.pkcs8_into(der)?;
+        Ok(secret)
       }
 
       /// Write this key as a version 1 RFC 9909 PKCS #8 private key. No heap
@@ -713,13 +727,69 @@ macro_rules! profile {
 
       $($signing)*
 
-      /// Zero-filled owner that construction fills in place; never returned.
+      /// Zero-filled owner that construction fills in place; never returned unfilled.
       const fn zeroed() -> Self {
         Self {
           seed: ZeroizingBytes::zeroed(),
           prf: ZeroizingBytes::zeroed(),
           public: $public([0; $pk]),
         }
+      }
+
+      /// Fill this zeroed owner from 3n bytes requested once from
+      /// `fill_random` (FIPS 205 Algorithm 21). On failure the owner holds no
+      /// key material.
+      fn generate_into(
+        &mut self,
+        mut fill_random: impl FnMut(&mut [u8]) -> Result<(), SlhDsaError>,
+      ) -> Result<(), SlhDsaError> {
+        with_data_independent_timing(|| {
+          let mut seeds = ZeroizingBytes::<$seeds>::zeroed();
+          fill_random(seeds.as_mut_array())?;
+          let (fields, _) = seeds.as_array().as_chunks::<$n>();
+          self.seed.as_mut_array().copy_from_slice(&fields[0]);
+          self.prf.as_mut_array().copy_from_slice(&fields[1]);
+          self.public.0[..$n].copy_from_slice(&fields[2]);
+          let mut root = [0; $n];
+          self.root(&mut root);
+          self.public.0[$n..].copy_from_slice(&root);
+          Ok(())
+        })
+      }
+
+      /// Import the encoded key `input` into this zeroed owner, and check its
+      /// PK.root. On failure the owner holds partial key material, which it
+      /// clears on drop.
+      fn import_into(&mut self, input: &[u8]) -> Result<(), SlhDsaKeyError> {
+        with_data_independent_timing(|| {
+          if input.len() != $sk {
+            return Err(SlhDsaKeyError::InvalidSecretKey);
+          }
+          let (fields, _) = input.as_chunks::<$n>();
+          self.seed.as_mut_array().copy_from_slice(&fields[0]);
+          self.prf.as_mut_array().copy_from_slice(&fields[1]);
+          self.public.0[..$n].copy_from_slice(&fields[2]);
+          self.public.0[$n..].copy_from_slice(&fields[3]);
+          let mut root = [0; $n];
+          self.root(&mut root);
+          if root != fields[3] {
+            return Err(SlhDsaKeyError::InvalidSecretKey);
+          }
+          Ok(())
+        })
+      }
+
+      /// Import the PKCS #8 key `der` into this zeroed owner, as
+      /// [`Self::import_into`] does for a raw key.
+      fn pkcs8_into(&mut self, der: &[u8]) -> Result<(), SlhDsaKeyError> {
+        with_data_independent_timing(|| {
+          let (key, public) = pkix::decode_pkcs8_raw::<SlhDsaKeyError, $sk, $pk>(der, $profile::ALGORITHM)?;
+          self.import_into(key)?;
+          if public.is_some_and(|public| *public != self.public.0) {
+            return Err(SlhDsaKeyError::InvalidSecretKey);
+          }
+          Ok(())
+        })
       }
 
       /// PK.root regenerated from SK.seed and PK.seed (FIPS 205 Algorithm 18).
