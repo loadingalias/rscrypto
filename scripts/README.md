@@ -1262,7 +1262,7 @@ Run it with ordinary tests when you change evidence hooks.
 Ordinary tests continue to check the application build without internal access.
 
 - Use `just bench <selector> --diag` or `just profile <target> --diag` for diagnostic workloads.
-- The `aead_diag` and `aead_kernels` targets enable their required internal hooks automatically.
+- The `aead_kernels` target enables its required internal hooks automatically.
 - Cross-prepared diagnostic benchmarks resolve the flags for the destination target
   before they record build provenance.
 - Keep internal builds separate from public-surface checks.

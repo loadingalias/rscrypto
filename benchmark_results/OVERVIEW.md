@@ -16,8 +16,9 @@ qualified survey: no host had load or thermal checks before collection. Loss cou
 v0.13; the per-point scores are the starting data for the v0.14 performance work.
 
 - CI lanes: Bench 44457214337 at `0ede6b42`, scored by re-score 44515348516 with the catalog of
-  `d99b4423`. From `0ede6b42` to the release source, the measured rscrypto code changed only in
-  tests, rustdoc, and nightly-feature gates.
+  `d99b4423`. From `0ede6b42` to `1833646f`, the measured rscrypto code changed only in tests,
+  rustdoc, and nightly-feature gates. Later commits change measured code, including ECDSA, CRC,
+  Windows AES-GCM, and AEAD tag code, so this record does not measure the release source.
 - `ChaCha20Rng` and QUIC-LB on the CI lanes: Bench 44519763386 (attempt 2) at `f588066e`, scored
   by re-score 44538077493.
 - Apple M1 Pro: the owner's local `just bench all` at `13d4cad2`, 114 run directories from

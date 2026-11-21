@@ -198,7 +198,8 @@ The `rscrypto::auth::hpke` module documentation describes the API.
 HashSLH-DSA profile, without allocation and without operating-system entropy. It enables `hmac` and `sha3`.
 Signatures are 7,856 to 49,856 bytes and go into buffers that the caller provides. The small (`s`)
 sets compute larger trees than the fast (`f`) sets, so they sign much more slowly, and importing a
-secret key costs one key generation.
+secret key costs one key generation. The allocator-backed secret-key constructors
+(`generate_keypair_in`, `try_from_slice_in`, and `from_pkcs8_der_in`) need `alloc`.
 See [SLH-DSA](slhdsa.md) for the profile choice, the API, and the open qualification gates.
 
 `p256-ecdh` and `p384-ecdh` are standalone leaf features.

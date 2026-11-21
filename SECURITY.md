@@ -23,7 +23,8 @@ Reports about older releases are welcome when the issue can still affect current
 
 ## Scope
 
-Report issues that can affect users or published artifacts, including:
+Report issues in `rscrypto` or its `rscrypto-rustls` companion that can affect users or published artifacts,
+including:
 
 - correctness failures in a primitive or a protocol profile;
 - secret disclosure through timing, memory, output, or error behavior;

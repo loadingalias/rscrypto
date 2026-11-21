@@ -31,7 +31,6 @@ include = [
   "!/docs/**/notes/**",
   "!/docs/funding/**",
   "!/docs/tasks/**",
-  "!/docs/llvm-ppc64le-readvolatile-issue.md",
   "!/src/**/*.md",
   "!/src/**/*.txt",
   "!/src/**/.gitignore",

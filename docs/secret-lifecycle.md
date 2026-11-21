@@ -518,7 +518,7 @@ remaining plaintext is first encrypted through the stream path, and the kernel a
 as trailing ciphertext. Its `SealData` key copy follows the same tag overwrite and remaining-half
 clear.
 Each x86-64 AES-GCM context's private power table is one initialized array with no internal
-padding: 2048 bytes on Linux and 256 bytes on other x86-64 targets. Context drop clears it once.
+padding: 2048 bytes on Linux and Windows and 256 bytes on other x86-64 targets. Context drop clears it once.
 Its 64-byte alignment changes placement, not cleanup ownership. The provider
 construction scrub addresses copies within its reviewed stack region; construction
 through other callers, live registers, and unrelated object padding retain their

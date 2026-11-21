@@ -60,7 +60,7 @@ constructors, the opt-in algorithms, and caller-selected entropy.
 | Composite ML-DSA authentication | `mldsa65_ed25519_sha512` and `mldsa65_ecdsa_secp256r1_sha512` (draft-ietf-tls-composite-mldsa-00) at provisional codepoints, TLS 1.3 only; keys prepared once (or compact on request) and hedged signing | [sign](src/sign/composite.rs), [verify](src/verify.rs) |
 | QUIC Initial keys and Retry | RFC 9001 AES-128-GCM Initial keys and Retry integrity tags | [quic](src/quic/initial.rs) |
 | QUIC reset and address tokens | HMAC-SHA256 reset tokens; HKDF-SHA256 and AES-256-GCM token keys | [quic](src/quic/token.rs) |
-| QUIC connection IDs | AES-128 connection-ID tags over caller-drawn nonces | [quic](src/quic/cid.rs) |
+| QUIC connection IDs | QUIC-LB connection IDs through `QuicLbCipher` (draft-ietf-quic-load-balancers-22) over caller-drawn nonces | [quic](src/quic/lb.rs) |
 | Key exchange | `X25519SecretKey`, `P256EphemeralSecret`, `P384EphemeralSecret`, `MlKem768`, `MlKem1024` | [kx_group](src/kx_group.rs) |
 
 `cipher_suite::ALL_CIPHER_SUITES` lists enabled TLS 1.3 suites in preference order.
@@ -144,8 +144,8 @@ builder. The provider offers the enabled suites, the groups in
 refuses every private key (clearing owned DER) and its ticketer factory refuses,
 so it supports no client authentication and cannot serve. A client built this way
 links no signing, ticket, or OS-entropy code; `scripts/bench/provider_size.py`
-measures the linked size of a minimal client with each constructor on
-top-secret's host targets.
+measures the linked size of a minimal client with each constructor on Linux
+x86-64 and AArch64 (glibc and musl), macOS AArch64, and Windows x86-64.
 `verify::ALL_ALGORITHMS` preserves the certificate algorithm catalog when callers
 build a custom TLS signature-scheme mapping with `WebPkiSupportedAlgorithms::new`.
 
@@ -381,6 +381,14 @@ Every key and nonce comes from the `SecureRandom` source passed to the call. A
 failing source fails the call, without OS fallback, and leaves caller data
 unchanged. Rustls's QUIC API supplies the handshake and the packet and header
 protection keys through this provider's `quic` algorithms.
+
+## Security and releases
+
+Report a suspected vulnerability in this crate through the repository's
+[security policy](../SECURITY.md). The rscrypto [threat model](../THREAT_MODEL.md)
+covers the primitives, not this crate. rustls owns the TLS protocol, rustls-webpki
+owns certificate path validation, and this crate owns the adapters that this README
+describes. Neither crate has had a third-party security audit.
 
 rscrypto keeps its `v<version>` tags. This crate's tags are
 `rscrypto-rustls-v<version>`.

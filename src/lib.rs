@@ -122,8 +122,9 @@ assert!(
 //! Fuzz targets exercise production paths; Miri covers the portable backends.
 //!
 //! `rscrypto` is a primitives crate, not a FIPS 140-3 validated module. It
-//! exposes FIPS-aligned primitives (AES-256-GCM, SHA-2, SHA-3 / SHAKE, HMAC,
-//! KMAC, HKDF, PBKDF2) alongside non-FIPS ones. The `portable-only` feature
+//! exposes FIPS-aligned primitives (AES-GCM, SHA-2, SHA-3 / SHAKE, HMAC, KMAC,
+//! HKDF, PBKDF2, ECDSA, Ed25519, RSA, ML-KEM, ML-DSA, SLH-DSA) alongside
+//! non-FIPS ones. The `portable-only` feature
 //! makes runtime capability detection report no SIMD/ASM capabilities, so
 //! dispatchers that consult runtime caps fall through to portable backends,
 //! and it turns off assembly that the crate selects at compile time from the

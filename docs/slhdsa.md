@@ -51,7 +51,7 @@ These checks cover every set unless the row names one.
 
 | Evidence | Scope |
 | --- | --- |
-| NIST ACVP (`testdata/slhdsa/acvp/`) | All 1,248 pinned cases: key generation, signing, and verification, pure and pre-hash, for every FIPS 205 hash function |
+| NIST ACVP (`testdata/slhdsa/acvp/`) | All 1,248 pinned cases: key generation, signing, and verification, pure and pre-hash, for every FIPS 205 hash function. One key-generation case of each set also runs `generate_keypair_in`, then `try_from_slice_in` and `from_pkcs8_der_in` on the generated key |
 | Differential tests | RustCrypto `slh-dsa` 0.2.0-rc.5 (key generation, deterministic and hedged signing) and `fips205` 0.5.0 (pure and HashSLH-DSA signing and verification) |
 | RFC 9909 Appendix C (`testdata/slhdsa/rfc9909/`) | SHA2-128s only: the published key pair and the certificate signature |
 | RFC 9909 encodings | SPKI and PKCS #8 for all 24 profiles against DER built from the RFC's OIDs, with one rejection test for each rule, and an exchange with RustCrypto and the OpenSSL CLI |
@@ -66,8 +66,8 @@ These checks cover every set unless the row names one.
   measure SHA2-128s key generation and deterministic signing, with a fixed against a random secret
   key. SLH-DSA has no timing claim until the CT campaign passes them on every lane. No case covers
   import, hedged or pre-hash signing, or the other sets.
-- **Stack and residue.** No native residue run covers Windows or a set other than SHA2-128s, and no
-  stack bound covers a set other than SHA2-128s.
+- **Stack and residue.** No native residue run covers Windows, a set other than SHA2-128s, or the
+  `*_in` constructors, and no stack bound covers a set other than SHA2-128s.
 - **Targets.** POWER, IBM Z, and RISC-V run no small-set differentials or fuzzing. Windows AArch64
   runs nothing.
 - **No Wycheproof suite** exists for SLH-DSA. OpenSSL and RustCrypto have no HashSLH-DSA codecs, so
