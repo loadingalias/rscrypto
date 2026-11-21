@@ -6,6 +6,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import re
 import signal
 import subprocess
 import time
@@ -48,8 +49,8 @@ def install():
                         '--target', ','.join(sorted(selected))], check=True)
 
 
-def boundary_features(graph, boundary):
-    """Maximal feature set that respects the core-only or alloc boundary."""
+def features_without(graph, forbidden):
+    """Features whose closure contains none of `forbidden`."""
     def closure(feature):
         result, pending = set(), [feature]
         while pending:
@@ -58,8 +59,23 @@ def boundary_features(graph, boundary):
                 result.add(name)
                 pending.extend(graph.get(name, []))
         return result
-    forbidden = {'std', 'getrandom'} | ({'alloc'} if boundary == 'core' else set())
     return [feature for feature in graph if not closure(feature) & forbidden]
+
+
+def boundary_features(graph, boundary):
+    """Maximal feature set that respects the core-only or alloc boundary."""
+    return features_without(graph, {'std', 'getrandom'} | ({'alloc'} if boundary == 'core' else set()))
+
+
+def nightly_features(target):
+    """Features whose backends for `target` enable the unstable compiler features in `src/lib.rs`."""
+    arch = re.match(r'powerpc64|s390x|riscv64|riscv32', target).group()
+    names = set()
+    for gate in (ROOT / 'src/lib.rs').read_text().split('#![cfg_attr(')[1:]:
+        gate = gate.split('\n)]')[0]
+        if f'target_arch = "{arch}"' in gate:
+            names.update(re.findall(r'feature = "([^"]+)"', gate))
+    return names - {'portable-only'}
 
 
 def cases():
@@ -104,6 +120,9 @@ def cases():
             yield f'{target}-portable-{boundary}', [check(msrv, target, selected)], {}
         selected = boundary_features(graph, 'alloc') if '-none' in target else sorted(graph)
         yield f'{target}-portable-build', [check(msrv, target, selected, 'build')], {}
+        # The features without a nightly backend for the target compile on the MSRV without `portable-only`.
+        forbidden = nightly_features(target) | {'portable-only'} | ({'std', 'getrandom'} if '-none' in target else set())
+        yield f'{target}-stable', [check(msrv, target, features_without(graph, forbidden))], {}
         # Each feature alone builds its nightly backends for the target, as the host loop checks above.
         for feature in sorted(selected):
             yield f'{target}-{feature}', [check(canonical, target, [feature])], {}

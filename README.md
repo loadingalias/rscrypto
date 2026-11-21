@@ -17,8 +17,8 @@ The companion [`rscrypto-rustls`](#tls-and-quic-provider) supplies TLS and QUIC 
 ## Install
 
 `rscrypto` needs Rust 1.100 or later.
-Accelerated POWER, IBM Z, and RISC-V builds need a nightly compiler;
-`portable-only` builds support the declared MSRV.
+Some accelerated POWER, IBM Z, and RISC-V backends need a nightly compiler;
+builds without their features, and `portable-only` builds, support the declared MSRV.
 See [Toolchain](docs/platforms.md#toolchain).
 
 Minimal `no_std` build with SHA-2 only:

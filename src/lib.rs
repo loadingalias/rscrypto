@@ -133,21 +133,87 @@ assert!(
 //! evidence. See the security guidance for nonce lifecycle, PHC verification
 //! limits, and platform fallback notes.
 
-// NIGHTLY: the POWER, IBM Z, and RV64 backends use these unstable features. Each build for these
-// targets enables all of them unless `portable-only` excludes the backends. The other targets and
-// `portable-only` builds compile on the MSRV.
+// NIGHTLY: the POWER, IBM Z, and RV64 backends of the features listed below use these unstable
+// features. A build for these targets enables them only when it selects one of those features and
+// not `portable-only`. Every other build compiles on the MSRV.
 #![cfg_attr(
-  all(target_arch = "powerpc64", not(feature = "portable-only")),
+  all(
+    target_arch = "powerpc64",
+    not(feature = "portable-only"),
+    any(
+      feature = "adler32",
+      feature = "aegis256",
+      feature = "aes-gcm",
+      feature = "aes-gcm-siv",
+      feature = "aes-siv",
+      feature = "argon2",
+      feature = "blake3",
+      feature = "chacha20-rng",
+      feature = "chacha20poly1305",
+      feature = "crc16",
+      feature = "crc24",
+      feature = "crc32",
+      feature = "crc64",
+      feature = "ml-dsa",
+      feature = "poly1305",
+      feature = "xchacha20poly1305",
+      feature = "xxh3"
+    )
+  ),
   feature(portable_simd, powerpc_target_feature),
   allow(unused_features, reason = "a build with few backends leaves some unused")
 )]
 #![cfg_attr(
-  all(target_arch = "s390x", not(feature = "portable-only")),
+  all(
+    target_arch = "s390x",
+    not(feature = "portable-only"),
+    any(
+      feature = "adler32",
+      feature = "aegis256",
+      feature = "aes-gcm",
+      feature = "aes-gcm-siv",
+      feature = "argon2",
+      feature = "blake3",
+      feature = "chacha20-rng",
+      feature = "chacha20poly1305",
+      feature = "crc16",
+      feature = "crc24",
+      feature = "crc32",
+      feature = "crc64",
+      feature = "ml-dsa",
+      feature = "ml-kem",
+      feature = "poly1305",
+      feature = "xchacha20poly1305",
+      feature = "xxh3"
+    )
+  ),
   feature(asm_experimental_reg, portable_simd, stdarch_s390x),
   allow(unused_features, reason = "a build with few backends leaves some unused")
 )]
 #![cfg_attr(
-  all(target_arch = "riscv64", not(feature = "portable-only")),
+  all(
+    target_arch = "riscv64",
+    not(feature = "portable-only"),
+    any(
+      feature = "adler32",
+      feature = "aegis256",
+      feature = "aes-gcm",
+      feature = "aes-gcm-siv",
+      feature = "aes-siv",
+      feature = "blake2b",
+      feature = "blake2s",
+      feature = "blake3",
+      feature = "chacha20-rng",
+      feature = "chacha20poly1305",
+      feature = "crc16",
+      feature = "crc24",
+      feature = "crc32",
+      feature = "crc64",
+      feature = "poly1305",
+      feature = "sha2",
+      feature = "xchacha20poly1305"
+    )
+  ),
   feature(asm_experimental_reg, portable_simd, riscv_ext_intrinsics, riscv_target_feature),
   allow(unused_features, reason = "a build with few backends leaves some unused")
 )]

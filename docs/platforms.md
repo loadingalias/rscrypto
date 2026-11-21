@@ -150,20 +150,24 @@ Evidence from one CPU does not qualify another CPU.
 `rscrypto` needs Rust 1.100 (`rust-version = "1.100.0"`).
 Rust 1.100 became stable on 2026-11-12.
 The repository tests with the nightly pinned in [`rust-toolchain.toml`](../rust-toolchain.toml).
-It checks the MSRV with the exact 1.100 beta pinned in [`scripts/lib/toolchain.py`](../scripts/lib/toolchain.py).
+It checks the MSRV with the released Rust 1.100.0 toolchain.
 
 Every target in the catalog supports `portable-only` on the declared MSRV.
 The compatibility lane checks core-only and allocation-enabled builds and generates release code
 for POWER, IBM Z, RV64, and RV32 with this feature on the MSRV compiler.
-Their accelerated backends still use the unstable compiler features below and need nightly Rust.
-Without `portable-only`, each POWER, IBM Z, and RV64 build needs nightly Rust, whatever features it selects.
+On these targets, the accelerated backends of the features below use unstable compiler features and need nightly Rust.
+A build that selects none of these features compiles on the MSRV without `portable-only`.
+The compatibility lane checks every other feature for each target on the MSRV compiler.
+[`src/lib.rs`](../src/lib.rs) owns the feature lists.
 
-| Target                                     | Unstable features |
-| ------------------------------------------ | ----------------- |
-| `powerpc64le-unknown-linux-gnu`            | `portable_simd`, `powerpc_target_feature` |
-| `s390x-unknown-linux-gnu`                  | `asm_experimental_reg`, `portable_simd`, `stdarch_s390x` |
-| `riscv64gc-unknown-linux-gnu`              | `asm_experimental_reg`, `portable_simd`, `riscv_ext_intrinsics`, `riscv_target_feature` |
-| `riscv32imac-unknown-none-elf` with `sha2` | `riscv_ext_intrinsics` |
+| Target | Features with a nightly backend | Unstable features |
+| --- | --- | --- |
+| `powerpc64le-unknown-linux-gnu` | `adler32`, `aegis256`, `aes-gcm`, `aes-gcm-siv`, `aes-siv`, `argon2`, `blake3`, `chacha20-rng`, `chacha20poly1305`, `crc16`, `crc24`, `crc32`, `crc64`, `ml-dsa`, `poly1305`, `xchacha20poly1305`, `xxh3` | `portable_simd`, `powerpc_target_feature` |
+| `s390x-unknown-linux-gnu` | `adler32`, `aegis256`, `aes-gcm`, `aes-gcm-siv`, `argon2`, `blake3`, `chacha20-rng`, `chacha20poly1305`, `crc16`, `crc24`, `crc32`, `crc64`, `ml-dsa`, `ml-kem`, `poly1305`, `xchacha20poly1305`, `xxh3` | `asm_experimental_reg`, `portable_simd`, `stdarch_s390x` |
+| `riscv64gc-unknown-linux-gnu` | `adler32`, `aegis256`, `aes-gcm`, `aes-gcm-siv`, `aes-siv`, `blake2b`, `blake2s`, `blake3`, `chacha20-rng`, `chacha20poly1305`, `crc16`, `crc24`, `crc32`, `crc64`, `poly1305`, `sha2`, `xchacha20poly1305` | `asm_experimental_reg`, `portable_simd`, `riscv_ext_intrinsics`, `riscv_target_feature` |
+| `riscv32imac-unknown-none-elf` | `sha2` | `riscv_ext_intrinsics` |
+
+A feature that enables one of these features needs nightly Rust too, for example `hmac` on RV64 through `sha2`.
 
 Unstable features can change between nightlies.
 For accelerated builds on these targets, the tested contract is the pinned nightly.

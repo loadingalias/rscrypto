@@ -93,6 +93,13 @@ sys.exit(7 if count == int(os.environ['FAIL_AT']) else 0)
                 if boundary == 'build':
                     self.assertEqual(command[2], 'build')
                     self.assertIn('--release', command)
+            # Stable 1.100 rejected `websocket-sha1` alone on RV64 and IBM Z before the gates named features.
+            _, commands, _ = next(row for row in plan if row[0] == f'{target}-stable')
+            command, = commands
+            self.assertEqual(command[1], '+' + compat.toolchain.msrv())
+            features = set(command[command.index('--features') + 1].split(','))
+            self.assertIn('websocket-sha1', features)
+            self.assertFalse(features & {'portable-only', 'sha2' if target.startswith('riscv') else 'crc32'})
             allowed = compat.boundary_features(manifest['features'], 'alloc') if '-none' in target else manifest['features']
             for feature in allowed:
                 _, commands, _ = next(row for row in plan if row[0] == f'{target}-{feature}')
