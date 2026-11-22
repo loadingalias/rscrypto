@@ -1466,8 +1466,8 @@ Local zig cross-builds are not renewal evidence: they differ from CI, and the lo
 |---|---:|---:|---:|
 | `aarch64-apple-darwin` | 32 | 6 | 1 |
 | `powerpc64le-unknown-linux-gnu` | 11 | 0 | 0 |
-| `riscv64gc-unknown-linux-gnu` | 0 | 0 | 0 |
-| `s390x-unknown-linux-gnu` | 0 | 0 | 0 |
+| `riscv64gc-unknown-linux-gnu` | 0 | 0 | 3 |
+| `s390x-unknown-linux-gnu` | 0 | 0 | 1 |
 | `aarch64-unknown-linux-gnu` and MUSL | 0 | 0 | 0 |
 | `x86_64-unknown-linux-gnu` | 0 | 0 | 17 |
 | `x86_64-pc-windows-msvc` | 0 | 0 | 4 |
@@ -1484,12 +1484,19 @@ Local zig cross-builds are not renewal evidence: they differ from CI, and the lo
 - POWER: each slice is unchanged. Each function differs only in four trailing alignment `nop` rows, which moved
   between functions. The function identity binds that placement. This renewal keeps the slices, and the identity fix
   follows v0.13.
+- IBM Z and RISC-V: 44959985571 cancelled their evidence, so these rows use
+  [Constant-Time 44965044968](https://github.com/loadingalias/rscrypto/actions/runs/44965044968) at `4d619c12`.
+  `rsa.private_ops` blocks the SHA-256 kernel selection in its `OnceCache` initializer, and on RISC-V also the
+  `update_impl` buffering bound. Each primitive that reaches a blocking row needs its own waiver. The default P-256
+  public key takes its coordinate blinding from HMAC-SHA-256 of the secret key, so
+  `signature.ecdsa_p256_public_derivation` reaches both rows. On RISC-V, `signature.ecdsa_p256_sign` also reaches
+  `update_impl`. Each new waiver takes the reviewed public rationale of its peers; the slice is unchanged.
 
 All renewed conditions are public: saved DIT state, output-pointer guards, zeroization extents of public addresses and
 lengths, the PSS unused-top-bits test, the `to_pair` and `from_pair` limb bounds of the AArch64 RSA pair, and the
 PKCS#1 implicit-rejection window bound. On these lanes, the gate scanner reports no needs-fix, stale, or unclassified
 finding.
-558 waivers remain.
+562 waivers remain.
 
 ## Public decisions and exclusions
 

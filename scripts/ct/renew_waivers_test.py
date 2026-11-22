@@ -4,8 +4,10 @@
 import json
 from pathlib import Path
 
-from asm_heuristics import FunctionBody, attach_condition_identities, scan_symbol
-from renew_waivers import Slicer, apply_identities, candidates, function_changes, reencoding
+from asm_heuristics import (FunctionBody, apply_select_branch_enforcement, apply_waivers,
+                            attach_condition_identities, scan_symbol)
+from renew_waivers import (Slicer, apply_identities, candidates, function_changes, reencoding,
+                           unwaived_enforced_findings)
 
 TARGET = "x86_64-unknown-linux-gnu"
 
@@ -71,6 +73,7 @@ def main() -> None:
   # A waived finding is not a candidate.
   assert candidates(waiver, [dict(moved, waived=True)], reviewed_record, Slicer(TARGET, reviewed_functions, None)) == []
   reencoding_regressions(waiver, reviewed_functions)
+  enforced_finding_regressions()
 
 
 def reencoding_regressions(waiver: dict, functions: dict[str, FunctionBody]) -> None:
@@ -110,6 +113,30 @@ def reencoding_regressions(waiver: dict, functions: dict[str, FunctionBody]) -> 
     pass
   else:
     raise AssertionError("a waiver without the old identity was changed")
+
+
+def enforced_finding_regressions() -> None:
+  """An enforced row fails the gate until each primitive that reaches it has a waiver, enforced or not.
+
+  IBM Z CT 44965044968 failed on such a row that the record did not list: only the non-enforced
+  `signature.ecdsa_p256_public_derivation` lacked a waiver."""
+  functions = function(["1000: 40 f6 c7 08\ttestb\t$0x8, %dil", "1004: 74 05\tje\t0x100b <f+0xb>",
+                        "1006: b8 01 00 00 00\tmovl\t$0x1, %eax", "100b: c3\tretq"])
+  found = scan_symbol(TARGET, "f", functions["f"], set(functions), scope="ct_intended_call_closure",
+                      primitive_ids=["kx.p256_ecdh", "kem.mlkem768"], roots=[], image=None)
+  apply_select_branch_enforcement(found, {"kx.p256_ecdh"})
+  attach_condition_identities(TARGET, found, functions, "artifacts/fixture.binary.disasm.txt", set(functions), None,
+                              {"select_branch"})
+  [branch] = [row for row in found if row["kind"] == "select_branch"]
+  waiver = {"target": TARGET, "primitive": "kx.p256_ecdh", "symbol": "f", "kind": "select_branch",
+            "slice_sha256": branch["slice_sha256"], "classification": "public", "source": "fixture",
+            "rationale": "fixture", "reviewer": "fixture", "reviewed_at": "2026-11-21"}
+  assert apply_waivers(found, [waiver], TARGET) == []
+  [row] = unwaived_enforced_findings(found, Slicer(TARGET, functions, None))
+  assert row["primitives"] == ["kem.mlkem768"] and row["slice_sha256"] == branch["slice_sha256"], row
+  # A waiver for each primitive clears the row.
+  assert apply_waivers(found, [waiver, dict(waiver, primitive="kem.mlkem768")], TARGET) == []
+  assert unwaived_enforced_findings(found, Slicer(TARGET, functions, None)) == []
 
 
 if __name__ == "__main__":

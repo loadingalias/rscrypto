@@ -7,7 +7,8 @@ condition changed or, for an open slice, when its function changed. For each sta
 the reviewed branch in the artifacts the waiver was reviewed against and lists the new branches of the same
 kind in the same function, with their slices and digests. A candidate with an unchanged slice differs only
 because an open slice also binds its function; a reviewer still confirms its open leaves. The record also
-lists every enforced finding that no waiver covers. The tool writes the record and changes nothing.
+lists every enforced finding that fails the gate, with each primitive that reaches it without a waiver. The
+tool writes the record and changes nothing.
 
 With `--reencode-from COMMIT`, the tool instead binds the current waivers to a fixed instruction identity. It
 finds each waiver's branches with the scanner of COMMIT and the same branches with the current scanner, both in
@@ -160,6 +161,16 @@ def candidates(waiver: dict[str, Any], findings: list[dict[str, Any]], reviewed:
     record["unchanged"] = reviewed is not None and record["canonical"] == reviewed["canonical"]
     rows.append(record)
   return sorted(rows, key=lambda row: (not row["unchanged"], row["offset"] if row["offset"] is not None else -1))
+
+
+def unwaived_enforced_findings(findings: list[dict[str, Any]], slicer: Slicer) -> list[dict[str, Any]]:
+  """Each select-shaped finding that fails the gate, with each primitive that reaches it without a waiver.
+
+  An enforced primitive makes the row fail, and then each primitive that reaches it needs its own waiver."""
+  return [{"symbol": finding["symbol"], "primitives": finding["unresolved_primitive_ids"],
+           **slicer.record(finding["symbol"], finding)}
+          for finding in findings
+          if finding["kind"] == "select_branch" and "slice_sha256" in finding and scanner.fails_verdict(finding)]
 
 
 def reencoding(old: list[dict[str, Any]], new: list[dict[str, Any]]) -> tuple[str, str]:
@@ -344,12 +355,7 @@ def main() -> int:
                  "function_changes": function_changes(reviewed_slicer, new_slicer, waiver["symbol"]),
                  "candidates": candidates(waiver, findings, reviewed, new_slicer)})
 
-  enforced = scanner.select_branch_enforced_primitives(ROOT)
-  unwaived = []
-  for finding in findings:
-    missing = [primitive for primitive in finding.get("unresolved_primitive_ids", []) if primitive in enforced]
-    if finding["kind"] == "select_branch" and missing and "slice_sha256" in finding:
-      unwaived.append({"symbol": finding["symbol"], "primitives": missing, **new_slicer.record(finding["symbol"], finding)})
+  unwaived = unwaived_enforced_findings(findings, new_slicer)
 
   counts = collections.Counter(
     "unchanged slice" if any(candidate["unchanged"] for candidate in row["candidates"]) else

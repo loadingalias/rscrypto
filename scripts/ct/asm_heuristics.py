@@ -687,6 +687,11 @@ def apply_waivers(findings: list[dict[str, Any]], configured: list[dict[str, Any
   ]
 
 
+def fails_verdict(finding: dict[str, Any]) -> bool:
+  """A failing finding blocks until a waiver or a public classification resolves each primitive that reaches it."""
+  return finding["severity"] == "fail" and finding["disposition"] != "accepted" and not finding.get("waived")
+
+
 def parse_asm_aliases(artifact_dir: Path) -> list[tuple[str, str]]:
   aliases: list[tuple[str, str]] = []
   alias_re = re.compile(r"^\s*(_?ct_entry_[A-Za-z0-9_]+)\s*=\s*(_?ct_entry_[A-Za-z0-9_]+)\s*$")
@@ -3108,9 +3113,7 @@ def main() -> int:
   for error in stale_waivers:
     print(error)
   missing_symbols = sorted(symbol for symbol in symbols if symbol not in functions)
-  unwaived_failures = [
-    item for item in findings if item["severity"] == "fail" and item["disposition"] != "accepted" and not item.get("waived")
-  ]
+  unwaived_failures = [item for item in findings if fails_verdict(item)]
   unwaived_warnings = [
     item
     for item in findings
