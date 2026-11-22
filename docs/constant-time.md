@@ -1470,6 +1470,7 @@ Local zig cross-builds are not renewal evidence: they differ from CI, and the lo
 | `s390x-unknown-linux-gnu` | 0 | 0 | 0 |
 | `aarch64-unknown-linux-gnu` and MUSL | 0 | 0 | 0 |
 | `x86_64-unknown-linux-gnu` | 0 | 0 | 17 |
+| `x86_64-pc-windows-msvc` | 0 | 0 | 4 |
 
 - Apple: `diffie_hellman`, `public_key`, and `encode_pss_with_mask` are inlined into their harness entries, so their
   waivers move there. The six deleted waivers covered two zeroization tails, a DIT restore, and two status mappings,
@@ -1477,6 +1478,7 @@ Local zig cross-builds are not renewal evidence: they differ from CI, and the lo
   The new waiver covers the DIT entry test of the PKCS#1 v1.5 decryption entry.
 - x86-64 Linux: the closures of 17 more primitives reach the CPUID implication filter of `detect_uncached` through
   backend dispatch. Each takes the reviewed public rationale of its 11 peers; the slice is unchanged.
+  On Windows, 4 more primitives reach the same filter, and each takes the rationale of its 24 peers.
   The CI binary names the BLAKE2 dispatch slot (`dispatch::ACTIVE`) in the `callq *disp(%rip)` comment. That name is
   the slot, not a callee, so the call graph no longer follows it.
 - POWER: each slice is unchanged. Each function differs only in four trailing alignment `nop` rows, which moved
@@ -1487,6 +1489,7 @@ All renewed conditions are public: saved DIT state, output-pointer guards, zeroi
 lengths, the PSS unused-top-bits test, the `to_pair` and `from_pair` limb bounds of the AArch64 RSA pair, and the
 PKCS#1 implicit-rejection window bound. On these lanes, the gate scanner reports no needs-fix, stale, or unclassified
 finding.
+558 waivers remain.
 
 ## Public decisions and exclusions
 
