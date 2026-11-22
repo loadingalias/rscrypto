@@ -1544,7 +1544,7 @@ and no secret-dependent addresses.
 A source-level fixed-work design is not a release claim by itself.
 The operation entry separates the portable implementation from the selected assembly for Apple
 and Linux AArch64, Linux x86-64, and Windows x86-64.
-The [September 2026 P-256 ECDH snapshot](../benchmark_results/OVERVIEW.md#p-256-ecdh-development-snapshot) keeps the historical Graviton3, Graviton4,
+The [September 2026 P-256 ECDH snapshot](https://github.com/loadingalias/rscrypto/blob/50c708b29905bb3221e7b22b9c7cce8fcc700818/benchmark_results/OVERVIEW.md#p-256-ecdh-development-snapshot) keeps the historical Graviton3, Graviton4,
 and Intel Granite Rapids results.
 Those development bundles keep binaries and raw timing samples,
 but later source changes need new evidence for the exact candidate.

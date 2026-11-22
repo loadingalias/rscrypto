@@ -35,7 +35,7 @@ or SHAKE-256. The corpus also does not provide an exhaustive cross-product of
 prehash identifiers and rejection reasons. The separate Wycheproof corpus and
 public API regressions cover malformed signatures and contexts, but do not replace
 those missing prehash-specific negative vectors. The
-[qualification summary](../../../benchmark_results/OVERVIEW.md#2026-10-16-ml-dsa-optimization-qualification)
+[qualification summary](https://github.com/loadingalias/rscrypto/blob/50c708b29905bb3221e7b22b9c7cce8fcc700818/benchmark_results/OVERVIEW.md#2026-10-16-ml-dsa-optimization-qualification)
 names the local reconciliation record with its per-case coverage map and upstream snapshots.
 
 Vector success proves the covered contracts; timing, cleanup, resource bounds,

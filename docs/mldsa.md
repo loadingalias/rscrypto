@@ -36,7 +36,7 @@ NIST calls them potential corrections, not an amended final publication.
 - The roots come from the standard's root 1753 and eight-bit index reversal.
   They are not imported from another implementation's table.
 
-The [2026-10-16 qualification summary](../benchmark_results/OVERVIEW.md#2026-10-16-ml-dsa-optimization-qualification)
+The [2026-10-16 qualification summary](https://github.com/loadingalias/rscrypto/blob/50c708b29905bb3221e7b22b9c7cce8fcc700818/benchmark_results/OVERVIEW.md#2026-10-16-ml-dsa-optimization-qualification)
 links the standards reconciliation, which maps all twelve spreadsheet rows to the selected source
 or identifies them as editorial. The local report retains fetched sources, checksums,
 regression references, ACVP coverage, and the limited formal-proof inventory.

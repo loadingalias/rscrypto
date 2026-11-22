@@ -145,7 +145,7 @@ A restored virtual-machine snapshot or another copied memory image is not detect
   P-384 ECDH fixed-base kernel on Linux and Windows x86-64. Other targets, `portable-only`, and Miri use the portable
   comb.
 
-The [P-256 ECDH development snapshot](../benchmark_results/OVERVIEW.md#p-256-ecdh-development-snapshot) records the September 2026 results for Graviton3, Graviton4,
+The [P-256 ECDH development snapshot](https://github.com/loadingalias/rscrypto/blob/50c708b29905bb3221e7b22b9c7cce8fcc700818/benchmark_results/OVERVIEW.md#p-256-ecdh-development-snapshot) records the September 2026 results for Graviton3, Graviton4,
 and Intel Granite Rapids on Linux and Windows, with their source identities.
 Its Linux timing and cleanup bundles are older than later shared-source changes.
 It does not supply Windows timing or cleanup evidence for the exact candidate.

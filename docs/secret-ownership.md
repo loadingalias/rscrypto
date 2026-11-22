@@ -501,7 +501,7 @@ outside this claim. Keyed and derive-key readers do not enter this path.
 - On macOS and Linux AArch64, the NEON signing challenge sampler builds the unpublished challenge as bytes
   `0`, `1` and `0xff` in a zeroizing owner, then widens it into the challenge polynomial.
   The byte owner clears when the sampler returns.
-- The [signing-residue qualification](../benchmark_results/OVERVIEW.md#2026-10-16-ml-dsa-optimization-qualification)
+- The [signing-residue qualification](https://github.com/loadingalias/rscrypto/blob/50c708b29905bb3221e7b22b9c7cce8fcc700818/benchmark_results/OVERVIEW.md#2026-10-16-ml-dsa-optimization-qualification)
   checks masks, NTT masks, rejected candidates, commitments and hint maps in the
   measured macOS AArch64 stack. It does not change their ownership contract or
   establish cleanup for every compiler-created copy.

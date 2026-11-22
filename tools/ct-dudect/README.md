@@ -55,7 +55,7 @@ The CSV columns are `benchname,sequence,class,runtime_ns`.
   Upstream's per-class push branched on the class right after the end timestamp.
   On Graviton5 that branch gave the classes different timings even when both ran identical work;
   label-independent recording removed the difference
-  ([2026-10-09 record](../../benchmark_results/OVERVIEW.md#2026-10-09-graviton5-dudect-class-label-artifact)).
+  ([2026-10-09 record](https://github.com/loadingalias/rscrypto/blob/50c708b29905bb3221e7b22b9c7cce8fcc700818/benchmark_results/OVERVIEW.md#2026-10-09-graviton5-dudect-class-label-artifact)).
 - The maximum t skips a cropped test whose t is not finite. A crop where each class holds one repeated
   duration has no variance, so its t is undefined. The RISC-V CI timer ticks every 333 ns, and equal tick
   counts convert to durations 1 ns apart, so such a crop gave t = -inf (CT 44476221075). The full test

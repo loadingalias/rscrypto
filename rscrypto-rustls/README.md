@@ -167,7 +167,8 @@ hash-map overhead. rustls's own verifiers with `verify::SUPPORTED_ALGORITHMS`
 retain no prepared anchors.
 
 Choose the server verifier by how many handshakes it will verify. On the Intel
-and Graviton4 bench hosts, preparing a Debian or Fedora bundle (148 and 146 roots,
+and Graviton4 bench hosts, in runs of 2026-10-22 that predate the ECDSA verification
+changes of rscrypto 0.13, preparing a Debian or Fedora bundle (148 and 146 roots,
 42 and 44 of them P-256 or P-384) costs 4.1–5.1 ms. It saves 84–90 µs per handshake
 only when the chain ends at a P-256 or P-384 root; chains that end at an RSA root
 cost the same with either verifier. The preparation pays for itself after 46–61

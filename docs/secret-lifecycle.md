@@ -66,21 +66,21 @@ outer-key, native-fallback or compiler-spill findings.
 
 The BLAKE3 SIMD128 backend clears its named vector, tail, parent, and output scratch in keyed
 and derive-key modes. Its plain tiny-input specialization adds no secret route. The
-[WASM backend record](../benchmark_results/OVERVIEW.md#2026-10-06-blake3-wasm-four-lane-backend)
+[WASM backend record](https://github.com/loadingalias/rscrypto/blob/50c708b29905bb3221e7b22b9c7cce8fcc700818/benchmark_results/OVERVIEW.md#2026-10-06-blake3-wasm-four-lane-backend)
 retains source-bound cleanup evidence and the separate pre-existing Portable state-owner gap.
 The parent caller review (`benchmark_results/blake3-wasm-parent-cost-20261006T063400Z/secret-review/key-borrow-follow-up.md`, local)
 also records existing outer by-value key copies without explicit cleanup. The parent SIMD
 borrow introduces no key-copy owner and preserves explicit clears; differing stack placement is not proof
 of identical post-return residue. These outer copies remain a separate cleanup follow-up.
-The [state-owner reduction](../benchmark_results/OVERVIEW.md#2026-10-06-blake3-wasm-state-ownership)
+The [state-owner reduction](https://github.com/loadingalias/rscrypto/blob/50c708b29905bb3221e7b22b9c7cce8fcc700818/benchmark_results/OVERVIEW.md#2026-10-06-blake3-wasm-state-ownership)
 removes the separate vector CV array while preserving full round-state, message,
 padding, and output cleanup. Its smaller guest frame does not imply smaller native
 frames or equal physical residue.
-The [padding-clear guard](../benchmark_results/OVERVIEW.md#2026-10-06-blake3-wasm-unused-padding-cleanup)
+The [padding-clear guard](https://github.com/loadingalias/rscrypto/blob/50c708b29905bb3221e7b22b9c7cce8fcc700818/benchmark_results/OVERVIEW.md#2026-10-06-blake3-wasm-unused-padding-cleanup)
 skips wiping padding that received no input bytes. A secret partial block still
 receives complete padding cleanup; all state, message, output clears and fences remain.
 That outcome left the normal generic frame and padding initialization unchanged.
-The later [root-mode specialization](../benchmark_results/OVERVIEW.md#2026-10-06-blake3-wasm-root-mode-specialization)
+The later [root-mode specialization](https://github.com/loadingalias/rscrypto/blob/50c708b29905bb3221e7b22b9c7cce8fcc700818/benchmark_results/OVERVIEW.md#2026-10-06-blake3-wasm-root-mode-specialization)
 lets full chunks omit unused padding storage and initialization while preserving
 all populated secret-owner clears and fences. Plain partial batches retain padding;
 OR-ing ROOT preserves the secret-mode bits for the generic source contract.
@@ -95,7 +95,7 @@ existing stack merge remain outside this claim.
 
 The shared BLAKE3 root-output fallback clears its decoded words and compression output
 after copying them in keyed and derive-key modes. Optimized WASM evidence and its limits are retained in
-the [WASM SIMD128 record](../benchmark_results/OVERVIEW.md#2026-10-06-blake3-wasm-simd128).
+the [WASM SIMD128 record](https://github.com/loadingalias/rscrypto/blob/50c708b29905bb3221e7b22b9c7cce8fcc700818/benchmark_results/OVERVIEW.md#2026-10-06-blake3-wasm-simd128).
 
 | Owner or operation | When cleanup happens |
 | --- | --- |
@@ -343,7 +343,7 @@ erasure of every compiler-created copy, register, or spill.
   construction. Planted/cleared controls and an isolated missing-polynomial-wipe
   mutation validate the scanner.
   This checks the measured stack snapshots, not registers, heap residue or arbitrary
-  smaller fragments. See the [qualification record](../benchmark_results/OVERVIEW.md#2026-10-16-ml-dsa-optimization-qualification).
+  smaller fragments. See the [qualification record](https://github.com/loadingalias/rscrypto/blob/50c708b29905bb3221e7b22b9c7cce8fcc700818/benchmark_results/OVERVIEW.md#2026-10-16-ml-dsa-optimization-qualification).
   A fresh 2026-11-03 run passed 192 signing calls across the same parameter,
   key-form, mode, and dispatch dimensions, with eight message indices per row.
   Its raw snapshots, controls, matched signatures, and limits are retained in the
@@ -439,7 +439,7 @@ memory-helper calls while H and the accumulator are live. The retained Apple pro
 closes the demonstrated bulk saved-slot and short-eight-block accumulator copies, with success
 and bad-tag exits traced. The final executable, LLVM IR and assembly match the reviewed artifact
 byte for byte. This scoped result does not establish all-target or whole-provider cleanup;
-[provider qualification](../benchmark_results/OVERVIEW.md#2026-10-27-provider-residue-review-checkpoint)
+[provider qualification](https://github.com/loadingalias/rscrypto/blob/50c708b29905bb3221e7b22b9c7cce8fcc700818/benchmark_results/OVERVIEW.md#2026-10-27-provider-residue-review-checkpoint)
 records the evidence and remaining gates.
 
 `rscrypto-rustls` holds HMAC keys, HKDF state, and AEAD/header-protection contexts
