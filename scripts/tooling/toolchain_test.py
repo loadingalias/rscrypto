@@ -42,7 +42,7 @@ else:
   if name == 'cargo' and sys.argv[1] == 'metadata':
     print(json.dumps({'packages': [{'name': 'rscrypto', 'targets': [
       {'name': 'aead_seal_open', 'kind': ['example'], 'crate_types': ['bin'],
-       'required-features': ['alloc', 'chacha20poly1305', 'getrandom']}]}]}))
+       'required-features': ['alloc', 'xchacha20poly1305', 'getrandom']}]}]}))
 ''')
     stub.chmod(0o755)
     for name in ('rustc', 'cargo', 'cargo-nextest', 'rustup'):
@@ -81,7 +81,7 @@ else:
       commands = run(['bash', 'scripts/test/test-examples.sh'], host)
       assert len(commands) == 2 and all(row['channel'] == channel for row in commands), (host, commands)
       assert commands[-1]['command'] == ['cargo', 'run', '--locked', '--quiet', '--no-default-features',
-                                        '--example', 'aead_seal_open', '--features', 'alloc,chacha20poly1305,getrandom']
+                                        '--example', 'aead_seal_open', '--features', 'alloc,xchacha20poly1305,getrandom']
     # There is no per-target selector: the canonical channel is the only answer.
     result = subprocess.check_output([sys.executable, str(ROOT / 'scripts/lib/toolchain.py')], text=True).strip()
     assert result == channel, result

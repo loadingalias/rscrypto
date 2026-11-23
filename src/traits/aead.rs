@@ -26,6 +26,16 @@ impl SealToken {
   }
 }
 
+/// An AEAD whose nonce policy permits independent, uniformly random nonces.
+///
+/// Implement this trait only if the algorithm permits random nonces within its documented per-key limits.
+/// The `getrandom` feature enables the random sealing methods.
+#[diagnostic::on_unimplemented(
+  message = "`{Self}` does not support random-nonce sealing",
+  note = "Use `ChaCha20Poly1305SealingKey` for ChaCha20-Poly1305 or `XChaCha20Poly1305` for random nonces."
+)]
+pub trait RandomNonceAead: Aead {}
+
 /// Authenticated encryption with associated data.
 ///
 /// The in-place methods mutate the payload buffer and return or consume the tag
@@ -36,12 +46,12 @@ impl SealToken {
 /// # Examples
 ///
 /// ```
-/// # #[cfg(feature = "getrandom")]
+/// # #[cfg(all(feature = "xchacha20poly1305", feature = "getrandom"))]
 /// # {
-/// use rscrypto::{Aead, ChaCha20Poly1305, ChaCha20Poly1305Key};
+/// use rscrypto::{Aead, XChaCha20Poly1305, XChaCha20Poly1305Key};
 ///
-/// let key = ChaCha20Poly1305Key::from_bytes([0x42; 32]);
-/// let cipher = ChaCha20Poly1305::new(&key);
+/// let key = XChaCha20Poly1305Key::try_random()?;
+/// let cipher = XChaCha20Poly1305::new(&key);
 ///
 /// // In-place encrypt with a fresh nonce and detached tag.
 /// let mut buf = *b"hello";
@@ -94,9 +104,8 @@ pub trait Aead {
 
   /// Encrypt `plaintext` into `out` as `ciphertext || tag` with a fresh random nonce.
   ///
-  /// This is the default one-shot sealing API when the `getrandom` feature is
-  /// available. The returned nonce must be stored or transmitted alongside the
-  /// ciphertext and must be supplied to [`decrypt`](Self::decrypt).
+  /// Observe the algorithm's per-key limit for random nonces.
+  /// Store or transmit the returned nonce with the ciphertext for [`decrypt`](Self::decrypt).
   ///
   /// # Errors
   ///
@@ -106,7 +115,10 @@ pub trait Aead {
   #[cfg(feature = "getrandom")]
   #[cfg_attr(docsrs, doc(cfg(feature = "getrandom")))]
   #[inline]
-  fn seal_random(&self, aad: &[u8], plaintext: &[u8], out: &mut [u8]) -> Result<Self::Nonce, RandomSealError> {
+  fn seal_random(&self, aad: &[u8], plaintext: &[u8], out: &mut [u8]) -> Result<Self::Nonce, RandomSealError>
+  where
+    Self: RandomNonceAead,
+  {
     let nonce = Self::Nonce::try_random()?;
     AeadWithNonce::encrypt(self, &nonce, aad, plaintext, out)?;
     Ok(nonce)
@@ -126,7 +138,10 @@ pub trait Aead {
   #[cfg(all(feature = "alloc", feature = "getrandom"))]
   #[cfg_attr(docsrs, doc(cfg(all(feature = "alloc", feature = "getrandom"))))]
   #[inline]
-  fn seal_random_to_vec(&self, aad: &[u8], plaintext: &[u8]) -> Result<(Self::Nonce, Vec<u8>), RandomSealError> {
+  fn seal_random_to_vec(&self, aad: &[u8], plaintext: &[u8]) -> Result<(Self::Nonce, Vec<u8>), RandomSealError>
+  where
+    Self: RandomNonceAead,
+  {
     let len = Self::ciphertext_len(plaintext.len()).map_err(SealError::from)?;
     let mut out = DropGuard::new(vec![0u8; len], |mut out| super::ct::zeroize(&mut out));
     let nonce = self.seal_random(aad, plaintext, &mut out)?;
@@ -145,7 +160,10 @@ pub trait Aead {
   #[cfg(feature = "getrandom")]
   #[cfg_attr(docsrs, doc(cfg(feature = "getrandom")))]
   #[inline]
-  fn seal_random_in_place(&self, aad: &[u8], buffer: &mut [u8]) -> Result<(Self::Nonce, Self::Tag), RandomSealError> {
+  fn seal_random_in_place(&self, aad: &[u8], buffer: &mut [u8]) -> Result<(Self::Nonce, Self::Tag), RandomSealError>
+  where
+    Self: RandomNonceAead,
+  {
     let nonce = Self::Nonce::try_random()?;
     let tag = self.__encrypt_in_place_with_nonce(&nonce, aad, buffer, SealToken::new())?;
     Ok((nonce, tag))
@@ -346,7 +364,10 @@ pub trait AeadGather: Aead {
     aad: &[u8],
     plaintext: impl IntoIterator<Item = &'input [u8]>,
     out: &mut [u8],
-  ) -> Result<(Self::Nonce, Self::Tag), RandomSealError> {
+  ) -> Result<(Self::Nonce, Self::Tag), RandomSealError>
+  where
+    Self: RandomNonceAead,
+  {
     let nonce = Self::Nonce::try_random()?;
     let tag = AeadWithNonce::encrypt_gather(self, &nonce, aad, plaintext, out)?;
     Ok((nonce, tag))

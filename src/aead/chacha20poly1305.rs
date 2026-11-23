@@ -6,6 +6,9 @@ use super::{AeadBufferError, Nonce96, OpenError, SealError, poly1305, targets::A
 use crate::backend::chacha20;
 use crate::traits::{Aead, AeadGather, ct};
 
+mod sealing_key;
+pub use sealing_key::ChaCha20Poly1305SealingKey;
+
 const KEY_SIZE: usize = chacha20::KEY_SIZE;
 const TAG_SIZE: usize = 16;
 const NONCE_SIZE: usize = Nonce96::LENGTH;
@@ -89,48 +92,12 @@ define_aead_tag_type!(
   "ChaCha20-Poly1305 authentication tag bytes."
 );
 
-/// Portable ChaCha20-Poly1305 AEAD.
+/// ChaCha20-Poly1305 with 96-bit nonces.
 ///
-/// # Examples
-///
-/// ```
-/// # #[cfg(feature = "getrandom")]
-/// # {
-/// use rscrypto::{Aead, ChaCha20Poly1305, ChaCha20Poly1305Key};
-///
-/// let key = ChaCha20Poly1305Key::from_bytes([0x42; 32]);
-/// let cipher = ChaCha20Poly1305::new(&key);
-///
-/// let mut buf = *b"hello";
-/// let (nonce, tag) = cipher.seal_random_in_place(b"", &mut buf)?;
-/// cipher.decrypt_in_place(&nonce, b"", &mut buf, &tag)?;
-/// assert_eq!(&buf, b"hello");
-/// # }
-/// # Ok::<(), Box<dyn std::error::Error>>(())
-/// ```
-///
-/// Tampering is reported as an opaque verification failure.
-///
-/// ```
-/// # #[cfg(feature = "getrandom")]
-/// # {
-/// use rscrypto::{Aead, ChaCha20Poly1305, ChaCha20Poly1305Key, aead::OpenError};
-///
-/// let key = ChaCha20Poly1305Key::from_bytes([0x42; 32]);
-/// let cipher = ChaCha20Poly1305::new(&key);
-///
-/// let mut sealed = [0u8; 5 + ChaCha20Poly1305::TAG_SIZE];
-/// let nonce = cipher.seal_random(b"", b"hello", &mut sealed)?;
-/// sealed[0] ^= 1;
-///
-/// let mut opened = [0u8; 5];
-/// assert_eq!(
-///   cipher.decrypt(&nonce, b"", &sealed, &mut opened),
-///   Err(OpenError::verification())
-/// );
-/// # }
-/// # Ok::<(), Box<dyn std::error::Error>>(())
-/// ```
+/// Use [`ChaCha20Poly1305SealingKey`] to seal messages and this type to open them.
+/// Each nonce must be unique under its key. RFC 8439 rules out random generation.
+/// Protocols that derive unique nonces can use [`AeadWithNonce`](super::expert::AeadWithNonce).
+/// See [RFC 8439, section 2.6](https://www.rfc-editor.org/rfc/rfc8439.html#section-2.6).
 pub struct ChaCha20Poly1305 {
   key: ChaCha20Poly1305Key,
 }

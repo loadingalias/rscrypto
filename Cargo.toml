@@ -400,7 +400,7 @@ required-features = ["argon2", "phc-strings", "getrandom"]
 
 [[example]]
 name = "aead_seal_open"
-required-features = ["alloc", "chacha20poly1305", "getrandom"]
+required-features = ["alloc", "xchacha20poly1305", "getrandom"]
 
 [[example]]
 name = "ed25519_sign_verify"

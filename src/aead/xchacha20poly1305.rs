@@ -21,6 +21,11 @@ define_aead_tag_type!(
 
 /// Portable XChaCha20-Poly1305 AEAD.
 ///
+/// With independent, uniformly random 192-bit nonces, the collision probability
+/// after 2^64 messages under one key is less than 2^-65.
+/// At 2^96 messages it is about 39%.
+/// See the [XChaCha draft, section 2.1](https://datatracker.ietf.org/doc/html/draft-irtf-cfrg-xchacha-03#section-2.1).
+///
 /// # Examples
 ///
 /// ```
@@ -128,6 +133,8 @@ impl XChaCha20Poly1305 {
     (subkey, ietf_nonce)
   }
 }
+
+impl crate::traits::RandomNonceAead for XChaCha20Poly1305 {}
 
 impl Aead for XChaCha20Poly1305 {
   const KEY_SIZE: usize = KEY_SIZE;

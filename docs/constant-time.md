@@ -1703,9 +1703,8 @@ Native DudeCT in the Constant-Time campaign gives the timing evidence for those 
 
 ### Process origin
 
-`platform::ProcessOrigin` adds public control flow to three claimed paths: `ChaCha20Rng` seeding,
-`NonceCounter` nonce issue, and HPKE sender seals. The check reads a generation word or the process ID,
-and neither depends on a secret. In a fork child, the owner refuses before any secret work.
+`ChaCha20Rng` seeding, `NonceCounter`, `ChaCha20Poly1305SealingKey`, and HPKE sender seals use `platform::ProcessOrigin`.
+The check reads a public generation word or process ID. The owner rejects a detected fork before it uses a secret.
 The BINSEC generator leaf runs the Linux page-mode setup through the harness's `mmap` and `madvise` shims,
 because BINSEC loads its initial memory from the file.
 

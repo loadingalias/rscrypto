@@ -11,6 +11,7 @@ It does not prove that the compiler erases every copy it makes.
 | --- | --- | --- |
 | `SecretBytes<N>`, `SecretVec`, `SecretString` | Not `Clone` or `Copy`. | A consuming export moves the bytes or UTF-8 text to the caller, and the caller becomes responsible for cleanup. |
 | AEAD keys and contexts | Keys copy only through explicit `duplicate_secret`. Contexts do not copy. | Key export is explicit. `Debug` is redacted. |
+| `ChaCha20Poly1305SealingKey` | Construction consumes the key. Each instance owns one nonce sequence. | No key export or serialization. `Debug` hides the key. |
 | Header-protection keys and contexts | No generic copy. | No public export. `Debug` is redacted. |
 | `QuicLbKey`, `QuicLbCipher` (`aead::expert::quic_lb`) | Not `Clone` or `Copy`. | No export of the key or the schedules. The caller owns the buffer that holds the plaintext. Key `Debug` is redacted. Cipher `Debug` shows only the public lengths. |
 | `ChaCha20Rng` | Not `Clone` or `Copy`; a clone would repeat the stream. | The key, the branch key, and unread output have no export; returned output and child generators belong to the caller. `Debug` is redacted. See [ChaCha20 generator](#chacha20-generator). |

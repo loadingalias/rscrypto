@@ -1163,19 +1163,17 @@ macro_rules! define_aes_gcm {
     /// forgery of future messages. There is no recovery — the key must be
     /// discarded.
     ///
-    /// SP 800-38D §8.3 places limits on IV usage under one key:
-    /// - random nonces: at most 2^32 encryptions per key (for collision-limiting risk),
-    /// - deterministic nonces/counter mode: at most 2^48 messages per key.
+    /// Choose one nonce construction per key. For random nonces, limit all senders together to 2^32 encryptions per key.
+    /// See [NIST SP 800-38D, sections 8.2 and 8.3](https://nvlpubs.nist.gov/nistpubs/legacy/sp/nistspecialpublication800-38d.pdf#page=27).
     ///
-    /// For high-volume use, prefer a deterministic construction with explicit
-    /// key rotation near 2^48 calls, or one of:
-    ///
-    /// - [`crate::aead::NonceCounter`] — 32-bit fixed prefix + monotonic counter for deterministic
-    ///   nonce issuance without allocations.
+    /// - [`crate::aead::NonceCounter`] issues deterministic nonces with a 32-bit prefix.
+    ///   This crate's deterministic profile limits each key to 2^48 invocations.
+    ///   Each counter enforces the limit for one stream.
     /// - [`Aes256GcmSiv`](crate::Aes256GcmSiv) — nonce-misuse resistant (degrades to deterministic
     ///   encryption on reuse, but never leaks the auth key).
-    /// - [`XChaCha20Poly1305`](crate::XChaCha20Poly1305) — 192-bit nonce makes random generation safe
-    ///   for ~2^96 messages per key.
+    /// - `XChaCha20Poly1305` supports independent, uniformly random 192-bit nonces.
+    ///   At 2^64 messages per key, the nonce collision probability is below 2^-65.
+    ///   At 2^96 messages, it is about 39%.
     ///
     /// # Examples
     ///
@@ -1276,6 +1274,8 @@ macro_rules! define_aes_gcm {
         <Self as Aead>::decrypt(self, nonce, aad, ciphertext_and_tag, out)
       }
     }
+
+    impl crate::traits::RandomNonceAead for $name {}
 
     impl Aead for $name {
       const KEY_SIZE: usize = $key_len;

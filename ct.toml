@@ -4219,10 +4219,12 @@ limitation = "display_secret, expose_secret, AsRef/as_bytes, and serde-secrets a
 [[operation]]
 id = "aead.construct_and_seal"
 api = [
-  "rscrypto::Aead::{new,encrypt_in_place,encrypt,seal,seal_with_random_nonce}",
+  "rscrypto::Aead::{new,seal_random,seal_random_in_place,seal_random_to_vec}",
+  "rscrypto::aead::expert::AeadWithNonce::{encrypt,encrypt_in_place,encrypt_in_place_detached,encrypt_to_vec}",
+  "rscrypto::ChaCha20Poly1305SealingKey::{new,seal,seal_in_place,seal_to_vec}",
   "rscrypto::{Aes128Gcm,Aes256Gcm,Aes128GcmSiv,Aes256GcmSiv,ChaCha20Poly1305,XChaCha20Poly1305,Aegis256,AsconAead128}::{new,encrypt_in_place,encrypt}",
   "rscrypto::AesSivCmac256::{new,seal_in_place,seal}",
-  "rscrypto::NonceCounter::*::encrypt*",
+  "rscrypto::aead::NonceCounter::*::encrypt*",
 ]
 features = [
   "aead algorithm feature",
@@ -4237,7 +4239,7 @@ variable_time_components = [
   "public buffer errors",
   "public backend dispatch",
   "entropy-source latency for random nonces",
-  "NonceCounter's public process-origin check, which refuses in a fork child",
+  "public nonce counter limit and process-origin check",
 ]
 permitted_leakage = ["algorithm", "lengths", "nonce", "AAD", "backend", "opaque success/failure"]
 claim = "ct-intended"
@@ -4255,12 +4257,13 @@ api = [
   "rscrypto::AeadGather::{seal_random_gather,__validate_gather_lengths,__encrypt_gather_with_nonce}",
   "rscrypto::aead::expert::AeadWithNonce::{encrypt_gather,encrypt_gather_uninit,encrypt_gather_append}",
   "rscrypto::aead::NonceCounter::{encrypt_gather}",
+  "rscrypto::ChaCha20Poly1305SealingKey::seal_gather",
 ]
-features = ["aes-gcm or chacha20poly1305", "alloc for vector append", "getrandom for random nonces"]
+features = ["aes-gcm or chacha20poly1305", "alloc for vector append", "aes-gcm and getrandom for random gather nonces"]
 targets = ["all-supported", "backend selected by public target capabilities"]
 secret_inputs = ["key", "plaintext", "keystream", "authentication subkeys and state"]
 public_inputs = ["nonce", "AAD", "slice boundaries and lengths", "declared plaintext length", "output capacity", "backend capabilities"]
-variable_time_components = ["public-length loops", "public buffer and length errors", "public backend dispatch", "entropy-source latency"]
+variable_time_components = ["public-length loops", "public buffer and length errors", "public backend dispatch", "entropy-source latency", "public nonce counter limit and process-origin check"]
 permitted_leakage = ["algorithm", "lengths and slice boundaries", "nonce", "AAD", "backend", "opaque success/failure"]
 claim = "ct-intended"
 evidence = [

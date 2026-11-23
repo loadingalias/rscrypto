@@ -1,8 +1,8 @@
-use rscrypto::{Aead, ChaCha20Poly1305, ChaCha20Poly1305Key};
+use rscrypto::{Aead, XChaCha20Poly1305, XChaCha20Poly1305Key};
 
 fn main() -> Result<(), Box<dyn core::error::Error>> {
-  let key = ChaCha20Poly1305Key::try_random()?;
-  let cipher = ChaCha20Poly1305::new(&key);
+  let key = XChaCha20Poly1305Key::try_random()?;
+  let cipher = XChaCha20Poly1305::new(&key);
 
   let aad = b"tenant=alpha;record=42";
   let plaintext = b"confidential payload";
@@ -12,6 +12,6 @@ fn main() -> Result<(), Box<dyn core::error::Error>> {
   if opened != plaintext {
     return Err(std::io::Error::other("AEAD round-trip changed the plaintext").into());
   }
-  println!("ChaCha20-Poly1305 sealed {} bytes", plaintext.len());
+  println!("XChaCha20-Poly1305 sealed {} bytes", plaintext.len());
   Ok(())
 }

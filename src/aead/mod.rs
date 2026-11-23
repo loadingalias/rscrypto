@@ -43,7 +43,8 @@
 //! # API Conventions
 //!
 //! - Every cipher uses a typed `*Key`, typed nonce wrapper, and typed `*Tag`.
-//! - Normal sealing uses fresh random nonces or [`NonceCounter`] where available.
+//! - `ChaCha20Poly1305SealingKey` owns a nonce sequence. `XChaCha20Poly1305` supports random nonces.
+//! - `NonceCounter` issues deterministic AES-GCM nonces.
 //! - Decryption accepts the nonce transported with the ciphertext.
 //! - Protocol-defined caller-nonce sealing requires an explicit [`expert::AeadWithNonce`] import.
 //! - All AEADs implement the shared [`Aead`] trait with the same constructor and operation names.
@@ -59,7 +60,7 @@ use core::fmt;
 use crate::traits::VerificationError;
 #[doc(hidden)]
 pub use crate::traits::aead::SealToken as __SealToken;
-pub use crate::traits::{Aead, AeadGather};
+pub use crate::traits::{Aead, AeadGather, RandomNonceAead};
 
 /// Expert cryptographic capabilities with protocol-enforced preconditions.
 pub mod expert {
@@ -189,6 +190,8 @@ mod header_protection;
 pub mod introspect;
 #[cfg(feature = "aes-gcm")]
 mod nonce_counter;
+#[cfg(any(feature = "aes-gcm", feature = "chacha20poly1305"))]
+mod nonce_sequence;
 #[cfg(any(feature = "chacha20poly1305", feature = "xchacha20poly1305"))]
 mod poly1305;
 #[cfg(any(feature = "aes-gcm", feature = "aes-gcm-siv"))]
@@ -311,7 +314,7 @@ pub use crate::backend::chacha20::diag_chacha20_xor_keystream_wasm_simd128;
 ))]
 pub use crate::backend::chacha20::{diag_chacha20_xor_keystream_x86_avx2, diag_chacha20_xor_keystream_x86_avx512};
 #[cfg(feature = "chacha20poly1305")]
-pub use chacha20poly1305::{ChaCha20Poly1305, ChaCha20Poly1305Key, ChaCha20Poly1305Tag};
+pub use chacha20poly1305::{ChaCha20Poly1305, ChaCha20Poly1305Key, ChaCha20Poly1305SealingKey, ChaCha20Poly1305Tag};
 #[cfg(all(rscrypto_internal, feature = "diag", feature = "chacha20poly1305"))]
 pub use chacha20poly1305::{
   diag_chacha20poly1305_decrypt_in_place_owned, diag_chacha20poly1305_encrypt_in_place_owned,
@@ -330,7 +333,9 @@ pub use chacha20poly1305::{
 #[cfg(all(rscrypto_internal, feature = "diag", feature = "aes-gcm"))]
 pub use ghash::diag_ghash_block_portable;
 #[cfg(feature = "aes-gcm")]
-pub use nonce_counter::{NonceCounter, NonceCounterExhausted, NonceCounterSealError};
+pub use nonce_counter::NonceCounter;
+#[cfg(any(feature = "aes-gcm", feature = "chacha20poly1305"))]
+pub use nonce_sequence::{NonceCounterExhausted, NonceCounterSealError};
 #[cfg(all(
   rscrypto_internal,
   feature = "diag",
@@ -354,11 +359,9 @@ pub use xchacha20poly1305::{XChaCha20Poly1305, XChaCha20Poly1305Key, XChaCha20Po
 
 /// AEAD nonce wrapper behavior shared by the typed nonce sizes.
 ///
-/// Production encryption should issue a fresh nonce per message. Use
-/// `Aead::seal_random` when the `getrandom` feature is available, or
-/// `NonceCounter` for deterministic AES-GCM streams. Constructing nonces
-/// from fixed bytes is for protocols that already define nonce derivation and
-/// for test vectors.
+/// Use `ChaCha20Poly1305SealingKey` for ChaCha20-Poly1305 and `NonceCounter` for deterministic AES-GCM streams.
+/// Algorithms that implement [`RandomNonceAead`] also support random sealing with the `getrandom` feature.
+/// Protocols that derive unique nonces can seal through [`expert::AeadWithNonce`].
 pub trait AeadNonce: Copy + Eq + fmt::Debug + AsRef<[u8]> {
   /// Nonce length in bytes.
   const LENGTH: usize;
@@ -486,7 +489,8 @@ define_nonce_type!(
   12,
   "Explicit 96-bit nonce wrapper.
 
-Pairs with `Aes256Gcm`, `Aes256GcmSiv`, and `ChaCha20Poly1305`."
+Use a unique counter or protocol-derived nonce for ChaCha20-Poly1305.
+AES-GCM and AES-GCM-SIV also accept this nonce size."
 );
 define_nonce_type!(
   Nonce128,

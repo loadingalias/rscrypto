@@ -329,6 +329,26 @@ fn a_forked_nonce_counter_issues_no_nonce() {
   );
 }
 
+#[cfg(all(feature = "std", feature = "chacha20poly1305"))]
+#[test]
+fn a_forked_chacha_sealing_key_refuses_before_writing() {
+  use rscrypto::{ChaCha20Poly1305Key, ChaCha20Poly1305SealingKey, aead::NonceCounterSealError};
+
+  let mut sealer = ChaCha20Poly1305SealingKey::new(ChaCha20Poly1305Key::from_bytes([0x42; 32]));
+  let mut out = [0xa5; 16];
+  let code = fork_child(|| {
+    if sealer.seal(b"", b"", &mut out) != Err(NonceCounterSealError::exhausted()) {
+      return 1;
+    }
+    u8::from(out != [0xa5; 16])
+  });
+  assert_eq!(code, 0, "the child must reject the seal before writing or allocating");
+  assert_eq!(
+    sealer.seal(b"", b"", &mut out).expect("parent seals").to_bytes(),
+    [0; 12]
+  );
+}
+
 #[cfg(all(feature = "hpke", feature = "x25519", feature = "aes-gcm"))]
 #[test]
 fn a_forked_hpke_sender_seals_nothing() {

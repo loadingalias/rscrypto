@@ -49,8 +49,8 @@ Runtime behavior needs execution on the target.
 ### Process forks
 
 `platform::ProcessOrigin` records the process that created a value, so that an owner of unique state can
-refuse a copy that a fork made. `NonceCounter`, the HPKE sender, and `RsaSigningWorkspace` use it, and
-`ChaCha20Rng::origin` reports it.
+refuse a copy that a fork made. `ChaCha20Poly1305SealingKey`, `NonceCounter`, the HPKE sender,
+and `RsaSigningWorkspace` use it. `ChaCha20Rng::origin` reports it.
 
 - With `std` on 64-bit Linux and Android (x86-64, AArch64, POWER, RISC-V, and IBM Z), detection uses one
   page that the kernel gives as zeros to a fork child (`MADV_WIPEONFORK`, Linux 4.14).

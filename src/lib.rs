@@ -52,25 +52,22 @@ assert_eq!(h.finalize(), digest);
 "#
 )]
 #![cfg_attr(
-  feature = "chacha20poly1305",
+  all(feature = "xchacha20poly1305", feature = "getrandom"),
   doc = r#"
 # AEAD
 
 ```rust
-# #[cfg(feature = "getrandom")]
-# {
-use rscrypto::{Aead, ChaCha20Poly1305, ChaCha20Poly1305Key};
+use rscrypto::{Aead, XChaCha20Poly1305, XChaCha20Poly1305Key};
 
-let key = ChaCha20Poly1305Key::from_bytes([0x11; 32]);
-let cipher = ChaCha20Poly1305::new(&key);
+let key = XChaCha20Poly1305Key::try_random()?;
+let cipher = XChaCha20Poly1305::new(&key);
 
-let mut sealed = [0u8; 4 + ChaCha20Poly1305::TAG_SIZE];
+let mut sealed = [0u8; 4 + XChaCha20Poly1305::TAG_SIZE];
 let nonce = cipher.seal_random(b"aad", b"data", &mut sealed)?;
 
 let mut opened = [0u8; 4];
 cipher.decrypt(&nonce, b"aad", &sealed, &mut opened)?;
 assert_eq!(&opened, b"data");
-# }
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 "#
@@ -378,7 +375,7 @@ pub use aead::{AesSivCmac256, AesSivCmac256Key, AesSivCmac256Nonce, AesSivCmac25
 #[cfg(feature = "ascon-aead")]
 pub use aead::{AsconAead128, AsconAead128Key, AsconAead128Tag};
 #[cfg(feature = "chacha20poly1305")]
-pub use aead::{ChaCha20Poly1305, ChaCha20Poly1305Key, ChaCha20Poly1305Tag};
+pub use aead::{ChaCha20Poly1305, ChaCha20Poly1305Key, ChaCha20Poly1305SealingKey, ChaCha20Poly1305Tag};
 #[cfg(feature = "xchacha20poly1305")]
 pub use aead::{XChaCha20Poly1305, XChaCha20Poly1305Key, XChaCha20Poly1305Tag};
 #[cfg(feature = "hkdf")]
@@ -576,7 +573,7 @@ pub use secret::{SecretString, SecretVec, SecretVecConstructionError};
   feature = "aegis256",
   feature = "ascon-aead"
 ))]
-pub use traits::{Aead, AeadGather};
+pub use traits::{Aead, AeadGather, RandomNonceAead};
 pub use traits::{Checksum, ChecksumCombine, Kem, Mac, TrySigner, TrySignerInto, VerificationError, Verifier, ct};
 #[cfg(any(
   feature = "sha2",
@@ -637,7 +634,7 @@ pub mod prelude {
     feature = "aegis256",
     feature = "ascon-aead"
   ))]
-  pub use crate::traits::{Aead, AeadGather};
+  pub use crate::traits::{Aead, AeadGather, RandomNonceAead};
   pub use crate::traits::{
     Checksum, ChecksumCombine, Digest, FastHash, Kem, Mac, TrySigner, TrySignerInto, VerificationError, Verifier, Xof,
   };
@@ -777,6 +774,25 @@ use rscrypto::aead::{ChaCha20Poly1305Key, Nonce96};
 
 let _ = ChaCha20Poly1305Key::random();
 let _ = Nonce96::random();
+```
+
+```compile_fail,E0277
+let _ = <rscrypto::ChaCha20Poly1305 as rscrypto::Aead>::seal_random;
+```
+
+```compile_fail,E0277
+let _ = <rscrypto::ChaCha20Poly1305 as rscrypto::Aead>::seal_random_in_place;
+```
+
+```compile_fail,E0277
+let _ = <rscrypto::ChaCha20Poly1305 as rscrypto::Aead>::seal_random_to_vec;
+```
+
+```compile_fail,E0277
+use rscrypto::{AeadGather, ChaCha20Poly1305};
+fn send(cipher: &ChaCha20Poly1305, out: &mut [u8]) {
+    let _ = cipher.seal_random_gather(b"", [b"data".as_slice()], out);
+}
 ```
 
 ```compile_fail

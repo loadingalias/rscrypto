@@ -15,7 +15,7 @@ just test-examples
 
 | Example | Purpose | Features |
 | --- | --- | --- |
-| `aead_seal_open` | Generate a ChaCha20-Poly1305 key, seal with associated data, and open the ciphertext. | `alloc,chacha20poly1305,getrandom` |
+| `aead_seal_open` | Seal and open a message with XChaCha20-Poly1305, associated data, and a random 192-bit nonce. | `alloc,xchacha20poly1305,getrandom` |
 | `argon2id_password_hashing` | Create a bounded Argon2id PHC record, then verify it in a reusable workspace from a caller-selected allocator. | `argon2,phc-strings,getrandom` |
 | `ed25519_sign_verify` | Generate an Ed25519 keypair, sign a message, and verify the signature. | `ed25519,getrandom` |
 | `rsa_pss_verify` | Verify a packaged RSA-PSS/SHA-256 fixture. | `rsa` |
@@ -30,7 +30,7 @@ just test-examples
 Run one example:
 
 ```bash
-cargo run --example aead_seal_open --features alloc,chacha20poly1305,getrandom
+cargo run --example aead_seal_open --features alloc,xchacha20poly1305,getrandom
 ```
 
 Replace the example name and the feature list with the values from its row.

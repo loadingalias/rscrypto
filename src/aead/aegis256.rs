@@ -449,6 +449,8 @@ fn decrypt_portable(key: &[u8; KEY_SIZE], nonce: &[u8; NONCE_SIZE], aad: &[u8], 
   tag
 }
 
+impl crate::traits::RandomNonceAead for Aegis256 {}
+
 impl Aead for Aegis256 {
   const KEY_SIZE: usize = KEY_SIZE;
   const NONCE_SIZE: usize = NONCE_SIZE;

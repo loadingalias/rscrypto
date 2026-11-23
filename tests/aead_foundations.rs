@@ -16,6 +16,11 @@ fn fixture_cipher() -> ChaCha20Poly1305 {
   ChaCha20Poly1305::new(&ChaCha20Poly1305Key::from_bytes([0x11; ChaCha20Poly1305::KEY_SIZE]))
 }
 
+#[cfg(all(feature = "aead", feature = "getrandom"))]
+fn random_nonce_cipher() -> XChaCha20Poly1305 {
+  XChaCha20Poly1305::new(&XChaCha20Poly1305Key::from_bytes([0x11; XChaCha20Poly1305::KEY_SIZE]))
+}
+
 #[cfg(feature = "aead")]
 struct DirtyRejectingAead;
 
@@ -202,14 +207,14 @@ fn gather_append_rejects_an_external_implementation_that_does_not_initialize_its
 #[cfg(all(feature = "aead", feature = "getrandom"))]
 fn aead_seal_random_issues_fresh_nonces_and_round_trips() {
   let aad = b"header";
-  let aead = fixture_cipher();
+  let aead = random_nonce_cipher();
 
-  let mut sealed_a = [0u8; 12 + ChaCha20Poly1305::TAG_SIZE];
+  let mut sealed_a = [0u8; 12 + XChaCha20Poly1305::TAG_SIZE];
   let nonce_a = aead
     .seal_random(aad, b"hello world!", &mut sealed_a)
     .expect("first random-nonce AEAD seal must succeed");
 
-  let mut sealed_b = [0u8; 12 + ChaCha20Poly1305::TAG_SIZE];
+  let mut sealed_b = [0u8; 12 + XChaCha20Poly1305::TAG_SIZE];
   let nonce_b = aead
     .seal_random(aad, b"hello world!", &mut sealed_b)
     .expect("second random-nonce AEAD seal must succeed");
@@ -227,7 +232,7 @@ fn aead_seal_random_issues_fresh_nonces_and_round_trips() {
 #[cfg(all(feature = "aead", feature = "getrandom"))]
 fn aead_seal_random_in_place_returns_nonce_and_tag_for_open() {
   let aad = b"header";
-  let aead = fixture_cipher();
+  let aead = random_nonce_cipher();
   let mut buffer = *b"detached";
 
   let (nonce, tag) = aead
@@ -244,7 +249,7 @@ fn aead_seal_random_in_place_returns_nonce_and_tag_for_open() {
 #[test]
 #[cfg(all(feature = "aead", feature = "getrandom"))]
 fn aead_seal_random_maps_buffer_errors_without_mutating_output() {
-  let aead = fixture_cipher();
+  let aead = random_nonce_cipher();
   let mut out = [0xA5; 3];
 
   let err = aead

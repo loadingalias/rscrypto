@@ -684,7 +684,7 @@ fn all_aeads_follow_new_encrypt_decrypt_and_detached_aliases() {
 #[test]
 #[cfg(all(feature = "aead", feature = "getrandom", feature = "alloc"))]
 fn aead_random_to_vec_seals_and_opens() {
-  let cipher = ChaCha20Poly1305::new(&ChaCha20Poly1305Key::from_bytes([0x33; ChaCha20Poly1305::KEY_SIZE]));
+  let cipher = XChaCha20Poly1305::new(&XChaCha20Poly1305Key::from_bytes([0x33; XChaCha20Poly1305::KEY_SIZE]));
   let (nonce, sealed) = cipher
     .seal_random_to_vec(b"aad", b"plaintext")
     .expect("random-nonce AEAD sealing must succeed");

@@ -960,6 +960,8 @@ macro_rules! define_aes_gcm_siv {
       }
     }
 
+    impl crate::traits::RandomNonceAead for $name {}
+
     impl Aead for $name {
       const KEY_SIZE: usize = $key_len;
       const NONCE_SIZE: usize = NONCE_SIZE;

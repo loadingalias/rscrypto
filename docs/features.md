@@ -99,9 +99,17 @@ No Cargo feature combination exposes them, including `--all-features`.
 Applications must not use either cfg.
 It has no compatibility guarantee.
 
+With `chacha20poly1305`, move a fresh key into `ChaCha20Poly1305SealingKey::new(key)`.
+Keep one sealing key per sender. Its `seal` methods return a unique 12-byte nonce with each ciphertext.
+They work without `getrandom`. Use a fresh key when migrating from random nonces or restarting a sender.
+Receivers open messages with `ChaCha20Poly1305`.
+
+For random nonces, use `xchacha20poly1305` with `getrandom`. Both peers must support its 24-byte nonce.
+Generic code that calls `seal_random*` needs the `RandomNonceAead` bound.
+
 The `aes-gcm` and `chacha20poly1305` leaves implement `AeadGather`. It encrypts ordered plaintext
-slices into one ciphertext without staging plaintext or allocating. Fresh-random-nonce sealing
-requires `getrandom`; caller-supplied nonces use `aead::expert::AeadWithNonce`. The append helper
+slices into one ciphertext without staging plaintext or allocating.
+Protocols that derive unique nonces use `aead::expert::AeadWithNonce`. Its append helper
 requires `alloc` and writes ciphertext directly into a vector's spare capacity.
 `AeadGather::decrypt_in_place_segments` decrypts one ciphertext in place across ordered segments,
 such as a TLS record split between two receive buffers. It needs no allocation. A failed tag check

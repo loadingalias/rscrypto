@@ -5,8 +5,8 @@ use chacha20poly1305::{
   aead::{Aead as _, AeadInOut, Payload, array::Array},
 };
 use rscrypto::{
-  ChaCha20Poly1305, ChaCha20Poly1305Key, ChaCha20Poly1305Tag,
-  aead::{Nonce96, expert::AeadWithNonce},
+  ChaCha20Poly1305, ChaCha20Poly1305Key, ChaCha20Poly1305SealingKey, ChaCha20Poly1305Tag,
+  aead::{Nonce96, NonceCounterSealError, SealError, expert::AeadWithNonce},
 };
 
 mod common;
@@ -53,6 +53,48 @@ fn chacha20poly1305_matches_rfc_8439_vector() {
     .decrypt(&nonce, &aad, &sealed, &mut opened)
     .expect("RFC 8439 ciphertext and tag must authenticate");
   assert_eq!(opened, plaintext);
+}
+
+#[test]
+fn chacha_sealing_key_uses_one_sequence_across_seal_methods_and_errors() {
+  let key = [0x42; 32];
+  let mut sealer = ChaCha20Poly1305SealingKey::new(ChaCha20Poly1305Key::from_bytes(key));
+  let oracle = Oracle::new(&Array(key));
+  let aad = b"header";
+  let plaintext = b"hello";
+  let check = |counter: u8, nonce: Nonce96, sealed: &[u8]| {
+    let mut expected = [0; 12];
+    expected[11] = counter;
+    assert_eq!(nonce.as_bytes(), &expected);
+    let opened = oracle
+      .decrypt(&Array(expected), Payload { msg: sealed, aad })
+      .expect("peer authenticates the record");
+    assert_eq!(opened, plaintext);
+  };
+
+  let mut combined = [0; 5 + ChaCha20Poly1305::TAG_SIZE];
+  let nonce = sealer.seal(aad, plaintext, &mut combined).expect("combined seal");
+  check(0, nonce, &combined);
+  let mut short = [0xa5];
+  assert_eq!(
+    sealer.seal(aad, plaintext, &mut short),
+    Err(NonceCounterSealError::Seal(SealError::buffer()))
+  );
+  assert_eq!(short, [0xa5]);
+
+  let mut buffer = *plaintext;
+  let (nonce, tag) = sealer.seal_in_place(aad, &mut buffer).expect("detached seal");
+  check(2, nonce, &[buffer.as_slice(), tag.as_bytes()].concat());
+  let (nonce, tag) = sealer
+    .seal_gather(aad, [b"he".as_slice(), b"llo"], &mut buffer)
+    .expect("gather seal");
+  check(3, nonce, &[buffer.as_slice(), tag.as_bytes()].concat());
+
+  #[cfg(feature = "alloc")]
+  {
+    let (nonce, sealed) = sealer.seal_to_vec(aad, plaintext).expect("allocating seal");
+    check(4, nonce, &sealed);
+  }
 }
 
 #[test]

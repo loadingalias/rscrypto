@@ -254,6 +254,8 @@ impl AsconAead128 {
   }
 }
 
+impl crate::traits::RandomNonceAead for AsconAead128 {}
+
 impl Aead for AsconAead128 {
   const KEY_SIZE: usize = KEY_SIZE;
   const NONCE_SIZE: usize = NONCE_SIZE;
