@@ -1498,6 +1498,21 @@ PKCS#1 implicit-rejection window bound. On these lanes, the gate scanner reports
 finding.
 562 waivers remain.
 
+### v0.13.0 release qualification, 2026-11-23
+
+Two Constant-Time runs qualify the v0.13.0 release source. Each platform verdict passed.
+
+| Platforms | Run | Source |
+|---|---|---|
+| Linux x86-64, AArch64, and POWER; Windows x86-64 | [Constant-Time 44965044968](https://github.com/loadingalias/rscrypto/actions/runs/44965044968) | `4d619c12` |
+| IBM Z and RISC-V | [Constant-Time 44978134209](https://github.com/loadingalias/rscrypto/actions/runs/44978134209) and its [RISC-V CT child](https://github.com/loadingalias/rscrypto/actions/runs/44978977604) | `50c708b2` |
+
+The source under `src/` is the same from `1d0409e5` to the release source.
+After `4d619c12`, `ct.toml` adds only the IBM Z and RISC-V waivers above.
+`asm_heuristics.py` moves its verdict predicate into `fails_verdict` and keeps the predicate.
+The commits after `50c708b2` change only documentation.
+No Apple Constant-Time run is part of this qualification.
+
 ## Public decisions and exclusions
 
 Ordinary equality is allowed for public values, such as nonces, encoded public keys,

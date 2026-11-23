@@ -173,8 +173,8 @@ Do not open a public issue.
 
 ## Performance
 
-The [benchmark overview](benchmark_results/OVERVIEW.md) measures the v0.13 release source on eight CI lanes.
-[Bench run 44681056190](https://github.com/loadingalias/rscrypto/actions/runs/44681056190) measured every primitive,
+The [benchmark overview](benchmark_results/OVERVIEW.md) measures the v0.13 release source on eight CI lanes and an Apple M1 Pro.
+On the CI lanes, [Bench run 44681056190](https://github.com/loadingalias/rscrypto/actions/runs/44681056190) measured every primitive,
 and later runs measured again each row that a later change can move.
 The results cover checksums, hashes, MACs, KDFs, password hashing, AEADs, signatures, key exchange,
 ML-KEM, X-Wing, HPKE, ML-DSA, SLH-DSA, and RSA.
@@ -193,11 +193,12 @@ The table counts the headline points, which hold each primitive's primary operat
 | POWER10 Linux         |   1032 |    530 | 404 |     98 |  1.05x |   1.48x |
 | IBM Z Linux           |   1029 |    792 | 130 |    107 |  2.13x |   2.84x |
 | RISC-V Linux          |   1032 |    584 | 292 |    156 |  1.07x |   1.14x |
+| macOS (Apple M1 Pro)  |   1032 |    486 | 354 |    192 |  1.04x |   1.27x |
 
 Each point comes from one run with 20 samples, 100 ms warm-up, and 400 ms measurement, using `nightly-2026-10-24`,
 on a host with no load or thermal checks. These classifications describe point estimates, not statistical significance.
 The overview gives the results by family and lists what the record leaves out:
-no Apple run measures the release source yet, and the TLS/QUIC provider targets need OpenSSL, which CI does not provision.
+the TLS/QUIC provider targets need OpenSSL, which CI does not provision.
 
 ## Project
 
