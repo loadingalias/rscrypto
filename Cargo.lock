@@ -2527,7 +2527,7 @@ dependencies = [
 
 [[package]]
 name = "rscrypto"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "aegis",
  "aes",
@@ -2605,7 +2605,7 @@ dependencies = [
 
 [[package]]
 name = "rscrypto-rustls"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "aes",
  "getrandom 0.4.3",

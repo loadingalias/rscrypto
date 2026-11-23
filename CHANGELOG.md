@@ -1,6 +1,275 @@
 # Changelog
 
 
+## [0.13.0](https://github.com/loadingalias/rscrypto/compare/v0.12.0...v0.13.0) - 2026-11-23
+- Add Adler-32 from RFC 1950, the checksum of zlib streams and HTTP `deflate`, behind the new `adler32` leaf feature, part of `checksums`. `Adler32` implements `Checksum`: one-shot `checksum`, incremental `update`, `finalize`, `reset` to the standard initial value, and `with_initial` to resume from an earlier checksum. It implements `ChecksumCombine` with zlib's `adler32_combine` semantics for every length. `Adler32::resume` is the const form of `with_initial`, under `std` the state implements `std::io::Write`, and with `alloc` `Adler32::buffered()` and `checksum::buffered::BufferedAdler32` coalesce short updates as the CRC wrappers do. `checksum::config::Adler32Force` and `Adler32Config`, with `RSCRYPTO_ADLER32_FORCE`, force a kernel for testing as the CRC force controls do. It needs neither `alloc` nor `std` and keeps no input. AArch64 uses NEON kernels, with the dot-product extension where the CPU has it. x86-64 uses SSSE3, AVX2, and AVX-512 VNNI kernels. POWER uses an AltiVec kernel, and IBM Z from z13 a vector-facility kernel. riscv64 uses an RVV kernel where the CPU has the V extension, and wasm32 builds with `simd128` use a SIMD128 kernel. Other targets use the portable kernel. It is non-cryptographic: it detects accidental corruption and gives no authentication. CRC outputs are unchanged.
+
+- Add `AeadGather::decrypt_in_place_segments` for AES-128-GCM, AES-256-GCM, and ChaCha20-Poly1305.
+  It decrypts one ciphertext in place across ordered segments, such as a TLS record split between two
+  receive buffers, with one tag check and no copy or allocation. Each backend runs its single-buffer
+  kernels on every segment and stages only the block that crosses a seam. A failed tag check zeroes
+  every segment.
+
+- Add `Blake3::update_file` to hash from an existing file's current position through EOF with advisory, bounded file buffering. It preserves incremental hash state and read-error behavior, uses stack input storage for small files, and clears owned input storage. Generic `update_reader` buffering remains available for other readers.
+
+- Add `hashes::expert::BLAKE3_PORTABLE_SOURCE`, the source text of the portable BLAKE3 compression function. rscrypto compiles the same file as its Portable kernel. The text uses only `core`, has no `unsafe` code and no conditional compilation, and builds with Rust 1.85 or later, edition 2024. Code that cannot link rscrypto can embed it inline, as a `mod` file, or with `include!`. The names, values, and signatures of its items are public API.
+
+- Add `ChaCha20Rng` behind the new `chacha20-rng` leaf feature, which `full` includes: a seeded, deterministic ChaCha20 random generator with fast key erasure. It reads no operating-system entropy and works without `alloc`. `fill_bytes`, `next_u32`, and `next_u64` read one byte stream, so the output does not depend on request boundaries. The first 480 output bytes are the RFC 8439 keystream for the seed. Reads clear the bytes that they return, and each refill replaces the key. `from_seed` takes a 32-byte seed, `try_generate_with` takes the seed from a caller's fill function, and `try_generate` seeds the generator from the operating system with `getrandom`. `ChaCha20Rng::child` derives a generator from this generator's seed, an 8-byte label, and a 64-bit index with one RFC 8439 block under a branch key. A child does not depend on the parent's draws, so one recorded root seed and each owner's path replay every stream. A party that learns a generator's state learns the seed of every child. `ChaCha20Rng::origin` reports the process that seeded the root, and a child keeps its parent's origin, so an owner can refuse a generator that a process fork copied. The generator is not `Clone`, redacts `Debug`, and clears its key, branch key, and unread output on drop.
+
+- Add composite ML-DSA signatures from draft-ietf-lamps-pq-composite-sigs-19 (RFC-to-be 10073): `MlDsa65Ed25519` (`id-MLDSA65-Ed25519-SHA512`, feature `mldsa65-ed25519`) and `MlDsa65EcdsaP256` (`id-MLDSA65-ECDSA-P256-SHA512`, feature `mldsa65-ecdsa-p256`). Both build on the existing ML-DSA-65, Ed25519, and ECDSA P-256 implementations; a signature verifies only if both components verify. They provide key generation from caller randomness, deterministic and hedged signing with an application context of up to 255 bytes, external SHA-512 prehash signing and verification, prepared signing keys, and strict raw, SubjectPublicKeyInfo, and PKCS #8 encodings. The `signatures` umbrella feature includes both.
+  
+  With `alloc`, `generate_keypair_in` (and `try_generate_keypair_in` with `getrandom`) on both types, and `try_from_slice_in` and `from_pkcs8_der_in` on `MlDsa65Ed25519SecretKey` and `MlDsa65EcdsaP256SecretKey`, write the ML-DSA-65 seed and expanded key and the Ed25519 or ECDSA P-256 key directly into memory from a caller-selected `Allocator` and return `Box<_, A>`. Moving the key then moves only a pointer and leaves no by-value copy, and signing through the box reads the key in place. Each returns the same errors as its by-value form, and a rejected key is cleared and freed before the call returns. `prepare` fills a caller-owned `MlDsa65Ed25519PreparedSecretKeyStorage` or `MlDsa65EcdsaP256PreparedSecretKeyStorage` with the prepared ML-DSA-65 key and a copy of the traditional key, and `prepare_in` builds that storage in such memory. The prepared key holds only its storage, so moving it moves no secret.
+
+- Add allocation-free gather encryption for AES-128-GCM, AES-256-GCM, and ChaCha20-Poly1305 through
+  `AeadGather`. Ordered plaintext slices share one counter sequence and authentication tag. The expert
+  nonce API supports initialized output or spare capacity without staging plaintext. AES-GCM nonce
+  counters and fresh-random-nonce encryption also support gathered plaintext.
+
+- Add HPKE Base mode from RFC 9180 behind the new `hpke` leaf feature, part of `key-exchange`. `hpke` enables only `hkdf`; each suite also needs its KEM and AEAD features. `HpkeX25519HkdfSha256Aes128Gcm` is DHKEM(X25519, HKDF-SHA256) with HKDF-SHA256 and AES-128-GCM (`hpke`, `x25519`, `aes-gcm`), the suite that client ECH uses. `HpkeXWingHkdfSha256ChaCha20Poly1305` is X-Wing (`0x647A`) with HKDF-SHA256 and ChaCha20Poly1305 (`hpke`, `x-wing`, `chacha20poly1305`); its KEM identifier and `DeriveKeyPair` follow draft-ietf-hpke-pq-05. `HpkeSender::setup` and `HpkeReceiver::setup` return typed contexts that seal or open messages in order and export secrets; `HpkeSuite::seal` and `HpkeSuite::open` handle one message. A context stops at its last sequence number with `HpkeError::MessageLimitReached`, and a failed open leaves it unchanged. A sender seals only in the process that set it up: in a fork child, each seal returns `HpkeError::MessageLimitReached` and the sequence number does not change, because a copy would reuse nonces. The contexts and `HpkeX25519PrivateKey` are not `Clone`, clear their secrets on drop, and redact `Debug`. With `alloc`, `setup_in` and `derive_keypair_in` build the context or the key directly in a box from a caller-selected `Allocator`. HPKE needs neither allocation nor operating-system entropy. RFC 9180 erratum 7121 is not applied: an X25519 private key is the unclamped `DeriveKeyPair` output, as draft-ietf-hpke-hpke-06 and the published vectors specify, and no byte on the wire changes.
+
+- Add `HmacSha256::finalize_into` and `HmacSha384::finalize_into`. Each writes the current tag into a caller-owned
+  array without consuming or resetting the state, so secret-derived output, such as key material, never becomes a
+  copyable tag value. The caller owns the array and its cleanup.
+  
+  Initialize keyed outer hash states in place during SHA-2 HMAC finalization.
+
+- Add the QUIC-LB connection-ID cipher of draft-ietf-quic-load-balancers-22 as `aead::expert::quic_lb`, behind `aes-gcm`. `QuicLbKey` holds the 16-octet configuration key, and `QuicLbCipher::new` takes it with a server-ID length of at least 1 octet and a nonce length of at least 4, with a total of at most 19, and returns `None` for other lengths. `encrypt` encrypts the server ID and nonce at the start of a 19-octet buffer in place: one AES-128 block for a 16-octet total, and the draft's four-pass Feistel network for every other total. `decrypt_server_id` leaves the server ID at the start of the buffer and zeroes every later octet. Decryption takes three AES passes when the server ID is no longer than the nonce, and four otherwise. The octets after the plaintext keep their values through encryption, and neither result depends on them. Neither operation allocates or fails. On x86-64 and AArch64, all Feistel passes run in one AES-NI or AES-CE scope with the round keys in registers. Single-pass decryption uses a new AES-128 inverse cipher on every backend: AES-NI, AES-CE, CPACF KM, POWER8, RISC-V Zvkned and Zknd, the portable cipher, and a bitsliced inverse on RV64 and IBM Z without AES hardware. The key and the cipher clear on drop, are not `Clone`, and redact `Debug`. The capability does not expose general AES block encryption or decryption. `ct.toml` gives both forms a `ct-intended` constant-time claim, `aead.quic_lb`, with DudeCT cases for single-pass and four-pass encryption and decryption.
+
+- Add the opt-in `RsaSigningWorkspace` for repeated RSA signing with one key. It holds the private-operation scratch and a blinding pair that it reuses for up to 32 signatures, squaring the pair before each reuse, as AWS-LC does, instead of drawing, inverting, and exponentiating a new factor for every signature. Factors within an epoch are therefore correlated. `RsaPrivateKey::signing_workspace` creates it. `RsaPrivateKey::sign_signature_with_random_fill_and_workspace` takes two caller entropy sources: one for the PSS salt and one for each blinding refresh, so a shared workspace and each signature can draw from different owners. `sign_signature_with_workspace` uses `getrandom` for both and does not allocate. A workspace belongs to the key that created it: another key gets `RsaPrivateOpError::InvalidScratch` before any entropy request. Any signing error or a process fork (`platform::ProcessOrigin`) draws a new factor. The workspace is not `Clone`, shows only its width and use count in `Debug`, and zeroizes its pair on error and drop.
+
+- Add SipHash-1-3 and SipHash-2-4 keyed hashing behind the `siphash` feature, part of `macs`. SipHashKey holds the 128-bit key and clears it on drop. SipHash13 and SipHash24 hash one byte string or act as a core::hash::Hasher. SipRandomState is a BuildHasher for HashMap and HashSet that keys SipHash-1-3 from caller entropy (try_new_with) or the operating system (try_new), so tables keyed by attacker-chosen values, such as QUIC connection IDs, resist collision flooding.
+
+- Add in-place SLH-DSA secret-key constructors behind `alloc`, for every pure and HashSLH-DSA profile: `generate_keypair_in`, `try_from_slice_in`, and `from_pkcs8_der_in`. Each builds the key in a box from the caller's allocator, so moving the key moves only a pointer and leaves no copy of SK.seed or SK.prf. The checks and errors match `generate_keypair`, `try_from_slice`, and `from_pkcs8_der`.
+
+- Add the optional rand_core feature: ChaCha20Rng implements rand_core 0.10's TryRng, TryCryptoRng, and SeedableRng, so rand and other rand_core consumers use it directly. The trait methods return the inherent stream, from_rng and fork write the seed straight into the new generator, and seed_from_u64 panics because a 64-bit value is not a 256-bit seed. The feature enables chacha20-rng and adds only the rand_core dependency.
+
+- Add the X-Wing hybrid KEM of ML-KEM-768 and X25519 from draft-connolly-cfrg-xwing-kem-11, behind the new `x-wing` leaf feature, part of `key-exchange`. draft-irtf-cfrg-concrete-hybrid-kems-04 names the same construction MLKEM768-X25519, and its HPKE KEM identifier is `0x647A`. `XWing` implements `Kem`. `XWingEncapsulationKey`, `XWingDecapsulationKey` (the 32-byte seed), `XWingCiphertext`, and `XWingSharedSecret` use the draft's raw encodings, which are also the HPKE serializations. Every `XWingEncapsulationKey` passed the FIPS 203 modulus check of its ML-KEM-768 part: `try_from_slice`, serde, and key derivation run it, and the key has no unchecked constructor. `XWingEncapsulationKey::prepare` prepares the key for repeated encapsulation, `XWingPreparedEncapsulationKey::try_from_slice` checks and prepares raw bytes in one pass, and `XWingDecapsulationKey::prepare` (or `prepare_in` with `alloc`) expands the key one time for repeated decapsulation. The expanded keys have no encoding, because the draft forbids their transfer. The one difference from the -11 text: encapsulation and decapsulation reject an all-zero X25519 shared secret with `XWingError::InvalidEncapsulationKey` or `XWingError::InvalidCiphertext`, as X-Wing pull request 39 and RFC 9180 specify. X25519 clamps its scalar, so that result depends only on the public key or ciphertext. X-Wing needs neither allocation nor operating-system entropy, and builds on rscrypto's ML-KEM-768, X25519, SHAKE256, and SHA3-256.
+
+- Add XXH32 and XXH64, the original xxHash algorithms that LZ4 and Zstandard frames use for checksums, behind the new `xxh32` and `xxh64` leaf features, part of `fast-hashes`. `Xxh32` and `Xxh64` implement `FastHash` with 32-bit and 64-bit seeds and outputs. `Xxh32Hasher` and `Xxh64Hasher` hash incrementally in a fixed-size state without `alloc` or `std`, and `reset` keeps their seed. Both are portable Rust and non-cryptographic: a frame checksum detects accidental corruption, but gives no authentication and no flood resistance. XXH3 is unchanged.
+
+- Breaking: RsaPublicKeyPolicy's constructors now name the moduli they accept, because the policy also gates private-key import and key generation, not only verification. legacy_verification() and LEGACY_VERIFICATION become modulus_2048_to_8192() and MODULUS_2048_TO_8192; modern_verification() and MODERN_VERIFICATION become modulus_3072_to_8192() and MODULUS_3072_TO_8192. The accepted moduli, the exponent rule, and Default (3,072 to 8,192 bits) are unchanged; rename the calls.
+
+- Add `platform::ProcessOrigin`, which records the process that created a value. In a copy that a process fork made, `ProcessOrigin::is_current` returns false, and the check is async-signal-safe. On Linux and Android (x86-64, AArch64, 64-bit POWER, 64-bit RISC-V, IBM Z), the check is one function call with one atomic load from a page that the kernel gives as zeros to a fork child. On Apple targets, a fork handler clears the same kind of word in each fork child. The word holds a generation above those of all ancestors, so a descendant never matches an ancestor's origin, even with a recycled process ID. If the kernel refuses the page or Apple refuses the handler, and on other Unix targets, the check compares process IDs. Targets that cannot fork always report the current process. Without `std`, no fork is detected. `ProcessOrigin::try_current` returns `ProcessOriginUnavailable` where the check would compare process IDs or detect no fork, for state that no descendant may continue.
+  
+  Security behavior change: `aead::NonceCounter` issues nonces only in the process that created it. In a fork child, `next_nonce` and each `encrypt` method return `NonceCounterExhausted` and consume no nonce, because a copied counter would repeat AES-GCM nonces under one key. Create a new key and counter in the child.
+  
+  Breaking: `NonceCounter::new` for AES-128-GCM and AES-256-GCM is no longer a `const fn`, because it records the creating process. Migration: a `static` that holds a counter, for example `static COUNTER: Mutex<NonceCounter<Aes256Gcm>> = Mutex::new(NonceCounter::new(prefix))`, becomes `static COUNTER: LazyLock<Mutex<NonceCounter<Aes256Gcm>>> = LazyLock::new(|| Mutex::new(NonceCounter::new(prefix)))`, or the counter is built at run time.
+
+- ECDSA public keys no longer build a verification table. `EcdsaP256PublicKey` and `EcdsaP384PublicKey` hold only the point, are `Copy`, and verify through the single-use path; `prepare()` returns the new `EcdsaP256PreparedPublicKey` or `EcdsaP384PreparedPublicKey`, which keeps the table for a key that verifies many signatures. `verify_sec1`, `verify_sec1_sha384`, and `verify_sec1_sha256` are removed: `from_sec1_bytes` followed by `verify` now does the same work. Deriving a public key from a secret key therefore builds no table either; on an Apple M1 Pro, P-256 derivation takes 7.9 µs instead of 91.6 µs, and P-384 derivation 53.3 µs instead of 238.0 µs.
+
+- License rscrypto under Apache-2.0. Earlier releases offered MIT OR Apache-2.0; from this release the crate and its owned sources carry only the Apache License 2.0. Three ChaCha20-Poly1305 assembly files adapted from AWS-LC and BoringSSL keep their upstream ISC license, so the package license is `Apache-2.0 AND ISC`. The package ships LICENSE and LICENSE-ISC in place of LICENSE-APACHE and LICENSE-MIT. Other code adapted from upstream projects keeps its upstream notices. The package no longer includes `CONTRIBUTING.md`.
+
+- ML-KEM keys are valid by construction. `MlKem*EncapsulationKey` and `MlKem*DecapsulationKey` no longer have `from_bytes`, `validate`, or `FromStr`. Build them with `try_from_slice`, DER import, serde, or key generation; each runs the FIPS 203 input check once (sections 7.2 and 7.3). Deserialization of these keys now rejects an invalid key; before, it accepted any value of the right length. `MlKem*Ciphertext::validate` is removed, because the type check is the length. Encapsulation and decapsulation no longer repeat the key check, so each decapsulation skips one SHA3-256 of the embedded encapsulation key. Preparation cannot fail: `prepare`, `prepare_in`, `MlKem*::prepare_encapsulation_key`, `MlKem*::prepare_decapsulation_key`, and the conversions to prepared keys (now `From`, before `TryFrom`) return the prepared key. Prepared ML-KEM decapsulation and `MlKem*::decapsulate_prepared` return the shared secret.
+
+- Rebuild the CRC engine. Every CRC runs one carryless-multiply folding engine per architecture, which takes the width (8 to 64 bits), the polynomial, and the bit order. Compile-time code derives every table and constant from the polynomial. CRC-24/OpenPGP folds MSB-first natively and no longer reverses the bits of each byte. CRC-32 and CRC-32C fuse the AArch64 CRC instructions, and CRC-32C fuses the x86-64 SSE4.2 instruction, with folding in rounds. Each CRC selects one kernel per process, and the kernel handles every input length. combine multiplies by precomputed powers of x instead of exponentiating a GF(2) matrix. Breaking: checksum::config::CrcForce and CrcConfig replace Crc16Force, Crc24Force, Crc32Force, Crc64Force, and their Config types. The Sve2Pmull force is removed, because no SVE2 kernel existed. The RSCRYPTO_*_FORCE variables keep their names and values, and clmul names the base carryless-multiply tier of the architecture. Kernel names that kernel_name_for_len and checksum::diag report change. CRC outputs are unchanged.
+
+- Replace the `RSCRYPTO_FORCE_AVX512` environment variable with
+  `platform::expert::allow_hybrid_avx512`. On Intel hybrid CPUs (Alder Lake through Arrow Lake),
+  detection removes AVX-512 and AVX10 even when CPUID reports them, because the E-cores lack them. A
+  process whose every core implements AVX-512, for example with the E-cores disabled in firmware, now
+  keeps them by calling the `unsafe` `allow_hybrid_avx512()` before the first `platform::caps()` call.
+  Setting `RSCRYPTO_FORCE_AVX512` no longer has any effect, so such systems keep AVX-512 masked until
+  they make that call. x86-64 capability detection no longer reads the environment or allocates.
+
+- Accept valid Ed25519 signatures under public keys with a small-order component. Verification
+  computed [S]B + [L - k]A, which differs from [S]B - [k]A when A has a small-order component, so it
+  rejected every such signature. It now checks [S]B = R + [k]A on the whole group on every backend.
+  It still rejects small-order and non-canonical A and R, S of at least L, and signatures that only
+  the cofactored check accepts.
+
+- Aead::ciphertext_len rejects a length above isize::MAX, because no byte buffer can hold it. Thus on 32-bit targets, encrypt_to_vec, seal_random_to_vec, and HpkeSender::seal_to_vec return a length error before they allocate. They no longer panic.
+
+- Keep AArch64 AES-GCM authentication state in its clearing owner and borrow GHASH tables across
+  AAD and batch helpers. Avoid the reviewed saved-register and short-batch accumulator copies,
+  and construct padded GHASH tails without memory-helper calls while H and state are live.
+
+- Clear AES-GCM's materialized CTR keystream buffers on return and unwind in the portable,
+  batched, and native tail paths. Run generic CTR work in a borrowed-only worker, then clear
+  3 KiB of its dead stack in one pass to remove compiler-created copies. Generated-code coverage
+  stays target and compiler bound; live registers retain their separate qualification limits.
+
+- Clear the native SIMD scratch used to copy ML-DSA prepared-key seed fields on macOS and Linux AArch64 and x86-64.
+
+- Clear native AES-GCM authentication state at its Rust ABI boundary and erase the Linux x86-64
+  GHASH power workspaces before releasing their stack frames. Native saved-register slots are
+  cleared after restoring the caller's registers. This does not claim erasure of every register
+  or compiler-created copy.
+
+- Clear AArch64 RSA Montgomery reduction's local parameter array after use, including copied
+  private CRT inverse words and intermediate multipliers. Apply the typed volatile wipe to
+  both Linux and non-Linux schedules.
+
+- Clear the padded Keccak state that fixed-output finalization copied before permuting and left on the stack. That copy could retain absorbed secret input, such as SLH-DSA's SK.seed in SHAKE PRF calls or HMAC-SHA3 key material. Finalization now pads, permutes, and clears one local state in place; outputs are unchanged.
+
+- Add the SLH-DSA guide, `docs/slhdsa.md`, and the `slhdsa_update_verify` example. The guide names SLH-DSA-SHA2-128s as the profile for trust roots and update keys, and SLH-DSA-SHA2-192s for security category 3, and lists the sizes, the API flow, the evidence, and the open limits of each set. The example pins a root key as its RFC 9909 SubjectPublicKeyInfo, signs an update manifest under a context, and verifies it from the pinned DER, as a device does. SLH-DSA-SHA2-128s key generation, signing, and verification now have stack bounds on the five Linux CI targets. Native residue runs on macOS AArch64 and on Linux x86-64 and AArch64 find no derived secret after each call. `ct.toml` adds DudeCT cases for SHA2-128s key generation and deterministic signing. SLH-DSA keeps its best-effort entry and has no timing claim. Keys, signatures, and the API are unchanged.
+
+- Document that a RapidHash seed is not a key. `RapidHash64::hash_with_seed`, `RapidStreamHasher::with_seed`, and
+  `RapidSeededState` keep RapidHash's public secrets under every seed, so families of keys share one hash under every
+  seed, even a secret one. Use `RapidRandomState` for keys an attacker can choose. `FastHash::hash_with_seed` now
+  states that a secret seed does not prevent chosen-input collisions unless an implementation documents otherwise.
+  Hashes are unchanged.
+
+- ECDSA verification adds the generator term into the key chain, so it needs no doublings of its own: on an Apple M1 Pro, P-256 verification with a prepared key runs 11% faster and P-384 14% faster. On x86-64 CPUs with BMI2 and ADX, P-256 verification multiplies and squares with owned MULX assembly. On x86-64 Linux and Windows, ECDSA P-384 signing and key derivation run the owned P-384 ECDH fixed-base kernel instead of the generic comb.
+
+- encrypt_to_vec, seal_random_to_vec, decrypt_to_vec, try_sign_to_vec, HpkeSender::seal_to_vec, and HpkeReceiver::open_to_vec clear their output vector on error and on unwind. Before, a panic in an external AEAD or signer implementation freed the vector with its plaintext or partial output.
+
+- On riscv64 CPUs with the Zkne scalar AES extension but without Zvkned, AES-GCM, AES-GCM-SIV, AES-SIV-CMAC, and AEGIS-256 now give correct results. The Zkne backend packed each 64-bit half of the AES state and of each round key big-endian, but `aes64es` and `aes64esm` read state byte i from bits 8i+7..8i, as the ratified scalar cryptography specification defines. Earlier releases gave wrong ciphertexts and tags on such CPUs. CPUs with Zvkned and other targets are unchanged.
+
+- Reduce Linux AArch64 RSA private-operation overhead with paired Montgomery strip loads and fixed
+  five-bit exponent windows that reuse existing scratch capacity. Give 16-limb CRT reduction a
+  register window, normalize within the kernel, and omit the cancelled lowest product. Expose
+  the 16-limb portable kernels and existing five-bit window schedule on POWER, IBM Z and RISC-V.
+  Keep the original scalar kernels and the four-bit fallback when the existing scratch does not
+  hold the wider table.
+
+- Speed up ML-DSA polynomial arithmetic and public matrix expansion on Linux x86-64 with AVX-512,
+  and ML-DSA-65 public matrix expansion on Linux AArch64 with SHA3.
+
+- Compute POWER RSA multiply-accumulate carries directly with integer carry instructions. Keep the
+  portable-only Rust path and the same fixed private-arithmetic schedule.
+
+- Keep secret SHA-384 and SHA-512 finalization work in clearing storage.
+
+- Keep the work of every Arm data-independent timing (`PSTATE.DIT`) scope between the DIT writes with compiler barriers, and detect `FEAT_DIT` without `std` on Linux, Android, and Apple targets. On AArch64, a scope that returns a secret by value, such as HPKE `setup`, keeps one more uncleared stack copy of it; the `*_in` forms do not.
+
+- Make CPU capability detection lock-free and owned. std builds no longer initialize detection
+  through a std `OnceLock`: every build caches it the same way, each first caller detects on its own
+  stack, and one compare-and-swap publishes the result. A panicking probe now leaves the cache
+  uninitialized instead of blocking other threads forever in `no_std` builds. Linux AArch64, POWER,
+  and IBM Z read their hardware capabilities with `getauxval` instead of opening `/proc/self/auxv`,
+  and Apple AArch64 reads its `sysctl` keys directly instead of the standard library's detector.
+  First-call detection on those targets performs no file I/O or heap allocation. The AArch64
+  data-independent-timing guard caches its own FEAT_DIT probe, which capability overrides and
+  `portable-only` builds do not disable.
+  Cached dispatch choices, including the CRC configurations, use the same lock-free cache. AES-GCM,
+  AES-GCM-SIV, ChaCha20-Poly1305, XChaCha20-Poly1305, and `ChaCha20Rng` select their GHASH and
+  POLYVAL multiply, Poly1305 block, and ChaCha20 keystream kernels from the cached capabilities at
+  each call, then call the kernel directly instead of through a cached function pointer.
+
+- On POWER, IBM Z, RV64, and RV32, a build that selects no feature with a nightly backend now compiles on stable Rust 1.100 without portable-only. For example, websocket-sha1 alone builds on stable RV64 and IBM Z. docs/platforms.md lists the features that need nightly Rust on each target.
+
+- On RISC-V, ECDSA no longer branches on secrets in two places. LLVM compiled the masked final subtraction of each P-384 field multiply and square to a conditional branch on the reduction borrow, and native DudeCT found the timing difference in P-384 public-key derivation. LLVM also compiled the final sign selection of the P-256 and P-384 safegcd order inversion, which computes the signing nonce inverse, to a branch on the sign of a secret-derived value.
+
+- On riscv64 CPUs with Zbc or Zbkc but without Zvbc, AES-GCM, AES-GCM-SIV, GHASH, and POLYVAL now give correct results. The scalar carry-less multiply let the compiler place its low product in an input register that the high product still read. The Zvbc CRC folds had the same operand constraint, which this build did not miscompile; it is fixed too.
+
+- Replace the adapted AWS-LC x86-64 RSA Montgomery assembly with owned MULX/ADCX/ADOX kernels in
+  Rust inline assembly. They serve every x86-64 OS with BMI2 and ADX and every modulus width that
+  is a multiple of 512 bits. On Granite Rapids, RSA public-key operations run about 3% faster than
+  with the replaced assembly. Windows public-key operations, and private operations without
+  AVX-512 IFMA, now use these kernels instead of portable code.
+
+- `RapidRandomState` derives its secret schedule once, when the state is created, instead of on every byte-slice
+  hash, so a hash no longer pays six serial derivation steps before it reads its input. The state grows from 16 to
+  64 bytes. Hashes are unchanged.
+
+- Reduce AArch64 AES-GCM setup work and HMAC-SHA256/SHA384 finalization copies, and use a stack-free SHA-512 hardware kernel on little-endian AArch64.
+
+- Reduce stores in aligned 64-byte secret wipes on GNU/Linux AArch64.
+
+- With the `diag` feature, `hashes::introspect::kernel_for` reports the Keccak kernel that SHA-3, SHAKE, and cSHAKE run: the AVX-512 or BMI rounds on x86-64, the SHA3 instructions on Apple AArch64, the lazy-rotation rounds on other AArch64, and KIMD on IBM Z. Before, it read a separate table and reported `portable` on every CPU.
+
+- RSA key generation derives lcm(p - 1, q - 1) and the private exponent with fixed-work arithmetic: a binary GCD and long division with fixed iteration counts, and a masked scan that inverts the public exponent. The previous Euclid and inverse search ran in time that depended on the secret primes.
+
+- Secret-key FromStr decodes hexadecimal without a branch or table index on the secret characters. Only a string that is not valid hex takes a branch, to report its first invalid character.
+
+- Speed up AES-128-GCM, AES-256-GCM, and ChaCha20-Poly1305 for short messages, message tails, and
+  TLS-record-shaped gathers on x86-64. With VAES and AVX-512, one finishing pass encrypts the final
+  blocks together with the tag block and folds GHASH with one reduction, so short records, the end
+  of long records, and the short second record of a 16 KiB TLS write no longer take single-block
+  paths. With AVX-512, ChaCha20-Poly1305 runs owned kernels at every length, and
+  the ChaCha20 keystream's final blocks no longer fall back to four-way or portable code. Short
+  opens check the tag before writing plaintext. The new x86-64 workers scrub the stack they spill to.
+
+- Speed up AEGIS-256 on RISC-V CPUs without AES extensions and on POWER. On RISC-V, each state update now
+  bitslices its round inputs straight from the state instead of copying blocks through intermediate
+  arrays: sealing and opening take 54–62% less time at every message size. On POWER, the AES round is
+  scheduled with the surrounding state updates, which takes 1–4% less time.
+
+- Speed up AES-128-GCM and AES-256-GCM key setup on x86-64. With AVX-512 and VPCLMULQDQ, the GHASH
+  key powers are computed four at a time; other x86-64 CPUs with PCLMULQDQ use a balanced recurrence
+  with a shorter dependency chain than the previous eight chains. Each context keeps one
+  64-byte-aligned power table, 128 powers on Linux and Windows and 16 on other x86-64 targets, instead of six
+  separate tables, and clears it on drop. On Granite Rapids, constructing a key and encrypting 64
+  bytes takes about 54% less time, and resumed TLS 1.2 AES-GCM handshakes take 9 to 12% less.
+
+- Speed up AES-GCM and AES-GCM-SIV on RISC-V CPUs without AES and carryless-multiply extensions, and on
+  POWER. On RISC-V, GHASH and long POLYVAL transcripts share one reduction per four blocks, and short CTR
+  tails share one AES call. On a T-Head C910, AES-GCM at 4 KiB and 1 MiB and AES-GCM-SIV at 16 KiB now run
+  1.03–1.09x as fast as RustCrypto; AES-GCM messages of up to 256 B still take about 1 µs longer. On POWER10,
+  opening AES-GCM-SIV messages of 256 B and more takes 33–61% less time, and AES-GCM messages of one to three
+  blocks take 16–40% less.
+
+- Speed up BLAKE2b and BLAKE2s on x86-64 and AArch64. On AMD Zen 5, runtime dispatch now selects the
+  scalar kernel, which is about twice as fast as the vector kernels there, including builds that
+  enable AVX2 or AVX-512 at compile time. On Intel CPUs with AVX-512VL, BLAKE2b is 16–20% faster and
+  BLAKE2s 12–20% faster: the rounds are unrolled, message vectors come from vector loads instead of
+  gathers, and the diagonal step no longer adds a permute to the dependency chain. On non-Apple
+  AArch64, the scalar rounds are 7–9% faster: each XOR-and-rotate step puts one shifted-register
+  `EOR` on the dependency chain instead of two instructions.
+
+- Speed up Blake3::update_reader and Blake3Subtree::update_reader, which no longer allocate, zero, and clear a 1 MiB buffer on every call. Reads start at 1 KiB and grow as the reader fills them, storage is zeroed only as reads need it, and inputs up to 64 KiB use stack storage without allocating. Serial hashing uses 16 KiB buffers at first and grows to 1 MiB reads for long inputs and files; hashers that may use threads still receive whole 1 MiB buffers. Every byte passed to the reader is still cleared before release, including bytes written by a reader that then fails. Outputs, returned counts, and error behavior are unchanged.
+
+- Speed up SHA-3, SHAKE, cSHAKE, KMAC, and HMAC-SHA-3 by 16–24% on non-Apple AArch64, measured on
+  Graviton4. The scalar Keccak permutation applies every ρ rotation through the rotated operand of an
+  `EOR` or `BIC` instead of rotating lanes separately, and its 24 rounds are unrolled. ML-KEM and ML-DSA
+  run 2–6% faster there. Apple targets keep their existing Keccak paths.
+
+- Speed up SHA-3, SHAKE, cSHAKE, KMAC, and HMAC-SHA-3 on Apple Silicon. The single-state Keccak permutation
+  runs as inline assembly with a fixed register allocation, about 10% faster than the previous kernel, whose
+  compiled rounds spilled a lane on the critical path. On M1 Pro, one-shot SHA-3 of up to one block takes
+  151–157 ns instead of 170–211 ns.
+
+- Speed up SHA-3, SHAKE, cSHAKE, KMAC, and HMAC-SHA-3 on Intel x86-64 CPUs with AVX-512. The single-state
+  Keccak permutation runs in AVX-512 registers and absorbs complete blocks without storing the state between
+  them. On Granite Rapids, SHA-3 of 1 KiB to 1 MiB runs 11–13% faster, 1.05–1.08x AWS-LC instead of
+  0.95–0.98x; on Sapphire Rapids it runs 3–4% faster. Other x86-64 CPUs with BMI1 and BMI2, such as AMD CPUs
+  and Intel CPUs without AVX-512, run the portable rounds compiled with `RORX` and `ANDN`. On Granite Rapids,
+  that kernel ran KMAC, cSHAKE, and HMAC-SHA-3 7–9% faster and SHAKE about 3% faster than the previous rounds.
+  AMD Zen 5 is unchanged, and AMD CPUs do not run the AVX-512 kernel, which is slower there.
+
+- Speed up one-shot KMAC and cSHAKE for short messages on every target: 9–14% for KMAC and 10–15% for cSHAKE
+  on Apple M1 Pro, and 9–10% for KMAC and 4–6% for cSHAKE on Intel Granite Rapids. One-shot calls now build a
+  single sponge instead of cloning reset states, `bytepad` skips its zero padding instead of absorbing it, and
+  partial input lanes are assembled in a register. A KMAC state now holds two Keccak sponges instead of four.
+  One-shot calls also finalize that sponge in place instead of copying it into a reader, and absorb the SP 800-185
+  length encodings without a separate call each.
+
+- Speed up RSA private operations on AVX-512 IFMA CPUs by exposing the fixed vector count in
+  Montgomery carry normalization. Preserve the arithmetic, table access, dispatch and scratch sizes.
+
+- Speed up RSA public-key operations with an imported key. A one-time operation enters the Montgomery domain
+  with one long division by the modulus instead of computing R² mod n, and each public-key operation leaves it
+  with its final multiplication instead of a separate reduction. Verification with a newly imported key costs
+  about a third less on x86-64 and AArch64. RsaPublicKey::public_scratch computes R² mod n once with two such
+  divisions, and RsaPublicScratch::new now only allocates. Results and errors are unchanged.
+
+- Speed up RSA private window selection on AVX2-capable x86-64 processors while retaining full table scans and the portable fallback. Keep scalar selection on soft-float targets.
+
+- Speed up standalone `Poly1305`. On 64-bit targets it now keeps a radix-2^64 accumulator and passes all
+  full blocks of each update to one kernel call. Short inputs take a scalar kernel. Longer inputs take an
+  AVX-512 IFMA kernel on x86-64 with AVX-512F and AVX-512 IFMA, a NEON kernel on AArch64 (beside four scalar
+  chains for long inputs), or four independent scalar chains on other 64-bit targets. Tags are unchanged.
+  32-bit targets and `portable-only` builds keep the radix-2^26 portable implementation.
+
+- Speed up AES-128-GCM-SIV and AES-256-GCM-SIV on x86-64 CPUs with VAES and VPCLMULQDQ. Sealing and opening
+  now run key derivation, the key schedule, POLYVAL, and CTR in one fused path for every message length, and
+  derive only the hash powers each length needs. On Intel Granite Rapids and AMD Zen 5, messages from 64 B to
+  1 KiB take 36–60% less time and longer messages 7–30% less. Opening below 64 B takes 51–64% less time, and
+  AES-256 sealing below 64 B 52–62% less; AES-128 sealing below 64 B, which already had a fused path, stays
+  within 9% of its previous time.
+
+- Speed up XXH3-64 and XXH3-128 for inputs of 4 KiB and more on x86-64: about 1.3–1.7x on Intel
+  CPUs with AVX-512 and 1.3–2.3x on AMD Zen 5. The AVX-512 and AVX2 kernels keep each stripe's term
+  off the accumulator, sum each block's stripes into independent partial sums, and step through
+  blocks without per-stripe checked offset arithmetic.
+
+- Use the AVX2 and AVX-512 ML-DSA backends on Windows x86-64, as on Linux x86-64, after the same cached CPU and OS capability detection. On Granite Rapids under Windows, ML-DSA signing runs about 4x and verification about 3x faster than the portable arithmetic it replaces; key generation runs about 1.35x faster.
+
+- Windows x86-64 now runs the same System V VAES-512 assembly as Linux x86-64 for AES-128-GCM and AES-256-GCM sealing and opening, and for AES-GCM-SIV counter mode, on processors with VAES, VPCLMULQDQ, and AVX-512. Windows calls the kernels through `extern "sysv64"`; before, it ran intrinsics only.
+
+- Windows x86-64 now runs the same System V assembly as Linux x86-64 for ECDSA P-256 and P-384 signing and public-key derivation, P-256 ECDH, and X25519. Windows calls these routines through `extern "sysv64"`; before, ECDSA and X25519 there ran portable arithmetic, and P-256 ECDH ran separate Microsoft x64 wrapper copies of the same assembly.
+
+- x86-64 runtime detection now reports a capability only together with every feature that Rust's target feature implies for it, so an incomplete CPUID, such as a hypervisor mask, can no longer select a kernel whose implied instructions the CPU lacks.
 ## [0.12.0](https://github.com/loadingalias/rscrypto/compare/v0.11.0...v0.12.0) - 2026-10-24
 - Move legacy RSAES-PKCS1-v1_5 decryption behind `rscrypto::auth::rsa::expert::RsaPkcs1v15Decrypt`
   and implement implicit rejection from draft-irtf-cfrg-rsa-guidance-10 section 7.
