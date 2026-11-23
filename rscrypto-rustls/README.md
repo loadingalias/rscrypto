@@ -1,28 +1,27 @@
 # rscrypto-rustls
 
-This crate supplies rscrypto-backed TLS 1.3 and QUIC cryptographic
-adapters for rustls 0.24 development, including hybrid key exchange, classical
-authentication, opt-in ML-DSA authentication, and opt-in TLS 1.2 suites. The `quic` module supplies QUIC v1 endpoint
-cryptography for any transport; this crate contains no QUIC transport.
+A cryptographic provider for [rustls](https://crates.io/crates/rustls), backed by
+[rscrypto](https://crates.io/crates/rscrypto). It supplies TLS 1.3, opt-in TLS 1.2, and the QUIC v1
+endpoint cryptography. Hybrid post-quantum key exchange is the default.
 
-The [manifest](Cargo.toml) pins rustls to the crates.io development release
-`=0.24.0-dev.3`. This is not the stable rustls 0.24.0. A later release of this
-crate moves the pin to rustls 0.24.0.
-Consumers must depend on the same rustls version so their configuration types
-match the provider's types.
+rustls composes the protocol, rustls-webpki validates certificate paths, and rustls-pki-types
+supplies the credential types. This crate does the cryptography for them. It contains no QUIC
+transport. Its normal and build dependency graph has no ring, AWS-LC, OpenSSL, or BoringSSL, and no
+C build tool.
 
-The crate requires `std` and the same minimum Rust version as rscrypto.
-Each algorithm feature forwards to the corresponding rscrypto leaf feature.
-Default features enable every TLS 1.3 suite, key-exchange group, and classical
-signature algorithm; `ml-dsa` and the composite `mldsa65-ed25519` and `mldsa65-ecdsa-p256` are opt-in.
-`portable-only` selects rscrypto's portable dispatch for validation.
-`chacha20-rng` adds `replay`, which gives each connection and each shared owner
-its own rscrypto `ChaCha20Rng` stream, so a recorded root seed replays a whole run.
+## Install
 
-rustls provides protocol composition, rustls-webpki provides certificate path
-validation, and rustls-pki-types provides credential types. Their built-in crypto
-backends are disabled. The provider's normal and build dependency graph must
-exclude ring, AWS-LC, OpenSSL, BoringSSL, and C build tools.
+```toml
+[dependencies]
+rscrypto-rustls = "0.1"
+rustls = "=0.24.0-dev.3"
+```
+
+This release pins rustls to the crates.io development release `=0.24.0-dev.3`, not to the stable
+rustls 0.24.0. Use the same rustls version, so that your configuration types match the provider's
+types. A later release moves the pin to rustls 0.24.0.
+
+The crate needs `std` and Rust 1.100.0 or later.
 
 ## Quick start
 
@@ -39,62 +38,60 @@ let config = rustls::ClientConfig::builder(provider)
 # Ok::<(), rustls::Error>(())
 ```
 
-`default_provider()` needs the default features. The sections below describe the other
-constructors, the opt-in algorithms, and caller-selected entropy.
+`default_provider()` needs the default features.
 
-## Implementation inventory
+## Choose a provider
 
-| Operation | rscrypto implementation | Adapter |
+| Constructor | Use it for | Needs |
 | --- | --- | --- |
-| Transcript hash | `Sha256`, `Sha384` | [hash](src/hash.rs) |
-| HMAC | `HmacSha256`, `HmacSha384`; each call creates a keyed state | [hash](src/hash.rs) |
-| TLS 1.2 PRF | RFC 5246 P_hash with a local HMAC state | [hash](src/hash.rs) |
-| HKDF extract and expand | `HkdfSha256`, `HkdfSha384`; imported PRKs and multi-part info | [hash](src/hash.rs) |
-| TLS 1.3 and TLS 1.2 records, QUIC packets | `Aes128Gcm`, `Aes256Gcm`, `ChaCha20Poly1305` | [aead](src/aead.rs) |
-| QUIC header protection | `Aes128HeaderProtection`, `Aes256HeaderProtection`, `ChaCha20HeaderProtection` | [quic](src/quic.rs) |
-| Stateless tickets | `Aes256Gcm`, fresh process-local keys, atomic counter nonces that a fork child does not reuse; rotation on a monotonic or caller clock | [ticket](src/ticket.rs) |
-| Entropy | OS entropy through `getrandom::fill` with the `getrandom` feature, or a caller-selected `SecureRandom` without it; with `chacha20-rng`, one scoped `ChaCha20Rng` stream for each connection and one owned stream for each shared owner; partial primitive inputs clear on failure | [random](src/random.rs), [replay](src/replay.rs), [kx_group](src/kx_group.rs), [sign](src/sign.rs), [client](src/client.rs) |
-| Certificate and handshake verification | ECDSA P-256/P-384, Ed25519, RSA-PSS and RSA PKCS#1 v1.5 | [verify](src/verify.rs) |
-| Key import and signing | rscrypto PKCS#8/SEC1/PKCS#1 codecs; blinded ECDSA, Ed25519, blinded RSA-PSS and RSA PKCS#1 v1.5 | [sign](src/sign.rs) |
-| ML-DSA authentication | Pure ML-DSA-44/65/87 with the empty TLS context; keys prepared once (or compact on request) and hedged signing | [sign](src/sign/mldsa.rs), [verify](src/verify.rs) |
-| Composite ML-DSA authentication | `mldsa65_ed25519_sha512` and `mldsa65_ecdsa_secp256r1_sha512` (draft-ietf-tls-composite-mldsa-00) at provisional codepoints, TLS 1.3 only; keys prepared once (or compact on request) and hedged signing | [sign](src/sign/composite.rs), [verify](src/verify.rs) |
-| QUIC Initial keys and Retry | RFC 9001 AES-128-GCM Initial keys and Retry integrity tags | [quic](src/quic/initial.rs) |
-| QUIC reset and address tokens | HMAC-SHA256 reset tokens; HKDF-SHA256 and AES-256-GCM token keys | [quic](src/quic/token.rs) |
-| QUIC connection IDs | QUIC-LB connection IDs through `QuicLbCipher` (draft-ietf-quic-load-balancers-22) over caller-drawn nonces | [quic](src/quic/lb.rs) |
-| Key exchange | `X25519SecretKey`, `P256EphemeralSecret`, `P384EphemeralSecret`, `MlKem768`, `MlKem1024` | [kx_group](src/kx_group.rs) |
+| `DEFAULT_PROVIDER` | An API that borrows a provider, such as `WebPkiServerVerifier::builder(roots, &rscrypto_rustls::DEFAULT_PROVIDER)` | `getrandom` |
+| `default_provider()` | An owned provider for a rustls config builder, or a provider whose lists you change | `getrandom` |
+| `post_quantum_required_provider()` | A provider that offers only X25519MLKEM768 | `getrandom` |
+| `ClientProvider::new(random)` | A TLS 1.3 client over your own `SecureRandom`, with no OS entropy | — |
 
-`cipher_suite::ALL_CIPHER_SUITES` lists enabled TLS 1.3 suites in preference order.
-AES suites need `hkdf` and `aes-gcm`; ChaCha20 needs `hkdf` and `chacha20poly1305`.
-Hash and primitive adapters remain available with their own leaf features.
-The implementation-inventory test checks each suite's wire identifier, hash,
-key size, TLS and QUIC usage limits, and available operations. Independent
-AWS-LC comparisons and [RFC vectors](tests/vectors/README.md) exercise them.
-CI's `scripts/check/provider.py` checks feature subsets and the provider's own normal/build
-dependency graph; independent crypto peers are dev dependencies.
+`DEFAULT_PROVIDER` and `default_provider()` prefer hybrid key exchange and allow classical fallback.
+`post_quantum_required_provider()` requires hybrid key establishment. It does not require a
+post-quantum certificate chain. No constructor installs a global provider.
 
-rustls owns transcript composition, the TLS key schedule, HKDF labels, record
-framing, and sequence numbers. These adapters perform the selected primitives
-and translate buffers and errors. Record authentication failures and packet
-authentication failures expose no primitive error detail. QUIC callers must
-enforce the reported per-key usage limits. The provider is not FIPS validated.
+`DEFAULT_PROVIDER` and the two functions also need at least one signature verification feature. The
+Cargo features set the available suites, groups, and algorithms. rustls refuses a configuration with no usable suite or
+group.
 
-Secret owners and cleanup boundaries are recorded in the workspace's
-[ownership](../docs/secret-ownership.md#rustls-symmetric-adapters) and
-[lifecycle](../docs/secret-lifecycle.md#rustls-symmetric-adapters) inventories.
-Those contracts do not establish that compiler-made copies are erased.
+`ClientProvider` holds its key-exchange groups, so build it in a `static`. Then pass `provider()` to
+the rustls client builder. It offers the enabled suites, the groups of `kx_group::ALL_KX_GROUPS`
+in the same order, and `verify::SUPPORTED_ALGORITHMS`. It refuses every private key and every
+ticketer, so it cannot authenticate as a client or serve. A client built this way links no signing,
+ticket, or OS entropy code.
 
-`kx_group::ALL_KX_GROUPS` prefers X25519MLKEM768, then X25519, P-256, and
-P-384. Every group requires its primitive feature, and the hybrid requires both
-`x25519` and `ml-kem`; `ALL_KX_GROUPS` and the group constants use OS entropy and
-also require `getrandom`. TLS 1.2 is opt-in; see [TLS 1.2](#tls-12).
-The hybrid follows RFC 10024: ML-KEM precedes X25519 in both shares and the
-shared secret. It validates the ML-KEM encapsulation key before server key
-generation. A well-formed altered ciphertext retains ML-KEM's implicit rejection;
-the TLS Finished check rejects the resulting different secret. The classical
-component is available to rustls's fallback optimization.
+## Features
 
-Four more groups are opt-in; no provider constructor offers them, so add them to
-a provider's `kx_groups` explicitly:
+Each algorithm feature enables the rscrypto feature of the same name.
+
+| Feature | Default | Gives |
+| --- | --- | --- |
+| `sha2`, `hmac`, `hkdf` | yes | Transcript hashes, HMAC, and HKDF |
+| `aes-gcm`, `chacha20poly1305` | yes | Record and QUIC packet protection |
+| `x25519`, `p256-ecdh`, `p384-ecdh`, `ml-kem` | yes | Key-exchange groups |
+| `ecdsa-p256`, `ecdsa-p384`, `ed25519`, `rsa` | yes | Signing and verification |
+| `getrandom` | yes | OS entropy for `DEFAULT_PROVIDER`, the two provider functions, `ALL_KX_GROUPS` and the group constants, `sign::KEY_PROVIDER`, and `ticket::ticketer()` |
+| `ml-dsa` | no | ML-DSA-44, ML-DSA-65, and ML-DSA-87 authentication |
+| `mldsa65-ed25519`, `mldsa65-ecdsa-p256` | no | [Composite ML-DSA](#composite-ml-dsa) authentication, experimental |
+| `chacha20-rng` | no | The `replay` module: one seeded random stream for each connection |
+| `portable-only` | no | rscrypto's portable code only, for validation |
+
+## Cipher suites and key exchange
+
+`cipher_suite::ALL_CIPHER_SUITES` lists the TLS 1.3 suites in preference order:
+TLS13_AES_256_GCM_SHA384, TLS13_AES_128_GCM_SHA256, and TLS13_CHACHA20_POLY1305_SHA256. The AES
+suites need `hkdf` and `aes-gcm`. The ChaCha20 suite needs `hkdf` and `chacha20poly1305`.
+
+`kx_group::ALL_KX_GROUPS` prefers X25519MLKEM768, then X25519, P-256, and P-384. The hybrid needs
+`x25519` and `ml-kem`, and each group needs its own primitive feature. The hybrid follows RFC 10024:
+the ML-KEM part comes first in both shares and in the shared secret. The server validates the ML-KEM
+encapsulation key before it generates its key. rustls can use the classical component for its
+fallback optimization.
+
+Four more groups are opt-in. No constructor offers them, so add them to a provider's `kx_groups`:
 
 | Group | Constant / caller-entropy type | Features | Client / server share, secret (bytes) |
 | --- | --- | --- | --- |
@@ -103,293 +100,244 @@ a provider's `kx_groups` explicitly:
 | MLKEM768 (draft-ietf-tls-mlkem-11) | `MLKEM768` / `MlKem768Group` | `ml-kem` | 1,184 / 1,088, 32 |
 | MLKEM1024 (draft-ietf-tls-mlkem-11) | `MLKEM1024` / `MlKem1024Group` | `ml-kem` | 1,568 / 1,568, 32 |
 
-Unlike X25519MLKEM768, the two NIST-curve hybrids put the uncompressed ECDHE
-share first in both shares and the ECDHE secret first in the shared secret. Each
-group checks exact share lengths, validates the encapsulation key (FIPS 203
-section 7.2) before server entropy, and validates the classical point; these
-failures are `illegal_parameter`. Pure ML-KEM offers no classical component and
-no fallback. Preference order and required-hybrid admission for these groups are
-not decided; `post_quantum_required_provider()` still offers only X25519MLKEM768.
-In-process tests agree with the pinned aws-lc-rs groups in both roles, with
-rustls's hybrid composer over aws-lc-rs and *ring* components (the only
-SecP384r1MLKEM1024 peers in the pinned rustls tree), and through full TLS 1.3
-handshakes; `just test-provider-interop --group NAME` adds OpenSSL 4.0.3 for all
-four and Go 1.27.4 for every group except MLKEM768.
+The two NIST-curve hybrids put the uncompressed ECDHE part first, unlike X25519MLKEM768. Each group
+checks the exact share lengths, the encapsulation key (FIPS 203 section 7.2), and the classical
+point. These failures are `illegal_parameter`. Pure ML-KEM has no classical component and no
+fallback. A malformed share or an entropy failure never gives a successful exchange.
 
-Malformed public shares and entropy failures never return a successful exchange.
-No new timing qualification is claimed.
+## Certificate verification
 
-TLS 1.3 record encryption reads gathered plaintext directly into reserved ciphertext output.
-The provider does not stage plaintext in its output vector. Core rscrypto owns output
-initialization and error cleanup, so the companion keeps its `forbid(unsafe_code)` boundary.
+`verify::SUPPORTED_ALGORITHMS` verifies ECDSA P-256 and P-384, Ed25519, RSA-PSS, and RSA PKCS#1
+v1.5, and ML-DSA and composite ML-DSA when their features are on. TLS 1.3 uses RSA PKCS#1 v1.5 only
+for certificate signatures. A TLS 1.3 ECDSA scheme must match its curve and its hash. Peer RSA keys
+can have 2,048 to 8,192 bits. To build your own TLS signature-scheme mapping with
+`WebPkiSupportedAlgorithms::new`, start from `verify::ALL_ALGORITHMS`, which keeps the certificate
+algorithm catalog.
 
-Use `DEFAULT_PROVIDER` when an API borrows a provider, for example
-`WebPkiServerVerifier::builder(roots, &rscrypto_rustls::DEFAULT_PROVIDER)`.
-This constant avoids constructing an owned provider for a borrowed argument.
-Use `default_provider()` when rustls's explicit `builder` or
-`builder_with_details` needs ownership or when customizing its lists.
-Both forms prefer hybrid key exchange and permit classical
-fallback. `post_quantum_required_provider()` offers only X25519MLKEM768; it
-requires hybrid key establishment, not a post-quantum certificate chain. Neither
-constructor installs a global provider. Cargo features determine the available
-lists. The constant and both constructors require `getrandom`; each also
-requires at least one signature verification feature. Primitive-only feature
-subsets still compile. Rustls rejects configurations without usable suites or groups.
-
-`ClientProvider::new(random)` is a TLS 1.3 client over a caller-owned
-`SecureRandom`, and it does not need `getrandom`. Build it in a `static`, because
-its key-exchange groups live in it, and pass `provider()` to rustls's client
-builder. The provider offers the enabled suites, the groups in
-`ALL_KX_GROUPS`'s order, and `verify::SUPPORTED_ALGORITHMS`. Its key provider
-refuses every private key (clearing owned DER) and its ticketer factory refuses,
-so it supports no client authentication and cannot serve. A client built this way
-links no signing, ticket, or OS-entropy code; `scripts/bench/provider_size.py`
-measures the linked size of a minimal client with each constructor on Linux
-x86-64 and AArch64 (glibc and musl), macOS AArch64, and Windows x86-64.
-`verify::ALL_ALGORITHMS` preserves the certificate algorithm catalog when callers
-build a custom TLS signature-scheme mapping with `WebPkiSupportedAlgorithms::new`.
-
-`verify::PreparedServerVerifier` and `verify::PreparedClientVerifier` prepare the
-configured roots' P-256, P-384 and ML-DSA keys once, when the verifier is built, instead of
-once per issued certificate. Install them with
+`with_root_certificates` builds rustls's `WebPkiServerVerifier` with these algorithms.
+`verify::PreparedServerVerifier` and `verify::PreparedClientVerifier` instead prepare the P-256,
+P-384, and ML-DSA root keys once, when you build the verifier. Install them with
 `ClientConfig::builder(..).dangerous().with_custom_certificate_verifier` and
-`ServerConfig::builder(..).with_client_cert_verifier`. Results, errors, signature
-schemes and configuration hashing match rustls's `WebPkiServerVerifier` and
-mandatory-authentication `WebPkiClientVerifier` for the same roots, with this
-provider's algorithms and no revocation lists; use those verifiers when you need
-CRLs, optional client authentication or custom root hints. The client verifier
-asks rustls's verifier for the exact error when a chain fails, so failures cost
-twice the work. RSA and Ed25519 anchors, and every key a peer sends, are
-imported per signature and never retained. `retained_anchor_bytes()` reports
-the retained key memory on 64-bit targets: 1,425 bytes per P-256 anchor, 2,001 per
-P-384 anchor, and 21,864, 38,888 or 68,200 per ML-DSA-44, 65 or 87 anchor, plus
-hash-map overhead. rustls's own verifiers with `verify::SUPPORTED_ALGORITHMS`
-retain no prepared anchors.
+`ServerConfig::builder(..).with_client_cert_verifier`.
 
-Choose the server verifier by how many handshakes it will verify. On the Intel
-and Graviton4 bench hosts, in runs of 2026-10-22 that predate the ECDSA verification
-changes of rscrypto 0.13, preparing a Debian or Fedora bundle (148 and 146 roots,
-42 and 44 of them P-256 or P-384) costs 4.1–5.1 ms. It saves 84–90 µs per handshake
-only when the chain ends at a P-256 or P-384 root; chains that end at an RSA root
-cost the same with either verifier. The preparation pays for itself after 46–61
-such handshakes. A short-lived client, such as a command that makes a few
-connections, should use rustls's `WebPkiServerVerifier` with
-`verify::SUPPORTED_ALGORITHMS`, which `with_root_certificates` builds: for 1, 3,
-and 10 handshakes it costs 2.3–123 times less than the prepared verifier. A
-long-lived client that reuses one verifier for many handshakes to EC-rooted origins
-should use `PreparedServerVerifier`. Lazy per-anchor preparation would not help the
-short-lived case, because preparing one anchor (about 98–117 µs) costs more than one
-prepared verification saves. The `tls-server-verifier` benchmark measures these
-rows with captured origin chains and the bundles in `tools/provider-bench/fixtures/server-verifier`.
+- Results, errors, signature schemes, and configuration hashing match rustls's
+  `WebPkiServerVerifier`, and its `WebPkiClientVerifier` with mandatory client authentication.
+- They support no revocation lists, no optional client authentication, and no custom root hints.
+  Use rustls's verifiers when you need one of these.
+- When a chain fails, the client verifier asks rustls's verifier for the exact error. A failure
+  therefore costs twice the work.
+- RSA and Ed25519 roots, and each key that a peer sends, are imported for each signature. The
+  verifiers do not keep them.
 
-`sign::KEY_PROVIDER`, which uses OS entropy and requires `getrandom`, accepts PKCS#8 keys, EC SEC1 keys, and RSA PKCS#1 keys,
-bounded to 16 KiB. Its signing keys expose SPKI for `rustls::crypto::Credentials::new`.
-Owned DER input is zeroized on success and rejection, including oversized input.
-Borrowed static DER remains the caller's responsibility; it cannot be cleared
-through an immutable borrow.
-ECDSA and RSA signing draw blinding and RSA-PSS salt from the key provider's
-entropy source; Ed25519 signing does not. RSA signing keys load with 2,048–8,192-bit moduli
-and exponent 65,537, so servers and clients with RSA-2048 certificates work.
-`sign::Provider::new(random).rsa_key_sizes(sign::RsaSigningKeySizes::Bits3072To8192)`
-requires 3,072 bits or more. Certificate and handshake verification accept 2,048–8,192-bit RSA
-peer keys whatever the signing policy. TLS 1.3 ECDSA signature
-schemes match their exact curve and hash, and RSA PKCS#1 v1.5 is available for
-certificate verification only. TLS 1.2 handshake signatures follow TLS 1.2's
-rules; see [TLS 1.2](#tls-12).
+Choose the server verifier by the number of handshakes that it verifies. A short-lived client,
+such as a command that makes a few connections, uses rustls's verifier. A long-lived client that
+verifies many chains to P-256 or P-384 roots uses `PreparedServerVerifier`. In runs of 2026-10-22,
+before the ECDSA verification changes of rscrypto 0.13, preparing a Debian or Fedora root bundle
+cost 4.1–5.1 ms. It saved 84–90 µs for each handshake to an EC root, and it paid for itself after
+46–61 such handshakes. A chain to an RSA root costs the same with either verifier.
 
-Each loaded RSA key keeps idle signing workspaces, at most one per available CPU
-and never more than 64. A workspace is an `RsaSigningWorkspace`, so a signature
-squares the previous blinding pair instead of drawing, inverting, and
-exponentiating a new factor. The pair is redrawn every 32 signatures, after any
-error, and after a process fork, as in AWS-LC, so factors within that epoch are
-correlated. `sign::Provider::new(random).compact()` keeps no workspace; each RSA
-signature then builds one and draws a new factor.
+`retained_anchor_bytes()` reports the memory that a prepared verifier keeps. On 64-bit targets,
+each root keeps the bytes below, plus hash-map overhead:
 
-With `ml-dsa`, RFC 9881 PKCS#8 keys load and are prepared once. Provider tests
-cover the seed and combined seed/key forms; the expanded form also loads through
-the same rscrypto import. The prepared key keeps the transformed secrets and
-public matrix (28,800, 48,256, or 81,024 bytes for ML-DSA-44, 65, or 87), and
-the provider drops the compact key. Signing uses fresh randomness and the empty context required
-by draft-ietf-tls-mldsa-06. Pure ML-DSA and HashML-DSA remain separate; HashML-DSA
-keys and signatures do not enter this TLS profile. All three parameter sets
-support all-ML-DSA certificate chains. Keys are shared by `Arc`, and concurrent
-signers read the same prepared key. `sign::Provider::new(random).compact()` keeps
-compact keys instead. Their secret encodings occupy 2,560, 4,032, or 4,896 bytes;
-the compact owner also retains the public key, for 3,872, 5,984, or 7,488 bytes
-before allocator rounding and provider owners. Each signature then prepares
-temporary heap storage of the sizes above, so it expands the matrix once rather
-than in every rejection attempt, and produces the same signatures more slowly.
-Prepared secrets are cleared before their storage is freed.
-The [resource evidence](../docs/provider-resource-evidence.md) records allocation
-counts, shared and concurrent heap observations, cleanup checks, and unresolved
-whole-call stack paths. Preparation remains bound to the configuration; peer
-keys are not cached.
+| Root key | P-256 | P-384 | ML-DSA-44 | ML-DSA-65 | ML-DSA-87 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Bytes | 1,425 | 2,001 | 21,864 | 38,888 | 68,200 |
 
-For scoped entropy, construct caller-owned static `kx_group::X25519Group`,
-`P256Group`, `P384Group`, `X25519MlKem768Group`, or opt-in group values and `sign::Provider`
-with the same `&'static dyn rustls::crypto::SecureRandom`. Assign them to the
-`CryptoProvider`'s `kx_groups` and `key_provider`, and assign that source to
-`secure_random`. Changing `secure_random` alone does not change existing groups
-or signing keys. Each constructor retains its selected source and propagates
-failures without OS fallback. The source must be cryptographically secure;
-deterministic test sources are unsuitable for production. These constructors
-need only their primitive features; without `getrandom`, the provider links no
-OS entropy source.
+## Keys and signing
 
-With `chacha20-rng`, `replay::ScopedRandom` is a stateless `SecureRandom` for
-these constructors and for `ClientProvider::new`. It draws from the
-`replay::Stream` of the innermost `replay::scope` on the calling thread. Give
-each connection its own stream, such as a `ChaCha20Rng::child` of the endpoint's
-generator. Run each rustls call of that connection inside its scope: the call
-that builds the connection and each call that processes peer data. A replay that
-rebuilds the same generators and makes the same calls in the same order sends
-the same bytes; one connection alone is not promised to replay. Outside a scope,
-`fill` returns `GetRandomFailed`, so a missed scope fails the handshake and
-never draws from the stream of another connection. A shared owner never draws
-from a connection's stream: `ticket::ticketer_with_rng(rng, time)` owns its
-generator, and an RSA key that `sign::Provider::scoped()` loads seeds its own
-blinding generator from 32 bytes of the scope that loads it. `ScopedRandom`
-refuses a draw by a shared owner, so `ticketer_with` and `sign::Provider::new`
-RSA keys over it fail at once. In a process fork child, every copied stream
-refuses to draw. In production, seed the root generator with 32 secret bytes
-from the operating system, once for each process.
+`sign::KEY_PROVIDER` loads PKCS#8 keys, SEC1 EC keys, and PKCS#1 RSA keys of at most 16 KiB. It
+needs `getrandom`. Each signing key gives its SPKI for `rustls::crypto::Credentials::new`. The
+provider clears owned DER input after it accepts or refuses the key, also when the input is too
+large. It cannot clear borrowed static DER, so that stays your responsibility.
 
-`ticket::ticketer_with(random, time)` supplies stateless session tickets with
-keys from a caller-selected `SecureRandom` and rotation timed by a caller's rustls
-`TimeProvider`; pass the same clock as the server configuration. It requires
-`aes-gcm`. `ticket::ticketer()` is the same ticketer over OS entropy and the
-monotonic clock, and also requires `getrandom`. Keys rotate every six hours and
-the advertised lifetime is six hours. Share the returned owner across server
-connections. Each key issues at most 2^24 tickets of at most 16 KiB plaintext.
-Rotation occurs on use: the first use after six hours replaces the key and keeps
-one previous key, and the first use at or after twelve hours erases a key, even
-after a long idle period. Inactive keys can stay resident until that use. A
-caller clock that falls behind delays rotation; it never revives an erased key.
-Process restart replaces ticket keys. A key seals only in the process that
-created it: in a fork child, the first use replaces a copied key with a new one
-and keeps the copy only to open earlier tickets. A missing time reading, encryption failure,
-or failed rotation suppresses tickets without failing TLS; after a failed
-rotation the previous key still opens its tickets. Early data remains off unless
-the caller explicitly enables it.
+`sign::Provider::new(random)` is the same key provider over your own `SecureRandom`.
 
-## Composite ML-DSA
+- **ECDSA and RSA.** Signing draws its blinding and the RSA-PSS salt from the key provider's entropy
+  source. Each ECDSA key signs with one scheme in every TLS version: P-256 with SHA-256, and P-384
+  with SHA-384.
+- **RSA.** Keys load with 2,048- to 8,192-bit moduli and exponent 65,537.
+  `.rsa_key_sizes(sign::RsaSigningKeySizes::Bits3072To8192)` requires 3,072 bits or more. A key
+  signs RSA-PSS when the peer offers it, and otherwise PKCS#1 v1.5. TLS 1.3 never signs PKCS#1 v1.5.
+- **RSA workspaces.** Each RSA key keeps idle signing workspaces, at most one for each available CPU
+  and at most 64. A signature squares the previous blinding pair instead of making a new factor.
+  The pair is drawn again after 32 signatures, after an error, and after a process fork, so the
+  factors in one such period are related.
+- **Ed25519.** Signing uses no entropy.
+- **ML-DSA** (`ml-dsa`). RFC 9881 PKCS#8 keys load in the seed, seed-and-key, and expanded forms.
+  Signing is hedged and uses the empty context of draft-ietf-tls-mldsa-06. Pure ML-DSA only: a
+  HashML-DSA key or signature does not enter this TLS profile. All three parameter sets support
+  all-ML-DSA certificate chains.
 
-With `mldsa65-ed25519` or `mldsa65-ecdsa-p256`, the provider signs and verifies the
-composite ML-DSA schemes of draft-ietf-tls-composite-mldsa-00: `id-MLDSA65-Ed25519-SHA512`
-and `id-MLDSA65-ECDSA-P256-SHA512` from draft-ietf-lamps-pq-composite-sigs-19 (RFC-to-be 10073),
-for CertificateVerify and for certificate signatures in a webpki chain. Both component signatures
-must verify. TLS uses the empty composite context; ML-DSA signing is hedged.
+By default, an ML-DSA key is prepared once when it loads, and concurrent signers share it through an
+`Arc`. `.compact()` keeps no RSA workspace and no prepared ML-DSA key. Each RSA signature then builds
+a workspace and draws a new factor. Each ML-DSA signature prepares temporary storage of the prepared
+size. This saves memory, and signing is slower. Prepared secrets are cleared before their storage is
+freed.
 
-IANA has not assigned the codepoints, so both are provisional values in the private-use range:
-`verify::MLDSA65_ED25519_SHA512` is 0xFE41 and `verify::MLDSA65_ECDSA_SECP256R1_SHA512` is 0xFE40.
-The provider advertises no unassigned value: it neither offers nor accepts 0x090B, which the
-earlier individual draft (draft-reddy-tls-composite-mldsa, revisions -00 through -05) gave the
-Ed25519 composite and which IANA lists as unassigned. A peer interoperates only if it uses the same
-private-use values. Both will change when IANA assigns codepoints. No default or umbrella feature
-enables either scheme; enabling its feature adds the scheme to `verify::SUPPORTED_ALGORITHMS`, so
-a provider built from that catalog then offers it. Neither codepoint is a TLS 1.2 signature algorithm, so TLS 1.2 never
-negotiates them, as section 2 of the draft requires.
+| ML-DSA key memory (bytes) | ML-DSA-44 | ML-DSA-65 | ML-DSA-87 |
+| --- | ---: | ---: | ---: |
+| Prepared | 28,800 | 48,256 | 81,024 |
+| Compact, with the public key | 3,872 | 5,984 | 7,488 |
 
-Composite PKCS#8 keys load and are prepared once, keeping the prepared ML-DSA-65 key (48,256
-bytes) and the traditional key; `sign::Provider::new(random).compact()` keeps the compact key and
-prepares temporary storage per signature. A composite key signs only its composite scheme, never a
-component scheme. A relying party that must not accept stand-alone ML-DSA or a traditional
-signature installs `verify::COMPOSITE_ALGORITHMS` as its signature verification algorithms.
+The [resource evidence](https://github.com/loadingalias/rscrypto/blob/main/docs/provider-resource-evidence.md)
+records the allocations, heap use, and cleanup checks.
 
-Provider tests verify the draft's reference-signed certificates, authenticate a client with one
-through webpki, run server and mutual authentication and root → intermediate → leaf chains for
-both composites, and check TLS 1.2 refusal, component-scheme refusal, and composite-only relying
-parties.
+## Your own entropy source
+
+To choose the entropy source, build static key-exchange groups and a `sign::Provider` over the same
+`&'static dyn rustls::crypto::SecureRandom`. The group types are `kx_group::X25519Group`,
+`P256Group`, `P384Group`, `X25519MlKem768Group`, and the opt-in group types. Put them in the
+`CryptoProvider`'s `kx_groups` and `key_provider`, and set `secure_random` to the same source.
+
+- A change to `secure_random` alone does not change existing groups or signing keys.
+- Each type keeps its source and returns its failures. It never falls back to OS entropy.
+- The source must be cryptographically secure. A deterministic test source is not safe in
+  production.
+- These types need only their primitive features. Without `getrandom`, the provider links no OS
+  entropy source.
+
+### Replayable runs
+
+With `chacha20-rng`, `replay::ScopedRandom` gives each connection its own `ChaCha20Rng` stream, so
+one recorded root seed replays a whole run. Use it as the source of the types above or of
+`ClientProvider::new`.
+
+1. Give each connection its own `replay::Stream`, for example a `ChaCha20Rng::child` of the
+   endpoint's generator.
+2. Run each rustls call of that connection inside its `replay::scope`: the call that builds the
+   connection, and each call that processes peer data.
+3. In production, seed the root generator once in each process, with 32 secret bytes from the
+   operating system.
+
+A replay that rebuilds the same generators and makes the same calls in the same order sends the
+same bytes. One connection alone does not replay.
+
+- Outside a scope, `fill` returns `GetRandomFailed`. A missed scope fails the handshake and never
+  draws from another connection's stream.
+- A shared owner never draws from a connection's stream. `ticket::ticketer_with_rng(rng, time)`
+  owns its generator. An RSA key that `sign::Provider::scoped()` loads seeds its own blinding
+  generator with 32 bytes from the scope that loads it.
+- `ScopedRandom` refuses a draw by a shared owner, so `ticketer_with` and `sign::Provider::new` RSA
+  keys over it fail at once.
+- In a forked child process, each copied stream refuses to draw.
+
+## Session tickets
+
+`ticket::ticketer_with(random, time)` gives stateless session tickets. It takes its keys from your
+`SecureRandom` and its rotation time from your rustls `TimeProvider`. Pass the same clock as the
+server configuration. `ticket::ticketer()` is the same ticketer over OS entropy and the monotonic
+clock. Both need `aes-gcm`, and `ticketer()` also needs `getrandom`. Share the returned ticketer
+across the server's connections.
+
+- Keys rotate every six hours, and the advertised ticket lifetime is six hours.
+- Each key issues at most 2^24 tickets of at most 16 KiB of plaintext.
+- Rotation occurs on use. The first use after six hours replaces the key and keeps one previous
+  key. The first use at or after twelve hours erases a key. Until that use, an inactive key stays
+  in memory.
+- A clock that falls behind delays rotation. It never brings back an erased key.
+- A process restart replaces the ticket keys. In a forked child, the first use replaces a copied
+  key, and the copy only opens earlier tickets.
+- A missing time reading, an encryption failure, or a failed rotation stops tickets but does not
+  fail TLS. After a failed rotation, the previous key still opens its tickets.
+- Early data stays off unless you enable it.
 
 ## TLS 1.2
 
-TLS 1.2 is opt-in: no provider constructor enables it. `cipher_suite::ALL_TLS12_CIPHER_SUITES`
-lists six ECDHE suites in preference order: ECDSA before RSA, each with AES-256-GCM,
-AES-128-GCM, then ChaCha20-Poly1305. There are no CBC, RSA key-transport, or
-finite-field Diffie-Hellman suites. AES suites need `aes-gcm`, ChaCha20 needs
-`chacha20poly1305`, and each suite needs `hmac` or `hkdf` for the PRF. Assign the
-list to an owned provider's `tls12_cipher_suites`, as the suite list's rustdoc example
-shows. `ClientProvider::provider()` returns an owned provider, so a caller-entropy
-client opts in the same way; for client certificates, also set its `key_provider` to
-a static `sign::Provider::new(random)`.
+TLS 1.2 is opt-in: no constructor enables it. `cipher_suite::ALL_TLS12_CIPHER_SUITES` lists six
+ECDHE suites in preference order: ECDSA before RSA, each with AES-256-GCM, AES-128-GCM, and then
+ChaCha20-Poly1305. There are no CBC, RSA key-transport, or finite-field Diffie-Hellman suites. The
+AES suites need `aes-gcm`, the ChaCha20 suites need `chacha20poly1305`, and each suite needs `hmac`
+or `hkdf` for the PRF.
 
-The provider's TLS 1.2 PRF derives a master secret only with the extended master
-secret (RFC 7627). A client or server whose peer omits it aborts with
-`handshake_failure`, as RFC 7627 §5.2 allows, so no session on this provider uses the
-legacy derivation and `require_ems` needs no setting. With `require_ems = true`,
-rustls refuses such a peer one message earlier. A client that also supports TLS 1.3
-rejects a TLS 1.3 server's downgrade marker (RFC 8446 §4.1.3).
+Assign the list to an owned provider's `tls12_cipher_suites`, as the rustdoc example of the list
+shows. `ClientProvider::provider()` returns an owned provider, so you opt in the same way. For client
+certificates, also set its `key_provider` to a static `sign::Provider::new(random)`.
 
-AES-GCM records use RFC 5288 nonces: the 4-byte salt and an 8-byte explicit part,
-which is the key block's explicit bytes XOR the sequence number, as in rustls's other
-providers. ChaCha20-Poly1305 records use RFC 7905 nonces. Record encryption reads
-gathered plaintext directly into the output, as in TLS 1.3, and a record whose
-plaintext would exceed 2^14 bytes is rejected before decryption. rustls derives the
-extended master secret and key block through that PRF.
+- The PRF derives a master secret only with the extended master secret (RFC 7627). A connection
+  whose peer omits it fails with `handshake_failure`, so `require_ems` needs no setting.
+- A client that also supports TLS 1.3 refuses the downgrade marker of a TLS 1.3 server
+  (RFC 8446 section 4.1.3).
+- AES-GCM records use RFC 5288 nonces, and ChaCha20-Poly1305 records use RFC 7905 nonces. A record
+  whose plaintext would be larger than 2^14 bytes is refused before decryption.
+- Key exchange uses X25519, P-256, or P-384. The hybrid groups are TLS 1.3 only, so
+  `post_quantum_required_provider()` refuses every TLS 1.2 handshake. QUIC refuses a provider with a
+  TLS 1.2 suite.
+- An ECDSA key signs only its own scheme, so a peer that offers only the other ECDSA hash gets no
+  signature from it.
+- In TLS 1.2, an ECDSA scheme names a hash, not a curve. For example, an `ecdsa_secp384r1_sha384`
+  signature from a P-256 key verifies, as Go servers send it. TLS 1.3 verification stays bound to
+  the curve.
 
-Key exchange uses X25519, P-256, or P-384. Hybrid groups are TLS 1.3 only, so
-`post_quantum_required_provider()` with TLS 1.2 suites still refuses every TLS 1.2
-handshake. QUIC rejects a provider with any TLS 1.2 suite.
+## Composite ML-DSA
 
-RSA keys sign RSA-PSS when the peer offers it and PKCS#1 v1.5 otherwise, for example
-for a TLS 1.2 server that accepts only PKCS#1 v1.5 client certificates. TLS 1.3 never
-signs PKCS#1 v1.5. Each ECDSA key signs with one scheme in every TLS version: P-256
-with SHA-256, and P-384 with SHA-384, as ring and AWS-LC keys do. A TLS 1.2 peer that
-offers only the other ECDSA hash gets no signature from such a key. Verification
-follows TLS 1.2's rule that an ECDSA scheme names a hash, not a curve: for example, an
-`ecdsa_secp384r1_sha384` signature from a P-256 key, which Go servers produce,
-verifies in TLS 1.2. TLS 1.3 verification stays curve-bound.
+The composite schemes are experimental. With `mldsa65-ed25519` or `mldsa65-ecdsa-p256`, the provider
+signs and verifies the composite ML-DSA schemes of draft-ietf-tls-composite-mldsa-00:
+`id-MLDSA65-Ed25519-SHA512` and `id-MLDSA65-ECDSA-P256-SHA512` of
+draft-ietf-lamps-pq-composite-sigs-19 (RFC-to-be 10073). They serve CertificateVerify and the
+certificate signatures of a webpki chain. Both component signatures must verify. TLS uses the empty
+composite context, and ML-DSA signing is hedged.
 
-Tests run both roles in memory against ring and AWS-LC: all six suites, the three
-groups, session-ID and stateless-ticket resumption, mutual authentication, PKCS#1
-v1.5-only peers, the downgrade marker, and a stripped extended-master-secret request
-or acknowledgement in either role with or without `require_ems`. Record tests compare
-every byte with both peers' TLS 1.2 record layers. `just test-provider-interop
---protocol tls12` runs the suites against the pinned Go and OpenSSL peers.
-
-`just test-provider-bogo` runs the pinned runner's declared TLS 1.2/1.3 profile, including independent EMS refusal cases.
-The shim opts into TLS 1.2; provider constructors retain their TLS 1.3 defaults.
-See the [campaign scope](../scripts/README.md#test-entry-points) for exclusions and diagnostic runs.
+- IANA has not assigned code points. The provider uses provisional private-use values:
+  `verify::MLDSA65_ED25519_SHA512` is 0xFE41, and `verify::MLDSA65_ECDSA_SECP256R1_SHA512` is
+  0xFE40. A peer interoperates only if it uses the same values. Both values change when IANA
+  assigns code points.
+- The provider does not offer or accept 0x090B. The earlier individual draft gave it to the Ed25519
+  composite, and IANA lists it as unassigned.
+- No default feature enables a composite scheme. Its feature adds it to
+  `verify::SUPPORTED_ALGORITHMS`, so a provider built from that catalog offers it.
+- Composite schemes are TLS 1.3 only, as section 2 of the draft requires.
+- A composite PKCS#8 key loads once and keeps the prepared ML-DSA-65 key (48,256 bytes) and the
+  traditional key. `.compact()` works as for ML-DSA.
+- A composite key signs only its composite scheme, never a component scheme. To refuse stand-alone
+  ML-DSA and traditional signatures, install `verify::COMPOSITE_ALGORITHMS` as the signature
+  verification algorithms.
 
 ## QUIC v1
 
-With `aes-gcm` and `hkdf`, the `quic` module supplies the QUIC v1 cryptography
-that rustls's QUIC API leaves to the transport, without `getrandom`. The QUIC-LB
-connection IDs need only `aes-gcm`.
+With `aes-gcm` and `hkdf`, the `quic` module supplies the QUIC v1 cryptography that rustls's QUIC API
+leaves to the transport. It does not need `getrandom`. The QUIC-LB connection IDs need only
+`aes-gcm`.
 
-- `quic::initial_keys(client_dst_connection_id, side)` derives Initial packet
-  and header keys as rustls `quic::Keys`.
-- `quic::retry_integrity_tag` and `quic::is_valid_retry` compute and check Retry
-  integrity tags.
-- `quic::LoadBalancerConfig` issues connection IDs that encode an encrypted
-  server ID, as [draft-ietf-quic-load-balancers-22](https://datatracker.ietf.org/doc/draft-ietf-quic-load-balancers-22/)
-  specifies, and decodes the server ID of an ID. A load balancer that follows the
-  draft routes these IDs with no custom code. The configuration holds the
-  rotation codepoint, the server-ID and nonce lengths, the first-octet form, and
-  a `LoadBalancerKey`. A 16-octet total uses one AES-128 block, and every other
-  total uses the four-pass Feistel network. The transport supplies each nonce,
-  which must not repeat under one key. Decoding refuses the reserved and foreign
-  rotation codepoints and short IDs with one `None`. The no-key form, server-use
-  octets, and unroutable-ID issuance are not implemented.
-- `quic::StatelessResetKey` derives each connection ID's stateless-reset token
-  from a static HMAC-SHA256 key.
-- `quic::AddressTokenKey` seals and opens Retry and NEW_TOKEN address tokens of
-  up to 4 KiB of plaintext. Each token carries a fresh 16-byte nonce, from which
-  HKDF-SHA256 derives a one-use AES-256-GCM key. The transport owns the token
-  contents, expiry, and replay policy.
+- `quic::initial_keys(client_dst_connection_id, side)` derives the Initial packet and header keys as
+  rustls `quic::Keys`.
+- `quic::retry_integrity_tag` and `quic::is_valid_retry` compute and check Retry integrity tags.
+- `quic::LoadBalancerConfig` issues connection IDs that encode an encrypted server ID, as
+  [draft-ietf-quic-load-balancers-22](https://datatracker.ietf.org/doc/draft-ietf-quic-load-balancers-22/)
+  specifies. It also decodes the server ID of an ID. The configuration holds the rotation code
+  point, the server-ID and nonce lengths, the first-octet form, and a `LoadBalancerKey`. The
+  transport supplies each nonce, which must not repeat under one key. Decoding refuses reserved and
+  foreign rotation code points and short IDs with one `None`. The no-key form, server-use octets,
+  and unroutable IDs are not implemented.
+- `quic::StatelessResetKey` derives the stateless-reset token of each connection ID from a static
+  HMAC-SHA256 key.
+- `quic::AddressTokenKey` seals and opens Retry and NEW_TOKEN address tokens of up to 4 KiB of
+  plaintext. Each token has a new 16-byte nonce, and HKDF-SHA256 derives a one-use AES-256-GCM key
+  from it. The transport owns the token contents, the expiry, and the replay policy.
 
-Every key and nonce comes from the `SecureRandom` source passed to the call. A
-failing source fails the call, without OS fallback, and leaves caller data
-unchanged. Rustls's QUIC API supplies the handshake and the packet and header
-protection keys through this provider's `quic` algorithms.
+Each key and nonce comes from the `SecureRandom` that you pass to the call. A failing source fails
+the call, with no OS fallback, and leaves your data unchanged. QUIC callers must enforce the usage
+limit that the provider reports for each key.
 
-## Security and releases
+## Security
 
-Report a suspected vulnerability in this crate through the repository's
-[security policy](../SECURITY.md). The rscrypto [threat model](../THREAT_MODEL.md)
-covers the primitives, not this crate. rustls owns the TLS protocol, rustls-webpki
-owns certificate path validation, and this crate owns the adapters that this README
-describes. Neither crate has had a third-party security audit.
+Report a suspected vulnerability through the
+[security policy](https://github.com/loadingalias/rscrypto/blob/main/SECURITY.md). Do not open a
+public issue.
 
-rscrypto keeps its `v<version>` tags. This crate's tags are
-`rscrypto-rustls-v<version>`.
+- rustls owns the TLS protocol: the transcript, the key schedule, the HKDF labels, record framing,
+  and sequence numbers. rustls-webpki owns certificate path validation. This crate owns the
+  cryptographic adapters.
+- A record or packet authentication failure gives no primitive error detail.
+- The crate forbids unsafe code. The rscrypto
+  [threat model](https://github.com/loadingalias/rscrypto/blob/main/THREAT_MODEL.md) covers the
+  primitives, not this crate.
+- The [ownership](https://github.com/loadingalias/rscrypto/blob/main/docs/secret-ownership.md#rustls-symmetric-adapters)
+  and [lifecycle](https://github.com/loadingalias/rscrypto/blob/main/docs/secret-lifecycle.md#rustls-symmetric-adapters)
+  inventories record the secret owners and their cleanup. They do not show that the compiler's
+  copies are erased.
+- The provider is not FIPS validated. Neither rscrypto nor this crate has had a third-party
+  security audit.
+
+## Versions
+
+This crate's release tags are `rscrypto-rustls-v<version>`. rscrypto's tags are `v<version>`.
