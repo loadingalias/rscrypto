@@ -106,7 +106,7 @@ jobs:
         id: release
         uses: "loadingalias/cargo-rail-action/release@fd41439dfa862939e6928cb98d7e76de580f673c" # v12.0.0
         with:
-          crates: rscrypto # The owner releases rscrypto-rustls 0.1.0 with a local `cargo rail release`; then restore `rscrypto rscrypto-rustls`.
+          crates: rscrypto rscrypto-rustls
           bump: ${{ inputs.bump }}
           dry-run: ${{ inputs.dry-run }}
         env:
