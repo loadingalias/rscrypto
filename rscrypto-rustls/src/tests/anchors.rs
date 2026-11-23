@@ -175,6 +175,78 @@ fn prepared_client_verifier_matches_webpki_results_and_errors() {
   }
 }
 
+#[cfg(feature = "ecdsa-p256")]
+#[test]
+fn supplied_catalog_controls_both_certificate_chains_independently_of_tls_schemes() {
+  use rustls::crypto::WebPkiSupportedAlgorithms;
+
+  let name = ServerName::try_from("localhost").expect("fixture name");
+  let mapping = crate::verify::SUPPORTED_ALGORITHMS.mapping();
+  let p256 = mapping
+    .iter()
+    .find(|entry| entry.0 == Credential::P256.scheme())
+    .expect("P-256 scheme")
+    .1;
+  let catalog = |all| WebPkiSupportedAlgorithms::new(all, mapping).expect("valid TLS mapping");
+  for (kind, catalog, accepts) in [
+    (Credential::P256, catalog(p256), true),
+    (Credential::P256, catalog(&[]), false),
+    #[cfg(feature = "ed25519")]
+    (Credential::Ed25519, catalog(p256), false),
+    #[cfg(any(feature = "mldsa65-ed25519", feature = "mldsa65-ecdsa-p256"))]
+    (Credential::P256, crate::verify::COMPOSITE_ALGORITHMS, false),
+    #[cfg(feature = "mldsa65-ed25519")]
+    (Credential::MlDsa65Ed25519, crate::verify::COMPOSITE_ALGORITHMS, true),
+    #[cfg(feature = "mldsa65-ecdsa-p256")]
+    (Credential::MlDsa65EcdsaP256, crate::verify::COMPOSITE_ALGORITHMS, true),
+  ] {
+    let (_, leaf, _) = credentials(kind);
+    let leaf_identity = identity(leaf);
+    let server_input = ServerIdentity::new(&leaf_identity, &name, VALID);
+    let mut provider = super::tls::provider();
+    provider.signature_verification_algorithms = catalog;
+    let stock_server = WebPkiServerVerifier::builder(roots(kind), &provider)
+      .build()
+      .expect("stock server verifier");
+    let server = PreparedServerVerifier::with_algorithms(roots(kind), catalog).expect("server verifier");
+    let expected = stock_server.verify_identity(&server_input).map(|_| ());
+    assert_eq!(expected.is_ok(), accepts);
+    assert_eq!(server.verify_identity(&server_input).map(|_| ()), expected);
+
+    let stock_client = WebPkiClientVerifier::builder(roots(kind), &provider)
+      .build()
+      .expect("stock client verifier");
+    let client = PreparedClientVerifier::with_algorithms(roots(kind), catalog).expect("client verifier");
+    let expected = client_authentication(kind, Arc::new(stock_client), leaf, VALID);
+    assert_eq!(expected.is_ok(), accepts);
+    assert_eq!(client_authentication(kind, Arc::new(client), leaf, VALID), expected);
+  }
+}
+
+#[cfg(all(feature = "ed25519", feature = "ecdsa-p256"))]
+#[test]
+fn handshake_only_mapping_keeps_prepared_p256_roots() {
+  let mapping = crate::verify::SUPPORTED_ALGORITHMS.mapping();
+  let index = mapping
+    .iter()
+    .position(|entry| entry.0 == Credential::Ed25519.scheme())
+    .expect("Ed25519 scheme");
+  let ed25519 = &mapping[index..=index];
+  let server =
+    PreparedServerVerifier::with_tls_signature_mapping(roots(Credential::P256), ed25519).expect("server verifier");
+  let client =
+    PreparedClientVerifier::with_tls_signature_mapping(roots(Credential::P256), ed25519).expect("client verifier");
+  assert!(server.retained_anchor_bytes() > 0 && client.retained_anchor_bytes() > 0);
+  assert_eq!(server.supported_verify_schemes(), [Credential::Ed25519.scheme()]);
+  assert_eq!(client.supported_verify_schemes(), [Credential::Ed25519.scheme()]);
+  let (_, leaf, _) = credentials(Credential::P256);
+  let leaf = identity(leaf);
+  let name = ServerName::try_from("localhost").expect("fixture name");
+  server
+    .verify_identity(&ServerIdentity::new(&leaf, &name, VALID))
+    .expect("P-256 chain is permitted");
+}
+
 #[test]
 fn ecdsa_and_mldsa_anchor_keys_are_retained() {
   for &kind in CREDENTIALS {

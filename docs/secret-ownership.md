@@ -248,8 +248,9 @@ share the prepared key through `Arc` and return public signatures. With `sign::P
 imported box instead, and each signature prepares a temporary prepared key with
 `prepare_in`. Hedged signing draws its randomness
 into a zeroizing owner before any secret computation.
-`PreparedServerVerifier` and `PreparedClientVerifier` retain prepared P-256, P-384,
-and ML-DSA anchor keys; their storage is public. PKCS#8 input uses rustls-pki-types' borrowed or owned
+`PreparedServerVerifier` and `PreparedClientVerifier` prepare public P-256, P-384 and ML-DSA anchor keys for the default certificate catalog.
+Their `with_algorithms` constructors send the supplied catalog directly to rustls and retain no prepared keys.
+PKCS#8 input uses rustls-pki-types' borrowed or owned
 DER containers. `Provider::load_private_key` immediately wraps the input in
 `zeroize::Zeroizing`, before the size check or any parser call. With
 rustls-pki-types 1.15.1 and zeroize 1.9.1, dropping this guard clears the owned

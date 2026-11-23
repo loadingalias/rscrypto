@@ -93,8 +93,10 @@ same name.
 - `sign::KEY_PROVIDER` loads PKCS#8, SEC1, and PKCS#1 keys. `sign::Provider::new(random).compact()`
   uses less memory and signs more slowly.
 - `with_root_certificates` builds rustls's verifier, which suits a short-lived client.
-  `verify::PreparedServerVerifier` prepares the EC and ML-DSA root keys once, which suits a
-  long-lived client with many handshakes. It supports no revocation lists.
+  `verify::PreparedServerVerifier::new` and `verify::PreparedClientVerifier::new` prepare EC and ML-DSA roots once for repeated handshakes.
+- `with_algorithms` applies the catalog's certificate algorithms to each chain link and its TLS mapping to handshake signatures.
+  Rustls checks these chains directly.
+  Use `with_tls_signature_mapping` to restrict only handshake signatures and keep prepared roots.
 
 ## Limits
 

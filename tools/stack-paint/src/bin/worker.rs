@@ -670,7 +670,6 @@ fn configs(scenario: &Scenario<'_>) -> Result<Configs, Error> {
   let server_roots = anchors(fault != Fault::UntrustedClient)?;
   let time = Arc::new(FixtureTime(if fault == Fault::Expired { EXPIRED } else { TIME }));
   let server_provider = Arc::new(server_provider);
-  let supported = server_provider.signature_verification_algorithms;
   let verifier: Arc<dyn rustls::server::danger::ClientVerifier> = if scenario.webpki {
     Arc::new(
       rustls::server::WebPkiClientVerifier::builder(server_roots, &server_provider)
@@ -679,17 +678,16 @@ fn configs(scenario: &Scenario<'_>) -> Result<Configs, Error> {
     )
   } else {
     Arc::new(
-      rscrypto_rustls::verify::PreparedClientVerifier::with_algorithms(server_roots, supported)
+      rscrypto_rustls::verify::PreparedClientVerifier::new(server_roots)
         .map_err(|error| Error::General(format!("client verifier: {error}")))?,
     )
   };
-  let client_supported = client_provider.signature_verification_algorithms;
   let client = ClientConfig::builder_with_details(Arc::new(client_provider), time.clone());
   let client = if scenario.webpki {
     client.with_root_certificates(client_roots)
   } else {
     client.dangerous().with_custom_certificate_verifier(Arc::new(
-      rscrypto_rustls::verify::PreparedServerVerifier::with_algorithms(client_roots, client_supported)
+      rscrypto_rustls::verify::PreparedServerVerifier::new(client_roots)
         .map_err(|error| Error::General(format!("server verifier: {error}")))?,
     ))
   };

@@ -78,11 +78,9 @@ pub use verifiers::{PreparedClientVerifier, PreparedServerVerifier};
 mod verifiers {
   //! Certificate verifiers that prepare operator-configured trust anchors once.
   //!
-  //! Each verifier wraps rustls's WebPKI verifier for the same roots, this
-  //! crate's algorithms, and no revocation lists. A prepared anchor key is
-  //! prepared from exactly the bytes webpki passes back for that anchor, so
-  //! every result equals the wrapped verifier's. Keys a peer sends are imported
-  //! per signature, as before, and never retained.
+  //! Each verifier wraps rustls's WebPKI verifier for the same roots and algorithm catalog, without revocation lists.
+  //! Anchor preparation uses the exact public key bytes that webpki supplies for each trust anchor.
+  //! Verifiers import peer keys per signature.
 
   use alloc::{borrow::Cow, sync::Arc, vec::Vec};
   use core::hash::Hasher;
@@ -100,71 +98,108 @@ mod verifiers {
 
   use super::implementation::{Anchors, PreparedAlgorithm, prepared_algorithms};
 
-  /// Server-certificate verifier with P-256, P-384 and ML-DSA trust-anchor keys prepared once.
+  // Both peer roles must bind the same catalog to chain and handshake verification.
+  macro_rules! verifier_constructors {
+    ($stock:ident) => {
+      /// Prepare P-256, P-384 and ML-DSA trust anchors for the default algorithm catalog.
+      ///
+      /// # Errors
+      ///
+      /// Returns [`VerifierBuilderError::NoRootAnchors`] for an empty store, as
+      /// the wrapped builder does.
+      pub fn new(roots: Arc<RootCertStore>) -> Result<Self, VerifierBuilderError> {
+        Self::prepare(roots, super::SUPPORTED_ALGORITHMS)
+      }
+
+      /// Prepare anchors for [`ALL_ALGORITHMS`](super::ALL_ALGORITHMS) and use `mapping` for TLS handshake signatures.
+      ///
+      /// # Errors
+      ///
+      /// Rustls rejects an empty mapping or an entry without algorithms with [`Error::ApiMisuse`].
+      /// An empty root store returns [`Error::Other`] containing [`VerifierBuilderError::NoRootAnchors`].
+      pub fn with_tls_signature_mapping(
+        roots: Arc<RootCertStore>,
+        mapping: &'static [(
+          SignatureScheme,
+          &'static [&'static dyn SignatureVerificationAlgorithm],
+        )],
+      ) -> Result<Self, Error> {
+        let supported = WebPkiSupportedAlgorithms::new(super::ALL_ALGORITHMS, mapping)?;
+        Self::prepare(roots, supported).map_err(|error| Error::Other(rustls::error::OtherError::new(error)))
+      }
+
+      fn prepare(
+        roots: Arc<RootCertStore>,
+        supported: WebPkiSupportedAlgorithms,
+      ) -> Result<Self, VerifierBuilderError> {
+        let stock = $stock::builder(Arc::clone(&roots), &verification_provider(supported)).build()?;
+        let keys = Anchors::new(&roots);
+        Ok(Self {
+          stock,
+          prepared: Some(PreparedAnchors { roots, keys }),
+        })
+      }
+
+      /// Use the certificate algorithms and TLS signature schemes in `supported`.
+      ///
+      /// Rustls verifies the chain with the supplied catalog. This constructor retains no prepared anchor keys.
+      /// Use [`Self::new`] for the default catalog or [`Self::with_tls_signature_mapping`] to restrict only handshake signatures.
+      ///
+      /// # Errors
+      ///
+      /// As [`Self::new`].
+      pub fn with_algorithms(
+        roots: Arc<RootCertStore>,
+        supported: WebPkiSupportedAlgorithms,
+      ) -> Result<Self, VerifierBuilderError> {
+        // Rustls exposes the TLS mapping but keeps the certificate algorithms private.
+        let stock = $stock::builder(roots, &verification_provider(supported)).build()?;
+        Ok(Self {
+          stock,
+          prepared: None,
+        })
+      }
+
+      /// Bytes retained by prepared anchor keys and their lookup keys, excluding map overhead.
+      ///
+      /// On 64-bit targets: 1,425 per P-256 anchor, 2,001 per P-384 anchor, and
+      /// 21,864, 38,888 or 68,200 per ML-DSA-44, 65 or 87 anchor.
+      #[must_use]
+      pub const fn retained_anchor_bytes(&self) -> usize {
+        match &self.prepared {
+          Some(anchors) => anchors.keys.retained_bytes(),
+          None => 0,
+        }
+      }
+    };
+  }
+
+  /// Verifies server certificates and can prepare trusted P-256, P-384 and ML-DSA keys.
   ///
-  /// Validation, name checks, errors, signature schemes and configuration
-  /// hashing are those of [`WebPkiServerVerifier`] built from the same roots
-  /// with [`SUPPORTED_ALGORITHMS`](super::SUPPORTED_ALGORITHMS) and without
-  /// revocation lists; use that verifier when revocation checking is needed.
+  /// Validation, name checks, errors, signature schemes and configuration hashing match [`WebPkiServerVerifier`]
+  /// with the same roots, algorithm catalog and no revocation lists.
   /// Install it with `ClientConfig::builder(..).dangerous().with_custom_certificate_verifier`.
   #[derive(Debug)]
   pub struct PreparedServerVerifier {
     stock: WebPkiServerVerifier,
-    roots: Arc<RootCertStore>,
-    anchors: Anchors,
+    prepared: Option<PreparedAnchors>,
   }
 
   impl PreparedServerVerifier {
-    /// Prepare `roots`' P-256, P-384 and ML-DSA anchor keys; other anchors import per use.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`VerifierBuilderError::NoRootAnchors`] for an empty store, as
-    /// the wrapped builder does.
-    pub fn new(roots: Arc<RootCertStore>) -> Result<Self, VerifierBuilderError> {
-      Self::with_algorithms(roots, super::SUPPORTED_ALGORITHMS)
-    }
-
-    /// Like [`Self::new`], with the TLS signature schemes of `supported`.
-    ///
-    /// `supported` must be built from [`ALL_ALGORITHMS`](super::ALL_ALGORITHMS),
-    /// for example `WebPkiSupportedAlgorithms::new(ALL_ALGORITHMS, mapping)`.
-    /// Its mapping selects the advertised and accepted handshake schemes;
-    /// certificate chains always use `ALL_ALGORITHMS`.
-    ///
-    /// # Errors
-    ///
-    /// As [`Self::new`].
-    pub fn with_algorithms(
-      roots: Arc<RootCertStore>,
-      supported: WebPkiSupportedAlgorithms,
-    ) -> Result<Self, VerifierBuilderError> {
-      let stock = WebPkiServerVerifier::builder(Arc::clone(&roots), &verification_provider(supported)).build()?;
-      let anchors = Anchors::new(&roots);
-      Ok(Self { stock, roots, anchors })
-    }
-
-    /// Bytes retained by prepared anchor keys and their lookup keys, excluding map overhead.
-    ///
-    /// On 64-bit targets: 1,425 per P-256 anchor, 2,001 per P-384 anchor, and
-    /// 21,864, 38,888 or 68,200 per ML-DSA-44, 65 or 87 anchor.
-    #[must_use]
-    pub const fn retained_anchor_bytes(&self) -> usize {
-      self.anchors.retained_bytes()
-    }
+    verifier_constructors!(WebPkiServerVerifier);
   }
 
   impl ServerVerifier for PreparedServerVerifier {
     fn verify_identity<'a>(&self, identity: &ServerIdentity<'a, '_>) -> Result<VerifiedIdentity<'a>, Error> {
-      let Identity::X509(certificates) = identity.identity else {
+      let (Some(anchors), Identity::X509(certificates)) = (&self.prepared, identity.identity) else {
         return self.stock.verify_identity(identity);
       };
       // The same public rustls checks the wrapped verifier runs without CRLs.
       let cert = ParsedCertificate::try_from(&certificates.end_entity)?;
-      let algorithms = prepared_algorithms(&self.anchors);
+      let algorithms = prepared_algorithms(&anchors.keys);
       verify_identity_signed_by_trust_anchor(
         &cert,
-        &self.roots,
+        &anchors.roots,
         &certificates.intermediates,
         identity.now,
         &references(&algorithms),
@@ -202,76 +237,39 @@ mod verifiers {
     }
   }
 
-  /// Client-certificate verifier, requiring authentication, with P-256, P-384
-  /// and ML-DSA trust-anchor keys prepared once.
+  /// Requires client certificates and can prepare trusted P-256, P-384 and ML-DSA keys.
   ///
   /// Results, errors, root hints and signature schemes are those of
-  /// [`WebPkiClientVerifier`] built from the same roots with
-  /// [`SUPPORTED_ALGORITHMS`](super::SUPPORTED_ALGORITHMS), mandatory client
-  /// authentication and no revocation lists. A rejected chain is re-verified by
-  /// that verifier so its exact error is returned; that doubles only failure work.
+  /// [`WebPkiClientVerifier`] with the same roots, algorithm catalog, mandatory client authentication and no revocation lists.
+  /// If prepared verification rejects a chain, the stock verifier supplies the exact rustls error.
   /// Install it with `ServerConfig::builder(..).with_client_cert_verifier`.
   #[derive(Debug)]
   pub struct PreparedClientVerifier {
     stock: WebPkiClientVerifier,
-    roots: Arc<RootCertStore>,
-    anchors: Anchors,
+    prepared: Option<PreparedAnchors>,
   }
 
   impl PreparedClientVerifier {
-    /// Prepare `roots`' P-256, P-384 and ML-DSA anchor keys; other anchors import per use.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`VerifierBuilderError::NoRootAnchors`] for an empty store, as
-    /// the wrapped builder does.
-    pub fn new(roots: Arc<RootCertStore>) -> Result<Self, VerifierBuilderError> {
-      Self::with_algorithms(roots, super::SUPPORTED_ALGORITHMS)
-    }
-
-    /// Like [`Self::new`], with the TLS signature schemes of `supported`.
-    ///
-    /// `supported` must be built from [`ALL_ALGORITHMS`](super::ALL_ALGORITHMS),
-    /// for example `WebPkiSupportedAlgorithms::new(ALL_ALGORITHMS, mapping)`.
-    /// Its mapping selects the advertised and accepted handshake schemes;
-    /// certificate chains always use `ALL_ALGORITHMS`.
-    ///
-    /// # Errors
-    ///
-    /// As [`Self::new`].
-    pub fn with_algorithms(
-      roots: Arc<RootCertStore>,
-      supported: WebPkiSupportedAlgorithms,
-    ) -> Result<Self, VerifierBuilderError> {
-      let stock = WebPkiClientVerifier::builder(Arc::clone(&roots), &verification_provider(supported)).build()?;
-      let anchors = Anchors::new(&roots);
-      Ok(Self { stock, roots, anchors })
-    }
-
-    /// Bytes retained by prepared anchor keys and their lookup keys, excluding map overhead.
-    ///
-    /// On 64-bit targets: 1,425 per P-256 anchor, 2,001 per P-384 anchor, and
-    /// 21,864, 38,888 or 68,200 per ML-DSA-44, 65 or 87 anchor.
-    #[must_use]
-    pub const fn retained_anchor_bytes(&self) -> usize {
-      self.anchors.retained_bytes()
-    }
+    verifier_constructors!(WebPkiClientVerifier);
   }
 
   impl ClientVerifier for PreparedClientVerifier {
     fn verify_identity<'a>(&self, identity: &ClientIdentity<'a, '_>) -> Result<VerifiedIdentity<'a>, Error> {
+      let Some(anchors) = &self.prepared else {
+        return self.stock.verify_identity(identity);
+      };
       // The wrapped verifier's own checks: client-auth EKU, no revocation.
       if let Identity::X509(certificates) = identity.identity
         && let Ok(cert) = webpki::EndEntityCert::try_from(&certificates.end_entity)
       {
-        let algorithms = prepared_algorithms(&self.anchors);
+        let algorithms = prepared_algorithms(&anchors.keys);
         let algorithms = references(&algorithms);
         if webpki::PathBuilder::new(
           &certificates.intermediates,
           None,
           &webpki::ExtendedKeyUsage::CLIENT_AUTH,
           &algorithms,
-          &self.roots.roots,
+          &anchors.roots.roots,
         )
         .build(&cert, identity.now)
         .is_ok()
@@ -313,6 +311,12 @@ mod verifiers {
     fn supported_certificate_types(&self) -> &'static [CertificateType] {
       self.stock.supported_certificate_types()
     }
+  }
+
+  #[derive(Debug)]
+  struct PreparedAnchors {
+    roots: Arc<RootCertStore>,
+    keys: Anchors,
   }
 
   fn references<'a>(algorithms: &'a [PreparedAlgorithm<'_>]) -> Vec<&'a dyn SignatureVerificationAlgorithm> {

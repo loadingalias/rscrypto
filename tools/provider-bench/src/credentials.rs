@@ -131,8 +131,11 @@ pub(crate) fn configs(
   let supported = provider.signature_verification_algorithms;
   let verifier: Arc<dyn rustls::server::danger::ClientVerifier> = if prepared {
     Arc::new(
-      rscrypto_rustls::verify::PreparedClientVerifier::with_algorithms(Arc::clone(&roots), supported)
-        .expect("client verifier"),
+      rscrypto_rustls::verify::PreparedClientVerifier::with_tls_signature_mapping(
+        Arc::clone(&roots),
+        supported.mapping(),
+      )
+      .expect("client verifier"),
     )
   } else {
     Arc::new(
@@ -144,7 +147,8 @@ pub(crate) fn configs(
   let client = ClientConfig::builder_with_details(Arc::new(client_provider), Arc::new(FixtureTime));
   let client = if prepared {
     client.dangerous().with_custom_certificate_verifier(Arc::new(
-      rscrypto_rustls::verify::PreparedServerVerifier::with_algorithms(roots, supported).expect("server verifier"),
+      rscrypto_rustls::verify::PreparedServerVerifier::with_tls_signature_mapping(roots, supported.mapping())
+        .expect("server verifier"),
     ))
   } else {
     client.with_root_certificates(roots)
