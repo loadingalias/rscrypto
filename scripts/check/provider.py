@@ -35,6 +35,7 @@ def runtime_matrix():
                                 'p256-ecdh', 'p384-ecdh', 'ecdsa-p256', 'ecdsa-p384', 'ed25519', 'rsa']),
         # Transport-neutral QUIC endpoint keys alone: no TLS bundle or getrandom.
         ('quic-endpoint', ['aes-gcm', 'hkdf']),
+        ('ech-scoped-entropy', ['ech', 'chacha20-rng']),
     ]
 
 
@@ -45,10 +46,15 @@ def feature_matrix(root=ROOT):
         raise ValueError('the provider rust-version must match rscrypto')
     graph = provider['features']
     for feature, edges in graph.items():
+        if feature == 'default':
+            continue
+        primitives = ['hpke', 'x25519', 'aes-gcm'] if feature == 'ech' else [feature]
         # OS entropy is delegated to the same getrandom crate as rscrypto.
-        expected = ['rscrypto/' + feature, *(['dep:getrandom'] if feature == 'getrandom' else [])]
-        if feature != 'default' and (feature not in core['features'] or edges != expected):
-            raise ValueError(f'provider feature {feature} must forward one-to-one to rscrypto')
+        expected = ['rscrypto/' + name for name in primitives]
+        if feature == 'getrandom':
+            expected.append('dep:getrandom')
+        if edges != expected or any(name not in core['features'] for name in primitives):
+            raise ValueError(f'provider feature {feature} must enable {expected}')
     native = sorted(set(graph) - {'default', 'portable-only'})
     return [('empty', []), ('default', ['default']), ('native', native),
             ('all', sorted(graph)),
@@ -182,7 +188,7 @@ def main():
                 selected = [*features, *(['portable-only'] if portable else [])]
                 run(['cargo', '+' + toolchain.channel(), 'nextest', 'run', '--locked',
                      '-p', PACKAGE, '--lib', '--release', *feature_args(selected),
-                     '-E', 'test(tests::profiles::) | test(tests::tls12::) | test(quic::)',
+                     '-E', 'test(tests::profiles::) | test(tests::tls12::) | test(tests::hpke::) | test(quic::)',
                      '--success-output', 'final'])
         return
     if args.mode == 'lint':

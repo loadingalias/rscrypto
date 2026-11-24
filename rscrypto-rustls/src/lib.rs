@@ -24,6 +24,8 @@ pub mod cipher_suite;
 mod client;
 #[cfg(any(feature = "sha2", feature = "hmac", feature = "hkdf"))]
 pub mod hash;
+#[cfg(feature = "ech")]
+pub mod hpke;
 pub mod kx_group;
 #[cfg(any(feature = "aes-gcm", feature = "chacha20poly1305"))]
 pub mod quic;
@@ -189,7 +191,7 @@ impl rustls::crypto::TicketerFactory for TicketerFactory {
 ///
 /// `replay::ScopedRandom` refuses this draw, because its innermost scope
 /// belongs to one connection.
-#[cfg(any(feature = "aes-gcm", feature = "rsa"))]
+#[cfg(any(feature = "aes-gcm", feature = "rsa", feature = "ech"))]
 pub(crate) fn owner_fill(
   random: &dyn rustls::crypto::SecureRandom,
   output: &mut [u8],

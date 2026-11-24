@@ -188,6 +188,12 @@ the caller; working words do not return by value. Compiler copies and registers
 retain their separate artifact-specific qualification limits.
 Transcript contexts can be cloned; they contain public handshake data.
 
+### rustls Encrypted Client Hello
+
+The HPKE suite borrows its entropy source. Each sealer or opener owns one boxed core HPKE context.
+Its debug output hides the secret state. Recipient key generation copies the X25519 private bytes into rustls's clearing `HpkePrivateKey`.
+Opener setup borrows those bytes and uses a temporary clearing `HpkeX25519PrivateKey`. The caller owns plaintext returned by a successful open.
+
 ### rustls key exchange
 
 Each classical active exchange owns an rscrypto `X25519SecretKey`, `P256EphemeralSecret`,

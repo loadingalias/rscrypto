@@ -22,6 +22,7 @@ default = [
   "sha2",
   "hmac",
   "hkdf",
+  "ech",
   "aes-gcm",
   "chacha20poly1305",
   "x25519",
@@ -37,6 +38,7 @@ default = [
 sha2 = ["rscrypto/sha2"]
 hmac = ["rscrypto/hmac"]
 hkdf = ["rscrypto/hkdf"]
+ech = ["rscrypto/hpke", "rscrypto/x25519", "rscrypto/aes-gcm"]
 aes-gcm = ["rscrypto/aes-gcm"]
 chacha20poly1305 = ["rscrypto/chacha20poly1305"]
 x25519 = ["rscrypto/x25519"]

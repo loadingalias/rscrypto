@@ -540,6 +540,14 @@ paths leave ciphertext unchanged. Successful plaintext belongs to rustls or its
 caller. The provider does not clear external record storage after successful use.
 These source contracts add no linked-code, residue, or timing qualification.
 
+### rustls Encrypted Client Hello
+
+Sender setup draws fresh encapsulation entropy. Recipient key generation uses the shared-owner entropy path.
+The core derives the traffic keys directly in the boxed sender or receiver.
+Each context retains its sequence across calls and clears its key state on drop.
+An authentication failure releases no plaintext and preserves the receiver sequence.
+See [HPKE](#hpke) for the primitive's cleanup limits.
+
 ### rustls key exchange
 
 Key generation uses fallible entropy callbacks into the primitives' clearing

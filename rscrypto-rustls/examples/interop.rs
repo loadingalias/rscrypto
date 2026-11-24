@@ -58,13 +58,11 @@ impl<S: SideData> Stream<S> {
   }
 }
 
-fn exchange(
-  connection: Connection<impl SideData, Tcp>,
+fn handshake<S: SideData>(
+  connection: Connection<S, Tcp>,
   socket: TcpStream,
   output: Vec<u8>,
-  client: bool,
-  reverse: bool,
-) -> Result<(), Box<dyn Error>> {
+) -> Result<Stream<S>, Box<dyn Error>> {
   // Accepted sockets can inherit the listener's nonblocking flag on BSD hosts.
   socket.set_nonblocking(false)?;
   socket.set_read_timeout(Some(TIMEOUT))?;
@@ -83,6 +81,47 @@ fn exchange(
   if stream.conn.alpn_protocol().map(AsRef::as_ref) != Some(b"provider-test".as_slice()) {
     return Err(invalid("ALPN mismatch").into());
   }
+  Ok(stream)
+}
+
+fn connect(config: &Arc<ClientConfig>, address: SocketAddr) -> Result<Stream<rustls::ClientSide>, Box<dyn Error>> {
+  let socket = TcpStream::connect_timeout(&address, TIMEOUT)?;
+  let mut output = Vec::new();
+  let connection = config.connect(ServerName::try_from("localhost")?).build(&mut output)?;
+  handshake(connection, socket, output)
+}
+
+#[cfg(feature = "ech")]
+fn client_ech(
+  path: &str,
+  expect_retry: bool,
+  provider: Arc<rustls::crypto::CryptoProvider>,
+  roots: &rustls::RootCertStore,
+  address: SocketAddr,
+) -> Result<rustls::client::EchConfig, Box<dyn Error>> {
+  use rscrypto_rustls::hpke::ALL_SUPPORTED_SUITES;
+  use rustls::client::EchConfig;
+
+  let config = EchConfig::new(std::fs::read(path)?.into(), ALL_SUPPORTED_SUITES)?;
+  if !expect_retry {
+    return Ok(config);
+  }
+  let mut client = ClientConfig::builder(provider)
+    .with_ech(config.into())
+    .with_root_certificates(roots.clone())
+    .with_no_client_auth()?;
+  client.alpn_protocols = vec![b"provider-test".to_vec().into()];
+  let failure = match connect(&Arc::new(client), address) {
+    Err(error) => error.downcast::<rustls::Error>()?,
+    Ok(_) => return Err(invalid("the server accepted the stale ECH key").into()),
+  };
+  match *failure {
+    rustls::Error::RejectedEch(rejection) => Ok(EchConfig::for_retry(rejection, ALL_SUPPORTED_SUITES)?),
+    error => Err(error.into()),
+  }
+}
+
+fn exchange(mut stream: Stream<impl SideData>, client: bool, reverse: bool) -> Result<(), Box<dyn Error>> {
   for round in 0..2 {
     if client {
       stream.conn.write(PAYLOAD.into(), &mut stream.output)?;
@@ -128,9 +167,12 @@ fn exchange(
 
 fn main() -> Result<(), Box<dyn Error>> {
   let args = std::env::args().skip(1).collect::<Vec<_>>();
-  if args.len() != 8 {
+  if args.len() != 8
+    && !(args.first().is_some_and(|role| role == "client")
+      && (args.len() == 9 || (args.len() == 10 && args[9] == "retry")))
+  {
     return Err(
-      invalid("usage: interop client|server ADDRESS FIXTURES CREDENTIAL SUITE GROUP COUNT echo|reverse").into(),
+      invalid("usage: interop client|server ADDRESS FIXTURES CREDENTIAL SUITE GROUP COUNT echo|reverse [ECH_CONFIG_LIST [retry]]").into(),
     );
   }
   let address: SocketAddr = args[1].parse()?;
@@ -147,17 +189,30 @@ fn main() -> Result<(), Box<dyn Error>> {
   let (roots, certificates, key) = credentials(Path::new(&args[2]), &args[3])?;
   match args[0].as_str() {
     "client" => {
-      let mut config = ClientConfig::builder(provider)
+      let builder = ClientConfig::builder(provider.clone());
+      #[cfg(feature = "ech")]
+      let builder = if let Some(path) = args.get(8) {
+        let ech = client_ech(path, args.get(9).is_some(), provider, &roots, address)?;
+        builder.with_ech(ech.into())
+      } else {
+        builder
+      };
+      #[cfg(not(feature = "ech"))]
+      if args.get(8).is_some() {
+        return Err(invalid("ECH requires the ech feature").into());
+      }
+      let mut config = builder
         .with_root_certificates(roots)
         .with_client_auth_cert(certificates, key)?;
       config.alpn_protocols = vec![b"provider-test".to_vec().into()];
       // The provider's TLS 1.2 PRF requires the extended master secret itself.
       let config = Arc::new(config);
       for _ in 0..count {
-        let socket = TcpStream::connect_timeout(&address, TIMEOUT)?;
-        let mut output = Vec::new();
-        let connection = config.connect(ServerName::try_from("localhost")?).build(&mut output)?;
-        exchange(connection, socket, output, true, reverse)?;
+        let stream = connect(&config, address)?;
+        if args.get(8).is_some() && stream.conn.side().ech_status() != rustls::client::EchStatus::Accepted {
+          return Err(invalid("the server did not accept ECH").into());
+        }
+        exchange(stream, true, reverse)?;
       }
     }
     "server" => {
@@ -186,7 +241,8 @@ fn main() -> Result<(), Box<dyn Error>> {
             Err(error) => return Err(error.into()),
           }
         };
-        exchange(Connection::new(config.clone())?, socket, Vec::new(), false, false)?;
+        let stream = handshake(Connection::new(config.clone())?, socket, Vec::new())?;
+        exchange(stream, false, false)?;
       }
     }
     _ => return Err(invalid("expected client or server").into()),

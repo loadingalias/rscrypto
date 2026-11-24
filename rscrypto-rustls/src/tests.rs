@@ -69,6 +69,8 @@ pub(crate) fn key_provider() -> &'static dyn rustls::crypto::KeyProvider {
   }
 }
 
+#[cfg(feature = "ech")]
+mod hpke;
 #[cfg(all(feature = "hkdf", feature = "aes-gcm", feature = "chacha20poly1305"))]
 mod symmetric;
 #[cfg(all(feature = "hkdf", feature = "aes-gcm"))]

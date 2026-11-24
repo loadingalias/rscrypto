@@ -170,7 +170,7 @@ impl SecureRandom for ScopedRandom {
 
 /// Fill `output` from `random` for a shared owner. [`ScopedRandom`] refuses,
 /// because the innermost scope belongs to one connection. Other sources fill.
-#[cfg(any(feature = "aes-gcm", feature = "rsa"))]
+#[cfg(any(feature = "aes-gcm", feature = "rsa", feature = "ech"))]
 pub(crate) fn owner_fill(random: &dyn SecureRandom, output: &mut [u8]) -> Result<(), GetRandomFailed> {
   // Restore the previous flag when the draw returns or unwinds.
   let _restore = core::mem::DropGuard::new(OWNER.replace(true), |previous| OWNER.set(previous));

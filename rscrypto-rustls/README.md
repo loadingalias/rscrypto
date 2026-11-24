@@ -50,6 +50,36 @@ let config = rustls::ClientConfig::builder(provider)
 # Ok::<(), rustls::Error>(())
 ```
 
+## Connect with Encrypted Client Hello
+
+The default build includes the [RFC 9849 client suite](https://www.rfc-editor.org/rfc/rfc9849.html#section-9).
+To offer ECH, get the server's
+`ECHConfigList` from a trusted source, such as its HTTPS DNS record through an encrypted resolver.
+Pass the wire bytes to rustls. Decode base64 first if your resolver returns the DNS presentation form.
+
+```rust
+use std::sync::Arc;
+
+use rscrypto_rustls::hpke::ALL_SUPPORTED_SUITES;
+use rustls::{ClientConfig, RootCertStore, client::EchConfig, pki_types::EchConfigListBytes};
+
+fn ech_client(list: EchConfigListBytes<'_>, roots: RootCertStore) -> Result<ClientConfig, rustls::Error> {
+  let ech = EchConfig::new(list, ALL_SUPPORTED_SUITES)?;
+  ClientConfig::builder(Arc::new(rscrypto_rustls::default_provider()))
+    .with_ech(ech.into())
+    .with_root_certificates(roots)
+    .with_no_client_auth()
+}
+```
+
+Connect with the service's real DNS name. Use this TLS 1.3 configuration only for services covered by that ECH list.
+After the handshake, `connection.side().ech_status()` reports `EchStatus::Accepted` when the server accepts ECH.
+A rejection ends the connection. If rustls returns `Error::RejectedEch(rejection)` with retry configurations,
+use `EchConfig::for_retry(rejection, ALL_SUPPORTED_SUITES)` for a fresh connection. Keep ECH required on that connection.
+
+For a build with custom features, enable `ech` for the adapter and `getrandom` for the suite list.
+For caller-supplied randomness, construct `hpke::X25519HkdfSha256Aes128Gcm::new(random)` and pass a static reference in your suite list.
+
 ## Choose a provider
 
 | Constructor | Use it for |
@@ -64,9 +94,8 @@ provider.
 
 ## Features
 
-The default features enable every TLS 1.3 suite, the default key-exchange groups, the classical
-signature algorithms, and `getrandom`. Each algorithm feature enables the rscrypto feature of the
-same name.
+The default features enable the TLS 1.3 suites, client ECH support, the default key-exchange groups, classical signatures, and `getrandom`.
+The `ech` feature selects rscrypto's `hpke`, `x25519`, and `aes-gcm` features.
 
 | Opt-in feature | Adds |
 | --- | --- |
@@ -80,6 +109,7 @@ same name.
 | Area | Default | Opt-in |
 | --- | --- | --- |
 | TLS 1.3 suites | AES-256-GCM, AES-128-GCM, ChaCha20-Poly1305 | — |
+| Client ECH | X25519, HKDF-SHA256, AES-128-GCM | Supply the server's ECH configuration to offer it |
 | Key exchange | X25519MLKEM768, X25519, P-256, P-384 | SecP256r1MLKEM768, SecP384r1MLKEM1024, MLKEM768, MLKEM1024 |
 | Signatures | ECDSA P-256 and P-384, Ed25519, RSA-PSS, RSA PKCS#1 v1.5 | ML-DSA; composite ML-DSA-65 with Ed25519 or ECDSA P-256 |
 | TLS 1.2 | — | Six ECDHE suites with AES-GCM or ChaCha20-Poly1305 |
@@ -118,6 +148,7 @@ limits.
 | Module | Covers |
 | --- | --- |
 | [`cipher_suite`](https://docs.rs/rscrypto-rustls/latest/rscrypto_rustls/cipher_suite/) | TLS 1.3 and TLS 1.2 suites |
+| [`hpke`](https://docs.rs/rscrypto-rustls/latest/rscrypto_rustls/hpke/) | ECH suites and their entropy source |
 | [`kx_group`](https://docs.rs/rscrypto-rustls/latest/rscrypto_rustls/kx_group/) | Key-exchange groups and their entropy source |
 | [`verify`](https://docs.rs/rscrypto-rustls/latest/rscrypto_rustls/verify/) | Signature algorithms, prepared verifiers, and composite code points |
 | [`sign`](https://docs.rs/rscrypto-rustls/latest/rscrypto_rustls/sign/) | Key loading, signing, and memory use |

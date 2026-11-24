@@ -107,6 +107,24 @@ pub trait Aead {
   /// Observe the algorithm's per-key limit for random nonces.
   /// Store or transmit the returned nonce with the ciphertext for [`decrypt`](Self::decrypt).
   ///
+  /// # Example
+  ///
+  /// ```
+  /// # #[cfg(feature = "xchacha20poly1305")]
+  /// # {
+  /// use rscrypto::{Aead, XChaCha20Poly1305, XChaCha20Poly1305Key};
+  ///
+  /// let key = XChaCha20Poly1305Key::try_random()?;
+  /// let cipher = XChaCha20Poly1305::new(&key);
+  /// let mut sealed = [0u8; 4 + XChaCha20Poly1305::TAG_SIZE];
+  /// let nonce = cipher.seal_random(b"header", b"data", &mut sealed)?;
+  /// let mut opened = [0u8; 4];
+  /// cipher.decrypt(&nonce, b"header", &sealed, &mut opened)?;
+  /// assert_eq!(&opened, b"data");
+  /// # }
+  /// # Ok::<(), Box<dyn std::error::Error>>(())
+  /// ```
+  ///
   /// # Errors
   ///
   /// Returns [`RandomSealError`] if the operating-system entropy source fails,

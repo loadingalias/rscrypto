@@ -44,6 +44,33 @@ The [feature guide](docs/features.md) explains how to select features.
 
 ## Quick start
 
+### Encrypt a message and read it back
+
+```toml
+[dependencies]
+rscrypto = { version = "0.13", features = ["xchacha20poly1305", "getrandom"] }
+```
+
+```rust
+use rscrypto::{Aead, XChaCha20Poly1305, XChaCha20Poly1305Key};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+  let key = XChaCha20Poly1305Key::try_random()?;
+  let cipher = XChaCha20Poly1305::new(&key);
+  let aad = b"record 42";
+  let message = b"meet at noon";
+  let (nonce, ciphertext) = cipher.seal_random_to_vec(aad, message)?;
+  let plaintext = cipher.decrypt_to_vec(&nonce, aad, &ciphertext)?;
+  assert_eq!(plaintext.as_slice(), message);
+  Ok(())
+}
+```
+
+Store the returned nonce with the ciphertext. Keep the key secret.
+Use the same key and associated data to decrypt later. The [runnable example](examples/aead_seal_open.rs) uses this workflow.
+
+### Hash a message
+
 ```rust
 use rscrypto::Sha256;
 
@@ -104,6 +131,7 @@ The `rscrypto-rustls` companion connects these primitives to rustls:
 | Capability | Coverage |
 | --- | --- |
 | TLS | TLS 1.3; opt-in TLS 1.2 ECDHE suites |
+| Client privacy | [Encrypted Client Hello](rscrypto-rustls/README.md#connect-with-encrypted-client-hello) with X25519, HKDF-SHA256, and AES-128-GCM |
 | Key exchange | X25519MLKEM768 hybrid (preferred), X25519, P-256, P-384; opt-in SecP256r1MLKEM768, SecP384r1MLKEM1024, MLKEM768, MLKEM1024 |
 | Authentication | ECDSA P-256/P-384, Ed25519, RSA; opt-in ML-DSA-44/65/87 (`ml-dsa`) and composite ML-DSA-65 with Ed25519 or ECDSA P-256 at provisional draft codepoints (`mldsa65-ed25519`, `mldsa65-ecdsa-p256`) |
 | QUIC | QUIC v1 packet and header protection through rustls's QUIC API; Initial keys, Retry tags, connection IDs, and reset and address tokens for any transport |

@@ -54,6 +54,17 @@ def pem(source, destination, label):
                            f'\n-----END {label}-----\n')
 
 
+def ech_keys(openssl, directory, public_name):
+    """Give the server its key and the client only the advertised ECHConfigList."""
+    key = directory / f'{public_name}.ech.pem'
+    subprocess.run([openssl, 'ech', '-public_name', public_name, '-suite', '0x20,1,1', '-out', str(key)],
+                   check=True, timeout=10)
+    encoded = key.read_bytes().split(b'-----BEGIN ECHCONFIG-----', 1)[1].split(b'-----END ECHCONFIG-----', 1)[0]
+    config = directory / f'{public_name}.ech.bin'
+    config.write_bytes(base64.b64decode(b''.join(encoded.split()), validate=True))
+    return str(key), str(config)
+
+
 def ready(process, prefix, timeout=10):
     """Read unbuffered startup lines without opening a spurious TLS connection."""
     deadline = time.monotonic() + timeout
@@ -92,7 +103,7 @@ def check_results(output, suite, group):
     return [row.split()[-1] for row in rows]
 
 
-def run_case(output, name, server_command, client_commands, *, suite, group, peer, ours_client, address=None):
+def run_case(output, name, server_command, client_commands, *, suite, group, peer, ours_client, address=None, expect_hrr=False):
     directory = output / name
     directory.mkdir()
     (directory / 'commands.json').write_text(json.dumps(
@@ -122,6 +133,8 @@ def run_case(output, name, server_command, client_commands, *, suite, group, pee
                 raise RuntimeError(f'server exited {server.returncode}: {directory}')
             ours = clients[0] if ours_client else server_output
             exported = check_results(ours, suite, group)
+            if expect_hrr and 'Some(FullWithHelloRetryRequest)' not in results(ours)[0]:
+                raise AssertionError('the ECH server did not request a second ClientHello')
             if peer == 'go':
                 theirs = server_output if ours_client else clients[0]
                 rows = results(theirs)
@@ -175,7 +188,7 @@ def main():
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(ROOT / path, destination)
     with (output / 'build.log').open('wb') as log:
-        subprocess.run(['cargo', 'build', '--locked', '-p', 'rscrypto-rustls', '--release', '--features', 'ml-dsa', '--example', 'interop'],
+        subprocess.run(['cargo', 'build', '--locked', '-p', 'rscrypto-rustls', '--release', '--features', 'ml-dsa,ech', '--example', 'interop'],
                        cwd=ROOT, check=True, stdout=log, stderr=subprocess.STDOUT, timeout=300)
         if 'go' in peers:
             subprocess.run(['go', 'build', '-o', str(output / 'go-peer'), 'scripts/test/provider_peer.go'],
@@ -228,10 +241,27 @@ def main():
                 with socket.socket() as available:
                     available.bind(('127.0.0.1', 0))
                     address = f'127.0.0.1:{available.getsockname()[1]}'
-                server = [executables['openssl'], 's_server', '-accept', address, '-rev', '-naccept', '2', '-Verify', '1',
+                server = [executables['openssl'], 's_server', '-accept', address, '-rev', '-Verify', '1',
                           *credentials, *groups, '-serverpref']
-                run_case(output, name, server, [ours], suite=suite, group=group, peer=peer,
+                run_case(output, name, [*server, '-naccept', '2'], [ours], suite=suite, group=group, peer=peer,
                          ours_client=True, address=address)
+                if (kind, suite, group) == ('p256', SUITES[0], 'X25519MLKEM768'):
+                    key, config = ech_keys(executables['openssl'], converted, 'cover.example')
+                    # The first key share forces a HelloRetryRequest. ECH must seal the second
+                    # ClientHello with the next nonce in the same HPKE context.
+                    client = [binary, 'client', '{address}', str(FIXTURES), kind, suite,
+                              'secp384r1+' + group, '2', 'reverse', config]
+                    run_case(output, name + '-ech', [*server, '-naccept', '2', '-ech_key', key], [client], suite=suite,
+                             group=group, peer=peer, ours_client=True, address=address, expect_hrr=True)
+                    completed.append(name + '-ech')
+                    # The fixture certificate authenticates the stale configuration's public name.
+                    # Only the active server supplies the replacement list used by the new connection.
+                    _, stale = ech_keys(executables['openssl'], converted, 'localhost')
+                    retry_server = [*server, '-naccept', '3', '-ech_key', key]
+                    retry_client = [*ours, stale, 'retry']
+                    run_case(output, name + '-ech-rotation', retry_server, [retry_client], suite=suite,
+                             group=group, peer=peer, ours_client=True, address=address)
+                    completed.append(name + '-ech-rotation')
             else:
                 session = str(output / (name + '.session.pem'))
                 client = [executables['openssl'], 's_client', '-connect', '{address}', '-servername', 'localhost',

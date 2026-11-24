@@ -35,12 +35,49 @@
 #![deny(missing_debug_implementations, missing_docs)]
 #![deny(clippy::print_stderr, clippy::print_stdout)]
 #![cfg_attr(
-  feature = "sha2",
+  any(
+    feature = "sha2",
+    all(feature = "alloc", feature = "xchacha20poly1305", feature = "getrandom")
+  ),
+  doc = "# Quick start"
+)]
+#![cfg_attr(
+  all(feature = "alloc", feature = "xchacha20poly1305", feature = "getrandom"),
   doc = r#"
-# Quick Start
+## Encrypt a message and read it back
+
+Enable XChaCha20-Poly1305 and operating-system randomness. The default `std` feature includes `alloc`.
+
+```toml
+[dependencies]
+rscrypto = { version = "0.13", features = ["xchacha20poly1305", "getrandom"] }
+```
 
 ```rust
-use rscrypto::{Digest, Sha256};
+use rscrypto::{Aead, XChaCha20Poly1305, XChaCha20Poly1305Key};
+
+let key = XChaCha20Poly1305Key::try_random()?;
+let cipher = XChaCha20Poly1305::new(&key);
+let aad = b"record 42";
+let message = b"meet at noon";
+let (nonce, ciphertext) = cipher.seal_random_to_vec(aad, message)?;
+let plaintext = cipher.decrypt_to_vec(&nonce, aad, &ciphertext)?;
+assert_eq!(plaintext.as_slice(), message);
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+Store the returned nonce with the ciphertext. Keep the key secret.
+To decrypt later, use the same key and the same associated data (`aad`).
+For caller-owned buffers, see [`Aead::seal_random`].
+"#
+)]
+#![cfg_attr(
+  feature = "sha2",
+  doc = r#"
+## Hash a message
+
+```rust
+use rscrypto::Sha256;
 
 let digest = Sha256::digest(b"hello world");
 
@@ -48,27 +85,6 @@ let mut h = Sha256::new();
 h.update(b"hello ");
 h.update(b"world");
 assert_eq!(h.finalize(), digest);
-```
-"#
-)]
-#![cfg_attr(
-  all(feature = "xchacha20poly1305", feature = "getrandom"),
-  doc = r#"
-# AEAD
-
-```rust
-use rscrypto::{Aead, XChaCha20Poly1305, XChaCha20Poly1305Key};
-
-let key = XChaCha20Poly1305Key::try_random()?;
-let cipher = XChaCha20Poly1305::new(&key);
-
-let mut sealed = [0u8; 4 + XChaCha20Poly1305::TAG_SIZE];
-let nonce = cipher.seal_random(b"aad", b"data", &mut sealed)?;
-
-let mut opened = [0u8; 4];
-cipher.decrypt(&nonce, b"aad", &sealed, &mut opened)?;
-assert_eq!(&opened, b"data");
-# Ok::<(), Box<dyn std::error::Error>>(())
 ```
 "#
 )]
