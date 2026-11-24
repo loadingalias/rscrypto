@@ -14,13 +14,14 @@ use alloc::vec::Vec;
 use rscrypto::{
   CompositeMlDsaError, MlDsa65EcdsaP256, MlDsa65EcdsaP256SecretKey, MlDsa65Ed25519, MlDsa65Ed25519SecretKey,
 };
-use rustls::crypto::{Identity, SignatureScheme};
+use rustls::crypto::{CipherSuite, Identity, KeyProvider, SignatureScheme, SigningKey};
+use rustls::error::{AlertDescription, PeerMisbehaved};
 use rustls::pki_types::{
   AlgorithmIdentifier, CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer, SignatureVerificationAlgorithm,
 };
-use rustls::{ClientConfig, RootCertStore, ServerConfig};
+use rustls::{ClientConfig, Error, RootCertStore, ServerConfig};
 
-use super::tls::{Credential, FixtureTime, configs, connections_from_configs, drive, provider};
+use super::tls::{Credential, FixtureTime, configs, connections_from_configs, drive, provider, transfer};
 use crate::verify;
 
 /// DER contents of 1.3.6.1.5.5.7.6.`arc`.
@@ -573,4 +574,170 @@ fn composite_schemes_stay_out_of_tls12() {
   }
   assert_eq!(verify::MLDSA65_ED25519_SHA512, SignatureScheme(0xfe41));
   assert_eq!(verify::MLDSA65_ECDSA_SECP256R1_SHA512, SignatureScheme(0xfe40));
+}
+
+/// A hostile peer's key: it signs each handshake with its composite scheme,
+/// whatever the peer offers. A hostile server reports `disguise` to its own
+/// stack so that it can select a TLS 1.2 suite.
+#[derive(Debug)]
+struct ForcedComposite {
+  key: alloc::boxed::Box<dyn SigningKey>,
+  disguise: Option<SignatureScheme>,
+}
+
+impl SigningKey for ForcedComposite {
+  fn choose_scheme(&self, _offered: &[SignatureScheme]) -> Option<alloc::boxed::Box<dyn rustls::crypto::Signer>> {
+    let signer = self
+      .key
+      .choose_scheme(&[verify::MLDSA65_ED25519_SHA512, verify::MLDSA65_ECDSA_SECP256R1_SHA512])?;
+    Some(match self.disguise {
+      Some(reported) => alloc::boxed::Box::new(Disguised { signer, reported }),
+      None => signer,
+    })
+  }
+
+  fn public_key(&self) -> Option<rustls::pki_types::SubjectPublicKeyInfoDer<'_>> {
+    self.key.public_key()
+  }
+}
+
+#[derive(Debug)]
+struct Disguised {
+  signer: alloc::boxed::Box<dyn rustls::crypto::Signer>,
+  reported: SignatureScheme,
+}
+
+impl rustls::crypto::Signer for Disguised {
+  fn sign(self: alloc::boxed::Box<Self>, message: &[u8]) -> Result<Vec<u8>, rustls::Error> {
+    self.signer.sign(message)
+  }
+
+  fn scheme(&self) -> SignatureScheme {
+    self.reported
+  }
+}
+
+#[derive(Debug)]
+struct ForcedKeys(Option<SignatureScheme>);
+
+impl KeyProvider for ForcedKeys {
+  fn load_private_key(&self, key: PrivateKeyDer<'static>) -> Result<alloc::boxed::Box<dyn SigningKey>, rustls::Error> {
+    Ok(alloc::boxed::Box::new(ForcedComposite {
+      key: super::key_provider().load_private_key(key)?,
+      disguise: self.0,
+    }))
+  }
+}
+
+/// Set the signature scheme of the ECDHE ServerKeyExchange in `flight`, one
+/// plaintext handshake record, to `scheme`.
+fn relabel_server_key_exchange(flight: &mut [u8], scheme: SignatureScheme) {
+  assert_eq!(flight[0], 22, "handshake record");
+  let record = usize::from(u16::from_be_bytes([flight[3], flight[4]]));
+  assert_eq!(record.strict_add(5), flight.len(), "one record");
+  let mut at = 5_usize;
+  while flight[at] != 12 {
+    let length = u32::from_be_bytes([
+      0,
+      flight[at.strict_add(1)],
+      flight[at.strict_add(2)],
+      flight[at.strict_add(3)],
+    ]);
+    at = at
+      .strict_add(4)
+      .strict_add(usize::try_from(length).expect("handshake length"));
+  }
+  // ECParameters (curve_type and named_curve), then the opaque point.
+  let point = at.strict_add(4).strict_add(3);
+  let signed = point.strict_add(1).strict_add(usize::from(flight[point]));
+  flight[signed..signed.strict_add(2)].copy_from_slice(&scheme.0.to_be_bytes());
+}
+
+#[test]
+fn tls12_composite_signatures_get_illegal_parameter() {
+  // draft-ietf-tls-composite-mldsa-00 section 2: a peer that receives a
+  // composite scheme in a TLS 1.2 ServerKeyExchange or CertificateVerify
+  // aborts with illegal_parameter. Each hostile peer holds a composite
+  // certificate and sends a valid composite signature.
+  static SERVER_KEYS: ForcedKeys = ForcedKeys(Some(SignatureScheme::ECDSA_NISTP256_SHA256));
+  static CLIENT_KEYS: ForcedKeys = ForcedKeys(None);
+  let hostile = |keys: &'static ForcedKeys| {
+    let mut provider = provider();
+    provider.tls13_cipher_suites = alloc::borrow::Cow::Borrowed(&[]);
+    provider.tls12_cipher_suites = alloc::borrow::Cow::Borrowed(crate::cipher_suite::ALL_TLS12_CIPHER_SUITES);
+    provider
+      .tls12_cipher_suites
+      .to_mut()
+      .retain(|suite| suite.common.suite == CipherSuite::TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256);
+    provider.key_provider = keys;
+    provider
+  };
+  // This provider with TLS 1.3 and TLS 1.2, so its offers carry the composite schemes.
+  let ours = || {
+    let mut provider = provider();
+    provider.tls12_cipher_suites = alloc::borrow::Cow::Borrowed(crate::cipher_suite::ALL_TLS12_CIPHER_SUITES);
+    provider
+  };
+  let illegal_parameter = Error::AlertReceived(AlertDescription::IllegalParameter);
+  for kind in Kind::ALL {
+    let (client, mut server) = configs(ours(), hostile(&SERVER_KEYS), kind.credential(), false);
+    server.max_fragment_size = None;
+    let (mut client, mut server) = connections_from_configs(Arc::new(client), Arc::new(server));
+    transfer(&mut client, &mut server, |_, _| Ok(())).expect("ClientHello");
+    relabel_server_key_exchange(&mut server.output, kind.scheme());
+    let error = transfer(&mut server, &mut client, |_, _| Ok(())).expect_err("composite ServerKeyExchange");
+    assert_eq!(
+      error,
+      Error::PeerMisbehaved(PeerMisbehaved::SignedKxWithWrongAlgorithm),
+      "{}",
+      kind.name()
+    );
+    let alert = transfer(&mut client, &mut server, |_, _| Ok(())).expect_err("client alert");
+    assert_eq!(alert, illegal_parameter, "{}", kind.name());
+
+    let (root, leaf, key) = super::tls::credentials(kind.credential());
+    let (server_root, server_leaf, server_key) = super::tls::credentials(Credential::P256);
+    let mut client_roots = RootCertStore::empty();
+    client_roots.add(CertificateDer::from(root.to_vec())).expect("root");
+    let client_roots = Arc::new(client_roots);
+    let server_provider = Arc::new(ours());
+    let verifiers: [Arc<dyn rustls::server::danger::ClientVerifier>; 2] = [
+      Arc::new(
+        rustls::server::WebPkiClientVerifier::builder(Arc::clone(&client_roots), &server_provider)
+          .build()
+          .expect("stock verifier"),
+      ),
+      Arc::new(verify::PreparedClientVerifier::new(client_roots).expect("prepared verifier")),
+    ];
+    for verifier in verifiers {
+      let mut server_roots = RootCertStore::empty();
+      server_roots
+        .add(CertificateDer::from(server_root.to_vec()))
+        .expect("root");
+      let client = ClientConfig::builder_with_details(Arc::new(hostile(&CLIENT_KEYS)), Arc::new(FixtureTime))
+        .with_root_certificates(server_roots)
+        .with_client_auth_cert(
+          Arc::new(Identity::from_cert_chain(vec![CertificateDer::from(leaf.to_vec())]).expect("identity")),
+          PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key.to_vec())),
+        )
+        .expect("client credential");
+      let server = ServerConfig::builder_with_details(Arc::clone(&server_provider), Arc::new(FixtureTime))
+        .with_client_cert_verifier(verifier)
+        .with_single_cert(
+          Arc::new(Identity::from_cert_chain(vec![CertificateDer::from(server_leaf.to_vec())]).expect("identity")),
+          PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(server_key.to_vec())),
+        )
+        .expect("server");
+      let (mut client, mut server) = connections_from_configs(Arc::new(client), Arc::new(server));
+      let error = drive(&mut client, &mut server).expect_err("composite CertificateVerify");
+      assert_eq!(
+        error,
+        Error::PeerMisbehaved(PeerMisbehaved::SignedHandshakeWithUnadvertisedSigScheme),
+        "{}",
+        kind.name()
+      );
+      let alert = transfer(&mut server, &mut client, |_, _| Ok(())).expect_err("server alert");
+      assert_eq!(alert, illegal_parameter, "{}", kind.name());
+    }
+  }
 }
