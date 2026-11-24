@@ -6,6 +6,32 @@ tie is 0.95x through 1.05x. [Benchmarking](../docs/benchmarking.md) gives the me
 rules, and the commands. Earlier campaigns remain in the
 [history of this file](https://github.com/loadingalias/rscrypto/blob/50c708b29905bb3221e7b22b9c7cce8fcc700818/benchmark_results/OVERVIEW.md).
 
+## Short TLS records on Arm
+
+On November 24, 2026, both AES-GCM key sizes tied the fastest peer on M1 Pro and beat it on Graviton4.
+The table gives the time in nanoseconds to seal one TLS 1.3 application record with a 64-byte payload.
+Each cell is the median of three independent run medians. Each host ran both the control at `8411e644` and the changed build.
+
+| Host | Cipher | rscrypto before | rscrypto after | AWS-LC | ring | Fastest peer / rscrypto after |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| Apple M1 Pro | AES-128-GCM | 181.9 | 97.0 | 92.3 | 94.7 | 0.952x |
+| Apple M1 Pro | AES-256-GCM | 182.8 | 102.1 | 101.8 | 99.2 | 0.972x |
+| Graviton4 | AES-128-GCM | 179.5 | 98.1 | 138.2 | 144.0 | 1.408x |
+| Graviton4 | AES-256-GCM | 184.4 | 97.8 | 145.0 | 145.2 | 1.483x |
+
+Opening a 64-byte record took 62.9 ns and 65.3 ns on M1 Pro for AES-128 and AES-256, respectively.
+On Graviton4, opening took 104.5 ns and 109.6 ns. Both hosts beat the fastest peer for both key sizes.
+For 16 KiB records, rscrypto seal and open times fell by 2.3% to 5.5% on M1 Pro.
+All four Graviton4 times stayed within 1% of their controls.
+
+The harness checks each provider's output before timing. Each run used 20 samples, a 100 ms warmup, and 400 ms of measurement per case.
+The record harness compares rscrypto, AWS-LC, and ring through rustls. The Graviton4 host had OpenSSL 4.0.3.
+[Record benchmark](../tools/provider-bench/benches/tls_connections.rs).
+
+```sh
+just bench tls_connections openssl=false 'filter=^tls13/record-(seal|open)/AES(128-GCM-SHA256|256-GCM-SHA384)/(64|16384)/[^/]+$'
+```
+
 ## November 24, 2026 performance measurements
 
 ### TLS 1.3 and QUIC
@@ -36,7 +62,8 @@ Graviton4 previously measured 392 µs and 418 µs.
 The two campaigns used different builds and hosts.
 [Historical provider measurements](https://github.com/loadingalias/rscrypto/blob/50c708b29905bb3221e7b22b9c7cce8fcc700818/benchmark_results/OVERVIEW.md#tls-13-and-quic-through-rscrypto-rustls).
 
-Graviton4 sealed a 64-byte TLS record in 179 ns. AWS-LC took 137 ns.
+Before the short-record change, Graviton4 sealed a 64-byte TLS record in 179 ns. AWS-LC took 137 ns.
+The follow-up repeated this measurement on both Arm hosts. [Short TLS records on Arm](#short-tls-records-on-arm).
 OpenSSL transferred 1 MiB on Graviton4 in 415 µs. The rscrypto provider took 447 µs.
 
 ### IBM Z ECDH

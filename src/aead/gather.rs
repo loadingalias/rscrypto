@@ -650,6 +650,28 @@ impl Drop for Output<'_> {
   }
 }
 
+/// Consume one mask batch across all input spans.
+#[cfg(all(target_arch = "aarch64", target_endian = "little", feature = "aes-gcm"))]
+#[inline(always)]
+pub(super) fn xor_keystream<'input, 'output>(
+  plaintext: impl IntoIterator<Item = &'input [u8]>,
+  out: &'output mut [MaybeUninit<u8>],
+  mask: &[u8],
+) -> Result<&'output mut [u8], SealError> {
+  let mut output = Output {
+    storage: out,
+    written: 0,
+    complete: false,
+  };
+  let mut mask = mask.get(..output.storage.len()).ok_or_else(SealError::buffer)?;
+  for span in plaintext {
+    let (prefix, rest) = mask.split_at_checked(span.len()).ok_or_else(SealError::buffer)?;
+    output.write_xor(span, prefix);
+    mask = rest;
+  }
+  output.finish()
+}
+
 /// Carry unused keystream across arbitrary input slices. Only public lengths and
 /// counters control iteration; plaintext is read once and ciphertext is written once.
 pub(super) fn xor<'input, 'output, const BLOCK: usize, const BATCH: usize>(

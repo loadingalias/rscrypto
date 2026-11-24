@@ -491,6 +491,8 @@ message. Plaintext never enters the output allocation. The core output guard cle
 reserved ciphertext region on a slice-length mismatch or iterator unwind. Its keystream owner
 clears on return or unwind. A sealing failure also clears the provider's appended bytes and
 restores the output vector's original length.
+The Arm AES-GCM short path accepts 1 through 96 plaintext bytes and up to 16 AAD bytes.
+Its 128-byte mask owner clears on return or unwind.
 The native little-endian AArch64 ChaCha20 path retains bounded public span metadata and
 uses the existing integrated cipher/authenticator. It reads short seams into registers,
 without a plaintext staging allocation. Its `SealData` key copy follows the existing tag

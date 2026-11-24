@@ -120,6 +120,8 @@ the unused bytes of a partial block. The output guard owns initialization progre
 plaintext buffer. The initialized-output and spare-capacity APIs return the same ciphertext and
 detached tag. The allocating append helper preserves existing output and extends its length only
 after checking that the returned initialized slice covers its complete reserved tail.
+On little-endian AArch64 with AES and PMULL, one 128-byte `ZeroizingBytes` owner holds the short gather's tag mask and payload masks.
+The GHASH window contains padded AAD, ciphertext, and their bit lengths.
 
 Segmented decryption borrows the caller's segments exclusively and retains no key. Its
 operation-local `ZeroizingBytes` owner holds the one block that crosses a segment boundary, first

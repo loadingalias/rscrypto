@@ -866,6 +866,30 @@ impl<K: AesKey> Gcm<K> {
     out: &'output mut [core::mem::MaybeUninit<u8>],
   ) -> Result<([u8; TAG_SIZE], &'output mut [u8]), SealError> {
     validate_gather_lengths(aad.len(), out.len())?;
+    #[cfg(all(target_arch = "aarch64", target_endian = "little"))]
+    if (1..=96).contains(&out.len())
+      && aad.len() <= 16
+      && matches!(
+        self.backend,
+        AeadBackend::Aarch64AesPmull | AeadBackend::Aarch64Sve2AesPmull
+      )
+    {
+      let lengths = super::seal_bit_lengths(aad.len(), out.len())?.to_be_bits_block();
+      // Encrypt the tag mask and all payload counters in one batch.
+      let mut masks = crate::secret::ZeroizingBytes::<128>::zeroed();
+      let count = out.len().div_ceil(16).strict_add(1);
+      let blocks = &mut masks.as_mut_array().as_chunks_mut::<16>().0[..count];
+      for (counter, block) in (1u32..).zip(blocks.iter_mut()) {
+        block[..12].copy_from_slice(nonce.as_bytes());
+        block[12..].copy_from_slice(&counter.to_be_bytes());
+      }
+      self.ek.encrypt_blocks_ecb(blocks);
+      let (tag_mask, stream) = masks.as_array().split_first_chunk::<16>().expect("one tag block");
+      let ciphertext = super::gather::xor_keystream(plaintext, out, stream)?;
+      // SAFETY: the backend establishes AES, PMULL, and NEON. The length check reserves the final GHASH lane.
+      let tag = unsafe { short_gather_tag(self.h_powers_8(), aad, ciphertext, lengths, tag_mask) };
+      return Ok((tag, ciphertext));
+    }
     #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     if self.backend == AeadBackend::X86VaesVpclmul && !out.is_empty() {
       let length_block = super::seal_bit_lengths(aad.len(), out.len())?.to_be_bits_block();
@@ -1118,6 +1142,81 @@ impl OpenState {
   fn advance(&mut self, len: usize) {
     let blocks = u32::try_from(len.strict_div(16)).expect("validated GCM length fits the 32-bit counter");
     self.counter = self.counter.wrapping_add(blocks);
+  }
+}
+
+/// Fold a short record directly from its complete ciphertext blocks and padded ends.
+///
+/// # Safety
+/// The caller must establish AES, PMULL, and NEON. AAD fits one block and ciphertext has one through 96 bytes.
+#[cfg(all(target_arch = "aarch64", target_endian = "little"))]
+#[target_feature(enable = "aes,neon")]
+#[inline(never)]
+unsafe fn short_gather_tag(
+  powers: &[u128; 8],
+  aad: &[u8],
+  ciphertext: &[u8],
+  lengths: [u8; 16],
+  mask: &[u8; 16],
+) -> [u8; TAG_SIZE] {
+  use core::arch::aarch64::{uint8x16_t, vdupq_n_u8, vld1q_u8};
+
+  #[inline]
+  fn pad(bytes: &[u8]) -> [u8; 16] {
+    let mut block = [0u8; 16];
+    match bytes {
+      [byte] => block[0] = *byte,
+      _ => block[..bytes.len()].copy_from_slice(bytes),
+    }
+    block
+  }
+
+  // Leave one through 16 bytes for the final ciphertext block, including an aligned last block.
+  let prefix_len = ciphertext.len().strict_sub(1) & !15;
+  let (prefix, last) = ciphertext.split_at(prefix_len);
+  let aad = pad(aad);
+  let last = pad(last);
+  // SAFETY: each lane loads 16 initialized bytes. Leading zero lanes preserve GHASH's initial zero.
+  unsafe {
+    /// # Safety
+    /// The caller must establish AES, PMULL, and NEON. The prefix has at most five complete blocks.
+    #[target_feature(enable = "aes,neon")]
+    #[inline]
+    unsafe fn fold<const N: usize>(
+      powers: &[u128; 8],
+      aad: uint8x16_t,
+      prefix: [&[u8; 16]; N],
+      last: uint8x16_t,
+      lengths: uint8x16_t,
+    ) -> u128 {
+      let mut lanes = [vdupq_n_u8(0); 8];
+      lanes[5usize.strict_sub(N)] = aad;
+      for (i, block) in prefix.into_iter().enumerate() {
+        // SAFETY: each input is a complete initialized block.
+        lanes[6usize.strict_sub(N).strict_add(i)] = unsafe { vld1q_u8(block.as_ptr()) };
+      }
+      lanes[6] = last;
+      lanes[7] = lengths;
+      // SAFETY: this hardware leaf runs only after the caller establishes PMULL.
+      unsafe { polyval::aarch64_aggregate_8blocks_be_lanes_inline(0, powers, &lanes) }
+    }
+
+    let powers = core::hint::black_box(powers);
+    let aad = vld1q_u8(aad.as_ptr());
+    let last = vld1q_u8(last.as_ptr());
+    let lengths = vld1q_u8(lengths.as_ptr());
+    let acc = GhashAccumulator(match prefix.as_chunks::<16>().0 {
+      [] => fold(powers, aad, [], last, lengths),
+      [a] => fold(powers, aad, [a], last, lengths),
+      [a, b] => fold(powers, aad, [a, b], last, lengths),
+      [a, b, c] => fold(powers, aad, [a, b, c], last, lengths),
+      [a, b, c, d] => fold(powers, aad, [a, b, c, d], last, lengths),
+      rest => {
+        let [a, b, c, d, e]: &[_; 5] = rest.try_into().expect("short GCM ciphertext fits six blocks");
+        fold(powers, aad, [a, b, c, d, e], last, lengths)
+      }
+    });
+    (acc.0 ^ u128::from_be_bytes(*mask)).to_be_bytes()
   }
 }
 

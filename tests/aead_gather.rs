@@ -239,6 +239,26 @@ fn byte_chunks_cross_cipher_and_batch_boundaries() {
   );
 }
 
+#[test]
+#[cfg(feature = "aes-gcm")]
+fn short_gcm_gathers_pad_aad_and_ciphertext_separately() {
+  let key = [0x6d; 16];
+  let nonce = [0x24; 12];
+  let cipher = rscrypto::Aes128Gcm::new(&rscrypto::Aes128GcmKey::from_bytes(key));
+  let reference = aes_gcm::Aes128Gcm::new(&Array(key));
+  let input: [u8; 97] = core::array::from_fn(|i| i.to_le_bytes()[0]);
+  for aad_len in [0, 1, 5, 15, 16, 17] {
+    let aad = &input[..aad_len];
+    for len in [
+      0, 1, 15, 16, 17, 31, 32, 33, 47, 48, 49, 63, 64, 65, 79, 80, 81, 95, 96, 97,
+    ] {
+      let plaintext = &input[..len];
+      let expected = oracle(&reference, &nonce, aad, plaintext);
+      check(&cipher, nonce, aad, plaintext, &[0, 1, 15, 16, 39, 64], &expected);
+    }
+  }
+}
+
 fn leading_span_and_short_tail<C: AeadGather<Nonce = Nonce96>, O>(cipher: &C, oracle_cipher: &O, every_through: usize)
 where
   O: aes_gcm::aead::Aead + aes_gcm::aead::AeadCore<NonceSize = aes_gcm::aead::consts::U12>,

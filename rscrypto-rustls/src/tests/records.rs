@@ -163,7 +163,7 @@ fn record_framing_fragmentation_and_failure_match_aws_lc() {
       .expect("matching suite")
       .aead_alg;
     for seq in [0, 1, u64::MAX.strict_sub(1)] {
-      for len in [0, 1, 31, 16_384] {
+      for len in [0, 1, 31, 64, 16_384] {
         let plain = vec![0xa3; len];
         let (a, b) = plain.split_at(len / 2);
         let chunks = [a, b];
@@ -179,6 +179,16 @@ fn record_framing_fragmentation_and_failure_match_aws_lc() {
         let mut expected = Vec::new();
         encrypt.encrypt(message(), seq, &mut actual).expect("encrypt");
         peer.encrypt(message(), seq, &mut expected).expect("peer encrypt");
+        let mut contiguous = Vec::new();
+        let single = Record {
+          payload: plain.as_slice().into(),
+          ..message()
+        };
+        ours
+          .encrypter(key(), Iv::from([0x71; 12]))
+          .encrypt(single, seq, &mut contiguous)
+          .expect("contiguous record");
+        assert_eq!(contiguous, expected);
         assert_eq!(actual[0], 0xa5, "encryption must preserve existing output");
         assert_eq!(actual[1..], expected);
         assert_eq!(expected.len(), size.strict_add(5));
@@ -244,6 +254,15 @@ fn record_length_and_invalid_key_reject_before_releasing_plaintext() {
   ));
   assert_eq!(out, [0xa5; 3]);
   let mut encrypt = AES_256_GCM.encrypter(AeadKey::from([0; 32]), Iv::from([0; 12]));
+  let mut valid = Vec::new();
+  encrypt.encrypt(message(), 0, &mut valid).expect("valid 12-byte IV");
+  let mut short_iv = AES_256_GCM.decrypter(AeadKey::from([0; 32]), Iv::new(&[0; 8]).expect("IV"));
+  let inbound = Record::new(
+    ContentType::ApplicationData,
+    EncodableVersion::Legacy(ProtocolVersion::TLSv1_2),
+    InboundOpaque(&mut valid[5..]),
+  );
+  assert!(matches!(short_iv.decrypt(inbound, 0), Err(Error::DecryptError)));
   let large = vec![0; 16_385];
   let large_message = Record {
     typ: ContentType::ApplicationData,

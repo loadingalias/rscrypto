@@ -462,11 +462,13 @@ impl RecordKey {
 impl RecordEncrypter for RecordKey {
   fn encrypt(&mut self, msg: Record<OutboundPlain<'_>>, seq: u64, out: &mut Vec<u8>) -> Result<(), Error> {
     // rustls fragments records at 2^14 bytes. Reject misuse before writing.
-    if msg.payload.len() > MAX_FRAGMENT_LEN || self.cipher.0.is_none() {
+    let payload_len = msg.payload.len();
+    if payload_len > MAX_FRAGMENT_LEN || self.cipher.0.is_none() {
       return Err(Error::EncryptError);
     }
-    let nonce = Nonce::new(&self.iv, seq).to_array().map_err(|_| Error::EncryptError)?;
-    let total_len = self.encrypted_payload_len(msg.payload.len());
+    let iv = self.iv.as_ref().try_into().map_err(|_| Error::EncryptError)?;
+    let nonce = sequence_nonce(iv, seq);
+    let total_len = self.encrypted_payload_len(payload_len);
     let header = encode_record_header(
       ContentType::ApplicationData,
       msg.version,
@@ -477,15 +479,22 @@ impl RecordEncrypter for RecordKey {
     // directly from the payload chunks and never enters the output allocation.
     out.reserve(header.len().strict_add(total_len));
     out.extend_from_slice(&header);
-    let plaintext_len = msg.payload.len().strict_add(1);
+    let plaintext_len = payload_len.strict_add(1);
     let content_type = [u8::from(msg.typ)];
-    match self.cipher.seal_gather(
-      nonce,
-      &make_tls13_aad(ContentType::ApplicationData, msg.version.encode(), total_len),
-      msg.payload.chunks().chain(core::iter::once(content_type.as_slice())),
-      plaintext_len,
-      out,
-    ) {
+    let sealed = if let Some(first) = msg.payload.single_chunk() {
+      self
+        .cipher
+        .seal_gather(nonce, &header, [first, content_type.as_slice()], plaintext_len, out)
+    } else {
+      self.cipher.seal_gather(
+        nonce,
+        &header,
+        msg.payload.chunks().chain(core::iter::once(content_type.as_slice())),
+        plaintext_len,
+        out,
+      )
+    };
+    match sealed {
       Ok(tag) => {
         out.extend_from_slice(&tag);
         Ok(())
@@ -506,7 +515,8 @@ impl RecordEncrypter for RecordKey {
 impl RecordDecrypter for RecordKey {
   fn decrypt<'a>(&mut self, mut msg: Record<InboundOpaque<'a>>, seq: u64) -> Result<Record<&'a [u8]>, Error> {
     let aad = make_tls13_aad(msg.typ, msg.version.encode(), msg.payload.len());
-    let nonce = Nonce::new(&self.iv, seq).to_array().map_err(|_| Error::DecryptError)?;
+    let iv = self.iv.as_ref().try_into().map_err(|_| Error::DecryptError)?;
+    let nonce = sequence_nonce(iv, seq);
     let plain_len = self.cipher.open(nonce, &aad, &mut msg.payload)?.len();
     msg.payload.truncate(plain_len);
     msg.into_tls13_unpadded_record()
@@ -549,16 +559,15 @@ impl Tls12RecordKey {
       })
     }
   }
+}
 
-  /// The nonce base with the big-endian sequence number XORed into its last
-  /// eight bytes (RFC 7905 §2, and the GCM sender construction above).
-  fn sequence_nonce(&self, seq: u64) -> [u8; NONCE_LEN] {
-    let mut nonce = self.nonce;
-    for (byte, seq) in nonce[NONCE_LEN.strict_sub(8)..].iter_mut().zip(seq.to_be_bytes()) {
-      *byte ^= seq;
-    }
-    nonce
+/// XOR the big-endian record sequence number into the last eight bytes of a 96-bit nonce base.
+#[inline]
+fn sequence_nonce(mut nonce: [u8; NONCE_LEN], seq: u64) -> [u8; NONCE_LEN] {
+  for (byte, seq) in nonce[NONCE_LEN.strict_sub(8)..].iter_mut().zip(seq.to_be_bytes()) {
+    *byte ^= seq;
   }
+  nonce
 }
 
 impl RecordEncrypter for Tls12RecordKey {
@@ -568,7 +577,7 @@ impl RecordEncrypter for Tls12RecordKey {
     if plaintext_len > MAX_FRAGMENT_LEN || self.cipher.0.is_none() {
       return Err(Error::EncryptError);
     }
-    let nonce = self.sequence_nonce(seq);
+    let nonce = sequence_nonce(self.nonce, seq);
     let total_len = self.encrypted_payload_len(plaintext_len);
     let header = encode_record_header(
       msg.typ,
@@ -622,7 +631,7 @@ impl RecordDecrypter for Tls12RecordKey {
     let aad = make_tls12_aad(seq, msg.typ, msg.version.version(), plain_len);
     let (explicit, body) = msg.payload.split_at_mut(explicit_len);
     let nonce = if explicit_len == 0 {
-      self.sequence_nonce(seq)
+      sequence_nonce(self.nonce, seq)
     } else {
       let mut nonce = self.nonce;
       nonce[NONCE_LEN.strict_sub(explicit_len)..].copy_from_slice(explicit);
