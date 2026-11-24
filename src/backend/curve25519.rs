@@ -220,36 +220,19 @@ impl FieldElement {
   #[must_use]
   #[cfg(feature = "ed25519")]
   pub(crate) fn from_bytes(bytes: &[u8; 32]) -> Option<Self> {
-    let mut acc = 0u128;
-    let mut acc_bits = 0u32;
-    let mut byte_iter = bytes.iter().copied();
-    let mut limbs = [0u64; FIELD_LIMBS];
-
-    for limb in limbs.iter_mut() {
-      while acc_bits < RADIX_BITS {
-        if let Some(byte) = byte_iter.next() {
-          acc |= u128::from(byte) << acc_bits;
-          acc_bits = acc_bits.wrapping_add(8);
-        } else {
-          break;
-        }
-      }
-
-      *limb = u64::try_from(acc & u128::from(MASK51)).expect("masked field limb fits u64");
-      acc >>= RADIX_BITS;
-      acc_bits = acc_bits.wrapping_sub(RADIX_BITS);
-    }
-
-    if acc != 0 || byte_iter.next().is_some() {
+    // Bit 255 and values at least 2^255 - 19 are invalid in a public Edwards coordinate.
+    let words: &[[u8; 8]; 4] = bytes.as_chunks::<8>().0.try_into().expect("four field words");
+    let [w0, w1, w2, w3] = words.map(u64::from_le_bytes);
+    if w3 >> 63 != 0 || (w3 == u64::MAX >> 1 && w1 & w2 == u64::MAX && w0 >= u64::MAX - 18) {
       return None;
     }
-
-    let element = Self(limbs).normalize();
-    if element.to_bytes() == *bytes {
-      Some(element)
-    } else {
-      None
-    }
+    Some(Self([
+      w0 & MASK51,
+      ((w0 >> 51) | (w1 << 13)) & MASK51,
+      ((w1 >> 38) | (w2 << 26)) & MASK51,
+      ((w2 >> 25) | (w3 << 39)) & MASK51,
+      w3 >> 12,
+    ]))
   }
 
   /// Encode the field element canonically.
@@ -328,7 +311,7 @@ impl FieldElement {
   pub(crate) fn sqrt(&self) -> Option<Self> {
     let normalized = self.normalize();
     self
-      .sqrt_ratio_i(&Self::ONE)
+      .sqrt_ratio(&Self::ONE, false)
       .filter(|candidate| candidate.square().normalize() == normalized)
   }
 
@@ -379,7 +362,7 @@ impl FieldElement {
 
   #[must_use]
   #[cfg(feature = "ed25519")]
-  pub(crate) fn sqrt_ratio_i(&self, denominator: &Self) -> Option<Self> {
+  pub(crate) fn sqrt_ratio(&self, denominator: &Self, negative: bool) -> Option<Self> {
     let numerator = self.normalize();
     let denominator = denominator.normalize();
     let v3 = denominator.square().mul(&denominator);
@@ -387,18 +370,22 @@ impl FieldElement {
     let r = numerator.mul(&v3).mul(&numerator.mul(&v7).pow_p58());
     let check = denominator.mul(&r.square()).normalize();
 
-    if check == numerator {
-      Some(if r.is_negative() { r.neg() } else { r })
+    let root = if check == numerator {
+      r
     } else if check == numerator.neg().normalize() {
-      let adjusted = r.mul(&SQRT_M1).normalize();
-      Some(if adjusted.is_negative() {
-        adjusted.neg()
-      } else {
-        adjusted
-      })
+      r.mul(&SQRT_M1)
     } else {
-      None
+      return None;
+    };
+    let root = root.normalize();
+    if negative && root == Self::ZERO {
+      return None;
     }
+    Some(if (root.0[0] & 1 != 0) == negative {
+      root
+    } else {
+      root.neg().normalize()
+    })
   }
 }
 
@@ -588,7 +575,16 @@ mod tests {
       0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x80,
     ];
 
-    assert_eq!(FieldElement::from_bytes(&modulus), None);
+    let mut boundary = modulus;
+    boundary[0] = 0xec;
+    assert_eq!(
+      FieldElement::from_bytes(&boundary),
+      Some(FieldElement::ONE.neg().normalize())
+    );
+    for low in 0xed..=0xff {
+      boundary[0] = low;
+      assert_eq!(FieldElement::from_bytes(&boundary), None);
+    }
     assert_eq!(FieldElement::from_bytes(&top_bit_set), None);
   }
 

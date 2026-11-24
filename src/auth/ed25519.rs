@@ -98,8 +98,6 @@ const _: fn(&[u8; 32]) -> point::ExtendedPoint = point::ExtendedPoint::scalar_mu
 const _: unsafe fn(&point::ExtendedPoint, &[u8; 32]) -> point::ExtendedPoint = point_avx2::scalar_mul_vartime_avx2;
 #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 const _: unsafe fn(&point::ExtendedPoint, &[u8; 32]) -> point::ExtendedPoint = point_avx2::scalar_mul_vartime_ifma;
-const _: fn(&point::ExtendedPoint) -> point::ExtendedPoint = point::ExtendedPoint::mul_by_cofactor;
-const _: fn(&point::ExtendedPoint) -> bool = point::ExtendedPoint::is_small_order;
 const _: fn(point::ExtendedPoint) -> Option<(field::FieldElement, field::FieldElement)> =
   point::ExtendedPoint::to_affine;
 const _: fn(
@@ -359,7 +357,6 @@ impl Drop for Ed25519SecretKey {
 pub struct Ed25519PublicKey {
   bytes: [u8; Self::LENGTH],
   point: Option<point::ExtendedPoint>,
-  small_order: bool,
 }
 
 impl Ed25519PublicKey {
@@ -369,12 +366,12 @@ impl Ed25519PublicKey {
   /// Construct a public key from its byte representation.
   #[must_use]
   pub fn from_bytes(bytes: [u8; Self::LENGTH]) -> Self {
-    let point = point::ExtendedPoint::from_bytes(&bytes);
-    Self {
-      small_order: point.is_some_and(|point| point.is_small_order()),
-      point,
-      bytes,
-    }
+    let point = if is_small_order_encoded(&bytes) {
+      None
+    } else {
+      point::ExtendedPoint::from_bytes(&bytes)
+    };
+    Self { bytes, point }
   }
 
   /// RFC 8410 SubjectPublicKeyInfo length in bytes.
@@ -410,7 +407,6 @@ impl Ed25519PublicKey {
     // so weak-key validation is only needed for untrusted encoded public keys.
     Self {
       bytes,
-      small_order: false,
       point: Some(point),
     }
   }
@@ -433,12 +429,6 @@ impl Ed25519PublicKey {
   #[must_use]
   const fn point(&self) -> Option<point::ExtendedPoint> {
     self.point
-  }
-
-  #[inline]
-  #[must_use]
-  const fn is_small_order(&self) -> bool {
-    self.small_order
   }
 }
 
@@ -633,7 +623,6 @@ impl Ed25519Keypair {
       public: Ed25519PublicKey {
         bytes: [0; PUBLIC_KEY_LENGTH],
         point: None,
-        small_order: false,
       },
       expanded: hash::ExpandedSecret::zeroed(),
     }
@@ -729,7 +718,7 @@ pub fn verify(
   signature: &Ed25519Signature,
 ) -> Result<(), VerificationError> {
   let (r_bytes, s_bytes) = split_signature(signature);
-  if public_key.is_small_order() {
+  if is_small_order_encoded(&r_bytes) {
     return Err(VerificationError::new());
   }
   let a_point = public_key.point().ok_or(VerificationError::new())?;
@@ -755,10 +744,6 @@ pub fn verify(
   }
 
   let r_point = point::ExtendedPoint::from_bytes(&r_bytes).ok_or(VerificationError::new())?;
-  if r_point.is_small_order() {
-    return Err(VerificationError::new());
-  }
-
   let combined = straus_dispatch(&s_canonical, &challenge_bytes, &minus_a);
 
   if combined.equals_projective(&r_point) {
@@ -1003,8 +988,10 @@ pub fn diag_ed25519_verify_public_decode_digest(public_key: &[u8; PUBLIC_KEY_LEN
 #[doc(hidden)]
 #[must_use]
 pub fn diag_ed25519_verify_r_decode_digest(r_bytes: &[u8; PUBLIC_KEY_LENGTH]) -> [u8; PUBLIC_KEY_LENGTH] {
+  if is_small_order_encoded(r_bytes) {
+    return [0; PUBLIC_KEY_LENGTH];
+  }
   point::ExtendedPoint::from_bytes(r_bytes)
-    .filter(|point| !point.is_small_order())
     .and_then(point::ExtendedPoint::to_bytes)
     .unwrap_or_default()
 }
@@ -1043,12 +1030,7 @@ pub fn diag_ed25519_verify_aarch64_asm_double_scalar_digest(
     .unwrap_or_default()
 }
 
-#[cfg(all(
-  target_arch = "aarch64",
-  any(target_os = "macos", target_os = "linux"),
-  not(feature = "portable-only"),
-  not(miri)
-))]
+// The eight canonical encodings of the Edwards25519 subgroup of order eight.
 const SMALL_ORDER_ENCODINGS: [[u8; PUBLIC_KEY_LENGTH]; 8] = [
   [
     0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -1096,10 +1078,6 @@ fn verify_aarch64_encoded_r(
   challenge_bytes: &[u8; SECRET_KEY_LENGTH],
   minus_a: &point::ExtendedPoint,
 ) -> Option<Result<(), VerificationError>> {
-  if is_small_order_encoded(r_bytes) {
-    return Some(Err(VerificationError::new()));
-  }
-
   aarch64_asm::double_scalar_basepoint_encoded(s_canonical, challenge_bytes, minus_a).map(|combined| {
     if ct::fixed_eq(&combined, r_bytes).declassify() {
       Ok(())
@@ -1109,17 +1087,10 @@ fn verify_aarch64_encoded_r(
   })
 }
 
-#[cfg(all(
-  target_arch = "aarch64",
-  any(target_os = "macos", target_os = "linux"),
-  not(feature = "portable-only"),
-  not(miri)
-))]
 #[must_use]
 fn is_small_order_encoded(bytes: &[u8; PUBLIC_KEY_LENGTH]) -> bool {
-  SMALL_ORDER_ENCODINGS
-    .iter()
-    .any(|small_order| ct::fixed_eq(bytes, small_order).declassify())
+  // These bytes belong to the public key or the signature.
+  SMALL_ORDER_ENCODINGS.contains(bytes)
 }
 
 // Dispatch: AArch64 assembly verify fast path → IFMA → AVX2 → portable
@@ -1376,7 +1347,7 @@ mod tests {
       1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
     ]);
 
-    assert!(public.is_small_order());
+    assert!(public.point().is_none());
     assert!(public.verify(b"strict verify", &signature).is_err());
   }
 
@@ -1422,28 +1393,17 @@ mod tests {
     }
   }
 
-  #[cfg(all(
-    target_arch = "aarch64",
-    any(target_os = "macos", target_os = "linux"),
-    not(feature = "portable-only"),
-    not(miri)
-  ))]
   #[test]
-  fn aarch64_small_order_encoding_table_matches_point_detection() {
-    for encoded in super::SMALL_ORDER_ENCODINGS {
-      assert!(super::is_small_order_encoded(&encoded));
-      assert!(point::ExtendedPoint::from_bytes(&encoded).is_some_and(|point| point.is_small_order()));
+  fn small_order_encoding_table_matches_point_detection() {
+    for (i, encoded) in super::SMALL_ORDER_ENCODINGS.iter().enumerate() {
+      assert!(!super::SMALL_ORDER_ENCODINGS[..i].contains(encoded));
+      assert!(point::ExtendedPoint::from_bytes(encoded).is_some_and(|point| point.is_small_order()));
+      assert!(Ed25519PublicKey::from_bytes(*encoded).point().is_none());
     }
   }
 
-  #[cfg(all(
-    target_arch = "aarch64",
-    any(target_os = "macos", target_os = "linux"),
-    not(feature = "portable-only"),
-    not(miri)
-  ))]
   #[test]
-  fn aarch64_verify_rejects_all_small_order_r_encodings() {
+  fn verify_rejects_all_small_order_r_encodings() {
     let secret = Ed25519SecretKey::from_bytes([0x46; Ed25519SecretKey::LENGTH]);
     let keypair = Ed25519Keypair::from_secret_key(secret);
 

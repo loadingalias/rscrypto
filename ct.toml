@@ -5652,7 +5652,7 @@ entrypoints = [
   "P256EphemeralSecret::public_key",
   "P256EphemeralSecret::diffie_hellman",
 ]
-secrets = ["ephemeral_scalar", "projective_state", "shared_secret"]
+secrets = ["ephemeral_scalar", "projective_state", "pcc_parameter_block", "shared_secret"]
 public = [
   "validated_peer_public_key",
   "public_key",
@@ -5682,7 +5682,7 @@ entrypoints = [
   "P384EphemeralSecret::public_key",
   "P384EphemeralSecret::diffie_hellman",
 ]
-secrets = ["ephemeral_scalar", "window_digits", "projective_state", "shared_secret"]
+secrets = ["ephemeral_scalar", "window_digits", "projective_state", "pcc_parameter_block", "shared_secret"]
 public = [
   "validated_peer_public_key",
   "public_key",

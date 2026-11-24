@@ -6,6 +6,7 @@
 
 extern crate alloc;
 
+#[cfg(feature = "openssl-peer")]
 mod openssl_peer;
 
 use alloc::{borrow::Cow, collections::VecDeque, rc::Rc, sync::Arc};
@@ -46,7 +47,14 @@ pub const SUITES: [&str; 3] = ["AES128-GCM-SHA256", "AES256-GCM-SHA384", "CHACHA
 /// `rscrypto` installs the provider's prepared-anchor verifiers, its recommended
 /// configuration. `rscrypto-webpki` uses rustls's WebPKI verifiers, as `aws-lc-rs`
 /// and `ring` do.
-pub const BACKENDS: [&str; 5] = ["rscrypto", "rscrypto-webpki", "aws-lc-rs", "ring", "openssl"];
+pub const BACKENDS: &[&str] = &[
+  "rscrypto",
+  "rscrypto-webpki",
+  "aws-lc-rs",
+  "ring",
+  #[cfg(feature = "openssl-peer")]
+  "openssl",
+];
 
 /// Composite ML-DSA credentials (draft-ietf-tls-composite-mldsa-00). No
 /// other backend implements these schemes, so only the rscrypto backends run them.
@@ -57,6 +65,9 @@ pub const COMPOSITE_CREDENTIALS: [&str; 2] = ["mldsa65-ed25519", "mldsa65-ecdsa-
 /// SecP384r1MLKEM1024, so those profiles have no row rather than a substitute.
 #[must_use]
 pub fn supports(backend: &str, profile: Profile<'_>) -> bool {
+  if !BACKENDS.contains(&backend) {
+    return false;
+  }
   if COMPOSITE_CREDENTIALS.contains(&profile.credential) {
     return backend.starts_with("rscrypto");
   }
@@ -319,6 +330,7 @@ impl<S: SideData> RustlsEndpoint<S> {
 )]
 enum Endpoint<S: SideData> {
   Rustls(RustlsEndpoint<S>),
+  #[cfg(feature = "openssl-peer")]
   OpenSsl(openssl_peer::Endpoint),
 }
 
@@ -332,6 +344,7 @@ impl<S: SideData> Drop for Endpoint<S> {
           .expect("close notification");
         peer.pipe.write_all(&peer.output).expect("TLS output");
       }
+      #[cfg(feature = "openssl-peer")]
       Self::OpenSsl(peer) => peer.close(),
     }
   }
@@ -341,6 +354,7 @@ impl<S: SideData> Endpoint<S> {
   fn pipe(&self) -> &Pipe {
     match self {
       Self::Rustls(peer) => &peer.pipe,
+      #[cfg(feature = "openssl-peer")]
       Self::OpenSsl(peer) => &peer.pipe,
     }
   }
@@ -361,12 +375,14 @@ impl<S: SideData> Endpoint<S> {
         peer.pipe.write_all(&peer.output).expect("TLS output");
         peer.output.clear();
       }
+      #[cfg(feature = "openssl-peer")]
       Self::OpenSsl(peer) => peer.step(),
     }
   }
   fn handshaking(&self) -> bool {
     match self {
       Self::Rustls(peer) => peer.connection.is_handshaking(),
+      #[cfg(feature = "openssl-peer")]
       Self::OpenSsl(peer) => peer.handshaking(),
     }
   }
@@ -386,6 +402,7 @@ impl<S: SideData> Endpoint<S> {
         }),
         "{side} handshake kind"
       ),
+      #[cfg(feature = "openssl-peer")]
       Self::OpenSsl(peer) => assert_eq!(peer.resumed(), resumed, "{side} full/resumed workload"),
     }
   }
@@ -400,6 +417,7 @@ impl<S: SideData> Endpoint<S> {
           .derive(b"provider-bench", Some(b"matched"), &mut bytes)
           .expect("exporter");
       }
+      #[cfg(feature = "openssl-peer")]
       Self::OpenSsl(peer) => peer.exporter(&mut bytes),
     }
     bytes
@@ -450,6 +468,7 @@ impl<S: SideData> Endpoint<S> {
           _ => panic!("{side} peer certificate identity"),
         }
       }
+      #[cfg(feature = "openssl-peer")]
       Self::OpenSsl(peer) => peer.check(profile, credential, authenticated, version, resumed, side),
     }
   }
@@ -459,6 +478,7 @@ impl<S: SideData> Endpoint<S> {
         .connection
         .write(bytes.into(), &mut peer.output)
         .expect("application write"),
+      #[cfg(feature = "openssl-peer")]
       Self::OpenSsl(peer) => peer.send(bytes),
     }
     self.step();
@@ -472,6 +492,7 @@ impl<S: SideData> Endpoint<S> {
         bytes.copy_from_slice(&peer.plaintext);
         peer.plaintext.clear();
       }
+      #[cfg(feature = "openssl-peer")]
       Self::OpenSsl(peer) => peer.receive(bytes),
     }
   }
@@ -558,6 +579,7 @@ impl Pair {
 
 enum Configs {
   Rustls(Arc<ClientConfig>, Arc<ServerConfig>),
+  #[cfg(feature = "openssl-peer")]
   OpenSsl(openssl_peer::Configs),
 }
 
@@ -603,9 +625,7 @@ impl Fixture {
     );
     let profile = profile.canonical(version);
     let tickets = Arc::new(AtomicUsize::new(0));
-    let configs = if backend == "openssl" {
-      Configs::OpenSsl(openssl_peer::Configs::new(profile, workload, version, tickets.clone()))
-    } else {
+    let rustls_configs = || {
       let (mut provider, all, tls12) = match backend {
         "rscrypto" | "rscrypto-webpki" => (
           rscrypto_rustls::default_provider(),
@@ -743,6 +763,14 @@ impl Fixture {
       }
       Configs::Rustls(Arc::new(client), Arc::new(server))
     };
+    #[cfg(feature = "openssl-peer")]
+    let configs = if backend == "openssl" {
+      Configs::OpenSsl(openssl_peer::Configs::new(profile, workload, version, tickets.clone()))
+    } else {
+      rustls_configs()
+    };
+    #[cfg(not(feature = "openssl-peer"))]
+    let configs = rustls_configs();
     let fixture = Self {
       configs,
       profile,
@@ -761,10 +789,15 @@ impl Fixture {
   /// TLS 1.3 consumes a ticket for each connection and keeps a bounded number per
   /// origin. Concurrent resumed observations therefore need independent stores.
   /// Cloning `ClientConfig` retains its Arc-owned key resolver and verifier.
-  #[expect(clippy::panic, reason = "this resource boundary observes Rustls configurations only")]
+  #[cfg_attr(
+    feature = "openssl-peer",
+    expect(clippy::panic, reason = "this resource boundary observes Rustls configurations only")
+  )]
   pub fn fork_with_resumption_cache(&self) -> Self {
-    let Configs::Rustls(client, server) = &self.configs else {
-      panic!("independent ticket stores require a Rustls fixture");
+    let (client, server) = match &self.configs {
+      Configs::Rustls(client, server) => (client, server),
+      #[cfg(feature = "openssl-peer")]
+      Configs::OpenSsl(_) => panic!("independent ticket stores require a Rustls fixture"),
     };
     let tickets = Arc::new(AtomicUsize::new(0));
     let mut client = (**client).clone();
@@ -836,6 +869,8 @@ impl Fixture {
   }
 
   fn begin_inner(&self, resumed: bool) -> Pair {
+    #[cfg(not(feature = "openssl-peer"))]
+    let _ = resumed; // rustls consumes the seeded ticket store automatically.
     let (left, right) = Pipe::pair();
     let (client, server) = match &self.configs {
       Configs::Rustls(client, server) => {
@@ -850,6 +885,7 @@ impl Fixture {
           Endpoint::Rustls(RustlsEndpoint::new(server, right, Vec::new())),
         )
       }
+      #[cfg(feature = "openssl-peer")]
       Configs::OpenSsl(configs) => {
         let (client, server) = configs.endpoints(left, right, resumed);
         (Endpoint::OpenSsl(client), Endpoint::OpenSsl(server))

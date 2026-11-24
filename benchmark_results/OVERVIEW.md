@@ -107,11 +107,27 @@ the cipher built once, from the base run and the Apple run:
 | RISC-V | 1.46 µs | 1.94 µs | 6.15 µs | 4.77 µs | 6.15 µs | 4.77 µs |
 | Apple M1 Pro | 9.5 ns | 15.6 ns | 66.1 ns | 54.8 ns | 66.4 ns | 55.9 ns |
 
+### IBM Z ECDH operations
+
+The six headline points cover private-scalar import and agreement with a parsed or encoded peer on each curve.
+The public-key row measures derivation from an existing private scalar. It has a separate score.
+All times are medians from the [release scorecard](https://github.com/loadingalias/rscrypto/actions/runs/44681056190/artifacts/14621750310).
+
+| Curve and operation | rscrypto | Fastest peer | Peer / rscrypto |
+| --- | ---: | ---: | ---: |
+| P-256 private-scalar import | 31.3 ns | RustCrypto, 51.7 ns | 1.65x |
+| P-256 public-key derivation | 1.966 ms | crrl, 71.7 µs | 0.036x |
+| P-256 agreement, parsed peer | 10.757 ms | crrl, 169.8 µs | 0.016x |
+| P-256 agreement, encoded peer | 10.761 ms | crrl, 170.8 µs | 0.016x |
+| P-384 private-scalar import | 29.7 ns | RustCrypto, 58.8 ns | 1.98x |
+| P-384 public-key derivation | 9.856 ms | RustCrypto, 523.6 µs | 0.053x |
+| P-384 agreement, parsed peer | 25.507 ms | RustCrypto, 1.750 ms | 0.069x |
+| P-384 agreement, encoded peer | 25.417 ms | RustCrypto, 1.764 ms | 0.069x |
+
 ## Not in this record
 
-- TLS 1.3 and QUIC through `rscrypto-rustls`, and the OpenSSL comparisons: these targets need
-  OpenSSL 4.0.3, which CI does not provision. The Apple run does not include them. Their last
-  full run is the [v0.12.0
+- The v0.13 TLS, QUIC and OpenSSL comparison targets required OpenSSL 4.0.3.
+  The release CI and Apple campaigns omitted them. Their previous full measurements appear in the [v0.12.0
   record](https://github.com/loadingalias/rscrypto/blob/50c708b29905bb3221e7b22b9c7cce8fcc700818/benchmark_results/OVERVIEW.md#2026-10-23-v0120-release-benchmark-run).
 - The BLAKE3 file readers, and the diagnostic targets: `aead_kernels`, `aead_diag`,
   `mldsa_portable`, `slhdsa_portable`, and `structural`.

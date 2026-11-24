@@ -109,6 +109,7 @@ fn main() {
   let mut sorted = samples.clone();
   sorted.sort_unstable();
   let percentile = |percent: usize| sorted[sorted.len().strict_sub(1).strict_mul(percent).strict_div(100)];
+  let provenance = rscrypto_provider_bench::provenance();
   let mut report = json!({
     "backend": args[0], "credential": args[1], "group": args[2], "suite": args[3], "mode": args[4],
     "workers": workers, "connections": samples.len(), "elapsed_ns": elapsed.as_nanos(),
@@ -116,10 +117,10 @@ fn main() {
     "wire": rows.iter().map(|row| &row.1).collect::<Vec<_>>(),
     "boundaries": "reused keys/configuration per worker; mutual authentication; connection construction, TLS, transport copies, ticket processing, and destruction timed; no network RTT; empirical percentiles",
     "memory_boundary": "whole-process high-water RSS, including TLS libraries, harness, worker stacks, and key/configuration owners; not allocated heap or a per-connection bound",
-    "openssl": openssl::version::version(),
-    "openssl_compiler": openssl::version::c_flags(),
-    "openssl_platform": openssl::version::platform(),
-    "provenance": rscrypto_provider_bench::provenance(),
+    "openssl": provenance["openssl"]["version"],
+    "openssl_compiler": provenance["openssl"]["c_flags"],
+    "openssl_platform": provenance["openssl"]["platform"],
+    "provenance": provenance,
   });
   #[cfg(unix)]
   {

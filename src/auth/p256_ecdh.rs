@@ -18,6 +18,17 @@ const FIELD_BYTES: usize = 32;
 const SEC1_BYTES: usize = 65;
 const SCALAR_SAMPLING_ATTEMPTS: usize = 32;
 
+#[cfg(any(test, all(target_arch = "s390x", not(feature = "portable-only"), not(miri))))]
+const GENERATOR_X_BYTES: [u8; 32] = [
+  0x6b, 0x17, 0xd1, 0xf2, 0xe1, 0x2c, 0x42, 0x47, 0xf8, 0xbc, 0xe6, 0xe5, 0x63, 0xa4, 0x40, 0xf2, 0x77, 0x03, 0x7d,
+  0x81, 0x2d, 0xeb, 0x33, 0xa0, 0xf4, 0xa1, 0x39, 0x45, 0xd8, 0x98, 0xc2, 0x96,
+];
+#[cfg(any(test, all(target_arch = "s390x", not(feature = "portable-only"), not(miri))))]
+const GENERATOR_Y_BYTES: [u8; 32] = [
+  0x4f, 0xe3, 0x42, 0xe2, 0xfe, 0x1a, 0x7f, 0x9b, 0x8e, 0xe7, 0xeb, 0x4a, 0x7c, 0x0f, 0x9e, 0x16, 0x2b, 0xce, 0x33,
+  0x57, 0x6b, 0x31, 0x5e, 0xce, 0xcb, 0xb6, 0x40, 0x68, 0x37, 0xbf, 0x51, 0xf5,
+];
+
 #[cfg(all(
   not(feature = "portable-only"),
   not(miri),
@@ -141,6 +152,19 @@ impl P256EphemeralSecret {
   #[must_use]
   pub fn public_key(&self) -> P256PublicKey {
     crate::traits::ct::with_data_independent_timing(|| {
+      #[cfg(all(target_arch = "s390x", not(feature = "portable-only"), not(miri)))]
+      {
+        let mut bytes = [0; SEC1_BYTES];
+        bytes[0] = 4;
+        if super::ecdh_s390x::multiply(
+          &self.0,
+          [GENERATOR_X_BYTES, GENERATOR_Y_BYTES].as_flattened(),
+          &mut bytes[1..],
+        ) {
+          let point = PublicPoint::from_pcc_coordinates(&bytes[1..]);
+          return P256PublicKey { bytes, point };
+        }
+      }
       #[cfg(all(
         not(feature = "portable-only"),
         not(miri),
@@ -179,6 +203,13 @@ impl P256EphemeralSecret {
   #[must_use]
   pub fn diffie_hellman(self, public: &P256PublicKey) -> P256SharedSecret {
     crate::traits::ct::with_data_independent_timing(|| {
+      #[cfg(all(target_arch = "s390x", not(feature = "portable-only"), not(miri)))]
+      {
+        let mut shared = P256SharedSecret([0; FIELD_BYTES]);
+        if super::ecdh_s390x::multiply(&self.0, &public.bytes[1..], &mut shared.0) {
+          return shared;
+        }
+      }
       #[cfg(all(
         not(feature = "portable-only"),
         not(miri),
@@ -427,16 +458,7 @@ pub fn diag_p256_field_mul_chain(left: [u64; 4], right: [u64; 4], rounds: usize)
 
 #[cfg(test)]
 mod tests {
-  use super::{P256EphemeralSecret, P256KeyGenerationError, P256PublicKey};
-
-  const GENERATOR_X_BYTES: [u8; 32] = [
-    0x6b, 0x17, 0xd1, 0xf2, 0xe1, 0x2c, 0x42, 0x47, 0xf8, 0xbc, 0xe6, 0xe5, 0x63, 0xa4, 0x40, 0xf2, 0x77, 0x03, 0x7d,
-    0x81, 0x2d, 0xeb, 0x33, 0xa0, 0xf4, 0xa1, 0x39, 0x45, 0xd8, 0x98, 0xc2, 0x96,
-  ];
-  const GENERATOR_Y_BYTES: [u8; 32] = [
-    0x4f, 0xe3, 0x42, 0xe2, 0xfe, 0x1a, 0x7f, 0x9b, 0x8e, 0xe7, 0xeb, 0x4a, 0x7c, 0x0f, 0x9e, 0x16, 0x2b, 0xce, 0x33,
-    0x57, 0x6b, 0x31, 0x5e, 0xce, 0xcb, 0xb6, 0x40, 0x68, 0x37, 0xbf, 0x51, 0xf5,
-  ];
+  use super::{GENERATOR_X_BYTES, GENERATOR_Y_BYTES, P256EphemeralSecret, P256KeyGenerationError, P256PublicKey};
 
   fn generated(bytes: [u8; 32]) -> P256EphemeralSecret {
     P256EphemeralSecret::try_generate_with(|out| {

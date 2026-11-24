@@ -190,8 +190,8 @@ It does not download upstream archives.
   `just test-fuzz --targets` front door with explicit duration and limits.
 - The `tls-provider` benchmark selector and `just bench-provider-scorecard`
   use the [provider benchmark package](../tools/provider-bench/README.md) in the tools workspace.
-  Its catalog target declares OpenSSL 4.0.3 as an external prerequisite,
-  so default runs omit it and the Bench workflow rejects it; run it locally.
+  Default runs and CI measure the rustls TLS and QUIC peers.
+  Explicit local TLS selectors also compare OpenSSL 4.0.3 unless you set `openssl=false`.
   Criterion measures complete TLS pairs and application records; the supplementary
   command retains individual latencies, process CPU, wire flights and process RSS.
 - `just bench-provider-resources` uses the same production TLS fixture with a

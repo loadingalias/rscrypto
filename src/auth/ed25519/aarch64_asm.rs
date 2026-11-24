@@ -78,8 +78,8 @@ pub(super) fn double_scalar_basepoint_encoded(
   let s_words = words_from_le_bytes(s);
   let h_words = words_from_le_bytes(h);
   let mut public_words = [0u64; AFFINE_POINT_LIMBS];
-  public_words[..FIELD_LIMBS].copy_from_slice(&words_from_le_bytes(&x.to_bytes()));
-  public_words[FIELD_LIMBS..].copy_from_slice(&words_from_le_bytes(&y.to_bytes()));
+  public_words[..FIELD_LIMBS].copy_from_slice(&affine_words(x));
+  public_words[FIELD_LIMBS..].copy_from_slice(&affine_words(y));
 
   let mut out = [0u64; AFFINE_POINT_LIMBS];
   // SAFETY: double-scalar multiplication call because:
@@ -111,6 +111,18 @@ pub(super) fn encode_public_point(point: ExtendedPoint) -> ([u8; PUBLIC_KEY_LENG
   let mut bytes = y.to_bytes();
   bytes[PUBLIC_KEY_LENGTH - 1] |= u8::from(x.is_negative()) << 7;
   (bytes, ExtendedPoint::from_affine(x, y))
+}
+
+/// Pack a public radix-51 coordinate into the four limbs expected by the assembly.
+#[inline]
+fn affine_words(value: &FieldElement) -> [u64; FIELD_LIMBS] {
+  let [a, b, c, d, e] = *value.normalize().limbs();
+  [
+    a | (b << 51),
+    (b >> 13) | (c << 38),
+    (c >> 26) | (d << 25),
+    (d >> 39) | (e << 12),
+  ]
 }
 
 #[inline]

@@ -1106,12 +1106,14 @@ Matching ignores case and punctuation, so `password-hashing` selects the `passwo
 
 Default targets are the catalog's `required` Criterion targets.
 A target with an `external` prerequisite is never a default target.
-`tls_connections` needs OpenSSL 4.0.3 and is excluded from default runs.
+Default runs and CI compare TLS through the rustls providers.
+An explicit local TLS selector also measures OpenSSL 4.0.3.
+Use `openssl=false` with that selector to compare the rustls providers alone.
 `tls-provider` is its umbrella group for discovery.
 Measure one `tls-handshake-<credential>` or scenario algorithm per invocation; the complete umbrella exceeds the run budget.
 The [TLS benchmark guide](../tools/provider-bench/README.md) defines every family and its comparison boundary.
 
-`quic_connections` has the same external prerequisite and is also excluded from default runs.
+Default runs and CI include `quic_connections` with the rustls providers.
 `quic-provider` lists its four selectors: `quic-handshake`, `quic-packet`, `quic-header`, and `quic-cid`.
 Measure one selector per invocation.
 The [QUIC benchmark guide](../tools/provider-bench/README.md#quic) separates the QUIC TLS handshake,

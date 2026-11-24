@@ -123,7 +123,9 @@ A restored virtual-machine snapshot or another copied memory image is not detect
     at compile time, unless `portable-only` or Miri is active.
   - Linux and Windows x86-64 select the baseline or ADX/BMI2 System V kernels after cached runtime
     detection. Windows calls them through `extern "sysv64"`, so both targets run the same bodies.
-  - A deterministic provenance transform keeps these backends independent of the ECDSA feature.
+  - IBM Z checks MSA9 and the PCC query bit for P-256 before each scalar multiplication.
+    Machines without that function use the portable implementation.
+  - A deterministic provenance transform keeps the AArch64 and x86-64 backends independent of the ECDSA feature.
     It also clears their secret-derived frames, saved-register spill slots,
     and volatile integer registers.
 - **P-384 ECDH** is a standalone leaf feature with a safe Rust reference implementation on every
@@ -136,6 +138,8 @@ A restored virtual-machine snapshot or another copied memory image is not detect
     After cached runtime detection,
     it selects BMI2/ADX field multiplication and squaring and fused in-place point doubling.
     CPUs without BMI2 and ADX use the portable multiplication and point formulas.
+  - IBM Z checks MSA9 and the PCC query bit for P-384 before each scalar multiplication.
+    Machines without that function use the portable implementation.
   - Other targets use the safe Rust reference implementation.
 - **ECDSA P-256** signing and key derivation run the P-256 fixed-base assembly on Apple and Linux AArch64 and on
   Linux and Windows x86-64, unless `portable-only` or Miri is active. Verification of public inputs runs owned field

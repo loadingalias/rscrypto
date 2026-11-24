@@ -133,15 +133,22 @@ class ManualBench(unittest.TestCase):
         defaults = [name for name, bench in catalog['benches'].items()
                     if bench['kind'] == 'criterion' and bench['required']]
         self.assertEqual(ci.selection('all'), {name: [name] for name in defaults})
-        self.assertNotIn('tls_connections', defaults)
+        self.assertNotIn('openssl_primitives', defaults)
         families = ci.jobs(ci.dispatch_inputs(request('all')))
-        self.assertEqual(list(families), ['auth', 'checksum', 'hashes', 'aead'])
+        self.assertEqual(set(families), {'tls', 'auth', 'checksum', 'hashes', 'aead'})
+        def features(args):
+            return ci.runner.requests(ci.runner.parse(['bench', *args]), catalog)[0]['features']
+        self.assertNotIn('openssl-peer', features(families['tls']['tls-handshake-p256']))
+        self.assertIn('openssl-peer', features(['tls-handshake-p256']))
+        self.assertNotIn('openssl-peer', features(['all', '--run-selector', 'tls-handshake-p256']))
+        self.assertNotIn('openssl-peer', features(['quic-handshake']))
         # A split target runs one catalog algorithm at a time. Auth must not combine its 15 algorithms with a cold
         # Windows build in one budget. SLH-DSA separates 72 operations; PBKDF2 has SHA-256 and SHA-512.
         split = {name: [algorithm for algorithm, entry in catalog['algorithms'].items() if entry['bench'] == name]
                  for name in defaults if catalog['benches'][name].get('split') == 'algorithms'}
         self.assertEqual({name: len(runs) for name, runs in split.items()},
-                         {'slhdsa': 72, 'auth': 15, 'pbkdf2': 2, 'rsa_keygen': 3})
+                         {'slhdsa': 72, 'auth': 15, 'pbkdf2': 2, 'rsa_keygen': 3,
+                          'tls_connections': 28, 'quic_connections': 4})
         expected = [run for name in defaults for run in split.get(name, [name])]
         self.assertEqual(sorted(run for runs in families.values() for run in runs), sorted(expected))
         # Slow SLH-DSA runs must not prevent PBKDF2, password hashing, or RSA from starting.
@@ -186,7 +193,7 @@ class ManualBench(unittest.TestCase):
         self.assertEqual([row['timeout'] for row in builds], [30 + 10 * 71])
 
     def test_external_targets_fail_before_runners_start(self):
-        for selection in ('tls-provider', 'tls_connections', 'sha256,tls-provider'):
+        for selection in ('openssl_primitives', 'openssl-sha256', 'sha256,openssl-sha256'):
             with self.subTest(selection=selection), self.assertRaisesRegex(ValueError, 'OpenSSL 4.0.3'):
                 plan(selection)
 

@@ -17,7 +17,7 @@ import tempfile
 # Embedded Windows Python omits the script directory from its import path.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from benchmark_catalog import applies, architecture, case_class, load_catalog, resolve_selector, scope
+from benchmark_catalog import applies, architecture, case_class, load_catalog, normalize, resolve_selector, scope
 from execution import enable_internal, build, build_command, build_environment, build_identity, digest, discover, match_cases, exit_code, identity, write_json, source_evidence
 from measure import measure, verify
 import settings
@@ -45,6 +45,7 @@ def parse(arguments: list[str]):
   bench.add_argument("--run-selector", action="append", help=argparse.SUPPRESS)
   bench.add_argument("--run-label", help=argparse.SUPPRESS)
   bench.add_argument("--diag", nargs="?", const=True, type=boolean, default=False)
+  bench.add_argument("--openssl", nargs="?", const=True, type=boolean)
   bench.add_argument("--quick", nargs="?", const=True, type=boolean, default=False)
   bench.add_argument("--output-dir", default="benchmark_results")
   bench.add_argument("--baseline", type=Path)
@@ -73,7 +74,7 @@ def parse(arguments: list[str]):
   normalized = []
   value_follows = False
   for index, token in enumerate(arguments):
-    if not value_follows and arguments[0] == "bench" and token in {"--diag", "--quick"}:
+    if not value_follows and arguments[0] == "bench" and token in {"--diag", "--quick", "--openssl"}:
       value = arguments[index + 1].lower() if index + 1 < len(arguments) else ""
       normalized.append(token if value in {"true", "false"} else token + "=true")
     elif not value_follows and arguments[0] == "bench" and "=" in token and re.fullmatch(r"[a-z_]+", token.split("=", 1)[0]):
@@ -91,7 +92,7 @@ def parse(arguments: list[str]):
   if args.mode == "bench":
     # Every accepted environment option has the same meaning as its CLI form.
     known = {"BENCH_FILTER", "BENCH_DIAG", "BENCH_LIST", "BENCH_OUTPUT_DIR", "BENCH_BASELINE",
-             "BENCH_WARMUP_MS", "BENCH_MEASURE_MS", "BENCH_SAMPLE_SIZE", "BENCH_QUICK"}
+             "BENCH_WARMUP_MS", "BENCH_MEASURE_MS", "BENCH_SAMPLE_SIZE", "BENCH_QUICK", "BENCH_OPENSSL"}
     unknown = set(key for key in os.environ if key.startswith("BENCH_")) - known
     if unknown:
       parser.error(f"unknown benchmark environment options: {', '.join(sorted(unknown))}")
@@ -104,22 +105,28 @@ def parse(arguments: list[str]):
       if name == "filter":
         getattr(args, name).insert(0, value)
       elif not explicit:
-        setattr(args, name, boolean(value) if name in {"diag", "list", "quick"} else
+        setattr(args, name, boolean(value) if name in {"diag", "list", "quick", "openssl"} else
                 int(value) if name in {"warmup_ms", "measure_ms", "sample_size"} else
                 Path(value) if name == "baseline" else value)
+    if args.openssl is None:
+      args.openssl = bool(args.selectors) and not any(normalize(selector) == "all" for selector in args.selectors)
     if any(not pattern for pattern in args.filter):
       parser.error("filter must not be empty")
   return args
 
 
-def target(catalog, name: str, diag: bool) -> dict:
+def target(catalog, name: str, diag: bool, openssl: bool = True) -> dict:
   entry = catalog["benches"].get(name)
   if entry is None or entry["kind"] != "criterion":
     raise ValueError(f"unknown Criterion target: {name}")
   if diag and 'manifest' in entry:
     raise ValueError(f"diagnostics are not supported by independent benchmark target: {name}")
-  features = sorted(set(entry["features"]) | ({"diag"} if diag else set()))
-  return {"binary": entry["binary"], "features": features, **({'manifest': entry['manifest']} if 'manifest' in entry else {}),
+  features = set(entry["features"])
+  if diag:
+    features.add("diag")
+  if not openssl:
+    features.discard("openssl-peer")
+  return {"binary": entry["binary"], "features": sorted(features), **({'manifest': entry['manifest']} if 'manifest' in entry else {}),
           **({'rustflags': entry['rustflags']} if 'rustflags' in entry else {})}
 
 
@@ -152,7 +159,7 @@ def requests(args, catalog, every_architecture=False) -> list[dict]:
     if skipped:
       raise ValueError(f"{', '.join(skipped)} does not run on {arch}")
     raise ValueError("selection produced no benchmark configurations")
-  return [target(catalog, name, args.diag) | {"bench": name, "scope": case_scope, "pattern": pattern}
+  return [target(catalog, name, args.diag, args.openssl) | {"bench": name, "scope": case_scope, "pattern": pattern}
           for name, case_scope, pattern in dict.fromkeys(rows)]
 
 
@@ -186,7 +193,7 @@ def run_budget(args, catalog, rows=None) -> int:
   return ordinary
 
 
-def partitions(catalog, diag: bool) -> dict[tuple, dict[str, str]]:
+def partitions(catalog, diag: bool, openssl: bool) -> dict[tuple, dict[str, str]]:
   """Map the build of each split target to the algorithm filters that must partition its cases."""
   result = {}
   for name, bench in catalog["benches"].items():
@@ -195,7 +202,7 @@ def partitions(catalog, diag: bool) -> dict[tuple, dict[str, str]]:
     if diag and "manifest" in bench:
       continue
     if bench.get("split") == "algorithms":
-      result[configuration(target(catalog, name, diag))] = {
+      result[configuration(target(catalog, name, diag, openssl))] = {
         algorithm: row["filter"] for algorithm, row in catalog["algorithms"].items() if row["bench"] == name}
   return result
 
@@ -291,7 +298,7 @@ def bench(args, catalog) -> None:
     with tempfile.TemporaryDirectory(prefix="rscrypto-list-") as directory:
       root = Path(directory)
       plan = resolve(rows, effective, root / "output.txt", dict(os.environ) | {"CRITERION_HOME": directory},
-                     split=partitions(catalog, args.diag))
+                     split=partitions(catalog, args.diag, args.openssl))
       for entry in plan:
         for case in entry["cases"]:
           print(f"[{case_class(catalog, entry['binary'], case)}] {entry['binary']} {case}")
@@ -328,7 +335,7 @@ def bench(args, catalog) -> None:
       prepared = consume(ROOT, args.target, args.run_archive.resolve(), root / 'input', rows, effective)
       write_json(root / 'transfer.json', {'archive_sha256': digest(args.run_archive), 'target': args.target,
                                         'manifest': 'input/bundle.json'})
-    plan = resolve(rows, effective, root / "output.txt", env, prepared, partitions(catalog, args.diag))
+    plan = resolve(rows, effective, root / "output.txt", env, prepared, partitions(catalog, args.diag, args.openssl))
     shutil.rmtree(root / "discovery", ignore_errors=True)
     write_json(root / "plan.json", plan)
     measure(root, plan, baseline, budget)
