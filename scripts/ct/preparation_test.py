@@ -164,7 +164,7 @@ if '--bin' in args:
                            if "--disassemble" in json.loads(line)]
           self.assertEqual(len(disassemblies), 1)  # The final linked binary.
           for command in disassemblies:
-            self.assertEqual("--mattr=+vector" in command, target == "s390x-unknown-linux-gnu", command)
+            self.assertEqual("--mattr=+vector,+message-security-assist-extension4" in command, target == "s390x-unknown-linux-gnu", command)
             # llvm-objdump decodes only the RISC-V extensions it is given: each one that the IR enables.
             self.assertEqual("--mattr=+v,+zknh" in command, target.startswith("riscv64"), command)
           binary = "rscrypto-ct-evidence.exe" if "windows" in target else "rscrypto-ct-evidence"

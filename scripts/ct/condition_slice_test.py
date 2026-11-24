@@ -392,6 +392,20 @@ def leaf_regressions() -> None:
   loads = {node["offset"]: node["inputs"]["mem"] for node in moved.nodes if "mem" in node["inputs"]}
   assert loads == {0x1d: ["+0xf"], 0x18: ["+0x4"]} and moved.reasons == [], moved.canonical
 
+  # PCC reads its scalar from the block. The partial-completion branch also depends on processor state.
+  pcc = slice_of("s390x-unknown-linux-gnu", [
+    "1000: a7 fb ff 40\taghi\t%r15, -192",
+    "1004: e3 20 f0 a0 00 24\tstg\t%r2, 160(%r15)",
+    "100a: 41 10 f0 a0\tla\t%r1, 160(%r15)",
+    "100e: a7 09 00 40\tlghi\t%r0, 64",
+    "1012: b9 2c 00 00\tpcc",
+    "1016: a7 14 ff fe\tjo\t0x1012",
+    "101a: 07 fe\tbr\t%r14",
+  ], 6)
+  assert pcc.leaves == ["entry memory", "entry r2", "pcc"], pcc.canonical
+  issued = next(node for node in pcc.nodes if node["offset"] == 0x12)
+  assert issued["inputs"] == {"r0": ["+0xe"], "r1": ["+0xa"], "mem": ["entry", "+0x4", "+0x12"]}, pcc.canonical
+
   # IBM Z `xc` of a location with itself stores zeros and keeps r15 the frame; STFLE stores the facility
   # list. The facility word therefore reads only those two stores.
   facilities = slice_of("s390x-unknown-linux-gnu", [

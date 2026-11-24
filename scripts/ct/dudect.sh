@@ -226,7 +226,7 @@ BINARY_OBJECT_PATH=""
 BINARY_OBJECT_ARGS=()
 objdump_args=(--disassemble --reloc --demangle)
 if [[ "$TARGET" == "s390x-unknown-linux-gnu" ]]; then
-  objdump_args+=(--mattr=+vector)
+  objdump_args+=(--mattr=+vector,+message-security-assist-extension4)
 fi
 if [[ "$TARGET" == *-windows-* ]]; then
   if [[ ! -s "$WINDOWS_OBJECT_PATH" ]]; then

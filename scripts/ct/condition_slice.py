@@ -873,6 +873,9 @@ def s390x_effects(row: scanner.DecodedLine, identity: str) -> Effects:
   if mnemonic == "pfd":
     # PREFETCH DATA changes no register and no storage.
     return effects(set(), set())
+  if mnemonic == "pcc":
+    # GR0 selects the function. GR1 addresses the parameter block. PCC sets CC on completion or interruption.
+    return effects({"r0", "r1"}, {"cc"}, load=True, state=True)
   if mnemonic in {"kimd", "klmd"}:
     # COMPUTE INTERMEDIATE and LAST MESSAGE DIGEST: r0 holds the function code and r1 the parameter block, which
     # holds the chaining value. The second operand names an even-odd pair, the message address and length, which
@@ -1292,6 +1295,9 @@ def s390x_memory(row: scanner.DecodedLine, identity: str = "") -> Memory:
     if executed[1][0] == executed[1][1] and executed[0] == "xc":
       return Memory((destination,))
     return Memory((source, dataclasses.replace(destination, store=False), destination))
+  if mnemonic == "pcc":
+    # The selected function sets the block size. Scalar multiplication reads and writes this block in place.
+    return Memory((Access(False, "r1", None, 0, None), Access(True, "r1", None, 0, None)))
   if mnemonic in {"kimd", "klmd"}:
     # The digest updates the parameter block at r1 in place.
     return Memory(wild_store=True)
