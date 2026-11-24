@@ -168,12 +168,15 @@ with reusable, allocator-backed storage and the allocation contract.
 See [ML-DSA](mldsa.md) for the API, the memory costs, and the open qualification gates.
 
 `mldsa65-ed25519` and `mldsa65-ecdsa-p256` each give one composite signature from
-[draft-ietf-lamps-pq-composite-sigs-19](https://datatracker.ietf.org/doc/draft-ietf-lamps-pq-composite-sigs/19/)
-(RFC-to-be 10073): `id-MLDSA65-Ed25519-SHA512` and `id-MLDSA65-ECDSA-P256-SHA512`.
+[RFC 10073](https://www.rfc-editor.org/rfc/rfc10073) (the text of draft-ietf-lamps-pq-composite-sigs-19):
+`id-MLDSA65-Ed25519-SHA512` and `id-MLDSA65-ECDSA-P256-SHA512`.
 They enable `ml-dsa` and `ed25519` or `ecdsa-p256`, need neither allocation nor operating-system entropy,
 and import and export the draft's raw, SubjectPublicKeyInfo, and PKCS #8 encodings.
 A signature is valid only if both components verify. `prepare_in` and the allocator-backed
 secret-key constructors (`generate_keypair_in`, `try_from_slice_in`, and `from_pkcs8_der_in`) need `alloc`.
+When a TPM or a Secure Enclave holds the P-256 half, `rscrypto::expert::MlDsa65EcdsaP256SplitSigner`
+signs the ML-DSA-65 half and gives the external signer `M'` or its SHA-256 digest.
+Its pending signature then assembles the composite and verifies both halves.
 The `rscrypto::auth::composite_mldsa` module documentation describes the construction and its limits.
 
 `x-wing` gives the X-Wing hybrid KEM of ML-KEM-768 and X25519 from

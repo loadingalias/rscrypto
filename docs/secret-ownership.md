@@ -369,6 +369,9 @@ their existing lifetimes; this boundary adds no secret owner or allocation.
 - `expose_secret` and `to_pkcs8_der_into` assemble the raw encoding in a zeroizing owner, then
   copy it into the returned `SecretBytes` or the caller's buffer.
 - Hedged signing draws all randomness into one zeroizing owner before any secret computation.
+- `expert::MlDsa65EcdsaP256SplitSigner` owns no secret. It borrows an `MlDsa65SecretKey` and keeps
+  a copy of the composite public key. `MlDsa65EcdsaP256PendingSignature` holds only public data:
+  the public key, `M'`, and the ML-DSA-65 signature. The external signer keeps the P-256 secret.
   The message representative holds only public data.
 - `prepare` and `prepare_in` fill one composite storage owner in place: its ML-DSA-65 field as
   [ML-DSA storage](#ml-dsa-storage) describes, then an explicit `duplicate_secret` copy of the

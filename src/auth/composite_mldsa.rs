@@ -30,10 +30,13 @@
 //! a DER `Ecdsa-Sig-Value`. SubjectPublicKeyInfo and PKCS #8 carry these raw
 //! encodings with the composite OID and absent parameters.
 //!
-//! The draft forbids reusing component keys outside the composite, so keys
-//! come only from fresh generation or from composite encodings; no
-//! constructor takes existing component keys. ECDSA signatures are
-//! malleable, so [`MlDsa65EcdsaP256`] is not strongly unforgeable.
+//! RFC 10073 forbids reusing component keys outside the composite, so keys
+//! come only from fresh generation or from composite encodings. The one
+//! exception is `rscrypto::expert::MlDsa65EcdsaP256SplitSigner`, for a P-256
+//! half that a TPM or a Secure Enclave holds: its caller generates both
+//! component keys fresh for that one composite (section 3.1.1). ECDSA
+//! signatures are malleable, so [`MlDsa65EcdsaP256`] is not strongly
+//! unforgeable.
 //!
 //! Signing needs tens of KiB of stack, like ML-DSA-65. With `alloc`,
 //! `prepare_in` expands the ML-DSA key once into allocated storage for
@@ -466,6 +469,14 @@ macro_rules! composite {
       ) -> Result<(), VerificationError> {
         let representative =
           Representative::new($profile::LABEL, context, prehash).map_err(|_| VerificationError::new())?;
+        self.verify_representative(&representative, signature)
+      }
+
+      fn verify_representative(
+        &self,
+        representative: &Representative,
+        signature: &$signature,
+      ) -> Result<(), VerificationError> {
         let ml_dsa = signature.ml_dsa()?;
         self
           .ml_dsa
@@ -1080,8 +1091,9 @@ pub use ecdsa_p256_composite::{
 };
 
 #[cfg(feature = "mldsa65-ecdsa-p256")]
-mod ecdsa_p256_composite {
+pub(crate) mod ecdsa_p256_composite {
   use super::*;
+  use crate::hashes::crypto::Sha256;
   use crate::{EcdsaError, EcdsaP256PublicKey, EcdsaP256SecretKey, EcdsaP256Signature};
 
   /// RFC 5915 `ECPrivateKey` bytes before the P-256 scalar: version 1 and the
@@ -1205,6 +1217,228 @@ mod ecdsa_p256_composite {
         .map_err(|_| VerificationError::new())?
         .verify(representative, &signature.ecdsa()?)
     }
+
+    /// Combine an ML-DSA-65 public key and a P-256 public key into one
+    /// composite key, for a P-256 half that a TPM or a Secure Enclave holds.
+    ///
+    /// RFC 10073 section 3.1.1 permits split key generation only when both
+    /// component keys are generated fresh for this composite. Never use
+    /// either component key alone or in another composite.
+    #[must_use]
+    pub fn from_components(ml_dsa: &MlDsa65PublicKey, ecdsa: &EcdsaP256PublicKey) -> Self {
+      Self {
+        ml_dsa: ml_dsa.clone(),
+        trad: ecdsa.to_sec1_bytes(),
+      }
+    }
+  }
+
+  /// `id-MLDSA65-ECDSA-P256-SHA512` signing with an external ECDSA P-256
+  /// signer, such as a TPM or a Secure Enclave.
+  ///
+  /// Each `begin_*` call builds the message representative `M'` and signs
+  /// the ML-DSA-65 half. The external signer then signs `M'` with ECDSA
+  /// P-256 and SHA-256, and [`MlDsa65EcdsaP256PendingSignature::finish`]
+  /// assembles and verifies the composite signature.
+  ///
+  /// The signer borrows the ML-DSA-65 key and owns no secret. Generate both
+  /// component keys fresh for this composite, and use them nowhere else
+  /// (RFC 10073 section 3.1.1).
+  ///
+  /// ```
+  /// # #[cfg(feature = "mldsa65-ecdsa-p256")] {
+  /// use rscrypto::expert::MlDsa65EcdsaP256SplitSigner;
+  /// use rscrypto::{EcdsaP256SecretKey, MlDsa65, MlDsa65EcdsaP256PublicKey};
+  ///
+  /// // Fixed key material keeps the example reproducible; generate real
+  /// // keys from fresh randomness.
+  /// let (ml_dsa_public, ml_dsa_secret) = MlDsa65::keypair_from_seed(&[7; 32])?;
+  /// // This software key stands in for the hardware signer.
+  /// let hardware = EcdsaP256SecretKey::from_bytes([9; 32])?;
+  /// let public = MlDsa65EcdsaP256PublicKey::from_components(&ml_dsa_public, &hardware.public_key());
+  ///
+  /// let signer = MlDsa65EcdsaP256SplitSigner::new(&ml_dsa_secret, &public)?;
+  /// let pending = signer.begin_deterministic(b"release manifest", b"example")?;
+  /// let ecdsa = hardware.try_sign(pending.ecdsa_message())?;
+  /// let signature = pending.finish(&ecdsa)?;
+  /// public.verify_with_context(b"release manifest", b"example", &signature)?;
+  /// # }
+  /// # Ok::<(), Box<dyn std::error::Error>>(())
+  /// ```
+  pub struct MlDsa65EcdsaP256SplitSigner<'k> {
+    ml_dsa: &'k MlDsa65SecretKey,
+    public: MlDsa65EcdsaP256PublicKey,
+  }
+
+  impl<'k> MlDsa65EcdsaP256SplitSigner<'k> {
+    /// Bind the ML-DSA-65 half of `public` to its secret key.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CompositeMlDsaKeyError::InvalidSecretKey`] if `ml_dsa` is not
+    /// the secret key of the ML-DSA-65 half of `public`.
+    pub fn new(
+      ml_dsa: &'k MlDsa65SecretKey,
+      public: &MlDsa65EcdsaP256PublicKey,
+    ) -> Result<Self, CompositeMlDsaKeyError> {
+      if *ml_dsa.public_key() != public.ml_dsa {
+        return Err(CompositeMlDsaKeyError::InvalidSecretKey);
+      }
+      Ok(Self {
+        ml_dsa,
+        public: public.clone(),
+      })
+    }
+
+    /// Begin deterministic signing with an application context of at most
+    /// 255 bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CompositeMlDsaError::ContextTooLong`] or
+    /// [`CompositeMlDsaError::SigningFailed`].
+    pub fn begin_deterministic(
+      &self,
+      message: &[u8],
+      context: &[u8],
+    ) -> Result<MlDsa65EcdsaP256PendingSignature, CompositeMlDsaError> {
+      self.begin_prehash_deterministic(&prehash(message), context)
+    }
+
+    /// Begin hedged signing with ML-DSA-65 randomness from `fill_random`.
+    ///
+    /// The context is checked before randomness is requested. The callback's
+    /// first error is returned unchanged.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CompositeMlDsaError::ContextTooLong`], the callback's error,
+    /// or [`CompositeMlDsaError::SigningFailed`].
+    pub fn begin_with(
+      &self,
+      message: &[u8],
+      context: &[u8],
+      fill_random: impl FnMut(&mut [u8]) -> Result<(), CompositeMlDsaError>,
+    ) -> Result<MlDsa65EcdsaP256PendingSignature, CompositeMlDsaError> {
+      self.begin_prehash_with(&prehash(message), context, fill_random)
+    }
+
+    /// Begin deterministic signing over a caller-computed SHA-512 digest of
+    /// the message, as RFC 10073 section 10.5 externalizes the prehash.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::begin_deterministic`].
+    pub fn begin_prehash_deterministic(
+      &self,
+      prehash: &[u8; 64],
+      context: &[u8],
+    ) -> Result<MlDsa65EcdsaP256PendingSignature, CompositeMlDsaError> {
+      let representative = Representative::new(MlDsa65EcdsaP256::LABEL, context, prehash)?;
+      self.pending(representative, None)
+    }
+
+    /// Begin hedged signing over a caller-computed SHA-512 digest of the
+    /// message, as by [`Self::begin_with`].
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::begin_with`].
+    pub fn begin_prehash_with(
+      &self,
+      prehash: &[u8; 64],
+      context: &[u8],
+      mut fill_random: impl FnMut(&mut [u8]) -> Result<(), CompositeMlDsaError>,
+    ) -> Result<MlDsa65EcdsaP256PendingSignature, CompositeMlDsaError> {
+      let representative = Representative::new(MlDsa65EcdsaP256::LABEL, context, prehash)?;
+      let mut random = ZeroizingBytes::<32>::zeroed();
+      fill_random(random.as_mut_array())?;
+      self.pending(representative, Some(random.as_array()))
+    }
+
+    fn pending(
+      &self,
+      representative: Representative,
+      random: Option<&[u8; 32]>,
+    ) -> Result<MlDsa65EcdsaP256PendingSignature, CompositeMlDsaError> {
+      let ml_dsa = with_data_independent_timing(|| {
+        sign_ml_dsa(
+          |message, context| self.ml_dsa.sign_deterministic(message, context),
+          |message, context, random| {
+            self.ml_dsa.sign_with(message, context, |out| {
+              out.copy_from_slice(random);
+              Ok(())
+            })
+          },
+          &representative,
+          MlDsa65EcdsaP256::LABEL,
+          random,
+        )
+      })?;
+      Ok(MlDsa65EcdsaP256PendingSignature {
+        public: self.public.clone(),
+        representative,
+        ml_dsa,
+      })
+    }
+  }
+
+  impl fmt::Debug for MlDsa65EcdsaP256SplitSigner<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+      f.debug_struct("MlDsa65EcdsaP256SplitSigner")
+        .field("public", &self.public)
+        .finish_non_exhaustive()
+    }
+  }
+
+  /// A composite signature that waits for its ECDSA P-256 half.
+  ///
+  /// It holds only public data: the composite public key, `M'`, and the
+  /// ML-DSA-65 signature. It can wait for a slow external signer.
+  pub struct MlDsa65EcdsaP256PendingSignature {
+    public: MlDsa65EcdsaP256PublicKey,
+    representative: Representative,
+    ml_dsa: MlDsa65Signature,
+  }
+
+  impl MlDsa65EcdsaP256PendingSignature {
+    /// `M'`, for an external signer that hashes with SHA-256 itself.
+    #[must_use]
+    pub fn ecdsa_message(&self) -> &[u8] {
+      self.representative.as_slice()
+    }
+
+    /// The SHA-256 digest of `M'`, for an external signer that takes a
+    /// digest, such as `TPM2_Sign`.
+    #[must_use]
+    pub fn ecdsa_digest(&self) -> [u8; 32] {
+      Sha256::digest(self.representative.as_slice())
+    }
+
+    /// Assemble the composite signature with the external half, then verify
+    /// both halves over `M'`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CompositeMlDsaError::InvalidSignature`] if the composite
+    /// does not verify, as for a half from another key or over another
+    /// message.
+    pub fn finish(&self, ecdsa: &EcdsaP256Signature) -> Result<MlDsa65EcdsaP256Signature, CompositeMlDsaError> {
+      let signature = MlDsa65EcdsaP256Signature::assemble(&self.ml_dsa, ecdsa);
+      self
+        .public
+        .verify_representative(&self.representative, &signature)
+        .map_err(|_| CompositeMlDsaError::InvalidSignature)?;
+      Ok(signature)
+    }
+  }
+
+  impl fmt::Debug for MlDsa65EcdsaP256PendingSignature {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+      f.debug_struct("MlDsa65EcdsaP256PendingSignature")
+        .field("public", &self.public)
+        .finish_non_exhaustive()
+    }
   }
 
   impl MlDsa65EcdsaP256SecretKey {
@@ -1291,13 +1525,18 @@ mod ecdsa_p256_composite {
           .map_err(|_| EcdsaError::SigningFailure),
       }
       .map_err(|_| CompositeMlDsaError::SigningFailed)?;
+      Ok(Self::assemble(ml_dsa, &ecdsa))
+    }
+
+    /// The ML-DSA-65 signature followed by the canonical DER of `ecdsa`.
+    fn assemble(ml_dsa: &MlDsa65Signature, ecdsa: &EcdsaP256Signature) -> Self {
       let mut der = [0; EcdsaP256Signature::DER_MAX_LENGTH];
       let der = ecdsa.to_der_into(&mut der);
       let mut bytes = [0; Self::MAX_LENGTH];
       bytes[..MlDsa65Signature::LENGTH].copy_from_slice(ml_dsa.as_bytes());
       let len = MlDsa65Signature::LENGTH.strict_add(der.len());
       bytes[MlDsa65Signature::LENGTH..len].copy_from_slice(der);
-      Ok(Self { bytes, len })
+      Self { bytes, len }
     }
   }
 

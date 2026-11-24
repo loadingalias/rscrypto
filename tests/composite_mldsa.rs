@@ -805,3 +805,35 @@ fn composite_keys_are_not_interchangeable() {
     CompositeMlDsaKeyError::UnsupportedAlgorithm
   );
 }
+
+#[test]
+fn split_signing_refuses_mismatched_halves() {
+  let (ml_dsa_public, ml_dsa_secret) = MlDsa65::keypair_from_seed(&[5; 32]).expect("ML-DSA-65 key");
+  let hardware = EcdsaP256SecretKey::from_bytes([6; 32]).expect("P-256 key");
+  let public = MlDsa65EcdsaP256PublicKey::from_components(&ml_dsa_public, &hardware.public_key());
+  let (_, other_ml_dsa) = MlDsa65::keypair_from_seed(&[7; 32]).expect("ML-DSA-65 key");
+  assert_eq!(
+    expert::MlDsa65EcdsaP256SplitSigner::new(&other_ml_dsa, &public).expect_err("another ML-DSA-65 key"),
+    CompositeMlDsaKeyError::InvalidSecretKey
+  );
+
+  let signer = expert::MlDsa65EcdsaP256SplitSigner::new(&ml_dsa_secret, &public).expect("split signer");
+  let pending = signer.begin_deterministic(b"message", b"").expect("begin");
+  let other_message = signer.begin_deterministic(b"other message", b"").expect("begin");
+  let other_key = EcdsaP256SecretKey::from_bytes([8; 32]).expect("P-256 key");
+  for half in [
+    other_key
+      .try_sign(pending.ecdsa_message())
+      .expect("half from another key"),
+    hardware
+      .try_sign(other_message.ecdsa_message())
+      .expect("half over another M'"),
+    hardware.try_sign(b"message").expect("half over the message, not M'"),
+  ] {
+    assert_eq!(pending.finish(&half), Err(CompositeMlDsaError::InvalidSignature));
+  }
+  let half = hardware.try_sign(pending.ecdsa_message()).expect("half");
+  public
+    .verify(b"message", &pending.finish(&half).expect("matching half"))
+    .expect("verifies");
+}
