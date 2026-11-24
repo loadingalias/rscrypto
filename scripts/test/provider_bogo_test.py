@@ -5,7 +5,7 @@ from pathlib import Path
 import tempfile
 import tomllib
 import unittest
-from provider_bogo import exclusions, linked_rustls, registry_version, vcs_commit
+from provider_bogo import REQUIRED_ECH, exclusions, linked_rustls, registry_version, summarize, vcs_commit
 
 
 def dependency(entry):
@@ -62,6 +62,14 @@ class RustlsPin(unittest.TestCase):
 
 
 class ProfileExclusions(unittest.TestCase):
+    def test_disabled_or_skipped_ech_cases_fail_an_otherwise_successful_run(self):
+        grease = 'TLS-ECH-GREASE-Client-TLS13'
+        retry = 'TLS-ECH-Client-Reject-UnauthenticatedRetryConfigs'
+        profiles = [{'Name': name, 'Selected': name in (grease, retry)} for name in REQUIRED_ECH]
+        summary = summarize(profiles, {grease: {'actual': 'SKIP'}, 'TLS-ECH-Client': {'actual': 'PASS'}}, 0)
+        self.assertEqual(summary['exit_code'], 1)
+        self.assertEqual(summary['required_ech'], {grease: 'SKIP', retry: 'MISSING'})
+
     def profile(self, name, **fields):
         return dict(dict(Name=name, Protocol='TLS', MaxVersion=0x0304, ExpectedVersion=0,
                          ResumeMaxVersion=0, ResumeExpectedVersion=0, ShouldFail=False,

@@ -7,88 +7,22 @@ use core::error::Error;
 use core::net::SocketAddr;
 use core::time::Duration;
 use std::io::{self, Write};
-use std::net::{Shutdown, TcpListener, TcpStream};
+use std::net::{Shutdown, TcpListener};
 use std::path::Path;
 use std::time::Instant;
 
 use rustls::pki_types::ServerName;
-use rustls::{ClientConfig, Connection, ServerConfig, SideData, Tcp, VecInput};
+use rustls::{ClientConfig, Connection, ServerConfig, SideData};
 
 mod common;
+mod tls_stream;
 use common::{credentials, provider};
+use tls_stream::{Stream, TIMEOUT, connect, handshake};
 
 const PAYLOAD: &[u8] = b"rscrypto provider interoperability\n";
-const TIMEOUT: Duration = Duration::from_secs(10);
 
 fn invalid(message: &str) -> io::Error {
   io::Error::new(io::ErrorKind::InvalidInput, message)
-}
-
-/// One TLS connection over a blocking socket, with its record buffers.
-struct Stream<S: SideData> {
-  conn: Connection<S, Tcp>,
-  sock: TcpStream,
-  input: VecInput,
-  output: Vec<u8>,
-  plaintext: Vec<u8>,
-}
-
-impl<S: SideData> Stream<S> {
-  /// Sends every queued TLS record.
-  fn flush(&mut self) -> io::Result<()> {
-    self.sock.write_all(&self.output)?;
-    self.output.clear();
-    Ok(())
-  }
-
-  /// Reads once from the socket, processes every complete record, and sends
-  /// what processing queued: a handshake flight, a KeyUpdate reply, or the
-  /// alert for a TLS failure. A TLS failure outranks a failed send.
-  fn receive(&mut self) -> Result<(), Box<dyn Error>> {
-    if self.input.read(&mut self.sock)? == 0 {
-      return Err(io::Error::from(io::ErrorKind::UnexpectedEof).into());
-    }
-    let processed = self
-      .conn
-      .read_tls(&mut self.input, &mut self.output)
-      .handle_all(&mut self.plaintext);
-    let sent = self.flush();
-    processed?;
-    Ok(sent?)
-  }
-}
-
-fn handshake<S: SideData>(
-  connection: Connection<S, Tcp>,
-  socket: TcpStream,
-  output: Vec<u8>,
-) -> Result<Stream<S>, Box<dyn Error>> {
-  // Accepted sockets can inherit the listener's nonblocking flag on BSD hosts.
-  socket.set_nonblocking(false)?;
-  socket.set_read_timeout(Some(TIMEOUT))?;
-  socket.set_write_timeout(Some(TIMEOUT))?;
-  let mut stream = Stream {
-    conn: connection,
-    sock: socket,
-    input: VecInput::default(),
-    output,
-    plaintext: Vec::new(),
-  };
-  stream.flush()?;
-  while stream.conn.is_handshaking() {
-    stream.receive()?;
-  }
-  if stream.conn.alpn_protocol().map(AsRef::as_ref) != Some(b"provider-test".as_slice()) {
-    return Err(invalid("ALPN mismatch").into());
-  }
-  Ok(stream)
-}
-
-fn connect(config: &Arc<ClientConfig>, address: SocketAddr) -> Result<Stream<rustls::ClientSide>, Box<dyn Error>> {
-  let socket = TcpStream::connect_timeout(&address, TIMEOUT)?;
-  let mut output = Vec::new();
-  let connection = config.connect(ServerName::try_from("localhost")?).build(&mut output)?;
-  handshake(connection, socket, output)
 }
 
 #[cfg(feature = "ech")]
@@ -111,7 +45,7 @@ fn client_ech(
     .with_root_certificates(roots.clone())
     .with_no_client_auth()?;
   client.alpn_protocols = vec![b"provider-test".to_vec().into()];
-  let failure = match connect(&Arc::new(client), address) {
+  let failure = match connect(&Arc::new(client), address, ServerName::try_from("localhost")?) {
     Err(error) => error.downcast::<rustls::Error>()?,
     Ok(_) => return Err(invalid("the server accepted the stale ECH key").into()),
   };
@@ -122,6 +56,9 @@ fn client_ech(
 }
 
 fn exchange(mut stream: Stream<impl SideData>, client: bool, reverse: bool) -> Result<(), Box<dyn Error>> {
+  if stream.conn.alpn_protocol().map(AsRef::as_ref) != Some(b"provider-test".as_slice()) {
+    return Err(invalid("ALPN mismatch").into());
+  }
   for round in 0..2 {
     if client {
       stream.conn.write(PAYLOAD.into(), &mut stream.output)?;
@@ -208,7 +145,7 @@ fn main() -> Result<(), Box<dyn Error>> {
       // The provider's TLS 1.2 PRF requires the extended master secret itself.
       let config = Arc::new(config);
       for _ in 0..count {
-        let stream = connect(&config, address)?;
+        let stream = connect(&config, address, ServerName::try_from("localhost")?)?;
         if args.get(8).is_some() && stream.conn.side().ech_status() != rustls::client::EchStatus::Accepted {
           return Err(invalid("the server did not accept ECH").into());
         }

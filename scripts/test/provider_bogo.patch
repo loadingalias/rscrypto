@@ -1,5 +1,5 @@
 diff --git a/Cargo.toml b/Cargo.toml
-index 4ef7a492..ab9319f5 100644
+index fe040660..69f0d1e9 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
 @@ -144,3 +144,6 @@ unused_qualifications = "warn"
@@ -10,7 +10,7 @@ index 4ef7a492..ab9319f5 100644
 +[patch."https://github.com/rustls/rustls"]
 +rustls = { path = "rustls" }
 diff --git a/bogo/Cargo.toml b/bogo/Cargo.toml
-index ed6312a2..cbcfeef6 100644
+index ed6312a2..f1bc60ab 100644
 --- a/bogo/Cargo.toml
 +++ b/bogo/Cargo.toml
 @@ -13,8 +13,11 @@ rustls-ring = { path = "../rustls-ring" }
@@ -25,8 +25,70 @@ index ed6312a2..cbcfeef6 100644
  fips = ["rustls-aws-lc-rs/fips"]
  
  [lints]
+diff --git a/bogo/src/client.rs b/bogo/src/client.rs
+index d2abe228..056f27b1 100644
+--- a/bogo/src/client.rs
++++ b/bogo/src/client.rs
+@@ -23,15 +23,14 @@ use rustls::{ClientConfig, DistinguishedName, Error};
+ use super::compress::{CompressionAlgs, ExpandingAlgorithm, RandomAlgorithm, ShrinkingAlgorithm};
+ use super::opts::Options;
+ use super::{
+-    ALL_HPKE_SUITES, Credential, GREASE_25519_PUBKEY, GREASE_HPKE_SUITE, KeyLogMemo,
+-    load_root_certs, lookup_scheme, quit,
++    Credential, GREASE_25519_PUBKEY, KeyLogMemo, load_root_certs, lookup_scheme, quit,
+ };
+ 
+ pub(crate) fn config(opts: &Options, key_log: &Arc<KeyLogMemo>) -> Arc<ClientConfig> {
+     let provider = Arc::new(opts.provider());
+     let cfg = ClientConfig::builder(provider.clone());
+ 
+-    let cfg = if opts.selected_provider.supports_ech() {
++    let cfg = if let Some((hpke_suites, grease_suite)) = opts.selected_provider.ech_suites() {
+         let ech_cfg = ClientConfig::builder(
+             CryptoProvider {
+                 tls12_cipher_suites: Default::default(),
+@@ -41,7 +40,7 @@ pub(crate) fn config(opts: &Options, key_log: &Arc<KeyLogMemo>) -> Arc<ClientCon
+         );
+ 
+         if let Some(ech_config_list) = &opts.ech_config_list {
+-            let ech_mode = match EchConfig::new(ech_config_list.clone(), ALL_HPKE_SUITES) {
++            let ech_mode = match EchConfig::new(ech_config_list.clone(), hpke_suites) {
+                 Ok(ech_config) => EchMode::from(ech_config),
+                 Err(Error::InvalidEncryptedClientHello(
+                     EncryptedClientHelloError::NoCompatibleConfig,
+@@ -55,7 +54,7 @@ pub(crate) fn config(opts: &Options, key_log: &Arc<KeyLogMemo>) -> Arc<ClientCon
+             quit(":UNUSABLE_ECH_CONFIG_LIST:");
+         } else if opts.enable_ech_grease {
+             let ech_mode = EchMode::Grease(EchGreaseConfig::new(
+-                GREASE_HPKE_SUITE,
++                grease_suite,
+                 HpkePublicKey(GREASE_25519_PUBKEY.to_vec()),
+             ));
+ 
+@@ -67,15 +66,17 @@ pub(crate) fn config(opts: &Options, key_log: &Arc<KeyLogMemo>) -> Arc<ClientCon
+         cfg
+     };
+ 
+-    let cfg = cfg
+-        .dangerous()
+-        .with_custom_certificate_verifier(Arc::new(DummyServerAuth::new(
++    let cfg = if opts.use_webpki_verifier {
++        cfg.with_root_certificates(load_root_certs(&opts.trusted_cert_file))
++    } else {
++        cfg.dangerous().with_custom_certificate_verifier(Arc::new(DummyServerAuth::new(
+             &opts.trusted_cert_file,
+             opts.ocsp,
+             opts.enable_ocsp_stapling,
+             opts.expected_server_names(),
+             &provider,
+-        )));
++        )))
++    };
+ 
+     let mut cfg = match opts.credentials.configured() {
+         true => {
 diff --git a/bogo/src/main.rs b/bogo/src/main.rs
-index c8736cf2..2d062cae 100644
+index b397d920..236e35fc 100644
 --- a/bogo/src/main.rs
 +++ b/bogo/src/main.rs
 @@ -635,6 +635,8 @@ enum SelectedProvider {
@@ -38,7 +100,7 @@ index c8736cf2..2d062cae 100644
  }
  
  impl SelectedProvider {
-@@ -655,6 +657,11 @@ impl SelectedProvider {
+@@ -655,13 +657,23 @@ impl SelectedProvider {
              }
  
              Self::Ring => rustls_ring::DEFAULT_PROVIDER,
@@ -50,16 +112,22 @@ index c8736cf2..2d062cae 100644
          }
      }
  
-@@ -662,6 +669,8 @@ impl SelectedProvider {
+-    fn supports_ech(&self) -> bool {
++    fn ech_suites(&self) -> Option<(&'static [&'static dyn Hpke], &'static dyn Hpke)> {
          match *self {
-             Self::AwsLcRs | Self::AwsLcRsFips => true,
-             Self::Ring => false,
+-            Self::AwsLcRs | Self::AwsLcRsFips => true,
+-            Self::Ring => false,
++            Self::AwsLcRs | Self::AwsLcRsFips => Some((ALL_HPKE_SUITES, GREASE_HPKE_SUITE)),
++            Self::Ring => None,
 +            #[cfg(feature = "rscrypto")]
-+            Self::Rscrypto => false,
++            Self::Rscrypto => Some((
++                rscrypto_rustls::hpke::ALL_SUPPORTED_SUITES,
++                rscrypto_rustls::hpke::X25519_HKDF_SHA256_AES_128_GCM,
++            )),
          }
      }
  }
-@@ -745,7 +754,7 @@ fn load_root_certs(filename: &str) -> Arc<RootCertStore> {
+@@ -745,7 +757,7 @@ fn load_root_certs(filename: &str) -> Arc<RootCertStore> {
      //
      // use an unrelated cert we have lying around.
      let filename = match filename {
@@ -69,10 +137,18 @@ index c8736cf2..2d062cae 100644
      };
  
 diff --git a/bogo/src/opts.rs b/bogo/src/opts.rs
-index 8d3b26f7..951a34b3 100644
+index 75311986..3e375f48 100644
 --- a/bogo/src/opts.rs
 +++ b/bogo/src/opts.rs
-@@ -101,6 +101,8 @@ impl Options {
+@@ -86,6 +86,7 @@ pub(crate) struct Options {
+     pub(crate) support_tls13: bool,
+     pub(crate) tickets: bool,
+     pub(crate) trusted_cert_file: String,
++    pub(crate) use_webpki_verifier: bool,
+     pub(crate) use_sni: bool,
+     pub(crate) verify_peer: bool,
+     pub(crate) verify_prefs: Option<SignatureScheme>,
+@@ -102,6 +103,8 @@ impl Options {
              #[cfg(feature = "fips")]
              Some("aws-lc-rs-fips") => SelectedProvider::AwsLcRsFips,
              Some("ring") => SelectedProvider::Ring,
@@ -81,7 +157,15 @@ index 8d3b26f7..951a34b3 100644
              Some(other) => panic!("unrecognized value for BOGO_SHIM_PROVIDER: {other:?}"),
          };
  
-@@ -200,7 +202,9 @@ impl Options {
+@@ -176,6 +179,7 @@ impl Options {
+             support_tls13: true,
+             tickets: true,
+             trusted_cert_file: "".to_string(),
++            use_webpki_verifier: false,
+             use_sni: false,
+             verify_peer: false,
+             verify_prefs: None,
+@@ -202,7 +206,9 @@ impl Options {
      }
  
      fn tls12_supported(&self) -> bool {
@@ -92,7 +176,7 @@ index 8d3b26f7..951a34b3 100644
      }
  
      pub(crate) fn expected_server_names(&self) -> Vec<ServerName<'static>> {
-@@ -235,7 +239,7 @@ impl Options {
+@@ -237,7 +243,7 @@ impl Options {
      pub(crate) fn provider(&self) -> CryptoProvider {
          let mut provider = self.provider.clone();
  
@@ -101,7 +185,7 @@ index 8d3b26f7..951a34b3 100644
              && let Some(
                  SignatureScheme::ML_DSA_44
                  | SignatureScheme::ML_DSA_65
-@@ -246,6 +250,21 @@ impl Options {
+@@ -248,6 +254,21 @@ impl Options {
              provider.signature_verification_algorithms = rustls_aws_lc_rs::SUPPORTED_SIG_ALGS;
          }
  
@@ -123,3 +207,11 @@ index 8d3b26f7..951a34b3 100644
          if let Some(groups) = &self.groups {
              provider
                  .kx_groups
+@@ -473,6 +494,7 @@ impl Options {
+             "-verify-peer" => {
+                 self.verify_peer = true;
+             }
++            "-use-webpki-verifier" => self.use_webpki_verifier = true,
+             "-shim-writes-first" => {
+                 self.queue_data = true;
+             }

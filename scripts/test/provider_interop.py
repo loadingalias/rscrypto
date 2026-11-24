@@ -103,12 +103,11 @@ def check_results(output, suite, group):
     return [row.split()[-1] for row in rows]
 
 
-def run_case(output, name, server_command, client_commands, *, suite, group, peer, ours_client, address=None, expect_hrr=False):
+def run_peers(output, name, server_command, client_commands, *, prefix, address=None, rejected=()):
     directory = output / name
     directory.mkdir()
     (directory / 'commands.json').write_text(json.dumps(
         {'server': server_command, 'clients': client_commands}, indent=2) + '\n')
-    prefix = b'ACCEPT' if peer == 'openssl' and ours_client else b'LISTEN '
     prelude = b''
     with (directory / 'server.stderr').open('wb') as errors:
         server = subprocess.Popen(server_command, cwd=ROOT, stdout=subprocess.PIPE,
@@ -123,28 +122,15 @@ def run_case(output, name, server_command, client_commands, *, suite, group, pee
                     result = subprocess.run(command, cwd=ROOT, input=PAYLOAD * 2,
                                             stdout=subprocess.PIPE, stderr=client_errors, timeout=30)
                 (directory / f'client-{index}.stdout').write_bytes(result.stdout)
-                if result.returncode:
-                    raise RuntimeError(f'client exited {result.returncode}: {directory}')
+                if result.returncode != int(index in rejected):
+                    raise RuntimeError(f'client {index} exited {result.returncode}: {directory}')
                 clients.append(result.stdout)
             remaining, _ = server.communicate(timeout=15)
             server_output = prelude + remaining
             (directory / 'server.stdout').write_bytes(server_output)
             if server.returncode:
                 raise RuntimeError(f'server exited {server.returncode}: {directory}')
-            ours = clients[0] if ours_client else server_output
-            exported = check_results(ours, suite, group)
-            if expect_hrr and 'Some(FullWithHelloRetryRequest)' not in results(ours)[0]:
-                raise AssertionError('the ECH server did not request a second ClientHello')
-            if peer == 'go':
-                theirs = server_output if ours_client else clients[0]
-                rows = results(theirs)
-                if len(rows) != 2 or 'Full' not in rows[0] or 'Resumed' not in rows[1]:
-                    raise AssertionError(f'Go resumption mismatch: {rows}')
-                if exported != [row.split()[-1] for row in rows]:
-                    raise AssertionError('independent Go exporters differ')
-            elif not ours_client and any(value != PAYLOAD * 2 for value in clients):
-                raise AssertionError('OpenSSL application payload differs')
-            print('PASS ' + name, flush=True)
+            return clients, server_output
         finally:
             if server.poll() is None:
                 server.kill()
@@ -152,6 +138,46 @@ def run_case(output, name, server_command, client_commands, *, suite, group, pee
                 remaining, _ = server.communicate(timeout=5)
                 (directory / 'server.stdout').write_bytes(prelude + remaining)
             server.stdout.close()
+
+
+def run_case(output, name, server_command, client_commands, *, suite, group, peer, ours_client, address=None, expect_hrr=False):
+    prefix = b'ACCEPT' if peer == 'openssl' and ours_client else b'LISTEN '
+    clients, server_output = run_peers(output, name, server_command, client_commands, prefix=prefix, address=address)
+    ours = clients[0] if ours_client else server_output
+    exported = check_results(ours, suite, group)
+    if expect_hrr and 'Some(FullWithHelloRetryRequest)' not in results(ours)[0]:
+        raise AssertionError('the ECH server did not request a second ClientHello')
+    if peer == 'go':
+        theirs = server_output if ours_client else clients[0]
+        rows = results(theirs)
+        if len(rows) != 2 or 'Full' not in rows[0] or 'Resumed' not in rows[1]:
+            raise AssertionError(f'Go resumption mismatch: {rows}')
+        if exported != [row.split()[-1] for row in rows]:
+            raise AssertionError('independent Go exporters differ')
+    elif not ours_client and any(value != PAYLOAD * 2 for value in clients):
+        raise AssertionError('OpenSSL application payload differs')
+    print('PASS ' + name, flush=True)
+
+
+def run_ech_example(output, openssl, binary, pem_dir, key, current, stale):
+    name = 'ech-client-example'
+    _, wrong_name = ech_keys(openssl, pem_dir, 'untrusted.example')
+    server = [openssl, 's_server', '-accept', '127.0.0.1:0', '-www', '-naccept', '4', '-tls1_3',
+              '-alpn', 'http/1.1', '-ech_key', key, '-cert', str(pem_dir / 'p256-leaf.pem'),
+              '-key', str(pem_dir / 'p256-key.pem')]
+    commands = [[str(binary), 'localhost', '{address}', config, str(pem_dir / 'p256-root.pem')]
+                for config in (current, stale, wrong_name)]
+    replies, _ = run_peers(output, name, server, commands, prefix=b'ACCEPT', rejected=(2,))
+    directory = output / name
+    logs = [(directory / f'client-{index}.stderr').read_text() for index in range(3)]
+    if not all(reply.startswith(b'HTTP/1.0 200 ') for reply in replies[:2]) or replies[2]:
+        raise AssertionError(f'unexpected HTTP response: {directory}')
+    accepted = 'ECH accepted\n'
+    if logs[:2] != [accepted, 'Retrying ECH on a fresh connection\n' + accepted]:
+        raise AssertionError(f'unexpected ECH retry count: {directory}')
+    if 'NotValidForName' not in logs[2] or 'Retrying ECH' in logs[2]:
+        raise AssertionError(f'expected a public-name certificate failure: {directory}')
+    print('PASS ' + name, flush=True)
 
 
 def main():
@@ -188,7 +214,8 @@ def main():
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(ROOT / path, destination)
     with (output / 'build.log').open('wb') as log:
-        subprocess.run(['cargo', 'build', '--locked', '-p', 'rscrypto-rustls', '--release', '--features', 'ml-dsa,ech', '--example', 'interop'],
+        subprocess.run(['cargo', 'build', '--locked', '-p', 'rscrypto-rustls', '--release', '--features', 'ml-dsa,ech',
+                        '--example', 'interop', '--example', 'ech-client'],
                        cwd=ROOT, check=True, stdout=log, stderr=subprocess.STDOUT, timeout=300)
         if 'go' in peers:
             subprocess.run(['go', 'build', '-o', str(output / 'go-peer'), 'scripts/test/provider_peer.go'],
@@ -213,6 +240,7 @@ def main():
             pem(FIXTURES / f'{kind}-{role}.der', converted / f'{kind}-{role}.pem', 'CERTIFICATE')
         pem(FIXTURES / f'{kind}-leaf-key.der', converted / f'{kind}-key.pem', 'PRIVATE KEY')
     completed = []
+    examples = []
     for peer, (kind, suite, group), ours_client in itertools.product(peers, cases, (True, False)):
         if peer == 'go' and group in GO_UNSUPPORTED_GROUPS:
             continue
@@ -262,6 +290,9 @@ def main():
                     run_case(output, name + '-ech-rotation', retry_server, [retry_client], suite=suite,
                              group=group, peer=peer, ours_client=True, address=address)
                     completed.append(name + '-ech-rotation')
+                    run_ech_example(output, executables['openssl'], Path(binary).with_name('ech-client'),
+                                    converted, key, config, stale)
+                    examples.append('ech-client-example')
             else:
                 session = str(output / (name + '.session.pem'))
                 client = [executables['openssl'], 's_client', '-connect', '{address}', '-servername', 'localhost',
@@ -269,7 +300,8 @@ def main():
                 run_case(output, name, ours, [client + ['-sess_out', session], client + ['-sess_in', session]],
                          suite=suite, group=group, peer=peer, ours_client=False)
         completed.append(name)
-        (output / 'results.json').write_text(json.dumps({'passed': completed, 'connections': len(completed) * 2}, indent=2) + '\n')
+        (output / 'results.json').write_text(json.dumps(
+            {'passed': completed, 'connections': len(completed) * 2, 'examples': examples}, indent=2) + '\n')
     (output / 'SHA256SUMS').write_text(''.join(
         hashlib.sha256(path.read_bytes()).hexdigest() + '  ' + str(path.relative_to(output)) + '\n'
         for path in sorted(output.rglob('*')) if path.is_file() and path != output / 'SHA256SUMS'))

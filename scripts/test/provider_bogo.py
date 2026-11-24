@@ -17,6 +17,12 @@ import tomllib
 
 ROOT = Path(__file__).resolve().parents[2]
 BORINGSSL = '9389a4af2c6c47a59ec39bfb51e4da2fe971d1bc'
+REQUIRED_ECH = (
+    'TLS-ECH-Client-Cipher-HKDF-SHA256-AES-128-GCM',
+    'TLS-ECH-GREASE-Client-TLS13',
+    'TLS-ECH-Client-Reject',
+    'TLS-ECH-Client-Reject-UnauthenticatedRetryConfigs',
+)
 
 
 def registry_version(dependency):
@@ -89,6 +95,16 @@ def exclusions(profiles):
         if reason:
             result[profile['Name']] = reason
     return result
+
+
+def summarize(profiles, tests, status):
+    # The runner can omit disabled cases or report SKIP with a successful exit.
+    selected = {case['Name']: case['Selected'] for case in profiles}
+    ech = {name: tests.get(name, {}).get('actual', 'MISSING')
+           for name in REQUIRED_ECH if selected.get(name, True)}
+    return {'exit_code': status or int(not tests or any(actual != 'PASS' for actual in ech.values())),
+            'runner_exit_code': status, 'counts': Counter(value['actual'] for value in tests.values()),
+            'required_ech': ech}
 
 
 def main():
@@ -169,8 +185,9 @@ def main():
     rsa.write_text('-----BEGIN PRIVATE KEY-----\n' + '\n'.join(
         encoded[i:i + 64] for i in range(0, len(encoded), 64)) + '\n-----END PRIVATE KEY-----\n')
     command = [str(runner / 'runner.test'), '-shim-path', shim, '-rsa-key-file', str(rsa), '-require-ems-profile']
-    run('profiles', [*command, '-profile-output', str(output / 'profiles.json')], runner / 'ssl/test/runner')
-    disabled = exclusions(json.loads((output / 'profiles.json').read_text()))
+    run('profiles', [*command, '-test', args.test, '-profile-output', str(output / 'profiles.json')], runner / 'ssl/test/runner')
+    profiles = json.loads((output / 'profiles.json').read_text())
+    disabled = exclusions(profiles)
     disabled.update(json.loads((ROOT / 'scripts/test/provider_bogo_disabled.json').read_text()))
     (output / 'profile-exclusions.json').write_text(json.dumps(disabled, indent=2) + '\n')
     config = json.loads(subprocess.check_output(
@@ -182,12 +199,11 @@ def main():
                           '-num-workers', '2', '-test.timeout', '600s', '-allow-unimplemented',
                           '-test', args.test, '-json-output', str(output / 'results.json')],
                  runner / 'ssl/test/runner', check=False, timeout=660)
-    result = json.loads((output / 'results.json').read_text())
-    counts = Counter(value['actual'] for value in result['tests'].values())
-    (output / 'summary.json').write_text(json.dumps({'exit_code': status, 'counts': counts}, indent=2) + '\n')
-    print(f'BoGo exit={status}: {dict(counts)}; evidence: {output}', flush=True)
-    # Preserve upstream failures as failures, without result-driven exclusions.
-    return status
+    results = output / 'results.json'
+    summary = summarize(profiles, json.loads(results.read_text())['tests'] if results.exists() else {}, status)
+    (output / 'summary.json').write_text(json.dumps(summary, indent=2) + '\n')
+    print(f'BoGo exit={summary["exit_code"]}: {dict(summary["counts"])}; required ECH: {summary["required_ech"]}; evidence: {output}', flush=True)
+    return summary['exit_code']
 
 
 if __name__ == '__main__':

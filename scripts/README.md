@@ -168,6 +168,8 @@ It does not download upstream archives.
   including the provider's opt-in SecP256r1MLKEM768, SecP384r1MLKEM1024, MLKEM768, and MLKEM1024; Go 1.27.4 has
   no MLKEM768, so those rows run against OpenSSL only. The ephemeral session files and exporter values protect only
   public test fixtures. The runner enforces timeouts and reaps peer processes.
+  `just test-provider-interop --peer openssl --protocol tls13 --quick` also runs the documented ECH client.
+  It checks the HTTP response, recovery after key rotation, and rejection of a certificate for the wrong public name.
 - `just test-provider-bogo` prepares pinned upstream rustls and runner checkouts,
   applies the retained provider/fixture patches, and runs the declared TLS 1.2/1.3 profile.
   The rustls checkout is the commit of the provider's `rustls` pin: the `rev` of a Git pin, or, for one
@@ -184,6 +186,10 @@ It does not download upstream archives.
   all signature operations still use this provider.
   `--test` narrows the campaign for diagnosis.
   It is not full-profile qualification.
+  Run `just test-provider-bogo --test '*ECH*'` for client ECH.
+  The shim selects rscrypto's HPKE suite for ECH and GREASE.
+  The runner requires passes for AES-128-GCM, GREASE, authenticated retry configurations, and rejection of an incorrect public-name certificate.
+  `summary.json` records each selected result and the upstream exit code.
 - The `provider_quic_*` fuzz targets call the provider's public QUIC API.
   Ordinary builds compile and lint them, and `just test-fuzz-asan` replays their
   committed corpora. Live campaigns use the normal

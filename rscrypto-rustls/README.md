@@ -55,7 +55,27 @@ let config = rustls::ClientConfig::builder(provider)
 The default build includes the [RFC 9849 client suite](https://www.rfc-editor.org/rfc/rfc9849.html#section-9).
 To offer ECH, get the server's
 `ECHConfigList` from a trusted source, such as its HTTPS DNS record through an encrypted resolver.
-Pass the wire bytes to rustls. Decode base64 first if your resolver returns the DNS presentation form.
+Use the wire bytes. Decode base64 first if your resolver returns the DNS presentation form.
+
+Run the [ECH client example](examples/ech-client.rs) from the workspace root.
+Cargo builds the provider's AWS-LC and ring test dependencies for workspace examples. These builds need a C toolchain.
+Set `ORIGIN` to the service's real DNS name.
+Set `ENDPOINT` to an IP address and port for that same service record.
+Save the ECH wire bytes in `ech.bin` and your trusted CA certificates in `roots.pem`.
+
+```sh
+cargo run -p rscrypto-rustls --example ech-client -- "$ORIGIN" "$ENDPOINT" ech.bin roots.pem > response.http
+```
+
+The client prints `ECH accepted` before it sends an HTTP/1.1 request. The response goes to `response.http`.
+After a key rotation, the client verifies the certificate for the public name in the original configuration.
+It retries once at the same endpoint if the server supplies a compatible replacement configuration.
+A certificate error ends the request.
+
+To try the example with local test credentials, run `just test-provider-interop --peer openssl --protocol tls13 --quick`.
+The command starts an OpenSSL server and exercises key rotation.
+
+To configure your own client, pass the same wire bytes and trust anchors to rustls.
 
 ```rust
 use std::sync::Arc;
@@ -72,7 +92,7 @@ fn ech_client(list: EchConfigListBytes<'_>, roots: RootCertStore) -> Result<Clie
 }
 ```
 
-Connect with the service's real DNS name. Use this TLS 1.3 configuration only for services covered by that ECH list.
+Use this TLS 1.3 configuration only for services covered by that ECH list.
 After the handshake, `connection.side().ech_status()` reports `EchStatus::Accepted` when the server accepts ECH.
 A rejection ends the connection. If rustls returns `Error::RejectedEch(rejection)` with retry configurations,
 use `EchConfig::for_retry(rejection, ALL_SUPPORTED_SUITES)` for a fresh connection. Keep ECH required on that connection.

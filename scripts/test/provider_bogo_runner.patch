@@ -12,7 +12,7 @@ index 2ec5721..affcd92 100644
  	case signatureECDSAWithSHA1, signatureECDSAWithP256AndSHA256, signatureECDSAWithP384AndSHA384, signatureECDSAWithP521AndSHA512:
  		var curve elliptic.Curve
 diff --git a/ssl/test/runner/ech_tests.go b/ssl/test/runner/ech_tests.go
-index 48382e4..a87ca22 100644
+index 48382e4..219fa23 100644
 --- a/ssl/test/runner/ech_tests.go
 +++ b/ssl/test/runner/ech_tests.go
 @@ -81,11 +81,11 @@ func addEncryptedClientHelloTests() {
@@ -29,6 +29,65 @@ index 48382e4..a87ca22 100644
  		DNSNames:   []string{"public.example"},
  	}).ToCredential()
  	echLongNameCertificate := rootCA.Issue(X509Info{
+@@ -666,7 +666,7 @@ read ack
+ 				},
+ 				flags: []string{
+ 					"-ech-config-list", base64FlagValue(CreateECHConfigList(cipherConfig.ECHConfig.Raw)),
+-					"-host-name", "secret.example",
++					"-host-name", "secret.example", "-use-webpki-verifier",
+ 					"-expect-ech-accept",
+ 				},
+ 				expectations: connectionExpectations{
+@@ -980,11 +980,13 @@ read ack
+ 			config: Config{
+ 				MinVersion: VersionTLS13,
+ 				MaxVersion: VersionTLS13,
++				Credential: &echSecretCertificate,
+ 				Bugs: ProtocolBugs{
+-					ExpectClientECH: true,
++					ExpectClientECH:  true,
++					ExpectServerName: "secret.example",
+ 				},
+ 			},
+-			flags: []string{"-enable-ech-grease"},
++			flags: []string{"-enable-ech-grease", "-host-name", "secret.example", "-use-webpki-verifier"},
+ 		})
+ 
+ 		// Test the client's ECH GREASE behavior when responding to server's
+@@ -1713,6 +1715,7 @@ read ack
+ 				Credential: &echPublicCertificate,
+ 			},
+ 			flags: []string{
++				"-use-webpki-verifier", "-host-name", "secret.example",
+ 				"-ech-config-list", base64FlagValue(CreateECHConfigList(echConfig.ECHConfig.Raw)),
+ 				"-expect-ech-retry-configs", base64FlagValue(CreateECHConfigList(echConfig2.ECHConfig.Raw, echConfig3.ECHConfig.Raw)),
+ 			},
+@@ -1720,6 +1723,25 @@ read ack
+ 			expectedLocalError: "remote error: ECH required",
+ 			expectedError:      ":ECH_REJECTED:",
+ 		})
++		// The origin certificate chains to the trusted root but does not cover public.example.
++		// RFC 9849 section 6.1.6 requires authentication before returning retry configurations.
++		testCases = append(testCases, testCase{
++			testType: clientTest,
++			protocol: protocol,
++			name:     prefix + "ECH-Client-Reject-UnauthenticatedRetryConfigs",
++			config: Config{
++				ServerECHConfigs: []ServerECHConfig{echConfig2, echConfig3},
++				Credential:       &echSecretCertificate,
++				Bugs:             ProtocolBugs{ExpectServerName: "public.example"},
++			},
++			flags: []string{
++				"-use-webpki-verifier", "-host-name", "secret.example",
++				"-ech-config-list", base64FlagValue(CreateECHConfigList(echConfig.ECHConfig.Raw)),
++			},
++			shouldFail:         true,
++			expectedLocalError: "remote error: bad certificate",
++			expectedError:      ":BAD_CERT: (NotValidForName",
++		})
+ 		testCases = append(testCases, testCase{
+ 			testType: clientTest,
+ 			protocol: protocol,
 diff --git a/ssl/test/runner/ems_tests.go b/ssl/test/runner/ems_tests.go
 index 16ce0b6..d2197b0 100644
 --- a/ssl/test/runner/ems_tests.go
@@ -95,7 +154,7 @@ index c955506..ee5ad23 100644
  		KeyUsage:   x509.KeyUsageKeyEncipherment,
  	}).ToCredential()
 diff --git a/ssl/test/runner/runner.go b/ssl/test/runner/runner.go
-index f026a10..f700f1b 100644
+index f026a10..04c0c16 100644
 --- a/ssl/test/runner/runner.go
 +++ b/ssl/test/runner/runner.go
 @@ -51,6 +51,9 @@ import (
@@ -203,13 +262,22 @@ index f026a10..f700f1b 100644
  	} {
  		var publicKey crypto.PublicKey
  		switch def.key.(type) {
-@@ -2419,6 +2434,50 @@ func main() {
+@@ -2419,6 +2434,63 @@ func main() {
  	}
  	testCases = append(testCases, toAppend...)
  
++	var oneOfPatternIfAny, noneOfPattern []string
++	if len(*testToRun) > 0 {
++		oneOfPatternIfAny = strings.Split(*testToRun, ";")
++	}
++	if len(*skipTest) > 0 {
++		noneOfPattern = strings.Split(*skipTest, ";")
++	}
++
 +	if *profileOutput != "" {
 +		type profile struct {
 +			Name                         string
++			Selected                     bool
 +			Protocol                     string
 +			MinVersion                   uint16
 +			MaxVersion                   uint16
@@ -224,7 +292,11 @@ index f026a10..f700f1b 100644
 +		}
 +		profiles := make([]profile, 0, len(testCases))
 +		for _, test := range testCases {
-+			entry := profile{Name: test.name, Protocol: test.protocol.String(),
++			selected, err := match(oneOfPatternIfAny, noneOfPattern, test.name)
++			if err != nil {
++				panic(err)
++			}
++			entry := profile{Name: test.name, Selected: selected, Protocol: test.protocol.String(),
 +				MinVersion: test.config.minVersion(), MaxVersion: test.config.maxVersion(),
 +				ExpectedVersion:              test.expectations.version,
 +				ShouldFail:                   test.shouldFail,
@@ -254,3 +326,18 @@ index f026a10..f700f1b 100644
  	checkTests()
  
  	dispatcher, err := newShimDispatcher()
+@@ -2445,14 +2517,6 @@ func main() {
+ 		go worker(dispatcher, statusChan, testChan, *shimPath, &wg)
+ 	}
+ 
+-	var oneOfPatternIfAny, noneOfPattern []string
+-	if len(*testToRun) > 0 {
+-		oneOfPatternIfAny = strings.Split(*testToRun, ";")
+-	}
+-	if len(*skipTest) > 0 {
+-		noneOfPattern = strings.Split(*skipTest, ";")
+-	}
+-
+ 	shardIndex, shardTotal, err := getSharding()
+ 	if err != nil {
+ 		fmt.Fprintln(os.Stderr, err)

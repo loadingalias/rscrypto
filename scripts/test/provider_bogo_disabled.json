@@ -1,5 +1,6 @@
 {
   "*P521*": "P-521 authentication is outside the selected provider profile.",
   "*MLKEM1024*": "The provider offers X25519MLKEM768; pure ML-KEM-1024 is a later profile.",
-  "*ECH*": "ECH depends on the separate HPKE delivery and is outside the first provider profile."
+  "TLS-ECH-Client-Cipher-HKDF-SHA256-AES-256-GCM": "The only recognized HPKE offer requires AES-256-GCM. The provider supports AES-128-GCM.",
+  "TLS-ECH-Client-Cipher-HKDF-SHA256-ChaCha20-Poly1305": "The only recognized HPKE offer requires ChaCha20-Poly1305. The provider supports AES-128-GCM."
 }
