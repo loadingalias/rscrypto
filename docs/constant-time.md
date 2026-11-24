@@ -1559,6 +1559,10 @@ and no secret-dependent addresses.
 A source-level fixed-work design is not a release claim by itself.
 The operation entry separates the portable implementation from the selected assembly for Apple
 and Linux AArch64, Linux x86-64, and Windows x86-64.
+On IBM Z, both curves have a PCC path for valid scalars and points.
+The hardware query identifies the supported function. On IBM Z machine 8562, the four fixed-versus-random scalar tests passed.
+Their largest absolute t-statistic was 3.47. Each test requested 20,000 samples.
+[Native P-256 and P-384 timing results](https://github.com/loadingalias/rscrypto/actions/runs/45317719955).
 The [September 2026 P-256 ECDH snapshot](https://github.com/loadingalias/rscrypto/blob/50c708b29905bb3221e7b22b9c7cce8fcc700818/benchmark_results/OVERVIEW.md#p-256-ecdh-development-snapshot) keeps the historical Graviton3, Graviton4,
 and Intel Granite Rapids results.
 Those development bundles keep binaries and raw timing samples,
@@ -1577,6 +1581,7 @@ P-384 ECDH has the same public prelude boundary.
 - x86-64 uses the same divstep inversion and the inline-assembly field kernels.
   Runtime detection selects BMI2/ADX multiplication and fused point doubling.
   Window additions use the portable formula over those kernels.
+- IBM Z uses PCC scalar multiplication if the machine reports the P-384 function.
 - Other targets run the portable implementation.
 
 `ct.toml` declares the DudeCT cases and the bounded BINSEC selector kernels.
@@ -1639,7 +1644,7 @@ native DudeCT.
 - IBM Z uses the plain 64-bit by 64-bit `MLGR` product, for which IBM publishes no timing
   guarantee. With it, P-384 ECDH agreement failed native DudeCT (fixed against random scalar,
   t = -19.3 at the 80,000-sample confirmation, Constant-Time 39717348652 at `9c8dfffd`), so IBM Z
-  ECDSA and ECDH keep the fixed-work software multiplier. RSA private operations keep `MLGR`.
+  ECDSA and the ECDH software fallback keep the fixed-work multiplier. RSA private operations keep `MLGR`.
 - 64-bit RISC-V sets the top bit of both operands, multiplies, and subtracts the correction terms.
   This defends against multipliers that finish early on leading zeros.
   The open RTL of the RISC-V runner's C910 core shows a fixed-latency multiplier.

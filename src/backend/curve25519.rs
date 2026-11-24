@@ -155,6 +155,11 @@ impl FieldElement {
   #[inline]
   #[must_use]
   pub(crate) fn square(&self) -> Self {
+    Self(reduce_wide(self.square_terms()))
+  }
+
+  #[inline]
+  fn square_terms(&self) -> [u128; FIELD_LIMBS] {
     let [f0, f1, f2, f3, f4] = self.0;
 
     let f0_2 = f0.wrapping_mul(2);
@@ -171,7 +176,7 @@ impl FieldElement {
     let h3 = m(f0_2, f3).wrapping_add(m(f1_2, f2)).wrapping_add(m(f4_19, f4));
     let h4 = m(f0_2, f4).wrapping_add(m(f1_2, f3)).wrapping_add(m(f2, f2));
 
-    Self(reduce_wide([h0, h1, h2, h3, h4]))
+    [h0, h1, h2, h3, h4]
   }
 
   /// Negate the field element modulo `2^255 - 19`.
@@ -185,7 +190,7 @@ impl FieldElement {
   /// Multiplicative inverse using exponentiation by `p - 2`.
   #[must_use]
   pub(crate) fn invert(&self) -> Self {
-    let (t19, t3) = self.pow22501();
+    let (t19, t3) = self.pow22501(Self::pow2k);
     t19.pow2k(5).mul(&t3)
   }
 
@@ -220,36 +225,19 @@ impl FieldElement {
   #[must_use]
   #[cfg(feature = "ed25519")]
   pub(crate) fn from_bytes(bytes: &[u8; 32]) -> Option<Self> {
-    let mut acc = 0u128;
-    let mut acc_bits = 0u32;
-    let mut byte_iter = bytes.iter().copied();
-    let mut limbs = [0u64; FIELD_LIMBS];
-
-    for limb in limbs.iter_mut() {
-      while acc_bits < RADIX_BITS {
-        if let Some(byte) = byte_iter.next() {
-          acc |= u128::from(byte) << acc_bits;
-          acc_bits = acc_bits.wrapping_add(8);
-        } else {
-          break;
-        }
-      }
-
-      *limb = u64::try_from(acc & u128::from(MASK51)).expect("masked field limb fits u64");
-      acc >>= RADIX_BITS;
-      acc_bits = acc_bits.wrapping_sub(RADIX_BITS);
-    }
-
-    if acc != 0 || byte_iter.next().is_some() {
+    // Bit 255 and values at least 2^255 - 19 are invalid in a public Edwards coordinate.
+    let words: &[[u8; 8]; 4] = bytes.as_chunks::<8>().0.try_into().expect("four field words");
+    let [w0, w1, w2, w3] = words.map(u64::from_le_bytes);
+    if w3 >> 63 != 0 || (w3 == u64::MAX >> 1 && w1 & w2 == u64::MAX && w0 >= u64::MAX - 18) {
       return None;
     }
-
-    let element = Self(limbs).normalize();
-    if element.to_bytes() == *bytes {
-      Some(element)
-    } else {
-      None
-    }
+    Some(Self([
+      w0 & MASK51,
+      ((w0 >> 51) | (w1 << 13)) & MASK51,
+      ((w1 >> 38) | (w2 << 26)) & MASK51,
+      ((w2 >> 25) | (w3 << 39)) & MASK51,
+      w3 >> 12,
+    ]))
   }
 
   /// Encode the field element canonically.
@@ -328,7 +316,7 @@ impl FieldElement {
   pub(crate) fn sqrt(&self) -> Option<Self> {
     let normalized = self.normalize();
     self
-      .sqrt_ratio_i(&Self::ONE)
+      .sqrt_ratio(&Self::ONE, false)
       .filter(|candidate| candidate.square().normalize() == normalized)
   }
 
@@ -344,27 +332,56 @@ impl FieldElement {
     acc
   }
 
+  /// Square a reduced public coordinate repeatedly during Ed25519 point decoding.
+  #[cfg(feature = "ed25519")]
+  fn public_squares(&self, count: u32) -> Self {
+    let mut value = *self;
+    for _ in 0..count {
+      let terms = value.square_terms();
+      // Each input limb is below 2^52. The largest coefficient sums at most 77 products.
+      // Its carry fits 60 bits. The top coefficient sums five products, so 19 times its carry fits u64.
+      let low = terms.map(|term| u64::try_from(term & u128::from(MASK51)).expect("51-bit limb"));
+      let high = terms.map(|term| u64::try_from(term >> RADIX_BITS).expect("bounded square carry"));
+      let folded = [
+        low[0].wrapping_add(high[4].wrapping_mul(19)),
+        low[1].wrapping_add(high[0]),
+        low[2].wrapping_add(high[1]),
+        low[3].wrapping_add(high[2]),
+        low[4].wrapping_add(high[3]),
+      ];
+      // Fold all carries together. Each result is below 2^51 + 19 * 512, hence below 2^52.
+      value = Self([
+        (folded[0] & MASK51).wrapping_add((folded[4] >> RADIX_BITS).wrapping_mul(19)),
+        (folded[1] & MASK51).wrapping_add(folded[0] >> RADIX_BITS),
+        (folded[2] & MASK51).wrapping_add(folded[1] >> RADIX_BITS),
+        (folded[3] & MASK51).wrapping_add(folded[2] >> RADIX_BITS),
+        (folded[4] & MASK51).wrapping_add(folded[3] >> RADIX_BITS),
+      ]);
+    }
+    value
+  }
+
   #[must_use]
-  fn pow22501(&self) -> (Self, Self) {
+  fn pow22501(&self, squares: impl Fn(&Self, u32) -> Self) -> (Self, Self) {
     let t0 = self.square();
     let t1 = t0.square().square();
     let t2 = self.mul(&t1);
     let t3 = t0.mul(&t2);
     let t4 = t3.square();
     let t5 = t2.mul(&t4);
-    let t6 = t5.pow2k(5);
+    let t6 = squares(&t5, 5);
     let t7 = t6.mul(&t5);
-    let t8 = t7.pow2k(10);
+    let t8 = squares(&t7, 10);
     let t9 = t8.mul(&t7);
-    let t10 = t9.pow2k(20);
+    let t10 = squares(&t9, 20);
     let t11 = t10.mul(&t9);
-    let t12 = t11.pow2k(10);
+    let t12 = squares(&t11, 10);
     let t13 = t12.mul(&t7);
-    let t14 = t13.pow2k(50);
+    let t14 = squares(&t13, 50);
     let t15 = t14.mul(&t13);
-    let t16 = t15.pow2k(100);
+    let t16 = squares(&t15, 100);
     let t17 = t16.mul(&t15);
-    let t18 = t17.pow2k(50);
+    let t18 = squares(&t17, 50);
     let t19 = t18.mul(&t13);
 
     (t19, t3)
@@ -373,13 +390,13 @@ impl FieldElement {
   #[must_use]
   #[cfg(feature = "ed25519")]
   fn pow_p58(&self) -> Self {
-    let (t19, _) = self.pow22501();
-    self.mul(&t19.pow2k(2))
+    let (t19, _) = self.pow22501(Self::public_squares);
+    self.mul(&t19.public_squares(2))
   }
 
   #[must_use]
   #[cfg(feature = "ed25519")]
-  pub(crate) fn sqrt_ratio_i(&self, denominator: &Self) -> Option<Self> {
+  pub(crate) fn sqrt_ratio(&self, denominator: &Self, negative: bool) -> Option<Self> {
     let numerator = self.normalize();
     let denominator = denominator.normalize();
     let v3 = denominator.square().mul(&denominator);
@@ -387,18 +404,22 @@ impl FieldElement {
     let r = numerator.mul(&v3).mul(&numerator.mul(&v7).pow_p58());
     let check = denominator.mul(&r.square()).normalize();
 
-    if check == numerator {
-      Some(if r.is_negative() { r.neg() } else { r })
+    let root = if check == numerator {
+      r
     } else if check == numerator.neg().normalize() {
-      let adjusted = r.mul(&SQRT_M1).normalize();
-      Some(if adjusted.is_negative() {
-        adjusted.neg()
-      } else {
-        adjusted
-      })
+      r.mul(&SQRT_M1)
     } else {
-      None
+      return None;
+    };
+    let root = root.normalize();
+    if negative && root == Self::ZERO {
+      return None;
     }
+    Some(if (root.0[0] & 1 != 0) == negative {
+      root
+    } else {
+      root.neg().normalize()
+    })
   }
 }
 
@@ -588,7 +609,16 @@ mod tests {
       0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x80,
     ];
 
-    assert_eq!(FieldElement::from_bytes(&modulus), None);
+    let mut boundary = modulus;
+    boundary[0] = 0xec;
+    assert_eq!(
+      FieldElement::from_bytes(&boundary),
+      Some(FieldElement::ONE.neg().normalize())
+    );
+    for low in 0xed..=0xff {
+      boundary[0] = low;
+      assert_eq!(FieldElement::from_bytes(&boundary), None);
+    }
     assert_eq!(FieldElement::from_bytes(&top_bit_set), None);
   }
 

@@ -17,8 +17,7 @@
       "manifest": "tools/provider-bench/Cargo.toml",
       "kind": "criterion",
       "family": "tls",
-      "required": false,
-      "external": "OpenSSL 4.0.3",
+      "required": true,
       "features": ["quic"]
     },
     "tls_connections": {
@@ -27,9 +26,8 @@
       "manifest": "tools/provider-bench/Cargo.toml",
       "kind": "criterion",
       "family": "tls",
-      "required": false,
-      "external": "OpenSSL 4.0.3",
-      "features": ["ml-dsa", "mldsa65-ed25519", "mldsa65-ecdsa-p256"]
+      "required": true,
+      "features": ["openssl-peer", "ml-dsa", "mldsa65-ed25519", "mldsa65-ecdsa-p256"]
     },
     "poly1305": {
       "binary": "poly1305",
@@ -1902,7 +1900,7 @@
       "bench": "auth",
       "cases": "^(?P<variant>p256-ecdh|p384-ecdh)/key-generation/(?P<implementation>[^/]+)(?P<input>)$",
       "headline": true,
-      "task": "Generate a key pair from caller-supplied randomness."
+      "task": "Import a caller-supplied private scalar. Public-key derivation runs outside timing."
     },
     "ecdh-agreement-parsed-peer": {
       "family": "ECDH",

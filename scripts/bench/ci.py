@@ -117,13 +117,14 @@ def jobs(inputs: dict) -> dict[str, dict[str, list[str]]]:
     grouped: dict[str, dict[str, list[str]]] = {}
     for bench, names in selection(inputs.get('benchmarks', '')).items():
         entry = catalog['benches'][bench]
+        run_options = [*common, 'openssl=false'] if 'openssl-peer' in entry['features'] else common
         if entry.get('split') == 'algorithms':
             # Each algorithm of a split target is its own run; no benchmark group spans two runs.
             if names == [bench]:
                 names = [name for name, algorithm in catalog['algorithms'].items() if algorithm['bench'] == bench]
-            runs = {name: arguments([name], common) for name in names}
+            runs = {name: arguments([name], run_options) for name in names}
         else:
-            runs = {bench: arguments(names, common)}
+            runs = {bench: arguments(names, run_options)}
         grouped.setdefault(entry['family'], {}).update(runs)
     return grouped
 

@@ -3,25 +3,14 @@
 use core::hint::black_box;
 
 use criterion::Criterion;
-use openssl::{hash::MessageDigest, pkey::PKey, sign::Signer};
 use rustls::crypto::{CipherSuite, hmac, tls12, tls13};
 
 use super::bench_config::{checked_routine, selected};
 
-fn hmac_oracle(digest: MessageDigest, key: &[u8], parts: &[&[u8]]) -> Vec<u8> {
-  assert!(
-    openssl::version::version().starts_with("OpenSSL 4.0.3 "),
-    "benchmark oracle requires OpenSSL 4.0.3"
-  );
-  let key = PKey::hmac(key).expect("fixture HMAC key");
-  let mut signer = Signer::new(digest, &key).expect("independent HMAC");
-  for part in parts {
-    signer.update(part).expect("independent HMAC input");
-  }
-  signer.sign_to_vec().expect("independent HMAC output")
-}
-
-#[expect(clippy::unreachable, reason = "the component rows select only the three declared PRF backends")]
+#[expect(
+  clippy::unreachable,
+  reason = "the component rows select only the three declared PRF backends"
+)]
 fn prf(backend: &str, suite: CipherSuite, key_block: usize) -> &'static dyn tls12::Prf {
   let suites = match backend {
     "rscrypto" => rscrypto_rustls::cipher_suite::ALL_TLS12_CIPHER_SUITES,
@@ -118,18 +107,18 @@ pub(super) fn key_schedule(c: &mut Criterion) {
     }
   }
 
-  for (hash, algorithm, hkdf, digest) in [
+  for (hash, algorithm, hkdf, oracle) in [
     (
       "sha256",
       rscrypto_rustls::hash::HMAC_SHA256,
       rscrypto_rustls::hash::HKDF_SHA256,
-      MessageDigest::sha256(),
+      rustls_aws_lc_rs::cipher_suite::TLS13_AES_128_GCM_SHA256.hkdf_provider,
     ),
     (
       "sha384",
       rscrypto_rustls::hash::HMAC_SHA384,
       rscrypto_rustls::hash::HKDF_SHA384,
-      MessageDigest::sha384(),
+      rustls_aws_lc_rs::cipher_suite::TLS13_AES_256_GCM_SHA384.hkdf_provider,
     ),
   ] {
     let hash_len = algorithm.hash_output_len();
@@ -154,7 +143,12 @@ pub(super) fn key_schedule(c: &mut Criterion) {
               let tag = prepared.sign_concat(first, &[b"key expansion", &[0x92; 64]], &[]);
               assert_eq!(
                 tag.as_ref(),
-                hmac_oracle(digest, &[0x42; 48], &[first, b"key expansion", &[0x92; 64]])
+                oracle
+                  .hmac_sign(
+                    &tls13::OkmBlock::new(&[0x42; 48]),
+                    &[first, b"key expansion", &[0x92; 64]].concat()
+                  )
+                  .as_ref()
               );
             }
             *key = Some(prepared);
@@ -195,7 +189,7 @@ pub(super) fn key_schedule(c: &mut Criterion) {
             let message = &[fill; 48][..hash_len];
             assert_eq!(
               hkdf.hmac_sign(&prepared, message).as_ref(),
-              hmac_oracle(digest, prepared.as_ref(), &[message])
+              oracle.hmac_sign(&prepared, message).as_ref()
             );
           }
           *key = Some(prepared);

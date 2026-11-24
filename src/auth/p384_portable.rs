@@ -904,6 +904,16 @@ pub(super) struct PublicPoint(Affine);
 
 #[cfg(feature = "p384-ecdh")]
 impl PublicPoint {
+  /// PCC returns canonical affine coordinates after successful multiplication.
+  #[cfg(all(target_arch = "s390x", not(feature = "portable-only"), not(miri)))]
+  pub(super) fn from_pcc_coordinates(bytes: &[u8]) -> Self {
+    let (x, y) = bytes.split_at(FIELD_BYTES);
+    Self(Affine {
+      x: FieldElement::from_uint(Uint::from_be_bytes(x.try_into().expect("field width"))),
+      y: FieldElement::from_uint(Uint::from_be_bytes(y.try_into().expect("field width"))),
+    })
+  }
+
   /// Parse canonical uncompressed SEC1 and reject off-curve points.
   pub(super) fn from_sec1_bytes(bytes: &[u8]) -> Option<Self> {
     if bytes.len() != SEC1_BYTES || bytes.first().copied() != Some(0x04) {

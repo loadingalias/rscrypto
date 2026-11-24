@@ -154,6 +154,13 @@ pub mod composite_mldsa;
   )
 ))]
 pub(crate) mod curve25519_edwards;
+#[cfg(all(
+  target_arch = "s390x",
+  any(feature = "p256-ecdh", feature = "p384-ecdh"),
+  not(feature = "portable-only"),
+  not(miri)
+))]
+mod ecdh_s390x;
 #[cfg(any(feature = "ecdsa-p256", feature = "ecdsa-p384"))]
 pub mod ecdsa;
 #[cfg(any(

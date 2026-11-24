@@ -83,7 +83,7 @@ def main() -> None:
     actual = ",".join(resolve_selector(catalog, selector))
     if actual != names:
       fail(f"selector {selector} resolved to {actual}, expected {names}")
-  if "tls_connections" in defaults or "structural" in defaults:
+  if "openssl_primitives" in defaults or "structural" in defaults:
     fail("default runs include a target that needs an external peer or another harness")
 
   for selector in ("unknown-selector", "bench=sha2", "hash", "checksum"):
@@ -180,7 +180,7 @@ def main() -> None:
       fail(f"catalog accepted a duplicate selector name: {selector}")
   for change in ({"required": True}, {"external": ""}):
     broken = copy.deepcopy(catalog)
-    broken["benches"]["tls_connections"].update(change)
+    broken["benches"]["openssl_primitives"].update(change)
     try:
       validate_catalog(broken)
     except CatalogError:

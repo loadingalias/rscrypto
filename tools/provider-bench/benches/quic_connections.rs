@@ -141,10 +141,6 @@ fn connection_ids(c: &mut Criterion) {
 
 fn main() {
   if !std::env::args().any(|arg| arg == "--list" || arg == "--rscrypto-filter-cases") {
-    assert!(
-      openssl::version::version().starts_with("OpenSSL 4.0.3 "),
-      "catalog prerequisite: OpenSSL 4.0.3"
-    );
     eprintln!(
       "{}",
       serde_json::json!({ "provider_bench_provenance": rscrypto_provider_bench::provenance() })

@@ -34,7 +34,7 @@ fn connection(c: &mut Criterion, name: &str, profile: Profile<'_>, workload: Wor
   }
   let mut measured = c.benchmark_group(name);
   measured.throughput(Throughput::Elements(1));
-  for backend in BACKENDS {
+  for &backend in BACKENDS {
     if !bench_config::selected(&format!("{name}/{backend}"))
       || !supports(backend, profile)
       || (workload == Workload::CompactKey && !backend.starts_with("rscrypto"))
@@ -248,7 +248,7 @@ fn traffic(c: &mut Criterion) {
           let mut measured = c.benchmark_group(&name);
           let total = size.strict_mul(if bidirectional { 2 } else { 1 });
           measured.throughput(Throughput::Bytes(u64::try_from(total).expect("transfer size")));
-          for backend in BACKENDS {
+          for &backend in BACKENDS {
             if !bench_config::selected(&format!("{name}/{backend}")) {
               continue;
             }

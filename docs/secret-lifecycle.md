@@ -260,6 +260,8 @@ erasure of every compiler-created copy, register, or spill.
 - The selected AArch64 and x86-64 assembly clears secret-derived frames, saved-register spill slots,
   and volatile integer registers before it returns.
 - The Windows public-point batch wrapper handles only public coordinates.
+- IBM Z PCC uses one 4,096-byte stack buffer for P-256 and P-384 operations.
+  Its owner clears the scalar, both output coordinates and the continuation state on return.
 
 ### P-384 ECDH
 

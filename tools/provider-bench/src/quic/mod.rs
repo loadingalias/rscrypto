@@ -20,7 +20,10 @@ pub const CRYPTO_BACKENDS: [&str; 3] = ["rscrypto", "aws-lc-rs", "ring"];
 
 /// P-256 server authentication, X25519, one suite, no TLS resumption or early data.
 /// The shared fixture also checks a TCP connection during untimed preparation.
-#[expect(clippy::unreachable, reason = "the QUIC catalog selects only rustls backends")]
+#[cfg_attr(
+  feature = "openssl-peer",
+  expect(clippy::unreachable, reason = "the QUIC catalog selects only rustls backends")
+)]
 fn configs(backend: &str, suite: &str) -> (Arc<ClientConfig>, Arc<ServerConfig>) {
   let fixture = Fixture::with_workload(
     backend,
@@ -32,10 +35,11 @@ fn configs(backend: &str, suite: &str) -> (Arc<ClientConfig>, Arc<ServerConfig>)
     },
     Workload::ServerAuth,
   );
-  let Configs::Rustls(client, server) = fixture.configs else {
-    unreachable!("QUIC uses only the catalog's rustls providers")
-  };
-  (client, server)
+  match fixture.configs {
+    Configs::Rustls(client, server) => (client, server),
+    #[cfg(feature = "openssl-peer")]
+    Configs::OpenSsl(_) => unreachable!("QUIC uses only the catalog's rustls providers"),
+  }
 }
 
 fn oracle(backend: &str) -> &'static str {

@@ -30,7 +30,7 @@ use super::{
 // Constants
 
 const MASK51: i64 = (1i64 << 51) - 1;
-#[cfg(all(test, feature = "ed25519"))]
+#[cfg(feature = "ed25519")]
 const MASK52: i64 = (1i64 << 52) - 1;
 
 /// Subtraction bias: 2p in radix-51. Limb 0 accounts for the -19 term.
@@ -426,6 +426,47 @@ impl FieldElement51x4 {
     self
   }
 
+  /// Fold one radix-51 carry per limb before a 52-bit IFMA multiplication.
+  ///
+  /// # Safety
+  ///
+  /// The caller must establish AVX2, AVX-512 IFMA and VL.
+  #[inline]
+  #[target_feature(enable = "avx2,avx512ifma,avx512vl")]
+  pub(crate) fn reduce_for_mul(&self) -> Self {
+    let mask = _mm256_set1_epi64x(MASK51);
+    let low = self.0.map(|limb| _mm256_and_si256(limb, mask));
+    let carry = self.0.map(|limb| _mm256_srli_epi64::<51>(limb));
+    // Each carry is at most 8191. Even the folded top carry leaves limb zero below 2^52.
+    Self([
+      madd52lo(low[0], carry[4], _mm256_set1_epi64x(19)),
+      _mm256_add_epi64(low[1], carry[0]),
+      _mm256_add_epi64(low[2], carry[1]),
+      _mm256_add_epi64(low[3], carry[2]),
+      _mm256_add_epi64(low[4], carry[3]),
+    ])
+  }
+
+  /// Reduce public limbs only when an IFMA operand exceeds 52 bits.
+  ///
+  /// # Safety
+  ///
+  /// The caller must establish AVX2, AVX-512 IFMA and VL. Every lane must hold public data.
+  #[cfg(feature = "ed25519")]
+  #[inline]
+  #[target_feature(enable = "avx2,avx512ifma,avx512vl")]
+  pub(crate) fn public_mul_input(self) -> Self {
+    let [a, b, c, d, e] = self.0;
+    let ab = _mm256_or_si256(a, b);
+    let cd = _mm256_or_si256(c, d);
+    let bits = _mm256_or_si256(_mm256_or_si256(ab, cd), e);
+    if _mm256_testz_si256(bits, _mm256_set1_epi64x(!MASK52)) != 0 {
+      self
+    } else {
+      self.reduce_for_mul()
+    }
+  }
+
   /// Multiply two vectorized field elements using AVX-512 IFMA.
   ///
   /// Full 5×5 schoolbook with dual accumulators (`madd52lo` + `madd52hi`),
@@ -433,11 +474,8 @@ impl FieldElement51x4 {
   ///
   /// # Precondition
   ///
-  /// Both operands must have limbs ≤ 52 bits (fitting IFMA's input window).
-  /// This is satisfied by `reduce()` output (≤51 bits), `negate_lazy()` on
-  /// reduced values (≤52 bits), or `new()` from scalar field elements (≤51 bits).
-  /// It is NOT satisfied after `diff_sum()` on reduced values (up to 53 bits) —
-  /// callers must `reduce()` such intermediates before calling `mul`.
+  /// Each operand must fit in 52 bits per limb. `reduce_for_mul()` establishes this bound.
+  /// Apply it to a `diff_sum()` result before multiplication. The sum can exceed 52 bits.
   ///
   /// # Safety
   ///
@@ -557,7 +595,7 @@ impl FieldElement51x4 {
       _mm256_add_epi64(z3, z8_19),
       _mm256_add_epi64(z4, z9_19),
     ])
-    .reduce()
+    .reduce_for_mul()
   }
 
   /// Multiply two vectorized field elements that may have up to 53-bit limbs.
@@ -565,7 +603,7 @@ impl FieldElement51x4 {
   /// This is the key optimization for IFMA point operations: `diff_sum()`
   /// produces limbs up to 53 bits (51-bit reduced + 2-bit bias from add/sub),
   /// but IFMA's `vpmadd52luq` truncates inputs to 52 bits. The standard
-  /// `mul()` therefore requires a `reduce()` call before each multiply after
+  /// `mul()` therefore requires a carry reduction before each multiply after
   /// `diff_sum()`.
   ///
   /// `mul_unreduced()` handles the 53rd bit by decomposing each operand
@@ -956,221 +994,61 @@ impl FieldElement51x4 {
     .reduce()
   }
 
-  /// Square a field element (pre-doubled cross terms, 30 IFMA ops).
-  ///
-  /// # Precondition
-  ///
-  /// All limbs must be ≤ 51 bits (reduced). Pre-doubling produces ≤ 52-bit
-  /// values which fit IFMA's 52-bit input window.
+  /// Square a field element with five unsigned 52-bit limbs.
   ///
   /// # Safety
   ///
-  /// Caller must ensure AVX-512 IFMA + VL are available.
+  /// The caller must establish AVX2, AVX-512 IFMA and VL.
+  #[inline]
   #[target_feature(enable = "avx2,avx512ifma,avx512vl")]
   #[cfg(feature = "ed25519")]
   pub(crate) fn square(&self) -> Self {
-    let zero = _mm256_setzero_si256();
-    let f = &self.0;
-
-    // Pre-double for cross terms (f_i is at most 51 bits → f_i_2 ≤ 52 bits,
-    // which fits in IFMA's 52-bit input window).
-    let f0_2 = _mm256_add_epi64(f[0], f[0]);
-    let f1_2 = _mm256_add_epi64(f[1], f[1]);
-    let f2_2 = _mm256_add_epi64(f[2], f[2]);
-    let f3_2 = _mm256_add_epi64(f[3], f[3]);
-
-    // Interleaved lo/hi scheduling (same rationale as mul).
-
-    // z0 = f0*f0
-    let lo0 = madd52lo(zero, f[0], f[0]);
-    let hi0 = madd52hi(zero, f[0], f[0]);
-
-    // z1 = 2*f0*f1
-    let lo1 = madd52lo(zero, f0_2, f[1]);
-    let hi1 = madd52hi(zero, f0_2, f[1]);
-
-    // z2 = 2*f0*f2 + f1*f1
-    let mut lo2 = madd52lo(zero, f0_2, f[2]);
-    let mut hi2 = madd52hi(zero, f0_2, f[2]);
-    lo2 = madd52lo(lo2, f[1], f[1]);
-    hi2 = madd52hi(hi2, f[1], f[1]);
-
-    // z3 = 2*f0*f3 + 2*f1*f2
-    let mut lo3 = madd52lo(zero, f0_2, f[3]);
-    let mut hi3 = madd52hi(zero, f0_2, f[3]);
-    lo3 = madd52lo(lo3, f1_2, f[2]);
-    hi3 = madd52hi(hi3, f1_2, f[2]);
-
-    // z4 = 2*f0*f4 + 2*f1*f3 + f2*f2
-    let mut lo4 = madd52lo(zero, f0_2, f[4]);
-    let mut hi4 = madd52hi(zero, f0_2, f[4]);
-    lo4 = madd52lo(lo4, f1_2, f[3]);
-    hi4 = madd52hi(hi4, f1_2, f[3]);
-    lo4 = madd52lo(lo4, f[2], f[2]);
-    hi4 = madd52hi(hi4, f[2], f[2]);
-
-    // z5 = 2*f1*f4 + 2*f2*f3
-    let mut lo5 = madd52lo(zero, f1_2, f[4]);
-    let mut hi5 = madd52hi(zero, f1_2, f[4]);
-    lo5 = madd52lo(lo5, f2_2, f[3]);
-    hi5 = madd52hi(hi5, f2_2, f[3]);
-
-    // z6 = 2*f2*f4 + f3*f3
-    let mut lo6 = madd52lo(zero, f2_2, f[4]);
-    let mut hi6 = madd52hi(zero, f2_2, f[4]);
-    lo6 = madd52lo(lo6, f[3], f[3]);
-    hi6 = madd52hi(hi6, f[3], f[3]);
-
-    // z7 = 2*f3*f4
-    let lo7 = madd52lo(zero, f3_2, f[4]);
-    let hi7 = madd52hi(zero, f3_2, f[4]);
-
-    // z8 = f4*f4
-    let lo8 = madd52lo(zero, f[4], f[4]);
-    let hi8 = madd52hi(zero, f[4], f[4]);
-
-    // Combine lo + hi into 10 actual limbs
-    let z0 = lo0;
-    let z1 = _mm256_add_epi64(_mm256_add_epi64(lo1, hi0), hi0);
-    let z2 = _mm256_add_epi64(_mm256_add_epi64(lo2, hi1), hi1);
-    let z3 = _mm256_add_epi64(_mm256_add_epi64(lo3, hi2), hi2);
-    let z4 = _mm256_add_epi64(_mm256_add_epi64(lo4, hi3), hi3);
-    let z5 = _mm256_add_epi64(_mm256_add_epi64(lo5, hi4), hi4);
-    let z6 = _mm256_add_epi64(_mm256_add_epi64(lo6, hi5), hi5);
-    let z7 = _mm256_add_epi64(_mm256_add_epi64(lo7, hi6), hi6);
-    let z8 = _mm256_add_epi64(_mm256_add_epi64(lo8, hi7), hi7);
-    let z9 = _mm256_add_epi64(hi8, hi8);
-
-    // Reduce upper limbs by ×19
-    let z5_19 = mul19(z5);
-    let z6_19 = mul19(z6);
-    let z7_19 = mul19(z7);
-    let z8_19 = mul19(z8);
-    let z9_19 = mul19(z9);
-
-    Self([
-      _mm256_add_epi64(z0, z5_19),
-      _mm256_add_epi64(z1, z6_19),
-      _mm256_add_epi64(z2, z7_19),
-      _mm256_add_epi64(z3, z8_19),
-      _mm256_add_epi64(z4, z9_19),
-    ])
-    .reduce()
+    Self(self.square_wide_fold()).reduce_for_mul()
   }
 
-  /// Square 52-bit inputs, returning 5 folded limbs before reduction.
-  ///
-  /// Shared helper for [`square_and_negate_d_wide`](Self::square_and_negate_d_wide).
-  /// Uses double-accumulate for cross terms (avoids pre-doubling overflow
-  /// with 52-bit inputs). Retained for differential testing.
-  ///
-  /// # Precondition
-  ///
-  /// All limbs must be ≤ 52 bits.
+  /// Fold the square of five unsigned 52-bit limbs modulo 2^255 - 19.
   ///
   /// # Safety
   ///
-  /// Caller must ensure AVX-512 IFMA + VL are available.
-  #[cfg(all(test, feature = "ed25519"))]
+  /// The caller must establish AVX2, AVX-512 IFMA and VL.
+  #[inline]
   #[target_feature(enable = "avx2,avx512ifma,avx512vl")]
+  #[cfg(feature = "ed25519")]
   fn square_wide_fold(&self) -> [__m256i; 5] {
-    let zero = _mm256_setzero_si256();
     let f = &self.0;
-
-    // Interleaved lo/hi, double-accumulate for cross terms.
-
-    // z0 = f0*f0
-    let lo0 = madd52lo(zero, f[0], f[0]);
-    let hi0 = madd52hi(zero, f[0], f[0]);
-
-    // z1 = 2*f0*f1 (double-accumulate)
-    let mut lo1 = madd52lo(zero, f[0], f[1]);
-    let mut hi1 = madd52hi(zero, f[0], f[1]);
-    lo1 = madd52lo(lo1, f[0], f[1]);
-    hi1 = madd52hi(hi1, f[0], f[1]);
-
-    // z2 = 2*f0*f2 + f1*f1
-    let mut lo2 = madd52lo(zero, f[0], f[2]);
-    let mut hi2 = madd52hi(zero, f[0], f[2]);
-    lo2 = madd52lo(lo2, f[0], f[2]);
-    hi2 = madd52hi(hi2, f[0], f[2]);
-    lo2 = madd52lo(lo2, f[1], f[1]);
-    hi2 = madd52hi(hi2, f[1], f[1]);
-
-    // z3 = 2*f0*f3 + 2*f1*f2
-    let mut lo3 = madd52lo(zero, f[0], f[3]);
-    let mut hi3 = madd52hi(zero, f[0], f[3]);
-    lo3 = madd52lo(lo3, f[0], f[3]);
-    hi3 = madd52hi(hi3, f[0], f[3]);
-    lo3 = madd52lo(lo3, f[1], f[2]);
-    hi3 = madd52hi(hi3, f[1], f[2]);
-    lo3 = madd52lo(lo3, f[1], f[2]);
-    hi3 = madd52hi(hi3, f[1], f[2]);
-
-    // z4 = 2*f0*f4 + 2*f1*f3 + f2*f2
-    let mut lo4 = madd52lo(zero, f[0], f[4]);
-    let mut hi4 = madd52hi(zero, f[0], f[4]);
-    lo4 = madd52lo(lo4, f[0], f[4]);
-    hi4 = madd52hi(hi4, f[0], f[4]);
-    lo4 = madd52lo(lo4, f[1], f[3]);
-    hi4 = madd52hi(hi4, f[1], f[3]);
-    lo4 = madd52lo(lo4, f[1], f[3]);
-    hi4 = madd52hi(hi4, f[1], f[3]);
-    lo4 = madd52lo(lo4, f[2], f[2]);
-    hi4 = madd52hi(hi4, f[2], f[2]);
-
-    // z5 = 2*f1*f4 + 2*f2*f3
-    let mut lo5 = madd52lo(zero, f[1], f[4]);
-    let mut hi5 = madd52hi(zero, f[1], f[4]);
-    lo5 = madd52lo(lo5, f[1], f[4]);
-    hi5 = madd52hi(hi5, f[1], f[4]);
-    lo5 = madd52lo(lo5, f[2], f[3]);
-    hi5 = madd52hi(hi5, f[2], f[3]);
-    lo5 = madd52lo(lo5, f[2], f[3]);
-    hi5 = madd52hi(hi5, f[2], f[3]);
-
-    // z6 = 2*f2*f4 + f3*f3
-    let mut lo6 = madd52lo(zero, f[2], f[4]);
-    let mut hi6 = madd52hi(zero, f[2], f[4]);
-    lo6 = madd52lo(lo6, f[2], f[4]);
-    hi6 = madd52hi(hi6, f[2], f[4]);
-    lo6 = madd52lo(lo6, f[3], f[3]);
-    hi6 = madd52hi(hi6, f[3], f[3]);
-
-    // z7 = 2*f3*f4 (double-accumulate)
-    let mut lo7 = madd52lo(zero, f[3], f[4]);
-    let mut hi7 = madd52hi(zero, f[3], f[4]);
-    lo7 = madd52lo(lo7, f[3], f[4]);
-    hi7 = madd52hi(hi7, f[3], f[4]);
-
-    // z8 = f4*f4
-    let lo8 = madd52lo(zero, f[4], f[4]);
-    let hi8 = madd52hi(zero, f[4], f[4]);
-
-    // Recombine, fold ×19, reduce — identical to square().
-    let z0 = lo0;
-    let z1 = _mm256_add_epi64(_mm256_add_epi64(lo1, hi0), hi0);
-    let z2 = _mm256_add_epi64(_mm256_add_epi64(lo2, hi1), hi1);
-    let z3 = _mm256_add_epi64(_mm256_add_epi64(lo3, hi2), hi2);
-    let z4 = _mm256_add_epi64(_mm256_add_epi64(lo4, hi3), hi3);
-    let z5 = _mm256_add_epi64(_mm256_add_epi64(lo5, hi4), hi4);
-    let z6 = _mm256_add_epi64(_mm256_add_epi64(lo6, hi5), hi5);
-    let z7 = _mm256_add_epi64(_mm256_add_epi64(lo7, hi6), hi6);
-    let z8 = _mm256_add_epi64(_mm256_add_epi64(lo8, hi7), hi7);
-    let z9 = _mm256_add_epi64(hi8, hi8);
-
-    let z5_19 = mul19(z5);
-    let z6_19 = mul19(z6);
-    let z7_19 = mul19(z7);
-    let z8_19 = mul19(z8);
-    let z9_19 = mul19(z9);
-
+    let zero = _mm256_setzero_si256();
+    let twice = |v| _mm256_add_epi64(v, v);
+    // IFMA consumes 52 bits per operand. Double the cross products after multiplication.
+    macro_rules! square_half {
+      ($madd:ident) => {{
+        let c2 = $madd(zero, f[0], f[2]);
+        let c3 = $madd($madd(zero, f[0], f[3]), f[1], f[2]);
+        let c4 = $madd($madd(zero, f[0], f[4]), f[1], f[3]);
+        let c5 = $madd($madd(zero, f[1], f[4]), f[2], f[3]);
+        let c6 = $madd(zero, f[2], f[4]);
+        [
+          $madd(zero, f[0], f[0]),
+          twice($madd(zero, f[0], f[1])),
+          $madd(twice(c2), f[1], f[1]),
+          twice(c3),
+          $madd(twice(c4), f[2], f[2]),
+          twice(c5),
+          $madd(twice(c6), f[3], f[3]),
+          twice($madd(zero, f[3], f[4])),
+          $madd(zero, f[4], f[4]),
+        ]
+      }};
+    }
+    let lo = square_half!(madd52lo);
+    let hi = square_half!(madd52hi);
+    // Each high half starts at bit 52. Each radix limb starts at bit 51.
+    let limb = |index: usize| _mm256_add_epi64(lo[index], twice(hi[index.strict_sub(1)]));
     [
-      _mm256_add_epi64(z0, z5_19),
-      _mm256_add_epi64(z1, z6_19),
-      _mm256_add_epi64(z2, z7_19),
-      _mm256_add_epi64(z3, z8_19),
-      _mm256_add_epi64(z4, z9_19),
+      _mm256_add_epi64(lo[0], mul19(limb(5))),
+      _mm256_add_epi64(limb(1), mul19(limb(6))),
+      _mm256_add_epi64(limb(2), mul19(limb(7))),
+      _mm256_add_epi64(limb(3), mul19(limb(8))),
+      _mm256_add_epi64(limb(4), mul19(twice(hi[8]))),
     ]
   }
 
@@ -1429,7 +1307,11 @@ mod tests {
     if !avx512ifma_available_for_tests() {
       return;
     }
-    let [a, b, c, d] = test_field_elements();
+    let max = (1u64 << 52).strict_sub(1);
+    let a = FieldElement::from_limbs([max; 5]);
+    let b = FieldElement::from_limbs([0, max, 0, max, 0]);
+    let c = FieldElement::from_limbs([max, 0, max, 0, max]);
+    let d = FieldElement::from_limbs([1 << 51; 5]);
 
     // SAFETY: AVX-512 IFMA checked above.
     unsafe {

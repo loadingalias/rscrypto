@@ -1,5 +1,6 @@
 //! Build and runtime identity of the comparison libraries, for retained results.
 
+#[cfg(feature = "openssl-peer")]
 use core::fmt::Write as _;
 use serde_json::{Value, json};
 
@@ -21,16 +22,20 @@ pub fn provenance() -> Value {
     })
     .collect::<serde_json::Map<_, _>>();
   let runtime = |name: &str| std::env::var_os(name).map(|value| value.to_string_lossy().into_owned());
+  #[cfg(feature = "openssl-peer")]
+  let openssl = json!({
+    "version": openssl::version::version(),
+    "c_flags": openssl::version::c_flags(),
+    "platform": openssl::version::platform(),
+    "dir": openssl::version::dir(),
+    "build_openssl_dir": option_env!("OPENSSL_DIR"),
+    "build_openssl_static": option_env!("OPENSSL_STATIC"),
+    "images": images(),
+  });
+  #[cfg(not(feature = "openssl-peer"))]
+  let openssl = Value::Null;
   json!({
-    "openssl": {
-      "version": openssl::version::version(),
-      "c_flags": openssl::version::c_flags(),
-      "platform": openssl::version::platform(),
-      "dir": openssl::version::dir(),
-      "build_openssl_dir": option_env!("OPENSSL_DIR"),
-      "build_openssl_static": option_env!("OPENSSL_STATIC"),
-      "images": images(),
-    },
+    "openssl": openssl,
     "rustflags": {
       "build": option_env!("RUSTFLAGS"),
       "build_encoded": option_env!("CARGO_ENCODED_RUSTFLAGS"),
@@ -42,13 +47,14 @@ pub fn provenance() -> Value {
   })
 }
 
+#[cfg(feature = "openssl-peer")]
 fn is_openssl_library(path: &str) -> bool {
   let name = path.rsplit('/').next().unwrap_or(path);
   name.starts_with("libssl.") || name.starts_with("libcrypto.")
 }
 
 /// The loaded OpenSSL images, from the process's own memory map.
-#[cfg(target_os = "linux")]
+#[cfg(all(feature = "openssl-peer", target_os = "linux"))]
 fn images() -> Value {
   let Ok(maps) = std::fs::read_to_string("/proc/self/maps") else {
     return json!({"error": "/proc/self/maps is unreadable"});
@@ -69,7 +75,7 @@ fn images() -> Value {
 
 /// The OpenSSL libraries under the build's `OPENSSL_DIR`. This identifies the
 /// configured installation; it does not prove which image the loader chose.
-#[cfg(not(target_os = "linux"))]
+#[cfg(all(feature = "openssl-peer", not(target_os = "linux")))]
 fn images() -> Value {
   let Some(dir) = option_env!("OPENSSL_DIR") else {
     return json!({"error": "OPENSSL_DIR was not set at build time"});
@@ -85,6 +91,7 @@ fn images() -> Value {
   json!({"configured": paths.iter().map(|path| file(path)).collect::<Vec<_>>()})
 }
 
+#[cfg(feature = "openssl-peer")]
 fn file(path: &std::path::Path) -> Value {
   let canonical = std::fs::canonicalize(path).ok();
   let sha256 = canonical

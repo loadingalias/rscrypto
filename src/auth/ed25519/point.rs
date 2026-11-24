@@ -280,16 +280,8 @@ impl ExtendedPoint {
     let y2 = y.square();
     let numerator = y2.sub(&FieldElement::ONE);
     let denominator = EDWARDS_D.mul(&y2).add(&FieldElement::ONE);
-    let mut x = numerator.sqrt_ratio_i(&denominator)?;
-
-    if x.is_zero() && sign {
-      return None;
-    }
-    if x.is_negative() != sign {
-      x = x.neg();
-    }
-
-    Some(Self::from_affine(x.normalize(), y.normalize()))
+    let x = numerator.sqrt_ratio(&denominator, sign)?;
+    Some(Self::from_affine(x, y))
   }
 
   /// Standard Ed25519 basepoint.
@@ -354,22 +346,6 @@ impl ExtendedPoint {
     }
 
     acc
-  }
-
-  // Radix-16 Straus removed — superseded by straus_wnaf_basepoint_vartime.
-
-  /// Multiply by the Edwards cofactor.
-  #[cfg(feature = "ed25519")]
-  #[must_use]
-  pub(crate) fn mul_by_cofactor(&self) -> Self {
-    self.double().double().double()
-  }
-
-  /// Whether this point lies in the low-order torsion subgroup.
-  #[cfg(feature = "ed25519")]
-  #[must_use]
-  pub(crate) fn is_small_order(&self) -> bool {
-    self.mul_by_cofactor().equals_projective(&Self::identity())
   }
 
   /// The group inverse `-P`: Edwards negation changes the sign of X and T and
@@ -691,6 +667,14 @@ impl fmt::Debug for ExtendedPoint {
 }
 
 #[cfg(all(test, feature = "ed25519"))]
+impl ExtendedPoint {
+  /// Independent subgroup check for the public encoding tests.
+  pub(crate) fn is_small_order(&self) -> bool {
+    self.double().double().double().equals_projective(&Self::identity())
+  }
+}
+
+#[cfg(all(test, feature = "ed25519"))]
 mod tests {
   use super::{ExtendedPoint, FieldElement};
 
@@ -778,13 +762,6 @@ mod tests {
   }
 
   #[test]
-  fn cofactor_mul_identity_stays_identity() {
-    let point = ExtendedPoint::identity().mul_by_cofactor();
-
-    assert_eq!(point.to_affine(), Some((FieldElement::ZERO, FieldElement::ONE)));
-  }
-
-  #[test]
   fn straus_wnaf_basepoint_matches_fixed_base_when_variable_scalar_is_zero() {
     let mut s = [0u8; 32];
     s[0] = 7;
@@ -810,12 +787,6 @@ mod tests {
         scalar
       );
     }
-  }
-
-  #[test]
-  fn small_order_detection_matches_identity_and_basepoint() {
-    assert!(ExtendedPoint::identity().is_small_order());
-    assert!(!basepoint().is_small_order());
   }
 
   #[cfg(feature = "ed25519")]

@@ -6,6 +6,97 @@ tie is 0.95x through 1.05x. [Benchmarking](../docs/benchmarking.md) gives the me
 rules, and the commands. Earlier campaigns remain in the
 [history of this file](https://github.com/loadingalias/rscrypto/blob/50c708b29905bb3221e7b22b9c7cce8fcc700818/benchmark_results/OVERVIEW.md).
 
+## November 24, 2026 performance measurements
+
+### TLS 1.3 and QUIC
+
+Each cell gives the median time in microseconds for rscrypto and the fastest external peer. Lower times are better.
+Each measurement uses AES-128-GCM. The handshake rows use P-256 credentials.
+The TLS endpoints authenticate each other. The QUIC handshake authenticates the server.
+
+| Workload | Intel Linux | Graviton4 | Apple M1 Pro |
+| --- | ---: | ---: | ---: |
+| TLS full, X25519 | 292 / 327 (AWS-LC) | 294 / 369 (AWS-LC) | 250 / 304 (AWS-LC) |
+| TLS resumed, X25519 | 86.0 / 93.1 (AWS-LC) | 104 / 119 (AWS-LC) | 94.9 / 102 (AWS-LC) |
+| TLS full, X25519MLKEM768 | 342 / 373 (AWS-LC) | 356 / 418 (AWS-LC) | 289 / 337 (AWS-LC) |
+| TLS resumed, X25519MLKEM768 | 134 / 141 (AWS-LC) | 167 / 169 (AWS-LC) | 137 / 138 (AWS-LC) |
+| TLS record seal, 64 B | 0.080 / 0.109 (AWS-LC) | 0.179 / 0.137 (AWS-LC) | 0.174 / 0.094 (AWS-LC) |
+| TLS record open, 64 B | 0.074 / 0.103 (ring) | 0.126 / 0.137 (ring) | 0.077 / 0.095 (ring) |
+| TLS record seal, 16 KiB | 0.932 / 0.987 (AWS-LC) | 2.34 / 2.41 (AWS-LC) | 2.01 / 2.14 (AWS-LC) |
+| TLS record open, 16 KiB | 1.02 / 1.00 (AWS-LC) | 2.48 / 2.41 (AWS-LC) | 2.07 / 2.16 (AWS-LC) |
+| TLS application transfer, 1 MiB | 248 / 251 (OpenSSL) | 447 / 415 (OpenSSL) | 426 / 417 (AWS-LC) |
+| QUIC full handshake, X25519 | 203 / 212 (AWS-LC) | 214 / 246 (AWS-LC) | 198 / 202 (AWS-LC) |
+| QUIC packet seal, 1,200 B | 0.151 / 0.182 (AWS-LC) | 0.299 / 0.305 (AWS-LC) | 0.251 / 0.263 (AWS-LC) |
+| QUIC packet open, 1,200 B | 0.147 / 0.180 (ring) | 0.290 / 0.296 (AWS-LC) | 0.233 / 0.298 (AWS-LC) |
+
+The Intel hybrid handshake took 342 µs with rscrypto, 373 µs with AWS-LC and 660 µs with OpenSSL 4.0.3.
+On Graviton4, the same handshake took 356 µs, 418 µs and 729 µs, respectively.
+The historical Intel result was 392 µs with rscrypto and 367 µs with AWS-LC.
+Graviton4 previously measured 392 µs and 418 µs.
+The two campaigns used different builds and hosts.
+[Historical provider measurements](https://github.com/loadingalias/rscrypto/blob/50c708b29905bb3221e7b22b9c7cce8fcc700818/benchmark_results/OVERVIEW.md#tls-13-and-quic-through-rscrypto-rustls).
+
+Graviton4 sealed a 64-byte TLS record in 179 ns. AWS-LC took 137 ns.
+OpenSSL transferred 1 MiB on Graviton4 in 415 µs. The rscrypto provider took 447 µs.
+
+### IBM Z ECDH
+
+The native runners reported IBM machine type 8562. The ratio divides the fastest external peer’s median time by the rscrypto median time.
+The headline includes scalar import, public derivation and parsed-peer agreement for each curve.
+
+| Operation | Release rscrypto | Current rscrypto | Fastest peer | Peer / rscrypto |
+| --- | ---: | ---: | ---: | ---: |
+| P-256 scalar import | 31.3 ns | 30.0 ns | 51.2 ns (RustCrypto) | 1.70x |
+| P-256 public derivation | 1.966 ms | 46.1 µs | 92.7 µs (crrl) | 2.01x |
+| P-256 agreement, parsed peer | 10.757 ms | 38.7 µs | 176 µs (crrl) | 4.54x |
+| P-256 agreement, SEC1 bytes | 10.761 ms | 52.5 µs | 178 µs (crrl) | 3.38x |
+| P-384 scalar import | 29.7 ns | 30.6 ns | 60.0 ns (RustCrypto) | 1.96x |
+| P-384 public derivation | 9.856 ms | 96.6 µs | 449 µs (RustCrypto) | 4.64x |
+| P-384 agreement, parsed peer | 25.507 ms | 77.1 µs | 1,902 µs (RustCrypto) | 24.66x |
+| P-384 agreement, SEC1 bytes | 25.417 ms | 134 µs | 1,771 µs (RustCrypto) | 13.25x |
+
+The six-point family geometric mean was 3.89x. The release recorded 0.13x.
+The P-256 and P-384 fixed-versus-random scalar timing tests passed for public derivation and agreement.
+[Native timing evidence](https://github.com/loadingalias/rscrypto/actions/runs/45317719955).
+
+| IBM Z mutual TLS, P-256 credentials | Full handshake | Resumed handshake |
+| --- | ---: | ---: |
+| secp256r1, µs | 10,446 / 7,122 (AWS-LC) | 299 / 2,461 (ring) |
+| secp384r1, µs | 11,351 / 12,279 (AWS-LC) | 492 / 7,773 (AWS-LC) |
+
+### Ed25519 on Intel Linux
+
+Each cell gives the rscrypto and fastest external peer times in microseconds. The control used the same Intel host.
+The reusable-key workload prepares each public key before timing. The import workload includes decoding the public key.
+
+| Message | Sign | Verify with a reusable key | Import and verify |
+| --- | ---: | ---: | ---: |
+| 0 B | 6.95 / 7.24 (AWS-LC) | 17.8 / 30.6 (AWS-LC) | 20.9 / 30.2 (dryoc) |
+| 32 B | 6.95 / 7.24 (AWS-LC) | 17.7 / 30.6 (AWS-LC) | 20.7 / 29.8 (dryoc) |
+| 1,024 B | 9.80 / 10.0 (AWS-LC) | 19.0 / 32.0 (AWS-LC) | 22.1 / 31.2 (dryoc) |
+| 16,384 B | 53.2 / 51.0 (AWS-LC) | 40.8 / 52.5 (AWS-LC) | 43.9 / 52.6 (AWS-LC) |
+
+The 12-point family geometric mean was 1.30x. The release recorded 0.88x.
+For a 32-byte message on Intel, reusable-key verification went from 35.3 to 17.7 µs. Import and verify went from 40.1 to 20.7 µs.
+For a 32-byte message on M1 Pro, reusable-key verification went from 25.6 to 25.7 µs. Import and verify went from 30.2 to 28.7 µs.
+
+### Measurement scope
+
+Each point is the median of three independent Criterion run medians. Each run used 20 samples, 100 ms of warm-up and a 400 ms measurement window.
+The tie band is 0.95x through 1.05x. Each peer performed the same catalog operation and passed its output check.
+The Intel c8i.xlarge used a Xeon 6975P-C. The c8g.xlarge used Graviton4. Both had four vCPUs.
+Both AWS hosts built OpenSSL 4.0.3 from the release tarball with SHA-256 `325b5c806167c13b40b1ffeadfe0248197c00eccc4cf123ec1e28d2d2fd216d9`.
+OpenSSL participated in the full and resumed TLS handshake rows and the 1 MiB transfer on AWS. Record primitives and QUIC compare rustls providers.
+The Mac and IBM Z ran the rustls-only selection. The Apple M1 Pro was an active workstation.
+Linux used the default target CPU. The Mac used `-C target-cpu=native`. All used `nightly-2026-10-24`.
+
+The Intel, Graviton4 and M1 provider binaries used clean revision `be3a5a7d`. IBM Z repeated the same ECDH and provider code across the linked runs.
+The Intel Ed25519 control used `1271cf58`. Its comparison build applied the public square and IFMA optimizations to `be3a5a7d`.
+The M1 Ed25519 candidate used the local `41cc59f9` checkout with the performance changes.
+The M1 Ed25519 control reused the verified `42040818` executable. Its SHA-256 was `8a51630ce61a7b062f7b64727bc56fbfb955b3ad9870be99f8191c796d9d95b3`.
+
+IBM Z benchmark runs retain the raw execution plans and Criterion samples. [First run](https://github.com/loadingalias/rscrypto/actions/runs/45316809839) · [Second run](https://github.com/loadingalias/rscrypto/actions/runs/45318238388) · [Third run](https://github.com/loadingalias/rscrypto/actions/runs/45319366428).
+
 ## v0.13 release source
 
 Toolchain `nightly-2026-10-24`, the default target CPU, and the `.config/criterion.json` settings:
@@ -107,11 +198,27 @@ the cipher built once, from the base run and the Apple run:
 | RISC-V | 1.46 µs | 1.94 µs | 6.15 µs | 4.77 µs | 6.15 µs | 4.77 µs |
 | Apple M1 Pro | 9.5 ns | 15.6 ns | 66.1 ns | 54.8 ns | 66.4 ns | 55.9 ns |
 
+### IBM Z ECDH operations
+
+The six headline points cover private-scalar import and agreement with a parsed or encoded peer on each curve.
+The public-key row measures derivation from an existing private scalar. It has a separate score.
+All times are medians from the [release scorecard](https://github.com/loadingalias/rscrypto/actions/runs/44681056190/artifacts/14621750310).
+
+| Curve and operation | rscrypto | Fastest peer | Peer / rscrypto |
+| --- | ---: | ---: | ---: |
+| P-256 private-scalar import | 31.3 ns | RustCrypto, 51.7 ns | 1.65x |
+| P-256 public-key derivation | 1.966 ms | crrl, 71.7 µs | 0.036x |
+| P-256 agreement, parsed peer | 10.757 ms | crrl, 169.8 µs | 0.016x |
+| P-256 agreement, encoded peer | 10.761 ms | crrl, 170.8 µs | 0.016x |
+| P-384 private-scalar import | 29.7 ns | RustCrypto, 58.8 ns | 1.98x |
+| P-384 public-key derivation | 9.856 ms | RustCrypto, 523.6 µs | 0.053x |
+| P-384 agreement, parsed peer | 25.507 ms | RustCrypto, 1.750 ms | 0.069x |
+| P-384 agreement, encoded peer | 25.417 ms | RustCrypto, 1.764 ms | 0.069x |
+
 ## Not in this record
 
-- TLS 1.3 and QUIC through `rscrypto-rustls`, and the OpenSSL comparisons: these targets need
-  OpenSSL 4.0.3, which CI does not provision. The Apple run does not include them. Their last
-  full run is the [v0.12.0
+- The v0.13 TLS, QUIC and OpenSSL comparison targets required OpenSSL 4.0.3.
+  The release CI and Apple campaigns omitted them. Their previous full measurements appear in the [v0.12.0
   record](https://github.com/loadingalias/rscrypto/blob/50c708b29905bb3221e7b22b9c7cce8fcc700818/benchmark_results/OVERVIEW.md#2026-10-23-v0120-release-benchmark-run).
 - The BLAKE3 file readers, and the diagnostic targets: `aead_kernels`, `aead_diag`,
   `mldsa_portable`, `slhdsa_portable`, and `structural`.

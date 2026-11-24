@@ -28,10 +28,10 @@ just bench-provider-resources mldsa87 X25519MLKEM768 AES256-GCM-SHA384 full --wo
 
 This connection workload has no internal-kernel diagnostic mode; `--diag` is rejected before compilation.
 
-The linked OpenSSL version must be exactly 4.0.3.
-Use its development headers and libraries; `OPENSSL_DIR` can select their installation.
-The benchmark catalog records this as the target's external prerequisite.
-CI does not provision it, so `just bench all` omits this target and the Bench workflow rejects it.
+The default campaign and the Bench workflow measure TLS and QUIC through the rustls providers.
+An explicit local TLS selector includes the OpenSSL 4.0.3 peer.
+Set `openssl=false` to use the same peers as CI, for example `just bench tls-handshake-p256 openssl=false`.
+For the OpenSSL peer, point `OPENSSL_DIR` at its 4.0.3 headers and libraries.
 The optional `vendored-openssl` feature lets cross-target lint jobs build the bindings without a target installation.
 The bindings currently vendor OpenSSL 3.6.3,
 so that feature alone does not supply the required measurement baseline.
@@ -105,7 +105,7 @@ and the certificate curve second if it differs, as [RFC 8422 section 5.1](https:
 Checks verify the actual group, including OpenSSL's server ephemeral public key.
 
 Key-schedule component rows check PRF bytes against another production provider
-and HMAC bytes against OpenSSL before timing, with two different inputs per retained key.
+and HMAC bytes against rustls/AWS-LC before timing, with two different inputs per retained key.
 PRF key blocks contain 48, 80 or 88 bytes for AES-128-GCM, AES-256-GCM or ChaCha20-Poly1305;
 the AES-GCM lengths include rustls's extra eight-byte explicit-nonce seed.
 Checks bind each length to every selected production suite's key-block shape.
@@ -345,9 +345,7 @@ just bench quic-header
 just bench quic-cid
 ```
 
-The target is optional and has the same OpenSSL 4.0.3 prerequisite as the TLS binary.
-OpenSSL supplies shared fixture/provenance support, not a QUIC comparison row.
-CI does not provision this target, and `just bench all` omits it.
+Both CI and `just bench all` include these QUIC rows. The catalog builds them with the rustls providers alone.
 The rows measure the provider's QUIC cryptography; this repository has no QUIC transport.
 
 | Selector         | Cases | Timed work |

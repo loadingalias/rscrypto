@@ -190,7 +190,7 @@ def match_cases(artifact, cases, patterns, log, env):
 
 def source_evidence(root: Path) -> None:
   names = subprocess.check_output(["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z", "--",
-                                   "Cargo.toml", "Cargo.lock", "build.rs", "rust-toolchain.toml", ".cargo", ".config", "src", "benches", "scripts", "rscrypto-rustls", "tools/provider-bench"])
+                                   "Cargo.toml", "Cargo.lock", "build.rs", "rust-toolchain.toml", ".cargo", ".config", "src", "benches", "scripts", "rscrypto-rustls", "tools/Cargo.toml", "tools/Cargo.lock", "tools/provider-bench"])
   write_json(root / "source.json", {name: digest(Path(name)) if Path(name).is_file() else None
                                    for name in sorted(set(names.decode().split("\0")) - {""})})
   write_json(root / "source-state.json", {

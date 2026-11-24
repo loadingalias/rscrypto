@@ -5655,7 +5655,7 @@ entrypoints = [
   "P256EphemeralSecret::public_key",
   "P256EphemeralSecret::diffie_hellman",
 ]
-secrets = ["ephemeral_scalar", "projective_state", "shared_secret"]
+secrets = ["ephemeral_scalar", "projective_state", "pcc_parameter_block", "shared_secret"]
 public = [
   "validated_peer_public_key",
   "public_key",
@@ -5685,7 +5685,7 @@ entrypoints = [
   "P384EphemeralSecret::public_key",
   "P384EphemeralSecret::diffie_hellman",
 ]
-secrets = ["ephemeral_scalar", "window_digits", "projective_state", "shared_secret"]
+secrets = ["ephemeral_scalar", "window_digits", "projective_state", "pcc_parameter_block", "shared_secret"]
 public = [
   "validated_peer_public_key",
   "public_key",
@@ -7227,24 +7227,24 @@ target = "s390x-unknown-linux-gnu"
 primitive = "kx.p256_ecdh"
 symbol = "ct_entry_p256_ecdh_public_key"
 kind = "select_branch"
-slice_sha256 = "dd095d91926195d55af1f4ca7c8e92b8fc272e9044870e6c0906fbf421b3c006"
+slice_sha256 = "57c71653b449f19978443c075edae3edfcf3242c0316aef0ee3e9676ac27f739"
 source = "src/auth/p256_portable.rs bit_mask; src/auth/p256_portable.rs scalar_mul_generator_portable; src/auth/p256_portable.rs digit bit index; src/auth/p256_portable.rs scalar_mul_generator_portable low/middle/high rows"
 classification = "public"
-rationale = "Public comb row bound, now inlined into the harness entry. The countdown r10 starts at 12 (+0x21c), and the loop exits when it reaches 0 (+0x2da). stg r10,624(%r15) at +0x2e0 is the only store to that slot. lg r12,624(%r15) (+0xe30) and lay r10,-1(r12) (+0xe36) form the next count. lg r9,624(%r15) at +0xec0 loads the current count, and no instruction writes r9 before the branch; calls preserve it. So r9 is 12..1. The calls receive objects that end at sp+623 or start at sp+672, so none reaches sp+624. clgijl r9,10 at +0x122e keeps the high scalar limb loaded from sp+1072 (+0x1228) when the last high-comb bit is below 256, and the fallthrough sets r2=0 (+0x1234). This is a public bit-index bound, not a comparison of secret limb contents."
+rationale = "Public comb row bound. GR10 starts at 12 (+0x26c). The loop exits at zero (+0x32a) and saves each remaining count at SP+552 (+0x330). GR12 reloads it (+0xe8e) and GR10 takes the previous count minus one (+0xe94). GR9 reloads the current count (+0xf1e). Calls preserve GR9. The comparison with 10 (+0x128c) selects the high limb for the public comb position."
 reviewer = "rscrypto CT waiver renewal review"
-reviewed_at = "2026-11-21"
+reviewed_at = "2026-11-24"
 
 [[asm_waiver]]
 target = "s390x-unknown-linux-gnu"
 primitive = "kx.p256_ecdh"
 symbol = "ct_entry_p256_ecdh_agree"
 kind = "select_branch"
-slice_sha256 = "0ded86ed305d922d0de98232a8bff905ddb2cd956cc43a2e847316d0a1988d52"
+slice_sha256 = "5f31393c064a69474203f901e626965bf511d46118ab206c4b5f144add4eaa13"
 source = "tools/ct-harness/src/lib.rs write_array; tools/ct-harness/src/lib.rs ct_entry_p256_ecdh_agree"
 classification = "public"
-rationale = "Public output-pointer guard. s390x entry r2 is out. stg r2,2400(%r15) at +0x84 saves it in the last doubleword of the 2408-byte frame (aghi at +0x6); no other instruction stores to that slot. The 16-entry, 104-byte point table spans sp+736..sp+2399 (+0x4cc..+0x5de). The indexed stores in the slice write sp+264..sp+315 (stc, r2<52) and sp+736..sp+767. The calls receive objects at sp+160..sp+2399, so none reaches sp+2400. After the result scratch at sp+400 is cleared (+0xe9a..+0xebe), ltg r11,2400(%r15) at +0xec2 reloads and tests the pointer. je (+0xec8) skips the 32-byte mvc output copy (+0xecc) and selects status 0; otherwise status 1. No shared-result byte feeds the condition. diffie_hellman is now inlined, which moved this guard from +0x50c."
+rationale = "Public output-pointer guard. Entry GR2 holds out. The store at +0x94 saves it at SP+4856. The PCC block occupies SP+760 through SP+4855. The software and hardware paths reload out into GR3 at +0x103e and +0x116e. The zero test at +0x1074 guards the 32-byte output copy at +0x107a."
 reviewer = "rscrypto CT waiver renewal review"
-reviewed_at = "2026-11-21"
+reviewed_at = "2026-11-24"
 
 [[asm_waiver]]
 target = "aarch64-unknown-linux-gnu"
@@ -13035,12 +13035,12 @@ target = "s390x-unknown-linux-gnu"
 primitive = "kx.p256_ecdh"
 symbol = "ct_entry_p256_ecdh_public_key"
 kind = "select_branch"
-slice_sha256 = "5ec375a00fcd87678c0efbbecfc954b746feb6077c32417a04760f004005cf66"
+slice_sha256 = "5cd7055308a5ed86626f1fe7908867dad971b4531d4c7a1a5b841f505275c3b8"
 source = "tools/ct-harness/src/lib.rs ct_entry_p256_ecdh_public_key; write_array"
 classification = "public"
-rationale = "Public output-pointer guard. stg r2,1064(%r15) at +0x140 saves entry r2=out; no other instruction stores to that slot. The calls receive objects that end at or below sp+1063, the last being the 32-byte field at sp+1032. ltg r1,1064(%r15) at +0x150e reloads and tests the pointer, and je (+0x1514) skips the 65-byte SEC1 store through r1 (+0x1524..+0x155e) and selects status 0. No point or scalar byte feeds it."
+rationale = "Public output-pointer guard. The two capability paths save entry GR2 at SP+5056 (+0x182 and +0x176c). The PCC block occupies SP+864 through SP+4959. The load at +0x1592 tests the saved output pointer. The branch at +0x1598 skips the SEC1 prefix and coordinate stores through this pointer."
 reviewer = "rscrypto exact-artifact condition review"
-reviewed_at = "2026-11-21"
+reviewed_at = "2026-11-24"
 
 [[asm_waiver]]
 target = "aarch64-unknown-linux-musl"

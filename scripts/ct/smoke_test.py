@@ -104,7 +104,7 @@ if __name__ == '__main__':
       disassemblies = [json.loads(line) for line in (root / 'llvm-calls.jsonl').read_text().splitlines()
                       if '--disassemble' in json.loads(line)]
       assert len(disassemblies) == 1, disassemblies
-      assert ('--mattr=+vector' in disassemblies[0]) == target.startswith('s390x'), disassemblies
+      assert ('--mattr=+vector,+message-security-assist-extension4' in disassemblies[0]) == target.startswith('s390x'), disassemblies
   manifest = tomllib.loads((ROOT / 'ct.toml').read_text())
   assert all(isinstance(case['smoke_samples'], int) and case['smoke_samples'] >= 2 for case in manifest['dudect_case'])
   print('DudeCT smoke policy regressions passed')

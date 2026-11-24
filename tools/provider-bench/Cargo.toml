@@ -8,16 +8,18 @@ license = "Apache-2.0"
 autobenches = false
 
 [features]
+default = ["openssl-peer"]
+openssl-peer = ["dep:openssl"]
 ml-dsa = ["rscrypto-rustls/ml-dsa"]
 mldsa65-ed25519 = ["rscrypto-rustls/mldsa65-ed25519"]
 mldsa65-ecdsa-p256 = ["rscrypto-rustls/mldsa65-ecdsa-p256"]
-primitives = ["dep:rscrypto"]
+primitives = ["dep:rscrypto", "openssl-peer"]
 # QUIC crypto workloads through rustls's QUIC API.
 quic = []
 portable-only = ["rscrypto-rustls/portable-only"]
 # Cross-target lint jobs can compile without a target OpenSSL installation.
 # Measurements still require the linked OpenSSL 4.0.3 checked by the fixture.
-vendored-openssl = ["openssl/vendored"]
+vendored-openssl = ["openssl-peer", "openssl/vendored"]
 
 [dependencies]
 rscrypto = { path = "../..", default-features = false, features = ["std", "sha2", "sha3", "aes-gcm"], optional = true }
@@ -25,7 +27,7 @@ rscrypto-rustls = { path = "../../rscrypto-rustls" }
 rustls = { workspace = true, features = ["webpki"] }
 rustls-aws-lc-rs = { workspace = true }
 rustls-ring = { workspace = true }
-openssl = "=0.10.82"
+openssl = { version = "=0.10.82", optional = true }
 libc = "0.2.191"
 serde_json = "1.0.154"
 
