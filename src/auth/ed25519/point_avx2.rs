@@ -626,7 +626,7 @@ impl ExtendedPointIfma {
     let ds = self.0.diff_sum();
     let prepared = self.0.blend(&ds, Lanes::AB);
     let constants = hamburg_constants_ifma();
-    let scaled = prepared.reduce().mul_small(&constants);
+    let scaled = prepared.reduce_for_mul().mul_small(&constants);
     let negated = scaled.negate_lazy();
     CachedPointIfma(scaled.blend(&negated, Lanes::D).reduce())
   }
@@ -641,10 +641,10 @@ impl ExtendedPointIfma {
   pub(crate) fn add_cached(&self, other: &CachedPointIfma) -> Self {
     let ds = self.0.diff_sum();
     let tmp = self.0.blend(&ds, Lanes::AB);
-    let product = tmp.reduce().mul(&other.0);
+    let product = tmp.reduce_for_mul().mul(&other.0);
     let swapped = product.shuffle(Shuffle::SwapCD);
     let ehfg = swapped.diff_sum();
-    let reduced = ehfg.reduce();
+    let reduced = ehfg.reduce_for_mul();
     let t0 = reduced.shuffle(Shuffle::OuterAInnerD);
     let t1 = reduced.shuffle(Shuffle::AlternateCB);
     Self(t0.mul(&t1))
@@ -652,8 +652,7 @@ impl ExtendedPointIfma {
 
   /// Double this point using HWCD'08 parallel doubling.
   ///
-  /// Uses the reduced-input `square()` + `mul()` path, reducing before each
-  /// multiply so the multiply need not handle overflow corrections.
+  /// The square and final multiplication each accept five 52-bit limbs.
   ///
   /// # Safety
   ///
@@ -662,14 +661,26 @@ impl ExtendedPointIfma {
   #[target_feature(enable = "avx2,avx512ifma,avx512vl")]
   #[cfg(feature = "ed25519")]
   pub(crate) fn double(&self) -> Self {
+    self.double_inner::<false>()
+  }
+
+  /// Double a point. Public verification may skip carry propagation for bounded limbs.
+  ///
+  /// # Safety
+  ///
+  /// The caller must establish AVX2, AVX-512 IFMA and VL. Use `PUBLIC` only for public points.
+  #[inline]
+  #[target_feature(enable = "avx2,avx512ifma,avx512vl")]
+  #[cfg(feature = "ed25519")]
+  fn double_inner<const PUBLIC: bool>(&self) -> Self {
     // Prepare (X, Y, Z, X+Y) for squaring.
     let tmp0 = self.0.shuffle(Shuffle::SwapPairs); // (Y, X, _, _)
     let tmp1 = self.0.add(&tmp0).shuffle(Shuffle::RepeatAB); // (X+Y, X+Y, X+Y, X+Y)
     let prepared = self.0.blend(&tmp1, Lanes::D); // (X, Y, Z, X+Y)
 
     // Square reduced inputs → (S1, S2, S3, S4) = (X², Y², Z², (X+Y)²)
-    let sq = prepared.reduce().square();
-    // sq is reduced (≤51 bits per limb).
+    let sq = if PUBLIC { prepared.public_mul_input() } else { prepared.reduce_for_mul() }.square();
+    // Each squared limb fits in 52 bits.
 
     // Compute (S5, S6, S8, S9) where:
     //   S5 = S1+S2, S6 = S1-S2, S8 = S1-S2+2S3, S9 = S1+S2-S4
@@ -688,7 +699,7 @@ impl ExtendedPointIfma {
     // = (S1+S2, S1-S2, S1+2S3-S2, S1+S2-S4) = (S5, S6, S8, S9)
 
     // Reduce before final multiply.
-    let reduced = tmp0.reduce();
+    let reduced = tmp0.reduce_for_mul();
     let t0 = reduced.shuffle(Shuffle::AlternateCA); // (S8, S5, S8, S5)
     let t1 = reduced.shuffle(Shuffle::OuterDInnerB); // (S9, S6, S6, S9)
 
@@ -1060,7 +1071,7 @@ pub(crate) unsafe fn straus_wnaf_vartime_ifma(s: &[u8; 32], h: &[u8; 32], a: &Ex
 
   // Main loop: 1 double per bit, sparse additions from wNAF digits.
   for i in (0..=top).rev() {
-    acc = acc.double();
+    acc = acc.double_inner::<true>();
 
     if s_naf[i] != 0 {
       acc = add_wnaf_digit_ifma_raw(acc, base_table, s_naf[i]);

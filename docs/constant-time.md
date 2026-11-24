@@ -1560,7 +1560,9 @@ A source-level fixed-work design is not a release claim by itself.
 The operation entry separates the portable implementation from the selected assembly for Apple
 and Linux AArch64, Linux x86-64, and Windows x86-64.
 On IBM Z, both curves have a PCC path for valid scalars and points.
-The hardware query identifies the supported function. Native scalar timing must be measured separately.
+The hardware query identifies the supported function. On IBM Z machine 8562, the four fixed-versus-random scalar tests passed.
+Their largest absolute t-statistic was 3.47. Each test requested 20,000 samples.
+[Native P-256 and P-384 timing results](https://github.com/loadingalias/rscrypto/actions/runs/45317719955).
 The [September 2026 P-256 ECDH snapshot](https://github.com/loadingalias/rscrypto/blob/50c708b29905bb3221e7b22b9c7cce8fcc700818/benchmark_results/OVERVIEW.md#p-256-ecdh-development-snapshot) keeps the historical Graviton3, Graviton4,
 and Intel Granite Rapids results.
 Those development bundles keep binaries and raw timing samples,

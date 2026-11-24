@@ -211,8 +211,8 @@ Each x86-64 platform runs separate Intel and AMD jobs.
 `benchmarks` accepts the same names as `just bench`; see [Select cases](#select-cases).
 
 The planner rejects unknown names, a form with no platform checked,
-and targets that need an external prerequisite, such as `tls-provider`,
-before it starts any build or measurement runner.
+and standalone OpenSSL targets such as `openssl-sha256` before it starts a runner.
+The `tls-provider` group compares rustls providers on CI.
 A case filter that matches nothing in a target fails that target's job during discovery.
 
 Optional sampling fields override the shared Criterion settings in
