@@ -679,7 +679,12 @@ impl ExtendedPointIfma {
     let prepared = self.0.blend(&tmp1, Lanes::D); // (X, Y, Z, X+Y)
 
     // Square reduced inputs → (S1, S2, S3, S4) = (X², Y², Z², (X+Y)²)
-    let sq = if PUBLIC { prepared.public_mul_input() } else { prepared.reduce_for_mul() }.square();
+    let sq = if PUBLIC {
+      prepared.public_mul_input()
+    } else {
+      prepared.reduce_for_mul()
+    }
+    .square();
     // Each squared limb fits in 52 bits.
 
     // Compute (S5, S6, S8, S9) where:
