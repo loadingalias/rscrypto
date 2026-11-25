@@ -97,45 +97,7 @@ impl Secret {
   }
 }
 
-#[derive(Debug)]
-pub(super) struct Key {
-  secret: Arc<Secret>,
-  spki: Vec<u8>,
-  random: &'static dyn rustls::crypto::SecureRandom,
-}
-
-impl SigningKey for Key {
-  fn choose_scheme(&self, offered: &[SignatureScheme]) -> Option<Box<dyn Signer>> {
-    offered.contains(&self.secret.scheme()).then(|| {
-      Box::new(Sign {
-        secret: Arc::clone(&self.secret),
-        random: self.random,
-      }) as Box<dyn Signer>
-    })
-  }
-
-  fn public_key(&self) -> Option<SubjectPublicKeyInfoDer<'_>> {
-    Some(SubjectPublicKeyInfoDer::from(self.spki.as_slice()))
-  }
-}
-
-#[derive(Debug)]
-struct Sign {
-  secret: Arc<Secret>,
-  random: &'static dyn rustls::crypto::SecureRandom,
-}
-
-impl Signer for Sign {
-  fn sign(self: Box<Self>, message: &[u8]) -> Result<Vec<u8>, Error> {
-    self.secret.sign_with(message, |out| {
-      self.random.fill(out).map_err(|_| MlDsaError::RandomGenerationFailed)
-    })
-  }
-
-  fn scheme(&self) -> SignatureScheme {
-    self.secret.scheme()
-  }
-}
+impl_tls_signer!(MlDsaError::RandomGenerationFailed);
 
 #[cfg(test)]
 #[test]

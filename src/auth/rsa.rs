@@ -64,7 +64,7 @@ use crate::{
 
 #[cfg(all(
   target_arch = "aarch64",
-  target_os = "macos",
+  any(target_os = "macos", target_os = "linux"),
   not(feature = "portable-only"),
   not(miri)
 ))]
@@ -87,15 +87,6 @@ mod rsa_aarch64_mont;
 ))]
 #[path = "rsa_aarch64_pair.rs"]
 mod rsa_aarch64_pair;
-
-#[cfg(all(
-  target_arch = "aarch64",
-  target_os = "linux",
-  not(feature = "portable-only"),
-  not(miri)
-))]
-#[path = "rsa_aarch64_linux_asm.rs"]
-mod rsa_aarch64_linux_asm;
 
 #[cfg(all(target_arch = "x86_64", not(feature = "portable-only"), not(miri)))]
 #[path = "rsa_x86_64_mont.rs"]
@@ -1671,7 +1662,7 @@ impl RsaPrivateKey {
   /// [`SecretVec::into_unprotected_vec`].
   #[must_use]
   pub fn to_pkcs1_der(&self) -> SecretVec {
-    self.components.to_pkcs1_der()
+    self.components.encode_der(false)
   }
 
   /// Encode this private key as a PKCS #8 `PrivateKeyInfo` DER object.
@@ -1681,20 +1672,7 @@ impl RsaPrivateKey {
   /// [`SecretVec::into_unprotected_vec`].
   #[must_use]
   pub fn to_pkcs8_der(&self) -> SecretVec {
-    let pkcs1 = self.to_pkcs1_der();
-    let algorithm = der_rsa_encryption_algorithm_identifier();
-    let body_len = der_integer_tlv_len(&[0])
-      .strict_add(algorithm.len())
-      .strict_add(der_tlv_len(pkcs1.len()));
-    let mut der = Vec::with_capacity(der_tlv_len(body_len));
-    der.push(TAG_SEQUENCE);
-    der_push_len(body_len, &mut der);
-    der_push_integer_unsigned(&[0], &mut der);
-    der.extend_from_slice(&algorithm);
-    der.push(TAG_OCTET_STRING);
-    der_push_len(pkcs1.len(), &mut der);
-    der.extend_from_slice(pkcs1.as_bytes());
-    SecretVec::from_vec(der)
+    self.components.encode_der(true)
   }
 
   /// Return the fixed signature length for this key.
@@ -3159,7 +3137,7 @@ impl RsaPrivateKeyComponents {
     &self.public
   }
 
-  fn to_pkcs1_der(&self) -> SecretVec {
+  fn encode_der(&self, pkcs8: bool) -> SecretVec {
     let public_exponent = self.public.public_exponent().as_u64().to_be_bytes();
     let values: [&[u8]; 9] = [
       &[0],
@@ -3172,16 +3150,21 @@ impl RsaPrivateKeyComponents {
       self.exponent_q.as_bytes(),
       self.coefficient.as_bytes(),
     ];
-    let body_len = values
-      .iter()
-      .fold(0usize, |len, value| len.strict_add(der_integer_tlv_len(value)));
-    let mut der = Vec::with_capacity(der_tlv_len(body_len));
-    der.push(TAG_SEQUENCE);
-    der_push_len(body_len, &mut der);
-    for value in values {
-      der_push_integer_unsigned(value, &mut der);
-    }
-    SecretVec::from_vec(der)
+    let body_len = der_integer_sequence_body_len(&values);
+    let pkcs1_len = der_tlv_len(body_len);
+    let pkcs8_body_len = der_integer_tlv_len(&[0])
+      .strict_add(RSA_ENCRYPTION_ALGORITHM.len())
+      .strict_add(der_tlv_len(pkcs1_len));
+    let len = if pkcs8 { der_tlv_len(pkcs8_body_len) } else { pkcs1_len };
+    SecretVec::build_with_capacity(len, |der| {
+      if pkcs8 {
+        der_push_header(TAG_SEQUENCE, pkcs8_body_len, der);
+        der_push_integer_unsigned(&[0], der);
+        der.extend_from_slice(RSA_ENCRYPTION_ALGORITHM);
+        der_push_header(TAG_OCTET_STRING, pkcs1_len, der);
+      }
+      der_push_integer_sequence(&values, body_len, der);
+    })
   }
 
   #[cfg(feature = "getrandom")]
@@ -5944,20 +5927,34 @@ impl RsaPublicKey {
   /// Encode this public key as a PKCS #1 `RSAPublicKey` DER object.
   #[must_use]
   pub fn to_pkcs1_der(&self) -> Vec<u8> {
-    der_sequence_from_parts(&[
-      der_integer_unsigned(self.modulus()).as_slice(),
-      der_integer_unsigned(&self.public_exponent().as_u64().to_be_bytes()).as_slice(),
-    ])
+    self.encode_der(false)
   }
 
   /// Encode this public key as an X.509 `SubjectPublicKeyInfo` DER object.
   #[must_use]
   pub fn to_spki_der(&self) -> Vec<u8> {
-    let pkcs1 = self.to_pkcs1_der();
-    der_sequence_from_parts(&[
-      der_rsa_encryption_algorithm_identifier().as_slice(),
-      der_bit_string_zero_unused(&pkcs1).as_slice(),
-    ])
+    self.encode_der(true)
+  }
+
+  fn encode_der(&self, spki: bool) -> Vec<u8> {
+    let exponent = self.public_exponent().as_u64().to_be_bytes();
+    let values = [self.modulus(), exponent.as_slice()];
+    let body_len = der_integer_sequence_body_len(&values);
+    let pkcs1_len = der_tlv_len(body_len);
+    let mut der = if spki {
+      let bits_len = pkcs1_len.strict_add(1);
+      let spki_body_len = RSA_ENCRYPTION_ALGORITHM.len().strict_add(der_tlv_len(bits_len));
+      let mut der = Vec::with_capacity(der_tlv_len(spki_body_len));
+      der_push_header(TAG_SEQUENCE, spki_body_len, &mut der);
+      der.extend_from_slice(RSA_ENCRYPTION_ALGORITHM);
+      der_push_header(TAG_BIT_STRING, bits_len, &mut der);
+      der.push(0);
+      der
+    } else {
+      Vec::with_capacity(pkcs1_len)
+    };
+    der_push_integer_sequence(&values, body_len, &mut der);
+    der
   }
 
   /// Allocate scratch for repeated public operations, with this key's `R² mod n` precomputed.
@@ -6857,6 +6854,38 @@ impl Hash for RsaPublicModulus {
   }
 }
 
+macro_rules! public_exponent_schedule {
+  ($exponent:expr, $square:expr, $multiply:expr $(,)?) => {
+    match $exponent {
+      3 => {
+        $square;
+        $multiply;
+      }
+      17 => {
+        for _ in 0..4 {
+          $square;
+        }
+        $multiply;
+      }
+      65_537 => {
+        for _ in 0..16 {
+          $square;
+        }
+        $multiply;
+      }
+      other => {
+        let top_bit = 63usize.strict_sub(other.leading_zeros() as usize);
+        for bit in (0..top_bit).rev() {
+          $square;
+          if (other >> bit) & 1 == 1 {
+            $multiply;
+          }
+        }
+      }
+    }
+  };
+}
+
 impl RsaPublicModulus {
   fn new(bytes: &[u8], bits: usize) -> Self {
     Self::new_inner(bytes, bits, false)
@@ -6967,66 +6996,22 @@ impl RsaPublicModulus {
       mont_mul_cios(base, x, r2, self, t);
       copy_limbs(acc, base);
 
-      match exponent.as_u64() {
-        3 => {
-          mont_square_cios_in_place(acc, tmp, self, t);
-          mont_mul_cios_in_place_left(acc, base, tmp, self, t);
-        }
-        17 => {
-          for _ in 0..4 {
-            mont_square_cios_in_place(acc, tmp, self, t);
-          }
-          mont_mul_cios_in_place_left(acc, base, tmp, self, t);
-        }
-        65_537 => {
-          for _ in 0..16 {
-            mont_square_cios_in_place(acc, tmp, self, t);
-          }
-          mont_mul_cios_in_place_left(acc, base, tmp, self, t);
-        }
-        exponent => {
-          let top_bit = 63usize.strict_sub(exponent.leading_zeros() as usize);
-          for bit in (0..top_bit).rev() {
-            mont_square_cios_in_place(acc, tmp, self, t);
-            if (exponent >> bit) & 1 == 1 {
-              mont_mul_cios_in_place_left(acc, base, tmp, self, t);
-            }
-          }
-        }
-      }
+      public_exponent_schedule!(
+        exponent.as_u64(),
+        mont_square_cios_in_place(acc, tmp, self, t),
+        mont_mul_cios_in_place_left(acc, base, tmp, self, t),
+      );
 
       mont_reduce_cios(base, acc, self, t);
     } else {
       mont_mul(base, x, r2, self, t);
       copy_limbs(acc, base);
 
-      match exponent.as_u64() {
-        3 => {
-          mont_square_in_place(acc, tmp, self, t);
-          mont_mul_in_place_left(acc, base, tmp, self, t);
-        }
-        17 => {
-          for _ in 0..4 {
-            mont_square_in_place(acc, tmp, self, t);
-          }
-          mont_mul_in_place_left(acc, base, tmp, self, t);
-        }
-        65_537 => {
-          for _ in 0..16 {
-            mont_square_in_place(acc, tmp, self, t);
-          }
-          mont_mul_in_place_left(acc, base, tmp, self, t);
-        }
-        exponent => {
-          let top_bit = 63usize.strict_sub(exponent.leading_zeros() as usize);
-          for bit in (0..top_bit).rev() {
-            mont_square_in_place(acc, tmp, self, t);
-            if (exponent >> bit) & 1 == 1 {
-              mont_mul_in_place_left(acc, base, tmp, self, t);
-            }
-          }
-        }
-      }
+      public_exponent_schedule!(
+        exponent.as_u64(),
+        mont_square_in_place(acc, tmp, self, t),
+        mont_mul_in_place_left(acc, base, tmp, self, t),
+      );
 
       mont_reduce(base, acc, self, t);
     }
@@ -7246,33 +7231,11 @@ impl RsaPublicModulus {
     mont_mul(base, x, r2, self, t);
     copy_limbs(acc, base);
 
-    match exponent.as_u64() {
-      3 => {
-        mont_square_in_place(acc, tmp, self, t);
-        mont_mul_in_place_left(acc, base, tmp, self, t);
-      }
-      17 => {
-        for _ in 0..4 {
-          mont_square_in_place(acc, tmp, self, t);
-        }
-        mont_mul_in_place_left(acc, base, tmp, self, t);
-      }
-      65_537 => {
-        for _ in 0..16 {
-          mont_square_in_place(acc, tmp, self, t);
-        }
-        mont_mul_in_place_left(acc, base, tmp, self, t);
-      }
-      exponent => {
-        let top_bit = 63usize.strict_sub(exponent.leading_zeros() as usize);
-        for bit in (0..top_bit).rev() {
-          mont_square_in_place(acc, tmp, self, t);
-          if (exponent >> bit) & 1 == 1 {
-            mont_mul_in_place_left(acc, base, tmp, self, t);
-          }
-        }
-      }
-    }
+    public_exponent_schedule!(
+      exponent.as_u64(),
+      mont_square_in_place(acc, tmp, self, t),
+      mont_mul_in_place_left(acc, base, tmp, self, t),
+    );
 
     mont_reduce(base, acc, self, t);
     limbs_to_be(base, out);
@@ -7319,33 +7282,11 @@ impl RsaPublicModulus {
     mont_mul_comba(base, x, r2, self, t);
     copy_limbs(acc, base);
 
-    match exponent.as_u64() {
-      3 => {
-        mont_square_comba_in_place(acc, tmp, self, t);
-        mont_mul_comba_in_place_left(acc, base, tmp, self, t);
-      }
-      17 => {
-        for _ in 0..4 {
-          mont_square_comba_in_place(acc, tmp, self, t);
-        }
-        mont_mul_comba_in_place_left(acc, base, tmp, self, t);
-      }
-      65_537 => {
-        for _ in 0..16 {
-          mont_square_comba_in_place(acc, tmp, self, t);
-        }
-        mont_mul_comba_in_place_left(acc, base, tmp, self, t);
-      }
-      exponent => {
-        let top_bit = 63usize.strict_sub(exponent.leading_zeros() as usize);
-        for bit in (0..top_bit).rev() {
-          mont_square_comba_in_place(acc, tmp, self, t);
-          if (exponent >> bit) & 1 == 1 {
-            mont_mul_comba_in_place_left(acc, base, tmp, self, t);
-          }
-        }
-      }
-    }
+    public_exponent_schedule!(
+      exponent.as_u64(),
+      mont_square_comba_in_place(acc, tmp, self, t),
+      mont_mul_comba_in_place_left(acc, base, tmp, self, t),
+    );
 
     mont_reduce(base, acc, self, t);
     limbs_to_be(base, out);
@@ -7392,33 +7333,11 @@ impl RsaPublicModulus {
     mont_mul_cios(base, x, r2, self, t);
     copy_limbs(acc, base);
 
-    match exponent.as_u64() {
-      3 => {
-        mont_square_cios_in_place(acc, tmp, self, t);
-        mont_mul_cios_in_place_left(acc, base, tmp, self, t);
-      }
-      17 => {
-        for _ in 0..4 {
-          mont_square_cios_in_place(acc, tmp, self, t);
-        }
-        mont_mul_cios_in_place_left(acc, base, tmp, self, t);
-      }
-      65_537 => {
-        for _ in 0..16 {
-          mont_square_cios_in_place(acc, tmp, self, t);
-        }
-        mont_mul_cios_in_place_left(acc, base, tmp, self, t);
-      }
-      exponent => {
-        let top_bit = 63usize.strict_sub(exponent.leading_zeros() as usize);
-        for bit in (0..top_bit).rev() {
-          mont_square_cios_in_place(acc, tmp, self, t);
-          if (exponent >> bit) & 1 == 1 {
-            mont_mul_cios_in_place_left(acc, base, tmp, self, t);
-          }
-        }
-      }
-    }
+    public_exponent_schedule!(
+      exponent.as_u64(),
+      mont_square_cios_in_place(acc, tmp, self, t),
+      mont_mul_cios_in_place_left(acc, base, tmp, self, t),
+    );
 
     mont_reduce_cios(base, acc, self, t);
     limbs_to_be(base, out);
@@ -7465,33 +7384,11 @@ impl RsaPublicModulus {
     mont_mul_cios_portable(base, x, r2, self, t);
     copy_limbs(acc, base);
 
-    match exponent.as_u64() {
-      3 => {
-        mont_square_cios_portable_in_place(acc, tmp, self, t);
-        mont_mul_cios_portable_in_place_left(acc, base, tmp, self, t);
-      }
-      17 => {
-        for _ in 0..4 {
-          mont_square_cios_portable_in_place(acc, tmp, self, t);
-        }
-        mont_mul_cios_portable_in_place_left(acc, base, tmp, self, t);
-      }
-      65_537 => {
-        for _ in 0..16 {
-          mont_square_cios_portable_in_place(acc, tmp, self, t);
-        }
-        mont_mul_cios_portable_in_place_left(acc, base, tmp, self, t);
-      }
-      exponent => {
-        let top_bit = 63usize.strict_sub(exponent.leading_zeros() as usize);
-        for bit in (0..top_bit).rev() {
-          mont_square_cios_portable_in_place(acc, tmp, self, t);
-          if (exponent >> bit) & 1 == 1 {
-            mont_mul_cios_portable_in_place_left(acc, base, tmp, self, t);
-          }
-        }
-      }
-    }
+    public_exponent_schedule!(
+      exponent.as_u64(),
+      mont_square_cios_portable_in_place(acc, tmp, self, t),
+      mont_mul_cios_portable_in_place_left(acc, base, tmp, self, t),
+    );
 
     mont_reduce_cios_portable(base, acc, self, t);
     limbs_to_be(base, out);
@@ -7499,32 +7396,25 @@ impl RsaPublicModulus {
   }
 }
 
-fn der_rsa_encryption_algorithm_identifier() -> Vec<u8> {
-  der_sequence_from_parts(&[
-    der_tlv(TAG_OBJECT_IDENTIFIER, RSA_ENCRYPTION_OID).as_slice(),
-    der_tlv(TAG_NULL, &[]).as_slice(),
-  ])
+// DER AlgorithmIdentifier for rsaEncryption with NULL parameters.
+const RSA_ENCRYPTION_ALGORITHM: &[u8] = &[0x30, 13, 6, 9, 0x2a, 0x86, 0x48, 0x86, 0xf7, 13, 1, 1, 1, 5, 0];
+
+fn der_push_header(tag: u8, len: usize, der: &mut Vec<u8>) {
+  der.push(tag);
+  der_push_len(len, der);
 }
 
-fn der_sequence_from_parts(parts: &[&[u8]]) -> Vec<u8> {
-  let len = parts.iter().fold(0usize, |acc, part| acc.strict_add(part.len()));
-  let mut body = Vec::with_capacity(len);
-  for part in parts {
-    body.extend_from_slice(part);
-  }
-  der_tlv(TAG_SEQUENCE, &body)
+fn der_integer_sequence_body_len(values: &[&[u8]]) -> usize {
+  values
+    .iter()
+    .fold(0usize, |len, value| len.strict_add(der_integer_tlv_len(value)))
 }
 
-fn der_integer_unsigned(value: &[u8]) -> Vec<u8> {
-  let first_nonzero = value.iter().position(|&byte| byte != 0);
-  let value = first_nonzero.and_then(|index| value.get(index..)).unwrap_or(&[0]);
-  let needs_sign_padding = value.first().is_some_and(|byte| byte & 0x80 != 0);
-  let mut encoded = Vec::with_capacity(value.len().strict_add(usize::from(needs_sign_padding)));
-  if needs_sign_padding {
-    encoded.push(0);
+fn der_push_integer_sequence(values: &[&[u8]], body_len: usize, der: &mut Vec<u8>) {
+  der_push_header(TAG_SEQUENCE, body_len, der);
+  for value in values {
+    der_push_integer_unsigned(value, der);
   }
-  encoded.extend_from_slice(value);
-  der_tlv(TAG_INTEGER, &encoded)
 }
 
 fn der_integer_tlv_len(value: &[u8]) -> usize {
@@ -7541,27 +7431,11 @@ fn der_push_integer_unsigned(value: &[u8], out: &mut Vec<u8>) {
   let value = first_nonzero.and_then(|index| value.get(index..)).unwrap_or(&[0]);
   let needs_sign_padding = value.first().is_some_and(|byte| byte & 0x80 != 0);
   let content_len = value.len().strict_add(usize::from(needs_sign_padding));
-  out.push(TAG_INTEGER);
-  der_push_len(content_len, out);
+  der_push_header(TAG_INTEGER, content_len, out);
   if needs_sign_padding {
     out.push(0);
   }
   out.extend_from_slice(value);
-}
-
-fn der_bit_string_zero_unused(value: &[u8]) -> Vec<u8> {
-  let mut body = Vec::with_capacity(value.len().strict_add(1));
-  body.push(0);
-  body.extend_from_slice(value);
-  der_tlv(TAG_BIT_STRING, &body)
-}
-
-fn der_tlv(tag: u8, value: &[u8]) -> Vec<u8> {
-  let mut out = Vec::with_capacity(1usize.strict_add(der_len_len(value.len())).strict_add(value.len()));
-  out.push(tag);
-  der_push_len(value.len(), &mut out);
-  out.extend_from_slice(value);
-  out
 }
 
 fn der_tlv_len(value_len: usize) -> usize {
@@ -8041,31 +7915,23 @@ impl RsaKeygenDrbg {
   }
 
   fn fill(&mut self, out: &mut [u8]) {
-    let mut offset = 0usize;
-    while offset < out.len() {
-      self.value = hmac_sha256_parts(&self.key, &[&self.value]);
-      let chunk_len = core::cmp::min(RSA_KEYGEN_DRBG_OUT_BYTES, out.len().strict_sub(offset));
-      if let (Some(dst), Some(src)) = (
-        out.get_mut(offset..offset.strict_add(chunk_len)),
-        self.value.get(..chunk_len),
-      ) {
-        dst.copy_from_slice(src);
-      }
-      offset = offset.strict_add(chunk_len);
+    for chunk in out.chunks_mut(RSA_KEYGEN_DRBG_OUT_BYTES) {
+      self.value = hmac_sha256_parts(&self.key, [self.value.as_slice()]);
+      chunk.copy_from_slice(&self.value[..chunk.len()]);
     }
     self.update(&[]);
   }
 
   fn update(&mut self, seed_material: &[&[u8]]) {
     self.key = keygen_drbg_update_key(&self.key, &self.value, 0, seed_material);
-    self.value = hmac_sha256_parts(&self.key, &[&self.value]);
+    self.value = hmac_sha256_parts(&self.key, [self.value.as_slice()]);
 
     if seed_material.iter().all(|part| part.is_empty()) {
       return;
     }
 
     self.key = keygen_drbg_update_key(&self.key, &self.value, 1, seed_material);
-    self.value = hmac_sha256_parts(&self.key, &[&self.value]);
+    self.value = hmac_sha256_parts(&self.key, [self.value.as_slice()]);
   }
 }
 
@@ -8085,22 +7951,23 @@ fn keygen_drbg_update_key(
   seed_material: &[&[u8]],
 ) -> [u8; RSA_KEYGEN_DRBG_OUT_BYTES] {
   let domain = [domain];
-  let mut mac_parts = Vec::with_capacity(seed_material.len().strict_add(2));
-  mac_parts.push(&value[..]);
-  mac_parts.push(&domain[..]);
-  mac_parts.extend_from_slice(seed_material);
-  hmac_sha256_parts(key, &mac_parts)
+  hmac_sha256_parts(
+    key,
+    [value.as_slice(), &domain]
+      .into_iter()
+      .chain(seed_material.iter().copied()),
+  )
 }
 
 /// HMAC-SHA256 over the concatenation of `data`, shared by the key-generation
 /// DRBG and PKCS#1 v1.5 implicit rejection without the `hmac` feature.
-fn hmac_sha256_parts(key: &[u8; HMAC_SHA256_OUT_BYTES], data: &[&[u8]]) -> [u8; HMAC_SHA256_OUT_BYTES] {
-  let mut key_block = [0u8; HMAC_SHA256_BLOCK_BYTES];
-  key_block[..HMAC_SHA256_OUT_BYTES].copy_from_slice(key);
-
+fn hmac_sha256_parts<'a>(
+  key: &[u8; HMAC_SHA256_OUT_BYTES],
+  data: impl IntoIterator<Item = &'a [u8]>,
+) -> [u8; HMAC_SHA256_OUT_BYTES] {
   let mut ipad = [0x36u8; HMAC_SHA256_BLOCK_BYTES];
   let mut opad = [0x5cu8; HMAC_SHA256_BLOCK_BYTES];
-  for ((ipad_byte, opad_byte), key_byte) in ipad.iter_mut().zip(opad.iter_mut()).zip(key_block.iter().copied()) {
+  for ((ipad_byte, opad_byte), key_byte) in ipad.iter_mut().zip(opad.iter_mut()).zip(key) {
     *ipad_byte ^= key_byte;
     *opad_byte ^= key_byte;
   }
@@ -8117,7 +7984,6 @@ fn hmac_sha256_parts(key: &[u8; HMAC_SHA256_OUT_BYTES], data: &[&[u8]]) -> [u8; 
   outer.update(inner_digest.as_ref());
   let tag = outer.finalize_secret();
 
-  ct::zeroize(&mut key_block);
   ct::zeroize(&mut ipad);
   ct::zeroize(&mut opad);
   ct::zeroize(&mut inner_digest);
@@ -9261,7 +9127,7 @@ fn decode_pkcs1v15_with_implicit_rejection(
 fn implicit_rejection_kdk(private_exponent: &[u8], ciphertext: &[u8]) -> [u8; HMAC_SHA256_OUT_BYTES] {
   debug_assert_eq!(private_exponent.len(), ciphertext.len());
   let mut exponent_hash = Sha256::digest_secret(private_exponent);
-  let kdk = hmac_sha256_parts(&exponent_hash, &[ciphertext]);
+  let kdk = hmac_sha256_parts(&exponent_hash, [ciphertext]);
   ct::zeroize(&mut exponent_hash);
   kdk
 }
@@ -9285,7 +9151,7 @@ fn implicit_rejection_prf(
     let index = u16::try_from(index)
       .map_err(|_| RsaPrivateOpError::InvalidLength)?
       .to_be_bytes();
-    let mut block = hmac_sha256_parts(kdk, &[&index, label, &bit_length]);
+    let mut block = hmac_sha256_parts(kdk, [index.as_slice(), label, &bit_length]);
     chunk.copy_from_slice(&block[..chunk.len()]);
     ct::zeroize(&mut block);
   }
@@ -13040,7 +12906,7 @@ fn mont_reduce_cios(out: &mut [u64], value: &[u64], modulus: &RsaPublicModulus, 
 
   #[cfg(all(
     target_arch = "aarch64",
-    target_os = "macos",
+    any(target_os = "linux", target_os = "macos"),
     not(feature = "portable-only"),
     not(miri)
   ))]
@@ -13051,34 +12917,12 @@ fn mont_reduce_cios(out: &mut [u64], value: &[u64], modulus: &RsaPublicModulus, 
 
   #[cfg(all(
     target_arch = "aarch64",
-    target_os = "linux",
-    not(feature = "portable-only"),
-    not(miri)
-  ))]
-  if n == 32 && t.len() >= 66 {
-    rsa_aarch64_linux_asm::mont_reduce_cios_32(out, value, &modulus.limbs, modulus.n0, t);
-    return;
-  }
-
-  #[cfg(all(
-    target_arch = "aarch64",
-    target_os = "macos",
+    any(target_os = "linux", target_os = "macos"),
     not(feature = "portable-only"),
     not(miri)
   ))]
   if matches!(n, 48 | 64 | 128) && t.len() >= rsa_aarch64_asm::bignum_mont_scratch_words(n) {
     rsa_aarch64_asm::mont_reduce_cios_words(out, value, &modulus.limbs, modulus.n0, n, t);
-    return;
-  }
-
-  #[cfg(all(
-    target_arch = "aarch64",
-    target_os = "linux",
-    not(feature = "portable-only"),
-    not(miri)
-  ))]
-  if matches!(n, 48 | 64 | 128) && t.len() >= rsa_aarch64_linux_asm::bignum_mont_scratch_words(n) {
-    rsa_aarch64_linux_asm::mont_reduce_cios_words(out, value, &modulus.limbs, modulus.n0, n, t);
     return;
   }
 
@@ -18523,7 +18367,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
   ))]
   #[test]
   fn aarch64_linux_rsa_montgomery_asm_matches_portable_across_supported_widths() {
-    assert_aarch64_rsa_montgomery_backend_matches_portable!(rsa_aarch64_linux_asm);
+    assert_aarch64_rsa_montgomery_backend_matches_portable!(rsa_aarch64_asm);
   }
 
   #[cfg(all(

@@ -12,3 +12,5 @@ member	aws-lc-sys-0.41.0/aws-lc/crypto/perlasm/x86_64-xlate.pl	2745d9400c9a5d238
 output	src/aead/chacha20poly1305/asm/rscrypto_chacha20_poly1305_aarch64_apple_darwin.s	3286	81666	cda377873577df9a782e2bf0b4d8ec7dd4c2258028d8123ff8d040ab450e6812
 output	src/aead/chacha20poly1305/asm/rscrypto_chacha20_poly1305_aarch64_linux.s	3268	80267	873eaa092320923adbc9c7218f697c5c8e23e5cf0cd9473350cecdc50aaf6eda
 output	src/aead/chacha20poly1305/asm/rscrypto_chacha20_poly1305_x86_64_linux.s	9046	197851	d7a460e5f55fb54e93777346f4213ad61eb16207af6ace2220385ddfe90b1332
+variant	src/aead/chacha20poly1305/asm/rscrypto_chacha20_poly1305_aarch64_linux.s	src/aead/chacha20poly1305/asm/rscrypto_chacha20_poly1305_aarch64.s	elf
+variant	src/aead/chacha20poly1305/asm/rscrypto_chacha20_poly1305_aarch64_apple_darwin.s	src/aead/chacha20poly1305/asm/rscrypto_chacha20_poly1305_aarch64.s	macho

@@ -151,11 +151,6 @@ macro_rules! define_sha_family_dispatch {
     compress_fn: $compress_fn:path,
     required_caps: $required_caps:path,
     runtime_kernel: $runtime_kernel:path,
-    output_len: $output_len:expr,
-    word: $word:ty,
-    total_bits_ty: $total_bits_ty:ty,
-    length_offset: $length_offset:expr,
-    h0: $h0:path,
     compile_time: {
       hw: $compile_time_hw:expr,
       name: $compile_time_name:expr,
@@ -207,11 +202,29 @@ macro_rules! define_sha_family_dispatch {
 
     #[inline]
     #[must_use]
-    pub(crate) fn digest(data: &[u8]) -> [u8; $output_len] {
+    pub(crate) fn compress_dispatch() -> $compress_fn_ty {
       if $compile_time_hw {
-        return digest_oneshot(data, $compile_time_best);
+        return $compile_time_best;
       }
-      digest_oneshot(data, active().compress_blocks)
+      active().compress_blocks
+    }
+  };
+}
+
+#[cfg(feature = "sha2")]
+macro_rules! define_sha_digest {
+  (
+    compress_fn_ty: $compress_fn_ty:ty,
+    output_len: $output_len:expr,
+    word: $word:ty,
+    total_bits_ty: $total_bits_ty:ty,
+    length_offset: $length_offset:expr,
+    h0: $h0:path,
+  ) => {
+    #[inline]
+    #[must_use]
+    pub(crate) fn digest(data: &[u8]) -> [u8; $output_len] {
+      digest_oneshot(data, compress_dispatch())
     }
 
     /// The one-shot digest of `.0`.
@@ -257,15 +270,6 @@ macro_rules! define_sha_family_dispatch {
     #[inline]
     pub(super) fn digest_oneshot(data: &[u8], compress_blocks: $compress_fn_ty) -> [u8; $output_len] {
       compress_blocks.with(OneShot(data))
-    }
-
-    #[inline]
-    #[must_use]
-    pub(crate) fn compress_dispatch() -> $compress_fn_ty {
-      if $compile_time_hw {
-        return $compile_time_best;
-      }
-      active().compress_blocks
     }
   };
 }

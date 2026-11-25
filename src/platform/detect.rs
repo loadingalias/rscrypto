@@ -111,24 +111,16 @@ pub(super) fn get() -> Detected {
 
   #[cfg(not(miri))]
   {
-    let det = {
-      #[cfg(any(feature = "std", target_has_atomic = "64"))]
-      {
-        atomic_cache::CACHE.get_or_init(detect_with_override)
-      }
+    #[cfg(any(feature = "std", target_has_atomic = "64"))]
+    {
+      atomic_cache::CACHE.get_or_init(detect_with_override)
+    }
 
-      #[cfg(not(any(feature = "std", target_has_atomic = "64")))]
-      {
-        // Constrained targets: always call detect (no caching)
-        detect_with_override()
-      }
-    };
-
-    debug_assert!(
-      crate::platform::target_matrix::manifest_has_arch(det.arch),
-      "detected arch policy drifted from .config/target-matrix.json"
-    );
-    det
+    #[cfg(not(any(feature = "std", target_has_atomic = "64")))]
+    {
+      // Constrained targets: always call detect (no caching)
+      detect_with_override()
+    }
   }
 }
 

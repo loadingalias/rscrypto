@@ -37,6 +37,7 @@
 use core::{fmt, num::NonZeroU32};
 
 use super::hmac::{HmacSha256, hmac_prefix_state};
+use super::sha2_words::{write_u32x8_be, write_u64_be};
 use crate::{
   hashes::crypto::{
     Sha256, Sha512,
@@ -58,30 +59,6 @@ const SHA512_BLOCK_SIZE: usize = 128;
 /// Maximum salt length whose `salt || INT_32_BE(block_index) || 0x80 || len`
 /// payload fits in a single SHA-512 block: 128 - 4 - 1 - 16 = 107.
 const SHA512_INLINE_SALT_MAX: usize = SHA512_BLOCK_SIZE - 4 - 1 - 16;
-
-#[inline(always)]
-fn write_u32x8_be(dst: &mut [u8], words: &[u32; 8]) {
-  dst[0..4].copy_from_slice(&words[0].to_be_bytes());
-  dst[4..8].copy_from_slice(&words[1].to_be_bytes());
-  dst[8..12].copy_from_slice(&words[2].to_be_bytes());
-  dst[12..16].copy_from_slice(&words[3].to_be_bytes());
-  dst[16..20].copy_from_slice(&words[4].to_be_bytes());
-  dst[20..24].copy_from_slice(&words[5].to_be_bytes());
-  dst[24..28].copy_from_slice(&words[6].to_be_bytes());
-  dst[28..32].copy_from_slice(&words[7].to_be_bytes());
-}
-
-#[inline(always)]
-fn write_u64x8_be(dst: &mut [u8], words: &[u64; 8]) {
-  dst[0..8].copy_from_slice(&words[0].to_be_bytes());
-  dst[8..16].copy_from_slice(&words[1].to_be_bytes());
-  dst[16..24].copy_from_slice(&words[2].to_be_bytes());
-  dst[24..32].copy_from_slice(&words[3].to_be_bytes());
-  dst[32..40].copy_from_slice(&words[4].to_be_bytes());
-  dst[40..48].copy_from_slice(&words[5].to_be_bytes());
-  dst[48..56].copy_from_slice(&words[6].to_be_bytes());
-  dst[56..64].copy_from_slice(&words[7].to_be_bytes());
-}
 
 #[inline(always)]
 fn zeroize_u32x8_no_fence(words: &mut [u32; 8]) {
@@ -1292,7 +1269,7 @@ fn pbkdf2_sha512_f(
 
   // Outer hash of U1: single block
   let mut outer_block = [0u8; SHA512_BLOCK_SIZE];
-  write_u64x8_be(&mut outer_block[..SHA512_OUTPUT_SIZE], &state);
+  write_u64_be::<8>(&mut outer_block[..SHA512_OUTPUT_SIZE], &state);
   outer_block[SHA512_OUTPUT_SIZE] = 0x80;
   // total outer bytes = 128 (opad, pre-compressed) + 64 (inner hash) = 192 → 1536 bits
   outer_block[112..SHA512_BLOCK_SIZE].copy_from_slice(&1536u128.to_be_bytes());
@@ -1308,11 +1285,11 @@ fn pbkdf2_sha512_f(
   inner_block[112..SHA512_BLOCK_SIZE].copy_from_slice(&1536u128.to_be_bytes());
 
   for _ in 1..iterations {
-    write_u64x8_be(&mut inner_block[..SHA512_OUTPUT_SIZE], &u_words);
+    write_u64_be::<8>(&mut inner_block[..SHA512_OUTPUT_SIZE], &u_words);
     state = *inner_init;
     compress.call(&mut state, &inner_block);
 
-    write_u64x8_be(&mut outer_block[..SHA512_OUTPUT_SIZE], &state);
+    write_u64_be::<8>(&mut outer_block[..SHA512_OUTPUT_SIZE], &state);
 
     state = *outer_init;
     compress.call(&mut state, &outer_block);
@@ -1324,7 +1301,7 @@ fn pbkdf2_sha512_f(
     }
   }
 
-  write_u64x8_be(output, &result_words);
+  write_u64_be::<8>(output, &result_words);
 
   ct::zeroize_no_fence(&mut inner_block);
   ct::zeroize_no_fence(&mut outer_block);
@@ -1381,11 +1358,11 @@ fn pbkdf2_sha512_iter1(
     state = *inner_init;
     compress.call(&mut state, &block);
 
-    write_u64x8_be(&mut outer_block[..SHA512_OUTPUT_SIZE], &state);
+    write_u64_be::<8>(&mut outer_block[..SHA512_OUTPUT_SIZE], &state);
     state = *outer_init;
     compress.call(&mut state, &outer_block);
 
-    write_u64x8_be(chunk, &state);
+    write_u64_be::<8>(chunk, &state);
   }
 
   if !tail.is_empty() {
@@ -1394,12 +1371,12 @@ fn pbkdf2_sha512_iter1(
     state = *inner_init;
     compress.call(&mut state, &block);
 
-    write_u64x8_be(&mut outer_block[..SHA512_OUTPUT_SIZE], &state);
+    write_u64_be::<8>(&mut outer_block[..SHA512_OUTPUT_SIZE], &state);
     state = *outer_init;
     compress.call(&mut state, &outer_block);
 
     let mut block_out = [0u8; SHA512_OUTPUT_SIZE];
-    write_u64x8_be(&mut block_out, &state);
+    write_u64_be::<8>(&mut block_out, &state);
     tail.copy_from_slice(&block_out[..tail.len()]);
     ct::zeroize_no_fence(&mut block_out);
   }

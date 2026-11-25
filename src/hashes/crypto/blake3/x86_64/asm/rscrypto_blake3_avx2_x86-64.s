@@ -2,16 +2,30 @@
 //
 // Adapted for rscrypto from upstream BLAKE3 1.8.5:
 //   c/blake3_avx2_x86-64_unix.S
+.if {macho}
 // Symbols are renamed into the rscrypto namespace and the Darwin-specific
 // symbol spelling is kept explicit for Rust global_asm!.
+.else // macho
+// Symbols are renamed into the rscrypto namespace and upstream preprocessor
+// conditionals are removed for Rust global_asm!.
+
+.section .note.GNU-stack,"",%progbits
+.endif // macho
 
 
 
+.if {macho}
 
 .globl _rscrypto_blake3_hash_many_avx2
 .text
         .p2align  6
 _rscrypto_blake3_hash_many_avx2:
+.else // macho
+.global rscrypto_blake3_hash_many_avx2
+.section .text
+        .p2align  6
+rscrypto_blake3_hash_many_avx2:
+.endif // macho
         push    r15
         push    r14
         push    r13
@@ -1766,7 +1780,11 @@ _rscrypto_blake3_hash_many_avx2:
         jmp     4b
 
 
+.if {macho}
 .section __TEXT,__const
+.else // macho
+.section .rodata
+.endif // macho
 .p2align  6
 RSCRYPTO_AVX2_ADD0:
         .long  0, 1, 2, 3, 4, 5, 6, 7

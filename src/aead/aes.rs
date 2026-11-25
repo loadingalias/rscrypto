@@ -1023,265 +1023,306 @@ pub(super) trait AesKey: Sized {
 }
 
 #[cfg(any(feature = "aes-gcm", feature = "aes-gcm-siv"))]
+macro_rules! aes_key_forwarders {
+  (
+    $expand_key:ident,
+    $encrypt_block:ident,
+    $encrypt_blocks_ecb:ident,
+    $ctr32_encrypt_be:ident,
+    $gcm_seal_x86:ident,
+    $gcm_open_x86:ident,
+    $gcm_open_bulk_x86:ident,
+    $ctr32_encrypt_be_aesni_pclmul_ghash:ident,
+    $ctr32_decrypt_be_aesni_pclmul_ghash:ident,
+    $ctr32_encrypt_be_gather_wide_ghash:ident,
+    $ctr32_encrypt_be_aarch64_ghash:ident,
+    $ctr32_decrypt_be_aarch64_ghash:ident,
+    $ctr32_encrypt_be_gather_aarch64_ghash:ident,
+    $gcm_short_ppc:ident,
+    $ctr32_encrypt_be_ppc_ghash:ident,
+    $ctr32_decrypt_be_ppc_ghash:ident,
+  ) => {
+    #[inline(always)]
+    fn expand(key: &Self::Bytes) -> Self {
+      $expand_key(key)
+    }
+
+    #[inline(always)]
+    fn encrypt_block(&self, block: &mut [u8; BLOCK_SIZE]) {
+      $encrypt_block(self, block);
+    }
+
+    #[inline(always)]
+    fn encrypt_blocks_ecb(&self, blocks: &mut [[u8; BLOCK_SIZE]]) {
+      $encrypt_blocks_ecb(self, blocks);
+    }
+
+    #[cfg(feature = "aes-gcm")]
+    #[inline(always)]
+    fn ctr32_encrypt_be(&self, initial_counter: &[u8; BLOCK_SIZE], data: &mut [u8]) {
+      $ctr32_encrypt_be(self, initial_counter, data);
+    }
+
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm"))]
+    #[inline(always)]
+    unsafe fn gcm_seal_x86(
+      &self,
+      j0: &[u8; BLOCK_SIZE],
+      counter_block: &[u8; BLOCK_SIZE],
+      acc: u128,
+      src: *const u8,
+      src_len: usize,
+      tail: &[&[u8]],
+      dst: *mut u8,
+      length_block: &[u8; BLOCK_SIZE],
+      tables: X86GcmTables<'_>,
+    ) -> Option<[u8; BLOCK_SIZE]> {
+      // SAFETY: the caller upholds the kernel's contract.
+      unsafe {
+        $gcm_seal_x86(
+          self,
+          j0,
+          counter_block,
+          acc,
+          src,
+          src_len,
+          tail,
+          dst,
+          length_block,
+          tables,
+        )
+      }
+    }
+
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm"))]
+    #[inline(always)]
+    unsafe fn gcm_open_x86(
+      &self,
+      j0: &[u8; BLOCK_SIZE],
+      counter_block: &[u8; BLOCK_SIZE],
+      acc: u128,
+      data: *mut u8,
+      len: usize,
+      length_block: &[u8; BLOCK_SIZE],
+      tables: X86GcmTables<'_>,
+      expected: &[u8; BLOCK_SIZE],
+    ) -> Option<bool> {
+      // SAFETY: the caller upholds the kernel's contract.
+      unsafe { $gcm_open_x86(self, j0, counter_block, acc, data, len, length_block, tables, expected) }
+    }
+
+    #[cfg(all(
+      target_arch = "x86_64",
+      target_feature = "sse2",
+      any(target_os = "linux", target_os = "windows"),
+      feature = "aes-gcm"
+    ))]
+    #[inline(always)]
+    unsafe fn gcm_open_bulk_x86(
+      &self,
+      counter_block: &[u8; BLOCK_SIZE],
+      data: *mut u8,
+      len: usize,
+      acc: &mut u128,
+      tables: X86GcmTables<'_>,
+    ) -> Option<usize> {
+      // SAFETY: the caller upholds the kernel's contract.
+      unsafe { $gcm_open_bulk_x86(self, counter_block, data, len, acc, tables) }
+    }
+
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm"))]
+    #[inline(always)]
+    unsafe fn ctr32_encrypt_be_aesni_pclmul_ghash(
+      &self,
+      initial_counter: &[u8; BLOCK_SIZE],
+      data: &mut [u8],
+      acc: u128,
+      h_polyval: u128,
+      h_powers_rev: &[u128; 4],
+    ) -> u128 {
+      // SAFETY: the caller establishes the kernel's CPU features.
+      unsafe { $ctr32_encrypt_be_aesni_pclmul_ghash(self, initial_counter, data, acc, h_polyval, h_powers_rev) }
+    }
+
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm"))]
+    #[inline(always)]
+    unsafe fn ctr32_decrypt_be_aesni_pclmul_ghash(
+      &self,
+      initial_counter: &[u8; BLOCK_SIZE],
+      data: &mut [u8],
+      acc: u128,
+      h_polyval: u128,
+      h_powers_rev: &[u128; 4],
+    ) -> u128 {
+      // SAFETY: the caller establishes the kernel's CPU features.
+      unsafe { $ctr32_decrypt_be_aesni_pclmul_ghash(self, initial_counter, data, acc, h_polyval, h_powers_rev) }
+    }
+
+    #[cfg(all(
+      target_arch = "x86_64",
+      target_feature = "sse2",
+      any(target_os = "linux", target_os = "windows"),
+      feature = "aes-gcm"
+    ))]
+    #[inline(always)]
+    unsafe fn ctr32_encrypt_be_gather_wide_ghash<'output>(
+      &self,
+      initial_counter: &[u8; BLOCK_SIZE],
+      plaintext: &super::gather::Input<'_, 256>,
+      whole_message_aligned: bool,
+      out: &'output mut [core::mem::MaybeUninit<u8>],
+      acc: &mut u128,
+      tables: X86GcmTables<'_>,
+    ) -> &'output mut [u8] {
+      // SAFETY: the caller upholds the kernel's contract.
+      unsafe {
+        $ctr32_encrypt_be_gather_wide_ghash(
+          self,
+          initial_counter,
+          plaintext,
+          whole_message_aligned,
+          out,
+          acc,
+          tables,
+        )
+      }
+    }
+
+    #[cfg(all(target_arch = "aarch64", feature = "aes-gcm"))]
+    #[inline(always)]
+    unsafe fn ctr32_encrypt_be_aarch64_ghash(
+      &self,
+      initial_counter: &[u8; BLOCK_SIZE],
+      data: &mut [u8],
+      acc: &mut u128,
+      tables: &Aarch64GcmTables<'_>,
+    ) {
+      // SAFETY: the caller establishes the kernel's CPU features.
+      unsafe { $ctr32_encrypt_be_aarch64_ghash(self, initial_counter, data, acc, tables) }
+    }
+
+    #[cfg(all(target_arch = "aarch64", feature = "aes-gcm"))]
+    #[inline(always)]
+    unsafe fn ctr32_decrypt_be_aarch64_ghash(
+      &self,
+      initial_counter: &[u8; BLOCK_SIZE],
+      data: &mut [u8],
+      acc: &mut u128,
+      tables: &Aarch64GcmTables<'_>,
+    ) {
+      // SAFETY: the caller establishes the kernel's CPU features.
+      unsafe { $ctr32_decrypt_be_aarch64_ghash(self, initial_counter, data, acc, tables) }
+    }
+
+    #[cfg(all(
+      target_arch = "aarch64",
+      any(target_os = "macos", target_os = "linux"),
+      feature = "aes-gcm"
+    ))]
+    #[inline(always)]
+    unsafe fn ctr32_encrypt_be_gather_aarch64_ghash<'output>(
+      &self,
+      initial_counter: &[u8; BLOCK_SIZE],
+      plaintext: &super::gather::Input<'_, 128>,
+      out: &'output mut [core::mem::MaybeUninit<u8>],
+      acc: &mut u128,
+      tables: &Aarch64GcmTables<'_>,
+    ) -> &'output mut [u8] {
+      // SAFETY: the caller upholds the kernel's contract.
+      unsafe { $ctr32_encrypt_be_gather_aarch64_ghash(self, initial_counter, plaintext, out, acc, tables) }
+    }
+
+    #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), feature = "aes-gcm"))]
+    #[inline(always)]
+    unsafe fn gcm_short_ppc<const OPEN: bool>(
+      &self,
+      j0: &[u8; BLOCK_SIZE],
+      aad: &[u8],
+      data: &mut [u8],
+      length_block: &[u8; BLOCK_SIZE],
+      h_powers_rev: &[u128; 4],
+    ) -> Option<[u8; BLOCK_SIZE]> {
+      // SAFETY: the caller establishes the kernel's CPU features.
+      unsafe { $gcm_short_ppc::<OPEN>(self, j0, aad, data, length_block, h_powers_rev) }
+    }
+
+    #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), feature = "aes-gcm"))]
+    #[inline(always)]
+    unsafe fn ctr32_encrypt_be_ppc_ghash(
+      &self,
+      initial_counter: &[u8; BLOCK_SIZE],
+      data: &mut [u8],
+      acc: u128,
+      h_polyval: u128,
+      h_powers_rev: &[u128; 4],
+      h_powers_rev_8: &[u128; 8],
+    ) -> u128 {
+      // SAFETY: the caller establishes the kernel's CPU features.
+      unsafe {
+        $ctr32_encrypt_be_ppc_ghash(
+          self,
+          initial_counter,
+          data,
+          acc,
+          h_polyval,
+          h_powers_rev,
+          h_powers_rev_8,
+        )
+      }
+    }
+
+    #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), feature = "aes-gcm"))]
+    #[inline(always)]
+    unsafe fn ctr32_decrypt_be_ppc_ghash(
+      &self,
+      initial_counter: &[u8; BLOCK_SIZE],
+      data: &mut [u8],
+      acc: u128,
+      h_polyval: u128,
+      h_powers_rev: &[u128; 4],
+      h_powers_rev_8: &[u128; 8],
+    ) -> u128 {
+      // SAFETY: the caller establishes the kernel's CPU features.
+      unsafe {
+        $ctr32_decrypt_be_ppc_ghash(
+          self,
+          initial_counter,
+          data,
+          acc,
+          h_polyval,
+          h_powers_rev,
+          h_powers_rev_8,
+        )
+      }
+    }
+  };
+}
+
+#[cfg(any(feature = "aes-gcm", feature = "aes-gcm-siv"))]
 impl AesKey for Aes128EncKey {
   type Bytes = [u8; KEY_SIZE_128];
 
   #[cfg(all(target_arch = "s390x", not(feature = "portable-only"), feature = "aes-gcm-siv"))]
   const KM_FUNCTION: u64 = km::AES_128;
 
-  #[inline(always)]
-  fn expand(key: &Self::Bytes) -> Self {
-    aes128_expand_key(key)
-  }
-
-  #[inline(always)]
-  fn encrypt_block(&self, block: &mut [u8; BLOCK_SIZE]) {
-    aes128_encrypt_block(self, block);
-  }
-
-  #[inline(always)]
-  fn encrypt_blocks_ecb(&self, blocks: &mut [[u8; BLOCK_SIZE]]) {
-    aes128_encrypt_blocks_ecb(self, blocks);
-  }
-
-  #[cfg(feature = "aes-gcm")]
-  #[inline(always)]
-  fn ctr32_encrypt_be(&self, initial_counter: &[u8; BLOCK_SIZE], data: &mut [u8]) {
-    aes128_ctr32_encrypt_be(self, initial_counter, data);
-  }
-
-  #[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm"))]
-  #[inline(always)]
-  unsafe fn gcm_seal_x86(
-    &self,
-    j0: &[u8; BLOCK_SIZE],
-    counter_block: &[u8; BLOCK_SIZE],
-    acc: u128,
-    src: *const u8,
-    src_len: usize,
-    tail: &[&[u8]],
-    dst: *mut u8,
-    length_block: &[u8; BLOCK_SIZE],
-    tables: X86GcmTables<'_>,
-  ) -> Option<[u8; BLOCK_SIZE]> {
-    // SAFETY: the caller upholds the kernel's contract.
-    unsafe {
-      aes128_gcm_seal_x86(
-        self,
-        j0,
-        counter_block,
-        acc,
-        src,
-        src_len,
-        tail,
-        dst,
-        length_block,
-        tables,
-      )
-    }
-  }
-
-  #[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm"))]
-  #[inline(always)]
-  unsafe fn gcm_open_x86(
-    &self,
-    j0: &[u8; BLOCK_SIZE],
-    counter_block: &[u8; BLOCK_SIZE],
-    acc: u128,
-    data: *mut u8,
-    len: usize,
-    length_block: &[u8; BLOCK_SIZE],
-    tables: X86GcmTables<'_>,
-    expected: &[u8; BLOCK_SIZE],
-  ) -> Option<bool> {
-    // SAFETY: the caller upholds the kernel's contract.
-    unsafe { aes128_gcm_open_x86(self, j0, counter_block, acc, data, len, length_block, tables, expected) }
-  }
-
-  #[cfg(all(
-    target_arch = "x86_64",
-    target_feature = "sse2",
-    any(target_os = "linux", target_os = "windows"),
-    feature = "aes-gcm"
-  ))]
-  #[inline(always)]
-  unsafe fn gcm_open_bulk_x86(
-    &self,
-    counter_block: &[u8; BLOCK_SIZE],
-    data: *mut u8,
-    len: usize,
-    acc: &mut u128,
-    tables: X86GcmTables<'_>,
-  ) -> Option<usize> {
-    // SAFETY: the caller upholds the kernel's contract.
-    unsafe { aes128_gcm_open_bulk_x86(self, counter_block, data, len, acc, tables) }
-  }
-
-  #[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm"))]
-  #[inline(always)]
-  unsafe fn ctr32_encrypt_be_aesni_pclmul_ghash(
-    &self,
-    initial_counter: &[u8; BLOCK_SIZE],
-    data: &mut [u8],
-    acc: u128,
-    h_polyval: u128,
-    h_powers_rev: &[u128; 4],
-  ) -> u128 {
-    // SAFETY: the caller establishes the kernel's CPU features.
-    unsafe { aes128_ctr32_encrypt_be_aesni_pclmul_ghash(self, initial_counter, data, acc, h_polyval, h_powers_rev) }
-  }
-
-  #[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm"))]
-  #[inline(always)]
-  unsafe fn ctr32_decrypt_be_aesni_pclmul_ghash(
-    &self,
-    initial_counter: &[u8; BLOCK_SIZE],
-    data: &mut [u8],
-    acc: u128,
-    h_polyval: u128,
-    h_powers_rev: &[u128; 4],
-  ) -> u128 {
-    // SAFETY: the caller establishes the kernel's CPU features.
-    unsafe { aes128_ctr32_decrypt_be_aesni_pclmul_ghash(self, initial_counter, data, acc, h_polyval, h_powers_rev) }
-  }
-
-  #[cfg(all(
-    target_arch = "x86_64",
-    target_feature = "sse2",
-    any(target_os = "linux", target_os = "windows"),
-    feature = "aes-gcm"
-  ))]
-  #[inline(always)]
-  unsafe fn ctr32_encrypt_be_gather_wide_ghash<'output>(
-    &self,
-    initial_counter: &[u8; BLOCK_SIZE],
-    plaintext: &super::gather::Input<'_, 256>,
-    whole_message_aligned: bool,
-    out: &'output mut [core::mem::MaybeUninit<u8>],
-    acc: &mut u128,
-    tables: X86GcmTables<'_>,
-  ) -> &'output mut [u8] {
-    // SAFETY: the caller upholds the kernel's contract.
-    unsafe {
-      aes128_ctr32_encrypt_be_gather_wide_ghash(
-        self,
-        initial_counter,
-        plaintext,
-        whole_message_aligned,
-        out,
-        acc,
-        tables,
-      )
-    }
-  }
-
-  #[cfg(all(target_arch = "aarch64", feature = "aes-gcm"))]
-  #[inline(always)]
-  unsafe fn ctr32_encrypt_be_aarch64_ghash(
-    &self,
-    initial_counter: &[u8; BLOCK_SIZE],
-    data: &mut [u8],
-    acc: &mut u128,
-    tables: &Aarch64GcmTables<'_>,
-  ) {
-    // SAFETY: the caller establishes the kernel's CPU features.
-    unsafe { aes128_ctr32_encrypt_be_aarch64_ghash(self, initial_counter, data, acc, tables) }
-  }
-
-  #[cfg(all(target_arch = "aarch64", feature = "aes-gcm"))]
-  #[inline(always)]
-  unsafe fn ctr32_decrypt_be_aarch64_ghash(
-    &self,
-    initial_counter: &[u8; BLOCK_SIZE],
-    data: &mut [u8],
-    acc: &mut u128,
-    tables: &Aarch64GcmTables<'_>,
-  ) {
-    // SAFETY: the caller establishes the kernel's CPU features.
-    unsafe { aes128_ctr32_decrypt_be_aarch64_ghash(self, initial_counter, data, acc, tables) }
-  }
-
-  #[cfg(all(
-    target_arch = "aarch64",
-    any(target_os = "macos", target_os = "linux"),
-    feature = "aes-gcm"
-  ))]
-  #[inline(always)]
-  unsafe fn ctr32_encrypt_be_gather_aarch64_ghash<'output>(
-    &self,
-    initial_counter: &[u8; BLOCK_SIZE],
-    plaintext: &super::gather::Input<'_, 128>,
-    out: &'output mut [core::mem::MaybeUninit<u8>],
-    acc: &mut u128,
-    tables: &Aarch64GcmTables<'_>,
-  ) -> &'output mut [u8] {
-    // SAFETY: the caller upholds the kernel's contract.
-    unsafe { aes128_ctr32_encrypt_be_gather_aarch64_ghash(self, initial_counter, plaintext, out, acc, tables) }
-  }
-
-  #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), feature = "aes-gcm"))]
-  #[inline(always)]
-  unsafe fn gcm_short_ppc<const OPEN: bool>(
-    &self,
-    j0: &[u8; BLOCK_SIZE],
-    aad: &[u8],
-    data: &mut [u8],
-    length_block: &[u8; BLOCK_SIZE],
-    h_powers_rev: &[u128; 4],
-  ) -> Option<[u8; BLOCK_SIZE]> {
-    // SAFETY: the caller establishes the kernel's CPU features.
-    unsafe { aes128_gcm_short_ppc::<OPEN>(self, j0, aad, data, length_block, h_powers_rev) }
-  }
-
-  #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), feature = "aes-gcm"))]
-  #[inline(always)]
-  unsafe fn ctr32_encrypt_be_ppc_ghash(
-    &self,
-    initial_counter: &[u8; BLOCK_SIZE],
-    data: &mut [u8],
-    acc: u128,
-    h_polyval: u128,
-    h_powers_rev: &[u128; 4],
-    h_powers_rev_8: &[u128; 8],
-  ) -> u128 {
-    // SAFETY: the caller establishes the kernel's CPU features.
-    unsafe {
-      aes128_ctr32_encrypt_be_ppc_ghash(
-        self,
-        initial_counter,
-        data,
-        acc,
-        h_polyval,
-        h_powers_rev,
-        h_powers_rev_8,
-      )
-    }
-  }
-
-  #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), feature = "aes-gcm"))]
-  #[inline(always)]
-  unsafe fn ctr32_decrypt_be_ppc_ghash(
-    &self,
-    initial_counter: &[u8; BLOCK_SIZE],
-    data: &mut [u8],
-    acc: u128,
-    h_polyval: u128,
-    h_powers_rev: &[u128; 4],
-    h_powers_rev_8: &[u128; 8],
-  ) -> u128 {
-    // SAFETY: the caller establishes the kernel's CPU features.
-    unsafe {
-      aes128_ctr32_decrypt_be_ppc_ghash(
-        self,
-        initial_counter,
-        data,
-        acc,
-        h_polyval,
-        h_powers_rev,
-        h_powers_rev_8,
-      )
-    }
-  }
+  aes_key_forwarders!(
+    aes128_expand_key,
+    aes128_encrypt_block,
+    aes128_encrypt_blocks_ecb,
+    aes128_ctr32_encrypt_be,
+    aes128_gcm_seal_x86,
+    aes128_gcm_open_x86,
+    aes128_gcm_open_bulk_x86,
+    aes128_ctr32_encrypt_be_aesni_pclmul_ghash,
+    aes128_ctr32_decrypt_be_aesni_pclmul_ghash,
+    aes128_ctr32_encrypt_be_gather_wide_ghash,
+    aes128_ctr32_encrypt_be_aarch64_ghash,
+    aes128_ctr32_decrypt_be_aarch64_ghash,
+    aes128_ctr32_encrypt_be_gather_aarch64_ghash,
+    aes128_gcm_short_ppc,
+    aes128_ctr32_encrypt_be_ppc_ghash,
+    aes128_ctr32_decrypt_be_ppc_ghash,
+  );
 
   #[cfg(feature = "aes-gcm-siv")]
   #[inline(always)]
@@ -1429,259 +1470,24 @@ impl AesKey for Aes256EncKey {
   #[cfg(all(target_arch = "s390x", not(feature = "portable-only"), feature = "aes-gcm-siv"))]
   const KM_FUNCTION: u64 = km::AES_256;
 
-  #[inline(always)]
-  fn expand(key: &Self::Bytes) -> Self {
-    aes256_expand_key(key)
-  }
-
-  #[inline(always)]
-  fn encrypt_block(&self, block: &mut [u8; BLOCK_SIZE]) {
-    aes256_encrypt_block(self, block);
-  }
-
-  #[inline(always)]
-  fn encrypt_blocks_ecb(&self, blocks: &mut [[u8; BLOCK_SIZE]]) {
-    aes256_encrypt_blocks_ecb(self, blocks);
-  }
-
-  #[cfg(feature = "aes-gcm")]
-  #[inline(always)]
-  fn ctr32_encrypt_be(&self, initial_counter: &[u8; BLOCK_SIZE], data: &mut [u8]) {
-    aes256_ctr32_encrypt_be(self, initial_counter, data);
-  }
-
-  #[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm"))]
-  #[inline(always)]
-  unsafe fn gcm_seal_x86(
-    &self,
-    j0: &[u8; BLOCK_SIZE],
-    counter_block: &[u8; BLOCK_SIZE],
-    acc: u128,
-    src: *const u8,
-    src_len: usize,
-    tail: &[&[u8]],
-    dst: *mut u8,
-    length_block: &[u8; BLOCK_SIZE],
-    tables: X86GcmTables<'_>,
-  ) -> Option<[u8; BLOCK_SIZE]> {
-    // SAFETY: the caller upholds the kernel's contract.
-    unsafe {
-      aes256_gcm_seal_x86(
-        self,
-        j0,
-        counter_block,
-        acc,
-        src,
-        src_len,
-        tail,
-        dst,
-        length_block,
-        tables,
-      )
-    }
-  }
-
-  #[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm"))]
-  #[inline(always)]
-  unsafe fn gcm_open_x86(
-    &self,
-    j0: &[u8; BLOCK_SIZE],
-    counter_block: &[u8; BLOCK_SIZE],
-    acc: u128,
-    data: *mut u8,
-    len: usize,
-    length_block: &[u8; BLOCK_SIZE],
-    tables: X86GcmTables<'_>,
-    expected: &[u8; BLOCK_SIZE],
-  ) -> Option<bool> {
-    // SAFETY: the caller upholds the kernel's contract.
-    unsafe { aes256_gcm_open_x86(self, j0, counter_block, acc, data, len, length_block, tables, expected) }
-  }
-
-  #[cfg(all(
-    target_arch = "x86_64",
-    target_feature = "sse2",
-    any(target_os = "linux", target_os = "windows"),
-    feature = "aes-gcm"
-  ))]
-  #[inline(always)]
-  unsafe fn gcm_open_bulk_x86(
-    &self,
-    counter_block: &[u8; BLOCK_SIZE],
-    data: *mut u8,
-    len: usize,
-    acc: &mut u128,
-    tables: X86GcmTables<'_>,
-  ) -> Option<usize> {
-    // SAFETY: the caller upholds the kernel's contract.
-    unsafe { aes256_gcm_open_bulk_x86(self, counter_block, data, len, acc, tables) }
-  }
-
-  #[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm"))]
-  #[inline(always)]
-  unsafe fn ctr32_encrypt_be_aesni_pclmul_ghash(
-    &self,
-    initial_counter: &[u8; BLOCK_SIZE],
-    data: &mut [u8],
-    acc: u128,
-    h_polyval: u128,
-    h_powers_rev: &[u128; 4],
-  ) -> u128 {
-    // SAFETY: the caller establishes the kernel's CPU features.
-    unsafe { aes256_ctr32_encrypt_be_aesni_pclmul_ghash(self, initial_counter, data, acc, h_polyval, h_powers_rev) }
-  }
-
-  #[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm"))]
-  #[inline(always)]
-  unsafe fn ctr32_decrypt_be_aesni_pclmul_ghash(
-    &self,
-    initial_counter: &[u8; BLOCK_SIZE],
-    data: &mut [u8],
-    acc: u128,
-    h_polyval: u128,
-    h_powers_rev: &[u128; 4],
-  ) -> u128 {
-    // SAFETY: the caller establishes the kernel's CPU features.
-    unsafe { aes256_ctr32_decrypt_be_aesni_pclmul_ghash(self, initial_counter, data, acc, h_polyval, h_powers_rev) }
-  }
-
-  #[cfg(all(
-    target_arch = "x86_64",
-    target_feature = "sse2",
-    any(target_os = "linux", target_os = "windows"),
-    feature = "aes-gcm"
-  ))]
-  #[inline(always)]
-  unsafe fn ctr32_encrypt_be_gather_wide_ghash<'output>(
-    &self,
-    initial_counter: &[u8; BLOCK_SIZE],
-    plaintext: &super::gather::Input<'_, 256>,
-    whole_message_aligned: bool,
-    out: &'output mut [core::mem::MaybeUninit<u8>],
-    acc: &mut u128,
-    tables: X86GcmTables<'_>,
-  ) -> &'output mut [u8] {
-    // SAFETY: the caller upholds the kernel's contract.
-    unsafe {
-      aes256_ctr32_encrypt_be_gather_wide_ghash(
-        self,
-        initial_counter,
-        plaintext,
-        whole_message_aligned,
-        out,
-        acc,
-        tables,
-      )
-    }
-  }
-
-  #[cfg(all(target_arch = "aarch64", feature = "aes-gcm"))]
-  #[inline(always)]
-  unsafe fn ctr32_encrypt_be_aarch64_ghash(
-    &self,
-    initial_counter: &[u8; BLOCK_SIZE],
-    data: &mut [u8],
-    acc: &mut u128,
-    tables: &Aarch64GcmTables<'_>,
-  ) {
-    // SAFETY: the caller establishes the kernel's CPU features.
-    unsafe { aes256_ctr32_encrypt_be_aarch64_ghash(self, initial_counter, data, acc, tables) }
-  }
-
-  #[cfg(all(target_arch = "aarch64", feature = "aes-gcm"))]
-  #[inline(always)]
-  unsafe fn ctr32_decrypt_be_aarch64_ghash(
-    &self,
-    initial_counter: &[u8; BLOCK_SIZE],
-    data: &mut [u8],
-    acc: &mut u128,
-    tables: &Aarch64GcmTables<'_>,
-  ) {
-    // SAFETY: the caller establishes the kernel's CPU features.
-    unsafe { aes256_ctr32_decrypt_be_aarch64_ghash(self, initial_counter, data, acc, tables) }
-  }
-
-  #[cfg(all(
-    target_arch = "aarch64",
-    any(target_os = "macos", target_os = "linux"),
-    feature = "aes-gcm"
-  ))]
-  #[inline(always)]
-  unsafe fn ctr32_encrypt_be_gather_aarch64_ghash<'output>(
-    &self,
-    initial_counter: &[u8; BLOCK_SIZE],
-    plaintext: &super::gather::Input<'_, 128>,
-    out: &'output mut [core::mem::MaybeUninit<u8>],
-    acc: &mut u128,
-    tables: &Aarch64GcmTables<'_>,
-  ) -> &'output mut [u8] {
-    // SAFETY: the caller upholds the kernel's contract.
-    unsafe { aes256_ctr32_encrypt_be_gather_aarch64_ghash(self, initial_counter, plaintext, out, acc, tables) }
-  }
-
-  #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), feature = "aes-gcm"))]
-  #[inline(always)]
-  unsafe fn gcm_short_ppc<const OPEN: bool>(
-    &self,
-    j0: &[u8; BLOCK_SIZE],
-    aad: &[u8],
-    data: &mut [u8],
-    length_block: &[u8; BLOCK_SIZE],
-    h_powers_rev: &[u128; 4],
-  ) -> Option<[u8; BLOCK_SIZE]> {
-    // SAFETY: the caller establishes the kernel's CPU features.
-    unsafe { aes256_gcm_short_ppc::<OPEN>(self, j0, aad, data, length_block, h_powers_rev) }
-  }
-
-  #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), feature = "aes-gcm"))]
-  #[inline(always)]
-  unsafe fn ctr32_encrypt_be_ppc_ghash(
-    &self,
-    initial_counter: &[u8; BLOCK_SIZE],
-    data: &mut [u8],
-    acc: u128,
-    h_polyval: u128,
-    h_powers_rev: &[u128; 4],
-    h_powers_rev_8: &[u128; 8],
-  ) -> u128 {
-    // SAFETY: the caller establishes the kernel's CPU features.
-    unsafe {
-      aes256_ctr32_encrypt_be_ppc_ghash(
-        self,
-        initial_counter,
-        data,
-        acc,
-        h_polyval,
-        h_powers_rev,
-        h_powers_rev_8,
-      )
-    }
-  }
-
-  #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), feature = "aes-gcm"))]
-  #[inline(always)]
-  unsafe fn ctr32_decrypt_be_ppc_ghash(
-    &self,
-    initial_counter: &[u8; BLOCK_SIZE],
-    data: &mut [u8],
-    acc: u128,
-    h_polyval: u128,
-    h_powers_rev: &[u128; 4],
-    h_powers_rev_8: &[u128; 8],
-  ) -> u128 {
-    // SAFETY: the caller establishes the kernel's CPU features.
-    unsafe {
-      aes256_ctr32_decrypt_be_ppc_ghash(
-        self,
-        initial_counter,
-        data,
-        acc,
-        h_polyval,
-        h_powers_rev,
-        h_powers_rev_8,
-      )
-    }
-  }
+  aes_key_forwarders!(
+    aes256_expand_key,
+    aes256_encrypt_block,
+    aes256_encrypt_blocks_ecb,
+    aes256_ctr32_encrypt_be,
+    aes256_gcm_seal_x86,
+    aes256_gcm_open_x86,
+    aes256_gcm_open_bulk_x86,
+    aes256_ctr32_encrypt_be_aesni_pclmul_ghash,
+    aes256_ctr32_decrypt_be_aesni_pclmul_ghash,
+    aes256_ctr32_encrypt_be_gather_wide_ghash,
+    aes256_ctr32_encrypt_be_aarch64_ghash,
+    aes256_ctr32_decrypt_be_aarch64_ghash,
+    aes256_ctr32_encrypt_be_gather_aarch64_ghash,
+    aes256_gcm_short_ppc,
+    aes256_ctr32_encrypt_be_ppc_ghash,
+    aes256_ctr32_decrypt_be_ppc_ghash,
+  );
 
   #[cfg(feature = "aes-gcm-siv")]
   #[inline(always)]

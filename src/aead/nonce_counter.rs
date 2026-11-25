@@ -41,270 +41,150 @@ impl<Cipher> fmt::Debug for NonceCounter<Cipher> {
   }
 }
 
-impl NonceCounter<Aes256Gcm> {
-  /// Fixed per-stream prefix length in bytes.
-  pub const FIXED_PREFIX_LEN: usize = FIXED_PREFIX_LEN;
+macro_rules! impl_nonce_counter {
+  ($cipher:ty, $tag:ty) => {
+    impl NonceCounter<$cipher> {
+      /// Fixed per-stream prefix length in bytes.
+      pub const FIXED_PREFIX_LEN: usize = FIXED_PREFIX_LEN;
 
-  /// Counter field length in bytes.
-  pub const COUNTER_LEN: usize = COUNTER_LEN;
+      /// Counter field length in bytes.
+      pub const COUNTER_LEN: usize = COUNTER_LEN;
 
-  /// Maximum deterministic AES-GCM invocations per key before rotation.
-  pub const MAX_MESSAGES: u64 = MAX_MESSAGES;
+      /// Maximum deterministic AES-GCM invocations per key before rotation.
+      pub const MAX_MESSAGES: u64 = MAX_MESSAGES;
 
-  /// Start a fresh AES-GCM nonce stream with `fixed_prefix`.
-  ///
-  /// The counter records the calling process ([`ProcessOrigin`](crate::platform::ProcessOrigin)), and only that
-  /// process gets nonces from it. So this is not a `const fn`: build a counter at
-  /// run time, or in a `LazyLock`, not in a `const` or `static` initializer.
-  #[inline]
-  #[must_use]
-  pub fn new(fixed_prefix: [u8; FIXED_PREFIX_LEN]) -> Self {
-    Self {
-      fixed_prefix,
-      sequence: NonceSequence::new(0),
-      _cipher: PhantomData,
+      /// Start a fresh AES-GCM nonce stream with `fixed_prefix`.
+      ///
+      /// The counter records the calling process ([`ProcessOrigin`](crate::platform::ProcessOrigin)), and only that
+      /// process gets nonces from it. So this is not a `const fn`: build a counter at
+      /// run time, or in a `LazyLock`, not in a `const` or `static` initializer.
+      #[inline]
+      #[must_use]
+      pub fn new(fixed_prefix: [u8; FIXED_PREFIX_LEN]) -> Self {
+        Self {
+          fixed_prefix,
+          sequence: NonceSequence::new(0),
+          _cipher: PhantomData,
+        }
+      }
+
+      /// Resume an AES-GCM nonce stream from a persisted counter value.
+      ///
+      /// # Errors
+      ///
+      /// Returns [`NonceCounterExhausted`] when `next_counter >= MAX_MESSAGES`.
+      #[inline]
+      pub fn with_counter(
+        fixed_prefix: [u8; FIXED_PREFIX_LEN],
+        next_counter: u64,
+      ) -> Result<Self, NonceCounterExhausted> {
+        if next_counter >= Self::MAX_MESSAGES {
+          return Err(NonceCounterExhausted::new());
+        }
+
+        Ok(Self {
+          fixed_prefix,
+          sequence: NonceSequence::new(next_counter),
+          _cipher: PhantomData,
+        })
+      }
+
+      /// Return the fixed 32-bit prefix.
+      #[inline]
+      #[must_use]
+      pub const fn fixed_prefix(&self) -> [u8; FIXED_PREFIX_LEN] {
+        self.fixed_prefix
+      }
+
+      /// Return the next 64-bit invocation counter that will be issued.
+      #[inline]
+      #[must_use]
+      pub const fn next_counter(&self) -> u64 {
+        self.sequence.next_counter()
+      }
+
+      /// Return how many nonces have already been issued.
+      #[inline]
+      #[must_use]
+      pub const fn issued(&self) -> u64 {
+        self.sequence.next_counter()
+      }
+
+      /// Return how many deterministic AES-GCM invocations remain.
+      ///
+      /// A copy that a process fork made issues no nonce, whatever this returns.
+      #[inline]
+      #[must_use]
+      pub const fn remaining(&self) -> u64 {
+        Self::MAX_MESSAGES.strict_sub(self.sequence.next_counter())
+      }
+
+      /// Issue the next fresh AES-GCM nonce.
+      ///
+      /// # Errors
+      ///
+      /// Returns [`NonceCounterExhausted`] when the counter reaches
+      /// [`MAX_MESSAGES`](Self::MAX_MESSAGES), or in a process fork child of the
+      /// process that created the counter. Neither case consumes a nonce.
+      #[inline]
+      pub fn next_nonce(&mut self) -> Result<Nonce96, NonceCounterExhausted> {
+        self.sequence.advance(self.fixed_prefix)
+      }
+
+      /// Encrypt `buffer` in place with the next fresh nonce.
+      ///
+      /// The nonce is consumed before sealing so it is never reissued, even if
+      /// the cipher returns a buffer or length error.
+      #[inline]
+      pub fn encrypt_in_place(
+        &mut self,
+        cipher: &$cipher,
+        aad: &[u8],
+        buffer: &mut [u8],
+      ) -> Result<(Nonce96, $tag), NonceCounterSealError> {
+        let nonce = self.next_nonce()?;
+        let tag = cipher.encrypt_in_place(&nonce, aad, buffer)?;
+        Ok((nonce, tag))
+      }
+
+      /// Encrypt `plaintext` into `out` with the next fresh nonce.
+      ///
+      /// The returned nonce must be transmitted alongside `out`.
+      #[inline]
+      pub fn encrypt(
+        &mut self,
+        cipher: &$cipher,
+        aad: &[u8],
+        plaintext: &[u8],
+        out: &mut [u8],
+      ) -> Result<Nonce96, NonceCounterSealError> {
+        let nonce = self.next_nonce()?;
+        cipher.encrypt(&nonce, aad, plaintext, out)?;
+        Ok(nonce)
+      }
+
+      /// Encrypt ordered plaintext slices into ciphertext with the next fresh nonce.
+      ///
+      /// `out` must have the complete plaintext length. The tag is returned separately.
+      /// A nonce is consumed before sealing, including when sealing fails.
+      #[inline]
+      pub fn encrypt_gather<'input>(
+        &mut self,
+        cipher: &$cipher,
+        aad: &[u8],
+        plaintext: impl IntoIterator<Item = &'input [u8]>,
+        out: &mut [u8],
+      ) -> Result<(Nonce96, $tag), NonceCounterSealError> {
+        let nonce = self.next_nonce()?;
+        let tag = cipher.encrypt_gather(&nonce, aad, plaintext, out)?;
+        Ok((nonce, tag))
+      }
     }
-  }
-
-  /// Resume an AES-GCM nonce stream from a persisted counter value.
-  ///
-  /// # Errors
-  ///
-  /// Returns [`NonceCounterExhausted`] when `next_counter >= MAX_MESSAGES`.
-  #[inline]
-  pub fn with_counter(fixed_prefix: [u8; FIXED_PREFIX_LEN], next_counter: u64) -> Result<Self, NonceCounterExhausted> {
-    if next_counter >= Self::MAX_MESSAGES {
-      return Err(NonceCounterExhausted::new());
-    }
-
-    Ok(Self {
-      fixed_prefix,
-      sequence: NonceSequence::new(next_counter),
-      _cipher: PhantomData,
-    })
-  }
-
-  /// Return the fixed 32-bit prefix.
-  #[inline]
-  #[must_use]
-  pub const fn fixed_prefix(&self) -> [u8; FIXED_PREFIX_LEN] {
-    self.fixed_prefix
-  }
-
-  /// Return the next 64-bit invocation counter that will be issued.
-  #[inline]
-  #[must_use]
-  pub const fn next_counter(&self) -> u64 {
-    self.sequence.next_counter()
-  }
-
-  /// Return how many nonces have already been issued.
-  #[inline]
-  #[must_use]
-  pub const fn issued(&self) -> u64 {
-    self.sequence.next_counter()
-  }
-
-  /// Return how many deterministic AES-GCM invocations remain.
-  ///
-  /// A copy that a process fork made issues no nonce, whatever this returns.
-  #[inline]
-  #[must_use]
-  pub const fn remaining(&self) -> u64 {
-    Self::MAX_MESSAGES.strict_sub(self.sequence.next_counter())
-  }
-
-  /// Issue the next fresh AES-GCM nonce.
-  ///
-  /// # Errors
-  ///
-  /// Returns [`NonceCounterExhausted`] when the counter reaches
-  /// [`MAX_MESSAGES`](Self::MAX_MESSAGES), or in a process fork child of the
-  /// process that created the counter. Neither case consumes a nonce.
-  #[inline]
-  pub fn next_nonce(&mut self) -> Result<Nonce96, NonceCounterExhausted> {
-    self.sequence.advance(self.fixed_prefix)
-  }
-
-  /// Encrypt `buffer` in place with the next fresh nonce.
-  ///
-  /// The nonce is consumed before sealing so it is never reissued, even if
-  /// the cipher returns a buffer or length error.
-  #[inline]
-  pub fn encrypt_in_place(
-    &mut self,
-    cipher: &Aes256Gcm,
-    aad: &[u8],
-    buffer: &mut [u8],
-  ) -> Result<(Nonce96, Aes256GcmTag), NonceCounterSealError> {
-    let nonce = self.next_nonce()?;
-    let tag = cipher.encrypt_in_place(&nonce, aad, buffer)?;
-    Ok((nonce, tag))
-  }
-
-  /// Encrypt `plaintext` into `out` with the next fresh nonce.
-  ///
-  /// The returned nonce must be transmitted alongside `out`.
-  #[inline]
-  pub fn encrypt(
-    &mut self,
-    cipher: &Aes256Gcm,
-    aad: &[u8],
-    plaintext: &[u8],
-    out: &mut [u8],
-  ) -> Result<Nonce96, NonceCounterSealError> {
-    let nonce = self.next_nonce()?;
-    cipher.encrypt(&nonce, aad, plaintext, out)?;
-    Ok(nonce)
-  }
-
-  /// Encrypt ordered plaintext slices into ciphertext with the next fresh nonce.
-  ///
-  /// `out` must have the complete plaintext length. The tag is returned separately.
-  /// A nonce is consumed before sealing, including when sealing fails.
-  #[inline]
-  pub fn encrypt_gather<'input>(
-    &mut self,
-    cipher: &Aes256Gcm,
-    aad: &[u8],
-    plaintext: impl IntoIterator<Item = &'input [u8]>,
-    out: &mut [u8],
-  ) -> Result<(Nonce96, Aes256GcmTag), NonceCounterSealError> {
-    let nonce = self.next_nonce()?;
-    let tag = cipher.encrypt_gather(&nonce, aad, plaintext, out)?;
-    Ok((nonce, tag))
-  }
+  };
 }
 
-impl NonceCounter<Aes128Gcm> {
-  /// Fixed per-stream prefix length in bytes.
-  pub const FIXED_PREFIX_LEN: usize = FIXED_PREFIX_LEN;
-
-  /// Counter field length in bytes.
-  pub const COUNTER_LEN: usize = COUNTER_LEN;
-
-  /// Maximum deterministic AES-GCM invocations per key before rotation.
-  pub const MAX_MESSAGES: u64 = MAX_MESSAGES;
-
-  /// Start a fresh AES-128-GCM nonce stream with `fixed_prefix`.
-  ///
-  /// The counter records the calling process ([`ProcessOrigin`](crate::platform::ProcessOrigin)), and only that
-  /// process gets nonces from it. So this is not a `const fn`: build a counter at
-  /// run time, or in a `LazyLock`, not in a `const` or `static` initializer.
-  #[inline]
-  #[must_use]
-  pub fn new(fixed_prefix: [u8; FIXED_PREFIX_LEN]) -> Self {
-    Self {
-      fixed_prefix,
-      sequence: NonceSequence::new(0),
-      _cipher: PhantomData,
-    }
-  }
-
-  /// Resume an AES-128-GCM nonce stream from a persisted counter value.
-  ///
-  /// # Errors
-  ///
-  /// Returns [`NonceCounterExhausted`] when `next_counter >= MAX_MESSAGES`.
-  #[inline]
-  pub fn with_counter(fixed_prefix: [u8; FIXED_PREFIX_LEN], next_counter: u64) -> Result<Self, NonceCounterExhausted> {
-    if next_counter >= Self::MAX_MESSAGES {
-      return Err(NonceCounterExhausted::new());
-    }
-
-    Ok(Self {
-      fixed_prefix,
-      sequence: NonceSequence::new(next_counter),
-      _cipher: PhantomData,
-    })
-  }
-
-  /// Return the fixed 32-bit prefix.
-  #[inline]
-  #[must_use]
-  pub const fn fixed_prefix(&self) -> [u8; FIXED_PREFIX_LEN] {
-    self.fixed_prefix
-  }
-
-  /// Return the next 64-bit invocation counter that will be issued.
-  #[inline]
-  #[must_use]
-  pub const fn next_counter(&self) -> u64 {
-    self.sequence.next_counter()
-  }
-
-  /// Return how many nonces have already been issued.
-  #[inline]
-  #[must_use]
-  pub const fn issued(&self) -> u64 {
-    self.sequence.next_counter()
-  }
-
-  /// Return how many deterministic AES-GCM invocations remain.
-  ///
-  /// A copy that a process fork made issues no nonce, whatever this returns.
-  #[inline]
-  #[must_use]
-  pub const fn remaining(&self) -> u64 {
-    Self::MAX_MESSAGES.strict_sub(self.sequence.next_counter())
-  }
-
-  /// Issue the next fresh AES-128-GCM nonce.
-  ///
-  /// # Errors
-  ///
-  /// Returns [`NonceCounterExhausted`] when the counter reaches
-  /// [`MAX_MESSAGES`](Self::MAX_MESSAGES), or in a process fork child of the
-  /// process that created the counter. Neither case consumes a nonce.
-  #[inline]
-  pub fn next_nonce(&mut self) -> Result<Nonce96, NonceCounterExhausted> {
-    self.sequence.advance(self.fixed_prefix)
-  }
-
-  /// Encrypt `buffer` in place with the next fresh nonce.
-  #[inline]
-  pub fn encrypt_in_place(
-    &mut self,
-    cipher: &Aes128Gcm,
-    aad: &[u8],
-    buffer: &mut [u8],
-  ) -> Result<(Nonce96, Aes128GcmTag), NonceCounterSealError> {
-    let nonce = self.next_nonce()?;
-    let tag = cipher.encrypt_in_place(&nonce, aad, buffer)?;
-    Ok((nonce, tag))
-  }
-
-  /// Encrypt `plaintext` into `out` with the next fresh nonce.
-  #[inline]
-  pub fn encrypt(
-    &mut self,
-    cipher: &Aes128Gcm,
-    aad: &[u8],
-    plaintext: &[u8],
-    out: &mut [u8],
-  ) -> Result<Nonce96, NonceCounterSealError> {
-    let nonce = self.next_nonce()?;
-    cipher.encrypt(&nonce, aad, plaintext, out)?;
-    Ok(nonce)
-  }
-
-  /// Encrypt ordered plaintext slices into ciphertext with the next fresh nonce.
-  ///
-  /// `out` must have the complete plaintext length. The tag is returned separately.
-  /// A nonce is consumed before sealing, including when sealing fails.
-  #[inline]
-  pub fn encrypt_gather<'input>(
-    &mut self,
-    cipher: &Aes128Gcm,
-    aad: &[u8],
-    plaintext: impl IntoIterator<Item = &'input [u8]>,
-    out: &mut [u8],
-  ) -> Result<(Nonce96, Aes128GcmTag), NonceCounterSealError> {
-    let nonce = self.next_nonce()?;
-    let tag = cipher.encrypt_gather(&nonce, aad, plaintext, out)?;
-    Ok((nonce, tag))
-  }
-}
+impl_nonce_counter!(Aes128Gcm, Aes128GcmTag);
+impl_nonce_counter!(Aes256Gcm, Aes256GcmTag);
 
 #[cfg(test)]
 mod tests {

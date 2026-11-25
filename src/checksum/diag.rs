@@ -99,20 +99,28 @@ fn reason(config: crate::checksum::config::CrcConfig) -> SelectionReason {
   }
 }
 
+#[cfg(any(feature = "crc32", feature = "crc64"))]
+macro_rules! selection {
+  ($crc:ident, $diag:ident, $polynomial:path, $len:expr) => {{
+    use crate::checksum::$crc;
+    let config = $crc::config();
+    $diag {
+      polynomial: $polynomial,
+      len: $len,
+      arch: crate::platform::arch(),
+      reason: reason(config),
+      effective_force: config.effective_force,
+      selected_kernel: $crc::kernel_name_for_len($len),
+    }
+  }};
+}
+
 /// Diagnose CRC-32 (IEEE) selection for `len`.
 #[cfg(feature = "crc32")]
 #[inline]
 #[must_use]
 pub fn crc32_ieee(len: usize) -> Crc32SelectionDiag {
-  use crate::checksum::Crc32;
-  Crc32SelectionDiag {
-    polynomial: Crc32Polynomial::Ieee,
-    len,
-    arch: crate::platform::arch(),
-    reason: reason(Crc32::config()),
-    effective_force: Crc32::config().effective_force,
-    selected_kernel: Crc32::kernel_name_for_len(len),
-  }
+  selection!(Crc32, Crc32SelectionDiag, Crc32Polynomial::Ieee, len)
 }
 
 /// Diagnose CRC-32C (Castagnoli) selection for `len`.
@@ -120,15 +128,7 @@ pub fn crc32_ieee(len: usize) -> Crc32SelectionDiag {
 #[inline]
 #[must_use]
 pub fn crc32c(len: usize) -> Crc32SelectionDiag {
-  use crate::checksum::Crc32C;
-  Crc32SelectionDiag {
-    polynomial: Crc32Polynomial::Castagnoli,
-    len,
-    arch: crate::platform::arch(),
-    reason: reason(Crc32C::config()),
-    effective_force: Crc32C::config().effective_force,
-    selected_kernel: Crc32C::kernel_name_for_len(len),
-  }
+  selection!(Crc32C, Crc32SelectionDiag, Crc32Polynomial::Castagnoli, len)
 }
 
 /// Diagnose CRC-64/XZ selection for `len`.
@@ -136,15 +136,7 @@ pub fn crc32c(len: usize) -> Crc32SelectionDiag {
 #[inline]
 #[must_use]
 pub fn crc64_xz(len: usize) -> Crc64SelectionDiag {
-  use crate::checksum::Crc64;
-  Crc64SelectionDiag {
-    polynomial: Crc64Polynomial::Xz,
-    len,
-    arch: crate::platform::arch(),
-    reason: reason(Crc64::config()),
-    effective_force: Crc64::config().effective_force,
-    selected_kernel: Crc64::kernel_name_for_len(len),
-  }
+  selection!(Crc64, Crc64SelectionDiag, Crc64Polynomial::Xz, len)
 }
 
 /// Diagnose CRC-64/NVME selection for `len`.
@@ -152,13 +144,5 @@ pub fn crc64_xz(len: usize) -> Crc64SelectionDiag {
 #[inline]
 #[must_use]
 pub fn crc64_nvme(len: usize) -> Crc64SelectionDiag {
-  use crate::checksum::Crc64Nvme;
-  Crc64SelectionDiag {
-    polynomial: Crc64Polynomial::Nvme,
-    len,
-    arch: crate::platform::arch(),
-    reason: reason(Crc64Nvme::config()),
-    effective_force: Crc64Nvme::config().effective_force,
-    selected_kernel: Crc64Nvme::kernel_name_for_len(len),
-  }
+  selection!(Crc64Nvme, Crc64SelectionDiag, Crc64Polynomial::Nvme, len)
 }

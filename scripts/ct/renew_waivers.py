@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import collections
 import difflib
+import itertools
 import json
 import re
 import subprocess
@@ -200,17 +201,47 @@ def reencoding(old: list[dict[str, Any]], new: list[dict[str, Any]]) -> tuple[st
 
 def apply_identities(text: str, changes: dict[int, tuple[str, str]]) -> str:
   """ct.toml with the `slice_sha256` of waiver `index` changed from `old` to `new`, for each (old, new) change."""
-  starts = [match.start() for match in re.finditer(r"^\[\[asm_waiver\]\]$", text, re.M)] + [len(text)]
-  pieces, position = [], 0
-  for index, (old, new) in sorted(changes.items()):
-    start, end = starts[index], starts[index + 1]
-    line = f'slice_sha256 = "{old}"'
-    if text[start:end].count(line) != 1:
-      raise SystemExit(f"asm_waiver[{index}] has no single line {line}")
-    pieces += [text[position:start], text[start:end].replace(line, f'slice_sha256 = "{new}"')]
-    position = end
-  updated = "".join(pieces) + text[position:]
-  before, after = tomllib.loads(text)["asm_waiver"], tomllib.loads(updated)["asm_waiver"]
+  before = scanner.expanded_waivers(tomllib.loads(text)["asm_waiver"])
+  for index, (old, _) in changes.items():
+    if not 0 <= index < len(before) or before[index]["slice_sha256"] != old:
+      raise SystemExit(f"asm_waiver[{index}] does not match the reviewed identity")
+
+  position = 0
+
+  def update(match: re.Match[str]) -> str:
+    nonlocal position
+    whole = match.group()
+    trailer = re.search(r"(?m)(?:^[ \t]*(?:#[^\n]*)?\n)+\Z", whole)
+    block = whole[:trailer.start()] if trailer else whole
+    record, = tomllib.loads(block)["asm_waiver"]
+    members = scanner.expanded_waivers([record])
+    start = position
+    position += len(members)
+    if not any(i in changes for i in range(start, position)):
+      return whole
+
+    def digest(index: int) -> str:
+      return changes[start + index][1] if start + index in changes else record["slice_sha256"]
+
+    blocks = []
+    for identity, indices in itertools.groupby(range(len(members)), key=digest):
+      updated, count = re.subn(r"""^([ \t]*slice_sha256[ \t]*=[ \t]*)["'][^"'\n]+["']""",
+                               lambda m: m[1] + json.dumps(identity), block, flags=re.M)
+      if count != 1:
+        raise SystemExit(f"asm_waiver[{start}] requires one slice_sha256 line")
+      if "primitives" in record:
+        names = [members[i]["primitive"] for i in indices]
+        field = "primitive = " + json.dumps(names[0]) if len(names) == 1 else "primitives = " + json.dumps(names)
+        updated, count = re.subn(r"^[ \t]*primitives[ \t]*=[ \t]*\[(?:[^\]#]|#[^\n]*\n)*\]",
+                                 lambda _: field, updated, flags=re.M)
+        if count != 1:
+          raise SystemExit(f"asm_waiver[{start}] requires one primitives line")
+      blocks.append(updated)
+    return "\n".join(blocks) + (trailer.group() if trailer else "")
+
+  # Stop at the next table header. A primitive list can span several lines.
+  updated = re.sub(r"^\[\[asm_waiver\]\][^\n]*\n.*?(?=^\[+[A-Za-z_]|\Z)", update, text, flags=re.M | re.S)
+  after = scanner.expanded_waivers(tomllib.loads(updated)["asm_waiver"])
   for index, (waiver, changed) in enumerate(zip(before, after, strict=True)):
     if index in changes:
       waiver = dict(waiver, slice_sha256=changes[index][1])

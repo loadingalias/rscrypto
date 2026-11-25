@@ -37,6 +37,10 @@ mod bench_config;
 
 #[path = "common/aws_lc.rs"]
 mod aws_lc_support;
+#[path = "../tests/common/mod.rs"]
+mod fixture_hex;
+use fixture_hex::decode_hex_vec;
+
 use aws_lc_support::aws_lc_bench;
 
 use core::hint::black_box;
@@ -79,8 +83,8 @@ use rscrypto::auth::rsa::{
   diag_rsa_public_operation_product, diag_rsa_verify_pkcs1v15_encoded, diag_rsa_verify_pss_encoded_with_scratch,
 };
 use rscrypto::{
-  Digest, RsaBlindingPair, RsaOaepProfile, RsaPkcs1v15Profile, RsaPrivateKey, RsaPrivateKeyParts, RsaPssProfile,
-  RsaPublicKey, RsaPublicKeyPolicy, RsaPublicScratch, RsaSignatureProfile, Sha256, Sha384, Sha512, VerificationError,
+  Digest, RsaBlindingPair, RsaOaepProfile, RsaPkcs1v15Profile, RsaPrivateKey, RsaPssProfile, RsaPublicKey,
+  RsaPublicKeyPolicy, RsaPublicScratch, RsaSignatureProfile, Sha256, Sha384, Sha512, VerificationError,
 };
 
 const MESSAGE_PSS: &[u8] = b"rscrypto RSA-PSS verification fixture";
@@ -166,25 +170,6 @@ impl RustCryptoTryRng for RepeatedByteRng {
 }
 
 impl RustCryptoTryCryptoRng for RepeatedByteRng {}
-
-fn hex_to_vec(hex: &str) -> Vec<u8> {
-  let mut out = Vec::with_capacity(hex.len() / 2);
-  for chunk in hex.as_bytes().as_chunks::<2>().0 {
-    let high = hex_value(chunk[0]).expect("RSA benchmark fixture must contain hexadecimal digits");
-    let low = hex_value(chunk[1]).expect("RSA benchmark fixture must contain hexadecimal digits");
-    out.push((high << 4) | low);
-  }
-  out
-}
-
-fn hex_value(byte: u8) -> Option<u8> {
-  match byte {
-    b'0'..=b'9' => Some(byte.strict_sub(b'0')),
-    b'a'..=b'f' => Some(byte.strict_sub(b'a').strict_add(10)),
-    b'A'..=b'F' => Some(byte.strict_sub(b'A').strict_add(10)),
-    _ => None,
-  }
-}
 
 fn der_len(len: usize) -> Vec<u8> {
   if len < 128 {
@@ -286,83 +271,27 @@ fn synthetic_pkcs1_der(modulus_len: usize) -> Vec<u8> {
 }
 
 fn pss_spki() -> Vec<u8> {
-  hex_to_vec(
-    "\
-30820122300d06092a864886f70d01010105000382010f003082010a0282010100ee0768fd95d4\
-b01ba98b31bae03ce5a63f4dbffa7ea7b43d876f3e2c49847f695248cebb213b867a3c219276d\
-fd7d1187a9981f8d42131d67464b60658fdcbdb3dc036d38c4024b7c1dc8ac096d19d6db048d\
-9db7c72d56675e923fbe0169e30e5dcb75b4170def5dc655d4a05ab317e0f19c2a79b8882b7\
-ef6fdbbc66de73485bc59fd6957cf76972d5869fcf7ab75e84b2e4a665a29e2e0cf6a135a93\
-0e0b5366e23bcad7f5e708effa078cd1387259c0c7730ba55343c568fa9b0da9c13d0c8ca03\
-81a6833554b387ba45e9088064d6ec627ebb5513a183f375e59130b5e6e77081dc1cf807f2bf\
-ab77fb0a09194a482e05eb931ea7b37deeb11d6d7f18110203010001",
-  )
+  include_bytes!("../tests/vectors/rsa/rsa2048_pss_spki.der").to_vec()
 }
 
 fn pss_signature_sha256() -> Vec<u8> {
-  hex_to_vec(
-    "\
-2641e0207f279b526767343e03007a293a0523db41828c0e335c10dea7ab7dec988ad09cd220d\
-1754f5f89f7cd3b2a9ab1f315709b019989ee96e9060d3158d0240b3f8dbed179c55c1b0fa78\
-f31249d706256748c325ded4835224e80b3daa066489d1cf28a4062fa4129b21723f6336f8c\
-55d6785cd2d284437748b78b47e0162da7cddd61df0536b378a1cc5c327cba76db99c253795c\
-19b49007146e44dbe47f3ee9c2da2248710cd264661815bd5508f604d6ee4a663a46c472f6d\
-323739fe6b142ddc3b006a9c113d3b81da524e0fe358f9cb141f686dc459b66b1150e5418e8\
-b6fcf2590d0706da27017429d91fe9f521f9fbb2ae2044f2eecfe87c7d",
-  )
+  include_bytes!("../tests/vectors/rsa/rsa2048_pss_signature_sha256.sig").to_vec()
 }
 
 fn pkcs1v15_spki() -> Vec<u8> {
-  hex_to_vec(
-    "\
-30820122300d06092a864886f70d01010105000382010f003082010a0282010100bf882d756861\
-2271d36ac41584c3434145d13af573b889b353af0d1b257dcdefabb18e3adb717507fa981c70e\
-870c73359fe878feaa1b7cec819accaffa6646232d08650b8e1aefd6626cb8ab032cde1bb2cf\
-d378a9275d4cf828313fcc108184cf05727595701c44d7009590c747a82d24e7b651c7e7a96\
-b5e6141b880e3be517fea22ea5d73415de297f4c6ea66019689eaf6fb4732288355974d84438\
-003aa9fb72b18a10e909062816e79e8ee15e2d4066c5000d3251f251c44e0486f85644f00a9\
-6ae40d5462e07e1bd02fe3eae2c5a793716b81ab690edb9cb6d8532baab08c080b8b08bdf50\
-d1d3dc07b4d3f4afbb0f86ea48971a16d04132ec2432870203010001",
-  )
+  include_bytes!("../tests/vectors/rsa/rsa2048_pkcs1v15_spki.der").to_vec()
 }
 
 fn pkcs1v15_signature_sha256() -> Vec<u8> {
-  hex_to_vec(
-    "\
-94781246d705f79659d01ac8894b6f41076abe165e28711ec8fa41c1c8767b175a9c63e5118b\
-d30de86da0d7b8934e963ef69c438ace976e4453dfce6b9b84a7d37a27ee61512656333dfda1\
-ac40197fe4f9396bb016b25054f98f149d126c0248fc007cddc3d75d178eb34ecda0e0df822\
-825ca133c062d3cdcb19e20a3e377541d8253af795a9b49a41ddb5795592502b9efbb153afc\
-dd4fcc492a891d8536ef91cc228a3dbf66f0c70596f9cd101fe95d127550e7a4a9864430bd3\
-4a88d8df93f4df7b54e8a4b8643891481e4bdcf87be3f98a1fdc475a819e3dc3a114aff86e\
-48929a430fc39333f81064701be7d5501a3a7b4ec6c68f6feda6190d66b16",
-  )
+  include_bytes!("../tests/vectors/rsa/rsa2048_pkcs1v15_signature_sha256.sig").to_vec()
 }
 
 fn legacy_exponent_modulus() -> Vec<u8> {
-  hex_to_vec(
-    "\
-ef8bb02b8e4aec1abc6fac7a0d6fb1f2649bb86a1567423fee4a194a250461a9db702558e92e52cc\
-907963d84731a7adaf4c609e1b7c7d7c187099a43857f7628f5d20416fcb48987c9d6f12cfc6bc\
-260c9b5506be3fe3cd218ddb37ef5b30feb16172a9832312726ed135c0540ef9d3229b87b5566f\
-3355c90f301b856aa822878269806079ab7267cdc6c7403d7be3fa652065b2d39f2dbf9fb61ed9\
-71fee37432ebe31d9aa465dbae96b0edd5ffddf1b49e03346a02290fed1e4e31f6b3b6e1f839f\
-d5add90a8a212c10dd997b0a4efcb3df990808509dcb28c504e0649827a83ffd864395d1f62f2\
-9a004f44423a44b07de943a60fba844a9da3603ce5c5",
-  )
+  include_bytes!("../tests/vectors/rsa/rsa2048_legacy_exponent_modulus.bin").to_vec()
 }
 
 fn legacy_exponent_input() -> Vec<u8> {
-  hex_to_vec(
-    "\
-3450869c4ccbee98815e55cb42f2dd85a3427d3f65e33d29352293e18cde9582a9fbc54b440984\
-1ba8d931a9a9411192516a9fbd3a7b886e7f8b8f3f7bb5403309eee9d7234df0b5934e18a1dc\
-9e3b568a3fab6947cefe50500abcbda19fd9ab7b7e90a95801e36a020ba79bdc94346198d98131\
-6864a06a43448b62acb7a8472661323175f04c5e447d0017e4073efc55f59f79f34aaa3be8ae7\
-0d26db78b25e9dfb23856d1b1e024aedfcfd649d209412c0c80832ca3466965eeff539afe791f\
-451b554e212cff4d92466438062c5202169b0adf0c95b7d3d31414602cf9d185252b550cc2e8f\
-5be08b7fc71f51210ff88363badadfaf5c2915c3a10b2389e",
-  )
+  include_bytes!("../tests/vectors/rsa/rsa2048_legacy_exponent_input.bin").to_vec()
 }
 
 fn modulus_minus_one(key: &RsaPublicKey) -> Vec<u8> {
@@ -401,42 +330,11 @@ fn tampered(bytes: &[u8]) -> Vec<u8> {
 }
 
 fn rsa2048_private_key() -> RsaPrivateKey {
-  let modulus = hex_to_vec(
-    "d397b84d98a4c26138ed1b695a8106ead91d553bf06041b62d3fdc50a041e222b8f4529689c1b82c5e71554f5dd69fa2f4b6158cf0dbeb57811a0fc327e1f28e74fe74d3bc166c1eabdc1b8b57b934ca8be5b00b4f29975bcc99acaf415b59bb28a6782bb41a2c3c2976b3c18dbadef62f00c6bb226640095096c0cc60d22fe7ef987d75c6a81b10d96bf292028af110dc7cc1bbc43d22adab379a0cd5d8078cc780ff5cd6209dea34c922cf784f7717e428d75b5aec8ff30e5f0141510766e2e0ab8d473c84e8710b2b98227c3db095337ad3452f19e2b9bfbccdd8148abf6776fa552775e6e75956e45229ae5a9c46949bab1e622f0e48f56524a84ed3483b",
-  );
-  let private_exponent = hex_to_vec(
-    "c4e70c689162c94c660828191b52b4d8392115df486a9adbe831e458d73958320dc1b755456e93701e9702d76fb0b92f90e01d1fe248153281fe79aa9763a92fae69d8d7ecd144de29fa135bd14f9573e349e45031e3b76982f583003826c552e89a397c1a06bd2163488630d92e8c2bb643d7abef700da95d685c941489a46f54b5316f62b5d2c3a7f1bbd134cb37353a44683fdc9d95d36458de22f6c44057fe74a0a436c4308f73f4da42f35c47ac16a7138d483afc91e41dc3a1127382e0c0f5119b0221b4fc639d6b9c38177a6de9b526ebd88c38d7982c07f98a0efd877d508aae275b946915c02e2e1106d175d74ec6777f5e80d12c053d9c7be1e341",
-  );
-  let prime_p = hex_to_vec(
-    "f827bbf3a41877c7cc59aebf42ed4b29c32defcb8ed96863d5b090a05a8930dd624a21c9dcf9838568fdfa0df65b8462a5f2ac913d6c56f975532bd8e78fb07bd405ca99a484bcf59f019bbddcb3933f2bce706300b4f7b110120c5df9018159067c35da3061a56c8635a52b54273b31271b4311f0795df6021e6355e1a42e61",
-  );
-  let prime_q = hex_to_vec(
-    "da4817ce0089dd36f2ade6a3ff410c73ec34bf1b4f6bda38431bfede11cef1f7f6efa70e5f8063a3b1f6e17296ffb15feefa0912a0325b8d1fd65a559e717b5b961ec345072e0ec5203d03441d29af4d64054a04507410cf1da78e7b6119d909ec66e6ad625bf995b279a4b3c5be7d895cd7c5b9c4c497fde730916fcdb4e41b",
-  );
-  let exponent_p = hex_to_vec(
-    "1da6e9cf80212856e87522eb59bcef094b7836ba1514a7639e8a1d8dfba37f0245176498315e6337d2c6de5542c5c6b8dee973735b6a91adf735fbfc4c1720587b8a419e40495826e55c14d70803312a103af7b4ecc5b2ff265371c4dcd730348a10d7827ddb7d1fcd9da561db09610a4b88f767b25b5e3de21ced73baa59aa1",
-  );
-  let exponent_q = hex_to_vec(
-    "d737a7c8e43d0a10c85bf0011886a16996a6371b0d46b0c5325de3003f9cc47491539f6a0b7d82407f12851cbf86e1f34da3d7d8367d104967efa7e7ad2e04cbbb8b1f4aeb165d57bd3e8afed8a62602ef304bd74f1ff106d51d44dd9f52a5ed23da1d6d2c82b4e6052fecd5978e0726ad94cd8e295510eb35cc6c49491026ab",
-  );
-  let coefficient = hex_to_vec(
-    "5268d7cf073479aebb2d2ed4dd66b8c89915b52d141e0c4932f56b0c0ed0936141894ec4d27d53bc86453cd8ca5b455045218c7e196209c1c651702ece090a15e3cbcc265971300023a86fe9d34ad527e9ef03b7adfe736e0680747abfd49839b82f2ffdec43bd0343ca30e13961b32af6cdeddd195672c76b53b76fc3ea76f8",
-  );
-
-  RsaPrivateKey::from_components_with_policy(
-    RsaPrivateKeyParts {
-      modulus: &modulus,
-      public_exponent: 65_537,
-      private_exponent: &private_exponent,
-      prime_p: &prime_p,
-      prime_q: &prime_q,
-      exponent_p: &exponent_p,
-      exponent_q: &exponent_q,
-      coefficient: &coefficient,
-    },
+  RsaPrivateKey::from_pkcs1_der_with_policy(
+    include_bytes!("../tests/vectors/rsa/rsa2048_private_pkcs1.der"),
     &RsaPublicKeyPolicy::modulus_2048_to_8192(),
   )
-  .expect("valid RSA private benchmark fixture must succeed")
+  .expect("the RSA-2048 benchmark key must parse")
 }
 
 /// RSA-2048 keys need the legacy policy; larger keys use the modern default.
@@ -509,7 +407,7 @@ impl DecryptionFixture {
     );
     check(group, test);
     let hex = |value: &serde_json::Value| {
-      hex_to_vec(
+      decode_hex_vec(
         value
           .as_str()
           .expect("Wycheproof RSA decryption fixture fields must be hex strings"),

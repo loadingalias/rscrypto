@@ -26,16 +26,18 @@ global_asm!(include_str!("asm/rscrypto_bignum_tomont_p256_aarch64_apple_darwin.s
 global_asm!(include_str!("asm/rscrypto_bignum_montsqr_p256_aarch64_apple_darwin.s"));
 #[cfg(all(target_arch = "aarch64", target_os = "macos", feature = "p256-ecdh"))]
 global_asm!(include_str!("asm/rscrypto_bignum_montmul_p256_aarch64_apple_darwin.s"));
-#[cfg(all(target_arch = "aarch64", target_os = "macos", feature = "p256-ecdh"))]
-global_asm!(include_str!("asm/rscrypto_p256_scalarmul_alt_aarch64_apple_darwin.s"));
+#[cfg(all(
+  target_arch = "aarch64",
+  any(target_os = "linux", target_os = "macos"),
+  feature = "p256-ecdh"
+))]
+global_asm!(include_str!("asm/rscrypto_p256_scalarmul_alt_aarch64.s"), macho = const cfg!(target_os = "macos") as u8);
 #[cfg(all(target_arch = "aarch64", target_os = "linux", feature = "p256-ecdh"))]
 global_asm!(include_str!("asm/rscrypto_bignum_tomont_p256_aarch64_unknown_linux.s"));
 #[cfg(all(target_arch = "aarch64", target_os = "linux", feature = "p256-ecdh"))]
 global_asm!(include_str!("asm/rscrypto_bignum_montsqr_p256_aarch64_unknown_linux.s"));
 #[cfg(all(target_arch = "aarch64", target_os = "linux", feature = "p256-ecdh"))]
 global_asm!(include_str!("asm/rscrypto_bignum_montmul_p256_aarch64_unknown_linux.s"));
-#[cfg(all(target_arch = "aarch64", target_os = "linux", feature = "p256-ecdh"))]
-global_asm!(include_str!("asm/rscrypto_p256_scalarmul_alt_aarch64_unknown_linux.s"));
 #[cfg(all(target_arch = "aarch64", target_os = "linux"))]
 global_asm!(include_str!(
   "asm/rscrypto_p256_scalarmulbase_alt_aarch64_unknown_linux.s"

@@ -274,6 +274,8 @@ pub mod poly1305;
 pub mod rsa;
 #[cfg(feature = "scrypt")]
 pub mod scrypt;
+#[cfg(any(feature = "hkdf", feature = "pbkdf2"))]
+mod sha2_words;
 #[cfg(feature = "siphash")]
 pub mod siphash;
 #[cfg(feature = "slh-dsa")]

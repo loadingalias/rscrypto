@@ -6,801 +6,95 @@ fn corpus_dir(target: &str) -> PathBuf {
   PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("corpus").join(target)
 }
 
-#[path = "../target_impls/aead_aegis256.rs"]
-mod aead_aegis256;
-
-#[path = "../target_impls/auth_chacha20_rng.rs"]
-mod auth_chacha20_rng;
-
-#[path = "../target_impls/auth_hkdf_sha512.rs"]
-mod auth_hkdf_sha512;
-
-#[path = "../target_impls/auth_hmac_sha3.rs"]
-mod auth_hmac_sha3;
-
-#[path = "../target_impls/auth_kmac128.rs"]
-mod auth_kmac128;
-
-#[path = "../target_impls/auth_poly1305.rs"]
-mod auth_poly1305;
-
-#[path = "../target_impls/hash_cshake128.rs"]
-mod hash_cshake128;
-
-#[path = "../target_impls/serde_secrets.rs"]
-mod serde_secrets;
-
-#[path = "../target_impls/aead_aes128gcm.rs"]
-mod aead_aes128gcm;
-
-#[path = "../target_impls/aead_aes128gcmsiv.rs"]
-mod aead_aes128gcmsiv;
-
-#[path = "../target_impls/aead_aes256gcm.rs"]
-mod aead_aes256gcm;
-
-#[path = "../target_impls/aead_aes256gcmsiv.rs"]
-mod aead_aes256gcmsiv;
-
-#[path = "../target_impls/aead_ascon128.rs"]
-mod aead_ascon128;
-
-#[path = "../target_impls/aead_chacha20poly1305.rs"]
-mod aead_chacha20poly1305;
-
-#[path = "../target_impls/aead_header_protection.rs"]
-mod aead_header_protection;
-
-#[path = "../target_impls/aead_aes_siv_cmac256.rs"]
-mod aead_aes_siv_cmac256;
-
-#[path = "../target_impls/aead_nonce_counter.rs"]
-mod aead_nonce_counter;
-
-#[path = "../target_impls/aead_quic_lb.rs"]
-mod aead_quic_lb;
-
-#[path = "../target_impls/aead_xchacha20poly1305.rs"]
-mod aead_xchacha20poly1305;
-
-#[path = "../target_impls/auth_argon2d.rs"]
-mod auth_argon2d;
-
-#[path = "../target_impls/auth_argon2i.rs"]
-mod auth_argon2i;
-
-#[path = "../target_impls/auth_argon2id.rs"]
-mod auth_argon2id;
-
-#[path = "../target_impls/auth_ed25519.rs"]
-mod auth_ed25519;
-
-#[path = "../target_impls/auth_ed25519_verify.rs"]
-mod auth_ed25519_verify;
-
-#[path = "../target_impls/auth_ecdsa_verify.rs"]
-mod auth_ecdsa_verify;
-
-#[path = "../target_impls/auth_ecdsa_sign.rs"]
-mod auth_ecdsa_sign;
-
-#[path = "../target_impls/auth_hkdf_sha256.rs"]
-mod auth_hkdf_sha256;
-
-#[path = "../target_impls/auth_hkdf_sha384.rs"]
-mod auth_hkdf_sha384;
-
-#[path = "../target_impls/auth_hmac_sha256.rs"]
-mod auth_hmac_sha256;
-
-#[path = "../target_impls/auth_hmac_sha384.rs"]
-mod auth_hmac_sha384;
-
-#[path = "../target_impls/auth_hmac_sha512.rs"]
-mod auth_hmac_sha512;
-
-#[path = "../target_impls/auth_kmac256.rs"]
-mod auth_kmac256;
-
-#[path = "../target_impls/auth_mldsa.rs"]
-mod auth_mldsa;
-
-#[path = "../target_impls/auth_composite_mldsa.rs"]
-mod auth_composite_mldsa;
-
-#[path = "../target_impls/auth_slhdsa.rs"]
-mod auth_slhdsa;
-
-#[path = "../target_impls/auth_mlkem512.rs"]
-mod auth_mlkem512;
-
-#[path = "../target_impls/auth_mlkem768.rs"]
-mod auth_mlkem768;
-
-#[path = "../target_impls/auth_mlkem1024.rs"]
-mod auth_mlkem1024;
-
-#[path = "../target_impls/auth_hpke.rs"]
-mod auth_hpke;
-
-#[path = "../target_impls/auth_xwing.rs"]
-mod auth_xwing;
-
-#[path = "../target_impls/auth_pbkdf2.rs"]
-mod auth_pbkdf2;
-
-#[path = "../target_impls/auth_phc.rs"]
-mod auth_phc;
-
-#[path = "../target_impls/auth_rsa_public_key.rs"]
-mod auth_rsa_public_key;
-
-#[path = "../target_impls/auth_rsa_import.rs"]
-mod auth_rsa_import;
-
-#[path = "../target_impls/auth_rsa_protocol.rs"]
-mod auth_rsa_protocol;
-
-#[path = "../target_impls/auth_rsa_private_ops.rs"]
-mod auth_rsa_private_ops;
-
-#[path = "../target_impls/auth_rsa_verify.rs"]
-mod auth_rsa_verify;
-
-#[path = "../target_impls/auth_scrypt.rs"]
-mod auth_scrypt;
-
-#[path = "../target_impls/auth_siphash.rs"]
-mod auth_siphash;
-
-#[path = "../target_impls/auth_x25519.rs"]
-mod auth_x25519;
-
-#[path = "../target_impls/auth_p256_ecdh.rs"]
-mod auth_p256_ecdh;
-#[path = "../target_impls/auth_p384_ecdh.rs"]
-mod auth_p384_ecdh;
-
-#[path = "../target_impls/checksum_adler32.rs"]
-mod checksum_adler32;
-
-#[path = "../target_impls/checksum_crc.rs"]
-mod checksum_crc;
-
-#[path = "../target_impls/fast_rapidhash.rs"]
-mod fast_rapidhash;
-
-#[path = "../target_impls/fast_xxh3.rs"]
-mod fast_xxh3;
-
-#[path = "../target_impls/fast_xxh32.rs"]
-mod fast_xxh32;
-
-#[path = "../target_impls/fast_xxh64.rs"]
-mod fast_xxh64;
-
-#[path = "../target_impls/hash_ascon.rs"]
-mod hash_ascon;
-
-#[path = "../target_impls/hash_ascon_cxof.rs"]
-mod hash_ascon_cxof;
-
-#[path = "../target_impls/hash_blake2b.rs"]
-mod hash_blake2b;
-
-#[path = "../target_impls/hash_blake2s.rs"]
-mod hash_blake2s;
-
-#[path = "../target_impls/hash_blake3.rs"]
-mod hash_blake3;
-
-#[path = "../target_impls/hash_blake3_derive.rs"]
-mod hash_blake3_derive;
-
-#[path = "../target_impls/hash_blake3_keyed.rs"]
-mod hash_blake3_keyed;
-
-#[path = "../target_impls/hash_cshake256.rs"]
-mod hash_cshake256;
-
-#[path = "../target_impls/hash_sha2.rs"]
-mod hash_sha2;
-
-#[path = "../target_impls/hash_sha3.rs"]
-mod hash_sha3;
-
-#[path = "../target_impls/hash_websocket_sha1.rs"]
-mod hash_websocket_sha1;
-
-#[path = "../target_impls/hex_parse.rs"]
-mod hex_parse;
-
-#[path = "../target_impls/traits_io.rs"]
-mod traits_io;
-
-#[path = "../target_impls/provider_quic_handshake.rs"]
-mod provider_quic_handshake;
-
-#[path = "../target_impls/provider_quic_header.rs"]
-mod provider_quic_header;
-
-#[path = "../target_impls/provider_quic_lb.rs"]
-mod provider_quic_lb;
-
-#[path = "../target_impls/provider_quic_retry.rs"]
-mod provider_quic_retry;
-
-#[path = "../target_impls/provider_quic_token.rs"]
-mod provider_quic_token;
-
-#[test]
-fn replay_aead_aegis256_corpus() {
-  let replayed = replay_corpus_dir("aead_aegis256", corpus_dir("aead_aegis256"), aead_aegis256::run);
-  assert_ne!(replayed, 0, "aead_aegis256 corpus should not be empty");
-}
-
-#[test]
-fn replay_aead_aes128gcm_corpus() {
-  let replayed = replay_corpus_dir("aead_aes128gcm", corpus_dir("aead_aes128gcm"), aead_aes128gcm::run);
-  assert_ne!(replayed, 0, "aead_aes128gcm corpus should not be empty");
-}
-
-#[test]
-fn replay_aead_aes128gcmsiv_corpus() {
-  let replayed = replay_corpus_dir(
-    "aead_aes128gcmsiv",
-    corpus_dir("aead_aes128gcmsiv"),
-    aead_aes128gcmsiv::run,
-  );
-  assert_ne!(replayed, 0, "aead_aes128gcmsiv corpus should not be empty");
-}
-
-#[test]
-fn replay_aead_aes256gcm_corpus() {
-  let replayed = replay_corpus_dir("aead_aes256gcm", corpus_dir("aead_aes256gcm"), aead_aes256gcm::run);
-  assert_ne!(replayed, 0, "aead_aes256gcm corpus should not be empty");
-}
-
-#[test]
-fn replay_aead_aes256gcmsiv_corpus() {
-  let replayed = replay_corpus_dir(
-    "aead_aes256gcmsiv",
-    corpus_dir("aead_aes256gcmsiv"),
-    aead_aes256gcmsiv::run,
-  );
-  assert_ne!(replayed, 0, "aead_aes256gcmsiv corpus should not be empty");
-}
-
-#[test]
-fn replay_aead_ascon128_corpus() {
-  let replayed = replay_corpus_dir("aead_ascon128", corpus_dir("aead_ascon128"), aead_ascon128::run);
-  assert_ne!(replayed, 0, "aead_ascon128 corpus should not be empty");
-}
-
-#[test]
-fn replay_aead_chacha20poly1305_corpus() {
-  let replayed = replay_corpus_dir(
-    "aead_chacha20poly1305",
-    corpus_dir("aead_chacha20poly1305"),
-    aead_chacha20poly1305::run,
-  );
-  assert_ne!(replayed, 0, "aead_chacha20poly1305 corpus should not be empty");
-}
-
-#[test]
-fn replay_aead_header_protection_corpus() {
-  let replayed = replay_corpus_dir(
-    "aead_header_protection",
-    corpus_dir("aead_header_protection"),
-    aead_header_protection::run,
-  );
-  assert_ne!(replayed, 0, "aead_header_protection corpus should not be empty");
-}
-
-#[test]
-fn replay_aead_aes_siv_cmac256_corpus() {
-  let replayed = replay_corpus_dir(
-    "aead_aes_siv_cmac256",
-    corpus_dir("aead_aes_siv_cmac256"),
-    aead_aes_siv_cmac256::run,
-  );
-  assert_ne!(replayed, 0, "aead_aes_siv_cmac256 corpus should not be empty");
-}
-
-#[test]
-fn replay_aead_nonce_counter_corpus() {
-  let replayed = replay_corpus_dir(
-    "aead_nonce_counter",
-    corpus_dir("aead_nonce_counter"),
-    aead_nonce_counter::run,
-  );
-  assert_ne!(replayed, 0, "aead_nonce_counter corpus should not be empty");
-}
-
-#[test]
-fn replay_aead_quic_lb_corpus() {
-  let replayed = replay_corpus_dir("aead_quic_lb", corpus_dir("aead_quic_lb"), aead_quic_lb::run);
-  assert_ne!(replayed, 0, "aead_quic_lb corpus should not be empty");
-}
-
-#[test]
-fn replay_aead_xchacha20poly1305_corpus() {
-  let replayed = replay_corpus_dir(
-    "aead_xchacha20poly1305",
-    corpus_dir("aead_xchacha20poly1305"),
-    aead_xchacha20poly1305::run,
-  );
-  assert_ne!(replayed, 0, "aead_xchacha20poly1305 corpus should not be empty");
-}
-
-#[test]
-fn replay_auth_argon2d_corpus() {
-  let replayed = replay_corpus_dir("auth_argon2d", corpus_dir("auth_argon2d"), auth_argon2d::run);
-  assert_ne!(replayed, 0, "auth_argon2d corpus should not be empty");
-}
-
-#[test]
-fn replay_auth_argon2i_corpus() {
-  let replayed = replay_corpus_dir("auth_argon2i", corpus_dir("auth_argon2i"), auth_argon2i::run);
-  assert_ne!(replayed, 0, "auth_argon2i corpus should not be empty");
-}
-
-#[test]
-fn replay_auth_argon2id_corpus() {
-  let replayed = replay_corpus_dir("auth_argon2id", corpus_dir("auth_argon2id"), auth_argon2id::run);
-  assert_ne!(replayed, 0, "auth_argon2id corpus should not be empty");
-}
-
-#[test]
-fn replay_auth_ed25519_corpus() {
-  let replayed = replay_corpus_dir("auth_ed25519", corpus_dir("auth_ed25519"), auth_ed25519::run);
-  assert_ne!(replayed, 0, "auth_ed25519 corpus should not be empty");
-}
-
-#[test]
-fn replay_auth_ed25519_verify_corpus() {
-  let replayed = replay_corpus_dir(
-    "auth_ed25519_verify",
-    corpus_dir("auth_ed25519_verify"),
-    auth_ed25519_verify::run,
-  );
-  assert_ne!(replayed, 0, "auth_ed25519_verify corpus should not be empty");
-}
-
-#[test]
-fn replay_auth_ecdsa_verify_corpus() {
-  let replayed = replay_corpus_dir(
-    "auth_ecdsa_verify",
-    corpus_dir("auth_ecdsa_verify"),
-    auth_ecdsa_verify::run,
-  );
-  assert_ne!(replayed, 0, "auth_ecdsa_verify corpus should not be empty");
-}
-
-#[test]
-fn replay_auth_ecdsa_sign_corpus() {
-  let replayed = replay_corpus_dir("auth_ecdsa_sign", corpus_dir("auth_ecdsa_sign"), auth_ecdsa_sign::run);
-  assert_ne!(replayed, 0, "auth_ecdsa_sign corpus should not be empty");
-}
-
-#[test]
-fn replay_auth_hkdf_sha256_corpus() {
-  let replayed = replay_corpus_dir(
-    "auth_hkdf_sha256",
-    corpus_dir("auth_hkdf_sha256"),
-    auth_hkdf_sha256::run,
-  );
-  assert_ne!(replayed, 0, "auth_hkdf_sha256 corpus should not be empty");
-}
-
-#[test]
-fn replay_auth_hkdf_sha384_corpus() {
-  let replayed = replay_corpus_dir(
-    "auth_hkdf_sha384",
-    corpus_dir("auth_hkdf_sha384"),
-    auth_hkdf_sha384::run,
-  );
-  assert_ne!(replayed, 0, "auth_hkdf_sha384 corpus should not be empty");
-}
-
-#[test]
-fn replay_auth_hmac_sha256_corpus() {
-  let replayed = replay_corpus_dir(
-    "auth_hmac_sha256",
-    corpus_dir("auth_hmac_sha256"),
-    auth_hmac_sha256::run,
-  );
-  assert_ne!(replayed, 0, "auth_hmac_sha256 corpus should not be empty");
-}
-
-#[test]
-fn replay_auth_hmac_sha384_corpus() {
-  let replayed = replay_corpus_dir(
-    "auth_hmac_sha384",
-    corpus_dir("auth_hmac_sha384"),
-    auth_hmac_sha384::run,
-  );
-  assert_ne!(replayed, 0, "auth_hmac_sha384 corpus should not be empty");
-}
-
-#[test]
-fn replay_auth_hmac_sha512_corpus() {
-  let replayed = replay_corpus_dir(
-    "auth_hmac_sha512",
-    corpus_dir("auth_hmac_sha512"),
-    auth_hmac_sha512::run,
-  );
-  assert_ne!(replayed, 0, "auth_hmac_sha512 corpus should not be empty");
-}
-
-#[test]
-fn replay_auth_kmac256_corpus() {
-  let replayed = replay_corpus_dir("auth_kmac256", corpus_dir("auth_kmac256"), auth_kmac256::run);
-  assert_ne!(replayed, 0, "auth_kmac256 corpus should not be empty");
-}
-
-#[test]
-fn replay_auth_mlkem512_corpus() {
-  let replayed = replay_corpus_dir("auth_mlkem512", corpus_dir("auth_mlkem512"), auth_mlkem512::run);
-  assert_ne!(replayed, 0, "auth_mlkem512 corpus should not be empty");
-}
-
-#[test]
-fn replay_auth_mlkem768_corpus() {
-  let replayed = replay_corpus_dir("auth_mlkem768", corpus_dir("auth_mlkem768"), auth_mlkem768::run);
-  assert_ne!(replayed, 0, "auth_mlkem768 corpus should not be empty");
-}
-
-#[test]
-fn replay_auth_mlkem1024_corpus() {
-  let replayed = replay_corpus_dir("auth_mlkem1024", corpus_dir("auth_mlkem1024"), auth_mlkem1024::run);
-  assert_ne!(replayed, 0, "auth_mlkem1024 corpus should not be empty");
-}
-
-#[test]
-fn replay_auth_hpke_corpus() {
-  let replayed = replay_corpus_dir("auth_hpke", corpus_dir("auth_hpke"), auth_hpke::run);
-  assert_ne!(replayed, 0, "auth_hpke corpus should not be empty");
-}
-
-#[test]
-fn replay_auth_xwing_corpus() {
-  let replayed = replay_corpus_dir("auth_xwing", corpus_dir("auth_xwing"), auth_xwing::run);
-  assert_ne!(replayed, 0, "auth_xwing corpus should not be empty");
-}
-
-#[test]
-fn replay_auth_pbkdf2_corpus() {
-  let replayed = replay_corpus_dir("auth_pbkdf2", corpus_dir("auth_pbkdf2"), auth_pbkdf2::run);
-  assert_ne!(replayed, 0, "auth_pbkdf2 corpus should not be empty");
-}
-
-#[test]
-fn replay_auth_phc_corpus() {
-  let replayed = replay_corpus_dir("auth_phc", corpus_dir("auth_phc"), auth_phc::run);
-  assert_ne!(replayed, 0, "auth_phc corpus should not be empty");
-}
-
-#[test]
-fn replay_auth_rsa_public_key_corpus() {
-  let replayed = replay_corpus_dir(
-    "auth_rsa_public_key",
-    corpus_dir("auth_rsa_public_key"),
-    auth_rsa_public_key::run,
-  );
-  assert_ne!(replayed, 0, "auth_rsa_public_key corpus should not be empty");
-}
-
-#[test]
-fn replay_auth_rsa_import_corpus() {
-  let replayed = replay_corpus_dir("auth_rsa_import", corpus_dir("auth_rsa_import"), auth_rsa_import::run);
-  assert_ne!(replayed, 0, "auth_rsa_import corpus should not be empty");
-}
-
-#[test]
-fn replay_auth_rsa_protocol_corpus() {
-  let replayed = replay_corpus_dir(
-    "auth_rsa_protocol",
-    corpus_dir("auth_rsa_protocol"),
-    auth_rsa_protocol::run,
-  );
-  assert_ne!(replayed, 0, "auth_rsa_protocol corpus should not be empty");
-}
-
-#[test]
-fn replay_auth_rsa_private_ops_corpus() {
-  let replayed = replay_corpus_dir(
-    "auth_rsa_private_ops",
-    corpus_dir("auth_rsa_private_ops"),
-    auth_rsa_private_ops::run,
-  );
-  assert_ne!(replayed, 0, "auth_rsa_private_ops corpus should not be empty");
-}
-
-#[test]
-fn replay_auth_rsa_verify_corpus() {
-  let replayed = replay_corpus_dir("auth_rsa_verify", corpus_dir("auth_rsa_verify"), auth_rsa_verify::run);
-  assert_ne!(replayed, 0, "auth_rsa_verify corpus should not be empty");
-}
-
-#[test]
-fn replay_auth_scrypt_corpus() {
-  let replayed = replay_corpus_dir("auth_scrypt", corpus_dir("auth_scrypt"), auth_scrypt::run);
-  assert_ne!(replayed, 0, "auth_scrypt corpus should not be empty");
-}
-
-#[test]
-fn replay_auth_siphash_corpus() {
-  let replayed = replay_corpus_dir("auth_siphash", corpus_dir("auth_siphash"), auth_siphash::run);
-  assert_ne!(replayed, 0, "auth_siphash corpus should not be empty");
-}
-
-#[test]
-fn replay_auth_x25519_corpus() {
-  let replayed = replay_corpus_dir("auth_x25519", corpus_dir("auth_x25519"), auth_x25519::run);
-  assert_ne!(replayed, 0, "auth_x25519 corpus should not be empty");
-}
-
-#[test]
-fn replay_auth_p256_ecdh_corpus() {
-  let replayed = replay_corpus_dir("auth_p256_ecdh", corpus_dir("auth_p256_ecdh"), auth_p256_ecdh::run);
-  assert_ne!(replayed, 0, "auth_p256_ecdh corpus should not be empty");
-}
-
-#[test]
-fn replay_auth_p384_ecdh_corpus() {
-  let replayed = replay_corpus_dir("auth_p384_ecdh", corpus_dir("auth_p384_ecdh"), auth_p384_ecdh::run);
-  assert_ne!(replayed, 0, "auth_p384_ecdh corpus should not be empty");
-}
-
-#[test]
-fn replay_checksum_adler32_corpus() {
-  let replayed = replay_corpus_dir(
-    "checksum_adler32",
-    corpus_dir("checksum_adler32"),
-    checksum_adler32::run,
-  );
-  assert_ne!(replayed, 0, "checksum_adler32 corpus should not be empty");
-}
-
-#[test]
-fn replay_checksum_crc_corpus() {
-  let replayed = replay_corpus_dir("checksum_crc", corpus_dir("checksum_crc"), checksum_crc::run);
-  assert_ne!(replayed, 0, "checksum_crc corpus should not be empty");
-}
-
-#[test]
-fn replay_fast_rapidhash_corpus() {
-  let replayed = replay_corpus_dir("fast_rapidhash", corpus_dir("fast_rapidhash"), fast_rapidhash::run);
-  assert_ne!(replayed, 0, "fast_rapidhash corpus should not be empty");
-}
-
-#[test]
-fn replay_fast_xxh3_corpus() {
-  let replayed = replay_corpus_dir("fast_xxh3", corpus_dir("fast_xxh3"), fast_xxh3::run);
-  assert_ne!(replayed, 0, "fast_xxh3 corpus should not be empty");
-}
-
-#[test]
-fn replay_fast_xxh32_corpus() {
-  let replayed = replay_corpus_dir("fast_xxh32", corpus_dir("fast_xxh32"), fast_xxh32::run);
-  assert_ne!(replayed, 0, "fast_xxh32 corpus should not be empty");
-}
-
-#[test]
-fn replay_fast_xxh64_corpus() {
-  let replayed = replay_corpus_dir("fast_xxh64", corpus_dir("fast_xxh64"), fast_xxh64::run);
-  assert_ne!(replayed, 0, "fast_xxh64 corpus should not be empty");
-}
-
-#[test]
-fn replay_hash_ascon_corpus() {
-  let replayed = replay_corpus_dir("hash_ascon", corpus_dir("hash_ascon"), hash_ascon::run);
-  assert_ne!(replayed, 0, "hash_ascon corpus should not be empty");
-}
-
-#[test]
-fn replay_hash_ascon_cxof_corpus() {
-  let replayed = replay_corpus_dir("hash_ascon_cxof", corpus_dir("hash_ascon_cxof"), hash_ascon_cxof::run);
-  assert_ne!(replayed, 0, "hash_ascon_cxof corpus should not be empty");
-}
-
-#[test]
-fn replay_hash_blake2b_corpus() {
-  let replayed = replay_corpus_dir("hash_blake2b", corpus_dir("hash_blake2b"), hash_blake2b::run);
-  assert_ne!(replayed, 0, "hash_blake2b corpus should not be empty");
-}
-
-#[test]
-fn replay_hash_blake2s_corpus() {
-  let replayed = replay_corpus_dir("hash_blake2s", corpus_dir("hash_blake2s"), hash_blake2s::run);
-  assert_ne!(replayed, 0, "hash_blake2s corpus should not be empty");
-}
-
-#[test]
-fn replay_hash_blake3_corpus() {
-  let replayed = replay_corpus_dir("hash_blake3", corpus_dir("hash_blake3"), hash_blake3::run);
-  assert_ne!(replayed, 0, "hash_blake3 corpus should not be empty");
-}
-
-#[test]
-fn replay_hash_blake3_derive_corpus() {
-  let replayed = replay_corpus_dir(
-    "hash_blake3_derive",
-    corpus_dir("hash_blake3_derive"),
-    hash_blake3_derive::run,
-  );
-  assert_ne!(replayed, 0, "hash_blake3_derive corpus should not be empty");
-}
-
-#[test]
-fn replay_hash_blake3_keyed_corpus() {
-  let replayed = replay_corpus_dir(
-    "hash_blake3_keyed",
-    corpus_dir("hash_blake3_keyed"),
-    hash_blake3_keyed::run,
-  );
-  assert_ne!(replayed, 0, "hash_blake3_keyed corpus should not be empty");
-}
-
-#[test]
-fn replay_hash_cshake256_corpus() {
-  let replayed = replay_corpus_dir("hash_cshake256", corpus_dir("hash_cshake256"), hash_cshake256::run);
-  assert_ne!(replayed, 0, "hash_cshake256 corpus should not be empty");
-}
-
-#[test]
-fn replay_hash_sha2_corpus() {
-  let replayed = replay_corpus_dir("hash_sha2", corpus_dir("hash_sha2"), hash_sha2::run);
-  assert_ne!(replayed, 0, "hash_sha2 corpus should not be empty");
-}
-
-#[test]
-fn replay_hash_sha3_corpus() {
-  let replayed = replay_corpus_dir("hash_sha3", corpus_dir("hash_sha3"), hash_sha3::run);
-  assert_ne!(replayed, 0, "hash_sha3 corpus should not be empty");
-}
-
-#[test]
-fn replay_hash_websocket_sha1_corpus() {
-  let replayed = replay_corpus_dir(
-    "hash_websocket_sha1",
-    corpus_dir("hash_websocket_sha1"),
-    hash_websocket_sha1::run,
-  );
-  assert_ne!(replayed, 0, "hash_websocket_sha1 corpus should not be empty");
-}
-
-#[test]
-fn replay_hex_parse_corpus() {
-  let replayed = replay_corpus_dir("hex_parse", corpus_dir("hex_parse"), hex_parse::run);
-  assert_ne!(replayed, 0, "hex_parse corpus should not be empty");
-}
-
-#[test]
-fn replay_traits_io_corpus() {
-  let replayed = replay_corpus_dir("traits_io", corpus_dir("traits_io"), traits_io::run);
-  assert_ne!(replayed, 0, "traits_io corpus should not be empty");
-}
-
-#[test]
-fn replay_auth_mldsa_corpus() {
-  let replayed = replay_corpus_dir("auth_mldsa", corpus_dir("auth_mldsa"), auth_mldsa::run);
-  assert_ne!(replayed, 0, "auth_mldsa corpus should not be empty");
-}
-
-#[test]
-fn replay_auth_composite_mldsa_corpus() {
-  let replayed = replay_corpus_dir(
-    "auth_composite_mldsa",
-    corpus_dir("auth_composite_mldsa"),
-    auth_composite_mldsa::run,
-  );
-  assert_ne!(replayed, 0, "auth_composite_mldsa corpus should not be empty");
-}
-
-#[test]
-fn replay_auth_slhdsa_corpus() {
-  let replayed = replay_corpus_dir("auth_slhdsa", corpus_dir("auth_slhdsa"), auth_slhdsa::run);
-  assert_ne!(replayed, 0, "auth_slhdsa corpus should not be empty");
-}
-
-#[test]
-fn replay_provider_quic_handshake_corpus() {
-  let replayed = replay_corpus_dir(
-    "provider_quic_handshake",
-    corpus_dir("provider_quic_handshake"),
-    provider_quic_handshake::run,
-  );
-  assert_ne!(replayed, 0, "provider_quic_handshake corpus should not be empty");
-}
-
-#[test]
-fn replay_provider_quic_header_corpus() {
-  let replayed = replay_corpus_dir(
-    "provider_quic_header",
-    corpus_dir("provider_quic_header"),
-    provider_quic_header::run,
-  );
-  assert_ne!(replayed, 0, "provider_quic_header corpus should not be empty");
-}
-
-#[test]
-fn replay_provider_quic_retry_corpus() {
-  let replayed = replay_corpus_dir(
-    "provider_quic_retry",
-    corpus_dir("provider_quic_retry"),
-    provider_quic_retry::run,
-  );
-  assert_ne!(replayed, 0, "provider_quic_retry corpus should not be empty");
-}
-
-#[test]
-fn replay_provider_quic_token_corpus() {
-  let replayed = replay_corpus_dir(
-    "provider_quic_token",
-    corpus_dir("provider_quic_token"),
-    provider_quic_token::run,
-  );
-  assert_ne!(replayed, 0, "provider_quic_token corpus should not be empty");
-}
-
-#[test]
-fn replay_provider_quic_lb_corpus() {
-  let replayed = replay_corpus_dir(
-    "provider_quic_lb",
-    corpus_dir("provider_quic_lb"),
-    provider_quic_lb::run,
-  );
-  assert_ne!(replayed, 0, "provider_quic_lb corpus should not be empty");
-}
-
-#[test]
-fn replay_auth_chacha20_rng_corpus() {
-  let replayed = replay_corpus_dir(
-    "auth_chacha20_rng",
-    corpus_dir("auth_chacha20_rng"),
-    auth_chacha20_rng::run,
-  );
-  assert_ne!(replayed, 0, "auth_chacha20_rng corpus should not be empty");
-}
-
-#[test]
-fn replay_auth_hkdf_sha512_corpus() {
-  let replayed = replay_corpus_dir(
-    "auth_hkdf_sha512",
-    corpus_dir("auth_hkdf_sha512"),
-    auth_hkdf_sha512::run,
-  );
-  assert_ne!(replayed, 0, "auth_hkdf_sha512 corpus should not be empty");
-}
-
-#[test]
-fn replay_auth_hmac_sha3_corpus() {
-  let replayed = replay_corpus_dir("auth_hmac_sha3", corpus_dir("auth_hmac_sha3"), auth_hmac_sha3::run);
-  assert_ne!(replayed, 0, "auth_hmac_sha3 corpus should not be empty");
-}
-
-#[test]
-fn replay_auth_kmac128_corpus() {
-  let replayed = replay_corpus_dir("auth_kmac128", corpus_dir("auth_kmac128"), auth_kmac128::run);
-  assert_ne!(replayed, 0, "auth_kmac128 corpus should not be empty");
-}
-
-#[test]
-fn replay_auth_poly1305_corpus() {
-  let replayed = replay_corpus_dir("auth_poly1305", corpus_dir("auth_poly1305"), auth_poly1305::run);
-  assert_ne!(replayed, 0, "auth_poly1305 corpus should not be empty");
-}
-
-#[test]
-fn replay_hash_cshake128_corpus() {
-  let replayed = replay_corpus_dir("hash_cshake128", corpus_dir("hash_cshake128"), hash_cshake128::run);
-  assert_ne!(replayed, 0, "hash_cshake128 corpus should not be empty");
-}
-
-#[test]
-fn replay_serde_secrets_corpus() {
-  let replayed = replay_corpus_dir("serde_secrets", corpus_dir("serde_secrets"), serde_secrets::run);
-  assert_ne!(replayed, 0, "serde_secrets corpus should not be empty");
+macro_rules! replay_tests {
+  ($($test:ident, $target:ident, $source:literal;)*) => {$(
+    #[path = $source]
+    mod $target;
+
+    #[test]
+    fn $test() {
+      let name = stringify!($target);
+      let replayed = replay_corpus_dir(name, corpus_dir(name), $target::run);
+      assert_ne!(replayed, 0, "{name} corpus should not be empty");
+    }
+  )*};
+}
+
+replay_tests! {
+  replay_aead_aegis256_corpus, aead_aegis256, "../target_impls/aead_aegis256.rs";
+  replay_aead_aes128gcm_corpus, aead_aes128gcm, "../target_impls/aead_aes128gcm.rs";
+  replay_aead_aes128gcmsiv_corpus, aead_aes128gcmsiv, "../target_impls/aead_aes128gcmsiv.rs";
+  replay_aead_aes256gcm_corpus, aead_aes256gcm, "../target_impls/aead_aes256gcm.rs";
+  replay_aead_aes256gcmsiv_corpus, aead_aes256gcmsiv, "../target_impls/aead_aes256gcmsiv.rs";
+  replay_aead_ascon128_corpus, aead_ascon128, "../target_impls/aead_ascon128.rs";
+  replay_aead_chacha20poly1305_corpus, aead_chacha20poly1305, "../target_impls/aead_chacha20poly1305.rs";
+  replay_aead_header_protection_corpus, aead_header_protection, "../target_impls/aead_header_protection.rs";
+  replay_aead_aes_siv_cmac256_corpus, aead_aes_siv_cmac256, "../target_impls/aead_aes_siv_cmac256.rs";
+  replay_aead_nonce_counter_corpus, aead_nonce_counter, "../target_impls/aead_nonce_counter.rs";
+  replay_aead_quic_lb_corpus, aead_quic_lb, "../target_impls/aead_quic_lb.rs";
+  replay_aead_xchacha20poly1305_corpus, aead_xchacha20poly1305, "../target_impls/aead_xchacha20poly1305.rs";
+  replay_auth_argon2d_corpus, auth_argon2d, "../target_impls/auth_argon2d.rs";
+  replay_auth_argon2i_corpus, auth_argon2i, "../target_impls/auth_argon2i.rs";
+  replay_auth_argon2id_corpus, auth_argon2id, "../target_impls/auth_argon2id.rs";
+  replay_auth_ed25519_corpus, auth_ed25519, "../target_impls/auth_ed25519.rs";
+  replay_auth_ed25519_verify_corpus, auth_ed25519_verify, "../target_impls/auth_ed25519_verify.rs";
+  replay_auth_ecdsa_verify_corpus, auth_ecdsa_verify, "../target_impls/auth_ecdsa_verify.rs";
+  replay_auth_ecdsa_sign_corpus, auth_ecdsa_sign, "../target_impls/auth_ecdsa_sign.rs";
+  replay_auth_hkdf_sha256_corpus, auth_hkdf_sha256, "../target_impls/auth_hkdf_sha256.rs";
+  replay_auth_hkdf_sha384_corpus, auth_hkdf_sha384, "../target_impls/auth_hkdf_sha384.rs";
+  replay_auth_hmac_sha256_corpus, auth_hmac_sha256, "../target_impls/auth_hmac_sha256.rs";
+  replay_auth_hmac_sha384_corpus, auth_hmac_sha384, "../target_impls/auth_hmac_sha384.rs";
+  replay_auth_hmac_sha512_corpus, auth_hmac_sha512, "../target_impls/auth_hmac_sha512.rs";
+  replay_auth_kmac256_corpus, auth_kmac256, "../target_impls/auth_kmac256.rs";
+  replay_auth_mlkem512_corpus, auth_mlkem512, "../target_impls/auth_mlkem512.rs";
+  replay_auth_mlkem768_corpus, auth_mlkem768, "../target_impls/auth_mlkem768.rs";
+  replay_auth_mlkem1024_corpus, auth_mlkem1024, "../target_impls/auth_mlkem1024.rs";
+  replay_auth_hpke_corpus, auth_hpke, "../target_impls/auth_hpke.rs";
+  replay_auth_xwing_corpus, auth_xwing, "../target_impls/auth_xwing.rs";
+  replay_auth_pbkdf2_corpus, auth_pbkdf2, "../target_impls/auth_pbkdf2.rs";
+  replay_auth_phc_corpus, auth_phc, "../target_impls/auth_phc.rs";
+  replay_auth_rsa_public_key_corpus, auth_rsa_public_key, "../target_impls/auth_rsa_public_key.rs";
+  replay_auth_rsa_import_corpus, auth_rsa_import, "../target_impls/auth_rsa_import.rs";
+  replay_auth_rsa_protocol_corpus, auth_rsa_protocol, "../target_impls/auth_rsa_protocol.rs";
+  replay_auth_rsa_private_ops_corpus, auth_rsa_private_ops, "../target_impls/auth_rsa_private_ops.rs";
+  replay_auth_rsa_verify_corpus, auth_rsa_verify, "../target_impls/auth_rsa_verify.rs";
+  replay_auth_scrypt_corpus, auth_scrypt, "../target_impls/auth_scrypt.rs";
+  replay_auth_siphash_corpus, auth_siphash, "../target_impls/auth_siphash.rs";
+  replay_auth_x25519_corpus, auth_x25519, "../target_impls/auth_x25519.rs";
+  replay_auth_p256_ecdh_corpus, auth_p256_ecdh, "../target_impls/auth_p256_ecdh.rs";
+  replay_auth_p384_ecdh_corpus, auth_p384_ecdh, "../target_impls/auth_p384_ecdh.rs";
+  replay_checksum_adler32_corpus, checksum_adler32, "../target_impls/checksum_adler32.rs";
+  replay_checksum_crc_corpus, checksum_crc, "../target_impls/checksum_crc.rs";
+  replay_fast_rapidhash_corpus, fast_rapidhash, "../target_impls/fast_rapidhash.rs";
+  replay_fast_xxh3_corpus, fast_xxh3, "../target_impls/fast_xxh3.rs";
+  replay_fast_xxh32_corpus, fast_xxh32, "../target_impls/fast_xxh32.rs";
+  replay_fast_xxh64_corpus, fast_xxh64, "../target_impls/fast_xxh64.rs";
+  replay_hash_ascon_corpus, hash_ascon, "../target_impls/hash_ascon.rs";
+  replay_hash_ascon_cxof_corpus, hash_ascon_cxof, "../target_impls/hash_ascon_cxof.rs";
+  replay_hash_blake2b_corpus, hash_blake2b, "../target_impls/hash_blake2b.rs";
+  replay_hash_blake2s_corpus, hash_blake2s, "../target_impls/hash_blake2s.rs";
+  replay_hash_blake3_corpus, hash_blake3, "../target_impls/hash_blake3.rs";
+  replay_hash_blake3_derive_corpus, hash_blake3_derive, "../target_impls/hash_blake3_derive.rs";
+  replay_hash_blake3_keyed_corpus, hash_blake3_keyed, "../target_impls/hash_blake3_keyed.rs";
+  replay_hash_cshake256_corpus, hash_cshake256, "../target_impls/hash_cshake256.rs";
+  replay_hash_sha2_corpus, hash_sha2, "../target_impls/hash_sha2.rs";
+  replay_hash_sha3_corpus, hash_sha3, "../target_impls/hash_sha3.rs";
+  replay_hash_websocket_sha1_corpus, hash_websocket_sha1, "../target_impls/hash_websocket_sha1.rs";
+  replay_hex_parse_corpus, hex_parse, "../target_impls/hex_parse.rs";
+  replay_traits_io_corpus, traits_io, "../target_impls/traits_io.rs";
+  replay_auth_mldsa_corpus, auth_mldsa, "../target_impls/auth_mldsa.rs";
+  replay_auth_composite_mldsa_corpus, auth_composite_mldsa, "../target_impls/auth_composite_mldsa.rs";
+  replay_auth_slhdsa_corpus, auth_slhdsa, "../target_impls/auth_slhdsa.rs";
+  replay_provider_quic_handshake_corpus, provider_quic_handshake, "../target_impls/provider_quic_handshake.rs";
+  replay_provider_quic_header_corpus, provider_quic_header, "../target_impls/provider_quic_header.rs";
+  replay_provider_quic_retry_corpus, provider_quic_retry, "../target_impls/provider_quic_retry.rs";
+  replay_provider_quic_token_corpus, provider_quic_token, "../target_impls/provider_quic_token.rs";
+  replay_provider_quic_lb_corpus, provider_quic_lb, "../target_impls/provider_quic_lb.rs";
+  replay_auth_chacha20_rng_corpus, auth_chacha20_rng, "../target_impls/auth_chacha20_rng.rs";
+  replay_auth_hkdf_sha512_corpus, auth_hkdf_sha512, "../target_impls/auth_hkdf_sha512.rs";
+  replay_auth_hmac_sha3_corpus, auth_hmac_sha3, "../target_impls/auth_hmac_sha3.rs";
+  replay_auth_kmac128_corpus, auth_kmac128, "../target_impls/auth_kmac128.rs";
+  replay_auth_poly1305_corpus, auth_poly1305, "../target_impls/auth_poly1305.rs";
+  replay_hash_cshake128_corpus, hash_cshake128, "../target_impls/hash_cshake128.rs";
+  replay_serde_secrets_corpus, serde_secrets, "../target_impls/serde_secrets.rs";
 }

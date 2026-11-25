@@ -60,24 +60,14 @@ pub fn retry_integrity_tag(original_dst_connection_id: &[u8], retry: &[u8]) -> O
 /// original connection ID longer than [`MAX_CONNECTION_ID_LEN`] bytes.
 #[must_use]
 pub fn is_valid_retry(original_dst_connection_id: &[u8], packet: &[u8]) -> bool {
-  let Some(length) = packet.len().checked_sub(RETRY_INTEGRITY_TAG_LEN) else {
+  let Some((body, tag)) = packet.split_last_chunk::<RETRY_INTEGRITY_TAG_LEN>() else {
     return false;
   };
-  let (body, tag) = packet.split_at(length);
-  let Ok(tag) = <[u8; RETRY_INTEGRITY_TAG_LEN]>::try_from(tag) else {
-    return false;
-  };
-  let Some(aad) = retry_aad(original_dst_connection_id, body) else {
-    return false;
-  };
-  retry_cipher()
-    .decrypt_in_place(
-      &Nonce96::from_bytes(RETRY_NONCE),
-      &aad,
-      &mut [],
-      &Aes128GcmTag::from_bytes(tag),
-    )
-    .is_ok()
+  retry_integrity_tag(original_dst_connection_id, body).is_some_and(|expected| {
+    Aes128GcmTag::from_bytes(expected)
+      .ct_eq(&Aes128GcmTag::from_bytes(*tag))
+      .declassify()
+  })
 }
 
 /// The Retry pseudo-packet: the original connection ID with its length, then the packet without its tag.

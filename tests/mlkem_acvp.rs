@@ -7,6 +7,8 @@ use rscrypto::{
 };
 use serde_json::Value;
 
+mod common;
+
 // NIST ACVP-Server FIPS 203 ML-KEM gen-val fixtures, pinned at commit
 // 15c0f3deeefbfa8cb6cd32a99e1ca3b738c66bf0.
 const ACVP_KEYGEN_PROMPT: &str = include_str!("vectors/mlkem_acvp_keygen_fips203_prompt.json");
@@ -85,29 +87,8 @@ fn case_by_id(group: &Value, tc_id: u64) -> &Value {
     .expect("ACVP expected group must contain every prompt tcId")
 }
 
-fn hex_nibble(byte: u8) -> Option<u8> {
-  match byte {
-    b'0'..=b'9' => Some(byte.strict_sub(b'0')),
-    b'a'..=b'f' => Some(byte.strict_sub(b'a').strict_add(10)),
-    b'A'..=b'F' => Some(byte.strict_sub(b'A').strict_add(10)),
-    _ => None,
-  }
-}
-
-fn decode_hex(hex: &str) -> Vec<u8> {
-  assert_eq!(hex.len() % 2, 0, "hex input must have even length");
-
-  let mut out = Vec::with_capacity(hex.len() / 2);
-  for pair in hex.as_bytes().as_chunks::<2>().0 {
-    let high = hex_nibble(pair[0]).expect("ACVP fixture must contain only hexadecimal digits");
-    let low = hex_nibble(pair[1]).expect("ACVP fixture must contain only hexadecimal digits");
-    out.push((high << 4) | low);
-  }
-  out
-}
-
 fn array_from_hex<const N: usize>(hex: &str) -> [u8; N] {
-  let bytes = decode_hex(hex);
+  let bytes = common::decode_hex_vec(hex);
   assert_eq!(bytes.len(), N, "unexpected ACVP hex length");
 
   let mut out = [0u8; N];
@@ -131,7 +112,7 @@ macro_rules! assert_keygen_case {
     random[..32].copy_from_slice(&d);
     random[32..].copy_from_slice(&z);
 
-    let (encapsulation_key, decapsulation_key) = <$profile>::generate_keypair(|out| {
+    let (encapsulation_key, decapsulation_key) = <$profile as Kem>::generate_keypair(|out| {
       out.copy_from_slice(&random);
       Ok::<(), MlKemError>(())
     })
@@ -162,12 +143,12 @@ macro_rules! assert_keygen_case {
 macro_rules! assert_encapsulation_case {
   ($profile:ty, $encapsulation_key:ty, $parameter_set:literal, $prompt:expr, $expected:expr) => {{
     let tc_id = u64_field($prompt, "tcId");
-    let encapsulation_key_bytes = decode_hex(string_field($prompt, "ek"));
+    let encapsulation_key_bytes = common::decode_hex_vec(string_field($prompt, "ek"));
     let encapsulation_key = <$encapsulation_key>::try_from_slice(&encapsulation_key_bytes)
       .expect("ACVP encapsulation key must have a valid encoding");
     let random = array_from_hex::<{ <$profile>::ENCAPSULATION_RANDOM_SIZE }>(string_field($prompt, "m"));
 
-    let (ciphertext, shared_secret) = <$profile>::encapsulate(&encapsulation_key, |out| {
+    let (ciphertext, shared_secret) = <$profile as Kem>::encapsulate(&encapsulation_key, |out| {
       out.copy_from_slice(&random);
       Ok::<(), MlKemError>(())
     })
@@ -190,14 +171,14 @@ macro_rules! assert_encapsulation_case {
 macro_rules! assert_decapsulation_case {
   ($profile:ty, $decapsulation_key:ty, $ciphertext:ty, $parameter_set:literal, $prompt:expr, $expected:expr) => {{
     let tc_id = u64_field($prompt, "tcId");
-    let decapsulation_key_bytes = decode_hex(string_field($prompt, "dk"));
-    let ciphertext_bytes = decode_hex(string_field($prompt, "c"));
+    let decapsulation_key_bytes = common::decode_hex_vec(string_field($prompt, "dk"));
+    let ciphertext_bytes = common::decode_hex_vec(string_field($prompt, "c"));
     let decapsulation_key = <$decapsulation_key>::try_from_slice(&decapsulation_key_bytes)
       .expect("ACVP decapsulation key must have a valid encoding");
     let ciphertext =
       <$ciphertext>::try_from_slice(&ciphertext_bytes).expect("ACVP ciphertext must have a valid encoding");
     let shared_secret =
-      <$profile>::decapsulate(&decapsulation_key, &ciphertext).expect("ML-KEM ACVP decapsulation must succeed");
+      <$profile as Kem>::decapsulate(&decapsulation_key, &ciphertext).expect("ML-KEM ACVP decapsulation must succeed");
     let expected_shared_secret = array_from_hex::<{ <$profile>::SHARED_SECRET_SIZE }>(string_field($expected, "k"));
 
     assert_bytes_eq(
@@ -213,7 +194,7 @@ macro_rules! assert_decapsulation_case {
 macro_rules! assert_key_check_case {
   ($key:ty, $parameter_set:literal, $prompt:expr, $expected:expr, $field:literal) => {{
     let tc_id = u64_field($prompt, "tcId");
-    let key_bytes = decode_hex(string_field($prompt, $field));
+    let key_bytes = common::decode_hex_vec(string_field($prompt, $field));
 
     assert_eq!(
       <$key>::try_from_slice(&key_bytes).is_ok(),

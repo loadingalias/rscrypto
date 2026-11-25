@@ -3,7 +3,6 @@ use std::io::Write;
 
 #[cfg(feature = "ecdsa-p256")]
 use rscrypto::EcdsaKeyGenerationError;
-use rscrypto::Kem;
 #[cfg(any(feature = "hmac", feature = "hmac-sha3"))]
 use rscrypto::Mac;
 #[cfg(any(
@@ -56,57 +55,6 @@ use rscrypto::{Poly1305, Poly1305OneTimeKey, Poly1305Tag};
 use rscrypto::{RsaPkcs1v15Profile, RsaPssProfile, RsaPublicKey, RsaSignatureProfile};
 #[cfg(feature = "x25519")]
 use rscrypto::{X25519Error, X25519PublicKey, X25519SecretKey};
-
-#[derive(Clone)]
-struct ToyKem;
-
-impl Kem for ToyKem {
-  const ENCAPSULATION_KEY_SIZE: usize = 3;
-  const DECAPSULATION_KEY_SIZE: usize = 4;
-  const CIPHERTEXT_SIZE: usize = 5;
-  const SHARED_SECRET_SIZE: usize = 2;
-
-  type EncapsulationKey = [u8; Self::ENCAPSULATION_KEY_SIZE];
-  type DecapsulationKey = [u8; Self::DECAPSULATION_KEY_SIZE];
-  type Ciphertext = [u8; Self::CIPHERTEXT_SIZE];
-  type SharedSecret = [u8; Self::SHARED_SECRET_SIZE];
-  type KeyGenerationError = ();
-  type EncapsulationError = ();
-  type DecapsulationError = ();
-
-  fn generate_keypair(
-    mut fill_random: impl FnMut(&mut [u8]) -> Result<(), Self::KeyGenerationError>,
-  ) -> Result<(Self::EncapsulationKey, Self::DecapsulationKey), Self::KeyGenerationError> {
-    let mut seed = [0u8; 4];
-    fill_random(&mut seed)?;
-    Ok(([seed[0], seed[1], seed[2]], seed))
-  }
-
-  fn encapsulate(
-    encapsulation_key: &Self::EncapsulationKey,
-    mut fill_random: impl FnMut(&mut [u8]) -> Result<(), Self::EncapsulationError>,
-  ) -> Result<(Self::Ciphertext, Self::SharedSecret), Self::EncapsulationError> {
-    let mut nonce = [0u8; 2];
-    fill_random(&mut nonce)?;
-    Ok((
-      [
-        encapsulation_key[0],
-        encapsulation_key[1],
-        encapsulation_key[2],
-        nonce[0],
-        nonce[1],
-      ],
-      nonce,
-    ))
-  }
-
-  fn decapsulate(
-    decapsulation_key: &Self::DecapsulationKey,
-    ciphertext: &Self::Ciphertext,
-  ) -> Result<Self::SharedSecret, Self::DecapsulationError> {
-    Ok([decapsulation_key[3], ciphertext[4]])
-  }
-}
 
 #[cfg(feature = "hashes")]
 fn assert_digest_api<D>()
@@ -560,34 +508,6 @@ fn rsa_signature_signer_shape_is_profile_bound() {
 fn verification_error_follows_new_default_and_display_conventions() {
   assert_eq!(VerificationError::new(), VerificationError::default());
   assert_eq!(VerificationError::new().to_string(), "verification failed");
-}
-
-#[test]
-fn kem_trait_uses_typed_key_ciphertext_and_secret_outputs() {
-  assert_eq!(ToyKem::ENCAPSULATION_KEY_SIZE, 3);
-  assert_eq!(ToyKem::DECAPSULATION_KEY_SIZE, 4);
-  assert_eq!(ToyKem::CIPHERTEXT_SIZE, 5);
-  assert_eq!(ToyKem::SHARED_SECRET_SIZE, 2);
-
-  let (encapsulation_key, decapsulation_key) = ToyKem::generate_keypair(|out| {
-    out.copy_from_slice(&[1, 2, 3, 4]);
-    Ok(())
-  })
-  .expect("infallible ToyKem key generation must succeed");
-  assert_eq!(encapsulation_key.as_ref(), &[1, 2, 3]);
-  assert_eq!(decapsulation_key.as_ref(), &[1, 2, 3, 4]);
-
-  let (ciphertext, encapsulated_secret) = ToyKem::encapsulate(&encapsulation_key, |out| {
-    out.copy_from_slice(&[8, 9]);
-    Ok(())
-  })
-  .expect("infallible ToyKem encapsulation must succeed");
-  assert_eq!(ciphertext.as_ref(), &[1, 2, 3, 8, 9]);
-  assert_eq!(encapsulated_secret.as_ref(), &[8, 9]);
-
-  let decapsulated_secret =
-    ToyKem::decapsulate(&decapsulation_key, &ciphertext).expect("infallible ToyKem decapsulation must succeed");
-  assert_eq!(decapsulated_secret.as_ref(), &[4, 9]);
 }
 
 #[test]

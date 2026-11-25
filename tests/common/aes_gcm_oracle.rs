@@ -1,0 +1,239 @@
+fn deterministic_bytes(seed: u8, len: usize) -> Vec<u8> {
+  let mut out = Vec::with_capacity(len);
+  let mut x = u32::from(seed);
+  for _ in 0..len {
+    x = x.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+    out.push(x.to_be_bytes()[0]);
+  }
+  out
+}
+
+fn assert_matches_oracle(key_bytes: &[u8; KEY_BYTES], nonce_bytes: &[u8; 12], aad: &[u8], plaintext: &[u8]) {
+  let key = Key::from_bytes(*key_bytes);
+  let nonce = Nonce96::from_bytes(*nonce_bytes);
+  let cipher = Cipher::new(&key);
+
+  let oracle = Oracle::new(&Array(*key_bytes));
+  let oracle_nonce = Array(*nonce_bytes);
+
+  // Encrypt with rscrypto.
+  let mut ours = plaintext.to_vec();
+  let tag = cipher
+    .encrypt_in_place(&nonce, aad, &mut ours)
+    .expect("rscrypto must seal valid AES-GCM oracle input");
+
+  // Encrypt with oracle.
+  let mut oracle_buf = plaintext.to_vec();
+  let oracle_tag = oracle
+    .encrypt_inout_detached(&oracle_nonce, aad, oracle_buf.as_mut_slice().into())
+    .expect("RustCrypto must seal valid AES-GCM oracle input");
+
+  assert_eq!(ours, oracle_buf, "ciphertext mismatch (len={})", plaintext.len());
+  assert_eq!(
+    tag.as_bytes(),
+    oracle_tag.as_slice(),
+    "tag mismatch (len={})",
+    plaintext.len()
+  );
+
+  // Decrypt with rscrypto.
+  cipher
+    .decrypt_in_place(&nonce, aad, &mut ours, &tag)
+    .expect("fresh AES-GCM ciphertext must authenticate");
+  assert_eq!(ours, plaintext, "decrypt round-trip failed (len={})", plaintext.len());
+}
+
+// Oracle Agreement
+
+#[test]
+fn matches_rustcrypto_oracle() {
+  let key = [0x42u8; KEY_BYTES];
+  let nonce = [0x24u8; 12];
+  let aad = ORACLE_AAD;
+  let plaintext = b"portable baseline first, SIMD later";
+
+  assert_matches_oracle(&key, &nonce, aad, plaintext);
+}
+
+#[test]
+fn oracle_empty_plaintext() {
+  assert_matches_oracle(&[0xAA; KEY_BYTES], &[0xBB; 12], b"aad-only", b"");
+}
+
+#[test]
+fn oracle_empty_aad() {
+  assert_matches_oracle(&[0xCC; KEY_BYTES], &[0xDD; 12], b"", b"no associated data");
+}
+
+#[test]
+fn oracle_both_empty() {
+  assert_matches_oracle(&[0xEE; KEY_BYTES], &[0xFF; 12], b"", b"");
+}
+
+#[test]
+fn oracle_block_boundary_sizes() {
+  let key = [0x55u8; KEY_BYTES];
+  let nonce = [0x66u8; 12];
+  let aad = b"boundary";
+
+  // AES block = 16 bytes. Test at, below, and above boundaries.
+  for size in [1, 15, 16, 17, 31, 32, 33, 48, 63, 64, 65, 128, 256] {
+    let plaintext = vec![0xABu8; size];
+    assert_matches_oracle(&key, &nonce, aad, &plaintext);
+  }
+}
+
+#[test]
+fn oracle_large_input() {
+  let key = [0x77u8; KEY_BYTES];
+  let nonce = [0x88u8; 12];
+  // 8 KiB — exercises multi-block GHASH and CTR paths.
+  let plaintext: Vec<u8> = (0usize..8192).map(|i| i.to_le_bytes()[0]).collect();
+  assert_matches_oracle(&key, &nonce, b"large", &plaintext);
+}
+
+#[test]
+fn oracle_aad_size_sweep() {
+  let key = [0x99u8; KEY_BYTES];
+  let nonce = [0xAAu8; 12];
+  let plaintext = b"fixed-plaintext";
+
+  // Sweeps cover the wide-GHASH 4-block boundary (64-byte chunks) and the
+  // partial-tail seam at +/-1 around 16-byte block boundaries.
+  for aad_len in [0usize, 1, 15, 16, 17, 32, 33, 47, 48, 49, 64, 65, 80, 81, 128, 1024] {
+    let aad: Vec<u8> = (0..aad_len).map(|i| i.to_le_bytes()[0]).collect();
+    assert_matches_oracle(&key, &nonce, &aad, plaintext);
+  }
+}
+
+#[test]
+fn oracle_all_short_lengths() {
+  let key = [0xA8u8; KEY_BYTES];
+
+  // Every length through two VAES register groups past the x86 short-message
+  // bound (496 bytes) and the 256-byte wide-kernel start.
+  for size in 0..=576usize {
+    let mut nonce = [SHORT_NONCE; 12];
+    let size_word = u32::try_from(size).expect("short-length case must fit in a 32-bit nonce field");
+    let size_byte = size.to_le_bytes()[0];
+    nonce[8..12].copy_from_slice(&size_word.to_be_bytes());
+    let aad = if size % 3 == 0 {
+      Vec::new()
+    } else {
+      deterministic_bytes(SHORT_AAD ^ size_byte, size % 97)
+    };
+    let plaintext = deterministic_bytes(SHORT_MESSAGE ^ size_byte, size);
+    assert_matches_oracle(&key, &nonce, &aad, &plaintext);
+  }
+}
+
+#[test]
+fn oracle_large_aligned_and_unaligned_lengths() {
+  let key = [LARGE_KEY; KEY_BYTES];
+  let aad_cases = [Vec::new(), deterministic_bytes(LARGE_AAD, 257)];
+
+  for (case_idx, &size) in [4096usize, 4097, 8191, 8192, 8193, 16_384, 16_385].iter().enumerate() {
+    let mut nonce = [LARGE_NONCE; 12];
+    let case_word = u32::try_from(case_idx).expect("GCM oracle case index must fit in a 32-bit nonce field");
+    let size_word = u32::try_from(size).expect("GCM oracle size must fit in a 32-bit nonce field");
+    nonce[4..8].copy_from_slice(&case_word.to_be_bytes());
+    nonce[8..12].copy_from_slice(&size_word.to_be_bytes());
+    let plaintext = deterministic_bytes(LARGE_MESSAGE ^ case_idx.to_le_bytes()[0], size);
+    for aad in &aad_cases {
+      assert_matches_oracle(&key, &nonce, aad, &plaintext);
+    }
+  }
+}
+
+// Forgery Rejection
+
+#[test]
+fn rejects_tampering_at_every_short_length() {
+  // A rejected open must leave every byte zero whichever kernel ran it. Each
+  // length flips the final ciphertext byte, then one tag bit, under a 5-byte
+  // TLS 1.3 AAD.
+  let key = Key::from_bytes([0x3C; KEY_BYTES]);
+  let cipher = Cipher::new(&key);
+  let aad = [0x17, 0x03, 0x03, 0x01, 0x11];
+  for size in 1..=576usize {
+    let mut nonce = [0x5Bu8; 12];
+    nonce[8..].copy_from_slice(&u32::try_from(size).expect("short length fits u32").to_be_bytes());
+    let nonce = Nonce96::from_bytes(nonce);
+    let plaintext = deterministic_bytes(size.to_le_bytes()[0], size);
+    let mut sealed = plaintext.clone();
+    let tag = cipher
+      .encrypt_in_place(&nonce, &aad, &mut sealed)
+      .expect("short tampering fixture must seal");
+
+    let mut buffer = sealed.clone();
+    buffer[size.strict_sub(1)] ^= 0x80;
+    cipher
+      .decrypt_in_place(&nonce, &aad, &mut buffer, &tag)
+      .expect_err("modified ciphertext must not authenticate");
+    assert!(buffer.iter().all(|&byte| byte == 0), "len={size}: ciphertext rejection");
+
+    let mut bad = tag.to_bytes();
+    bad[size % 16] ^= 0x01;
+    let mut buffer = sealed.clone();
+    cipher
+      .decrypt_in_place(&nonce, &aad, &mut buffer, &Tag::from_bytes(bad))
+      .expect_err("modified tag must not authenticate");
+    assert!(buffer.iter().all(|&byte| byte == 0), "len={size}: tag rejection");
+
+    cipher
+      .decrypt_in_place(&nonce, &aad, &mut sealed, &tag)
+      .expect("unmodified short message must authenticate");
+    assert_eq!(sealed, plaintext, "len={size}");
+  }
+}
+
+#[test]
+fn rejects_modified_tag() {
+  let key = Key::from_bytes([0x11; KEY_BYTES]);
+  let nonce = Nonce96::from_bytes([0x22; 12]);
+  let cipher = Cipher::new(&key);
+
+  let mut buffer = *b"forgery-check";
+  let mut tag = cipher
+    .encrypt_in_place(&nonce, b"aad", &mut buffer)
+    .expect("AES-GCM tag-forgery fixture must seal")
+    .to_bytes();
+  tag[0] ^= 1;
+
+  cipher
+    .decrypt_in_place(&nonce, b"aad", &mut buffer, &Tag::from_bytes(tag))
+    .expect_err("AES-GCM must reject a modified tag");
+}
+
+#[test]
+fn rejects_modified_ciphertext() {
+  let key = Key::from_bytes([0x33; KEY_BYTES]);
+  let nonce = Nonce96::from_bytes([0x44; 12]);
+  let cipher = Cipher::new(&key);
+
+  let mut buffer = *b"tamper-detect";
+  let tag = cipher
+    .encrypt_in_place(&nonce, b"", &mut buffer)
+    .expect("AES-GCM ciphertext-tampering fixture must seal");
+  buffer[0] ^= 1;
+
+  cipher
+    .decrypt_in_place(&nonce, b"", &mut buffer, &tag)
+    .expect_err("AES-GCM must reject modified ciphertext");
+}
+
+#[test]
+fn rejects_wrong_aad() {
+  let key = Key::from_bytes([0x55; KEY_BYTES]);
+  let nonce = Nonce96::from_bytes([0x66; 12]);
+  let cipher = Cipher::new(&key);
+
+  let mut buffer = *b"aad-mismatch";
+  let tag = cipher
+    .encrypt_in_place(&nonce, b"correct", &mut buffer)
+    .expect("AES-GCM AAD-mismatch fixture must seal");
+
+  cipher
+    .decrypt_in_place(&nonce, b"wrong", &mut buffer, &tag)
+    .expect_err("AES-GCM must reject incorrect associated data");
+}

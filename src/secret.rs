@@ -124,6 +124,13 @@ impl<E> core::error::Error for SecretVecConstructionError<E> where E: core::erro
 
 #[cfg(feature = "alloc")]
 impl SecretVec {
+  #[cfg(feature = "rsa")]
+  pub(crate) fn build_with_capacity(capacity: usize, write: impl FnOnce(&mut Vec<u8>)) -> Self {
+    let mut secret = Self(Vec::with_capacity(capacity));
+    write(&mut secret.0);
+    secret
+  }
+
   /// Protect an existing vector without copying or reallocating it.
   #[inline]
   #[must_use]

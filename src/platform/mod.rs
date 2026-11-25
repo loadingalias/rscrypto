@@ -40,8 +40,6 @@
 pub mod caps;
 pub(crate) mod detect;
 mod process;
-#[cfg(not(miri))]
-mod target_matrix;
 
 // Public API - Types
 

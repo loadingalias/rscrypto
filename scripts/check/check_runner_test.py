@@ -208,6 +208,13 @@ if name == 'cargo' and args[0] == 'deny':
 
     targets = json.loads((root / '.config/target-matrix.json').read_text())['targets']
     assert set(tomllib.loads((source / 'deny.toml').read_text())['graph']['targets']) == set(targets)
+    catalog_file = root / '.config/target-matrix.json'
+    catalog = json.loads(catalog_file.read_text())
+    for prefix in ('x86_64-', 'aarch64-'):
+      catalog_file.write_text(json.dumps(dict(catalog, targets=[t for t in targets if not t.startswith(prefix)])))
+      result, _ = run('native')
+      assert result.returncode != 0 and 'invalid target catalog' in result.stderr, result
+    catalog_file.write_text(json.dumps(catalog))
     feature_graph = tomllib.loads((root / 'Cargo.toml').read_text())['features']
     features = set(feature_graph)
 

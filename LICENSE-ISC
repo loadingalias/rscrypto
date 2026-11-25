@@ -6,8 +6,7 @@ assembly and are licensed under the ISC license below:
     Copyright (c) 2014-2024 Google Inc.
     Copyright Amazon.com, Inc. or its affiliates.
 
-  src/aead/chacha20poly1305/asm/rscrypto_chacha20_poly1305_aarch64_linux.s
-  src/aead/chacha20poly1305/asm/rscrypto_chacha20_poly1305_aarch64_apple_darwin.s
+  src/aead/chacha20poly1305/asm/rscrypto_chacha20_poly1305_aarch64.s
     Copyright (c) 2020, CloudFlare Ltd.
 
 Permission to use, copy, modify, and/or distribute this software for any

@@ -5461,17 +5461,17 @@ fn multiply_ntts_accumulate<const K: usize>(acc: &mut Poly, a: &PolyVec<K>, b: &
 
   #[cfg(all(
     target_arch = "aarch64",
-    target_os = "linux",
+    any(target_os = "linux", target_os = "macos"),
     not(miri),
     not(feature = "portable-only")
   ))]
   {
     if K == 2 {
-      // SAFETY: aarch64 Linux assembly K=2 dot-product dispatch because:
+      // SAFETY: AArch64 assembly K=2 dot-product dispatch because:
       // 1. `K == 2` proves `a` and `b` are contiguous `[[u16; 256]; 2]` polynomial vectors.
       // 2. `acc` is a fixed 256-coefficient polynomial matching the assembly ABI.
       // 3. The borrow checker guarantees `acc` is not aliased by `a` or `b`; inputs are read-only.
-      // 4. Advanced SIMD is baseline for supported aarch64 Linux targets.
+      // 4. Advanced SIMD is baseline for these AArch64 targets.
       // 5. The assembly memory schedule is fixed and independent of secret coefficient values.
       unsafe {
         return aarch64::basemul_accumulate_k2_asm_ptr(acc, a.as_ptr().cast::<u16>(), b.as_ptr().cast::<u16>());
@@ -5479,11 +5479,11 @@ fn multiply_ntts_accumulate<const K: usize>(acc: &mut Poly, a: &PolyVec<K>, b: &
     }
 
     if K == 3 {
-      // SAFETY: aarch64 Linux assembly K=3 dot-product dispatch because:
+      // SAFETY: AArch64 assembly K=3 dot-product dispatch because:
       // 1. `K == 3` proves `a` and `b` are contiguous `[[u16; 256]; 3]` polynomial vectors.
       // 2. `acc` is a fixed 256-coefficient polynomial matching the assembly ABI.
       // 3. The borrow checker guarantees `acc` is not aliased by `a` or `b`; inputs are read-only.
-      // 4. Advanced SIMD is baseline for supported aarch64 Linux targets.
+      // 4. Advanced SIMD is baseline for these AArch64 targets.
       // 5. The assembly memory schedule is fixed and independent of secret coefficient values.
       unsafe {
         return aarch64::basemul_accumulate_k3_asm_ptr(acc, a.as_ptr().cast::<u16>(), b.as_ptr().cast::<u16>());
@@ -5491,55 +5491,11 @@ fn multiply_ntts_accumulate<const K: usize>(acc: &mut Poly, a: &PolyVec<K>, b: &
     }
 
     if K == 4 {
-      // SAFETY: aarch64 Linux assembly K=4 dot-product dispatch because:
+      // SAFETY: AArch64 assembly K=4 dot-product dispatch because:
       // 1. `K == 4` proves `a` and `b` are contiguous `[[u16; 256]; 4]` polynomial vectors.
       // 2. `acc` is a fixed 256-coefficient polynomial matching the assembly ABI.
       // 3. The borrow checker guarantees `acc` is not aliased by `a` or `b`; inputs are read-only.
-      // 4. Advanced SIMD is baseline for supported aarch64 Linux targets.
-      // 5. The assembly memory schedule is fixed and independent of secret coefficient values.
-      unsafe {
-        return aarch64::basemul_accumulate_k4_asm_ptr(acc, a.as_ptr().cast::<u16>(), b.as_ptr().cast::<u16>());
-      }
-    }
-  }
-
-  #[cfg(all(
-    target_arch = "aarch64",
-    target_os = "macos",
-    not(miri),
-    not(feature = "portable-only")
-  ))]
-  {
-    if K == 2 {
-      // SAFETY: aarch64 Darwin assembly K=2 dot-product dispatch because:
-      // 1. `K == 2` proves `a` and `b` are contiguous `[[u16; 256]; 2]` polynomial vectors.
-      // 2. `acc` is a fixed 256-coefficient polynomial matching the assembly ABI.
-      // 3. The borrow checker guarantees `acc` is not aliased by `a` or `b`; inputs are read-only.
-      // 4. Advanced SIMD is baseline for supported aarch64 macOS targets.
-      // 5. The assembly memory schedule is fixed and independent of secret coefficient values.
-      unsafe {
-        return aarch64::basemul_accumulate_k2_asm_ptr(acc, a.as_ptr().cast::<u16>(), b.as_ptr().cast::<u16>());
-      }
-    }
-
-    if K == 3 {
-      // SAFETY: aarch64 Darwin assembly K=3 dot-product dispatch because:
-      // 1. `K == 3` proves `a` and `b` are contiguous `[[u16; 256]; 3]` polynomial vectors.
-      // 2. `acc` is a fixed 256-coefficient polynomial matching the assembly ABI.
-      // 3. The borrow checker guarantees `acc` is not aliased by `a` or `b`; inputs are read-only.
-      // 4. Advanced SIMD is baseline for supported aarch64 macOS targets.
-      // 5. The assembly memory schedule is fixed and independent of secret coefficient values.
-      unsafe {
-        return aarch64::basemul_accumulate_k3_asm_ptr(acc, a.as_ptr().cast::<u16>(), b.as_ptr().cast::<u16>());
-      }
-    }
-
-    if K == 4 {
-      // SAFETY: aarch64 Darwin assembly K=4 dot-product dispatch because:
-      // 1. `K == 4` proves `a` and `b` are contiguous `[[u16; 256]; 4]` polynomial vectors.
-      // 2. `acc` is a fixed 256-coefficient polynomial matching the assembly ABI.
-      // 3. The borrow checker guarantees `acc` is not aliased by `a` or `b`; inputs are read-only.
-      // 4. Advanced SIMD is baseline for supported aarch64 macOS targets.
+      // 4. Advanced SIMD is baseline for these AArch64 targets.
       // 5. The assembly memory schedule is fixed and independent of secret coefficient values.
       unsafe {
         return aarch64::basemul_accumulate_k4_asm_ptr(acc, a.as_ptr().cast::<u16>(), b.as_ptr().cast::<u16>());

@@ -15,3 +15,7 @@ output	src/hashes/crypto/blake3/x86_64/asm/rscrypto_blake3_avx2_x86-64_windows_m
 output	src/hashes/crypto/blake3/x86_64/asm/rscrypto_blake3_avx512_x86-64_apple_darwin.s	4712	159416	d6b59bc6384ff89f4fb8269a08877a168ca214f58cd5e1dc55ab171746dbfd78
 output	src/hashes/crypto/blake3/x86_64/asm/rscrypto_blake3_avx512_x86-64_unix_linux.s	4714	159448	ce679dcca1b685ed24612d78879dbbdd38980885d155f2ed0c74469da0e9c9c2
 output	src/hashes/crypto/blake3/x86_64/asm/rscrypto_blake3_avx512_x86-64_windows_msvc.s	4710	159402	38ffa1cb046ae9f39d4691a55889aca7537f0d69cb3bc522558b3e268859dbc9
+variant	src/hashes/crypto/blake3/x86_64/asm/rscrypto_blake3_avx2_x86-64_unix_linux.s	src/hashes/crypto/blake3/x86_64/asm/rscrypto_blake3_avx2_x86-64.s	elf
+variant	src/hashes/crypto/blake3/x86_64/asm/rscrypto_blake3_avx2_x86-64_apple_darwin.s	src/hashes/crypto/blake3/x86_64/asm/rscrypto_blake3_avx2_x86-64.s	macho
+variant	src/hashes/crypto/blake3/x86_64/asm/rscrypto_blake3_avx512_x86-64_unix_linux.s	src/hashes/crypto/blake3/x86_64/asm/rscrypto_blake3_avx512_x86-64.s	elf
+variant	src/hashes/crypto/blake3/x86_64/asm/rscrypto_blake3_avx512_x86-64_apple_darwin.s	src/hashes/crypto/blake3/x86_64/asm/rscrypto_blake3_avx512_x86-64.s	macho

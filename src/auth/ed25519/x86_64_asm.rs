@@ -16,11 +16,15 @@ const AFFINE_POINT_LIMBS: usize = 8;
 const FIELD_LIMBS: usize = 4;
 
 global_asm!(
+  include_str!("asm/rscrypto_ed25519_base_table.inc"),
   include_str!("asm/rscrypto_ed25519_scalarmulbase_x86_64_unknown_linux.s"),
+  ".purgem rscrypto_ed25519_base_table",
   options(att_syntax)
 );
 global_asm!(
+  include_str!("asm/rscrypto_ed25519_base_table.inc"),
   include_str!("asm/rscrypto_ed25519_scalarmulbase_alt_x86_64_unknown_linux.s"),
+  ".purgem rscrypto_ed25519_base_table",
   options(att_syntax)
 );
 

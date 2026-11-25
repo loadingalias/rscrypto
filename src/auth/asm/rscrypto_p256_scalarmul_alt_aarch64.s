@@ -7,19 +7,41 @@
 //
 // The public symbol is renamed to the rscrypto namespace and embedded with Rust global_asm!.
 
+.if {macho}
         .globl _rscrypto_p256_scalarmul_alt
 
         .private_extern _rscrypto_p256_scalarmul_alt
+.else // macho
+        .globl rscrypto_p256_scalarmul_alt
+
+        .hidden rscrypto_p256_scalarmul_alt
+.endif // macho
 
 
         .text
         .balign 4
+.if {macho}
 _rscrypto_p256_scalarmul_alt:
         .cfi_startproc
 
         stp x19, x20, [sp, #-16]! %% .cfi_adjust_cfa_offset 16 %% .cfi_rel_offset x19, 0 %% .cfi_rel_offset x20, 8
         stp x21, x30, [sp, #-16]! %% .cfi_adjust_cfa_offset 16 %% .cfi_rel_offset x21, 0 %% .cfi_rel_offset x30, 8
         sub sp, sp, #(31*32 +0) %% .cfi_adjust_cfa_offset 31*32
+.else // macho
+rscrypto_p256_scalarmul_alt:
+        .cfi_startproc
+
+        stp x19, x20, [sp, #-16]!
+        .cfi_adjust_cfa_offset 16
+        .cfi_rel_offset x19, 0
+        .cfi_rel_offset x20, 8
+        stp x21, x30, [sp, #-16]!
+        .cfi_adjust_cfa_offset 16
+        .cfi_rel_offset x21, 0
+        .cfi_rel_offset x30, 8
+        sub sp, sp, #(31*32 +0)
+        .cfi_adjust_cfa_offset 31*32
+.endif // macho
 
 
 
@@ -30,8 +52,19 @@ _rscrypto_p256_scalarmul_alt:
 
 
 
+.if {macho}
         movz x12, #0x2551 %% movk x12, #0xfc63, lsl #16 %% movk x12, #0xcac2, lsl #32 %% movk x12, #0xf3b9, lsl #48
         movz x13, #0x9e84 %% movk x13, #0xa717, lsl #16 %% movk x13, #0xfaad, lsl #32 %% movk x13, #0xbce6, lsl #48
+.else // macho
+        movz x12, #0x2551
+        movk x12, #0xfc63, lsl #16
+        movk x12, #0xcac2, lsl #32
+        movk x12, #0xf3b9, lsl #48
+        movz x13, #0x9e84
+        movk x13, #0xa717, lsl #16
+        movk x13, #0xfaad, lsl #32
+        movk x13, #0xbce6, lsl #48
+.endif // macho
         mov x14, #0xffffffffffffffff
         mov x15, #0xffffffff00000000
 
@@ -347,10 +380,17 @@ Lp256_scalarmul_alt_loop:
 
         mov x16, sp
         mov x17, #62
+.if {macho}
 Lrscrypto_p256_scalarmul_alt_clear_frame:
         stp xzr, xzr, [x16], #16
         subs x17, x17, #1
         b.ne Lrscrypto_p256_scalarmul_alt_clear_frame
+.else // macho
+.Lrscrypto_p256_scalarmul_alt_clear_frame:
+        stp xzr, xzr, [x16], #16
+        subs x17, x17, #1
+        b.ne .Lrscrypto_p256_scalarmul_alt_clear_frame
+.endif // macho
         mov x0, xzr
         mov x1, xzr
         mov x2, xzr
@@ -369,6 +409,7 @@ Lrscrypto_p256_scalarmul_alt_clear_frame:
         mov x15, xzr
         mov x16, xzr
         mov x17, xzr
+.if {macho}
         add sp, sp, #(31*32 +0) %% .cfi_adjust_cfa_offset -31*32
         ldp x21, x30, [sp]
         stp xzr, xzr, [sp]
@@ -377,6 +418,24 @@ Lrscrypto_p256_scalarmul_alt_clear_frame:
         stp xzr, xzr, [sp]
         add sp, sp, #16 %% .cfi_adjust_cfa_offset -16 %% .cfi_restore x19 %% .cfi_restore x20
         ret %% .cfi_endproc
+.else // macho
+        add sp, sp, #(31*32 +0)
+        .cfi_adjust_cfa_offset -31*32
+        ldp x21, x30, [sp]
+        stp xzr, xzr, [sp]
+        add sp, sp, #16
+        .cfi_adjust_cfa_offset -16
+        .cfi_restore x21
+        .cfi_restore x30
+        ldp x19, x20, [sp]
+        stp xzr, xzr, [sp]
+        add sp, sp, #16
+        .cfi_adjust_cfa_offset -16
+        .cfi_restore x19
+        .cfi_restore x20
+        ret
+        .cfi_endproc
+.endif // macho
 
 
 
@@ -422,7 +481,12 @@ Lp256_scalarmul_alt_local_demont_p256:
         adc x5, x5, xzr
         stp x2, x3, [x0]
         stp x4, x5, [x0, #16]
+.if {macho}
         ret %% .cfi_endproc
+.else // macho
+        ret
+        .cfi_endproc
+.endif // macho
 
 
 
@@ -430,10 +494,27 @@ Lp256_scalarmul_alt_local_demont_p256:
 
 Lp256_scalarmul_alt_local_inv_p256:
         .cfi_startproc
+.if {macho}
         stp x19, x20, [sp, #-16]! %% .cfi_adjust_cfa_offset 16 %% .cfi_rel_offset x19, 0 %% .cfi_rel_offset x20, 8
         stp x21, x22, [sp, #-16]! %% .cfi_adjust_cfa_offset 16 %% .cfi_rel_offset x21, 0 %% .cfi_rel_offset x22, 8
         stp x23, x24, [sp, #-16]! %% .cfi_adjust_cfa_offset 16 %% .cfi_rel_offset x23, 0 %% .cfi_rel_offset x24, 8
         sub sp, sp, #(160 +0) %% .cfi_adjust_cfa_offset 160
+.else // macho
+        stp x19, x20, [sp, #-16]!
+        .cfi_adjust_cfa_offset 16
+        .cfi_rel_offset x19, 0
+        .cfi_rel_offset x20, 8
+        stp x21, x22, [sp, #-16]!
+        .cfi_adjust_cfa_offset 16
+        .cfi_rel_offset x21, 0
+        .cfi_rel_offset x22, 8
+        stp x23, x24, [sp, #-16]!
+        .cfi_adjust_cfa_offset 16
+        .cfi_rel_offset x23, 0
+        .cfi_rel_offset x24, 8
+        sub sp, sp, #(160 +0)
+        .cfi_adjust_cfa_offset 160
+.endif // macho
         mov x20, x0
         mov x10, #0xffffffffffffffff
         mov x11, #0xffffffff
@@ -1502,6 +1583,7 @@ Lp256_scalarmul_alt_inv_midloop:
         stp x12, x13, [x20, #16]
         mov x16, sp
         mov x17, #10
+.if {macho}
 Lrscrypto_p256_scalarmul_alt_clear_inverse_frame:
         stp xzr, xzr, [x16], #16
         subs x17, x17, #1
@@ -1517,6 +1599,34 @@ Lrscrypto_p256_scalarmul_alt_clear_inverse_frame:
         stp xzr, xzr, [sp]
         add sp, sp, #16 %% .cfi_adjust_cfa_offset -16 %% .cfi_restore x19 %% .cfi_restore x20
         ret %% .cfi_endproc
+.else // macho
+.Lrscrypto_p256_scalarmul_alt_clear_inverse_frame:
+        stp xzr, xzr, [x16], #16
+        subs x17, x17, #1
+        b.ne .Lrscrypto_p256_scalarmul_alt_clear_inverse_frame
+        add sp, sp, #(160 +0)
+        .cfi_adjust_cfa_offset -160
+        ldp x23, x24, [sp]
+        stp xzr, xzr, [sp]
+        add sp, sp, #16
+        .cfi_adjust_cfa_offset -16
+        .cfi_restore x23
+        .cfi_restore x24
+        ldp x21, x22, [sp]
+        stp xzr, xzr, [sp]
+        add sp, sp, #16
+        .cfi_adjust_cfa_offset -16
+        .cfi_restore x21
+        .cfi_restore x22
+        ldp x19, x20, [sp]
+        stp xzr, xzr, [sp]
+        add sp, sp, #16
+        .cfi_adjust_cfa_offset -16
+        .cfi_restore x19
+        .cfi_restore x20
+        ret
+        .cfi_endproc
+.endif // macho
 
 
 
@@ -1637,7 +1747,12 @@ Lp256_scalarmul_alt_local_montmul_p256:
         csel x15, x15, x5, cc
         stp x12, x13, [x0]
         stp x14, x15, [x0, #16]
+.if {macho}
         ret %% .cfi_endproc
+.else // macho
+        ret
+        .cfi_endproc
+.endif // macho
 
 
 
@@ -1736,7 +1851,12 @@ Lp256_scalarmul_alt_local_montsqr_p256:
         csel x11, x11, x7, cc
         stp x8, x9, [x0]
         stp x10, x11, [x0, #16]
+.if {macho}
         ret %% .cfi_endproc
+.else // macho
+        ret
+        .cfi_endproc
+.endif // macho
 
 
 
@@ -1867,7 +1987,12 @@ Lp256_scalarmul_alt_local_tomont_p256:
         adc x6, x6, x7
         stp x3, x4, [x0]
         stp x5, x6, [x0, #16]
+.if {macho}
         ret %% .cfi_endproc
+.else // macho
+        ret
+        .cfi_endproc
+.endif // macho
 
 
 
@@ -1875,7 +2000,12 @@ Lp256_scalarmul_alt_local_tomont_p256:
 
 Lp256_scalarmul_alt_local_p256_montjadd:
         .cfi_startproc
+.if {macho}
         sub sp, sp, #(224 +0) %% .cfi_adjust_cfa_offset 224
+.else // macho
+        sub sp, sp, #(224 +0)
+        .cfi_adjust_cfa_offset 224
+.endif // macho
         mov x15, x0
         mov x16, x1
         mov x17, x2
@@ -3803,12 +3933,23 @@ Lp256_scalarmul_alt_local_p256_montjadd:
         stp x10, x11, [x15, #80]
         mov x16, sp
         mov x17, #14
+.if {macho}
 Lrscrypto_p256_scalarmul_alt_clear_add_frame:
         stp xzr, xzr, [x16], #16
         subs x17, x17, #1
         b.ne Lrscrypto_p256_scalarmul_alt_clear_add_frame
         add sp, sp, #(224 +0) %% .cfi_adjust_cfa_offset -224
         ret %% .cfi_endproc
+.else // macho
+.Lrscrypto_p256_scalarmul_alt_clear_add_frame:
+        stp xzr, xzr, [x16], #16
+        subs x17, x17, #1
+        b.ne .Lrscrypto_p256_scalarmul_alt_clear_add_frame
+        add sp, sp, #(224 +0)
+        .cfi_adjust_cfa_offset -224
+        ret
+        .cfi_endproc
+.endif // macho
 
 
 
@@ -3816,7 +3957,12 @@ Lrscrypto_p256_scalarmul_alt_clear_add_frame:
 
 Lp256_scalarmul_alt_local_p256_montjdouble:
         .cfi_startproc
+.if {macho}
         sub sp, sp, #(192 +0) %% .cfi_adjust_cfa_offset 192
+.else // macho
+        sub sp, sp, #(192 +0)
+        .cfi_adjust_cfa_offset 192
+.endif // macho
         mov x15, x0
         mov x16, x1
         ldp x2, x3, [x16, #64]
@@ -4855,12 +5001,23 @@ Lp256_scalarmul_alt_local_p256_montjdouble:
         stp x5, x6, [x15, #48]
         mov x16, sp
         mov x17, #12
+.if {macho}
 Lrscrypto_p256_scalarmul_alt_clear_double_frame:
         stp xzr, xzr, [x16], #16
         subs x17, x17, #1
         b.ne Lrscrypto_p256_scalarmul_alt_clear_double_frame
         add sp, sp, #(192 +0) %% .cfi_adjust_cfa_offset -192
         ret %% .cfi_endproc
+.else // macho
+.Lrscrypto_p256_scalarmul_alt_clear_double_frame:
+        stp xzr, xzr, [x16], #16
+        subs x17, x17, #1
+        b.ne .Lrscrypto_p256_scalarmul_alt_clear_double_frame
+        add sp, sp, #(192 +0)
+        .cfi_adjust_cfa_offset -192
+        ret
+        .cfi_endproc
+.endif // macho
 
 
 
@@ -4868,7 +5025,12 @@ Lrscrypto_p256_scalarmul_alt_clear_double_frame:
 
 Lp256_scalarmul_alt_local_p256_montjmixadd:
         .cfi_startproc
+.if {macho}
         sub sp, sp, #(192 +0) %% .cfi_adjust_cfa_offset 192
+.else // macho
+        sub sp, sp, #(192 +0)
+        .cfi_adjust_cfa_offset 192
+.endif // macho
         mov x15, x0
         mov x16, x1
         mov x17, x2
@@ -6230,9 +6392,20 @@ Lp256_scalarmul_alt_local_p256_montjmixadd:
         stp x10, x11, [x15, #80]
         mov x16, sp
         mov x17, #12
+.if {macho}
 Lrscrypto_p256_scalarmul_alt_clear_mixadd_frame:
         stp xzr, xzr, [x16], #16
         subs x17, x17, #1
         b.ne Lrscrypto_p256_scalarmul_alt_clear_mixadd_frame
         add sp, sp, #(192 +0) %% .cfi_adjust_cfa_offset -192
         ret %% .cfi_endproc
+.else // macho
+.Lrscrypto_p256_scalarmul_alt_clear_mixadd_frame:
+        stp xzr, xzr, [x16], #16
+        subs x17, x17, #1
+        b.ne .Lrscrypto_p256_scalarmul_alt_clear_mixadd_frame
+        add sp, sp, #(192 +0)
+        .cfi_adjust_cfa_offset -192
+        ret
+        .cfi_endproc
+.endif // macho

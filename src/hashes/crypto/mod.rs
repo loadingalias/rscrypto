@@ -5,6 +5,9 @@ use core::fmt;
 
 #[cfg(feature = "ascon-hash")]
 pub mod ascon;
+#[cfg(any(feature = "blake2b", feature = "blake2s"))]
+#[macro_use]
+mod blake2_macros;
 #[cfg(feature = "blake2b")]
 pub mod blake2b;
 #[cfg(feature = "blake2s")]

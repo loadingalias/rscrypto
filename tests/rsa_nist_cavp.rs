@@ -76,6 +76,8 @@ fn pkcs1_der(n: &[u8], e: &[u8]) -> Vec<u8> {
   tlv(0x30, &body)
 }
 
+mod common;
+
 fn hex_to_vec(hex: &str) -> Vec<u8> {
   let mut padded;
   let hex = if hex.len().is_multiple_of(2) {
@@ -87,13 +89,7 @@ fn hex_to_vec(hex: &str) -> Vec<u8> {
     &padded
   };
 
-  let mut out = Vec::with_capacity(hex.len() / 2);
-  for chunk in hex.as_bytes().as_chunks::<2>().0 {
-    let high = hex_value(chunk[0]).expect("CAVP fixture must contain hexadecimal digits");
-    let low = hex_value(chunk[1]).expect("CAVP fixture must contain hexadecimal digits");
-    out.push((high << 4) | low);
-  }
-  out
+  common::decode_hex_vec(hex)
 }
 
 fn hex_to_canonical_vec(hex: &str) -> Vec<u8> {
@@ -116,15 +112,6 @@ fn hex_to_u64(hex: &str) -> u64 {
     value = (value << 8) | u64::from(byte);
   }
   value
-}
-
-fn hex_value(byte: u8) -> Option<u8> {
-  match byte {
-    b'0'..=b'9' => Some(byte.strict_sub(b'0')),
-    b'a'..=b'f' => Some(byte.strict_sub(b'a').strict_add(10)),
-    b'A'..=b'F' => Some(byte.strict_sub(b'A').strict_add(10)),
-    _ => None,
-  }
 }
 
 fn field<'a>(value: &'a Value, name: &'static str) -> &'a str {

@@ -1,5 +1,8 @@
 #![cfg(feature = "rsa")]
 
+mod common;
+use common::decode_hex_vec;
+
 use core::ops::Range;
 
 use rscrypto::auth::rsa::expert::RsaPkcs1v15Decrypt;
@@ -63,26 +66,6 @@ enum WycheproofResult {
   Valid,
   Acceptable,
   Invalid,
-}
-
-fn hex_to_vec(hex: &str) -> Vec<u8> {
-  assert_eq!(hex.len() % 2, 0);
-  let mut out = Vec::with_capacity(hex.len() / 2);
-  for chunk in hex.as_bytes().as_chunks::<2>().0 {
-    let high = hex_value(chunk[0]).expect("Wycheproof fixture must contain hexadecimal digits");
-    let low = hex_value(chunk[1]).expect("Wycheproof fixture must contain hexadecimal digits");
-    out.push((high << 4) | low);
-  }
-  out
-}
-
-fn hex_value(byte: u8) -> Option<u8> {
-  match byte {
-    b'0'..=b'9' => Some(byte.strict_sub(b'0')),
-    b'a'..=b'f' => Some(byte.strict_sub(b'a').strict_add(10)),
-    b'A'..=b'F' => Some(byte.strict_sub(b'A').strict_add(10)),
-    _ => None,
-  }
 }
 
 fn groups<'a>(suite: &'a Value, expected_algorithm: &str) -> &'a [Value] {
@@ -150,13 +133,13 @@ fn assert_pkcs1v15_wycheproof_vectors(
   for group in groups(&suite, "RSASSA-PKCS1-v1_5") {
     assert_eq!(group["keySize"].as_u64(), Some(expected_key_size));
     assert_eq!(group["sha"].as_str(), Some(expected_sha));
-    let public_key = hex_to_vec(field(group, "publicKeyDer"));
+    let public_key = decode_hex_vec(field(group, "publicKeyDer"));
     let key = RsaPublicKey::from_spki_der_with_policy(&public_key, &policy).expect("Wycheproof RSA key must parse");
     let mut scratch = key.public_scratch();
 
     for test in test_cases(group) {
-      let msg = hex_to_vec(field(test, "msg"));
-      let sig = hex_to_vec(field(test, "sig"));
+      let msg = decode_hex_vec(field(test, "msg"));
+      let sig = decode_hex_vec(field(test, "sig"));
       let verified = key
         .verify_pkcs1v15_with_scratch(profile, &msg, &sig, &mut scratch)
         .is_ok();
@@ -215,13 +198,13 @@ fn assert_pss_wycheproof_vectors(
     assert_eq!(group["mgf"].as_str(), Some("MGF1"));
     assert_eq!(group["mgfSha"].as_str(), Some(expected_sha));
     assert_eq!(group["sLen"].as_u64(), Some(expected_salt_len as u64));
-    let public_key = hex_to_vec(field(group, "publicKeyDer"));
+    let public_key = decode_hex_vec(field(group, "publicKeyDer"));
     let key = public_key_from_wycheproof_spki(&public_key, expected_key_size, "Wycheproof RSA-PSS key must parse");
     let mut scratch = key.public_scratch();
 
     for test in test_cases(group) {
-      let msg = hex_to_vec(field(test, "msg"));
-      let sig = hex_to_vec(field(test, "sig"));
+      let msg = decode_hex_vec(field(test, "msg"));
+      let sig = decode_hex_vec(field(test, "sig"));
       let verified = key
         .verify_pss_with_salt_len_and_scratch(profile, expected_salt_len, &msg, &sig, &mut scratch)
         .is_ok();
@@ -299,7 +282,7 @@ fn assert_oaep_wycheproof_vectors(
     assert_eq!(group["sha"].as_str(), Some(expected_sha));
     assert_eq!(group["mgf"].as_str(), Some("MGF1"));
     assert_eq!(group["mgfSha"].as_str(), Some(expected_sha));
-    let private_key_der = hex_to_vec(field(group, "privateKeyPkcs8"));
+    let private_key_der = decode_hex_vec(field(group, "privateKeyPkcs8"));
     let key = private_key_from_wycheproof_pkcs8(
       &private_key_der,
       expected_key_size,
@@ -314,8 +297,8 @@ fn assert_oaep_wycheproof_vectors(
     let group_has_invalid = test_cases(group).iter().any(|test| field(test, "result") == "invalid");
 
     for test in test_cases(group) {
-      let ciphertext = hex_to_vec(field(test, "ct"));
-      let label = hex_to_vec(field(test, "label"));
+      let ciphertext = decode_hex_vec(field(test, "ct"));
+      let label = decode_hex_vec(field(test, "label"));
       let mut plaintext = vec![0xa5; key.public_key().modulus().len()];
       let decrypted = key.decrypt_oaep_with_blinding_factor(
         profile,
@@ -331,7 +314,7 @@ fn assert_oaep_wycheproof_vectors(
           let plaintext_len = decrypted.expect("Wycheproof valid OAEP ciphertext must decrypt");
           assert_eq!(
             &plaintext[..plaintext_len],
-            hex_to_vec(field(test, "msg")).as_slice(),
+            decode_hex_vec(field(test, "msg")).as_slice(),
             "Wycheproof OAEP tcId {} decrypted to the wrong plaintext",
             test["tcId"]
           );
@@ -349,7 +332,7 @@ fn assert_oaep_wycheproof_vectors(
               .expect("Wycheproof OAEP valid ciphertext must decrypt with caller-owned scratch");
             assert_eq!(
               &scratch_plaintext[..scratch_plaintext_len],
-              hex_to_vec(field(test, "msg")).as_slice(),
+              decode_hex_vec(field(test, "msg")).as_slice(),
               "Wycheproof OAEP tcId {} scratch decrypt produced the wrong plaintext",
               test["tcId"]
             );
@@ -446,7 +429,7 @@ fn assert_oaep_mgf1sha1_vectors_are_rejected(
     assert_eq!(group["sha"].as_str(), Some(expected_sha));
     assert_eq!(group["mgf"].as_str(), Some("MGF1"));
     assert_eq!(group["mgfSha"].as_str(), Some("SHA-1"));
-    let private_key_der = hex_to_vec(field(group, "privateKeyPkcs8"));
+    let private_key_der = decode_hex_vec(field(group, "privateKeyPkcs8"));
     let key = private_key_from_wycheproof_pkcs8(
       &private_key_der,
       expected_key_size,
@@ -457,8 +440,8 @@ fn assert_oaep_mgf1sha1_vectors_are_rejected(
     let mut scratch = key.private_scratch();
 
     for test in test_cases(group) {
-      let ciphertext = hex_to_vec(field(test, "ct"));
-      let label = hex_to_vec(field(test, "label"));
+      let ciphertext = decode_hex_vec(field(test, "ct"));
+      let label = decode_hex_vec(field(test, "label"));
       let mut plaintext = vec![0u8; key.public_key().modulus().len()];
       let decrypted = key.decrypt_oaep_with_blinding_factor(
         profile,
@@ -578,7 +561,7 @@ fn assert_rsaes_pkcs1v15_wycheproof_vectors(
   for group in selected_groups {
     assert_eq!(group["type"].as_str(), Some("RsaesPkcs1Decrypt"));
     assert_eq!(group["keySize"].as_u64(), Some(expected_key_size));
-    let private_key_der = hex_to_vec(field(group, "privateKeyPkcs8"));
+    let private_key_der = decode_hex_vec(field(group, "privateKeyPkcs8"));
     let key = private_key_from_wycheproof_pkcs8(
       &private_key_der,
       expected_key_size,
@@ -593,7 +576,7 @@ fn assert_rsaes_pkcs1v15_wycheproof_vectors(
     let group_has_invalid = test_cases(group).iter().any(|test| field(test, "result") == "invalid");
 
     for test in test_cases(group) {
-      let ciphertext = hex_to_vec(field(test, "ct"));
+      let ciphertext = decode_hex_vec(field(test, "ct"));
       let mut plaintext = vec![0xa5; key.public_key().modulus().len()];
       let decrypted = key.decrypt_pkcs1v15_with_blinding_factor(
         &ciphertext,
@@ -607,7 +590,7 @@ fn assert_rsaes_pkcs1v15_wycheproof_vectors(
           let plaintext_len = decrypted.expect("Wycheproof valid RSAES-PKCS1-v1_5 ciphertext must decrypt");
           assert_eq!(
             &plaintext[..plaintext_len],
-            hex_to_vec(field(test, "msg")).as_slice(),
+            decode_hex_vec(field(test, "msg")).as_slice(),
             "Wycheproof RSAES-PKCS1-v1_5 tcId {} decrypted to the wrong plaintext",
             test["tcId"]
           );
@@ -623,7 +606,7 @@ fn assert_rsaes_pkcs1v15_wycheproof_vectors(
               .expect("Wycheproof RSAES-PKCS1-v1_5 valid ciphertext must decrypt with caller-owned scratch");
             assert_eq!(
               &scratch_plaintext[..scratch_plaintext_len],
-              hex_to_vec(field(test, "msg")).as_slice(),
+              decode_hex_vec(field(test, "msg")).as_slice(),
               "Wycheproof RSAES-PKCS1-v1_5 tcId {} scratch decrypt produced the wrong plaintext",
               test["tcId"]
             );
@@ -723,7 +706,7 @@ fn assert_pkcs1v15_sig_gen_wycheproof_vectors(json: &str, expected_key_size: u64
       continue;
     }
 
-    let private_key_der = hex_to_vec(field(group, "privateKeyPkcs8"));
+    let private_key_der = decode_hex_vec(field(group, "privateKeyPkcs8"));
     let key = RsaPrivateKey::from_pkcs8_der_with_policy(&private_key_der, &RsaPublicKeyPolicy::modulus_2048_to_8192())
       .expect("Wycheproof PKCS1v1.5 private key must parse");
     assert_eq!(key.public_key().modulus_bits() as u64, expected_key_size);
@@ -734,8 +717,8 @@ fn assert_pkcs1v15_sig_gen_wycheproof_vectors(json: &str, expected_key_size: u64
       match wycheproof_result(field(test, "result")) {
         WycheproofResult::Valid => {
           valid = valid.strict_add(1);
-          let message = hex_to_vec(field(test, "msg"));
-          let expected_signature = hex_to_vec(field(test, "sig"));
+          let message = decode_hex_vec(field(test, "msg"));
+          let expected_signature = decode_hex_vec(field(test, "sig"));
           let mut signature = vec![0u8; key.public_key().modulus().len()];
           let mut scratch_signature = vec![0u8; key.public_key().modulus().len()];
           let mut scratch = key.private_scratch();

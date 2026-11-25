@@ -24,7 +24,7 @@ from asm_heuristics import (
   scan_symbol,
   summarize,
   summarize_closure,
-  validate_waivers,
+  expanded_waivers, validate_waivers,
 )
 from full import build_findings, configure_target_environment
 from provenance import codegen_value, resolve_executable, resolved_linker_version, symbol_objects
@@ -980,6 +980,12 @@ def main() -> None:
     "reviewer": "regression fixture", "reviewed_at": "2026-10-15",
   }
   assert validate_waivers([waiver]) == []
+  shared = dict(waiver, primitives=[waiver["primitive"], "other.primitive"])
+  del shared["primitive"]
+  expanded = expanded_waivers([shared])
+  assert validate_waivers(expanded) == []
+  assert any("duplicates" in error for error in validate_waivers([*expanded, dict(waiver, reviewer="second reviewer")]))
+
   assert apply_waivers([public_site], [waiver], target) == []
   assert public_site["operand_class"] == "public" and public_site["waived"]
   assert apply_waivers([], [waiver], "riscv64gc-unknown-linux-gnu") == []

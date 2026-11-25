@@ -1,14 +1,22 @@
-//! macOS AArch64 RSA arithmetic assembly backend.
+//! AArch64 RSA arithmetic assembly backend.
 //!
 //! This module owns the ABI boundary. `rsa.rs` owns all RSA validation,
 //! representative range checks, dispatch, and fallback semantics.
 
 use core::arch::global_asm;
 
+#[cfg(target_os = "linux")]
+global_asm!(include_str!("asm/rscrypto_rsa_aarch64_linux_elf.s"));
+#[cfg(target_os = "macos")]
 global_asm!(include_str!("asm/rscrypto_rsa_aarch64_apple_darwin.s"));
 
 unsafe extern "C" {
-  fn rscrypto_rsa_mont_reduce_cios_32_aarch64_apple_darwin(
+  #[cfg_attr(target_os = "linux", link_name = "rscrypto_rsa_mont_reduce_cios_32_aarch64_elf")]
+  #[cfg_attr(
+    target_os = "macos",
+    link_name = "rscrypto_rsa_mont_reduce_cios_32_aarch64_apple_darwin"
+  )]
+  fn rscrypto_rsa_mont_reduce_cios_32_aarch64(
     out: *mut u64,
     value: *const u64,
     modulus: *const u64,
@@ -16,7 +24,12 @@ unsafe extern "C" {
     t: *mut u64,
   );
 
-  fn rscrypto_rsa_mont_reduce_cios_words_aarch64_apple_darwin(
+  #[cfg_attr(target_os = "linux", link_name = "rscrypto_rsa_mont_reduce_cios_words_aarch64_elf")]
+  #[cfg_attr(
+    target_os = "macos",
+    link_name = "rscrypto_rsa_mont_reduce_cios_words_aarch64_apple_darwin"
+  )]
+  fn rscrypto_rsa_mont_reduce_cios_words_aarch64(
     out: *mut u64,
     value: *const u64,
     modulus: *const u64,
@@ -48,14 +61,14 @@ pub(super) fn mont_reduce_cios_words(
   debug_assert!(t.len() >= bignum_mont_scratch_words(words));
 
   // SAFETY: RSA Montgomery REDC assembly call because:
-  // 1. This module is compiled only for macOS AArch64 and embeds the matching Darwin symbol.
+  // 1. The selected AArch64 source and link name match the target ABI.
   // 2. The caller checks `out`, `value`, and `modulus` are 48, 64, or 128 `u64` limbs and `t` has
   //    `2 * words + 2` scratch limbs.
   // 3. The assembly writes only caller-provided scratch and performs final conditional subtraction
   //    with mask selection, not data-dependent branches.
   // 4. All pointers are derived from live Rust slices and the assembly does not retain them.
   unsafe {
-    rscrypto_rsa_mont_reduce_cios_words_aarch64_apple_darwin(
+    rscrypto_rsa_mont_reduce_cios_words_aarch64(
       out.as_mut_ptr(),
       value.as_ptr(),
       modulus.as_ptr(),
@@ -74,7 +87,7 @@ pub(super) fn mont_reduce_cios_32(out: &mut [u64], value: &[u64], modulus: &[u64
   debug_assert!(t.len() >= 66);
 
   // SAFETY: RSA-2048 Montgomery REDC assembly call because:
-  // 1. This module is compiled only for macOS AArch64 and embeds the matching Darwin symbol.
+  // 1. The selected AArch64 source and link name match the target ABI.
   // 2. The caller checks `out`, `value`, and `modulus` are 32 `u64` limbs and `t` has at least 66
   //    `u64` scratch limbs.
   // 3. All pointers are derived from live Rust slices and are valid for the assembly's fixed
@@ -82,12 +95,6 @@ pub(super) fn mont_reduce_cios_32(out: &mut [u64], value: &[u64], modulus: &[u64
   // 4. `t` is dedicated caller-owned scratch. Current callers pass distinct `out` and `value` slices
   //    through the RSA arithmetic scratch layout.
   unsafe {
-    rscrypto_rsa_mont_reduce_cios_32_aarch64_apple_darwin(
-      out.as_mut_ptr(),
-      value.as_ptr(),
-      modulus.as_ptr(),
-      n0,
-      t.as_mut_ptr(),
-    )
+    rscrypto_rsa_mont_reduce_cios_32_aarch64(out.as_mut_ptr(), value.as_ptr(), modulus.as_ptr(), n0, t.as_mut_ptr())
   };
 }

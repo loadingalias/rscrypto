@@ -1358,6 +1358,121 @@ pub unsafe extern "C" fn ct_entry_ed25519_sign(
   }
 }
 
+macro_rules! ecdsa_public_key_body {
+  ($key:ty, $out:expr, $secret_key:expr, $blind_bytes:literal, $blind:expr) => {{
+    // SAFETY: The caller provides the secret key bytes for this curve until the copy finishes.
+    let Some(secret_key) = (unsafe { read_array($secret_key) }) else {
+      return STATUS_ERR;
+    };
+    // SAFETY: The caller provides the full blinding input until the copy finishes.
+    let Some(blind) = (unsafe { read_array::<$blind_bytes>($blind) }) else {
+      return STATUS_ERR;
+    };
+
+    let Ok(secret_key) = <$key>::from_bytes(secret_key) else {
+      return STATUS_ERR;
+    };
+    let public_key = match secret_key.try_public_key_blinded_with(|out| {
+      out.copy_from_slice(&blind);
+      Ok::<(), core::convert::Infallible>(())
+    }) {
+      Ok(public_key) => public_key,
+      Err(never) => match never {},
+    };
+    let public_key = public_key.to_sec1_bytes();
+
+    // SAFETY: The output fits the caller-owned buffer. All input reads have finished.
+    if unsafe { write_array($out, &public_key) } {
+      STATUS_OK
+    } else {
+      STATUS_ERR
+    }
+  }};
+}
+
+macro_rules! ecdsa_sign_body {
+  ($key:ty, $out:expr, $secret_key:expr, $blind_bytes:literal, $blind:expr, $message:expr, $message_len:expr) => {{
+    // SAFETY: The caller provides the secret key bytes for this curve until the copy finishes.
+    let Some(secret_key) = (unsafe { read_array($secret_key) }) else {
+      return STATUS_ERR;
+    };
+    // SAFETY: The caller provides the full blinding input until the copy finishes.
+    let Some(blind) = (unsafe { read_array::<$blind_bytes>($blind) }) else {
+      return STATUS_ERR;
+    };
+    // SAFETY: The function contract establishes the allocation, length bound, initialization,
+    // immutability, and lifetime required for a non-null message; input_slice handles both null
+    // shapes.
+    let Some(message) = (unsafe { input_slice($message, $message_len) }) else {
+      return STATUS_ERR;
+    };
+
+    let Ok(secret_key) = <$key>::from_bytes(secret_key) else {
+      return STATUS_ERR;
+    };
+    let Ok(signature) = secret_key.try_sign_blinded_with(message, |out| {
+      out.copy_from_slice(&blind);
+      Ok::<(), core::convert::Infallible>(())
+    }) else {
+      return STATUS_ERR;
+    };
+    let signature = signature.to_bytes();
+
+    // SAFETY: The output fits the caller-owned buffer. All input reads have finished.
+    if unsafe { write_array($out, &signature) } {
+      STATUS_OK
+    } else {
+      STATUS_ERR
+    }
+  }};
+}
+
+macro_rules! ecdsa_default_public_key_body {
+  ($key:ty, $out:expr, $secret_key:expr) => {{
+    // SAFETY: The caller provides the secret key bytes for this curve until the copy finishes.
+    let Some(secret_key) = (unsafe { read_array($secret_key) }) else {
+      return STATUS_ERR;
+    };
+    let Ok(secret_key) = <$key>::from_bytes(secret_key) else {
+      return STATUS_ERR;
+    };
+    let public_key = secret_key.public_key().to_sec1_bytes();
+    // SAFETY: The output fits the caller-owned buffer. All input reads have finished.
+    if unsafe { write_array($out, &public_key) } {
+      STATUS_OK
+    } else {
+      STATUS_ERR
+    }
+  }};
+}
+
+macro_rules! ecdsa_default_sign_body {
+  ($key:ty, $out:expr, $secret_key:expr, $message:expr, $message_len:expr) => {{
+    // SAFETY: The caller provides the secret key bytes for this curve until the copy finishes.
+    let Some(secret_key) = (unsafe { read_array($secret_key) }) else {
+      return STATUS_ERR;
+    };
+    // SAFETY: The function contract establishes the allocation, length bound, initialization,
+    // immutability, and lifetime required for a non-null message; input_slice handles both null
+    // shapes.
+    let Some(message) = (unsafe { input_slice($message, $message_len) }) else {
+      return STATUS_ERR;
+    };
+    let Ok(secret_key) = <$key>::from_bytes(secret_key) else {
+      return STATUS_ERR;
+    };
+    let Ok(signature) = secret_key.try_sign(message) else {
+      return STATUS_ERR;
+    };
+    // SAFETY: The output fits the caller-owned buffer. All input reads have finished.
+    if unsafe { write_array($out, &signature.to_bytes()) } {
+      STATUS_OK
+    } else {
+      STATUS_ERR
+    }
+  }};
+}
+
 /// Derive an ECDSA/P-256 public key with caller-supplied blinding.
 ///
 /// # Safety
@@ -1370,37 +1485,7 @@ pub unsafe extern "C" fn ct_entry_ed25519_sign(
 ///   finish before the output write.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ct_entry_ecdsa_p256_public_key(out: *mut u8, secret_key: *const u8, blind: *const u8) -> u8 {
-  // SAFETY: The function contract requires a non-null secret_key to expose 32 initialized,
-  // readable bytes that remain immutable while read_array copies them into owned storage.
-  let Some(secret_key) = (unsafe { read_array::<32>(secret_key) }) else {
-    return STATUS_ERR;
-  };
-  // SAFETY: The function contract requires a non-null blind to expose 64 initialized, readable
-  // bytes that remain immutable while read_array copies them into owned storage.
-  let Some(blind) = (unsafe { read_array::<64>(blind) }) else {
-    return STATUS_ERR;
-  };
-
-  let Ok(secret_key) = EcdsaP256SecretKey::from_bytes(secret_key) else {
-    return STATUS_ERR;
-  };
-  let public_key = match secret_key.try_public_key_blinded_with(|out| {
-    out.copy_from_slice(&blind);
-    Ok::<(), core::convert::Infallible>(())
-  }) {
-    Ok(public_key) => public_key,
-    Err(never) => match never {},
-  };
-  let public_key = public_key.to_sec1_bytes();
-
-  // SAFETY: The function contract requires a non-null out to expose 65 writable bytes without
-  // concurrent access. Both caller-memory reads have finished, so out may overlap either input;
-  // write_array rejects null before writing from the independently owned public key.
-  if unsafe { write_array(out, &public_key) } {
-    STATUS_OK
-  } else {
-    STATUS_ERR
-  }
+  ecdsa_public_key_body!(EcdsaP256SecretKey, out, secret_key, 64, blind)
 }
 
 /// Sign a message with ECDSA/P-256 and caller-supplied projective blinding.
@@ -1424,42 +1509,7 @@ pub unsafe extern "C" fn ct_entry_ecdsa_p256_sign(
   message: *const u8,
   message_len: usize,
 ) -> u8 {
-  // SAFETY: The function contract requires a non-null secret_key to expose 32 initialized,
-  // readable bytes that remain immutable while read_array copies them into owned storage.
-  let Some(secret_key) = (unsafe { read_array::<32>(secret_key) }) else {
-    return STATUS_ERR;
-  };
-  // SAFETY: The function contract requires a non-null blind to expose 64 initialized, readable
-  // bytes that remain immutable while read_array copies them into owned storage.
-  let Some(blind) = (unsafe { read_array::<64>(blind) }) else {
-    return STATUS_ERR;
-  };
-  // SAFETY: The function contract establishes the allocation, length bound, initialization,
-  // immutability, and lifetime required for a non-null message; input_slice handles both null
-  // shapes.
-  let Some(message) = (unsafe { input_slice(message, message_len) }) else {
-    return STATUS_ERR;
-  };
-
-  let Ok(secret_key) = EcdsaP256SecretKey::from_bytes(secret_key) else {
-    return STATUS_ERR;
-  };
-  let Ok(signature) = secret_key.try_sign_blinded_with(message, |out| {
-    out.copy_from_slice(&blind);
-    Ok::<(), core::convert::Infallible>(())
-  }) else {
-    return STATUS_ERR;
-  };
-  let signature = signature.to_bytes();
-
-  // SAFETY: The function contract requires a non-null out to expose 64 writable bytes without
-  // concurrent access. All caller-memory reads have finished, so out may overlap any input;
-  // write_array rejects null before writing from the independently owned signature.
-  if unsafe { write_array(out, &signature) } {
-    STATUS_OK
-  } else {
-    STATUS_ERR
-  }
+  ecdsa_sign_body!(EcdsaP256SecretKey, out, secret_key, 64, blind, message, message_len)
 }
 
 /// Derive an ECDSA/P-384 public key with caller-supplied blinding.
@@ -1474,37 +1524,7 @@ pub unsafe extern "C" fn ct_entry_ecdsa_p256_sign(
 ///   finish before the output write.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ct_entry_ecdsa_p384_public_key(out: *mut u8, secret_key: *const u8, blind: *const u8) -> u8 {
-  // SAFETY: The function contract requires a non-null secret_key to expose 48 initialized,
-  // readable bytes that remain immutable while read_array copies them into owned storage.
-  let Some(secret_key) = (unsafe { read_array::<48>(secret_key) }) else {
-    return STATUS_ERR;
-  };
-  // SAFETY: The function contract requires a non-null blind to expose 96 initialized, readable
-  // bytes that remain immutable while read_array copies them into owned storage.
-  let Some(blind) = (unsafe { read_array::<96>(blind) }) else {
-    return STATUS_ERR;
-  };
-
-  let Ok(secret_key) = EcdsaP384SecretKey::from_bytes(secret_key) else {
-    return STATUS_ERR;
-  };
-  let public_key = match secret_key.try_public_key_blinded_with(|out| {
-    out.copy_from_slice(&blind);
-    Ok::<(), core::convert::Infallible>(())
-  }) {
-    Ok(public_key) => public_key,
-    Err(never) => match never {},
-  };
-  let public_key = public_key.to_sec1_bytes();
-
-  // SAFETY: The function contract requires a non-null out to expose 97 writable bytes without
-  // concurrent access. Both caller-memory reads have finished, so out may overlap either input;
-  // write_array rejects null before writing from the independently owned public key.
-  if unsafe { write_array(out, &public_key) } {
-    STATUS_OK
-  } else {
-    STATUS_ERR
-  }
+  ecdsa_public_key_body!(EcdsaP384SecretKey, out, secret_key, 96, blind)
 }
 
 /// Sign a message with ECDSA/P-384 and caller-supplied projective blinding.
@@ -1528,42 +1548,7 @@ pub unsafe extern "C" fn ct_entry_ecdsa_p384_sign(
   message: *const u8,
   message_len: usize,
 ) -> u8 {
-  // SAFETY: The function contract requires a non-null secret_key to expose 48 initialized,
-  // readable bytes that remain immutable while read_array copies them into owned storage.
-  let Some(secret_key) = (unsafe { read_array::<48>(secret_key) }) else {
-    return STATUS_ERR;
-  };
-  // SAFETY: The function contract requires a non-null blind to expose 96 initialized, readable
-  // bytes that remain immutable while read_array copies them into owned storage.
-  let Some(blind) = (unsafe { read_array::<96>(blind) }) else {
-    return STATUS_ERR;
-  };
-  // SAFETY: The function contract establishes the allocation, length bound, initialization,
-  // immutability, and lifetime required for a non-null message; input_slice handles both null
-  // shapes.
-  let Some(message) = (unsafe { input_slice(message, message_len) }) else {
-    return STATUS_ERR;
-  };
-
-  let Ok(secret_key) = EcdsaP384SecretKey::from_bytes(secret_key) else {
-    return STATUS_ERR;
-  };
-  let Ok(signature) = secret_key.try_sign_blinded_with(message, |out| {
-    out.copy_from_slice(&blind);
-    Ok::<(), core::convert::Infallible>(())
-  }) else {
-    return STATUS_ERR;
-  };
-  let signature = signature.to_bytes();
-
-  // SAFETY: The function contract requires a non-null out to expose 96 writable bytes without
-  // concurrent access. All caller-memory reads have finished, so out may overlap any input;
-  // write_array rejects null before writing from the independently owned signature.
-  if unsafe { write_array(out, &signature) } {
-    STATUS_OK
-  } else {
-    STATUS_ERR
-  }
+  ecdsa_sign_body!(EcdsaP384SecretKey, out, secret_key, 96, blind, message, message_len)
 }
 
 /// Derive an ECDSA/P-256 public key through the default path, which takes no caller blinding.
@@ -1576,22 +1561,7 @@ pub unsafe extern "C" fn ct_entry_ecdsa_p384_sign(
 ///   while written. A null pointer is rejected. It may overlap the input, which is read first.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ct_entry_ecdsa_p256_default_public_key(out: *mut u8, secret_key: *const u8) -> u8 {
-  // SAFETY: The function contract requires a non-null secret_key to expose 32 initialized,
-  // readable bytes that remain immutable while read_array copies them into owned storage.
-  let Some(secret_key) = (unsafe { read_array::<32>(secret_key) }) else {
-    return STATUS_ERR;
-  };
-  let Ok(secret_key) = EcdsaP256SecretKey::from_bytes(secret_key) else {
-    return STATUS_ERR;
-  };
-  let public_key = secret_key.public_key().to_sec1_bytes();
-  // SAFETY: The function contract requires a non-null out to expose 65 writable bytes without
-  // concurrent access. The input read has finished; write_array rejects null.
-  if unsafe { write_array(out, &public_key) } {
-    STATUS_OK
-  } else {
-    STATUS_ERR
-  }
+  ecdsa_default_public_key_body!(EcdsaP256SecretKey, out, secret_key)
 }
 
 /// Sign a message with ECDSA/P-256 through the default path, which takes no caller blinding.
@@ -1612,30 +1582,7 @@ pub unsafe extern "C" fn ct_entry_ecdsa_p256_default_sign(
   message: *const u8,
   message_len: usize,
 ) -> u8 {
-  // SAFETY: The function contract requires a non-null secret_key to expose 32 initialized,
-  // readable bytes that remain immutable while read_array copies them into owned storage.
-  let Some(secret_key) = (unsafe { read_array::<32>(secret_key) }) else {
-    return STATUS_ERR;
-  };
-  // SAFETY: The function contract establishes the allocation, length bound, initialization,
-  // immutability, and lifetime required for a non-null message; input_slice handles both null
-  // shapes.
-  let Some(message) = (unsafe { input_slice(message, message_len) }) else {
-    return STATUS_ERR;
-  };
-  let Ok(secret_key) = EcdsaP256SecretKey::from_bytes(secret_key) else {
-    return STATUS_ERR;
-  };
-  let Ok(signature) = secret_key.try_sign(message) else {
-    return STATUS_ERR;
-  };
-  // SAFETY: The function contract requires a non-null out to expose 64 writable bytes without
-  // concurrent access. All input reads have finished; write_array rejects null.
-  if unsafe { write_array(out, &signature.to_bytes()) } {
-    STATUS_OK
-  } else {
-    STATUS_ERR
-  }
+  ecdsa_default_sign_body!(EcdsaP256SecretKey, out, secret_key, message, message_len)
 }
 
 /// Derive an ECDSA/P-384 public key through the default path, which takes no caller blinding.
@@ -1648,22 +1595,7 @@ pub unsafe extern "C" fn ct_entry_ecdsa_p256_default_sign(
 ///   while written. A null pointer is rejected. It may overlap the input, which is read first.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ct_entry_ecdsa_p384_default_public_key(out: *mut u8, secret_key: *const u8) -> u8 {
-  // SAFETY: The function contract requires a non-null secret_key to expose 48 initialized,
-  // readable bytes that remain immutable while read_array copies them into owned storage.
-  let Some(secret_key) = (unsafe { read_array::<48>(secret_key) }) else {
-    return STATUS_ERR;
-  };
-  let Ok(secret_key) = EcdsaP384SecretKey::from_bytes(secret_key) else {
-    return STATUS_ERR;
-  };
-  let public_key = secret_key.public_key().to_sec1_bytes();
-  // SAFETY: The function contract requires a non-null out to expose 97 writable bytes without
-  // concurrent access. The input read has finished; write_array rejects null.
-  if unsafe { write_array(out, &public_key) } {
-    STATUS_OK
-  } else {
-    STATUS_ERR
-  }
+  ecdsa_default_public_key_body!(EcdsaP384SecretKey, out, secret_key)
 }
 
 /// Sign a message with ECDSA/P-384 through the default path, which takes no caller blinding.
@@ -1684,30 +1616,7 @@ pub unsafe extern "C" fn ct_entry_ecdsa_p384_default_sign(
   message: *const u8,
   message_len: usize,
 ) -> u8 {
-  // SAFETY: The function contract requires a non-null secret_key to expose 48 initialized,
-  // readable bytes that remain immutable while read_array copies them into owned storage.
-  let Some(secret_key) = (unsafe { read_array::<48>(secret_key) }) else {
-    return STATUS_ERR;
-  };
-  // SAFETY: The function contract establishes the allocation, length bound, initialization,
-  // immutability, and lifetime required for a non-null message; input_slice handles both null
-  // shapes.
-  let Some(message) = (unsafe { input_slice(message, message_len) }) else {
-    return STATUS_ERR;
-  };
-  let Ok(secret_key) = EcdsaP384SecretKey::from_bytes(secret_key) else {
-    return STATUS_ERR;
-  };
-  let Ok(signature) = secret_key.try_sign(message) else {
-    return STATUS_ERR;
-  };
-  // SAFETY: The function contract requires a non-null out to expose 96 writable bytes without
-  // concurrent access. All input reads have finished; write_array rejects null.
-  if unsafe { write_array(out, &signature.to_bytes()) } {
-    STATUS_OK
-  } else {
-    STATUS_ERR
-  }
+  ecdsa_default_sign_body!(EcdsaP384SecretKey, out, secret_key, message, message_len)
 }
 
 /// Verify a PBKDF2-HMAC-SHA256 password through the constant-time C ABI harness.

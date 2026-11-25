@@ -9,9 +9,17 @@ use core::arch::global_asm;
 use super::POINT_LENGTH;
 
 #[cfg(target_os = "macos")]
-global_asm!(include_str!("asm/rscrypto_x25519_aarch64_apple_darwin.s"));
+global_asm!(
+  include_str!("asm/rscrypto_x25519_base_table.inc"),
+  include_str!("asm/rscrypto_x25519_aarch64_apple_darwin.s"),
+  ".purgem rscrypto_x25519_base_table"
+);
 #[cfg(target_os = "linux")]
-global_asm!(include_str!("asm/rscrypto_x25519_aarch64_unknown_linux.s"));
+global_asm!(
+  include_str!("asm/rscrypto_x25519_base_table.inc"),
+  include_str!("asm/rscrypto_x25519_aarch64_unknown_linux.s"),
+  ".purgem rscrypto_x25519_base_table"
+);
 
 unsafe extern "C" {
   fn rscrypto_curve25519_x25519_byte_alt(out: *mut u8, scalar: *const u8, point: *const u8);

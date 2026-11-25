@@ -210,6 +210,10 @@ mod ni;
 #[path = "aegis256/powerpc64_ppc.rs"]
 mod ppc;
 #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
+#[macro_use]
+#[path = "aegis256/riscv64.rs"]
+mod riscv64;
+#[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
 #[path = "aegis256/riscv64_zkne.rs"]
 mod rv_zkne;
 #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]

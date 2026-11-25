@@ -259,11 +259,14 @@ into a zeroizing owner before any secret computation.
 Their `with_algorithms` constructors send the supplied catalog directly to rustls and retain no prepared keys.
 PKCS#8 input uses rustls-pki-types' borrowed or owned
 DER containers. `Provider::load_private_key` immediately wraps the input in
-`zeroize::Zeroizing`, before the size check or any parser call. With
-rustls-pki-types 1.15.1 and zeroize 1.9.1, dropping this guard clears the owned
-vector's full allocation, then frees it. Success, rejection, and unwinding
-share that guard. Immutable borrowed static DER cannot be cleared and remains
-the caller's responsibility. Aborting the process does not run destructors.
+`zeroize::Zeroizing`, before the size check or any parser call. The provider pins
+rustls-pki-types 1.16.0. Its three private-key formats delegate owned DER cleanup
+to the vector. The locked zeroize 1.9.1 implementation clears its initialized bytes
+and spare capacity before deallocation. Success, rejection, and unwinding all drop the guard.
+The pre-deallocation observations cover the earlier Apple AArch64 build with
+nightly-2026-09-30 and zeroize 1.9.0. See the [provider lifecycle evidence](secret-lifecycle.md#rustls-authentication).
+The caller owns immutable borrowed static DER. The guard cannot clear that storage.
+Aborting the process skips destructors.
 `ClientProvider` and the prepared verifiers' internal verification provider use a
 key provider that loads no key: it wraps the owned input in the same
 `zeroize::Zeroizing` guard and drops it before returning its error.

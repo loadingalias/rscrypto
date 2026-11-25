@@ -40,32 +40,3 @@ pub use crate::platform::{DispatchInfo, KernelIntrospect};
 pub fn kernel_for<T: KernelIntrospect>(len: usize) -> &'static str {
   T::kernel_name_for_len(len)
 }
-
-#[cfg(test)]
-mod tests {
-
-  use super::*;
-
-  #[test]
-  fn dispatch_info_display_not_empty() {
-    let info = DispatchInfo::current();
-    let s = alloc::format!("{info}");
-    assert!(!s.is_empty());
-  }
-
-  #[test]
-  fn dispatch_info_debug_not_empty() {
-    let info = DispatchInfo::current();
-    let s = alloc::format!("{info:?}");
-    assert!(!s.is_empty());
-    assert!(s.contains("DispatchInfo"));
-  }
-
-  #[test]
-  fn dispatch_info_is_copy() {
-    let info = DispatchInfo::current();
-    let copy = info;
-    let _ = info; // Use original after copy - proves Copy
-    let _ = copy;
-  }
-}

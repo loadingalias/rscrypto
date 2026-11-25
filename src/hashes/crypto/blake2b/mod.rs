@@ -662,53 +662,9 @@ pub struct Blake2bParams {
   personal: [u8; PERSONAL_LEN],
 }
 
+impl_blake2_params!(Blake2bParams, Blake2bKey);
+
 impl Blake2bParams {
-  /// Maximum key length (bytes).
-  pub const MAX_KEY_LEN: usize = MAX_KEY_LEN;
-  /// Maximum salt length (bytes).
-  pub const SALT_LEN: usize = SALT_LEN;
-  /// Maximum personalization length (bytes).
-  pub const PERSONAL_LEN: usize = PERSONAL_LEN;
-
-  /// Create a new params builder with no key, salt, or personalization.
-  #[must_use]
-  pub const fn new() -> Self {
-    Self {
-      key_buf: [0u8; MAX_KEY_LEN],
-      key_len: 0,
-      salt: [0u8; SALT_LEN],
-      personal: [0u8; PERSONAL_LEN],
-    }
-  }
-
-  /// Set a validated MAC key. Omit this method for unkeyed hashing.
-  #[must_use]
-  pub fn key(mut self, key: Blake2bKey<'_>) -> Self {
-    let key = key.as_bytes();
-    self.key_buf = [0u8; MAX_KEY_LEN];
-    self.key_buf[..key.len()].copy_from_slice(key);
-    self.key_len = u8::try_from(key.len()).expect("validated Blake2b key length fits in u8");
-    self
-  }
-
-  /// Set the 16-byte RFC 7693 salt field.
-  #[must_use]
-  pub const fn salt(mut self, salt: [u8; SALT_LEN]) -> Self {
-    self.salt = salt;
-    self
-  }
-
-  /// Set the 16-byte RFC 7693 personalization field.
-  #[must_use]
-  pub const fn personal(mut self, personal: [u8; PERSONAL_LEN]) -> Self {
-    self.personal = personal;
-    self
-  }
-
-  fn key_slice(&self) -> &[u8] {
-    &self.key_buf[..usize::from(self.key_len)]
-  }
-
   /// Build a streaming Blake2b-256 hasher initialized with these parameters.
   #[must_use]
   pub fn build_256(&self) -> Blake2b256 {
@@ -789,28 +745,6 @@ impl Blake2bParams {
   }
 }
 
-impl Default for Blake2bParams {
-  fn default() -> Self {
-    Self::new()
-  }
-}
-
-impl fmt::Debug for Blake2bParams {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    f.debug_struct("Blake2bParams")
-      .field("key_len", &self.key_len)
-      .field("salt", &self.salt)
-      .field("personal", &self.personal)
-      .finish()
-  }
-}
-
-impl Drop for Blake2bParams {
-  fn drop(&mut self) {
-    ct::zeroize(&mut self.key_buf);
-  }
-}
-
 // ─── Blake2b256 ─────────────────────────────────────────────────────────────
 
 /// Blake2b-256 cryptographic hash (32-byte output).
@@ -831,36 +765,7 @@ impl Drop for Blake2bParams {
 #[derive(Clone)]
 pub struct Blake2b256(Core);
 
-impl fmt::Debug for Blake2b256 {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    f.debug_struct("Blake2b256").finish_non_exhaustive()
-  }
-}
-
-impl Blake2b256 {
-  /// Output size in bytes.
-  pub const OUTPUT_SIZE: usize = 32;
-
-  /// Compute an unkeyed Blake2b-256 hash in one shot.
-  #[must_use]
-  pub fn digest(data: &[u8]) -> [u8; 32] {
-    oneshot_hash_array::<32>(32, &[], data)
-  }
-
-  /// Create a keyed Blake2b-256 streaming hasher (Blake2b-MAC).
-  #[must_use]
-  pub fn new_keyed(key: Blake2bKey<'_>) -> Self {
-    let key = key.as_bytes();
-    Self(Core::new(32, key))
-  }
-
-  /// Compute a keyed Blake2b-256 hash in one shot.
-  #[must_use]
-  pub fn keyed_digest(key: Blake2bKey<'_>, data: &[u8]) -> [u8; 32] {
-    let key = key.as_bytes();
-    oneshot_hash_array::<32>(32, key, data)
-  }
-}
+impl_blake2_digest!(Blake2b256, Blake2bKey, 32);
 
 impl Blake2b256 {
   #[cfg(test)]
@@ -917,42 +822,6 @@ pub(crate) fn diag_hash_parts_portable(output_len: u8, parts: &[&[u8]], out: &mu
   state.finalize_into(out);
 }
 
-impl Default for Blake2b256 {
-  fn default() -> Self {
-    Self(Core::new_unkeyed(32))
-  }
-}
-
-impl Digest for Blake2b256 {
-  const OUTPUT_SIZE: usize = 32;
-  type Output = [u8; 32];
-
-  #[inline]
-  fn new() -> Self {
-    Self(Core::new_unkeyed(32))
-  }
-
-  #[inline]
-  fn update(&mut self, data: &[u8]) {
-    self.0.update(data);
-  }
-
-  fn finalize(&self) -> Self::Output {
-    finalize_array::<32>(&self.0)
-  }
-
-  #[inline]
-  fn reset(&mut self) {
-    self.0.reset();
-  }
-}
-
-impl Drop for Blake2b256 {
-  fn drop(&mut self) {
-    // Core::drop handles zeroization
-  }
-}
-
 // ─── Blake2b512 ─────────────────────────────────────────────────────────────
 
 /// Blake2b-512 cryptographic hash (64-byte output).
@@ -973,36 +842,7 @@ impl Drop for Blake2b256 {
 #[derive(Clone)]
 pub struct Blake2b512(Core);
 
-impl fmt::Debug for Blake2b512 {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    f.debug_struct("Blake2b512").finish_non_exhaustive()
-  }
-}
-
-impl Blake2b512 {
-  /// Output size in bytes.
-  pub const OUTPUT_SIZE: usize = 64;
-
-  /// Compute an unkeyed Blake2b-512 hash in one shot.
-  #[must_use]
-  pub fn digest(data: &[u8]) -> [u8; 64] {
-    oneshot_hash_array::<64>(64, &[], data)
-  }
-
-  /// Create a keyed Blake2b-512 streaming hasher (Blake2b-MAC).
-  #[must_use]
-  pub fn new_keyed(key: Blake2bKey<'_>) -> Self {
-    let key = key.as_bytes();
-    Self(Core::new(64, key))
-  }
-
-  /// Compute a keyed Blake2b-512 hash in one shot.
-  #[must_use]
-  pub fn keyed_digest(key: Blake2bKey<'_>, data: &[u8]) -> [u8; 64] {
-    let key = key.as_bytes();
-    oneshot_hash_array::<64>(64, key, data)
-  }
-}
+impl_blake2_digest!(Blake2b512, Blake2bKey, 64);
 
 impl Blake2b512 {
   #[cfg(test)]
@@ -1011,42 +851,6 @@ impl Blake2b512 {
     compress_blocks: kernels::CompressBlocksFn,
   ) -> Self {
     Self(Core::new_with_compress_for_test(64, &[], compress, compress_blocks))
-  }
-}
-
-impl Default for Blake2b512 {
-  fn default() -> Self {
-    Self(Core::new_unkeyed(64))
-  }
-}
-
-impl Digest for Blake2b512 {
-  const OUTPUT_SIZE: usize = 64;
-  type Output = [u8; 64];
-
-  #[inline]
-  fn new() -> Self {
-    Self(Core::new_unkeyed(64))
-  }
-
-  #[inline]
-  fn update(&mut self, data: &[u8]) {
-    self.0.update(data);
-  }
-
-  fn finalize(&self) -> Self::Output {
-    finalize_array::<64>(&self.0)
-  }
-
-  #[inline]
-  fn reset(&mut self) {
-    self.0.reset();
-  }
-}
-
-impl Drop for Blake2b512 {
-  fn drop(&mut self) {
-    // Core::drop handles zeroization
   }
 }
 

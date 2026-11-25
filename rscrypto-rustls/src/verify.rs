@@ -319,11 +319,12 @@ mod verifiers {
     keys: Anchors,
   }
 
-  fn references<'a>(algorithms: &'a [PreparedAlgorithm<'_>]) -> Vec<&'a dyn SignatureVerificationAlgorithm> {
+  fn references<'a, const N: usize>(
+    algorithms: &'a [PreparedAlgorithm<'_>; N],
+  ) -> [&'a dyn SignatureVerificationAlgorithm; N] {
     algorithms
-      .iter()
+      .each_ref()
       .map(|algorithm| algorithm as &dyn SignatureVerificationAlgorithm)
-      .collect()
   }
 
   // The wrapped builders read only `signature_verification_algorithms`. The
@@ -365,7 +366,6 @@ mod implementation {
   use alloc::alloc::Global;
   #[cfg(any(feature = "ecdsa-p256", feature = "ecdsa-p384", feature = "ml-dsa"))]
   use alloc::boxed::Box;
-  use alloc::vec::Vec;
   #[cfg(feature = "ecdsa-p256")]
   use rscrypto::{EcdsaP256PreparedPublicKey, EcdsaP256PublicKey, EcdsaP256Signature};
   #[cfg(feature = "ecdsa-p384")]
@@ -683,11 +683,8 @@ mod implementation {
   }
 
   /// This crate's certificate algorithms, in [`ALL`]'s order, over `anchors`.
-  pub(super) fn prepared_algorithms(anchors: &Anchors) -> Vec<PreparedAlgorithm<'_>> {
-    CONCRETE
-      .iter()
-      .map(|&algorithm| PreparedAlgorithm { algorithm, anchors })
-      .collect()
+  pub(super) fn prepared_algorithms(anchors: &Anchors) -> [PreparedAlgorithm<'_>; ALL.len()] {
+    CONCRETE.map(|algorithm| PreparedAlgorithm { algorithm, anchors })
   }
 
   #[cfg(feature = "ecdsa-p256")]
@@ -820,7 +817,7 @@ mod implementation {
   macro_rules! algorithms {
     ($($(#[$cfg:meta])* $name:ident,)*) => {
       pub(super) const ALL: &[&dyn SignatureVerificationAlgorithm] = &[$($(#[$cfg])* &$name,)*];
-      const CONCRETE: &[&Algorithm] = &[$($(#[$cfg])* &$name,)*];
+      const CONCRETE: [&Algorithm; ALL.len()] = [$($(#[$cfg])* &$name,)*];
     };
   }
   algorithms!(

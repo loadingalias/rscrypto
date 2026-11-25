@@ -438,6 +438,25 @@ impl AeadKernel for riscv64_vector::Aead {
   }
 }
 
+#[cfg(any(target_arch = "aarch64", all(target_arch = "x86_64", target_feature = "sse2")))]
+#[inline(always)]
+fn fivefold_limb(limb: u32) -> u32 {
+  const MAX_UNSCALED: u32 = 858_993_459;
+  debug_assert!(limb <= MAX_UNSCALED);
+
+  let product = u64::from(limb).strict_mul(5);
+  let [b0, b1, b2, b3, _, _, _, _] = product.to_le_bytes();
+  u32::from_le_bytes([b0, b1, b2, b3])
+}
+
+#[cfg(any(target_arch = "aarch64", all(target_arch = "x86_64", target_feature = "sse2")))]
+#[inline(always)]
+fn narrow_limb(value: u64) -> u32 {
+  debug_assert_eq!(value >> u32::BITS, 0);
+  let [b0, b1, b2, b3, _, _, _, _] = value.to_le_bytes();
+  u32::from_le_bytes([b0, b1, b2, b3])
+}
+
 #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 #[target_feature(enable = "avx2")]
 /// Absorbs one Poly1305 block with the x86-64 AVX2 multiplier.
@@ -492,16 +511,6 @@ unsafe fn compute_block_x86_avx2(state: &mut State, block: &[u8; 16], partial: b
   }
 
   #[inline(always)]
-  fn fivefold_limb(limb: u32) -> u32 {
-    const MAX_UNSCALED: u32 = 858_993_459;
-    debug_assert!(limb <= MAX_UNSCALED);
-
-    let product = u64::from(limb).strict_mul(5);
-    let [b0, b1, b2, b3, _, _, _, _] = product.to_le_bytes();
-    u32::from_le_bytes([b0, b1, b2, b3])
-  }
-
-  #[inline(always)]
   fn sum5_mul(lhs: [u32; 5], rhs: [u32; 5]) -> u64 {
     let [l0, l1, l2, l3, l4] = lhs;
     let [r0, r1, r2, r3, r4] = rhs;
@@ -511,13 +520,6 @@ unsafe fn compute_block_x86_avx2(state: &mut State, block: &[u8; 16], partial: b
 
     let [b0, b1, b2, b3, b4, b5, b6, b7, _, _, _, _, _, _, _, _] = sum.to_le_bytes();
     u64::from_le_bytes([b0, b1, b2, b3, b4, b5, b6, b7])
-  }
-
-  #[inline(always)]
-  fn narrow_limb(value: u64) -> u32 {
-    debug_assert_eq!(value >> u32::BITS, 0);
-    let [b0, b1, b2, b3, _, _, _, _] = value.to_le_bytes();
-    u32::from_le_bytes([b0, b1, b2, b3])
   }
 
   let hibit = if partial { 0 } else { FULL_BLOCK_HIBIT };
@@ -598,16 +600,6 @@ unsafe fn compute_block_x86_avx512(state: &mut State, block: &[u8; 16], partial:
   }
 
   #[inline(always)]
-  fn fivefold_limb(limb: u32) -> u32 {
-    const MAX_UNSCALED: u32 = 858_993_459;
-    debug_assert!(limb <= MAX_UNSCALED);
-
-    let product = u64::from(limb).strict_mul(5);
-    let [b0, b1, b2, b3, _, _, _, _] = product.to_le_bytes();
-    u32::from_le_bytes([b0, b1, b2, b3])
-  }
-
-  #[inline(always)]
   fn pair_sum4_mul(lhs: [u32; 4], rhs_lo: [u32; 4], rhs_hi: [u32; 4]) -> (u64, u64) {
     let mut lanes = [0u64; 8];
     let destination = NonNull::from(&mut lanes).cast::<__m512i>().as_ptr();
@@ -675,13 +667,6 @@ unsafe fn compute_block_x86_avx512(state: &mut State, block: &[u8; 16], partial:
   fn add_product(base: u64, lhs: u32, rhs: u32) -> u64 {
     let sum = u128::from(base).strict_add(u128::from(lhs).strict_mul(u128::from(rhs)));
     narrow_sum(sum)
-  }
-
-  #[inline(always)]
-  fn narrow_limb(value: u64) -> u32 {
-    debug_assert_eq!(value >> u32::BITS, 0);
-    let [b0, b1, b2, b3, _, _, _, _] = value.to_le_bytes();
-    u32::from_le_bytes([b0, b1, b2, b3])
   }
 
   let hibit = if partial { 0 } else { FULL_BLOCK_HIBIT };
@@ -774,16 +759,6 @@ unsafe fn compute_block_aarch64_neon(state: &mut State, block: &[u8; 16], partia
   }
 
   #[inline(always)]
-  fn fivefold_limb(limb: u32) -> u32 {
-    const MAX_UNSCALED: u32 = 858_993_459;
-    debug_assert!(limb <= MAX_UNSCALED);
-
-    let product = u64::from(limb).strict_mul(5);
-    let [b0, b1, b2, b3, _, _, _, _] = product.to_le_bytes();
-    u32::from_le_bytes([b0, b1, b2, b3])
-  }
-
-  #[inline(always)]
   fn sum5_mul(lhs: [u32; 5], rhs: [u32; 5]) -> u64 {
     let [l0, l1, l2, l3, l4] = lhs;
     let [r0, r1, r2, r3, r4] = rhs;
@@ -793,13 +768,6 @@ unsafe fn compute_block_aarch64_neon(state: &mut State, block: &[u8; 16], partia
 
     let [b0, b1, b2, b3, b4, b5, b6, b7, _, _, _, _, _, _, _, _] = sum.to_le_bytes();
     u64::from_le_bytes([b0, b1, b2, b3, b4, b5, b6, b7])
-  }
-
-  #[inline(always)]
-  fn narrow_limb(value: u64) -> u32 {
-    debug_assert_eq!(value >> u32::BITS, 0);
-    let [b0, b1, b2, b3, _, _, _, _] = value.to_le_bytes();
-    u32::from_le_bytes([b0, b1, b2, b3])
   }
 
   let hibit = if partial { 0 } else { FULL_BLOCK_HIBIT };

@@ -21,13 +21,17 @@ global_asm!(include_str!("asm/rscrypto_ed25519_aarch64_apple_darwin.s"));
 #[cfg(target_os = "linux")]
 global_asm!(include_str!("asm/rscrypto_ed25519_aarch64_unknown_linux.s"));
 #[cfg(target_os = "macos")]
-global_asm!(include_str!(
-  "asm/rscrypto_ed25519_scalarmulbase_aarch64_apple_darwin.s"
-));
+global_asm!(
+  include_str!("asm/rscrypto_ed25519_base_table.inc"),
+  include_str!("asm/rscrypto_ed25519_scalarmulbase_aarch64_apple_darwin.s"),
+  ".purgem rscrypto_ed25519_base_table"
+);
 #[cfg(target_os = "linux")]
-global_asm!(include_str!(
-  "asm/rscrypto_ed25519_scalarmulbase_aarch64_unknown_linux.s"
-));
+global_asm!(
+  include_str!("asm/rscrypto_ed25519_base_table.inc"),
+  include_str!("asm/rscrypto_ed25519_scalarmulbase_aarch64_unknown_linux.s"),
+  ".purgem rscrypto_ed25519_base_table"
+);
 
 unsafe extern "C" {
   fn rscrypto_edwards25519_scalarmulbase_alt(out: *mut u64, scalar: *const u64);

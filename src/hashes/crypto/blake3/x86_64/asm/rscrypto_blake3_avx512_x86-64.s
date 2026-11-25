@@ -2,11 +2,19 @@
 //
 // Adapted for rscrypto from upstream BLAKE3 1.8.5:
 //   c/blake3_avx512_x86-64_unix.S
+.if {macho}
 // Symbols are renamed into the rscrypto namespace and the Darwin-specific
 // symbol spelling is kept explicit for Rust global_asm!.
+.else // macho
+// Symbols are renamed into the rscrypto namespace and upstream preprocessor
+// conditionals are removed for Rust global_asm!.
+
+.section .note.GNU-stack,"",%progbits
+.endif // macho
 
 
 
+.if {macho}
 
 .globl _rscrypto_blake3_hash_many_avx512
 .globl _rscrypto_blake3_compress_in_place_avx512
@@ -14,6 +22,15 @@
 .text
 .p2align  6
 _rscrypto_blake3_hash_many_avx512:
+.else // macho
+.global rscrypto_blake3_hash_many_avx512
+.global rscrypto_blake3_compress_in_place_avx512
+.global rscrypto_blake3_xof_many_avx512
+
+.section .text
+.p2align  6
+rscrypto_blake3_hash_many_avx512:
+.endif // macho
         push    r15
         push    r14
         push    r13
@@ -2369,7 +2386,11 @@ _rscrypto_blake3_hash_many_avx512:
         vmovdqu xmmword ptr [rbx+0x10], xmm1
         jmp     4b
 .p2align 6
+.if {macho}
 _rscrypto_blake3_compress_in_place_avx512:
+.else // macho
+rscrypto_blake3_compress_in_place_avx512:
+.endif // macho
         vmovdqu xmm0, xmmword ptr [rdi]
         vmovdqu xmm1, xmmword ptr [rdi+0x10]
         movzx   eax, r8b
@@ -2450,7 +2471,11 @@ _rscrypto_blake3_compress_in_place_avx512:
         ret
 
 .p2align 6
+.if {macho}
 _rscrypto_blake3_xof_many_avx512:
+.else // macho
+rscrypto_blake3_xof_many_avx512:
+.endif // macho
         mov    r10,QWORD PTR [rsp+0x8]
         cmp    r10,0x1
         ja     2f
@@ -4684,7 +4709,11 @@ _rscrypto_blake3_xof_many_avx512:
         jmp    9b
 
 
+.if {macho}
 .section __TEXT,__const
+.else // macho
+.section .rodata
+.endif // macho
 .p2align  6
 INDEX0:
         .long    0,  1,  2,  3, 16, 17, 18, 19

@@ -1064,102 +1064,114 @@ pub struct EcdsaP256Keypair {
   public: EcdsaP256PublicKey,
 }
 
-impl EcdsaP256Keypair {
-  /// Explicitly duplicate this secret-bearing keypair.
-  #[inline]
-  #[must_use]
-  pub fn duplicate_secret(&self) -> Self {
-    Self {
-      secret: self.secret.duplicate_secret(),
-      public: self.public,
+macro_rules! impl_ecdsa_keypair {
+  ($pair:ident, $secret:ident, $public:ident, $signature:ident, $blind:literal) => {
+    impl $pair {
+      /// Explicitly duplicate this secret-bearing keypair.
+      #[inline]
+      #[must_use]
+      pub fn duplicate_secret(&self) -> Self {
+        Self {
+          secret: self.secret.duplicate_secret(),
+          public: self.public,
+        }
+      }
+
+      /// Try to generate a keypair with caller-supplied randomness.
+      #[inline]
+      pub fn try_generate_with<E>(
+        fill: impl FnMut(&mut [u8]) -> Result<(), E>,
+      ) -> Result<Self, EcdsaKeyGenerationError<E>> {
+        $secret::try_generate_with(fill).map(Self::from_secret_key)
+      }
+
+      /// Try to generate a keypair from the platform entropy source.
+      ///
+      /// # Errors
+      ///
+      /// Returns an ECDSA key-generation error if entropy is unavailable or scalar
+      /// rejection exhausts its bounded retry budget.
+      #[cfg(feature = "getrandom")]
+      #[cfg_attr(docsrs, doc(cfg(feature = "getrandom")))]
+      #[inline]
+      pub fn try_generate() -> Result<Self, EcdsaKeyGenerationError<getrandom::Error>> {
+        $secret::try_generate().map(Self::from_secret_key)
+      }
+
+      /// Derive a keypair from a secret key.
+      #[must_use]
+      pub fn from_secret_key(secret: $secret) -> Self {
+        let public = secret.public_key();
+        Self { secret, public }
+      }
+
+      /// Try to derive a keypair from a secret key with caller-supplied blinding.
+      ///
+      /// On filler failure, the consumed secret key and partially filled blinding
+      /// buffer are cleared before this method returns.
+      pub fn try_from_secret_key_blinded_with<E>(
+        secret: $secret,
+        fill: impl FnOnce(&mut [u8; $blind]) -> Result<(), E>,
+      ) -> Result<Self, E> {
+        let public = secret.try_public_key_blinded_with(fill)?;
+        Ok(Self { secret, public })
+      }
+
+      /// Borrow the secret key.
+      #[must_use]
+      pub const fn secret_key(&self) -> &$secret {
+        &self.secret
+      }
+
+      /// Return the public key.
+      #[must_use]
+      pub fn public_key(&self) -> $public {
+        self.public
+      }
+
+      /// Sign a message with the hash for this curve.
+      pub fn try_sign(&self, message: &[u8]) -> Result<$signature, EcdsaError> {
+        self.secret.try_sign(message)
+      }
+
+      /// Sign with fallible caller-supplied blinding.
+      #[inline]
+      pub fn try_sign_blinded_with<E>(
+        &self,
+        message: &[u8],
+        fill: impl FnOnce(&mut [u8; $blind]) -> Result<(), E>,
+      ) -> Result<$signature, EcdsaBlindedSigningError<E>> {
+        self.secret.try_sign_blinded_with(message, fill)
+      }
     }
-  }
 
-  /// Try to generate a P-256 keypair with caller-supplied randomness.
-  #[inline]
-  pub fn try_generate_with<E>(
-    fill: impl FnMut(&mut [u8]) -> Result<(), E>,
-  ) -> Result<Self, EcdsaKeyGenerationError<E>> {
-    EcdsaP256SecretKey::try_generate_with(fill).map(Self::from_secret_key)
-  }
+    impl crate::traits::TrySigner for $pair {
+      type Signature = $signature;
+      type Error = EcdsaError;
 
-  /// Try to generate a P-256 keypair from the platform entropy source.
-  ///
-  /// # Errors
-  ///
-  /// Returns an ECDSA key-generation error if entropy is unavailable or scalar
-  /// rejection exhausts its bounded retry budget.
-  #[cfg(feature = "getrandom")]
-  #[cfg_attr(docsrs, doc(cfg(feature = "getrandom")))]
-  #[inline]
-  pub fn try_generate() -> Result<Self, EcdsaKeyGenerationError<getrandom::Error>> {
-    EcdsaP256SecretKey::try_generate().map(Self::from_secret_key)
-  }
+      #[inline]
+      fn try_sign(&self, message: &[u8]) -> Result<Self::Signature, Self::Error> {
+        $pair::try_sign(self, message)
+      }
+    }
 
-  /// Derive a P-256 keypair from a secret key.
-  #[must_use]
-  pub fn from_secret_key(secret: EcdsaP256SecretKey) -> Self {
-    let public = secret.public_key();
-    Self { secret, public }
-  }
-
-  /// Try to derive a P-256 keypair from a secret key with caller-supplied blinding.
-  ///
-  /// On filler failure, the consumed secret key and partially filled blinding
-  /// buffer are cleared before this method returns.
-  pub fn try_from_secret_key_blinded_with<E>(
-    secret: EcdsaP256SecretKey,
-    fill: impl FnOnce(&mut [u8; 64]) -> Result<(), E>,
-  ) -> Result<Self, E> {
-    let public = secret.try_public_key_blinded_with(fill)?;
-    Ok(Self { secret, public })
-  }
-
-  /// Borrow the secret key.
-  #[must_use]
-  pub const fn secret_key(&self) -> &EcdsaP256SecretKey {
-    &self.secret
-  }
-
-  /// Return the public key.
-  #[must_use]
-  pub fn public_key(&self) -> EcdsaP256PublicKey {
-    self.public
-  }
-
-  /// Sign a message with P-256/SHA-256.
-  pub fn try_sign(&self, message: &[u8]) -> Result<EcdsaP256Signature, EcdsaError> {
-    self.secret.try_sign(message)
-  }
-
-  /// Try to sign with P-256/SHA-256 and fallible caller-supplied blinding.
-  #[inline]
-  pub fn try_sign_blinded_with<E>(
-    &self,
-    message: &[u8],
-    fill: impl FnOnce(&mut [u8; 64]) -> Result<(), E>,
-  ) -> Result<EcdsaP256Signature, EcdsaBlindedSigningError<E>> {
-    self.secret.try_sign_blinded_with(message, fill)
-  }
+    impl fmt::Debug for $pair {
+      fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct(stringify!($pair))
+          .field("public", &self.public)
+          .finish_non_exhaustive()
+      }
+    }
+  };
 }
 
-impl crate::traits::TrySigner for EcdsaP256Keypair {
-  type Signature = EcdsaP256Signature;
-  type Error = EcdsaError;
-
-  #[inline]
-  fn try_sign(&self, message: &[u8]) -> Result<Self::Signature, Self::Error> {
-    EcdsaP256Keypair::try_sign(self, message)
-  }
-}
-
-impl fmt::Debug for EcdsaP256Keypair {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    f.debug_struct("EcdsaP256Keypair")
-      .field("public", &self.public)
-      .finish_non_exhaustive()
-  }
-}
+impl_ecdsa_keypair!(
+  EcdsaP256Keypair,
+  EcdsaP256SecretKey,
+  EcdsaP256PublicKey,
+  EcdsaP256Signature,
+  64
+);
 
 /// P-384 ECDSA keypair with typed secret and public halves.
 pub struct EcdsaP384Keypair {
@@ -1167,102 +1179,13 @@ pub struct EcdsaP384Keypair {
   public: EcdsaP384PublicKey,
 }
 
-impl EcdsaP384Keypair {
-  /// Explicitly duplicate this secret-bearing keypair.
-  #[inline]
-  #[must_use]
-  pub fn duplicate_secret(&self) -> Self {
-    Self {
-      secret: self.secret.duplicate_secret(),
-      public: self.public,
-    }
-  }
-
-  /// Try to generate a P-384 keypair with caller-supplied randomness.
-  #[inline]
-  pub fn try_generate_with<E>(
-    fill: impl FnMut(&mut [u8]) -> Result<(), E>,
-  ) -> Result<Self, EcdsaKeyGenerationError<E>> {
-    EcdsaP384SecretKey::try_generate_with(fill).map(Self::from_secret_key)
-  }
-
-  /// Try to generate a P-384 keypair from the platform entropy source.
-  ///
-  /// # Errors
-  ///
-  /// Returns an ECDSA key-generation error if entropy is unavailable or scalar
-  /// rejection exhausts its bounded retry budget.
-  #[cfg(feature = "getrandom")]
-  #[cfg_attr(docsrs, doc(cfg(feature = "getrandom")))]
-  #[inline]
-  pub fn try_generate() -> Result<Self, EcdsaKeyGenerationError<getrandom::Error>> {
-    EcdsaP384SecretKey::try_generate().map(Self::from_secret_key)
-  }
-
-  /// Derive a P-384 keypair from a secret key.
-  #[must_use]
-  pub fn from_secret_key(secret: EcdsaP384SecretKey) -> Self {
-    let public = secret.public_key();
-    Self { secret, public }
-  }
-
-  /// Try to derive a P-384 keypair from a secret key with caller-supplied blinding.
-  ///
-  /// On filler failure, the consumed secret key and partially filled blinding
-  /// buffer are cleared before this method returns.
-  pub fn try_from_secret_key_blinded_with<E>(
-    secret: EcdsaP384SecretKey,
-    fill: impl FnOnce(&mut [u8; 96]) -> Result<(), E>,
-  ) -> Result<Self, E> {
-    let public = secret.try_public_key_blinded_with(fill)?;
-    Ok(Self { secret, public })
-  }
-
-  /// Borrow the secret key.
-  #[must_use]
-  pub const fn secret_key(&self) -> &EcdsaP384SecretKey {
-    &self.secret
-  }
-
-  /// Return the public key.
-  #[must_use]
-  pub fn public_key(&self) -> EcdsaP384PublicKey {
-    self.public
-  }
-
-  /// Sign a message with P-384/SHA-384.
-  pub fn try_sign(&self, message: &[u8]) -> Result<EcdsaP384Signature, EcdsaError> {
-    self.secret.try_sign(message)
-  }
-
-  /// Try to sign with P-384/SHA-384 and fallible caller-supplied blinding.
-  #[inline]
-  pub fn try_sign_blinded_with<E>(
-    &self,
-    message: &[u8],
-    fill: impl FnOnce(&mut [u8; 96]) -> Result<(), E>,
-  ) -> Result<EcdsaP384Signature, EcdsaBlindedSigningError<E>> {
-    self.secret.try_sign_blinded_with(message, fill)
-  }
-}
-
-impl crate::traits::TrySigner for EcdsaP384Keypair {
-  type Signature = EcdsaP384Signature;
-  type Error = EcdsaError;
-
-  #[inline]
-  fn try_sign(&self, message: &[u8]) -> Result<Self::Signature, Self::Error> {
-    EcdsaP384Keypair::try_sign(self, message)
-  }
-}
-
-impl fmt::Debug for EcdsaP384Keypair {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    f.debug_struct("EcdsaP384Keypair")
-      .field("public", &self.public)
-      .finish_non_exhaustive()
-  }
-}
+impl_ecdsa_keypair!(
+  EcdsaP384Keypair,
+  EcdsaP384SecretKey,
+  EcdsaP384PublicKey,
+  EcdsaP384Signature,
+  96
+);
 
 /// P-256 ECDSA public key.
 ///
@@ -1275,6 +1198,32 @@ pub struct EcdsaP256PublicKey {
   point: Affine<4>,
 }
 
+macro_rules! ecdsa_public_key_encodings {
+  ($oid:ident, $header:ident) => {
+    /// Parse a SubjectPublicKeyInfo public key.
+    pub fn from_spki_der(der: &[u8]) -> Result<Self, EcdsaError> {
+      let public_key = parse_spki_der(der, $oid)?;
+      Self::from_sec1_bytes(public_key)
+    }
+
+    /// RFC 5480 SubjectPublicKeyInfo length in bytes.
+    pub const SPKI_DER_LENGTH: usize = $header.len().strict_add(Self::SEC1_LENGTH);
+
+    /// Write this key as an RFC 5480 SubjectPublicKeyInfo with its
+    /// named curve and an uncompressed point.
+    #[must_use]
+    pub fn to_spki_der(&self) -> [u8; Self::SPKI_DER_LENGTH] {
+      pkix::concat(&$header, &self.to_sec1_bytes())
+    }
+
+    /// Return the uncompressed SEC1 public-key bytes.
+    #[must_use]
+    pub fn to_sec1_bytes(&self) -> [u8; Self::SEC1_LENGTH] {
+      encode_sec1(&self.point)
+    }
+  };
+}
+
 impl EcdsaP256PublicKey {
   /// Uncompressed SEC1 public-key length in bytes.
   pub const SEC1_LENGTH: usize = 65;
@@ -1284,28 +1233,7 @@ impl EcdsaP256PublicKey {
     parse_public_key::<p256_verify::Fe, 4>(bytes, &P256).map(|point| Self { point })
   }
 
-  /// Parse a P-256 SubjectPublicKeyInfo public key.
-  pub fn from_spki_der(der: &[u8]) -> Result<Self, EcdsaError> {
-    let public_key = parse_spki_der(der, SECP256R1_OID)?;
-    Self::from_sec1_bytes(public_key)
-  }
-
-  /// RFC 5480 SubjectPublicKeyInfo length in bytes.
-  pub const SPKI_DER_LENGTH: usize = P256_SPKI_HEADER.len().strict_add(Self::SEC1_LENGTH);
-
-  /// Write this key as an RFC 5480 SubjectPublicKeyInfo with the `prime256v1`
-  /// named curve and an uncompressed point, the form that
-  /// [`Self::from_spki_der`] accepts.
-  #[must_use]
-  pub fn to_spki_der(&self) -> [u8; Self::SPKI_DER_LENGTH] {
-    pkix::concat(&P256_SPKI_HEADER, &self.to_sec1_bytes())
-  }
-
-  /// Return the uncompressed SEC1 public-key bytes.
-  #[must_use]
-  pub fn to_sec1_bytes(&self) -> [u8; Self::SEC1_LENGTH] {
-    encode_sec1(&self.point)
-  }
+  ecdsa_public_key_encodings!(SECP256R1_OID, P256_SPKI_HEADER);
 
   /// Build this key's verification table, for a key that verifies many signatures.
   ///
@@ -1432,28 +1360,7 @@ impl EcdsaP384PublicKey {
     parse_public_key::<p384_verify::Fe, 6>(bytes, &P384).map(|point| Self { point })
   }
 
-  /// Parse a P-384 SubjectPublicKeyInfo public key.
-  pub fn from_spki_der(der: &[u8]) -> Result<Self, EcdsaError> {
-    let public_key = parse_spki_der(der, SECP384R1_OID)?;
-    Self::from_sec1_bytes(public_key)
-  }
-
-  /// RFC 5480 SubjectPublicKeyInfo length in bytes.
-  pub const SPKI_DER_LENGTH: usize = P384_SPKI_HEADER.len().strict_add(Self::SEC1_LENGTH);
-
-  /// Write this key as an RFC 5480 SubjectPublicKeyInfo with the `secp384r1`
-  /// named curve and an uncompressed point, the form that
-  /// [`Self::from_spki_der`] accepts.
-  #[must_use]
-  pub fn to_spki_der(&self) -> [u8; Self::SPKI_DER_LENGTH] {
-    pkix::concat(&P384_SPKI_HEADER, &self.to_sec1_bytes())
-  }
-
-  /// Return the uncompressed SEC1 public-key bytes.
-  #[must_use]
-  pub fn to_sec1_bytes(&self) -> [u8; Self::SEC1_LENGTH] {
-    encode_sec1(&self.point)
-  }
+  ecdsa_public_key_encodings!(SECP384R1_OID, P384_SPKI_HEADER);
 
   /// Build this key's verification table, for a key that verifies many signatures.
   ///

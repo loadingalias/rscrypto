@@ -1101,130 +1101,143 @@ fn aes256_gcm_nonce_counter_encrypt(c: &mut Criterion) {
   g.finish();
 }
 
-fn aes256_gcm_decrypt(c: &mut Criterion) {
-  if !bench_config::selected("aes-256-gcm/copy-and-decrypt") {
-    return;
-  }
-  aws_lc_bench! {
-    use aws_lc_rs::aead as aws_aead;
-  }
-  use ring::aead as ring_aead;
+macro_rules! gcm_decrypt_bench {
+  ($name:ident, $group:literal, $key_type:ident, $cipher:ident, $key:ident, $algorithm:ident) => {
+    fn $name(c: &mut Criterion) {
+      if !bench_config::selected($group) {
+        return;
+      }
+      aws_lc_bench! {
+        use aws_lc_rs::aead as aws_aead;
+      }
+      use ring::aead as ring_aead;
 
-  let inputs = common::comp_sizes(&[]);
-  let nonce_rs = rscrypto::aead::Nonce96::from_bytes(NONCE_12);
-  let cipher_rs = rscrypto::Aes256Gcm::new(&rscrypto::Aes256GcmKey::from_bytes(KEY_32));
-  let cipher_rc = aes_gcm::Aes256Gcm::new(&KEY_32.into());
-  let nonce_rc = aes_gcm::Nonce::from(NONCE_12);
-  aws_lc_bench! {
-    let aws_key = aws_aead::LessSafeKey::new(aws_aead::UnboundKey::new(&aws_aead::AES_256_GCM, &KEY_32).expect("valid AEAD benchmark operation must succeed"));
-  }
-  let ring_key = ring_aead::LessSafeKey::new(
-    ring_aead::UnboundKey::new(&ring_aead::AES_256_GCM, &KEY_32).expect("valid AEAD benchmark operation must succeed"),
-  );
-  // Timed: restore input into a preallocated buffer, decrypt, and handle/drop per-call outputs.
-  // Untimed: fixtures, buffer allocation, and reusable cipher construction/destruction.
-  let mut g = c.benchmark_group("aes-256-gcm/copy-and-decrypt");
-
-  for (len, data) in &inputs {
-    common::set_throughput(&mut g, *len);
-
-    // Every row opens RustCrypto's ciphertext and tag and must recover the input.
-    let mut ciphertext = data.clone();
-    let tag_rc = cipher_rc
-      .encrypt_inout_detached(&nonce_rc, AAD, ciphertext.as_mut_slice().into())
-      .expect("valid AEAD benchmark operation must succeed");
-    let tag_rs = rscrypto::Aes256Gcm::tag_from_slice(&tag_rc).expect("AEAD tags have 16 bytes");
-    let tag_ring = ring_aead::Tag::try_from(&tag_rc[..]).expect("AEAD tags have 16 bytes");
-
-    g.bench_function(
-      BenchmarkId::new("rscrypto", len),
-      checked_with(
-        ciphertext.clone(),
-        |buf| {
-          buf.copy_from_slice(&ciphertext);
-          cipher_rs
-            .decrypt_in_place(
-              black_box(&nonce_rs),
-              black_box(AAD),
-              black_box(&mut *buf),
-              black_box(&tag_rs),
-            )
-            .expect("valid AEAD benchmark operation must succeed");
-          black_box(&*buf);
-        },
-        |(), buf| assert_eq!(buf, data),
-      ),
-    );
-    segments_row(&mut g, &cipher_rs, &nonce_rs, &ciphertext, &tag_rs, data);
-
-    g.bench_function(
-      BenchmarkId::new("rustcrypto", len),
-      checked_with(
-        ciphertext.clone(),
-        |buf| {
-          buf.copy_from_slice(&ciphertext);
-          cipher_rc
-            .decrypt_inout_detached(
-              black_box(&nonce_rc),
-              black_box(AAD),
-              black_box(buf.as_mut_slice().into()),
-              black_box(&tag_rc),
-            )
-            .expect("valid AEAD benchmark operation must succeed");
-          black_box(&*buf);
-        },
-        |(), buf| assert_eq!(buf, data),
-      ),
-    );
-
-    aws_lc_bench! {
-      // AWS-LC exposes detached tags for seal, but its in-place open API takes ct||tag.
-      let appended = sealed(&ciphertext, tag_rc);
-
-      g.bench_function(
-        BenchmarkId::new("aws-lc-rs-appended-tag", len),
-        checked_with(
-          appended.clone(),
-          |buf| {
-            buf.copy_from_slice(&appended);
-            aws_key
-              .open_in_place(
-                aws_aead::Nonce::assume_unique_for_key(NONCE_12),
-                aws_aead::Aad::from(AAD),
-                black_box(&mut *buf),
-              )
-              .expect("valid AEAD benchmark operation must succeed");
-            black_box(&*buf);
-          },
-          |(), buf| assert_eq!(&buf[..*len], data.as_slice()),
-        ),
+      let inputs = common::comp_sizes(&[]);
+      let nonce_rs = rscrypto::aead::Nonce96::from_bytes(NONCE_12);
+      let cipher_rs = rscrypto::$cipher::new(&rscrypto::$key_type::from_bytes($key));
+      let cipher_rc = aes_gcm::$cipher::new(&$key.into());
+      let nonce_rc = aes_gcm::Nonce::from(NONCE_12);
+      aws_lc_bench! {
+        let aws_key = aws_aead::LessSafeKey::new(aws_aead::UnboundKey::new(&aws_aead::$algorithm, &$key).expect("valid AEAD benchmark operation must succeed"));
+      }
+      let ring_key = ring_aead::LessSafeKey::new(
+        ring_aead::UnboundKey::new(&ring_aead::$algorithm, &$key).expect("valid AEAD benchmark operation must succeed"),
       );
+      // Timed: restore input into a preallocated buffer, decrypt, and handle/drop per-call outputs.
+      // Untimed: fixtures, buffer allocation, and reusable cipher construction/destruction.
+      let mut g = c.benchmark_group($group);
+
+      for (len, data) in &inputs {
+        common::set_throughput(&mut g, *len);
+
+        // Every row opens RustCrypto's ciphertext and tag and must recover the input.
+        let mut ciphertext = data.clone();
+        let tag_rc = cipher_rc
+          .encrypt_inout_detached(&nonce_rc, AAD, ciphertext.as_mut_slice().into())
+          .expect("valid AEAD benchmark operation must succeed");
+        let tag_rs = rscrypto::$cipher::tag_from_slice(&tag_rc).expect("AEAD tags have 16 bytes");
+        let tag_ring = ring_aead::Tag::try_from(&tag_rc[..]).expect("AEAD tags have 16 bytes");
+
+        g.bench_function(
+          BenchmarkId::new("rscrypto", len),
+          checked_with(
+            ciphertext.clone(),
+            |buf| {
+              buf.copy_from_slice(&ciphertext);
+              cipher_rs
+                .decrypt_in_place(
+                  black_box(&nonce_rs),
+                  black_box(AAD),
+                  black_box(&mut *buf),
+                  black_box(&tag_rs),
+                )
+                .expect("valid AEAD benchmark operation must succeed");
+              black_box(&*buf);
+            },
+            |(), buf| assert_eq!(buf, data),
+          ),
+        );
+        segments_row(&mut g, &cipher_rs, &nonce_rs, &ciphertext, &tag_rs, data);
+
+        g.bench_function(
+          BenchmarkId::new("rustcrypto", len),
+          checked_with(
+            ciphertext.clone(),
+            |buf| {
+              buf.copy_from_slice(&ciphertext);
+              cipher_rc
+                .decrypt_inout_detached(
+                  black_box(&nonce_rc),
+                  black_box(AAD),
+                  black_box(buf.as_mut_slice().into()),
+                  black_box(&tag_rc),
+                )
+                .expect("valid AEAD benchmark operation must succeed");
+              black_box(&*buf);
+            },
+            |(), buf| assert_eq!(buf, data),
+          ),
+        );
+
+        aws_lc_bench! {
+          // AWS-LC exposes detached tags for seal, but its in-place open API takes ct||tag.
+          let appended = sealed(&ciphertext, tag_rc);
+
+          g.bench_function(
+            BenchmarkId::new("aws-lc-rs-appended-tag", len),
+            checked_with(
+              appended.clone(),
+              |buf| {
+                buf.copy_from_slice(&appended);
+                aws_key
+                  .open_in_place(
+                    aws_aead::Nonce::assume_unique_for_key(NONCE_12),
+                    aws_aead::Aad::from(AAD),
+                    black_box(&mut *buf),
+                  )
+                  .expect("valid AEAD benchmark operation must succeed");
+                black_box(&*buf);
+              },
+              |(), buf| assert_eq!(&buf[..*len], data.as_slice()),
+            ),
+          );
+        }
+
+        g.bench_function(
+          BenchmarkId::new("ring", len),
+          checked_with(
+            ciphertext.clone(),
+            |buf| {
+              buf.copy_from_slice(&ciphertext);
+              ring_key
+                .open_in_place_separate_tag(
+                  ring_aead::Nonce::assume_unique_for_key(NONCE_12),
+                  ring_aead::Aad::from(AAD),
+                  black_box(tag_ring),
+                  black_box(&mut *buf),
+                  0..,
+                )
+                .expect("valid AEAD benchmark operation must succeed");
+              black_box(&*buf);
+            },
+            |(), buf| assert_eq!(buf, data),
+          ),
+        );
+      }
+
+      g.finish();
     }
-
-    g.bench_function(
-      BenchmarkId::new("ring", len),
-      checked_with(
-        ciphertext.clone(),
-        |buf| {
-          buf.copy_from_slice(&ciphertext);
-          ring_key
-            .open_in_place_separate_tag(
-              ring_aead::Nonce::assume_unique_for_key(NONCE_12),
-              ring_aead::Aad::from(AAD),
-              black_box(tag_ring),
-              black_box(&mut *buf),
-              0..,
-            )
-            .expect("valid AEAD benchmark operation must succeed");
-          black_box(&*buf);
-        },
-        |(), buf| assert_eq!(buf, data),
-      ),
-    );
-  }
-
-  g.finish();
+  };
 }
+
+gcm_decrypt_bench!(
+  aes256_gcm_decrypt,
+  "aes-256-gcm/copy-and-decrypt",
+  Aes256GcmKey,
+  Aes256Gcm,
+  KEY_32,
+  AES_256_GCM
+);
 
 // AES-128-GCM
 
@@ -1339,130 +1352,14 @@ fn aes128_gcm_encrypt(c: &mut Criterion) {
   g.finish();
 }
 
-fn aes128_gcm_decrypt(c: &mut Criterion) {
-  if !bench_config::selected("aes-128-gcm/copy-and-decrypt") {
-    return;
-  }
-  aws_lc_bench! {
-    use aws_lc_rs::aead as aws_aead;
-  }
-  use ring::aead as ring_aead;
-
-  let inputs = common::comp_sizes(&[]);
-  let nonce_rs = rscrypto::aead::Nonce96::from_bytes(NONCE_12);
-  let cipher_rs = rscrypto::Aes128Gcm::new(&rscrypto::Aes128GcmKey::from_bytes(KEY_16));
-  let cipher_rc = aes_gcm::Aes128Gcm::new(&KEY_16.into());
-  let nonce_rc = aes_gcm::Nonce::from(NONCE_12);
-  aws_lc_bench! {
-    let aws_key = aws_aead::LessSafeKey::new(aws_aead::UnboundKey::new(&aws_aead::AES_128_GCM, &KEY_16).expect("valid AEAD benchmark operation must succeed"));
-  }
-  let ring_key = ring_aead::LessSafeKey::new(
-    ring_aead::UnboundKey::new(&ring_aead::AES_128_GCM, &KEY_16).expect("valid AEAD benchmark operation must succeed"),
-  );
-  // Timed: restore input into a preallocated buffer, decrypt, and handle/drop per-call outputs.
-  // Untimed: fixtures, buffer allocation, and reusable cipher construction/destruction.
-  let mut g = c.benchmark_group("aes-128-gcm/copy-and-decrypt");
-
-  for (len, data) in &inputs {
-    common::set_throughput(&mut g, *len);
-
-    // Every row opens RustCrypto's ciphertext and tag and must recover the input.
-    let mut ciphertext = data.clone();
-    let tag_rc = cipher_rc
-      .encrypt_inout_detached(&nonce_rc, AAD, ciphertext.as_mut_slice().into())
-      .expect("valid AEAD benchmark operation must succeed");
-    let tag_rs = rscrypto::Aes128Gcm::tag_from_slice(&tag_rc).expect("AEAD tags have 16 bytes");
-    let tag_ring = ring_aead::Tag::try_from(&tag_rc[..]).expect("AEAD tags have 16 bytes");
-
-    g.bench_function(
-      BenchmarkId::new("rscrypto", len),
-      checked_with(
-        ciphertext.clone(),
-        |buf| {
-          buf.copy_from_slice(&ciphertext);
-          cipher_rs
-            .decrypt_in_place(
-              black_box(&nonce_rs),
-              black_box(AAD),
-              black_box(&mut *buf),
-              black_box(&tag_rs),
-            )
-            .expect("valid AEAD benchmark operation must succeed");
-          black_box(&*buf);
-        },
-        |(), buf| assert_eq!(buf, data),
-      ),
-    );
-    segments_row(&mut g, &cipher_rs, &nonce_rs, &ciphertext, &tag_rs, data);
-
-    g.bench_function(
-      BenchmarkId::new("rustcrypto", len),
-      checked_with(
-        ciphertext.clone(),
-        |buf| {
-          buf.copy_from_slice(&ciphertext);
-          cipher_rc
-            .decrypt_inout_detached(
-              black_box(&nonce_rc),
-              black_box(AAD),
-              black_box(buf.as_mut_slice().into()),
-              black_box(&tag_rc),
-            )
-            .expect("valid AEAD benchmark operation must succeed");
-          black_box(&*buf);
-        },
-        |(), buf| assert_eq!(buf, data),
-      ),
-    );
-
-    aws_lc_bench! {
-      // AWS-LC exposes detached tags for seal, but its in-place open API takes ct||tag.
-      let appended = sealed(&ciphertext, tag_rc);
-
-      g.bench_function(
-        BenchmarkId::new("aws-lc-rs-appended-tag", len),
-        checked_with(
-          appended.clone(),
-          |buf| {
-            buf.copy_from_slice(&appended);
-            aws_key
-              .open_in_place(
-                aws_aead::Nonce::assume_unique_for_key(NONCE_12),
-                aws_aead::Aad::from(AAD),
-                black_box(&mut *buf),
-              )
-              .expect("valid AEAD benchmark operation must succeed");
-            black_box(&*buf);
-          },
-          |(), buf| assert_eq!(&buf[..*len], data.as_slice()),
-        ),
-      );
-    }
-
-    g.bench_function(
-      BenchmarkId::new("ring", len),
-      checked_with(
-        ciphertext.clone(),
-        |buf| {
-          buf.copy_from_slice(&ciphertext);
-          ring_key
-            .open_in_place_separate_tag(
-              ring_aead::Nonce::assume_unique_for_key(NONCE_12),
-              ring_aead::Aad::from(AAD),
-              black_box(tag_ring),
-              black_box(&mut *buf),
-              0..,
-            )
-            .expect("valid AEAD benchmark operation must succeed");
-          black_box(&*buf);
-        },
-        |(), buf| assert_eq!(buf, data),
-      ),
-    );
-  }
-
-  g.finish();
-}
+gcm_decrypt_bench!(
+  aes128_gcm_decrypt,
+  "aes-128-gcm/copy-and-decrypt",
+  Aes128GcmKey,
+  Aes128Gcm,
+  KEY_16,
+  AES_128_GCM
+);
 
 // AEGIS-256
 

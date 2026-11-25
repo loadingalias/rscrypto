@@ -9,10 +9,8 @@ use core::{arch::global_asm, mem};
 use super::KEY_SIZE;
 use crate::aead::segments::Span;
 
-#[cfg(target_os = "macos")]
-global_asm!(include_str!("asm/rscrypto_chacha20_poly1305_aarch64_apple_darwin.s"));
-#[cfg(target_os = "linux")]
-global_asm!(include_str!("asm/rscrypto_chacha20_poly1305_aarch64_linux.s"));
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+global_asm!(include_str!("asm/rscrypto_chacha20_poly1305_aarch64.s"), macho = const cfg!(target_os = "macos") as u8);
 
 #[repr(C, align(16))]
 #[derive(Clone, Copy)]

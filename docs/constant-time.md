@@ -80,6 +80,8 @@ The call graph also follows a conditional transfer into another function, such a
 On RISC-V, llvm-objdump decodes each extension that the emitted LLVM IR enables, so V and Zknh code is visible.
 An `asm_waiver` binds a reviewed condition to its target, primitive, function, finding kind,
 and condition identity (`slice_sha256`): a digest of the backward slice of the condition in the linked binary.
+A review can list `primitives` when every other field matches. The scanner checks each primitive independently.
+Renewing one member splits its record if the new digest differs from another member's digest.
 The slice holds every instruction whose result reaches the condition through registers, flags,
 or memory inside the function, each with the placement-independent identity described below.
 A load reaches the stores that can write the loaded bytes.

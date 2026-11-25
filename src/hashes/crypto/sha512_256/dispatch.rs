@@ -1,23 +1,13 @@
-use super::{
-  BLOCK_LEN,
-  kernels::{CompressBlocksFn, Sha512_256KernelId, compress_blocks_fn, required_caps},
-};
+use super::{BLOCK_LEN, kernels::CompressBlocksFn};
+pub(crate) use crate::hashes::crypto::sha512::dispatch::compress_dispatch;
+#[cfg(feature = "diag")]
+pub(crate) use crate::hashes::crypto::sha512::dispatch::kernel_name_for_len;
 
-define_sha_family_dispatch! {
-  kernel_id: Sha512_256KernelId,
+define_sha_digest! {
   compress_fn_ty: CompressBlocksFn,
-  portable_kernel: Sha512_256KernelId::Portable,
-  compress_fn: compress_blocks_fn,
-  required_caps: required_caps,
-  runtime_kernel: super::dispatch_policy::select_runtime_kernel,
   output_len: 32,
   word: u64,
   total_bits_ty: u128,
   length_offset: 112,
   h0: super::H0,
-  compile_time: {
-    hw: false,
-    name: "portable",
-    best: compress_blocks_fn(Sha512_256KernelId::Portable),
-  },
 }

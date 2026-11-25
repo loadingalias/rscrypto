@@ -1,7 +1,6 @@
 //! Stateless-reset tokens and address tokens.
 
 use alloc::{boxed::Box, vec::Vec};
-use core::sync::atomic::{AtomicBool, Ordering};
 
 use rscrypto::aead::{Nonce96, expert::AeadWithNonce};
 use rscrypto::{Aes256Gcm, Aes256GcmKey, Aes256GcmTag, HkdfSha256, HmacSha256, HmacSha256Tag, SecretBytes};
@@ -160,7 +159,6 @@ impl AddressTokenKey {
     )))]
     Box::new(TokenCipher {
       cipher: Aes256Gcm::new(&key),
-      sealed: AtomicBool::new(false),
     })
   }
 }
@@ -184,22 +182,17 @@ impl core::fmt::Debug for AddressTokenKey {
 fn boxed_token_cipher(key: &Aes256GcmKey) -> Box<TokenCipher> {
   Box::new(TokenCipher {
     cipher: Aes256Gcm::new(key),
-    sealed: AtomicBool::new(false),
   })
 }
 
 /// One derived token key, which seals at most once.
 struct TokenCipher {
   cipher: Aes256Gcm,
-  sealed: AtomicBool,
 }
 
 impl TokenCipher {
-  /// Encrypt `data` in place and append the tag; fails for oversized input or a second seal.
-  fn seal_in_place(&self, data: &mut Vec<u8>, aad: &[u8]) -> Result<(), Error> {
-    if data.len() > MAX_TOKEN_PLAINTEXT || self.sealed.swap(true, Ordering::Relaxed) {
-      return Err(Error::EncryptError);
-    }
+  /// Consume the derived key, encrypt `data` in place, and append its tag.
+  fn seal_in_place(self: Box<Self>, data: &mut Vec<u8>, aad: &[u8]) -> Result<(), Error> {
     // Each derived key seals once, so the fixed AEAD nonce is never reused
     // under one key while token nonces stay distinct.
     let tag = self

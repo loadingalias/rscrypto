@@ -9,8 +9,6 @@ use crate::traits::Digest;
 
 #[doc(hidden)]
 pub(crate) mod dispatch;
-#[doc(hidden)]
-pub(crate) mod dispatch_policy;
 #[cfg(test)]
 mod kernel_test;
 pub(crate) mod kernels;
@@ -138,38 +136,7 @@ impl Sha384 {
     self.compress_blocks
   }
 
-  #[inline]
-  fn update_with(&mut self, mut data: &[u8], compress_blocks: CompressBlocksFn) {
-    if data.is_empty() {
-      return;
-    }
-
-    if self.block_len != 0 {
-      let take = core::cmp::min(BLOCK_LEN.strict_sub(self.block_len), data.len());
-      self.block[self.block_len..self.block_len.strict_add(take)].copy_from_slice(&data[..take]);
-      self.block_len = self.block_len.strict_add(take);
-      data = &data[take..];
-
-      if self.block_len == BLOCK_LEN {
-        compress_blocks.call(&mut self.state, &self.block);
-        self.bytes_hashed = self.bytes_hashed.strict_add(BLOCK_LEN as u128);
-        self.block_len = 0;
-      }
-    }
-
-    let full_len = data.len().strict_sub(data.len() % BLOCK_LEN);
-    if full_len != 0 {
-      let (blocks, rest) = data.split_at(full_len);
-      compress_blocks.call(&mut self.state, blocks);
-      self.bytes_hashed = self.bytes_hashed.strict_add(blocks.len() as u128);
-      data = rest;
-    }
-
-    if !data.is_empty() {
-      self.block[..data.len()].copy_from_slice(data);
-      self.block_len = data.len();
-    }
-  }
+  super::sha512::impl_sha512_update!();
 
   #[inline]
   fn finalize_inner_with<const ZEROIZE: bool>(&self, compress_blocks: CompressBlocksFn) -> [u8; 48] {

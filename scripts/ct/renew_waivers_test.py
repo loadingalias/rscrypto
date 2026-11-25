@@ -2,6 +2,7 @@
 """Regression tests for the waiver review record."""
 
 import json
+import tomllib
 from pathlib import Path
 
 from asm_heuristics import (FunctionBody, apply_select_branch_enforcement, apply_waivers,
@@ -107,6 +108,14 @@ def reencoding_regressions(waiver: dict, functions: dict[str, FunctionBody]) -> 
   )
   updated = apply_identities(manifest, {1: ("0", "1")})
   assert updated == manifest[: manifest.rindex('slice_sha256 = "0"')] + 'slice_sha256 = "1"\nrationale = "same"\n', updated
+  # Renew one primitive without changing either neighbor or a later table.
+  group = '[[asm_waiver]]\nprimitives = [\n  "a", # first member\n  "b", "c",\n]\nslice_sha256 = "0"\n'
+  tail = '\n# Keep this table.\n[other]\nenabled = true\n'
+  split = apply_identities(group + tail, {1: ("0", "1")})
+  assert split.endswith(tail)
+  assert [(w["primitive"], w["slice_sha256"]) for w in tomllib.loads(split)["asm_waiver"]] == [
+    ("a", "0"), ("b", "1"), ("c", "0"),
+  ]
   try:
     apply_identities(manifest, {0: ("2", "1")})
   except SystemExit:

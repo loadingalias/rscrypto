@@ -16,7 +16,9 @@ use crate::platform::{self, caps::x86};
 const ELF: u8 = cfg!(not(target_os = "windows")) as u8;
 
 global_asm!(
+  include_str!("asm/rscrypto_x25519_base_table.inc"),
   include_str!("asm/rscrypto_x25519_x86_64_sysv.s"),
+  ".purgem rscrypto_x25519_base_table",
   elf = const ELF,
   options(att_syntax)
 );

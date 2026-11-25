@@ -1,66 +1,20 @@
 #![cfg(feature = "rsa")]
 
-use core::{
-  alloc::{GlobalAlloc, Layout},
-  cell::Cell,
+use rsa::{
+  PrivateKey as RustCryptoRsaPrivateKey,
+  pkcs1::{DecodeRsaPrivateKey, EncodeRsaPrivateKey},
 };
-use std::alloc::System;
-
-use rsa::{BoxedUint, PrivateKey as RustCryptoRsaPrivateKey, pkcs1::EncodeRsaPrivateKey};
 use rscrypto::auth::rsa::expert::RsaPkcs1v15Decrypt;
 use rscrypto::{
   RsaBlindingPair, RsaEncryptionError, RsaJwtAlgorithm, RsaOaepProfile, RsaPkcs1v15Profile, RsaPrivateKey,
   RsaPssProfile, RsaPublicKey, RsaPublicKeyPolicy, RsaSignatureProfile, RsaX509PublicKey,
 };
 
-std::thread_local! {
-  static ALLOCATIONS: Cell<Option<usize>> = const { Cell::new(None) };
-}
+#[path = "common/allocations.rs"]
+mod allocations;
+use allocations::{Measurement, measure_allocations};
+
 const ID_RSASSA_PSS_OID: &[u8] = &[0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x0a];
-
-struct CountingAlloc;
-
-fn record_allocation() {
-  match ALLOCATIONS.try_with(|allocations| {
-    if let Some(count) = allocations.get() {
-      allocations.set(Some(count.strict_add(1)));
-    }
-  }) {
-    Ok(()) | Err(_) => {}
-  }
-}
-
-// SAFETY: CountingAlloc preserves the global allocator contract because:
-// 1. Every allocation operation delegates to `System` with the original `Layout`.
-// 2. Returned pointers and deallocations are exactly those produced/accepted by `System`.
-// 3. The only added behavior is a thread-local counter update independent of allocation memory.
-unsafe impl GlobalAlloc for CountingAlloc {
-  unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-    record_allocation();
-    // SAFETY: Delegating allocation to `System` because:
-    // 1. `layout` is forwarded unchanged from the caller.
-    // 2. `System` is the platform allocator and defines the allocation contract.
-    unsafe { System.alloc(layout) }
-  }
-
-  unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-    // SAFETY: Delegating deallocation to `System` because:
-    // 1. `ptr` was returned by this allocator's delegated `System` allocation path.
-    // 2. `layout` is forwarded unchanged from the caller.
-    unsafe { System.dealloc(ptr, layout) };
-  }
-
-  unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-    record_allocation();
-    // SAFETY: Delegating reallocation to `System` because:
-    // 1. `ptr` and `layout` identify an allocation owned by this allocator.
-    // 2. `new_size` is forwarded unchanged from the caller.
-    unsafe { System.realloc(ptr, layout, new_size) }
-  }
-}
-
-#[global_allocator]
-static GLOBAL: CountingAlloc = CountingAlloc;
 
 const MESSAGE_PSS: &[u8] = b"rscrypto RSA-PSS verification fixture";
 const MESSAGE_PKCS1V15: &[u8] = b"rscrypto RSA-PKCS1-v1_5 verification fixture";
@@ -85,27 +39,6 @@ const X509_SHA1_WITH_RSA_ENCRYPTION: &[u8] = &[
 const X509_PSS_DEFAULT_SHA1_ALGORITHM: &[u8] = &[
   0x30, 0x0d, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x0a, 0x30, 0x00,
 ];
-
-fn hex_to_vec(hex: &str) -> Vec<u8> {
-  let (chunks, remainder) = hex.as_bytes().as_chunks::<2>();
-  assert!(remainder.is_empty(), "hex input must contain complete byte pairs");
-  let mut out = Vec::with_capacity(chunks.len());
-  for &[hi, lo] in chunks {
-    let hi = hex_value(hi).expect("hex fixtures must contain only ASCII hexadecimal digits");
-    let lo = hex_value(lo).expect("hex fixtures must contain only ASCII hexadecimal digits");
-    out.push((hi << 4) | lo);
-  }
-  out
-}
-
-fn hex_value(byte: u8) -> Option<u8> {
-  match byte {
-    b'0'..=b'9' => Some(byte.strict_sub(b'0')),
-    b'a'..=b'f' => Some(byte.strict_sub(b'a').strict_add(10)),
-    b'A'..=b'F' => Some(byte.strict_sub(b'A').strict_add(10)),
-    _ => None,
-  }
-}
 
 fn der_len(len: usize) -> Vec<u8> {
   if len < 128 {
@@ -249,86 +182,24 @@ fn x509_certificate(tbs_certificate_der: &[u8], signature_algorithm_der: &[u8], 
 }
 
 fn pss_spki() -> Vec<u8> {
-  hex_to_vec(
-    "\
-30820122300d06092a864886f70d01010105000382010f003082010a0282010100ee0768fd95d4\
-b01ba98b31bae03ce5a63f4dbffa7ea7b43d876f3e2c49847f695248cebb213b867a3c219276d\
-fd7d1187a9981f8d42131d67464b60658fdcbdb3dc036d38c4024b7c1dc8ac096d19d6db048d\
-9db7c72d56675e923fbe0169e30e5dcb75b4170def5dc655d4a05ab317e0f19c2a79b8882b7\
-ef6fdbbc66de73485bc59fd6957cf76972d5869fcf7ab75e84b2e4a665a29e2e0cf6a135a93\
-0e0b5366e23bcad7f5e708effa078cd1387259c0c7730ba55343c568fa9b0da9c13d0c8ca03\
-81a6833554b387ba45e9088064d6ec627ebb5513a183f375e59130b5e6e77081dc1cf807f2bf\
-ab77fb0a09194a482e05eb931ea7b37deeb11d6d7f18110203010001",
-  )
+  include_bytes!("vectors/rsa/rsa2048_pss_spki.der").to_vec()
 }
 
 fn pss_signature_sha256() -> Vec<u8> {
-  hex_to_vec(
-    "\
-2641e0207f279b526767343e03007a293a0523db41828c0e335c10dea7ab7dec988ad09cd220d\
-1754f5f89f7cd3b2a9ab1f315709b019989ee96e9060d3158d0240b3f8dbed179c55c1b0fa78\
-f31249d706256748c325ded4835224e80b3daa066489d1cf28a4062fa4129b21723f6336f8c\
-55d6785cd2d284437748b78b47e0162da7cddd61df0536b378a1cc5c327cba76db99c253795c\
-19b49007146e44dbe47f3ee9c2da2248710cd264661815bd5508f604d6ee4a663a46c472f6d\
-323739fe6b142ddc3b006a9c113d3b81da524e0fe358f9cb141f686dc459b66b1150e5418e8\
-b6fcf2590d0706da27017429d91fe9f521f9fbb2ae2044f2eecfe87c7d",
-  )
+  include_bytes!("vectors/rsa/rsa2048_pss_signature_sha256.sig").to_vec()
 }
 
 fn pkcs1v15_spki() -> Vec<u8> {
-  hex_to_vec(
-    "\
-30820122300d06092a864886f70d01010105000382010f003082010a0282010100bf882d756861\
-2271d36ac41584c3434145d13af573b889b353af0d1b257dcdefabb18e3adb717507fa981c70e\
-870c73359fe878feaa1b7cec819accaffa6646232d08650b8e1aefd6626cb8ab032cde1bb2cf\
-d378a9275d4cf828313fcc108184cf05727595701c44d7009590c747a82d24e7b651c7e7a96\
-b5e6141b880e3be517fea22ea5d73415de297f4c6ea66019689eaf6fb4732288355974d84438\
-003aa9fb72b18a10e909062816e79e8ee15e2d4066c5000d3251f251c44e0486f85644f00a9\
-6ae40d5462e07e1bd02fe3eae2c5a793716b81ab690edb9cb6d8532baab08c080b8b08bdf50\
-d1d3dc07b4d3f4afbb0f86ea48971a16d04132ec2432870203010001",
-  )
+  include_bytes!("vectors/rsa/rsa2048_pkcs1v15_spki.der").to_vec()
 }
 
 fn pkcs1v15_signature_sha256() -> Vec<u8> {
-  hex_to_vec(
-    "\
-94781246d705f79659d01ac8894b6f41076abe165e28711ec8fa41c1c8767b175a9c63e5118b\
-d30de86da0d7b8934e963ef69c438ace976e4453dfce6b9b84a7d37a27ee61512656333dfda1\
-ac40197fe4f9396bb016b25054f98f149d126c0248fc007cddc3d75d178eb34ecda0e0df822\
-825ca133c062d3cdcb19e20a3e377541d8253af795a9b49a41ddb5795592502b9efbb153afc\
-dd4fcc492a891d8536ef91cc228a3dbf66f0c70596f9cd101fe95d127550e7a4a9864430bd3\
-4a88d8df93f4df7b54e8a4b8643891481e4bdcf87be3f98a1fdc475a819e3dc3a114aff86e\
-48929a430fc39333f81064701be7d5501a3a7b4ec6c68f6feda6190d66b16",
-  )
+  include_bytes!("vectors/rsa/rsa2048_pkcs1v15_signature_sha256.sig").to_vec()
 }
 
 fn rustcrypto_fixture_private_key() -> RustCryptoRsaPrivateKey {
-  RustCryptoRsaPrivateKey::from_components(
-    BoxedUint::from_str_radix_vartime(
-      "00d397b84d98a4c26138ed1b695a8106ead91d553bf06041b62d3fdc50a041e222b8f4529689c1b82c5e71554f5dd69fa2f4b6158cf0dbeb57811a0fc327e1f28e74fe74d3bc166c1eabdc1b8b57b934ca8be5b00b4f29975bcc99acaf415b59bb28a6782bb41a2c3c2976b3c18dbadef62f00c6bb226640095096c0cc60d22fe7ef987d75c6a81b10d96bf292028af110dc7cc1bbc43d22adab379a0cd5d8078cc780ff5cd6209dea34c922cf784f7717e428d75b5aec8ff30e5f0141510766e2e0ab8d473c84e8710b2b98227c3db095337ad3452f19e2b9bfbccdd8148abf6776fa552775e6e75956e45229ae5a9c46949bab1e622f0e48f56524a84ed3483b",
-      16,
-    )
-    .expect("the fixed RSA modulus must be valid hexadecimal"),
-    BoxedUint::from_str_radix_vartime("010001", 16).expect("the fixed RSA exponent must be valid hexadecimal"),
-    BoxedUint::from_str_radix_vartime(
-      "00c4e70c689162c94c660828191b52b4d8392115df486a9adbe831e458d73958320dc1b755456e93701e9702d76fb0b92f90e01d1fe248153281fe79aa9763a92fae69d8d7ecd144de29fa135bd14f9573e349e45031e3b76982f583003826c552e89a397c1a06bd2163488630d92e8c2bb643d7abef700da95d685c941489a46f54b5316f62b5d2c3a7f1bbd134cb37353a44683fdc9d95d36458de22f6c44057fe74a0a436c4308f73f4da42f35c47ac16a7138d483afc91e41dc3a1127382e0c0f5119b0221b4fc639d6b9c38177a6de9b526ebd88c38d7982c07f98a0efd877d508aae275b946915c02e2e1106d175d74ec6777f5e80d12c053d9c7be1e341",
-      16,
-    )
-    .expect("the fixed RSA private exponent must be valid hexadecimal"),
-    vec![
-      BoxedUint::from_str_radix_vartime(
-        "00f827bbf3a41877c7cc59aebf42ed4b29c32defcb8ed96863d5b090a05a8930dd624a21c9dcf9838568fdfa0df65b8462a5f2ac913d6c56f975532bd8e78fb07bd405ca99a484bcf59f019bbddcb3933f2bce706300b4f7b110120c5df9018159067c35da3061a56c8635a52b54273b31271b4311f0795df6021e6355e1a42e61",
-        16,
-      )
-      .expect("the fixed first RSA prime must be valid hexadecimal"),
-      BoxedUint::from_str_radix_vartime(
-        "00da4817ce0089dd36f2ade6a3ff410c73ec34bf1b4f6bda38431bfede11cef1f7f6efa70e5f8063a3b1f6e17296ffb15feefa0912a0325b8d1fd65a559e717b5b961ec345072e0ec5203d03441d29af4d64054a04507410cf1da78e7b6119d909ec66e6ad625bf995b279a4b3c5be7d895cd7c5b9c4c497fde730916fcdb4e41b",
-        16,
-      )
-      .expect("the fixed second RSA prime must be valid hexadecimal"),
-    ],
-  )
-  .expect("the fixed RSA components must form a valid private key")
+  RustCryptoRsaPrivateKey::from_pkcs1_der(include_bytes!("vectors/rsa/rsa2048_private_pkcs1.der"))
+    .expect("the independent RSA-2048 fixture must parse")
 }
 
 fn private_key() -> RsaPrivateKey {
@@ -378,26 +249,19 @@ fn factor_two_and_inverse(modulus: &[u8]) -> (Vec<u8>, Vec<u8>) {
 }
 
 fn public_operation_input() -> Vec<u8> {
-  hex_to_vec(
-    "\
-3450869c4ccbee98815e55cb42f2dd85a3427d3f65e33d29352293e18cde9582a9fbc54b440984\
-1ba8d931a9a9411192516a9fbd3a7b886e7f8b8f3f7bb5403309eee9d7234df0b5934e18a1dc\
-9e3b568a3fab6947cefe50500abcbda19fd9ab7b7e90a95801e36a020ba79bdc94346198d98131\
-6864a06a43448b62acb7a8472661323175f04c5e447d0017e4073efc55f59f79f34aaa3be8ae7\
-0d26db78b25e9dfb23856d1b1e024aedfcfd649d209412c0c80832ca3466965eeff539afe791f\
-451b554e212cff4d92466438062c5202169b0adf0c95b7d3d31414602cf9d185252b550cc2e8f\
-5be08b7fc71f51210ff88363badadfaf5c2915c3a10b2389e",
-  )
+  include_bytes!("vectors/rsa/rsa2048_legacy_exponent_input.bin").to_vec()
 }
 
-fn reset_allocations() {
-  ALLOCATIONS.set(Some(0));
-}
+#[test]
+fn der_encoders_allocate_only_the_returned_buffer() {
+  use core::hint::black_box;
 
-fn allocation_count() -> usize {
-  ALLOCATIONS
-    .replace(None)
-    .expect("allocation counting must be enabled before reading it")
+  let private = private_key();
+  let public = private.public_key();
+  assert_eq!(measure_allocations(|| drop(black_box(public.to_pkcs1_der()))), 1);
+  assert_eq!(measure_allocations(|| drop(black_box(public.to_spki_der()))), 1);
+  assert_eq!(measure_allocations(|| drop(black_box(private.to_pkcs1_der()))), 1);
+  assert_eq!(measure_allocations(|| drop(black_box(private.to_pkcs8_der()))), 1);
 }
 
 #[test]
@@ -412,21 +276,21 @@ fn reused_scratch_rsa_operations_do_not_allocate() {
     .public_operation_with_scratch(&input, &mut out, &mut scratch)
     .expect("the warm-up RSA public operation must succeed");
 
-  reset_allocations();
+  let measurement = Measurement::start();
   key
     .public_operation_with_scratch(&input, &mut out, &mut scratch)
     .expect("the measured RSA public operation must succeed");
-  assert_eq!(allocation_count(), 0);
+  assert_eq!(measurement.finish(), 0);
 
   let sig = pss_signature_sha256();
   let pss_sha256 = RsaSignatureProfile::pss(RsaPssProfile::Sha256);
-  reset_allocations();
+  let measurement = Measurement::start();
   key
     .verify_pss_with_scratch(RsaPssProfile::Sha256, MESSAGE_PSS, &sig, &mut scratch)
     .expect("scratch-backed PSS verification must succeed");
-  assert_eq!(allocation_count(), 0);
+  assert_eq!(measurement.finish(), 0);
 
-  reset_allocations();
+  let measurement = Measurement::start();
   key
     .verify_signature_with_scratch(
       RsaSignatureProfile::pss(RsaPssProfile::Sha256),
@@ -435,23 +299,23 @@ fn reused_scratch_rsa_operations_do_not_allocate() {
       &mut scratch,
     )
     .expect("typed scratch-backed PSS verification must succeed");
-  assert_eq!(allocation_count(), 0);
+  assert_eq!(measurement.finish(), 0);
 
-  reset_allocations();
+  let measurement = Measurement::start();
   key
     .jwt_verifier(RsaJwtAlgorithm::Ps256)
     .verify_with_scratch("PS256", MESSAGE_PSS, &sig, &mut scratch)
     .expect("scratch-backed PS256 verification must succeed");
-  assert_eq!(allocation_count(), 0);
+  assert_eq!(measurement.finish(), 0);
 
-  reset_allocations();
+  let measurement = Measurement::start();
   key
     .verify_expected_cose_algorithm_id_with_scratch(-37, -37, pss_sha256, MESSAGE_PSS, &sig, &mut scratch)
     .expect("scratch-backed PS256 COSE verification must succeed");
-  assert_eq!(allocation_count(), 0);
+  assert_eq!(measurement.finish(), 0);
 
   let seed = [0x42; 32];
-  reset_allocations();
+  let measurement = Measurement::start();
   key
     .encrypt_oaep_with_random_fill_and_scratch(
       RsaOaepProfile::Sha256,
@@ -462,33 +326,33 @@ fn reused_scratch_rsa_operations_do_not_allocate() {
       fill_rsa_random_from(&seed),
     )
     .expect("scratch-backed OAEP encryption must succeed");
-  assert_eq!(allocation_count(), 0);
+  assert_eq!(measurement.finish(), 0);
 
   let x509_key = legacy_x509_public_key_from_spki(&pss_spki());
   let mut scratch = x509_key.public_key().public_scratch();
-  reset_allocations();
+  let measurement = Measurement::start();
   x509_key
     .verify_signature_from_x509_algorithm_der_with_scratch(X509_PSS_SHA256_ALGORITHM, MESSAGE_PSS, &sig, &mut scratch)
     .expect("scratch-backed X.509 PSS verification must succeed");
-  assert_eq!(allocation_count(), 0);
+  assert_eq!(measurement.finish(), 0);
 
-  reset_allocations();
+  let measurement = Measurement::start();
   x509_key
     .verify_expected_tls13_signature_scheme_with_scratch(0x0804, 0x0804, pss_sha256, MESSAGE_PSS, &sig, &mut scratch)
     .expect("scratch-backed TLS 1.3 PSS verification must succeed");
-  assert_eq!(allocation_count(), 0);
+  assert_eq!(measurement.finish(), 0);
 
   let key = legacy_public_key_from_spki(&pkcs1v15_spki());
   let sig = pkcs1v15_signature_sha256();
   let pkcs1v15_sha256 = RsaSignatureProfile::pkcs1v15(RsaPkcs1v15Profile::Sha256);
   let mut scratch = key.public_scratch();
-  reset_allocations();
+  let measurement = Measurement::start();
   key
     .verify_pkcs1v15_with_scratch(RsaPkcs1v15Profile::Sha256, MESSAGE_PKCS1V15, &sig, &mut scratch)
     .expect("scratch-backed PKCS#1 v1.5 verification must succeed");
-  assert_eq!(allocation_count(), 0);
+  assert_eq!(measurement.finish(), 0);
 
-  reset_allocations();
+  let measurement = Measurement::start();
   key
     .verify_signature_with_scratch(
       RsaSignatureProfile::pkcs1v15(RsaPkcs1v15Profile::Sha256),
@@ -497,32 +361,32 @@ fn reused_scratch_rsa_operations_do_not_allocate() {
       &mut scratch,
     )
     .expect("typed scratch-backed PKCS#1 v1.5 verification must succeed");
-  assert_eq!(allocation_count(), 0);
+  assert_eq!(measurement.finish(), 0);
 
-  reset_allocations();
+  let measurement = Measurement::start();
   key
     .jwt_verifier(RsaJwtAlgorithm::Rs256)
     .verify_with_scratch("RS256", MESSAGE_PKCS1V15, &sig, &mut scratch)
     .expect("scratch-backed RS256 verification must succeed");
-  assert_eq!(allocation_count(), 0);
+  assert_eq!(measurement.finish(), 0);
 
-  reset_allocations();
+  let measurement = Measurement::start();
   key
     .verify_expected_cose_algorithm_id_with_scratch(-257, -257, pkcs1v15_sha256, MESSAGE_PKCS1V15, &sig, &mut scratch)
     .expect("scratch-backed RS256 COSE verification must succeed");
-  assert_eq!(allocation_count(), 0);
+  assert_eq!(measurement.finish(), 0);
 
   let message = b"scratch-backed RSAES-PKCS1-v1_5 encryption";
   let mut ciphertext = vec![0u8; key.modulus().len()];
-  reset_allocations();
+  let measurement = Measurement::start();
   key
     .encrypt_pkcs1v15_with_random_fill_and_scratch(message, &mut ciphertext, &mut scratch, fill_rsa_random_with(0x5d))
     .expect("scratch-backed PKCS#1 v1.5 encryption must succeed");
-  assert_eq!(allocation_count(), 0);
+  assert_eq!(measurement.finish(), 0);
 
   let x509_key = legacy_x509_public_key_from_spki(&pkcs1v15_spki());
   let mut scratch = x509_key.public_key().public_scratch();
-  reset_allocations();
+  let measurement = Measurement::start();
   x509_key
     .verify_signature_from_x509_algorithm_der_with_scratch(
       X509_SHA256_WITH_RSA_ENCRYPTION,
@@ -531,9 +395,9 @@ fn reused_scratch_rsa_operations_do_not_allocate() {
       &mut scratch,
     )
     .expect("scratch-backed X.509 PKCS#1 v1.5 verification must succeed");
-  assert_eq!(allocation_count(), 0);
+  assert_eq!(measurement.finish(), 0);
 
-  reset_allocations();
+  let measurement = Measurement::start();
   x509_key
     .verify_expected_tls_certificate_signature_scheme_with_scratch(
       0x0401,
@@ -544,7 +408,7 @@ fn reused_scratch_rsa_operations_do_not_allocate() {
       &mut scratch,
     )
     .expect("scratch-backed TLS certificate PKCS#1 v1.5 verification must succeed");
-  assert_eq!(allocation_count(), 0);
+  assert_eq!(measurement.finish(), 0);
 
   assert_one_shot_protocol_rejects_fail_before_scratch_allocation();
   let private_key = private_key();
@@ -560,7 +424,7 @@ fn assert_private_caller_random_rejects_fail_before_scratch_allocation(key: &Rsa
   let mut signature = vec![0xa5; key.signature_len()];
   let mut entropy_calls = 0usize;
 
-  reset_allocations();
+  let measurement = Measurement::start();
   assert!(
     key
       .sign_signature_with_random_fill(
@@ -574,7 +438,7 @@ fn assert_private_caller_random_rejects_fail_before_scratch_allocation(key: &Rsa
       )
       .is_err()
   );
-  assert_eq!(allocation_count(), 0);
+  assert_eq!(measurement.finish(), 0);
   assert_eq!(entropy_calls, 0);
   assert!(signature.iter().all(|&byte| byte == 0));
 }
@@ -585,73 +449,73 @@ fn assert_private_protocol_signing_rejects_fail_before_entropy_allocation(key: &
   let mut signature = vec![0xa5; key.signature_len()];
   let message = b"private protocol signing allocation reject";
 
-  reset_allocations();
+  let measurement = Measurement::start();
   assert!(
     key
       .sign_tls13_signature_scheme(0x0401, message, &mut signature)
       .is_err()
   );
-  assert_eq!(allocation_count(), 0);
+  assert_eq!(measurement.finish(), 0);
   assert!(signature.iter().all(|&byte| byte == 0));
 
   signature.fill(0xa5);
-  reset_allocations();
+  let measurement = Measurement::start();
   assert!(
     key
       .sign_tls13_signature_scheme_with_scratch(0x0401, message, &mut signature, &mut scratch)
       .is_err()
   );
-  assert_eq!(allocation_count(), 0);
+  assert_eq!(measurement.finish(), 0);
   assert!(signature.iter().all(|&byte| byte == 0));
 
   signature.fill(0xa5);
-  reset_allocations();
+  let measurement = Measurement::start();
   assert!(
     key
       .sign_tls_certificate_signature_scheme(0x0201, message, &mut signature)
       .is_err()
   );
-  assert_eq!(allocation_count(), 0);
+  assert_eq!(measurement.finish(), 0);
   assert!(signature.iter().all(|&byte| byte == 0));
 
   signature.fill(0xa5);
-  reset_allocations();
+  let measurement = Measurement::start();
   assert!(
     key
       .sign_tls_certificate_signature_scheme_with_scratch(0x0201, message, &mut signature, &mut scratch)
       .is_err()
   );
-  assert_eq!(allocation_count(), 0);
+  assert_eq!(measurement.finish(), 0);
   assert!(signature.iter().all(|&byte| byte == 0));
 
   signature.fill(0xa5);
-  reset_allocations();
+  let measurement = Measurement::start();
   assert!(key.sign_cose_algorithm_id(-7, message, &mut signature).is_err());
-  assert_eq!(allocation_count(), 0);
+  assert_eq!(measurement.finish(), 0);
   assert!(signature.iter().all(|&byte| byte == 0));
 
   signature.fill(0xa5);
-  reset_allocations();
+  let measurement = Measurement::start();
   assert!(
     key
       .sign_cose_algorithm_id_with_scratch(-7, message, &mut signature, &mut scratch)
       .is_err()
   );
-  assert_eq!(allocation_count(), 0);
+  assert_eq!(measurement.finish(), 0);
   assert!(signature.iter().all(|&byte| byte == 0));
 
   signature.fill(0xa5);
-  reset_allocations();
+  let measurement = Measurement::start();
   assert!(
     key
       .sign_x509_signature_algorithm_der(X509_SHA1_WITH_RSA_ENCRYPTION, message, &mut signature)
       .is_err()
   );
-  assert_eq!(allocation_count(), 0);
+  assert_eq!(measurement.finish(), 0);
   assert!(signature.iter().all(|&byte| byte == 0));
 
   signature.fill(0xa5);
-  reset_allocations();
+  let measurement = Measurement::start();
   assert!(
     key
       .sign_x509_signature_algorithm_der_with_scratch(
@@ -662,11 +526,11 @@ fn assert_private_protocol_signing_rejects_fail_before_entropy_allocation(key: &
       )
       .is_err()
   );
-  assert_eq!(allocation_count(), 0);
+  assert_eq!(measurement.finish(), 0);
   assert!(signature.iter().all(|&byte| byte == 0));
 
   signature.fill(0xa5);
-  reset_allocations();
+  let measurement = Measurement::start();
   assert!(
     key
       .sign_signature(
@@ -676,11 +540,11 @@ fn assert_private_protocol_signing_rejects_fail_before_entropy_allocation(key: &
       )
       .is_err()
   );
-  assert_eq!(allocation_count(), 0);
+  assert_eq!(measurement.finish(), 0);
   assert!(signature.iter().all(|&byte| byte == 0));
 
   signature.fill(0xa5);
-  reset_allocations();
+  let measurement = Measurement::start();
   assert!(
     key
       .sign_signature_with_scratch(
@@ -691,7 +555,7 @@ fn assert_private_protocol_signing_rejects_fail_before_entropy_allocation(key: &
       )
       .is_err()
   );
-  assert_eq!(allocation_count(), 0);
+  assert_eq!(measurement.finish(), 0);
   assert!(signature.iter().all(|&byte| byte == 0));
 }
 
@@ -701,7 +565,7 @@ fn assert_private_scratch_operations_do_not_allocate(key: &RsaPrivateKey) {
   let mut signature = vec![0u8; key.signature_len()];
   let mut decrypted = vec![0u8; key.signature_len()];
 
-  reset_allocations();
+  let measurement = Measurement::start();
   key
     .sign_pkcs1v15_with_blinding_factor_and_scratch(
       RsaPkcs1v15Profile::Sha256,
@@ -711,10 +575,10 @@ fn assert_private_scratch_operations_do_not_allocate(key: &RsaPrivateKey) {
       &mut scratch,
     )
     .expect("scratch-backed blinded PKCS#1 v1.5 signing must succeed");
-  assert_eq!(allocation_count(), 0);
+  assert_eq!(measurement.finish(), 0);
 
   let salt = [0x7a; 32];
-  reset_allocations();
+  let measurement = Measurement::start();
   key
     .sign_pss_with_salt_and_blinding_factor_and_scratch(
       RsaPssProfile::Sha256,
@@ -725,10 +589,10 @@ fn assert_private_scratch_operations_do_not_allocate(key: &RsaPrivateKey) {
       &mut scratch,
     )
     .expect("scratch-backed blinded PSS signing must succeed");
-  assert_eq!(allocation_count(), 0);
+  assert_eq!(measurement.finish(), 0);
 
   let mut entropy_calls = 0usize;
-  reset_allocations();
+  let measurement = Measurement::start();
   key
     .sign_pss_with_random_fill_and_scratch(
       RsaPssProfile::Sha256,
@@ -747,7 +611,7 @@ fn assert_private_scratch_operations_do_not_allocate(key: &RsaPrivateKey) {
     )
     .expect("scratch-backed caller-random PSS signing must succeed");
   assert_eq!(entropy_calls, 3);
-  assert_eq!(allocation_count(), 0);
+  assert_eq!(measurement.finish(), 0);
 
   let label = b"private-scratch-allocation";
   let plaintext = b"private scratch allocation OAEP";
@@ -764,7 +628,7 @@ fn assert_private_scratch_operations_do_not_allocate(key: &RsaPrivateKey) {
     )
     .expect("OAEP fixture encryption must succeed");
 
-  reset_allocations();
+  let measurement = Measurement::start();
   let len = key
     .decrypt_oaep_with_blinding_factor_and_scratch(
       RsaOaepProfile::Sha256,
@@ -776,7 +640,7 @@ fn assert_private_scratch_operations_do_not_allocate(key: &RsaPrivateKey) {
     )
     .expect("scratch-backed blinded OAEP decryption must succeed");
   assert_eq!(&decrypted[..len], plaintext);
-  assert_eq!(allocation_count(), 0);
+  assert_eq!(measurement.finish(), 0);
 
   let pkcs1v15_plaintext = b"private scratch allocation RSAES-PKCS1-v1_5";
   key
@@ -784,7 +648,7 @@ fn assert_private_scratch_operations_do_not_allocate(key: &RsaPrivateKey) {
     .encrypt_pkcs1v15_with_random_fill(pkcs1v15_plaintext, &mut ciphertext, fill_rsa_random_with(0x5d))
     .expect("PKCS#1 v1.5 fixture encryption must succeed");
 
-  reset_allocations();
+  let measurement = Measurement::start();
   let len = key
     .decrypt_pkcs1v15_with_blinding_factor_and_scratch(
       &ciphertext,
@@ -794,7 +658,7 @@ fn assert_private_scratch_operations_do_not_allocate(key: &RsaPrivateKey) {
     )
     .expect("scratch-backed blinded PKCS#1 v1.5 decryption must succeed");
   assert_eq!(&decrypted[..len], pkcs1v15_plaintext);
-  assert_eq!(allocation_count(), 0);
+  assert_eq!(measurement.finish(), 0);
 
   // A wrong block type must select the synthetic message, using only scratch.
   let mut invalid_encoded = vec![0x5au8; key.signature_len()];
@@ -803,7 +667,7 @@ fn assert_private_scratch_operations_do_not_allocate(key: &RsaPrivateKey) {
     .public_key()
     .public_operation(&invalid_encoded, &mut ciphertext)
     .expect("a zero-leading encoded block must be below the modulus");
-  reset_allocations();
+  let measurement = Measurement::start();
   let len = key
     .decrypt_pkcs1v15_with_blinding_factor_and_scratch(
       &ciphertext,
@@ -813,7 +677,7 @@ fn assert_private_scratch_operations_do_not_allocate(key: &RsaPrivateKey) {
     )
     .expect("implicit rejection must return a message for an invalid block type");
   assert_ne!(&decrypted[..len], pkcs1v15_plaintext);
-  assert_eq!(allocation_count(), 0);
+  assert_eq!(measurement.finish(), 0);
 }
 
 #[cfg(feature = "getrandom")]
@@ -822,7 +686,7 @@ fn assert_rng_private_scratch_operations_do_not_allocate(key: &RsaPrivateKey) {
   let mut signature = vec![0u8; key.signature_len()];
   let mut decrypted = vec![0u8; key.signature_len()];
 
-  reset_allocations();
+  let measurement = Measurement::start();
   key
     .sign_pkcs1v15_with_scratch(
       RsaPkcs1v15Profile::Sha256,
@@ -831,7 +695,7 @@ fn assert_rng_private_scratch_operations_do_not_allocate(key: &RsaPrivateKey) {
       &mut scratch,
     )
     .expect("scratch-backed randomized PKCS#1 v1.5 signing must succeed");
-  assert_eq!(allocation_count(), 0);
+  assert_eq!(measurement.finish(), 0);
   key
     .public_key()
     .verify_pkcs1v15(
@@ -841,7 +705,7 @@ fn assert_rng_private_scratch_operations_do_not_allocate(key: &RsaPrivateKey) {
     )
     .expect("the randomized PKCS#1 v1.5 signature must verify");
 
-  reset_allocations();
+  let measurement = Measurement::start();
   key
     .sign_pss_with_scratch(
       RsaPssProfile::Sha256,
@@ -850,7 +714,7 @@ fn assert_rng_private_scratch_operations_do_not_allocate(key: &RsaPrivateKey) {
       &mut scratch,
     )
     .expect("scratch-backed randomized PSS signing must succeed");
-  assert_eq!(allocation_count(), 0);
+  assert_eq!(measurement.finish(), 0);
   key
     .public_key()
     .verify_pss(RsaPssProfile::Sha256, b"rng private scratch allocation PSS", &signature)
@@ -862,7 +726,7 @@ fn assert_rng_private_scratch_operations_do_not_allocate(key: &RsaPrivateKey) {
     b"rng signing workspace allocation refresh".as_slice(),
     b"rng signing workspace allocation reuse",
   ] {
-    reset_allocations();
+    let measurement = Measurement::start();
     key
       .sign_signature_with_workspace(
         RsaSignatureProfile::pss(RsaPssProfile::Sha256),
@@ -871,13 +735,13 @@ fn assert_rng_private_scratch_operations_do_not_allocate(key: &RsaPrivateKey) {
         &mut workspace,
       )
       .expect("workspace PSS signing must succeed");
-    assert_eq!(allocation_count(), 0);
+    assert_eq!(measurement.finish(), 0);
     key
       .public_key()
       .verify_pss(RsaPssProfile::Sha256, message, &signature)
       .expect("the workspace PSS signature must verify");
   }
-  reset_allocations();
+  let measurement = Measurement::start();
   key
     .sign_signature_with_workspace(
       RsaSignatureProfile::pkcs1v15(RsaPkcs1v15Profile::Sha256),
@@ -886,7 +750,7 @@ fn assert_rng_private_scratch_operations_do_not_allocate(key: &RsaPrivateKey) {
       &mut workspace,
     )
     .expect("workspace PKCS#1 v1.5 signing must succeed");
-  assert_eq!(allocation_count(), 0);
+  assert_eq!(measurement.finish(), 0);
   key
     .public_key()
     .verify_pkcs1v15(
@@ -911,12 +775,12 @@ fn assert_rng_private_scratch_operations_do_not_allocate(key: &RsaPrivateKey) {
     )
     .expect("OAEP fixture encryption must succeed");
 
-  reset_allocations();
+  let measurement = Measurement::start();
   let len = key
     .decrypt_oaep_with_scratch(RsaOaepProfile::Sha256, label, &ciphertext, &mut decrypted, &mut scratch)
     .expect("scratch-backed randomized OAEP decryption must succeed");
   assert_eq!(&decrypted[..len], plaintext);
-  assert_eq!(allocation_count(), 0);
+  assert_eq!(measurement.finish(), 0);
 
   let pkcs1v15_plaintext = b"rng private scratch allocation RSAES-PKCS1-v1_5";
   key
@@ -924,12 +788,12 @@ fn assert_rng_private_scratch_operations_do_not_allocate(key: &RsaPrivateKey) {
     .encrypt_pkcs1v15_with_random_fill(pkcs1v15_plaintext, &mut ciphertext, fill_rsa_random_with(0x5d))
     .expect("PKCS#1 v1.5 fixture encryption must succeed");
 
-  reset_allocations();
+  let measurement = Measurement::start();
   let len = key
     .decrypt_pkcs1v15_with_scratch(&ciphertext, &mut decrypted, &mut scratch)
     .expect("scratch-backed randomized PKCS#1 v1.5 decryption must succeed");
   assert_eq!(&decrypted[..len], pkcs1v15_plaintext);
-  assert_eq!(allocation_count(), 0);
+  assert_eq!(measurement.finish(), 0);
 }
 
 fn assert_one_shot_protocol_rejects_fail_before_scratch_allocation() {
@@ -940,42 +804,42 @@ fn assert_one_shot_protocol_rejects_fail_before_scratch_allocation() {
   let pss_algorithm_x509_key =
     legacy_x509_public_key_from_spki(&pss_algorithm_spki_from_rsa_encryption_spki(&pss_spki()));
 
-  reset_allocations();
+  let measurement = Measurement::start();
   assert!(
     key
       .jwt_verifier(RsaJwtAlgorithm::Ps256)
       .verify("none", MESSAGE_PSS, &sig)
       .is_err()
   );
-  assert_eq!(allocation_count(), 0);
+  assert_eq!(measurement.finish(), 0);
 
-  reset_allocations();
+  let measurement = Measurement::start();
   assert!(
     key
       .jwt_verifier(RsaJwtAlgorithm::Ps256)
       .verify("PS1", MESSAGE_PSS, &sig)
       .is_err()
   );
-  assert_eq!(allocation_count(), 0);
+  assert_eq!(measurement.finish(), 0);
 
-  reset_allocations();
+  let measurement = Measurement::start();
   assert!(key.verify_cose_algorithm_id(1, MESSAGE_PSS, &sig).is_err());
-  assert_eq!(allocation_count(), 0);
+  assert_eq!(measurement.finish(), 0);
 
-  reset_allocations();
+  let measurement = Measurement::start();
   assert!(key.verify_cose_algorithm_id(-65535, MESSAGE_PSS, &sig).is_err());
-  assert_eq!(allocation_count(), 0);
+  assert_eq!(measurement.finish(), 0);
 
   for impossible_salt_len in [4096, usize::MAX] {
-    reset_allocations();
+    let measurement = Measurement::start();
     assert!(
       key
         .verify_pss_with_salt_len(RsaPssProfile::Sha256, impossible_salt_len, MESSAGE_PSS, &sig)
         .is_err()
     );
-    assert_eq!(allocation_count(), 0);
+    assert_eq!(measurement.finish(), 0);
 
-    reset_allocations();
+    let measurement = Measurement::start();
     assert!(
       key
         .verify_signature(
@@ -985,10 +849,10 @@ fn assert_one_shot_protocol_rejects_fail_before_scratch_allocation() {
         )
         .is_err()
     );
-    assert_eq!(allocation_count(), 0);
+    assert_eq!(measurement.finish(), 0);
 
     let mut scratch = key.public_scratch();
-    reset_allocations();
+    let measurement = Measurement::start();
     assert!(
       key
         .verify_signature_with_scratch(
@@ -999,137 +863,137 @@ fn assert_one_shot_protocol_rejects_fail_before_scratch_allocation() {
         )
         .is_err()
     );
-    assert_eq!(allocation_count(), 0);
+    assert_eq!(measurement.finish(), 0);
   }
 
-  reset_allocations();
+  let measurement = Measurement::start();
   assert!(
     x509_key
       .verify_signature_from_x509_algorithm_der(&[0x30, 0x00], MESSAGE_PSS, &sig)
       .is_err()
   );
-  assert_eq!(allocation_count(), 0);
+  assert_eq!(measurement.finish(), 0);
 
-  reset_allocations();
+  let measurement = Measurement::start();
   assert!(
     x509_key
       .verify_signature_from_x509_algorithm_der(X509_SHA1_WITH_RSA_ENCRYPTION, MESSAGE_PSS, &sig)
       .is_err()
   );
-  assert_eq!(allocation_count(), 0);
+  assert_eq!(measurement.finish(), 0);
 
-  reset_allocations();
+  let measurement = Measurement::start();
   assert!(
     x509_key
       .verify_signature_from_x509_algorithm_der(X509_PSS_DEFAULT_SHA1_ALGORITHM, MESSAGE_PSS, &sig)
       .is_err()
   );
-  assert_eq!(allocation_count(), 0);
+  assert_eq!(measurement.finish(), 0);
 
-  reset_allocations();
+  let measurement = Measurement::start();
   assert!(
     x509_key
       .verify_signature_from_x509_algorithm_der(X509_PSS_SHA256_OVERSIZED_SALT_ALGORITHM, MESSAGE_PSS, &sig)
       .is_err()
   );
-  assert_eq!(allocation_count(), 0);
+  assert_eq!(measurement.finish(), 0);
 
-  reset_allocations();
+  let measurement = Measurement::start();
   assert!(
     x509_key
       .verify_tls13_signature_scheme(0x0401, MESSAGE_PSS, &sig)
       .is_err()
   );
-  assert_eq!(allocation_count(), 0);
+  assert_eq!(measurement.finish(), 0);
 
-  reset_allocations();
+  let measurement = Measurement::start();
   assert!(
     x509_key
       .verify_tls13_signature_scheme(0x0809, MESSAGE_PSS, &sig)
       .is_err()
   );
-  assert_eq!(allocation_count(), 0);
+  assert_eq!(measurement.finish(), 0);
 
-  reset_allocations();
+  let measurement = Measurement::start();
   assert!(
     x509_key
       .verify_tls13_signature_scheme(0x0420, MESSAGE_PSS, &sig)
       .is_err()
   );
-  assert_eq!(allocation_count(), 0);
+  assert_eq!(measurement.finish(), 0);
 
-  reset_allocations();
+  let measurement = Measurement::start();
   assert!(
     x509_key
       .verify_tls_certificate_signature_scheme(0x0201, MESSAGE_PSS, &sig)
       .is_err()
   );
-  assert_eq!(allocation_count(), 0);
+  assert_eq!(measurement.finish(), 0);
 
-  reset_allocations();
+  let measurement = Measurement::start();
   assert!(
     pss_algorithm_x509_key
       .verify_tls13_signature_scheme(0x0804, MESSAGE_PSS, &sig)
       .is_err()
   );
-  assert_eq!(allocation_count(), 0);
+  assert_eq!(measurement.finish(), 0);
 
-  reset_allocations();
+  let measurement = Measurement::start();
   assert!(
     pss_algorithm_x509_key
       .verify_tls_certificate_signature_scheme(0x0401, MESSAGE_PKCS1V15, &pkcs1_sig)
       .is_err()
   );
-  assert_eq!(allocation_count(), 0);
+  assert_eq!(measurement.finish(), 0);
 
-  reset_allocations();
+  let measurement = Measurement::start();
   assert!(
     pss_algorithm_x509_key
       .verify_signature_from_x509_algorithm_der(X509_SHA256_WITH_RSA_ENCRYPTION, MESSAGE_PKCS1V15, &pkcs1_sig,)
       .is_err()
   );
-  assert_eq!(allocation_count(), 0);
+  assert_eq!(measurement.finish(), 0);
 
-  reset_allocations();
+  let measurement = Measurement::start();
   assert!(x509_key.verify_x509_certificate_signature_der(&[0x30, 0x00]).is_err());
-  assert_eq!(allocation_count(), 0);
+  assert_eq!(measurement.finish(), 0);
 
   let sha1_certificate = x509_certificate(
     &minimal_tbs_certificate(X509_SHA1_WITH_RSA_ENCRYPTION),
     X509_SHA1_WITH_RSA_ENCRYPTION,
     &sig,
   );
-  reset_allocations();
+  let measurement = Measurement::start();
   assert!(
     x509_key
       .verify_x509_certificate_signature_der(&sha1_certificate)
       .is_err()
   );
-  assert_eq!(allocation_count(), 0);
+  assert_eq!(measurement.finish(), 0);
 
   let pss_default_sha1_certificate = x509_certificate(
     &minimal_tbs_certificate(X509_PSS_DEFAULT_SHA1_ALGORITHM),
     X509_PSS_DEFAULT_SHA1_ALGORITHM,
     &sig,
   );
-  reset_allocations();
+  let measurement = Measurement::start();
   assert!(
     x509_key
       .verify_x509_certificate_signature_der(&pss_default_sha1_certificate)
       .is_err()
   );
-  assert_eq!(allocation_count(), 0);
+  assert_eq!(measurement.finish(), 0);
 
   let pss_oversized_salt_certificate = x509_certificate(
     &minimal_tbs_certificate(X509_PSS_SHA256_OVERSIZED_SALT_ALGORITHM),
     X509_PSS_SHA256_OVERSIZED_SALT_ALGORITHM,
     &sig,
   );
-  reset_allocations();
+  let measurement = Measurement::start();
   assert!(
     x509_key
       .verify_x509_certificate_signature_der(&pss_oversized_salt_certificate)
       .is_err()
   );
-  assert_eq!(allocation_count(), 0);
+  assert_eq!(measurement.finish(), 0);
 }

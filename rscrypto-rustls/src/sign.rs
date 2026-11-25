@@ -16,6 +16,51 @@ use rustls::crypto::KeyProvider;
 use rustls::crypto::SigningKey;
 use rustls::pki_types::PrivateKeyDer;
 
+#[cfg(any(feature = "ml-dsa", feature = "mldsa65-ed25519", feature = "mldsa65-ecdsa-p256"))]
+macro_rules! impl_tls_signer {
+  ($entropy_error:path) => {
+    #[derive(Debug)]
+    pub(super) struct Key {
+      secret: Arc<Secret>,
+      spki: Vec<u8>,
+      random: &'static dyn rustls::crypto::SecureRandom,
+    }
+
+    impl SigningKey for Key {
+      fn choose_scheme(&self, offered: &[SignatureScheme]) -> Option<Box<dyn Signer>> {
+        offered.contains(&self.secret.scheme()).then(|| {
+          Box::new(Sign {
+            secret: Arc::clone(&self.secret),
+            random: self.random,
+          }) as Box<dyn Signer>
+        })
+      }
+
+      fn public_key(&self) -> Option<SubjectPublicKeyInfoDer<'_>> {
+        Some(SubjectPublicKeyInfoDer::from(self.spki.as_slice()))
+      }
+    }
+
+    #[derive(Debug)]
+    struct Sign {
+      secret: Arc<Secret>,
+      random: &'static dyn rustls::crypto::SecureRandom,
+    }
+
+    impl Signer for Sign {
+      fn sign(self: Box<Self>, message: &[u8]) -> Result<Vec<u8>, Error> {
+        self
+          .secret
+          .sign_with(message, |out| self.random.fill(out).map_err(|_| $entropy_error))
+      }
+
+      fn scheme(&self) -> SignatureScheme {
+        self.secret.scheme()
+      }
+    }
+  };
+}
+
 #[cfg(any(feature = "mldsa65-ed25519", feature = "mldsa65-ecdsa-p256"))]
 mod composite;
 #[cfg(feature = "ml-dsa")]

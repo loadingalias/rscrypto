@@ -10,14 +10,18 @@ define_sha_family_dispatch! {
   compress_fn: compress_blocks_fn,
   required_caps: required_caps,
   runtime_kernel: super::dispatch_policy::select_runtime_kernel,
-  output_len: 32,
-  word: u32,
-  total_bits_ty: u64,
-  length_offset: 56,
-  h0: super::H0,
   compile_time: {
     hw: super::kernels::COMPILE_TIME_HW,
     name: super::kernels::COMPILE_TIME_NAME,
     best: super::kernels::compile_time_best(),
   },
+}
+
+define_sha_digest! {
+  compress_fn_ty: CompressBlocksFn,
+  output_len: 32,
+  word: u32,
+  total_bits_ty: u64,
+  length_offset: 56,
+  h0: super::H0,
 }

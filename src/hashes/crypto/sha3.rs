@@ -12,6 +12,60 @@ use super::keccak::{
 };
 use crate::traits::{Digest, Xof};
 
+macro_rules! impl_sha3_digest {
+  ($digest:ident, $rate:literal, $size:literal) => {
+    impl core::fmt::Debug for $digest {
+      fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct(stringify!($digest)).finish_non_exhaustive()
+      }
+    }
+
+    impl Digest for $digest {
+      const OUTPUT_SIZE: usize = $size;
+      type Output = [u8; $size];
+
+      #[inline]
+      fn new() -> Self {
+        Self::default()
+      }
+
+      #[inline]
+      fn update(&mut self, data: &[u8]) {
+        self.core.update(data);
+      }
+
+      #[inline]
+      fn finalize(&self) -> Self::Output {
+        let mut out = [0u8; $size];
+        self.core.finalize_into_fixed(0x06, &mut out);
+        out
+      }
+
+      #[inline]
+      fn digest(data: &[u8]) -> Self::Output {
+        super::keccak::oneshot_fixed::<$rate, $size>(0x06, data)
+      }
+
+      #[inline]
+      fn reset(&mut self) {
+        *self = Self::default();
+      }
+    }
+
+    impl $digest {
+      /// Hash two independent messages in parallel, returning both digests.
+      ///
+      /// The aarch64 SHA3 Crypto Extensions backend interleaves the two independent
+      /// states.
+      #[inline]
+      #[must_use]
+      pub fn digest_pair(a: &[u8], b: &[u8]) -> ([u8; $size], [u8; $size]) {
+        super::keccak::oneshot_pair::<$rate, $size>(0x06, a, b)
+      }
+    }
+  };
+}
+
 /// SHA3-256 digest state.
 ///
 /// Standardized in FIPS 202.
@@ -50,105 +104,9 @@ pub struct Sha3_224 {
   core: PublicKeccakCore<144>,
 }
 
-impl core::fmt::Debug for Sha3_256 {
-  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-    f.debug_struct("Sha3_256").finish_non_exhaustive()
-  }
-}
+impl_sha3_digest!(Sha3_224, 144, 28);
 
-impl core::fmt::Debug for Sha3_224 {
-  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-    f.debug_struct("Sha3_224").finish_non_exhaustive()
-  }
-}
-
-impl Digest for Sha3_224 {
-  const OUTPUT_SIZE: usize = 28;
-  type Output = [u8; 28];
-
-  #[inline]
-  fn new() -> Self {
-    Self::default()
-  }
-
-  #[inline]
-  fn update(&mut self, data: &[u8]) {
-    self.core.update(data);
-  }
-
-  #[inline]
-  fn finalize(&self) -> Self::Output {
-    let mut out = [0u8; 28];
-    self.core.finalize_into_fixed(0x06, &mut out);
-    out
-  }
-
-  #[inline]
-  fn digest(data: &[u8]) -> Self::Output {
-    super::keccak::oneshot_fixed::<144, 28>(0x06, data)
-  }
-
-  #[inline]
-  fn reset(&mut self) {
-    *self = Self::default();
-  }
-}
-
-impl Sha3_224 {
-  /// Hash two independent messages in parallel, returning both 28-byte digests.
-  ///
-  /// The aarch64 SHA3 Crypto Extensions backend interleaves the two independent
-  /// states.
-  #[inline]
-  #[must_use]
-  pub fn digest_pair(a: &[u8], b: &[u8]) -> ([u8; 28], [u8; 28]) {
-    super::keccak::oneshot_pair::<144, 28>(0x06, a, b)
-  }
-}
-
-impl Digest for Sha3_256 {
-  const OUTPUT_SIZE: usize = 32;
-  type Output = [u8; 32];
-
-  #[inline]
-  fn new() -> Self {
-    Self::default()
-  }
-
-  #[inline]
-  fn update(&mut self, data: &[u8]) {
-    self.core.update(data);
-  }
-
-  #[inline]
-  fn finalize(&self) -> Self::Output {
-    let mut out = [0u8; 32];
-    self.core.finalize_into_fixed(0x06, &mut out);
-    out
-  }
-
-  #[inline]
-  fn digest(data: &[u8]) -> Self::Output {
-    super::keccak::oneshot_fixed::<136, 32>(0x06, data)
-  }
-
-  #[inline]
-  fn reset(&mut self) {
-    *self = Self::default();
-  }
-}
-
-impl Sha3_256 {
-  /// Hash two independent messages in parallel, returning both 32-byte digests.
-  ///
-  /// The aarch64 SHA3 Crypto Extensions backend interleaves the two independent
-  /// states.
-  #[inline]
-  #[must_use]
-  pub fn digest_pair(a: &[u8], b: &[u8]) -> ([u8; 32], [u8; 32]) {
-    super::keccak::oneshot_pair::<136, 32>(0x06, a, b)
-  }
-}
+impl_sha3_digest!(Sha3_256, 136, 32);
 
 /// SHA3-512 digest state.
 ///
@@ -188,105 +146,9 @@ pub struct Sha3_384 {
   core: PublicKeccakCore<104>,
 }
 
-impl core::fmt::Debug for Sha3_512 {
-  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-    f.debug_struct("Sha3_512").finish_non_exhaustive()
-  }
-}
+impl_sha3_digest!(Sha3_384, 104, 48);
 
-impl core::fmt::Debug for Sha3_384 {
-  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-    f.debug_struct("Sha3_384").finish_non_exhaustive()
-  }
-}
-
-impl Digest for Sha3_384 {
-  const OUTPUT_SIZE: usize = 48;
-  type Output = [u8; 48];
-
-  #[inline]
-  fn new() -> Self {
-    Self::default()
-  }
-
-  #[inline]
-  fn update(&mut self, data: &[u8]) {
-    self.core.update(data);
-  }
-
-  #[inline]
-  fn finalize(&self) -> Self::Output {
-    let mut out = [0u8; 48];
-    self.core.finalize_into_fixed(0x06, &mut out);
-    out
-  }
-
-  #[inline]
-  fn digest(data: &[u8]) -> Self::Output {
-    super::keccak::oneshot_fixed::<104, 48>(0x06, data)
-  }
-
-  #[inline]
-  fn reset(&mut self) {
-    *self = Self::default();
-  }
-}
-
-impl Sha3_384 {
-  /// Hash two independent messages in parallel, returning both 48-byte digests.
-  ///
-  /// The aarch64 SHA3 Crypto Extensions backend interleaves the two independent
-  /// states.
-  #[inline]
-  #[must_use]
-  pub fn digest_pair(a: &[u8], b: &[u8]) -> ([u8; 48], [u8; 48]) {
-    super::keccak::oneshot_pair::<104, 48>(0x06, a, b)
-  }
-}
-
-impl Digest for Sha3_512 {
-  const OUTPUT_SIZE: usize = 64;
-  type Output = [u8; 64];
-
-  #[inline]
-  fn new() -> Self {
-    Self::default()
-  }
-
-  #[inline]
-  fn update(&mut self, data: &[u8]) {
-    self.core.update(data);
-  }
-
-  #[inline]
-  fn finalize(&self) -> Self::Output {
-    let mut out = [0u8; 64];
-    self.core.finalize_into_fixed(0x06, &mut out);
-    out
-  }
-
-  #[inline]
-  fn digest(data: &[u8]) -> Self::Output {
-    super::keccak::oneshot_fixed::<72, 64>(0x06, data)
-  }
-
-  #[inline]
-  fn reset(&mut self) {
-    *self = Self::default();
-  }
-}
-
-impl Sha3_512 {
-  /// Hash two independent messages in parallel, returning both 64-byte digests.
-  ///
-  /// The aarch64 SHA3 Crypto Extensions backend interleaves the two independent
-  /// states.
-  #[inline]
-  #[must_use]
-  pub fn digest_pair(a: &[u8], b: &[u8]) -> ([u8; 64], [u8; 64]) {
-    super::keccak::oneshot_pair::<72, 64>(0x06, a, b)
-  }
-}
+impl_sha3_digest!(Sha3_512, 72, 64);
 
 impl_std_io_write_for_digest!(Sha3_224);
 impl_std_io_write_for_digest!(Sha3_256);

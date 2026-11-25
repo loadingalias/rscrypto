@@ -1,23 +1,13 @@
-use super::{
-  BLOCK_LEN,
-  kernels::{CompressBlocksFn, Sha224KernelId, compress_blocks_fn, required_caps},
-};
+use super::{BLOCK_LEN, kernels::CompressBlocksFn};
+pub(crate) use crate::hashes::crypto::sha256::dispatch::compress_dispatch;
+#[cfg(feature = "diag")]
+pub(crate) use crate::hashes::crypto::sha256::dispatch::kernel_name_for_len;
 
-define_sha_family_dispatch! {
-  kernel_id: Sha224KernelId,
+define_sha_digest! {
   compress_fn_ty: CompressBlocksFn,
-  portable_kernel: Sha224KernelId::Portable,
-  compress_fn: compress_blocks_fn,
-  required_caps: required_caps,
-  runtime_kernel: super::dispatch_policy::select_runtime_kernel,
   output_len: 28,
   word: u32,
   total_bits_ty: u64,
   length_offset: 56,
   h0: super::H0,
-  compile_time: {
-    hw: crate::hashes::crypto::sha256::kernels::COMPILE_TIME_HW,
-    name: crate::hashes::crypto::sha256::kernels::COMPILE_TIME_NAME,
-    best: crate::hashes::crypto::sha256::kernels::compile_time_best(),
-  },
 }

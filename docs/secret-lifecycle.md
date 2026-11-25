@@ -653,12 +653,11 @@ stream. They do not qualify compiler-made copies.
 ### rustls QUIC integration
 
 The transport-neutral `quic` reset, connection-ID, and address-token keys draw
-from the caller's fallible entropy source into clearing owners. Token derivation clears its intermediate key. The derived
-sealer atomically consumes its one-use permission before encryption and rejects
-plaintext above 4 KiB. Authentication failure clears the decrypted token body;
-length rejection occurs before mutation. `AddressTokenKey::seal` checks the
-length before drawing its nonce, so a failure leaves the plaintext unchanged.
-Token buffers and authenticated metadata remain owned by the caller.
+from the caller's fallible entropy source into clearing owners. Token derivation clears its intermediate key.
+`AddressTokenKey::seal` rejects plaintext longer than 4 KiB before it draws a nonce or changes the buffer.
+Sealing consumes the boxed cipher. Its derived key clears on drop.
+Opening clears the decrypted body on authentication failure. A length error leaves the token unchanged.
+The caller owns token buffers and authenticated metadata.
 
 The same GNU configuration outlines token context construction into a worker
 that returns its final `Box`. A construction guard clears retired worker frames

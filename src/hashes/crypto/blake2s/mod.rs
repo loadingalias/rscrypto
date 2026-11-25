@@ -217,19 +217,6 @@ impl Core {
     core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
   }
 
-  #[cfg(test)]
-  fn new_with_compress_for_test(
-    nn: u8,
-    key: &[u8],
-    compress: kernels::CompressFn,
-    compress_blocks: kernels::CompressBlocksFn,
-  ) -> Self {
-    let mut core = Self::new(nn, key);
-    core.compress = compress;
-    core.compress_blocks = compress_blocks;
-    core
-  }
-
   fn update(&mut self, data: &[u8]) {
     if data.is_empty() {
       return;
@@ -586,53 +573,9 @@ pub struct Blake2sParams {
   personal: [u8; PERSONAL_LEN],
 }
 
+impl_blake2_params!(Blake2sParams, Blake2sKey);
+
 impl Blake2sParams {
-  /// Maximum key length (bytes).
-  pub const MAX_KEY_LEN: usize = MAX_KEY_LEN;
-  /// Maximum salt length (bytes).
-  pub const SALT_LEN: usize = SALT_LEN;
-  /// Maximum personalization length (bytes).
-  pub const PERSONAL_LEN: usize = PERSONAL_LEN;
-
-  /// Create a new params builder with no key, salt, or personalization.
-  #[must_use]
-  pub const fn new() -> Self {
-    Self {
-      key_buf: [0u8; MAX_KEY_LEN],
-      key_len: 0,
-      salt: [0u8; SALT_LEN],
-      personal: [0u8; PERSONAL_LEN],
-    }
-  }
-
-  /// Set a validated MAC key. Omit this method for unkeyed hashing.
-  #[must_use]
-  pub fn key(mut self, key: Blake2sKey<'_>) -> Self {
-    let key = key.as_bytes();
-    self.key_buf = [0u8; MAX_KEY_LEN];
-    self.key_buf[..key.len()].copy_from_slice(key);
-    self.key_len = u8::try_from(key.len()).expect("validated Blake2s key length fits in u8");
-    self
-  }
-
-  /// Set the 8-byte RFC 7693 salt field.
-  #[must_use]
-  pub const fn salt(mut self, salt: [u8; SALT_LEN]) -> Self {
-    self.salt = salt;
-    self
-  }
-
-  /// Set the 8-byte RFC 7693 personalization field.
-  #[must_use]
-  pub const fn personal(mut self, personal: [u8; PERSONAL_LEN]) -> Self {
-    self.personal = personal;
-    self
-  }
-
-  fn key_slice(&self) -> &[u8] {
-    &self.key_buf[..usize::from(self.key_len)]
-  }
-
   /// Build a streaming Blake2s-256 hasher initialized with these parameters.
   #[must_use]
   pub fn build_256(&self) -> Blake2s256 {
@@ -658,28 +601,6 @@ impl Blake2sParams {
   }
 }
 
-impl Default for Blake2sParams {
-  fn default() -> Self {
-    Self::new()
-  }
-}
-
-impl fmt::Debug for Blake2sParams {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    f.debug_struct("Blake2sParams")
-      .field("key_len", &self.key_len)
-      .field("salt", &self.salt)
-      .field("personal", &self.personal)
-      .finish()
-  }
-}
-
-impl Drop for Blake2sParams {
-  fn drop(&mut self) {
-    ct::zeroize(&mut self.key_buf);
-  }
-}
-
 // ─── Blake2s256 ─────────────────────────────────────────────────────────────
 
 /// Blake2s-256 cryptographic hash (32-byte output).
@@ -700,54 +621,7 @@ impl Drop for Blake2sParams {
 #[derive(Clone)]
 pub struct Blake2s256(Core);
 
-impl fmt::Debug for Blake2s256 {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    f.debug_struct("Blake2s256").finish_non_exhaustive()
-  }
-}
-
-impl Blake2s256 {
-  /// Output size in bytes.
-  pub const OUTPUT_SIZE: usize = 32;
-
-  /// Compute an unkeyed Blake2s-256 hash in one shot.
-  #[must_use]
-  pub fn digest(data: &[u8]) -> [u8; 32] {
-    oneshot_hash_array::<32>(32, &[], data)
-  }
-
-  /// Create a keyed Blake2s-256 streaming hasher.
-  #[must_use]
-  pub fn new_keyed(key: Blake2sKey<'_>) -> Self {
-    let key = key.as_bytes();
-    Self(Core::new(32, key))
-  }
-
-  /// Compute a keyed Blake2s-256 hash in one shot.
-  #[must_use]
-  pub fn keyed_digest(key: Blake2sKey<'_>, data: &[u8]) -> [u8; 32] {
-    let key = key.as_bytes();
-    oneshot_hash_array::<32>(32, key, data)
-  }
-
-  #[cfg(test)]
-  pub(crate) fn new_with_compress_for_test(
-    compress: kernels::CompressFn,
-    compress_blocks: kernels::CompressBlocksFn,
-  ) -> Self {
-    Self(Core::new_with_compress_for_test(32, &[], compress, compress_blocks))
-  }
-
-  #[cfg(test)]
-  pub(crate) fn keyed_with_compress_for_test(
-    key: &[u8],
-    compress: kernels::CompressFn,
-    compress_blocks: kernels::CompressBlocksFn,
-  ) -> Self {
-    assert!(!key.is_empty(), "use new_with_compress_for_test() for unkeyed hashing");
-    Self(Core::new_with_compress_for_test(32, key, compress, compress_blocks))
-  }
-}
+impl_blake2_digest!(Blake2s256, Blake2sKey, 32);
 
 #[cfg(all(rscrypto_internal, feature = "diag"))]
 /// Derive a keyed Blake2s-256 diagnostic digest with the portable backend.
@@ -765,42 +639,6 @@ pub fn diag_blake2s256_keyed_digest_portable(key: &[u8; 32]) -> [u8; 32] {
   out
 }
 
-impl Default for Blake2s256 {
-  fn default() -> Self {
-    Self(Core::new_unkeyed(32))
-  }
-}
-
-impl Digest for Blake2s256 {
-  const OUTPUT_SIZE: usize = 32;
-  type Output = [u8; 32];
-
-  #[inline]
-  fn new() -> Self {
-    Self(Core::new_unkeyed(32))
-  }
-
-  #[inline]
-  fn update(&mut self, data: &[u8]) {
-    self.0.update(data);
-  }
-
-  fn finalize(&self) -> Self::Output {
-    finalize_array::<32>(&self.0)
-  }
-
-  #[inline]
-  fn reset(&mut self) {
-    self.0.reset();
-  }
-}
-
-impl Drop for Blake2s256 {
-  fn drop(&mut self) {
-    // Core::drop handles zeroization
-  }
-}
-
 // ─── Blake2s128 ─────────────────────────────────────────────────────────────
 
 /// Blake2s-128 cryptographic hash (16-byte output).
@@ -816,96 +654,25 @@ impl Drop for Blake2s256 {
 #[derive(Clone)]
 pub struct Blake2s128(Core);
 
-impl fmt::Debug for Blake2s128 {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    f.debug_struct("Blake2s128").finish_non_exhaustive()
-  }
-}
-
-impl Blake2s128 {
-  /// Output size in bytes.
-  pub const OUTPUT_SIZE: usize = 16;
-
-  /// Compute an unkeyed Blake2s-128 hash in one shot.
-  #[must_use]
-  pub fn digest(data: &[u8]) -> [u8; 16] {
-    oneshot_hash_array::<16>(16, &[], data)
-  }
-
-  /// Create a keyed Blake2s-128 streaming hasher.
-  #[must_use]
-  pub fn new_keyed(key: Blake2sKey<'_>) -> Self {
-    let key = key.as_bytes();
-    Self(Core::new(16, key))
-  }
-
-  /// Compute a keyed Blake2s-128 hash in one shot.
-  #[must_use]
-  pub fn keyed_digest(key: Blake2sKey<'_>, data: &[u8]) -> [u8; 16] {
-    let key = key.as_bytes();
-    oneshot_hash_array::<16>(16, key, data)
-  }
-
-  #[cfg(test)]
-  pub(crate) fn new_with_compress_for_test(
-    compress: kernels::CompressFn,
-    compress_blocks: kernels::CompressBlocksFn,
-  ) -> Self {
-    Self(Core::new_with_compress_for_test(16, &[], compress, compress_blocks))
-  }
-
-  #[cfg(test)]
-  pub(crate) fn keyed_with_compress_for_test(
-    key: &[u8],
-    compress: kernels::CompressFn,
-    compress_blocks: kernels::CompressBlocksFn,
-  ) -> Self {
-    assert!(!key.is_empty(), "use new_with_compress_for_test() for unkeyed hashing");
-    Self(Core::new_with_compress_for_test(16, key, compress, compress_blocks))
-  }
-}
-
-impl Default for Blake2s128 {
-  fn default() -> Self {
-    Self(Core::new_unkeyed(16))
-  }
-}
-
-impl Digest for Blake2s128 {
-  const OUTPUT_SIZE: usize = 16;
-  type Output = [u8; 16];
-
-  #[inline]
-  fn new() -> Self {
-    Self(Core::new_unkeyed(16))
-  }
-
-  #[inline]
-  fn update(&mut self, data: &[u8]) {
-    self.0.update(data);
-  }
-
-  fn finalize(&self) -> Self::Output {
-    finalize_array::<16>(&self.0)
-  }
-
-  #[inline]
-  fn reset(&mut self) {
-    self.0.reset();
-  }
-}
-
-impl Drop for Blake2s128 {
-  fn drop(&mut self) {
-    // Core::drop handles zeroization
-  }
-}
+impl_blake2_digest!(Blake2s128, Blake2sKey, 16);
 
 impl_std_io_write_for_digest!(Blake2s256);
 impl_std_io_write_for_digest!(Blake2s128);
 
 #[cfg(test)]
 mod tests {
+  fn core_for_kernel(
+    output_bytes: u8,
+    key: &[u8],
+    compress: super::kernels::CompressFn,
+    compress_blocks: super::kernels::CompressBlocksFn,
+  ) -> super::Core {
+    let mut core = super::Core::new(output_bytes, key);
+    core.compress = compress;
+    core.compress_blocks = compress_blocks;
+    core
+  }
+
   use blake2::{
     Blake2s as OracleBlake2s, Blake2s256 as OracleBlake2s256, Blake2sMac,
     digest::{
@@ -1240,7 +1007,7 @@ mod tests {
 
     for &data in ORACLE_CASES {
       let expected = oracle_hash_256(data);
-      let mut h = Blake2s256::new_with_compress_for_test(compress, compress_blocks);
+      let mut h = Blake2s256(core_for_kernel(32, &[], compress, compress_blocks));
       h.update(data);
       assert_eq!(
         h.finalize(),
@@ -1253,7 +1020,7 @@ mod tests {
 
     for &data in ORACLE_CASES {
       let expected = oracle_hash_128(data);
-      let mut h = Blake2s128::new_with_compress_for_test(compress, compress_blocks);
+      let mut h = Blake2s128(core_for_kernel(16, &[], compress, compress_blocks));
       h.update(data);
       assert_eq!(
         h.finalize(),
@@ -1274,7 +1041,7 @@ mod tests {
       oracle_128.update(msg);
       let expected_128 = oracle_128.finalize().into_bytes();
 
-      let mut h128 = Blake2s128::keyed_with_compress_for_test(key, compress, compress_blocks);
+      let mut h128 = Blake2s128(core_for_kernel(16, key, compress, compress_blocks));
       h128.update(msg);
       let actual_128 = h128.finalize();
       assert_eq!(
@@ -1290,7 +1057,7 @@ mod tests {
       oracle_256.update(msg);
       let expected_256 = oracle_256.finalize().into_bytes();
 
-      let mut h256 = Blake2s256::keyed_with_compress_for_test(key, compress, compress_blocks);
+      let mut h256 = Blake2s256(core_for_kernel(32, key, compress, compress_blocks));
       h256.update(msg);
       let actual_256 = h256.finalize();
       assert_eq!(
@@ -1306,7 +1073,7 @@ mod tests {
     let data = &[0x42u8; 300];
     let expected = oracle_hash_256(data);
     for chunk_size in [1, 7, 63, 64, 127, 128, 129] {
-      let mut h = Blake2s256::new_with_compress_for_test(compress, compress_blocks);
+      let mut h = Blake2s256(core_for_kernel(32, &[], compress, compress_blocks));
       for chunk in data.chunks(chunk_size) {
         h.update(chunk);
       }
@@ -1321,7 +1088,7 @@ mod tests {
 
     let expected_128 = oracle_hash_128(data);
     for chunk_size in [1, 7, 31, 32, 63, 64, 65] {
-      let mut h = Blake2s128::new_with_compress_for_test(compress, compress_blocks);
+      let mut h = Blake2s128(core_for_kernel(16, &[], compress, compress_blocks));
       for chunk in data.chunks(chunk_size) {
         h.update(chunk);
       }
@@ -1441,7 +1208,7 @@ mod tests {
       let compress = blake2s_compress_fn(id);
       let compress_blocks = blake2s_compress_blocks_fn(id);
       for len in 0..=data.len() {
-        let mut h = Blake2s256::new_with_compress_for_test(compress, compress_blocks);
+        let mut h = Blake2s256(core_for_kernel(32, &[], compress, compress_blocks));
         h.update(&data[..len]);
         assert_eq!(
           h.finalize(),

@@ -1272,139 +1272,158 @@ fn ecdsa_p256_verify(c: &mut Criterion) {
   g.finish();
 }
 
-fn ecdsa_p256_sign(c: &mut Criterion) {
-  if !bench_config::selected("ecdsa-p256/sign") {
-    return;
-  }
-  let secret_bytes = [0x11u8; 32];
-  let secret =
-    EcdsaP256SecretKey::from_bytes(secret_bytes).expect("valid authentication benchmark operation must succeed");
-  let keypair = EcdsaP256Keypair::from_secret_key(secret);
-  let blind = [0x5cu8; 64];
-  let signing_key =
-    P256OracleSigningKey::from_slice(&secret_bytes).expect("valid authentication benchmark operation must succeed");
-  let verifying_key = signing_key.verifying_key();
-  let sec1 = keypair.public_key().to_sec1_bytes();
-  let ring_rng = ring::rand::SystemRandom::new();
-  let ring_key = ring::signature::EcdsaKeyPair::from_private_key_and_public_key(
-    &ring::signature::ECDSA_P256_SHA256_FIXED_SIGNING,
-    &secret_bytes,
-    &sec1,
-    &ring_rng,
-  )
-  .expect("valid authentication benchmark operation must succeed");
-  aws_lc_bench! {
-    let aws_rng = aws_lc_rs::rand::SystemRandom::new();
-    let aws_key = aws_lc_rs::signature::EcdsaKeyPair::from_private_key_and_public_key(
-      &aws_lc_rs::signature::ECDSA_P256_SHA256_FIXED_SIGNING,
-      &secret_bytes,
-      &sec1,
-    )
-    .expect("valid authentication benchmark operation must succeed");
-  }
-  // ECDSA P-256 signing with a key held outside timing. Timed: hashing, nonce generation, signing, and the
-  // signature object. The nonce source differs by library and stays timed:
-  // - `rscrypto` is `try_sign`, the default API: a deterministic nonce that is not RFC 6979, with no entropy
-  //   source. `rscrypto-blinded` adds caller-supplied nonce blinding and must return the same signature.
-  // - RustCrypto derives the RFC 6979 nonce.
-  // - ring draws nonce randomness from `SystemRandom` in each call; aws-lc-rs uses AWS-LC's internal generator.
-  // No row has a fixed signature. RustCrypto must verify every other row's signature, and ring must verify
-  // RustCrypto's.
-  let verifies = |data: &[u8], signature: &[u8]| {
-    let signature = P256OracleSignature::from_slice(signature).expect("ECDSA P-256 signature must parse");
-    p256::ecdsa::signature::Verifier::verify(verifying_key, data, &signature)
-      .expect("RustCrypto must verify the ECDSA P-256 signature");
-  };
+macro_rules! ecdsa_sign_bench {
+  ($name:ident, $group:literal, $peer:literal, $curve:ident, $secret:ident, $pair:ident, $oracle_key:ident, $signature:ident, $signing:ident, $verify:ident, $secret_bytes:expr, $blinding:expr,) => {
+    fn $name(c: &mut Criterion) {
+      if !bench_config::selected($group) {
+        return;
+      }
+      let secret_bytes = $secret_bytes;
+      let secret =
+        $secret::from_bytes(secret_bytes).expect("valid authentication benchmark operation must succeed");
+      let keypair = $pair::from_secret_key(secret);
+      let blind = $blinding;
+      let signing_key =
+        $oracle_key::from_slice(&secret_bytes).expect("valid authentication benchmark operation must succeed");
+      let verifying_key = signing_key.verifying_key();
+      let sec1 = keypair.public_key().to_sec1_bytes();
+      let ring_rng = ring::rand::SystemRandom::new();
+      let ring_key = ring::signature::EcdsaKeyPair::from_private_key_and_public_key(
+        &ring::signature::$signing,
+        &secret_bytes,
+        &sec1,
+        &ring_rng,
+      )
+      .expect("valid authentication benchmark operation must succeed");
+      aws_lc_bench! {
+        let aws_rng = aws_lc_rs::rand::SystemRandom::new();
+        let aws_key = aws_lc_rs::signature::EcdsaKeyPair::from_private_key_and_public_key(
+          &aws_lc_rs::signature::$signing,
+          &secret_bytes,
+          &sec1,
+        )
+        .expect("valid authentication benchmark operation must succeed");
+      }
+      // ECDSA signing with a key held outside timing. Timed: hashing, nonce generation, signing, and the
+      // signature object. The nonce source differs by library and stays timed:
+      // - `rscrypto` is `try_sign`, the default API: a deterministic nonce that is not RFC 6979, with no entropy
+      //   source. `rscrypto-blinded` adds caller-supplied nonce blinding and must return the same signature.
+      // - RustCrypto derives the RFC 6979 nonce.
+      // - ring draws nonce randomness from `SystemRandom` in each call; aws-lc-rs uses AWS-LC's internal generator.
+      // No row has a fixed signature. RustCrypto must verify every other row's signature, and ring must verify
+      // RustCrypto's.
+      let verifies = |data: &[u8], signature: &[u8]| {
+        let signature = $signature::from_slice(signature).expect("ECDSA signature must parse");
+        $curve::ecdsa::signature::Verifier::verify(verifying_key, data, &signature)
+          .expect("RustCrypto must verify the ECDSA signature");
+      };
 
-  let inputs = [0usize, 32, 1024, 16384]
-    .into_iter()
-    .map(|len| (len, common::random_bytes(len)))
-    .collect::<Vec<_>>();
-  let mut g = c.benchmark_group("ecdsa-p256/sign");
+      let inputs = [0usize, 32, 1024, 16384]
+        .into_iter()
+        .map(|len| (len, common::random_bytes(len)))
+        .collect::<Vec<_>>();
+      let mut g = c.benchmark_group($group);
 
-  for (len, data) in &inputs {
-    common::set_throughput(&mut g, *len);
+      for (len, data) in &inputs {
+        common::set_throughput(&mut g, *len);
 
-    g.bench_function(
-      BenchmarkId::new("rscrypto", len),
-      checked(
-        || {
-          black_box(
-            black_box(&keypair)
-              .try_sign(black_box(data))
-              .expect("valid authentication benchmark operation must succeed"),
-          )
-        },
-        |signature| verifies(data, signature.as_bytes()),
-      ),
-    );
+        g.bench_function(
+          BenchmarkId::new("rscrypto", len),
+          checked(
+            || {
+              black_box(
+                black_box(&keypair)
+                  .try_sign(black_box(data))
+                  .expect("valid authentication benchmark operation must succeed"),
+              )
+            },
+            |signature| verifies(data, signature.as_bytes()),
+          ),
+        );
 
-    g.bench_function(
-      BenchmarkId::new("rscrypto-blinded", len),
-      checked(
-        || {
-          black_box(
-            black_box(&keypair)
-              .try_sign_blinded_with(black_box(data), |out| {
-                out.copy_from_slice(black_box(&blind));
-                Ok::<(), core::convert::Infallible>(())
-              })
-              .expect("valid authentication benchmark operation must succeed"),
-          )
-        },
-        |signature| {
-          let deterministic = keypair
-            .try_sign(data)
-            .expect("valid authentication benchmark operation must succeed");
-          assert_eq!(signature, deterministic);
-          verifies(data, signature.as_bytes());
-        },
-      ),
-    );
+        g.bench_function(
+          BenchmarkId::new("rscrypto-blinded", len),
+          checked(
+            || {
+              black_box(
+                black_box(&keypair)
+                  .try_sign_blinded_with(black_box(data), |out| {
+                    out.copy_from_slice(black_box(&blind));
+                    Ok::<(), core::convert::Infallible>(())
+                  })
+                  .expect("valid authentication benchmark operation must succeed"),
+              )
+            },
+            |signature| {
+              let deterministic = keypair
+                .try_sign(data)
+                .expect("valid authentication benchmark operation must succeed");
+              assert_eq!(signature, deterministic);
+              verifies(data, signature.as_bytes());
+            },
+          ),
+        );
 
-    g.bench_function(
-      BenchmarkId::new("rustcrypto-p256", len),
-      checked(
-        || {
-          let signature: P256OracleSignature =
-            p256::ecdsa::signature::Signer::sign(black_box(&signing_key), black_box(data));
-          black_box(signature)
-        },
-        |signature| {
-          ring::signature::UnparsedPublicKey::new(&ring::signature::ECDSA_P256_SHA256_FIXED, &sec1)
-            .verify(data, signature.to_bytes().as_slice())
-            .expect("ring must verify RustCrypto's ECDSA P-256 signature");
-        },
-      ),
-    );
+        g.bench_function(
+          BenchmarkId::new($peer, len),
+          checked(
+            || {
+              let signature: $signature =
+                $curve::ecdsa::signature::Signer::sign(black_box(&signing_key), black_box(data));
+              black_box(signature)
+            },
+            |signature| {
+              ring::signature::UnparsedPublicKey::new(&ring::signature::$verify, &sec1)
+                .verify(data, signature.to_bytes().as_slice())
+                .expect("ring must verify RustCrypto's ECDSA signature");
+            },
+          ),
+        );
 
-    g.bench_function(
-      BenchmarkId::new("ring", len),
-      checked(
-        || {
-          black_box(
-            ring_key
-              .sign(&ring_rng, black_box(data))
-              .expect("valid authentication benchmark operation must succeed"),
-          )
-        },
-        |signature| verifies(data, signature.as_ref()),
-      ),
-    );
+        g.bench_function(
+          BenchmarkId::new("ring", len),
+          checked(
+            || {
+              black_box(
+                ring_key
+                  .sign(&ring_rng, black_box(data))
+                  .expect("valid authentication benchmark operation must succeed"),
+              )
+            },
+            |signature| verifies(data, signature.as_ref()),
+          ),
+        );
 
-    aws_lc_bench! {
-      g.bench_function(
-        BenchmarkId::new("aws-lc-rs", len),
-        checked(
-          || black_box(aws_key.sign(&aws_rng, black_box(data)).expect("valid authentication benchmark operation must succeed")),
-          |signature| verifies(data, signature.as_ref()),
-        ),
-      );
+        aws_lc_bench! {
+          g.bench_function(
+            BenchmarkId::new("aws-lc-rs", len),
+            checked(
+              || black_box(aws_key.sign(&aws_rng, black_box(data)).expect("valid authentication benchmark operation must succeed")),
+              |signature| verifies(data, signature.as_ref()),
+            ),
+          );
+        }
+      }
+
+      g.finish();
     }
-  }
-
-  g.finish();
+  };
 }
+
+ecdsa_sign_bench!(
+  ecdsa_p256_sign,
+  "ecdsa-p256/sign",
+  "rustcrypto-p256",
+  p256,
+  EcdsaP256SecretKey,
+  EcdsaP256Keypair,
+  P256OracleSigningKey,
+  P256OracleSignature,
+  ECDSA_P256_SHA256_FIXED_SIGNING,
+  ECDSA_P256_SHA256_FIXED,
+  [0x11u8; 32],
+  [0x5cu8; 64],
+);
 
 // ECDSA P-256 public key from a secret key held outside timing. Timed: the fixed-base scalar multiplication and the
 // library's public-key object, which holds only the affine point in both libraries. `rscrypto-blinded` adds caller-supplied scalar blinding. Every row must return the NIST
@@ -1615,139 +1634,20 @@ fn ecdsa_p384_verify(c: &mut Criterion) {
   g.finish();
 }
 
-fn ecdsa_p384_sign(c: &mut Criterion) {
-  if !bench_config::selected("ecdsa-p384/sign") {
-    return;
-  }
-  let secret_bytes = [0x31u8; 48];
-  let secret =
-    EcdsaP384SecretKey::from_bytes(secret_bytes).expect("valid authentication benchmark operation must succeed");
-  let keypair = EcdsaP384Keypair::from_secret_key(secret);
-  let blind = [0xa3u8; 96];
-  let signing_key =
-    P384OracleSigningKey::from_slice(&secret_bytes).expect("valid authentication benchmark operation must succeed");
-  let verifying_key = signing_key.verifying_key();
-  let sec1 = keypair.public_key().to_sec1_bytes();
-  let ring_rng = ring::rand::SystemRandom::new();
-  let ring_key = ring::signature::EcdsaKeyPair::from_private_key_and_public_key(
-    &ring::signature::ECDSA_P384_SHA384_FIXED_SIGNING,
-    &secret_bytes,
-    &sec1,
-    &ring_rng,
-  )
-  .expect("valid authentication benchmark operation must succeed");
-  aws_lc_bench! {
-    let aws_rng = aws_lc_rs::rand::SystemRandom::new();
-    let aws_key = aws_lc_rs::signature::EcdsaKeyPair::from_private_key_and_public_key(
-      &aws_lc_rs::signature::ECDSA_P384_SHA384_FIXED_SIGNING,
-      &secret_bytes,
-      &sec1,
-    )
-    .expect("valid authentication benchmark operation must succeed");
-  }
-  // ECDSA P-384 signing with a key held outside timing. Timed: hashing, nonce generation, signing, and the
-  // signature object. The nonce source differs by library and stays timed:
-  // - `rscrypto` is `try_sign`, the default API: a deterministic nonce that is not RFC 6979, with no entropy
-  //   source. `rscrypto-blinded` adds caller-supplied nonce blinding and must return the same signature.
-  // - RustCrypto derives the RFC 6979 nonce.
-  // - ring draws nonce randomness from `SystemRandom` in each call; aws-lc-rs uses AWS-LC's internal generator.
-  // No row has a fixed signature. RustCrypto must verify every other row's signature, and ring must verify
-  // RustCrypto's.
-  let verifies = |data: &[u8], signature: &[u8]| {
-    let signature = P384OracleSignature::from_slice(signature).expect("ECDSA P-384 signature must parse");
-    p384::ecdsa::signature::Verifier::verify(verifying_key, data, &signature)
-      .expect("RustCrypto must verify the ECDSA P-384 signature");
-  };
-
-  let inputs = [0usize, 32, 1024, 16384]
-    .into_iter()
-    .map(|len| (len, common::random_bytes(len)))
-    .collect::<Vec<_>>();
-  let mut g = c.benchmark_group("ecdsa-p384/sign");
-
-  for (len, data) in &inputs {
-    common::set_throughput(&mut g, *len);
-
-    g.bench_function(
-      BenchmarkId::new("rscrypto", len),
-      checked(
-        || {
-          black_box(
-            black_box(&keypair)
-              .try_sign(black_box(data))
-              .expect("valid authentication benchmark operation must succeed"),
-          )
-        },
-        |signature| verifies(data, signature.as_bytes()),
-      ),
-    );
-
-    g.bench_function(
-      BenchmarkId::new("rscrypto-blinded", len),
-      checked(
-        || {
-          black_box(
-            black_box(&keypair)
-              .try_sign_blinded_with(black_box(data), |out| {
-                out.copy_from_slice(black_box(&blind));
-                Ok::<(), core::convert::Infallible>(())
-              })
-              .expect("valid authentication benchmark operation must succeed"),
-          )
-        },
-        |signature| {
-          let deterministic = keypair
-            .try_sign(data)
-            .expect("valid authentication benchmark operation must succeed");
-          assert_eq!(signature, deterministic);
-          verifies(data, signature.as_bytes());
-        },
-      ),
-    );
-
-    g.bench_function(
-      BenchmarkId::new("rustcrypto-p384", len),
-      checked(
-        || {
-          let signature: P384OracleSignature =
-            p384::ecdsa::signature::Signer::sign(black_box(&signing_key), black_box(data));
-          black_box(signature)
-        },
-        |signature| {
-          ring::signature::UnparsedPublicKey::new(&ring::signature::ECDSA_P384_SHA384_FIXED, &sec1)
-            .verify(data, signature.to_bytes().as_slice())
-            .expect("ring must verify RustCrypto's ECDSA P-384 signature");
-        },
-      ),
-    );
-
-    g.bench_function(
-      BenchmarkId::new("ring", len),
-      checked(
-        || {
-          black_box(
-            ring_key
-              .sign(&ring_rng, black_box(data))
-              .expect("valid authentication benchmark operation must succeed"),
-          )
-        },
-        |signature| verifies(data, signature.as_ref()),
-      ),
-    );
-
-    aws_lc_bench! {
-      g.bench_function(
-        BenchmarkId::new("aws-lc-rs", len),
-        checked(
-          || black_box(aws_key.sign(&aws_rng, black_box(data)).expect("valid authentication benchmark operation must succeed")),
-          |signature| verifies(data, signature.as_ref()),
-        ),
-      );
-    }
-  }
-
-  g.finish();
-}
+ecdsa_sign_bench!(
+  ecdsa_p384_sign,
+  "ecdsa-p384/sign",
+  "rustcrypto-p384",
+  p384,
+  EcdsaP384SecretKey,
+  EcdsaP384Keypair,
+  P384OracleSigningKey,
+  P384OracleSignature,
+  ECDSA_P384_SHA384_FIXED_SIGNING,
+  ECDSA_P384_SHA384_FIXED,
+  [0x31u8; 48],
+  [0xa3u8; 96],
+);
 
 // ECDSA P-384 public key from a secret key held outside timing. Timed: the fixed-base scalar multiplication and the
 // library's public-key object, which holds only the affine point in both libraries. `rscrypto-blinded` adds caller-supplied scalar blinding. Every row must return the NIST

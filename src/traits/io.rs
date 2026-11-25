@@ -127,6 +127,109 @@ fn debug_adapter<R: core::fmt::Debug, H: core::fmt::Debug>(
 
 // Checksum I/O Adapters
 
+#[cfg(feature = "std")]
+macro_rules! impl_io_adapter {
+  ($name:ident, $bound:path, $result:ident) => {
+    impl<R: core::fmt::Debug, H: $bound + core::fmt::Debug> core::fmt::Debug for $name<R, H> {
+      fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        debug_adapter(f, stringify!($name), &self.inner, &self.hasher)
+      }
+    }
+
+    impl<T, H: $bound> $name<T, H> {
+      /// Wrap `inner` with a fresh hash state.
+      #[inline]
+      #[must_use]
+      pub fn new(inner: T) -> Self {
+        Self {
+          inner,
+          hasher: H::new(),
+        }
+      }
+
+      /// Return the result for all bytes processed through the adapter.
+      #[inline]
+      #[must_use]
+      pub fn $result(&self) -> H::Output {
+        self.hasher.finalize()
+      }
+
+      /// Borrow the running hash state.
+      ///
+      /// Direct updates contribute to the result.
+      #[inline]
+      pub fn hasher_mut(&mut self) -> &mut H {
+        &mut self.hasher
+      }
+
+      /// Consume the adapter and return the inner stream and current result.
+      #[inline]
+      pub fn into_parts(self) -> (T, H::Output) {
+        (self.inner, self.hasher.finalize())
+      }
+
+      /// Consume the adapter and return the inner stream, discarding the hash state.
+      #[inline]
+      pub fn into_inner(self) -> T {
+        self.inner
+      }
+
+      /// Borrow the inner stream.
+      #[inline]
+      pub fn inner(&self) -> &T {
+        &self.inner
+      }
+
+      /// Borrow the inner stream mutably.
+      ///
+      /// Direct I/O bypasses the hash state.
+      #[inline]
+      pub fn inner_mut(&mut self) -> &mut T {
+        &mut self.inner
+      }
+    }
+  };
+}
+
+#[cfg(feature = "std")]
+macro_rules! impl_io_read {
+  ($name:ident, $bound:path) => {
+    impl<R: std::io::Read, H: $bound> std::io::Read for $name<R, H> {
+      #[inline]
+      fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        read_and_update(&mut self.inner, buf, |data| self.hasher.update(data))
+      }
+
+      #[inline]
+      fn read_vectored(&mut self, bufs: &mut [std::io::IoSliceMut<'_>]) -> std::io::Result<usize> {
+        read_vectored_and_update(&mut self.inner, bufs, |data| self.hasher.update(data))
+      }
+    }
+  };
+}
+
+#[cfg(feature = "std")]
+macro_rules! impl_io_write {
+  ($name:ident, $bound:path) => {
+    impl<W: std::io::Write, H: $bound> std::io::Write for $name<W, H> {
+      #[inline]
+      fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        write_and_update(&mut self.inner, buf, |data| self.hasher.update(data))
+      }
+
+      #[inline]
+      fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush()
+      }
+
+      #[inline]
+      fn write_vectored(&mut self, bufs: &[std::io::IoSlice<'_>]) -> std::io::Result<usize> {
+        write_vectored_and_update(&mut self.inner, bufs, |data| self.hasher.update(data))
+      }
+    }
+  };
+}
+
 /// Wraps a [`Read`](std::io::Read) and computes a checksum transparently.
 ///
 /// All reads from this type pass through to the inner reader while
@@ -171,24 +274,12 @@ pub struct ChecksumReader<R, C: crate::Checksum> {
 }
 
 #[cfg(feature = "std")]
-impl<R: core::fmt::Debug, C: crate::Checksum + core::fmt::Debug> core::fmt::Debug for ChecksumReader<R, C> {
-  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-    debug_adapter(f, "ChecksumReader", &self.inner, &self.hasher)
-  }
-}
+impl_io_adapter!(ChecksumReader, crate::Checksum, checksum);
+#[cfg(feature = "std")]
+impl_io_read!(ChecksumReader, crate::Checksum);
 
 #[cfg(feature = "std")]
 impl<R, C: crate::Checksum> ChecksumReader<R, C> {
-  /// Wrap `inner` with a checksum initialized to its algorithm-defined default.
-  #[inline]
-  #[must_use]
-  pub fn new(inner: R) -> Self {
-    Self {
-      inner,
-      hasher: C::new(),
-    }
-  }
-
   /// Wrap `inner` with a checksum initialized from `initial`.
   #[inline]
   #[must_use]
@@ -197,60 +288,6 @@ impl<R, C: crate::Checksum> ChecksumReader<R, C> {
       inner,
       hasher: C::with_initial(initial),
     }
-  }
-
-  /// Return the checksum of the bytes read through this adapter so far.
-  #[inline]
-  #[must_use]
-  pub fn checksum(&self) -> C::Output {
-    self.hasher.finalize()
-  }
-
-  /// Borrow the checksum state mutably.
-  ///
-  /// Direct updates affect the returned checksum but do not read from the inner reader.
-  #[inline]
-  pub fn hasher_mut(&mut self) -> &mut C {
-    &mut self.hasher
-  }
-
-  /// Consume the adapter and return the inner reader and current checksum.
-  #[inline]
-  pub fn into_parts(self) -> (R, C::Output) {
-    (self.inner, self.hasher.finalize())
-  }
-
-  /// Consume the adapter and return the inner reader, discarding the checksum state.
-  #[inline]
-  pub fn into_inner(self) -> R {
-    self.inner
-  }
-
-  /// Borrow the inner reader.
-  #[inline]
-  pub fn inner(&self) -> &R {
-    &self.inner
-  }
-
-  /// Borrow the inner reader mutably.
-  ///
-  /// Bytes read directly from this value are not included in the checksum.
-  #[inline]
-  pub fn inner_mut(&mut self) -> &mut R {
-    &mut self.inner
-  }
-}
-
-#[cfg(feature = "std")]
-impl<R: std::io::Read, C: crate::Checksum> std::io::Read for ChecksumReader<R, C> {
-  #[inline]
-  fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-    read_and_update(&mut self.inner, buf, |data| self.hasher.update(data))
-  }
-
-  #[inline]
-  fn read_vectored(&mut self, bufs: &mut [std::io::IoSliceMut<'_>]) -> std::io::Result<usize> {
-    read_vectored_and_update(&mut self.inner, bufs, |data| self.hasher.update(data))
   }
 }
 
@@ -307,24 +344,12 @@ pub struct ChecksumWriter<W, C: crate::Checksum> {
 }
 
 #[cfg(feature = "std")]
-impl<W: core::fmt::Debug, C: crate::Checksum + core::fmt::Debug> core::fmt::Debug for ChecksumWriter<W, C> {
-  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-    debug_adapter(f, "ChecksumWriter", &self.inner, &self.hasher)
-  }
-}
+impl_io_adapter!(ChecksumWriter, crate::Checksum, checksum);
+#[cfg(feature = "std")]
+impl_io_write!(ChecksumWriter, crate::Checksum);
 
 #[cfg(feature = "std")]
 impl<W, C: crate::Checksum> ChecksumWriter<W, C> {
-  /// Wrap `inner` with a checksum initialized to its algorithm-defined default.
-  #[inline]
-  #[must_use]
-  pub fn new(inner: W) -> Self {
-    Self {
-      inner,
-      hasher: C::new(),
-    }
-  }
-
   /// Wrap `inner` with a checksum initialized from `initial`.
   #[inline]
   #[must_use]
@@ -333,65 +358,6 @@ impl<W, C: crate::Checksum> ChecksumWriter<W, C> {
       inner,
       hasher: C::with_initial(initial),
     }
-  }
-
-  /// Return the checksum of the bytes written through this adapter so far.
-  #[inline]
-  #[must_use]
-  pub fn checksum(&self) -> C::Output {
-    self.hasher.finalize()
-  }
-
-  /// Borrow the checksum state mutably.
-  ///
-  /// Direct updates affect the returned checksum but do not write to the inner writer.
-  #[inline]
-  pub fn hasher_mut(&mut self) -> &mut C {
-    &mut self.hasher
-  }
-
-  /// Consume the adapter and return the inner writer and current checksum.
-  #[inline]
-  pub fn into_parts(self) -> (W, C::Output) {
-    (self.inner, self.hasher.finalize())
-  }
-
-  /// Consume the adapter and return the inner writer, discarding the checksum state.
-  #[inline]
-  pub fn into_inner(self) -> W {
-    self.inner
-  }
-
-  /// Borrow the inner writer.
-  #[inline]
-  pub fn inner(&self) -> &W {
-    &self.inner
-  }
-
-  /// Borrow the inner writer mutably.
-  ///
-  /// Bytes written directly to this value are not included in the checksum.
-  #[inline]
-  pub fn inner_mut(&mut self) -> &mut W {
-    &mut self.inner
-  }
-}
-
-#[cfg(feature = "std")]
-impl<W: std::io::Write, C: crate::Checksum> std::io::Write for ChecksumWriter<W, C> {
-  #[inline]
-  fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-    write_and_update(&mut self.inner, buf, |data| self.hasher.update(data))
-  }
-
-  #[inline]
-  fn flush(&mut self) -> std::io::Result<()> {
-    self.inner.flush()
-  }
-
-  #[inline]
-  fn write_vectored(&mut self, bufs: &[std::io::IoSlice<'_>]) -> std::io::Result<usize> {
-    write_vectored_and_update(&mut self.inner, bufs, |data| self.hasher.update(data))
   }
 }
 
@@ -440,78 +406,9 @@ pub struct DigestReader<R, D: crate::traits::Digest> {
 }
 
 #[cfg(feature = "std")]
-impl<R: core::fmt::Debug, D: crate::traits::Digest + core::fmt::Debug> core::fmt::Debug for DigestReader<R, D> {
-  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-    debug_adapter(f, "DigestReader", &self.inner, &self.hasher)
-  }
-}
-
+impl_io_adapter!(DigestReader, crate::traits::Digest, digest);
 #[cfg(feature = "std")]
-impl<R, D: crate::traits::Digest> DigestReader<R, D> {
-  /// Wrap `inner` with a new digest state.
-  #[inline]
-  #[must_use]
-  pub fn new(inner: R) -> Self {
-    Self {
-      inner,
-      hasher: D::new(),
-    }
-  }
-
-  /// Return the digest of the bytes read through this adapter so far.
-  #[inline]
-  #[must_use]
-  pub fn digest(&self) -> D::Output {
-    self.hasher.finalize()
-  }
-
-  /// Borrow the digest state mutably.
-  ///
-  /// Direct updates affect the returned digest but do not read from the inner reader.
-  #[inline]
-  pub fn hasher_mut(&mut self) -> &mut D {
-    &mut self.hasher
-  }
-
-  /// Consume the adapter and return the inner reader and current digest.
-  #[inline]
-  pub fn into_parts(self) -> (R, D::Output) {
-    (self.inner, self.hasher.finalize())
-  }
-
-  /// Consume the adapter and return the inner reader, discarding the digest state.
-  #[inline]
-  pub fn into_inner(self) -> R {
-    self.inner
-  }
-
-  /// Borrow the inner reader.
-  #[inline]
-  pub fn inner(&self) -> &R {
-    &self.inner
-  }
-
-  /// Borrow the inner reader mutably.
-  ///
-  /// Bytes read directly from this value are not included in the digest.
-  #[inline]
-  pub fn inner_mut(&mut self) -> &mut R {
-    &mut self.inner
-  }
-}
-
-#[cfg(feature = "std")]
-impl<R: std::io::Read, D: crate::traits::Digest> std::io::Read for DigestReader<R, D> {
-  #[inline]
-  fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-    read_and_update(&mut self.inner, buf, |data| self.hasher.update(data))
-  }
-
-  #[inline]
-  fn read_vectored(&mut self, bufs: &mut [std::io::IoSliceMut<'_>]) -> std::io::Result<usize> {
-    read_vectored_and_update(&mut self.inner, bufs, |data| self.hasher.update(data))
-  }
-}
+impl_io_read!(DigestReader, crate::traits::Digest);
 
 /// Wraps a [`Write`](std::io::Write) and computes a digest transparently.
 ///
@@ -565,83 +462,9 @@ pub struct DigestWriter<W, D: crate::traits::Digest> {
 }
 
 #[cfg(feature = "std")]
-impl<W: core::fmt::Debug, D: crate::traits::Digest + core::fmt::Debug> core::fmt::Debug for DigestWriter<W, D> {
-  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-    debug_adapter(f, "DigestWriter", &self.inner, &self.hasher)
-  }
-}
-
+impl_io_adapter!(DigestWriter, crate::traits::Digest, digest);
 #[cfg(feature = "std")]
-impl<W, D: crate::traits::Digest> DigestWriter<W, D> {
-  /// Wrap `inner` with a new digest state.
-  #[inline]
-  #[must_use]
-  pub fn new(inner: W) -> Self {
-    Self {
-      inner,
-      hasher: D::new(),
-    }
-  }
-
-  /// Return the digest of the bytes written through this adapter so far.
-  #[inline]
-  #[must_use]
-  pub fn digest(&self) -> D::Output {
-    self.hasher.finalize()
-  }
-
-  /// Borrow the digest state mutably.
-  ///
-  /// Direct updates affect the returned digest but do not write to the inner writer.
-  #[inline]
-  pub fn hasher_mut(&mut self) -> &mut D {
-    &mut self.hasher
-  }
-
-  /// Consume the adapter and return the inner writer and current digest.
-  #[inline]
-  pub fn into_parts(self) -> (W, D::Output) {
-    (self.inner, self.hasher.finalize())
-  }
-
-  /// Consume the adapter and return the inner writer, discarding the digest state.
-  #[inline]
-  pub fn into_inner(self) -> W {
-    self.inner
-  }
-
-  /// Borrow the inner writer.
-  #[inline]
-  pub fn inner(&self) -> &W {
-    &self.inner
-  }
-
-  /// Borrow the inner writer mutably.
-  ///
-  /// Bytes written directly to this value are not included in the digest.
-  #[inline]
-  pub fn inner_mut(&mut self) -> &mut W {
-    &mut self.inner
-  }
-}
-
-#[cfg(feature = "std")]
-impl<W: std::io::Write, D: crate::traits::Digest> std::io::Write for DigestWriter<W, D> {
-  #[inline]
-  fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-    write_and_update(&mut self.inner, buf, |data| self.hasher.update(data))
-  }
-
-  #[inline]
-  fn flush(&mut self) -> std::io::Result<()> {
-    self.inner.flush()
-  }
-
-  #[inline]
-  fn write_vectored(&mut self, bufs: &[std::io::IoSlice<'_>]) -> std::io::Result<usize> {
-    write_vectored_and_update(&mut self.inner, bufs, |data| self.hasher.update(data))
-  }
-}
+impl_io_write!(DigestWriter, crate::traits::Digest);
 
 #[cfg(all(test, feature = "std"))]
 mod tests {

@@ -8,8 +8,6 @@ use crate::traits::Digest;
 
 #[doc(hidden)]
 pub(crate) mod dispatch;
-#[doc(hidden)]
-pub(crate) mod dispatch_policy;
 #[cfg(test)]
 mod kernel_test;
 pub(crate) mod kernels;

@@ -40,10 +40,12 @@ if any('portable-only' in features[name] for name in selected):
 print(','.join(sorted(selected)))
 PY
 )
+catalog=$(jq -er '.targets | if length == (unique | length) and
+  any(.[]; startswith("x86_64-")) and any(.[]; startswith("aarch64-"))
+  then .[] else error("invalid target catalog") end' .config/target-matrix.json)
 targets=("$host")
 if [[ "$mode" == targets ]]; then
   targets=()
-  catalog=$(jq -er '.targets | if length > 0 and length == (unique | length) then .[] else error("invalid target catalog") end' .config/target-matrix.json)
   cross=$("$python" -c 'import sys; sys.path.insert(0, "scripts/lib"); from cross_build import TARGETS; print(*TARGETS)')
   while IFS= read -r target; do
     [[ "$target" == "$host" || "$target" == *-apple-darwin || " $cross " == *" $target "* ]] || targets+=("$target")

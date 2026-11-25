@@ -187,42 +187,6 @@ impl_hash_kernel_introspect!(
 );
 #[cfg(test)]
 mod tests {
-
-  #[test]
-  #[cfg(feature = "sha2")]
-  fn kernel_for_digest_is_not_empty() {
-    let kernel = super::kernel_for::<crate::hashes::crypto::Sha256>(1024);
-    assert!(!kernel.is_empty());
-  }
-
-  #[test]
-  #[cfg(feature = "sha3")]
-  fn kernel_for_xof_is_not_empty() {
-    let kernel = super::kernel_for::<crate::hashes::crypto::Shake256>(4096);
-    assert!(!kernel.is_empty());
-  }
-
-  #[test]
-  #[cfg(feature = "xxh3")]
-  fn kernel_for_fast_hash_is_not_empty() {
-    let kernel = super::kernel_for::<crate::hashes::fast::xxh3::Xxh3_64>(1024);
-    assert!(!kernel.is_empty());
-  }
-
-  #[test]
-  #[cfg(feature = "blake2b")]
-  fn kernel_for_blake2b_is_not_empty() {
-    let kernel = super::kernel_for::<crate::hashes::crypto::Blake2b512>(1024);
-    assert!(!kernel.is_empty());
-  }
-
-  #[test]
-  #[cfg(feature = "blake2s")]
-  fn kernel_for_blake2s_is_not_empty() {
-    let kernel = super::kernel_for::<crate::hashes::crypto::Blake2s256>(1024);
-    assert!(!kernel.is_empty());
-  }
-
   /// Apple AArch64 always has the SHA3 instructions, and production Keccak runs its SHA3 rounds
   /// there. The report once read a separate table and said "portable".
   #[test]

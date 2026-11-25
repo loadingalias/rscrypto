@@ -21,7 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
 
 import evidence_bundle as bundle
 from dudect_report import raw_csv_rows
-from asm_heuristics import FINDINGS_EXIT, validate_public_inputs, validate_waivers
+from asm_heuristics import FINDINGS_EXIT, expanded_waivers, validate_public_inputs, validate_waivers
 from provenance import ct_function_symbols, dudect_runner_sources, load_toml, sha256_file
 from manifest import (
   binsec_kernel_targets, binsec_required_targets, is_diagnostic_dudect_case, primitive_supports_physical_timing,
@@ -510,10 +510,11 @@ def validate_manifest(root: Path, selected_target: str, errors: list[str], warni
         fail(errors, f"harness {harness.get('name', '<unnamed>')} covers unknown primitive {covered}")
 
   target_names = {row.get("name") for row in ct.get("target", [])}
-  configured_waivers = ct.get("asm_waiver", [])
+  configured_waivers = expanded_waivers(ct.get("asm_waiver", []))
   errors.extend(validate_waivers(configured_waivers))
   for index, waiver in enumerate(configured_waivers):
-    if waiver.get("target") not in target_names or waiver.get("primitive") not in primitive_ids:
+    if not (isinstance(waiver.get("target"), str) and waiver["target"] in target_names
+            and isinstance(waiver.get("primitive"), str) and waiver["primitive"] in primitive_ids):
       fail(errors, f"asm_waiver[{index}] must name an existing target and primitive")
     if waiver.get("classification") in {"outside-claim", "allowed-disclosure"}:
       reference = str(waiver.get("contract", "")).split(":")

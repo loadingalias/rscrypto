@@ -16,6 +16,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from generated import check_or_write  # noqa: E402
+
 import p384  # noqa: E402
 import rsa_pair_aarch64  # noqa: E402
 import rsa_pair_simulate  # noqa: E402
@@ -46,21 +48,8 @@ def main():
         print(f'Paired RSA kernels match Python integers ({args.cases} cases per shape)')
         return 0
 
-    stale_total = []
-    for path, text, new, stale in sources():
-        relative = path.relative_to(ROOT)
-        if args.mode == 'write' and new != text:
-            path.write_text(new, encoding='utf-8')
-            print(f'rewrote {relative}: {", ".join(stale)}')
-        stale_total += [f'{relative}: {name}' for name in stale]
-    if args.mode == 'check' and stale_total:
-        for entry in stale_total:
-            print(f'stale generated assembly: {entry}', file=sys.stderr)
-        print('Run `scripts/lib/python.sh scripts/asm/rsa_pair.py write` after changing a generator.', file=sys.stderr)
-        return 1
-    if args.mode == 'check':
-        print('Paired RSA assembly matches its generator')
-    return 0
+    return check_or_write(args.mode, ROOT, 'scripts/asm/rsa_pair.py', sources(),
+                          'Paired RSA assembly matches its generator')
 
 
 if __name__ == '__main__':

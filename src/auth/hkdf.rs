@@ -3,6 +3,7 @@
 use core::fmt;
 
 use super::hmac::{HmacSha256, HmacSha384, HmacSha512};
+use super::sha2_words::{write_u32x8_be, write_u64_be};
 use crate::{
   hashes::crypto::{
     sha256::{H0 as SHA256_H0, dispatch as sha256_dispatch, kernels::CompressBlocksFn as Sha256CompressBlocksFn},
@@ -23,42 +24,6 @@ const SHA384_BLOCK_SIZE: usize = 128;
 const SHA512_OUTPUT_SIZE: usize = 64;
 const SHA512_MAX_OUTPUT_SIZE: usize = 255 * SHA512_OUTPUT_SIZE;
 const SHA512_BLOCK_SIZE: usize = 128;
-
-#[inline(always)]
-fn write_u32x8_be(dst: &mut [u8; SHA256_OUTPUT_SIZE], words: &[u32; 8]) {
-  dst[0..4].copy_from_slice(&words[0].to_be_bytes());
-  dst[4..8].copy_from_slice(&words[1].to_be_bytes());
-  dst[8..12].copy_from_slice(&words[2].to_be_bytes());
-  dst[12..16].copy_from_slice(&words[3].to_be_bytes());
-  dst[16..20].copy_from_slice(&words[4].to_be_bytes());
-  dst[20..24].copy_from_slice(&words[5].to_be_bytes());
-  dst[24..28].copy_from_slice(&words[6].to_be_bytes());
-  dst[28..32].copy_from_slice(&words[7].to_be_bytes());
-}
-
-#[inline(always)]
-fn write_u64x6_be(dst: &mut [u8], words: &[u64; 8]) {
-  debug_assert!(dst.len() >= SHA384_OUTPUT_SIZE);
-  dst[0..8].copy_from_slice(&words[0].to_be_bytes());
-  dst[8..16].copy_from_slice(&words[1].to_be_bytes());
-  dst[16..24].copy_from_slice(&words[2].to_be_bytes());
-  dst[24..32].copy_from_slice(&words[3].to_be_bytes());
-  dst[32..40].copy_from_slice(&words[4].to_be_bytes());
-  dst[40..48].copy_from_slice(&words[5].to_be_bytes());
-}
-
-#[inline(always)]
-fn write_u64x8_be(dst: &mut [u8], words: &[u64; 8]) {
-  debug_assert!(dst.len() >= SHA512_OUTPUT_SIZE);
-  dst[0..8].copy_from_slice(&words[0].to_be_bytes());
-  dst[8..16].copy_from_slice(&words[1].to_be_bytes());
-  dst[16..24].copy_from_slice(&words[2].to_be_bytes());
-  dst[24..32].copy_from_slice(&words[3].to_be_bytes());
-  dst[32..40].copy_from_slice(&words[4].to_be_bytes());
-  dst[40..48].copy_from_slice(&words[5].to_be_bytes());
-  dst[48..56].copy_from_slice(&words[6].to_be_bytes());
-  dst[56..64].copy_from_slice(&words[7].to_be_bytes());
-}
 
 #[cfg(all(
   target_arch = "aarch64",
@@ -357,6 +322,10 @@ impl HkdfSha256 {
       return Ok(());
     }
 
+    // Sum in u64, not usize: repeated parts can exceed usize on 32-bit targets. A total
+    // beyond SHA-256's message limit fails strict arithmetic, as in `Sha256::update`.
+    let info_len = info.iter().fold(0u64, |len, part| len.strict_add(part.len() as u64));
+
     let compress = self.compress;
 
     let mut inner_block = [0u8; SHA256_BLOCK_SIZE];
@@ -377,7 +346,7 @@ impl HkdfSha256 {
     expand_hmac_sha256_inner(
       compress,
       None,
-      info,
+      (info, info_len),
       counter,
       &mut state,
       &mut inner_hash,
@@ -399,7 +368,7 @@ impl HkdfSha256 {
       expand_hmac_sha256_inner(
         compress,
         Some(&prev_tag),
-        info,
+        (info, info_len),
         counter,
         &mut state,
         &mut inner_hash,
@@ -421,10 +390,7 @@ impl HkdfSha256 {
     ct::zeroize_no_fence(&mut inner_hash);
     ct::zeroize_no_fence(&mut inner_block);
     ct::zeroize_no_fence(&mut outer_block);
-    for word in state.iter_mut() {
-      // SAFETY: word is a valid, aligned, dereferenceable pointer to initialized memory.
-      unsafe { core::ptr::write_volatile(word, 0) };
-    }
+    ct::zeroize_words_no_fence(&mut state);
     core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
 
     Ok(())
@@ -493,10 +459,8 @@ pub fn diag_hkdf_sha256_derive_portable(input_key_material: &[u8; SHA256_OUTPUT_
 impl Drop for HkdfSha256 {
   fn drop(&mut self) {
     ct::zeroize(&mut self.prk);
-    for word in self.inner_init.iter_mut().chain(self.outer_init.iter_mut()) {
-      // SAFETY: word is a valid, aligned, dereferenceable pointer to initialized memory.
-      unsafe { core::ptr::write_volatile(word, 0) };
-    }
+    ct::zeroize_words_no_fence(&mut self.inner_init);
+    ct::zeroize_words_no_fence(&mut self.outer_init);
     core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
   }
 }
@@ -660,6 +624,8 @@ impl HkdfSha384 {
       return Ok(());
     }
 
+    let info_len = info.iter().fold(0u128, |len, part| len.strict_add(part.len() as u128));
+
     let compress = self.compress;
 
     let mut inner_block = [0u8; SHA384_BLOCK_SIZE];
@@ -679,7 +645,7 @@ impl HkdfSha384 {
     expand_hmac_sha384_inner(
       compress,
       None,
-      info,
+      (info, info_len),
       counter,
       &mut state,
       &mut outer_block,
@@ -694,7 +660,7 @@ impl HkdfSha384 {
       expand_hmac_sha384_inner(
         compress,
         Some(&prev_tag),
-        info,
+        (info, info_len),
         counter,
         &mut state,
         &mut outer_block,
@@ -708,10 +674,7 @@ impl HkdfSha384 {
     ct::zeroize_no_fence(&mut prev_tag);
     ct::zeroize_no_fence(&mut inner_block);
     ct::zeroize_no_fence(&mut outer_block);
-    for word in state.iter_mut() {
-      // SAFETY: word is a valid, aligned, dereferenceable pointer to initialized memory.
-      unsafe { core::ptr::write_volatile(word, 0) };
-    }
+    ct::zeroize_words_no_fence(&mut state);
     core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
 
     Ok(())
@@ -780,10 +743,8 @@ pub fn diag_hkdf_sha384_derive_portable(input_key_material: &[u8; SHA384_OUTPUT_
 impl Drop for HkdfSha384 {
   fn drop(&mut self) {
     ct::zeroize(&mut self.prk);
-    for word in self.inner_init.iter_mut().chain(self.outer_init.iter_mut()) {
-      // SAFETY: word is a valid, aligned, dereferenceable pointer to initialized memory.
-      unsafe { core::ptr::write_volatile(word, 0) };
-    }
+    ct::zeroize_words_no_fence(&mut self.inner_init);
+    ct::zeroize_words_no_fence(&mut self.outer_init);
     core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
   }
 }
@@ -922,10 +883,7 @@ impl HkdfSha512 {
     ct::zeroize_no_fence(&mut prev_tag);
     ct::zeroize_no_fence(&mut inner_block);
     ct::zeroize_no_fence(&mut outer_block);
-    for word in state.iter_mut() {
-      // SAFETY: word is a valid, aligned, dereferenceable pointer to initialized memory.
-      unsafe { core::ptr::write_volatile(word, 0) };
-    }
+    ct::zeroize_words_no_fence(&mut state);
     core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
 
     Ok(())
@@ -981,10 +939,8 @@ impl HkdfSha512 {
 impl Drop for HkdfSha512 {
   fn drop(&mut self) {
     ct::zeroize(&mut self.prk);
-    for word in self.inner_init.iter_mut().chain(self.outer_init.iter_mut()) {
-      // SAFETY: word is a valid, aligned, dereferenceable pointer to initialized memory.
-      unsafe { core::ptr::write_volatile(word, 0) };
-    }
+    ct::zeroize_words_no_fence(&mut self.inner_init);
+    ct::zeroize_words_no_fence(&mut self.outer_init);
     core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
   }
 }
@@ -993,16 +949,13 @@ impl Drop for HkdfSha512 {
 fn expand_hmac_sha256_inner(
   compress: Sha256CompressBlocksFn,
   prev: Option<&[u8; SHA256_OUTPUT_SIZE]>,
-  info: &[&[u8]],
+  (info, info_len): (&[&[u8]], u64),
   counter: u8,
   state: &mut [u32; 8],
   out: &mut [u8; SHA256_OUTPUT_SIZE],
   block: &mut [u8; SHA256_BLOCK_SIZE],
 ) {
   let prev_len = if prev.is_some() { SHA256_OUTPUT_SIZE } else { 0 };
-  // Sum in u64, not usize: repeated parts can exceed usize on 32-bit targets. A total
-  // beyond SHA-256's message limit fails strict arithmetic, as in `Sha256::update`.
-  let info_len = info.iter().fold(0u64, |len, part| len.strict_add(part.len() as u64));
   let total_bytes = (SHA256_BLOCK_SIZE as u64)
     .strict_add(prev_len as u64)
     .strict_add(info_len)
@@ -1072,14 +1025,13 @@ fn expand_hmac_sha256_outer(
 fn expand_hmac_sha384_inner(
   compress: Sha384CompressBlocksFn,
   prev: Option<&[u8; SHA384_OUTPUT_SIZE]>,
-  info: &[&[u8]],
+  (info, info_len): (&[&[u8]], u128),
   counter: u8,
   state: &mut [u64; 8],
   outer_block: &mut [u8; SHA384_BLOCK_SIZE],
   block: &mut [u8; SHA384_BLOCK_SIZE],
 ) {
   let prev_len = if prev.is_some() { SHA384_OUTPUT_SIZE } else { 0 };
-  let info_len = info.iter().fold(0u128, |len, part| len.strict_add(part.len() as u128));
   let total_bytes = (SHA384_BLOCK_SIZE as u128)
     .strict_add(prev_len as u128)
     .strict_add(info_len)
@@ -1126,7 +1078,7 @@ fn expand_hmac_sha384_inner(
   block[112..SHA384_BLOCK_SIZE].copy_from_slice(&total_bytes.strict_mul(8).to_be_bytes());
   compress.call(state, block);
 
-  write_u64x6_be(&mut outer_block[..SHA384_OUTPUT_SIZE], state);
+  write_u64_be::<6>(&mut outer_block[..SHA384_OUTPUT_SIZE], state);
 }
 
 #[inline(always)]
@@ -1140,7 +1092,7 @@ fn expand_hmac_sha384_outer(
   *state = *outer_init;
   compress.call(state, outer_block);
 
-  write_u64x6_be(out, state);
+  write_u64_be::<6>(out, state);
 }
 
 #[inline(always)]
@@ -1196,7 +1148,7 @@ fn expand_hmac_sha512_inner(
   block[112..SHA512_BLOCK_SIZE].copy_from_slice(&total_bytes.strict_mul(8).to_be_bytes());
   compress.call(state, block);
 
-  write_u64x8_be(&mut outer_block[..SHA512_OUTPUT_SIZE], state);
+  write_u64_be::<8>(&mut outer_block[..SHA512_OUTPUT_SIZE], state);
 }
 
 #[inline(always)]
@@ -1210,7 +1162,7 @@ fn expand_hmac_sha512_outer(
   *state = *outer_init;
   compress.call(state, outer_block);
 
-  write_u64x8_be(out, state);
+  write_u64_be::<8>(out, state);
 }
 
 #[cfg(test)]

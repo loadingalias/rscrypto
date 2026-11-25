@@ -353,9 +353,23 @@ def equality_release_roots(root: Path) -> set[str]:
   return set(release_binary.get("owner_symbols", [])) | set(release_binary.get("public_len_symbols", []))
 
 
+def expanded_waivers(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+  """Expand shared reviews into the primitive-specific identities used by the scanner."""
+  result = []
+  for record in records:
+    members = record.get("primitives")
+    if "primitive" not in record and isinstance(members, list) and members and all(isinstance(p, str) for p in members):
+      fields = {key: value for key, value in record.items() if key != "primitives"}
+      result.extend(dict(fields, primitive=p) for p in members)
+    else:
+      # Keep malformed groups visible to the manifest validator.
+      result.append(record)
+  return result
+
+
 def waivers(root: Path) -> list[dict[str, Any]]:
   ct = load_toml(root / "ct.toml")
-  return list(ct.get("asm_waiver", []))
+  return expanded_waivers(ct.get("asm_waiver", []))
 
 
 def public_input_rules(root: Path) -> list[dict[str, Any]]:
@@ -481,8 +495,9 @@ def validate_waivers(configured: list[dict[str, Any]]) -> list[str]:
       errors.append(f"asm_waiver[{index}] missing field(s): {', '.join(missing)}")
     if extra:
       errors.append(f"asm_waiver[{index}] has unknown field(s): {', '.join(extra)}")
-    for field in ("target", "primitive", "symbol", "kind", "slice_sha256"):
-      if waiver.get(field) in (None, "", "*"):
+    fields = ("target", "primitive", "symbol", "kind", "slice_sha256")
+    for field in fields:
+      if not isinstance(waiver.get(field), str) or waiver[field] in ("", "*"):
         errors.append(f"asm_waiver[{index}] field {field} must be exact")
     if not re.fullmatch(r"[0-9a-f]{64}", str(waiver.get("slice_sha256", ""))):
       errors.append(f"asm_waiver[{index}] slice_sha256 must be a SHA-256 hex digest")
@@ -496,7 +511,9 @@ def validate_waivers(configured: list[dict[str, Any]]) -> list[str]:
     for field in ("source", "rationale", "reviewer"):
       if not str(waiver.get(field, "")).strip():
         errors.append(f"asm_waiver[{index}] field {field} must not be empty")
-    identity = tuple(waiver.get(field) for field in sorted(WAIVER_REQUIRED_FIELDS))
+    if not all(isinstance(waiver.get(field), str) for field in fields):
+      continue
+    identity = tuple(waiver[field] for field in fields)
     if identity in identities:
       errors.append(f"asm_waiver[{index}] duplicates an earlier waiver")
     identities.add(identity)

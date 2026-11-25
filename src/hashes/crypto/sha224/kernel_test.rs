@@ -34,7 +34,7 @@ mod tests {
       (x86::SHA | x86::SSE41, Sha224KernelId::X86Sha),
     ] {
       assert_eq!(caps.has(required), expected == Sha224KernelId::X86Sha);
-      let kernel = super::super::dispatch_policy::select_runtime_kernel(caps);
+      let kernel = crate::hashes::crypto::sha256::dispatch_policy::select_runtime_kernel(caps);
       assert_eq!(kernel, expected);
     }
   }

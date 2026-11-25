@@ -73,68 +73,18 @@ pub(crate) fn hmac_prefix_state<const BLOCK_SIZE: usize, T>(
 }
 
 #[inline(always)]
-fn read_u64_unaligned<const N: usize>(bytes: &[u8; N], offset: usize) -> u64 {
-  assert!(offset.strict_add(8) <= N);
-  // SAFETY: `offset + 8 <= N` above keeps the 8-byte read in bounds. The source is a byte array, so
-  // it may be unaligned and `read_unaligned` is required.
-  unsafe { core::ptr::read_unaligned(bytes.as_ptr().add(offset).cast::<u64>()) }
-}
-
-#[inline(always)]
-fn write_u64_unaligned<const N: usize>(bytes: &mut [u8; N], offset: usize, word: u64) {
-  assert!(offset.strict_add(8) <= N);
-  // SAFETY: `offset + 8 <= N` above keeps the 8-byte write in bounds. The destination is a byte
-  // array, so it may be unaligned and `write_unaligned` is required.
-  unsafe { core::ptr::write_unaligned(bytes.as_mut_ptr().add(offset).cast::<u64>(), word) };
-}
-
-#[inline(always)]
-fn hmac_prefix_pad_word<const BLOCK_SIZE: usize>(
-  key_block: &[u8; BLOCK_SIZE],
-  ipad: &mut [u8; BLOCK_SIZE],
-  opad: &mut [u8; BLOCK_SIZE],
-  offset: usize,
-) {
-  let key = read_u64_unaligned(key_block, offset);
-  write_u64_unaligned(ipad, offset, HMAC_IPAD_WORD ^ key);
-  write_u64_unaligned(opad, offset, HMAC_OPAD_WORD ^ key);
-}
-
-#[inline(always)]
-fn hmac_prefix_pad_words<const BLOCK_SIZE: usize>(
-  key_block: &[u8; BLOCK_SIZE],
-  ipad: &mut [u8; BLOCK_SIZE],
-  opad: &mut [u8; BLOCK_SIZE],
-) {
-  hmac_prefix_pad_word(key_block, ipad, opad, 0);
-  hmac_prefix_pad_word(key_block, ipad, opad, 8);
-  hmac_prefix_pad_word(key_block, ipad, opad, 16);
-  hmac_prefix_pad_word(key_block, ipad, opad, 24);
-  hmac_prefix_pad_word(key_block, ipad, opad, 32);
-  hmac_prefix_pad_word(key_block, ipad, opad, 40);
-  hmac_prefix_pad_word(key_block, ipad, opad, 48);
-  hmac_prefix_pad_word(key_block, ipad, opad, 56);
-
-  if BLOCK_SIZE == SHA512_FAMILY_BLOCK_SIZE {
-    hmac_prefix_pad_word(key_block, ipad, opad, 64);
-    hmac_prefix_pad_word(key_block, ipad, opad, 72);
-    hmac_prefix_pad_word(key_block, ipad, opad, 80);
-    hmac_prefix_pad_word(key_block, ipad, opad, 88);
-    hmac_prefix_pad_word(key_block, ipad, opad, 96);
-    hmac_prefix_pad_word(key_block, ipad, opad, 104);
-    hmac_prefix_pad_word(key_block, ipad, opad, 112);
-    hmac_prefix_pad_word(key_block, ipad, opad, 120);
+fn hmac_prefix_pad_words<const N: usize>(key: &[u8; N], ipad: &mut [u8; N], opad: &mut [u8; N]) {
+  for ((key, inner), outer) in key
+    .as_chunks::<8>()
+    .0
+    .iter()
+    .zip(ipad.as_chunks_mut::<8>().0)
+    .zip(opad.as_chunks_mut::<8>().0)
+  {
+    let word = u64::from_ne_bytes(*key);
+    *inner = (word ^ HMAC_IPAD_WORD).to_ne_bytes();
+    *outer = (word ^ HMAC_OPAD_WORD).to_ne_bytes();
   }
-}
-
-#[inline(always)]
-fn hmac_outer_pad_word<const OUT_SIZE: usize, const BLOCK_SIZE: usize>(
-  outer: &mut [u8; OUT_SIZE],
-  ipad: &[u8; BLOCK_SIZE],
-  offset: usize,
-) {
-  let word = read_u64_unaligned(ipad, offset) ^ HMAC_PAD_DELTA_WORD;
-  write_u64_unaligned(outer, offset, word);
 }
 
 #[inline(always)]
@@ -142,24 +92,13 @@ fn hmac_outer_pad_words<const OUT_SIZE: usize, const BLOCK_SIZE: usize>(
   outer: &mut [u8; OUT_SIZE],
   ipad: &[u8; BLOCK_SIZE],
 ) {
-  hmac_outer_pad_word(outer, ipad, 0);
-  hmac_outer_pad_word(outer, ipad, 8);
-  hmac_outer_pad_word(outer, ipad, 16);
-  hmac_outer_pad_word(outer, ipad, 24);
-  hmac_outer_pad_word(outer, ipad, 32);
-  hmac_outer_pad_word(outer, ipad, 40);
-  hmac_outer_pad_word(outer, ipad, 48);
-  hmac_outer_pad_word(outer, ipad, 56);
-
-  if BLOCK_SIZE == SHA512_FAMILY_BLOCK_SIZE {
-    hmac_outer_pad_word(outer, ipad, 64);
-    hmac_outer_pad_word(outer, ipad, 72);
-    hmac_outer_pad_word(outer, ipad, 80);
-    hmac_outer_pad_word(outer, ipad, 88);
-    hmac_outer_pad_word(outer, ipad, 96);
-    hmac_outer_pad_word(outer, ipad, 104);
-    hmac_outer_pad_word(outer, ipad, 112);
-    hmac_outer_pad_word(outer, ipad, 120);
+  for (dst, src) in outer[..BLOCK_SIZE]
+    .as_chunks_mut::<8>()
+    .0
+    .iter_mut()
+    .zip(ipad.as_chunks::<8>().0)
+  {
+    *dst = (u64::from_ne_bytes(*src) ^ HMAC_PAD_DELTA_WORD).to_ne_bytes();
   }
 }
 
@@ -530,6 +469,13 @@ impl core::fmt::Debug for HmacSha384 {
 }
 
 impl HmacSha384 {
+  #[inline]
+  fn finalize_tag(&self) -> HmacSha384Tag {
+    let mut tag = HmacSha384Tag::default();
+    self.finalize_into(&mut tag.0);
+    tag
+  }
+
   /// Write the current tag into `output` without consuming or resetting the state.
   ///
   /// The caller owns the output, including its cleanup if it is used as secret
@@ -734,56 +680,60 @@ pub fn diag_hmac_sha384_verify_portable(
   ct::fixed_eq(&tag, expected)
 }
 
-impl Mac for HmacSha384 {
-  const TAG_SIZE: usize = SHA384_TAG_SIZE;
-  type Tag = HmacSha384Tag;
+macro_rules! impl_sha512_family_mac {
+  ($mac:ty, $digest:ty, $tag:ident, $size:ident) => {
+    impl Mac for $mac {
+      const TAG_SIZE: usize = $size;
+      type Tag = $tag;
 
-  fn new(key: &[u8]) -> Self {
-    Self::from_key_with(key, Sha384::new)
-  }
+      fn new(key: &[u8]) -> Self {
+        Self::from_key_with(key, <$digest>::new)
+      }
 
-  #[inline]
-  fn update(&mut self, data: &[u8]) {
-    self.inner.update(data);
-  }
+      #[inline]
+      fn update(&mut self, data: &[u8]) {
+        self.inner.update(data);
+      }
 
-  #[inline]
-  fn finalize(&self) -> Self::Tag {
-    let mut tag = HmacSha384Tag::default();
-    self.finalize_into(&mut tag.0);
-    tag
-  }
+      #[inline]
+      fn finalize(&self) -> Self::Tag {
+        self.finalize_tag()
+      }
 
-  #[inline]
-  fn reset(&mut self) {
-    self.inner.zeroize_secret_state();
-    self.inner.reset_to_aligned_prefix(&self.inner_init);
-  }
+      #[inline]
+      fn reset(&mut self) {
+        self.inner.zeroize_secret_state();
+        self.inner.reset_to_aligned_prefix(&self.inner_init);
+      }
 
-  #[inline]
-  fn mac(key: &[u8], data: &[u8]) -> Self::Tag {
-    let mut tag = [0u8; SHA384_TAG_SIZE];
-    Self::mac_into(key, data, &mut tag);
-    HmacSha384Tag::from_bytes(tag)
-  }
+      #[inline]
+      fn mac(key: &[u8], data: &[u8]) -> Self::Tag {
+        let mut tag = [0u8; $size];
+        Self::mac_into(key, data, &mut tag);
+        $tag::from_bytes(tag)
+      }
 
-  #[inline]
-  fn verify(&self, expected: &Self::Tag) -> Result<(), VerificationError> {
-    if self.finalize().ct_eq(expected).declassify() {
-      Ok(())
-    } else {
-      Err(VerificationError::new())
+      #[inline]
+      fn verify(&self, expected: &Self::Tag) -> Result<(), VerificationError> {
+        if self.finalize().ct_eq(expected).declassify() {
+          Ok(())
+        } else {
+          Err(VerificationError::new())
+        }
+      }
     }
-  }
+
+    impl Drop for $mac {
+      fn drop(&mut self) {
+        self.inner.zeroize_secret_state();
+        self.inner_init.zeroize();
+        self.outer_init.zeroize();
+      }
+    }
+  };
 }
 
-impl Drop for HmacSha384 {
-  fn drop(&mut self) {
-    self.inner.zeroize_secret_state();
-    self.inner_init.zeroize();
-    self.outer_init.zeroize();
-  }
-}
+impl_sha512_family_mac!(HmacSha384, Sha384, HmacSha384Tag, SHA384_TAG_SIZE);
 
 /// HMAC-SHA512 authentication state.
 ///
@@ -816,6 +766,18 @@ impl core::fmt::Debug for HmacSha512 {
 }
 
 impl HmacSha512 {
+  #[inline]
+  fn finalize_tag(&self) -> HmacSha512Tag {
+    let mut inner_hash = self.inner.finalize_secret();
+    let mut outer = Sha512::new();
+    outer.reset_to_aligned_prefix(&self.outer_init);
+    outer.update(&inner_hash);
+    ct::zeroize(&mut inner_hash);
+    let tag = outer.finalize_secret();
+    outer.zeroize_secret_state();
+    HmacSha512Tag::from_bytes(tag)
+  }
+
   /// HMAC-SHA512 block size in bytes.
   pub const BLOCK_SIZE: usize = SHA512_FAMILY_BLOCK_SIZE;
 
@@ -1011,61 +973,7 @@ pub fn diag_hmac_sha512_verify_portable(
   ct::fixed_eq(&tag, expected)
 }
 
-impl Mac for HmacSha512 {
-  const TAG_SIZE: usize = SHA512_TAG_SIZE;
-  type Tag = HmacSha512Tag;
-
-  fn new(key: &[u8]) -> Self {
-    Self::from_key_with(key, Sha512::new)
-  }
-
-  #[inline]
-  fn update(&mut self, data: &[u8]) {
-    self.inner.update(data);
-  }
-
-  #[inline]
-  fn finalize(&self) -> Self::Tag {
-    let mut inner_hash = self.inner.finalize_secret();
-    let mut outer = Sha512::new();
-    outer.reset_to_aligned_prefix(&self.outer_init);
-    outer.update(&inner_hash);
-    ct::zeroize(&mut inner_hash);
-    let tag = outer.finalize_secret();
-    outer.zeroize_secret_state();
-    HmacSha512Tag::from_bytes(tag)
-  }
-
-  #[inline]
-  fn reset(&mut self) {
-    self.inner.zeroize_secret_state();
-    self.inner.reset_to_aligned_prefix(&self.inner_init);
-  }
-
-  #[inline]
-  fn mac(key: &[u8], data: &[u8]) -> Self::Tag {
-    let mut tag = [0u8; SHA512_TAG_SIZE];
-    Self::mac_into(key, data, &mut tag);
-    HmacSha512Tag::from_bytes(tag)
-  }
-
-  #[inline]
-  fn verify(&self, expected: &Self::Tag) -> Result<(), VerificationError> {
-    if self.finalize().ct_eq(expected).declassify() {
-      Ok(())
-    } else {
-      Err(VerificationError::new())
-    }
-  }
-}
-
-impl Drop for HmacSha512 {
-  fn drop(&mut self) {
-    self.inner.zeroize_secret_state();
-    self.inner_init.zeroize();
-    self.outer_init.zeroize();
-  }
-}
+impl_sha512_family_mac!(HmacSha512, Sha512, HmacSha512Tag, SHA512_TAG_SIZE);
 
 #[cfg(test)]
 mod tests {

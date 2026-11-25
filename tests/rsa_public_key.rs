@@ -3,6 +3,9 @@
 #[path = "common/openssl.rs"]
 mod openssl_oracle;
 
+mod common;
+use common::decode_hex_vec;
+
 #[cfg(not(any(target_arch = "s390x", target_arch = "powerpc64")))]
 use core::{
   ffi::c_void,
@@ -25,7 +28,7 @@ use num_bigint::BigUint;
 use proptest::prelude::*;
 use ring::signature as ring_signature;
 use rsa::{
-  BoxedUint, PrivateKey as RustCryptoRsaPrivateKey, PublicKey as RustCryptoRsaPublicKey,
+  PrivateKey as RustCryptoRsaPrivateKey, PublicKey as RustCryptoRsaPublicKey,
   pkcs1::{DecodeRsaPrivateKey, DecodeRsaPublicKey, EncodeRsaPrivateKey},
   pkcs1v15::{
     Signature as RustCryptoPkcs1v15Signature, SigningKey as RustCryptoPkcs1v15SigningKey,
@@ -202,19 +205,7 @@ fn algorithm_identifier(algorithm_oid: &[u8], params: Option<&[u8]>) -> Vec<u8> 
   sequence(&body)
 }
 
-fn hex_to_vec(hex: &str) -> Vec<u8> {
-  let (chunks, remainder) = hex.as_bytes().as_chunks::<2>();
-  assert!(remainder.is_empty(), "hex input must contain complete byte pairs");
-  let mut out = Vec::with_capacity(chunks.len());
-  for &[hi, lo] in chunks {
-    let hi = hex_value(hi).expect("hex fixtures must contain only ASCII hexadecimal digits");
-    let lo = hex_value(lo).expect("hex fixtures must contain only ASCII hexadecimal digits");
-    out.push((hi << 4) | lo);
-  }
-  out
-}
-
-fn cavp_hex_to_vec(hex: &str) -> Vec<u8> {
+fn cavp_decode_hex_vec(hex: &str) -> Vec<u8> {
   let mut padded;
   let hex = if hex.len().is_multiple_of(2) {
     hex
@@ -224,16 +215,7 @@ fn cavp_hex_to_vec(hex: &str) -> Vec<u8> {
     padded.push_str(hex);
     &padded
   };
-  hex_to_vec(hex)
-}
-
-fn hex_value(byte: u8) -> Option<u8> {
-  match byte {
-    b'0'..=b'9' => Some(byte.strict_sub(b'0')),
-    b'a'..=b'f' => Some(byte.strict_sub(b'a').strict_add(10)),
-    b'A'..=b'F' => Some(byte.strict_sub(b'A').strict_add(10)),
-    _ => None,
-  }
+  decode_hex_vec(hex)
 }
 
 fn rsa2048_modulus() -> Vec<u8> {
@@ -409,32 +391,8 @@ fn x509_self_signed_tbs_certificate(signature_algorithm_der: &[u8], subject_publ
 }
 
 fn rustcrypto_fixture_private_key() -> RustCryptoRsaPrivateKey {
-  RustCryptoRsaPrivateKey::from_components(
-    BoxedUint::from_str_radix_vartime(
-      "00d397b84d98a4c26138ed1b695a8106ead91d553bf06041b62d3fdc50a041e222b8f4529689c1b82c5e71554f5dd69fa2f4b6158cf0dbeb57811a0fc327e1f28e74fe74d3bc166c1eabdc1b8b57b934ca8be5b00b4f29975bcc99acaf415b59bb28a6782bb41a2c3c2976b3c18dbadef62f00c6bb226640095096c0cc60d22fe7ef987d75c6a81b10d96bf292028af110dc7cc1bbc43d22adab379a0cd5d8078cc780ff5cd6209dea34c922cf784f7717e428d75b5aec8ff30e5f0141510766e2e0ab8d473c84e8710b2b98227c3db095337ad3452f19e2b9bfbccdd8148abf6776fa552775e6e75956e45229ae5a9c46949bab1e622f0e48f56524a84ed3483b",
-      16,
-    )
-    .expect("the fixed RSA modulus must be valid hexadecimal"),
-    BoxedUint::from_str_radix_vartime("010001", 16).expect("the fixed RSA exponent must be valid hexadecimal"),
-    BoxedUint::from_str_radix_vartime(
-      "00c4e70c689162c94c660828191b52b4d8392115df486a9adbe831e458d73958320dc1b755456e93701e9702d76fb0b92f90e01d1fe248153281fe79aa9763a92fae69d8d7ecd144de29fa135bd14f9573e349e45031e3b76982f583003826c552e89a397c1a06bd2163488630d92e8c2bb643d7abef700da95d685c941489a46f54b5316f62b5d2c3a7f1bbd134cb37353a44683fdc9d95d36458de22f6c44057fe74a0a436c4308f73f4da42f35c47ac16a7138d483afc91e41dc3a1127382e0c0f5119b0221b4fc639d6b9c38177a6de9b526ebd88c38d7982c07f98a0efd877d508aae275b946915c02e2e1106d175d74ec6777f5e80d12c053d9c7be1e341",
-      16,
-    )
-    .expect("the fixed RSA private exponent must be valid hexadecimal"),
-    vec![
-      BoxedUint::from_str_radix_vartime(
-        "00f827bbf3a41877c7cc59aebf42ed4b29c32defcb8ed96863d5b090a05a8930dd624a21c9dcf9838568fdfa0df65b8462a5f2ac913d6c56f975532bd8e78fb07bd405ca99a484bcf59f019bbddcb3933f2bce706300b4f7b110120c5df9018159067c35da3061a56c8635a52b54273b31271b4311f0795df6021e6355e1a42e61",
-        16,
-      )
-      .expect("the fixed first RSA prime must be valid hexadecimal"),
-      BoxedUint::from_str_radix_vartime(
-        "00da4817ce0089dd36f2ade6a3ff410c73ec34bf1b4f6bda38431bfede11cef1f7f6efa70e5f8063a3b1f6e17296ffb15feefa0912a0325b8d1fd65a559e717b5b961ec345072e0ec5203d03441d29af4d64054a04507410cf1da78e7b6119d909ec66e6ad625bf995b279a4b3c5be7d895cd7c5b9c4c497fde730916fcdb4e41b",
-        16,
-      )
-      .expect("the fixed second RSA prime must be valid hexadecimal"),
-    ],
-  )
-  .expect("the fixed RSA components must form a valid private key")
+  RustCryptoRsaPrivateKey::from_pkcs1_der(include_bytes!("vectors/rsa/rsa2048_private_pkcs1.der"))
+    .expect("the independent RSA-2048 fixture must parse")
 }
 
 fn x509_sha256_rsa_self_signed_certificate(params: Option<&[u8]>) -> (Vec<u8>, Vec<u8>) {
@@ -457,17 +415,7 @@ fn assert_private_key_parts_match(left: &RustCryptoRsaPrivateKey, right: &RustCr
 }
 
 fn pss_fixture_public_key() -> Vec<u8> {
-  hex_to_vec(
-    "\
-30820122300d06092a864886f70d01010105000382010f003082010a0282010100ee0768fd95d4\
-b01ba98b31bae03ce5a63f4dbffa7ea7b43d876f3e2c49847f695248cebb213b867a3c219276d\
-fd7d1187a9981f8d42131d67464b60658fdcbdb3dc036d38c4024b7c1dc8ac096d19d6db048d\
-9db7c72d56675e923fbe0169e30e5dcb75b4170def5dc655d4a05ab317e0f19c2a79b8882b7\
-ef6fdbbc66de73485bc59fd6957cf76972d5869fcf7ab75e84b2e4a665a29e2e0cf6a135a93\
-0e0b5366e23bcad7f5e708effa078cd1387259c0c7730ba55343c568fa9b0da9c13d0c8ca03\
-81a6833554b387ba45e9088064d6ec627ebb5513a183f375e59130b5e6e77081dc1cf807f2bf\
-ab77fb0a09194a482e05eb931ea7b37deeb11d6d7f18110203010001",
-  )
+  include_bytes!("vectors/rsa/rsa2048_pss_spki.der").to_vec()
 }
 
 fn pss_fixture_message() -> &'static [u8] {
@@ -475,30 +423,11 @@ fn pss_fixture_message() -> &'static [u8] {
 }
 
 fn pss_fixture_signature_sha256() -> Vec<u8> {
-  hex_to_vec(
-    "\
-2641e0207f279b526767343e03007a293a0523db41828c0e335c10dea7ab7dec988ad09cd220d\
-1754f5f89f7cd3b2a9ab1f315709b019989ee96e9060d3158d0240b3f8dbed179c55c1b0fa78\
-f31249d706256748c325ded4835224e80b3daa066489d1cf28a4062fa4129b21723f6336f8c\
-55d6785cd2d284437748b78b47e0162da7cddd61df0536b378a1cc5c327cba76db99c253795c\
-19b49007146e44dbe47f3ee9c2da2248710cd264661815bd5508f604d6ee4a663a46c472f6d\
-323739fe6b142ddc3b006a9c113d3b81da524e0fe358f9cb141f686dc459b66b1150e5418e8\
-b6fcf2590d0706da27017429d91fe9f521f9fbb2ae2044f2eecfe87c7d",
-  )
+  include_bytes!("vectors/rsa/rsa2048_pss_signature_sha256.sig").to_vec()
 }
 
 fn pkcs1v15_fixture_public_key() -> Vec<u8> {
-  hex_to_vec(
-    "\
-30820122300d06092a864886f70d01010105000382010f003082010a0282010100bf882d756861\
-2271d36ac41584c3434145d13af573b889b353af0d1b257dcdefabb18e3adb717507fa981c70e\
-870c73359fe878feaa1b7cec819accaffa6646232d08650b8e1aefd6626cb8ab032cde1bb2cf\
-d378a9275d4cf828313fcc108184cf05727595701c44d7009590c747a82d24e7b651c7e7a96\
-b5e6141b880e3be517fea22ea5d73415de297f4c6ea66019689eaf6fb4732288355974d84438\
-003aa9fb72b18a10e909062816e79e8ee15e2d4066c5000d3251f251c44e0486f85644f00a9\
-6ae40d5462e07e1bd02fe3eae2c5a793716b81ab690edb9cb6d8532baab08c080b8b08bdf50\
-d1d3dc07b4d3f4afbb0f86ea48971a16d04132ec2432870203010001",
-  )
+  include_bytes!("vectors/rsa/rsa2048_pkcs1v15_spki.der").to_vec()
 }
 
 fn pkcs1v15_fixture_message() -> &'static [u8] {
@@ -506,20 +435,11 @@ fn pkcs1v15_fixture_message() -> &'static [u8] {
 }
 
 fn pkcs1v15_fixture_signature_sha256() -> Vec<u8> {
-  hex_to_vec(
-    "\
-94781246d705f79659d01ac8894b6f41076abe165e28711ec8fa41c1c8767b175a9c63e5118b\
-d30de86da0d7b8934e963ef69c438ace976e4453dfce6b9b84a7d37a27ee61512656333dfda1\
-ac40197fe4f9396bb016b25054f98f149d126c0248fc007cddc3d75d178eb34ecda0e0df822\
-825ca133c062d3cdcb19e20a3e377541d8253af795a9b49a41ddb5795592502b9efbb153afc\
-dd4fcc492a891d8536ef91cc228a3dbf66f0c70596f9cd101fe95d127550e7a4a9864430bd3\
-4a88d8df93f4df7b54e8a4b8643891481e4bdcf87be3f98a1fdc475a819e3dc3a114aff86e\
-48929a430fc39333f81064701be7d5501a3a7b4ec6c68f6feda6190d66b16",
-  )
+  include_bytes!("vectors/rsa/rsa2048_pkcs1v15_signature_sha256.sig").to_vec()
 }
 
 fn x509_certificate_fixture_public_key() -> Vec<u8> {
-  hex_to_vec(
+  decode_hex_vec(
     "\
 30820122300d06092a864886f70d01010105000382010f003082010a0282010100a246ccf6bd59720287837151de9fa5\
 5d4a811e456643f7fd0ced5a9ffa8fe52a89d52a8f6bd96246c9f0d23cd4f215609bfd0fd09dfcf13305440cae6e1b9a\
@@ -532,7 +452,7 @@ f70203010001",
 }
 
 fn x509_pkcs1v15_certificate_fixture() -> Vec<u8> {
-  hex_to_vec(
+  decode_hex_vec(
     "\
 3082031b30820203a00302010202144abda3eea77ef52d888f7ab507cd9016cacc900f300d06092a864886f70d01010b\
 0500301d311b301906035504030c12727363727970746f2d7273612d706b637331301e170d3236303532323232333332\
@@ -555,7 +475,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
 }
 
 fn x509_pss_certificate_fixture() -> Vec<u8> {
-  hex_to_vec(
+  decode_hex_vec(
     "\
 3082037f30820233a0030201020214663f635a01b30adf27a6e6eab0482e8aaeda37b3304106092a864886f70d01010a\
 3034a00f300d06096086480165030402010500a11c301a06092a864886f70d010108300d060960864801650304020105\
@@ -1818,7 +1738,7 @@ fn wycheproof_rsa3072_private_key_pkcs8() -> Vec<u8> {
   .expect("the Wycheproof RSA-OAEP document must be valid JSON");
   let group = &document["testGroups"][0];
   assert_eq!(group["keySize"], 3072);
-  hex_to_vec(
+  decode_hex_vec(
     group["privateKeyPkcs8"]
       .as_str()
       .expect("the Wycheproof private key must be a hex string"),
@@ -1889,7 +1809,7 @@ fn a_workspace_from_another_key_signs_nothing() {
   ))
   .expect("the Wycheproof RSA-OAEP document must be valid JSON");
   let same_width = RsaPrivateKey::from_pkcs8_der_with_policy(
-    &hex_to_vec(
+    &decode_hex_vec(
       document["testGroups"][0]["privateKeyPkcs8"]
         .as_str()
         .expect("the Wycheproof private key must be a hex string"),
@@ -3957,27 +3877,9 @@ fn private_component_validation_leaf_requires_every_check() {
 
 #[test]
 fn public_operation_matches_independent_65537_vector() {
-  let modulus = hex_to_vec(
-    "\
-ef8bb02b8e4aec1abc6fac7a0d6fb1f2649bb86a1567423fee4a194a250461a9db702558e92e52cc\
-907963d84731a7adaf4c609e1b7c7d7c187099a43857f7628f5d20416fcb48987c9d6f12cfc6bc\
-260c9b5506be3fe3cd218ddb37ef5b30feb16172a9832312726ed135c0540ef9d3229b87b5566f\
-3355c90f301b856aa822878269806079ab7267cdc6c7403d7be3fa652065b2d39f2dbf9fb61ed9\
-71fee37432ebe31d9aa465dbae96b0edd5ffddf1b49e03346a02290fed1e4e31f6b3b6e1f839f\
-d5add90a8a212c10dd997b0a4efcb3df990808509dcb28c504e0649827a83ffd864395d1f62f2\
-9a004f44423a44b07de943a60fba844a9da3603ce5c5",
-  );
-  let input = hex_to_vec(
-    "\
-3450869c4ccbee98815e55cb42f2dd85a3427d3f65e33d29352293e18cde9582a9fbc54b440984\
-1ba8d931a9a9411192516a9fbd3a7b886e7f8b8f3f7bb5403309eee9d7234df0b5934e18a1dc\
-9e3b568a3fab6947cefe50500abcbda19fd9ab7b7e90a95801e36a020ba79bdc94346198d98131\
-6864a06a43448b62acb7a8472661323175f04c5e447d0017e4073efc55f59f79f34aaa3be8ae7\
-0d26db78b25e9dfb23856d1b1e024aedfcfd649d209412c0c80832ca3466965eeff539afe791f\
-451b554e212cff4d92466438062c5202169b0adf0c95b7d3d31414602cf9d185252b550cc2e8f\
-5be08b7fc71f51210ff88363badadfaf5c2915c3a10b2389e",
-  );
-  let expected = hex_to_vec(
+  let modulus = include_bytes!("vectors/rsa/rsa2048_legacy_exponent_modulus.bin").to_vec();
+  let input = include_bytes!("vectors/rsa/rsa2048_legacy_exponent_input.bin").to_vec();
+  let expected = decode_hex_vec(
     "\
 020d016f2b1394b5ec00d4ddd1725435747a31fd4b2489fad76060b68b2259089d304b1d3c98\
 e0a343c4b313d15b6022b0400dde22538f30e8474d483189c04ece5acc8aaf1481b362c2d2fe7\
@@ -4001,27 +3903,9 @@ ec34e8c72cc58fd5324fbe1ddd9714909caedfaa38706cfa66d9bc1026ba3ec1188092392a54a\
 
 #[test]
 fn public_operation_matches_independent_legacy_exponent_vectors() {
-  let modulus = hex_to_vec(
-    "\
-ef8bb02b8e4aec1abc6fac7a0d6fb1f2649bb86a1567423fee4a194a250461a9db702558e92e52cc\
-907963d84731a7adaf4c609e1b7c7d7c187099a43857f7628f5d20416fcb48987c9d6f12cfc6bc\
-260c9b5506be3fe3cd218ddb37ef5b30feb16172a9832312726ed135c0540ef9d3229b87b5566f\
-3355c90f301b856aa822878269806079ab7267cdc6c7403d7be3fa652065b2d39f2dbf9fb61ed9\
-71fee37432ebe31d9aa465dbae96b0edd5ffddf1b49e03346a02290fed1e4e31f6b3b6e1f839f\
-d5add90a8a212c10dd997b0a4efcb3df990808509dcb28c504e0649827a83ffd864395d1f62f2\
-9a004f44423a44b07de943a60fba844a9da3603ce5c5",
-  );
-  let input = hex_to_vec(
-    "\
-3450869c4ccbee98815e55cb42f2dd85a3427d3f65e33d29352293e18cde9582a9fbc54b440984\
-1ba8d931a9a9411192516a9fbd3a7b886e7f8b8f3f7bb5403309eee9d7234df0b5934e18a1dc\
-9e3b568a3fab6947cefe50500abcbda19fd9ab7b7e90a95801e36a020ba79bdc94346198d98131\
-6864a06a43448b62acb7a8472661323175f04c5e447d0017e4073efc55f59f79f34aaa3be8ae7\
-0d26db78b25e9dfb23856d1b1e024aedfcfd649d209412c0c80832ca3466965eeff539afe791f\
-451b554e212cff4d92466438062c5202169b0adf0c95b7d3d31414602cf9d185252b550cc2e8f\
-5be08b7fc71f51210ff88363badadfaf5c2915c3a10b2389e",
-  );
-  let expected_e3 = hex_to_vec(
+  let modulus = include_bytes!("vectors/rsa/rsa2048_legacy_exponent_modulus.bin").to_vec();
+  let input = include_bytes!("vectors/rsa/rsa2048_legacy_exponent_input.bin").to_vec();
+  let expected_e3 = decode_hex_vec(
     "\
 c47adb0961fe847a1520b2e3a9f65ce6536dbf7599508d852dfc1b9fb958f06f5917aed756d7c\
 7b21f48d8b36ab70d030d735b402d247de55c2c50d80a4f48ebcc5e7219c4964e58305461f31\
@@ -4031,7 +3915,7 @@ e52eed21d22185f8510c402d7dbe737957e4628b17668e4fa1016c779a20014d9bef37798698c\
 d10d641d758aec54de1511cb5f7085353500c7c49e4ecb975aa4f2616529d84559dc8ded7380\
 112eaddf2de6f28a6856fead34ca2149560e75e41598ea59684e77",
   );
-  let expected_e17 = hex_to_vec(
+  let expected_e17 = decode_hex_vec(
     "\
 c0f626ce19c684b15078eef9ccce75d142051cc382529056a83babb680795e24f599379beade07\
 a2e2963eef379848cc9e8d6138b3e155f02f0a25582658befd513c3d375a2e2de7d431b2019cd\
@@ -4092,26 +3976,8 @@ fn public_scratch_reuses_after_modulus_minus_one_operation() {
 #[cfg(all(rscrypto_internal, feature = "diag"))]
 #[test]
 fn public_operation_bitserial_baseline_matches_montgomery_path() {
-  let modulus = hex_to_vec(
-    "\
-ef8bb02b8e4aec1abc6fac7a0d6fb1f2649bb86a1567423fee4a194a250461a9db702558e92e52cc\
-907963d84731a7adaf4c609e1b7c7d7c187099a43857f7628f5d20416fcb48987c9d6f12cfc6bc\
-260c9b5506be3fe3cd218ddb37ef5b30feb16172a9832312726ed135c0540ef9d3229b87b5566f\
-3355c90f301b856aa822878269806079ab7267cdc6c7403d7be3fa652065b2d39f2dbf9fb61ed9\
-71fee37432ebe31d9aa465dbae96b0edd5ffddf1b49e03346a02290fed1e4e31f6b3b6e1f839f\
-d5add90a8a212c10dd997b0a4efcb3df990808509dcb28c504e0649827a83ffd864395d1f62f2\
-9a004f44423a44b07de943a60fba844a9da3603ce5c5",
-  );
-  let input = hex_to_vec(
-    "\
-3450869c4ccbee98815e55cb42f2dd85a3427d3f65e33d29352293e18cde9582a9fbc54b440984\
-1ba8d931a9a9411192516a9fbd3a7b886e7f8b8f3f7bb5403309eee9d7234df0b5934e18a1dc\
-9e3b568a3fab6947cefe50500abcbda19fd9ab7b7e90a95801e36a020ba79bdc94346198d98131\
-6864a06a43448b62acb7a8472661323175f04c5e447d0017e4073efc55f59f79f34aaa3be8ae7\
-0d26db78b25e9dfb23856d1b1e024aedfcfd649d209412c0c80832ca3466965eeff539afe791f\
-451b554e212cff4d92466438062c5202169b0adf0c95b7d3d31414602cf9d185252b550cc2e8f\
-5be08b7fc71f51210ff88363badadfaf5c2915c3a10b2389e",
-  );
+  let modulus = include_bytes!("vectors/rsa/rsa2048_legacy_exponent_modulus.bin").to_vec();
+  let input = include_bytes!("vectors/rsa/rsa2048_legacy_exponent_input.bin").to_vec();
   let small_policy = RsaPublicKeyPolicy::modulus_2048_to_8192().allow_legacy_small_exponents();
   let odd_policy = small_policy.allow_legacy_odd_exponents();
 
@@ -4252,17 +4118,8 @@ fn pss_verify_accepts_openssl_sha256_sha384_and_sha512_vectors() {
   let key = legacy_public_key_from_spki(&pss_fixture_public_key());
   let message = pss_fixture_message();
 
-  let sig256 = hex_to_vec(
-    "\
-2641e0207f279b526767343e03007a293a0523db41828c0e335c10dea7ab7dec988ad09cd220d\
-1754f5f89f7cd3b2a9ab1f315709b019989ee96e9060d3158d0240b3f8dbed179c55c1b0fa78\
-f31249d706256748c325ded4835224e80b3daa066489d1cf28a4062fa4129b21723f6336f8c\
-55d6785cd2d284437748b78b47e0162da7cddd61df0536b378a1cc5c327cba76db99c253795c\
-19b49007146e44dbe47f3ee9c2da2248710cd264661815bd5508f604d6ee4a663a46c472f6d\
-323739fe6b142ddc3b006a9c113d3b81da524e0fe358f9cb141f686dc459b66b1150e5418e8\
-b6fcf2590d0706da27017429d91fe9f521f9fbb2ae2044f2eecfe87c7d",
-  );
-  let sig384 = hex_to_vec(
+  let sig256 = include_bytes!("vectors/rsa/rsa2048_pss_signature_sha256.sig").to_vec();
+  let sig384 = decode_hex_vec(
     "\
 008d755ce5e0516de98e9ea2f638183c9dfe8b7d1946abbf5621a102b7939f9dc75aecf1bde\
 af35180dc5215139c2d9bed55513f955da77b3f6308e68755a0af1acde93a5b90173b4705cb1\
@@ -4272,7 +4129,7 @@ af35180dc5215139c2d9bed55513f955da77b3f6308e68755a0af1acde93a5b90173b4705cb1\
 7b7dc14e39da782dcad8283745fb484f2dff8b122271c5e80b523eab04d52dfd9f1d06ecb04\
 6a3d8d7b124cb14d3b5797787104daa27c2e0ce6ccb9f0c4d8afc5a05e",
   );
-  let sig512 = hex_to_vec(
+  let sig512 = decode_hex_vec(
     "\
 95989be018de687a9383e0880b1618e16158b3defd0870aab1eba35d33e381836b1f6086ec78\
 aec5205b05ff989176db1199e8d34341380f501c34973526d024ef9fd87108e041c16625937a\
@@ -4298,16 +4155,7 @@ c2b691954f9bd86140e31acf6a8a2b9d28cba358e509dfc234c1e33e223c",
 fn pss_verify_rejects_tampered_signature_message_and_profile() {
   let key = legacy_public_key_from_spki(&pss_fixture_public_key());
   let message = pss_fixture_message();
-  let mut sig = hex_to_vec(
-    "\
-2641e0207f279b526767343e03007a293a0523db41828c0e335c10dea7ab7dec988ad09cd220d\
-1754f5f89f7cd3b2a9ab1f315709b019989ee96e9060d3158d0240b3f8dbed179c55c1b0fa78\
-f31249d706256748c325ded4835224e80b3daa066489d1cf28a4062fa4129b21723f6336f8c\
-55d6785cd2d284437748b78b47e0162da7cddd61df0536b378a1cc5c327cba76db99c253795c\
-19b49007146e44dbe47f3ee9c2da2248710cd264661815bd5508f604d6ee4a663a46c472f6d\
-323739fe6b142ddc3b006a9c113d3b81da524e0fe358f9cb141f686dc459b66b1150e5418e8\
-b6fcf2590d0706da27017429d91fe9f521f9fbb2ae2044f2eecfe87c7d",
-  );
+  let mut sig = include_bytes!("vectors/rsa/rsa2048_pss_signature_sha256.sig").to_vec();
 
   assert!(key.verify_pss(RsaPssProfile::Sha384, message, &sig).is_err());
   assert!(key.verify_pss(RsaPssProfile::Sha256, b"wrong message", &sig).is_err());
@@ -4853,17 +4701,8 @@ fn pkcs1v15_verify_accepts_openssl_sha256_sha384_and_sha512_vectors() {
   let key = legacy_public_key_from_spki(&pkcs1v15_fixture_public_key());
   let message = pkcs1v15_fixture_message();
 
-  let sig256 = hex_to_vec(
-    "\
-94781246d705f79659d01ac8894b6f41076abe165e28711ec8fa41c1c8767b175a9c63e5118b\
-d30de86da0d7b8934e963ef69c438ace976e4453dfce6b9b84a7d37a27ee61512656333dfda1\
-ac40197fe4f9396bb016b25054f98f149d126c0248fc007cddc3d75d178eb34ecda0e0df822\
-825ca133c062d3cdcb19e20a3e377541d8253af795a9b49a41ddb5795592502b9efbb153afc\
-dd4fcc492a891d8536ef91cc228a3dbf66f0c70596f9cd101fe95d127550e7a4a9864430bd3\
-4a88d8df93f4df7b54e8a4b8643891481e4bdcf87be3f98a1fdc475a819e3dc3a114aff86e\
-48929a430fc39333f81064701be7d5501a3a7b4ec6c68f6feda6190d66b16",
-  );
-  let sig384 = hex_to_vec(
+  let sig256 = include_bytes!("vectors/rsa/rsa2048_pkcs1v15_signature_sha256.sig").to_vec();
+  let sig384 = decode_hex_vec(
     "\
 3597d240885f8562e6d590649a2bf41b61f4555d1e27de5500d0f226b13e4031de7c1cb70e3\
 f9a49ef2c5964c812b70f1fd8d867179f015ff460bb21c3539a9b395a0ef7df9218325d993\
@@ -4873,7 +4712,7 @@ f2ab2b51146f9f319287c90188ab48f74513e4696990004c6cfef5a0405f4a8286b8f26304\
 367799720e1fb618a6eddfe29b9dc761c2be9ab2f90be744824fcfd2f96e74ac64d57b5d50\
 3447d84047f74ab708e66384826fa3da6c0f2043f21a4c7291b32095b25f42921aa",
   );
-  let sig512 = hex_to_vec(
+  let sig512 = decode_hex_vec(
     "\
 8466ba3e31a0c388460c43a6d9ffff6bb8c6d5c7a1a1f8de79ea9046a9de667200fb2b2943\
 331f4d6f0d25dcddc0e43112d43193af610751ffa8531395703d7002020a8f152937f327e76\
@@ -4899,16 +4738,7 @@ addc98f3b49437df55aad5e96a6b7db196f9d30de7173dda79944f51fc7a339655cd2727d47\
 fn pkcs1v15_verify_rejects_tampered_signature_message_and_profile() {
   let key = legacy_public_key_from_spki(&pkcs1v15_fixture_public_key());
   let message = pkcs1v15_fixture_message();
-  let mut sig = hex_to_vec(
-    "\
-94781246d705f79659d01ac8894b6f41076abe165e28711ec8fa41c1c8767b175a9c63e5118b\
-d30de86da0d7b8934e963ef69c438ace976e4453dfce6b9b84a7d37a27ee61512656333dfda1\
-ac40197fe4f9396bb016b25054f98f149d126c0248fc007cddc3d75d178eb34ecda0e0df822\
-825ca133c062d3cdcb19e20a3e377541d8253af795a9b49a41ddb5795592502b9efbb153afc\
-dd4fcc492a891d8536ef91cc228a3dbf66f0c70596f9cd101fe95d127550e7a4a9864430bd3\
-4a88d8df93f4df7b54e8a4b8643891481e4bdcf87be3f98a1fdc475a819e3dc3a114aff86e\
-48929a430fc39333f81064701be7d5501a3a7b4ec6c68f6feda6190d66b16",
-  );
+  let mut sig = include_bytes!("vectors/rsa/rsa2048_pkcs1v15_signature_sha256.sig").to_vec();
 
   assert!(key.verify_pkcs1v15(RsaPkcs1v15Profile::Sha384, message, &sig).is_err());
   assert!(
@@ -5166,13 +4996,13 @@ fn nist_cavp_sha2_signatures_match_rust_external_oracles() {
     }
     .expect("CAVP result fields must be `P` or `F`");
 
-    let modulus = cavp_hex_to_vec(cavp_field(test, "n"));
-    let exponent = cavp_hex_to_vec(cavp_field(test, "e"));
+    let modulus = cavp_decode_hex_vec(cavp_field(test, "n"));
+    let exponent = cavp_decode_hex_vec(cavp_field(test, "e"));
     let pkcs1 = valid_pkcs1_with_modulus_and_exponent(&modulus, &exponent);
     let key = RsaPublicKey::from_modulus_exponent_with_policy(&modulus, cavp_public_exponent(&exponent), &policy)
       .expect("CAVP RSA key components must validate");
-    let message = cavp_hex_to_vec(cavp_field(test, "msg"));
-    let signature = cavp_hex_to_vec(cavp_field(test, "sig"));
+    let message = cavp_decode_hex_vec(cavp_field(test, "msg"));
+    let signature = cavp_decode_hex_vec(cavp_field(test, "sig"));
 
     assert_eq!(
       cavp_rscrypto_result(&key, scheme, sha, salt_len, &message, &signature).is_ok(),
@@ -5211,12 +5041,12 @@ fn nist_cavp_sha2_signatures_match_openssl_cli_when_available() {
     }
     .expect("CAVP result fields must be `P` or `F`");
     let pkcs1 = valid_pkcs1_with_modulus_and_exponent(
-      &cavp_hex_to_vec(cavp_field(test, "n")),
-      &cavp_hex_to_vec(cavp_field(test, "e")),
+      &cavp_decode_hex_vec(cavp_field(test, "n")),
+      &cavp_decode_hex_vec(cavp_field(test, "e")),
     );
     let spki = spki_for_pkcs1(&pkcs1);
-    let message = cavp_hex_to_vec(cavp_field(test, "msg"));
-    let signature = cavp_hex_to_vec(cavp_field(test, "sig"));
+    let message = cavp_decode_hex_vec(cavp_field(test, "msg"));
+    let signature = cavp_decode_hex_vec(cavp_field(test, "sig"));
     let digest_arg = match sha {
       "SHA256" => Some("-sha256"),
       "SHA384" => Some("-sha384"),

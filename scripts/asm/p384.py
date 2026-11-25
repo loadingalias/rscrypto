@@ -17,6 +17,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from generated import check_or_write  # noqa: E402
+
 import p384_aarch64  # noqa: E402
 import p384_simulate  # noqa: E402
 import p384_x86_64  # noqa: E402
@@ -90,21 +92,8 @@ def main():
         print(f'P-384 generated kernels match Python integers ({args.cases} cases per kernel)')
         return 0
 
-    stale_total = []
-    for path, text, new, stale in sources():
-        relative = path.relative_to(ROOT)
-        if args.mode == 'write' and new != text:
-            path.write_text(new, encoding='utf-8')
-            print(f'rewrote {relative}: {", ".join(stale)}')
-        stale_total += [f'{relative}: {name}' for name in stale]
-    if args.mode == 'check' and stale_total:
-        for entry in stale_total:
-            print(f'stale generated assembly: {entry}', file=sys.stderr)
-        print('Run `scripts/lib/python.sh scripts/asm/p384.py write` after changing a generator.', file=sys.stderr)
-        return 1
-    if args.mode == 'check':
-        print('P-384 generated assembly matches its generators')
-    return 0
+    return check_or_write(args.mode, ROOT, 'scripts/asm/p384.py', sources(),
+                          'P-384 generated assembly matches its generators')
 
 
 if __name__ == '__main__':

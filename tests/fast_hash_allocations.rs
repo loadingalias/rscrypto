@@ -6,11 +6,6 @@
 
 #[cfg(all(feature = "xxh3", feature = "rapidhash"))]
 use core::hash::{BuildHasher, Hasher};
-use core::{
-  alloc::{GlobalAlloc, Layout},
-  cell::Cell,
-};
-use std::alloc::System;
 #[cfg(all(feature = "xxh3", feature = "rapidhash"))]
 use std::collections::HashMap;
 
@@ -21,84 +16,9 @@ use rscrypto::{RapidSeededState, RapidStreamHasher, Xxh3_128Hasher, Xxh3BuildHas
 #[path = "common/file.rs"]
 mod file;
 
-struct CountingAllocator;
-
-const MEASUREMENT_DISABLED: usize = usize::MAX;
-
-std::thread_local! {
-  static ALLOCATIONS: Cell<usize> = const { Cell::new(MEASUREMENT_DISABLED) };
-}
-
-fn record_allocation() {
-  discard_measurement_result(ALLOCATIONS.try_with(|allocations| {
-    let count = allocations.get();
-    if count != MEASUREMENT_DISABLED {
-      allocations.set(count.strict_add(1));
-    }
-  }));
-}
-
-fn discard_measurement_result(_result: Result<(), std::thread::AccessError>) {}
-
-// SAFETY: Delegating allocation to `System` because:
-// 1. Every operation forwards the original pointer and layout unchanged.
-// 2. `System` defines and upholds the global allocator contract.
-// 3. Thread-local measurement only updates a `Cell<usize>` and cannot affect the allocated memory.
-unsafe impl GlobalAlloc for CountingAllocator {
-  unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-    record_allocation();
-    // SAFETY: Delegating allocation because:
-    // 1. `layout` is forwarded unchanged to the system allocator.
-    unsafe { System.alloc(layout) }
-  }
-
-  unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
-    record_allocation();
-    // SAFETY: Delegating zeroed allocation because:
-    // 1. `layout` is forwarded unchanged to the system allocator.
-    unsafe { System.alloc_zeroed(layout) }
-  }
-
-  unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-    // SAFETY: Delegating deallocation because:
-    // 1. `ptr` and `layout` originated from the delegated system allocation path.
-    unsafe { System.dealloc(ptr, layout) }
-  }
-
-  unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-    record_allocation();
-    // SAFETY: Delegating reallocation because:
-    // 1. `ptr`, `layout`, and `new_size` are forwarded unchanged to `System`.
-    unsafe { System.realloc(ptr, layout, new_size) }
-  }
-}
-
-#[global_allocator]
-static GLOBAL: CountingAllocator = CountingAllocator;
-
-struct AllocationMeasurement;
-
-impl Drop for AllocationMeasurement {
-  fn drop(&mut self) {
-    discard_measurement_result(ALLOCATIONS.try_with(|allocations| allocations.set(MEASUREMENT_DISABLED)));
-  }
-}
-
-fn measure_allocations(f: impl FnOnce()) -> usize {
-  ALLOCATIONS.with(|allocations| {
-    assert_eq!(
-      allocations.replace(0),
-      MEASUREMENT_DISABLED,
-      "allocation measurements must not be nested"
-    );
-  });
-
-  let measurement = AllocationMeasurement;
-  f();
-  let count = ALLOCATIONS.with(|allocations| allocations.replace(MEASUREMENT_DISABLED));
-  drop(measurement);
-  count
-}
+#[path = "common/allocations.rs"]
+mod allocations;
+use allocations::measure_allocations;
 
 #[cfg(all(feature = "blake3", feature = "std"))]
 #[test]

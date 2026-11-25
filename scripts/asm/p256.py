@@ -17,6 +17,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from generated import check_or_write  # noqa: E402
+
 import p256_x86_64  # noqa: E402
 import p384  # noqa: E402
 import p384_simulate  # noqa: E402
@@ -89,17 +91,8 @@ def main():
     path = ROOT / SOURCE
     text = path.read_text(encoding='utf-8')
     new, stale = p384.regenerate(text, p256_x86_64.KERNELS)
-    if args.mode == 'write' and new != text:
-        path.write_text(new, encoding='utf-8')
-        print(f'rewrote {SOURCE}: {", ".join(stale)}')
-    elif args.mode == 'check' and stale:
-        for name in stale:
-            print(f'stale generated assembly: {SOURCE}: {name}', file=sys.stderr)
-        print('Run `scripts/lib/python.sh scripts/asm/p256.py write` after changing a generator.', file=sys.stderr)
-        return 1
-    if args.mode == 'check':
-        print('P-256 generated assembly matches its generator')
-    return 0
+    return check_or_write(args.mode, ROOT, 'scripts/asm/p256.py', [(path, text, new, stale)],
+                          'P-256 generated assembly matches its generator')
 
 
 if __name__ == '__main__':

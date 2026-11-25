@@ -8,7 +8,11 @@
 // Cipher rounds and Poly1305 arithmetic retain their recorded upstream provenance.
 
 
+.if {macho}
 .section	__TEXT,__const
+.else // macho
+.section .rodata
+.endif // macho
 
 .align	7
 Lchacha20_consts:
@@ -23,6 +27,7 @@ Lclamp:
 .text
 
 
+.if {macho}
 .globl	_rscrypto_chacha20_poly1305_seal_aarch64_apple_darwin
 .private_extern	_rscrypto_chacha20_poly1305_seal_aarch64_apple_darwin
 
@@ -38,6 +43,9 @@ _rscrypto_chacha20_poly1305_seal_gather_aarch64_apple_darwin:
 	mov x6, x1
 	b _rscrypto_chacha20_poly1305_seal_body_aarch64_apple_darwin
 
+.else // macho
+.align	6
+.endif // macho
 
 // Input loads retain the integrated cipher/authentication schedule. x20 holds
 // public bytes left in the current span; normal seal uses usize::MAX. A public
@@ -192,9 +200,12 @@ Lrscrypto_store16_fast\@:
 Lrscrypto_store16_done\@:
 .endm
 
+.if {macho}
 .globl _rscrypto_chacha20_poly1305_hash_aad_aarch64_apple_darwin
 .private_extern _rscrypto_chacha20_poly1305_hash_aad_aarch64_apple_darwin
 _rscrypto_chacha20_poly1305_hash_aad_aarch64_apple_darwin:
+.else // macho
+.endif // macho
 Lpoly_hash_ad_internal:
 .cfi_startproc
 	cbnz	x4, Lpoly_hash_intro
@@ -289,6 +300,7 @@ Lpoly_hash_ad_ret:
 //
 // void chacha20_poly1305_seal(uint8_t *pt, uint8_t *ct, size_t len_in, uint8_t *ad, size_t len_ad, union open_data *seal_data);
 //
+.if {macho}
 
 .align	6
 .globl _rscrypto_chacha20_poly1305_seal_body_aarch64_apple_darwin
@@ -297,6 +309,22 @@ _rscrypto_chacha20_poly1305_seal_body_aarch64_apple_darwin:
 .cfi_startproc
 Lseal_entry:
 	hint	#25
+.else // macho
+.globl	rscrypto_chacha20_poly1305_seal_aarch64
+
+.align	6
+rscrypto_chacha20_poly1305_seal_aarch64:
+	mov x6, #0
+	b Lseal_entry
+
+.globl rscrypto_chacha20_poly1305_seal_gather_aarch64
+.align 6
+rscrypto_chacha20_poly1305_seal_gather_aarch64:
+	mov x6, x1
+Lseal_entry:
+	hint	#25
+.cfi_startproc
+.endif // macho
 	stp	x29, x30, [sp, #-112]!
 .cfi_def_cfa_offset	112
 .cfi_offset	w30, -104
@@ -330,8 +358,13 @@ Lseal_entry:
     ldp x1, x20, [x19], #16
 Lseal_input_ready:
 
+.if {macho}
 	adrp	x11, Lchacha20_consts@PAGE
 	add	x11, x11, Lchacha20_consts@PAGEOFF
+.else // macho
+	adrp	x11, Lchacha20_consts
+	add	x11, x11, :lo12:Lchacha20_consts
+.endif // macho
 
 	ld1	{{v24.16b - v27.16b}}, [x11] // Load the CONSTS, INC, ROL8 and CLAMP values
 	ld1	{{v28.16b - v30.16b}}, [x5]
@@ -617,7 +650,11 @@ Lseal_init_rounds:
 	mov	x17, v4.d[1]
 	mov	v27.16b, v9.16b // Store the S key
 
+.if {macho}
 	bl	_rscrypto_chacha20_poly1305_hash_aad_aarch64_apple_darwin
+.else // macho
+	bl	Lpoly_hash_ad_internal
+.endif // macho
 
 	mov	x3, x0
 	cmp	x2, #256
@@ -657,8 +694,13 @@ Lseal_init_rounds:
 	mov	x7, #6 // and two blocks for the remaining 6, for a total of (1 * 4 + 2 * 6) * 16 = 256
 
 Lseal_main_loop:
+.if {macho}
 	adrp	x11, Lchacha20_consts@PAGE
 	add	x11, x11, Lchacha20_consts@PAGEOFF
+.else // macho
+	adrp	x11, Lchacha20_consts
+	add	x11, x11, :lo12:Lchacha20_consts
+.endif // macho
 
 	ld4r	{{v0.4s,v1.4s,v2.4s,v3.4s}}, [x11]
 	mov	v4.16b, v24.16b
@@ -1683,7 +1725,11 @@ Lseal_128_rounds:
 	mov	x17, v2.d[1]
 	mov	v27.16b, v7.16b // Store the S key
 
+.if {macho}
 	bl	_rscrypto_chacha20_poly1305_hash_aad_aarch64_apple_darwin
+.else // macho
+	bl	Lpoly_hash_ad_internal
+.endif // macho
 	b	Lseal_tail
 .cfi_endproc
 
@@ -1692,6 +1738,7 @@ Lseal_128_rounds:
 //
 // void chacha20_poly1305_open(uint8_t *pt, uint8_t *ct, size_t len_in, uint8_t *ad, size_t len_ad, union open_data *aead_data);
 //
+.if {macho}
 .globl	_rscrypto_chacha20_poly1305_open_aarch64_apple_darwin
 .private_extern	_rscrypto_chacha20_poly1305_open_aarch64_apple_darwin
 
@@ -1716,6 +1763,25 @@ _rscrypto_chacha20_poly1305_open_scatter_aarch64_apple_darwin:
 _rscrypto_chacha20_poly1305_open_body_aarch64_apple_darwin:
 .cfi_startproc
 	hint	#25
+.else // macho
+.globl	rscrypto_chacha20_poly1305_open_aarch64
+
+.align	6
+rscrypto_chacha20_poly1305_open_aarch64:
+	mov x6, #0
+	mov x7, #0
+	b Lopen_entry
+
+// void open_scatter(const span *out, const span *in, size_t len_in, uint8_t *ad, size_t len_ad, union open_data *aead_data);
+.globl rscrypto_chacha20_poly1305_open_scatter_aarch64
+.align 6
+rscrypto_chacha20_poly1305_open_scatter_aarch64:
+	mov x6, x0
+	mov x7, x1
+Lopen_entry:
+	hint	#25
+.cfi_startproc
+.endif // macho
 	stp	x29, x30, [sp, #-144]!
 .cfi_def_cfa_offset	144
 .cfi_offset	w30, -136
@@ -1758,8 +1824,13 @@ _rscrypto_chacha20_poly1305_open_body_aarch64_apple_darwin:
     ldp x1, x20, [x19], #16
 Lopen_spans_ready:
 
+.if {macho}
 	adrp	x11, Lchacha20_consts@PAGE
 	add	x11, x11, Lchacha20_consts@PAGEOFF
+.else // macho
+	adrp	x11, Lchacha20_consts
+	add	x11, x11, :lo12:Lchacha20_consts
+.endif // macho
 
 	ld1	{{v24.16b - v27.16b}}, [x11] // Load the CONSTS, INC, ROL8 and CLAMP values
 	ld1	{{v28.16b - v30.16b}}, [x5]
@@ -1834,7 +1905,11 @@ Lopen_init_rounds:
 	mov	x17, v0.d[1]
 	mov	v27.16b, v5.16b // Store the S key
 
+.if {macho}
 	bl	_rscrypto_chacha20_poly1305_hash_aad_aarch64_apple_darwin
+.else // macho
+	bl	Lpoly_hash_ad_internal
+.endif // macho
 
 Lopen_ad_done:
 	RSCRYPTO_HASH_AT_READ
@@ -1845,8 +1920,13 @@ Lopen_main_loop:
 	cmp	x2, #192
 	b.lt	Lopen_tail
 
+.if {macho}
 	adrp	x11, Lchacha20_consts@PAGE
 	add	x11, x11, Lchacha20_consts@PAGEOFF
+.else // macho
+	adrp	x11, Lchacha20_consts
+	add	x11, x11, :lo12:Lchacha20_consts
+.endif // macho
 
 	ld4r	{{v0.4s,v1.4s,v2.4s,v3.4s}}, [x11]
 	mov	v4.16b, v24.16b
@@ -3097,7 +3177,11 @@ Lopen_128_rounds:
 	mov	x17, v2.d[1]
 	mov	v27.16b, v7.16b // Store the S key
 
+.if {macho}
 	bl	_rscrypto_chacha20_poly1305_hash_aad_aarch64_apple_darwin
+.else // macho
+	bl	Lpoly_hash_ad_internal
+.endif // macho
 
 Lopen_128_store:
 	cmp	x2, #64
