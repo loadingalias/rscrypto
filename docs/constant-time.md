@@ -1635,6 +1635,21 @@ The complete linked-binary closure found that branch; DudeCT did not, because it
 These changes keep signature behavior the same.
 They do not establish a timing claim for a release or a downstream build by themselves.
 
+### Ed25519 signing on RISC-V
+
+Ed25519 signing and public point decoding share the Curve25519 squaring and inversion code.
+`66f0676b` gave decoding a cheaper squaring for public coordinates.
+That change also changed the inlining and instruction order of the secret field inversion.
+The new code had no secret-dependent branch, division, or address.
+On the C910 RISC-V runners, about 4.5% of random-secret signatures then took 1.0 to 1.7 µs longer.
+`ed25519_sign_fixed_vs_random_secret` failed at t = −13.09 (CT 45496494345).
+Tag `v0.13.0` passed on the same machine (CT 45552153779).
+The mechanism is not known.
+The fix returned the field code to its earlier form and removed the public squaring.
+With it, signing passed on a runner that had shown the leak (CT 45562559029, |t| = 2.28).
+On this core, a clean instruction review does not prove constant timing.
+Each change to the shared field arithmetic needs native RISC-V DudeCT.
+
 ### Secret limb multiplication on RISC-V and IBM Z
 
 Owner decisions, 2026-10-21: ECDSA, ECDH, and RSA private arithmetic, including the RSA blinding

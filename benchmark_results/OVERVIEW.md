@@ -92,6 +92,7 @@ Linux used the default target CPU. The Mac used `-C target-cpu=native`. All used
 
 The Intel, Graviton4 and M1 provider binaries used clean revision `be3a5a7d`. IBM Z repeated the same ECDH and provider code across the linked runs.
 The Intel Ed25519 control used `1271cf58`. Its comparison build applied the public square and IFMA optimizations to `be3a5a7d`.
+A later change removed the public square, because it changed the RISC-V signing machine code. No benchmark measures Ed25519 verification after that change.
 The M1 Ed25519 candidate used the local `41cc59f9` checkout with the performance changes.
 The M1 Ed25519 control reused the verified `42040818` executable. Its SHA-256 was `8a51630ce61a7b062f7b64727bc56fbfb955b3ad9870be99f8191c796d9d95b3`.
 
