@@ -327,6 +327,68 @@ fn credential_fixtures_are_reproducible() {
   }
 }
 
+/// Validate the chains issued by Bouncy Castle 1.87 with the production server verifier.
+#[test]
+fn bouncy_castle_composite_certificate_chains() {
+  use core::time::Duration;
+
+  use rustls::client::danger::{ServerIdentity, ServerVerifier};
+  use rustls::pki_types::{ServerName, UnixTime};
+
+  macro_rules! chain {
+    ($name:literal) => {{
+      const ROOT: &[u8] = include_bytes!(concat!(
+        "../../tests/vectors/composite_mldsa/bc-1.87/",
+        $name,
+        "-root.der"
+      ));
+      const ISSUER: &[u8] = include_bytes!(concat!(
+        "../../tests/vectors/composite_mldsa/bc-1.87/",
+        $name,
+        "-chain-intermediate.der"
+      ));
+      const LEAF: &[u8] = include_bytes!(concat!(
+        "../../tests/vectors/composite_mldsa/bc-1.87/",
+        $name,
+        "-chain-leaf.der"
+      ));
+      (ROOT, ISSUER, LEAF)
+    }};
+  }
+
+  let name = ServerName::try_from("localhost").expect("fixture name");
+  let now = UnixTime::since_unix_epoch(Duration::from_secs(1_798_761_600)); // 2027-01-01 UTC
+  for (root, issuer, leaf) in [chain!("mldsa65-ed25519"), chain!("mldsa65-ecdsa-p256")] {
+    let mut roots = RootCertStore::empty();
+    roots.add(CertificateDer::from(root)).expect("BC root");
+    let verifier = rustls::client::WebPkiServerVerifier::builder(Arc::new(roots), &provider())
+      .build()
+      .expect("verifier");
+    let check = |leaf: &[u8]| {
+      let identity = Identity::from_cert_chain(vec![CertificateDer::from(leaf.to_vec()), CertificateDer::from(issuer)])
+        .expect("BC chain");
+      verifier.verify_identity(&ServerIdentity::new(&identity, &name, now))
+    };
+    check(leaf).expect("BC leaf through BC intermediate");
+
+    // RFC 10073 puts the ML-DSA signature first and the classical signature last.
+    let (certificate, _) = element(leaf);
+    let (_, after_tbs) = element(certificate);
+    let (_, after_algorithm) = element(after_tbs);
+    let (bits, rest) = element(after_algorithm);
+    assert!(rest.is_empty());
+    assert_eq!(bits[0], 0);
+    for index in [leaf.len().strict_sub(bits[1..].len()), leaf.len().strict_sub(1)] {
+      let mut altered = leaf.to_vec();
+      altered[index] ^= 1;
+      assert!(matches!(
+        check(&altered),
+        Err(Error::InvalidCertificate(rustls::error::CertificateError::BadSignature))
+      ));
+    }
+  }
+}
+
 fn algorithm(kind: Kind) -> &'static dyn SignatureVerificationAlgorithm {
   let algorithms = verify::SUPPORTED_ALGORITHMS
     .mapping()

@@ -129,6 +129,12 @@ macos-status:
 test-cross operation target archive *flags:
     @scripts/lib/python.sh scripts/test/cross.py "$@"
 
+# Verify RFC 10073 certificate chains in both directions with Bouncy Castle 1.87.
+[group('tests')]
+test-composite-certificates:
+    @scripts/lib/python.sh scripts/test/composite_certificates.py
+    @scripts/test/test.sh -- -p rscrypto-rustls --lib -E 'test(bouncy_castle_composite_certificate_chains) | test(credential_fixtures_are_reproducible)'
+
 # Exercise TLS with the pinned OpenSSL and Go peers; retain process evidence locally.
 [group('tests')]
 test-provider-interop *args:
@@ -289,6 +295,11 @@ test-coverage:
 [group('benchmarks')]
 bench *args:
     @export PYTHONUTF8=1; python="$(scripts/lib/python.sh --print)"; "$python" scripts/bench/bounded.py --bench "$@"
+
+# Check sealed ciphertext roots. Pass --measure to time complete operations.
+[group('benchmarks')]
+bench-storage-record *args:
+    @scripts/lib/python.sh scripts/bench/bounded.py scripts/lib/toolchain.sh --exec cargo bench --locked -p rscrypto --no-default-features --features std,aegis256,blake3 --bench storage_record -- "$@"
 
 # Stable instruction/cache-cost benchmarks. Requires gungraun-runner and Valgrind.
 [group('benchmarks')]

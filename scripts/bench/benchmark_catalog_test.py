@@ -270,9 +270,9 @@ def main() -> None:
     if "std" not in features or ("parallel" in features) != (name in {"blake3", "blake3_file", "password_hashing"}):
       fail(f"incorrect runtime feature scope for {name}")
 
-  for manifest, binary in catalog_binaries:
-    if binary == 'structural':
-      continue
+  criterion_binaries = {(bench.get('manifest', 'Cargo.toml'), bench['binary']) for bench in catalog['benches'].values()
+                        if bench['kind'] == 'criterion'}
+  for manifest, binary in criterion_binaries:
     source = (ROOT / Path(manifest).parent / "benches" / f"{binary}.rs").read_text()
     if not re.search(r'bench_config::run\(&', source):
       fail(f"{binary} does not use the shared Criterion configuration")

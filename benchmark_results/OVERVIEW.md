@@ -6,6 +6,32 @@ tie is 0.95x through 1.05x. [Benchmarking](../docs/benchmarking.md) gives the me
 rules, and the commands. Earlier campaigns remain in the
 [history of this file](https://github.com/loadingalias/rscrypto/blob/50c708b29905bb3221e7b22b9c7cce8fcc700818/benchmark_results/OVERVIEW.md).
 
+## November 25, 2026 sealed records
+
+On Graviton4, hashing 64 KiB took 39.73–39.75 µs at p50 with rscrypto 0.13.0.
+The four-chunk SVE2 kernel took 34.17–34.19 µs. At 4 KiB, the corresponding medians were 2.71 and 2.36 µs.
+The compiler-generated XOR/rotate variant took 43.74–43.77 µs at 64 KiB.
+On Apple M1 Pro, register transposition and lane-load experiments did not improve both record sizes.
+Graviton4 run `20261125T211643Z-16580` passed 28 BLAKE3 unit tests using the final kernel.
+
+Each cell gives p50 / p99 in microseconds for one plaintext copy, AEGIS-256 seal, and whole-ciphertext BLAKE3 root.
+The Intel and Apple rows use the release control. Graviton4 uses the SVE2 kernel.
+Each reported run used 2,001 warmups and 2,001 samples.
+
+| Host | 1 KiB | 4 KiB | 64 KiB |
+| --- | ---: | ---: | ---: |
+| Xeon Platinum 8559C | 1.11 / 1.13 | 1.68 / 1.82 | 19.50 / 27.42 |
+| Graviton4 | 1.62 / 1.65 | 3.03 / 3.04 | 44.19 / 46.98 |
+| Apple M1 Pro | 1.46 / 1.54 | 3.13 / 3.33 | 46.58 / 58.79 |
+
+On Graviton4, two independent 64 KiB records took 88.64 µs serially and 55.55 µs with a persistent worker.
+The worker retained each record's ciphertext, detached tag, and root.
+For one 64 KiB root spanning two existing seals, the worker took 46.29 µs. The serial operation took 44.51 µs.
+On M1 Pro, a streaming AEGIS-256 reference also reproduced rscrypto's one-shot ciphertext, tag, and root with one nonce at all three sizes.
+Its 64 KiB serial median was 42.6–42.7 µs. Overlapping the first half's hash with the second half's seal took 47.75–48.67 µs.
+These rows measure crypto work in memory. The storage receipt and durability-class floor belong to Via.
+[Workloads and reproduction](../docs/benchmarking.md#sealed-ciphertext-records).
+
 ## November 24, 2026 performance measurements
 
 ### TLS 1.3 and QUIC

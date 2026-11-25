@@ -453,6 +453,11 @@ required-features = [
 ]
 
 [[bench]]
+name = "storage_record"
+harness = false
+required-features = ["std", "blake3", "aegis256"]
+
+[[bench]]
 name = "aead_kernels"
 harness = false
 required-features = ["chacha20poly1305", "diag", "sha2"]

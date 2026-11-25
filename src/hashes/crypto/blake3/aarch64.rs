@@ -983,6 +983,18 @@ pub(crate) unsafe fn hash4_roots_neon(
   unsafe { hash4_neon(inputs, input_len, key, 0, false, flags, out) }
 }
 
+/// Hash four contiguous chunks using SVE2 word rotations.
+///
+/// # Safety
+///
+/// The 16-byte-aligned input covers 4,096 bytes. The word-aligned, disjoint output covers 128 bytes.
+/// The caller must establish SVE2.
+#[cfg(all(target_os = "linux", target_endian = "little"))]
+unsafe fn hash4_contiguous_sve2(input: *const u8, key: &[u32; 8], counter: u64, flags: u32, out: *mut u8) {
+  // SAFETY: The caller provides the required features, alignment, lengths, and disjoint ranges.
+  unsafe { asm::rscrypto_blake3_hash4_chunks_aarch64_sve2(input, key.as_ptr(), counter, flags, out) }
+}
+
 /// Hash exactly 4 contiguous full chunks (4 * 1024 bytes) and write 4 CVs.
 ///
 /// This is the hot-path worker used by `hash_many_contiguous_neon` to avoid
@@ -1345,6 +1357,19 @@ pub(crate) unsafe fn hash_many_contiguous_neon(
 ) {
   debug_assert!(num_chunks != 0);
 
+  #[cfg(all(target_os = "linux", target_endian = "little"))]
+  let hash4: unsafe fn(*const u8, &[u32; 8], u64, u32, *mut u8) = if num_chunks >= 4
+    && input.cast::<u128>().is_aligned()
+    && out.cast::<u32>().is_aligned()
+    && crate::platform::caps().has(crate::platform::caps::aarch64::SVE2)
+  {
+    hash4_contiguous_sve2
+  } else {
+    hash4_contiguous_full_chunks_neon_to_out
+  };
+  #[cfg(not(all(target_os = "linux", target_endian = "little")))]
+  let hash4 = hash4_contiguous_full_chunks_neon_to_out;
+
   // SAFETY: NEON intrinsics and pointer ops are sound: intrinsics require NEON via #[target_feature],
   // pointers are within bounds of caller-provided slices.
   unsafe {
@@ -1365,8 +1390,8 @@ pub(crate) unsafe fn hash_many_contiguous_neon(
         crate::hashes::common::prefetch::prefetch_read_l1(input.add(next));
       }
 
-      hash4_contiguous_full_chunks_neon_to_out(src0, key, counter, flags, dst0);
-      hash4_contiguous_full_chunks_neon_to_out(
+      hash4(src0, key, counter, flags, dst0);
+      hash4(
         src0.add(4 * CHUNK_LEN),
         key,
         counter.wrapping_add(4),
@@ -1390,7 +1415,7 @@ pub(crate) unsafe fn hash_many_contiguous_neon(
         crate::hashes::common::prefetch::prefetch_read_l1(input.add(next));
       }
 
-      hash4_contiguous_full_chunks_neon_to_out(src, key, counter, flags, dst);
+      hash4(src, key, counter, flags, dst);
       idx = idx.strict_add(4);
       counter = counter.wrapping_add(4);
     }

@@ -4,7 +4,8 @@
 //! (used as a dev-dependency oracle in benches/tests).
 //!
 //! Pointer contract:
-//! - asm entrypoints assume 8-byte aligned inputs
+//! - one-chunk entrypoints assume 8-byte aligned inputs
+//! - the four-chunk SVE2 entrypoint takes a 16-byte aligned input
 //! - u32 outputs require 4-byte alignment
 //! - last-block byte outputs require 8-byte alignment
 //! - unaligned callers must use the NEON paths in `aarch64.rs`.
@@ -88,5 +89,22 @@ unsafe extern "C" {
     flags: u32,
     blocks_compressed: *mut u8,
     num_blocks: usize,
+  );
+}
+
+#[cfg(all(target_os = "linux", target_endian = "little"))]
+global_asm!(
+  include_str!("asm/rscrypto_blake3_hash4_chunks_aarch64_sve2.s"),
+  options(raw)
+);
+
+#[cfg(all(target_os = "linux", target_endian = "little"))]
+unsafe extern "C" {
+  pub(super) fn rscrypto_blake3_hash4_chunks_aarch64_sve2(
+    input: *const u8,
+    key: *const u32,
+    counter: u64,
+    flags: u32,
+    out: *mut u8,
   );
 }

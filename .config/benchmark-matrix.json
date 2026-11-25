@@ -290,6 +290,12 @@
       "required": true,
       "features": ["std", "chacha20-rng", "rand_core"]
     },
+    "storage_record": {
+      "binary": "storage_record",
+      "kind": "latency",
+      "required": false,
+      "features": ["std", "aegis256", "blake3"]
+    },
     "structural": {
       "binary": "structural",
       "kind": "gungraun",

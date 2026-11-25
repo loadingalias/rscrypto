@@ -154,7 +154,9 @@ The `ech` feature selects rscrypto's `hpke`, `x25519`, and `aes-gcm` features.
   rustls 0.24.0.
 - Composite ML-DSA is experimental. Its code points are private-use values: 0xFE41 for
   ML-DSA-65 with Ed25519, and 0xFE40 for ML-DSA-65 with ECDSA P-256. They change when IANA assigns
-  code points.
+  code points. Bouncy Castle 1.87 and this provider validate each other's RFC 10073 certificate chains for both pairs.
+  Independent TLS handshake qualification still requires a peer for the assigned schemes.
+  [Certificate fixtures and checks](tests/vectors/composite_mldsa/bc-1.87/README.md).
 - The prepared verifiers support no revocation lists, no optional client authentication, and no
   custom root hints. Use rustls's verifiers for these.
 - The provider is not FIPS validated. Neither rscrypto nor this crate has had a third-party security

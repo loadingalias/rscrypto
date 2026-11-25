@@ -78,7 +78,7 @@ def validate_catalog(catalog: dict) -> None:
           or benches[bench].get("split") != "algorithms" or benches[bench].get("kind") != "criterion"):
         raise CatalogError(f"algorithm {name} needs a bounded comparison budget on a split Criterion target")
 
-  valid_kinds = {"criterion", "gungraun"}
+  valid_kinds = {"criterion", "gungraun", "latency"}
   for name, bench in benches.items():
     if "max_run_seconds" in bench:
       raise CatalogError(f"bench {name}: extended budgets belong to individual algorithms")

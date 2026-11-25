@@ -405,6 +405,27 @@ Every Criterion row checks its output before Criterion times it.
 
 ## Timed workload boundaries
 
+### Sealed ciphertext records
+
+Run the storage probe to measure AEGIS-256 sealing and the BLAKE3 root of the stored ciphertext.
+
+```sh
+just bench-storage-record --measure
+```
+
+The probe checks ciphertext, detached tags, and roots against independent implementations at 1, 4, and 64 KiB.
+Omit `--measure` to run only those checks.
+Each timed row reports p50 and p99 nanoseconds from 2,001 samples after 2,001 warmups.
+The single-record row includes the plaintext copy into the output buffer, one seal, and one whole-ciphertext digest.
+
+Two-unit rows preserve both pre-existing unit boundaries and return one root over their concatenated ciphertext.
+Two-record rows preserve each extent and return two independent roots. Their time covers completion of both records.
+The overlap rows include worker communication. All rows use empty associated data and preallocated buffers.
+A storage engine must measure its own receipt latency against its durability-class floor.
+
+The recipe uses the workspace bench profile. The November 25 comparison built the same harness with Via's native feature set.
+Both binaries used Cargo's default release profile with overflow checks and rustc `48f4b0553`.
+
 ### BLAKE3 file inputs
 
 The optional `blake3_file` target measures `Blake3::update_file`, `Blake3::update_reader`,
