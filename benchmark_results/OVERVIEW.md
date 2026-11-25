@@ -6,6 +6,64 @@ tie is 0.95x through 1.05x. [Benchmarking](../docs/benchmarking.md) gives the me
 rules, and the commands. Earlier campaigns remain in the
 [history of this file](https://github.com/loadingalias/rscrypto/blob/50c708b29905bb3221e7b22b9c7cce8fcc700818/benchmark_results/OVERVIEW.md).
 
+## November 25, 2026 BLAKE3 comparison
+
+On Graviton4, rscrypto led upstream `blake3` 1.8.7 with a **1.072x geometric mean** across 26 single-threaded comparisons.
+Both libraries computed one-shot hashes with and without a key at 13 sizes from 0 B through 1 MiB.
+rscrypto led in 10 cases, tied in 12, and trailed in 4. It led in both modes at every measured size from 4 KiB through 1 MiB.
+
+The times below are medians in microseconds. Graviton4 used revision `1b950e04`, which includes the SVE2 kernel. Graviton5 and M1 Pro used the v0.13 release source.
+
+| Host | Operation | 4 KiB rscrypto | 4 KiB upstream | 64 KiB rscrypto | 64 KiB upstream |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Graviton4 | Hash | 2.32 | 2.87 | 34.24 | 44.42 |
+| Graviton4 | Keyed hash | 2.37 | 2.87 | 34.87 | 44.42 |
+| Graviton5 | Hash | 2.26 | 2.41 | 33.61 | 37.87 |
+| Graviton5 | Keyed hash | 2.29 | 2.42 | 34.25 | 37.86 |
+| Apple M1 Pro | Hash | 2.50 | 2.42 | 38.93 | 37.91 |
+| Apple M1 Pro | Keyed hash | 2.59 | 2.46 | 45.02 | 49.63 |
+
+<details>
+<summary>All 26 Graviton4 comparisons and the reproduction command</summary>
+
+Each ratio divides upstream time by rscrypto time. The tie band is 0.95x through 1.05x.
+
+| Input | Hash ratio | Keyed hash ratio |
+| --- | ---: | ---: |
+| 0 B | 1.028x | 0.968x |
+| 1 B | 0.978x | 0.925x |
+| 32 B | 0.999x | 0.944x |
+| 64 B | 1.046x | 0.976x |
+| 65 B | 0.988x | 0.970x |
+| 256 B | 0.989x | 0.977x |
+| 1 KiB | 0.974x | 0.968x |
+| 1,025 B | 0.948x | 0.875x |
+| 4 KiB | 1.237x | 1.211x |
+| 16 KiB | 1.285x | 1.277x |
+| 64 KiB | 1.297x | 1.274x |
+| 256 KiB | 1.243x | 1.234x |
+| 1 MiB | 1.251x | 1.241x |
+
+Run this command three times on Graviton4 with revision `1b950e04`.
+
+```bash
+just bench blake3_serial 'filter=^blake3/serial/(hash|keyed)/(rscrypto|blake3)/[0-9]+$'
+```
+
+</details>
+
+One four-vCPU i8g.xlarge ran the Graviton4 suite three times. Each Graviton4 time is the median of the three run medians.
+Each run used 20 samples per case, 100 ms of warm-up, and a 400 ms measurement window.
+The three family scores ranged from 1.071x to 1.072x. All 156 output checks passed.
+Run `20261125T222010Z-90457` retains the plans and raw samples. [Benchmark method](../docs/benchmarking.md#scorecard).
+
+The v0.13 release led upstream on POWER10 (1.48x) and IBM Z (1.34x). Upstream led on Intel Windows (0.92x).
+The other six release hosts fell within the tie band, including Graviton5 (1.02x) and Apple M1 Pro (0.96x).
+[Release scorecard](https://github.com/loadingalias/rscrypto/actions/runs/44681056190/artifacts/14621750310) · [Release results by host](#v013-release-source).
+
+Against rscrypto v0.13.0, the SVE2 kernel cut Graviton4 unkeyed hash latency by 13% at 4 KiB and 14% at 64 KiB.
+[Sealed-record measurements](#november-25-2026-sealed-records).
+
 ## November 25, 2026 sealed records
 
 On Graviton4, hashing 64 KiB took 39.73–39.75 µs at p50 with rscrypto 0.13.0.
