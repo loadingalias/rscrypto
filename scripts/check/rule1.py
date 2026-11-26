@@ -84,7 +84,7 @@ def violations(root):
   found, queue = [], [(root / 'src/lib.rs', False)]
   while queue:
     path, test_file = queue.pop()
-    lines = path.read_text().split('\n')
+    lines = path.read_text(encoding='utf-8').split('\n')
     attributed = dict((index, attributes) for attributes, index in items(lines))
     for index, line in enumerate(lines):
       module = MOD.match(line)

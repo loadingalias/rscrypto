@@ -70,7 +70,7 @@ def main():
     root = Path(temporary)
     for name, text in FILES.items():
       (root / name).parent.mkdir(parents=True, exist_ok=True)
-      (root / name).write_text(text.lstrip('\n'))
+      (root / name).write_text(text.lstrip('\n'), encoding='utf-8')
     found = {(path, text) for path, _, text in rule1.violations(root)}
   assert found == {
     ('src/production.rs', 'fn hook() {}'),
