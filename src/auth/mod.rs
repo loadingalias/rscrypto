@@ -180,6 +180,7 @@ pub mod ecdsa;
     )
   )
 ))]
+#[rustfmt::skip]
 mod ecdsa_generator_tables;
 #[cfg(feature = "ed25519")]
 pub mod ed25519;

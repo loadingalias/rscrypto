@@ -12,6 +12,7 @@ use super::{field::FieldElement, scalar_radix_16};
 use crate::traits::ct;
 
 #[path = "basepoint_tables.rs"]
+#[rustfmt::skip]
 mod basepoint_tables;
 #[cfg(feature = "ed25519")]
 #[path = "basepoint_wnaf5_table.rs"]

@@ -14,6 +14,7 @@ use core::arch::global_asm;
 use super::p256_portable::PublicPoint;
 
 #[path = "ecdsa_aarch64_tables.rs"]
+#[rustfmt::skip]
 mod fixed_base_tables;
 
 #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
