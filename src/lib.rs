@@ -610,9 +610,7 @@ pub use traits::{Digest, FastHash, Xof};
 /// Their placement is an intentional opt-in, not an additional runtime layer.
 pub mod expert {
   #[cfg(feature = "mldsa65-ecdsa-p256")]
-  pub use crate::auth::composite_mldsa::ecdsa_p256_composite::{
-    MlDsa65EcdsaP256PendingSignature, MlDsa65EcdsaP256SplitSigner,
-  };
+  pub use crate::auth::composite_mldsa::ecdsa_p256_composite::MlDsa65EcdsaP256PendingSignature;
   #[cfg(any(
     feature = "aes-gcm",
     feature = "aes-gcm-siv",

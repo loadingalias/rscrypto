@@ -171,48 +171,60 @@ fn components(secret: &MlDsa65EcdsaP256SecretKey) -> ([u8; 32], [u8; 32]) {
 }
 
 #[test]
-fn split_signing_matches_one_shot_and_kryptering() {
+fn external_signing_matches_one_shot_and_kryptering() {
   use p256::ecdsa::SigningKey as P256OracleSigningKey;
   use p256::ecdsa::signature::hazmat::PrehashSigner as _;
+  use rustcrypto_ml_dsa::{ExpandedSigningKey, MlDsa65 as OracleMlDsa65};
 
   let variant = CompositeMlDsaVariant::MlDsa65Es256;
   let algorithm = SignatureAlgorithm::CompositeMlDsa(variant);
+  let label = MlDsa65EcdsaP256::LABEL;
+  let ml_dsa_context = [0, u8::try_from(label.len()).expect("label length")];
   for round in 0..3 {
     let (public, secret) = MlDsa65EcdsaP256::generate_keypair(filler(round)).expect("generate");
     let (seed, scalar) = components(&secret);
-    let (ml_dsa_public, ml_dsa_secret) = MlDsa65::keypair_from_seed(&seed).expect("ML-DSA-65 key");
-    let hardware = EcdsaP256SecretKey::from_bytes(scalar).expect("P-256 key");
+    let (ml_dsa_public, _) = MlDsa65::keypair_from_seed(&seed).expect("ML-DSA-65 key");
+    let ecdsa = EcdsaP256SecretKey::from_bytes(scalar).expect("P-256 key");
     assert_eq!(
-      MlDsa65EcdsaP256PublicKey::from_components(&ml_dsa_public, &hardware.public_key()),
+      MlDsa65EcdsaP256PublicKey::from_components(&ml_dsa_public, &ecdsa.public_key()),
       public
     );
-    let signer = expert::MlDsa65EcdsaP256SplitSigner::new(&ml_dsa_secret, &public).expect("split signer");
-    // A TPM signs the SHA-256 digest of M'; RustCrypto P-256 stands in for it.
+    // RustCrypto ML-DSA and P-256 stand in for external signers, such as
+    // Windows CNG or a TPM.
+    let ml_dsa = ExpandedSigningKey::<OracleMlDsa65>::from_seed(&seed.into());
     let tpm = P256OracleSigningKey::from_slice(&scalar).expect("oracle key");
     let oracle_public = kryptering_public(&public);
     let key = SoftwareKey::from_composite_ml_dsa(variant, None, &oracle_public).expect("oracle key");
     let verifier = SoftwareVerifier::new(algorithm, key).expect("oracle verifier");
 
     for message in messages() {
-      let pending = signer.begin_deterministic(&message, b"split").expect("begin");
-      let ecdsa = hardware.try_sign(pending.ecdsa_message()).expect("P-256 half");
+      let pending = expert::MlDsa65EcdsaP256PendingSignature::new(&message, b"external").expect("begin");
+      let half = ml_dsa
+        .sign_deterministic(pending.representative(), label)
+        .expect("ML-DSA-65 half");
+      let ml_dsa_half = MlDsa65Signature::try_from_slice(half.encode().as_slice()).expect("ML-DSA-65 half parses");
+      let ecdsa_half = ecdsa.try_sign(pending.representative()).expect("P-256 half");
       assert_eq!(
-        pending.finish(&ecdsa).expect("finish"),
-        secret.sign_deterministic(&message, b"split").expect("one-shot"),
-        "split and one-shot deterministic signing agree"
+        pending.finish(&public, &ml_dsa_half, &ecdsa_half).expect("finish"),
+        secret.sign_deterministic(&message, b"external").expect("one-shot"),
+        "external and one-shot deterministic signing agree"
       );
 
-      let pending = signer
-        .begin_with(&message, b"", filler(round.wrapping_add(100)))
-        .expect("begin");
+      // A caller-computed prehash, a hedged ML-DSA-65 half, and a P-256 half
+      // over the SHA-256 digest of M'.
+      let pending =
+        expert::MlDsa65EcdsaP256PendingSignature::from_prehash(&Sha512::digest(&message), b"").expect("begin");
+      let random = [round ^ 0xa5; 32];
+      let half = ml_dsa.sign_internal(&[&ml_dsa_context, label, pending.representative()], &random.into());
+      let ml_dsa_half = MlDsa65Signature::try_from_slice(half.encode().as_slice()).expect("ML-DSA-65 half parses");
       let half: p256::ecdsa::Signature = tpm.sign_prehash(&pending.ecdsa_digest()).expect("digest half");
-      let half = EcdsaP256Signature::from_der(half.to_der().as_bytes()).expect("digest half parses");
-      let signature = pending.finish(&half).expect("finish");
+      let ecdsa_half = EcdsaP256Signature::from_der(half.to_der().as_bytes()).expect("digest half parses");
+      let signature = pending.finish(&public, &ml_dsa_half, &ecdsa_half).expect("finish");
       assert!(
         verifier
           .verify(&message, &to_raw_ecdsa(&signature))
           .expect("oracle verification"),
-        "the oracle accepts a split signature with a digest-signed half"
+        "the oracle accepts a signature from two external halves"
       );
     }
   }

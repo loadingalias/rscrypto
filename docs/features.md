@@ -174,9 +174,9 @@ They enable `ml-dsa` and `ed25519` or `ecdsa-p256`, need neither allocation nor 
 and import and export the draft's raw, SubjectPublicKeyInfo, and PKCS #8 encodings.
 A signature is valid only if both components verify. `prepare_in` and the allocator-backed
 secret-key constructors (`generate_keypair_in`, `try_from_slice_in`, and `from_pkcs8_der_in`) need `alloc`.
-When a TPM or a Secure Enclave holds the P-256 half, `rscrypto::expert::MlDsa65EcdsaP256SplitSigner`
-signs the ML-DSA-65 half and gives the external signer `M'` or its SHA-256 digest.
-Its pending signature then assembles the composite and verifies both halves.
+When external signers hold the component keys, such as Windows CNG, a TPM, or a Secure Enclave,
+`rscrypto::expert::MlDsa65EcdsaP256PendingSignature` gives them `M'` or its SHA-256 digest.
+It then assembles the composite signature from the two halves and verifies it.
 The `rscrypto::auth::composite_mldsa` module documentation describes the construction and its limits.
 
 `x-wing` gives the X-Wing hybrid KEM of ML-KEM-768 and X25519 from

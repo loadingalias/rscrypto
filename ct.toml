@@ -6427,7 +6427,7 @@ tier = "A"
 claim = "best-effort"
 features = ["mldsa65-ed25519", "mldsa65-ecdsa-p256"]
 variants = ["id-MLDSA65-Ed25519-SHA512", "id-MLDSA65-ECDSA-P256-SHA512"]
-entrypoints = ["MlDsa65Ed25519::generate_keypair", "MlDsa65EcdsaP256::generate_keypair", "MlDsa65*SecretKey::{from_bytes,from_pkcs8_der,sign_deterministic,sign_with,sign_prehash_*}", "MlDsa65*PreparedSecretKey::sign_*", "expert::MlDsa65EcdsaP256SplitSigner::begin_*"]
+entrypoints = ["MlDsa65Ed25519::generate_keypair", "MlDsa65EcdsaP256::generate_keypair", "MlDsa65*SecretKey::{from_bytes,from_pkcs8_der,sign_deterministic,sign_with,sign_prehash_*}", "MlDsa65*PreparedSecretKey::sign_*"]
 secrets = ["ml_dsa_seed", "expanded_secret_key", "traditional_secret_key", "signing_randomness"]
 public = ["algorithm", "public_key", "message_representative", "message_length", "context_length", "accepted_signature"]
 may_leak = ["signing_retry_count", "opaque_success_or_failure"]
@@ -7184,8 +7184,7 @@ api = [
   "rscrypto::MlDsa65{Ed25519,EcdsaP256}PreparedSecretKeyStorage::new",
   "rscrypto::MlDsa65{Ed25519,EcdsaP256}PublicKey::{verify,verify_with_context,verify_prehash,from_bytes,try_from_slice,to_bytes,from_spki_der,to_spki_der,LENGTH,SPKI_DER_LENGTH}",
   "rscrypto::MlDsa65EcdsaP256PublicKey::from_components",
-  "rscrypto::expert::MlDsa65EcdsaP256SplitSigner::{new,begin_deterministic,begin_with,begin_prehash_deterministic,begin_prehash_with,Debug}",
-  "rscrypto::expert::MlDsa65EcdsaP256PendingSignature::{ecdsa_message,ecdsa_digest,finish,Debug}",
+  "rscrypto::expert::MlDsa65EcdsaP256PendingSignature::{new,from_prehash,representative,ecdsa_digest,finish,Debug}",
   "rscrypto::MlDsa65{Ed25519,EcdsaP256}Signature::{as_bytes,to_bytes,try_from_slice,LENGTH,MAX_LENGTH}",
   "rscrypto::MlDsa65{Ed25519,EcdsaP256}*::{Debug,Clone,Default,PartialEq,AsRef,Verifier,Drop}",
   "rscrypto::CompositeMlDsa{Error,KeyError}",
