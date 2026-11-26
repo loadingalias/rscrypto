@@ -4267,24 +4267,6 @@ fn aes256_ctr32_encrypt_be_worker(ek: &Aes256EncKey, initial_counter: &[u8; BLOC
 
 // Wide AES-CTR for GCM (big-endian 32-bit counter, VAES-512)
 
-#[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm", test))]
-#[target_feature(enable = "avx2")]
-#[inline]
-/// # Safety
-/// Caller must ensure AVX2 is available.
-unsafe fn x86_gcm_ctr_blocks_be_2(iv_words: [u32; 3], ctr: u32) -> core::arch::x86_64::__m256i {
-  use core::arch::x86_64::*;
-
-  let p0 = iv_words[0].cast_signed();
-  let p1 = iv_words[1].cast_signed();
-  let p2 = iv_words[2].cast_signed();
-  let b0 = _mm_set_epi32(ctr.to_be().cast_signed(), p2, p1, p0);
-  let b1 = _mm_set_epi32(ctr.wrapping_add(1).to_be().cast_signed(), p2, p1, p0);
-
-  let z = _mm256_castsi128_si256(b0);
-  _mm256_inserti128_si256(z, b1, 1)
-}
-
 /// Build one big-endian GCM counter block directly in an XMM register.
 ///
 /// # Safety
@@ -6063,14 +6045,14 @@ mod tests {
   #[cfg(all(target_arch = "aarch64", feature = "aes-gcm"))]
   fn aarch64_gcm_test_powers() -> Aarch64GcmTestPowers {
     let h_polyval = 0x1287_3d5b_fedc_ba09_7654_3210_f0e1_d2c3u128;
-    let powers = crate::aead::polyval::precompute_powers_8(h_polyval);
+    let powers = crate::aead::polyval::precompute_powers_chained::<8>(h_polyval);
     let h_powers_rev = [powers[3], powers[2], powers[1], powers[0]];
     let h_powers_rev_8 = [
       powers[7], powers[6], powers[5], powers[4], powers[3], powers[2], powers[1], powers[0],
     ];
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     let h_powers_rev_16 = {
-      let powers = crate::aead::polyval::precompute_powers_16(h_polyval);
+      let powers = crate::aead::polyval::precompute_powers_chained::<16>(h_polyval);
       [
         powers[15], powers[14], powers[13], powers[12], powers[11], powers[10], powers[9], powers[8], powers[7],
         powers[6], powers[5], powers[4], powers[3], powers[2], powers[1], powers[0],
@@ -6306,23 +6288,6 @@ mod tests {
   }
 
   #[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm"))]
-  #[target_feature(enable = "avx2")]
-  /// # Safety
-  ///
-  /// Caller must ensure AVX2 is available before calling this target-feature helper.
-  unsafe fn x86_gcm_ctr_blocks_be_2_test_bytes(iv_words: [u32; 3], ctr: u32) -> [u8; 32] {
-    use core::arch::x86_64::*;
-
-    let mut out = [0u8; 32];
-    // SAFETY: test-only YMM counter block store because:
-    // 1. The caller verified AVX2 before invoking this target-feature helper.
-    // 2. `out` is exactly 32 writable bytes, matching one `__m256i` store.
-    // 3. The vector under test is produced directly from the two-block counter constructor.
-    unsafe { _mm256_storeu_si256(out.as_mut_ptr().cast(), x86_gcm_ctr_blocks_be_2(iv_words, ctr)) };
-    out
-  }
-
-  #[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm"))]
   #[test]
   fn x86_gcm_ctr_block_be_preserves_prefix_and_encodes_counter() {
     if !crate::platform::caps().has(crate::platform::caps::x86::SSE2) {
@@ -6341,29 +6306,6 @@ mod tests {
         actual.as_slice(),
         expected.as_slice(),
         "x86 XMM GCM counter block mismatch"
-      );
-    }
-  }
-
-  #[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm"))]
-  #[test]
-  fn x86_gcm_ctr_blocks_be_2_preserves_prefix_and_wraps_counter() {
-    if !crate::platform::caps().has(crate::platform::caps::x86::AVX2) {
-      return;
-    }
-
-    let iv_prefix = *b"ctr wrap iv!";
-    let iv_words = x86_gcm_iv_words(&iv_prefix);
-
-    for ctr in [0x0102_0304, u32::MAX] {
-      let mut expected = [0u8; 32];
-      fill_expected_gcm_counter_blocks(&iv_prefix, ctr, &mut expected);
-      // SAFETY: runtime caps above confirmed AVX2 before calling the target-feature helper.
-      let actual = unsafe { x86_gcm_ctr_blocks_be_2_test_bytes(iv_words, ctr) };
-      assert_eq!(
-        actual.as_slice(),
-        expected.as_slice(),
-        "x86 YMM GCM counter block mismatch"
       );
     }
   }
@@ -6409,7 +6351,7 @@ mod tests {
   #[cfg(all(all(target_arch = "x86_64", target_feature = "sse2"), feature = "aes-gcm"))]
   fn x86_gcm_test_powers_16() -> X86GcmTestPowers16 {
     let h_polyval = 0x1287_3d5b_fedc_ba09_7654_3210_f0e1_d2c3u128;
-    let powers = crate::aead::polyval::precompute_powers_128(h_polyval);
+    let powers = crate::aead::polyval::precompute_powers_chained::<128>(h_polyval);
     X86GcmTestPowers16 {
       h_polyval,
       h_powers_rev: [powers[3], powers[2], powers[1], powers[0]],

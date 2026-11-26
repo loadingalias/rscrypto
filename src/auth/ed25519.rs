@@ -1397,7 +1397,7 @@ mod tests {
   fn small_order_encoding_table_matches_point_detection() {
     for (i, encoded) in super::SMALL_ORDER_ENCODINGS.iter().enumerate() {
       assert!(!super::SMALL_ORDER_ENCODINGS[..i].contains(encoded));
-      assert!(point::ExtendedPoint::from_bytes(encoded).is_some_and(|point| point.is_small_order()));
+      assert!(point::ExtendedPoint::from_bytes(encoded).is_some_and(|p| point::tests::is_small_order(&p)));
       assert!(Ed25519PublicKey::from_bytes(*encoded).point().is_none());
     }
   }
@@ -1490,7 +1490,7 @@ mod tests {
       let a = point::ExtendedPoint::from_bytes(&public).expect("A decodes");
       let r = point::ExtendedPoint::from_bytes(&r_bytes).expect("R decodes");
       assert!(
-        !a.is_small_order() && !r.is_small_order(),
+        !point::tests::is_small_order(&a) && !point::tests::is_small_order(&r),
         "case {index} reaches the product"
       );
       let s = scalar::to_bytes(&scalar::from_canonical_bytes(&s_bytes).expect("canonical S"));

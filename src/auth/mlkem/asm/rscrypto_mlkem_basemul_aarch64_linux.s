@@ -5,31 +5,16 @@
 //
 // ABI:
 //   x0: uint16_t acc[256]            read/write accumulator
-//   x1: const uint16_t a[256|16]     read-only multiplicand
-//   x2: const uint16_t b[256|16]     read-only multiplicand
-//   x3: const int16_t gamma[128|8]   read-only Montgomery gammas
+//   x1: const uint16_t a[K * 256]    read-only multiplicand
+//   x2: const uint16_t b[K * 256]    read-only multiplicand
+//   x3: const int16_t gamma[128]     read-only Montgomery gammas
 //
-// The full-polynomial entry processes 16 fixed chunks. The K=3/K=4 entries take
-// x1/x2 as contiguous PolyVec bases with 512-byte polynomial strides and fuse
-// the whole dot product into one accumulator pass. The chunk entry processes
-// exactly one 16-coefficient chunk and is used by the fused SampleNTT path tests.
+// The K=2/K=3/K=4 entries take x1/x2 as contiguous PolyVec bases with 512-byte
+// polynomial strides and fuse the whole dot product into one accumulator pass.
 // All branches and memory addresses depend only on public ML-KEM dimensions.
 
 .text
 .balign 4
-
-.macro MONT_REDUCE out, lo, hi
-        xtn     v20.4h, \lo\().4s
-        xtn2    v20.8h, \hi\().4s
-        mul     v20.8h, v20.8h, v31.8h
-        smull   v21.4s, v20.4h, v30.4h
-        smull2  v22.4s, v20.8h, v30.8h
-        shrn    v21.4h, v21.4s, #16
-        shrn2   v21.8h, v22.4s, #16
-        shrn    v22.4h, \lo\().4s, #16
-        shrn2   v22.8h, \hi\().4s, #16
-        sub     \out\().8h, v22.8h, v21.8h
-.endm
 
 .macro SIGNED_TO_MOD_Q value
         sshr    v20.8h, \value\().8h, #15
@@ -102,34 +87,6 @@
         SIGNED_TO_MOD_Q v7
 .endm
 
-.macro BASEMUL_ACCUMULATE_16
-        ldr     q21, [x3], #16
-        BASEMUL_PRODUCT_16 x1, x2
-        ld2     {{ v18.8h, v19.8h }}, [x0]
-        ADD_MOD_Q v18, v6
-        ADD_MOD_Q v19, v7
-        st2     {{ v18.8h, v19.8h }}, [x0], #32
-.endm
-
-.macro BASEMUL_ACCUMULATE_K3_16
-        ldr     q21, [x3], #16
-        ld2     {{ v23.8h, v24.8h }}, [x0]
-
-        BASEMUL_PRODUCT_16 x1, x2
-        ADD_MOD_Q v23, v6
-        ADD_MOD_Q v24, v7
-
-        BASEMUL_PRODUCT_16 x4, x5
-        ADD_MOD_Q v23, v6
-        ADD_MOD_Q v24, v7
-
-        BASEMUL_PRODUCT_16 x6, x7
-        ADD_MOD_Q v23, v6
-        ADD_MOD_Q v24, v7
-
-        st2     {{ v23.8h, v24.8h }}, [x0], #32
-.endm
-
 .macro BASEMUL_ACCUMULATE_K2_16
         ldr     q21, [x3], #16
         ld2     {{ v23.8h, v24.8h }}, [x0]
@@ -144,58 +101,6 @@
 
         st2     {{ v23.8h, v24.8h }}, [x0], #32
 .endm
-
-.macro BASEMUL_ACCUMULATE_K4_16
-        ldr     q21, [x3], #16
-        ld2     {{ v23.8h, v24.8h }}, [x0]
-
-        BASEMUL_PRODUCT_16 x1, x2
-        ADD_MOD_Q v23, v6
-        ADD_MOD_Q v24, v7
-
-        BASEMUL_PRODUCT_16 x4, x7
-        ADD_MOD_Q v23, v6
-        ADD_MOD_Q v24, v7
-
-        BASEMUL_PRODUCT_16 x5, x8
-        ADD_MOD_Q v23, v6
-        ADD_MOD_Q v24, v7
-
-        BASEMUL_PRODUCT_16 x6, x9
-        ADD_MOD_Q v23, v6
-        ADD_MOD_Q v24, v7
-
-        st2     {{ v23.8h, v24.8h }}, [x0], #32
-.endm
-
-.globl rscrypto_mlkem_basemul_accumulate_aarch64_linux
-.type rscrypto_mlkem_basemul_accumulate_aarch64_linux, %function
-.hidden rscrypto_mlkem_basemul_accumulate_aarch64_linux
-rscrypto_mlkem_basemul_accumulate_aarch64_linux:
-        mov     w8, #3329
-        dup     v30.8h, w8
-        mov     w8, #62209
-        dup     v31.8h, w8
-        mov     w9, #8
-1:
-        BASEMUL_ACCUMULATE_16
-        BASEMUL_ACCUMULATE_16
-        subs    w9, w9, #1
-        b.ne    1b
-        ret
-.size rscrypto_mlkem_basemul_accumulate_aarch64_linux, .-rscrypto_mlkem_basemul_accumulate_aarch64_linux
-
-.globl rscrypto_mlkem_basemul_accumulate_chunk_aarch64_linux
-.type rscrypto_mlkem_basemul_accumulate_chunk_aarch64_linux, %function
-.hidden rscrypto_mlkem_basemul_accumulate_chunk_aarch64_linux
-rscrypto_mlkem_basemul_accumulate_chunk_aarch64_linux:
-        mov     w8, #3329
-        dup     v30.8h, w8
-        mov     w8, #62209
-        dup     v31.8h, w8
-        BASEMUL_ACCUMULATE_16
-        ret
-.size rscrypto_mlkem_basemul_accumulate_chunk_aarch64_linux, .-rscrypto_mlkem_basemul_accumulate_chunk_aarch64_linux
 
 .globl rscrypto_mlkem_basemul_accumulate_k2_aarch64_linux
 .type rscrypto_mlkem_basemul_accumulate_k2_aarch64_linux, %function

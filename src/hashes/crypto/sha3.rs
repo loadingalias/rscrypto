@@ -2,8 +2,6 @@
 //!
 //! Portable, `no_std`, pure Rust Keccak-f\[1600\] sponge.
 
-#[cfg(all(test, feature = "ml-kem"))]
-use super::keccak::xof_quad;
 use super::keccak::{PublicKeccakCore, PublicKeccakXof};
 #[cfg(feature = "ml-kem")]
 use super::keccak::{
@@ -311,28 +309,6 @@ impl Shake128 {
       Shake128XofReader { inner: d },
     )
   }
-
-  #[inline]
-  #[cfg(all(test, feature = "ml-kem"))]
-  pub(crate) fn xof_quad(
-    data_a: &[u8],
-    data_b: &[u8],
-    data_c: &[u8],
-    data_d: &[u8],
-  ) -> (
-    Shake128XofReader,
-    Shake128XofReader,
-    Shake128XofReader,
-    Shake128XofReader,
-  ) {
-    let (a, b, c, d) = xof_quad::<168>(0x1F, data_a, data_b, data_c, data_d);
-    (
-      Shake128XofReader { inner: a },
-      Shake128XofReader { inner: b },
-      Shake128XofReader { inner: c },
-      Shake128XofReader { inner: d },
-    )
-  }
 }
 
 /// Streaming reader for SHAKE128 output.
@@ -385,15 +361,12 @@ impl Shake128XofReader {
   #[inline]
   #[cfg(all(
     feature = "ml-kem",
-    any(
-      test,
-      not(all(
-        target_arch = "aarch64",
-        target_endian = "little",
-        not(miri),
-        not(feature = "portable-only")
-      ))
-    )
+    not(all(
+      target_arch = "aarch64",
+      target_endian = "little",
+      not(miri),
+      not(feature = "portable-only")
+    ))
   ))]
   pub(crate) fn squeeze_quad<const N: usize>(
     &mut self,
@@ -582,33 +555,6 @@ mod tests {
     via_oneshot.squeeze(&mut oneshot_out);
 
     assert_eq!(finalize_out, oneshot_out);
-  }
-
-  #[cfg(feature = "ml-kem")]
-  #[test]
-  fn shake128_xof_quad_matches_sequential() {
-    let msg_a = b"ml-kem matrix lane 0";
-    let msg_b = &[0x42u8; 34];
-    let msg_c = &[0x77u8; 255];
-    let msg_d = &[0xa5u8; 409];
-
-    let (mut quad_a, mut quad_b, mut quad_c, mut quad_d) = Shake128::xof_quad(msg_a, msg_b, msg_c, msg_d);
-    let mut actual = [[0u8; 320]; 4];
-    quad_a.squeeze_quad(&mut quad_b, &mut quad_c, &mut quad_d, &mut actual);
-
-    let mut expected_a = [0u8; 320];
-    let mut expected_b = [0u8; 320];
-    let mut expected_c = [0u8; 320];
-    let mut expected_d = [0u8; 320];
-    Shake128::xof(msg_a).squeeze(&mut expected_a);
-    Shake128::xof(msg_b).squeeze(&mut expected_b);
-    Shake128::xof(msg_c).squeeze(&mut expected_c);
-    Shake128::xof(msg_d).squeeze(&mut expected_d);
-
-    assert_eq!(actual[0], expected_a, "lane 0");
-    assert_eq!(actual[1], expected_b, "lane 1");
-    assert_eq!(actual[2], expected_c, "lane 2");
-    assert_eq!(actual[3], expected_d, "lane 3");
   }
 
   /// Test inputs of length `RATE - 1` for each SHA-3 variant.

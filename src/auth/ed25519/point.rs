@@ -667,16 +667,17 @@ impl fmt::Debug for ExtendedPoint {
 }
 
 #[cfg(all(test, feature = "ed25519"))]
-impl ExtendedPoint {
-  /// Independent subgroup check for the public encoding tests.
-  pub(crate) fn is_small_order(&self) -> bool {
-    self.double().double().double().equals_projective(&Self::identity())
-  }
-}
-
-#[cfg(all(test, feature = "ed25519"))]
-mod tests {
+pub(crate) mod tests {
   use super::{ExtendedPoint, FieldElement};
+
+  /// Independent subgroup check for the public encoding tests.
+  pub(crate) fn is_small_order(point: &ExtendedPoint) -> bool {
+    point
+      .double()
+      .double()
+      .double()
+      .equals_projective(&ExtendedPoint::identity())
+  }
 
   fn basepoint() -> ExtendedPoint {
     ExtendedPoint::basepoint()

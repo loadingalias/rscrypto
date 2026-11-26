@@ -4736,12 +4736,6 @@ impl SecretI31 {
     Self { words: vec![0; len] }
   }
 
-  #[cfg(test)]
-  #[inline]
-  fn as_slice(&self) -> &[u32] {
-    &self.words
-  }
-
   #[inline]
   fn as_mut_slice(&mut self) -> &mut [u32] {
     &mut self.words
@@ -4811,13 +4805,6 @@ impl RsaPrivateI31InverseScratch {
     })
   }
 
-  #[cfg(test)]
-  fn is_cleared(&self) -> bool {
-    [&self.a, &self.b, &self.u, &self.v, &self.modulus]
-      .iter()
-      .all(|words| words.as_slice().iter().all(|&value| value == 0))
-  }
-
   fn clear(&mut self) {
     ct::zeroize_words(self.a.as_mut_slice());
     ct::zeroize_words(self.b.as_mut_slice());
@@ -4872,13 +4859,6 @@ impl RsaPrivateS62InverseScratch {
       e: private_scratch_prefix(&mut self.e, limb_count)?,
       modulus: private_scratch_prefix(&mut self.modulus, limb_count)?,
     })
-  }
-
-  #[cfg(test)]
-  fn is_cleared(&self) -> bool {
-    [&self.f, &self.g, &self.d, &self.e, &self.modulus]
-      .iter()
-      .all(|limbs| limbs.as_slice().iter().all(|&value| value == 0))
   }
 
   fn clear(&mut self) {
@@ -9521,16 +9501,6 @@ fn ct_select_usize(zero: usize, one: usize, choice: u8) -> usize {
   (zero & !mask) | (one & mask)
 }
 
-#[cfg(test)]
-fn verify_pss_encoded<D>(message: &[u8], encoded: &[u8], em_bits: usize) -> Result<(), VerificationError>
-where
-  D: Digest,
-{
-  let mut db = vec![0u8; encoded.len()];
-  let mut db_mask = vec![0u8; encoded.len()];
-  verify_pss_encoded_with_scratch::<D>(message, encoded, em_bits, D::OUTPUT_SIZE, &mut db, &mut db_mask)
-}
-
 fn verify_pss_encoded_with_scratch<D>(
   message: &[u8],
   encoded: &[u8],
@@ -13114,6 +13084,39 @@ mod tests {
 
   use super::expert::RsaPkcs1v15Decrypt as _;
   use super::*;
+
+  impl SecretI31 {
+    #[inline]
+    fn as_slice(&self) -> &[u32] {
+      &self.words
+    }
+  }
+
+  impl RsaPrivateI31InverseScratch {
+    fn is_cleared(&self) -> bool {
+      [&self.a, &self.b, &self.u, &self.v, &self.modulus]
+        .iter()
+        .all(|words| words.as_slice().iter().all(|&value| value == 0))
+    }
+  }
+
+  #[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x")))]
+  impl RsaPrivateS62InverseScratch {
+    fn is_cleared(&self) -> bool {
+      [&self.f, &self.g, &self.d, &self.e, &self.modulus]
+        .iter()
+        .all(|limbs| limbs.as_slice().iter().all(|&value| value == 0))
+    }
+  }
+
+  fn verify_pss_encoded<D>(message: &[u8], encoded: &[u8], em_bits: usize) -> Result<(), VerificationError>
+  where
+    D: Digest,
+  {
+    let mut db = vec![0u8; encoded.len()];
+    let mut db_mask = vec![0u8; encoded.len()];
+    verify_pss_encoded_with_scratch::<D>(message, encoded, em_bits, D::OUTPUT_SIZE, &mut db, &mut db_mask)
+  }
 
   #[cfg(feature = "getrandom")]
   const CAVP_KEYGEN_186_3_PROBABLE_PRIME: &str =

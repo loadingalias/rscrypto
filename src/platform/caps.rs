@@ -64,27 +64,6 @@ impl Caps {
     self.0
   }
 
-  /// Create a capability set from raw words.
-  ///
-  /// This is primarily useful for testing and fuzzing. Normal usage should prefer
-  /// the predefined constants.
-  #[cfg(test)]
-  #[inline]
-  #[must_use]
-  pub const fn from_raw(words: [u64; 4]) -> Self {
-    Self::from_words(words)
-  }
-
-  /// Access the raw underlying words.
-  ///
-  /// Returns the four 64-bit words that make up the capability bitset.
-  #[cfg(test)]
-  #[inline]
-  #[must_use]
-  pub const fn as_raw(&self) -> &[u64; 4] {
-    &self.0
-  }
-
   /// Check if all features in `required` are present.
   ///
   /// # Examples

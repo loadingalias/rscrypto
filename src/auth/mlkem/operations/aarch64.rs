@@ -1,9 +1,5 @@
 use core::arch::global_asm;
 
-#[cfg(all(test, target_os = "linux"))]
-use super::PolyVec;
-#[cfg(all(test, target_os = "linux"))]
-use super::SAMPLE_NTT_ACC_CHUNK_COEFFS;
 use super::{GAMMAS_MONT, Poly};
 
 #[cfg(target_os = "macos")]
@@ -62,22 +58,6 @@ unsafe extern "C" {
     input2: *const u8,
     caps: *const usize,
   ) -> u64;
-  #[cfg(test)]
-  fn rscrypto_mlkem_rej_uniform_3blocks_aarch64_linux(out: *mut u16, input: *const u8) -> usize;
-  #[cfg(test)]
-  fn rscrypto_mlkem_basemul_accumulate_aarch64_linux(
-    acc: *mut u16,
-    a: *const u16,
-    b: *const u16,
-    gammas_mont: *const i16,
-  );
-  #[cfg(test)]
-  fn rscrypto_mlkem_basemul_accumulate_chunk_aarch64_linux(
-    acc: *mut u16,
-    a: *const u16,
-    b: *const u16,
-    gammas_mont: *const i16,
-  );
   fn rscrypto_mlkem_basemul_accumulate_k2_aarch64_linux(
     acc: *mut u16,
     a: *const u16,
@@ -205,76 +185,26 @@ pub(super) unsafe fn sample_ntt_rej_uniform_triple_block_bounded_asm(
   unpack_triple_counts(packed)
 }
 
-#[cfg(all(test, target_os = "linux"))]
 #[inline]
-/// # Safety
-///
-/// Requires AArch64 Linux with Advanced SIMD. `input` must reference 504 readable
-/// bytes and `out` must reference 256 writable, aligned `u16` coefficients.
-/// The input and output regions must not overlap and must remain valid for the call.
-pub(super) unsafe fn sample_ntt_rej_uniform_3blocks_asm(out: *mut u16, input: *const u8) -> usize {
-  // SAFETY: Linux aarch64 three-block SampleNTT rejection parser call because:
-  // 1. `input` points to three contiguous readable SHAKE128 rate blocks.
-  // 2. `out` points to writable capacity for one full 256-coefficient ML-KEM polynomial.
-  // 3. The assembly caps writes at 256 accepted candidates and returns the accepted count written.
-  // 4. Advanced SIMD is baseline for supported aarch64 Linux targets.
-  // 5. Rejection branches and write positions depend only on public matrix-A XOF bytes.
-  unsafe { rscrypto_mlkem_rej_uniform_3blocks_aarch64_linux(out, input) }
-}
-
-#[inline]
-#[cfg(any(test, target_os = "macos"))]
+#[cfg(target_os = "macos")]
 /// # Safety
 ///
 /// The active platform must provide the matching ML-KEM AArch64 assembly
 /// backend. `acc`, `a`, and `b` must be valid, non-overlapping polynomials.
 pub(super) unsafe fn basemul_accumulate_asm(acc: &mut Poly, a: &Poly, b: &Poly) {
-  #[cfg(target_os = "macos")]
-  {
-    // SAFETY: ML-KEM aarch64 base-multiply assembly call because:
-    // 1. `acc`, `a`, and `b` are fixed 256-coefficient polynomials matching the assembly ABI.
-    // 2. `GAMMAS_MONT` is a fixed 128-lane i16 table matching the 128 ML-KEM base-case products.
-    // 3. This module is compiled only for aarch64 macOS with baseline Advanced SIMD support.
-    // 4. The assembly performs 16 fixed chunks with memory addresses determined only by public ML-KEM
-    //    dimensions.
-    unsafe {
-      rscrypto_mlkem_basemul_accumulate_aarch64_apple_darwin(
-        acc.as_mut_ptr(),
-        a.as_ptr(),
-        b.as_ptr(),
-        GAMMAS_MONT.as_ptr(),
-      );
-    }
-  }
-
-  #[cfg(target_os = "linux")]
-  {
-    // SAFETY: ML-KEM aarch64 base-multiply assembly call because:
-    // 1. `acc`, `a`, and `b` are fixed 256-coefficient polynomials matching the assembly ABI.
-    // 2. `GAMMAS_MONT` is a fixed 128-lane i16 table matching the 128 ML-KEM base-case products.
-    // 3. This module is compiled only for aarch64 Linux with baseline Advanced SIMD support.
-    // 4. The assembly performs 16 fixed chunks with memory addresses determined only by public ML-KEM
-    //    dimensions.
-    unsafe {
-      rscrypto_mlkem_basemul_accumulate_aarch64_linux(acc.as_mut_ptr(), a.as_ptr(), b.as_ptr(), GAMMAS_MONT.as_ptr());
-    }
-  }
-}
-
-#[cfg(all(test, target_os = "linux"))]
-/// # Safety
-///
-/// Requires the AArch64 Linux ML-KEM assembly backend with Advanced SIMD.
-/// The input references must remain readable and must not overlap the
-/// uniquely borrowed accumulator for the duration of the call.
-pub(super) unsafe fn test_basemul_accumulate_asm(acc: &mut Poly, a: &Poly, b: &Poly) {
-  // SAFETY: test-only direct access to the full base-multiply assembly entry point because:
-  // 1. `acc`, `a`, and `b` are fixed 256-coefficient ML-KEM polynomials.
-  // 2. This module is compiled only on aarch64 targets with the assembly backend available.
-  // 3. Tests compare the output against the scalar/FIPS accumulator before the symbol is considered
-  //    for production dispatch.
+  // SAFETY: ML-KEM aarch64 base-multiply assembly call because:
+  // 1. `acc`, `a`, and `b` are fixed 256-coefficient polynomials matching the assembly ABI.
+  // 2. `GAMMAS_MONT` is a fixed 128-lane i16 table matching the 128 ML-KEM base-case products.
+  // 3. This function is compiled only for aarch64 macOS with baseline Advanced SIMD support.
+  // 4. The assembly performs 16 fixed chunks with memory addresses determined only by public ML-KEM
+  //    dimensions.
   unsafe {
-    basemul_accumulate_asm(acc, a, b);
+    rscrypto_mlkem_basemul_accumulate_aarch64_apple_darwin(
+      acc.as_mut_ptr(),
+      a.as_ptr(),
+      b.as_ptr(),
+      GAMMAS_MONT.as_ptr(),
+    );
   }
 }
 
@@ -386,131 +316,5 @@ pub(super) unsafe fn basemul_accumulate_k4_asm_ptr(acc: &mut Poly, a: *const u16
     unsafe {
       rscrypto_mlkem_basemul_accumulate_k4_aarch64_linux(acc.as_mut_ptr(), a, b, GAMMAS_MONT.as_ptr());
     }
-  }
-}
-
-#[inline]
-#[cfg(all(test, target_os = "linux"))]
-/// # Safety
-///
-/// Requires the AArch64 Linux ML-KEM assembly backend with Advanced SIMD.
-/// The input references must remain readable and must not overlap the
-/// uniquely borrowed accumulator for the duration of the call.
-unsafe fn basemul_accumulate_k2_asm(acc: &mut Poly, a: &PolyVec<2>, b: &PolyVec<2>) {
-  // SAFETY: ML-KEM aarch64 K=2 dot-product assembly call because:
-  // 1. `acc`, `a`, and `b` are fixed-size ML-KEM polynomial arrays matching the assembly ABI.
-  // 2. `a` and `b` are contiguous `[[u16; 256]; 2]` values, so the assembly's fixed 512-byte
-  //    polynomial strides stay in bounds.
-  // 3. The assembly performs fixed public loops with no coefficient-dependent memory addresses.
-  unsafe {
-    basemul_accumulate_k2_asm_ptr(acc, a.as_ptr().cast::<u16>(), b.as_ptr().cast::<u16>());
-  }
-}
-
-#[inline]
-#[cfg(all(test, target_os = "linux"))]
-/// # Safety
-///
-/// Requires the AArch64 Linux ML-KEM assembly backend with Advanced SIMD.
-/// The input references must remain readable and must not overlap the
-/// uniquely borrowed accumulator for the duration of the call.
-unsafe fn basemul_accumulate_k3_asm(acc: &mut Poly, a: &PolyVec<3>, b: &PolyVec<3>) {
-  // SAFETY: forwards contiguous `PolyVec<3>` storage to the target K=3 pointer ABI.
-  unsafe {
-    basemul_accumulate_k3_asm_ptr(acc, a.as_ptr().cast::<u16>(), b.as_ptr().cast::<u16>());
-  }
-}
-
-#[inline]
-#[cfg(all(test, target_os = "linux"))]
-/// # Safety
-///
-/// Requires the AArch64 Linux ML-KEM assembly backend with Advanced SIMD.
-/// The input references must remain readable and must not overlap the
-/// uniquely borrowed accumulator for the duration of the call.
-unsafe fn basemul_accumulate_k4_asm(acc: &mut Poly, a: &PolyVec<4>, b: &PolyVec<4>) {
-  // SAFETY: forwards contiguous `PolyVec<4>` storage to the target K=4 pointer ABI.
-  unsafe {
-    basemul_accumulate_k4_asm_ptr(acc, a.as_ptr().cast::<u16>(), b.as_ptr().cast::<u16>());
-  }
-}
-
-#[cfg(all(test, target_os = "linux"))]
-/// # Safety
-///
-/// Requires the AArch64 Linux ML-KEM assembly backend with Advanced SIMD.
-/// The input references must remain readable and must not overlap the
-/// uniquely borrowed accumulator for the duration of the call.
-pub(super) unsafe fn test_basemul_accumulate_k2_asm(acc: &mut Poly, a: &PolyVec<2>, b: &PolyVec<2>) {
-  // SAFETY: test-only direct access to the K=2 dot-product assembly entry point because:
-  // 1. `acc`, `a`, and `b` are fixed-size ML-KEM polynomial arrays.
-  // 2. This module is compiled only on aarch64 Linux/macOS targets with the assembly backend.
-  // 3. Tests compare the output against the scalar/FIPS accumulator before production dispatch.
-  unsafe {
-    basemul_accumulate_k2_asm(acc, a, b);
-  }
-}
-
-#[cfg(all(test, target_os = "linux"))]
-/// # Safety
-///
-/// Requires the AArch64 Linux ML-KEM assembly backend with Advanced SIMD.
-/// The input references must remain readable and must not overlap the
-/// uniquely borrowed accumulator for the duration of the call.
-pub(super) unsafe fn test_basemul_accumulate_k3_asm(acc: &mut Poly, a: &PolyVec<3>, b: &PolyVec<3>) {
-  // SAFETY: test-only direct access to the K=3 dot-product assembly entry point because:
-  // 1. `acc`, `a`, and `b` are fixed-size ML-KEM polynomial arrays.
-  // 2. This module is compiled only on aarch64 Linux/macOS targets with the assembly backend.
-  // 3. Tests compare the output against the scalar/FIPS accumulator before production dispatch.
-  unsafe {
-    basemul_accumulate_k3_asm(acc, a, b);
-  }
-}
-
-#[cfg(all(test, target_os = "linux"))]
-/// # Safety
-///
-/// Requires the AArch64 Linux ML-KEM assembly backend with Advanced SIMD.
-/// The input references must remain readable and must not overlap the
-/// uniquely borrowed accumulator for the duration of the call.
-pub(super) unsafe fn test_basemul_accumulate_k4_asm(acc: &mut Poly, a: &PolyVec<4>, b: &PolyVec<4>) {
-  // SAFETY: test-only direct access to the K=4 dot-product assembly entry point because:
-  // 1. `acc`, `a`, and `b` are fixed-size ML-KEM polynomial arrays.
-  // 2. This module is compiled only on aarch64 Linux/macOS targets with the assembly backend.
-  // 3. Tests compare the output against the scalar/FIPS accumulator before production dispatch.
-  unsafe {
-    basemul_accumulate_k4_asm(acc, a, b);
-  }
-}
-
-#[cfg(all(test, target_os = "linux"))]
-/// # Safety
-///
-/// Requires the AArch64 Linux ML-KEM assembly backend. `coeff_offset` must be
-/// a multiple of `SAMPLE_NTT_ACC_CHUNK_COEFFS` and at most
-/// `N - SAMPLE_NTT_ACC_CHUNK_COEFFS`. The input references must not overlap `acc`.
-pub(super) unsafe fn test_basemul_accumulate_chunk_asm(
-  acc: &mut Poly,
-  a: &[u16; SAMPLE_NTT_ACC_CHUNK_COEFFS],
-  b: &Poly,
-  coeff_offset: usize,
-) {
-  debug_assert_eq!(coeff_offset % SAMPLE_NTT_ACC_CHUNK_COEFFS, 0);
-  debug_assert!(coeff_offset.strict_add(SAMPLE_NTT_ACC_CHUNK_COEFFS) <= acc.len());
-  let gamma_offset = coeff_offset / 2;
-
-  // SAFETY: test-only direct access to the chunk base-multiply assembly entry point because:
-  // 1. `a` contains exactly one 16-coefficient SampleNTT chunk.
-  // 2. `coeff_offset` is checked to keep all `acc`, `b`, and `GAMMAS_MONT` accesses in bounds.
-  // 3. Tests compare the output against the scalar/FIPS chunk accumulator before the symbol is
-  //    considered for production dispatch.
-  // 4. The assembly memory schedule is fixed for one public 16-coefficient chunk.
-  unsafe {
-    rscrypto_mlkem_basemul_accumulate_chunk_aarch64_linux(
-      acc.as_mut_ptr().add(coeff_offset),
-      a.as_ptr(),
-      b.as_ptr().add(coeff_offset),
-      GAMMAS_MONT.as_ptr().add(gamma_offset),
-    );
   }
 }

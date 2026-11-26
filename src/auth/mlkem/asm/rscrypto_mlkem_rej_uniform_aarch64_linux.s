@@ -16,12 +16,6 @@
 // Returns:
 //   x0: accepted candidate count, capped at x2
 //
-// Three-block ABI:
-//   x0: uint16_t out[256] write-only accepted candidates
-//   x1: const uint8_t input[3 * 168] read-only contiguous SHAKE128 rate blocks
-// Returns:
-//   x0: accepted candidate count, capped at 256
-//
 // Triple-block ABI:
 //   x0: uint16_t out0[112] write-only accepted candidates
 //   x1: const uint8_t input0[168] read-only SHAKE128 rate block
@@ -270,37 +264,6 @@ rscrypto_mlkem_rej_uniform_block_bounded_aarch64_linux:
         mov     x0, x9
         ret
 .size rscrypto_mlkem_rej_uniform_block_bounded_aarch64_linux, .-rscrypto_mlkem_rej_uniform_block_bounded_aarch64_linux
-
-.globl rscrypto_mlkem_rej_uniform_3blocks_aarch64_linux
-.type rscrypto_mlkem_rej_uniform_3blocks_aarch64_linux, %function
-.hidden rscrypto_mlkem_rej_uniform_3blocks_aarch64_linux
-rscrypto_mlkem_rej_uniform_3blocks_aarch64_linux:
-        mov     x9, #0
-        mov     x2, #256
-        mov     x13, x1
-        SAMPLE_NTT_SETUP_CONSTANTS
-
-        mov     w14, #6
-.Lsample_ntt_3blocks_full_loop:
-        SAMPLE_NTT_DECODE_COMPACT_32 x13
-        subs    w14, w14, #1
-        b.ne    .Lsample_ntt_3blocks_full_loop
-
-        SAMPLE_NTT_DECODE_COMPACT_16 x13
-        SAMPLE_NTT_DECODE_COMPACT_16 x13
-
-        mov     w14, #3
-.Lsample_ntt_3blocks_tail_loop:
-        SAMPLE_NTT_DECODE_COMPACT_32_BOUNDED x13, .Lsample_ntt_3blocks_done
-        subs    w14, w14, #1
-        b.ne    .Lsample_ntt_3blocks_tail_loop
-
-        SAMPLE_NTT_DECODE_COMPACT_16_BOUNDED x13, .Lsample_ntt_3blocks_done
-
-.Lsample_ntt_3blocks_done:
-        mov     x0, x9
-        ret
-.size rscrypto_mlkem_rej_uniform_3blocks_aarch64_linux, .-rscrypto_mlkem_rej_uniform_3blocks_aarch64_linux
 
 .globl rscrypto_mlkem_rej_uniform_triple_block_aarch64_linux
 .type rscrypto_mlkem_rej_uniform_triple_block_aarch64_linux, %function

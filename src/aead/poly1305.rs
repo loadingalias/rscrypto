@@ -19,9 +19,6 @@ use crate::backend::poly1305::{FULL_BLOCK_HIBIT, LIMB_MASK, load_u32_le};
 #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
 const RISCV64_PAR4_MIN: u64 = 4096;
 
-#[cfg(test)]
-type ComputeBlockFn = fn(&mut State, &[u8; 16], bool);
-
 #[cfg(any(
   all(target_arch = "powerpc64", not(feature = "portable-only"), target_endian = "little"),
   all(target_arch = "riscv64", not(feature = "portable-only")),
@@ -908,23 +905,6 @@ unsafe fn compute_block_wasm_simd128(state: &mut State, block: &[u8; 16], partia
 }
 
 impl State {
-  #[cfg(test)]
-  fn update_message(&mut self, message: &[u8], compute_block: ComputeBlockFn) {
-    let (blocks, remainder) = message.as_chunks::<16>();
-    for block in blocks {
-      compute_block(self, block, false);
-    }
-
-    if remainder.is_empty() {
-      return;
-    }
-
-    let mut block = [0u8; 16];
-    block[..remainder.len()].copy_from_slice(remainder);
-    block[remainder.len()] = 1;
-    compute_block(self, &block, true);
-  }
-
   fn update_padded_segment(&mut self, segment: &[u8], compute_block: impl Fn(&mut Self, &[u8; 16], bool)) {
     let (blocks, remainder) = segment.as_chunks::<16>();
     for block in blocks {
@@ -939,14 +919,6 @@ impl State {
     block[..remainder.len()].copy_from_slice(remainder);
     compute_block(self, &block, false);
   }
-}
-
-#[cfg(test)]
-#[must_use]
-pub(crate) fn authenticate(message: &[u8], key: &[u8; 32]) -> [u8; 16] {
-  let mut state = State::new(key);
-  state.update_message(message, State::compute_block_portable);
-  state.tag()
 }
 
 pub(crate) fn authenticate_aead(primitive: AeadPrimitive, aad: &[u8], ciphertext: &[u8], key: &[u8; 32]) -> [u8; 16] {
@@ -1084,7 +1056,6 @@ mod x86_avx512;
 mod tests {
   use alloc::vec::Vec;
 
-  use super::authenticate;
   #[cfg(any(
     all(target_arch = "x86_64", target_feature = "sse2"),
     target_arch = "aarch64",
@@ -1131,20 +1102,6 @@ mod tests {
         byte
       })
       .collect()
-  }
-
-  #[test]
-  fn poly1305_matches_rfc_8439_section_2_5_2() {
-    let key = [
-      0x85, 0xd6, 0xbe, 0x78, 0x57, 0x55, 0x6d, 0x33, 0x7f, 0x44, 0x52, 0xfe, 0x42, 0xd5, 0x06, 0xa8, 0x01, 0x03, 0x80,
-      0x8a, 0xfb, 0x0d, 0xb2, 0xfd, 0x4a, 0xbf, 0xf6, 0xaf, 0x41, 0x49, 0xf5, 0x1b,
-    ];
-    let message = b"Cryptographic Forum Research Group";
-    let expected = [
-      0xa8, 0x06, 0x1d, 0xc1, 0x30, 0x51, 0x36, 0xc6, 0xc2, 0x2b, 0x8b, 0xaf, 0x0c, 0x01, 0x27, 0xa9,
-    ];
-
-    assert_eq!(authenticate(message, &key), expected);
   }
 
   #[test]

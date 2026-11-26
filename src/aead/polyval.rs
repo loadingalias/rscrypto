@@ -22,11 +22,6 @@ pub(crate) const BLOCK_SIZE: usize = 16;
 #[cfg(feature = "aes-gcm-siv")]
 pub(crate) const KEY_SIZE: usize = 16;
 
-/// POLYVAL reduction polynomial (without x^128):
-/// x^127 + x^126 + x^121 + 1
-#[cfg(test)]
-const POLY: u128 = (1u128 << 127) | (1u128 << 126) | (1u128 << 121) | 1;
-
 #[inline(always)]
 fn split_u128_le(value: u128) -> (u64, u64) {
   let [
@@ -2025,79 +2020,6 @@ pub(super) fn precompute_powers_chained<const N: usize>(h: u128) -> [u128; N] {
   powers
 }
 
-/// Precompute hash key powers [H, H^2, ..., H^8] for 8-block GHASH windows.
-#[cfg(all(test, target_arch = "aarch64", feature = "aes-gcm"))]
-pub(super) fn precompute_powers_8(h: u128) -> [u128; 8] {
-  let h2 = clmul128_reduce(h, h);
-  let h3 = clmul128_reduce(h2, h);
-  let h4 = clmul128_reduce(h3, h);
-  let h5 = clmul128_reduce(h4, h);
-  let h6 = clmul128_reduce(h5, h);
-  let h7 = clmul128_reduce(h6, h);
-  let h8 = clmul128_reduce(h7, h);
-  [h, h2, h3, h4, h5, h6, h7, h8]
-}
-
-/// Precompute hash key powers [H, H^2, ..., H^16] for 16-block GHASH/POLYVAL windows.
-#[cfg(test)]
-pub(super) fn precompute_powers_16(h: u128) -> [u128; 16] {
-  let mut powers = [0u128; 16];
-  powers[0] = h;
-
-  let mut i = 1usize;
-  while i < powers.len() {
-    powers[i] = clmul128_reduce(powers[i.strict_sub(1)], h);
-    i = i.strict_add(1);
-  }
-
-  powers
-}
-
-/// Precompute hash key powers [H, H^2, ..., H^32] for 32-block GHASH windows.
-#[cfg(test)]
-pub(super) fn precompute_powers_32(h: u128) -> [u128; 32] {
-  let mut powers = [0u128; 32];
-  powers[0] = h;
-
-  let mut i = 1usize;
-  while i < powers.len() {
-    powers[i] = clmul128_reduce(powers[i.strict_sub(1)], h);
-    i = i.strict_add(1);
-  }
-
-  powers
-}
-
-/// Precompute hash key powers [H, H^2, ..., H^64] for 64-block GHASH windows.
-#[cfg(test)]
-pub(super) fn precompute_powers_64(h: u128) -> [u128; 64] {
-  let mut powers = [0u128; 64];
-  powers[0] = h;
-
-  let mut i = 1usize;
-  while i < powers.len() {
-    powers[i] = clmul128_reduce(powers[i.strict_sub(1)], h);
-    i = i.strict_add(1);
-  }
-
-  powers
-}
-
-/// Precompute hash key powers [H, H^2, ..., H^128] for 128-block GHASH windows.
-#[cfg(test)]
-pub(super) fn precompute_powers_128(h: u128) -> [u128; 128] {
-  let mut powers = [0u128; 128];
-  powers[0] = h;
-
-  let mut i = 1usize;
-  while i < powers.len() {
-    powers[i] = clmul128_reduce(powers[i.strict_sub(1)], h);
-    i = i.strict_add(1);
-  }
-
-  powers
-}
-
 /// Pack eight pairs of GHASH powers as 16 interleaved low/high words followed
 /// by eight paired middle words. Each middle half is `lo64 ^ hi64`.
 #[cfg(all(
@@ -3059,6 +2981,8 @@ mod tests {
   /// in the low half gives x^128 * x^{-128} = 1.
   #[test]
   fn mont_reduce_of_poly() {
+    /// POLYVAL reduction polynomial without x^128: x^127 + x^126 + x^121 + 1.
+    const POLY: u128 = (1u128 << 127) | (1u128 << 126) | (1u128 << 121) | 1;
     let (poly_lo, poly_hi) = split_u128_le(POLY);
     let v = [poly_lo, poly_hi, 0u64, 0u64];
     let result = mont_reduce(v);
@@ -3074,78 +2998,6 @@ mod tests {
     assert_eq!(powers[1], clmul128_reduce(h, h), "powers[1] should be H^2");
     assert_eq!(powers[2], clmul128_reduce(powers[1], h), "powers[2] should be H^3");
     assert_eq!(powers[3], clmul128_reduce(powers[2], h), "powers[3] should be H^4");
-  }
-
-  /// Verify precompute_powers_16 extends the same power chain to H^16.
-  #[test]
-  fn precompute_powers_16_correct() {
-    let h = u128::from_le_bytes(RFC_H);
-    let powers = precompute_powers_16(h);
-    assert_eq!(powers[0], h, "powers[0] should be H");
-
-    let mut i = 1usize;
-    while i < powers.len() {
-      assert_eq!(
-        powers[i],
-        clmul128_reduce(powers[i.strict_sub(1)], h),
-        "powers[{i}] should extend the H power chain"
-      );
-      i = i.strict_add(1);
-    }
-  }
-
-  /// Verify precompute_powers_32 extends the same power chain to H^32.
-  #[test]
-  fn precompute_powers_32_correct() {
-    let h = u128::from_le_bytes(RFC_H);
-    let powers = precompute_powers_32(h);
-    assert_eq!(powers[0], h, "powers[0] should be H");
-
-    let mut i = 1usize;
-    while i < powers.len() {
-      assert_eq!(
-        powers[i],
-        clmul128_reduce(powers[i.strict_sub(1)], h),
-        "powers[{i}] should extend the H power chain"
-      );
-      i = i.strict_add(1);
-    }
-  }
-
-  /// Verify precompute_powers_64 extends the same power chain to H^64.
-  #[test]
-  fn precompute_powers_64_correct() {
-    let h = u128::from_le_bytes(RFC_H);
-    let powers = precompute_powers_64(h);
-    assert_eq!(powers[0], h, "powers[0] should be H");
-
-    let mut i = 1usize;
-    while i < powers.len() {
-      assert_eq!(
-        powers[i],
-        clmul128_reduce(powers[i.strict_sub(1)], h),
-        "powers[{i}] should extend the H power chain"
-      );
-      i = i.strict_add(1);
-    }
-  }
-
-  /// Verify precompute_powers_128 extends the same power chain to H^128.
-  #[test]
-  fn precompute_powers_128_correct() {
-    let h = u128::from_le_bytes(RFC_H);
-    let powers = precompute_powers_128(h);
-    assert_eq!(powers[0], h, "powers[0] should be H");
-
-    let mut i = 1usize;
-    while i < powers.len() {
-      assert_eq!(
-        powers[i],
-        clmul128_reduce(powers[i.strict_sub(1)], h),
-        "powers[{i}] should extend the H power chain"
-      );
-      i = i.strict_add(1);
-    }
   }
 
   /// The eight-chain powers equal a serial power chain built with the portable multiply, and
@@ -3259,7 +3111,10 @@ mod tests {
       return;
     }
     let h = u128::from_le_bytes(RFC_H);
-    let powers = precompute_powers_16(h);
+    let mut powers = [h; 16];
+    for i in 1..16 {
+      powers[i] = clmul128_reduce(powers[i - 1], h);
+    }
     let h_powers_rev = [powers[3], powers[2], powers[1], powers[0]];
     let h_powers_rev_16 = core::array::from_fn(|i| powers[15usize.strict_sub(i)]);
     let acc = 0x1122_3344_5566_7788_99aa_bbcc_ddee_ff00u128;

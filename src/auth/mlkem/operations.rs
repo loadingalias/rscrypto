@@ -45,8 +45,6 @@ use core::arch::x86_64::{
   _mm256_srai_epi32, _mm256_srli_epi32, _mm256_sub_epi16, _mm256_sub_epi32,
 };
 
-#[cfg(test)]
-use crate::hashes::crypto::Shake256;
 use crate::{
   auth::mlkem::MlKemError,
   hashes::crypto::{Sha3_256, Shake128, Shake128XofReader, keccak::secret},
@@ -78,18 +76,12 @@ const Q_I16: i16 = Q.cast_signed();
 ))]
 const Q_I32: i32 = Q as i32;
 const Q_HALF: u32 = Q_U32 / 2;
-#[cfg(test)]
-const Q_DIV_SHIFT: u32 = 36;
-#[cfg(test)]
-const Q_DIV_RECIP: u64 = 20_642_679;
 #[cfg(any(test, not(target_arch = "s390x")))]
 const Q_COMPRESS_DIV_SHIFT: i32 = 33;
 #[cfg(any(test, not(target_arch = "s390x")))]
 const Q_COMPRESS_DIV_RECIP: u32 = 2_580_335;
 const Q_MONT_INV_U16: u16 = 62_209;
 const MONT_R_SQUARED_MOD_Q: i16 = 1353;
-#[cfg(test)]
-const INV_NTT_SCALE_MONT: i16 = 512;
 const INV_NTT_PRODUCT_SCALE_MONT: i16 = 1441;
 
 const SEED_BYTES: usize = 32;
@@ -97,10 +89,6 @@ const HASH_BYTES: usize = 32;
 const SHARED_SECRET_BYTES: usize = 32;
 const POLY_BYTES: usize = 384;
 const SHAKE128_RATE_BYTES: usize = 168;
-#[cfg(test)]
-const SAMPLE_NTT_INITIAL_BLOCKS: usize = 3;
-#[cfg(test)]
-const SAMPLE_NTT_INITIAL_BYTES: usize = SHAKE128_RATE_BYTES * SAMPLE_NTT_INITIAL_BLOCKS;
 const ETA2_RANDOM_BYTES: usize = 128;
 const ETA3_RANDOM_BYTES: usize = 192;
 const SAMPLE_NTT_ACC_CHUNK_COEFFS: usize = 16;
@@ -127,23 +115,6 @@ fn low_u32(value: u64) -> u32 {
   u32::from_le_bytes([b0, b1, b2, b3])
 }
 
-#[cfg(test)]
-#[inline]
-fn test_low_byte(value: usize) -> u8 {
-  value.to_le_bytes()[0]
-}
-
-#[cfg(test)]
-#[inline]
-fn test_u8(value: usize) -> u8 {
-  u8::try_from(value).expect("test value fits in u8")
-}
-
-#[cfg(test)]
-#[inline]
-fn test_u16(value: usize) -> u16 {
-  u16::try_from(value).expect("test value fits in u16")
-}
 #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 type PolyMulCache = [u16; N / 2];
 #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
@@ -152,8 +123,6 @@ type PolyVecMulCache<const K: usize> = [PolyMulCache; K];
 #[derive(Clone)]
 pub(super) struct PreparedEncapsulationArithmetic<const K: usize> {
   t_hat: PolyVec<K>,
-  #[cfg(test)]
-  rho: [u8; SEED_BYTES],
   a_transpose_hat: PolyMatrix<K>,
 }
 
@@ -169,8 +138,6 @@ impl<const K: usize> PreparedEncapsulationArithmetic<K> {
   pub(super) const fn zeroed() -> Self {
     Self {
       t_hat: [[0; N]; K],
-      #[cfg(test)]
-      rho: [0; SEED_BYTES],
       a_transpose_hat: [[[0; N]; K]; K],
     }
   }
@@ -246,17 +213,6 @@ const ZETAS_MONT: [i16; 128] = [
   1653, -246, 778, 1159, -147, -777, 1483, -602, 1119, -1590, 644, -872, 349, 418, 329, -156, -75, 817, 1097, 603, 610,
   1322, -1285, -1465, 384, -1215, -136, 1218, -1335, -874, 220, -1187, -1659, -1185, -1530, -1278, 794, -1510, -854,
   -870, 478, -108, -308, 996, 991, 958, -1460, 1522, 1628,
-];
-
-#[cfg(test)]
-const GAMMAS: [u16; 128] = [
-  17, 3312, 2761, 568, 583, 2746, 2649, 680, 1637, 1692, 723, 2606, 2288, 1041, 1100, 2229, 1409, 1920, 2662, 667,
-  3281, 48, 233, 3096, 756, 2573, 2156, 1173, 3015, 314, 3050, 279, 1703, 1626, 1651, 1678, 2789, 540, 1789, 1540,
-  1847, 1482, 952, 2377, 1461, 1868, 2687, 642, 939, 2390, 2308, 1021, 2437, 892, 2388, 941, 733, 2596, 2337, 992, 268,
-  3061, 641, 2688, 1584, 1745, 2298, 1031, 2037, 1292, 3220, 109, 375, 2954, 2549, 780, 2090, 1239, 1645, 1684, 1063,
-  2266, 319, 3010, 2773, 556, 757, 2572, 2099, 1230, 561, 2768, 2466, 863, 2594, 735, 2804, 525, 1092, 2237, 403, 2926,
-  1026, 2303, 1143, 2186, 2150, 1179, 2775, 554, 886, 2443, 1722, 1607, 1212, 2117, 1874, 1455, 1029, 2300, 2110, 1219,
-  2935, 394, 885, 2444, 2154, 1175,
 ];
 
 const GAMMAS_MONT: [i16; 128] = [
@@ -510,10 +466,6 @@ pub(super) fn prepare_encapsulation_key_into<const K: usize, const EK_BYTES: usi
   rho.copy_from_slice(&ek[rho_start..rho_start.strict_add(SEED_BYTES)]);
 
   prepare_matrix_transpose_into::<K>(&rho, &mut out.a_transpose_hat);
-  #[cfg(test)]
-  {
-    out.rho = rho;
-  }
 }
 
 fn prepare_matrix_transpose_into<const K: usize>(rho: &[u8; SEED_BYTES], a_transpose_hat: &mut PolyMatrix<K>) {
@@ -684,10 +636,6 @@ fn keygen_prepared_expanded_into<
     for (i, poly) in out.encapsulation.t_hat.iter_mut().enumerate() {
       let start = i.strict_mul(POLY_BYTES);
       byte_decode::<12>(&ek[start..start.strict_add(POLY_BYTES)], poly);
-    }
-    #[cfg(test)]
-    {
-      out.encapsulation.rho = *rho;
     }
     let (dk_ek, tail) = tail.split_at_mut(EK_BYTES);
     dk_ek.copy_from_slice(ek);
@@ -1610,14 +1558,6 @@ pub(super) unsafe fn diag_s390x_compress_decompress_values_digest(values: [u16; 
   digest
 }
 
-#[cfg(test)]
-fn fill_diag_seed(out: &mut [u8; SEED_BYTES], seed: u8) {
-  for (i, byte) in out.iter_mut().enumerate() {
-    let i = u8::try_from(i).expect("ML-KEM diagnostic seed offset fits in u8");
-    *byte = seed.wrapping_add(i);
-  }
-}
-
 #[cfg(all(rscrypto_internal, feature = "diag"))]
 #[inline(never)]
 fn diag_fold_poly(poly: &Poly) -> u16 {
@@ -2002,21 +1942,6 @@ fn pke_decrypt_prepared<
   message
 }
 
-#[cfg(test)]
-fn sample_ntt(rho: &[u8; SEED_BYTES], j: u8, i: u8) -> Poly {
-  let mut out = [0u16; N];
-  sample_ntt_into(rho, j, i, &mut out);
-  out
-}
-
-#[cfg(test)]
-fn sample_ntt_pair(rho: &[u8; SEED_BYTES], j0: u8, i0: u8, j1: u8, i1: u8) -> (Poly, Poly) {
-  let mut out0 = [0u16; N];
-  let mut out1 = [0u16; N];
-  sample_ntt_pair_into(rho, j0, i0, j1, i1, &mut out0, &mut out1);
-  (out0, out1)
-}
-
 #[inline(always)]
 fn sample_ntt_four_materialized_into(rho: &[u8; SEED_BYTES], lanes: [(u8, u8); 4], out: [&mut Poly; 4]) {
   sample_ntt_quad_into(rho, lanes, out);
@@ -2105,32 +2030,6 @@ fn sample_matrix_ntt_mul_accumulate_materialized<const K: usize>(
     sample_ntt_into(rho, j, i, &mut a);
     multiply_ntts_add_assign(&mut acc[dst], &a, &rhs[rhs_index]);
   }
-}
-
-#[cfg(test)]
-#[inline(always)]
-fn sample_matrix_ntt_mul_accumulate_windowed<const K: usize>(
-  rho: &[u8; SEED_BYTES],
-  rhs: &PolyVec<K>,
-  acc: &mut PolyVec<K>,
-  transpose: bool,
-) {
-  if transpose {
-    sample_matrix_ntt_mul_accumulate_materialized::<K>(rho, rhs, acc, true);
-    return;
-  }
-
-  if K == 4 {
-    sample_matrix_ntt_mul_accumulate_windowed_k4(rho, rhs, acc);
-    return;
-  }
-
-  if K == 3 {
-    sample_matrix_ntt_mul_accumulate_windowed_k3(rho, rhs, acc);
-    return;
-  }
-
-  sample_matrix_ntt_mul_accumulate_materialized::<K>(rho, rhs, acc, false);
 }
 
 #[inline(always)]
@@ -2312,55 +2211,6 @@ fn sample_matrix_ntt_materialized_k3_rows_quad(
   sample_ntt_into(rho, 2, 2, &mut row2[2]);
 }
 
-#[cfg(test)]
-#[inline(always)]
-fn sample_matrix_ntt_mul_accumulate_windowed_k3<const K: usize>(
-  rho: &[u8; SEED_BYTES],
-  rhs: &PolyVec<K>,
-  acc: &mut PolyVec<K>,
-) {
-  debug_assert_eq!(K, 3);
-
-  let rhs = polyvec_as_k3(rhs);
-  let mut row = [[0u16; N]; 3];
-  #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
-  let mut rhs_cache = polyvec_mulcache(rhs);
-
-  macro_rules! accumulate_row {
-    ($acc:expr, $row:expr) => {{
-      #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
-      {
-        multiply_ntts_accumulate_cached($acc, $row, rhs, &rhs_cache);
-      }
-      #[cfg(not(all(target_arch = "aarch64", not(miri), not(feature = "portable-only"))))]
-      {
-        multiply_ntts_accumulate($acc, $row, rhs);
-      }
-    }};
-  }
-
-  {
-    let [a0, a1, a2] = polyvec3_mut(&mut row);
-    sample_ntt_triple_into(rho, [(0, 0), (1, 0), (2, 0)], [a0, a1, a2]);
-  }
-  accumulate_row!(&mut acc[0], &row);
-
-  {
-    let [a0, a1, a2] = polyvec3_mut(&mut row);
-    sample_ntt_triple_into(rho, [(0, 1), (1, 1), (2, 1)], [a0, a1, a2]);
-  }
-  accumulate_row!(&mut acc[1], &row);
-
-  {
-    let [a0, a1, a2] = polyvec3_mut(&mut row);
-    sample_ntt_triple_into(rho, [(0, 2), (1, 2), (2, 2)], [a0, a1, a2]);
-  }
-  accumulate_row!(&mut acc[2], &row);
-
-  #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
-  zeroize_polyvec_mulcache(&mut rhs_cache);
-}
-
 #[inline(always)]
 fn sample_matrix_ntt_mul_accumulate_materialized_k3_transpose<const K: usize>(
   rho: &[u8; SEED_BYTES],
@@ -2533,69 +2383,6 @@ fn sample_matrix_ntt_mul_accumulate_materialized_k4<const K: usize>(
     multiply_ntts_accumulate(&mut acc[2], &row2, rhs);
     multiply_ntts_accumulate(&mut acc[3], &row3, rhs);
   }
-
-  #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
-  zeroize_polyvec_mulcache(&mut rhs_cache);
-}
-
-#[cfg(test)]
-#[inline(always)]
-fn sample_matrix_ntt_mul_accumulate_windowed_k4<const K: usize>(
-  rho: &[u8; SEED_BYTES],
-  rhs: &PolyVec<K>,
-  acc: &mut PolyVec<K>,
-) {
-  debug_assert_eq!(K, 4);
-
-  let rhs = polyvec_as_k4(rhs);
-  let mut row_a = [[0u16; N]; 4];
-  let mut row_b = [[0u16; N]; 4];
-  #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
-  let mut rhs_cache = polyvec_mulcache(rhs);
-
-  macro_rules! accumulate_row {
-    ($acc:expr, $row:expr) => {{
-      #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
-      {
-        multiply_ntts_accumulate_cached($acc, $row, rhs, &rhs_cache);
-      }
-      #[cfg(not(all(target_arch = "aarch64", not(miri), not(feature = "portable-only"))))]
-      {
-        multiply_ntts_accumulate($acc, $row, rhs);
-      }
-    }};
-  }
-
-  {
-    let [a0, a1, a2, _] = polyvec4_mut(&mut row_a);
-    sample_ntt_triple_into(rho, [(0, 0), (1, 0), (2, 0)], [a0, a1, a2]);
-  }
-  {
-    let [_, _, _, a0] = polyvec4_mut(&mut row_a);
-    let [a1, a2, _, _] = polyvec4_mut(&mut row_b);
-    sample_ntt_triple_into(rho, [(3, 0), (0, 1), (1, 1)], [a0, a1, a2]);
-  }
-  accumulate_row!(&mut acc[0], &row_a);
-
-  {
-    let [_, _, a0, a1] = polyvec4_mut(&mut row_b);
-    let [a2, _, _, _] = polyvec4_mut(&mut row_a);
-    sample_ntt_triple_into(rho, [(2, 1), (3, 1), (0, 2)], [a0, a1, a2]);
-  }
-  accumulate_row!(&mut acc[1], &row_b);
-
-  {
-    let [_, a0, a1, a2] = polyvec4_mut(&mut row_a);
-    sample_ntt_triple_into(rho, [(1, 2), (2, 2), (3, 2)], [a0, a1, a2]);
-  }
-  accumulate_row!(&mut acc[2], &row_a);
-
-  {
-    let [a0, a1, a2, _] = polyvec4_mut(&mut row_b);
-    sample_ntt_triple_into(rho, [(0, 3), (1, 3), (2, 3)], [a0, a1, a2]);
-  }
-  sample_ntt_into(rho, 3, 3, &mut row_b[3]);
-  accumulate_row!(&mut acc[3], &row_b);
 
   #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
   zeroize_polyvec_mulcache(&mut rhs_cache);
@@ -2871,333 +2658,6 @@ fn sample_ntt_quad_mul_accumulate(rho: &[u8; SEED_BYTES], lanes: [(u8, u8, &Poly
     [lanes[0].2, lanes[1].2, lanes[2].2, lanes[3].2],
     acc,
   );
-}
-
-#[inline]
-#[cfg(test)]
-fn sample_ntt_input(rho: &[u8; SEED_BYTES], j: u8, i: u8) -> [u8; SEED_BYTES + 2] {
-  let mut input = [0u8; SEED_BYTES + 2];
-  input[..SEED_BYTES].copy_from_slice(rho);
-  input[SEED_BYTES] = j;
-  input[SEED_BYTES.strict_add(1)] = i;
-  input
-}
-
-#[cfg(test)]
-fn sample_ntt_initial_3blocks_into(rho: &[u8; SEED_BYTES], j: u8, i: u8, out: &mut Poly) -> usize {
-  let mut reader = Shake128::xof_seeded_32_2(rho, j, i);
-  let mut buf = [0u8; SAMPLE_NTT_INITIAL_BYTES];
-  squeeze_sample_ntt_initial_blocks(&mut reader, &mut buf);
-
-  let mut filled = 0usize;
-  sample_ntt_initial_3blocks_public(&buf, out, &mut filled);
-  filled
-}
-
-#[cfg(test)]
-fn sample_ntt_initial_3blocks_then_tail_into(rho: &[u8; SEED_BYTES], j: u8, i: u8, out: &mut Poly) -> u16 {
-  let mut reader = Shake128::xof_seeded_32_2(rho, j, i);
-  let mut buf = [0u8; SAMPLE_NTT_INITIAL_BYTES];
-  squeeze_sample_ntt_initial_blocks(&mut reader, &mut buf);
-
-  let mut filled = 0usize;
-  sample_ntt_initial_3blocks_public(&buf, out, &mut filled);
-
-  let mut blocks = u16::try_from(SAMPLE_NTT_INITIAL_BLOCKS).expect("initial ML-KEM sample block count fits in u16");
-  let mut tail = [0u8; SHAKE128_RATE_BYTES];
-  while filled < N {
-    reader.squeeze(&mut tail);
-    blocks = blocks.wrapping_add(1);
-    sample_ntt_block_public(&tail, out, &mut filled);
-  }
-  blocks
-}
-
-#[cfg(test)]
-fn squeeze_sample_ntt_initial_blocks(reader: &mut impl Xof, out: &mut [u8; SAMPLE_NTT_INITIAL_BYTES]) {
-  for block in 0..SAMPLE_NTT_INITIAL_BLOCKS {
-    let start = block.strict_mul(SHAKE128_RATE_BYTES);
-    let end = start.strict_add(SHAKE128_RATE_BYTES);
-    reader.squeeze(&mut out[start..end]);
-  }
-}
-
-#[cfg(test)]
-fn sample_ntt_triple_first3_into(rho: &[u8; SEED_BYTES], lanes: [(u8, u8); 3], out: [&mut Poly; 3]) {
-  let (mut reader0, mut reader1, mut reader2) = Shake128::xof_seeded_32_2_triple(rho, lanes[0], lanes[1], lanes[2]);
-  let [out0, out1, out2] = out;
-  let mut filled = [0usize; 3];
-
-  for _ in 0..SAMPLE_NTT_INITIAL_BLOCKS {
-    debug_assert!(filled[0] < N && filled[1] < N && filled[2] < N);
-
-    #[cfg(all(
-      target_arch = "aarch64",
-      target_endian = "little",
-      not(miri),
-      not(feature = "portable-only")
-    ))]
-    {
-      Shake128XofReader::with_triple_rate_block(&mut reader0, &mut reader1, &mut reader2, |state0, state1, state2| {
-        sample_ntt_triple_state_block(
-          [state0, state1, state2],
-          [&mut *out0, &mut *out1, &mut *out2],
-          &mut filled,
-        );
-      });
-    }
-
-    #[cfg(not(all(
-      target_arch = "aarch64",
-      target_endian = "little",
-      not(miri),
-      not(feature = "portable-only")
-    )))]
-    {
-      let mut buf0 = [0u8; SHAKE128_RATE_BYTES];
-      let mut buf1 = [0u8; SHAKE128_RATE_BYTES];
-      let mut buf2 = [0u8; SHAKE128_RATE_BYTES];
-      Shake128XofReader::squeeze_triple(
-        &mut reader0,
-        &mut reader1,
-        &mut reader2,
-        &mut buf0,
-        &mut buf1,
-        &mut buf2,
-      );
-      sample_ntt_block_public(&buf0, out0, &mut filled[0]);
-      sample_ntt_block_public(&buf1, out1, &mut filled[1]);
-      sample_ntt_block_public(&buf2, out2, &mut filled[2]);
-    }
-  }
-
-  let mut tail = [0u8; SHAKE128_RATE_BYTES];
-  while filled[0] < N {
-    reader0.squeeze(&mut tail);
-    sample_ntt_block_public(&tail, out0, &mut filled[0]);
-  }
-  while filled[1] < N {
-    reader1.squeeze(&mut tail);
-    sample_ntt_block_public(&tail, out1, &mut filled[1]);
-  }
-  while filled[2] < N {
-    reader2.squeeze(&mut tail);
-    sample_ntt_block_public(&tail, out2, &mut filled[2]);
-  }
-}
-
-#[cfg(test)]
-fn sample_ntt_triple_initial_3blocks_into(rho: &[u8; SEED_BYTES], lanes: [(u8, u8); 3], out: [&mut Poly; 3]) {
-  let _ = sample_ntt_triple_initial_3blocks_then_tail_into(rho, lanes, out);
-}
-
-#[cfg(test)]
-fn sample_ntt_triple_initial_3blocks_then_tail_into(
-  rho: &[u8; SEED_BYTES],
-  lanes: [(u8, u8); 3],
-  out: [&mut Poly; 3],
-) -> [u16; 3] {
-  let (mut reader0, mut reader1, mut reader2) = Shake128::xof_seeded_32_2_triple(rho, lanes[0], lanes[1], lanes[2]);
-  let mut initial = [[0u8; SAMPLE_NTT_INITIAL_BYTES]; 3];
-
-  for block in 0..SAMPLE_NTT_INITIAL_BLOCKS {
-    let start = block.strict_mul(SHAKE128_RATE_BYTES);
-    let end = start.strict_add(SHAKE128_RATE_BYTES);
-
-    #[cfg(all(
-      target_arch = "aarch64",
-      target_endian = "little",
-      not(miri),
-      not(feature = "portable-only")
-    ))]
-    {
-      Shake128XofReader::with_triple_rate_block(&mut reader0, &mut reader1, &mut reader2, |state0, state1, state2| {
-        copy_keccak_rate_block(state0, &mut initial[0][start..end]);
-        copy_keccak_rate_block(state1, &mut initial[1][start..end]);
-        copy_keccak_rate_block(state2, &mut initial[2][start..end]);
-      });
-    }
-
-    #[cfg(not(all(
-      target_arch = "aarch64",
-      target_endian = "little",
-      not(miri),
-      not(feature = "portable-only")
-    )))]
-    {
-      let [buf0, buf1, buf2] = &mut initial;
-      Shake128XofReader::squeeze_triple(
-        &mut reader0,
-        &mut reader1,
-        &mut reader2,
-        &mut buf0[start..end],
-        &mut buf1[start..end],
-        &mut buf2[start..end],
-      );
-    }
-  }
-
-  let [out0, out1, out2] = out;
-  let mut filled = [0usize; 3];
-  sample_ntt_initial_3blocks_public(&initial[0], out0, &mut filled[0]);
-  sample_ntt_initial_3blocks_public(&initial[1], out1, &mut filled[1]);
-  sample_ntt_initial_3blocks_public(&initial[2], out2, &mut filled[2]);
-
-  let initial_blocks = u16::try_from(SAMPLE_NTT_INITIAL_BLOCKS).expect("initial ML-KEM sample block count fits in u16");
-  let mut blocks = [initial_blocks; 3];
-  let mut tail = [[0u8; SHAKE128_RATE_BYTES]; 3];
-
-  while filled[0] < N && filled[1] < N && filled[2] < N {
-    #[cfg(all(
-      target_arch = "aarch64",
-      target_endian = "little",
-      not(miri),
-      not(feature = "portable-only")
-    ))]
-    {
-      Shake128XofReader::with_triple_rate_block(&mut reader0, &mut reader1, &mut reader2, |state0, state1, state2| {
-        sample_ntt_triple_state_block(
-          [state0, state1, state2],
-          [&mut *out0, &mut *out1, &mut *out2],
-          &mut filled,
-        );
-      });
-    }
-
-    #[cfg(not(all(
-      target_arch = "aarch64",
-      target_endian = "little",
-      not(miri),
-      not(feature = "portable-only")
-    )))]
-    {
-      let [buf0, buf1, buf2] = &mut tail;
-      Shake128XofReader::squeeze_triple(&mut reader0, &mut reader1, &mut reader2, buf0, buf1, buf2);
-      sample_ntt_block_public(&tail[0], out0, &mut filled[0]);
-      sample_ntt_block_public(&tail[1], out1, &mut filled[1]);
-      sample_ntt_block_public(&tail[2], out2, &mut filled[2]);
-    }
-
-    blocks[0] = blocks[0].wrapping_add(1);
-    blocks[1] = blocks[1].wrapping_add(1);
-    blocks[2] = blocks[2].wrapping_add(1);
-  }
-
-  while filled[0] < N {
-    reader0.squeeze(&mut tail[0]);
-    blocks[0] = blocks[0].wrapping_add(1);
-    sample_ntt_block_public(&tail[0], out0, &mut filled[0]);
-  }
-  while filled[1] < N {
-    reader1.squeeze(&mut tail[1]);
-    blocks[1] = blocks[1].wrapping_add(1);
-    sample_ntt_block_public(&tail[1], out1, &mut filled[1]);
-  }
-  while filled[2] < N {
-    reader2.squeeze(&mut tail[2]);
-    blocks[2] = blocks[2].wrapping_add(1);
-    sample_ntt_block_public(&tail[2], out2, &mut filled[2]);
-  }
-
-  blocks
-}
-
-#[cfg(all(
-  test,
-  target_arch = "aarch64",
-  target_endian = "little",
-  not(miri),
-  not(feature = "portable-only")
-))]
-#[inline(always)]
-fn copy_keccak_rate_block(state: &[u64; 25], out: &mut [u8]) {
-  debug_assert_eq!(out.len(), SHAKE128_RATE_BYTES);
-  // SAFETY: little-endian Keccak state prefix copy because:
-  // 1. This helper only compiles on little-endian aarch64, so the in-memory `u64` layout matches
-  //    SHAKE byte order for the rate prefix.
-  // 2. A 25-lane Keccak state contains 200 initialized bytes, covering the 168-byte SHAKE128 rate.
-  // 3. `out` is an initialized mutable slice of exactly one SHAKE128 rate block.
-  unsafe {
-    core::ptr::copy_nonoverlapping(state.as_ptr().cast::<u8>(), out.as_mut_ptr(), SHAKE128_RATE_BYTES);
-  }
-}
-
-#[cfg(test)]
-fn sample_ntt_initial_3blocks_public(buf: &[u8; SAMPLE_NTT_INITIAL_BYTES], out: &mut Poly, filled: &mut usize) {
-  #[cfg(all(
-    target_arch = "aarch64",
-    target_os = "linux",
-    not(miri),
-    not(feature = "portable-only")
-  ))]
-  {
-    if *filled == 0 {
-      // SAFETY: aarch64 initial-three-block parser because:
-      // 1. `buf` is exactly three contiguous SHAKE128 rate blocks.
-      // 2. `out` is one full 256-coefficient ML-KEM polynomial and `filled == 0`.
-      // 3. The assembly caps writes at `N` accepted coefficients.
-      // 4. Rejection branches and write positions depend only on public matrix-A XOF bytes.
-      unsafe {
-        sample_ntt_initial_3blocks_asm(buf, out, filled);
-      }
-      return;
-    }
-  }
-
-  sample_ntt_initial_3blocks_scalar(buf, out, filled);
-}
-
-#[cfg(test)]
-#[inline(always)]
-fn sample_ntt_initial_3blocks_scalar(buf: &[u8; SAMPLE_NTT_INITIAL_BYTES], out: &mut Poly, filled: &mut usize) {
-  let mut n = *filled;
-  let mut offset = 0usize;
-  while n < N && offset.strict_add(2) < SAMPLE_NTT_INITIAL_BYTES {
-    let b0 = buf[offset];
-    let b1 = buf[offset.strict_add(1)];
-    let b2 = buf[offset.strict_add(2)];
-    let d1 = u16::from(b0) | (u16::from(b1 & 0x0f) << 8);
-    let d2 = (u16::from(b1) >> 4) | (u16::from(b2) << 4);
-
-    if d1 < Q {
-      out[n] = d1;
-      n = n.strict_add(1);
-      if n == N {
-        break;
-      }
-    }
-    if d2 < Q {
-      out[n] = d2;
-      n = n.strict_add(1);
-    }
-
-    offset = offset.strict_add(3);
-  }
-  *filled = n;
-}
-
-#[cfg(all(
-  test,
-  target_arch = "aarch64",
-  target_os = "linux",
-  not(miri),
-  not(feature = "portable-only")
-))]
-#[target_feature(enable = "neon")]
-/// # Safety
-///
-/// `buf` must contain exactly three contiguous SHAKE128 rate blocks. `out` must be a unique
-/// polynomial destination, and `filled` must be zero on entry. The active CPU must support NEON.
-unsafe fn sample_ntt_initial_3blocks_asm(buf: &[u8; SAMPLE_NTT_INITIAL_BYTES], out: &mut Poly, filled: &mut usize) {
-  debug_assert_eq!(*filled, 0);
-
-  // SAFETY: direct aarch64 three-block parser because:
-  // 1. `buf.as_ptr()` names three contiguous readable rate blocks.
-  // 2. `out.as_mut_ptr()` names writable capacity for the full polynomial.
-  // 3. The assembly returns a count capped at `N`.
-  let accepted = unsafe { aarch64::sample_ntt_rej_uniform_3blocks_asm(out.as_mut_ptr(), buf.as_ptr()) };
-  debug_assert!(accepted <= N);
-  *filled = accepted;
 }
 
 fn sample_ntt_from_xof_into(mut reader: impl Xof, out: &mut Poly) {
@@ -5021,12 +4481,6 @@ fn inverse_ntt_scaled(poly: &mut Poly, final_scale_mont: i16) {
 }
 
 #[inline]
-#[cfg(test)]
-fn inverse_ntt(poly: &mut Poly) {
-  inverse_ntt_scaled(poly, INV_NTT_SCALE_MONT);
-}
-
-#[inline]
 fn inverse_ntt_montgomery_product(poly: &mut Poly) {
   inverse_ntt_scaled(poly, INV_NTT_PRODUCT_SCALE_MONT);
 }
@@ -5121,11 +4575,6 @@ fn inverse_ntt_scalar_with_scale(poly: &mut Poly, final_scale_mont: i16) {
   for coeff in poly {
     *coeff = mul_mont_const_mod(*coeff, final_scale_mont);
   }
-}
-
-#[cfg(test)]
-fn inverse_ntt_scalar(poly: &mut Poly) {
-  inverse_ntt_scalar_with_scale(poly, INV_NTT_SCALE_MONT);
 }
 
 #[cfg(all(
@@ -7114,15 +6563,6 @@ fn base_case_multiply(a0: u16, a1: u16, b0: u16, b1: u16, gamma_mont: i16) -> (u
   (c0, c1)
 }
 
-#[cfg(test)]
-fn base_case_multiply_normal_reference(a0: u16, a1: u16, b0: u16, b1: u16, gamma: u16) -> (u16, u16) {
-  let a0b0 = mul_mod(a0, b0);
-  let a1b1_gamma = mul_mod(mul_mod(a1, b1), gamma);
-  let c0 = add_mod(a0b0, a1b1_gamma);
-  let c1 = add_mod(mul_mod(a0, b1), mul_mod(a1, b0));
-  (c0, c1)
-}
-
 #[cfg(any(
   test,
   all(rscrypto_internal, feature = "diag"),
@@ -7208,54 +6648,6 @@ fn poly_from_montgomery_product_domain_scalar(poly: &mut Poly) {
 fn poly_add_assign(lhs: &mut Poly, rhs: &Poly) {
   for i in 0..N {
     lhs[i] = add_mod(lhs[i], rhs[i]);
-  }
-}
-
-#[cfg(test)]
-fn compress_poly<const D: usize>(input: &Poly, out: &mut Poly) {
-  for i in (0..N).step_by(4) {
-    let values = compress_values_4::<D>([
-      input[i],
-      input[i.strict_add(1)],
-      input[i.strict_add(2)],
-      input[i.strict_add(3)],
-    ]);
-    out[i] = values[0];
-    out[i.strict_add(1)] = values[1];
-    out[i.strict_add(2)] = values[2];
-    out[i.strict_add(3)] = values[3];
-  }
-}
-
-#[cfg(test)]
-fn decompress_poly<const D: usize>(input: &Poly, out: &mut Poly) {
-  for i in (0..N).step_by(4) {
-    let values = decompress_values_4::<D>([
-      input[i],
-      input[i.strict_add(1)],
-      input[i.strict_add(2)],
-      input[i.strict_add(3)],
-    ]);
-    out[i] = values[0];
-    out[i.strict_add(1)] = values[1];
-    out[i.strict_add(2)] = values[2];
-    out[i.strict_add(3)] = values[3];
-  }
-}
-
-#[cfg(test)]
-fn decompress_poly_add_assign<const D: usize>(input: &Poly, out: &mut Poly) {
-  for i in (0..N).step_by(4) {
-    let values = decompress_values_4::<D>([
-      input[i],
-      input[i.strict_add(1)],
-      input[i.strict_add(2)],
-      input[i.strict_add(3)],
-    ]);
-    out[i] = add_mod(out[i], values[0]);
-    out[i.strict_add(1)] = add_mod(out[i.strict_add(1)], values[1]);
-    out[i.strict_add(2)] = add_mod(out[i.strict_add(2)], values[2]);
-    out[i.strict_add(3)] = add_mod(out[i.strict_add(3)], values[3]);
   }
 }
 
@@ -8181,12 +7573,6 @@ fn sub_if_ge_q(value: u16) -> u16 {
 }
 
 #[inline]
-#[cfg(test)]
-fn mul_mod(a: u16, b: u16) -> u16 {
-  reduce_u32(u32::from(a).strict_mul(u32::from(b)))
-}
-
-#[inline]
 #[cfg(any(
   test,
   miri,
@@ -8255,19 +7641,6 @@ fn signed_to_mod_q(value: i16) -> u16 {
   let value = i32::from(value);
   let reduced = value.strict_add((value >> 31) & Q_I32);
   low_u16(u32::from_ne_bytes(reduced.to_ne_bytes()))
-}
-
-#[inline]
-#[cfg(test)]
-fn reduce_u32(value: u32) -> u16 {
-  let quotient = div_q_u32(value);
-  low_u16(value.wrapping_sub(quotient.strict_mul(Q_U32)))
-}
-
-#[inline]
-#[cfg(test)]
-fn div_q_u32(value: u32) -> u32 {
-  low_u32(u64::from(value).strict_mul(Q_DIV_RECIP) >> Q_DIV_SHIFT)
 }
 
 #[inline]
@@ -8398,12 +7771,6 @@ fn opaque_s390x_bit(value: u32) -> u32 {
 }
 
 #[inline]
-#[cfg(test)]
-fn div_q_compress_u32_recip(value: u32) -> u32 {
-  low_u32(u64::from(value).strict_mul(u64::from(Q_COMPRESS_DIV_RECIP)) >> Q_COMPRESS_DIV_SHIFT)
-}
-
-#[inline]
 fn small_signed_to_mod_q(value: i16) -> u16 {
   let value = i32::from(value);
   let reduced = value.strict_add((value >> 31) & i32::from(Q));
@@ -8512,7 +7879,6 @@ mod tests {
       assert_eq!(prepared.mask.hat, expected.mask.hat, "K = {K}");
       assert_eq!(prepared.mask.negated, expected.mask.negated, "K = {K}");
       assert_eq!(prepared.encapsulation.t_hat, expected.encapsulation.t_hat, "K = {K}");
-      assert_eq!(prepared.encapsulation.rho, expected.encapsulation.rho, "K = {K}");
       assert_eq!(
         prepared.encapsulation.a_transpose_hat, expected.encapsulation.a_transpose_hat,
         "K = {K}"
@@ -8531,6 +7897,148 @@ mod tests {
   use super::*;
   #[cfg(miri)]
   use crate::{Kem, MlKem512, MlKem512Ciphertext};
+
+  use crate::hashes::crypto::Shake256;
+
+  const Q_DIV_SHIFT: u32 = 36;
+  const Q_DIV_RECIP: u64 = 20_642_679;
+  pub(super) const INV_NTT_SCALE_MONT: i16 = 512;
+  const GAMMAS: [u16; 128] = [
+    17, 3312, 2761, 568, 583, 2746, 2649, 680, 1637, 1692, 723, 2606, 2288, 1041, 1100, 2229, 1409, 1920, 2662, 667,
+    3281, 48, 233, 3096, 756, 2573, 2156, 1173, 3015, 314, 3050, 279, 1703, 1626, 1651, 1678, 2789, 540, 1789, 1540,
+    1847, 1482, 952, 2377, 1461, 1868, 2687, 642, 939, 2390, 2308, 1021, 2437, 892, 2388, 941, 733, 2596, 2337, 992,
+    268, 3061, 641, 2688, 1584, 1745, 2298, 1031, 2037, 1292, 3220, 109, 375, 2954, 2549, 780, 2090, 1239, 1645, 1684,
+    1063, 2266, 319, 3010, 2773, 556, 757, 2572, 2099, 1230, 561, 2768, 2466, 863, 2594, 735, 2804, 525, 1092, 2237,
+    403, 2926, 1026, 2303, 1143, 2186, 2150, 1179, 2775, 554, 886, 2443, 1722, 1607, 1212, 2117, 1874, 1455, 1029,
+    2300, 2110, 1219, 2935, 394, 885, 2444, 2154, 1175,
+  ];
+
+  #[inline]
+  fn test_low_byte(value: usize) -> u8 {
+    value.to_le_bytes()[0]
+  }
+
+  #[inline]
+  fn test_u8(value: usize) -> u8 {
+    u8::try_from(value).expect("test value fits in u8")
+  }
+
+  #[inline]
+  fn test_u16(value: usize) -> u16 {
+    u16::try_from(value).expect("test value fits in u16")
+  }
+
+  fn fill_diag_seed(out: &mut [u8; SEED_BYTES], seed: u8) {
+    for (i, byte) in out.iter_mut().enumerate() {
+      let i = u8::try_from(i).expect("ML-KEM diagnostic seed offset fits in u8");
+      *byte = seed.wrapping_add(i);
+    }
+  }
+
+  fn sample_ntt(rho: &[u8; SEED_BYTES], j: u8, i: u8) -> Poly {
+    let mut out = [0u16; N];
+    sample_ntt_into(rho, j, i, &mut out);
+    out
+  }
+
+  fn sample_ntt_pair(rho: &[u8; SEED_BYTES], j0: u8, i0: u8, j1: u8, i1: u8) -> (Poly, Poly) {
+    let mut out0 = [0u16; N];
+    let mut out1 = [0u16; N];
+    sample_ntt_pair_into(rho, j0, i0, j1, i1, &mut out0, &mut out1);
+    (out0, out1)
+  }
+
+  #[inline]
+  fn sample_ntt_input(rho: &[u8; SEED_BYTES], j: u8, i: u8) -> [u8; SEED_BYTES + 2] {
+    let mut input = [0u8; SEED_BYTES + 2];
+    input[..SEED_BYTES].copy_from_slice(rho);
+    input[SEED_BYTES] = j;
+    input[SEED_BYTES.strict_add(1)] = i;
+    input
+  }
+
+  #[inline]
+  fn inverse_ntt(poly: &mut Poly) {
+    inverse_ntt_scaled(poly, INV_NTT_SCALE_MONT);
+  }
+
+  pub(super) fn inverse_ntt_scalar(poly: &mut Poly) {
+    inverse_ntt_scalar_with_scale(poly, INV_NTT_SCALE_MONT);
+  }
+
+  fn base_case_multiply_normal_reference(a0: u16, a1: u16, b0: u16, b1: u16, gamma: u16) -> (u16, u16) {
+    let a0b0 = mul_mod(a0, b0);
+    let a1b1_gamma = mul_mod(mul_mod(a1, b1), gamma);
+    let c0 = add_mod(a0b0, a1b1_gamma);
+    let c1 = add_mod(mul_mod(a0, b1), mul_mod(a1, b0));
+    (c0, c1)
+  }
+
+  fn compress_poly<const D: usize>(input: &Poly, out: &mut Poly) {
+    for i in (0..N).step_by(4) {
+      let values = compress_values_4::<D>([
+        input[i],
+        input[i.strict_add(1)],
+        input[i.strict_add(2)],
+        input[i.strict_add(3)],
+      ]);
+      out[i] = values[0];
+      out[i.strict_add(1)] = values[1];
+      out[i.strict_add(2)] = values[2];
+      out[i.strict_add(3)] = values[3];
+    }
+  }
+
+  fn decompress_poly<const D: usize>(input: &Poly, out: &mut Poly) {
+    for i in (0..N).step_by(4) {
+      let values = decompress_values_4::<D>([
+        input[i],
+        input[i.strict_add(1)],
+        input[i.strict_add(2)],
+        input[i.strict_add(3)],
+      ]);
+      out[i] = values[0];
+      out[i.strict_add(1)] = values[1];
+      out[i.strict_add(2)] = values[2];
+      out[i.strict_add(3)] = values[3];
+    }
+  }
+
+  fn decompress_poly_add_assign<const D: usize>(input: &Poly, out: &mut Poly) {
+    for i in (0..N).step_by(4) {
+      let values = decompress_values_4::<D>([
+        input[i],
+        input[i.strict_add(1)],
+        input[i.strict_add(2)],
+        input[i.strict_add(3)],
+      ]);
+      out[i] = add_mod(out[i], values[0]);
+      out[i.strict_add(1)] = add_mod(out[i.strict_add(1)], values[1]);
+      out[i.strict_add(2)] = add_mod(out[i.strict_add(2)], values[2]);
+      out[i.strict_add(3)] = add_mod(out[i.strict_add(3)], values[3]);
+    }
+  }
+
+  #[inline]
+  fn mul_mod(a: u16, b: u16) -> u16 {
+    reduce_u32(u32::from(a).strict_mul(u32::from(b)))
+  }
+
+  #[inline]
+  fn reduce_u32(value: u32) -> u16 {
+    let quotient = div_q_u32(value);
+    low_u16(value.wrapping_sub(quotient.strict_mul(Q_U32)))
+  }
+
+  #[inline]
+  fn div_q_u32(value: u32) -> u32 {
+    low_u32(u64::from(value).strict_mul(Q_DIV_RECIP) >> Q_DIV_SHIFT)
+  }
+
+  #[inline]
+  fn div_q_compress_u32_recip(value: u32) -> u32 {
+    low_u32(u64::from(value).strict_mul(u64::from(Q_COMPRESS_DIV_RECIP)) >> Q_COMPRESS_DIV_SHIFT)
+  }
 
   #[cfg(miri)]
   #[test]
@@ -8580,41 +8088,41 @@ mod tests {
 
   #[cfg(all(
     target_arch = "aarch64",
-    target_os = "linux",
+    any(target_os = "macos", target_os = "linux"),
     not(miri),
     not(feature = "portable-only")
   ))]
   #[test]
   fn basemul_accumulate_k2_asm_matches_scalar_reference() {
-    assert_basemul_accumulate_k_asm_matches_scalar_reference(
+    assert_basemul_accumulate_k_asm_matches_scalar_reference::<2>(
       [0u16; N],
       [[0u16; N]; 2],
       [[0u16; N]; 2],
       "all zero",
-      aarch64::test_basemul_accumulate_k2_asm,
+      aarch64::basemul_accumulate_k2_asm_ptr,
     );
-    assert_basemul_accumulate_k_asm_matches_scalar_reference(
+    assert_basemul_accumulate_k_asm_matches_scalar_reference::<2>(
       [Q - 1; N],
       [[Q - 1; N]; 2],
       [[Q - 1; N]; 2],
       "all q-1",
-      aarch64::test_basemul_accumulate_k2_asm,
+      aarch64::basemul_accumulate_k2_asm_ptr,
     );
 
     for seed in 0usize..256 {
-      assert_basemul_accumulate_k_asm_matches_scalar_reference(
+      assert_basemul_accumulate_k_asm_matches_scalar_reference::<2>(
         test_poly(seed),
         core::array::from_fn(|i| test_poly(seed.strict_add(0x4500).strict_add(i.strict_mul(0x100)))),
         core::array::from_fn(|i| test_poly(seed.strict_add(0x4a00).strict_add(i.strict_mul(0x100)))),
         "seeded",
-        aarch64::test_basemul_accumulate_k2_asm,
+        aarch64::basemul_accumulate_k2_asm_ptr,
       );
     }
   }
 
   #[cfg(all(
     target_arch = "aarch64",
-    target_os = "linux",
+    any(target_os = "macos", target_os = "linux"),
     not(miri),
     not(feature = "portable-only")
   ))]
@@ -8623,7 +8131,7 @@ mod tests {
     a: PolyVec<K>,
     b: PolyVec<K>,
     label: &str,
-    asm_fn: unsafe fn(&mut Poly, &PolyVec<K>, &PolyVec<K>),
+    asm_fn: unsafe fn(&mut Poly, *const u16, *const u16),
   ) {
     let mut scalar = acc;
     for (a_poly, b_poly) in a.iter().zip(b.iter()) {
@@ -8632,12 +8140,11 @@ mod tests {
 
     let mut asm = acc;
     // SAFETY: direct aarch64 assembly K-vector dot-product test call because:
-    // 1. This test only compiles on aarch64 Linux targets that include the assembly backend.
-    // 2. `asm`, `a`, and `b` are fixed-size ML-KEM polynomial arrays matching the assembly ABI.
-    // 3. The test compares against the scalar/FIPS accumulator before production dispatch.
-    // 4. The assembly memory schedule depends only on public ML-KEM dimensions.
+    // 1. This test only compiles on aarch64 targets that include the assembly backend.
+    // 2. `a` and `b` are contiguous `PolyVec<K>` storage, matching the `K * N` pointer ABI.
+    // 3. The assembly memory schedule depends only on public ML-KEM dimensions.
     unsafe {
-      asm_fn(&mut asm, &a, &b);
+      asm_fn(&mut asm, a.as_ptr().cast::<u16>(), b.as_ptr().cast::<u16>());
     }
 
     assert_eq!(asm, scalar, "{label}");
@@ -8777,7 +8284,7 @@ mod tests {
 
   #[cfg(all(
     target_arch = "aarch64",
-    target_os = "linux",
+    target_os = "macos",
     not(miri),
     not(feature = "portable-only")
   ))]
@@ -8787,12 +8294,11 @@ mod tests {
 
     let mut asm = acc;
     // SAFETY: direct aarch64 assembly single-polynomial accumulator test call because:
-    // 1. This test only compiles on aarch64 Linux targets that include the assembly backend.
+    // 1. This test only compiles on aarch64 macOS, which includes the assembly backend.
     // 2. `asm`, `a`, and `b` are fixed-size ML-KEM polynomial arrays matching the assembly ABI.
-    // 3. The test compares against the scalar/FIPS accumulator before production dispatch.
-    // 4. The assembly memory schedule depends only on public ML-KEM dimensions.
+    // 3. The assembly memory schedule depends only on public ML-KEM dimensions.
     unsafe {
-      aarch64::test_basemul_accumulate_asm(&mut asm, &a, &b);
+      aarch64::basemul_accumulate_asm(&mut asm, &a, &b);
     }
 
     assert_eq!(asm, scalar, "{label}");
@@ -8800,7 +8306,7 @@ mod tests {
 
   #[cfg(all(
     target_arch = "aarch64",
-    target_os = "linux",
+    target_os = "macos",
     not(miri),
     not(feature = "portable-only")
   ))]
@@ -8829,103 +8335,68 @@ mod tests {
 
   #[cfg(all(
     target_arch = "aarch64",
-    target_os = "linux",
-    not(miri),
-    not(feature = "portable-only")
-  ))]
-  #[test]
-  fn basemul_accumulate_chunk_asm_matches_scalar_reference() {
-    for seed in 0usize..128 {
-      let acc = test_poly(seed);
-      let a = test_poly(seed.strict_add(0x3000));
-      let b = test_poly(seed.strict_add(0x4000));
-
-      for coeff_offset in (0..N).step_by(SAMPLE_NTT_ACC_CHUNK_COEFFS) {
-        let mut chunk = [0u16; SAMPLE_NTT_ACC_CHUNK_COEFFS];
-        chunk.copy_from_slice(&a[coeff_offset..coeff_offset.strict_add(SAMPLE_NTT_ACC_CHUNK_COEFFS)]);
-
-        let mut scalar = acc;
-        multiply_ntts_add_assign_chunk_scalar(&mut scalar, &chunk, &b, coeff_offset);
-
-        let mut asm = acc;
-        // SAFETY: direct aarch64 assembly chunk test call because:
-        // 1. This test only compiles on aarch64 Linux targets that include the assembly backend.
-        // 2. `chunk` contains exactly one 16-coefficient SampleNTT chunk.
-        // 3. `coeff_offset` is emitted from fixed 16-coefficient public chunk boundaries.
-        // 4. The test compares against the scalar/FIPS chunk accumulator before production dispatch.
-        unsafe {
-          aarch64::test_basemul_accumulate_chunk_asm(&mut asm, &chunk, &b, coeff_offset);
-        }
-
-        assert_eq!(asm, scalar, "seed {seed}, coeff_offset {coeff_offset}");
-      }
-    }
-  }
-
-  #[cfg(all(
-    target_arch = "aarch64",
-    target_os = "linux",
+    any(target_os = "macos", target_os = "linux"),
     not(miri),
     not(feature = "portable-only")
   ))]
   #[test]
   fn basemul_accumulate_k3_asm_matches_scalar_reference() {
-    assert_basemul_accumulate_k_asm_matches_scalar_reference(
+    assert_basemul_accumulate_k_asm_matches_scalar_reference::<3>(
       [0u16; N],
       [[0u16; N]; 3],
       [[0u16; N]; 3],
       "all zero",
-      aarch64::test_basemul_accumulate_k3_asm,
+      aarch64::basemul_accumulate_k3_asm_ptr,
     );
-    assert_basemul_accumulate_k_asm_matches_scalar_reference(
+    assert_basemul_accumulate_k_asm_matches_scalar_reference::<3>(
       [Q - 1; N],
       [[Q - 1; N]; 3],
       [[Q - 1; N]; 3],
       "all q-1",
-      aarch64::test_basemul_accumulate_k3_asm,
+      aarch64::basemul_accumulate_k3_asm_ptr,
     );
 
     for seed in 0usize..256 {
-      assert_basemul_accumulate_k_asm_matches_scalar_reference(
+      assert_basemul_accumulate_k_asm_matches_scalar_reference::<3>(
         test_poly(seed),
         core::array::from_fn(|i| test_poly(seed.strict_add(0x5000).strict_add(i.strict_mul(0x100)))),
         core::array::from_fn(|i| test_poly(seed.strict_add(0x6000).strict_add(i.strict_mul(0x100)))),
         "seeded",
-        aarch64::test_basemul_accumulate_k3_asm,
+        aarch64::basemul_accumulate_k3_asm_ptr,
       );
     }
   }
 
   #[cfg(all(
     target_arch = "aarch64",
-    target_os = "linux",
+    any(target_os = "macos", target_os = "linux"),
     not(miri),
     not(feature = "portable-only")
   ))]
   #[test]
   fn basemul_accumulate_k4_asm_matches_scalar_reference() {
-    assert_basemul_accumulate_k_asm_matches_scalar_reference(
+    assert_basemul_accumulate_k_asm_matches_scalar_reference::<4>(
       [0u16; N],
       [[0u16; N]; 4],
       [[0u16; N]; 4],
       "all zero",
-      aarch64::test_basemul_accumulate_k4_asm,
+      aarch64::basemul_accumulate_k4_asm_ptr,
     );
-    assert_basemul_accumulate_k_asm_matches_scalar_reference(
+    assert_basemul_accumulate_k_asm_matches_scalar_reference::<4>(
       [Q - 1; N],
       [[Q - 1; N]; 4],
       [[Q - 1; N]; 4],
       "all q-1",
-      aarch64::test_basemul_accumulate_k4_asm,
+      aarch64::basemul_accumulate_k4_asm_ptr,
     );
 
     for seed in 0usize..256 {
-      assert_basemul_accumulate_k_asm_matches_scalar_reference(
+      assert_basemul_accumulate_k_asm_matches_scalar_reference::<4>(
         test_poly(seed),
         core::array::from_fn(|i| test_poly(seed.strict_add(0x7000).strict_add(i.strict_mul(0x100)))),
         core::array::from_fn(|i| test_poly(seed.strict_add(0x8000).strict_add(i.strict_mul(0x100)))),
         "seeded",
-        aarch64::test_basemul_accumulate_k4_asm,
+        aarch64::basemul_accumulate_k4_asm_ptr,
       );
     }
   }
@@ -8959,88 +8430,6 @@ mod tests {
 
     for (lane, &(j, i)) in lanes.iter().enumerate() {
       assert_eq!(actual[lane], sample_ntt(&rho, j, i), "lane {lane}");
-    }
-  }
-
-  #[test]
-  fn sample_ntt_initial_3blocks_matches_full_sampler() {
-    for seed in 0usize..64 {
-      let mut rho = [0u8; SEED_BYTES];
-      for (i, byte) in rho.iter_mut().enumerate() {
-        *byte = test_low_byte(
-          seed
-            .strict_mul(53)
-            .strict_add(i.strict_mul(47))
-            .strict_add((seed >> 1).strict_mul(19))
-            & 0xff,
-        );
-      }
-
-      for j in 0u8..4 {
-        for i in 0u8..4 {
-          let expected = sample_ntt(&rho, j, i);
-
-          let mut prefix = [0u16; N];
-          let prefix_len = sample_ntt_initial_3blocks_into(&rho, j, i, &mut prefix);
-          assert!(prefix_len <= N, "seed {seed}, lane ({j}, {i})");
-          assert_eq!(
-            &prefix[..prefix_len],
-            &expected[..prefix_len],
-            "initial prefix seed {seed}, lane ({j}, {i})"
-          );
-
-          let mut actual = [0u16; N];
-          let blocks = sample_ntt_initial_3blocks_then_tail_into(&rho, j, i, &mut actual);
-          assert!(
-            blocks >= test_u16(SAMPLE_NTT_INITIAL_BLOCKS),
-            "seed {seed}, lane ({j}, {i})"
-          );
-          assert_eq!(actual, expected, "full sample seed {seed}, lane ({j}, {i})");
-        }
-      }
-    }
-  }
-
-  #[test]
-  fn sample_ntt_triple_initial_3blocks_matches_full_sampler() {
-    let lane_sets = [
-      [(0, 0), (1, 0), (2, 0)],
-      [(3, 0), (0, 1), (1, 1)],
-      [(2, 1), (3, 1), (0, 2)],
-      [(1, 2), (2, 2), (3, 2)],
-      [(0, 3), (1, 3), (2, 3)],
-    ];
-
-    for seed in 0usize..64 {
-      let mut rho = [0u8; SEED_BYTES];
-      for (i, byte) in rho.iter_mut().enumerate() {
-        *byte = test_low_byte(
-          seed
-            .strict_mul(59)
-            .strict_add(i.strict_mul(31))
-            .strict_add((seed >> 2).strict_mul(23))
-            & 0xff,
-        );
-      }
-
-      for lanes in lane_sets {
-        let mut first3 = [[0u16; N]; 3];
-        {
-          let [out0, out1, out2] = &mut first3;
-          sample_ntt_triple_first3_into(&rho, lanes, [out0, out1, out2]);
-        }
-
-        let mut actual = [[0u16; N]; 3];
-        {
-          let [out0, out1, out2] = &mut actual;
-          sample_ntt_triple_initial_3blocks_into(&rho, lanes, [out0, out1, out2]);
-        }
-
-        for (lane, &(j, i)) in lanes.iter().enumerate() {
-          assert_eq!(first3[lane], sample_ntt(&rho, j, i), "first3 seed {seed}, lane {lane}");
-          assert_eq!(actual[lane], sample_ntt(&rho, j, i), "seed {seed}, lane {lane}");
-        }
-      }
     }
   }
 
@@ -9264,44 +8653,6 @@ mod tests {
           "seed {seed}, lane {lane}"
         );
       }
-    }
-  }
-
-  #[cfg(all(
-    target_arch = "aarch64",
-    target_os = "linux",
-    not(miri),
-    not(feature = "portable-only")
-  ))]
-  #[test]
-  fn sample_ntt_initial_3blocks_asm_matches_scalar_reference() {
-    for seed in 0usize..512 {
-      let mut buf = [0u8; SAMPLE_NTT_INITIAL_BYTES];
-      for (i, byte) in buf.iter_mut().enumerate() {
-        *byte = test_low_byte(
-          seed
-            .strict_mul(83)
-            .strict_add(i.strict_mul(41))
-            .strict_add((seed >> 1).strict_mul(37))
-            & 0xff,
-        );
-      }
-
-      let mut expected = [0u16; N];
-      let mut actual = [0u16; N];
-      let mut expected_filled = 0usize;
-      let mut actual_filled = 0usize;
-      sample_ntt_initial_3blocks_scalar(&buf, &mut expected, &mut expected_filled);
-      // SAFETY: direct three-block parser equivalence test because:
-      // 1. `buf` is exactly three contiguous SHAKE128 rate blocks.
-      // 2. `actual` is a full polynomial destination and `actual_filled == 0`.
-      // 3. The scalar reference defines the expected public SampleNTT prefix.
-      unsafe {
-        sample_ntt_initial_3blocks_asm(&buf, &mut actual, &mut actual_filled);
-      }
-
-      assert_eq!(actual_filled, expected_filled, "seed {seed}");
-      assert_eq!(&actual[..actual_filled], &expected[..expected_filled], "seed {seed}");
     }
   }
 
@@ -9733,11 +9084,6 @@ mod tests {
       sample_matrix_ntt_mul_accumulate_materialized::<4>(&rho, &rhs, &mut actual, transpose);
 
       assert_eq!(actual, expected, "transpose={transpose}");
-
-      let mut windowed = [[0u16; N]; 4];
-      sample_matrix_ntt_mul_accumulate_windowed::<4>(&rho, &rhs, &mut windowed, transpose);
-
-      assert_eq!(windowed, expected, "windowed transpose={transpose}");
     }
   }
 
@@ -9763,11 +9109,6 @@ mod tests {
       sample_matrix_ntt_mul_accumulate_materialized::<3>(&rho, &rhs, &mut actual, transpose);
 
       assert_eq!(actual, expected, "transpose={transpose}");
-
-      let mut windowed = [[0u16; N]; 3];
-      sample_matrix_ntt_mul_accumulate_windowed::<3>(&rho, &rhs, &mut windowed, transpose);
-
-      assert_eq!(windowed, expected, "windowed transpose={transpose}");
     }
   }
 
@@ -9847,7 +9188,6 @@ mod tests {
 
     let mut ek = PreparedEncapsulationArithmetic {
       t_hat: [[0u16; N]; K],
-      rho,
       a_transpose_hat: [[[0u16; N]; K]; K],
     };
     prepare_matrix_transpose_into::<K>(&rho, &mut ek.a_transpose_hat);
@@ -9856,7 +9196,7 @@ mod tests {
     matrix_ntt_mul_accumulate_prepared_transpose(&ek, &rhs, &mut cached);
 
     let mut materialized = [[0u16; N]; K];
-    sample_matrix_ntt_mul_accumulate_materialized::<K>(&ek.rho, &rhs, &mut materialized, true);
+    sample_matrix_ntt_mul_accumulate_materialized::<K>(&rho, &rhs, &mut materialized, true);
 
     assert_eq!(cached, materialized);
   }

@@ -754,20 +754,6 @@ fn hamburg_constants_ifma() -> FieldElement51x4 {
   FieldElement51x4::new(&d2_fe, &d2_fe, &d2_fe_2, &d1_fe_2)
 }
 
-/// Hamburg scaling constants for affine cached (IFMA): `(d2, d2, 2·d2, d2)`.
-///
-/// # Safety
-///
-/// Caller must ensure AVX2 is available.
-#[inline]
-#[target_feature(enable = "avx2")]
-#[cfg(all(test, feature = "ed25519"))]
-fn hamburg_affine_constants_ifma() -> FieldElement51x4 {
-  let d2_fe = FieldElement::from_small(D2);
-  let d2_fe_2 = FieldElement::from_small(D2.wrapping_mul(2));
-  FieldElement51x4::new(&d2_fe, &d2_fe, &d2_fe_2, &d2_fe)
-}
-
 /// Scan a public table row, then apply the secret digit's sign.
 ///
 /// Keep this AVX2-only boundary out of line: inlining into an IFMA caller
@@ -1209,7 +1195,8 @@ mod tests {
     }
     // SAFETY: The runtime guard establishes AVX2, IFMA and VL for every call below.
     unsafe {
-      let affine_k = hamburg_affine_constants_ifma();
+      let d2 = FieldElement::from_small(D2);
+      let affine_k = FieldElement51x4::new(&d2, &d2, &FieldElement::from_small(D2.wrapping_mul(2)), &d2);
       let identity = ExtendedPointIfma::from_extended(&ExtendedPoint::identity()).to_cached();
       assert_eq!(raw_vectors(identity.0.0), raw_vectors(cached_identity_ifma().0.0));
       for (row, table) in super::super::point::BASEPOINT_RADIX16_TABLE.iter().enumerate() {
@@ -1563,10 +1550,13 @@ mod tests {
       );
 
       assert!(
-        !a_point.is_small_order(),
+        !super::super::point::tests::is_small_order(&a_point),
         "public key used in verify should not be weak"
       );
-      assert!(!r_point.is_small_order(), "R used in verify should not be low order");
+      assert!(
+        !super::super::point::tests::is_small_order(&r_point),
+        "R used in verify should not be low order"
+      );
 
       assert!(
         avx_result.equals_projective(&r_point),

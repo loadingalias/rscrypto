@@ -33,12 +33,6 @@ use crate::traits::ct;
 const FIELD_BYTES: usize = 32;
 #[cfg(feature = "p256-ecdh")]
 const SEC1_BYTES: usize = 65;
-#[cfg(all(test, feature = "p256-ecdh"))]
-const COMB_WINDOW_BITS: usize = 4;
-#[cfg(all(test, feature = "p256-ecdh"))]
-const COMB_WINDOW_SIZE: usize = 1usize << COMB_WINDOW_BITS;
-#[cfg(all(test, feature = "p256-ecdh"))]
-const COMB_WINDOW_ROWS: usize = 256 / COMB_WINDOW_BITS;
 #[cfg(any(
   all(test, feature = "p256-ecdh"),
   feature = "portable-only",
@@ -112,20 +106,6 @@ const CURVE_B_MONTGOMERY: Uint = Uint([
   0xe5a2_20ab_f721_2ed6,
   0xdc30_061d_0487_4834,
 ]);
-#[cfg(all(test, feature = "p256-ecdh"))]
-const GENERATOR_X: Uint = Uint([
-  0xf4a1_3945_d898_c296,
-  0x7703_7d81_2deb_33a0,
-  0xf8bc_e6e5_63a4_40f2,
-  0x6b17_d1f2_e12c_4247,
-]);
-#[cfg(all(test, feature = "p256-ecdh"))]
-const GENERATOR_Y: Uint = Uint([
-  0xcbb6_4068_37bf_51f5,
-  0x2bce_3357_6b31_5ece,
-  0x8ee7_eb4a_7c0f_9e16,
-  0x4fe3_42e2_fe1a_7f9b,
-]);
 #[cfg(feature = "p256-ecdh")]
 const FIELD_R2: Uint = Uint([
   0x0000_0000_0000_0003,
@@ -162,8 +142,6 @@ impl Uint {
     ))
   ))]
   const ZERO: Self = Self([0; 4]);
-  #[cfg(all(test, feature = "p256-ecdh"))]
-  const ONE: Self = Self([1, 0, 0, 0]);
 
   #[cfg(feature = "p256-ecdh")]
   fn from_be_slice(bytes: &[u8]) -> Option<Self> {
@@ -496,14 +474,6 @@ struct Affine {
 }
 
 impl Affine {
-  #[cfg(all(test, feature = "p256-ecdh"))]
-  fn generator() -> Self {
-    Self {
-      x: FieldElement::from_uint(GENERATOR_X),
-      y: FieldElement::from_uint(GENERATOR_Y),
-    }
-  }
-
   #[cfg(all(
     feature = "p256-ecdh",
     any(
@@ -539,17 +509,6 @@ impl Affine {
     x.copy_from_slice(&x_bytes);
     y.copy_from_slice(&y_bytes);
     bytes
-  }
-
-  #[cfg(all(test, feature = "p256-ecdh"))]
-  fn select(table: &[Self; COMB_WINDOW_SIZE], digit: usize) -> Self {
-    let mut selected = table[0];
-    for (index, &candidate) in table.iter().enumerate() {
-      let mask = mask_equal_usize(digit, index);
-      selected.x = FieldElement::select(selected.x, candidate.x, mask);
-      selected.y = FieldElement::select(selected.y, candidate.y, mask);
-    }
-    selected
   }
 
   #[cfg(any(
@@ -778,37 +737,6 @@ impl Projective {
     Self::select(with_self_infinity, self, rhs_infinity_mask)
   }
 
-  #[cfg(all(test, feature = "p256-ecdh"))]
-  fn add_mixed(self, rhs: Affine, rhs_infinity_mask: u64) -> Self {
-    // Complete Renes-Costello-Batina addition for a = -3, specialized for
-    // affine `rhs` (ePrint 2015/1060, algorithm 4 with Z2 = 1).
-    let curve_b = FieldElement::from_montgomery(CURVE_B_MONTGOMERY);
-    let x1x2 = self.x.mul(rhs.x);
-    let y1y2 = self.y.mul(rhs.y);
-    let c = self.x.add(self.y).mul(rhs.x.add(rhs.y)).sub(x1x2).sub(y1y2);
-    let d = rhs.y.mul(self.z).add(self.y);
-    let e = rhs.x.mul(self.z).add(self.x);
-    let f = e.sub(curve_b.mul(self.z)).triple();
-    let g = y1y2.sub(f);
-    let h = y1y2.add(f);
-    let i = self.z.triple();
-    let j = curve_b.mul(e).sub(x1x2).sub(i).triple();
-    let k = x1x2.triple().sub(i);
-    let l = d.mul(j);
-    let m = k.mul(j);
-    let n = k.mul(c);
-    let y = h.mul(g).add(m);
-    let x = h.mul(c).sub(l);
-    let z = g.mul(d).add(n);
-    let added = Self {
-      x,
-      y,
-      z,
-      infinity_mask: z.0.zero_mask(),
-    };
-    Self::select(added, self, rhs_infinity_mask)
-  }
-
   #[cfg(feature = "p256-ecdh")]
   fn add(self, rhs: Self) -> Self {
     let curve_b = FieldElement::from_montgomery(CURVE_B_MONTGOMERY);
@@ -869,11 +797,6 @@ struct SecretProjective(Projective);
   ))
 ))]
 impl SecretProjective {
-  #[cfg(all(test, feature = "p256-ecdh"))]
-  fn add_mixed(&self, rhs: Affine, rhs_infinity_mask: u64) -> Self {
-    Self(self.0.add_mixed(rhs, rhs_infinity_mask))
-  }
-
   #[cfg(feature = "p256-ecdh")]
   fn add(&self, rhs: Projective) -> Self {
     Self(self.0.add(rhs))
@@ -998,22 +921,6 @@ fn scalar_mul_generator_portable(scalar: &Scalar) -> SecretProjective {
     acc = acc.add_mixed_nonexceptional_jacobian(selected, infinity);
   }
   SecretProjective(acc)
-}
-
-#[cfg(all(test, feature = "p256-ecdh"))]
-fn scalar_mul_generator_comb_reference(scalar: &Scalar) -> SecretProjective {
-  let table = generator_comb_table();
-  let mut acc = SecretProjective(Projective::infinity());
-  for row in (0..COMB_WINDOW_ROWS).rev() {
-    acc = SecretProjective(acc.0.double());
-    let mut digit = 0usize;
-    for offset in 0..COMB_WINDOW_BITS {
-      let bit = (scalar.0.bit_mask(row.strict_add(COMB_WINDOW_ROWS.strict_mul(offset))) & 1).to_le_bytes()[0];
-      digit |= usize::from(bit) << offset;
-    }
-    acc = acc.add_mixed(Affine::select(&table, digit), mask_equal_usize(digit, 0));
-  }
-  acc
 }
 
 #[cfg(feature = "p256-ecdh")]
@@ -1184,22 +1091,6 @@ pub(super) fn parse_sec1_words(bytes: &[u8]) -> Option<[u64; 8]> {
   Some([x.0[0], x.0[1], x.0[2], x.0[3], y.0[0], y.0[1], y.0[2], y.0[3]])
 }
 
-#[cfg(all(
-  all(test, feature = "p256-ecdh"),
-  feature = "p256-ecdh",
-  not(feature = "portable-only"),
-  not(miri),
-  any(
-    all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
-    all(target_arch = "x86_64", any(target_os = "linux", target_os = "windows"))
-  )
-))]
-pub(super) fn curve_terms_for_test(words: &[u64; 8]) -> ([u64; 4], [u64; 4], [u64; 4], [u64; 4]) {
-  let x = FieldElement::from_uint(Uint(words[..4].try_into().expect("four x-coordinate limbs")));
-  let y = FieldElement::from_uint(Uint(words[4..].try_into().expect("four y-coordinate limbs")));
-  (x.0.0, y.0.0, y.square().0.0, x.square().mul(x).0.0)
-}
-
 #[cfg(feature = "p256-ecdh")]
 pub(super) fn scalar_is_canonical_nonzero(bytes: &[u8; FIELD_BYTES]) -> bool {
   let Some(candidate) = Uint::from_be_slice(bytes) else {
@@ -1310,18 +1201,6 @@ pub(super) fn diag_montgomery_mul_chain(left: [u64; 4], right: [u64; 4], rounds:
   value.0.iter().fold(0, |digest, limb| digest ^ limb)
 }
 
-#[cfg(all(test, feature = "p256-ecdh"))]
-fn generator_comb_table() -> [Affine; COMB_WINDOW_SIZE] {
-  let mut table = [Affine::generator(); COMB_WINDOW_SIZE];
-  for ((point, x), y) in table.iter_mut().zip(GENERATOR_COMB_X).zip(GENERATOR_COMB_Y) {
-    *point = Affine {
-      x: FieldElement::from_montgomery(x),
-      y: FieldElement::from_montgomery(y),
-    };
-  }
-  table
-}
-
 /// Hide a secret selection mask from LLVM on the targets where it otherwise
 /// lowers masked selection to branches.
 ///
@@ -1427,12 +1306,6 @@ fn ct_mul_riscv64_limbs(left: Riscv64MulLimb, right: Riscv64MulLimb) -> (u64, u6
   debug_assert_eq!(borrow, 0);
 
   (product_low, product_high)
-}
-
-#[cfg(all(test, feature = "p256-ecdh"))]
-#[inline(never)]
-fn ct_mul_u64_wide_riscv64(left: u64, right: u64) -> (u64, u64) {
-  ct_mul_riscv64_limbs(Riscv64MulLimb::new(left), Riscv64MulLimb::new(right))
 }
 
 #[inline(always)]
@@ -1736,207 +1609,54 @@ fn subtract_modulus_once(limbs: [u64; 5]) -> Uint {
 }
 
 #[cfg(all(test, feature = "p256-ecdh"))]
-const GENERATOR_COMB_X: [Uint; COMB_WINDOW_SIZE] = [
-  Uint([
-    0x79e7_30d4_18a9_143c,
-    0x75ba_95fc_5fed_b601,
-    0x79fb_732b_7762_2510,
-    0x1890_5f76_a537_55c6,
-  ]),
-  Uint([
-    0x79e7_30d4_18a9_143c,
-    0x75ba_95fc_5fed_b601,
-    0x79fb_732b_7762_2510,
-    0x1890_5f76_a537_55c6,
-  ]),
-  Uint([
-    0x4f92_2fc5_16a0_d2bb,
-    0x0d5c_c16c_1a62_3499,
-    0x9241_cf3a_57c6_2c8b,
-    0x2f5e_6961_fd1b_667f,
-  ]),
-  Uint([
-    0x9e56_6847_e137_bbbc,
-    0xe434_469e_8a6a_0bec,
-    0xb1c4_2761_79d7_3463,
-    0x5abe_0285_133d_0015,
-  ]),
-  Uint([
-    0x62a8_c244_bfe2_0925,
-    0x91c1_9ac3_8fdc_e867,
-    0x5a96_a5d5_dd38_7063,
-    0x61d5_87d4_21d3_24f6,
-  ]),
-  Uint([
-    0x1c89_1f2b_2cb1_9ffd,
-    0x01ba_8d5b_b192_3c23,
-    0xb6d0_3d67_8ac5_ca8e,
-    0x586e_b04c_1f13_bedc,
-  ]),
-  Uint([
-    0x6257_7734_d2b5_33d5,
-    0x673b_8af6_a1bd_ddc0,
-    0x577e_7c9a_a79e_c293,
-    0xbb6d_e651_c3b2_66b1,
-  ]),
-  Uint([
-    0xbd6a_38e1_1ae5_aa1c,
-    0xb8b7_652b_49e7_3658,
-    0x0b13_0014_ee5f_87ed,
-    0x9d0f_27b2_aeeb_ffcd,
-  ]),
-  Uint([
-    0x56f8_410e_f4f8_b16a,
-    0x9724_1afe_c47b_266a,
-    0x0a40_6b8e_6d9c_87c1,
-    0x803f_3e02_cd42_ab1b,
-  ]),
-  Uint([
-    0x846a_56f2_c379_ab34,
-    0xa8ee_068b_841d_f8d1,
-    0x2031_4459_176c_68ef,
-    0xf1af_32d5_915f_1f30,
-  ]),
-  Uint([
-    0xed93_e225_d5be_5a2b,
-    0x6fe7_9983_5934_f3c6,
-    0x4314_0926_2262_6ffc,
-    0x50bb_b4d9_7990_216a,
-  ]),
-  Uint([
-    0xfc68_b5c5_9b39_1593,
-    0xc385_f5a2_5982_70fc,
-    0x7144_f3aa_d19a_dcbb,
-    0xdd55_8999_83fb_ae0c,
-  ]),
-  Uint([
-    0x5fe1_4bfe_80ec_21fe,
-    0xf6ce_116a_c255_be82,
-    0x98bc_5a07_2f4a_5d67,
-    0xfad2_7148_db7e_63af,
-  ]),
-  Uint([
-    0x1e9e_cc49_a56c_0dd7,
-    0xa5cf_fcd8_4608_6c74,
-    0x8f7a_1408_f505_aece,
-    0xb37b_85c0_bef0_c47e,
-  ]),
-  Uint([
-    0x0a1c_7294_95c8_f8be,
-    0x2961_c480_3bf3_62bf,
-    0x9e41_8403_df63_d4ac,
-    0xc109_f9cb_91ec_e900,
-  ]),
-  Uint([
-    0x0d5a_e356_4291_3074,
-    0x5549_1b27_48a5_42b1,
-    0x469c_a665_b310_732a,
-    0x2959_1d52_5f1a_4cc1,
-  ]),
-];
+pub(super) mod tests {
+  use super::{Affine, FieldElement, Riscv64MulLimb, Uint, ct_mul_riscv64_limbs};
 
-#[cfg(all(test, feature = "p256-ecdh"))]
-const GENERATOR_COMB_Y: [Uint; COMB_WINDOW_SIZE] = [
-  Uint([
-    0xddf2_5357_ce95_560a,
-    0x8b4a_b8e4_ba19_e45c,
-    0xd2e8_8688_dd21_f325,
-    0x8571_ff18_2588_5d85,
-  ]),
-  Uint([
-    0xddf2_5357_ce95_560a,
-    0x8b4a_b8e4_ba19_e45c,
-    0xd2e8_8688_dd21_f325,
-    0x8571_ff18_2588_5d85,
-  ]),
-  Uint([
-    0x5c15_c70b_f5a0_1797,
-    0x3d20_b44d_6095_6192,
-    0x0491_1b37_071f_db52,
-    0xf648_f916_8d6f_0f7b,
-  ]),
-  Uint([
-    0x92aa_837c_c04c_7dab,
-    0x573d_9f4c_4326_0c07,
-    0x0c93_1562_78e6_cc37,
-    0x94bb_725b_6b6f_7383,
-  ]),
-  Uint([
-    0xe876_73a2_a371_73ea,
-    0x2384_8008_5377_8b65,
-    0x10f8_441e_05ba_b43e,
-    0xfa11_fe12_4621_efbe,
-  ]),
-  Uint([
-    0x0c35_c6e5_27e8_ed09,
-    0x1e81_a33c_1819_ede2,
-    0x278f_d6c0_56c6_52fa,
-    0x19d5_ac08_7086_4f11,
-  ]),
-  Uint([
-    0xe7e9_303a_b652_59b3,
-    0xd6a0_afd3_d03a_7480,
-    0xc5ac_83d1_9b3c_fc27,
-    0x60b4_619a_5d18_b99b,
-  ]),
-  Uint([
-    0xca92_4631_7a73_0a55,
-    0x9c95_5b2f_ddbb_c83a,
-    0x07c1_dfe0_ac01_9a71,
-    0x244a_566d_356e_c48d,
-  ]),
-  Uint([
-    0x7f03_09a8_04db_ec69,
-    0xa83b_85f7_3bba_d05f,
-    0xc609_7273_ad8e_197f,
-    0xc097_440e_5067_adc1,
-  ]),
-  Uint([
-    0x99c3_7531_5d75_bd50,
-    0x837c_ffba_f72f_67bc,
-    0x0613_a418_48d7_723f,
-    0x23d0_f130_e2d4_1c8b,
-  ]),
-  Uint([
-    0x3781_91c6_e57e_c63e,
-    0x6542_2c40_181d_cdb2,
-    0x41a8_099b_0236_e0f6,
-    0x2b10_0118_01fe_49c3,
-  ]),
-  Uint([
-    0x93b8_8b8e_74b8_2ff4,
-    0xd2e0_3c40_71e7_34c9,
-    0x9a7a_9eaf_43c0_322a,
-    0xe6e4_c551_149d_6041,
-  ]),
-  Uint([
-    0x90c0_b6ac_29ab_05b3,
-    0x37a9_a83c_4e25_1ae6,
-    0x0a7d_c875_c2aa_de7d,
-    0x7738_7de3_9f0e_1a84,
-  ]),
-  Uint([
-    0x3596_b6e4_cc0e_6a8f,
-    0xfd6d_4bbf_6b38_8f23,
-    0xaba4_53fa_c39c_ef4e,
-    0x9c13_5ac8_f9f6_28d5,
-  ]),
-  Uint([
-    0xc2d0_95d0_5894_5705,
-    0xb908_3d96_ddeb_85c0,
-    0x8469_2b8d_7a40_449b,
-    0x9bc3_344f_2eee_1ee1,
-  ]),
-  Uint([
-    0xe76f_5b6b_b84f_983f,
-    0xbe7e_ef41_9f5f_84e1,
-    0x1200_d496_80ba_a189,
-    0x6376_551f_18ef_332c,
-  ]),
-];
+  const GENERATOR_X: Uint = Uint([
+    0xf4a1_3945_d898_c296,
+    0x7703_7d81_2deb_33a0,
+    0xf8bc_e6e5_63a4_40f2,
+    0x6b17_d1f2_e12c_4247,
+  ]);
+  const GENERATOR_Y: Uint = Uint([
+    0xcbb6_4068_37bf_51f5,
+    0x2bce_3357_6b31_5ece,
+    0x8ee7_eb4a_7c0f_9e16,
+    0x4fe3_42e2_fe1a_7f9b,
+  ]);
 
-#[cfg(all(test, feature = "p256-ecdh"))]
-mod tests {
+  impl Uint {
+    const ONE: Self = Self([1, 0, 0, 0]);
+  }
+
+  impl Affine {
+    fn generator() -> Self {
+      Self {
+        x: FieldElement::from_uint(GENERATOR_X),
+        y: FieldElement::from_uint(GENERATOR_Y),
+      }
+    }
+  }
+
+  #[inline(never)]
+  fn ct_mul_u64_wide_riscv64(left: u64, right: u64) -> (u64, u64) {
+    ct_mul_riscv64_limbs(Riscv64MulLimb::new(left), Riscv64MulLimb::new(right))
+  }
+
+  #[cfg(all(
+    not(feature = "portable-only"),
+    not(miri),
+    any(
+      all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
+      all(target_arch = "x86_64", any(target_os = "linux", target_os = "windows"))
+    )
+  ))]
+  pub(in crate::auth) fn curve_terms_for_test(words: &[u64; 8]) -> ([u64; 4], [u64; 4], [u64; 4], [u64; 4]) {
+    let x = FieldElement::from_uint(Uint(words[..4].try_into().expect("four x-coordinate limbs")));
+    let y = FieldElement::from_uint(Uint(words[4..].try_into().expect("four y-coordinate limbs")));
+    (x.0.0, y.0.0, y.square().0.0, x.square().mul(x).0.0)
+  }
+
   #[cfg(all(
     not(feature = "portable-only"),
     not(miri),
@@ -1970,14 +1690,14 @@ mod tests {
       for right in edges {
         let product = u128::from(left).strict_mul(u128::from(right));
         assert_eq!(super::ct_mul_u64_wide(left, right), super::split_u128(product));
-        assert_eq!(super::ct_mul_u64_wide_riscv64(left, right), super::split_u128(product));
+        assert_eq!(ct_mul_u64_wide_riscv64(left, right), super::split_u128(product));
       }
     }
 
     let field_edges = [
       super::Uint::ZERO,
       super::Uint::ONE,
-      super::GENERATOR_X,
+      GENERATOR_X,
       super::Uint([0xffff_ffff_ffff_fffe, 0x0000_0000_ffff_ffff, 0, 0xffff_ffff_0000_0001]),
     ];
     for left in field_edges {
@@ -2038,8 +1758,8 @@ mod tests {
     assert!(super::FieldElement::zero().invert() == super::FieldElement::zero());
     for value in [
       super::Uint::ONE,
-      super::GENERATOR_X,
-      super::GENERATOR_Y,
+      GENERATOR_X,
+      GENERATOR_Y,
       super::Uint([0xffff_ffff_ffff_fffe, 0x0000_0000_ffff_ffff, 0, 0xffff_ffff_0000_0001]),
     ] {
       let value = super::FieldElement::from_uint(value);
@@ -2048,20 +1768,16 @@ mod tests {
   }
 
   #[test]
-  fn fixed_base_comb_matches_reference_and_arbitrary_point_window() {
+  fn fixed_base_matches_arbitrary_point_window() {
     let table = super::precompute_public_table(super::Affine::generator());
     for bytes in [[0x11; 32], [0x42; 32], [0x7f; 32], [0xa5; 32]] {
       let scalar = super::Scalar::from_bytes(&bytes);
       let fixed = super::scalar_mul_generator_portable(&scalar)
         .to_affine_jacobian()
         .encode_sec1();
-      let comb = super::scalar_mul_generator_comb_reference(&scalar)
-        .to_affine()
-        .encode_sec1();
       let arbitrary = super::scalar_mul_public_table(&scalar, &table)
         .to_affine()
         .encode_sec1();
-      assert_eq!(fixed, comb);
       assert_eq!(fixed, arbitrary);
     }
   }

@@ -420,7 +420,7 @@ mod tests {
   }
 
   fn portable_terms(words: &[u64; 8]) -> super::P256CurveTerms {
-    let (x, y, y_squared, x_cubed) = super::super::p256_portable::curve_terms_for_test(words);
+    let (x, y, y_squared, x_cubed) = super::super::p256_portable::tests::curve_terms_for_test(words);
     super::P256CurveTerms {
       x,
       y,

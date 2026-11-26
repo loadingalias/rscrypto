@@ -900,22 +900,6 @@ impl FieldElement2625x4 {
     [z0, z1, z2, z3, z4, z5, z6, z7, z8, z9]
   }
 
-  /// Square the vectorized field element (4 independent squarings).
-  ///
-  /// Production code uses `square_and_negate_d()` directly; this standalone
-  /// wrapper exists for differential testing.
-  ///
-  /// # Safety
-  ///
-  /// Calls from outside an AVX2-enabled context require runtime AVX2 support.
-  #[cfg(all(test, feature = "ed25519"))]
-  #[inline]
-  #[target_feature(enable = "avx2")]
-  pub(crate) fn square(&self) -> Self {
-    let mut z = self.square_accum();
-    Self::reduce64(&mut z)
-  }
-
   /// Square and negate the D lane in a single fused operation.
   ///
   /// Computes `(A², B², C², −D²)` — needed for the HWCD doubling formula
@@ -1122,48 +1106,6 @@ mod tests {
   }
 
   #[test]
-  fn square_matches_scalar() {
-    if !std::arch::is_x86_feature_detected!("avx2") {
-      return;
-    }
-    let [a, b, c, d] = test_field_elements();
-
-    // SAFETY: AVX2 availability checked by the runtime guard above.
-    unsafe {
-      let packed = FieldElement2625x4::new(&a, &b, &c, &d);
-      let squared = packed.square();
-      let [ra, rb, rc, rd] = squared.split();
-
-      assert_eq!(ra.normalize(), a.square().normalize(), "A square failed");
-      assert_eq!(rb.normalize(), b.square().normalize(), "B square failed");
-      assert_eq!(rc.normalize(), c.square().normalize(), "C square failed");
-      assert_eq!(rd.normalize(), d.square().normalize(), "D square failed");
-    }
-  }
-
-  #[test]
-  fn square_matches_mul_self() {
-    if !std::arch::is_x86_feature_detected!("avx2") {
-      return;
-    }
-    let [a, b, c, d] = test_field_elements();
-
-    // SAFETY: AVX2 availability checked by the runtime guard above.
-    unsafe {
-      let packed = FieldElement2625x4::new(&a, &b, &c, &d);
-      let sq = packed.square();
-      let mm = packed.mul(&packed);
-      let [sa, sb, sc, sd] = sq.split();
-      let [ma, mb, mc, md] = mm.split();
-
-      assert_eq!(sa.normalize(), ma.normalize(), "A square vs mul mismatch");
-      assert_eq!(sb.normalize(), mb.normalize(), "B square vs mul mismatch");
-      assert_eq!(sc.normalize(), mc.normalize(), "C square vs mul mismatch");
-      assert_eq!(sd.normalize(), md.normalize(), "D square vs mul mismatch");
-    }
-  }
-
-  #[test]
   fn square_and_negate_d_matches_scalar() {
     if !std::arch::is_x86_feature_detected!("avx2") {
       return;
@@ -1279,32 +1221,6 @@ mod tests {
       assert_eq!(b2.normalize(), bi.normalize(), "IFMA mul B mismatch");
       assert_eq!(c2.normalize(), ci.normalize(), "IFMA mul C mismatch");
       assert_eq!(d2.normalize(), di.normalize(), "IFMA mul D mismatch");
-    }
-  }
-
-  #[test]
-  fn ifma_square_matches_avx2() {
-    if !std::arch::is_x86_feature_detected!("avx2") || !avx512ifma_available_for_tests() {
-      return;
-    }
-    let [a, b, c, d] = test_field_elements();
-
-    // SAFETY: AVX2 + IFMA availability checked by the runtime guard above.
-    unsafe {
-      use super::super::field_ifma::FieldElement51x4;
-
-      let avx2_packed = FieldElement2625x4::new(&a, &b, &c, &d);
-      let avx2_result = avx2_packed.square();
-      let [a2, b2, c2, d2] = avx2_result.split();
-
-      let ifma_packed = FieldElement51x4::new(&a, &b, &c, &d);
-      let ifma_result = ifma_packed.square();
-      let [ai, bi, ci, di] = ifma_result.split();
-
-      assert_eq!(a2.normalize(), ai.normalize(), "IFMA square A mismatch");
-      assert_eq!(b2.normalize(), bi.normalize(), "IFMA square B mismatch");
-      assert_eq!(c2.normalize(), ci.normalize(), "IFMA square C mismatch");
-      assert_eq!(d2.normalize(), di.normalize(), "IFMA square D mismatch");
     }
   }
 }

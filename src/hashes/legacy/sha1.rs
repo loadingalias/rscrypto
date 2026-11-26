@@ -221,14 +221,6 @@ pub(super) fn digest_parts(first: &[u8], second: &[u8]) -> [u8; 20] {
   sha1.finalize()
 }
 
-#[cfg(test)]
-fn digest_parts_with(first: &[u8], second: &[u8], compress: CompressFn) -> [u8; 20] {
-  let mut sha1 = Sha1::new_with(compress);
-  sha1.update(first);
-  sha1.update(second);
-  sha1.finalize()
-}
-
 #[cfg(miri)]
 fn selected_compress() -> CompressFn {
   ACTIVE_COMPRESS.get_or_init(|| compress_portable)
@@ -659,13 +651,14 @@ fn compress_portable(state: &mut [u32; 5], block: &[u8; BLOCK_LEN]) {
 
 #[cfg(test)]
 mod tests {
-  use super::{compress_portable, digest_parts, digest_parts_with, digest_websocket_key};
+  use super::{CompressFn, Sha1, compress_portable, digest_parts, digest_websocket_key};
 
-  #[cfg(all(
-    not(miri),
-    any(target_arch = "aarch64", all(target_arch = "x86_64", target_feature = "sse2"))
-  ))]
-  use super::CompressFn;
+  fn digest_parts_with(first: &[u8], second: &[u8], compress: CompressFn) -> [u8; 20] {
+    let mut sha1 = Sha1::new_with(compress);
+    sha1.update(first);
+    sha1.update(second);
+    sha1.finalize()
+  }
 
   fn assert_hex(message: &[u8], expected: [u8; 20]) {
     assert_eq!(digest_parts_with(message, b"", compress_portable), expected);

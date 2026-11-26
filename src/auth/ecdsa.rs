@@ -197,13 +197,6 @@ const P256_GX: Uint<4> = Uint([
   0xf8bc_e6e5_63a4_40f2,
   0x6b17_d1f2_e12c_4247,
 ]);
-#[cfg(test)]
-const P256_GY: Uint<4> = Uint([
-  0xcbb6_4068_37bf_51f5,
-  0x2bce_3357_6b31_5ece,
-  0x8ee7_eb4a_7c0f_9e16,
-  0x4fe3_42e2_fe1a_7f9b,
-]);
 
 const P384_FIELD: Uint<6> = Uint([
   0x0000_0000_ffff_ffff,
@@ -245,15 +238,6 @@ const P384_FIELD_MINUS_TWO: Uint<6> = Uint([
   0xffff_ffff_ffff_ffff,
   0xffff_ffff_ffff_ffff,
 ]);
-#[cfg(test)]
-const P384_FIELD_MONTGOMERY_ONE: Uint<6> = Uint([
-  0xffff_ffff_0000_0001,
-  0x0000_0000_ffff_ffff,
-  0x0000_0000_0000_0001,
-  0x0000_0000_0000_0000,
-  0x0000_0000_0000_0000,
-  0x0000_0000_0000_0000,
-]);
 const P384_B: Uint<6> = Uint([
   0x2a85_c8ed_d3ec_2aef,
   0xc656_398d_8a2e_d19d,
@@ -270,15 +254,6 @@ const P384_GX: Uint<6> = Uint([
   0x6e1d_3b62_8ba7_9b98,
   0x8eb1_c71e_f320_ad74,
   0xaa87_ca22_be8b_0537,
-]);
-#[cfg(test)]
-const P384_GY: Uint<6> = Uint([
-  0x7a43_1d7c_90ea_0e5f,
-  0x0a60_b1ce_1d7e_819d,
-  0xe9da_3113_b5f0_b8c0,
-  0xf8f4_1dbd_289a_147c,
-  0x5d9e_98bf_9292_dc29,
-  0x3617_de4a_9626_2c6f,
 ]);
 
 static P256_FIELD_MODULUS: Modulus<4> = Modulus {
@@ -2420,30 +2395,6 @@ impl<const L: usize> Jacobian<L> {
     0u64.wrapping_sub(u64::from(self.infinity))
   }
 
-  #[cfg(test)]
-  fn double(self) -> Self {
-    if self.infinity || self.y.value.is_zero() {
-      return Self::infinity(self.x.modulus);
-    }
-
-    let delta = self.z.square();
-    let gamma = self.y.square();
-    let beta = self.x.mul(gamma);
-    let alpha = self.x.sub(delta).mul(self.x.add(delta)).triple();
-    let x3 = alpha.square().sub(beta.double().double().double());
-    let z3 = self.y.add(self.z).square().sub(gamma).sub(delta);
-    let y3 = alpha
-      .mul(beta.double().double().sub(x3))
-      .sub(gamma.square().double().double().double());
-
-    Self {
-      x: x3,
-      y: y3,
-      z: z3,
-      infinity: false,
-    }
-  }
-
   fn double_ct(self) -> Self {
     let delta = self.z.square();
     let gamma = self.y.square();
@@ -2466,42 +2417,6 @@ impl<const L: usize> Jacobian<L> {
       Self::infinity(self.x.modulus),
       self.infinity_mask() | self.y.value.ct_is_zero_mask(),
     )
-  }
-
-  #[cfg(test)]
-  fn add_mixed(self, rhs: Affine<L>) -> Self {
-    if self.infinity {
-      return Self::from_affine(rhs);
-    }
-
-    let z1z1 = self.z.square();
-    let u2 = rhs.x.mul(z1z1);
-    let s2 = rhs.y.mul(self.z).mul(z1z1);
-    let h = u2.sub(self.x);
-    let r = s2.sub(self.y).double();
-
-    if h.value.is_zero() {
-      return if r.value.is_zero() {
-        self.double()
-      } else {
-        Self::infinity(self.x.modulus)
-      };
-    }
-
-    let hh = h.square();
-    let i = hh.double().double();
-    let j = h.mul(i);
-    let v = self.x.mul(i);
-    let x3 = r.square().sub(j).sub(v.double());
-    let y3 = r.mul(v.sub(x3)).sub(self.y.mul(j).double());
-    let z3 = self.z.add(h).square().sub(z1z1).sub(hh);
-
-    Self {
-      x: x3,
-      y: y3,
-      z: z3,
-      infinity: false,
-    }
   }
 
   fn add_mixed_ct(self, rhs: Affine<L>, rhs_infinity_mask: u64) -> Self {
@@ -3404,298 +3319,6 @@ fn affine_from_words<const L: usize>(modulus: &'static Modulus<L>, words: &[u64]
   }
 }
 
-#[cfg(test)]
-#[derive(Clone, Copy)]
-struct P384FieldElement {
-  value: Uint<6>,
-}
-
-#[cfg(test)]
-impl P384FieldElement {
-  fn zero() -> Self {
-    Self { value: Uint::ZERO }
-  }
-
-  fn one() -> Self {
-    Self {
-      value: P384_FIELD_MONTGOMERY_ONE,
-    }
-  }
-
-  const fn from_montgomery(value: Uint<6>) -> Self {
-    Self { value }
-  }
-
-  fn to_generic(self) -> FieldElement<6> {
-    FieldElement::from_montgomery(self.value, &P384_FIELD_MODULUS)
-  }
-
-  fn add(self, rhs: Self) -> Self {
-    Self::from_montgomery(add_p384_field(self.value.0, rhs.value.0))
-  }
-
-  fn sub(self, rhs: Self) -> Self {
-    Self::from_montgomery(sub_p384_field(self.value.0, rhs.value.0))
-  }
-
-  fn mul(self, rhs: Self) -> Self {
-    Self::from_montgomery(Uint(p384_field_mul_words(self.value.0, rhs.value.0)))
-  }
-
-  fn square(self) -> Self {
-    Self::from_montgomery(Uint(p384_field_square_words(self.value.0)))
-  }
-
-  fn double(self) -> Self {
-    self.add(self)
-  }
-
-  fn triple(self) -> Self {
-    self.double().add(self)
-  }
-
-  fn select(lhs: Self, rhs: Self, mask: u64) -> Self {
-    Self::from_montgomery(Uint::select(lhs.value, rhs.value, mask))
-  }
-}
-
-#[cfg(test)]
-#[derive(Clone, Copy)]
-struct P384Affine {
-  x: P384FieldElement,
-  y: P384FieldElement,
-}
-
-#[cfg(test)]
-#[derive(Clone, Copy)]
-struct P384Jacobian {
-  x: P384FieldElement,
-  y: P384FieldElement,
-  z: P384FieldElement,
-  infinity: bool,
-}
-
-#[cfg(test)]
-impl P384Jacobian {
-  fn infinity() -> Self {
-    Self {
-      x: P384FieldElement::zero(),
-      y: P384FieldElement::one(),
-      z: P384FieldElement::zero(),
-      infinity: true,
-    }
-  }
-
-  fn from_affine(point: P384Affine) -> Self {
-    Self {
-      x: point.x,
-      y: point.y,
-      z: P384FieldElement::one(),
-      infinity: false,
-    }
-  }
-
-  fn to_generic(self) -> Jacobian<6> {
-    Jacobian {
-      x: self.x.to_generic(),
-      y: self.y.to_generic(),
-      z: self.z.to_generic(),
-      infinity: self.infinity,
-    }
-  }
-
-  fn select(lhs: Self, rhs: Self, mask: u64) -> Self {
-    let lhs_infinity = 0u64.wrapping_sub(u64::from(lhs.infinity));
-    let rhs_infinity = 0u64.wrapping_sub(u64::from(rhs.infinity));
-    let selected_infinity = lhs_infinity ^ (mask & (lhs_infinity ^ rhs_infinity));
-    Self {
-      x: P384FieldElement::select(lhs.x, rhs.x, mask),
-      y: P384FieldElement::select(lhs.y, rhs.y, mask),
-      z: P384FieldElement::select(lhs.z, rhs.z, mask),
-      infinity: selected_infinity != 0,
-    }
-  }
-
-  fn infinity_mask(&self) -> u64 {
-    0u64.wrapping_sub(u64::from(self.infinity))
-  }
-
-  fn double_ct(self) -> Self {
-    let delta = self.z.square();
-    let gamma = self.y.square();
-    let beta = self.x.mul(gamma);
-    let alpha = self.x.sub(delta).mul(self.x.add(delta)).triple();
-    let x3 = alpha.square().sub(beta.double().double().double());
-    let z3 = self.y.add(self.z).square().sub(gamma).sub(delta);
-    let y3 = alpha
-      .mul(beta.double().double().sub(x3))
-      .sub(gamma.square().double().double().double());
-
-    let raw = Self {
-      x: x3,
-      y: y3,
-      z: z3,
-      infinity: false,
-    };
-    Self::select(
-      raw,
-      Self::infinity(),
-      self.infinity_mask() | self.y.value.ct_is_zero_mask(),
-    )
-  }
-
-  // Incomplete mixed-add formula. The fixed-base comb loop below proves that
-  // finite, non-masked operands are neither equal nor opposite.
-  fn add_mixed_nonexceptional_ct(self, rhs: P384Affine, rhs_infinity_mask: u64) -> Self {
-    let z1z1 = self.z.square();
-    let u2 = rhs.x.mul(z1z1);
-    let s2 = rhs.y.mul(self.z).mul(z1z1);
-    let h = u2.sub(self.x);
-    let r = s2.sub(self.y).double();
-
-    let hh = h.square();
-    let i = hh.double().double();
-    let j = h.mul(i);
-    let v = self.x.mul(i);
-    let x3 = r.square().sub(j).sub(v.double());
-    let y3 = r.mul(v.sub(x3)).sub(self.y.mul(j).double());
-    let z3 = self.z.add(h).square().sub(z1z1).sub(hh);
-    let raw = Self {
-      x: x3,
-      y: y3,
-      z: z3,
-      infinity: false,
-    };
-
-    let with_self_infinity = Self::select(raw, Self::from_affine(rhs), self.infinity_mask());
-    Self::select(with_self_infinity, self, rhs_infinity_mask)
-  }
-}
-
-#[cfg(test)]
-fn p384_field_mul_words(lhs: [u64; 6], rhs: [u64; 6]) -> [u64; 6] {
-  #[cfg(any(
-    all(
-      target_arch = "aarch64",
-      any(target_os = "macos", target_os = "linux"),
-      not(feature = "portable-only"),
-      not(miri)
-    ),
-    all(
-      target_arch = "x86_64",
-      any(target_os = "linux", target_os = "windows"),
-      not(feature = "portable-only"),
-      not(miri)
-    )
-  ))]
-  {
-    ecdsa_platform_asm::p384_field_mul(&lhs, &rhs)
-  }
-
-  #[cfg(not(any(
-    all(
-      target_arch = "aarch64",
-      any(target_os = "macos", target_os = "linux"),
-      not(feature = "portable-only"),
-      not(miri)
-    ),
-    all(
-      target_arch = "x86_64",
-      any(target_os = "linux", target_os = "windows"),
-      not(feature = "portable-only"),
-      not(miri)
-    )
-  )))]
-  {
-    ecdsa_p384_field::mul(lhs, rhs)
-  }
-}
-
-#[cfg(test)]
-fn p384_field_square_words(value: [u64; 6]) -> [u64; 6] {
-  #[cfg(any(
-    all(
-      target_arch = "aarch64",
-      any(target_os = "macos", target_os = "linux"),
-      not(feature = "portable-only"),
-      not(miri)
-    ),
-    all(
-      target_arch = "x86_64",
-      any(target_os = "linux", target_os = "windows"),
-      not(feature = "portable-only"),
-      not(miri)
-    )
-  ))]
-  {
-    ecdsa_platform_asm::p384_field_square(&value)
-  }
-
-  #[cfg(not(any(
-    all(
-      target_arch = "aarch64",
-      any(target_os = "macos", target_os = "linux"),
-      not(feature = "portable-only"),
-      not(miri)
-    ),
-    all(
-      target_arch = "x86_64",
-      any(target_os = "linux", target_os = "windows"),
-      not(feature = "portable-only"),
-      not(miri)
-    )
-  )))]
-  {
-    ecdsa_p384_field::square(value)
-  }
-}
-
-#[cfg(test)]
-fn select_p384_signing_generator_affine_ct(digit: usize) -> P384Affine {
-  let mut x = Uint(P384_SIGNING_GENERATOR_COMB_X[0].0);
-  let mut y = Uint(P384_SIGNING_GENERATOR_COMB_Y[0].0);
-
-  for (index, (&candidate_x, &candidate_y)) in P384_SIGNING_GENERATOR_COMB_X
-    .iter()
-    .zip(P384_SIGNING_GENERATOR_COMB_Y.iter())
-    .enumerate()
-    .skip(1)
-  {
-    let mask = mask_eq_usize(digit, index);
-    x = Uint::select(x, Uint(candidate_x.0), mask);
-    y = Uint::select(y, Uint(candidate_y.0), mask);
-  }
-
-  P384Affine {
-    x: P384FieldElement::from_montgomery(x),
-    y: P384FieldElement::from_montgomery(y),
-  }
-}
-
-#[cfg(test)]
-fn p384_scalar_mul_basepoint_comb_nonexceptional_ct(scalar: &SecretScalar<6>) -> Jacobian<6> {
-  let rows = P384_SIGNING_COMB_ROWS;
-  let mut acc = P384Jacobian::infinity();
-
-  for row in (0..rows).rev() {
-    acc = acc.double_ct();
-    let digit = signing_comb_digit_ct(scalar.value(), row, rows, P384_SIGNING_COMB_WIDTH);
-    let selected = select_p384_signing_generator_affine_ct(digit);
-
-    // P-384's signing comb represents a scalar as sum(2^row * S_row), where
-    // every S_row has bits only at positions `column * rows`. After the loop
-    // double, the accumulator coefficient has bits only at
-    // `column * rows + offset`, with 1 <= offset < rows. For nonzero digits it
-    // cannot equal S_row as an integer; both values are below the prime group
-    // order, so equality modulo the order is also impossible. Opposites are
-    // impossible because row 0 would require the scalar to equal the order, and
-    // later rows are bounded by less than half the order plus the sparse S_row.
-    acc = acc.add_mixed_nonexceptional_ct(selected, mask_eq_usize(digit, 0));
-  }
-
-  acc.to_generic()
-}
-
 #[cfg(all(
   target_arch = "aarch64",
   any(target_os = "macos", target_os = "linux"),
@@ -3798,21 +3421,6 @@ fn jacobian_from_p384_words<const L: usize>(modulus: &'static Modulus<L>, words:
     z: FieldElement::from_montgomery(Uint(z), modulus),
     infinity: false,
   }
-}
-
-#[cfg(test)]
-fn scalar_mul_basepoint_comb_ct<const L: usize>(curve: &Curve<L>, scalar: Uint<L>) -> Jacobian<L> {
-  let rows = curve.signing_comb_rows;
-  let mut acc = Jacobian::infinity(curve.field_modulus);
-
-  for row in (0..rows).rev() {
-    acc = acc.double_ct();
-    let digit = signing_comb_digit_ct(scalar, row, rows, curve.signing_comb_width);
-    let selected = select_signing_generator_affine_ct(curve, digit);
-    acc = acc.add_mixed_ct(selected, mask_eq_usize(digit, 0));
-  }
-
-  acc
 }
 
 fn scalar_mul_basepoint_comb_ct_secret<const L: usize, const S: usize>(
@@ -4216,50 +3824,7 @@ fn projective_x_matches_scalar<const L: usize>(point: Jacobian<L>, scalar: Uint<
   }
 }
 
-// The generic variable-time verification arithmetic is the oracle for the specialized
-// `verify` layer.
-#[cfg(test)]
-fn scalar_mul_two<const L: usize>(
-  curve: &Curve<L>,
-  generator_scalar: Uint<L>,
-  point_scalar: Uint<L>,
-  point_table: &[Affine<L>; COMB_TABLE_SIZE],
-) -> Jacobian<L> {
-  let rows = comb_rows::<L>();
-  let generator_rows = curve.signing_comb_rows;
-  let mut acc = Jacobian::infinity(curve.field_modulus);
-
-  for row in (0..rows).rev() {
-    acc = acc.double();
-    // The wider fixed-base signing comb has fewer rows. Adding its digit at
-    // the same row lets the remaining doublings scale it by 2^row, as signing
-    // does, so the generator term needs fewer additions and no extra doublings.
-    if row < generator_rows {
-      let digit = comb_digit(generator_scalar, row, generator_rows, curve.signing_comb_width);
-      if digit != 0 {
-        acc = acc.add_mixed(signing_generator_affine(curve, digit));
-      }
-    }
-    let digit = comb_digit(point_scalar, row, rows, COMB_WIDTH);
-    if digit != 0 {
-      acc = acc.add_mixed(point_table[digit]);
-    }
-  }
-  acc
-}
-
 const _: () = assert!(P256_SIGNING_COMB_ROWS <= comb_rows::<4>() && P384_SIGNING_COMB_ROWS <= comb_rows::<6>());
-
-// The generic variable-time verification arithmetic is the oracle for the specialized
-// `verify` layer.
-#[cfg(test)]
-/// Read the fixed-base signing-comb entry for a public digit.
-fn signing_generator_affine<const L: usize>(curve: &Curve<L>, digit: usize) -> Affine<L> {
-  Affine {
-    x: FieldElement::from_montgomery(Uint(curve.signing_generator_comb_x[digit].0), curve.field_modulus),
-    y: FieldElement::from_montgomery(Uint(curve.signing_generator_comb_y[digit].0), curve.field_modulus),
-  }
-}
 
 const fn comb_rows<const L: usize>() -> usize {
   L.strict_mul(64).div_ceil(COMB_WIDTH)
@@ -4274,65 +3839,6 @@ fn comb_digit<const L: usize>(scalar: Uint<L>, row: usize, rows: usize, width: u
     }
   }
   digit
-}
-
-// The generic variable-time verification arithmetic is the oracle for the specialized
-// `verify` layer.
-#[cfg(test)]
-fn precompute_comb_table<const L: usize>(point: Affine<L>) -> [Affine<L>; COMB_TABLE_SIZE] {
-  let rows = comb_rows::<L>();
-  let mut column_points = [Jacobian::from_affine(point); COMB_WIDTH];
-  let mut current = Jacobian::from_affine(point);
-  for column in column_points.iter_mut().skip(1) {
-    for _ in 0..rows {
-      current = current.double();
-    }
-    *column = current;
-  }
-  let columns = normalize_jacobian_table(column_points);
-
-  let mut table = [Jacobian::from_affine(point); COMB_TABLE_SIZE];
-  for (mask, entry) in table.iter_mut().enumerate().skip(1) {
-    let mut acc = Jacobian::infinity(point.x.modulus);
-    for (column, &column_point) in columns.iter().enumerate() {
-      if mask & (1usize << column) != 0 {
-        acc = acc.add_mixed(column_point);
-      }
-    }
-    *entry = acc;
-  }
-  normalize_jacobian_table(table)
-}
-
-#[cfg(test)]
-fn normalize_jacobian_table<const L: usize, const N: usize>(table: [Jacobian<L>; N]) -> [Affine<L>; N] {
-  let modulus = table
-    .first()
-    .map(|point| point.x.modulus)
-    .expect("ECDSA comb tables are nonempty");
-  let mut prefixes = [FieldElement::one(modulus); N];
-  let mut acc = FieldElement::one(modulus);
-  for (prefix, point) in prefixes.iter_mut().zip(table.iter()) {
-    *prefix = acc;
-    acc = acc.mul(point.z);
-  }
-
-  let mut acc_inv = acc.inv();
-  let mut out = [Affine {
-    x: FieldElement::zero(modulus),
-    y: FieldElement::zero(modulus),
-  }; N];
-  for ((point, prefix), output) in table.iter().zip(prefixes).zip(out.iter_mut()).rev() {
-    let z_inv = acc_inv.mul(prefix);
-    acc_inv = acc_inv.mul(point.z);
-    let z2 = z_inv.square();
-    let z3 = z2.mul(z_inv);
-    *output = Affine {
-      x: point.x.mul(z2),
-      y: point.y.mul(z3),
-    };
-  }
-  out
 }
 
 /// Parse an uncompressed SEC1 point and check `y² = x³ - 3x + b`.
@@ -5141,6 +4647,175 @@ mod tests {
 
   use super::*;
 
+  const P256_GY: Uint<4> = Uint([
+    0xcbb6_4068_37bf_51f5,
+    0x2bce_3357_6b31_5ece,
+    0x8ee7_eb4a_7c0f_9e16,
+    0x4fe3_42e2_fe1a_7f9b,
+  ]);
+  const P384_GY: Uint<6> = Uint([
+    0x7a43_1d7c_90ea_0e5f,
+    0x0a60_b1ce_1d7e_819d,
+    0xe9da_3113_b5f0_b8c0,
+    0xf8f4_1dbd_289a_147c,
+    0x5d9e_98bf_9292_dc29,
+    0x3617_de4a_9626_2c6f,
+  ]);
+
+  // The generic variable-time verification arithmetic is the oracle for the specialized
+  // `verify` layer.
+  impl<const L: usize> Jacobian<L> {
+    fn double(self) -> Self {
+      if self.infinity || self.y.value.is_zero() {
+        return Self::infinity(self.x.modulus);
+      }
+
+      let delta = self.z.square();
+      let gamma = self.y.square();
+      let beta = self.x.mul(gamma);
+      let alpha = self.x.sub(delta).mul(self.x.add(delta)).triple();
+      let x3 = alpha.square().sub(beta.double().double().double());
+      let z3 = self.y.add(self.z).square().sub(gamma).sub(delta);
+      let y3 = alpha
+        .mul(beta.double().double().sub(x3))
+        .sub(gamma.square().double().double().double());
+
+      Self {
+        x: x3,
+        y: y3,
+        z: z3,
+        infinity: false,
+      }
+    }
+
+    fn add_mixed(self, rhs: Affine<L>) -> Self {
+      if self.infinity {
+        return Self::from_affine(rhs);
+      }
+
+      let z1z1 = self.z.square();
+      let u2 = rhs.x.mul(z1z1);
+      let s2 = rhs.y.mul(self.z).mul(z1z1);
+      let h = u2.sub(self.x);
+      let r = s2.sub(self.y).double();
+
+      if h.value.is_zero() {
+        return if r.value.is_zero() {
+          self.double()
+        } else {
+          Self::infinity(self.x.modulus)
+        };
+      }
+
+      let hh = h.square();
+      let i = hh.double().double();
+      let j = h.mul(i);
+      let v = self.x.mul(i);
+      let x3 = r.square().sub(j).sub(v.double());
+      let y3 = r.mul(v.sub(x3)).sub(self.y.mul(j).double());
+      let z3 = self.z.add(h).square().sub(z1z1).sub(hh);
+
+      Self {
+        x: x3,
+        y: y3,
+        z: z3,
+        infinity: false,
+      }
+    }
+  }
+
+  fn scalar_mul_two<const L: usize>(
+    curve: &Curve<L>,
+    generator_scalar: Uint<L>,
+    point_scalar: Uint<L>,
+    point_table: &[Affine<L>; COMB_TABLE_SIZE],
+  ) -> Jacobian<L> {
+    let rows = comb_rows::<L>();
+    let generator_rows = curve.signing_comb_rows;
+    let mut acc = Jacobian::infinity(curve.field_modulus);
+
+    for row in (0..rows).rev() {
+      acc = acc.double();
+      // The wider fixed-base signing comb has fewer rows. Adding its digit at
+      // the same row lets the remaining doublings scale it by 2^row, as signing
+      // does, so the generator term needs fewer additions and no extra doublings.
+      if row < generator_rows {
+        let digit = comb_digit(generator_scalar, row, generator_rows, curve.signing_comb_width);
+        if digit != 0 {
+          acc = acc.add_mixed(signing_generator_affine(curve, digit));
+        }
+      }
+      let digit = comb_digit(point_scalar, row, rows, COMB_WIDTH);
+      if digit != 0 {
+        acc = acc.add_mixed(point_table[digit]);
+      }
+    }
+    acc
+  }
+
+  /// Read the fixed-base signing-comb entry for a public digit.
+  fn signing_generator_affine<const L: usize>(curve: &Curve<L>, digit: usize) -> Affine<L> {
+    Affine {
+      x: FieldElement::from_montgomery(Uint(curve.signing_generator_comb_x[digit].0), curve.field_modulus),
+      y: FieldElement::from_montgomery(Uint(curve.signing_generator_comb_y[digit].0), curve.field_modulus),
+    }
+  }
+
+  fn precompute_comb_table<const L: usize>(point: Affine<L>) -> [Affine<L>; COMB_TABLE_SIZE] {
+    let rows = comb_rows::<L>();
+    let mut column_points = [Jacobian::from_affine(point); COMB_WIDTH];
+    let mut current = Jacobian::from_affine(point);
+    for column in column_points.iter_mut().skip(1) {
+      for _ in 0..rows {
+        current = current.double();
+      }
+      *column = current;
+    }
+    let columns = normalize_jacobian_table(column_points);
+
+    let mut table = [Jacobian::from_affine(point); COMB_TABLE_SIZE];
+    for (mask, entry) in table.iter_mut().enumerate().skip(1) {
+      let mut acc = Jacobian::infinity(point.x.modulus);
+      for (column, &column_point) in columns.iter().enumerate() {
+        if mask & (1usize << column) != 0 {
+          acc = acc.add_mixed(column_point);
+        }
+      }
+      *entry = acc;
+    }
+    normalize_jacobian_table(table)
+  }
+
+  fn normalize_jacobian_table<const L: usize, const N: usize>(table: [Jacobian<L>; N]) -> [Affine<L>; N] {
+    let modulus = table
+      .first()
+      .map(|point| point.x.modulus)
+      .expect("ECDSA comb tables are nonempty");
+    let mut prefixes = [FieldElement::one(modulus); N];
+    let mut acc = FieldElement::one(modulus);
+    for (prefix, point) in prefixes.iter_mut().zip(table.iter()) {
+      *prefix = acc;
+      acc = acc.mul(point.z);
+    }
+
+    let mut acc_inv = acc.inv();
+    let mut out = [Affine {
+      x: FieldElement::zero(modulus),
+      y: FieldElement::zero(modulus),
+    }; N];
+    for ((point, prefix), output) in table.iter().zip(prefixes).zip(out.iter_mut()).rev() {
+      let z_inv = acc_inv.mul(prefix);
+      acc_inv = acc_inv.mul(point.z);
+      let z2 = z_inv.square();
+      let z3 = z2.mul(z_inv);
+      *output = Affine {
+        x: point.x.mul(z2),
+        y: point.y.mul(z3),
+      };
+    }
+    out
+  }
+
   fn p256_public_key() -> EcdsaP256PublicKey {
     let mut sec1 = [0u8; EcdsaP256PublicKey::SEC1_LENGTH];
     sec1[0] = 0x04;
@@ -5162,7 +4837,8 @@ mod tests {
       P256_ORDER.sub_raw(&Uint::ONE).0,
     ];
     for key_scalar in scalars {
-      let point = scalar_mul_basepoint_comb_ct(&P256, key_scalar).to_affine_ct(P256_FIELD_MINUS_TWO);
+      let point =
+        scalar_mul_basepoint_comb_ct_secret(&P256, &SecretScalar::new(key_scalar)).to_affine_ct(P256_FIELD_MINUS_TWO);
       let table = verify::comb_table::<p256_verify::Fe, 4>(point);
       assert!(
         table == precompute_comb_table(point),
@@ -5216,7 +4892,8 @@ mod tests {
       P384_ORDER.sub_raw(&Uint::ONE).0,
     ];
     for key_scalar in scalars {
-      let point = scalar_mul_basepoint_comb_ct(&P384, key_scalar).to_affine_ct(P384_FIELD_MINUS_TWO);
+      let point =
+        scalar_mul_basepoint_comb_ct_secret(&P384, &SecretScalar::new(key_scalar)).to_affine_ct(P384_FIELD_MINUS_TWO);
       let table = verify::comb_table::<p384_verify::Fe, 6>(point);
       assert!(
         table == precompute_comb_table(point),
@@ -5265,26 +4942,6 @@ mod tests {
     P384_GX.write_be(&mut sec1[1..49]);
     P384_GY.write_be(&mut sec1[49..]);
     EcdsaP384PublicKey::from_sec1_bytes(&sec1).expect("the P-384 generator is a valid public key")
-  }
-
-  fn p384_sparse_scalar(bits: &[usize]) -> Uint<6> {
-    let mut scalar = Uint::ZERO;
-    for &bit in bits {
-      scalar.0[bit / 64] |= 1u64 << (bit % 64);
-    }
-    assert!(scalar.cmp(&P384_ORDER).is_lt());
-    scalar
-  }
-
-  fn assert_p384_nonexceptional_comb_matches_complete(scalar: Uint<6>) {
-    let complete = scalar_mul_basepoint_comb_ct(&P384, scalar).to_affine_ct(P384_FIELD_MINUS_TWO);
-    let secret_scalar = SecretScalar::new(scalar);
-    let optimized = p384_scalar_mul_basepoint_comb_nonexceptional_ct(&secret_scalar).to_affine_ct(P384_FIELD_MINUS_TWO);
-
-    assert!(
-      optimized == complete,
-      "P-384 nonexceptional comb must match complete comb"
-    );
   }
 
   #[test]
@@ -6076,7 +5733,8 @@ mod tests {
     ];
 
     for scalar in scalars {
-      let portable = scalar_mul_basepoint_comb_ct(&P256, scalar).to_affine_ct(P256_FIELD_MINUS_TWO);
+      let portable =
+        scalar_mul_basepoint_comb_ct_secret(&P256, &SecretScalar::new(scalar)).to_affine_ct(P256_FIELD_MINUS_TWO);
       let secret_scalar = SecretScalar::new(scalar);
       let backend =
         scalar_mul_basepoint_affine_backend(&P256, &secret_scalar).expect("P-256 platform backend must be present");
@@ -6104,6 +5762,14 @@ mod tests {
   ))]
   #[test]
   fn p384_portable_field_arithmetic_matches_platform_backend() {
+    const P384_FIELD_MONTGOMERY_ONE: Uint<6> = Uint([
+      0xffff_ffff_0000_0001,
+      0x0000_0000_ffff_ffff,
+      0x0000_0000_0000_0001,
+      0x0000_0000_0000_0000,
+      0x0000_0000_0000_0000,
+      0x0000_0000_0000_0000,
+    ]);
     let values = [
       Uint::ZERO,
       P384_FIELD_MONTGOMERY_ONE,
@@ -6142,7 +5808,8 @@ mod tests {
     ];
 
     for scalar in scalars {
-      let portable = scalar_mul_basepoint_comb_ct(&P384, scalar).to_affine_ct(P384_FIELD_MINUS_TWO);
+      let portable =
+        scalar_mul_basepoint_comb_ct_secret(&P384, &SecretScalar::new(scalar)).to_affine_ct(P384_FIELD_MINUS_TWO);
       let secret_scalar = SecretScalar::new(scalar);
       let backend = scalar_mul_basepoint_backend(&P384, &secret_scalar)
         .expect("P-384 platform backend must be present")
@@ -6152,29 +5819,6 @@ mod tests {
         backend == portable,
         "P-384 platform basepoint backend must match portable comb"
       );
-    }
-  }
-
-  #[test]
-  fn p384_nonexceptional_comb_matches_complete_comb_for_structured_scalars() {
-    for scalar in [
-      Uint::ONE,
-      Uint::from_u64(2),
-      Uint::from_u64(0x1234_5678_9abc_def0),
-      p384_sparse_scalar(&[0, 48, 96, 144, 192, 240, 288, 336]),
-      p384_sparse_scalar(&[1, 49, 97, 145, 193, 241, 289, 337]),
-      p384_sparse_scalar(&[47, 95, 143, 191, 239, 287, 335, 383]),
-      P384_ORDER.sub_raw(&Uint::ONE).0,
-    ] {
-      assert_p384_nonexceptional_comb_matches_complete(scalar);
-    }
-
-    for row in [0usize, 1, 2, 23, 46] {
-      for column in [0usize, 1, 3, 7] {
-        let bit = row.strict_add(column.strict_mul(P384_SIGNING_COMB_ROWS));
-        let next_bit = bit.strict_add(1);
-        assert_p384_nonexceptional_comb_matches_complete(p384_sparse_scalar(&[bit, next_bit]));
-      }
     }
   }
 

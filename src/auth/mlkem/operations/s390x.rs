@@ -1150,14 +1150,14 @@ mod tests {
 
       assert_eq!(vector, scalar, "forward seed {seed}");
 
-      super::super::inverse_ntt_scalar(&mut scalar);
+      super::super::tests::inverse_ntt_scalar(&mut scalar);
       // SAFETY: direct s390x vector inverse-NTT test call because:
       // 1. Runtime feature detection confirmed z/Vector availability above.
       // 2. `vector` is a fixed 256-coefficient polynomial matching the kernel contract.
       // 3. The kernel's memory access schedule depends only on public ML-KEM dimensions and uses
       //    fixed-work shift/add multiplication for secret-fed coefficient products.
       unsafe {
-        inverse_ntt_vector(&mut vector, super::super::INV_NTT_SCALE_MONT);
+        inverse_ntt_vector(&mut vector, super::super::tests::INV_NTT_SCALE_MONT);
       }
 
       assert_eq!(vector, scalar, "inverse seed {seed}");
