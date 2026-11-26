@@ -25,8 +25,6 @@ use super::{
 };
 #[cfg(all(target_arch = "x86_64", feature = "ed25519"))]
 use super::{point::CachedPoint, scalar};
-#[path = "basepoint_radix16_avx2.rs"]
-mod basepoint_radix16_avx2;
 #[path = "basepoint_radix16_ifma.rs"]
 mod basepoint_radix16_ifma;
 #[cfg(target_arch = "x86_64")]
@@ -306,9 +304,11 @@ fn cached_from_affine(cp: &CachedPoint, constants: &FieldElement2625x4) -> Cache
   CachedPointAvx2(packed.mul(constants))
 }
 
-/// Scan a public table row, then apply the secret digit's sign.
+/// Scan a public IFMA table row, repack the selected entry for AVX2, then apply the secret digit's
+/// sign.
 ///
-/// Keep this AVX2-only boundary out of line: inlining into an IFMA caller
+/// The IFMA table holds canonical radix-51 limbs of the same Hamburg-scaled values. Digit 0 selects
+/// the AVX2 `identity`. Keep this AVX2-only boundary out of line: inlining into an IFMA caller
 /// permits EVEX instructions that the binary constant-time verifier cannot read.
 ///
 /// # Safety
@@ -318,12 +318,13 @@ fn cached_from_affine(cp: &CachedPoint, constants: &FieldElement2625x4) -> Cache
 #[target_feature(enable = "avx2")]
 fn select_signed_cached_avx2(table: &[[[i64; 4]; 5]; 8], digit: i8, identity: &CachedPointAvx2) -> CachedPointAvx2 {
   let abs = core::hint::black_box(ct_abs_i8(digit));
-  let mut selected = *identity;
-  for (expected, candidate) in (1u8..=8).zip(table) {
-    let cached = CachedPointAvx2(FieldElement2625x4(load_cached_raw(candidate)));
+  let mut limbs = FieldElement51x4(load_cached_raw(&table[0]));
+  for (expected, candidate) in (2u8..=8).zip(&table[1..]) {
     let mask = core::hint::black_box(ct_eq_mask_u8(abs, expected));
-    selected = select_cached_avx2(&selected, &cached, mask);
+    limbs = limbs.select_mask(&FieldElement51x4(load_cached_raw(candidate)), mask);
   }
+  let selected = CachedPointAvx2(FieldElement2625x4::from_radix51_lanes(limbs.0));
+  let selected = select_cached_avx2(&selected, identity, core::hint::black_box(ct_eq_mask_u8(abs, 0)));
   let neg = selected.neg();
   select_cached_avx2(&selected, &neg, core::hint::black_box(ct_negative_mask_i8(digit)))
 }
@@ -431,20 +432,20 @@ pub(crate) unsafe fn scalar_mul_vartime_avx2(point: &ExtendedPoint, scalar_bytes
 
 /// Fixed-base scalar multiplication for the Ed25519 basepoint using AVX2.
 ///
-/// Uses the static table in the exact vector representation consumed by addition.
+/// Repacks each selected entry of the static IFMA table for AVX2 addition.
 ///
 /// # Safety
 ///
 /// Caller must ensure AVX2 is available.
 #[target_feature(enable = "avx2")]
 pub(crate) unsafe fn scalar_mul_basepoint_avx2(scalar_bytes: &[u8; 32]) -> ExtendedPoint {
-  use basepoint_radix16_avx2::BASEPOINT_RADIX16_AVX2_RAW;
+  use basepoint_radix16_ifma::BASEPOINT_RADIX16_IFMA_RAW;
 
   let digits = scalar_radix_16(scalar_bytes);
   let mut acc = ExtendedPointAvx2::from_extended(&ExtendedPoint::identity());
   let identity = acc.to_cached();
 
-  for (digit, table) in digits.iter().copied().zip(BASEPOINT_RADIX16_AVX2_RAW.iter()) {
+  for (digit, table) in digits.iter().copied().zip(BASEPOINT_RADIX16_IFMA_RAW.iter()) {
     let point = select_signed_cached_avx2(table, digit, &identity);
     acc = acc.add_cached(&point);
   }
@@ -461,10 +462,10 @@ pub(crate) unsafe fn scalar_mul_basepoint_avx2(scalar_bytes: &[u8; 32]) -> Exten
 #[inline]
 #[target_feature(enable = "avx2")]
 pub unsafe fn diag_select_basepoint_cached_avx2_limb_digest(digit: i8) -> [u64; 20] {
-  use basepoint_radix16_avx2::BASEPOINT_RADIX16_AVX2_RAW;
+  use basepoint_radix16_ifma::BASEPOINT_RADIX16_IFMA_RAW;
 
   let identity = ExtendedPointAvx2::from_extended(&ExtendedPoint::identity()).to_cached();
-  let selected = select_signed_cached_avx2(&BASEPOINT_RADIX16_AVX2_RAW[0], digit, &identity);
+  let selected = select_signed_cached_avx2(&BASEPOINT_RADIX16_IFMA_RAW[0], digit, &identity);
   let fields = selected.0.split();
   let mut out = [0u64; 20];
   for (chunk, field) in out.as_chunks_mut::<5>().0.iter_mut().zip(fields.iter()) {
@@ -1101,7 +1102,7 @@ mod tests {
   }
 
   #[test]
-  fn radix16_vector_tables_match_portable_fields() {
+  fn radix16_ifma_table_matches_portable_fields() {
     let d2 = FieldElement::from_small(D2);
     let d2_twice = FieldElement::from_small(D2 * 2);
     for (row, table) in super::super::point::BASEPOINT_RADIX16_TABLE.iter().enumerate() {
@@ -1109,30 +1110,12 @@ mod tests {
         let (plus, minus, t2d) = point.components();
         let expected = [minus.mul(&d2), plus.mul(&d2), d2_twice, t2d.mul(&d2)];
         let ifma = basepoint_radix16_ifma::BASEPOINT_RADIX16_IFMA_RAW[row][index];
-        let avx2 = basepoint_radix16_avx2::BASEPOINT_RADIX16_AVX2_RAW[row][index];
         for (lane, expected) in expected.iter().enumerate() {
           let ifma_limbs = ifma.map(|limb| u64::from_ne_bytes(limb[lane].to_ne_bytes()));
           assert_eq!(
             ifma_limbs,
             *expected.normalize().limbs(),
             "IFMA row {row}, entry {index}, lane {lane}"
-          );
-
-          // AVX2 keeps a loose 26/25-bit representation. Decode its specified
-          // lane layout, then compare using the independent scalar field path.
-          let avx2_limbs = avx2.map(|limb| {
-            let pair = (lane / 2) * 2;
-            let shift = (lane % 2) * 32;
-            let low = (u64::from_ne_bytes(limb[pair].to_ne_bytes()) >> shift) & u64::from(u32::MAX);
-            let high = (u64::from_ne_bytes(limb[pair + 1].to_ne_bytes()) >> shift) & u64::from(u32::MAX);
-            assert!(low < (1 << 26));
-            assert!(high < (1 << 26));
-            low + (high << 26)
-          });
-          assert_eq!(
-            FieldElement::from_limbs(avx2_limbs).normalize(),
-            expected.normalize(),
-            "AVX2 row {row}, entry {index}, lane {lane}"
           );
         }
       }
@@ -1155,7 +1138,7 @@ mod tests {
   }
 
   #[test]
-  fn radix16_avx2_table_and_signed_selection_match_runtime_conversion() {
+  fn radix16_avx2_signed_selection_matches_runtime_conversion() {
     if !std::arch::is_x86_feature_detected!("avx2") {
       return;
     }
@@ -1163,10 +1146,17 @@ mod tests {
     unsafe {
       let affine_k = hamburg_affine_constants();
       let identity = ExtendedPointAvx2::from_extended(&ExtendedPoint::identity()).to_cached();
+      let fields = |point: CachedPointAvx2| point.0.split().map(|field| field.normalize());
       for (row, table) in super::super::point::BASEPOINT_RADIX16_TABLE.iter().enumerate() {
-        let raw = &basepoint_radix16_avx2::BASEPOINT_RADIX16_AVX2_RAW[row];
-        for (point, raw) in table.iter().zip(raw) {
-          assert_eq!(raw_vectors(cached_from_affine(point, &affine_k).0.0), *raw);
+        let raw = &basepoint_radix16_ifma::BASEPOINT_RADIX16_IFMA_RAW[row];
+        // The repack equals the scalar packing of the same canonical lanes, word for word.
+        for entry in raw {
+          let lanes: [FieldElement; 4] = core::array::from_fn(|lane| {
+            FieldElement::from_limbs(entry.map(|limb| u64::from_ne_bytes(limb[lane].to_ne_bytes())))
+          });
+          let packed = FieldElement2625x4::new(&lanes[0], &lanes[1], &lanes[2], &lanes[3]);
+          let repacked = FieldElement2625x4::from_radix51_lanes(load_cached_raw(entry));
+          assert_eq!(raw_vectors(repacked.0), raw_vectors(packed.0), "row {row}");
         }
         for digit in -8i8..=8 {
           let mut expected = if digit == 0 {
@@ -1178,11 +1168,7 @@ mod tests {
             expected = expected.neg();
           }
           let selected = select_signed_cached_avx2(raw, digit, &identity);
-          assert_eq!(
-            raw_vectors(selected.0.0),
-            raw_vectors(expected.0.0),
-            "row {row}, digit {digit}"
-          );
+          assert_eq!(fields(selected), fields(expected), "row {row}, digit {digit}");
         }
       }
     }

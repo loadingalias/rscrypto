@@ -237,6 +237,31 @@ impl FieldElement2625x4 {
     Self(out).reduce()
   }
 
+  /// Repack four field elements from radix-51 limb vectors, one element in each 64-bit lane.
+  ///
+  /// Each limb must be canonical (below 2^51), so each high part fits 25 bits and the result needs
+  /// no reduction.
+  ///
+  /// # Safety
+  ///
+  /// Calls from outside an AVX2-enabled context require runtime AVX2 support.
+  #[inline]
+  #[target_feature(enable = "avx2")]
+  pub(crate) fn from_radix51_lanes(limbs: [__m256i; 5]) -> Self {
+    let mask = _mm256_set1_epi64x(LOW_26_BITS);
+    let mut out = limbs;
+    for limb in &mut out {
+      let low = _mm256_and_si256(*limb, mask);
+      let high = _mm256_srli_epi64::<26>(*limb);
+      // (A, B, C, D) low and high parts become the pairs (A, B) and (C, D) of `pack_limb_pair`.
+      *limb = _mm256_or_si256(
+        _mm256_unpacklo_epi64(low, high),
+        _mm256_slli_epi64::<32>(_mm256_unpackhi_epi64(low, high)),
+      );
+    }
+    Self(out)
+  }
+
   /// # Safety
   ///
   /// Calls from outside an AVX2-enabled context require runtime AVX2 support.

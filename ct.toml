@@ -3049,7 +3049,7 @@ targets = ["x86_64-unknown-linux-gnu"]
 rustflags = ["-C", "target-feature=+avx2"]
 sse_depth = 20000
 secrets = [{ name = "CT_BINSEC_ED25519_DIGIT", kind = "global", bytes = 1 }]
-public = [{ name = "BASEPOINT_RADIX16_AVX2_RAW[0]", kind = "const", value = 0 }]
+public = [{ name = "BASEPOINT_RADIX16_IFMA_RAW[0]", kind = "const", value = 0 }]
 assumptions = []
 notes = "Production passes an Ed25519 signed radix-16 digit; this kernel validates the AVX2 fixed-base selector used by the accelerated signing/public-key path."
 claim = "ct-intended"

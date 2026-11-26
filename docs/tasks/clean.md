@@ -8,9 +8,11 @@
 - Keep the generated paired RSA kernel source.
   Its generator checks that the committed output matches.
   [Generated kernel](../../src/auth/rsa_aarch64_pair.rs) · [Generator](../../scripts/asm/rsa_pair.py#L8)
-- Keep the generated Ed25519 AVX2 and IFMA radix-16 tables.
+- Keep the generated Ed25519 IFMA radix-16 table.
   Compile-time derivation from the portable table reproduced every word and kept the binary size.
   It added 450 ms to each x86_64 `cargo check` with `ed25519,x25519` (772 ms to 1,222 ms).
-  Each AVX2 word is an IFMA limb split into 26 and 25 bits.
-  Tests compare every entry with portable field arithmetic and the runtime vector conversion.
-  [AVX2 table](../../src/auth/ed25519/basepoint_radix16_avx2.rs) · [IFMA table](../../src/auth/ed25519/basepoint_radix16_ifma.rs) · [Representation checks](../../src/auth/ed25519/point_avx2.rs#L1118)
+  The AVX2 path splits each selected IFMA entry into 26- and 25-bit limbs, so it needs no table.
+  On Windows Granite Rapids with IFMA masked, the split moved no fixed-base row beyond the 0.5% run-to-run
+  drift (Ed25519 public key +0.3%, X25519 public key -0.2%).
+  Tests compare every entry with portable field arithmetic and each AVX2 selection with the runtime conversion.
+  [IFMA table](../../src/auth/ed25519/basepoint_radix16_ifma.rs) · [Representation checks](../../src/auth/ed25519/point_avx2.rs#L1105)
