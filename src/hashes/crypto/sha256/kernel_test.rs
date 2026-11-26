@@ -2,18 +2,34 @@ use alloc::vec::Vec;
 
 use super::{
   Sha256,
-  kernels::{ALL, Sha256KernelId, compress_blocks_fn, required_caps},
+  kernels::{Sha256KernelId, required_caps},
 };
 
+pub(crate) const ALL: &[Sha256KernelId] = &[
+  Sha256KernelId::Portable,
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+  Sha256KernelId::X86Sha,
+  #[cfg(target_arch = "aarch64")]
+  Sha256KernelId::Aarch64Sha2,
+  #[cfg(all(
+    any(target_arch = "riscv64", target_arch = "riscv32"),
+    not(feature = "portable-only")
+  ))]
+  Sha256KernelId::RiscvZknh,
+  #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+  Sha256KernelId::WasmSimd128,
+  #[cfg(target_arch = "s390x")]
+  Sha256KernelId::S390xKimd,
+];
+
 fn digest_with_kernel<'a>(id: Sha256KernelId, chunks: impl IntoIterator<Item = &'a [u8]>) -> [u8; 32] {
-  let compress = compress_blocks_fn(id);
   let mut h = Sha256::default();
   for chunk in chunks {
     if !chunk.is_empty() {
-      h.update_with(chunk, compress);
+      h.update_with(chunk, id);
     }
   }
-  h.finalize_inner_with::<false>(compress)
+  h.finalize_inner_with::<false>(id)
 }
 
 #[cfg(test)]
@@ -115,19 +131,17 @@ mod tests {
 
 #[test]
 fn forced_backend_survives_initialization_and_clone_until_reset() {
-  use super::kernels::CompressBlocksFn::Kernel;
-
   let caps = crate::platform::caps();
   for &id in ALL.iter().filter(|&&id| caps.has(required_caps(id))) {
     let mut hasher = Sha256 {
-      compress_blocks: compress_blocks_fn(id),
+      compress_blocks: id,
       dispatch_initialized: true,
       ..Default::default()
     };
     let mut cloned = hasher.clone();
     for h in [&mut hasher, &mut cloned] {
       assert!(
-        matches!((h.select_compress(), compress_blocks_fn(id)), (Kernel(selected), Kernel(forced)) if selected == forced),
+        h.select_compress() == id,
         "forced kernel {} was replaced during selection",
         id.as_str()
       );

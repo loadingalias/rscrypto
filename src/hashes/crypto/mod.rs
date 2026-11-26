@@ -66,7 +66,7 @@ pub use sha512_256::Sha512_256;
 
 /// An operation that uses one SHA-2 compression function.
 ///
-/// `CompressBlocksFn::with` of SHA-256 and SHA-512 runs it with the function
+/// `Sha256KernelId::with` and `Sha512KernelId::with` runs it with the function
 /// item of the selected kernel. Each kernel thus gets its own copy, and each
 /// compression in it is a direct call.
 #[cfg(feature = "sha2")]

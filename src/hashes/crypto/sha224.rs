@@ -3,7 +3,7 @@
 //! SHA-224 is identical to SHA-256 except for initial hash values (H0) and
 //! output truncation (28 bytes / 7 words). The compression function is shared.
 
-use self::kernels::CompressBlocksFn;
+use self::kernels::Sha256KernelId;
 use crate::traits::Digest;
 
 #[doc(hidden)]
@@ -52,7 +52,7 @@ pub struct Sha224 {
   block: [u8; BLOCK_LEN],
   block_len: usize,
   bytes_hashed: u64,
-  compress_blocks: CompressBlocksFn,
+  compress_blocks: Sha256KernelId,
   // True also preserves an explicitly supplied compression backend.
   dispatch_initialized: bool,
 }
@@ -89,7 +89,7 @@ impl Sha224 {
   }
 
   #[inline]
-  fn select_compress(&mut self) -> CompressBlocksFn {
+  fn select_compress(&mut self) -> Sha256KernelId {
     if !self.dispatch_initialized {
       self.compress_blocks = dispatch::compress_dispatch();
       self.dispatch_initialized = true;
@@ -98,7 +98,7 @@ impl Sha224 {
   }
 
   #[inline]
-  fn update_with(&mut self, mut data: &[u8], compress_blocks: CompressBlocksFn) {
+  fn update_with(&mut self, mut data: &[u8], compress_blocks: Sha256KernelId) {
     if data.is_empty() {
       return;
     }
@@ -140,7 +140,7 @@ impl Sha224 {
   }
 
   #[inline]
-  fn finalize_inner_with(&self, compress_blocks: CompressBlocksFn) -> [u8; 28] {
+  fn finalize_inner_with(&self, compress_blocks: Sha256KernelId) -> [u8; 28] {
     let mut state = self.state;
     let mut block = self.block;
     let mut block_len = self.block_len;

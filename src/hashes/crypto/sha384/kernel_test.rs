@@ -1,15 +1,12 @@
 use alloc::vec::Vec;
 
-use super::{
-  Sha384,
-  kernels::{ALL, Sha384KernelId, compress_blocks_fn, required_caps},
-};
+use super::{Sha384, kernels::Sha384KernelId};
+use crate::hashes::crypto::sha512::{kernel_test::ALL, kernels::required_caps};
 use crate::traits::Digest as _;
 
 fn hasher_for_kernel(id: Sha384KernelId) -> Sha384 {
-  let compress = compress_blocks_fn(id);
   Sha384 {
-    compress_blocks: compress,
+    compress_blocks: id,
     dispatch_initialized: true,
     ..Default::default()
   }
@@ -55,7 +52,7 @@ mod tests {
 
       for &len in &lens {
         let msg = pattern(len);
-        let oneshot = super::super::dispatch::digest_oneshot(&msg, compress_blocks_fn(id));
+        let oneshot = super::super::dispatch::digest_oneshot(&msg, id);
         let ours = digest_with_kernel(id, &msg);
 
         use sha2::Digest as _;
@@ -113,19 +110,17 @@ mod tests {
 
 #[test]
 fn forced_backend_survives_initialization_and_clone_until_reset() {
-  use super::kernels::CompressBlocksFn::Kernel;
-
   let caps = crate::platform::caps();
   for &id in ALL.iter().filter(|&&id| caps.has(required_caps(id))) {
     let mut hasher = Sha384 {
-      compress_blocks: compress_blocks_fn(id),
+      compress_blocks: id,
       dispatch_initialized: true,
       ..Default::default()
     };
     let mut cloned = hasher.clone();
     for h in [&mut hasher, &mut cloned] {
       assert!(
-        matches!((h.select_compress(), compress_blocks_fn(id)), (Kernel(selected), Kernel(forced)) if selected == forced),
+        h.select_compress() == id,
         "forced kernel {} was replaced during selection",
         id.as_str()
       );

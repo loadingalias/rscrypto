@@ -121,5 +121,6 @@ run_checks verify
 "$python" scripts/asm/p384.py check
 "$python" scripts/asm/rsa_pair.py check
 "$python" scripts/asm/provenance.py check
+"$python" scripts/check/rule1.py
 scripts/check/lint-independent-workspaces.sh
 RUSTDOCFLAGS="${RUSTDOCFLAGS:+$RUSTDOCFLAGS }-D warnings" cargo doc --workspace --no-deps --all-features --locked

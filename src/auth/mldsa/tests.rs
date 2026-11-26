@@ -244,7 +244,10 @@ macro_rules! prepared_storage_lifecycle {
         .expect("compact signature");
       {
         let prepared = secret.prepare(&mut storage).expect("prepare secret");
-        assert!(!prepared.storage.state.is_clear(), "preparation must fill storage");
+        assert!(
+          !crate::auth::mldsa::portable::tests::is_clear(&prepared.storage.state),
+          "preparation must fill storage"
+        );
         assert_eq!(
           prepared.storage.seeds.as_array(),
           &secret.bytes.as_array()[..128],
@@ -265,7 +268,10 @@ macro_rules! prepared_storage_lifecycle {
           .verify_with_context(b"other", b"context", &expected)
           .expect_err("changed message");
       }
-      assert!(storage.state.is_clear(), "dropping the handle must clear secrets");
+      assert!(
+        crate::auth::mldsa::portable::tests::is_clear(&storage.state),
+        "dropping the handle must clear secrets"
+      );
       assert_eq!(storage.seeds.as_array(), &[0; 128], "dropping the handle must clear K");
     }
 
@@ -273,7 +279,7 @@ macro_rules! prepared_storage_lifecycle {
     // clear what it decoded before returning. Out-of-range noise fails decode
     // only after every polynomial has been written.
     let _leaked = core::mem::ManuallyDrop::new(first.1.prepare(&mut storage).expect("prepare secret"));
-    assert!(!storage.state.is_clear());
+    assert!(!crate::auth::mldsa::portable::tests::is_clear(&storage.state));
     let mut bytes = *first.1.bytes.as_array();
     let noise_end = 128usize.strict_add($p.eta_bits.strict_mul(32));
     bytes[128..noise_end].fill(0xff);
@@ -285,7 +291,10 @@ macro_rules! prepared_storage_lifecycle {
       invalid.prepare(&mut storage).map(|_| ()),
       Err(MlDsaError::InvalidSecretKey)
     );
-    assert!(storage.state.is_clear(), "failed preparation must clear secrets");
+    assert!(
+      crate::auth::mldsa::portable::tests::is_clear(&storage.state),
+      "failed preparation must clear secrets"
+    );
     assert_eq!(storage.seeds.as_array(), &[0; 128], "failed preparation must clear K");
   }};
 }
@@ -701,7 +710,8 @@ fn allocated_prepared_secrets_are_cleared_before_deallocation() {
           // arrays, which remain valid after their clearing destructors.
           // This borrow ends before the allocation is released.
           let storage = unsafe { pointer.cast::<$storage>().as_ref() };
-          let cleared = storage.state.is_clear() && storage.seeds.as_array() == &[0; 128];
+          let cleared =
+            crate::auth::mldsa::portable::tests::is_clear(&storage.state) && storage.seeds.as_array() == &[0; 128];
           self.cleared.set(self.cleared.get() && cleared);
           self.deallocations.set(self.deallocations.get().strict_add(1));
           // SAFETY: the pointer and original layout are forwarded to the
@@ -723,7 +733,7 @@ fn allocated_prepared_secrets_are_cleared_before_deallocation() {
       assert_eq!(allocations.get(), 1, "one storage allocation per preparation");
       assert_eq!(deallocations.get(), 0, "prepared key retains its allocation");
       assert!(
-        !prepared.storage.state.is_clear(),
+        !crate::auth::mldsa::portable::tests::is_clear(&prepared.storage.state),
         "observe nonzero transformed secrets"
       );
       assert_ne!(

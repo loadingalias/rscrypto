@@ -12,19 +12,11 @@ use crate::platform::caps::wasm;
 #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 use crate::platform::caps::x86;
 
-/// The selected compression kernel.
+/// Compression through the selected kernel.
 ///
 /// [`Self::with`] reaches each kernel through a direct call, so no code
 /// pointer is stored or called, and a static stack review bounds every path.
-#[derive(Clone, Copy)]
-pub(crate) enum CompressBlocksFn {
-  Kernel(Sha512KernelId),
-  /// A PBKDF2 test's instrumented compression function.
-  #[cfg(all(test, feature = "pbkdf2"))]
-  Test(fn(&mut [u64; 8], &[u8])),
-}
-
-impl CompressBlocksFn {
+impl Sha512KernelId {
   /// Run `op` with the selected kernel.
   ///
   /// Each kernel gets its own copy of `op`, so each compression in `op` is
@@ -32,25 +24,23 @@ impl CompressBlocksFn {
   #[inline(always)]
   pub(crate) fn with<O: WithCompress<[u64; 8]>>(self, op: O) -> O::Output {
     match self {
-      Self::Kernel(Sha512KernelId::Portable) => op.run(Sha512::compress_blocks_portable),
+      Self::Portable => op.run(Sha512::compress_blocks_portable),
       #[cfg(target_arch = "aarch64")]
-      Self::Kernel(Sha512KernelId::Aarch64Sha512) => op.run(compress_blocks_aarch64_sha512),
+      Self::Aarch64Sha512 => op.run(compress_blocks_aarch64_sha512),
       #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
-      Self::Kernel(Sha512KernelId::X86Sha512) => op.run(compress_blocks_x86_sha512),
+      Self::X86Sha512 => op.run(compress_blocks_x86_sha512),
       #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
-      Self::Kernel(Sha512KernelId::X86Avx512vl) => op.run(compress_blocks_x86_avx512vl),
+      Self::X86Avx512vl => op.run(compress_blocks_x86_avx512vl),
       #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
-      Self::Kernel(Sha512KernelId::Riscv64Zknh) => op.run(compress_blocks_riscv_zknh),
+      Self::Riscv64Zknh => op.run(compress_blocks_riscv_zknh),
       #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
-      Self::Kernel(Sha512KernelId::WasmSimd128) => op.run(compress_blocks_wasm_simd128),
+      Self::WasmSimd128 => op.run(compress_blocks_wasm_simd128),
       #[cfg(target_arch = "s390x")]
-      Self::Kernel(Sha512KernelId::S390xKimd) => op.run(compress_blocks_s390x_kimd),
+      Self::S390xKimd => op.run(compress_blocks_s390x_kimd),
       #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
-      Self::Kernel(Sha512KernelId::X86Avx2Decoupled) => op.run(compress_blocks_x86_avx2_decoupled),
+      Self::X86Avx2Decoupled => op.run(compress_blocks_x86_avx2_decoupled),
       #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
-      Self::Kernel(Sha512KernelId::X86Avx512vlDecoupled) => op.run(compress_blocks_x86_avx512vl_decoupled),
-      #[cfg(all(test, feature = "pbkdf2"))]
-      Self::Test(compress) => op.run(compress),
+      Self::X86Avx512vlDecoupled => op.run(compress_blocks_x86_avx512vl_decoupled),
     }
   }
 
@@ -173,12 +163,6 @@ fn compress_blocks_x86_avx512vl_decoupled(state: &mut [u64; 8], blocks: &[u8]) {
   unsafe { super::x86_64_avx512vl::compress_blocks_avx512vl_decoupled(state, blocks) }
 }
 
-/// The kernel `id`. Dispatch has already checked `id` against the CPU.
-#[must_use]
-pub(crate) const fn compress_blocks_fn(id: Sha512KernelId) -> CompressBlocksFn {
-  CompressBlocksFn::Kernel(id)
-}
-
 #[inline]
 #[must_use]
 pub(crate) const fn required_caps(id: Sha512KernelId) -> Caps {
@@ -202,23 +186,3 @@ pub(crate) const fn required_caps(id: Sha512KernelId) -> Caps {
     Sha512KernelId::X86Avx512vlDecoupled => x86::AVX512F.union(x86::AVX512VL).union(x86::BMI2),
   }
 }
-
-// Keep kernel tests focused on backends that runtime dispatch can actually pick.
-#[cfg(test)]
-pub(crate) const ALL: &[Sha512KernelId] = &[
-  Sha512KernelId::Portable,
-  #[cfg(target_arch = "aarch64")]
-  Sha512KernelId::Aarch64Sha512,
-  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
-  Sha512KernelId::X86Sha512,
-  #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
-  Sha512KernelId::Riscv64Zknh,
-  #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
-  Sha512KernelId::WasmSimd128,
-  #[cfg(target_arch = "s390x")]
-  Sha512KernelId::S390xKimd,
-  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
-  Sha512KernelId::X86Avx2Decoupled,
-  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
-  Sha512KernelId::X86Avx512vlDecoupled,
-];

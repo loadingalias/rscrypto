@@ -1,10 +1,10 @@
-use super::{BLOCK_LEN, kernels::CompressBlocksFn};
+use super::{BLOCK_LEN, kernels::Sha256KernelId};
 pub(crate) use crate::hashes::crypto::sha256::dispatch::compress_dispatch;
 #[cfg(feature = "diag")]
 pub(crate) use crate::hashes::crypto::sha256::dispatch::kernel_name_for_len;
 
 define_sha_digest! {
-  compress_fn_ty: CompressBlocksFn,
+  compress_fn_ty: Sha256KernelId,
   output_len: 28,
   word: u32,
   total_bits_ty: u64,

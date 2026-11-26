@@ -181,10 +181,10 @@ if name == 'cargo' and args[0] == 'deny':
     for name in ('lint-independent-workspaces.sh',):
       (root / 'scripts/check' / name).symlink_to(stub)
     (root / 'scripts/asm').mkdir(parents=True)
-    for name in ('p256.py', 'p384.py', 'rsa_pair.py', 'provenance.py'):
-      (root / 'scripts/asm' / name).write_text('import json, os, sys\n'
-                                               "with open(os.environ['CHECK_LOG'], 'a') as output:\n"
-                                               f"    output.write(json.dumps(['{name}', *sys.argv[1:]]) + '\\n')\n")
+    for name in ('asm/p256.py', 'asm/p384.py', 'asm/rsa_pair.py', 'asm/provenance.py', 'check/rule1.py'):
+      (root / 'scripts' / name).write_text('import json, os, sys\n'
+                                           "with open(os.environ['CHECK_LOG'], 'a') as output:\n"
+                                           f"    output.write(json.dumps(['{name.split('/')[1]}', *sys.argv[1:]]) + '\\n')\n")
     environment = {key: value for key, value in os.environ.items()
                    if key not in ('BASH_ENV', 'ENV') and not key.startswith(('BASH_FUNC_', 'GIT_'))}
     # The fixture holds no tooling catalog, so its Python helpers run on this interpreter.
@@ -280,7 +280,7 @@ if name == 'cargo' and args[0] == 'deny':
       assert not any(c[:2] in (['cargo', 'deny'], ['cargo', 'audit']) for c in commands)
       for extra in (['lint-independent-workspaces.sh'], ['p256.py', 'check'], ['p384.py', 'check'],
                     ['rsa_pair.py', 'check'],
-                    ['provenance.py', 'check']):
+                    ['provenance.py', 'check'], ['rule1.py']):
         assert (extra in commands) == (mode != 'targets'), (mode, extra)
     # The cross build validates each cross-built target as its own host, without repairs.
     for target in sorted(built):
@@ -292,7 +292,7 @@ if name == 'cargo' and args[0] == 'deny':
       assert all(c[1] == '+' + channel for c in rows)
       for extra in (['lint-independent-workspaces.sh'], ['p256.py', 'check'], ['p384.py', 'check'],
                     ['rsa_pair.py', 'check'],
-                    ['provenance.py', 'check']):
+                    ['provenance.py', 'check'], ['rule1.py']):
         assert extra in commands, (target, extra)
       assert not any('--fix' in c for c in commands)
     tooling = tomllib.loads((source / '.config/tooling.toml').read_text())

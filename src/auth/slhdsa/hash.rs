@@ -43,7 +43,7 @@ pub(crate) trait Suite<const N: usize>: Sized {
 /// SHA-256 resumed after the 64-byte PK.seed block.
 #[derive(Clone, Copy)]
 struct SeededSha256 {
-  compress: sha256::kernels::CompressBlocksFn,
+  compress: sha256::kernels::Sha256KernelId,
   state: [u32; 8],
 }
 
@@ -99,7 +99,7 @@ impl SeededSha256 {
 /// SHA-512 resumed after the 128-byte PK.seed block.
 #[derive(Clone, Copy)]
 struct SeededSha512 {
-  compress: sha512::kernels::CompressBlocksFn,
+  compress: sha512::kernels::Sha512KernelId,
   state: [u64; 8],
 }
 

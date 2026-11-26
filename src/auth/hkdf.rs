@@ -6,9 +6,9 @@ use super::hmac::{HmacSha256, HmacSha384, HmacSha512};
 use super::sha2_words::{write_u32x8_be, write_u64_be};
 use crate::{
   hashes::crypto::{
-    sha256::{H0 as SHA256_H0, dispatch as sha256_dispatch, kernels::CompressBlocksFn as Sha256CompressBlocksFn},
-    sha384::{H0 as SHA384_H0, dispatch as sha384_dispatch, kernels::CompressBlocksFn as Sha384CompressBlocksFn},
-    sha512::{H0 as SHA512_H0, dispatch as sha512_dispatch, kernels::CompressBlocksFn as Sha512CompressBlocksFn},
+    sha256::{H0 as SHA256_H0, dispatch as sha256_dispatch, kernels::Sha256KernelId},
+    sha384::{H0 as SHA384_H0, dispatch as sha384_dispatch, kernels::Sha384KernelId},
+    sha512::{H0 as SHA512_H0, dispatch as sha512_dispatch, kernels::Sha512KernelId},
   },
   traits::ct,
 };
@@ -32,11 +32,7 @@ const SHA512_BLOCK_SIZE: usize = 128;
   not(miri)
 ))]
 #[inline(always)]
-fn compress_hkdf_sha256_block(
-  _compress: Sha256CompressBlocksFn,
-  state: &mut [u32; 8],
-  block: &[u8; SHA256_BLOCK_SIZE],
-) {
+fn compress_hkdf_sha256_block(_compress: Sha256KernelId, state: &mut [u32; 8], block: &[u8; SHA256_BLOCK_SIZE]) {
   // SAFETY: Direct Apple SHA2 single-block compression because:
   // 1. This build enables `target_feature = "sha2"` at compile time.
   // 2. HKDF passes exactly one initialized 64-byte SHA-256 block at each call site.
@@ -53,7 +49,7 @@ fn compress_hkdf_sha256_block(
   not(miri)
 )))]
 #[inline(always)]
-fn compress_hkdf_sha256_block(compress: Sha256CompressBlocksFn, state: &mut [u32; 8], block: &[u8; SHA256_BLOCK_SIZE]) {
+fn compress_hkdf_sha256_block(compress: Sha256KernelId, state: &mut [u32; 8], block: &[u8; SHA256_BLOCK_SIZE]) {
   compress.call(state, block);
 }
 
@@ -125,7 +121,7 @@ pub struct HkdfSha256 {
   prk: [u8; SHA256_OUTPUT_SIZE],
   inner_init: [u32; 8],
   outer_init: [u32; 8],
-  compress: Sha256CompressBlocksFn,
+  compress: Sha256KernelId,
 }
 
 impl fmt::Debug for HkdfSha256 {
@@ -251,7 +247,7 @@ impl HkdfSha256 {
   fn extract_with(
     salt: &[u8],
     input_key_material: &[u8],
-    compress: Sha256CompressBlocksFn,
+    compress: Sha256KernelId,
     mac: impl FnOnce(&[u8], &[u8], &mut [u8; SHA256_OUTPUT_SIZE]),
   ) -> Self {
     let zero_salt = [0u8; SHA256_OUTPUT_SIZE];
@@ -265,7 +261,7 @@ impl HkdfSha256 {
 
   /// Store `prk` and precompute its HMAC prefixes with `compress`.
   #[inline(always)]
-  fn from_prk_with(prk: &[u8; SHA256_OUTPUT_SIZE], compress: Sha256CompressBlocksFn) -> Self {
+  fn from_prk_with(prk: &[u8; SHA256_OUTPUT_SIZE], compress: Sha256KernelId) -> Self {
     with_hmac_prefix_states::<_, _, SHA256_BLOCK_SIZE, _>(
       prk,
       SHA256_H0,
@@ -435,7 +431,7 @@ impl HkdfSha256 {
   pub(crate) fn extract_with_compress_for_test(
     salt: &[u8],
     input_key_material: &[u8],
-    compress: Sha256CompressBlocksFn,
+    compress: Sha256KernelId,
   ) -> Self {
     Self::extract_with(salt, input_key_material, compress, |salt, input_key_material, prk| {
       *prk = HmacSha256::mac_with_compress_for_test(salt, input_key_material, compress);
@@ -448,9 +444,7 @@ impl HkdfSha256 {
 #[inline(never)]
 /// Derive a portable HKDF-SHA256 diagnostic output using fixed `b"salt"` and `b"info"` inputs.
 pub fn diag_hkdf_sha256_derive_portable(input_key_material: &[u8; SHA256_OUTPUT_SIZE]) -> [u8; SHA256_OUTPUT_SIZE] {
-  let compress = crate::hashes::crypto::sha256::kernels::compress_blocks_fn(
-    crate::hashes::crypto::sha256::kernels::Sha256KernelId::Portable,
-  );
+  let compress = crate::hashes::crypto::sha256::kernels::Sha256KernelId::Portable;
   HkdfSha256::extract_with_compress_for_test(b"salt", input_key_material, compress)
     .expand_array::<SHA256_OUTPUT_SIZE>(b"info")
     .unwrap_or([0u8; SHA256_OUTPUT_SIZE])
@@ -488,7 +482,7 @@ pub struct HkdfSha384 {
   prk: [u8; SHA384_OUTPUT_SIZE],
   inner_init: [u64; 8],
   outer_init: [u64; 8],
-  compress: Sha384CompressBlocksFn,
+  compress: Sha384KernelId,
 }
 
 impl fmt::Debug for HkdfSha384 {
@@ -553,7 +547,7 @@ impl HkdfSha384 {
   fn extract_with(
     salt: &[u8],
     input_key_material: &[u8],
-    compress: Sha384CompressBlocksFn,
+    compress: Sha384KernelId,
     mac: impl FnOnce(&[u8], &[u8], &mut [u8; SHA384_OUTPUT_SIZE]),
   ) -> Self {
     let zero_salt = [0u8; SHA384_OUTPUT_SIZE];
@@ -567,7 +561,7 @@ impl HkdfSha384 {
 
   /// Store `prk` and precompute its HMAC prefixes with `compress`.
   #[inline(always)]
-  fn from_prk_with(prk: &[u8; SHA384_OUTPUT_SIZE], compress: Sha384CompressBlocksFn) -> Self {
+  fn from_prk_with(prk: &[u8; SHA384_OUTPUT_SIZE], compress: Sha384KernelId) -> Self {
     with_hmac_prefix_states::<_, _, SHA384_BLOCK_SIZE, _>(
       prk,
       SHA384_H0,
@@ -719,7 +713,7 @@ impl HkdfSha384 {
   pub(crate) fn extract_with_compress_for_test(
     salt: &[u8],
     input_key_material: &[u8],
-    compress: Sha384CompressBlocksFn,
+    compress: Sha384KernelId,
   ) -> Self {
     Self::extract_with(salt, input_key_material, compress, |salt, input_key_material, prk| {
       *prk = HmacSha384::mac_with_compress_for_test(salt, input_key_material, compress);
@@ -732,9 +726,7 @@ impl HkdfSha384 {
 #[inline(never)]
 /// Derive a portable HKDF-SHA384 diagnostic output using fixed `b"salt"` and `b"info"` inputs.
 pub fn diag_hkdf_sha384_derive_portable(input_key_material: &[u8; SHA384_OUTPUT_SIZE]) -> [u8; SHA384_OUTPUT_SIZE] {
-  let compress = crate::hashes::crypto::sha384::kernels::compress_blocks_fn(
-    crate::hashes::crypto::sha384::kernels::Sha384KernelId::Portable,
-  );
+  let compress = crate::hashes::crypto::sha384::kernels::Sha384KernelId::Portable;
   HkdfSha384::extract_with_compress_for_test(b"salt", input_key_material, compress)
     .expand_array::<SHA384_OUTPUT_SIZE>(b"info")
     .unwrap_or([0u8; SHA384_OUTPUT_SIZE])
@@ -757,7 +749,7 @@ pub struct HkdfSha512 {
   prk: [u8; SHA512_OUTPUT_SIZE],
   inner_init: [u64; 8],
   outer_init: [u64; 8],
-  compress: Sha512CompressBlocksFn,
+  compress: Sha512KernelId,
 }
 
 impl fmt::Debug for HkdfSha512 {
@@ -796,7 +788,7 @@ impl HkdfSha512 {
   fn extract_with(
     salt: &[u8],
     input_key_material: &[u8],
-    compress: Sha512CompressBlocksFn,
+    compress: Sha512KernelId,
     mac: impl FnOnce(&[u8], &[u8], &mut [u8; SHA512_OUTPUT_SIZE]),
   ) -> Self {
     let zero_salt = [0u8; SHA512_OUTPUT_SIZE];
@@ -810,7 +802,7 @@ impl HkdfSha512 {
 
   /// Store `prk` and precompute its HMAC prefixes with `compress`.
   #[inline(always)]
-  fn from_prk_with(prk: &[u8; SHA512_OUTPUT_SIZE], compress: Sha512CompressBlocksFn) -> Self {
+  fn from_prk_with(prk: &[u8; SHA512_OUTPUT_SIZE], compress: Sha512KernelId) -> Self {
     with_hmac_prefix_states::<_, _, SHA512_BLOCK_SIZE, _>(
       prk,
       SHA512_H0,
@@ -923,17 +915,6 @@ impl HkdfSha512 {
   pub fn prk(&self) -> &[u8; SHA512_OUTPUT_SIZE] {
     &self.prk
   }
-
-  #[cfg(test)]
-  pub(crate) fn extract_with_compress_for_test(
-    salt: &[u8],
-    input_key_material: &[u8],
-    compress: Sha512CompressBlocksFn,
-  ) -> Self {
-    Self::extract_with(salt, input_key_material, compress, |salt, input_key_material, prk| {
-      *prk = HmacSha512::mac_with_compress_for_test(salt, input_key_material, compress);
-    })
-  }
 }
 
 impl Drop for HkdfSha512 {
@@ -947,7 +928,7 @@ impl Drop for HkdfSha512 {
 
 #[inline(always)]
 fn expand_hmac_sha256_inner(
-  compress: Sha256CompressBlocksFn,
+  compress: Sha256KernelId,
   prev: Option<&[u8; SHA256_OUTPUT_SIZE]>,
   (info, info_len): (&[&[u8]], u64),
   counter: u8,
@@ -1007,7 +988,7 @@ fn expand_hmac_sha256_inner(
 
 #[inline(always)]
 fn expand_hmac_sha256_outer(
-  compress: Sha256CompressBlocksFn,
+  compress: Sha256KernelId,
   outer_init: &[u32; 8],
   inner_hash: &[u8; SHA256_OUTPUT_SIZE],
   state: &mut [u32; 8],
@@ -1023,7 +1004,7 @@ fn expand_hmac_sha256_outer(
 
 #[inline(always)]
 fn expand_hmac_sha384_inner(
-  compress: Sha384CompressBlocksFn,
+  compress: Sha384KernelId,
   prev: Option<&[u8; SHA384_OUTPUT_SIZE]>,
   (info, info_len): (&[&[u8]], u128),
   counter: u8,
@@ -1083,7 +1064,7 @@ fn expand_hmac_sha384_inner(
 
 #[inline(always)]
 fn expand_hmac_sha384_outer(
-  compress: Sha384CompressBlocksFn,
+  compress: Sha384KernelId,
   outer_init: &[u64; 8],
   state: &mut [u64; 8],
   outer_block: &mut [u8; SHA384_BLOCK_SIZE],
@@ -1097,7 +1078,7 @@ fn expand_hmac_sha384_outer(
 
 #[inline(always)]
 fn expand_hmac_sha512_inner(
-  compress: Sha512CompressBlocksFn,
+  compress: Sha512KernelId,
   prev: Option<&[u8; SHA512_OUTPUT_SIZE]>,
   info: &[u8],
   counter: u8,
@@ -1153,7 +1134,7 @@ fn expand_hmac_sha512_inner(
 
 #[inline(always)]
 fn expand_hmac_sha512_outer(
-  compress: Sha512CompressBlocksFn,
+  compress: Sha512KernelId,
   outer_init: &[u64; 8],
   state: &mut [u64; 8],
   outer_block: &mut [u8; SHA512_BLOCK_SIZE],
@@ -1172,21 +1153,25 @@ mod tests {
   use hkdf::Hkdf as RustCryptoHkdf;
 
   use super::*;
+
   use crate::hashes::crypto::{
     Sha256,
-    sha256::kernels::{
-      ALL as SHA256_KERNELS, Sha256KernelId, compress_blocks_fn as sha256_compress_blocks_fn,
-      required_caps as sha256_required_caps,
-    },
-    sha384::kernels::{
-      ALL as SHA384_KERNELS, Sha384KernelId, compress_blocks_fn as sha384_compress_blocks_fn,
-      required_caps as sha384_required_caps,
-    },
-    sha512::kernels::{
-      ALL as SHA512_KERNELS, Sha512KernelId, compress_blocks_fn as sha512_compress_blocks_fn,
-      required_caps as sha512_required_caps,
-    },
+    sha256::kernel_test::ALL as SHA256_KERNELS,
+    sha256::kernels::{Sha256KernelId, required_caps as sha256_required_caps},
+    sha384::kernels::Sha384KernelId,
+    sha512::kernel_test::ALL as SHA384_KERNELS,
+    sha512::kernel_test::ALL as SHA512_KERNELS,
+    sha512::kernels::required_caps as sha384_required_caps,
+    sha512::kernels::{Sha512KernelId, required_caps as sha512_required_caps},
   };
+
+  impl HkdfSha512 {
+    fn extract_with_compress_for_test(salt: &[u8], input_key_material: &[u8], compress: Sha512KernelId) -> Self {
+      Self::extract_with(salt, input_key_material, compress, |salt, input_key_material, prk| {
+        *prk = HmacSha512::mac_with_compress_for_test(salt, input_key_material, compress);
+      })
+    }
+  }
 
   type RustCryptoHkdfSha256 = RustCryptoHkdf<sha2::Sha256>;
   type RustCryptoHkdfSha384 = RustCryptoHkdf<sha2::Sha384>;
@@ -1203,7 +1188,6 @@ mod tests {
   }
 
   fn assert_hkdf_sha256_kernel(id: Sha256KernelId) {
-    let compress = sha256_compress_blocks_fn(id);
     let cases = [
       (0usize, 0usize, 0usize, 0usize),
       (13, 22, 10, 1),
@@ -1225,7 +1209,7 @@ mod tests {
         .expect("test output length should be within the HKDF-SHA256 limit");
 
       let public = HkdfSha256::new(&salt, &ikm);
-      let forced = HkdfSha256::extract_with_compress_for_test(&salt, &ikm, compress);
+      let forced = HkdfSha256::extract_with_compress_for_test(&salt, &ikm, id);
 
       let mut public_out = vec![0u8; out_len];
       public
@@ -1268,7 +1252,6 @@ mod tests {
   }
 
   fn assert_hkdf_sha384_kernel(id: Sha384KernelId) {
-    let compress = sha384_compress_blocks_fn(id);
     let cases = [
       (0usize, 0usize, 0usize, 0usize),
       (16, 32, 8, 48),
@@ -1287,7 +1270,7 @@ mod tests {
         .expect("test output length should be within the HKDF-SHA384 limit");
 
       let public = HkdfSha384::new(&salt, &ikm);
-      let forced = HkdfSha384::extract_with_compress_for_test(&salt, &ikm, compress);
+      let forced = HkdfSha384::extract_with_compress_for_test(&salt, &ikm, id);
 
       let mut public_out = vec![0u8; out_len];
       public
@@ -1330,7 +1313,6 @@ mod tests {
   }
 
   fn assert_hkdf_sha512_kernel(id: Sha512KernelId) {
-    let compress = sha512_compress_blocks_fn(id);
     let cases = [
       (0usize, 0usize, 0usize, 0usize),
       (16, 32, 8, 64),
@@ -1349,7 +1331,7 @@ mod tests {
         .expect("test output length should be within the HKDF-SHA512 limit");
 
       let public = HkdfSha512::new(&salt, &ikm);
-      let forced = HkdfSha512::extract_with_compress_for_test(&salt, &ikm, compress);
+      let forced = HkdfSha512::extract_with_compress_for_test(&salt, &ikm, id);
 
       let mut public_out = vec![0u8; out_len];
       public
@@ -1451,7 +1433,7 @@ mod tests {
       if !caps.has(sha256_required_caps(id)) {
         continue;
       }
-      let hkdf = HkdfSha256::extract_with_compress_for_test(&salt, &ikm, sha256_compress_blocks_fn(id));
+      let hkdf = HkdfSha256::extract_with_compress_for_test(&salt, &ikm, id);
       for split in 0..=INFO_LEN {
         let (head, tail) = info.split_at(split);
         let mut okm = [0u8; OKM_LEN];
@@ -1486,7 +1468,7 @@ mod tests {
       if !caps.has(sha384_required_caps(id)) {
         continue;
       }
-      let hkdf = HkdfSha384::extract_with_compress_for_test(&salt, &ikm, sha384_compress_blocks_fn(id));
+      let hkdf = HkdfSha384::extract_with_compress_for_test(&salt, &ikm, id);
       for split in 0..=INFO_LEN {
         let (head, tail) = info.split_at(split);
         let mut okm = [0u8; OKM_LEN];

@@ -366,16 +366,6 @@ impl<const K: usize, const L: usize> SigningState<K, L> {
     }
   }
 
-  #[cfg(test)]
-  pub(super) fn is_clear(&self) -> bool {
-    self
-      .s1
-      .iter()
-      .chain(&self.s2)
-      .chain(&self.t0)
-      .all(|poly| poly.0.iter().all(|&x| x == 0))
-  }
-
   /// Decode and transform the secret polynomials. Returns whether every noise
   /// coefficient was in range; the result is computed without early exit.
   #[must_use]
@@ -751,4 +741,19 @@ pub(super) fn verify_with_state<const K: usize, const L: usize>(
     return Err(MlDsaError::InvalidSignature);
   }
   Ok(())
+}
+
+#[cfg(test)]
+pub(super) mod tests {
+  use super::SigningState;
+
+  /// Report whether every transformed secret polynomial is zero.
+  pub(in crate::auth::mldsa) fn is_clear<const K: usize, const L: usize>(state: &SigningState<K, L>) -> bool {
+    state
+      .s1
+      .iter()
+      .chain(&state.s2)
+      .chain(&state.t0)
+      .all(|poly| poly.0.iter().all(|&x| x == 0))
+  }
 }

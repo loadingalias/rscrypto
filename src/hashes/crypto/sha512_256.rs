@@ -3,7 +3,7 @@
 //! SHA-512/256 is identical to SHA-512 except for initial hash values (H0) and
 //! output truncation (32 bytes / 4 words). The compression function is shared.
 
-use self::kernels::CompressBlocksFn;
+use self::kernels::Sha512KernelId;
 use super::sha512::Sha512;
 use crate::traits::Digest;
 
@@ -53,7 +53,7 @@ pub struct Sha512_256 {
   block: [u8; BLOCK_LEN],
   block_len: usize,
   bytes_hashed: u128,
-  compress_blocks: CompressBlocksFn,
+  compress_blocks: Sha512KernelId,
   // True also preserves an explicitly supplied compression backend.
   dispatch_initialized: bool,
 }
@@ -83,7 +83,7 @@ impl Default for Sha512_256 {
       block: [0u8; BLOCK_LEN],
       block_len: 0,
       bytes_hashed: 0,
-      compress_blocks: kernels::compress_blocks_fn(kernels::Sha512_256KernelId::Portable),
+      compress_blocks: kernels::Sha512_256KernelId::Portable,
       dispatch_initialized: false,
     }
   }
@@ -91,7 +91,7 @@ impl Default for Sha512_256 {
 
 impl Sha512_256 {
   #[inline]
-  fn select_compress(&mut self) -> CompressBlocksFn {
+  fn select_compress(&mut self) -> Sha512KernelId {
     if !self.dispatch_initialized {
       self.compress_blocks = dispatch::compress_dispatch();
       self.dispatch_initialized = true;
@@ -102,7 +102,7 @@ impl Sha512_256 {
   super::sha512::impl_sha512_update!();
 
   #[inline]
-  fn finalize_inner_with(&self, compress_blocks: CompressBlocksFn) -> [u8; 32] {
+  fn finalize_inner_with(&self, compress_blocks: Sha512KernelId) -> [u8; 32] {
     let total_len = self.bytes_hashed.strict_add(self.block_len as u128);
     let state = Sha512::finalize_state_words(self.state, self.block, self.block_len, total_len, compress_blocks);
 

@@ -1,20 +1,20 @@
 use crate::traits::Digest as _;
 use alloc::vec::Vec;
 
-use super::{
-  Sha224,
-  kernels::{ALL, Sha224KernelId, compress_blocks_fn, required_caps},
+use super::Sha224;
+use crate::hashes::crypto::sha256::{
+  kernel_test::ALL,
+  kernels::{Sha256KernelId as Sha224KernelId, required_caps},
 };
 
 fn digest_with_kernel<'a>(id: Sha224KernelId, chunks: impl IntoIterator<Item = &'a [u8]>) -> [u8; 28] {
-  let compress = compress_blocks_fn(id);
   let mut h = Sha224::default();
   for chunk in chunks {
     if !chunk.is_empty() {
-      h.update_with(chunk, compress);
+      h.update_with(chunk, id);
     }
   }
-  h.finalize_inner_with(compress)
+  h.finalize_inner_with(id)
 }
 
 #[cfg(test)]
@@ -47,7 +47,6 @@ mod tests {
       if !caps.has(required_caps(id)) {
         continue;
       }
-      let compress = compress_blocks_fn(id);
       for offset in 0..64 {
         for len in [0, 64, 128, 256, 4096] {
           let blocks = &input[offset..offset + len];
@@ -55,7 +54,7 @@ mod tests {
             let mut expected = initial;
             let mut actual = initial;
             crate::hashes::crypto::sha256::Sha256::compress_blocks_portable(&mut expected, blocks);
-            compress.call(&mut actual, blocks);
+            id.call(&mut actual, blocks);
             assert_eq!(actual, expected, "kernel={} offset={offset} len={len}", id.as_str());
           }
         }
@@ -137,19 +136,17 @@ mod tests {
 
 #[test]
 fn forced_backend_survives_initialization_and_clone_until_reset() {
-  use super::kernels::CompressBlocksFn::Kernel;
-
   let caps = crate::platform::caps();
   for &id in ALL.iter().filter(|&&id| caps.has(required_caps(id))) {
     let mut hasher = Sha224 {
-      compress_blocks: compress_blocks_fn(id),
+      compress_blocks: id,
       dispatch_initialized: true,
       ..Default::default()
     };
     let mut cloned = hasher.clone();
     for h in [&mut hasher, &mut cloned] {
       assert!(
-        matches!((h.select_compress(), compress_blocks_fn(id)), (Kernel(selected), Kernel(forced)) if selected == forced),
+        h.select_compress() == id,
         "forced kernel {} was replaced during selection",
         id.as_str()
       );

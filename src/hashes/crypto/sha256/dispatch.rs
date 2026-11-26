@@ -1,13 +1,13 @@
 use super::{
   BLOCK_LEN,
-  kernels::{CompressBlocksFn, Sha256KernelId, compress_blocks_fn, required_caps},
+  kernels::{Sha256KernelId, required_caps},
 };
 
 define_sha_family_dispatch! {
   kernel_id: Sha256KernelId,
-  compress_fn_ty: CompressBlocksFn,
+  compress_fn_ty: Sha256KernelId,
   portable_kernel: Sha256KernelId::Portable,
-  compress_fn: compress_blocks_fn,
+  compress_fn: core::convert::identity,
   required_caps: required_caps,
   runtime_kernel: super::dispatch_policy::select_runtime_kernel,
   compile_time: {
@@ -18,7 +18,7 @@ define_sha_family_dispatch! {
 }
 
 define_sha_digest! {
-  compress_fn_ty: CompressBlocksFn,
+  compress_fn_ty: Sha256KernelId,
   output_len: 32,
   word: u32,
   total_bits_ty: u64,

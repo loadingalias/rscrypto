@@ -140,7 +140,6 @@ unsafe extern "sysv64" {
 }
 
 #[cfg(feature = "p256-ecdh")]
-#[cfg_attr(test, derive(Debug, PartialEq, Eq))]
 struct P256CurveTerms {
   x: [u64; 4],
   y: [u64; 4],
@@ -419,21 +418,19 @@ mod tests {
     ]
   }
 
-  fn portable_terms(words: &[u64; 8]) -> super::P256CurveTerms {
-    let (x, y, y_squared, x_cubed) = super::super::p256_portable::tests::curve_terms_for_test(words);
-    super::P256CurveTerms {
-      x,
-      y,
-      y_squared,
-      x_cubed,
-    }
+  fn portable_terms(words: &[u64; 8]) -> ([u64; 4], [u64; 4], [u64; 4], [u64; 4]) {
+    super::super::p256_portable::tests::curve_terms_for_test(words)
+  }
+
+  fn terms_tuple(terms: super::P256CurveTerms) -> ([u64; 4], [u64; 4], [u64; 4], [u64; 4]) {
+    (terms.x, terms.y, terms.y_squared, terms.x_cubed)
   }
 
   #[cfg(target_arch = "aarch64")]
   #[test]
   fn aarch64_public_field_assembly_matches_portable_authority() {
     for words in samples() {
-      assert_eq!(super::p256_curve_terms(&words), portable_terms(&words));
+      assert_eq!(terms_tuple(super::p256_curve_terms(&words)), portable_terms(&words));
     }
   }
 
@@ -444,9 +441,9 @@ mod tests {
 
     for words in samples() {
       let portable = portable_terms(&words);
-      assert_eq!(super::p256_curve_terms_baseline(&words), portable);
+      assert_eq!(terms_tuple(super::p256_curve_terms_baseline(&words)), portable);
       if crate::platform::caps().has(x86::BMI2.union(x86::ADX)) {
-        assert_eq!(super::p256_curve_terms_bmi2_adx(&words), portable);
+        assert_eq!(terms_tuple(super::p256_curve_terms_bmi2_adx(&words)), portable);
       }
     }
   }

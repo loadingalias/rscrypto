@@ -1,6 +1,6 @@
 //! SHA-256 (FIPS 180-4).
 
-use self::kernels::CompressBlocksFn;
+use self::kernels::Sha256KernelId;
 use crate::{
   hashes::util::{Aligned64, rotr32},
   traits::Digest,
@@ -13,7 +13,7 @@ pub(crate) mod dispatch;
 #[doc(hidden)]
 pub(crate) mod dispatch_policy;
 #[cfg(test)]
-mod kernel_test;
+pub(crate) mod kernel_test;
 pub(crate) mod kernels;
 #[cfg(all(
   any(target_arch = "riscv64", target_arch = "riscv32"),
@@ -346,7 +346,7 @@ pub struct Sha256 {
   block: [u8; BLOCK_LEN],
   block_len: usize,
   bytes_hashed: u64,
-  compress_blocks: CompressBlocksFn,
+  compress_blocks: Sha256KernelId,
   // True also preserves an explicitly supplied compression backend.
   dispatch_initialized: bool,
   #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
@@ -365,7 +365,7 @@ enum Sha256UpdateMode {
 pub(crate) struct Sha256Prefix {
   state: [u32; 8],
   bytes_hashed: u64,
-  compress_blocks: CompressBlocksFn,
+  compress_blocks: Sha256KernelId,
   // True also preserves an explicitly supplied compression backend.
   dispatch_initialized: bool,
   #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
@@ -417,7 +417,7 @@ impl Sha256Prefix {
 
   #[cfg(feature = "pbkdf2")]
   #[inline]
-  pub(crate) fn pbkdf2_parts(&self) -> ([u32; 8], CompressBlocksFn) {
+  pub(crate) fn pbkdf2_parts(&self) -> ([u32; 8], Sha256KernelId) {
     (self.state, self.compress_blocks)
   }
 
@@ -501,7 +501,7 @@ impl Sha256 {
   }
 
   #[inline]
-  fn select_compress(&mut self) -> CompressBlocksFn {
+  fn select_compress(&mut self) -> Sha256KernelId {
     if !self.dispatch_initialized {
       self.compress_blocks = dispatch::compress_dispatch();
       self.dispatch_initialized = true;
@@ -544,7 +544,7 @@ impl Sha256 {
   }
 
   #[inline]
-  fn update_with(&mut self, data: &[u8], compress_blocks: CompressBlocksFn) {
+  fn update_with(&mut self, data: &[u8], compress_blocks: Sha256KernelId) {
     self.update_with_fn(data, |state, blocks| compress_blocks.call(state, blocks));
   }
 
@@ -555,7 +555,7 @@ impl Sha256 {
       return false;
     }
 
-    self.compress_blocks = kernels::compress_blocks_fn(kernels::Sha256KernelId::X86Sha);
+    self.compress_blocks = kernels::Sha256KernelId::X86Sha;
     self.update_mode = Sha256UpdateMode::X86ShaDirect;
     true
   }
@@ -648,14 +648,14 @@ impl Sha256 {
   }
 
   #[inline]
-  fn finalize_inner_with<const ZEROIZE: bool>(&self, compress_blocks: CompressBlocksFn) -> [u8; 32] {
+  fn finalize_inner_with<const ZEROIZE: bool>(&self, compress_blocks: Sha256KernelId) -> [u8; 32] {
     let mut output = [0u8; 32];
     self.finalize_inner_into::<ZEROIZE>(compress_blocks, &mut output);
     output
   }
 
   #[inline]
-  fn finalize_inner_into<const ZEROIZE: bool>(&self, compress_blocks: CompressBlocksFn, output: &mut [u8; 32]) {
+  fn finalize_inner_into<const ZEROIZE: bool>(&self, compress_blocks: Sha256KernelId, output: &mut [u8; 32]) {
     let mut state = self.state;
     let mut block = self.block;
     let total_len = self.bytes_hashed.strict_add(self.block_len as u64);
@@ -677,7 +677,7 @@ impl Sha256 {
     block: &mut [u8; BLOCK_LEN],
     mut block_len: usize,
     total_len: u64,
-    compress_blocks: CompressBlocksFn,
+    compress_blocks: Sha256KernelId,
   ) {
     block[block_len] = 0x80;
     block_len = block_len.strict_add(1);
@@ -755,7 +755,7 @@ impl Sha256 {
     any(all(rscrypto_internal, feature = "diag"), all(test, feature = "hkdf"))
   ))]
   #[inline]
-  pub(crate) fn new_with_compress_for_test(compress_blocks: CompressBlocksFn) -> Self {
+  pub(crate) fn new_with_compress_for_test(compress_blocks: Sha256KernelId) -> Self {
     Self {
       state: H0,
       block: [0u8; BLOCK_LEN],

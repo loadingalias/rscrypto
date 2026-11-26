@@ -343,7 +343,7 @@ impl HmacSha256 {
   #[cfg(any(all(rscrypto_internal, feature = "diag"), all(test, feature = "hkdf")))]
   pub(crate) fn new_with_compress_for_test(
     key: &[u8],
-    compress: crate::hashes::crypto::sha256::kernels::CompressBlocksFn,
+    compress: crate::hashes::crypto::sha256::kernels::Sha256KernelId,
   ) -> Self {
     Self::from_key_with(key, || Sha256::new_with_compress_for_test(compress))
   }
@@ -352,7 +352,7 @@ impl HmacSha256 {
   pub(crate) fn mac_with_compress_for_test(
     key: &[u8],
     data: &[u8],
-    compress: crate::hashes::crypto::sha256::kernels::CompressBlocksFn,
+    compress: crate::hashes::crypto::sha256::kernels::Sha256KernelId,
   ) -> [u8; SHA256_TAG_SIZE] {
     let mut mac = Self::new_with_compress_for_test(key, compress);
     mac.update(data);
@@ -366,9 +366,7 @@ pub fn diag_hmac_sha256_verify_portable(
   key: &[u8; SHA256_TAG_SIZE],
   expected: &[u8; SHA256_TAG_SIZE],
 ) -> ct::CtDecision {
-  let compress = crate::hashes::crypto::sha256::kernels::compress_blocks_fn(
-    crate::hashes::crypto::sha256::kernels::Sha256KernelId::Portable,
-  );
+  let compress = crate::hashes::crypto::sha256::kernels::Sha256KernelId::Portable;
   let tag = HmacSha256::mac_with_compress_for_test(key, b"binsec", compress);
   ct::fixed_eq(&tag, expected)
 }
@@ -379,9 +377,7 @@ pub fn diag_hmac_sha256_verify_truncated_64_portable(
   key: &[u8; SHA256_TAG_SIZE],
   expected: &[u8; 8],
 ) -> ct::CtDecision {
-  let compress = crate::hashes::crypto::sha256::kernels::compress_blocks_fn(
-    crate::hashes::crypto::sha256::kernels::Sha256KernelId::Portable,
-  );
+  let compress = crate::hashes::crypto::sha256::kernels::Sha256KernelId::Portable;
   let tag = HmacSha256::mac_with_compress_for_test(key, b"binsec", compress);
   let tag = hmac_sha256_truncate_64(&tag);
   ct::fixed_eq(&tag, expected)
@@ -650,7 +646,7 @@ impl HmacSha384 {
   #[cfg(any(test, all(rscrypto_internal, feature = "diag")))]
   pub(crate) fn new_with_compress_for_test(
     key: &[u8],
-    compress: crate::hashes::crypto::sha384::kernels::CompressBlocksFn,
+    compress: crate::hashes::crypto::sha384::kernels::Sha384KernelId,
   ) -> Self {
     Self::from_key_with(key, || Sha384::new_with_compress_for_test(compress))
   }
@@ -659,7 +655,7 @@ impl HmacSha384 {
   pub(crate) fn mac_with_compress_for_test(
     key: &[u8],
     data: &[u8],
-    compress: crate::hashes::crypto::sha384::kernels::CompressBlocksFn,
+    compress: crate::hashes::crypto::sha384::kernels::Sha384KernelId,
   ) -> [u8; SHA384_TAG_SIZE] {
     let mut mac = Self::new_with_compress_for_test(key, compress);
     mac.update(data);
@@ -673,9 +669,7 @@ pub fn diag_hmac_sha384_verify_portable(
   key: &[u8; SHA384_TAG_SIZE],
   expected: &[u8; SHA384_TAG_SIZE],
 ) -> ct::CtDecision {
-  let compress = crate::hashes::crypto::sha384::kernels::compress_blocks_fn(
-    crate::hashes::crypto::sha384::kernels::Sha384KernelId::Portable,
-  );
+  let compress = crate::hashes::crypto::sha384::kernels::Sha384KernelId::Portable;
   let tag = HmacSha384::mac_with_compress_for_test(key, b"binsec", compress);
   ct::fixed_eq(&tag, expected)
 }
@@ -943,7 +937,7 @@ impl HmacSha512 {
   #[cfg(any(test, all(rscrypto_internal, feature = "diag")))]
   pub(crate) fn new_with_compress_for_test(
     key: &[u8],
-    compress: crate::hashes::crypto::sha512::kernels::CompressBlocksFn,
+    compress: crate::hashes::crypto::sha512::kernels::Sha512KernelId,
   ) -> Self {
     Self::from_key_with(key, || Sha512::new_with_compress_for_test(compress))
   }
@@ -952,7 +946,7 @@ impl HmacSha512 {
   pub(crate) fn mac_with_compress_for_test(
     key: &[u8],
     data: &[u8],
-    compress: crate::hashes::crypto::sha512::kernels::CompressBlocksFn,
+    compress: crate::hashes::crypto::sha512::kernels::Sha512KernelId,
   ) -> [u8; SHA512_TAG_SIZE] {
     let mut mac = Self::new_with_compress_for_test(key, compress);
     mac.update(data);
@@ -966,9 +960,7 @@ pub fn diag_hmac_sha512_verify_portable(
   key: &[u8; SHA512_TAG_SIZE],
   expected: &[u8; SHA512_TAG_SIZE],
 ) -> ct::CtDecision {
-  let compress = crate::hashes::crypto::sha512::kernels::compress_blocks_fn(
-    crate::hashes::crypto::sha512::kernels::Sha512KernelId::Portable,
-  );
+  let compress = crate::hashes::crypto::sha512::kernels::Sha512KernelId::Portable;
   let tag = HmacSha512::mac_with_compress_for_test(key, b"binsec", compress);
   ct::fixed_eq(&tag, expected)
 }
@@ -983,14 +975,11 @@ mod tests {
 
   use super::*;
   use crate::hashes::crypto::{
-    sha384::kernels::{
-      ALL as SHA384_KERNELS, Sha384KernelId, compress_blocks_fn as sha384_compress_blocks_fn,
-      required_caps as sha384_required_caps,
-    },
-    sha512::kernels::{
-      ALL as SHA512_KERNELS, Sha512KernelId, compress_blocks_fn as sha512_compress_blocks_fn,
-      required_caps as sha512_required_caps,
-    },
+    sha384::kernels::Sha384KernelId,
+    sha512::kernel_test::ALL as SHA384_KERNELS,
+    sha512::kernel_test::ALL as SHA512_KERNELS,
+    sha512::kernels::required_caps as sha384_required_caps,
+    sha512::kernels::{Sha512KernelId, required_caps as sha512_required_caps},
   };
 
   type RustCryptoHmacSha384 = Hmac<sha2::Sha384>;
@@ -1037,7 +1026,6 @@ mod tests {
   }
 
   fn assert_hmac_sha384_kernel(id: Sha384KernelId) {
-    let compress = sha384_compress_blocks_fn(id);
     let cases = [
       (0usize, 0usize, 1usize),
       (1, 1, 1),
@@ -1063,7 +1051,7 @@ mod tests {
         data_len
       );
       assert_eq!(
-        HmacSha384::mac_with_compress_for_test(&key, &data, compress),
+        HmacSha384::mac_with_compress_for_test(&key, &data, id),
         expected,
         "sha384 forced oneshot mismatch kernel={} key_len={} data_len={}",
         id.as_str(),
@@ -1071,7 +1059,7 @@ mod tests {
         data_len
       );
 
-      let mut streaming = HmacSha384::new_with_compress_for_test(&key, compress);
+      let mut streaming = HmacSha384::new_with_compress_for_test(&key, id);
       for chunk in data.chunks(chunk_len) {
         streaming.update(chunk);
       }
@@ -1099,7 +1087,6 @@ mod tests {
   }
 
   fn assert_hmac_sha512_kernel(id: Sha512KernelId) {
-    let compress = sha512_compress_blocks_fn(id);
     let cases = [
       (0usize, 0usize, 1usize),
       (1, 1, 1),
@@ -1125,7 +1112,7 @@ mod tests {
         data_len
       );
       assert_eq!(
-        HmacSha512::mac_with_compress_for_test(&key, &data, compress),
+        HmacSha512::mac_with_compress_for_test(&key, &data, id),
         expected,
         "sha512 forced oneshot mismatch kernel={} key_len={} data_len={}",
         id.as_str(),
@@ -1133,7 +1120,7 @@ mod tests {
         data_len
       );
 
-      let mut streaming = HmacSha512::new_with_compress_for_test(&key, compress);
+      let mut streaming = HmacSha512::new_with_compress_for_test(&key, id);
       for chunk in data.chunks(chunk_len) {
         streaming.update(chunk);
       }

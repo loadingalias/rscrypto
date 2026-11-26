@@ -683,8 +683,8 @@ mod tests {
 
   use super::{
     kernels::{
-      ALL as BLAKE2S_KERNELS, Blake2sKernelId, compress_blocks_fn as blake2s_compress_blocks_fn,
-      compress_fn as blake2s_compress_fn, required_caps as blake2s_required_caps,
+      Blake2sKernelId, compress_blocks_fn as blake2s_compress_blocks_fn, compress_fn as blake2s_compress_fn,
+      required_caps as blake2s_required_caps,
     },
     *,
   };
@@ -1000,6 +1000,19 @@ mod tests {
   }
 
   // ── Per-kernel oracle tests ───────────────────────────────────────────
+
+  /// All kernel IDs for agreement testing.
+  const BLAKE2S_KERNELS: &[Blake2sKernelId] = &[
+    Blake2sKernelId::Portable,
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+    Blake2sKernelId::X86Avx2,
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+    Blake2sKernelId::X86Avx512vl,
+    #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
+    Blake2sKernelId::Riscv64V,
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+    Blake2sKernelId::WasmSimd128,
+  ];
 
   fn assert_blake2s_kernel(id: Blake2sKernelId) {
     let compress = blake2s_compress_fn(id);

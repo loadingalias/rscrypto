@@ -73,14 +73,3 @@ pub(crate) const fn required_caps(id: AsconPermute12KernelId) -> Caps {
     }
   }
 }
-
-#[cfg(test)]
-pub(crate) const ALL: &[AsconPermute12KernelId] = &[
-  AsconPermute12KernelId::Portable,
-  #[cfg(target_arch = "aarch64")]
-  AsconPermute12KernelId::Aarch64Neon,
-  #[cfg(target_arch = "x86_64")]
-  AsconPermute12KernelId::X86Avx2,
-  #[cfg(target_arch = "x86_64")]
-  AsconPermute12KernelId::X86Avx512,
-];

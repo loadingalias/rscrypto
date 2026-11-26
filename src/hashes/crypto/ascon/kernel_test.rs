@@ -1,6 +1,16 @@
 use alloc::{vec, vec::Vec};
 
-use super::kernels::{ALL, permute_fn, required_caps};
+use super::kernels::{AsconPermute12KernelId, permute_fn, required_caps};
+
+pub(crate) const ALL: &[AsconPermute12KernelId] = &[
+  AsconPermute12KernelId::Portable,
+  #[cfg(target_arch = "aarch64")]
+  AsconPermute12KernelId::Aarch64Neon,
+  #[cfg(target_arch = "x86_64")]
+  AsconPermute12KernelId::X86Avx2,
+  #[cfg(target_arch = "x86_64")]
+  AsconPermute12KernelId::X86Avx512,
+];
 
 #[derive(Clone, Debug)]
 pub(super) struct KernelResult {

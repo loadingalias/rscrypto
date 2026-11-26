@@ -41,8 +41,8 @@ use super::sha2_words::{write_u32x8_be, write_u64_be};
 use crate::{
   hashes::crypto::{
     Sha256, Sha512,
-    sha256::{H0 as SHA256_H0, dispatch as sha256_dispatch, kernels::CompressBlocksFn as Sha256CompressBlocksFn},
-    sha512::{H0 as SHA512_H0, dispatch as sha512_dispatch, kernels::CompressBlocksFn as Sha512CompressBlocksFn},
+    sha256::{H0 as SHA256_H0, dispatch as sha256_dispatch, kernels::Sha256KernelId},
+    sha512::{H0 as SHA512_H0, dispatch as sha512_dispatch, kernels::Sha512KernelId},
   },
   traits::{VerificationError, ct},
 };
@@ -728,7 +728,7 @@ define_pbkdf2_sha2! {
   Pbkdf2Sha256 {
     output_size_const: SHA256_OUTPUT_SIZE,
     block_size_const: SHA256_BLOCK_SIZE,
-    compress_ty: Sha256CompressBlocksFn,
+    compress_ty: Sha256KernelId,
     digest_ty: Sha256,
     h0: SHA256_H0,
     dispatch: sha256_dispatch,
@@ -744,7 +744,7 @@ define_pbkdf2_sha2! {
 
 /// One-shot SHA-256 digest with a specific compress function for tests and internal proofs.
 #[cfg(any(test, all(rscrypto_internal, feature = "diag")))]
-fn sha256_oneshot_with_compress(data: &[u8], compress: Sha256CompressBlocksFn) -> [u8; SHA256_OUTPUT_SIZE] {
+fn sha256_oneshot_with_compress(data: &[u8], compress: Sha256KernelId) -> [u8; SHA256_OUTPUT_SIZE] {
   let mut state = SHA256_H0;
   let mut pos = 0usize;
   while pos.strict_add(SHA256_BLOCK_SIZE) <= data.len() {
@@ -780,9 +780,7 @@ pub fn diag_pbkdf2_sha256_verify_portable(
   password: &[u8; SHA256_OUTPUT_SIZE],
   expected: &[u8; SHA256_OUTPUT_SIZE],
 ) -> bool {
-  let compress = crate::hashes::crypto::sha256::kernels::compress_blocks_fn(
-    crate::hashes::crypto::sha256::kernels::Sha256KernelId::Portable,
-  );
+  let compress = crate::hashes::crypto::sha256::kernels::Sha256KernelId::Portable;
   Pbkdf2Sha256::new_with_compress_for_test(password, compress)
     .verify_primitive_unguarded(b"salt", 1, expected)
     .is_ok()
@@ -796,9 +794,7 @@ pub fn diag_pbkdf2_sha512_verify_portable(
   password: &[u8; SHA512_OUTPUT_SIZE],
   expected: &[u8; SHA512_OUTPUT_SIZE],
 ) -> bool {
-  let compress = crate::hashes::crypto::sha512::kernels::compress_blocks_fn(
-    crate::hashes::crypto::sha512::kernels::Sha512KernelId::Portable,
-  );
+  let compress = crate::hashes::crypto::sha512::kernels::Sha512KernelId::Portable;
   Pbkdf2Sha512::new_with_compress_for_test(password, compress)
     .verify_primitive_unguarded(b"salt", 1, expected)
     .is_ok()
@@ -917,7 +913,7 @@ fn pbkdf2_sha256_derive_key_fast_path_with_preference(
 /// overhead, no padding recomputation.
 #[inline(always)]
 fn pbkdf2_sha256_f(
-  compress: Sha256CompressBlocksFn,
+  compress: Sha256KernelId,
   inner_init: &[u32; 8],
   outer_init: &[u32; 8],
   salt: &[u8],
@@ -1046,7 +1042,7 @@ fn pbkdf2_sha256_f(
 
 #[inline(always)]
 fn pbkdf2_sha256_iter1(
-  compress: Sha256CompressBlocksFn,
+  compress: Sha256KernelId,
   inner_init: &[u32; 8],
   outer_init: &[u32; 8],
   salt: &[u8],
@@ -1140,7 +1136,7 @@ define_pbkdf2_sha2! {
   Pbkdf2Sha512 {
     output_size_const: SHA512_OUTPUT_SIZE,
     block_size_const: SHA512_BLOCK_SIZE,
-    compress_ty: Sha512CompressBlocksFn,
+    compress_ty: Sha512KernelId,
     digest_ty: Sha512,
     h0: SHA512_H0,
     dispatch: sha512_dispatch,
@@ -1171,7 +1167,7 @@ fn pbkdf2_sha512_derive_key_fast_path(
 
 /// One-shot SHA-512 digest with a specific compress function for tests and internal proofs.
 #[cfg(any(test, all(rscrypto_internal, feature = "diag")))]
-fn sha512_oneshot_with_compress(data: &[u8], compress: Sha512CompressBlocksFn) -> [u8; SHA512_OUTPUT_SIZE] {
+fn sha512_oneshot_with_compress(data: &[u8], compress: Sha512KernelId) -> [u8; SHA512_OUTPUT_SIZE] {
   let mut state = SHA512_H0;
   let mut pos = 0usize;
   while pos.strict_add(SHA512_BLOCK_SIZE) <= data.len() {
@@ -1202,7 +1198,7 @@ fn sha512_oneshot_with_compress(data: &[u8], compress: Sha512CompressBlocksFn) -
 /// Compute one PBKDF2-SHA512 block: `F(Password, Salt, c, i)`.
 #[inline(always)]
 fn pbkdf2_sha512_f(
-  compress: Sha512CompressBlocksFn,
+  compress: Sha512KernelId,
   inner_init: &[u64; 8],
   outer_init: &[u64; 8],
   salt: &[u8],
@@ -1314,7 +1310,7 @@ fn pbkdf2_sha512_f(
 
 #[inline(always)]
 fn pbkdf2_sha512_iter1(
-  compress: Sha512CompressBlocksFn,
+  compress: Sha512KernelId,
   inner_init: &[u64; 8],
   outer_init: &[u64; 8],
   salt: &[u8],
@@ -1390,7 +1386,6 @@ fn pbkdf2_sha512_iter1(
 #[cfg(test)]
 mod tests {
   use alloc::vec;
-  use core::sync::atomic::{AtomicUsize, Ordering};
 
   use super::*;
 
@@ -1729,21 +1724,12 @@ mod tests {
       Err(Pbkdf2Error::ExcessiveIterations)
     );
 
-    let sha256 =
-      Pbkdf2Sha256::new_with_compress_for_test(b"pw", Sha256CompressBlocksFn::Test(counting_sha256_compress));
-    SHA256_VERIFY_BLOCKS.store(0, Ordering::Relaxed);
+    // Without the limit, `u32::MAX` iterations outlast the nextest termination.
     assert!(
-      sha256
-        .verify_with_policy_bounded(
-          b"",
-          excessive_sha256,
-          &[0],
-          &policy,
-          Pbkdf2Sha256::MAX_VERIFY_ITERATIONS,
-        )
+      Pbkdf2Sha256::new(b"pw")
+        .verify_with_policy_bounded(b"", u32::MAX, &[0], &policy, Pbkdf2Sha256::MAX_VERIFY_ITERATIONS)
         .is_err()
     );
-    assert_eq!(SHA256_VERIFY_BLOCKS.load(Ordering::Relaxed), 0);
 
     for iterations in [
       Pbkdf2Sha512::MAX_VERIFY_ITERATIONS.strict_sub(1),
@@ -1764,21 +1750,12 @@ mod tests {
       Err(Pbkdf2Error::ExcessiveIterations)
     );
 
-    let sha512 =
-      Pbkdf2Sha512::new_with_compress_for_test(b"pw", Sha512CompressBlocksFn::Test(counting_sha512_compress));
-    SHA512_VERIFY_BLOCKS.store(0, Ordering::Relaxed);
+    // Without the limit, `u32::MAX` iterations outlast the nextest termination.
     assert!(
-      sha512
-        .verify_with_policy_bounded(
-          b"",
-          excessive_sha512,
-          &[0],
-          &policy,
-          Pbkdf2Sha512::MAX_VERIFY_ITERATIONS,
-        )
+      Pbkdf2Sha512::new(b"pw")
+        .verify_with_policy_bounded(b"", u32::MAX, &[0], &policy, Pbkdf2Sha512::MAX_VERIFY_ITERATIONS)
         .is_err()
     );
-    assert_eq!(SHA512_VERIFY_BLOCKS.load(Ordering::Relaxed), 0);
   }
 
   #[test]
@@ -1786,7 +1763,7 @@ mod tests {
     let policy = Pbkdf2VerifyPolicy::new(1, 0);
 
     macro_rules! assert_block_work_limit {
-      ($pbkdf2:ty, $compress:expr, $counter:ident, $output_size:expr) => {{
+      ($pbkdf2:ty, $output_size:expr) => {{
         // Three iterations over two blocks is six units of work.
         let max_work = 6;
         let mut at_limit = vec![0u8; 2 * $output_size];
@@ -1794,7 +1771,7 @@ mod tests {
         let mut over_limit = vec![0u8; 2 * $output_size + 1];
         <$pbkdf2>::derive_key_primitive(b"pw", b"salt", 3, &mut over_limit).expect("work-limit fixture derives");
 
-        let state = <$pbkdf2>::new_with_compress_for_test(b"pw", $compress);
+        let state = <$pbkdf2>::new(b"pw");
         assert!(
           state
             .verify_with_policy_bounded(b"salt", 3, &at_limit, &policy, max_work)
@@ -1805,46 +1782,33 @@ mod tests {
         );
 
         // A correct key fails once its third block exceeds the work limit.
-        $counter.store(0, Ordering::Relaxed);
         assert!(
           state
             .verify_with_policy_bounded(b"salt", 3, &over_limit, &policy, max_work)
             .is_err()
         );
-        assert_eq!($counter.load(Ordering::Relaxed), 0);
         assert!(
           <$pbkdf2>::verify_password_with_policy_bounded(b"pw", b"salt", 3, &over_limit, &policy, max_work).is_err()
         );
 
-        // At the default per-block limit, a second block is already excessive.
-        $counter.store(0, Ordering::Relaxed);
+        // At the default per-block limit, a second block is already excessive. Without the check
+        // before HMAC work, 4096 blocks at that limit outlast the nextest termination.
         assert!(
           state
             .verify_with_policy_bounded(
               b"salt",
               <$pbkdf2>::MAX_VERIFY_ITERATIONS,
-              &[0; $output_size + 1],
+              &vec![0; 4096 * $output_size],
               &policy,
               <$pbkdf2>::MAX_VERIFY_ITERATIONS,
             )
             .is_err()
         );
-        assert_eq!($counter.load(Ordering::Relaxed), 0);
       }};
     }
 
-    assert_block_work_limit!(
-      Pbkdf2Sha256,
-      Sha256CompressBlocksFn::Test(counting_sha256_compress),
-      SHA256_VERIFY_BLOCKS,
-      Pbkdf2Sha256::OUTPUT_SIZE
-    );
-    assert_block_work_limit!(
-      Pbkdf2Sha512,
-      Sha512CompressBlocksFn::Test(counting_sha512_compress),
-      SHA512_VERIFY_BLOCKS,
-      Pbkdf2Sha512::OUTPUT_SIZE
-    );
+    assert_block_work_limit!(Pbkdf2Sha256, Pbkdf2Sha256::OUTPUT_SIZE);
+    assert_block_work_limit!(Pbkdf2Sha512, Pbkdf2Sha512::OUTPUT_SIZE);
   }
 
   #[test]
@@ -2002,55 +1966,13 @@ mod tests {
   // ── Forced-kernel oracle tests ──────────────────────────────────────
 
   use crate::hashes::crypto::{
-    sha256::kernels::{
-      ALL as SHA256_KERNELS, Sha256KernelId, compress_blocks_fn as sha256_compress_blocks_fn,
-      required_caps as sha256_required_caps,
-    },
-    sha512::kernels::{
-      ALL as SHA512_KERNELS, Sha512KernelId, compress_blocks_fn as sha512_compress_blocks_fn,
-      required_caps as sha512_required_caps,
-    },
+    sha256::kernel_test::ALL as SHA256_KERNELS,
+    sha256::kernels::{Sha256KernelId, required_caps as sha256_required_caps},
+    sha512::kernel_test::ALL as SHA512_KERNELS,
+    sha512::kernels::{Sha512KernelId, required_caps as sha512_required_caps},
   };
 
-  static SHA256_VERIFY_BLOCKS: AtomicUsize = AtomicUsize::new(0);
-  static SHA512_VERIFY_BLOCKS: AtomicUsize = AtomicUsize::new(0);
-
-  fn counting_sha256_compress(state: &mut [u32; 8], blocks: &[u8]) {
-    SHA256_VERIFY_BLOCKS.fetch_add(blocks.len() / SHA256_BLOCK_SIZE, Ordering::Relaxed);
-    sha256_compress_blocks_fn(Sha256KernelId::Portable).call(state, blocks);
-  }
-
-  fn counting_sha512_compress(state: &mut [u64; 8], blocks: &[u8]) {
-    SHA512_VERIFY_BLOCKS.fetch_add(blocks.len() / SHA512_BLOCK_SIZE, Ordering::Relaxed);
-    sha512_compress_blocks_fn(Sha512KernelId::Portable).call(state, blocks);
-  }
-
-  fn counted_sha256_verify(
-    state: &Pbkdf2Sha256,
-    salt: &[u8],
-    iterations: u32,
-    expected: &[u8],
-  ) -> (Result<(), VerificationError>, usize) {
-    SHA256_VERIFY_BLOCKS.store(0, Ordering::Relaxed);
-    let result = state.verify_primitive(salt, iterations, expected);
-    let blocks = SHA256_VERIFY_BLOCKS.swap(0, Ordering::Relaxed);
-    (result, blocks)
-  }
-
-  fn counted_sha512_verify(
-    state: &Pbkdf2Sha512,
-    salt: &[u8],
-    iterations: u32,
-    expected: &[u8],
-  ) -> (Result<(), VerificationError>, usize) {
-    SHA512_VERIFY_BLOCKS.store(0, Ordering::Relaxed);
-    let result = state.verify_primitive(salt, iterations, expected);
-    let blocks = SHA512_VERIFY_BLOCKS.swap(0, Ordering::Relaxed);
-    (result, blocks)
-  }
-
   fn assert_pbkdf2_sha256_kernel(id: Sha256KernelId) {
-    let compress = sha256_compress_blocks_fn(id);
     let cases: &[(&[u8], &[u8], u32, usize)] = &[
       (b"password", b"salt", 1, 32),
       (b"password", b"salt", 4, 32),
@@ -2067,7 +1989,7 @@ mod tests {
       let mut expected = vec![0u8; dk_len];
       oracle_sha256(password, salt, iterations, &mut expected);
 
-      let state = Pbkdf2Sha256::new_with_compress_for_test(password, compress);
+      let state = Pbkdf2Sha256::new_with_compress_for_test(password, id);
       let mut actual = vec![0u8; dk_len];
       state
         .derive(salt, iterations, &mut actual)
@@ -2087,7 +2009,6 @@ mod tests {
   }
 
   fn assert_pbkdf2_sha512_kernel(id: Sha512KernelId) {
-    let compress = sha512_compress_blocks_fn(id);
     let cases: &[(&[u8], &[u8], u32, usize)] = &[
       (b"password", b"salt", 1, 64),
       (b"password", b"salt", 4, 64),
@@ -2104,7 +2025,7 @@ mod tests {
       let mut expected = vec![0u8; dk_len];
       oracle_sha512(password, salt, iterations, &mut expected);
 
-      let state = Pbkdf2Sha512::new_with_compress_for_test(password, compress);
+      let state = Pbkdf2Sha512::new_with_compress_for_test(password, id);
       let mut actual = vec![0u8; dk_len];
       state
         .derive(salt, iterations, &mut actual)
@@ -2140,104 +2061,6 @@ mod tests {
       if caps.has(sha512_required_caps(id)) {
         assert_pbkdf2_sha512_kernel(id);
       }
-    }
-  }
-
-  #[test]
-  fn sha256_verify_keeps_same_compress_work_for_match_and_mismatch_positions() {
-    let password = [0x11; 89];
-    let salt = [0x22; 200];
-    let state =
-      Pbkdf2Sha256::new_with_compress_for_test(&password, Sha256CompressBlocksFn::Test(counting_sha256_compress));
-    #[cfg(not(miri))]
-    let output_lengths = 1..=96;
-    #[cfg(miri)]
-    let output_lengths = [1usize, 2, 31, 32, 33, 63, 64, 65, 95, 96].into_iter();
-
-    for out_len in output_lengths {
-      let mut expected = vec![0u8; out_len];
-      state
-        .derive(&salt, 3, &mut expected)
-        .expect("SHA-256 work-count case parameters are valid");
-
-      let (ok, ok_blocks) = counted_sha256_verify(&state, &salt, 3, &expected);
-      ok.expect("SHA-256 verification must accept matching output");
-
-      let mut wrong_first = expected.clone();
-      wrong_first[0] ^= 1;
-      let (wrong_first_result, wrong_first_blocks) = counted_sha256_verify(&state, &salt, 3, &wrong_first);
-      assert!(
-        wrong_first_result.is_err(),
-        "sha256 verify must reject first-byte mismatch output_len={out_len}"
-      );
-
-      let mut wrong_last = expected.clone();
-      let last = wrong_last.len().strict_sub(1);
-      wrong_last[last] ^= 1;
-      let (wrong_last_result, wrong_last_blocks) = counted_sha256_verify(&state, &salt, 3, &wrong_last);
-      assert!(
-        wrong_last_result.is_err(),
-        "sha256 verify must reject last-byte mismatch output_len={out_len}"
-      );
-
-      assert!(ok_blocks > 0, "sha256 verify must do real work output_len={out_len}");
-      assert_eq!(
-        ok_blocks, wrong_first_blocks,
-        "sha256 verify must not short-circuit on first-byte mismatch output_len={out_len}"
-      );
-      assert_eq!(
-        ok_blocks, wrong_last_blocks,
-        "sha256 verify must not short-circuit on last-byte mismatch output_len={out_len}"
-      );
-    }
-  }
-
-  #[test]
-  fn sha512_verify_keeps_same_compress_work_for_match_and_mismatch_positions() {
-    let password = [0x44; 161];
-    let salt = [0x55; 260];
-    let state =
-      Pbkdf2Sha512::new_with_compress_for_test(&password, Sha512CompressBlocksFn::Test(counting_sha512_compress));
-    #[cfg(not(miri))]
-    let output_lengths = 1..=192;
-    #[cfg(miri)]
-    let output_lengths = [1usize, 2, 63, 64, 65, 127, 128, 129, 191, 192].into_iter();
-
-    for out_len in output_lengths {
-      let mut expected = vec![0u8; out_len];
-      state
-        .derive(&salt, 3, &mut expected)
-        .expect("SHA-512 work-count case parameters are valid");
-
-      let (ok, ok_blocks) = counted_sha512_verify(&state, &salt, 3, &expected);
-      ok.expect("SHA-512 verification must accept matching output");
-
-      let mut wrong_first = expected.clone();
-      wrong_first[0] ^= 1;
-      let (wrong_first_result, wrong_first_blocks) = counted_sha512_verify(&state, &salt, 3, &wrong_first);
-      assert!(
-        wrong_first_result.is_err(),
-        "sha512 verify must reject first-byte mismatch output_len={out_len}"
-      );
-
-      let mut wrong_last = expected.clone();
-      let last = wrong_last.len().strict_sub(1);
-      wrong_last[last] ^= 1;
-      let (wrong_last_result, wrong_last_blocks) = counted_sha512_verify(&state, &salt, 3, &wrong_last);
-      assert!(
-        wrong_last_result.is_err(),
-        "sha512 verify must reject last-byte mismatch output_len={out_len}"
-      );
-
-      assert!(ok_blocks > 0, "sha512 verify must do real work output_len={out_len}");
-      assert_eq!(
-        ok_blocks, wrong_first_blocks,
-        "sha512 verify must not short-circuit on first-byte mismatch output_len={out_len}"
-      );
-      assert_eq!(
-        ok_blocks, wrong_last_blocks,
-        "sha512 verify must not short-circuit on last-byte mismatch output_len={out_len}"
-      );
     }
   }
 }

@@ -15,19 +15,11 @@ use crate::platform::caps::wasm;
 #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 use crate::platform::caps::x86;
 
-/// The selected compression kernel.
+/// Compression through the selected kernel.
 ///
 /// [`Self::with`] reaches each kernel through a direct call, so no code
 /// pointer is stored or called, and a static stack review bounds every path.
-#[derive(Clone, Copy)]
-pub(crate) enum CompressBlocksFn {
-  Kernel(Sha256KernelId),
-  /// A PBKDF2 test's instrumented compression function.
-  #[cfg(all(test, feature = "pbkdf2"))]
-  Test(fn(&mut [u32; 8], &[u8])),
-}
-
-impl CompressBlocksFn {
+impl Sha256KernelId {
   /// Run `op` with the selected kernel.
   ///
   /// Each kernel gets its own copy of `op`, so each compression in `op` is
@@ -35,22 +27,20 @@ impl CompressBlocksFn {
   #[inline(always)]
   pub(crate) fn with<O: WithCompress<[u32; 8]>>(self, op: O) -> O::Output {
     match self {
-      Self::Kernel(Sha256KernelId::Portable) => op.run(Sha256::compress_blocks_portable),
+      Self::Portable => op.run(Sha256::compress_blocks_portable),
       #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
-      Self::Kernel(Sha256KernelId::X86Sha) => op.run(compress_blocks_x86_sha),
+      Self::X86Sha => op.run(compress_blocks_x86_sha),
       #[cfg(target_arch = "aarch64")]
-      Self::Kernel(Sha256KernelId::Aarch64Sha2) => op.run(compress_blocks_aarch64_sha2),
+      Self::Aarch64Sha2 => op.run(compress_blocks_aarch64_sha2),
       #[cfg(all(
         any(target_arch = "riscv64", target_arch = "riscv32"),
         not(feature = "portable-only")
       ))]
-      Self::Kernel(Sha256KernelId::RiscvZknh) => op.run(compress_blocks_riscv_zknh),
+      Self::RiscvZknh => op.run(compress_blocks_riscv_zknh),
       #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
-      Self::Kernel(Sha256KernelId::WasmSimd128) => op.run(compress_blocks_wasm_simd128),
+      Self::WasmSimd128 => op.run(compress_blocks_wasm_simd128),
       #[cfg(target_arch = "s390x")]
-      Self::Kernel(Sha256KernelId::S390xKimd) => op.run(compress_blocks_s390x_kimd),
-      #[cfg(all(test, feature = "pbkdf2"))]
-      Self::Test(compress) => op.run(compress),
+      Self::S390xKimd => op.run(compress_blocks_s390x_kimd),
     }
   }
 
@@ -105,24 +95,6 @@ impl Sha256KernelId {
   }
 }
 
-#[cfg(test)]
-pub(crate) const ALL: &[Sha256KernelId] = &[
-  Sha256KernelId::Portable,
-  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
-  Sha256KernelId::X86Sha,
-  #[cfg(target_arch = "aarch64")]
-  Sha256KernelId::Aarch64Sha2,
-  #[cfg(all(
-    any(target_arch = "riscv64", target_arch = "riscv32"),
-    not(feature = "portable-only")
-  ))]
-  Sha256KernelId::RiscvZknh,
-  #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
-  Sha256KernelId::WasmSimd128,
-  #[cfg(target_arch = "s390x")]
-  Sha256KernelId::S390xKimd,
-];
-
 // Safe wrappers — dispatch validates caps before calling. Each wrapper is
 // one out-of-line function, so no caller gets its own copy of a kernel.
 
@@ -165,12 +137,6 @@ fn compress_blocks_wasm_simd128(state: &mut [u32; 8], blocks: &[u8]) {
 fn compress_blocks_s390x_kimd(state: &mut [u32; 8], blocks: &[u8]) {
   // SAFETY: Only called when dispatch has verified `s390x::MSA` is available.
   unsafe { super::s390x::compress_blocks_kimd(state, blocks) }
-}
-
-/// The kernel `id`. Dispatch has already checked `id` against the CPU.
-#[must_use]
-pub(crate) const fn compress_blocks_fn(id: Sha256KernelId) -> CompressBlocksFn {
-  CompressBlocksFn::Kernel(id)
 }
 
 #[inline]
@@ -227,10 +193,10 @@ pub(crate) const COMPILE_TIME_HW: bool = cfg!(not(miri))
 /// Otherwise returns the portable fallback.  Marked `#[inline(always)]` so
 /// LLVM sees a constant kernel and removes the kernel match.
 #[inline(always)]
-pub(crate) fn compile_time_best() -> CompressBlocksFn {
+pub(crate) fn compile_time_best() -> Sha256KernelId {
   #[cfg(miri)]
   {
-    compress_blocks_fn(Sha256KernelId::Portable)
+    Sha256KernelId::Portable
   }
   #[cfg(all(
     not(miri),
@@ -239,7 +205,7 @@ pub(crate) fn compile_time_best() -> CompressBlocksFn {
     target_feature = "sse4.1"
   ))]
   {
-    compress_blocks_fn(Sha256KernelId::X86Sha)
+    Sha256KernelId::X86Sha
   }
   #[cfg(all(
     not(miri),
@@ -247,7 +213,7 @@ pub(crate) fn compile_time_best() -> CompressBlocksFn {
     any(target_os = "macos", target_feature = "sha2")
   ))]
   {
-    compress_blocks_fn(Sha256KernelId::Aarch64Sha2)
+    Sha256KernelId::Aarch64Sha2
   }
   #[cfg(all(
     not(miri),
@@ -256,11 +222,11 @@ pub(crate) fn compile_time_best() -> CompressBlocksFn {
     target_feature = "zknh"
   ))]
   {
-    compress_blocks_fn(Sha256KernelId::RiscvZknh)
+    Sha256KernelId::RiscvZknh
   }
   #[cfg(all(not(miri), target_arch = "wasm32", target_feature = "simd128"))]
   {
-    compress_blocks_fn(Sha256KernelId::WasmSimd128)
+    Sha256KernelId::WasmSimd128
   }
   #[cfg(all(
     not(miri),
@@ -281,7 +247,7 @@ pub(crate) fn compile_time_best() -> CompressBlocksFn {
     ))
   ))]
   {
-    compress_blocks_fn(Sha256KernelId::Portable)
+    Sha256KernelId::Portable
   }
 }
 

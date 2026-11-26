@@ -767,26 +767,6 @@ pub struct Blake2b256(Core);
 
 impl_blake2_digest!(Blake2b256, Blake2bKey, 32);
 
-impl Blake2b256 {
-  #[cfg(test)]
-  pub(crate) fn new_with_compress_for_test(
-    compress: kernels::CompressFn,
-    compress_blocks: kernels::CompressBlocksFn,
-  ) -> Self {
-    Self(Core::new_with_compress_for_test(32, &[], compress, compress_blocks))
-  }
-
-  #[cfg(test)]
-  pub(crate) fn keyed_with_compress_for_test(
-    key: &[u8],
-    compress: kernels::CompressFn,
-    compress_blocks: kernels::CompressBlocksFn,
-  ) -> Self {
-    assert!(!key.is_empty(), "use new_with_compress_for_test() for unkeyed hashing");
-    Self(Core::new_with_compress_for_test(32, key, compress, compress_blocks))
-  }
-}
-
 #[cfg(all(rscrypto_internal, feature = "diag"))]
 #[must_use]
 /// Derive a keyed Blake2b-256 diagnostic digest with the portable backend.
@@ -843,16 +823,6 @@ pub(crate) fn diag_hash_parts_portable(output_len: u8, parts: &[&[u8]], out: &mu
 pub struct Blake2b512(Core);
 
 impl_blake2_digest!(Blake2b512, Blake2bKey, 64);
-
-impl Blake2b512 {
-  #[cfg(test)]
-  pub(crate) fn new_with_compress_for_test(
-    compress: kernels::CompressFn,
-    compress_blocks: kernels::CompressBlocksFn,
-  ) -> Self {
-    Self(Core::new_with_compress_for_test(64, &[], compress, compress_blocks))
-  }
-}
 
 impl_std_io_write_for_digest!(Blake2b256);
 impl_std_io_write_for_digest!(Blake2b512);
@@ -1705,9 +1675,22 @@ mod tests {
   // ── Per-kernel oracle tests ───────────────────────────────────────────
 
   use super::kernels::{
-    ALL as BLAKE2B_KERNELS, Blake2bKernelId, compress_blocks_fn as blake2b_compress_blocks_fn,
-    compress_fn as blake2b_compress_fn, required_caps as blake2b_required_caps,
+    Blake2bKernelId, compress_blocks_fn as blake2b_compress_blocks_fn, compress_fn as blake2b_compress_fn,
+    required_caps as blake2b_required_caps,
   };
+
+  /// All kernel IDs for agreement testing.
+  const BLAKE2B_KERNELS: &[Blake2bKernelId] = &[
+    Blake2bKernelId::Portable,
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+    Blake2bKernelId::X86Avx2,
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+    Blake2bKernelId::X86Avx512vl,
+    #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
+    Blake2bKernelId::Riscv64V,
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+    Blake2bKernelId::WasmSimd128,
+  ];
 
   fn assert_blake2b_kernel(id: Blake2bKernelId) {
     let compress = blake2b_compress_fn(id);
@@ -1727,7 +1710,7 @@ mod tests {
     // Unkeyed Blake2b-256
     for &data in cases {
       let expected = oracle_hash_256(data);
-      let mut h = Blake2b256::new_with_compress_for_test(compress, compress_blocks);
+      let mut h = Blake2b256(Core::new_with_compress_for_test(32, &[], compress, compress_blocks));
       h.update(data);
       assert_eq!(
         h.finalize(),
@@ -1741,7 +1724,7 @@ mod tests {
     // Unkeyed Blake2b-512
     for &data in cases {
       let expected = oracle_hash_512(data);
-      let mut h = Blake2b512::new_with_compress_for_test(compress, compress_blocks);
+      let mut h = Blake2b512(Core::new_with_compress_for_test(64, &[], compress, compress_blocks));
       h.update(data);
       assert_eq!(
         h.finalize(),
@@ -1759,7 +1742,7 @@ mod tests {
       blake2::digest::Mac::update(&mut oracle, b"message");
       let expected: [u8; 32] = blake2::digest::Mac::finalize(oracle).into_bytes().into();
 
-      let mut h = Blake2b256::keyed_with_compress_for_test(key, compress, compress_blocks);
+      let mut h = Blake2b256(Core::new_with_compress_for_test(32, key, compress, compress_blocks));
       h.update(b"message");
       assert_eq!(
         h.finalize(),
@@ -1774,7 +1757,7 @@ mod tests {
     let data = &[0x42u8; 300];
     let expected = oracle_hash_512(data);
     for chunk_size in [1, 7, 63, 64, 127, 128, 129] {
-      let mut h = Blake2b512::new_with_compress_for_test(compress, compress_blocks);
+      let mut h = Blake2b512(Core::new_with_compress_for_test(64, &[], compress, compress_blocks));
       for chunk in data.chunks(chunk_size) {
         h.update(chunk);
       }
@@ -1902,7 +1885,7 @@ mod tests {
       let compress = blake2b_compress_fn(id);
       let compress_blocks = blake2b_compress_blocks_fn(id);
       for len in 0..=data.len() {
-        let mut h = Blake2b512::new_with_compress_for_test(compress, compress_blocks);
+        let mut h = Blake2b512(Core::new_with_compress_for_test(64, &[], compress, compress_blocks));
         h.update(&data[..len]);
         assert_eq!(
           h.finalize(),

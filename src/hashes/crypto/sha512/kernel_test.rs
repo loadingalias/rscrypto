@@ -2,14 +2,32 @@ use alloc::vec::Vec;
 
 use super::{
   Sha512,
-  kernels::{ALL, Sha512KernelId, compress_blocks_fn, required_caps},
+  kernels::{Sha512KernelId, required_caps},
 };
 use crate::traits::Digest as _;
 
+// Keep kernel tests focused on backends that runtime dispatch can actually pick.
+pub(crate) const ALL: &[Sha512KernelId] = &[
+  Sha512KernelId::Portable,
+  #[cfg(target_arch = "aarch64")]
+  Sha512KernelId::Aarch64Sha512,
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+  Sha512KernelId::X86Sha512,
+  #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
+  Sha512KernelId::Riscv64Zknh,
+  #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+  Sha512KernelId::WasmSimd128,
+  #[cfg(target_arch = "s390x")]
+  Sha512KernelId::S390xKimd,
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+  Sha512KernelId::X86Avx2Decoupled,
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+  Sha512KernelId::X86Avx512vlDecoupled,
+];
+
 fn hasher_for_kernel(id: Sha512KernelId) -> Sha512 {
-  let compress = compress_blocks_fn(id);
   Sha512 {
-    compress_blocks: compress,
+    compress_blocks: id,
     dispatch_initialized: true,
     ..Default::default()
   }
@@ -22,7 +40,7 @@ fn digest_with_kernel(id: Sha512KernelId, data: &[u8]) -> [u8; 64] {
 }
 
 fn digest_64_byte_prefix_with_kernel(id: Sha512KernelId, prefix: &[u8; 64], data: &[u8]) -> [u8; 64] {
-  Sha512::digest_64_byte_prefix_with(prefix, data, compress_blocks_fn(id))
+  Sha512::digest_64_byte_prefix_with(prefix, data, id)
 }
 
 #[cfg(test)]
@@ -59,7 +77,7 @@ mod tests {
 
       for &len in &lens {
         let msg = pattern(len);
-        let oneshot = super::super::dispatch::digest_oneshot(&msg, compress_blocks_fn(id));
+        let oneshot = super::super::dispatch::digest_oneshot(&msg, id);
         let ours = digest_with_kernel(id, &msg);
 
         use sha2::Digest as _;
@@ -144,7 +162,7 @@ mod tests {
         oracle_input.extend_from_slice(&msg);
 
         let actual = digest_64_byte_prefix_with_kernel(id, &prefix, &msg);
-        let expected = super::super::dispatch::digest_oneshot(&oracle_input, compress_blocks_fn(id));
+        let expected = super::super::dispatch::digest_oneshot(&oracle_input, id);
 
         assert_eq!(
           actual,
@@ -160,19 +178,17 @@ mod tests {
 
 #[test]
 fn forced_backend_survives_initialization_and_clone_until_reset() {
-  use super::kernels::CompressBlocksFn::Kernel;
-
   let caps = crate::platform::caps();
   for &id in ALL.iter().filter(|&&id| caps.has(required_caps(id))) {
     let mut hasher = Sha512 {
-      compress_blocks: compress_blocks_fn(id),
+      compress_blocks: id,
       dispatch_initialized: true,
       ..Default::default()
     };
     let mut cloned = hasher.clone();
     for h in [&mut hasher, &mut cloned] {
       assert!(
-        matches!((h.select_compress(), compress_blocks_fn(id)), (Kernel(selected), Kernel(forced)) if selected == forced),
+        h.select_compress() == id,
         "forced kernel {} was replaced during selection",
         id.as_str()
       );

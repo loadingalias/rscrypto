@@ -1,6 +1,6 @@
 //! SHA-512 (FIPS 180-4).
 
-use self::kernels::CompressBlocksFn;
+use self::kernels::Sha512KernelId;
 use crate::{
   hashes::util::{Aligned64, rotr64},
   traits::Digest,
@@ -11,7 +11,7 @@ pub(crate) mod dispatch;
 #[doc(hidden)]
 pub(crate) mod dispatch_policy;
 #[cfg(test)]
-mod kernel_test;
+pub(crate) mod kernel_test;
 pub(crate) mod kernels;
 
 #[cfg(target_arch = "aarch64")]
@@ -192,7 +192,7 @@ pub struct Sha512 {
   block: [u8; BLOCK_LEN],
   block_len: usize,
   bytes_hashed: u128,
-  compress_blocks: CompressBlocksFn,
+  compress_blocks: Sha512KernelId,
   // True also preserves an explicitly supplied compression backend.
   dispatch_initialized: bool,
 }
@@ -202,7 +202,7 @@ pub struct Sha512 {
 pub(crate) struct Sha512Prefix {
   state: [u64; 8],
   bytes_hashed: u128,
-  compress_blocks: CompressBlocksFn,
+  compress_blocks: Sha512KernelId,
   // True also preserves an explicitly supplied compression backend.
   dispatch_initialized: bool,
 }
@@ -235,7 +235,7 @@ impl Default for Sha512 {
       block: [0u8; BLOCK_LEN],
       block_len: 0,
       bytes_hashed: 0,
-      compress_blocks: kernels::compress_blocks_fn(kernels::Sha512KernelId::Portable),
+      compress_blocks: kernels::Sha512KernelId::Portable,
       dispatch_initialized: false,
     }
   }
@@ -258,7 +258,7 @@ impl Drop for SecretFinalization {
 macro_rules! impl_sha512_update {
   () => {
     #[inline]
-    fn update_with(&mut self, mut data: &[u8], compress_blocks: CompressBlocksFn) {
+    fn update_with(&mut self, mut data: &[u8], compress_blocks: Sha512KernelId) {
       if data.is_empty() {
         return;
       }
@@ -338,7 +338,7 @@ impl Sha512 {
   }
 
   #[inline]
-  fn select_compress(&mut self) -> CompressBlocksFn {
+  fn select_compress(&mut self) -> Sha512KernelId {
     if !self.dispatch_initialized {
       self.compress_blocks = dispatch::compress_dispatch();
       self.dispatch_initialized = true;
@@ -355,7 +355,7 @@ impl Sha512 {
 
   #[inline(always)]
   #[cfg(any(feature = "ed25519", test))]
-  fn digest_64_byte_prefix_with(prefix: &[u8; 64], data: &[u8], compress_blocks: CompressBlocksFn) -> [u8; 64] {
+  fn digest_64_byte_prefix_with(prefix: &[u8; 64], data: &[u8], compress_blocks: Sha512KernelId) -> [u8; 64] {
     let total_len = 64u128.strict_add(data.len() as u128);
     let mut state = H0;
     let mut block = [0u8; BLOCK_LEN];
@@ -391,7 +391,7 @@ impl Sha512 {
     block: [u8; BLOCK_LEN],
     block_len: usize,
     total_len: u128,
-    compress_blocks: CompressBlocksFn,
+    compress_blocks: Sha512KernelId,
   ) -> [u8; 64] {
     let state = Self::finalize_state_words(state, block, block_len, total_len, compress_blocks);
     Self::state_to_digest(&state)
@@ -403,7 +403,7 @@ impl Sha512 {
     mut block: [u8; BLOCK_LEN],
     block_len: usize,
     total_len: u128,
-    compress_blocks: CompressBlocksFn,
+    compress_blocks: Sha512KernelId,
   ) -> [u64; 8] {
     Self::finalize_state_words_in_place(&mut state, &mut block, block_len, total_len, compress_blocks);
     state
@@ -415,7 +415,7 @@ impl Sha512 {
     fill_block: impl FnOnce(&mut [u8; BLOCK_LEN]),
     block_len: usize,
     total_len: u128,
-    compress_blocks: CompressBlocksFn,
+    compress_blocks: Sha512KernelId,
     output: &mut [u8; N],
   ) {
     const { assert!(N == 48 || N == 64) };
@@ -437,7 +437,7 @@ impl Sha512 {
     block: &mut [u8; BLOCK_LEN],
     mut block_len: usize,
     total_len: u128,
-    compress_blocks: CompressBlocksFn,
+    compress_blocks: Sha512KernelId,
   ) {
     let bit_len = total_len.strict_mul(8);
 
@@ -457,7 +457,7 @@ impl Sha512 {
   }
 
   #[inline(always)]
-  fn finalize_inner_with<const ZEROIZE: bool>(&self, compress_blocks: CompressBlocksFn) -> [u8; 64] {
+  fn finalize_inner_with<const ZEROIZE: bool>(&self, compress_blocks: Sha512KernelId) -> [u8; 64] {
     let total_len = self.bytes_hashed.strict_add(self.block_len as u128);
     if ZEROIZE {
       let mut output = [0u8; 64];
@@ -533,7 +533,7 @@ impl Sha512 {
 
   #[cfg(all(feature = "hmac", any(test, all(rscrypto_internal, feature = "diag"))))]
   #[inline]
-  pub(crate) fn new_with_compress_for_test(compress_blocks: CompressBlocksFn) -> Self {
+  pub(crate) fn new_with_compress_for_test(compress_blocks: Sha512KernelId) -> Self {
     Self {
       state: H0,
       block: [0u8; BLOCK_LEN],

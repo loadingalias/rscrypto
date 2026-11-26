@@ -22,12 +22,17 @@ Those entry points call the supporting modules.
 | `asm/p384.py check`                    | `check/check.sh` |
 | `asm/rsa_pair.py check`                | `check/check.sh` |
 | `asm/provenance.py check`              | `check/check.sh` |
+| `check/rule1.py`                       | `check/check.sh` |
 
 `check/check_runner_test.py` tests command selection, repair behavior, and failure propagation with substitute executors.
 Run it with `scripts/lib/python.sh scripts/check/check_runner_test.py`.
 
 `check/lint-independent-workspaces.sh` lints every independent Cargo workspace that Git tracks or would add.
 Ignored manifests, such as local evidence crates, are not repository policy.
+
+`check/rule1.py` fails when production source holds an item that only a test `cfg` compiles (AGENTS.md RULE 1).
+It follows module declarations and `include!` from `src/lib.rs`, so test modules and test files pass.
+Its allowlist names each remaining case, and an entry that matches nothing fails.
 
 ### Provider workspace checks
 
