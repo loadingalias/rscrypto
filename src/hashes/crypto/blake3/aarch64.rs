@@ -1359,8 +1359,8 @@ pub(crate) unsafe fn hash_many_contiguous_neon(
 
   #[cfg(all(target_os = "linux", target_endian = "little"))]
   let hash4: unsafe fn(*const u8, &[u32; 8], u64, u32, *mut u8) = if num_chunks >= 4
-    && input.cast::<u128>().is_aligned()
-    && out.cast::<u32>().is_aligned()
+    && input.addr().is_multiple_of(core::mem::align_of::<u128>())
+    && out.addr().is_multiple_of(core::mem::align_of::<u32>())
     && crate::platform::caps().has(crate::platform::caps::aarch64::SVE2)
   {
     hash4_contiguous_sve2
