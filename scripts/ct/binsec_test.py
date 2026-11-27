@@ -36,6 +36,24 @@ class BinsecBuildTests(unittest.TestCase):
                                     'relocation-model=static', '-C', 'link-arg=-no-pie'])
             self.assertEqual(build.call_args.kwargs['env']['CARGO_ENCODED_RUSTFLAGS'].split('\x1f'), flags)
 
+  def test_private_proof_link_flags_do_not_reach_shared_dependencies(self):
+    self.addCleanup(binsec.build_library_tests.cache_clear)
+    with tempfile.TemporaryDirectory() as temporary:
+      root = Path(temporary)
+      (root / 'ct.toml').write_text('[[binsec_kernel]]\nharness = "lib-test"\nsymbol = "leaf"\n')
+      with patch.dict(os.environ, {'CARGO_ENCODED_RUSTFLAGS': '-C\x1fdebuginfo=1'}, clear=True), \
+           patch.object(binsec, 'ROOT', root), patch.object(binsec, 'configure_cross_linker'), \
+           patch.object(binsec, 'run', return_value=subprocess.CompletedProcess([], 0, stdout='rustc')), \
+           patch.object(binsec, 'build_library_test') as link:
+        _, recorded = binsec.build_library_tests(TARGET, ('-C', 'target-cpu=x86-64'))
+      _, _, _, _, final_flags, env = link.call_args.args
+      shared_flags = env['CARGO_ENCODED_RUSTFLAGS'].split('\x1f')
+      self.assertEqual(shared_flags, ['-C', 'debuginfo=1', '-C', 'target-cpu=x86-64'])
+      self.assertIn('link-arg=-no-pie', final_flags)
+      self.assertIn('link-arg=-Wl,-u,leaf', final_flags)
+      self.assertTrue(any(flag.endswith('.o') for flag in final_flags))
+      self.assertEqual(recorded, shared_flags + final_flags)
+
   def test_binsec_script_sets_the_lse_flag_after_the_section_load_only_if_the_elf_defines_it(self):
     # Before the load, the load writes the file's 0 over the flag. Without the symbol, BINSEC
     # cannot resolve the name and stops.

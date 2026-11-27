@@ -72,7 +72,8 @@ if os.path.basename(sys.argv[1]) in ('provenance.py', 'library_harness.py'):
         (root / "scripts/ct").mkdir()
         shutil.copy2(ROOT / "scripts/ct/provenance.py", root / "scripts/ct/provenance.py")
         shutil.copy2(ROOT / "scripts/ct/library_harness.py", root / "scripts/ct/library_harness.py")
-        for path in ("Cargo.toml", "tools/Cargo.toml", "tools/ct-harness/Cargo.toml"):
+        shutil.copy2(ROOT / "Cargo.toml", root / "Cargo.toml")
+        for path in ("tools/Cargo.toml", "tools/ct-harness/Cargo.toml"):
           manifest = root / path
           manifest.parent.mkdir(parents=True, exist_ok=True)
           manifest.write_text('[package]\nname = "fixture"\nversion = "0.0.0"\n')

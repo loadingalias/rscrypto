@@ -87,7 +87,11 @@ def measure(prepared, args):
   for path in (args.stdout, args.csv, report_path):
     if path.exists():
       raise ValueError(f"refusing to reuse measurement evidence: {path}")
-  command = [prepared["metadata"]["binary"]["path"], "--ignored", "--exact", "ct_tests::dudect::measure", "--nocapture"]
+  # Serial libtest keeps its 60-second progress message out of the measurement's stdout.
+  command = [
+    prepared["metadata"]["binary"]["path"], "--test-threads=1", "--ignored", "--exact",
+    "ct_tests::dudect::measure", "--nocapture",
+  ]
   environment = {
     "RSCRYPTO_CT_DUDECT_SAMPLES": str(args.samples),
     "RSCRYPTO_CT_DUDECT_OUT": str(args.csv),

@@ -16,8 +16,8 @@ ROOT = Path(__file__).resolve().parents[2]
 def main():
   with tempfile.TemporaryDirectory() as temporary:
     root = Path(temporary)
-    for name in ('ct.toml', 'scripts/ct/library_harness.py', 'scripts/ct/dudect.sh', 'scripts/ct/dudect_execute.py', 'scripts/ct/manifest.py',
-                 'scripts/ct/provenance.py', 'scripts/lib/python.sh'):
+    for name in ('Cargo.toml', 'ct.toml', 'scripts/ct/library_harness.py', 'scripts/ct/dudect.sh',
+                 'scripts/ct/dudect_execute.py', 'scripts/ct/manifest.py', 'scripts/ct/provenance.py', 'scripts/lib/python.sh'):
       path = root / name
       path.parent.mkdir(parents=True, exist_ok=True)
       shutil.copy2(ROOT / name, path)

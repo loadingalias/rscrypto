@@ -169,7 +169,7 @@ try {
     # Keep Microsoft's link.exe ahead of Git's Unix link utility.
     $paths = @($msvcBin, $uvDirectory, $pythonBin, $binDirectory, (Join-Path $gitDirectory 'cmd'),
         (Join-Path $gitDirectory 'bin'), (Join-Path $gitDirectory 'usr\bin'))
-    $archives = if ($CiCt) { @('cargo-binstall') } else { @('llvm', 'cmake', 'cargo-binstall') }
+    [string[]]$archives = if ($CiCt) { @('cargo-binstall') } else { @('llvm', 'cmake', 'cargo-binstall') }
     if (-not $Ci) {
         $archives += 'powershell'
         if ($native.assets.PSObject.Properties.Name -contains 'cargo-rail') { $archives += 'cargo-rail' }

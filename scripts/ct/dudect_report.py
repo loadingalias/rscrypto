@@ -31,6 +31,11 @@ from provenance import cfg_target_features, codegen_value, codegen_values, dudec
 SEED_RE = re.compile(r"^bench\s+(?P<name>\S+)\s+seeded with (?P<seed>0x[0-9a-fA-F]+)$")
 TICK_RE = re.compile(r"^timer tick (?P<tick>[0-9]+) ns$")
 CALLS_RE = re.compile(r"^bench (?P<name>\S+) timed (?P<calls>[0-9]+) calls per sample$")
+# Parallel libtest in archived runs could print its progress inside a pending result line.
+LIBTEST_PROGRESS_RE = re.compile(
+  r"^(bench \S+[ \t]+\.\.\. )test ct_tests::dudect::measure has been running for over [0-9]+ seconds\n(?=: n == )",
+  re.MULTILINE,
+)
 RESULT_RE = re.compile(
   r"^bench (?P<name>\S+)\s+\.\.\. : n == (?P<n>[+-]?[0-9.]+)M, "
   r"max t = (?P<t>[+-]?[0-9.]+), max tau = (?P<tau>[+-]?[0-9.]+), "
@@ -133,7 +138,8 @@ def parse_stdout(path: Path) -> tuple[dict[str, str], dict[str, dict], int]:
   results: dict[str, dict] = {}
   calls: dict[str, int] = {}
   tick_ns = 0
-  for line in path.read_text(errors="replace").splitlines():
+  transcript = LIBTEST_PROGRESS_RE.sub(r"\1", path.read_text(errors="replace"))
+  for line in transcript.splitlines():
     if seed_match := SEED_RE.match(line):
       seeds[seed_match.group("name")] = seed_match.group("seed")
       continue

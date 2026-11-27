@@ -77,6 +77,12 @@ def test_case_selection() -> None:
     stdout.write_text("timer tick 41 ns\n" + result_line + "bench alpha_one timed 64 calls per sample\n")
     _, results, tick_ns = parse_stdout(stdout)
     assert tick_ns == 41 and results["alpha_one"]["calls_per_sample"] == 64
+    progress = "test ct_tests::dudect::measure has been running for over 60 seconds\n"
+    split_result = result_line.replace("... :", "... " + progress + ":")
+    stdout.write_text("timer tick 41 ns\n" + split_result + "bench alpha_one timed 64 calls per sample\n")
+    assert parse_stdout(stdout)[1:] == (results, tick_ns)
+    stdout.write_text(split_result.replace(progress, "unrecognized output\n"))
+    assert not parse_stdout(stdout)[1]
     stdout.write_text(result_line * 2)
     expect_failure(lambda: parse_stdout(stdout))
 

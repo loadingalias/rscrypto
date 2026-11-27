@@ -1789,7 +1789,19 @@ The table traces the seven earlier findings through those calls. Offsets are rel
 
 The three alignment branches now have ordinary conditional-branch findings.
 This review used the linked binary retained after preparation failed. The run produced no RISC-V timing measurements.
-The replacement campaign must also verify the x86-64 Ed25519 AVX2 basepoint selection entry.
+
+At `2ec2e196`, all seven RISC-V sites retained the same enclosing function bytes, branch offsets, and controlling values shown above.
+The review also traced 235 flagged sites across six linked Linux binaries and recorded 226 distinct branch conditions in `ct.toml`.
+The binaries cover x86-64 GNU, AArch64 GNU and musl, POWER, IBM Z, and RISC-V.
+Applying the updated records to those binaries left no blocking assembly findings, stale records, or missing roots.
+Three RSA branches return the opaque operation status permitted by `rsa.private_ops`. Their records cite that disclosure contract.
+[Campaign and artifacts](https://github.com/loadingalias/rscrypto/actions/runs/46073157179)
+
+The campaign recorded 146 passing timing cases on POWER, 83 on IBM Z, and 80 on RISC-V.
+On each machine, a Rust test progress message interrupted the next result line. Each archive retained the complete sample set for that case.
+The remaining cases need measurements. Linux x86-64 and AArch64 completed four fixed-width equality proofs each before the private test executable failed to link.
+The public HMAC verification proofs and the x86-64 Ed25519 AVX2 basepoint selection proof remain open. Windows stopped during tool setup.
+[RISC-V timing archive](https://github.com/loadingalias/rscrypto/actions/runs/46075155382)
 
 ### ML-DSA
 

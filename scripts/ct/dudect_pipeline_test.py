@@ -30,7 +30,7 @@ def main():
     runner.write_text(f"#!{sys.executable}\n" + '''
 import os, sys
 from pathlib import Path
-assert sys.argv[1:] == ['--ignored', '--exact', 'ct_tests::dudect::measure', '--nocapture']
+assert sys.argv[1:] == ['--test-threads=1', '--ignored', '--exact', 'ct_tests::dudect::measure', '--nocapture']
 name = os.environ['RSCRYPTO_CT_DUDECT_FILTER']
 seed = os.environ.get('RSCRYPTO_CT_DUDECT_SEED', '')
 csv = Path(os.environ['RSCRYPTO_CT_DUDECT_OUT'])

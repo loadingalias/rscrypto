@@ -19,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from provenance import resolved_rustflags, sha256_file, zig_executable
 from manifest import binsec_kernel_targets, target_record
+from library_harness import build_library_test
 
 ROOT = Path(__file__).resolve().parents[2]
 HARNESS_MANIFEST = ROOT / "tools" / "ct-binsec-harness" / "Cargo.toml"
@@ -261,31 +262,26 @@ def build_library_tests(target: str, rustflags: tuple[str, ...]) -> tuple[Path, 
   """Build the private proof roots in their owning modules and retain their C symbols."""
   target_dir = ROOT / "target" / "ct-binsec-build"
   target_dir.mkdir(parents=True, exist_ok=True)
-  flags = [*resolved_rustflags(ROOT, target)[2], *(rustflags or default_target_rustflags(target)), *binsec_proof_rustflags(target)]
+  flags = [*resolved_rustflags(ROOT, target)[2], *(rustflags or default_target_rustflags(target))]
+  proof_flags = binsec_proof_rustflags(target)
   memory = HARNESS_MANIFEST.parent / "src" / "memory.rs"
-  identity = hashlib.sha256(repr((sha256_file(memory), target, flags, run(["rustc", "-vV"]).stdout)).encode()).hexdigest()
+  inputs = (sha256_file(memory), target, flags + proof_flags, run(["rustc", "-vV"]).stdout)
+  identity = hashlib.sha256(repr(inputs).encode()).hexdigest()
   obj = target_dir / f"memory-{identity}.o"
   if not obj.exists():
-    result = run(["rustc", "--edition=2024", "--crate-type=lib", "--target", target, *flags, "-C", "opt-level=3",
+    result = run(["rustc", "--edition=2024", "--crate-type=lib", "--target", target, *flags, *proof_flags, "-C", "opt-level=3",
                   "--emit", f"obj={obj}", str(memory)])
     if result.returncode:
       raise SystemExit(result.stderr)
-  flags.extend(["-C", f"link-arg={obj}"])
+  proof_flags.extend(["-C", f"link-arg={obj}"])
   symbols = {row["symbol"] for row in kernels(load_manifest(), None, target) if row.get("harness") == "lib-test"}
   for symbol in sorted(symbols):
-    flags.extend(["-C", f"link-arg=-Wl,-u,{symbol}"])
+    proof_flags.extend(["-C", f"link-arg=-Wl,-u,{symbol}"])
   env = os.environ.copy()
   env["CARGO_ENCODED_RUSTFLAGS"] = "\x1f".join(flags)
   configure_cross_linker(env, target)
-  cmd = ["cargo", "test", "--locked", "-p", "rscrypto", "--lib", "--no-run", "--profile", "binsec",
-         "--target", target, "--target-dir", str(target_dir), "--no-default-features",
-         "--features", ",".join(LEAF_FEATURES), "--message-format=json-render-diagnostics"]
-  result = subprocess.run(cmd, cwd=ROOT, env=env, text=True, stdout=subprocess.PIPE, check=True)
-  executables = [Path(row["executable"]) for line in result.stdout.splitlines() if (row := json.loads(line)).get("reason") == "compiler-artifact"
-                 and row["target"]["name"] == "rscrypto" and row["profile"]["test"] and row.get("executable")]
-  if len(executables) != 1 or not executables[0].is_file():
-    raise SystemExit("Cargo did not produce the rscrypto library test executable")
-  return executables[0], flags
+  binary = build_library_test(target, target_dir, "binsec", LEAF_FEATURES, proof_flags, env)
+  return binary, flags + proof_flags
 
 
 def symbol_names(binary: Path) -> set[str]:
