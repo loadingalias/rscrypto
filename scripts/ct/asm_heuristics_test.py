@@ -1076,13 +1076,13 @@ def closed_world_regressions() -> None:
   assert control_errors("s390x-unknown-linux-gnu", fixture(["1000: a7 e5 00 80\tbras\t%r14, 0x1100 <rscrypto::g>",
                                                             "1004: 07 fe\tbr\t%r14"]), None) == [
     "rscrypto::fixture+0x0: bras %r14, 0x1100 <rscrypto::g>: a transfer of control without a control rule"]
-  # x86 VPERMQ has no effect rule; VPXORQ has one.
+  # The scanner accepts the SHA-512 lane permutation and rejects an unmodeled vector operation.
   x86 = "x86_64-unknown-linux-gnu"
   vector = fixture(["1000: 62 f3 fd 48 00 c1 4e\tvpermq\t$0x4e, %zmm1, %zmm0",
-                    "1007: 62 f1 f5 48 ef c2\tvpxorq\t%zmm2, %zmm1, %zmm0", "100d: c3\tretq"])
+                    "1007: c5 dd f6 f8\tvpsadbw\t%ymm0, %ymm4, %ymm7", "100b: c3\tretq"])
   assert control_errors(x86, vector, None) == []
   assert effect_errors(x86, vector, {vector.symbol}, None) == [
-    "rscrypto::fixture+0x0: vpermq $0x4e, %zmm1, %zmm0: no effect rule"]
+    "rscrypto::fixture+0x7: vpsadbw %ymm0, %ymm4, %ymm7: no effect rule"]
   # The ChaCha20-Poly1305 assembly returns with `.byte 0xf3,0xc3`, which llvm-objdump prints as `rep retq`.
   assert control_errors(x86, fixture(["1000: f3 c3\trep\t\tretq", "1002: cd 1f\tint\t$0x1f"]), None) == [
     "rscrypto::fixture+0x2: int $0x1f: a transfer of control without a control rule"]

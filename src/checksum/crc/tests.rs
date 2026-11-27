@@ -51,7 +51,12 @@ fn reference(spec: &Spec, register: u64, data: &[u8]) -> u64 {
 impl<W: Word> Crc<W> {
   /// The word-domain register for a register value in the specification's form.
   fn register_to_word(&self, register: u64) -> W {
-    self.domain_to_word(self.spec.domain(register & mask(self.spec.width)))
+    let shift = if self.spec.reflected {
+      0
+    } else {
+      W::BITS.strict_sub(self.spec.width)
+    };
+    W::narrow((register & mask(self.spec.width)) << shift)
   }
 
   /// The register value in the specification's form for a word-domain register.

@@ -324,7 +324,7 @@ ring = "0.17.14"
 rsa = { version = "0.10.0", default-features = false, features = ["encoding", "pkcs1v15"] }
 # Independent big-integer oracle for the RSA arithmetic tests.
 num-bigint = { version = "0.5.1", default-features = false }
-dryoc = "2.0.0"
+dryoc = "2.0.1"
 rustcrypto-ml-dsa = { version = "=0.1.1", package = "ml-dsa", default-features = false, features = ["alloc", "pkcs8", "zeroize"] }
 rustcrypto-slh-dsa = { version = "=0.2.0-rc.5", package = "slh-dsa" }
 fips205 = "=0.5.0"

@@ -1,9 +1,18 @@
 //! Fixed inputs and stop address for the library test proof binary.
 
-mod input;
-
 use core::ptr;
-pub(crate) use input::array_from_global;
+
+#[cfg(any(
+  feature = "aegis256",
+  feature = "aes-gcm",
+  feature = "aes-gcm-siv",
+  feature = "argon2",
+  feature = "ascon-aead",
+  feature = "chacha20poly1305",
+  feature = "rsa",
+  feature = "x25519"
+))]
+include!("binsec/input.rs");
 
 #[unsafe(no_mangle)]
 #[used]

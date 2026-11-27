@@ -2125,7 +2125,7 @@ def power_reference_identities(
 
 # X-form loads, `T, RA, RB` with EA = (RA|0) + RB, and the bytes each reads.
 POWER_INDEXED_LOADS = {
-  "lbzx": 1, "lhzx": 2, "lhax": 2, "lwzx": 4, "lwax": 4, "ldx": 8, "lfsx": 4, "lfdx": 8, "lxsdx": 8,
+  "lbzx": 1, "lhzx": 2, "lhax": 2, "lwzx": 4, "lwax": 4, "ldx": 8, "lfsx": 4, "lfdx": 8, "lfiwzx": 4, "lxsdx": 8,
   "lxsiwzx": 4, "lxsiwax": 4, "lxsspx": 4, "lxvd2x": 16, "lxvw4x": 16, "lxvx": 16, "lxvdsx": 8, "lvx": 16,
 }
 # D-form vector and floating-point loads, `T, D(RA)`.

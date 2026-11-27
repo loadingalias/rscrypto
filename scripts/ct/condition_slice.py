@@ -135,11 +135,12 @@ X86_VECTOR = re.compile(
   r"|vpcmp(?:eq|lt|le|neq|nlt|nle)u[bwdq]|v?ps(?:ll|rl|ra)[wdq]|v?ps(?:ll|rl)dq|v?punpck[lh](?:bw|wd|dq|qdq)"
   r"|v?pack[us]s(?:wb|dw)|v?pshuf(?:b|d|lw|hw)|v?palignr|v?pblendw|v?shufp[sd]|valign[dq]|vpternlog[dq]"
   r"|vpmadd52[lh]uq|v?pinsr[bwdq]|vinsert[if](?:128|32x4|64x2|32x8|64x4)|v?pextr[bwdq]|v?pmovmskb"
-  r"|vpbroadcast[bwdq]|sha256(?:rnds2|msg1|msg2)"
+  r"|vpbroadcast[bwdq]|vbroadcasti128|vextracti128|vperm2i128|vpermq|vpermt2q|vpblendd|vprolq"
+  r"|sha256(?:rnds2|msg1|msg2)|vsha512(?:rnds2|msg1|msg2)"
   # Mask-register moves and logic (AVX-512).
   r"|kmov[bwdq]|knot[bwdq]|k(?:and|andn|or|xor|xnor|add)[bwdq]|kunpck(?:bw|wd|dq)|kshift[lr][bwdq]")
 X86_SSE_WRITE_ONLY = re.compile(r"pshuf(?:d|lw|hw)|pextr[bwdq]|pmovmskb")
-X86_VECTOR_ACCUMULATE = re.compile(r"vpternlog[dq]|vpmadd52[lh]uq")
+X86_VECTOR_ACCUMULATE = re.compile(r"vpternlog[dq]|vpmadd52[lh]uq|vpermt2q|vsha512(?:rnds2|msg1|msg2)")
 # KORTEST and KTEST set ZF and CF from two mask registers.
 X86_MASK_TEST = re.compile(r"k(?:or)?test[bwdq]")
 X86_WRITE_MASK = re.compile(r"\s*\{%(k[0-7])\}")
@@ -228,6 +229,8 @@ def x86_effects(row: scanner.DecodedLine, identity: str, caller_saved: set[str] 
   address_uses = set().union(*(x86_registers(operand) for operand in memory)) if memory else set()
   if x86_is_nop(mnemonic):
     return effects(set(), set())
+  if mnemonic == "prefetcht0":
+    return effects(address_uses, set())
   if mnemonic in X86_COUNT_BRANCHES:
     return effects({"rcx"}, set())
   if mnemonic in X86_LOOPS:
@@ -345,9 +348,10 @@ AARCH64_DATA = {
   "pmull", "pmull2", "ext", "tbl", "movi", "rev64", "addp", "umaxv", "uminv", "uzp", "shrn", "sli", "sri", "usra",
   "uaddlp", "sha256h", "sha256h2", "sha256su0", "sha256su1",
 }
-# Arm ARM C7.2: SHA256H, SHA256H2, SHA256SU0, and SHA256SU1 update their destination.
+# The SHA-256 and SHA-512 round and schedule instructions update their destination.
 AARCH64_READS_DESTINATION = {"movk", "bfi", "bfxil", "bfm", "bfc", "ins", "mla", "umlal", "umlal2", "bsl", "bit",
-                             "bif", "sli", "sri", "usra", "sha256h", "sha256h2", "sha256su0", "sha256su1"}
+                             "bif", "sli", "sri", "usra", "sha256h", "sha256h2", "sha256su0", "sha256su1",
+                             "sha512h", "sha512h2", "sha512su0", "sha512su1"}
 
 
 AARCH64_ATOMIC = re.compile(r"^(?:ld(?:add|clr|eor|set|smax|smin|umax|umin)|swp|cas)")
@@ -447,8 +451,8 @@ RISCV_ALU = {
   "zext.h", "zext.w", "mul", "mulh", "mulhu", "mulhsu", "mulw", "div", "divu", "divw", "divuw", "rem", "remu",
   "remw", "remuw", "c.mv", "c.li", "c.addi", "c.add", "c.sub", "c.and", "c.or", "c.xor", "c.slli", "c.srli",
   "c.srai", "c.andi", "c.lui", "c.addiw", "c.addw", "c.subw", "c.addi16sp", "c.addi4spn", "fmv.x.d", "fmv.d.x",
-  # Zknh: the SHA-256 sigma and sum functions of one register.
-  "sha256sig0", "sha256sig1", "sha256sum0", "sha256sum1",
+  # Zknh computes each SHA-256 and RV64 SHA-512 transform from one source register.
+  "sha256sig0", "sha256sig1", "sha256sum0", "sha256sum1", "sha512sig0", "sha512sig1", "sha512sum0", "sha512sum1",
 }
 RISCV_LOADS = {"lb", "lh", "lw", "ld", "lbu", "lhu", "lwu", "flw", "fld", "c.lw", "c.ld", "c.lwsp", "c.ldsp",
                "c.fld", "c.fldsp"}
@@ -486,6 +490,8 @@ def riscv_effects(row: scanner.DecodedLine, identity: str) -> Effects:
   if mnemonic in RISCV_LOADS:
     return effects(set(registers[1:]), set(registers[:1]), load="<const:" not in identity)
   if mnemonic in RISCV_ALU:
+    if row.operands.split(",", 1)[0].strip() == "zero":
+      return effects(set(registers), set())
     if mnemonic in {"auipc", "lui", "li", "c.li", "c.lui"}:
       return effects(set(), set(registers[:1]))
     return effects(set(registers[1:]), set(registers[:1]))
@@ -518,9 +524,9 @@ POWER_STORES = {"stb", "sth", "stw", "std", "stbu", "sthu", "stwu", "stdu", "stb
 # Record forms that set cr0 although their mnemonic is not an arithmetic record form.
 POWER_CR0_SETTERS = {"andi.", "andis.", "stbcx.", "sthcx.", "stwcx.", "stdcx."}
 POWER_VECTOR_MEMORY = {"lxv": 1, "lxvd2x": 2, "lxvw4x": 2, "lxsd": 1, "lxssp": 1, "lxsdx": 2, "lvx": 2, "lfd": 1,
-                       "lfs": 1, "lfdx": 2, "lxvx": 2, "lxvdsx": 2, "lxsiwzx": 2}
+                       "lfs": 1, "lfdx": 2, "lfiwzx": 2, "lxvx": 2, "lxvdsx": 2, "lxsiwzx": 2}
 POWER_VECTOR_STORE = {"stxv": 1, "stxvd2x": 2, "stxvw4x": 2, "stxsd": 1, "stxssp": 1, "stxsdx": 2, "stvx": 2,
-                      "stfd": 1, "stfs": 1, "stfdx": 2, "stxvx": 2}
+                      "stfd": 1, "stfs": 1, "stfdx": 2, "stfiwx": 2, "stxvx": 2}
 POWER_COMPARES = {"cmpd", "cmpw", "cmpld", "cmplw", "cmpdi", "cmpwi", "cmpldi", "cmplwi", "cmpb"}
 
 
@@ -953,7 +959,7 @@ def immediate(text: str) -> int | None:
 X86_MEMORY = re.compile(r"^(?:%[a-z]s:)?(?P<displacement>-?(?:0x)?[0-9a-f]+)?\((?P<base>%[a-z0-9]+)?"
                         r"(?:,\s*(?P<index>%[a-z0-9]+)?(?:,\s*\d+)?)?\)$")
 X86_SUFFIX_WIDTH = {"b": 1, "w": 2, "l": 4, "q": 8}
-X86_STORE_ONLY = {"mov", "movabs", "set", "movnti"}
+X86_STORE_ONLY = {"mov", "movabs", "set", "movnti", "vextracti128"}
 X86_LOAD_ONLY = X86_COMPARES | {"movzx", "movsx", "movsxd", "push", "imul", "mul", "div", "idiv", "crc32", "popcnt",
                                 "lzcnt", "tzcnt", "bsf", "bsr", "cmov", "andn", "bextr", "bzhi", "pext", "pdep", "mulx"}
 X86_STRING = re.compile(r"^(?:stos|movs|cmps|scas|lods)[bwlq]?$")
@@ -981,6 +987,8 @@ def x86_element_width(mnemonic: str, operands: list[str]) -> int | None:
     return vector // int(embedded.group(1)) or None
   if mnemonic in {"movddup", "vmovddup"} and operands[-1:] and operands[-1].startswith("%xmm"):
     return 8
+  if mnemonic == "vextracti128":
+    return 16
   if match := X86_BROADCAST.fullmatch(mnemonic):
     integer, floating, lane = match.groups()
     return X86_INTEGER_WIDTH[integer] if integer else X86_FLOAT_WIDTH[floating] if floating else X86_LANE_WIDTH[lane]
@@ -1018,6 +1026,9 @@ def x86_memory(row: scanner.DecodedLine) -> Memory:
   mnemonic = row.mnemonic
   if x86_is_nop(mnemonic):
     return NO_MEMORY
+  if mnemonic == "prefetcht0":
+    # The hint can fetch a cache line. It writes no memory or architectural result.
+    return Memory(x86_memory_operands([row.operands], store=False, width=None))
   # `rep stosq` decodes as mnemonic `rep` with the string operation first in its operands.
   string = next((word for word in f"{mnemonic} {row.operands}".split()[:2] if X86_STRING.match(word)), None)
   if string is not None:
@@ -1210,7 +1221,7 @@ POWER_WIDTH = {"b": 1, "h": 2, "w": 4, "d": 8}
 POWER_VECTOR_WIDTH = {"lxv": 16, "stxv": 16, "lxvd2x": 16, "stxvd2x": 16, "lxvw4x": 16, "stxvw4x": 16, "lvx": 16,
                       "stvx": 16, "lxvx": 16, "stxvx": 16, "lxsd": 8, "stxsd": 8, "lxsdx": 8, "stxsdx": 8, "lfd": 8,
                       "stfd": 8, "lfdx": 8, "stfdx": 8, "lxssp": 4, "stxssp": 4, "lfs": 4, "stfs": 4, "lxsiwzx": 4,
-                      "lxvdsx": 8}
+                      "lxvdsx": 8, "lfiwzx": 4, "stfiwx": 4}
 
 
 def power_memory(row: scanner.DecodedLine) -> Memory:

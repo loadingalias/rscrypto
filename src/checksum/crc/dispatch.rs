@@ -201,6 +201,8 @@ engine! {
       reflected: unsafe fn(u64, &[u8], &super::Keys) -> u64,
       msb: unsafe fn(u64, &[u8], &super::Keys) -> u64,
     ) -> A::W {
+      use super::Word;
+
       if data.len() < 16 {
         return portable::update(A::CRC, register, data);
       }
@@ -211,10 +213,11 @@ engine! {
         if crc.spec.reflected {
           reflected(state, data, &crc.keys)
         } else {
-          msb(state, data, &crc.keys)
+          // The MSB-first engine stores the register at the high end of its 64-bit word.
+          msb(state, data, &crc.keys) >> (64u32.strict_sub(A::W::BITS))
         }
       };
-      crc.domain_to_word(state)
+      A::W::narrow(state)
     }
   }
 }

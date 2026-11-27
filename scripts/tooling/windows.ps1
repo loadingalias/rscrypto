@@ -174,7 +174,7 @@ try {
         $archives += 'powershell'
         if ($native.assets.PSObject.Properties.Name -contains 'cargo-rail') { $archives += 'cargo-rail' }
     }
-    if ($Platform -eq 'x86_64-win' -and -not $CiCt) { $archives += 'nasm' }
+    if ($Platform -eq 'x86_64-win') { $archives += 'nasm' }
     foreach ($name in $archives) {
         $directory = & $python $catalogHelper install-archive $Platform $name $prefix
         if ($LASTEXITCODE -ne 0) { throw "Unable to install $name" }
@@ -249,7 +249,7 @@ try {
         Set-Content -Path (Join-Path $probeDirectory 'build.rs') -Value 'fn main() {}' -Encoding ASCII
         $probeCommands = @(
             'check:', "    cargo +$channel run --target $($native.'rust-host')")
-        if ($Platform -eq 'x86_64-win' -and -not $CiCt) {
+        if ($Platform -eq 'x86_64-win') {
             Set-Content -Path (Join-Path $probeDirectory 'probe.asm') -Encoding ASCII -Value @(
                 'section .text', 'global tooling_probe', 'tooling_probe:', '    ret')
             $probeCommands += '    nasm -f win64 probe.asm -o probe.obj'

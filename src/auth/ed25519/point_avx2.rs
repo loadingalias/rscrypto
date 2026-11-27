@@ -1690,8 +1690,11 @@ mod binsec {
   use crate::binsec::*;
   use core::ptr;
 
+  /// # Safety
+  ///
+  /// The host must support AVX2.
   #[target_feature(enable = "avx2")]
-  unsafe fn select_basepoint_cached_avx2_limb_digest(digit: i8) -> [u64; 20] {
+  fn select_basepoint_cached_avx2_limb_digest(digit: i8) -> [u64; 20] {
     use basepoint_radix16_ifma::BASEPOINT_RADIX16_IFMA_RAW;
 
     let identity = ExtendedPointAvx2::from_extended(&ExtendedPoint::identity()).to_cached();
@@ -1704,8 +1707,11 @@ mod binsec {
     out
   }
 
+  /// # Safety
+  ///
+  /// The IFMA table selector uses AVX2. The host must support AVX2.
   #[target_feature(enable = "avx2")]
-  unsafe fn select_basepoint_cached_ifma_limb_digest(digit: i8) -> [u64; 20] {
+  fn select_basepoint_cached_ifma_limb_digest(digit: i8) -> [u64; 20] {
     use basepoint_radix16_ifma::BASEPOINT_RADIX16_IFMA_RAW;
 
     let identity = super::tests::cached_identity_ifma();
@@ -1728,9 +1734,7 @@ mod binsec {
   pub(super) unsafe extern "C" fn ct_binsec_ed25519_select_basepoint_cached_avx2() -> ! {
     // SAFETY: This pointer references a fixed harness global with static storage.
     let digit = unsafe { ptr::read_volatile(ptr::addr_of!(CT_BINSEC_ED25519_DIGIT)) };
-    // SAFETY: This entrypoint is compiled with AVX2 enabled and is selected only
-    // for the x86_64 AVX2 BINSEC kernel.
-    let limbs = unsafe { select_basepoint_cached_avx2_limb_digest(digit) };
+    let limbs = select_basepoint_cached_avx2_limb_digest(digit);
 
     let mut acc = 0u64;
     for limb in limbs {
@@ -1750,8 +1754,7 @@ mod binsec {
   pub(super) unsafe extern "C" fn ct_binsec_ed25519_select_basepoint_cached_ifma() -> ! {
     // SAFETY: This pointer references a fixed harness global with static storage.
     let digit = unsafe { ptr::read_volatile(ptr::addr_of!(CT_BINSEC_ED25519_DIGIT)) };
-    // SAFETY: AVX2 is enabled; the IFMA table selector itself uses only AVX2.
-    let limbs = unsafe { select_basepoint_cached_ifma_limb_digest(digit) };
+    let limbs = select_basepoint_cached_ifma_limb_digest(digit);
 
     let mut acc = 0u64;
     for limb in limbs {

@@ -24,11 +24,11 @@ impl<K: AesKey> GcmSiv<K> {
 fn diag_raw_tag_aes<K: AesKey>(enc_key: &K::Bytes, block: &[u8; 16]) -> [u8; 16] {
   let mut out = *block;
   #[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
-  {
-    // SAFETY: diagnostic s390x CT runs execute on the native MSA runner.
+  if crate::platform::caps().has(crate::platform::caps::s390x::MSA) {
+    // SAFETY: the host supports the MSA AES instructions used with this raw key.
     unsafe { K::s390x_encrypt_block_raw(enc_key, &mut out) };
+    return out;
   }
-  #[cfg(not(all(target_arch = "s390x", not(feature = "portable-only"))))]
   K::expand(enc_key).encrypt_block(&mut out);
   out
 }
@@ -40,14 +40,11 @@ fn diag_ctr32<K: AesKey>(enc_key: &K::Bytes, tag: &[u8; 16], plaintext: &[u8; 44
   let counter_block = counter_block(tag);
   let mut buffer = *plaintext;
   #[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
-  {
-    let ctr = u32::from_le_bytes([counter_block[0], counter_block[1], counter_block[2], counter_block[3]]);
-    ctr32_le_xor_blocks(&counter_block, ctr, &mut buffer, |block| {
-      // SAFETY: diagnostic s390x CT runs execute on the native MSA runner.
-      unsafe { K::s390x_encrypt_block_raw(enc_key, block) }
-    });
+  if crate::platform::caps().has(crate::platform::caps::s390x::MSA) {
+    // SAFETY: the host supports the MSA AES instructions used by the production counter loop.
+    unsafe { s390x_ctr32_le_xor_raw::<K>(enc_key, &counter_block, &mut buffer) };
+    return crate::aead::ct_tests::fold16(&buffer);
   }
-  #[cfg(not(all(target_arch = "s390x", not(feature = "portable-only"))))]
   K::expand(enc_key).ctr32_encrypt(&counter_block, &mut buffer);
   crate::aead::ct_tests::fold16(&buffer)
 }

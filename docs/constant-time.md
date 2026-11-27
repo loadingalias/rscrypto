@@ -1774,16 +1774,22 @@ The public BINSEC harness and the private library-test entries both use `portabl
 Five additional ML-DSA cases have a diagnostic verdict only on POWER. Other targets still require them.
 The POWER qualification and its operand distributions appear under [Power and frequency channels](#power-and-frequency-channels).
 
-The RISC-V scan from run `45735935304` has seven pending RSA branch reviews.
+The RISC-V binary at `604f6695` calls RSA functions that the earlier binary inlined.
+The table traces the seven earlier findings through those calls. Offsets are relative to their linked functions.
+[Earlier report](https://github.com/loadingalias/rscrypto/actions/runs/45735935304) · [Rebuilt binary](https://github.com/loadingalias/rscrypto/actions/runs/46038951597/job/140641645251)
 
-| Previous linked symbol | Offsets in that binary |
-|---|---|
-| `ct_entry_rsa_pkcs1v15_decrypt_fixed_blinding` | `+0x166`, `+0x214`, `+0x760`, `+0x9f0`, `+0xb00` |
-| `ct_entry_rsa_pss_sign_fixed_blinding` | `+0x24c` |
-| `implicit_rejection_prf` | `+0x126` |
+| Earlier function and offset | Function and offset at `604f6695` | Values that control the branch |
+|---|---|---|
+| PKCS #1 v1.5 decrypt entry `+0x166`, `+0x214` | `decrypt_pkcs1v15_with_blinding_factor_and_scratch` includes `+0x218` and `+0x2fe` | Output length and the bytes to the next aligned address select the prefix to clear. |
+| Same entry `+0x760` | `decode_pkcs1v15_with_implicit_rejection +0x21e` | The encoded block length minus 11 determines whether the maximum message length is zero. |
+| Same entry `+0x9f0` | `decode_pkcs1v15_implicit_rejection +0x1aa` | The loop index, shift step, and maximum message length determine whether a source byte exists. |
+| Same entry `+0xb00` | `decode_pkcs1v15_with_implicit_rejection +0x1a2` | The scratch buffer address and length select the prefix to clear. |
+| PSS signing entry `+0x24c` | SHA-256 `encode_pss_with_mask +0x1fa` | The encoder compares eight times the output length with the encoded bit width before masking the first byte. |
+| `implicit_rejection_prf +0x126` | `implicit_rejection_prf +0x128` | The remaining output length and the 32-byte HMAC block size select the next chunk length. |
 
-The next campaign must locate each branch in the rebuilt binary.
-It must also verify the x86-64 Ed25519 AVX2 basepoint selection entry.
+The three alignment branches now have ordinary conditional-branch findings.
+This review used the linked binary retained after preparation failed. The run produced no RISC-V timing measurements.
+The replacement campaign must also verify the x86-64 Ed25519 AVX2 basepoint selection entry.
 
 ### ML-DSA
 

@@ -609,16 +609,6 @@ impl<W: Word> Crc<W> {
     }
   }
 
-  /// Converts a 64-bit engine-domain value to the word domain.
-  #[inline(always)]
-  pub(in crate::checksum) fn domain_to_word(&self, value: u64) -> W {
-    if self.spec.reflected {
-      W::narrow(value)
-    } else {
-      W::narrow(value >> (64u32.strict_sub(W::BITS)))
-    }
-  }
-
   /// `crc(A || B)` from `crc(A)`, `crc(B)`, and the length of `B`, as finalized values.
   ///
   /// `crc(A || B) = (crc(A) ^ xorout ^ init) * x^(8 * len(B)) ^ crc(B)`, modulo `G`. `shift`

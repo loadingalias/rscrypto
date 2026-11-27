@@ -4,8 +4,8 @@
 import re
 from pathlib import Path
 
-from asm_heuristics import FunctionBody, prepare_linked_image
-from condition_slice import condition_slice
+from asm_heuristics import FunctionBody, decode_lines, prepare_linked_image
+from condition_slice import Access, Effects, condition_slice, isa_effects, x86_memory
 from linked_image import LinkedImage, Section
 
 
@@ -575,7 +575,36 @@ def call_regressions() -> None:
 
 def effect_rule_regressions() -> None:
   """Instructions that the model did not know defined the wrong registers, so a slice stopped at them or passed them."""
+  # The SHA-512 rounds read the old destination. An immediate lane permutation overwrites it.
   x86 = "x86_64-unknown-linux-gnu"
+  for target, instruction, reads, writes in [
+      (x86, "c4 e2 1f cb c8\tvsha512rnds2\t%xmm0, %ymm12, %ymm1", {"v0", "v12", "v1"}, {"v1"}),
+      (x86, "c4 62 7f cc f4\tvsha512msg1\t%xmm4, %ymm14", {"v4", "v14"}, {"v14"}),
+      (x86, "c4 42 7f cd f5\tvsha512msg2\t%ymm13, %ymm14", {"v13", "v14"}, {"v14"}),
+      (x86, "62 f2 ed 48 7e c8\tvpermt2q\t%zmm0, %zmm2, %zmm1", {"v0", "v1", "v2"}, {"v1"}),
+      (x86, "62 f3 fd 48 00 c1 4e\tvpermq\t$0x4e, %zmm1, %zmm0", {"v1"}, {"v0"}),
+      ("aarch64-unknown-linux-gnu", "ce7e83a3\tsha512h\tq3, q29, v30.2d", {"v3", "v29", "v30"}, {"v3"}),
+      ("aarch64-unknown-linux-gnu", "cec08230\tsha512su0\tv16.2d, v17.2d", {"v16", "v17"}, {"v16"})]:
+    row, = decode_lines(body(["1000: " + instruction]))
+    assert isa_effects(target)(row, "") == Effects(frozenset(reads), frozenset(writes)), instruction
+  # The cache hint leaves storage intact. The extract writes only its selected 16-byte lane.
+  hint, extract = decode_lines(body(["1000: 0f 18 0e\tprefetcht0\t(%rsi)",
+                                     "1003: c4 e3 7d 39 06 01\tvextracti128\t$1, %ymm0, (%rsi)"]))
+  assert x86_memory(hint).accesses == (Access(False, "rsi"),)
+  assert x86_memory(extract).accesses == (Access(True, "rsi", width=16),)
+
+  # RV64 Zknh reads rs1 and writes rd. A write to x0 cannot change the branch input.
+  for opcode, mnemonic in enumerate(("sha512sum0", "sha512sum1", "sha512sig0", "sha512sig1"), 0x104):
+    result = slice_of("riscv64gc-unknown-linux-gnu", [
+      f"1000: {opcode:03x}59513\t{mnemonic}\ta0, a1",
+      f"1004: {opcode:03x}51013\t{mnemonic}\tzero, a0",
+      "1008: 00050463\tbeqz\ta0, 0x1010 <f+0x10>",
+      "100c: 00000013\tnop",
+      "1010: 00008067\tret",
+    ], 3)
+    assert result.reasons == [] and result.leaves == ["entry a1"], result.canonical
+    assert [node["offset"] for node in result.nodes] == [8, 0], result.canonical
+
   # Intel SDM Vol. 2: PXOR changes no flag, so the branch tests the compare before it.
   compared = slice_of(x86, ["1000: 48 39 f7\tcmpq\t%rsi, %rdi", "1003: 66 0f ef c1\tpxor\t%xmm1, %xmm0",
                             "1007: 74 01\tje\t0x100a <f+0xa>", "1009: 90\tnop", "100a: c3\tretq"], 3)
@@ -611,6 +640,18 @@ def effect_rule_regressions() -> None:
     "1014: 20 00 80 4e\tblr",
   ], 4)
   assert curve.reasons == [] and curve.leaves == ["entry memory", "entry r20", "entry r3", "entry r4"], curve.canonical
+  # The RSA HMAC path moves an integer word through an FPR. The branch must depend on the original load.
+  word = slice_of("powerpc64le-unknown-linux-gnu", [
+    "1000: ee 2e 23 7c\tlfiwzx 1, 3, 5",
+    "1004: ae 0f 20 7c\tstfiwx 1, 0, 1",
+    "1008: 00 00 81 80\tlwz 4, 0(1)",
+    "100c: 00 00 04 28\tcmplwi 4, 0",
+    "1010: 08 00 82 41\tbeq 0x1018 <f+0x18>",
+    "1014: 00 00 00 60\tnop",
+    "1018: 20 00 80 4e\tblr",
+  ], 5)
+  assert word.reasons == [] and word.leaves == ["entry memory", "entry r3", "entry r5"], word.canonical
+  assert node_at(word, 0x8)["inputs"]["mem"] == ["+0x4"], word.canonical
   # LBZUX also writes its base register with the effective address. The slice holds its load too.
   updated = slice_of("powerpc64le-unknown-linux-gnu", [
     "1000: ee 18 86 7c\tlbzux 4, 6, 3",
