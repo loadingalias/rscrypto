@@ -1449,10 +1449,11 @@ mod tests {
   }
 }
 
-#[cfg(all(test, feature = "std"))]
+#[cfg(test)]
 mod kernel_tests {
   use super::*;
   use crate::aead::expert::AeadWithNonce as _;
+  use alloc::{vec, vec::Vec};
   fn pattern_bytes(len: usize, seed: u8) -> Vec<u8> {
     let mut out = vec![0u8; len];
     for (index, byte) in out.iter_mut().enumerate() {
@@ -1517,10 +1518,11 @@ mod kernel_tests {
     not(feature = "portable-only"),
     not(miri),
     target_arch = "x86_64",
+    target_feature = "sse2",
     target_os = "linux"
   ))]
   #[test]
-  fn x86_asm_encrypt_matches_owned_path() {
+  fn x86_asm_seal_and_open_match_owned_path() {
     const PLAINTEXT_LENS: &[usize] = &[
       0, 1, 2, 15, 16, 17, 31, 32, 33, 63, 64, 65, 127, 128, 129, 191, 192, 193, 255, 256, 257, 319, 320, 321, 511,
       512, 513, 1024, 1025, 4095, 4096, 4097, 16_384,
@@ -1559,6 +1561,18 @@ mod kernel_tests {
         assert!(
           actual_tag == *expected_tag.as_bytes(),
           "x86 asm tag mismatch plaintext_len={plaintext_len} aad_len={aad_len}"
+        );
+
+        // SAFETY: The same nonempty buffer and checked CPU meet the open kernel's requirements.
+        let open_tag = unsafe { x86_64_asm::open_in_place(key.as_bytes(), nonce.as_bytes(), &aad, &mut actual) };
+        assert_eq!(
+          actual, plaintext,
+          "x86 asm open plaintext_len={plaintext_len} aad_len={aad_len}"
+        );
+        assert_eq!(
+          open_tag,
+          *expected_tag.as_bytes(),
+          "x86 asm open tag plaintext_len={plaintext_len} aad_len={aad_len}"
         );
       }
     }

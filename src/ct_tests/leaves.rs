@@ -1,5 +1,5 @@
 use super::operations::{STATUS_ERR, read_array};
-use crate::aead::ct_tests::diag_aes_siv_cmac256_open_portable;
+use crate::{aead::ct_tests::diag_aes_siv_cmac256_open_portable, auth::mlkem::ct_tests as mlkem};
 use core::ptr;
 
 /// Retain the production eight-limb selector with its normal capability dispatch.
@@ -55,6 +55,18 @@ unsafe fn read_mlkem_polyvec<const K: usize>(ptr: *const u16) -> Option<[[u16; 2
   Some(out)
 }
 
+// The IBM Z evidence build enables z/Vector at compile time and retains the direct kernel call.
+macro_rules! mlkem_digest {
+  ($generic:ident, $vector:ident, $($input:ident),+) => {{
+    #[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
+    if cfg!(target_feature = "vector") || crate::platform::caps().has(crate::platform::caps::s390x::VECTOR) {
+      // SAFETY: The compile target or the detected CPU provides z/Vector.
+      return unsafe { mlkem::$vector($($input),+) };
+    }
+    mlkem::$generic($($input),+)
+  }};
+}
+
 /// Run the ML-KEM forward-NTT diagnostic through the constant-time C ABI harness.
 ///
 /// # Safety
@@ -69,16 +81,7 @@ pub(crate) unsafe extern "C" fn ct_entry_mlkem_diag_ntt(poly: *const u16) -> u16
     return 0;
   };
 
-  #[cfg(target_arch = "s390x")]
-  {
-    // SAFETY: s390x CT artifact and IBM Z diagnostic runs are selected only for z/Vector-capable
-    // runners. This root intentionally bypasses runtime dispatch so the artifact scans the
-    // low-level ML-KEM z/Vector NTT kernel.
-    unsafe { crate::auth::mlkem::ct_tests::diag_mlkem_s390x_ntt_input_digest(poly) }
-  }
-
-  #[cfg(not(target_arch = "s390x"))]
-  crate::auth::mlkem::ct_tests::diag_mlkem_ntt_input_digest(poly)
+  mlkem_digest!(diag_mlkem_ntt_input_digest, diag_mlkem_s390x_ntt_input_digest, poly)
 }
 
 /// Run the ML-KEM inverse-NTT diagnostic through the constant-time C ABI harness.
@@ -95,16 +98,11 @@ pub(crate) unsafe extern "C" fn ct_entry_mlkem_diag_inverse_ntt(poly: *const u16
     return 0;
   };
 
-  #[cfg(target_arch = "s390x")]
-  {
-    // SAFETY: s390x CT artifact and IBM Z diagnostic runs are selected only for z/Vector-capable
-    // runners. This root intentionally bypasses runtime dispatch so the artifact scans the
-    // low-level ML-KEM z/Vector inverse-NTT kernel.
-    unsafe { crate::auth::mlkem::ct_tests::diag_mlkem_s390x_inverse_ntt_montgomery_product_input_digest(poly) }
-  }
-
-  #[cfg(not(target_arch = "s390x"))]
-  crate::auth::mlkem::ct_tests::diag_mlkem_inverse_ntt_montgomery_product_input_digest(poly)
+  mlkem_digest!(
+    diag_mlkem_inverse_ntt_montgomery_product_input_digest,
+    diag_mlkem_s390x_inverse_ntt_montgomery_product_input_digest,
+    poly
+  )
 }
 
 /// Run the ML-KEM to-product-domain diagnostic through the constant-time C ABI harness.
@@ -121,16 +119,11 @@ pub(crate) unsafe extern "C" fn ct_entry_mlkem_diag_to_product_domain(poly: *con
     return 0;
   };
 
-  #[cfg(target_arch = "s390x")]
-  {
-    // SAFETY: s390x CT artifact and IBM Z diagnostic runs are selected only for z/Vector-capable
-    // runners. This root intentionally bypasses runtime dispatch so the artifact scans the
-    // low-level ML-KEM z/Vector product-domain conversion kernel.
-    unsafe { crate::auth::mlkem::ct_tests::diag_mlkem_s390x_to_montgomery_product_domain_input_digest(poly) }
-  }
-
-  #[cfg(not(target_arch = "s390x"))]
-  crate::auth::mlkem::ct_tests::diag_mlkem_to_montgomery_product_domain_input_digest(poly)
+  mlkem_digest!(
+    diag_mlkem_to_montgomery_product_domain_input_digest,
+    diag_mlkem_s390x_to_montgomery_product_domain_input_digest,
+    poly
+  )
 }
 
 /// Run the ML-KEM from-product-domain diagnostic through the constant-time C ABI harness.
@@ -147,16 +140,11 @@ pub(crate) unsafe extern "C" fn ct_entry_mlkem_diag_from_product_domain(poly: *c
     return 0;
   };
 
-  #[cfg(target_arch = "s390x")]
-  {
-    // SAFETY: s390x CT artifact and IBM Z diagnostic runs are selected only for z/Vector-capable
-    // runners. This root intentionally bypasses runtime dispatch so the artifact scans the
-    // low-level ML-KEM z/Vector product-domain exit kernel.
-    unsafe { crate::auth::mlkem::ct_tests::diag_mlkem_s390x_from_montgomery_product_domain_input_digest(poly) }
-  }
-
-  #[cfg(not(target_arch = "s390x"))]
-  crate::auth::mlkem::ct_tests::diag_mlkem_from_montgomery_product_domain_input_digest(poly)
+  mlkem_digest!(
+    diag_mlkem_from_montgomery_product_domain_input_digest,
+    diag_mlkem_s390x_from_montgomery_product_domain_input_digest,
+    poly
+  )
 }
 
 /// Run the ML-KEM NTT multiply/add diagnostic through the constant-time C ABI harness.
@@ -188,16 +176,13 @@ pub(crate) unsafe extern "C" fn ct_entry_mlkem_diag_multiply_ntts_add_assign(
     return 0;
   };
 
-  #[cfg(target_arch = "s390x")]
-  {
-    // SAFETY: s390x CT artifact and IBM Z diagnostic runs are selected only for z/Vector-capable
-    // runners. This root intentionally bypasses runtime dispatch so the artifact scans the
-    // low-level ML-KEM z/Vector base-multiply accumulator kernel.
-    unsafe { crate::auth::mlkem::ct_tests::diag_mlkem_s390x_multiply_ntts_add_assign_input_digest(a, b, acc) }
-  }
-
-  #[cfg(not(target_arch = "s390x"))]
-  crate::auth::mlkem::ct_tests::diag_mlkem_multiply_ntts_add_assign_input_digest(a, b, acc)
+  mlkem_digest!(
+    diag_mlkem_multiply_ntts_add_assign_input_digest,
+    diag_mlkem_s390x_multiply_ntts_add_assign_input_digest,
+    a,
+    b,
+    acc
+  )
 }
 
 /// Run the ML-KEM K=3 NTT accumulation diagnostic through the constant-time C ABI harness.
@@ -229,15 +214,13 @@ pub(crate) unsafe extern "C" fn ct_entry_mlkem_diag_multiply_ntts_accumulate_k3(
     return 0;
   };
 
-  #[cfg(target_arch = "s390x")]
-  {
-    // SAFETY: s390x CT artifact and IBM Z diagnostic runs are selected only for z/Vector-capable
-    // runners, and this root intentionally scans the direct k=3 dot-product kernel.
-    unsafe { crate::auth::mlkem::ct_tests::diag_mlkem_s390x_multiply_ntts_accumulate_k3_input_digest(a, b, acc) }
-  }
-
-  #[cfg(not(target_arch = "s390x"))]
-  crate::auth::mlkem::ct_tests::diag_mlkem768_multiply_ntts_accumulate_input_digest(a, b, acc)
+  mlkem_digest!(
+    diag_mlkem768_multiply_ntts_accumulate_input_digest,
+    diag_mlkem_s390x_multiply_ntts_accumulate_k3_input_digest,
+    a,
+    b,
+    acc
+  )
 }
 
 /// Run the ML-KEM K=4 NTT accumulation diagnostic through the constant-time C ABI harness.
@@ -269,15 +252,13 @@ pub(crate) unsafe extern "C" fn ct_entry_mlkem_diag_multiply_ntts_accumulate_k4(
     return 0;
   };
 
-  #[cfg(target_arch = "s390x")]
-  {
-    // SAFETY: s390x CT artifact and IBM Z diagnostic runs are selected only for z/Vector-capable
-    // runners, and this root intentionally scans the direct k=4 dot-product kernel.
-    unsafe { crate::auth::mlkem::ct_tests::diag_mlkem_s390x_multiply_ntts_accumulate_k4_input_digest(a, b, acc) }
-  }
-
-  #[cfg(not(target_arch = "s390x"))]
-  crate::auth::mlkem::ct_tests::diag_mlkem1024_multiply_ntts_accumulate_input_digest(a, b, acc)
+  mlkem_digest!(
+    diag_mlkem1024_multiply_ntts_accumulate_input_digest,
+    diag_mlkem_s390x_multiply_ntts_accumulate_k4_input_digest,
+    a,
+    b,
+    acc
+  )
 }
 
 /// Run the ML-KEM compression/decompression diagnostic through the constant-time C ABI harness.
@@ -294,16 +275,11 @@ pub(crate) unsafe extern "C" fn ct_entry_mlkem_diag_compress_decompress(values: 
     return 0;
   };
 
-  #[cfg(target_arch = "s390x")]
-  {
-    // SAFETY: s390x CT artifact and IBM Z diagnostic runs are selected only for z/Vector-capable
-    // runners. This root intentionally bypasses runtime dispatch so the artifact scans the
-    // low-level ML-KEM z/Vector compress/decompress kernels.
-    unsafe { crate::auth::mlkem::ct_tests::diag_mlkem_s390x_compress_decompress_values_digest(values) }
-  }
-
-  #[cfg(not(target_arch = "s390x"))]
-  crate::auth::mlkem::ct_tests::diag_mlkem_compress_decompress_values_digest(values)
+  mlkem_digest!(
+    diag_mlkem_compress_decompress_values_digest,
+    diag_mlkem_s390x_compress_decompress_values_digest,
+    values
+  )
 }
 
 /// Fixed-shape forced-portable AES-SIV-CMAC-256 complete-open harness.
