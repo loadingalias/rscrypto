@@ -1392,7 +1392,7 @@ mod tests {
         1087,
         1088,
         1089,
-        len / 2 | 1,
+        (len / 2) | 1,
         len - 1,
       ]
       .into_iter()
