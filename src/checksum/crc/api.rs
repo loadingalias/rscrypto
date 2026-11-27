@@ -22,7 +22,6 @@ macro_rules! define_crc {
     output_size: $output_size:expr,
     spec: $spec:expr,
     hw: $hw:expr,
-    env: $env:literal,
     buffered: $buffered:ident,
   ) => {
     $(#[$meta])*
@@ -41,9 +40,6 @@ macro_rules! define_crc {
       static KERNEL: $crate::backend::cache::OnceCache<dispatch::Kernel<$word>> =
         $crate::backend::cache::OnceCache::new();
       static SHIFT: $crate::backend::cache::OnceCache<dispatch::Shift> = $crate::backend::cache::OnceCache::new();
-      #[cfg(feature = "std")]
-      static CONFIG: $crate::backend::cache::OnceCache<dispatch::CrcConfig> =
-        $crate::backend::cache::OnceCache::new();
 
       /// Shift from a register in the specification's form to the word domain.
       const WORD_SHIFT: u32 = if SPEC.reflected { 0 } else { <$word>::BITS.strict_sub(SPEC.width) };
@@ -86,23 +82,8 @@ macro_rules! define_crc {
         const HW: Hw = $hw;
       }
 
-      fn config() -> dispatch::CrcConfig {
-        #[cfg(feature = "std")]
-        {
-          CONFIG.get_or_init(|| dispatch::config($env, <$name as Algo>::HW))
-        }
-        #[cfg(not(feature = "std"))]
-        {
-          dispatch::config($env, <$name as Algo>::HW)
-        }
-      }
-
-      fn tier() -> dispatch::CrcForce {
-        dispatch::tier(config().effective_force, <$name as Algo>::HW)
-      }
-
       fn kernel() -> dispatch::Kernel<$word> {
-        KERNEL.get_or_init(|| dispatch::kernel::<$name>(tier()))
+        KERNEL.get_or_init(|| dispatch::kernel::<$name>(dispatch::tier(<$name as Algo>::HW)))
       }
 
       /// Resolves the kernel on first use, for hashers made in `const` context.
@@ -121,16 +102,11 @@ macro_rules! define_crc {
           }
         }
 
-        /// Returns the effective force configuration of this CRC.
-        #[must_use]
-        pub fn config() -> $crate::checksum::config::CrcConfig {
-          config()
-        }
-
         /// Returns the name of the kernel that runs for an input of `len` bytes.
         #[must_use]
         pub fn kernel_name_for_len(len: usize) -> &'static str {
-          dispatch::kernel_name(tier(), <$name as Algo>::HW, len)
+          let tier = if len <= INLINE_MAX { dispatch::Tier::Portable } else { dispatch::tier(<$name as Algo>::HW) };
+          dispatch::tier_name(tier)
         }
 
         /// Creates a buffering wrapper that coalesces short updates before kernel dispatch.
@@ -192,12 +168,11 @@ macro_rules! define_crc {
 
       impl $crate::traits::ChecksumCombine for $name {
         fn combine(crc_a: $word, crc_b: $word, len_b: usize) -> $word {
-          let shift = SHIFT.get_or_init(|| dispatch::shift::<$name>(tier()));
+          let shift = SHIFT.get_or_init(|| dispatch::shift::<$name>(dispatch::tier(<$name as Algo>::HW)));
           narrow(DATA.combine(widen(crc_a), widen(crc_b), len_b, shift))
         }
       }
 
-      #[cfg(feature = "diag")]
       impl $crate::checksum::introspect::KernelIntrospect for $name {
         fn kernel_name_for_len(len: usize) -> &'static str {
           $name::kernel_name_for_len(len)

@@ -4,11 +4,11 @@ use rscrypto::Aead;
 use rscrypto::Mac;
 #[cfg(all(feature = "rsa", feature = "getrandom"))]
 use rscrypto::RsaJwtAlgorithm;
-#[cfg(all(feature = "hashes", any(feature = "std", feature = "diag")))]
+#[cfg(feature = "hashes")]
 use rscrypto::Sha256;
 #[cfg(feature = "aead")]
 use rscrypto::aead::expert::AeadWithNonce;
-#[cfg(all(feature = "aead", feature = "diag"))]
+#[cfg(feature = "aead")]
 use rscrypto::aead::introspect::{
   DispatchInfo as AeadDispatchInfo, aegis256_backend, aes256gcm_backend, aes256gcmsiv_backend, ascon_aead128_backend,
   chacha20poly1305_backend, xchacha20poly1305_backend,
@@ -25,15 +25,13 @@ use rscrypto::auth::HkdfOutputLengthError;
 use rscrypto::auth::rsa::expert::RsaPkcs1v15Decrypt;
 #[cfg(all(feature = "checksums", feature = "alloc"))]
 use rscrypto::checksum::buffered::BufferedCrc32C;
-#[cfg(all(feature = "checksums", feature = "diag"))]
-use rscrypto::checksum::config::{CrcConfig, CrcForce};
-#[cfg(all(feature = "checksums", feature = "diag"))]
+#[cfg(feature = "checksums")]
 use rscrypto::checksum::introspect::{DispatchInfo, KernelIntrospect, is_hardware_accelerated, kernel_for};
 #[cfg(feature = "checksums")]
 use rscrypto::checksum::{Crc32Castagnoli, Crc32Ieee, Crc64Xz};
 #[cfg(feature = "hashes")]
 use rscrypto::hashes::fast::Xxh3_64;
-#[cfg(all(feature = "hashes", feature = "diag"))]
+#[cfg(feature = "hashes")]
 use rscrypto::hashes::introspect::{
   DispatchInfo as HashDispatchInfo, KernelIntrospect as HashKernelIntrospect, kernel_for as hash_kernel_for,
 };
@@ -47,7 +45,7 @@ use rscrypto::{
   Cshake256, Cshake256XofReader, Digest, FastHash, RapidHash64, RapidHasher, RapidRandomState, RapidSeededState,
   RapidStreamHasher, Shake128, Shake128XofReader, Shake256, Shake256XofReader, Xof, Xxh3,
 };
-#[cfg(all(feature = "hashes", feature = "diag"))]
+#[cfg(feature = "hashes")]
 use rscrypto::{AsconHash256, Sha3_224, Sha3_256, Sha3_384, Sha3_512, Sha224, Sha384, Sha512, Sha512_256, Xxh3_128};
 #[cfg(feature = "checksums")]
 use rscrypto::{Checksum, ChecksumCombine, Crc16Ccitt, Crc16Ibm, Crc24OpenPgp, Crc32, Crc32C, Crc64, Crc64Nvme};
@@ -148,7 +146,6 @@ fn root_surface_aead_exports_compile() {
   let _open_length_error = OpenError::too_large();
   let _verification_error = OpenError::verification();
 
-  #[cfg(feature = "diag")]
   {
     let _dispatch = AeadDispatchInfo::current();
     let _aes256gcm_backend = aes256gcm_backend();
@@ -1050,15 +1047,10 @@ fn digest_reader_writer_round_trip() {
 }
 
 #[test]
-#[cfg(all(feature = "checksums", feature = "diag"))]
+#[cfg(feature = "checksums")]
 fn advanced_checksum_modules_compile() {
   fn assert_kernel_introspect<T: KernelIntrospect>() {}
 
-  let _crc16_config: CrcConfig = Crc16Ccitt::config();
-  let _crc24_config: CrcConfig = Crc24OpenPgp::config();
-  let _crc32_config: CrcConfig = Crc32::config();
-  let _crc64_config: CrcConfig = Crc64::config();
-  let _force = CrcForce::Auto;
   let _dispatch = DispatchInfo::current();
   let _kernel = kernel_for::<Crc32>(64);
   let _accelerated = is_hardware_accelerated();
@@ -1067,7 +1059,7 @@ fn advanced_checksum_modules_compile() {
 }
 
 #[test]
-#[cfg(all(feature = "hashes", feature = "diag"))]
+#[cfg(feature = "hashes")]
 fn advanced_hash_modules_compile() {
   fn assert_hash_kernel_introspect<T: HashKernelIntrospect>() {}
 

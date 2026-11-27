@@ -94,12 +94,10 @@ pub(super) fn finish(adler: u32, tail: &[u8], steps: impl FnOnce(&[Step], &[Step
 /// Differential checks against the portable kernel that every block kernel runs on its target.
 #[cfg(test)]
 pub(super) mod checks {
-  extern crate std;
-
   use alloc::{vec, vec::Vec};
 
   use super::{BLOCK, CHUNK_BLOCKS};
-  use crate::checksum::adler32::{config::Adler32Force, portable};
+  use crate::checksum::adler32::portable;
 
   /// Bytes per chunk, the span of one deferred reduction.
   const CHUNK: usize = BLOCK * CHUNK_BLOCKS;
@@ -178,34 +176,6 @@ pub(super) mod checks {
           "{name}: all 0xff, len={len}, start={start:#010x}"
         );
       }
-    }
-  }
-
-  /// With `RSCRYPTO_ADLER32_FORCE` naming `force`, the public API must run that kernel. The
-  /// effective force must equal the request, so a host that lacks the kernel fails here instead
-  /// of falling back to automatic selection.
-  pub(in crate::checksum::adler32) fn assert_forced_kernel_runs(force: Adler32Force, name: &str) {
-    use crate::{checksum::Adler32, traits::Checksum};
-
-    let Ok(requested) = std::env::var("RSCRYPTO_ADLER32_FORCE") else {
-      return;
-    };
-    if !requested.trim().eq_ignore_ascii_case(force.as_str()) {
-      return;
-    }
-    assert_eq!(Adler32::config().effective_force, force, "this CPU cannot run {name}");
-    assert_eq!(Adler32::kernel_name_for_len(CHUNK), name);
-
-    let data = random_bytes(3 * CHUNK + 4093);
-    for len in lengths() {
-      let input = &data[..len];
-      let expected = portable::update(1, input);
-      assert_eq!(Adler32::checksum(input), expected, "{name}: len={len}");
-      let mut streamed = Adler32::new();
-      for part in input.chunks(4093) {
-        streamed.update(part);
-      }
-      assert_eq!(streamed.finalize(), expected, "{name}: streamed len={len}");
     }
   }
 }

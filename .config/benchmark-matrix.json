@@ -55,7 +55,7 @@
       "kind": "criterion",
       "family": "hashes",
       "required": true,
-      "features": ["std", "sha2", "diag"]
+      "features": ["std", "sha2"]
     },
     "sha3": {
       "binary": "sha3",
@@ -114,13 +114,6 @@
       "family": "hashes",
       "required": true,
       "features": ["std", "xxh32", "xxh64"]
-    },
-    "aead_kernels": {
-      "binary": "aead_kernels",
-      "kind": "criterion",
-      "family": "aead",
-      "required": false,
-      "features": ["std", "sha2", "chacha20poly1305", "diag"]
     },
     "blake2": {
       "binary": "blake2",
@@ -207,8 +200,7 @@
         "x25519",
         "p256-ecdh",
         "p384-ecdh",
-        "ml-kem",
-        "diag"
+        "ml-kem"
       ]
     },
     "pbkdf2": {
@@ -231,7 +223,7 @@
       "kind": "criterion",
       "family": "auth",
       "required": true,
-      "features": ["std", "rsa", "diag", "getrandom"]
+      "features": ["std", "rsa", "getrandom"]
     },
     "rsa_keygen": {
       "binary": "rsa_keygen",
@@ -248,24 +240,6 @@
       "split": "algorithms",
       "required": true,
       "features": ["std", "slh-dsa"]
-    },
-    "aead_diag": {
-      "binary": "aead",
-      "kind": "criterion",
-      "family": "aead",
-      "required": false,
-      "features": [
-        "std",
-        "sha2",
-        "aes-gcm",
-        "aes-gcm-siv",
-        "aes-siv",
-        "chacha20poly1305",
-        "xchacha20poly1305",
-        "aegis256",
-        "ascon-aead",
-        "diag"
-      ]
     },
     "aead": {
       "binary": "aead",
@@ -494,8 +468,7 @@
     "aegis-256": { "bench": "aead", "filter": "aegis-256" },
     "ascon-aead128": { "bench": "aead", "filter": "ascon-aead128" },
     "header-protection": { "bench": "aead", "filter": "header-protection" },
-    "quic-lb": { "bench": "aead", "filter": "quic-lb" },
-    "chacha20-poly1305-diag": { "bench": "aead_diag", "filter": "chacha20-poly1305/copy-and-encrypt" }
+    "quic-lb": { "bench": "aead", "filter": "quic-lb" }
   },
   "groups": {
     "slhdsa-sha2-128s": ["slhdsa-sha2-128s-keygen", "slhdsa-sha2-128s-sign", "slhdsa-sha2-128s-verify", "slhdsa-sha2-128s-import"],
@@ -597,115 +570,89 @@
   "profile_presets": {
     "aead/aes": {
       "bench": "aead",
-      "case": "aes-128-gcm/copy-and-encrypt/rscrypto/4096",
-      "diagnostic": false
+      "case": "aes-128-gcm/copy-and-encrypt/rscrypto/4096"
     },
     "aead/aes128-gcm-siv": {
       "bench": "aead",
-      "case": "aes-128-gcm-siv/copy-and-encrypt/rscrypto/32",
-      "diagnostic": false
+      "case": "aes-128-gcm-siv/copy-and-encrypt/rscrypto/32"
     },
     "aead/chacha20": {
       "bench": "aead",
-      "case": "chacha20-poly1305/copy-and-encrypt/rscrypto/4096",
-      "diagnostic": false
+      "case": "chacha20-poly1305/copy-and-encrypt/rscrypto/4096"
     },
     "aead/aegis256": {
       "bench": "aead",
-      "case": "aegis-256/copy-and-encrypt/rscrypto/4096",
-      "diagnostic": false
+      "case": "aegis-256/copy-and-encrypt/rscrypto/4096"
     },
     "aead/ascon": {
       "bench": "aead",
-      "case": "ascon-aead128/copy-and-encrypt/rscrypto/4096",
-      "diagnostic": false
+      "case": "ascon-aead128/copy-and-encrypt/rscrypto/4096"
     },
     "auth/p256-ecdh": {
       "bench": "auth",
-      "case": "p256-ecdh/public-key/rscrypto",
-      "diagnostic": false
+      "case": "p256-ecdh/public-key/rscrypto"
     },
     "auth/p384-ecdh": {
       "bench": "auth",
-      "case": "p384-ecdh/agreement/parsed-peer/rscrypto",
-      "diagnostic": false
+      "case": "p384-ecdh/agreement/parsed-peer/rscrypto"
     },
     "auth/p384-sign": {
       "bench": "auth",
-      "case": "ecdsa-p384/sign/rscrypto/32",
-      "diagnostic": false
+      "case": "ecdsa-p384/sign/rscrypto/32"
     },
     "auth/argon2id": {
       "bench": "password_hashing",
-      "case": "argon2id-owasp/salt16-raw32/rscrypto/m=19MiB_t=2_p=1",
-      "diagnostic": false
+      "case": "argon2id-owasp/salt16-raw32/rscrypto/m=19MiB_t=2_p=1"
     },
     "auth/mldsa65-keygen": {
       "bench": "mldsa",
-      "case": "mldsa65/keygen/seed-encoded/rscrypto",
-      "diagnostic": false
+      "case": "mldsa65/keygen/seed-encoded/rscrypto"
     },
     "auth/mldsa65-prepared-sign": {
       "bench": "mldsa",
-      "case": "mldsa65/sign/prepared-key-deterministic/rscrypto",
-      "diagnostic": false
+      "case": "mldsa65/sign/prepared-key-deterministic/rscrypto"
     },
     "auth/mldsa65-prepared-verify": {
       "bench": "mldsa",
-      "case": "mldsa65/verify/prepared-key/rscrypto",
-      "diagnostic": false
+      "case": "mldsa65/verify/prepared-key/rscrypto"
     },
     "auth/rsa2048-sign": {
       "bench": "rsa",
-      "case": "rsa-2048-private-signing/sign-pss-sha256/cached-blinding/rscrypto",
-      "diagnostic": false
+      "case": "rsa-2048-private-signing/sign-pss-sha256/cached-blinding/rscrypto"
     },
     "auth/slhdsa-sha2-128s-sign": {
       "bench": "slhdsa",
-      "case": "slhdsa-sha2-128s/sign/deterministic-32/rscrypto",
-      "diagnostic": false
+      "case": "slhdsa-sha2-128s/sign/deterministic-32/rscrypto"
     },
     "auth/slhdsa-shake-128s-sign": {
       "bench": "slhdsa",
-      "case": "slhdsa-shake-128s/sign/deterministic-32/rscrypto",
-      "diagnostic": false
+      "case": "slhdsa-shake-128s/sign/deterministic-32/rscrypto"
     },
     "auth/slhdsa-sha2-128s-verify": {
       "bench": "slhdsa",
-      "case": "slhdsa-sha2-128s/verify/32/rscrypto",
-      "diagnostic": false
+      "case": "slhdsa-sha2-128s/verify/32/rscrypto"
     },
     "hashes/sha256": {
       "bench": "sha2",
-      "case": "sha256/rscrypto/4096",
-      "diagnostic": false
+      "case": "sha256/rscrypto/4096"
     },
     "hashes/blake3": {
       "bench": "blake3_serial",
-      "case": "blake3/serial/hash/rscrypto/4096",
-      "diagnostic": true
+      "case": "blake3/serial/hash/rscrypto/4096"
     },
     "hashes/blake3-keyed": {
       "bench": "blake3_serial",
-      "case": "blake3/serial/keyed/rscrypto/64",
-      "diagnostic": true
+      "case": "blake3/serial/keyed/rscrypto/64"
     },
     "checksums/crc32c": {
       "bench": "crc",
-      "case": "crc32c/rscrypto/4096",
-      "diagnostic": false
+      "case": "crc32c/rscrypto/4096"
     }
   },
   "case_classes": {
-    "sha2": {
-      "diagnostic": [
-        "/internal/"
-      ]
-    },
     "auth": {
       "diagnostic": [
-        "/internal/",
-        "^ed25519/verify-phase/"
+        "/internal/"
       ]
     },
     "pbkdf2": {
@@ -722,11 +669,6 @@
       ]
     },
     "rsa": {
-      "diagnostic": [
-        "^rsa-(hash-components|montgomery-thresholds)/",
-        "/(blinding-inverse|padding-)",
-        "-(bitserial-baseline|product-montgomery|generic-exponent|cios-candidate|cios-portable)$"
-      ],
       "expensive": [
         "^rsa-[0-9]+-private-signing/",
         "^rsa-[0-9]+-oaep-sha256/decrypt/",
@@ -742,23 +684,6 @@
       "expensive": [
         "/(keygen|sign|hash-sign|import)/"
       ]
-    },
-    "aead": {
-      "diagnostic": [
-        "^chacha20-poly1305/copy-and-(encrypt|decrypt)/rscrypto-(owned|x86-asm)/"
-      ]
-    },
-    "aead_kernels": {
-      "diagnostic": [
-        "^"
-      ]
-    },
-    "blake3": {
-      "diagnostic": [
-        "/rscrypto-[^/]+/",
-        "^blake3/(chunk-tail-digest|chunk-tail-cvs|parent-tail-cvs|leaf-alignment-cvs)/"
-      ]
-
     }
   },
   "comparisons": {

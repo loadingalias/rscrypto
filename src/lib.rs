@@ -250,6 +250,48 @@ extern crate alloc;
 #[cfg(all(test, not(feature = "alloc")))]
 extern crate alloc;
 
+#[cfg(all(
+  test,
+  feature = "full",
+  feature = "parallel",
+  feature = "getrandom",
+  any(unix, windows),
+  not(miri)
+))]
+extern crate self as rscrypto;
+#[cfg(all(
+  test,
+  feature = "full",
+  feature = "parallel",
+  feature = "getrandom",
+  any(unix, windows),
+  not(miri)
+))]
+mod ct_tests;
+
+#[cfg(all(
+  test,
+  not(miri),
+  feature = "portable-only",
+  any(
+    feature = "aegis256",
+    feature = "aes-gcm",
+    feature = "aes-gcm-siv",
+    feature = "argon2",
+    feature = "ascon-aead",
+    feature = "chacha20poly1305",
+    feature = "ecdsa-p256",
+    feature = "ecdsa-p384",
+    feature = "ed25519",
+    feature = "ml-dsa",
+    feature = "p256-ecdh",
+    feature = "p384-ecdh",
+    feature = "rsa",
+    feature = "x25519"
+  )
+))]
+mod binsec;
+
 // Tests use std-backed runtime feature detection and the test harness regardless
 // of whether the crate's `std` feature is enabled.
 #[cfg(any(feature = "std", test))]
@@ -662,13 +704,9 @@ pub mod prelude {
 #[doc = include_str!("../README.md")]
 pub struct ReadmeDoctests;
 
-#[cfg(all(doctest, feature = "full", feature = "diag"))]
+#[cfg(all(doctest, feature = "full"))]
 #[doc(hidden)]
 #[doc = r#"
-```compile_fail
-use rscrypto::CrcConfig;
-```
-
 ```compile_fail
 use rscrypto::DispatchInfo;
 ```
@@ -729,12 +767,7 @@ use rscrypto::platform_describe;
 use rscrypto::DigestReader;
 ```
 
-```compile_fail
-use rscrypto::diag_hmac_sha256_verify_portable;
-```
-
 ```rust
-use rscrypto::checksum::config::CrcConfig;
 use rscrypto::checksum::buffered::BufferedCrc32C;
 use rscrypto::checksum::introspect::{DispatchInfo, kernel_for};
 use rscrypto::checksum::{Crc32Castagnoli, Crc32Ieee, Crc64Xz};
@@ -746,7 +779,6 @@ use rscrypto::{AsconXof, AsconXofReader, Xxh3};
 fn assert_hash_introspect<T: KernelIntrospect>() {}
 
 let _ = rscrypto::platform::describe();
-let _: CrcConfig = rscrypto::Crc32::config();
 let _ = kernel_for::<rscrypto::Crc32>(64);
 let _ = DispatchInfo::current();
 let _ = hash_kernel_for::<rscrypto::Sha256>(1024);
@@ -1521,23 +1553,15 @@ mod send_sync_assertions {
     assert_send_sync::<Crc32C>();
     assert_send_sync::<Crc64>();
     assert_send_sync::<Crc64Nvme>();
-    assert_send_sync::<checksum::config::CrcForce>();
-    assert_send_sync::<checksum::config::CrcConfig>();
 
     // Adler-32
     assert_send_sync::<Adler32>();
-    assert_send_sync::<checksum::config::Adler32Force>();
-    assert_send_sync::<checksum::config::Adler32Config>();
 
-    #[cfg(feature = "diag")]
-    {
-      assert_send_sync::<checksum::introspect::DispatchInfo>();
-      assert_send_sync::<checksum::diag::SelectionReason>();
-      assert_send_sync::<checksum::diag::Crc32Polynomial>();
-      assert_send_sync::<checksum::diag::Crc64Polynomial>();
-      assert_send_sync::<checksum::diag::Crc32SelectionDiag>();
-      assert_send_sync::<checksum::diag::Crc64SelectionDiag>();
-    }
+    assert_send_sync::<checksum::introspect::DispatchInfo>();
+    assert_send_sync::<checksum::introspect::Crc32Polynomial>();
+    assert_send_sync::<checksum::introspect::Crc64Polynomial>();
+    assert_send_sync::<checksum::introspect::Crc32SelectionDiag>();
+    assert_send_sync::<checksum::introspect::Crc64SelectionDiag>();
   }
 
   #[test]
@@ -1651,8 +1675,6 @@ mod send_sync_assertions {
     assert_clone::<Crc32C>();
     assert_clone::<Crc64>();
     assert_clone::<Crc64Nvme>();
-    assert_clone::<checksum::config::CrcForce>();
-    assert_clone::<checksum::config::CrcConfig>();
     assert_debug::<Crc16Ccitt>();
     assert_debug::<Crc16Ibm>();
     assert_debug::<Crc24OpenPgp>();
@@ -1660,19 +1682,10 @@ mod send_sync_assertions {
     assert_debug::<Crc32C>();
     assert_debug::<Crc64>();
     assert_debug::<Crc64Nvme>();
-    assert_debug::<checksum::config::CrcForce>();
-    assert_debug::<checksum::config::CrcConfig>();
     assert_clone::<Adler32>();
     assert_debug::<Adler32>();
-    assert_clone::<checksum::config::Adler32Force>();
-    assert_clone::<checksum::config::Adler32Config>();
-    assert_debug::<checksum::config::Adler32Force>();
-    assert_debug::<checksum::config::Adler32Config>();
-    #[cfg(feature = "diag")]
-    {
-      assert_clone::<checksum::introspect::DispatchInfo>();
-      assert_debug::<checksum::introspect::DispatchInfo>();
-    }
+    assert_clone::<checksum::introspect::DispatchInfo>();
+    assert_debug::<checksum::introspect::DispatchInfo>();
   }
 
   #[test]
@@ -1784,303 +1797,6 @@ mod send_sync_assertions {
     assert_debug::<hashes::DigestWriter<Vec<u8>, Sha256>>();
   }
 }
-
-#[cfg(all(
-  doctest,
-  feature = "hmac",
-  feature = "hmac-sha3",
-  feature = "diag",
-  not(rscrypto_internal)
-))]
-#[doc(hidden)]
-#[doc = r#"
-```compile_fail,E0432
-use rscrypto::auth::diag_hmac_sha256_verify_portable;
-```
-
-```compile_fail,E0432
-use rscrypto::auth::diag_hmac_sha256_verify_truncated_64_portable;
-```
-
-```compile_fail,E0432
-use rscrypto::auth::diag_hmac_sha384_verify_portable;
-```
-
-```compile_fail,E0432
-use rscrypto::auth::diag_hmac_sha512_verify_portable;
-```
-
-```compile_fail,E0432
-use rscrypto::auth::hmac::diag_hmac_sha256_verify_portable;
-```
-
-```compile_fail,E0432
-use rscrypto::auth::hmac::diag_hmac_sha256_verify_truncated_64_portable;
-```
-
-```compile_fail,E0432
-use rscrypto::auth::hmac::diag_hmac_sha384_verify_portable;
-```
-
-```compile_fail,E0432
-use rscrypto::auth::hmac::diag_hmac_sha512_verify_portable;
-```
-"#]
-pub struct __HmacEvidenceBoundary;
-
-#[cfg(all(doctest, feature = "hkdf", feature = "diag", not(rscrypto_internal)))]
-#[doc(hidden)]
-#[doc = r#"
-```compile_fail,E0432
-use rscrypto::auth::diag_hkdf_sha256_derive_portable;
-```
-
-```compile_fail,E0432
-use rscrypto::auth::diag_hkdf_sha384_derive_portable;
-```
-
-```compile_fail,E0432
-use rscrypto::auth::hkdf::diag_hkdf_sha256_derive_portable;
-```
-
-```compile_fail,E0432
-use rscrypto::auth::hkdf::diag_hkdf_sha384_derive_portable;
-```
-"#]
-pub struct __HkdfEvidenceBoundary;
-
-#[cfg(all(doctest, feature = "pbkdf2", feature = "diag", not(rscrypto_internal)))]
-#[doc(hidden)]
-#[doc = r#"
-```compile_fail,E0432
-use rscrypto::auth::diag_pbkdf2_sha256_verify_portable;
-```
-
-```compile_fail,E0432
-use rscrypto::auth::diag_pbkdf2_sha512_verify_portable;
-```
-
-```compile_fail,E0432
-use rscrypto::auth::pbkdf2::diag_pbkdf2_sha256_verify_portable;
-```
-
-```compile_fail,E0432
-use rscrypto::auth::pbkdf2::diag_pbkdf2_sha512_verify_portable;
-```
-"#]
-pub struct __Pbkdf2EvidenceBoundary;
-
-#[cfg(all(doctest, feature = "aegis256", feature = "diag", not(rscrypto_internal)))]
-#[doc(hidden)]
-#[doc = r#"
-```compile_fail,E0432
-use rscrypto::aead::diag_aegis256_update_portable;
-```
-
-```compile_fail,E0432
-use rscrypto::aead::diag_aes_enc_round_portable;
-```
-"#]
-pub struct __AegisEvidenceBoundary;
-
-#[cfg(all(doctest, feature = "ascon-aead", feature = "diag", not(rscrypto_internal)))]
-#[doc(hidden)]
-#[doc = r#"
-```compile_fail,E0432
-use rscrypto::aead::diag_ascon_aead128_tag_portable;
-```
-"#]
-pub struct __AsconEvidenceBoundary;
-
-#[cfg(all(doctest, feature = "aes-gcm", feature = "diag", not(rscrypto_internal)))]
-#[doc(hidden)]
-#[doc = r#"
-```compile_fail,E0432
-use rscrypto::aead::diag_ghash_block_portable;
-```
-"#]
-pub struct __GhashEvidenceBoundary;
-
-#[cfg(all(doctest, feature = "aes-gcm-siv", feature = "diag", not(rscrypto_internal)))]
-#[doc(hidden)]
-#[doc = r#"
-```compile_fail,E0432
-use rscrypto::aead::diag_polyval_reduce_portable;
-```
-"#]
-pub struct __PolyvalEvidenceBoundary;
-
-#[cfg(all(doctest, feature = "aes-gcm", feature = "diag", not(rscrypto_internal)))]
-#[doc(hidden)]
-#[doc = r#"
-```compile_fail,E0432
-use rscrypto::aead::diag_aes128gcm_ctr32_be;
-```
-
-```compile_fail,E0432
-use rscrypto::aead::diag_aes128gcm_ghash;
-```
-
-```compile_fail,E0432
-use rscrypto::aead::diag_aes128gcm_tag_aes;
-```
-
-```compile_fail,E0432
-use rscrypto::aead::diag_aes256gcm_ctr32_be;
-```
-
-```compile_fail,E0432
-use rscrypto::aead::diag_aes256gcm_ghash;
-```
-
-```compile_fail,E0432
-use rscrypto::aead::diag_aes256gcm_tag_aes;
-```
-"#]
-pub struct __AesGcmEvidenceBoundary;
-
-#[cfg(all(doctest, feature = "aes-gcm-siv", feature = "diag", not(rscrypto_internal)))]
-#[doc(hidden)]
-#[doc = r#"
-```compile_fail,E0432
-use rscrypto::aead::diag_aes128gcmsiv_derive_keys;
-```
-
-```compile_fail,E0432
-use rscrypto::aead::diag_aes128gcmsiv_raw_tag_aes;
-```
-
-```compile_fail,E0432
-use rscrypto::aead::diag_aes128gcmsiv_ctr32;
-```
-
-```compile_fail,E0432
-use rscrypto::aead::diag_aes256gcmsiv_derive_keys;
-```
-
-```compile_fail,E0432
-use rscrypto::aead::diag_aes256gcmsiv_raw_tag_aes;
-```
-
-```compile_fail,E0432
-use rscrypto::aead::diag_aes256gcmsiv_ctr32;
-```
-
-```compile_fail,E0432
-use rscrypto::aead::diag_aes128gcmsiv_polyval_digest;
-```
-"#]
-pub struct __AesGcmSivEvidenceBoundary;
-
-#[cfg(all(doctest, feature = "full", feature = "diag", not(rscrypto_internal)))]
-#[doc(hidden)]
-#[doc = r#"
-```compile_fail,E0432
-use rscrypto::aead::diag_aes_siv_cmac256_s2v_portable;
-```
-
-```compile_fail,E0432
-use rscrypto::aead::diag_aes_siv_cmac256_open_portable;
-```
-
-```compile_fail,E0432
-use rscrypto::aead::diag_chacha20_xor_keystream_portable;
-```
-
-```compile_fail,E0432
-use rscrypto::aead::diag_poly1305_block_portable_digest;
-```
-
-```compile_fail,E0432
-use rscrypto::aead::diag_chacha20poly1305_encrypt_in_place_owned;
-```
-
-```compile_fail,E0432
-use rscrypto::auth::argon2::diag_hash_portable;
-```
-
-```compile_fail,E0432
-use rscrypto::auth::argon2::DIAG_BLOCK_WORDS;
-```
-
-```compile_fail,E0432
-use rscrypto::auth::diag_ecdsa_p256_nonce_reduce_limb_digest;
-```
-
-```compile_fail,E0432
-use rscrypto::auth::ecdsa::diag_ecdsa_p384_nonce_reduce_limb_digest;
-```
-
-```compile_fail,E0432
-use rscrypto::auth::DiagEd25519VerifyScalars;
-```
-
-```compile_fail,E0432
-use rscrypto::auth::ed25519::diag_ed25519_verify_scalars;
-```
-
-```compile_fail,E0432
-use rscrypto::auth::diag_curve25519_conditional_swap;
-```
-
-```compile_fail,E0432
-use rscrypto::auth::p256_ecdh::diag_p256_ecdh_select_window_limb_digest;
-```
-
-```compile_fail,E0432
-use rscrypto::auth::p256_ecdh::diag_p256_ecdh_select_signed_window_limb_digest;
-```
-
-```compile_fail,E0432
-use rscrypto::auth::rsa::diag_rsa_verify_pss_encoded;
-```
-
-```compile_fail,E0432
-use rscrypto::auth::mlkem::diag_mlkem512_keygen_secret_noise_digest;
-```
-
-```compile_fail,E0432
-use rscrypto::auth::diag_mlkem_ntt_input_digest;
-```
-
-```compile_fail,E0432
-use rscrypto::hashes::crypto::diag_blake2b256_keyed_digest_portable;
-```
-
-```compile_fail,E0432
-use rscrypto::hashes::crypto::blake2s::diag_blake2s256_keyed_digest_portable;
-```
-
-```compile_fail,E0432
-use rscrypto::hashes::crypto::blake3::Blake3DiagKernel;
-```
-
-```compile_fail,E0432
-use rscrypto::hashes::introspect::sha256_compress_blocks_for_bench;
-```
-
-```compile_fail,E0599
-let _ = rscrypto::RsaPublicKey::diag_encrypt_pkcs1v15_with_seed;
-```
-
-```compile_fail,E0599
-let _ = rscrypto::RsaPublicKey::diag_encrypt_pkcs1v15_with_seed_and_scratch;
-```
-
-```compile_fail,E0599
-let _ = rscrypto::RsaPublicKey::diag_encrypt_oaep_with_seed;
-```
-
-```compile_fail,E0599
-let _ = rscrypto::RsaPublicKey::diag_encrypt_oaep_with_seed_and_scratch;
-```
-
-```compile_fail,E0432
-use rscrypto::rng::diag_chacha20_rng_fill_portable;
-```
-
-"#]
-pub struct __RemainingEvidenceBoundary;
 
 #[cfg(all(doctest, feature = "full"))]
 #[doc(hidden)]

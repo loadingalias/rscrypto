@@ -22,6 +22,15 @@ pub(crate) const ALL: &[Sha256KernelId] = &[
   Sha256KernelId::S390xKimd,
 ];
 
+#[cfg(feature = "hkdf")]
+pub(crate) fn hasher_for_kernel(id: Sha256KernelId) -> Sha256 {
+  Sha256 {
+    compress_blocks: id,
+    dispatch_initialized: true,
+    ..Default::default()
+  }
+}
+
 fn digest_with_kernel<'a>(id: Sha256KernelId, chunks: impl IntoIterator<Item = &'a [u8]>) -> [u8; 32] {
   let mut h = Sha256::default();
   for chunk in chunks {

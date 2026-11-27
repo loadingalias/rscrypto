@@ -30,19 +30,6 @@ const _: unsafe fn(&[u8; 32]) -> point::ExtendedPoint = point_avx2::scalar_mul_b
 #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 const _: unsafe fn(&[u8; 32]) -> point::ExtendedPoint = point_avx2::scalar_mul_basepoint_ifma;
 
-#[cfg(all(rscrypto_internal, feature = "diag", feature = "ed25519"))]
-pub use point::diag_select_basepoint_cached_limb_digest as diag_ed25519_select_basepoint_cached_limb_digest;
-#[cfg(all(
-  rscrypto_internal,
-  feature = "diag",
-  feature = "ed25519",
-  all(target_arch = "x86_64", target_feature = "sse2")
-))]
-pub use point_avx2::{
-  diag_select_basepoint_cached_avx2_limb_digest as diag_ed25519_select_basepoint_cached_avx2_limb_digest,
-  diag_select_basepoint_cached_ifma_limb_digest as diag_ed25519_select_basepoint_cached_ifma_limb_digest,
-};
-
 /// Dispatch `[s]B` (fixed-base scalar mul) to the fastest validated CT path.
 #[cfg(not(all(
   all(target_arch = "x86_64", target_feature = "sse2"),

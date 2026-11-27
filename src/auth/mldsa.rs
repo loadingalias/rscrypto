@@ -1233,82 +1233,12 @@ impl<S: DerefMut<Target = MlDsa65PreparedSecretKeyStorage>> MlDsa65PreparedSecre
   }
 }
 
-#[cfg(all(rscrypto_internal, feature = "diag"))]
-mod diagnostics;
-
-/// Return and reset the signing attempts counted since the last call.
-///
-/// Exists only in `--cfg rscrypto_mldsa_attempts` builds, for the signing-tail
-/// baseline; no production or evidence build contains the counter.
-#[cfg(rscrypto_mldsa_attempts)]
-#[doc(hidden)]
-#[must_use]
-pub fn diag_mldsa_take_sign_attempts() -> usize {
-  portable::attempts::take()
-}
-#[cfg(all(rscrypto_internal, feature = "diag"))]
-pub use diagnostics::{
-  diag_mldsa_accumulate, diag_mldsa_mask, diag_mldsa_montgomery, diag_mldsa_montgomery_batch, diag_mldsa_norm,
-  diag_mldsa_ntt, diag_mldsa_prepare44, diag_mldsa_prepare65, diag_mldsa_prepare87, diag_mldsa_product,
-  diag_mldsa_rounding, diag_mldsa_row_product,
-};
-
-/// Diagnostic execution of the production inverse NTT on canonical coefficients.
-///
-/// Available only to internal evidence builds. Inputs must be below 8,380,417.
-#[cfg(all(rscrypto_internal, feature = "diag"))]
-#[must_use]
-pub fn diag_mldsa_inverse_ntt(input: &[u32; 256]) -> u32 {
-  crate::traits::ct::with_data_independent_timing(|| {
-    let mut value = poly::Poly::zero();
-    value.0.copy_from_slice(input);
-    value.inverse_ntt();
-    core::hint::black_box(&value.0).iter().fold(0, |digest, x| digest ^ x)
-  })
-}
-
-/// Diagnostic execution of the production scalar inverse NTT, bypassing dispatch.
-///
-/// Available only to internal evidence builds. Inputs must be below 8,380,417.
-#[cfg(all(rscrypto_internal, feature = "diag"))]
-#[must_use]
-pub fn diag_mldsa_inverse_ntt_portable(input: &[u32; 256]) -> u32 {
-  crate::traits::ct::with_data_independent_timing(|| {
-    let mut value = poly::Poly::zero();
-    value.0.copy_from_slice(input);
-    value.inverse_ntt_scalar::<false>();
-    core::hint::black_box(&value.0).iter().fold(0, |digest, x| digest ^ x)
-  })
-}
-
-/// Diagnostic execution of the production secret-noise sampler.
-///
-/// Available only to internal evidence builds. `eta` must be two or four.
-#[cfg(all(rscrypto_internal, feature = "diag"))]
-#[must_use]
-pub fn diag_mldsa_noise(seed: &[u8; 64], eta: u32) -> (bool, u32) {
-  crate::traits::ct::with_data_independent_timing(|| {
-    let mut value = poly::Poly::zero();
-    let valid = sampling::noise(seed, 0, eta, &mut value).is_ok();
-    (
-      valid,
-      core::hint::black_box(&value.0).iter().fold(0, |digest, x| digest ^ x),
-    )
-  })
-}
-
-/// Diagnostic execution of the production unpublished-challenge sampler.
-///
-/// Available only to internal evidence builds. Use standard seed lengths and tau.
-#[cfg(all(rscrypto_internal, feature = "diag"))]
-#[must_use]
-pub fn diag_mldsa_challenge(seed: &[u8], tau: usize) -> (bool, u32) {
-  crate::traits::ct::with_data_independent_timing(|| {
-    let mut value = poly::Poly::zero();
-    let valid = sampling::challenge(seed, tau, &mut value).is_ok();
-    (
-      valid,
-      core::hint::black_box(&value.0).iter().fold(0, |digest, x| digest ^ x),
-    )
-  })
-}
+#[cfg(all(
+  test,
+  feature = "full",
+  feature = "parallel",
+  feature = "getrandom",
+  any(unix, windows),
+  not(miri)
+))]
+pub(crate) mod ct_tests;

@@ -27,7 +27,6 @@ define_crc! {
   output_size: 4,
   spec: Spec::new(32, 0x04C1_1DB7, true, 0xFFFF_FFFF, 0xFFFF_FFFF),
   hw: Hw::Crc32,
-  env: "RSCRYPTO_CRC32_FORCE",
   buffered: BufferedCrc32,
 }
 
@@ -59,7 +58,6 @@ define_crc! {
   output_size: 4,
   spec: Spec::new(32, 0x1EDC_6F41, true, 0xFFFF_FFFF, 0xFFFF_FFFF),
   hw: Hw::Crc32c,
-  env: "RSCRYPTO_CRC32_FORCE",
   buffered: BufferedCrc32C,
 }
 

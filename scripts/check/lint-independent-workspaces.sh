@@ -99,7 +99,6 @@ fi
 
 check_cfg_flags=(
   '--check-cfg=cfg(miri)'
-  '--check-cfg=cfg(rscrypto_internal)'
   '--check-cfg=cfg(target_feature,values("movdiri","movdir64b","serialize"))'
 )
 
@@ -137,13 +136,6 @@ for manifest in "${manifests[@]}"; do
       cargo_args+=(--message-format=json)
     fi
 
-    # The CT tools in the tools workspace need rscrypto's internal evidence surface.
-    if [[ "$relative_manifest" == tools/Cargo.toml ]]; then
-      target="${CARGO_BUILD_TARGET:-$("$REPO_ROOT/scripts/lib/toolchain.sh" --print-host)}"
-      CARGO_TARGET_DIR="$TARGET_DIR" "$REPO_ROOT/scripts/lib/python.sh" "$REPO_ROOT/scripts/ct/internal.py" \
-        --target "$target" -- cargo "${cargo_args[@]}" -- "${compiler_flags[@]}"
-    else
-      CARGO_TARGET_DIR="$TARGET_DIR" cargo "${cargo_args[@]}" -- "${compiler_flags[@]}"
-    fi
+    CARGO_TARGET_DIR="$TARGET_DIR" cargo "${cargo_args[@]}" -- "${compiler_flags[@]}"
   done
 done

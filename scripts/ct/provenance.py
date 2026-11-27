@@ -391,9 +391,8 @@ def main() -> int:
   reports = report_records(args.out_dir)
   write_artifact_hashes(args.out_dir, artifacts)
 
-  dependency_lockfile = root / "tools" / "Cargo.lock"
   workspace_lockfile = root / "Cargo.lock"
-  profile = load_toml(root / "tools" / "Cargo.toml").get("profile", {}).get(args.profile, {})
+  profile = cargo.get("profile", {}).get(args.profile, {})
   status_entries = git_status(root)
   feature_list = [feature for feature in args.features.split(",") if feature]
 
@@ -464,8 +463,8 @@ def main() -> int:
     "strip": profile.get("strip", "unknown"),
     "features": feature_list,
     "default_features": False,
-    "dependency_lockfile": "tools/Cargo.lock",
-    "dependency_lockfile_sha256": sha256_file(dependency_lockfile),
+    "dependency_lockfile": "Cargo.lock",
+    "dependency_lockfile_sha256": sha256_file(workspace_lockfile),
     "workspace_lockfile": "Cargo.lock",
     "workspace_lockfile_sha256": sha256_file(workspace_lockfile),
     "component_lockfiles": component_lockfiles(root),

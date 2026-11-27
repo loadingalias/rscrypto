@@ -10,8 +10,8 @@ no test cases were changed.
 `SHA256SUMS` is the complete 36-file payload inventory and records the checked-in representation.
 Verify it from this directory with `shasum -a 256 -c SHA256SUMS`.
 
-`tests/rsa_wycheproof.rs` consumes the full mapped set and `tests/rsa_leakage.rs` consumes one OAEP corpus for failure-class checks.
+`tests/rsa_wycheproof.rs` consumes the full mapped set.
 `tests/rsa_implicit_rejection.rs` and `scripts/test/rsa_implicit_rejection_vectors.py` read `rsa_pkcs1_{2048,3072,4096}_test.json`;
 the [implicit-rejection vectors](../implicit_rejection/README.md) pin their SHA-256.
-RSA unit tests in `src/auth/rsa.rs`, `benches/rsa.rs`, and `tools/ct-dudect` also read selected corpora.
+RSA library tests, `benches/rsa.rs`, and the timing cases in `src/ct_tests/dudect.rs` also read selected corpora.
 `docs/test-vector-coverage.md` owns the coverage limits.

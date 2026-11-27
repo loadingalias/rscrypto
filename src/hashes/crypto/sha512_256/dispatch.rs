@@ -1,6 +1,6 @@
 use super::{BLOCK_LEN, kernels::Sha512KernelId};
 pub(crate) use crate::hashes::crypto::sha512::dispatch::compress_dispatch;
-#[cfg(feature = "diag")]
+
 pub(crate) use crate::hashes::crypto::sha512::dispatch::kernel_name_for_len;
 
 define_sha_digest! {

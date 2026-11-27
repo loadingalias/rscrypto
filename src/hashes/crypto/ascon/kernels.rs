@@ -1,5 +1,4 @@
 use super::permute_12_portable;
-use crate::platform::Caps;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
@@ -15,7 +14,6 @@ pub(crate) enum AsconPermute12KernelId {
 }
 
 impl AsconPermute12KernelId {
-  #[cfg(feature = "diag")]
   #[inline]
   #[must_use]
   pub(crate) const fn as_str(self) -> &'static str {
@@ -58,11 +56,12 @@ pub(crate) fn permute_fn(id: AsconPermute12KernelId) -> fn(&mut [u64; 5]) {
   }
 }
 
+#[cfg(any(test, target_arch = "x86_64", target_arch = "aarch64"))]
 #[inline]
 #[must_use]
-pub(crate) const fn required_caps(id: AsconPermute12KernelId) -> Caps {
+pub(crate) const fn required_caps(id: AsconPermute12KernelId) -> crate::platform::Caps {
   match id {
-    AsconPermute12KernelId::Portable => Caps::NONE,
+    AsconPermute12KernelId::Portable => crate::platform::Caps::NONE,
     #[cfg(target_arch = "aarch64")]
     AsconPermute12KernelId::Aarch64Neon => crate::platform::caps::aarch64::NEON,
     #[cfg(target_arch = "x86_64")]

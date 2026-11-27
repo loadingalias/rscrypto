@@ -39,10 +39,6 @@ on:
         description: Linux RISC-V
         type: boolean
         default: false
-      diagnostic:
-        description: Build diagnostic benchmark features
-        type: boolean
-        default: false
       quick:
         description: Quick validation of every selected case; no performance rankings
         type: boolean

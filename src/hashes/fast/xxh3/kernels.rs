@@ -21,7 +21,6 @@ pub(crate) enum Xxh3KernelId {
 }
 
 impl Xxh3KernelId {
-  #[cfg(feature = "diag")]
   #[inline]
   #[must_use]
   pub(crate) const fn as_str(self) -> &'static str {

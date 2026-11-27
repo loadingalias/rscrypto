@@ -73,10 +73,7 @@ mod aarch64_asm;
   target_arch = "x86_64",
   target_feature = "sse2",
   target_os = "linux",
-  any(
-    all(rscrypto_internal, feature = "diag"),
-    all(not(debug_assertions), not(feature = "portable-only"))
-  )
+  all(any(test, not(debug_assertions)), not(feature = "portable-only"))
 ))]
 #[path = "chacha20poly1305/x86_64_asm.rs"]
 mod x86_64_asm;
@@ -253,15 +250,38 @@ impl ChaCha20Poly1305 {
     caps.has(crate::platform::caps::x86::AVX512_READY)
   }
 
+  /// # Safety
+  ///
+  /// The CPU must support AVX2 and BMI2. The total length must exceed 320 bytes and fit the ChaCha20 counter.
   #[cfg(all(
     target_arch = "x86_64",
     target_feature = "sse2",
     target_os = "linux",
-    any(
-      test,
-      all(rscrypto_internal, feature = "diag"),
-      all(not(debug_assertions), not(feature = "portable-only"))
-    )
+    not(feature = "portable-only"),
+    any(test, not(debug_assertions))
+  ))]
+  unsafe fn open_segments_avx2(
+    &self,
+    nonce: &Nonce96,
+    aad: &[u8],
+    segments: &mut [&mut [u8]],
+    tag: &ChaCha20Poly1305Tag,
+  ) -> Option<Result<(), OpenError>> {
+    let expected = super::segments::spans(segments, |spans| {
+      // SAFETY: The caller establishes the CPU and length requirements. The spans borrow disjoint segments.
+      unsafe { x86_64_asm::open_scatter(self.key.as_bytes(), nonce.as_bytes(), aad, spans) }
+    })?;
+    Some(super::segments::verdict(
+      segments,
+      ct::fixed_eq(&expected, tag.as_bytes()).declassify(),
+    ))
+  }
+
+  #[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "sse2",
+    target_os = "linux",
+    any(test, all(not(debug_assertions), not(feature = "portable-only")))
   ))]
   #[inline]
   fn x86_64_asm_caps_available(caps: crate::platform::Caps) -> bool {
@@ -317,73 +337,6 @@ impl ChaCha20Poly1305 {
     } else {
       ciphertext_len <= X86_64_OPEN_ASM_SHORT_MAX
     }
-  }
-
-  #[cfg(all(
-    rscrypto_internal,
-    feature = "diag",
-    all(target_arch = "x86_64", target_feature = "sse2"),
-    target_os = "linux"
-  ))]
-  fn encrypt_in_place_asm_x86_64_forced(
-    &self,
-    nonce: &Nonce96,
-    aad: &[u8],
-    buffer: &mut [u8],
-  ) -> Option<Result<ChaCha20Poly1305Tag, SealError>> {
-    if buffer.is_empty() {
-      return None;
-    }
-
-    #[cfg(feature = "std")]
-    let caps = crate::platform::caps();
-    #[cfg(not(feature = "std"))]
-    let caps = crate::platform::caps_static();
-
-    if !Self::x86_64_asm_caps_available(caps) {
-      return None;
-    }
-
-    // SAFETY: the diagnostic entry validated the ChaCha20 length bound; the guards above prove a nonempty buffer and
-    // AVX2+BMI2 availability.
-    let tag = unsafe { x86_64_asm::seal_in_place(self.key.as_bytes(), nonce.as_bytes(), aad, buffer) };
-    Some(Ok(ChaCha20Poly1305Tag::from_bytes(tag)))
-  }
-
-  #[cfg(all(
-    rscrypto_internal,
-    feature = "diag",
-    all(target_arch = "x86_64", target_feature = "sse2"),
-    target_os = "linux"
-  ))]
-  fn decrypt_in_place_asm_x86_64_forced(
-    &self,
-    nonce: &Nonce96,
-    aad: &[u8],
-    buffer: &mut [u8],
-    tag: &ChaCha20Poly1305Tag,
-  ) -> Option<Result<(), OpenError>> {
-    if buffer.is_empty() {
-      return None;
-    }
-
-    #[cfg(feature = "std")]
-    let caps = crate::platform::caps();
-    #[cfg(not(feature = "std"))]
-    let caps = crate::platform::caps_static();
-
-    if !Self::x86_64_asm_caps_available(caps) {
-      return None;
-    }
-
-    // SAFETY: the diagnostic entry validated the ChaCha20 length bound; the guards above prove a nonempty buffer and
-    // AVX2+BMI2 availability.
-    let expected = unsafe { x86_64_asm::open_in_place(self.key.as_bytes(), nonce.as_bytes(), aad, buffer) };
-    if !ct::fixed_eq(&expected, tag.as_bytes()).declassify() {
-      ct::zeroize(buffer);
-      return Some(Err(OpenError::verification()));
-    }
-    Some(Ok(()))
   }
 
   #[cfg(all(
@@ -648,115 +601,6 @@ impl ChaCha20Poly1305 {
   }
 }
 
-/// Encrypts in place without using a platform-specific integrated ChaCha20-Poly1305 assembly entrypoint.
-///
-/// Lower-level ChaCha20 and Poly1305 dispatch remains enabled. Returns an error when the input lengths exceed the
-/// supported limits.
-#[cfg(all(rscrypto_internal, feature = "diag"))]
-pub fn diag_chacha20poly1305_encrypt_in_place_owned(
-  cipher: &ChaCha20Poly1305,
-  nonce: &Nonce96,
-  aad: &[u8],
-  buffer: &mut [u8],
-) -> Result<ChaCha20Poly1305Tag, SealError> {
-  super::seal_bounded_length_as_u64(buffer.len(), MAX_PLAINTEXT_LEN)?;
-  cipher.encrypt_in_place_owned_unchecked(nonce, aad, buffer)
-}
-
-#[cfg(all(
-  rscrypto_internal,
-  feature = "diag",
-  all(target_arch = "x86_64", target_feature = "sse2"),
-  target_os = "linux"
-))]
-/// Encrypts in place through the Linux x86-64 assembly entrypoint when that entrypoint is available.
-///
-/// Returns `None` when the current CPU cannot execute the assembly backend.
-pub fn diag_chacha20poly1305_encrypt_in_place_x86_64_asm(
-  cipher: &ChaCha20Poly1305,
-  nonce: &Nonce96,
-  aad: &[u8],
-  buffer: &mut [u8],
-) -> Option<Result<ChaCha20Poly1305Tag, SealError>> {
-  if let Err(err) = super::seal_bounded_length_as_u64(buffer.len(), MAX_PLAINTEXT_LEN) {
-    return Some(Err(err));
-  }
-
-  cipher.encrypt_in_place_asm_x86_64_forced(nonce, aad, buffer)
-}
-
-#[cfg(all(
-  rscrypto_internal,
-  feature = "diag",
-  all(target_arch = "x86_64", target_feature = "sse2"),
-  target_os = "linux"
-))]
-/// Authenticates and decrypts in place through the Linux x86-64 assembly entrypoint when it is available.
-///
-/// Returns `None` when the current CPU cannot execute the assembly backend.
-pub fn diag_chacha20poly1305_decrypt_in_place_x86_64_asm(
-  cipher: &ChaCha20Poly1305,
-  nonce: &Nonce96,
-  aad: &[u8],
-  buffer: &mut [u8],
-  tag: &ChaCha20Poly1305Tag,
-) -> Option<Result<(), OpenError>> {
-  if let Err(err) = super::open_bounded_length_as_u64(buffer.len(), MAX_PLAINTEXT_LEN) {
-    return Some(Err(err));
-  }
-
-  cipher.decrypt_in_place_asm_x86_64_forced(nonce, aad, buffer, tag)
-}
-
-#[cfg(all(
-  rscrypto_internal,
-  feature = "diag",
-  all(target_arch = "x86_64", target_feature = "sse2"),
-  target_os = "linux"
-))]
-/// Authenticates and decrypts in place across `segments` through the Linux x86-64 span assembly when it is available.
-///
-/// Returns `None` when the current CPU cannot execute the assembly backend, the message holds at most 320 bytes, or
-/// more than 128 segments hold bytes. Authentication failure zeroes every segment.
-pub fn diag_chacha20poly1305_decrypt_segments_x86_64_asm(
-  cipher: &ChaCha20Poly1305,
-  nonce: &Nonce96,
-  aad: &[u8],
-  segments: &mut [&mut [u8]],
-  tag: &ChaCha20Poly1305Tag,
-) -> Option<Result<(), OpenError>> {
-  let len = super::segments::total_len(segments)?;
-  if let Err(err) = super::open_bounded_length_as_u64(len, MAX_PLAINTEXT_LEN) {
-    return Some(Err(err));
-  }
-  if len <= 320 || !ChaCha20Poly1305::x86_64_asm_caps_available(crate::platform::caps()) {
-    return None;
-  }
-  let expected = super::segments::spans(segments, |spans| {
-    // SAFETY: the checks above prove AVX2, BMI2, more than 320 bytes, and the ChaCha20 length bound.
-    unsafe { x86_64_asm::open_scatter(cipher.key.as_bytes(), nonce.as_bytes(), aad, spans) }
-  })?;
-  let matched = ct::fixed_eq(&expected, tag.as_bytes()).declassify();
-  Some(super::segments::verdict(segments, matched))
-}
-
-/// Authenticates and decrypts in place without using a platform-specific integrated ChaCha20-Poly1305 assembly
-/// entrypoint.
-///
-/// Lower-level ChaCha20 and Poly1305 dispatch remains enabled. Authentication failure zeroes `buffer` and returns an
-/// opaque verification error; unsupported input lengths also return an error.
-#[cfg(all(rscrypto_internal, feature = "diag"))]
-pub fn diag_chacha20poly1305_decrypt_in_place_owned(
-  cipher: &ChaCha20Poly1305,
-  nonce: &Nonce96,
-  aad: &[u8],
-  buffer: &mut [u8],
-  tag: &ChaCha20Poly1305Tag,
-) -> Result<(), OpenError> {
-  super::open_bounded_length_as_u64(buffer.len(), MAX_PLAINTEXT_LEN)?;
-  cipher.decrypt_in_place_owned_unchecked(nonce, aad, buffer, tag)
-}
-
 impl AeadGather for ChaCha20Poly1305 {
   fn __validate_gather_lengths(_aad_len: usize, plaintext_len: usize) -> Result<(), SealError> {
     super::seal_bounded_length_as_u64(plaintext_len, MAX_PLAINTEXT_LEN)?;
@@ -789,14 +633,10 @@ impl AeadGather for ChaCha20Poly1305 {
       not(feature = "portable-only")
     ))]
     if Self::x86_64_open_asm_selected(len)
-      && let Some(expected) = super::segments::spans(segments, |spans| {
-        // SAFETY: the selection proves AVX2 and BMI2, the length exceeds the
-        // staged short messages, and the public entry validated its bound.
-        unsafe { x86_64_asm::open_scatter(self.key.as_bytes(), nonce.as_bytes(), aad, spans) }
-      })
+      // SAFETY: Selection checks AVX2 and BMI2. The caller checked the message length above.
+      && let Some(result) = unsafe { self.open_segments_avx2(nonce, aad, segments, tag) }
     {
-      let matched = ct::fixed_eq(&expected, tag.as_bytes()).declassify();
-      return super::segments::verdict(segments, matched);
+      return result;
     }
     #[cfg(all(
       target_arch = "aarch64",
@@ -1369,59 +1209,6 @@ mod tests {
     }
   }
 
-  #[cfg(all(
-    rscrypto_internal,
-    feature = "diag",
-    all(target_arch = "x86_64", target_feature = "sse2"),
-    target_os = "linux"
-  ))]
-  #[test]
-  fn x86_64_open_asm_matches_owned_path() {
-    if !ChaCha20Poly1305::x86_64_asm_caps_available(crate::platform::caps()) {
-      return;
-    }
-
-    let key = ChaCha20Poly1305Key::from_bytes([0x42; KEY_SIZE]);
-    let nonce = Nonce96::from_bytes([0x24; NONCE_SIZE]);
-    let cipher = ChaCha20Poly1305::new(&key);
-
-    for plaintext_len in [
-      1usize, 15, 16, 17, 31, 32, 33, 63, 64, 65, 127, 128, 129, 255, 256, 257, 1024,
-    ] {
-      let plaintext = (0u8..=u8::MAX)
-        .cycle()
-        .take(plaintext_len)
-        .map(|index| 0x51u8.wrapping_add(index.wrapping_mul(13)))
-        .collect::<Vec<_>>();
-
-      for aad_len in [0usize, 1, 13, 14, 15, 16, 17, 31, 32, 63, 64] {
-        let aad = (0u8..)
-          .take(aad_len)
-          .map(|index| 0xa7u8.wrapping_add(index.wrapping_mul(7)))
-          .collect::<Vec<_>>();
-
-        let mut ciphertext = plaintext.clone();
-        let tag = cipher
-          .encrypt_in_place_owned_unchecked(&nonce, &aad, &mut ciphertext)
-          .expect("bounded test input must encrypt through the owned path");
-        let mut actual = ciphertext.clone();
-        // SAFETY: the test returned unless AVX2+BMI2 are available; every selected ciphertext is nonempty and well
-        // below ChaCha20's 2^32-block limit.
-        let actual_tag = unsafe { x86_64_asm::open_in_place(key.as_bytes(), nonce.as_bytes(), &aad, &mut actual) };
-
-        assert_eq!(
-          actual, plaintext,
-          "x86 open asm plaintext mismatch plaintext_len={plaintext_len} aad_len={aad_len}"
-        );
-        assert_eq!(
-          actual_tag,
-          tag.to_bytes(),
-          "x86 open asm tag mismatch plaintext_len={plaintext_len} aad_len={aad_len}"
-        );
-      }
-    }
-  }
-
   #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), target_endian = "little"))]
   #[test]
   fn power_short_fast_encrypt_matches_owned_path() {
@@ -1548,5 +1335,232 @@ mod tests {
 
     let result = cipher.decrypt_in_place(&nonce, b"wrong", &mut buf, &tag);
     assert!(result.is_err());
+  }
+
+  #[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "sse2",
+    target_os = "linux",
+    not(feature = "portable-only"),
+    not(miri)
+  ))]
+  #[test]
+  fn avx2_span_open_matches_oracle_and_clears_only_segments_on_failure() {
+    use ::chacha20poly1305::{
+      ChaCha20Poly1305 as Oracle, KeyInit,
+      aead::{Aead as _, Payload, array::Array},
+    };
+    use alloc::vec;
+
+    const LENS: &[usize] = &[
+      321, 448, 449, 511, 512, 513, 575, 576, 577, 1088, 1089, 1601, 4097, 16_385,
+    ];
+
+    let caps = crate::platform::caps();
+    if !caps.has(crate::platform::caps::x86::AVX2.union(crate::platform::caps::x86::BMI2)) {
+      return;
+    }
+
+    let key_bytes = [0x42; ChaCha20Poly1305::KEY_SIZE];
+    let nonce_bytes = [0x24; Nonce96::LENGTH];
+    let cipher = ChaCha20Poly1305::new(&ChaCha20Poly1305Key::from_bytes(key_bytes));
+    let nonce = Nonce96::from_bytes(nonce_bytes);
+    let oracle = Oracle::new(&Array(key_bytes));
+    let aad = [0xa7; 13];
+
+    for &len in LENS {
+      let plaintext: Vec<_> = (0..len).map(|i| i.to_le_bytes()[0].wrapping_mul(17)).collect();
+      let sealed = oracle
+        .encrypt(
+          &Array(nonce_bytes),
+          Payload {
+            msg: &plaintext,
+            aad: &aad,
+          },
+        )
+        .expect("oracle seals the fixture");
+      let (ciphertext, tag) = sealed.split_at(len);
+      let tag = ChaCha20Poly1305::tag_from_slice(tag).expect("16-byte tag");
+      let mut cut_sets: Vec<Vec<usize>> = [
+        1usize,
+        63,
+        64,
+        65,
+        575,
+        576,
+        577,
+        1087,
+        1088,
+        1089,
+        len / 2 | 1,
+        len - 1,
+      ]
+      .into_iter()
+      .filter(|cut| (1..len).contains(cut))
+      .map(|cut| vec![cut])
+      .collect();
+      // At most 128 segments take the span assembly.
+      cut_sets.push((1..len).step_by((len / 120).max(97)).collect());
+      cut_sets.push((560..len.min(600)).collect());
+      cut_sets.retain(|cuts| !cuts.is_empty());
+      for cuts in &cut_sets {
+        for corrupt in [false, true] {
+          let mut ends = cuts.clone();
+          ends.insert(0, 0);
+          ends.push(len);
+          // Guards and independent allocations keep each segment a separate range.
+          let mut storage: Vec<Vec<u8>> = ends
+            .windows(2)
+            .map(|range| [&[0xa5], &ciphertext[range[0]..range[1]], &[0x5a][..]].concat())
+            .collect();
+          if corrupt {
+            storage[1][1] ^= 0x01;
+          }
+          let mut segments: Vec<&mut [u8]> = storage
+            .iter_mut()
+            .map(|bytes| {
+              let end = bytes.len() - 1;
+              &mut bytes[1..end]
+            })
+            .collect();
+          // SAFETY: The CPU check covers AVX2 and BMI2. Every fixture has 321 to 16,385 bytes.
+          let result =
+            unsafe { cipher.open_segments_avx2(&nonce, &aad, &mut segments, &tag) }.expect("at most 128 spans");
+          let opened: Vec<u8> = storage
+            .iter()
+            .flat_map(|bytes| bytes[1..bytes.len() - 1].to_vec())
+            .collect();
+          if corrupt {
+            assert_eq!(result, Err(OpenError::verification()), "len {len}, cuts {cuts:?}");
+            assert!(opened.iter().all(|&byte| byte == 0), "len {len}, cuts {cuts:?}");
+          } else {
+            result.expect("the span assembly opens the oracle ciphertext");
+            assert_eq!(opened, plaintext, "len {len}, cuts {cuts:?}");
+          }
+          assert!(
+            storage
+              .iter()
+              .all(|bytes| bytes[0] == 0xa5 && bytes[bytes.len() - 1] == 0x5a),
+            "len {len}, cuts {cuts:?}"
+          );
+        }
+      }
+    }
+  }
+}
+
+#[cfg(all(test, feature = "std"))]
+mod kernel_tests {
+  use super::*;
+  use crate::aead::expert::AeadWithNonce as _;
+  fn pattern_bytes(len: usize, seed: u8) -> Vec<u8> {
+    let mut out = vec![0u8; len];
+    for (index, byte) in out.iter_mut().enumerate() {
+      let index = index.to_le_bytes()[0];
+      *byte = seed
+        .wrapping_add(index.wrapping_mul(17))
+        .wrapping_add(index.rotate_left(1));
+    }
+    out
+  }
+  #[test]
+  fn owned_decrypt_large_inputs_match_normal_path() {
+    const PLAINTEXT_LENS: &[usize] = &[1024, 1025, 4095, 4096, 4097, 16_384];
+
+    let key = ChaCha20Poly1305Key::from_bytes([0x42; ChaCha20Poly1305::KEY_SIZE]);
+    let nonce = Nonce96::from_bytes([0x24; Nonce96::LENGTH]);
+    let cipher = ChaCha20Poly1305::new(&key);
+
+    for &plaintext_len in PLAINTEXT_LENS {
+      let plaintext = pattern_bytes(plaintext_len, 0x51);
+      let aad = pattern_bytes(257, 0xa7);
+      let mut ciphertext = plaintext.clone();
+      let tag = cipher
+        .encrypt_in_place(&nonce, &aad, &mut ciphertext)
+        .expect("diagnostic ChaCha20-Poly1305 fixture must seal");
+
+      cipher
+        .decrypt_in_place_owned_unchecked(&nonce, &aad, &mut ciphertext, &tag)
+        .expect("owned diagnostic ChaCha20-Poly1305 path must open its fixture");
+
+      assert_eq!(
+        ciphertext, plaintext,
+        "owned diagnostic decrypt mismatch at plaintext_len={plaintext_len}"
+      );
+    }
+  }
+  #[test]
+  fn owned_decrypt_zeroes_large_buffer_on_bad_tag() {
+    let key = ChaCha20Poly1305Key::from_bytes([0x11; ChaCha20Poly1305::KEY_SIZE]);
+    let nonce = Nonce96::from_bytes([0x22; Nonce96::LENGTH]);
+    let cipher = ChaCha20Poly1305::new(&key);
+
+    let plaintext = pattern_bytes(4097, 0x6d);
+    let aad = pattern_bytes(33, 0x95);
+    let mut ciphertext = plaintext;
+    let mut tag = cipher
+      .encrypt_in_place(&nonce, &aad, &mut ciphertext)
+      .expect("diagnostic ChaCha20-Poly1305 bad-tag fixture must seal")
+      .to_bytes();
+    tag[7] ^= 0x80;
+
+    let result =
+      cipher.decrypt_in_place_owned_unchecked(&nonce, &aad, &mut ciphertext, &ChaCha20Poly1305Tag::from_bytes(tag));
+
+    result.expect_err("owned diagnostic ChaCha20-Poly1305 path must reject a modified tag");
+    assert!(
+      ciphertext.iter().all(|&byte| byte == 0),
+      "owned diagnostic decrypt must zero caller buffer on verification failure"
+    );
+  }
+  #[cfg(all(
+    not(feature = "portable-only"),
+    not(miri),
+    target_arch = "x86_64",
+    target_os = "linux"
+  ))]
+  #[test]
+  fn x86_asm_encrypt_matches_owned_path() {
+    const PLAINTEXT_LENS: &[usize] = &[
+      0, 1, 2, 15, 16, 17, 31, 32, 33, 63, 64, 65, 127, 128, 129, 191, 192, 193, 255, 256, 257, 319, 320, 321, 511,
+      512, 513, 1024, 1025, 4095, 4096, 4097, 16_384,
+    ];
+    const AAD_LENS: &[usize] = &[0, 1, 13, 14, 15, 16, 17, 31, 32, 33, 63, 64, 65, 257];
+
+    let caps = crate::platform::caps();
+    if !caps.has(crate::platform::caps::x86::AVX2.union(crate::platform::caps::x86::BMI2)) {
+      return;
+    }
+
+    let key = ChaCha20Poly1305Key::from_bytes([0x42; ChaCha20Poly1305::KEY_SIZE]);
+    let nonce = Nonce96::from_bytes([0x24; Nonce96::LENGTH]);
+    let cipher = ChaCha20Poly1305::new(&key);
+
+    for &plaintext_len in PLAINTEXT_LENS {
+      let plaintext = pattern_bytes(plaintext_len, 0x51);
+
+      for &aad_len in AAD_LENS {
+        let aad = pattern_bytes(aad_len, 0xa7);
+        let mut actual = plaintext.clone();
+        if actual.is_empty() {
+          continue;
+        }
+        // SAFETY: The host supports AVX2 and BMI2. The initialized buffer is nonempty and below the counter limit.
+        let actual_tag = unsafe { x86_64_asm::seal_in_place(key.as_bytes(), nonce.as_bytes(), &aad, &mut actual) };
+
+        let mut expected = plaintext.clone();
+        let expected_tag = cipher
+          .encrypt_in_place_owned_unchecked(&nonce, &aad, &mut expected)
+          .expect("owned diagnostic ChaCha20-Poly1305 path must seal");
+        assert_eq!(
+          actual, expected,
+          "x86 asm ciphertext mismatch plaintext_len={plaintext_len} aad_len={aad_len}"
+        );
+        assert!(
+          actual_tag == *expected_tag.as_bytes(),
+          "x86 asm tag mismatch plaintext_len={plaintext_len} aad_len={aad_len}"
+        );
+      }
+    }
   }
 }

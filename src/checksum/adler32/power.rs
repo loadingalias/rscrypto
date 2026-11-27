@@ -13,8 +13,7 @@
 //! # Safety
 //!
 //! [`update_safe`] relies on Adler-32's `select`, which returns it only when cached detection
-//! reports AltiVec: for automatic selection and for the force that `config::get()` keeps only
-//! then.
+//! reports AltiVec.
 
 use core::{
   arch::asm,
@@ -176,7 +175,7 @@ pub(in crate::checksum) fn update_safe(adler: u32, data: &[u8]) -> u32 {
 
 #[cfg(test)]
 mod tests {
-  use crate::checksum::adler32::{blocks::checks, config::Adler32Force};
+  use crate::checksum::adler32::blocks::checks;
 
   /// The kernel matches the portable kernel on a CPU with AltiVec.
   #[test]
@@ -184,10 +183,5 @@ mod tests {
     if !cfg!(miri) && crate::platform::caps().has(crate::platform::caps::power::ALTIVEC) {
       checks::assert_matches_portable(super::KERNEL_NAME, super::update_safe);
     }
-  }
-
-  #[test]
-  fn the_forced_kernel_runs_through_the_public_api() {
-    checks::assert_forced_kernel_runs(Adler32Force::Vmsum, super::KERNEL_NAME);
   }
 }

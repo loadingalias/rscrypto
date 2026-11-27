@@ -426,28 +426,6 @@ impl HkdfSha256 {
   pub fn prk(&self) -> &[u8; SHA256_OUTPUT_SIZE] {
     &self.prk
   }
-
-  #[cfg(any(test, all(rscrypto_internal, feature = "diag")))]
-  pub(crate) fn extract_with_compress_for_test(
-    salt: &[u8],
-    input_key_material: &[u8],
-    compress: Sha256KernelId,
-  ) -> Self {
-    Self::extract_with(salt, input_key_material, compress, |salt, input_key_material, prk| {
-      *prk = HmacSha256::mac_with_compress_for_test(salt, input_key_material, compress);
-    })
-  }
-}
-
-#[cfg(all(rscrypto_internal, feature = "diag"))]
-#[unsafe(no_mangle)]
-#[inline(never)]
-/// Derive a portable HKDF-SHA256 diagnostic output using fixed `b"salt"` and `b"info"` inputs.
-pub fn diag_hkdf_sha256_derive_portable(input_key_material: &[u8; SHA256_OUTPUT_SIZE]) -> [u8; SHA256_OUTPUT_SIZE] {
-  let compress = crate::hashes::crypto::sha256::kernels::Sha256KernelId::Portable;
-  HkdfSha256::extract_with_compress_for_test(b"salt", input_key_material, compress)
-    .expand_array::<SHA256_OUTPUT_SIZE>(b"info")
-    .unwrap_or([0u8; SHA256_OUTPUT_SIZE])
 }
 
 impl Drop for HkdfSha256 {
@@ -708,28 +686,6 @@ impl HkdfSha384 {
   pub fn prk(&self) -> &[u8; SHA384_OUTPUT_SIZE] {
     &self.prk
   }
-
-  #[cfg(any(test, all(rscrypto_internal, feature = "diag")))]
-  pub(crate) fn extract_with_compress_for_test(
-    salt: &[u8],
-    input_key_material: &[u8],
-    compress: Sha384KernelId,
-  ) -> Self {
-    Self::extract_with(salt, input_key_material, compress, |salt, input_key_material, prk| {
-      *prk = HmacSha384::mac_with_compress_for_test(salt, input_key_material, compress);
-    })
-  }
-}
-
-#[cfg(all(rscrypto_internal, feature = "diag"))]
-#[unsafe(no_mangle)]
-#[inline(never)]
-/// Derive a portable HKDF-SHA384 diagnostic output using fixed `b"salt"` and `b"info"` inputs.
-pub fn diag_hkdf_sha384_derive_portable(input_key_material: &[u8; SHA384_OUTPUT_SIZE]) -> [u8; SHA384_OUTPUT_SIZE] {
-  let compress = crate::hashes::crypto::sha384::kernels::Sha384KernelId::Portable;
-  HkdfSha384::extract_with_compress_for_test(b"salt", input_key_material, compress)
-    .expand_array::<SHA384_OUTPUT_SIZE>(b"info")
-    .unwrap_or([0u8; SHA384_OUTPUT_SIZE])
 }
 
 impl Drop for HkdfSha384 {
@@ -1165,10 +1121,26 @@ mod tests {
     sha512::kernels::{Sha512KernelId, required_caps as sha512_required_caps},
   };
 
-  impl HkdfSha512 {
-    fn extract_with_compress_for_test(salt: &[u8], input_key_material: &[u8], compress: Sha512KernelId) -> Self {
+  impl HkdfSha256 {
+    fn extract_for_kernel(salt: &[u8], input_key_material: &[u8], compress: Sha256KernelId) -> Self {
       Self::extract_with(salt, input_key_material, compress, |salt, input_key_material, prk| {
-        *prk = HmacSha512::mac_with_compress_for_test(salt, input_key_material, compress);
+        *prk = HmacSha256::mac_for_kernel(salt, input_key_material, compress);
+      })
+    }
+  }
+
+  impl HkdfSha384 {
+    fn extract_for_kernel(salt: &[u8], input_key_material: &[u8], compress: Sha384KernelId) -> Self {
+      Self::extract_with(salt, input_key_material, compress, |salt, input_key_material, prk| {
+        *prk = HmacSha384::mac_for_kernel(salt, input_key_material, compress);
+      })
+    }
+  }
+
+  impl HkdfSha512 {
+    fn extract_for_kernel(salt: &[u8], input_key_material: &[u8], compress: Sha512KernelId) -> Self {
+      Self::extract_with(salt, input_key_material, compress, |salt, input_key_material, prk| {
+        *prk = HmacSha512::mac_for_kernel(salt, input_key_material, compress);
       })
     }
   }
@@ -1209,7 +1181,7 @@ mod tests {
         .expect("test output length should be within the HKDF-SHA256 limit");
 
       let public = HkdfSha256::new(&salt, &ikm);
-      let forced = HkdfSha256::extract_with_compress_for_test(&salt, &ikm, id);
+      let forced = HkdfSha256::extract_for_kernel(&salt, &ikm, id);
 
       let mut public_out = vec![0u8; out_len];
       public
@@ -1270,7 +1242,7 @@ mod tests {
         .expect("test output length should be within the HKDF-SHA384 limit");
 
       let public = HkdfSha384::new(&salt, &ikm);
-      let forced = HkdfSha384::extract_with_compress_for_test(&salt, &ikm, id);
+      let forced = HkdfSha384::extract_for_kernel(&salt, &ikm, id);
 
       let mut public_out = vec![0u8; out_len];
       public
@@ -1331,7 +1303,7 @@ mod tests {
         .expect("test output length should be within the HKDF-SHA512 limit");
 
       let public = HkdfSha512::new(&salt, &ikm);
-      let forced = HkdfSha512::extract_with_compress_for_test(&salt, &ikm, id);
+      let forced = HkdfSha512::extract_for_kernel(&salt, &ikm, id);
 
       let mut public_out = vec![0u8; out_len];
       public
@@ -1433,7 +1405,7 @@ mod tests {
       if !caps.has(sha256_required_caps(id)) {
         continue;
       }
-      let hkdf = HkdfSha256::extract_with_compress_for_test(&salt, &ikm, id);
+      let hkdf = HkdfSha256::extract_for_kernel(&salt, &ikm, id);
       for split in 0..=INFO_LEN {
         let (head, tail) = info.split_at(split);
         let mut okm = [0u8; OKM_LEN];
@@ -1468,7 +1440,7 @@ mod tests {
       if !caps.has(sha384_required_caps(id)) {
         continue;
       }
-      let hkdf = HkdfSha384::extract_with_compress_for_test(&salt, &ikm, id);
+      let hkdf = HkdfSha384::extract_for_kernel(&salt, &ikm, id);
       for split in 0..=INFO_LEN {
         let (head, tail) = info.split_at(split);
         let mut okm = [0u8; OKM_LEN];

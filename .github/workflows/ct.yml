@@ -15,7 +15,7 @@ on:
   workflow_dispatch:
     inputs:
       diagnostic_case:
-        description: Exact CT case, comma-separated cases, mldsa for all required ML-DSA kernel cases, or mldsa-probe for the ML-DSA diagnostic probes, on Linux platforms; scoped evidence only
+        description: Exact CT case, comma-separated cases, mldsa for all required ML-DSA kernel cases, on Linux platforms; scoped evidence only
         type: string
         default: ""
       architectures:

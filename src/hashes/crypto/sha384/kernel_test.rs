@@ -4,7 +4,7 @@ use super::{Sha384, kernels::Sha384KernelId};
 use crate::hashes::crypto::sha512::{kernel_test::ALL, kernels::required_caps};
 use crate::traits::Digest as _;
 
-fn hasher_for_kernel(id: Sha384KernelId) -> Sha384 {
+pub(crate) fn hasher_for_kernel(id: Sha384KernelId) -> Sha384 {
   Sha384 {
     compress_blocks: id,
     dispatch_initialized: true,

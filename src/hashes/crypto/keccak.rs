@@ -560,7 +560,6 @@ pub(crate) trait Permuter: Copy {
   fn permute(self, state: &mut [u64; 25], len_hint: usize);
 
   /// The kernel that [`Self::permute`] runs on this CPU, for introspection.
-  #[cfg(feature = "diag")]
   fn kernel_name(self) -> &'static str;
 
   /// Absorb one complete rate block and permute.
@@ -641,7 +640,6 @@ impl Permuter for InlinePermuter {
     keccakf_portable(state);
   }
 
-  #[cfg(feature = "diag")]
   fn kernel_name(self) -> &'static str {
     "portable"
   }
@@ -693,7 +691,6 @@ impl Permuter for X86Permuter {
     }
   }
 
-  #[cfg(feature = "diag")]
   fn kernel_name(self) -> &'static str {
     if self.single_avx512 {
       "x86-avx512"
@@ -809,7 +806,6 @@ impl Permuter for Aarch64Permuter {
     }
   }
 
-  #[cfg(feature = "diag")]
   fn kernel_name(self) -> &'static str {
     if cfg!(target_vendor = "apple") {
       "aarch64-sha3"
@@ -909,7 +905,6 @@ impl Permuter for Aarch64Permuter {
     }
   }
 
-  #[cfg(feature = "diag")]
   fn kernel_name(self) -> &'static str {
     if cfg!(target_vendor = "apple") && self.has_sha3 {
       "aarch64-sha3"
@@ -1015,7 +1010,6 @@ impl Permuter for S390xPermuter {
   }
 
   /// KIMD absorbs whole blocks, and the portable rounds permute the rest.
-  #[cfg(feature = "diag")]
   fn kernel_name(self) -> &'static str {
     if self.has_kimd { "s390x-kimd" } else { "portable" }
   }
@@ -1058,7 +1052,6 @@ pub(crate) type PlatformPermuter = InlinePermuter;
 
 /// The kernel that production Keccak selects on this CPU. The selection does
 /// not depend on the input length.
-#[cfg(feature = "diag")]
 pub(crate) fn kernel_name_for_len(_len: usize) -> &'static str {
   PlatformPermuter::default().kernel_name()
 }

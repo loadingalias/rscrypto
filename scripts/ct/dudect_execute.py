@@ -87,18 +87,22 @@ def measure(prepared, args):
   for path in (args.stdout, args.csv, report_path):
     if path.exists():
       raise ValueError(f"refusing to reuse measurement evidence: {path}")
-  command = [prepared["metadata"]["binary"]["path"], "--out", str(args.csv), "--min-ticks", str(prepared["min_median_ticks"])]
-  if args.filter:
-    command += ["--filter", args.filter]
+  command = [prepared["metadata"]["binary"]["path"], "--ignored", "--exact", "ct_tests::dudect::measure", "--nocapture"]
+  environment = {
+    "RSCRYPTO_CT_DUDECT_SAMPLES": str(args.samples),
+    "RSCRYPTO_CT_DUDECT_OUT": str(args.csv),
+    "RSCRYPTO_CT_DUDECT_MIN_TICKS": str(prepared["min_median_ticks"]),
+    "RSCRYPTO_CT_DUDECT_FILTER": args.filter,
+  }
   if args.seed:
-    command += ["--seed", args.seed]
-  args.command = f"RSCRYPTO_CT_DUDECT_SAMPLES={args.samples} " + " ".join(command)
+    environment["RSCRYPTO_CT_DUDECT_SEED"] = args.seed
+  args.command = " ".join(f"{key}={value}" for key, value in environment.items()) + " " + " ".join(command)
   print(args.command, flush=True)
   with args.stdout.open("w") as stdout:
     try:
       result = subprocess.run(
         command, stdout=stdout, check=False, timeout=args.timeout,
-        env={**os.environ, "RSCRYPTO_CT_DUDECT_SAMPLES": str(args.samples)},
+        env={**os.environ, **environment},
       )
     except subprocess.TimeoutExpired:
       print("DudeCT measurement timed out", flush=True)

@@ -85,7 +85,7 @@ class MacOSCommit(unittest.TestCase):
             self.assertEqual(subprocess.run([str(script)], env=env).returncode, 0)
             self.assertEqual((root / 'calls').read_text().splitlines(), [
                 'check.sh native', 'test --all --release', 'test --all --release --portable',
-                'test-evidence', 'test-rsa-macos-asm'])
+                'test-rsa-macos-asm'])
             (root / 'calls').unlink()
             result = subprocess.run([str(script)], env={**env, 'FAIL_COMMAND': 'test --all --release'})
             self.assertNotEqual(result.returncode, 0)

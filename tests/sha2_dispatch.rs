@@ -59,7 +59,6 @@ fn sha512_256_streaming_clone_reset_boundaries() {
   exercise_streaming::<Sha512_256, sha2::Sha512_256>();
 }
 
-#[cfg(feature = "diag")]
 #[test]
 fn diagnostic_backend_is_independent_of_length() {
   use rscrypto::hashes::introspect::{KernelIntrospect, kernel_for};

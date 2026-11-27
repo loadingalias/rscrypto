@@ -7,15 +7,4 @@ license = "Apache-2.0"
 
 [dependencies]
 dudect-bencher = { version = "=0.7.0", path = "vendor/dudect-bencher" }
-rscrypto = { path = "../..", default-features = false, features = [
-  "std",
-  "full",
-  "parallel",
-  "diag",
-  "getrandom",
-] }
-rscrypto-ct-harness = { path = "../ct-harness" }
-
-[[bin]]
-name = "rscrypto-ct-dudect"
-path = "src/main.rs"
+rscrypto = { path = "../..", default-features = false, features = ["std", "hmac"] }

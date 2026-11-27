@@ -72,7 +72,6 @@ pub(crate) enum Sha256KernelId {
 }
 
 impl Sha256KernelId {
-  #[cfg(any(test, feature = "diag"))]
   #[inline]
   #[must_use]
   pub(crate) const fn as_str(self) -> &'static str {
@@ -252,7 +251,6 @@ pub(crate) fn compile_time_best() -> Sha256KernelId {
 }
 
 /// Kernel name for the compile-time-best path (introspection).
-#[cfg(feature = "diag")]
 pub(crate) const COMPILE_TIME_NAME: &str = if cfg!(miri) {
   "portable"
 } else if cfg!(all(

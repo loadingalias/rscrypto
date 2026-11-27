@@ -46,8 +46,7 @@ def request(env: dict, run_id: str) -> dict:
   if preset is None:
     raise ValueError('primitive must be one of: ' + ', '.join(catalog['profile_presets']))
   benchmark = preset['bench']
-  enabled = preset['diagnostic']
-  entry = runner.target(catalog, benchmark, enabled)
+  entry = runner.target(catalog, benchmark)
   row = profile_platform(architecture, run_id)
   return {
     'architecture': architecture,
@@ -58,7 +57,6 @@ def request(env: dict, run_id: str) -> dict:
     'benchmark': benchmark,
     'case': preset['case'],
     'seconds': settings.PROFILE_CAPTURE_DEFAULT_SECONDS,
-    'diagnostic': enabled,
     'binary': entry['binary'],
     'features': entry['features'],
     'prepare_timeout': settings.PROFILE_PREPARE_TIMEOUT_MINUTES,
@@ -72,8 +70,6 @@ def command(selection: dict, operation: str, target: str, archive: str) -> list[
   if operation not in {'prepare', 'capture'}:
     raise ValueError('profile operation must be prepare or capture')
   result = ['just', 'profile', selection['benchmark'], selection['case'], str(selection['seconds'])]
-  if selection['diagnostic']:
-    result.append('--diag')
   result += ['--target', target,
              '--prepare-archive' if operation == 'prepare' else '--run-archive', archive]
   return result

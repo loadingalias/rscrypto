@@ -112,14 +112,9 @@ else:
     assert Path(command[command.index('--manifest-path') + 1]).resolve() == (workspace / 'Cargo.toml').resolve(), command
     assert 'Linting independent workspace: tools/later/' not in result.stdout
 
-    # Only the tools workspace, which holds the CT tools, exposes internal hooks. Ambient flags
-    # must survive that opt-in without leaking it to the next workspace.
+    # Every workspace inherits the ambient compiler flags.
     shutil.rmtree(workspace)
     (root / 'tools/Cargo.toml').write_text('[workspace]\n')
-    for name in ('scripts/ct/internal.py', 'scripts/ct/provenance.py', 'scripts/lib/python.sh'):
-      path = root / name
-      path.parent.mkdir(parents=True, exist_ok=True)
-      shutil.copy2(source / name, path)
     flag_log = root / 'flags.jsonl'
     for failure, expected_status in (('', 0), ('tools', 7)):
       flag_log.write_text('')
@@ -133,7 +128,7 @@ else:
       assert result.returncode == expected_status, result.stderr
       flags = [json.loads(line) for line in flag_log.read_text().splitlines()]
       # A failed package stops the lint; otherwise each workspace lints its two unvendored packages.
-      expected = [['tools', '-C\x1ftarget-cpu=generic\x1f--cfg\x1frscrypto_internal']]
+      expected = [['tools', '-C\x1ftarget-cpu=generic']]
       if not failure:
         expected = 2 * expected + 2 * [['later', '-C\x1ftarget-cpu=generic']]
       assert flags == expected, flags
@@ -273,8 +268,8 @@ if name == 'cargo' and args[0] == 'deny':
           if target == 'wasm32-wasip1':
             assert {'std', 'getrandom', 'full'} <= selected and 'parallel' not in selected
       fmt = [c for c in commands if c[:3] == ['cargo', '+' + channel, 'fmt']]
-      check = [['cargo', '+' + channel, 'fmt', '--all', '--', '--check']]
-      assert fmt == ([['cargo', '+' + channel, 'fmt', '--all']] * 2 + check if mode == 'check' else check)
+      check = [['cargo', '+' + channel, 'fmt', '-p', 'rscrypto', '-p', 'rscrypto-rustls', '--', '--check']]
+      assert fmt == ([['cargo', '+' + channel, 'fmt', '-p', 'rscrypto', '-p', 'rscrypto-rustls']] * 2 + check if mode == 'check' else check)
       assert not any('plan' in c for c in commands)
       # Dependency policy runs only through scripts/check/dependencies.sh.
       assert not any(c[:2] in (['cargo', 'deny'], ['cargo', 'audit']) for c in commands)

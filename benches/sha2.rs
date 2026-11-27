@@ -16,36 +16,6 @@ use core::hint::black_box;
 use bench_config::checked;
 use criterion::{BenchmarkId, Criterion};
 
-#[cfg(all(rscrypto_internal, feature = "diag"))]
-fn print_sha2_diag_once() {
-  use std::sync::Once;
-
-  static ONCE: Once = Once::new();
-  ONCE.call_once(|| {
-    use rscrypto::{Sha256, hashes::introspect::kernel_for};
-
-    eprintln!("rscrypto-diag sha2 runtime_caps={}", rscrypto::platform::caps());
-    eprintln!("rscrypto-diag sha2 static_caps={}", rscrypto::platform::caps_static());
-    eprintln!(
-      "rscrypto-diag sha2 target_features sha={} sha512={} avx2={} avx512f={}",
-      cfg!(target_feature = "sha"),
-      cfg!(target_feature = "sha512"),
-      cfg!(target_feature = "avx2"),
-      cfg!(target_feature = "avx512f")
-    );
-    eprintln!(
-      "rscrypto-diag sha2 sha256_kernel 64={} 4096={} 1048576={}",
-      kernel_for::<Sha256>(64),
-      kernel_for::<Sha256>(4096),
-      kernel_for::<Sha256>(1_048_576)
-    );
-  });
-}
-
-#[cfg(not(all(rscrypto_internal, feature = "diag")))]
-#[inline]
-fn print_sha2_diag_once() {}
-
 /// One-shot hashing across the shared size matrix. `$boundaries` adds the longest message whose padding fits one compression
 /// block and the shortest that needs a second: 55 and 56 bytes for 64-byte
 /// blocks, 111 and 112 for 128-byte blocks.
@@ -55,7 +25,6 @@ macro_rules! sha2_oneshot {
       if !bench_config::selected($group) {
         return;
       }
-      print_sha2_diag_once();
 
       let inputs = common::comp_sizes(&$boundaries);
       let mut g = c.benchmark_group($group);
@@ -94,7 +63,6 @@ macro_rules! sha2_oneshot_ietf {
       if !bench_config::selected($group) {
         return;
       }
-      print_sha2_diag_once();
 
       let inputs = common::comp_sizes(&$boundaries);
       let mut g = c.benchmark_group($group);
@@ -186,7 +154,6 @@ macro_rules! sha2_streaming {
       if !bench_config::selected($group) {
         return;
       }
-      print_sha2_diag_once();
 
       let data = common::random_bytes(1048576);
       let rscrypto_digest = |chunk_size: usize| {
@@ -240,56 +207,6 @@ sha2_streaming!(
   sha2::Sha512_256
 );
 
-fn sha256_internal(_c: &mut Criterion) {
-  if !bench_config::selected("sha256/internal/") {
-    return;
-  }
-  print_sha2_diag_once();
-
-  #[cfg(all(rscrypto_internal, feature = "diag"))]
-  {
-    use bench_config::checked_with;
-
-    let blocks = common::random_bytes(64 * 16);
-    let mut g = _c.benchmark_group("sha256/internal/compress");
-
-    for block_count in [1usize, 2, 16] {
-      let len = block_count.strict_mul(64);
-      common::set_throughput(&mut g, len);
-      let blocks = &blocks[..len];
-      let initial = [
-        0x6a09e667u32,
-        0xbb67ae85,
-        0x3c6ef372,
-        0xa54ff53a,
-        0x510e527f,
-        0x9b05688c,
-        0x1f83d9ab,
-        0x5be0cd19,
-      ];
-      g.bench_function(
-        BenchmarkId::new("selected-kernel", format!("{len}B")),
-        checked_with(
-          initial,
-          |state| {
-            rscrypto::hashes::introspect::sha256_compress_blocks_for_bench(black_box(&mut *state), black_box(blocks));
-            state[0]
-          },
-          |_, state| {
-            // The check sees the state after two calls; sha2 compresses the same blocks twice.
-            let mut expected = initial;
-            sha2::block_api::compress256(&mut expected, blocks.as_chunks::<64>().0);
-            sha2::block_api::compress256(&mut expected, blocks.as_chunks::<64>().0);
-            assert_eq!(*state, expected);
-          },
-        ),
-      );
-    }
-
-    g.finish();
-  }
-}
-
 fn main() {
   bench_config::run(&[
     sha224,
@@ -302,6 +219,5 @@ fn main() {
     sha384_streaming,
     sha512_streaming,
     sha512_256_streaming,
-    sha256_internal,
   ]);
 }

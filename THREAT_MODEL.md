@@ -25,7 +25,6 @@ The crate touches the system in these ways only:
 
 - With `getrandom`, some APIs get entropy from the operating system.
 - With `std`, runtime dispatch reads CPU and operating-system capability data.
-- With `std`, the CRC and Adler-32 dispatch reads its `RSCRYPTO_*_FORCE` environment variables.
 - With `std` on Unix targets, fork detection reads the process ID. On 64-bit Linux and Android, it maps
   one page that the kernel clears in a fork child. On Apple targets, it registers one fork handler that
   clears a word in a fork child. It reads the process ID only if the system refuses the page or the handler.

@@ -19,7 +19,6 @@ pub(in crate::checksum) mod aarch64;
   all(target_arch = "s390x", not(feature = "portable-only"))
 ))]
 mod blocks;
-pub(crate) mod config;
 pub(in crate::checksum) mod portable;
 #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
 pub(in crate::checksum) mod power;
@@ -32,7 +31,6 @@ pub(in crate::checksum) mod wasm32;
 #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 pub(in crate::checksum) mod x86_64;
 
-pub use config::{Adler32Config, Adler32Force};
 use portable::{MOD, MOD64};
 
 use crate::traits::{Checksum, ChecksumCombine};
@@ -68,9 +66,7 @@ const NEON_DOTPROD: Kernel = Kernel {
 
 #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
 fn adler32_neon_dotprod(adler: u32, data: &[u8]) -> u32 {
-  // SAFETY: NEON is enabled at compile time. Only `select` returns this function, and only when
-  // cached detection reports the dot-product extension: automatic selection checks it, and
-  // `config::get()` keeps `Adler32Force::NeonDotprod` only then.
+  // SAFETY: The build enables NEON and the selector checks the dot-product extension.
   unsafe { aarch64::update_dotprod(adler, data) }
 }
 
@@ -94,9 +90,7 @@ const RVV: Kernel = Kernel {
 
 #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
 fn adler32_rvv(adler: u32, data: &[u8]) -> u32 {
-  // SAFETY: Only `select` returns this function, and only when cached detection reports the V
-  // extension: automatic selection checks it, and `config::get()` keeps `Adler32Force::Rvv`
-  // only then.
+  // SAFETY: The selector checks the V extension.
   unsafe { riscv64::update(adler, data) }
 }
 
@@ -106,35 +100,6 @@ const WASM_SIMD128: Kernel = Kernel {
   name: wasm32::KERNEL_NAME,
 };
 
-/// The kernel for `force`, which comes from `config::get()`: a forced kernel survives it only
-/// when cached detection reports every capability that the kernel needs.
-///
-/// This is the only kernel selection of Adler-32. [`kernel`] caches its result, and updates and
-/// kernel names both read that cache, so a reported name is the kernel that runs.
-fn select(force: Adler32Force) -> Kernel {
-  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
-  if let Some(kernel) = x86_64::KERNELS.iter().find(|kernel| kernel.force == force) {
-    return Kernel {
-      update: kernel.update,
-      name: kernel.name,
-    };
-  }
-  match force {
-    Adler32Force::Portable => PORTABLE,
-    #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
-    Adler32Force::Neon => NEON,
-    #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
-    Adler32Force::NeonDotprod => NEON_DOTPROD,
-    #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
-    Adler32Force::Vmsum => VMSUM,
-    #[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
-    Adler32Force::Vsum => VSUM,
-    #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
-    Adler32Force::Rvv => RVV,
-    _ => select_auto(),
-  }
-}
-
 /// Automatic selection: the x86-64 kernel that cached detection allows, the aarch64 dot-product
 /// kernel when detection reports `FEAT_DotProd` and the NEON kernel when it reports NEON, the
 /// POWER kernel when detection reports AltiVec, the IBM Z kernel when detection reports the
@@ -142,7 +107,7 @@ fn select(force: Adler32Force) -> Kernel {
 /// when the artifact requires SIMD128, and otherwise the portable kernel. `portable-only`, Miri,
 /// and a portable detection override report no capability, so they select the portable kernel.
 /// Every Adler-32 kernel handles every length, so one kernel serves every call.
-fn select_auto() -> Kernel {
+fn select() -> Kernel {
   let caps = crate::platform::caps();
   #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   if let Some(kernel) = x86_64::select(caps) {
@@ -179,11 +144,11 @@ fn select_auto() -> Kernel {
   PORTABLE
 }
 
-/// The kernel of this process, selected once for the effective force.
+/// The kernel of this process, selected from cached capabilities.
 #[inline]
 fn kernel() -> Kernel {
   static KERNEL: crate::backend::cache::OnceCache<Kernel> = crate::backend::cache::OnceCache::new();
-  KERNEL.get_or_init(|| select(config::get().effective_force))
+  KERNEL.get_or_init(select)
 }
 
 /// Adler-32 through [`kernel`], for a hasher that `const` construction cannot resolve.
@@ -231,12 +196,6 @@ impl Adler32 {
       // `resume` is const, so the kernel resolves at the first update.
       dispatch: adler32_dispatch,
     }
-  }
-
-  /// Get the effective Adler-32 configuration.
-  #[must_use]
-  pub fn config() -> Adler32Config {
-    config::get()
   }
 
   /// Returns the kernel name that the selector would choose for `len`.
@@ -406,7 +365,6 @@ impl_std_io_write_for_checksum!(Adler32);
 
 // Kernel Introspection
 
-#[cfg(feature = "diag")]
 impl crate::checksum::introspect::KernelIntrospect for Adler32 {
   fn kernel_name_for_len(len: usize) -> &'static str {
     Self::kernel_name_for_len(len)
@@ -414,7 +372,7 @@ impl crate::checksum::introspect::KernelIntrospect for Adler32 {
 }
 
 /// Automatic selection runs, and names, the fastest kernel that the host's capabilities allow.
-/// The list below states that policy apart from `select_auto`, so on its native host a reported
+/// The list below states that policy apart from `select`, so on its native host a reported
 /// capability that does not select its kernel fails here. The kernel must also match the
 /// portable kernel through the public API.
 #[cfg(all(test, not(miri)))]
@@ -422,9 +380,6 @@ impl crate::checksum::introspect::KernelIntrospect for Adler32 {
 fn automatic_selection_runs_the_kernel_that_the_capabilities_call_for() {
   use crate::platform::Caps;
 
-  if config::get().effective_force != Adler32Force::Auto {
-    return;
-  }
   let policy: &[(Caps, &str)] = &[
     #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     (

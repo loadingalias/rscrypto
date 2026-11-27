@@ -25,7 +25,7 @@ just test-examples
 | `p256_ecdh` | Generate two ephemeral P-256 keys and confirm that both parties derive the same fixed-width ECC CDH output. | `p256-ecdh,getrandom` |
 | `p384_ecdh` | Generate two ephemeral P-384 keys and confirm that both parties derive the same fixed-width ECC CDH output. | `p384-ecdh,getrandom` |
 | `x25519_key_agreement` | Generate two X25519 keypairs and confirm that both parties derive the same raw secret. | `x25519,getrandom` |
-| `introspect` | Show platform capabilities and the selected CRC, SHA-256, and AEAD backends. | `crc32,sha2,chacha20poly1305,diag` |
+| `introspect` | Show platform capabilities and the selected CRC, SHA-256, and AEAD backends. | `crc32,sha2,chacha20poly1305` |
 
 Run one example:
 

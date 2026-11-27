@@ -150,7 +150,7 @@ bench-provider-scorecard *args:
 bench-provider-resources *args:
     @scripts/lib/python.sh scripts/bench/provider_resources.py "$@"
 
-# Record ML-DSA per-signature latency tails and rejection-sampling attempt counts.
+# Record the latency distribution of public ML-DSA signing calls.
 [group('benchmarks')]
 bench-mldsa-tail *args:
     @scripts/lib/python.sh scripts/bench/mldsa_tail.py "$@"
@@ -290,7 +290,7 @@ test-coverage:
 
 # Benches
 
-# Measure Criterion cases, or discover them with --list; --diag enables diagnostics.
+# Measure Criterion cases, or discover them with --list.
 # The bench and profile runners run Python in UTF-8 mode so Windows consoles can print Criterion output.
 [group('benchmarks')]
 bench *args:
@@ -308,7 +308,7 @@ bench-structural *args:
     @command -v valgrind >/dev/null || { echo "error: Valgrind is required" >&2; exit 1; }
     @export PYTHONUTF8=1; python="$(scripts/lib/python.sh --print)"; "$python" scripts/bench/bounded.py scripts/lib/toolchain.sh --exec cargo bench --locked --profile bench --features 'checksums,sha2,blake3' --bench structural "$@"
 
-# Record one exact case, or discover cases with --list; --diag enables diagnostics.
+# Record one exact case, or discover cases with --list.
 [group('benchmarks')]
 profile *args:
     @export PYTHONUTF8=1; python="$(scripts/lib/python.sh --print)"; "$python" scripts/bench/bounded.py "$python" scripts/bench/runner.py profile "$@"
@@ -332,8 +332,3 @@ bench-export run:
 [group('benchmarks')]
 bench-compare *args:
     @scripts/lib/python.sh scripts/bench/compare.py "$@"
-
-# Run internal-hook regressions with native and portable dispatch.
-[group('tests')]
-test-evidence:
-    @scripts/lib/python.sh scripts/ct/internal.py --target "${CARGO_BUILD_TARGET:-$(scripts/lib/toolchain.sh --print-host)}" -- scripts/lib/python.sh scripts/test/evidence_suite.py

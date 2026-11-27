@@ -40,10 +40,7 @@ pub(super) fn contiguous<'a>(segments: &'a mut [&mut [u8]]) -> Option<&'a mut [u
       target_arch = "x86_64",
       target_feature = "sse2",
       target_os = "linux",
-      any(
-        all(rscrypto_internal, feature = "diag"),
-        all(not(debug_assertions), not(feature = "portable-only"))
-      )
+      all(any(test, not(debug_assertions)), not(feature = "portable-only"))
     )
   )
 ))]
@@ -66,10 +63,7 @@ pub(super) struct Span {
       target_arch = "x86_64",
       target_feature = "sse2",
       target_os = "linux",
-      any(
-        all(rscrypto_internal, feature = "diag"),
-        all(not(debug_assertions), not(feature = "portable-only"))
-      )
+      all(any(test, not(debug_assertions)), not(feature = "portable-only"))
     )
   )
 ))]
@@ -96,10 +90,7 @@ impl Span {
       target_arch = "x86_64",
       target_feature = "sse2",
       target_os = "linux",
-      any(
-        all(rscrypto_internal, feature = "diag"),
-        all(not(debug_assertions), not(feature = "portable-only"))
-      )
+      all(any(test, not(debug_assertions)), not(feature = "portable-only"))
     )
   )
 ))]

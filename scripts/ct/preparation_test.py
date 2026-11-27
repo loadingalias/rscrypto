@@ -35,7 +35,7 @@ class PreparationTests(unittest.TestCase):
     for target, failure in ((target, failure)
                             for target in (TARGET, "x86_64-pc-windows-msvc", "riscv64gc-unknown-linux-gnu",
                                            "s390x-unknown-linux-gnu")
-                            for failure in ("", "--lib", "--bin", "rust-src")):
+                            for failure in ("", "--release", "-Zpanic-abort-tests", "rust-src")):
       with self.subTest(target=target, failure=failure), tempfile.TemporaryDirectory() as temporary:
         root = Path(temporary).resolve()
         commands = root / "commands"
@@ -66,11 +66,12 @@ print('override objdump')
         executable(commands / "reporter", f"#!{sys.executable}\n" + '''
 import os, sys
 if sys.argv[1:3] == ['-X', 'utf8']: del sys.argv[1:3]
-if sys.argv[1] == 'scripts/ct/provenance.py':
+if os.path.basename(sys.argv[1]) in ('provenance.py', 'library_harness.py'):
   os.execv(sys.executable, [sys.executable, *sys.argv[1:]])
 ''')
         (root / "scripts/ct").mkdir()
         shutil.copy2(ROOT / "scripts/ct/provenance.py", root / "scripts/ct/provenance.py")
+        shutil.copy2(ROOT / "scripts/ct/library_harness.py", root / "scripts/ct/library_harness.py")
         for path in ("Cargo.toml", "tools/Cargo.toml", "tools/ct-harness/Cargo.toml"):
           manifest = root / path
           manifest.parent.mkdir(parents=True, exist_ok=True)
@@ -79,8 +80,9 @@ if sys.argv[1] == 'scripts/ct/provenance.py':
           lockfile = root / path
           lockfile.parent.mkdir(parents=True, exist_ok=True)
           lockfile.touch()
+        (root / "ct.toml").write_text('[equality_evidence.release_binary]\nfeatures = ["std", "full", "parallel", "getrandom"]\n')
         executable(commands / "cargo", f"#!{sys.executable}\n" + '''
-import os, sys
+import json, os, sys
 from pathlib import Path
 args = sys.argv[1:]
 assert os.environ['RUSTUP_TOOLCHAIN'] == os.environ['EXPECTED_TOOLCHAIN']
@@ -93,14 +95,19 @@ build = Path(args[args.index('--target-dir') + 1])
 assert not (build / 'stale-build').exists()
 emit = build / args[args.index('--target') + 1] / 'release'
 emit.mkdir(parents=True, exist_ok=True)
-name = 'rscrypto_ct_harness' if '--lib' in args else 'rscrypto_ct_evidence'
+linked = '-Zpanic-abort-tests' in args
+prefix = emit / 'rscrypto_ct_harness'
+if linked:
+  output = next(arg for arg in args if arg.startswith('--emit=llvm-ir='))
+  prefix = Path(output.split('=', 2)[2].split(',', 1)[0]).with_suffix('')
 for extension in ('s', 'o'):
-  (emit / (name + '.' + extension)).write_text('fresh')
-# A function that enables RISC-V extensions with `#[target_feature]`, as rustc emits its attributes.
-(emit / (name + '.ll')).write_text('attributes #0 = { "target-features"="+zknh,-relax,+v,+zknh" }\\n')
-if '--bin' in args:
+  prefix.with_suffix('.' + extension).write_text('fresh')
+prefix.with_suffix('.ll').write_text('attributes #0 = { "target-features"="+zknh,-relax,+v,+zknh" }\\n')
+if linked:
   windows = 'windows-msvc' in args[args.index('--target') + 1]
-  (emit / ('rscrypto-ct-evidence.exe' if windows else 'rscrypto-ct-evidence')).write_text('binary')
+  binary = emit / ('rscrypto-tests.exe' if windows else 'rscrypto-tests')
+  binary.write_text('binary')
+  print(json.dumps({'reason': 'compiler-artifact', 'target': {'name': 'rscrypto'}, 'profile': {'test': True}, 'executable': str(binary)}))
   if windows:
     flag = next(arg for arg in args if arg.startswith('link-arg=/MAP:'))
     Path(flag.removeprefix('link-arg=/MAP:')).write_text('map')

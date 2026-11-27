@@ -622,8 +622,7 @@ impl Sha256 {
   }
 
   #[cfg(any(feature = "hmac", feature = "rsa"))]
-  #[cfg_attr(feature = "diag", inline(never))]
-  #[cfg_attr(not(feature = "diag"), inline)]
+  #[inline]
   pub(crate) fn finalize_secret(&self) -> [u8; 32] {
     if kernels::COMPILE_TIME_HW {
       return self.finalize_inner_with::<true>(kernels::compile_time_best());
@@ -632,8 +631,7 @@ impl Sha256 {
   }
 
   #[cfg(feature = "hmac")]
-  #[cfg_attr(feature = "diag", inline(never))]
-  #[cfg_attr(not(feature = "diag"), inline)]
+  #[inline]
   pub(crate) fn finalize_secret_into(&self, output: &mut [u8; 32]) {
     if kernels::COMPILE_TIME_HW {
       self.finalize_inner_into::<true>(kernels::compile_time_best(), output);
@@ -749,24 +747,6 @@ impl Sha256 {
   #[inline]
   #[cfg(all(feature = "hmac", not(all(target_arch = "x86_64", target_feature = "sse2"))))]
   fn reset_update_mode_to_aligned_prefix(&mut self, _prefix: &Sha256Prefix) {}
-
-  #[cfg(all(
-    feature = "hmac",
-    any(all(rscrypto_internal, feature = "diag"), all(test, feature = "hkdf"))
-  ))]
-  #[inline]
-  pub(crate) fn new_with_compress_for_test(compress_blocks: Sha256KernelId) -> Self {
-    Self {
-      state: H0,
-      block: [0u8; BLOCK_LEN],
-      block_len: 0,
-      bytes_hashed: 0,
-      compress_blocks,
-      dispatch_initialized: true,
-      #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
-      update_mode: Sha256UpdateMode::RuntimeDispatch,
-    }
-  }
 }
 
 #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]

@@ -217,7 +217,6 @@ A case filter that matches nothing in a target fails that target's job during di
 
 Optional sampling fields override the shared Criterion settings in
 [`.config/criterion.json`](../.config/criterion.json). Empty fields keep those settings.
-The diagnostic checkbox enables diagnostic features for the selected targets.
 It does not select other targets.
 
 Use `quick` for a short validation run. It keeps the selected cases, production operations,
@@ -338,7 +337,6 @@ The [Profile workflow](../.github/workflows/profile.yml) runs only on manual req
 It takes one native Linux architecture and one curated primitive.
 
 - The benchmark catalog maps each primitive to one benchmark target and one exact production case.
-  It also owns the diagnostic-feature policy.
 - The default selection is `aead/aes`.
   It profiles `aes-128-gcm/copy-and-encrypt/rscrypto/4096` for five seconds.
 - The ML-DSA presets use ML-DSA-65: `auth/mldsa65-keygen`, `auth/mldsa65-prepared-sign`, and `auth/mldsa65-prepared-verify`.
@@ -542,8 +540,7 @@ Each library retains its own cleanup policy. Caller output storage is reused.
 `RSCRYPTO_BLAKE3_BENCH_ISA` selects `auto`, `portable`, `sse41`, `avx2`, `avx512`
 or `neon` before cached detection. The override only removes capabilities and
 rejects unavailable tiers. Upstream remains explicitly labeled `blake3-auto`.
-Process output records capability masks; optional `--diag` also checks the
-selected bulk backend. Native performance qualification is separate from
+Process output records the capability masks. Native performance qualification is separate from
 compilation, case discovery and output equality.
 
 ### Other operation boundaries
@@ -713,8 +710,6 @@ the default Bench workflow does not provision them and excludes this optional ta
     ECDSA `rscrypto` parses the key, which builds no verification table, and verifies once,
     as rscrypto-rustls does for a key that is not a trust anchor. aws-lc-rs allocates an `EVP_PKEY`.
   - Each check also requires the timed path to reject a key that is not a curve point.
-  - The diagnostic `verify-phase/portable-double-scalar` and `verify-phase/aarch64-asm-double-scalar` rows
-    include portable public-point decoding and result encoding; they do not measure cached-key verification alone.
 - ECDSA `sign/rscrypto` is the default `try_sign` API, which needs no entropy source.
   `rscrypto-blinded` returns the same signature through the blinded path.
 - ECDH agreement has two tasks.
@@ -732,9 +727,6 @@ the default Bench workflow does not provision them and excludes this optional ta
   aws-lc-rs takes part only in `public-key-from-secret`, because its key import already derives and caches
   the public point. libcrux has no key object, so it is absent from `public-key`.
   ring cannot import a scalar, so it is absent from `public-key-from-secret`.
-- The ChaCha diagnostic group `chacha20-copy-and-xor` restores the message and applies the keystream in the timed closure,
-  with a reused allocated buffer.
-  It is not a complete AEAD operation.
 - CRC `streaming` checksums 1 MiB through updates of 64 bytes or 4 KiB, with each library's incremental API.
   CRC `combine` joins the checksums of a 1 KiB part and a second part of 64, 65,535, or 16,777,215 bytes.
   Those lengths have every low bit set, which gives square-and-multiply combination its most multiplications.
@@ -772,11 +764,7 @@ the default Bench workflow does not provision them and excludes this optional ta
   Every measured operation is checked against upstream before timing.
 - BLAKE3 `ordered-alignment` repeats selected ordered cases with identical bytes
   at addresses congruent to 0 and 1 modulo 64. It retains the `ordered` timing
-  boundary. Diagnostic `leaf-alignment-cvs` rows call existing full-chunk workers
-  with independently controlled input and output alignment. They include wrapper
-  validation and consume every CV, with allocation outside timing. Every CV is
-  checked against upstream's non-root hash at its chunk offset.
-  These component rows do not measure public dispatch or complete hashing.
+  boundary.
 - HKDF `expand` builds every pseudorandom key outside timing, from the same PRK bytes.
   aws-lc-rs uses `Prk::new_less_safe`, because its `Salt::extract` only stores the inputs
   and would run Extract again inside every `fill`.
@@ -1175,8 +1163,7 @@ Discover the actual cases before you choose a measurement scope:
 ```bash
 just bench crc64-nvme --list
 just bench sha2 --list
-just bench blake3 --diag --list
-just bench aead_kernels --list
+just bench blake3 --list
 ```
 
 `--list` builds the selected configuration and lists its cases.
@@ -1195,10 +1182,7 @@ and they give no timing guarantee.
 A diagnostic case can also be costly.
 Classes do not block execution.
 
-`--diag` (or `diag=true`) enables `diag` and the internal compiler cfg for the selected benchmark builds.
-Some target configurations already need it.
 The cases depend on the compiled features and the host capabilities.
-Dedicated diagnostic targets, such as `aead_kernels`, need explicit selection.
 `all` and runs with no name include only the default targets.
 
 ### Run
@@ -1262,7 +1246,7 @@ After a benchmark shows a specific cost, inspect it:
 ```bash
 just profile sha2 --list
 just profile sha2 'sha256/rscrypto/64' 10
-just profile blake3 --diag --list
+just profile blake3 --list
 just perf-codegen sha2 -- --asm <function>
 just perf-llvm-lines sha2 -- --filter <pattern>
 ```
@@ -1303,7 +1287,6 @@ Benchmarking and profiling share the Cargo command and the CPU-flag policy.
   Algorithm selectors, raw filters, and multi-target selection do not change this.
 - Each distinct target configuration is built once, before its selected cases run.
 - Profiling and code inspection use the same catalog target configuration.
-  `--diag` enables the same feature and internal compiler cfg in each command.
 - The `blake3`, `blake3_file`, and password-hashing targets enable `parallel`, where their workloads use it.
   `blake3_serial` builds the same binary without it, for the single-thread BLAKE3 comparisons.
 - Cargo ignores the panic setting for benchmarks,

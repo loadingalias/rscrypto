@@ -16,6 +16,3 @@ test = false
 
 [features]
 portable-only = ["rscrypto/portable-only"]
-
-[lints.rust]
-unexpected_cfgs = { level = "deny", check-cfg = ['cfg(rscrypto_mldsa_attempts)'] }

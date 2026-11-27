@@ -163,14 +163,14 @@ def recorded_hashes(path: Path) -> dict[str, str]:
 
 
 def dudect_registered_benches(root: Path, errors: list[str]) -> set[str]:
-  path = root / "tools" / "ct-dudect" / "src" / "main.rs"
+  path = root / "src/ct_tests/dudect.rs"
   if not path.exists():
     fail(errors, f"DudeCT source missing: {path}")
     return set()
   text = path.read_text()
-  start = text.find("ctbench_main_with_seeds!(")
+  start = text.find("timing_cases!(")
   if start < 0:
-    fail(errors, "DudeCT source has no ctbench_main_with_seeds! registry")
+    fail(errors, "DudeCT source has no timing_cases! registry")
     return set()
   body = text[start:]
   return set(re.findall(r"\(\s*([A-Za-z0-9_]+),\s*Some\(", body))
@@ -369,10 +369,10 @@ def validate_manifest(root: Path, selected_target: str, errors: list[str], warni
   release_binary = ct.get("equality_evidence", {}).get("release_binary", {})
   expected_release_binary = {
     "name": "rscrypto-ct-evidence",
-    "kind": "executable",
+    "kind": "library-test",
     "profile": "release",
     "backend": "llvm",
-    "features": ["std", "full", "parallel", "diag", "getrandom"],
+    "features": ["std", "full", "parallel", "getrandom"],
     "default_features": False,
   }
   for field, expected in expected_release_binary.items():
@@ -380,21 +380,17 @@ def validate_manifest(root: Path, selected_target: str, errors: list[str], warni
       fail(errors, f"equality release binary {field} expected {expected!r}, got {release_binary.get(field)!r}")
 
   harness_manifest_path = root / "tools" / "ct-harness" / "Cargo.toml"
-  dudect_manifest_path = root / "tools" / "ct-dudect" / "Cargo.toml"
   with harness_manifest_path.open("rb") as source:
-    harness_manifest = tomllib.load(source)
-  with dudect_manifest_path.open("rb") as source:
-    dudect_manifest = tomllib.load(source)
-  harness_dependency = harness_manifest.get("dependencies", {}).get("rscrypto", {})
-  dudect_dependency = dudect_manifest.get("dependencies", {}).get("rscrypto", {})
-  for label, dependency in (("CT harness", harness_dependency), ("DudeCT", dudect_dependency)):
-    if dependency.get("features") != release_binary.get("features"):
-      fail(errors, f"{label} rscrypto features do not match the equality release binary")
-    if dependency.get("default-features") != release_binary.get("default_features"):
-      fail(errors, f"{label} rscrypto default features do not match the equality release binary")
-  harness_bins = [row for row in harness_manifest.get("bin", []) if row.get("name") == release_binary.get("name")]
-  if len(harness_bins) != 1:
-    fail(errors, "CT harness must define exactly one equality release binary")
+    harness_dependency = tomllib.load(source)["dependencies"]["rscrypto"]
+  if harness_dependency.get("features") != release_binary.get("features"):
+    fail(errors, "CT harness rscrypto features do not match the equality release binary")
+  if harness_dependency.get("default-features") != release_binary.get("default_features"):
+    fail(errors, "CT harness rscrypto default features do not match the equality release binary")
+  with (root / "Cargo.toml").open("rb") as source:
+    package = tomllib.load(source)
+  runner = package.get("target", {}).get("cfg(any(unix, windows))", {}).get("dev-dependencies", {}).get("dudect-bencher", {})
+  if runner != {"path": "tools/ct-dudect/vendor/dudect-bencher"}:
+    fail(errors, "DudeCT must use the vendored runner in the library tests")
   owner_widths = release_binary.get("owner_widths", [])
   owner_symbols = release_binary.get("owner_symbols", [])
   public_len_symbols = release_binary.get("public_len_symbols", [])
@@ -433,7 +429,7 @@ def validate_manifest(root: Path, selected_target: str, errors: list[str], warni
     if owner_primitive.get("harness", {}).get("symbols") != owner_symbols:
       fail(errors, "owner_equality.fixed harness symbols do not match the equality release binary")
 
-  evidence_main = root / "tools" / "ct-harness" / "src" / "main.rs"
+  evidence_main = root / "src/ct_tests/retention.rs"
   retain_match = re.search(r"retain!\((.*?)\n  \);", evidence_main.read_text(), re.DOTALL)
   if retain_match is None:
     fail(errors, "CT harness lacks the final equality root retention list")
@@ -945,17 +941,23 @@ def validate_manifest(root: Path, selected_target: str, errors: list[str], warni
       fail(errors, f"duplicate public-length comparison id {comparison_id}")
     comparison_ids.add(comparison_id)
 
-    source = comparison.get("source")
-    if not isinstance(source, str) or not source.startswith("src/") or not (root / source).is_file():
-      fail(errors, f"public-length comparison {comparison_id} has invalid source {source!r}")
-      continue
     call_count = comparison.get("call_count")
-    if isinstance(call_count, bool) or not isinstance(call_count, int) or call_count <= 0:
+    if type(call_count) is not int or call_count <= 0:
       fail(errors, f"public-length comparison {comparison_id} call_count must be a positive integer")
       continue
-    if source in expected_public_len_calls:
-      fail(errors, f"public-length comparison source {source} is listed more than once")
-    expected_public_len_calls[source] = call_count
+    sources = comparison.get("sources", {comparison.get("source"): call_count})
+    if not isinstance(sources, dict) or not sources or any(type(count) is not int or count <= 0 for count in sources.values()):
+      fail(errors, f"public-length comparison {comparison_id} requires a positive count per source")
+      continue
+    if sum(sources.values()) != call_count:
+      fail(errors, f"public-length comparison {comparison_id} source counts do not add up to call_count")
+    for source, count in sources.items():
+      if not isinstance(source, str) or not source.startswith("src/") or not (root / source).is_file():
+        fail(errors, f"public-length comparison {comparison_id} has invalid source {source!r}")
+        continue
+      if source in expected_public_len_calls:
+        fail(errors, f"public-length comparison source {source} is listed more than once")
+      expected_public_len_calls[source] = count
 
     operations = comparison.get("operations")
     if not isinstance(operations, list) or not operations:
@@ -1504,9 +1506,9 @@ def validate_dudect(root: Path, target: str, profile: str, ct: dict, errors: lis
     fail(errors, "dudect rustc does not match lane provenance")
   if report.get("cargo") != provenance.get("tools", {}).get("cargo"):
     fail(errors, "dudect cargo does not match lane provenance")
-  dudect_manifest = root / "tools" / "ct-dudect" / "Cargo.toml"
+  dudect_manifest = root / "Cargo.toml"
   harness_manifest = root / "tools" / "ct-harness" / "Cargo.toml"
-  dudect_lockfile = root / "tools" / "Cargo.lock"
+  dudect_lockfile = root / "Cargo.lock"
   for key, path in (
     ("dudect_manifest_sha256", dudect_manifest),
     ("harness_manifest_sha256", harness_manifest),
@@ -1514,10 +1516,10 @@ def validate_dudect(root: Path, target: str, profile: str, ct: dict, errors: lis
   ):
     if report.get(key) != sha256_file(path):
       fail(errors, f"dudect {key} mismatch")
-  with (root / "tools" / "Cargo.toml").open("rb") as source:
+  with (root / "Cargo.toml").open("rb") as source:
     expected_profile_settings = tomllib.load(source).get("profile", {}).get(profile, {})
   if report.get("profile_settings") != expected_profile_settings:
-    fail(errors, "dudect profile settings do not match the tools workspace manifest")
+    fail(errors, "dudect profile settings do not match the library release manifest")
 
   if report.get("dudect_runner_sources") != dudect_runner_sources(root):
     fail(errors, "dudect runner source identity mismatch")

@@ -174,36 +174,6 @@ impl ring::hkdf::KeyType for RingHkdfLen {
   }
 }
 
-#[cfg(all(rscrypto_internal, feature = "diag"))]
-fn print_auth_diag_once() {
-  use std::sync::Once;
-
-  static ONCE: Once = Once::new();
-  ONCE.call_once(|| {
-    use rscrypto::{Sha256, hashes::introspect::kernel_for};
-
-    eprintln!("rscrypto-diag auth runtime_caps={}", rscrypto::platform::caps());
-    eprintln!("rscrypto-diag auth static_caps={}", rscrypto::platform::caps_static());
-    eprintln!(
-      "rscrypto-diag auth target_features sha={} sha512={} avx2={} avx512f={}",
-      cfg!(target_feature = "sha"),
-      cfg!(target_feature = "sha512"),
-      cfg!(target_feature = "avx2"),
-      cfg!(target_feature = "avx512f")
-    );
-    eprintln!(
-      "rscrypto-diag auth sha256_kernel 64={} 4096={} 1048576={}",
-      kernel_for::<Sha256>(64),
-      kernel_for::<Sha256>(4096),
-      kernel_for::<Sha256>(1_048_576)
-    );
-  });
-}
-
-#[cfg(not(all(rscrypto_internal, feature = "diag")))]
-#[inline]
-fn print_auth_diag_once() {}
-
 // HMAC with a key that each library prepares outside timing. Timed: message absorption, finalization, and state
 // reuse or destruction.
 // - rscrypto resets its keyed state after each tag. RustCrypto clones its keyed state. aws-lc-rs and ring copy the
@@ -223,7 +193,6 @@ macro_rules! hmac_bench {
       if !bench_config::selected($group) {
         return;
       }
-      print_auth_diag_once();
 
       let inputs = common::comp_sizes(&[]);
       let key = [0x42u8; $key_len];
@@ -327,7 +296,6 @@ fn hmac_sha256_streaming(c: &mut Criterion) {
   if !bench_config::selected("hmac-sha256/streaming") {
     return;
   }
-  print_auth_diag_once();
 
   let data = common::random_bytes(1048576);
   let key = [0x24u8; 32];
@@ -376,7 +344,6 @@ fn hmac_sha256_internal(c: &mut Criterion) {
   if !bench_config::selected("hmac-sha256/internal/fixed-message") {
     return;
   }
-  print_auth_diag_once();
 
   let data = common::random_bytes(4096);
   let key = [0x24u8; 32];
@@ -510,7 +477,6 @@ macro_rules! hmac_verify_bench {
       if !bench_config::selected(concat!($group, "/verify/")) {
         return;
       }
-      print_auth_diag_once();
 
       let key = [0x42u8; $key_len];
       let rustcrypto =
@@ -696,7 +662,6 @@ macro_rules! hkdf_expand_bench {
       if !bench_config::selected($group) {
         return;
       }
-      print_auth_diag_once();
 
       let salt = [0x11u8; $hash_len];
       let ikm = [0x22u8; $hash_len];
@@ -980,7 +945,6 @@ macro_rules! hkdf_extract_bench {
       if !bench_config::selected($group) {
         return;
       }
-      print_auth_diag_once();
 
       let salt = [0x11u8; $hash_len];
       let mut g = c.benchmark_group($group);
@@ -2048,519 +2012,6 @@ ecdsa_der_bench!(
   ring::signature::ECDSA_P384_SHA384_ASN1
 );
 
-// Independent expectations for the diagnostic ECDSA component rows, from RustCrypto point arithmetic and
-// crypto-bigint modular arithmetic. Components return little-endian 64-bit limbs. A Montgomery value is
-// multiplied by 2^(64 * limbs) modulo its field prime or group order. A nonce row passes only when the
-// x-coordinate of its k * G is the r of rscrypto's public signature.
-#[cfg(all(rscrypto_internal, feature = "diag"))]
-macro_rules! ecdsa_component_oracle {
-  (
-    $module:ident,
-    $curve:ident,
-    $uint:ident,
-    $secret_key:ident,
-    $hash:ty,
-    $len:literal,
-    $words:literal,
-    $order:literal,
-    $field:literal,
-    $comb_width:literal,
-    $comb_rows:literal,
-    $comb_entries:literal
-  ) => {
-    mod $module {
-      use sha2::Digest as _;
-      use $curve::{
-        AffinePoint, ProjectivePoint, Scalar,
-        elliptic_curve::{bigint::NonZero, ops::Reduce, point::AffineCoordinates as _},
-        $uint,
-      };
-
-      const ORDER: NonZero<$uint> = NonZero::<$uint>::new_unwrap(<$uint>::from_be_hex($order));
-      const FIELD: NonZero<$uint> = NonZero::<$uint>::new_unwrap(<$uint>::from_be_hex($field));
-
-      /// The integer whose little-endian 64-bit limbs a component returned.
-      pub(super) fn from_limbs(limbs: &[u64]) -> $uint {
-        let bytes: Vec<u8> = limbs.iter().rev().flat_map(|limb| limb.to_be_bytes()).collect();
-        <$uint>::from_be_slice(&bytes)
-      }
-
-      /// The coordinate pair, or `r || s`, of a two-integer component.
-      pub(super) fn pair(limbs: &[u64]) -> ($uint, $uint) {
-        let (first, second) = limbs.split_at($words);
-        (from_limbs(first), from_limbs(second))
-      }
-
-      fn nonzero(value: $uint) -> $uint {
-        if value == <$uint>::ZERO { <$uint>::ONE } else { value }
-      }
-
-      fn reduce(bytes: &[u8]) -> $uint {
-        <$uint>::rem_wide((<$uint>::from_be_slice(bytes), <$uint>::ZERO), &ORDER)
-      }
-
-      fn mul(lhs: &$uint, rhs: &$uint) -> $uint {
-        lhs.mul_mod(rhs, &ORDER)
-      }
-
-      fn inverse(value: &$uint) -> $uint {
-        value.invert_mod(&ORDER).expect("a nonzero scalar is invertible")
-      }
-
-      /// Multiplies by 2^bits, which is 2^bits - modulus because each modulus exceeds 2^(bits - 1).
-      fn montgomery(value: &$uint, modulus: &NonZero<$uint>) -> $uint {
-        value.mul_mod(&<$uint>::ZERO.wrapping_sub(modulus.as_ref()), modulus)
-      }
-
-      /// Affine coordinates of `scalar * G`.
-      fn base_mul(scalar: &$uint) -> ($uint, $uint) {
-        let point =
-          core::ops::Mul::mul(ProjectivePoint::GENERATOR, <Scalar as Reduce<$uint>>::reduce(scalar)).to_affine();
-        (<$uint>::from_be_slice(&point.x()), <$uint>::from_be_slice(&point.y()))
-      }
-
-      /// rscrypto's nonzero reduction of a double-width big-endian value.
-      pub(super) fn reduce_wide(bytes: &[u8]) -> $uint {
-        let (high, low) = bytes.split_at($len);
-        nonzero(<$uint>::rem_wide(
-          (<$uint>::from_be_slice(low), <$uint>::from_be_slice(high)),
-          &ORDER,
-        ))
-      }
-
-      /// The nonce blind that rscrypto derives from caller bytes. s390x draws it from the second half, with
-      /// the top bit cleared; other targets reduce all of the bytes.
-      fn nonce_blind(blind: &[u8]) -> $uint {
-        if cfg!(target_arch = "s390x") {
-          let mut half = [0u8; $len];
-          half.copy_from_slice(&blind[$len..]);
-          half[0] &= 0x7f;
-          nonzero(<$uint>::from_be_slice(&half))
-        } else {
-          reduce_wide(blind)
-        }
-      }
-
-      /// The `r` of rscrypto's public deterministic signature.
-      pub(super) fn signature_r(secret: [u8; $len], message: &[u8]) -> $uint {
-        let signature = rscrypto::$secret_key::from_bytes(secret)
-          .expect("valid authentication benchmark operation must succeed")
-          .try_sign(message)
-          .expect("valid authentication benchmark operation must succeed")
-          .to_bytes();
-        <$uint>::from_be_slice(&signature[..$len])
-      }
-
-      /// The nonce in `limbs`, once its point reproduces the public signature for `message`.
-      pub(super) fn nonce(limbs: &[u64], secret: [u8; $len], message: &[u8]) -> $uint {
-        let nonce = from_limbs(limbs);
-        let (x, _) = base_mul(&nonce);
-        assert_eq!(
-          <$uint>::rem_wide((x, <$uint>::ZERO), &ORDER),
-          signature_r(secret, message),
-          "the component nonce must produce the public signature"
-        );
-        nonce
-      }
-
-      /// The fixed public `r` of the scalar rows: the generator's x-coordinate modulo n.
-      pub(super) fn fixed_r() -> $uint {
-        reduce(&AffinePoint::GENERATOR.x())
-      }
-
-      /// r * d mod n for the fixed `r`.
-      pub(super) fn r_times_secret(secret: [u8; $len]) -> $uint {
-        mul(&fixed_r(), &reduce(&secret))
-      }
-
-      /// k^-1 (z + r d) mod n for the fixed `r`, before low-s normalization.
-      pub(super) fn raw_s(secret: [u8; $len], nonce: &$uint, message: &[u8]) -> $uint {
-        let z = reduce(&<$hash>::digest(message));
-        mul(&inverse(nonce), &z.add_mod(&r_times_secret(secret), &ORDER))
-      }
-
-      pub(super) fn low_s(s: $uint) -> $uint {
-        if s > ORDER.as_ref().shr(1) {
-          s.neg_mod(&ORDER)
-        } else {
-          s
-        }
-      }
-
-      pub(super) fn montgomery_scalar(value: &$uint) -> $uint {
-        montgomery(value, &ORDER)
-      }
-
-      pub(super) fn montgomery_inverse(value: &$uint) -> $uint {
-        montgomery(&inverse(value), &ORDER)
-      }
-
-      /// The nonce times the blind that rscrypto derives from `blind`.
-      pub(super) fn blinded(nonce: &$uint, blind: &[u8]) -> $uint {
-        mul(nonce, &nonce_blind(blind))
-      }
-
-      /// Montgomery affine coordinates of `scalar * G`.
-      pub(super) fn montgomery_point(scalar: &$uint) -> ($uint, $uint) {
-        let (x, y) = base_mul(scalar);
-        (montgomery(&x, &FIELD), montgomery(&y, &FIELD))
-      }
-
-      /// The signing-comb entry for `digit`: digit bit `c` adds 2^(c * rows) G. Digit 0 and digits past the
-      /// table select entry 0, which holds G.
-      pub(super) fn comb_entry(digit: u8) -> ($uint, $uint) {
-        let mut scalar = <$uint>::ZERO;
-        if u32::from(digit) < $comb_entries {
-          for column in 0..$comb_width {
-            if u32::from(digit).checked_shr(column).expect("comb column is below 32") & 1 == 1 {
-              scalar = scalar.wrapping_add(&<$uint>::ONE.shl(column.strict_mul($comb_rows)));
-            }
-          }
-        }
-        montgomery_point(&nonzero(scalar))
-      }
-    }
-  };
-}
-
-#[cfg(all(rscrypto_internal, feature = "diag", feature = "ecdsa-p256"))]
-ecdsa_component_oracle!(
-  p256_components,
-  p256,
-  U256,
-  EcdsaP256SecretKey,
-  sha2::Sha256,
-  32,
-  4,
-  "FFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551",
-  "FFFFFFFF00000001000000000000000000000000FFFFFFFFFFFFFFFFFFFFFFFF",
-  7,
-  37,
-  128
-);
-
-#[cfg(all(rscrypto_internal, feature = "diag", feature = "ecdsa-p384"))]
-ecdsa_component_oracle!(
-  p384_components,
-  p384,
-  U384,
-  EcdsaP384SecretKey,
-  sha2::Sha384,
-  48,
-  6,
-  "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFC7634D81F4372DDF581A0DB248B0A77AECEC196ACCC52973",
-  "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFFFF0000000000000000FFFFFFFF",
-  8,
-  48,
-  256
-);
-
-#[cfg(all(rscrypto_internal, feature = "diag", feature = "ecdsa-p256"))]
-fn ecdsa_p256_internal(c: &mut Criterion) {
-  if !bench_config::selected("ecdsa-p256/internal") {
-    return;
-  }
-  use crate::p256_components as oracle;
-  use rscrypto::auth::{
-    diag_ecdsa_p256_basepoint_blinded_limb_digest, diag_ecdsa_p256_final_multiply_limb_digest,
-    diag_ecdsa_p256_nonce_inverse_blinded_limb_digest, diag_ecdsa_p256_nonce_inverse_limb_digest,
-    diag_ecdsa_p256_nonce_reduce_limb_digest, diag_ecdsa_p256_order_mul_blinded_fixed_r_limb_digest,
-    diag_ecdsa_p256_order_mul_fixed_r_limb_digest, diag_ecdsa_p256_reduce_wide_order_limb_digest,
-    diag_ecdsa_p256_scalar_finish_limb_digest, diag_ecdsa_p256_select_signing_generator_affine_limb_digest,
-  };
-
-  let secret = [0x11u8; 32];
-  let blind = [0x5cu8; 64];
-  let nonce_wide = [0x5bu8; 64];
-  let inputs = [0usize, 32, 1024, 16384]
-    .into_iter()
-    .map(|len| (len, common::random_bytes(len)))
-    .collect::<Vec<_>>();
-  let mut g = c.benchmark_group("ecdsa-p256/internal");
-
-  g.bench_function(
-    "select-generator-affine",
-    checked(
-      || {
-        black_box(diag_ecdsa_p256_select_signing_generator_affine_limb_digest(black_box(
-          173,
-        )))
-      },
-      |limbs| assert_eq!(oracle::pair(&limbs), oracle::comb_entry(173)),
-    ),
-  );
-  g.bench_function(
-    "reduce-wide-order",
-    checked(
-      || black_box(diag_ecdsa_p256_reduce_wide_order_limb_digest(black_box(nonce_wide))),
-      |limbs| assert_eq!(oracle::from_limbs(&limbs), oracle::reduce_wide(&nonce_wide)),
-    ),
-  );
-  g.bench_function(
-    "order-mul-fixed-r",
-    checked(
-      || black_box(diag_ecdsa_p256_order_mul_fixed_r_limb_digest(black_box(secret))),
-      |limbs| assert_eq!(oracle::from_limbs(&limbs), oracle::r_times_secret(secret)),
-    ),
-  );
-  g.bench_function(
-    "order-mul-blinded-fixed-r",
-    checked(
-      || {
-        black_box(diag_ecdsa_p256_order_mul_blinded_fixed_r_limb_digest(
-          black_box(secret),
-          black_box(blind),
-        ))
-      },
-      |limbs| assert_eq!(oracle::from_limbs(&limbs), oracle::r_times_secret(secret)),
-    ),
-  );
-
-  for (len, data) in &inputs {
-    let nonce = || oracle::nonce(&diag_ecdsa_p256_nonce_reduce_limb_digest(secret, data), secret, data);
-    let wide_s = || oracle::raw_s(secret, &oracle::reduce_wide(&nonce_wide), data);
-
-    g.bench_function(
-      BenchmarkId::new("nonce-reduce", len),
-      checked(
-        || {
-          black_box(diag_ecdsa_p256_nonce_reduce_limb_digest(
-            black_box(secret),
-            black_box(data),
-          ))
-        },
-        |limbs| {
-          oracle::nonce(&limbs, secret, data);
-        },
-      ),
-    );
-    g.bench_function(
-      BenchmarkId::new("basepoint-blinded", len),
-      checked(
-        || {
-          black_box(diag_ecdsa_p256_basepoint_blinded_limb_digest(
-            black_box(secret),
-            black_box(blind),
-            black_box(data),
-          ))
-        },
-        |limbs| assert_eq!(oracle::pair(&limbs), oracle::montgomery_point(&nonce())),
-      ),
-    );
-    g.bench_function(
-      BenchmarkId::new("scalar-finish", len),
-      checked(
-        || {
-          black_box(diag_ecdsa_p256_scalar_finish_limb_digest(
-            black_box(secret),
-            black_box(nonce_wide),
-            black_box(data),
-          ))
-        },
-        |limbs| assert_eq!(oracle::pair(&limbs), (oracle::fixed_r(), oracle::low_s(wide_s()))),
-      ),
-    );
-    g.bench_function(
-      BenchmarkId::new("nonce-inverse", len),
-      checked(
-        || {
-          black_box(diag_ecdsa_p256_nonce_inverse_limb_digest(
-            black_box(secret),
-            black_box(data),
-          ))
-        },
-        |limbs| assert_eq!(oracle::from_limbs(&limbs), oracle::montgomery_inverse(&nonce())),
-      ),
-    );
-    g.bench_function(
-      BenchmarkId::new("nonce-inverse-blinded", len),
-      checked(
-        || {
-          black_box(diag_ecdsa_p256_nonce_inverse_blinded_limb_digest(
-            black_box(secret),
-            black_box(blind),
-            black_box(data),
-          ))
-        },
-        |limbs| {
-          assert_eq!(
-            oracle::from_limbs(&limbs),
-            oracle::montgomery_inverse(&oracle::blinded(&nonce(), &blind))
-          )
-        },
-      ),
-    );
-    g.bench_function(
-      BenchmarkId::new("final-multiply", len),
-      checked(
-        || {
-          black_box(diag_ecdsa_p256_final_multiply_limb_digest(
-            black_box(secret),
-            black_box(nonce_wide),
-            black_box(data),
-          ))
-        },
-        |limbs| assert_eq!(oracle::from_limbs(&limbs), oracle::montgomery_scalar(&wide_s())),
-      ),
-    );
-  }
-
-  g.finish();
-}
-
-#[cfg(all(rscrypto_internal, feature = "diag", feature = "ecdsa-p384"))]
-fn ecdsa_p384_internal(c: &mut Criterion) {
-  if !bench_config::selected("ecdsa-p384/internal") {
-    return;
-  }
-  use crate::p384_components as oracle;
-  use rscrypto::auth::{
-    diag_ecdsa_p384_basepoint_blinded_limb_digest, diag_ecdsa_p384_basepoint_r_limb_digest,
-    diag_ecdsa_p384_final_multiply_limb_digest, diag_ecdsa_p384_nonce_inverse_blinded_limb_digest,
-    diag_ecdsa_p384_nonce_inverse_limb_digest, diag_ecdsa_p384_nonce_reduce_limb_digest,
-    diag_ecdsa_p384_order_mul_fixed_r_limb_digest, diag_ecdsa_p384_reduce_wide_order_limb_digest,
-    diag_ecdsa_p384_scalar_finish_limb_digest, diag_ecdsa_p384_select_signing_generator_affine_limb_digest,
-  };
-
-  let secret = [0x31u8; 48];
-  let blind = [0xa3u8; 96];
-  let nonce_wide = [0x5bu8; 96];
-  let inputs = [0usize, 32, 1024, 16384]
-    .into_iter()
-    .map(|len| (len, common::random_bytes(len)))
-    .collect::<Vec<_>>();
-  let mut g = c.benchmark_group("ecdsa-p384/internal");
-
-  g.bench_function(
-    "select-generator-affine",
-    checked(
-      || {
-        black_box(diag_ecdsa_p384_select_signing_generator_affine_limb_digest(black_box(
-          173,
-        )))
-      },
-      |limbs| assert_eq!(oracle::pair(&limbs), oracle::comb_entry(173)),
-    ),
-  );
-  g.bench_function(
-    "reduce-wide-order",
-    checked(
-      || black_box(diag_ecdsa_p384_reduce_wide_order_limb_digest(black_box(nonce_wide))),
-      |limbs| assert_eq!(oracle::from_limbs(&limbs), oracle::reduce_wide(&nonce_wide)),
-    ),
-  );
-  g.bench_function(
-    "order-mul-fixed-r",
-    checked(
-      || black_box(diag_ecdsa_p384_order_mul_fixed_r_limb_digest(black_box(secret))),
-      |limbs| assert_eq!(oracle::from_limbs(&limbs), oracle::r_times_secret(secret)),
-    ),
-  );
-
-  for (len, data) in &inputs {
-    let nonce = || oracle::nonce(&diag_ecdsa_p384_nonce_reduce_limb_digest(secret, data), secret, data);
-    let wide_s = || oracle::raw_s(secret, &oracle::reduce_wide(&nonce_wide), data);
-
-    g.bench_function(
-      BenchmarkId::new("nonce-reduce", len),
-      checked(
-        || {
-          black_box(diag_ecdsa_p384_nonce_reduce_limb_digest(
-            black_box(secret),
-            black_box(data),
-          ))
-        },
-        |limbs| {
-          oracle::nonce(&limbs, secret, data);
-        },
-      ),
-    );
-    g.bench_function(
-      BenchmarkId::new("basepoint-blinded", len),
-      checked(
-        || {
-          black_box(diag_ecdsa_p384_basepoint_blinded_limb_digest(
-            black_box(secret),
-            black_box(blind),
-            black_box(data),
-          ))
-        },
-        |limbs| assert_eq!(oracle::pair(&limbs), oracle::montgomery_point(&nonce())),
-      ),
-    );
-    g.bench_function(
-      BenchmarkId::new("basepoint-r", len),
-      checked(
-        || {
-          black_box(diag_ecdsa_p384_basepoint_r_limb_digest(
-            black_box(secret),
-            black_box(data),
-          ))
-        },
-        |limbs| assert_eq!(oracle::from_limbs(&limbs), oracle::signature_r(secret, data)),
-      ),
-    );
-    g.bench_function(
-      BenchmarkId::new("scalar-finish", len),
-      checked(
-        || {
-          black_box(diag_ecdsa_p384_scalar_finish_limb_digest(
-            black_box(secret),
-            black_box(nonce_wide),
-            black_box(data),
-          ))
-        },
-        |limbs| assert_eq!(oracle::pair(&limbs), (oracle::fixed_r(), oracle::low_s(wide_s()))),
-      ),
-    );
-    g.bench_function(
-      BenchmarkId::new("nonce-inverse", len),
-      checked(
-        || {
-          black_box(diag_ecdsa_p384_nonce_inverse_limb_digest(
-            black_box(secret),
-            black_box(data),
-          ))
-        },
-        |limbs| assert_eq!(oracle::from_limbs(&limbs), oracle::montgomery_inverse(&nonce())),
-      ),
-    );
-    g.bench_function(
-      BenchmarkId::new("nonce-inverse-blinded", len),
-      checked(
-        || {
-          black_box(diag_ecdsa_p384_nonce_inverse_blinded_limb_digest(
-            black_box(secret),
-            black_box(blind),
-            black_box(data),
-          ))
-        },
-        |limbs| {
-          assert_eq!(
-            oracle::from_limbs(&limbs),
-            oracle::montgomery_inverse(&oracle::blinded(&nonce(), &blind))
-          )
-        },
-      ),
-    );
-    g.bench_function(
-      BenchmarkId::new("final-multiply", len),
-      checked(
-        || {
-          black_box(diag_ecdsa_p384_final_multiply_limb_digest(
-            black_box(secret),
-            black_box(nonce_wide),
-            black_box(data),
-          ))
-        },
-        |limbs| assert_eq!(oracle::from_limbs(&limbs), oracle::montgomery_scalar(&wide_s())),
-      ),
-    );
-  }
-
-  g.finish();
-}
-
 // Ed25519 signing keypair from 32 secret-key bytes. Timed: secret import, key expansion, public-key derivation,
 // and the keypair object. Every row must hold the RFC 8032 public key.
 fn ed25519_keypair_from_secret(c: &mut Criterion) {
@@ -2844,111 +2295,6 @@ fn ed25519_verify(c: &mut Criterion) {
       import_and_verify(dryoc_import, key, malformed, data, signature, tampered),
     );
   }
-  g.finish();
-}
-
-#[cfg(all(rscrypto_internal, feature = "diag"))]
-fn ed25519_verify_phase(c: &mut Criterion) {
-  if !bench_config::selected("ed25519/verify-phase") {
-    return;
-  }
-  use rscrypto::auth::{
-    diag_ed25519_verify_challenge_reduce_digest, diag_ed25519_verify_portable_double_scalar_digest,
-    diag_ed25519_verify_public_decode_digest, diag_ed25519_verify_r_decode_digest, diag_ed25519_verify_scalars,
-  };
-
-  print_auth_diag_once();
-
-  // Dalek's signature satisfies [s]B + [k](-A) = R. Decoded points must re-encode to their inputs, the
-  // double-scalar rows must return R, and the reduced challenge must be the k of that equation.
-  let signing_key = SigningKey::from_bytes(&[13u8; 32]);
-  let public = Ed25519PublicKey::from_bytes(signing_key.verifying_key().to_bytes());
-  let inputs = [0usize, 32, 1024, 16384]
-    .into_iter()
-    .map(|len| (len, common::random_bytes(len)))
-    .collect::<Vec<_>>();
-  let mut g = c.benchmark_group("ed25519/verify-phase");
-
-  for (len, data) in &inputs {
-    common::set_throughput(&mut g, *len);
-    let signature = Ed25519Signature::from_bytes(signing_key.sign(data).to_bytes());
-    let scalars = diag_ed25519_verify_scalars(&public, &signature, data)
-      .expect("valid authentication benchmark operation must succeed");
-    let r_bytes = scalars.r_bytes;
-
-    g.bench_function(
-      BenchmarkId::new("challenge-reduce", len),
-      checked(
-        || {
-          black_box(diag_ed25519_verify_challenge_reduce_digest(
-            black_box(&public),
-            black_box(&signature),
-            black_box(data),
-          ))
-        },
-        |challenge| {
-          let point = diag_ed25519_verify_portable_double_scalar_digest(
-            &scalars.s_canonical,
-            &scalars.challenge,
-            &scalars.public_key,
-          );
-          assert_eq!(point, r_bytes);
-          assert_eq!(challenge, scalars.challenge);
-        },
-      ),
-    );
-
-    g.bench_function(
-      BenchmarkId::new("public-decode", len),
-      checked(
-        || black_box(diag_ed25519_verify_public_decode_digest(black_box(&scalars.public_key))),
-        |encoded| assert_eq!(encoded, *public.as_bytes()),
-      ),
-    );
-
-    g.bench_function(
-      BenchmarkId::new("r-decode", len),
-      checked(
-        || black_box(diag_ed25519_verify_r_decode_digest(black_box(&scalars.r_bytes))),
-        |encoded| assert_eq!(encoded, r_bytes),
-      ),
-    );
-
-    g.bench_function(
-      BenchmarkId::new("portable-double-scalar", len),
-      checked(
-        || {
-          black_box(diag_ed25519_verify_portable_double_scalar_digest(
-            black_box(&scalars.s_canonical),
-            black_box(&scalars.challenge),
-            black_box(&scalars.public_key),
-          ))
-        },
-        |point| assert_eq!(point, r_bytes),
-      ),
-    );
-
-    #[cfg(all(
-      target_arch = "aarch64",
-      any(target_os = "macos", target_os = "linux"),
-      not(feature = "portable-only"),
-      not(miri)
-    ))]
-    g.bench_function(
-      BenchmarkId::new("aarch64-asm-double-scalar", len),
-      checked(
-        || {
-          black_box(rscrypto::auth::diag_ed25519_verify_aarch64_asm_double_scalar_digest(
-            black_box(&scalars.s_canonical),
-            black_box(&scalars.challenge),
-            black_box(&scalars.public_key),
-          ))
-        },
-        |point| assert_eq!(point, r_bytes),
-      ),
-    );
-  }
-
   g.finish();
 }
 
@@ -4549,8 +3895,6 @@ fn main() {
     ecdsa_p256_public_key,
     ecdsa_p256_sign,
     ecdsa_p256_verify,
-    #[cfg(all(rscrypto_internal, feature = "diag", feature = "ecdsa-p256"))]
-    ecdsa_p256_internal,
     ecdsa_p384_public_key,
     ecdsa_p384_sign,
     ecdsa_p384_verify,
@@ -4558,14 +3902,10 @@ fn main() {
     ecdsa_p256_signature_der,
     ecdsa_p384_verify_der,
     ecdsa_p384_signature_der,
-    #[cfg(all(rscrypto_internal, feature = "diag", feature = "ecdsa-p384"))]
-    ecdsa_p384_internal,
     ed25519_public_key,
     ed25519_keypair_from_secret,
     ed25519_sign,
     ed25519_verify,
-    #[cfg(all(rscrypto_internal, feature = "diag"))]
-    ed25519_verify_phase,
     x25519_public_key,
     x25519_diffie_hellman,
     p256_ecdh_key_generation,

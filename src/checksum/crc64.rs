@@ -27,7 +27,6 @@ define_crc! {
   output_size: 8,
   spec: Spec::new(64, 0x42F0_E1EB_A9EA_3693, true, !0, !0),
   hw: Hw::None,
-  env: "RSCRYPTO_CRC64_FORCE",
   buffered: BufferedCrc64,
 }
 
@@ -59,6 +58,5 @@ define_crc! {
   output_size: 8,
   spec: Spec::new(64, 0xAD93_D235_94C9_3659, true, !0, !0),
   hw: Hw::None,
-  env: "RSCRYPTO_CRC64_FORCE",
   buffered: BufferedCrc64Nvme,
 }

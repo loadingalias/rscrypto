@@ -59,6 +59,8 @@ allow = ["BSD-3-Clause"]
 [bans]
 multiple-versions = "warn"
 wildcards = "deny"
+# dependencies.sh restricts local versionless paths to the vendored timing test runner.
+allow-wildcard-paths = true
 highlight = "all"
 
 skip = []

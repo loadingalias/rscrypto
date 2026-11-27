@@ -32,7 +32,7 @@ Ignored manifests, such as local evidence crates, are not repository policy.
 
 `check/rule1.py` fails when production source holds an item that only a test `cfg` compiles (AGENTS.md RULE 1).
 It follows module declarations and `include!` from `src/lib.rs`, so test modules and test files pass.
-Its allowlist names each remaining case, and an entry that matches nothing fails.
+It rejects test-only items outside the test modules.
 
 ### Provider workspace checks
 
@@ -111,7 +111,7 @@ Its simulator runs both kernels on bounds-checked memory against digit-serial ra
 in Python integers, for every supported prime width and two other block counts.
 `asm/rsa_pair_test.py` (part of `just test-scripts`) checks that template edits and single-instruction mutations
 are detected.
-`neon_crt_pair_matches_portable_exponentiation` in `src/auth/rsa.rs` is the native differential evidence.
+`neon_crt_pair_matches_portable_exponentiation` in `src/auth/rsa/exponentiation/tests.rs` is the native differential evidence.
 
 ## Derived assembly provenance
 
@@ -319,10 +319,8 @@ Test preparation and native execution retain these contracts:
   Its `--ci-cross-run TOOLS_ARCHIVE` tooling only runs them.
 - The test bundle uses XZ compression; existing gzip bundles remain readable.
 - Doctests compile and run on the native CI rows only.
-- The suites run under the `cross` and `cross-internal` Nextest profiles in
-  [`.config/nextest.toml`](../.config/nextest.toml). The SLH-DSA small-set independent-implementation
-  differentials run on the native rows only, and the internal suites leave the SLH-DSA ACVP vectors to
-  the ordinary suite with the same dispatch on the same target. Every other test runs in every suite.
+- Transferred tests use the `cross` Nextest profile on hardware and `emulated` under QEMU.
+  The SLH-DSA small-set independent-implementation comparisons run in the native CI jobs. [Nextest profiles](../.config/nextest.toml)
 - `just test-cross run ... --emulated` (the RISC-V QEMU workflow) runs only the native-dispatch suites,
   which select the extension kernels, under the `emulated` profiles. They skip SLH-DSA signing, which
   chains millions of hash calls through the same kernels and runs on every native row, and give each
@@ -502,7 +500,7 @@ and provenance snapshot for each invocation, under `target/ct/<target>/<profile>
 `just ct-replay --target TARGET --source-root SOURCE --archive ARCHIVE --out OUTPUT --case CASE` repeats prepared POWER, IBM Z, or RISC-V cases three times on one allowed CPU.
 
 - `--case` takes an exact manifest case, a comma-separated list of cases, `mldsa` for every required
-  ML-DSA kernel case, or `mldsa-probe` for the ML-DSA diagnostic probes.
+  ML-DSA kernel case.
 - The suite lists all planned cases, keeps each case's original budget and every result,
   and fails if any required case fails.
   A tooling failure leaves the inventory explicitly incomplete.
@@ -522,7 +520,7 @@ Replay is diagnostic evidence, not full qualification.
 ### Diagnostic CT runs
 
 The CT workflow's `diagnostic_case` input takes exact case names, a comma-separated list,
-or the `mldsa` and `mldsa-probe` groups, on any requested Linux architecture.
+or the `mldsa` group, on any requested Linux architecture.
 Native rows run `ct-full --dudect-case`.
 Cross rows (POWER, IBM Z, RISC-V) verify the complete prepared archive and replay the cases once.
 These runs provide scoped evidence and do not qualify a release.
@@ -891,7 +889,7 @@ registers or the other parameter sets.
   splitting unfiltered targets marked `split: algorithms` into their complete catalog operations.
   Each measurement gets its own budget and result directory; the first failure stops the campaign.
   Before measuring a target, it builds and discovers that target within the `max_comparison_seconds` ceiling.
-  Preparation and measurement select the same features and internal flags,
+  Preparation and measurement select the same features and compiler flags,
   so moving between targets does not trigger rebuilds inside the measurement budget.
   `--list` only runs those per-target preparation invocations.
   On macOS, cleanup accepts `EPERM` only after checking that the process group has no live members.
@@ -902,7 +900,6 @@ registers or the other parameter sets.
 - Export is a separate runner command.
 - `just bench --list` uses the same resolver to list the actual cases with their catalog work classes,
   without starting a measurement run.
-  `--diag` enables diagnostic cases.
 
 `just test-scripts` runs the benchmark catalog, runner, and profiling regression tests in `bench/`.
 Run one alone, for example, with `scripts/lib/python.sh scripts/bench/benchmark_catalog_test.py`.
@@ -910,12 +907,9 @@ It tests the Python runner, Just argument forwarding, and export in temporary di
 with substitute Cargo, benchmark, and profiler executors.
 It does not run cryptographic benchmarks.
 
-`just bench-mldsa-tail` builds [`tools/mldsa-tail`](../tools/mldsa-tail/src/main.rs) twice and
-retains both runs under `benchmark_results/mldsa-tail-<time>/`. The production build times each
-compact and prepared, deterministic and hedged signature of fixed inputs; the second build adds
-`--cfg rscrypto_mldsa_attempts`, which counts rejection-sampling attempts and is not production
-latency. Inputs are deterministic, so attempt counts match on every target. The recipe prints both
-outputs, raw rows and summaries, and the provenance, so a `just ssh-just` log carries them home.
+`just bench-mldsa-tail` measures production signing latency for fixed keys and messages.
+It measures compact and prepared keys with deterministic and hedged signatures.
+It writes raw rows, summaries, and build provenance to `benchmark_results/mldsa-tail-<time>/`.
 
 Local and development-machine benchmarks share unique run directories under `benchmark_results/criterion/<run-id>/`, with logs, the plan,
 provenance, raw data, and completion status.
@@ -1155,7 +1149,7 @@ They do not install Rust, build code, or call Cargo Rail.
 **`bench.yml`** runs only on manual request.
 
 - Its form takes catalog names in `benchmarks`, an optional case `filter`,
-  one checkbox per native CI platform, diagnostic and quick checkboxes, and optional sampling overrides.
+  one checkbox per native CI platform, a quick checkbox, and optional sampling overrides.
   The planner reads the form as one `DISPATCH_INPUTS` JSON value and gives later jobs a one-line copy,
   because `Enter-VsDevShell` keeps only the first line of a multi-line variable.
 - `bench/ci.py plan` groups the selection by the catalog's primitive `family` and starts one job per platform and family.
@@ -1192,7 +1186,6 @@ See [Benchmarking](../docs/benchmarking.md#bench-workflow).
 It accepts one native Linux architecture and one curated primitive.
 
 - `.config/benchmark-matrix.json` maps each primitive to one benchmark target and one exact production case.
-  It also owns the diagnostic-feature policy.
 - The workflow records that case for five seconds.
 - Preparation and native capture each have their own 20-minute cap.
 - A newer request for the same architecture cancels the older request.
@@ -1240,44 +1233,20 @@ with scalar and SIMD artifacts tested separately.
 - These are Wasmtime results, not browser-engine results.
 - The library also gets broad feature builds for both WASM targets.
 
-The x86-64 and ARM64 Linux rows install the native musl build prerequisites and run `just test-musl`:
-the complete native and portable test suites, plus doctests and separate internal evidence suites,
-compiled and run for the matching musl target.
+The x86-64 and ARM64 Linux rows install the native musl build prerequisites and run `just test-musl`.
+Each host builds and runs the native and portable suites and their doctests for its musl target.
 Apple ARM64 checks and tests run locally through `just check-macos` in a background job queued by each push.
 Windows ARM64 execution is deferred.
 No compatibility lane enables persistent caches.
 
-## Internal evidence builds
+## Private kernel evidence
 
-`scripts/ct/internal.py` enables `--cfg rscrypto_internal` for repository evidence builds.
+Library tests exercise private kernels directly. Both native and portable cross-test archives include the differential tests.
+The ChaCha20 tests record each backend they execute.
 
-- CT artifact generation, BINSEC, DudeCT, their self-tests,
-  and their independent-workspace lint checks use it automatically.
-- Diagnostic benchmarks, profiles, and code inspection use the same flag resolver.
-- The RSA assembly gates use it for their public-operation candidate tests.
-- The resolver keeps the target compiler flags and passes encoded arguments to Cargo.
-  Build provenance records the effective flags.
-- Normal builds, docs, tests, and published Cargo feature combinations do not opt in.
-
-`--cfg rscrypto_mldsa_attempts` is a separate, narrower flag. Only `just bench-mldsa-tail` sets it,
-to count ML-DSA signing attempts; CT and other evidence builds never contain the counter.
-
-`just test-evidence` runs the production library and evidence integration tests,
-with production-auto and portable-only dispatch.
-It keeps the forced-kernel, component,
-and PBKDF2 verification regressions after their hooks leave the public API.
-`just ct-test` and native qualification include this recipe.
-Cross-test archives carry separate production-auto and portable-only internal suites,
-and need all four suites at execution.
-Run it with ordinary tests when you change evidence hooks.
-Ordinary tests continue to check the application build without internal access.
-
-- Use `just bench <selector> --diag` or `just profile <target> --diag` for diagnostic workloads.
-- The `aead_kernels` target enables its required internal hooks automatically.
-- Cross-prepared diagnostic benchmarks resolve the flags for the destination target
-  before they record build provenance.
-- Keep internal builds separate from public-surface checks.
-  Use `just ct-binsec` for binary proofs and `just ct-dudect` for timing evidence.
+DudeCT runs individual cases in the optimized library test executable.
+BINSEC uses a portable-only public harness for public operations. Private proof entries live in their owning modules' library tests.
+The campaign records the exact binary, flags, features, and target for each result.
 
 ## Release orchestration
 

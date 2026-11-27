@@ -76,12 +76,7 @@ use rsa::{
 };
 #[cfg(feature = "getrandom")]
 use rscrypto::auth::rsa::expert::RsaPkcs1v15Decrypt as _;
-#[cfg(all(rscrypto_internal, feature = "diag"))]
-use rscrypto::auth::rsa::{
-  diag_rsa_blinding_factor_inverse_with_scratch, diag_rsa_public_operation_bitserial, diag_rsa_public_operation_cios,
-  diag_rsa_public_operation_cios_portable, diag_rsa_public_operation_generic_exponent,
-  diag_rsa_public_operation_product, diag_rsa_verify_pkcs1v15_encoded, diag_rsa_verify_pss_encoded_with_scratch,
-};
+
 use rscrypto::{
   Digest, RsaBlindingPair, RsaOaepProfile, RsaPkcs1v15Profile, RsaPrivateKey, RsaPssProfile, RsaPublicKey,
   RsaPublicKeyPolicy, RsaPublicScratch, RsaSignatureProfile, Sha256, Sha384, Sha512, VerificationError,
@@ -261,13 +256,6 @@ fn pkcs1_der_from_modulus_exponent(modulus: &[u8], exponent: &[u8]) -> Vec<u8> {
   body.extend_from_slice(&integer_unsigned(modulus));
   body.extend_from_slice(&integer_unsigned(exponent));
   sequence(&body)
-}
-
-#[cfg(all(rscrypto_internal, feature = "diag"))]
-fn synthetic_pkcs1_der(modulus_len: usize) -> Vec<u8> {
-  let mut modulus = vec![0xff; modulus_len];
-  modulus[0] = 0x80;
-  pkcs1_der_from_modulus_exponent(&modulus, &[0x01, 0x00, 0x01])
 }
 
 fn pss_spki() -> Vec<u8> {
@@ -524,29 +512,9 @@ fn rsa_private_signing_for_size(c: &mut Criterion, bits: usize, load_key: impl F
   // Each row owns its signature buffer and scratch, allocated outside timing.
   let buffers = || (vec![0u8; key.signature_len()], key.private_scratch());
 
-  // rscrypto-only rows: blinding-factor inversion (diagnostic) and private
-  // scratch allocation, which the `rscrypto` signing rows reuse.
+  // The signing rows reuse the private scratch.
   let mut group = c.benchmark_group(&name);
-  #[cfg(all(rscrypto_internal, feature = "diag"))]
-  group.bench_function(
-    "blinding-inverse-scratch-rscrypto",
-    checked_with(
-      buffers(),
-      |(computed_inverse, inverse_scratch)| {
-        // The factor doubles as a valid inverse mask; production draws a fresh one.
-        diag_rsa_blinding_factor_inverse_with_scratch(
-          black_box(&key),
-          black_box(&factor),
-          black_box(&factor),
-          black_box(computed_inverse),
-          black_box(inverse_scratch),
-        )
-        .expect("valid scratch-backed RSA blinding-factor inversion must succeed")
-      },
-      // `factor_two_and_inverse` computes the inverse of 2 as (n + 1) / 2.
-      |(), (computed_inverse, _)| assert_eq!(*computed_inverse, inverse),
-    ),
-  );
+
   group.bench_function(
     "scratch-setup-rscrypto",
     checked(
@@ -1769,36 +1737,10 @@ fn rsa_components_for_size(
   let representative = modulus_minus_one(&pss_key);
   let modulus_len = pss_key.modulus().len();
 
-  #[cfg(all(rscrypto_internal, feature = "diag"))]
-  let (pss_encoded, pss_em_bits, mut pss_db, mut pss_db_mask, pkcs1_encoded) = {
-    let mut pss_encoded = vec![0u8; pss_key.modulus().len()];
-    pss_key
-      .public_operation_with_scratch(pss_sig, &mut pss_encoded, &mut pss_key.public_scratch())
-      .expect("valid RSA benchmark fixture must succeed");
-    let pss_em_bits = pss_key.modulus_bits().strict_sub(1);
-    let pss_em_len = pss_em_bits.strict_add(7) / 8;
-    let leading = pss_encoded.len().strict_sub(pss_em_len);
-    pss_encoded.drain(..leading);
-
-    let mut pkcs1_encoded = vec![0u8; pkcs1_key.modulus().len()];
-    pkcs1_key
-      .public_operation_with_scratch(pkcs1_sig, &mut pkcs1_encoded, &mut pkcs1_key.public_scratch())
-      .expect("valid RSA benchmark fixture must succeed");
-
-    (
-      pss_encoded,
-      pss_em_bits,
-      vec![0u8; pss_em_len],
-      vec![0u8; pss_em_len],
-      pkcs1_encoded,
-    )
-  };
-
   // Untimed oracle: RustCrypto's modpow for the public-operation rows.
   let public_operation_reference = || reference_public_operation(&pss_key, &representative);
 
-  // rscrypto-only rows: public scratch allocation, the raw public operation,
-  // and diagnostic padding and Montgomery-variant rows.
+  // Measure public scratch allocation and the raw public operation.
   let mut group = c.benchmark_group(name);
   group.bench_function(
     "scratch-setup-rscrypto",
@@ -1825,92 +1767,11 @@ fn rsa_components_for_size(
       |(), (out, _)| assert_eq!(*out, public_operation_reference()),
     ),
   );
-  #[cfg(all(rscrypto_internal, feature = "diag"))]
-  {
-    group.bench_function(
-      "public-op-e65537-product-montgomery",
-      checked_with(
-        (vec![0u8; modulus_len], pss_key.public_scratch()),
-        |(out, scratch)| {
-          diag_rsa_public_operation_product(
-            black_box(&pss_key),
-            black_box(&representative),
-            black_box(out),
-            black_box(scratch),
-          )
-          .expect("valid RSA benchmark fixture must succeed")
-        },
-        |(), (out, _)| assert_eq!(*out, public_operation_reference()),
-      ),
-    );
-    group.bench_function(
-      "public-op-e65537-cios-candidate",
-      checked_with(
-        (vec![0u8; modulus_len], pss_key.public_scratch()),
-        |(out, scratch)| {
-          diag_rsa_public_operation_cios(
-            black_box(&pss_key),
-            black_box(&representative),
-            black_box(out),
-            black_box(scratch),
-          )
-          .expect("valid RSA benchmark fixture must succeed")
-        },
-        |(), (out, _)| assert_eq!(*out, public_operation_reference()),
-      ),
-    );
-  }
+
   // The padding rows decode the encoded messages that the production public
   // operation recovers from the fixture signatures. ring confirms that each
   // fixture signature is valid.
-  #[cfg(all(rscrypto_internal, feature = "diag"))]
-  group.bench_function(
-    "padding-pss-sha256-rscrypto",
-    checked(
-      || {
-        diag_rsa_verify_pss_encoded_with_scratch(
-          RsaPssProfile::Sha256,
-          black_box(MESSAGE_PSS),
-          black_box(&pss_encoded),
-          black_box(pss_em_bits),
-          black_box(&mut pss_db),
-          black_box(&mut pss_db_mask),
-        )
-        .expect("valid RSA benchmark fixture must succeed")
-      },
-      |()| {
-        diag_rsa_verify_pss_encoded_with_scratch(
-          RsaPssProfile::Sha256,
-          MESSAGE_PSS,
-          &tampered(&pss_encoded),
-          pss_em_bits,
-          &mut vec![0u8; pss_encoded.len()],
-          &mut vec![0u8; pss_encoded.len()],
-        )
-        .expect_err("a tampered RSA-PSS encoded message must not verify");
-        ring_confirms::<PssSha256>(&pss_fixture);
-      },
-    ),
-  );
-  #[cfg(all(rscrypto_internal, feature = "diag"))]
-  group.bench_function(
-    "padding-pkcs1v15-sha256-rscrypto",
-    checked(
-      || {
-        diag_rsa_verify_pkcs1v15_encoded(
-          RsaPkcs1v15Profile::Sha256,
-          black_box(MESSAGE_PKCS1V15),
-          black_box(&pkcs1_encoded),
-        )
-        .expect("valid RSA benchmark fixture must succeed")
-      },
-      |()| {
-        diag_rsa_verify_pkcs1v15_encoded(RsaPkcs1v15Profile::Sha256, MESSAGE_PKCS1V15, &tampered(&pkcs1_encoded))
-          .expect_err("a tampered RSA-PKCS1-v1_5 encoded message must not verify");
-        ring_confirms::<Pkcs1v15Sha256>(&pkcs1_fixture);
-      },
-    ),
-  );
+
   group.finish();
 
   // SPKI parsing: each library parses the same `rsaEncryption` SPKI bytes into
@@ -2036,69 +1897,7 @@ fn rsa_public_exponents(c: &mut Criterion) {
       |(), (out, _)| matches_reference(&key_e3, out),
     ),
   );
-  #[cfg(all(rscrypto_internal, feature = "diag"))]
-  group.bench_function(
-    "public-op-e3-bitserial-baseline",
-    checked_with(
-      vec![0u8; modulus.len()],
-      |out| {
-        diag_rsa_public_operation_bitserial(black_box(&key_e3), black_box(&input), black_box(out))
-          .expect("valid RSA benchmark fixture must succeed")
-      },
-      |(), out| matches_reference(&key_e3, out),
-    ),
-  );
-  #[cfg(all(rscrypto_internal, feature = "diag"))]
-  group.bench_function(
-    "public-op-e3-product-montgomery",
-    checked_with(
-      buffers(&key_e3),
-      |(out, scratch)| {
-        diag_rsa_public_operation_product(
-          black_box(&key_e3),
-          black_box(&input),
-          black_box(out),
-          black_box(scratch),
-        )
-        .expect("valid RSA benchmark fixture must succeed")
-      },
-      |(), (out, _)| matches_reference(&key_e3, out),
-    ),
-  );
-  #[cfg(all(rscrypto_internal, feature = "diag"))]
-  group.bench_function(
-    "public-op-e3-generic-exponent",
-    checked_with(
-      buffers(&key_e3),
-      |(out, scratch)| {
-        diag_rsa_public_operation_generic_exponent(
-          black_box(&key_e3),
-          black_box(&input),
-          black_box(out),
-          black_box(scratch),
-        )
-        .expect("valid RSA benchmark fixture must succeed")
-      },
-      |(), (out, _)| matches_reference(&key_e3, out),
-    ),
-  );
-  #[cfg(all(rscrypto_internal, feature = "diag"))]
-  group.bench_function(
-    "public-op-e3-cios-candidate",
-    checked_with(
-      buffers(&key_e3),
-      |(out, scratch)| {
-        diag_rsa_public_operation_cios(
-          black_box(&key_e3),
-          black_box(&input),
-          black_box(out),
-          black_box(scratch),
-        )
-        .expect("valid RSA benchmark fixture must succeed")
-      },
-      |(), (out, _)| matches_reference(&key_e3, out),
-    ),
-  );
+
   group.bench_function(
     "public-op-e17",
     checked_with(
@@ -2111,69 +1910,7 @@ fn rsa_public_exponents(c: &mut Criterion) {
       |(), (out, _)| matches_reference(&key_e17, out),
     ),
   );
-  #[cfg(all(rscrypto_internal, feature = "diag"))]
-  group.bench_function(
-    "public-op-e17-bitserial-baseline",
-    checked_with(
-      vec![0u8; modulus.len()],
-      |out| {
-        diag_rsa_public_operation_bitserial(black_box(&key_e17), black_box(&input), black_box(out))
-          .expect("valid RSA benchmark fixture must succeed")
-      },
-      |(), out| matches_reference(&key_e17, out),
-    ),
-  );
-  #[cfg(all(rscrypto_internal, feature = "diag"))]
-  group.bench_function(
-    "public-op-e17-product-montgomery",
-    checked_with(
-      buffers(&key_e17),
-      |(out, scratch)| {
-        diag_rsa_public_operation_product(
-          black_box(&key_e17),
-          black_box(&input),
-          black_box(out),
-          black_box(scratch),
-        )
-        .expect("valid RSA benchmark fixture must succeed")
-      },
-      |(), (out, _)| matches_reference(&key_e17, out),
-    ),
-  );
-  #[cfg(all(rscrypto_internal, feature = "diag"))]
-  group.bench_function(
-    "public-op-e17-generic-exponent",
-    checked_with(
-      buffers(&key_e17),
-      |(out, scratch)| {
-        diag_rsa_public_operation_generic_exponent(
-          black_box(&key_e17),
-          black_box(&input),
-          black_box(out),
-          black_box(scratch),
-        )
-        .expect("valid RSA benchmark fixture must succeed")
-      },
-      |(), (out, _)| matches_reference(&key_e17, out),
-    ),
-  );
-  #[cfg(all(rscrypto_internal, feature = "diag"))]
-  group.bench_function(
-    "public-op-e17-cios-candidate",
-    checked_with(
-      buffers(&key_e17),
-      |(out, scratch)| {
-        diag_rsa_public_operation_cios(
-          black_box(&key_e17),
-          black_box(&input),
-          black_box(out),
-          black_box(scratch),
-        )
-        .expect("valid RSA benchmark fixture must succeed")
-      },
-      |(), (out, _)| matches_reference(&key_e17, out),
-    ),
-  );
+
   group.bench_function(
     "public-op-e65537",
     checked_with(
@@ -2186,69 +1923,7 @@ fn rsa_public_exponents(c: &mut Criterion) {
       |(), (out, _)| matches_reference(&key_e65537, out),
     ),
   );
-  #[cfg(all(rscrypto_internal, feature = "diag"))]
-  group.bench_function(
-    "public-op-e65537-bitserial-baseline",
-    checked_with(
-      vec![0u8; modulus.len()],
-      |out| {
-        diag_rsa_public_operation_bitserial(black_box(&key_e65537), black_box(&input), black_box(out))
-          .expect("valid RSA benchmark fixture must succeed")
-      },
-      |(), out| matches_reference(&key_e65537, out),
-    ),
-  );
-  #[cfg(all(rscrypto_internal, feature = "diag"))]
-  group.bench_function(
-    "public-op-e65537-product-montgomery",
-    checked_with(
-      buffers(&key_e65537),
-      |(out, scratch)| {
-        diag_rsa_public_operation_product(
-          black_box(&key_e65537),
-          black_box(&input),
-          black_box(out),
-          black_box(scratch),
-        )
-        .expect("valid RSA benchmark fixture must succeed")
-      },
-      |(), (out, _)| matches_reference(&key_e65537, out),
-    ),
-  );
-  #[cfg(all(rscrypto_internal, feature = "diag"))]
-  group.bench_function(
-    "public-op-e65537-generic-exponent",
-    checked_with(
-      buffers(&key_e65537),
-      |(out, scratch)| {
-        diag_rsa_public_operation_generic_exponent(
-          black_box(&key_e65537),
-          black_box(&input),
-          black_box(out),
-          black_box(scratch),
-        )
-        .expect("valid RSA benchmark fixture must succeed")
-      },
-      |(), (out, _)| matches_reference(&key_e65537, out),
-    ),
-  );
-  #[cfg(all(rscrypto_internal, feature = "diag"))]
-  group.bench_function(
-    "public-op-e65537-cios-candidate",
-    checked_with(
-      buffers(&key_e65537),
-      |(out, scratch)| {
-        diag_rsa_public_operation_cios(
-          black_box(&key_e65537),
-          black_box(&input),
-          black_box(out),
-          black_box(scratch),
-        )
-        .expect("valid RSA benchmark fixture must succeed")
-      },
-      |(), (out, _)| matches_reference(&key_e65537, out),
-    ),
-  );
+
   group.bench_function(
     "public-op-e0x49d2a1-generic",
     checked_with(
@@ -2261,52 +1936,7 @@ fn rsa_public_exponents(c: &mut Criterion) {
       |(), (out, _)| matches_reference(&key_generic, out),
     ),
   );
-  #[cfg(all(rscrypto_internal, feature = "diag"))]
-  group.bench_function(
-    "public-op-e0x49d2a1-bitserial-baseline",
-    checked_with(
-      vec![0u8; modulus.len()],
-      |out| {
-        diag_rsa_public_operation_bitserial(black_box(&key_generic), black_box(&input), black_box(out))
-          .expect("valid RSA benchmark fixture must succeed")
-      },
-      |(), out| matches_reference(&key_generic, out),
-    ),
-  );
-  #[cfg(all(rscrypto_internal, feature = "diag"))]
-  group.bench_function(
-    "public-op-e0x49d2a1-product-montgomery",
-    checked_with(
-      buffers(&key_generic),
-      |(out, scratch)| {
-        diag_rsa_public_operation_product(
-          black_box(&key_generic),
-          black_box(&input),
-          black_box(out),
-          black_box(scratch),
-        )
-        .expect("valid RSA benchmark fixture must succeed")
-      },
-      |(), (out, _)| matches_reference(&key_generic, out),
-    ),
-  );
-  #[cfg(all(rscrypto_internal, feature = "diag"))]
-  group.bench_function(
-    "public-op-e0x49d2a1-cios-candidate",
-    checked_with(
-      buffers(&key_generic),
-      |(out, scratch)| {
-        diag_rsa_public_operation_cios(
-          black_box(&key_generic),
-          black_box(&input),
-          black_box(out),
-          black_box(scratch),
-        )
-        .expect("valid RSA benchmark fixture must succeed")
-      },
-      |(), (out, _)| matches_reference(&key_generic, out),
-    ),
-  );
+
   group.finish();
 }
 
@@ -2393,87 +2023,6 @@ fn rsa_hash_components(c: &mut Criterion) {
   group.finish();
 }
 
-#[cfg(all(rscrypto_internal, feature = "diag"))]
-fn rsa_montgomery_thresholds(c: &mut Criterion) {
-  if !bench_config::selected("rsa-montgomery-thresholds") {
-    return;
-  }
-  let mut group = c.benchmark_group("rsa-montgomery-thresholds");
-
-  for (name, modulus_len) in [
-    ("rsa-2048-32-limbs", 256usize),
-    ("rsa-3072-48-limbs", 384usize),
-    ("rsa-4096-64-limbs", 512usize),
-    ("rsa-4160-65-limbs", 520usize),
-    ("rsa-6144-96-limbs", 768usize),
-    ("rsa-8128-127-limbs", 1016usize),
-    ("rsa-8192-128-limbs", 1024usize),
-  ] {
-    let key = RsaPublicKey::from_pkcs1_der_with_policy(
-      &synthetic_pkcs1_der(modulus_len),
-      &RsaPublicKeyPolicy::modulus_2048_to_8192(),
-    )
-    .expect("valid RSA benchmark fixture must succeed");
-    let input = modulus_minus_one(&key);
-    // Each row owns its output and scratch. RustCrypto's modpow is the oracle.
-    let buffers = || (vec![0u8; key.modulus().len()], key.public_scratch());
-    let matches_reference = |out: &[u8]| assert_eq!(out, reference_public_operation(&key, &input));
-
-    group.bench_function(
-      format!("{name}/auto"),
-      checked_with(
-        buffers(),
-        |(out, scratch)| {
-          key
-            .public_operation_with_scratch(black_box(&input), black_box(out), black_box(scratch))
-            .expect("valid RSA benchmark fixture must succeed")
-        },
-        |(), (out, _)| matches_reference(out),
-      ),
-    );
-    group.bench_function(
-      format!("{name}/product-montgomery"),
-      checked_with(
-        buffers(),
-        |(out, scratch)| {
-          diag_rsa_public_operation_product(black_box(&key), black_box(&input), black_box(out), black_box(scratch))
-            .expect("valid RSA benchmark fixture must succeed")
-        },
-        |(), (out, _)| matches_reference(out),
-      ),
-    );
-    group.bench_function(
-      format!("{name}/cios-candidate"),
-      checked_with(
-        buffers(),
-        |(out, scratch)| {
-          diag_rsa_public_operation_cios(black_box(&key), black_box(&input), black_box(out), black_box(scratch))
-            .expect("valid RSA benchmark fixture must succeed")
-        },
-        |(), (out, _)| matches_reference(out),
-      ),
-    );
-    group.bench_function(
-      format!("{name}/cios-portable"),
-      checked_with(
-        buffers(),
-        |(out, scratch)| {
-          diag_rsa_public_operation_cios_portable(
-            black_box(&key),
-            black_box(&input),
-            black_box(out),
-            black_box(scratch),
-          )
-          .expect("valid RSA benchmark fixture must succeed")
-        },
-        |(), (out, _)| matches_reference(out),
-      ),
-    );
-  }
-
-  group.finish();
-}
-
 fn rsa_components(c: &mut Criterion) {
   let pss2048_spki = pss_spki();
   let pss2048_sig = pss_signature_sha256();
@@ -2546,8 +2095,6 @@ fn main() {
     rsa_private_signing,
     rsa_public_exponents,
     rsa_hash_components,
-    #[cfg(all(rscrypto_internal, feature = "diag"))]
-    rsa_montgomery_thresholds,
     rsa_oaep,
     #[cfg(feature = "getrandom")]
     rsa_pkcs1v15_decryption,

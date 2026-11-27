@@ -49,7 +49,6 @@ class ManualProfile(unittest.TestCase):
     self.assertEqual(selection['case'], 'aes-128-gcm/copy-and-encrypt/rscrypto/4096')
     self.assertEqual(selection['seconds'], 5)
     self.assertEqual(selection['binary'], 'aead')
-    self.assertNotIn('diag', selection['features'])
     self.assertEqual(selection['prepare_timeout'], 20)
     self.assertEqual(selection['capture_timeout'], 20)
 
@@ -98,7 +97,6 @@ class ManualProfile(unittest.TestCase):
         command = profile_ci.command(selection, operation, selection['target'], 'archive with spaces.tar.gz')
         self.assertEqual(command[:3], ['just', 'profile', 'blake3_serial'])
         self.assertIn('blake3/serial/hash/rscrypto/4096', command)
-        self.assertIn('--diag', command)
         self.assertIn(flag, command)
         self.assertEqual(command[-1], 'archive with spaces.tar.gz')
 

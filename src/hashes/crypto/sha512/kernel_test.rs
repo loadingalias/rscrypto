@@ -25,7 +25,7 @@ pub(crate) const ALL: &[Sha512KernelId] = &[
   Sha512KernelId::X86Avx512vlDecoupled,
 ];
 
-fn hasher_for_kernel(id: Sha512KernelId) -> Sha512 {
+pub(crate) fn hasher_for_kernel(id: Sha512KernelId) -> Sha512 {
   Sha512 {
     compress_blocks: id,
     dispatch_initialized: true,

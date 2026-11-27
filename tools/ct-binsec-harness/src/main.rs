@@ -3,13 +3,20 @@
   reason = "the freestanding Binsec artifact intentionally provides its own C memory-runtime ABI"
 )]
 
+#[path = "../../../src/binsec/input.rs"]
+mod input;
+mod memory;
+
+use input::array_from_global;
+
 use core::ptr;
 
 use rscrypto::aead::expert::AeadWithNonce;
 use rscrypto::{
   Aegis256, Aegis256Key, Aes128Gcm, Aes128GcmKey, Aes128GcmSiv, Aes128GcmSivKey, Aes256Gcm, Aes256GcmKey, Aes256GcmSiv,
-  Aes256GcmSivKey, AsconAead128, AsconAead128Key, Blake3KeyedHash, ChaCha20Poly1305, ChaCha20Poly1305Key,
-  HmacSha384Tag, HmacSha512Tag, Kmac256, X25519SecretKey, XChaCha20Poly1305, XChaCha20Poly1305Key,
+  Aes256GcmSivKey, AsconAead128, AsconAead128Key, Blake2b256, Blake2bKey, Blake2s256, Blake2sKey, Blake3,
+  Blake3KeyedHash, ChaCha20Poly1305, ChaCha20Poly1305Key, ChaCha20Rng, HmacSha256, HmacSha256Tag, HmacSha384,
+  HmacSha384Tag, HmacSha512, HmacSha512Tag, Kmac256, Mac, X25519SecretKey, XChaCha20Poly1305, XChaCha20Poly1305Key,
   aead::{Nonce96, Nonce128, Nonce192, Nonce256},
 };
 
@@ -17,151 +24,6 @@ const LEN_16: usize = 16;
 const LEN_32: usize = 32;
 const LEN_48: usize = 48;
 const LEN_64: usize = 64;
-const CURVE25519_LIMBS: usize = 5;
-const ARGON2_BLOCK_WORDS: usize = 128;
-const RSA_WINDOW_LIMBS: usize = 4;
-const RSA_WINDOW_TABLE_LIMBS: usize = 16 * RSA_WINDOW_LIMBS;
-#[cfg(target_arch = "aarch64")]
-const RSA_PAIR_WORDS: usize = 48;
-
-#[unsafe(no_mangle)]
-#[inline(never)]
-/// C-compatible volatile byte fill for the analysis harness.
-///
-/// # Safety
-///
-/// `dst` must be valid and writable for `len` bytes.
-pub unsafe extern "C" fn memset(dst: *mut u8, value: i32, len: usize) -> *mut u8 {
-  let mut offset = 0usize;
-  while offset < len {
-    // SAFETY: C callers require `dst..dst+len` to be writable. Volatile writes
-    // keep zeroization visible to BINSEC and prevent this shim from becoming a
-    // recursive compiler intrinsic.
-    unsafe { ptr::write_volatile(dst.add(offset), value.to_le_bytes()[0]) };
-    offset = offset.strict_add(1);
-  }
-  dst
-}
-
-#[unsafe(no_mangle)]
-#[inline(never)]
-/// C-compatible overlapping byte copy for the analysis harness.
-///
-/// # Safety
-///
-/// `src` must be readable and `dst` writable for `len` bytes. Both pointers
-/// must satisfy Rust's pointer provenance requirements for those ranges.
-pub unsafe extern "C" fn memmove(dst: *mut u8, src: *const u8, len: usize) -> *mut u8 {
-  if (dst as usize) <= (src as usize) {
-    let mut offset = 0usize;
-    while offset < len {
-      // SAFETY: C callers require source and destination ranges to be valid.
-      let byte = unsafe { ptr::read(src.add(offset)) };
-      // SAFETY: C callers require source and destination ranges to be valid.
-      unsafe { ptr::write(dst.add(offset), byte) };
-      offset = offset.strict_add(1);
-    }
-  } else {
-    let mut remaining = len;
-    while remaining != 0 {
-      remaining = remaining.strict_sub(1);
-      // SAFETY: C callers require source and destination ranges to be valid.
-      let byte = unsafe { ptr::read(src.add(remaining)) };
-      // SAFETY: C callers require source and destination ranges to be valid.
-      unsafe { ptr::write(dst.add(remaining), byte) };
-    }
-  }
-  dst
-}
-
-#[unsafe(no_mangle)]
-#[inline(never)]
-/// C-compatible non-overlapping byte copy for the analysis harness.
-///
-/// # Safety
-///
-/// `src` must be readable and `dst` writable for `len` bytes, and the two
-/// ranges must not overlap.
-pub unsafe extern "C" fn memcpy(dst: *mut u8, src: *const u8, len: usize) -> *mut u8 {
-  // SAFETY: `memcpy` has the same validity contract as `memmove`, with the
-  // additional non-overlap precondition. The `memmove` implementation is valid
-  // for both cases and keeps the harness small.
-  unsafe { memmove(dst, src, len) }
-}
-
-#[unsafe(no_mangle)]
-#[inline(never)]
-/// C-compatible byte comparison for the analysis harness.
-///
-/// # Safety
-///
-/// `lhs` and `rhs` must each be readable for `len` bytes.
-pub unsafe extern "C" fn bcmp(lhs: *const u8, rhs: *const u8, len: usize) -> i32 {
-  let mut acc = 0u8;
-  let mut offset = 0usize;
-  while offset < len {
-    // SAFETY: C callers require both ranges to be readable for `len` bytes.
-    let l = unsafe { ptr::read(lhs.add(offset)) };
-    // SAFETY: C callers require both ranges to be readable for `len` bytes.
-    let r = unsafe { ptr::read(rhs.add(offset)) };
-    acc |= l ^ r;
-    offset = offset.strict_add(1);
-  }
-  i32::from(acc)
-}
-
-/// The page that the `mmap` shim returns, page-aligned and zero-filled.
-#[cfg(target_os = "linux")]
-#[repr(C, align(4096))]
-struct ProcessOriginPage([u8; 4096]);
-
-#[cfg(target_os = "linux")]
-static mut CT_BINSEC_PROCESS_ORIGIN_PAGE: ProcessOriginPage = ProcessOriginPage([0; 4096]);
-
-#[cfg(target_os = "linux")]
-#[unsafe(no_mangle)]
-#[inline(never)]
-/// Harness-only `mmap` for the analysis harness, which BINSEC never runs
-/// natively. No production build defines this symbol.
-///
-/// BINSEC loads the initial memory from the file, so the first
-/// `rscrypto::platform::ProcessOrigin::current()` in an analyzed leaf runs
-/// the process setup. The setup maps one page and advises it. This shim and
-/// [`madvise`] model the Linux production path: `mmap` returns one
-/// page-aligned, zero-filled page, the probe with invalid advice fails, and
-/// `MADV_WIPEONFORK` succeeds. So the analyzed path is the page-mode path, and
-/// it stays inside the binary, where BINSEC can follow it. The prototype is
-/// `void *mmap(void *, size_t, int, int, int, off_t)`.
-///
-/// # Safety
-///
-/// Callers must use the returned page only as the one private page that the
-/// process setup asks for.
-pub unsafe extern "C" fn mmap(
-  _addr: *mut core::ffi::c_void,
-  _len: usize,
-  _prot: i32,
-  _flags: i32,
-  _fd: i32,
-  _offset: i64,
-) -> *mut core::ffi::c_void {
-  ptr::addr_of_mut!(CT_BINSEC_PROCESS_ORIGIN_PAGE).cast()
-}
-
-#[cfg(target_os = "linux")]
-#[unsafe(no_mangle)]
-#[inline(never)]
-/// Harness-only `madvise` for the analysis harness: it accepts
-/// `MADV_WIPEONFORK` (18) and refuses every other advice, as Linux does for the
-/// invalid advice -1. The prototype is `int madvise(void *, size_t, int)`. See
-/// [`mmap`].
-///
-/// # Safety
-///
-/// It reads and writes no memory, so every call is defined.
-pub unsafe extern "C" fn madvise(_addr: *mut core::ffi::c_void, _len: usize, advice: i32) -> i32 {
-  if advice == 18 { 0 } else { -1 }
-}
 
 #[unsafe(no_mangle)]
 #[used]
@@ -249,161 +111,7 @@ pub static mut CT_BINSEC_AEAD_BUFFER_32: [u8; 32] = [0u8; 32];
 
 #[unsafe(no_mangle)]
 #[used]
-pub static mut CT_BINSEC_NONCE_16: [u8; 16] = [0u8; 16];
-
-#[unsafe(no_mangle)]
-#[used]
-pub static mut CT_BINSEC_AEGIS_NONCE_32: [u8; 32] = [0u8; 32];
-
-#[unsafe(no_mangle)]
-#[used]
-pub static mut CT_BINSEC_ARGON2_DST: [u64; ARGON2_BLOCK_WORDS] = [0u64; ARGON2_BLOCK_WORDS];
-
-#[unsafe(no_mangle)]
-#[used]
-pub static mut CT_BINSEC_ARGON2_X: [u64; ARGON2_BLOCK_WORDS] = [0u64; ARGON2_BLOCK_WORDS];
-
-#[unsafe(no_mangle)]
-#[used]
-pub static mut CT_BINSEC_ARGON2_Y: [u64; ARGON2_BLOCK_WORDS] = [0u64; ARGON2_BLOCK_WORDS];
-
-#[unsafe(no_mangle)]
-#[used]
-pub static mut CT_BINSEC_POLY1305_KEY: [u8; 32] = [0u8; 32];
-
-#[unsafe(no_mangle)]
-#[used]
-pub static mut CT_BINSEC_POLY1305_BLOCK: [u8; 16] = [0u8; 16];
-
-#[unsafe(no_mangle)]
-#[used]
-pub static mut CT_BINSEC_POLY1305_PARTIAL: u8 = 0;
-
-#[unsafe(no_mangle)]
-#[used]
-pub static mut CT_BINSEC_CURVE25519_LHS: [u64; CURVE25519_LIMBS] = [0u64; CURVE25519_LIMBS];
-
-#[unsafe(no_mangle)]
-#[used]
-pub static mut CT_BINSEC_CURVE25519_RHS: [u64; CURVE25519_LIMBS] = [0u64; CURVE25519_LIMBS];
-
-#[unsafe(no_mangle)]
-#[used]
-pub static mut CT_BINSEC_CURVE25519_SWAP: u8 = 0;
-
-#[unsafe(no_mangle)]
-#[used]
-pub static mut CT_BINSEC_ED25519_DIGIT: i8 = 0;
-
-#[unsafe(no_mangle)]
-#[used]
-pub static mut CT_BINSEC_ECDSA_DIGIT: u8 = 0;
-
-#[unsafe(no_mangle)]
-#[used]
-pub static mut CT_BINSEC_P256_ECDH_DIGIT: u8 = 0;
-
-#[unsafe(no_mangle)]
-#[used]
-pub static mut CT_BINSEC_P256_ECDH_SIGNED_DIGIT: u8 = 0;
-
-#[unsafe(no_mangle)]
-#[used]
-pub static mut CT_BINSEC_P384_ECDH_GENERATOR_DIGIT: u8 = 0;
-
-#[unsafe(no_mangle)]
-#[used]
-pub static mut CT_BINSEC_P384_ECDH_WINDOW_DIGIT: u8 = 0;
-
-#[unsafe(no_mangle)]
-#[used]
-pub static mut CT_BINSEC_RSA_WINDOW_TABLE: [u64; RSA_WINDOW_TABLE_LIMBS] = [0u64; RSA_WINDOW_TABLE_LIMBS];
-
-#[unsafe(no_mangle)]
-#[used]
-pub static mut CT_BINSEC_RSA_WINDOW: u8 = 0;
-
-#[cfg(target_arch = "aarch64")]
-#[unsafe(no_mangle)]
-#[used]
-pub static mut CT_BINSEC_RSA_PAIR_A: [u64; RSA_PAIR_WORDS] = [0u64; RSA_PAIR_WORDS];
-
-#[cfg(target_arch = "aarch64")]
-#[unsafe(no_mangle)]
-#[used]
-pub static mut CT_BINSEC_RSA_PAIR_B: [u64; RSA_PAIR_WORDS] = [0u64; RSA_PAIR_WORDS];
-
-#[cfg(target_arch = "aarch64")]
-#[unsafe(no_mangle)]
-#[used]
-pub static mut CT_BINSEC_RSA_PAIR_MODULI: [u64; RSA_PAIR_WORDS] = [0u64; RSA_PAIR_WORDS];
-
-#[cfg(target_arch = "aarch64")]
-#[unsafe(no_mangle)]
-#[used]
-pub static mut CT_BINSEC_RSA_PAIR_CONSTANTS: [u64; 4] = [0u64; 4];
-
-#[unsafe(no_mangle)]
-#[used]
-pub static mut CT_BINSEC_RSA_COMPONENT_32: [u8; 32] = [0u8; 32];
-
-#[unsafe(no_mangle)]
-#[used]
-pub static mut CT_BINSEC_RSA_UPPER_32: [u8; 32] = [0u8; 32];
-
-#[unsafe(no_mangle)]
-#[used]
-pub static mut CT_BINSEC_RSA_OTHER_32: [u8; 32] = [0u8; 32];
-
-#[unsafe(no_mangle)]
-#[used]
-pub static mut CT_BINSEC_RSA_EXPONENT_256: [u8; 256] = [0u8; 256];
-
-#[unsafe(no_mangle)]
-#[used]
-pub static mut CT_BINSEC_RSA_CIPHERTEXT_256: [u8; 256] = [0u8; 256];
-
-#[unsafe(no_mangle)]
-#[used]
-pub static mut CT_BINSEC_RSA_ENCODED_256: [u8; 256] = [0u8; 256];
-
-#[unsafe(no_mangle)]
-#[used]
-pub static mut CT_BINSEC_RSA_CANDIDATES_256: [u8; 256] = [0u8; 256];
-
-#[unsafe(no_mangle)]
-#[used]
-pub static mut CT_BINSEC_RSA_ALTERNATIVE_256: [u8; 256] = [0u8; 256];
-
-#[unsafe(no_mangle)]
-#[used]
 pub static mut CT_BINSEC_RESULT: u8 = 0;
-
-#[inline(always)]
-/// Read a fixed-size byte array from a harness global.
-///
-/// # Safety
-///
-/// `ptr` must point to a valid, initialized array that remains readable for
-/// the duration of the volatile read.
-unsafe fn array_from_global<const N: usize>(ptr: *const [u8; N]) -> [u8; N] {
-  // SAFETY: BINSEC harness globals are fixed-size byte arrays with static
-  // storage duration. `read_volatile` keeps the symbolic bytes observable.
-  unsafe { ptr::read_volatile(ptr) }
-}
-
-#[inline(always)]
-/// Read a fixed-size limb array from a harness global.
-///
-/// # Safety
-///
-/// `ptr` must point to a valid, initialized array that remains readable for
-/// the duration of the volatile read.
-unsafe fn limbs_from_global<const N: usize>(ptr: *const [u64; N]) -> [u64; N] {
-  // SAFETY: BINSEC harness globals are fixed-size limb arrays with static
-  // storage duration. `read_volatile` keeps the symbolic limbs observable.
-  unsafe { ptr::read_volatile(ptr) }
-}
 
 #[unsafe(no_mangle)]
 #[inline(never)]
@@ -463,8 +171,10 @@ pub extern "C" fn ct_binsec_hmac_sha256_verify() -> ! {
   let key = unsafe { array_from_global(ptr::addr_of!(CT_BINSEC_KEY_32)) };
   // SAFETY: These pointers reference fixed harness globals with static storage.
   let expected = unsafe { array_from_global(ptr::addr_of!(CT_BINSEC_TAG_32)) };
-  let ok = rscrypto::auth::diag_hmac_sha256_verify_portable(&key, &expected);
-  ct_binsec_done(u8::from(ok.declassify()))
+  let mut mac = HmacSha256::new(&key);
+  mac.update(b"binsec");
+  let ok = mac.verify(&HmacSha256Tag::from_bytes(expected));
+  ct_binsec_done(u8::from(ok.is_ok()))
 }
 
 #[unsafe(no_mangle)]
@@ -477,8 +187,8 @@ pub extern "C" fn ct_binsec_hmac_sha256_verify_truncated_64() -> ! {
   let expected = expected
     .first_chunk::<8>()
     .expect("HMAC-SHA256 tags contain eight bytes");
-  let ok = rscrypto::auth::diag_hmac_sha256_verify_truncated_64_portable(&key, expected);
-  ct_binsec_done(u8::from(ok.declassify()))
+  let ok = HmacSha256::verify_truncated_tag_64(&key, b"binsec", expected);
+  ct_binsec_done(u8::from(ok.is_ok()))
 }
 
 #[unsafe(no_mangle)]
@@ -488,8 +198,10 @@ pub extern "C" fn ct_binsec_hmac_sha384_verify() -> ! {
   let key = unsafe { array_from_global(ptr::addr_of!(CT_BINSEC_KEY_48)) };
   // SAFETY: These pointers reference fixed harness globals with static storage.
   let expected = unsafe { array_from_global(ptr::addr_of!(CT_BINSEC_TAG_48)) };
-  let ok = rscrypto::auth::diag_hmac_sha384_verify_portable(&key, &expected);
-  ct_binsec_done(u8::from(ok.declassify()))
+  let mut mac = HmacSha384::new(&key);
+  mac.update(b"binsec");
+  let ok = mac.verify(&HmacSha384Tag::from_bytes(expected));
+  ct_binsec_done(u8::from(ok.is_ok()))
 }
 
 #[unsafe(no_mangle)]
@@ -499,8 +211,10 @@ pub extern "C" fn ct_binsec_hmac_sha512_verify() -> ! {
   let key = unsafe { array_from_global(ptr::addr_of!(CT_BINSEC_KEY_64)) };
   // SAFETY: These pointers reference fixed harness globals with static storage.
   let expected = unsafe { array_from_global(ptr::addr_of!(CT_BINSEC_TAG_64)) };
-  let ok = rscrypto::auth::diag_hmac_sha512_verify_portable(&key, &expected);
-  ct_binsec_done(u8::from(ok.declassify()))
+  let mut mac = HmacSha512::new(&key);
+  mac.update(b"binsec");
+  let ok = mac.verify(&HmacSha512Tag::from_bytes(expected));
+  ct_binsec_done(u8::from(ok.is_ok()))
 }
 
 #[unsafe(no_mangle)]
@@ -522,9 +236,7 @@ pub extern "C" fn ct_binsec_blake3_verify_keyed() -> ! {
   // SAFETY: These pointers reference fixed harness globals with static storage.
   let expected = unsafe { array_from_global(ptr::addr_of!(CT_BINSEC_TAG_32)) };
   let expected = Blake3KeyedHash::from_bytes(expected);
-  let actual = rscrypto::hashes::crypto::diag_blake3_keyed_digest_portable(&key);
-  let ok = actual.ct_eq(&expected);
-  ct_binsec_done(u8::from(ok.declassify()))
+  ct_binsec_done(u8::from(Blake3::verify_keyed(&key, b"binsec", &expected).is_ok()))
 }
 
 #[unsafe(no_mangle)]
@@ -532,7 +244,7 @@ pub extern "C" fn ct_binsec_blake3_verify_keyed() -> ! {
 pub extern "C" fn ct_binsec_hkdf_sha256_derive() -> ! {
   // SAFETY: These pointers reference fixed harness globals with static storage.
   let ikm = unsafe { array_from_global(ptr::addr_of!(CT_BINSEC_IKM_32)) };
-  let okm = rscrypto::auth::diag_hkdf_sha256_derive_portable(&ikm);
+  let okm = rscrypto::HkdfSha256::derive_array::<32>(b"salt", &ikm, b"info").expect("one HKDF output block");
   let mut acc = 0u8;
   for byte in okm {
     acc ^= byte;
@@ -545,7 +257,7 @@ pub extern "C" fn ct_binsec_hkdf_sha256_derive() -> ! {
 pub extern "C" fn ct_binsec_hkdf_sha384_derive() -> ! {
   // SAFETY: These pointers reference fixed harness globals with static storage.
   let ikm = unsafe { array_from_global(ptr::addr_of!(CT_BINSEC_IKM_48)) };
-  let okm = rscrypto::auth::diag_hkdf_sha384_derive_portable(&ikm);
+  let okm = rscrypto::HkdfSha384::derive_array::<48>(b"salt", &ikm, b"info").expect("one HKDF output block");
   let mut acc = 0u8;
   for byte in okm {
     acc ^= byte;
@@ -560,7 +272,7 @@ pub extern "C" fn ct_binsec_pbkdf2_sha256_verify() -> ! {
   let password = unsafe { array_from_global(ptr::addr_of!(CT_BINSEC_PASSWORD_32)) };
   // SAFETY: These pointers reference fixed harness globals with static storage.
   let expected = unsafe { array_from_global(ptr::addr_of!(CT_BINSEC_TAG_32)) };
-  let ok = rscrypto::auth::diag_pbkdf2_sha256_verify_portable(&password, &expected);
+  let ok = rscrypto::Pbkdf2Sha256::verify_password_primitive(&password, b"salt", 1, &expected).is_ok();
   ct_binsec_done(u8::from(ok))
 }
 
@@ -571,85 +283,8 @@ pub extern "C" fn ct_binsec_pbkdf2_sha512_verify() -> ! {
   let password = unsafe { array_from_global(ptr::addr_of!(CT_BINSEC_PASSWORD_64)) };
   // SAFETY: These pointers reference fixed harness globals with static storage.
   let expected = unsafe { array_from_global(ptr::addr_of!(CT_BINSEC_TAG_64)) };
-  let ok = rscrypto::auth::diag_pbkdf2_sha512_verify_portable(&password, &expected);
+  let ok = rscrypto::Pbkdf2Sha512::verify_password_primitive(&password, b"salt", 1, &expected).is_ok();
   ct_binsec_done(u8::from(ok))
-}
-
-#[unsafe(no_mangle)]
-#[inline(never)]
-pub extern "C" fn ct_binsec_aes_round_portable() -> ! {
-  // SAFETY: These pointers reference fixed harness globals with static storage.
-  let block = unsafe { array_from_global(ptr::addr_of!(CT_BINSEC_TAG_16)) };
-  // SAFETY: These pointers reference fixed harness globals with static storage.
-  let round_key = unsafe { array_from_global(ptr::addr_of!(CT_BINSEC_KEY_16)) };
-  let out = rscrypto::aead::diag_aes_enc_round_portable(&block, &round_key);
-  let mut acc = 0u8;
-  for byte in out {
-    acc ^= byte;
-  }
-  ct_binsec_done(acc)
-}
-
-#[unsafe(no_mangle)]
-#[inline(never)]
-pub extern "C" fn ct_binsec_ghash_block_portable() -> ! {
-  // SAFETY: These pointers reference fixed harness globals with static storage.
-  let h = unsafe { array_from_global(ptr::addr_of!(CT_BINSEC_KEY_16)) };
-  // SAFETY: These pointers reference fixed harness globals with static storage.
-  let block = unsafe { array_from_global(ptr::addr_of!(CT_BINSEC_TAG_16)) };
-  let out = rscrypto::aead::diag_ghash_block_portable(&h, &block);
-  let mut acc = 0u8;
-  for byte in out {
-    acc ^= byte;
-  }
-  ct_binsec_done(acc)
-}
-
-#[unsafe(no_mangle)]
-#[inline(never)]
-pub extern "C" fn ct_binsec_polyval_reduce_portable() -> ! {
-  // SAFETY: These pointers reference fixed harness globals with static storage.
-  let a = unsafe { array_from_global(ptr::addr_of!(CT_BINSEC_KEY_16)) };
-  // SAFETY: These pointers reference fixed harness globals with static storage.
-  let b = unsafe { array_from_global(ptr::addr_of!(CT_BINSEC_TAG_16)) };
-  let out = rscrypto::aead::diag_polyval_reduce_portable(&a, &b);
-  let mut acc = 0u8;
-  for byte in out {
-    acc ^= byte;
-  }
-  ct_binsec_done(acc)
-}
-
-#[unsafe(no_mangle)]
-#[inline(never)]
-pub extern "C" fn ct_binsec_aegis256_update_portable() -> ! {
-  // SAFETY: These pointers reference fixed harness globals with static storage.
-  let key = unsafe { array_from_global(ptr::addr_of!(CT_BINSEC_KEY_32)) };
-  // SAFETY: These pointers reference fixed harness globals with static storage.
-  let nonce = unsafe { array_from_global(ptr::addr_of!(CT_BINSEC_AEGIS_NONCE_32)) };
-  // SAFETY: These pointers reference fixed harness globals with static storage.
-  let block = unsafe { array_from_global(ptr::addr_of!(CT_BINSEC_TAG_16)) };
-  let out = rscrypto::aead::diag_aegis256_update_portable(&key, &nonce, &block);
-  let mut acc = 0u8;
-  for byte in out {
-    acc ^= byte;
-  }
-  ct_binsec_done(acc)
-}
-
-#[unsafe(no_mangle)]
-#[inline(never)]
-pub extern "C" fn ct_binsec_ascon_aead128_tag_portable() -> ! {
-  // SAFETY: These pointers reference fixed harness globals with static storage.
-  let key = unsafe { array_from_global(ptr::addr_of!(CT_BINSEC_KEY_16)) };
-  // SAFETY: These pointers reference fixed harness globals with static storage.
-  let nonce = unsafe { array_from_global(ptr::addr_of!(CT_BINSEC_NONCE_16)) };
-  // SAFETY: These pointers reference fixed harness globals with static storage.
-  let block = unsafe { array_from_global(ptr::addr_of!(CT_BINSEC_TAG_16)) };
-  // SAFETY: These pointers reference fixed harness globals with static storage.
-  let expected = unsafe { array_from_global(ptr::addr_of!(CT_BINSEC_RHS_16)) };
-  let ok = rscrypto::aead::diag_ascon_aead128_tag_portable(&key, &nonce, &block, &expected);
-  ct_binsec_done(u8::from(ok.declassify()))
 }
 
 macro_rules! aead_seal_entry {
@@ -836,46 +471,12 @@ aead_open_entry!(
 
 #[unsafe(no_mangle)]
 #[inline(never)]
-pub extern "C" fn ct_binsec_argon2i_hash() -> ! {
-  // SAFETY: These pointers reference fixed harness globals with static storage.
-  let mut dst = unsafe { limbs_from_global(ptr::addr_of!(CT_BINSEC_ARGON2_DST)) };
-  // SAFETY: These pointers reference fixed harness globals with static storage.
-  let x = unsafe { limbs_from_global(ptr::addr_of!(CT_BINSEC_ARGON2_X)) };
-  // SAFETY: These pointers reference fixed harness globals with static storage.
-  let y = unsafe { limbs_from_global(ptr::addr_of!(CT_BINSEC_ARGON2_Y)) };
-  rscrypto::auth::argon2::diag_compress_portable(&mut dst, &x, &y, true);
-
-  let mut acc = 0u64;
-  for word in dst {
-    acc ^= word;
-  }
-  let folded = acc | (acc >> 8) | (acc >> 16) | (acc >> 24) | (acc >> 32) | (acc >> 40) | (acc >> 48) | (acc >> 56);
-  ct_binsec_done(folded.to_le_bytes()[0])
-}
-
-#[unsafe(no_mangle)]
-#[inline(never)]
-pub extern "C" fn ct_binsec_chacha20poly1305_seal() -> ! {
-  // SAFETY: These pointers reference fixed harness globals with static storage.
-  let key = unsafe { array_from_global(ptr::addr_of!(CT_BINSEC_KEY_32)) };
-  // SAFETY: These pointers reference fixed harness globals with static storage.
-  let mut buffer = unsafe { array_from_global(ptr::addr_of!(CT_BINSEC_AEAD_BUFFER_32)) };
-  rscrypto::aead::diag_chacha20_xor_keystream_portable(&key, 1, &[7u8; 12], &mut buffer);
-  let mut acc = 0u8;
-  for byte in buffer {
-    acc ^= byte;
-  }
-  ct_binsec_done(acc)
-}
-
-#[unsafe(no_mangle)]
-#[inline(never)]
 pub extern "C" fn ct_binsec_chacha20_rng_fill() -> ! {
   // SAFETY: These pointers reference fixed harness globals with static storage.
   let seed = unsafe { array_from_global(ptr::addr_of!(CT_BINSEC_KEY_32)) };
   // One read takes the first refill: eight portable ChaCha20 blocks, key replacement, and clears.
   let mut out = [0u8; 32];
-  rscrypto::rng::diag_chacha20_rng_fill_portable(seed, &mut out);
+  ChaCha20Rng::from_seed(seed).fill_bytes(&mut out);
   let mut acc = 0u8;
   for byte in out {
     acc ^= byte;
@@ -888,9 +489,9 @@ pub extern "C" fn ct_binsec_chacha20_rng_fill() -> ! {
 pub extern "C" fn ct_binsec_blake2_blake3_keyed_digest() -> ! {
   // SAFETY: These pointers reference fixed harness globals with static storage.
   let key = unsafe { array_from_global(ptr::addr_of!(CT_BINSEC_KEY_32)) };
-  let b2b256 = rscrypto::hashes::crypto::diag_blake2b256_keyed_digest_portable(&key);
-  let b2s256 = rscrypto::hashes::crypto::diag_blake2s256_keyed_digest_portable(&key);
-  let b3 = rscrypto::hashes::crypto::diag_blake3_keyed_digest_portable(&key).to_bytes();
+  let b2b256 = Blake2b256::keyed_digest(Blake2bKey::new(&key).expect("32-byte key"), b"binsec");
+  let b2s256 = Blake2s256::keyed_digest(Blake2sKey::new(&key).expect("32-byte key"), b"binsec");
+  let b3 = Blake3::keyed_digest(&key, b"binsec").to_bytes();
 
   let mut acc = 0u8;
   for byte in b2b256.into_iter().chain(b2s256).chain(b3) {
@@ -900,331 +501,8 @@ pub extern "C" fn ct_binsec_blake2_blake3_keyed_digest() -> ! {
 }
 
 #[unsafe(no_mangle)]
-#[inline(never)]
-pub extern "C" fn ct_binsec_poly1305_block_portable() -> ! {
-  // SAFETY: These pointers reference fixed harness globals with static storage.
-  let key = unsafe { array_from_global(ptr::addr_of!(CT_BINSEC_POLY1305_KEY)) };
-  // SAFETY: These pointers reference fixed harness globals with static storage.
-  let block = unsafe { array_from_global(ptr::addr_of!(CT_BINSEC_POLY1305_BLOCK)) };
-  // SAFETY: This pointer references a fixed harness global with static storage.
-  let partial = unsafe { ptr::read_volatile(ptr::addr_of!(CT_BINSEC_POLY1305_PARTIAL)) } != 0;
-  let tag = rscrypto::aead::diag_poly1305_block_portable_digest(&key, &block, partial);
-
-  let mut acc = 0u8;
-  for byte in tag {
-    acc ^= byte;
-  }
-  ct_binsec_done(acc)
-}
-
-#[unsafe(no_mangle)]
-#[inline(never)]
-pub extern "C" fn ct_binsec_curve25519_conditional_swap() -> ! {
-  // SAFETY: These pointers reference fixed harness globals with static storage.
-  let mut lhs = unsafe { limbs_from_global(ptr::addr_of!(CT_BINSEC_CURVE25519_LHS)) };
-  // SAFETY: These pointers reference fixed harness globals with static storage.
-  let mut rhs = unsafe { limbs_from_global(ptr::addr_of!(CT_BINSEC_CURVE25519_RHS)) };
-  // SAFETY: This pointer references a fixed harness global with static storage.
-  let swap = unsafe { ptr::read_volatile(ptr::addr_of!(CT_BINSEC_CURVE25519_SWAP)) };
-
-  rscrypto::auth::diag_curve25519_conditional_swap(&mut lhs, &mut rhs, swap);
-
-  let mut acc = 0u64;
-  for limb in lhs.into_iter().chain(rhs) {
-    acc ^= limb;
-  }
-  let folded = acc | (acc >> 8) | (acc >> 16) | (acc >> 24) | (acc >> 32) | (acc >> 40) | (acc >> 48) | (acc >> 56);
-  ct_binsec_done(folded.to_le_bytes()[0])
-}
-
-#[unsafe(no_mangle)]
-#[inline(never)]
-pub extern "C" fn ct_binsec_ed25519_select_basepoint_cached() -> ! {
-  // SAFETY: This pointer references a fixed harness global with static storage.
-  let digit = unsafe { ptr::read_volatile(ptr::addr_of!(CT_BINSEC_ED25519_DIGIT)) };
-  let limbs = rscrypto::auth::diag_ed25519_select_basepoint_cached_limb_digest(digit);
-
-  let mut acc = 0u64;
-  for limb in limbs {
-    acc ^= limb;
-  }
-  let folded = acc | (acc >> 8) | (acc >> 16) | (acc >> 24) | (acc >> 32) | (acc >> 40) | (acc >> 48) | (acc >> 56);
-  ct_binsec_done(folded.to_le_bytes()[0])
-}
-
-#[unsafe(no_mangle)]
-#[inline(never)]
-pub extern "C" fn ct_binsec_ecdsa_p256_select_signing_generator_affine() -> ! {
-  // SAFETY: This pointer references a fixed harness global with static storage.
-  let digit = unsafe { ptr::read_volatile(ptr::addr_of!(CT_BINSEC_ECDSA_DIGIT)) };
-  let limbs = rscrypto::auth::diag_ecdsa_p256_select_signing_generator_affine_limb_digest(digit);
-
-  let mut acc = 0u64;
-  for limb in limbs {
-    acc ^= limb;
-  }
-  let folded = acc | (acc >> 8) | (acc >> 16) | (acc >> 24) | (acc >> 32) | (acc >> 40) | (acc >> 48) | (acc >> 56);
-  ct_binsec_done(folded.to_le_bytes()[0])
-}
-
-#[unsafe(no_mangle)]
-#[inline(never)]
-pub extern "C" fn ct_binsec_p256_ecdh_select_window() -> ! {
-  // SAFETY: This pointer references a fixed harness global with static storage.
-  let digit = unsafe { ptr::read_volatile(ptr::addr_of!(CT_BINSEC_P256_ECDH_DIGIT)) };
-  let limbs = rscrypto::auth::diag_p256_ecdh_select_window_limb_digest(digit);
-
-  let mut acc = 0u64;
-  for limb in limbs {
-    acc ^= limb;
-  }
-  let folded = acc | (acc >> 8) | (acc >> 16) | (acc >> 24) | (acc >> 32) | (acc >> 40) | (acc >> 48) | (acc >> 56);
-  ct_binsec_done(folded.to_le_bytes()[0])
-}
-
-#[unsafe(no_mangle)]
-#[inline(never)]
-pub extern "C" fn ct_binsec_p256_ecdh_select_signed_window() -> ! {
-  // SAFETY: This pointer references a fixed harness global with static storage.
-  let digit = unsafe { ptr::read_volatile(ptr::addr_of!(CT_BINSEC_P256_ECDH_SIGNED_DIGIT)) };
-  let limbs = rscrypto::auth::diag_p256_ecdh_select_signed_window_limb_digest(digit);
-
-  let mut acc = 0u64;
-  for limb in limbs {
-    acc ^= limb;
-  }
-  let folded = acc | (acc >> 8) | (acc >> 16) | (acc >> 24) | (acc >> 32) | (acc >> 40) | (acc >> 48) | (acc >> 56);
-  ct_binsec_done(folded.to_le_bytes()[0])
-}
-
-#[unsafe(no_mangle)]
-#[inline(never)]
-pub extern "C" fn ct_binsec_p384_ecdh_select_generator() -> ! {
-  // SAFETY: This pointer references a fixed harness global with static storage.
-  let digit = unsafe { ptr::read_volatile(ptr::addr_of!(CT_BINSEC_P384_ECDH_GENERATOR_DIGIT)) };
-  let limbs = rscrypto::auth::diag_p384_ecdh_select_generator_limb_digest(digit);
-
-  let mut acc = 0u64;
-  for limb in limbs {
-    acc ^= limb;
-  }
-  let folded = acc | (acc >> 8) | (acc >> 16) | (acc >> 24) | (acc >> 32) | (acc >> 40) | (acc >> 48) | (acc >> 56);
-  ct_binsec_done(folded.to_le_bytes()[0])
-}
-
-#[unsafe(no_mangle)]
-#[inline(never)]
-pub extern "C" fn ct_binsec_p384_ecdh_select_window() -> ! {
-  // SAFETY: This pointer references a fixed harness global with static storage.
-  let digit = unsafe { ptr::read_volatile(ptr::addr_of!(CT_BINSEC_P384_ECDH_WINDOW_DIGIT)) };
-  let limbs = rscrypto::auth::diag_p384_ecdh_select_window_limb_digest(digit);
-
-  let mut acc = 0u64;
-  for limb in limbs {
-    acc ^= limb;
-  }
-  let folded = acc | (acc >> 8) | (acc >> 16) | (acc >> 24) | (acc >> 32) | (acc >> 40) | (acc >> 48) | (acc >> 56);
-  ct_binsec_done(folded.to_le_bytes()[0])
-}
-
-#[unsafe(no_mangle)]
-#[inline(never)]
-pub extern "C" fn ct_binsec_ecdsa_p384_select_signing_generator_affine() -> ! {
-  // SAFETY: This pointer references a fixed harness global with static storage.
-  let digit = unsafe { ptr::read_volatile(ptr::addr_of!(CT_BINSEC_ECDSA_DIGIT)) };
-  let limbs = rscrypto::auth::diag_ecdsa_p384_select_signing_generator_affine_limb_digest(digit);
-
-  let mut acc = 0u64;
-  for limb in limbs {
-    acc ^= limb;
-  }
-  let folded = acc | (acc >> 8) | (acc >> 16) | (acc >> 24) | (acc >> 32) | (acc >> 40) | (acc >> 48) | (acc >> 56);
-  ct_binsec_done(folded.to_le_bytes()[0])
-}
-
-#[unsafe(no_mangle)]
-#[inline(never)]
-pub extern "C" fn ct_binsec_rsa_private_select_window_power_4() -> ! {
-  // SAFETY: This pointer references a fixed harness global with static storage.
-  let table = unsafe { limbs_from_global(ptr::addr_of!(CT_BINSEC_RSA_WINDOW_TABLE)) };
-  // SAFETY: This pointer references a fixed harness global with static storage.
-  let window = unsafe { ptr::read_volatile(ptr::addr_of!(CT_BINSEC_RSA_WINDOW)) };
-  let limbs = rscrypto::auth::diag_rsa_private_select_window_power_4(&table, window);
-
-  let mut acc = 0u64;
-  for limb in limbs {
-    acc ^= limb;
-  }
-  let folded = acc | (acc >> 8) | (acc >> 16) | (acc >> 24) | (acc >> 32) | (acc >> 40) | (acc >> 48) | (acc >> 56);
-  ct_binsec_done(folded.to_le_bytes()[0])
-}
-
-#[cfg(target_arch = "aarch64")]
-#[unsafe(no_mangle)]
-#[inline(never)]
-pub extern "C" fn ct_binsec_rsa_private_select_window_power_4_neon() -> ! {
-  // SAFETY: This pointer references a fixed harness global with static storage.
-  let table = unsafe { limbs_from_global(ptr::addr_of!(CT_BINSEC_RSA_WINDOW_TABLE)) };
-  // SAFETY: This pointer references a fixed harness global with static storage.
-  let window = unsafe { ptr::read_volatile(ptr::addr_of!(CT_BINSEC_RSA_WINDOW)) };
-  let limbs = rscrypto::auth::diag_rsa_private_select_window_power_4_neon(&table, window);
-
-  let mut acc = 0u64;
-  for limb in limbs {
-    acc ^= limb;
-  }
-  let folded = acc | (acc >> 8) | (acc >> 16) | (acc >> 24) | (acc >> 32) | (acc >> 40) | (acc >> 48) | (acc >> 56);
-  ct_binsec_done(folded.to_le_bytes()[0])
-}
-
-#[cfg(target_arch = "aarch64")]
-#[unsafe(no_mangle)]
-#[inline(never)]
-pub extern "C" fn ct_binsec_rsa_pair_mul_square_24_neon() -> ! {
-  // SAFETY: These pointers reference fixed harness globals with static storage.
-  let (a, b, moduli, constants) = unsafe {
-    (
-      limbs_from_global(ptr::addr_of!(CT_BINSEC_RSA_PAIR_A)),
-      limbs_from_global(ptr::addr_of!(CT_BINSEC_RSA_PAIR_B)),
-      limbs_from_global(ptr::addr_of!(CT_BINSEC_RSA_PAIR_MODULI)),
-      limbs_from_global(ptr::addr_of!(CT_BINSEC_RSA_PAIR_CONSTANTS)),
-    )
-  };
-  let limbs = rscrypto::auth::diag_rsa_pair_mul_square_24(&a, &b, &moduli, &constants);
-
-  let mut acc = 0u64;
-  for limb in limbs {
-    acc ^= limb;
-  }
-  let folded = acc | (acc >> 8) | (acc >> 16) | (acc >> 24) | (acc >> 32) | (acc >> 40) | (acc >> 48) | (acc >> 56);
-  ct_binsec_done(folded.to_le_bytes()[0])
-}
-
-#[unsafe(no_mangle)]
-#[inline(never)]
-pub extern "C" fn ct_binsec_rsa_private_component_validation_32() -> ! {
-  // SAFETY: These pointers reference fixed harness globals with static storage.
-  let component = unsafe { array_from_global(ptr::addr_of!(CT_BINSEC_RSA_COMPONENT_32)) };
-  // SAFETY: These pointers reference fixed harness globals with static storage.
-  let upper = unsafe { array_from_global(ptr::addr_of!(CT_BINSEC_RSA_UPPER_32)) };
-  // SAFETY: These pointers reference fixed harness globals with static storage.
-  let other = unsafe { array_from_global(ptr::addr_of!(CT_BINSEC_RSA_OTHER_32)) };
-  let ok = rscrypto::auth::diag_rsa_private_component_validation_32(&component, &upper, &other);
-  ct_binsec_done(ok)
-}
-
-#[unsafe(no_mangle)]
-#[inline(never)]
-pub extern "C" fn ct_binsec_rsa_implicit_rejection_kdk_256() -> ! {
-  // SAFETY: Each pointer references an initialized fixed-size harness global.
-  let exponent = unsafe { array_from_global(ptr::addr_of!(CT_BINSEC_RSA_EXPONENT_256)) };
-  // SAFETY: This pointer references an initialized fixed-size harness global.
-  let ciphertext = unsafe { array_from_global(ptr::addr_of!(CT_BINSEC_RSA_CIPHERTEXT_256)) };
-  let kdk = rscrypto::auth::rsa::diag_rsa_implicit_rejection_kdk_256(&exponent, &ciphertext);
-  ct_binsec_done(kdk.iter().fold(0, |acc, byte| acc ^ byte))
-}
-
-#[unsafe(no_mangle)]
-#[inline(never)]
-pub extern "C" fn ct_binsec_rsa_implicit_rejection_expand_256() -> ! {
-  // SAFETY: This pointer references an initialized fixed-size harness global.
-  let kdk = unsafe { array_from_global(ptr::addr_of!(CT_BINSEC_KEY_32)) };
-  let mut candidates = [0u8; 256];
-  let mut alternative = [0u8; 256];
-  let result = rscrypto::auth::rsa::diag_rsa_implicit_rejection_expand_256(&kdk, &mut candidates, &mut alternative);
-  let digest = candidates.iter().chain(&alternative).fold(0, |acc, byte| acc ^ byte);
-  ct_binsec_done(digest ^ u8::from(result.is_ok()))
-}
-
-#[unsafe(no_mangle)]
-#[inline(never)]
-pub extern "C" fn ct_binsec_rsa_implicit_rejection_decode_256() -> ! {
-  // SAFETY: Each pointer references an initialized fixed-size harness global.
-  let encoded = unsafe { array_from_global(ptr::addr_of!(CT_BINSEC_RSA_ENCODED_256)) };
-  // SAFETY: This pointer references an initialized fixed-size harness global.
-  let candidates = unsafe { array_from_global(ptr::addr_of!(CT_BINSEC_RSA_CANDIDATES_256)) };
-  // SAFETY: This pointer references an initialized fixed-size harness global.
-  let mut alternative = unsafe { array_from_global(ptr::addr_of!(CT_BINSEC_RSA_ALTERNATIVE_256)) };
-  let mut out = [0u8; 245];
-  let len =
-    rscrypto::auth::rsa::diag_rsa_implicit_rejection_decode_256(&encoded, &candidates, &mut alternative, &mut out)
-      .unwrap_or(0);
-  let digest = out.iter().fold(0, |acc, byte| acc ^ byte);
-  ct_binsec_done(digest ^ len.to_le_bytes()[0])
-}
-
-#[cfg(target_arch = "x86_64")]
-#[unsafe(no_mangle)]
-#[inline(never)]
-#[target_feature(enable = "avx2")]
-/// # Safety
-///
-/// The caller must ensure AVX2 is available before invoking this entrypoint.
-pub unsafe extern "C" fn ct_binsec_ed25519_select_basepoint_cached_avx2() -> ! {
-  // SAFETY: This pointer references a fixed harness global with static storage.
-  let digit = unsafe { ptr::read_volatile(ptr::addr_of!(CT_BINSEC_ED25519_DIGIT)) };
-  // SAFETY: This entrypoint is compiled with AVX2 enabled and is selected only
-  // for the x86_64 AVX2 BINSEC kernel.
-  let limbs = unsafe { rscrypto::auth::diag_ed25519_select_basepoint_cached_avx2_limb_digest(digit) };
-
-  let mut acc = 0u64;
-  for limb in limbs {
-    acc ^= limb;
-  }
-  let folded = acc | (acc >> 8) | (acc >> 16) | (acc >> 24) | (acc >> 32) | (acc >> 40) | (acc >> 48) | (acc >> 56);
-  ct_binsec_done(folded.to_le_bytes()[0])
-}
-
-#[cfg(target_arch = "x86_64")]
-#[unsafe(no_mangle)]
-#[inline(never)]
-#[target_feature(enable = "avx2")]
-/// # Safety
-///
-/// The caller must ensure AVX2 is available before invoking this entrypoint.
-pub unsafe extern "C" fn ct_binsec_ed25519_select_basepoint_cached_ifma() -> ! {
-  // SAFETY: This pointer references a fixed harness global with static storage.
-  let digit = unsafe { ptr::read_volatile(ptr::addr_of!(CT_BINSEC_ED25519_DIGIT)) };
-  // SAFETY: AVX2 is enabled; the IFMA table selector itself uses only AVX2.
-  let limbs = unsafe { rscrypto::auth::diag_ed25519_select_basepoint_cached_ifma_limb_digest(digit) };
-
-  let mut acc = 0u64;
-  for limb in limbs {
-    acc ^= limb;
-  }
-  let folded = acc | (acc >> 8) | (acc >> 16) | (acc >> 24) | (acc >> 32) | (acc >> 40) | (acc >> 48) | (acc >> 56);
-  ct_binsec_done(folded.to_le_bytes()[0])
-}
-
-#[unsafe(no_mangle)]
 #[used]
-pub static mut CT_BINSEC_MLDSA_OPERANDS: [u32; 2] = [0; 2];
-
-#[unsafe(no_mangle)]
-#[used]
-pub static mut CT_BINSEC_MLDSA_PRODUCT: u32 = 0;
-
-/// Analyze the production portable Montgomery leaf over its complete input domain.
-#[unsafe(no_mangle)]
-#[inline(never)]
-pub extern "C" fn ct_binsec_mldsa_montgomery() -> ! {
-  let operands = ptr::addr_of!(CT_BINSEC_MLDSA_OPERANDS).cast::<u32>();
-  // SAFETY: Both addresses refer to initialized, harness-owned static storage.
-  // The harness is single-threaded and no reference to either operand is created.
-  let (a, b) = unsafe { (ptr::read_volatile(operands), ptr::read_volatile(operands.add(1))) };
-  // Every pair below 2q has a preimage. Normalization is harness input preparation;
-  // the multiplication and reduction execute the actual production function.
-  let product = rscrypto::auth::diag_mldsa_montgomery(a % 16_760_834, b % 16_760_834);
-  // SAFETY: This harness-owned static has no concurrent reader or writer. Keep
-  // every result bit observable so the compiler cannot prune the arithmetic.
-  unsafe { ptr::write_volatile(ptr::addr_of_mut!(CT_BINSEC_MLDSA_PRODUCT), product) };
-  ct_binsec_done(0)
-}
-
-#[unsafe(no_mangle)]
-#[used]
-pub static CT_BINSEC_ENTRYPOINTS: [extern "C" fn() -> !; 54] = [
-  ct_binsec_mldsa_montgomery,
+pub static CT_BINSEC_ENTRYPOINTS: [extern "C" fn() -> !; 32] = [
   ct_binsec_owner_eq_16,
   ct_binsec_owner_eq_32,
   ct_binsec_owner_eq_48,
@@ -1239,11 +517,6 @@ pub static CT_BINSEC_ENTRYPOINTS: [extern "C" fn() -> !; 54] = [
   ct_binsec_hkdf_sha384_derive,
   ct_binsec_pbkdf2_sha256_verify,
   ct_binsec_pbkdf2_sha512_verify,
-  ct_binsec_aes_round_portable,
-  ct_binsec_ghash_block_portable,
-  ct_binsec_polyval_reduce_portable,
-  ct_binsec_aegis256_update_portable,
-  ct_binsec_ascon_aead128_tag_portable,
   ct_binsec_aes128gcm_seal,
   ct_binsec_aes256gcm_seal,
   ct_binsec_aes128gcmsiv_seal,
@@ -1260,40 +533,8 @@ pub static CT_BINSEC_ENTRYPOINTS: [extern "C" fn() -> !; 54] = [
   ct_binsec_xchacha20poly1305_open,
   ct_binsec_aegis256_open,
   ct_binsec_ascon_aead128_open,
-  ct_binsec_argon2i_hash,
-  ct_binsec_chacha20poly1305_seal,
   ct_binsec_chacha20_rng_fill,
   ct_binsec_blake2_blake3_keyed_digest,
-  ct_binsec_poly1305_block_portable,
-  ct_binsec_curve25519_conditional_swap,
-  ct_binsec_ed25519_select_basepoint_cached,
-  ct_binsec_ecdsa_p256_select_signing_generator_affine,
-  ct_binsec_p256_ecdh_select_window,
-  ct_binsec_p256_ecdh_select_signed_window,
-  ct_binsec_p384_ecdh_select_generator,
-  ct_binsec_p384_ecdh_select_window,
-  ct_binsec_ecdsa_p384_select_signing_generator_affine,
-  ct_binsec_rsa_private_select_window_power_4,
-  ct_binsec_rsa_private_component_validation_32,
-  ct_binsec_rsa_implicit_rejection_kdk_256,
-  ct_binsec_rsa_implicit_rejection_expand_256,
-  ct_binsec_rsa_implicit_rejection_decode_256,
-];
-
-#[cfg(target_arch = "x86_64")]
-#[unsafe(no_mangle)]
-#[used]
-pub static CT_BINSEC_X86_ENTRYPOINTS: [unsafe extern "C" fn() -> !; 2] = [
-  ct_binsec_ed25519_select_basepoint_cached_avx2,
-  ct_binsec_ed25519_select_basepoint_cached_ifma,
-];
-
-#[cfg(target_arch = "aarch64")]
-#[unsafe(no_mangle)]
-#[used]
-pub static CT_BINSEC_AARCH64_ENTRYPOINTS: [extern "C" fn() -> !; 2] = [
-  ct_binsec_rsa_private_select_window_power_4_neon,
-  ct_binsec_rsa_pair_mul_square_24_neon,
 ];
 
 fn main() {

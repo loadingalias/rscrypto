@@ -10,7 +10,7 @@ use crate::traits::Digest;
 #[doc(hidden)]
 pub(crate) mod dispatch;
 #[cfg(test)]
-mod kernel_test;
+pub(crate) mod kernel_test;
 pub(crate) mod kernels;
 
 const BLOCK_LEN: usize = 128;
@@ -220,19 +220,6 @@ impl Sha384 {
     let digest = state.finalize_secret();
     state.zeroize_secret_state();
     digest
-  }
-
-  #[cfg(all(feature = "hmac", any(test, all(rscrypto_internal, feature = "diag"))))]
-  #[inline]
-  pub(crate) fn new_with_compress_for_test(compress_blocks: Sha512KernelId) -> Self {
-    Self {
-      state: H0,
-      block: [0u8; BLOCK_LEN],
-      block_len: 0,
-      bytes_hashed: 0,
-      compress_blocks,
-      dispatch_initialized: true,
-    }
   }
 }
 

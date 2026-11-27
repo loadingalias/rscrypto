@@ -28,6 +28,5 @@ define_crc! {
   output_size: 3,
   spec: Spec::new(24, 0x86_4CFB, false, 0xB7_04CE, 0),
   hw: Hw::None,
-  env: "RSCRYPTO_CRC24_FORCE",
   buffered: BufferedCrc24OpenPgp,
 }

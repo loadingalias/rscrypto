@@ -6,12 +6,8 @@ publish = false
 
 [lib]
 name = "rscrypto_ct_harness"
+path = "../../src/ct_tests/operations.rs"
 crate-type = ["rlib", "staticlib"]
-bench = false
-
-[[bin]]
-name = "rscrypto-ct-evidence"
-path = "src/main.rs"
 bench = false
 
 [dependencies]
@@ -19,6 +15,5 @@ rscrypto = { path = "../..", default-features = false, features = [
   "std",
   "full",
   "parallel",
-  "diag",
   "getrandom",
 ] }

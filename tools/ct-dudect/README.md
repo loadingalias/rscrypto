@@ -2,6 +2,7 @@
 
 Run `just ct-test` to check the exporter and the report validation.
 Run timing cases through `just ct-dudect` or `just ct-full`.
+The release-profile library test calls the vendored runner for each selected case.
 
 ## HMAC host controls
 
@@ -71,7 +72,8 @@ The CSV columns are `benchname,sequence,class,runtime_ns`.
 - The export tests cover unequal classes, deterministic duration and order fixtures,
   replay of real measured samples through the same statistic, and the repetition of short operations.
 
-The local dependency is unpublished, and only this evidence harness uses it.
+The library tests and the HMAC host controls use this local dependency.
+Cargo omits the test dependency and its vendored sources from the published package.
 Vendored code is excluded from automatic dependency-requirement rewriting
 and from first-party style lints.
 `just ct-test` has explicit regression coverage for its exporter.

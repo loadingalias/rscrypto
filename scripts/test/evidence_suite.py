@@ -1,14 +1,7 @@
-"""Shared scope for internal production regressions on native and transferred test lanes."""
+"""Validate ChaCha20 backend execution records from native and transferred tests."""
 
 import json
-from pathlib import Path
-import subprocess
-import sys
 
-TARGET_ARGS = [
-    "--lib", "--test", "aead_kernel_equivalence", "--test", "argon2_kernels",
-    "--test", "chacha20poly1305", "--test", "rsa_public_key", "--test", "pbkdf2_evidence",
-]
 BACKEND_MARKER = "RSCRYPTO_BACKEND_EVIDENCE="
 BACKEND_TESTS = {"counter-zero", "arbitrary-counters"}
 
@@ -80,19 +73,3 @@ def validate_backend_evidence(output, dispatch):
         if not valid_result:
             raise ValueError(f"inconsistent ChaCha20 backend result: {record}")
     return records
-
-
-def main():
-    root = Path(__file__).resolve().parents[2]
-    for dispatch in ("--native", "--portable"):
-        result = subprocess.run(["just", "--justfile", str(root / "justfile"), "test", "--release", dispatch,
-                                 "--", *TARGET_ARGS], cwd=root, stdout=subprocess.PIPE,
-                                stderr=subprocess.STDOUT, text=True)
-        sys.stdout.write(result.stdout)
-        if result.returncode:
-            raise subprocess.CalledProcessError(result.returncode, result.args)
-        validate_backend_evidence(result.stdout, "production-auto" if dispatch == "--native" else "portable-only")
-
-
-if __name__ == "__main__":
-    main()

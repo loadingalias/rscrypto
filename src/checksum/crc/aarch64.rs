@@ -10,7 +10,7 @@ use core::arch::aarch64::{
 
 use super::{
   Algo, Hw, Keys, MASK, Word,
-  dispatch::{CrcForce, Kernel, fold_with},
+  dispatch::{Kernel, Tier, fold_with},
   shift_by,
 };
 
@@ -484,12 +484,12 @@ fn pmull_eor3_kernel<A: Algo>(register: A::W, data: &[u8]) -> A::W {
 }
 
 /// The kernel of an AArch64 tier for CRC `A`. The caller has checked that the CPU runs `tier`.
-pub(in crate::checksum) fn kernel<A: Algo>(tier: CrcForce) -> Kernel<A::W> {
+pub(in crate::checksum) fn kernel<A: Algo>(tier: Tier) -> Kernel<A::W> {
   let fuse = A::HW != Hw::None && crate::platform::caps().has(crate::platform::caps::aarch64::CRC_READY);
   match (tier, fuse) {
-    (CrcForce::Hwcrc, _) => hwcrc_kernel::<A>,
-    (CrcForce::PmullEor3, true) => fused_kernel::<A, true>,
-    (CrcForce::PmullEor3, false) => pmull_eor3_kernel::<A>,
+    (Tier::Hwcrc, _) => hwcrc_kernel::<A>,
+    (Tier::PmullEor3, true) => fused_kernel::<A, true>,
+    (Tier::PmullEor3, false) => pmull_eor3_kernel::<A>,
     (_, true) => fused_kernel::<A, false>,
     (_, false) => pmull_kernel::<A>,
   }

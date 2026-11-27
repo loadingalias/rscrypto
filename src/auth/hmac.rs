@@ -339,48 +339,6 @@ impl HmacSha256 {
       outer_init: outer_init_prefix,
     }
   }
-
-  #[cfg(any(all(rscrypto_internal, feature = "diag"), all(test, feature = "hkdf")))]
-  pub(crate) fn new_with_compress_for_test(
-    key: &[u8],
-    compress: crate::hashes::crypto::sha256::kernels::Sha256KernelId,
-  ) -> Self {
-    Self::from_key_with(key, || Sha256::new_with_compress_for_test(compress))
-  }
-
-  #[cfg(any(all(rscrypto_internal, feature = "diag"), all(test, feature = "hkdf")))]
-  pub(crate) fn mac_with_compress_for_test(
-    key: &[u8],
-    data: &[u8],
-    compress: crate::hashes::crypto::sha256::kernels::Sha256KernelId,
-  ) -> [u8; SHA256_TAG_SIZE] {
-    let mut mac = Self::new_with_compress_for_test(key, compress);
-    mac.update(data);
-    mac.finalize().to_bytes()
-  }
-}
-
-#[cfg(all(rscrypto_internal, feature = "diag"))]
-/// Compare the portable HMAC-SHA256 tag for the diagnostic message `b"binsec"` with `expected`.
-pub fn diag_hmac_sha256_verify_portable(
-  key: &[u8; SHA256_TAG_SIZE],
-  expected: &[u8; SHA256_TAG_SIZE],
-) -> ct::CtDecision {
-  let compress = crate::hashes::crypto::sha256::kernels::Sha256KernelId::Portable;
-  let tag = HmacSha256::mac_with_compress_for_test(key, b"binsec", compress);
-  ct::fixed_eq(&tag, expected)
-}
-
-#[cfg(all(rscrypto_internal, feature = "diag"))]
-/// Compare the leading 64 bits of the portable HMAC-SHA256 diagnostic tag with `expected`.
-pub fn diag_hmac_sha256_verify_truncated_64_portable(
-  key: &[u8; SHA256_TAG_SIZE],
-  expected: &[u8; 8],
-) -> ct::CtDecision {
-  let compress = crate::hashes::crypto::sha256::kernels::Sha256KernelId::Portable;
-  let tag = HmacSha256::mac_with_compress_for_test(key, b"binsec", compress);
-  let tag = hmac_sha256_truncate_64(&tag);
-  ct::fixed_eq(&tag, expected)
 }
 
 impl Mac for HmacSha256 {
@@ -642,36 +600,6 @@ impl HmacSha384 {
       outer_init: outer_init_prefix,
     }
   }
-
-  #[cfg(any(test, all(rscrypto_internal, feature = "diag")))]
-  pub(crate) fn new_with_compress_for_test(
-    key: &[u8],
-    compress: crate::hashes::crypto::sha384::kernels::Sha384KernelId,
-  ) -> Self {
-    Self::from_key_with(key, || Sha384::new_with_compress_for_test(compress))
-  }
-
-  #[cfg(any(test, all(rscrypto_internal, feature = "diag")))]
-  pub(crate) fn mac_with_compress_for_test(
-    key: &[u8],
-    data: &[u8],
-    compress: crate::hashes::crypto::sha384::kernels::Sha384KernelId,
-  ) -> [u8; SHA384_TAG_SIZE] {
-    let mut mac = Self::new_with_compress_for_test(key, compress);
-    mac.update(data);
-    mac.finalize().to_bytes()
-  }
-}
-
-#[cfg(all(rscrypto_internal, feature = "diag"))]
-/// Compare the portable HMAC-SHA384 tag for the diagnostic message `b"binsec"` with `expected`.
-pub fn diag_hmac_sha384_verify_portable(
-  key: &[u8; SHA384_TAG_SIZE],
-  expected: &[u8; SHA384_TAG_SIZE],
-) -> ct::CtDecision {
-  let compress = crate::hashes::crypto::sha384::kernels::Sha384KernelId::Portable;
-  let tag = HmacSha384::mac_with_compress_for_test(key, b"binsec", compress);
-  ct::fixed_eq(&tag, expected)
 }
 
 macro_rules! impl_sha512_family_mac {
@@ -933,36 +861,6 @@ impl HmacSha512 {
       outer_init: outer_init_prefix,
     }
   }
-
-  #[cfg(any(test, all(rscrypto_internal, feature = "diag")))]
-  pub(crate) fn new_with_compress_for_test(
-    key: &[u8],
-    compress: crate::hashes::crypto::sha512::kernels::Sha512KernelId,
-  ) -> Self {
-    Self::from_key_with(key, || Sha512::new_with_compress_for_test(compress))
-  }
-
-  #[cfg(any(test, all(rscrypto_internal, feature = "diag")))]
-  pub(crate) fn mac_with_compress_for_test(
-    key: &[u8],
-    data: &[u8],
-    compress: crate::hashes::crypto::sha512::kernels::Sha512KernelId,
-  ) -> [u8; SHA512_TAG_SIZE] {
-    let mut mac = Self::new_with_compress_for_test(key, compress);
-    mac.update(data);
-    mac.finalize().to_bytes()
-  }
-}
-
-#[cfg(all(rscrypto_internal, feature = "diag"))]
-/// Compare the portable HMAC-SHA512 tag for the diagnostic message `b"binsec"` with `expected`.
-pub fn diag_hmac_sha512_verify_portable(
-  key: &[u8; SHA512_TAG_SIZE],
-  expected: &[u8; SHA512_TAG_SIZE],
-) -> ct::CtDecision {
-  let compress = crate::hashes::crypto::sha512::kernels::Sha512KernelId::Portable;
-  let tag = HmacSha512::mac_with_compress_for_test(key, b"binsec", compress);
-  ct::fixed_eq(&tag, expected)
 }
 
 impl_sha512_family_mac!(HmacSha512, Sha512, HmacSha512Tag, SHA512_TAG_SIZE);
@@ -981,6 +879,61 @@ mod tests {
     sha512::kernels::required_caps as sha384_required_caps,
     sha512::kernels::{Sha512KernelId, required_caps as sha512_required_caps},
   };
+
+  #[cfg(feature = "hkdf")]
+  impl HmacSha256 {
+    pub(crate) fn new_for_kernel(key: &[u8], compress: crate::hashes::crypto::sha256::kernels::Sha256KernelId) -> Self {
+      Self::from_key_with(key, || {
+        crate::hashes::crypto::sha256::kernel_test::hasher_for_kernel(compress)
+      })
+    }
+
+    pub(crate) fn mac_for_kernel(
+      key: &[u8],
+      data: &[u8],
+      compress: crate::hashes::crypto::sha256::kernels::Sha256KernelId,
+    ) -> [u8; SHA256_TAG_SIZE] {
+      let mut mac = Self::new_for_kernel(key, compress);
+      mac.update(data);
+      mac.finalize().to_bytes()
+    }
+  }
+
+  impl HmacSha384 {
+    pub(crate) fn new_for_kernel(key: &[u8], compress: crate::hashes::crypto::sha384::kernels::Sha384KernelId) -> Self {
+      Self::from_key_with(key, || {
+        crate::hashes::crypto::sha384::kernel_test::hasher_for_kernel(compress)
+      })
+    }
+
+    pub(crate) fn mac_for_kernel(
+      key: &[u8],
+      data: &[u8],
+      compress: crate::hashes::crypto::sha384::kernels::Sha384KernelId,
+    ) -> [u8; SHA384_TAG_SIZE] {
+      let mut mac = Self::new_for_kernel(key, compress);
+      mac.update(data);
+      mac.finalize().to_bytes()
+    }
+  }
+
+  impl HmacSha512 {
+    pub(crate) fn new_for_kernel(key: &[u8], compress: crate::hashes::crypto::sha512::kernels::Sha512KernelId) -> Self {
+      Self::from_key_with(key, || {
+        crate::hashes::crypto::sha512::kernel_test::hasher_for_kernel(compress)
+      })
+    }
+
+    pub(crate) fn mac_for_kernel(
+      key: &[u8],
+      data: &[u8],
+      compress: crate::hashes::crypto::sha512::kernels::Sha512KernelId,
+    ) -> [u8; SHA512_TAG_SIZE] {
+      let mut mac = Self::new_for_kernel(key, compress);
+      mac.update(data);
+      mac.finalize().to_bytes()
+    }
+  }
 
   type RustCryptoHmacSha384 = Hmac<sha2::Sha384>;
   type RustCryptoHmacSha512 = Hmac<sha2::Sha512>;
@@ -1051,7 +1004,7 @@ mod tests {
         data_len
       );
       assert_eq!(
-        HmacSha384::mac_with_compress_for_test(&key, &data, id),
+        HmacSha384::mac_for_kernel(&key, &data, id),
         expected,
         "sha384 forced oneshot mismatch kernel={} key_len={} data_len={}",
         id.as_str(),
@@ -1059,7 +1012,7 @@ mod tests {
         data_len
       );
 
-      let mut streaming = HmacSha384::new_with_compress_for_test(&key, id);
+      let mut streaming = HmacSha384::new_for_kernel(&key, id);
       for chunk in data.chunks(chunk_len) {
         streaming.update(chunk);
       }
@@ -1112,7 +1065,7 @@ mod tests {
         data_len
       );
       assert_eq!(
-        HmacSha512::mac_with_compress_for_test(&key, &data, id),
+        HmacSha512::mac_for_kernel(&key, &data, id),
         expected,
         "sha512 forced oneshot mismatch kernel={} key_len={} data_len={}",
         id.as_str(),
@@ -1120,7 +1073,7 @@ mod tests {
         data_len
       );
 
-      let mut streaming = HmacSha512::new_with_compress_for_test(&key, id);
+      let mut streaming = HmacSha512::new_for_kernel(&key, id);
       for chunk in data.chunks(chunk_len) {
         streaming.update(chunk);
       }

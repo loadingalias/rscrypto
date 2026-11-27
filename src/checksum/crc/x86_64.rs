@@ -13,7 +13,7 @@ use core::arch::x86_64::{
 
 use super::{
   Algo, Hw, Keys, MASK, Word,
-  dispatch::{CrcForce, Kernel, fold_with},
+  dispatch::{Kernel, Tier, fold_with},
   shift_by,
 };
 
@@ -585,12 +585,12 @@ fn vpclmul_kernel<A: Algo>(register: A::W, data: &[u8]) -> A::W {
 }
 
 /// The kernel of an x86-64 tier for CRC `A`. The caller has checked that the CPU runs `tier`.
-pub(in crate::checksum) fn kernel<A: Algo>(tier: CrcForce) -> Kernel<A::W> {
+pub(in crate::checksum) fn kernel<A: Algo>(tier: Tier) -> Kernel<A::W> {
   let fuse = A::HW == Hw::Crc32c && crate::platform::caps().has(crate::platform::caps::x86::CRC32C_READY);
   match (tier, fuse) {
-    (CrcForce::Hwcrc, _) => hwcrc_kernel::<A>,
-    (CrcForce::Vpclmul, true) => fused_kernel::<A, true>,
-    (CrcForce::Vpclmul, false) => vpclmul_kernel::<A>,
+    (Tier::Hwcrc, _) => hwcrc_kernel::<A>,
+    (Tier::Vpclmul, true) => fused_kernel::<A, true>,
+    (Tier::Vpclmul, false) => vpclmul_kernel::<A>,
     (_, true) => fused_kernel::<A, false>,
     (_, false) => pclmul_kernel::<A>,
   }

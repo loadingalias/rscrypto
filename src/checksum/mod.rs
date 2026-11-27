@@ -65,11 +65,9 @@
 //!
 //! # Advanced
 //!
-//! Dispatch is automatic by default.
+//! The process capabilities select the kernel.
 //!
-//! - Use [`crate::checksum::config`] for force/config controls.
-//! - Use `crate::checksum::introspect` (requires `diag` feature) for kernel reporting and selection
-//!   details.
+//! - Use [`crate::checksum::introspect`] for the selected kernel.
 //! - Use [`crate::platform`] for platform detection and override control.
 //!
 //! # no_std Support
@@ -109,12 +107,6 @@ mod crc24;
 mod crc32;
 #[cfg(feature = "crc64")]
 mod crc64;
-#[cfg(all(
-  feature = "diag",
-  any(feature = "crc16", feature = "crc24", feature = "crc32", feature = "crc64")
-))]
-pub mod diag;
-#[cfg(feature = "diag")]
 pub mod introspect;
 #[cfg(feature = "std")]
 pub mod io;
@@ -131,14 +123,6 @@ pub mod buffered {
   pub use crate::checksum::crc32::{BufferedCrc32, BufferedCrc32C};
   #[cfg(feature = "crc64")]
   pub use crate::checksum::crc64::{BufferedCrc64, BufferedCrc64Nvme};
-}
-
-/// Advanced checksum configuration and force-mode controls.
-pub mod config {
-  #[cfg(feature = "adler32")]
-  pub use crate::checksum::adler32::{Adler32Config, Adler32Force};
-  #[cfg(any(feature = "crc16", feature = "crc24", feature = "crc32", feature = "crc64"))]
-  pub use crate::checksum::crc::dispatch::{CrcConfig, CrcForce};
 }
 
 // Re-export public types

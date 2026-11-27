@@ -4436,33 +4436,58 @@ unsafe fn square_kernel(t: *mut u64, n: *const u64, a: *const u64, params: *mut 
   }
 }
 
-/// One paired multiplication `a·b·R⁻¹` and one square of the product, per lane, at the smallest
-/// kernel shape: 24 digits, three blocks. `constants` holds `n'·2^36` for both lanes, then
-/// `n_0 + n_1·2^28` for both lanes.
-#[cfg(all(rscrypto_internal, feature = "diag"))]
-pub(super) fn diag_mul_square_24(a: &[u64; 48], b: &[u64; 48], n: &[u64; 48], constants: &[u64; 4]) -> [u64; 48] {
-  #[repr(C, align(16))]
-  struct Buffers {
-    t: [u64; 96],
-    params: [u64; PARAM_WORDS],
-    out: [u64; 48],
+#[cfg(all(test, not(miri), feature = "portable-only", feature = "rsa"))]
+mod binsec {
+  use super::*;
+  use crate::binsec::*;
+
+  fn mul_square_24(a: &[u64; 48], b: &[u64; 48], n: &[u64; 48], constants: &[u64; 4]) -> [u64; 48] {
+    #[repr(C, align(16))]
+    struct Buffers {
+      t: [u64; 96],
+      params: [u64; PARAM_WORDS],
+      out: [u64; 48],
+    }
+    let digits = 24usize;
+    let mut buffers = Buffers {
+      t: [0; 96],
+      params: [0; PARAM_WORDS],
+      out: [0; 48],
+    };
+    buffers.params[PARAM_K..PARAM_K + 4].copy_from_slice(constants);
+    buffers.params[PARAM_BLOCKS] = (digits / BLOCK_DIGITS) as u64;
+    buffers.params[PARAM_BACK] = (digits.strict_sub(1).strict_mul(16)) as u64;
+    buffers.params[PARAM_STRIDE] = (digits.strict_mul(16)) as u64;
+    let mut engine = Engine {
+      n,
+      t: &mut buffers.t,
+      params: &mut buffers.params,
+    };
+    engine.mul(&mut buffers.out, a, b);
+    engine.square(&mut buffers.out);
+    buffers.out
   }
-  let digits = 24usize;
-  let mut buffers = Buffers {
-    t: [0; 96],
-    params: [0; PARAM_WORDS],
-    out: [0; 48],
-  };
-  buffers.params[PARAM_K..PARAM_K + 4].copy_from_slice(constants);
-  buffers.params[PARAM_BLOCKS] = (digits / BLOCK_DIGITS) as u64;
-  buffers.params[PARAM_BACK] = (digits.strict_sub(1).strict_mul(16)) as u64;
-  buffers.params[PARAM_STRIDE] = (digits.strict_mul(16)) as u64;
-  let mut engine = Engine {
-    n,
-    t: &mut buffers.t,
-    params: &mut buffers.params,
-  };
-  engine.mul(&mut buffers.out, a, b);
-  engine.square(&mut buffers.out);
-  buffers.out
+
+  #[cfg(target_arch = "aarch64")]
+  #[unsafe(no_mangle)]
+  #[inline(never)]
+  pub(super) extern "C" fn ct_binsec_rsa_pair_mul_square_24_neon() -> ! {
+    // SAFETY: These pointers reference fixed harness globals with static storage.
+    let (a, b, moduli, constants) = unsafe {
+      (
+        array_from_global(&raw const CT_BINSEC_RSA_PAIR_A),
+        array_from_global(&raw const CT_BINSEC_RSA_PAIR_B),
+        array_from_global(&raw const CT_BINSEC_RSA_PAIR_MODULI),
+        array_from_global(&raw const CT_BINSEC_RSA_PAIR_CONSTANTS),
+      )
+    };
+    let limbs = mul_square_24(&a, &b, &moduli, &constants);
+
+    let mut acc = 0u64;
+    for limb in limbs {
+      acc ^= limb;
+    }
+    let folded = acc | (acc >> 8) | (acc >> 16) | (acc >> 24) | (acc >> 32) | (acc >> 40) | (acc >> 48) | (acc >> 56);
+    ct_binsec_done(folded.to_le_bytes()[0])
+  }
 }

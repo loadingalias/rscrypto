@@ -81,13 +81,6 @@ def build_environment() -> None:
     os.environ["RUSTFLAGS"] = "-C target-cpu=native"
 
 
-def enable_internal(rows: list[dict], target: str | None = None) -> None:
-  """Resolve internal flags before both compilation and provenance collection."""
-  if any("diag" in row["features"] for row in rows):
-    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "ct"))
-    from internal import build_environment as internal_environment
-    environment, _ = internal_environment(target or host())
-    os.environ["CARGO_ENCODED_RUSTFLAGS"] = environment["CARGO_ENCODED_RUSTFLAGS"]
 
 
 def build_command(binary: str, features: list[str], manifest: str | None = None) -> list[str]:

@@ -264,11 +264,10 @@ pub(crate) fn size_class_kernel(len: usize) -> Kernel {
   kernel(active().size_classes.select(len))
 }
 
-#[cfg(feature = "diag")]
 #[inline]
 #[must_use]
 pub(crate) fn kernel_name_for_len(len: usize) -> &'static str {
-  size_class_kernel(len).name
+  size_class_kernel(len).id.as_str()
 }
 
 #[inline]

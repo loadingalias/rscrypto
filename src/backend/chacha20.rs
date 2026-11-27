@@ -304,12 +304,6 @@ pub(crate) fn xor_keystream_chunk<const N: usize>(key: &[u8; KEY_SIZE], chunk: &
   unsafe { xor_keystream_host(key, 0, &[0; NONCE_SIZE], chunk) };
 }
 
-/// [`xor_keystream_chunk`] with the portable kernel regardless of host caps.
-#[cfg(all(rscrypto_internal, feature = "diag", feature = "chacha20-rng"))]
-pub(crate) fn xor_keystream_chunk_portable<const N: usize>(key: &[u8; KEY_SIZE], chunk: &mut [u8; N]) {
-  xor_keystream_portable(key, 0, &[0; NONCE_SIZE], chunk);
-}
-
 fn xor_keystream_portable(key: &[u8; KEY_SIZE], initial_counter: u32, nonce: &[u8; NONCE_SIZE], buffer: &mut [u8]) {
   let mut counter = initial_counter;
   for chunk in buffer.chunks_mut(BLOCK_SIZE) {
@@ -588,188 +582,6 @@ pub(crate) unsafe fn xor_keystream_aarch64_neon(
 
 // Forced entry points let backend-equivalence tests bypass runtime dispatch.
 
-/// Run the **portable** ChaCha20 XOR-keystream regardless of host caps.
-#[cfg(all(
-  rscrypto_internal,
-  feature = "diag",
-  any(feature = "chacha20poly1305", feature = "xchacha20poly1305")
-))]
-pub fn diag_chacha20_xor_keystream_portable(
-  key: &[u8; KEY_SIZE],
-  initial_counter: u32,
-  nonce: &[u8; NONCE_SIZE],
-  buffer: &mut [u8],
-) {
-  xor_keystream_portable(key, initial_counter, nonce, buffer);
-}
-
-/// Run the aarch64 NEON ChaCha20 XOR-keystream.
-///
-/// # Safety
-///
-/// Caller must verify the host has `aarch64::NEON` and that `buffer`'s 64-byte block count fits the counter range
-/// starting at `initial_counter`. Compile-time gated to `target_arch = "aarch64"`.
-#[cfg(all(
-  rscrypto_internal,
-  feature = "diag",
-  any(feature = "chacha20poly1305", feature = "xchacha20poly1305"),
-  target_arch = "aarch64"
-))]
-pub unsafe fn diag_chacha20_xor_keystream_aarch64_neon(
-  key: &[u8; KEY_SIZE],
-  initial_counter: u32,
-  nonce: &[u8; NONCE_SIZE],
-  buffer: &mut [u8],
-) {
-  // SAFETY: the caller contract is exactly the private backend entry's contract.
-  unsafe { aarch64_neon::xor_keystream(key, initial_counter, nonce, buffer) };
-}
-
-/// Run the x86_64 AVX2 ChaCha20 XOR-keystream.
-///
-/// # Safety
-///
-/// Caller must verify the host has `x86::AVX2` and that `buffer`'s 64-byte block count fits the counter range starting
-/// at `initial_counter`.
-#[cfg(all(
-  rscrypto_internal,
-  feature = "diag",
-  any(feature = "chacha20poly1305", feature = "xchacha20poly1305"),
-  all(target_arch = "x86_64", target_feature = "sse2")
-))]
-pub unsafe fn diag_chacha20_xor_keystream_x86_avx2(
-  key: &[u8; KEY_SIZE],
-  initial_counter: u32,
-  nonce: &[u8; NONCE_SIZE],
-  buffer: &mut [u8],
-) {
-  // SAFETY: the caller contract is exactly the private backend entry's contract.
-  unsafe { x86_avx2::xor_keystream(key, initial_counter, nonce, buffer) };
-}
-
-/// Run the x86_64 AVX-512 ChaCha20 XOR-keystream.
-///
-/// # Safety
-///
-/// Caller must verify the host has `x86::AVX512F + AVX512VL + AVX512BW + AVX512DQ` and that `buffer`'s 64-byte block
-/// count fits the counter range starting at `initial_counter`.
-#[cfg(all(
-  rscrypto_internal,
-  feature = "diag",
-  any(feature = "chacha20poly1305", feature = "xchacha20poly1305"),
-  all(target_arch = "x86_64", target_feature = "sse2")
-))]
-pub unsafe fn diag_chacha20_xor_keystream_x86_avx512(
-  key: &[u8; KEY_SIZE],
-  initial_counter: u32,
-  nonce: &[u8; NONCE_SIZE],
-  buffer: &mut [u8],
-) {
-  // SAFETY: the caller contract is exactly the private backend entry's contract.
-  unsafe { x86_avx512::xor_keystream(key, initial_counter, nonce, buffer) };
-}
-
-/// Run the POWER VSX ChaCha20 XOR-keystream.
-///
-/// # Safety
-///
-/// Caller must verify the host has `power::POWER8_VECTOR` and that `buffer`'s 64-byte block count fits the counter
-/// range starting at `initial_counter`. The portable kernel — which has been the correctness oracle since commit
-/// `2631aefa` fixed the rotation-amount bug here — must produce identical bytes.
-#[cfg(all(
-  rscrypto_internal,
-  feature = "diag",
-  any(feature = "chacha20poly1305", feature = "xchacha20poly1305"),
-  target_arch = "powerpc64",
-  not(feature = "portable-only"),
-  target_endian = "little"
-))]
-pub unsafe fn diag_chacha20_xor_keystream_power_vsx(
-  key: &[u8; KEY_SIZE],
-  initial_counter: u32,
-  nonce: &[u8; NONCE_SIZE],
-  buffer: &mut [u8],
-) {
-  // SAFETY: the caller contract is exactly the private backend entry's contract.
-  unsafe { power_vsx::xor_keystream(key, initial_counter, nonce, buffer) };
-}
-
-/// Run the s390x z/Vector ChaCha20 XOR-keystream.
-///
-/// # Safety
-///
-/// Caller must verify the host has `s390x::VECTOR` and that `buffer`'s 64-byte block count fits the counter range
-/// starting at `initial_counter`. Same correctness-oracle invariant as POWER VSX above.
-#[cfg(all(
-  rscrypto_internal,
-  feature = "diag",
-  any(feature = "chacha20poly1305", feature = "xchacha20poly1305"),
-  target_arch = "s390x",
-  not(feature = "portable-only")
-))]
-pub unsafe fn diag_chacha20_xor_keystream_s390x_vector(
-  key: &[u8; KEY_SIZE],
-  initial_counter: u32,
-  nonce: &[u8; NONCE_SIZE],
-  buffer: &mut [u8],
-) {
-  // SAFETY: the caller contract is exactly the private backend entry's contract.
-  unsafe { s390x_vector::xor_keystream(key, initial_counter, nonce, buffer) };
-}
-
-/// Run the riscv64 RVV ChaCha20 XOR-keystream.
-///
-/// # Safety
-///
-/// Caller must verify the host has `riscv::V` and that `buffer`'s 64-byte block count fits the counter range starting
-/// at `initial_counter`.
-#[cfg(all(
-  rscrypto_internal,
-  feature = "diag",
-  any(feature = "chacha20poly1305", feature = "xchacha20poly1305"),
-  target_arch = "riscv64",
-  not(feature = "portable-only")
-))]
-pub unsafe fn diag_chacha20_xor_keystream_riscv64_vector(
-  key: &[u8; KEY_SIZE],
-  initial_counter: u32,
-  nonce: &[u8; NONCE_SIZE],
-  buffer: &mut [u8],
-) {
-  // SAFETY: the caller contract is exactly the private backend entry's contract.
-  unsafe { riscv64_vector::xor_keystream(key, initial_counter, nonce, buffer) };
-}
-
-/// Run the wasm32 simd128 ChaCha20 XOR-keystream.
-///
-/// # Safety
-///
-/// Caller must verify the host has `wasm::SIMD128` and that `buffer`'s 64-byte block count fits the counter range
-/// starting at `initial_counter`.
-#[cfg(all(
-  rscrypto_internal,
-  feature = "diag",
-  any(feature = "chacha20poly1305", feature = "xchacha20poly1305"),
-  target_arch = "wasm32"
-))]
-pub unsafe fn diag_chacha20_xor_keystream_wasm_simd128(
-  key: &[u8; KEY_SIZE],
-  initial_counter: u32,
-  nonce: &[u8; NONCE_SIZE],
-  buffer: &mut [u8],
-) {
-  assert!(
-    crate::platform::caps().has(crate::platform::caps::wasm::SIMD128),
-    "WASM SIMD128 is unavailable"
-  );
-  #[cfg(target_feature = "simd128")]
-  // SAFETY: the caller contract is exactly the private backend entry's contract.
-  unsafe {
-    wasm_simd128::xor_keystream(key, initial_counter, nonce, buffer)
-  };
-  #[cfg(not(target_feature = "simd128"))]
-  let _ = (key, initial_counter, nonce, buffer);
-}
 #[cfg(test)]
 mod tests {
   #[cfg(any(
@@ -1096,3 +908,27 @@ mod tests {
     }
   }
 }
+
+#[cfg(all(test, not(miri), feature = "portable-only", feature = "chacha20poly1305"))]
+mod binsec {
+  use super::*;
+  use crate::binsec::*;
+
+  #[unsafe(no_mangle)]
+  #[inline(never)]
+  pub(super) extern "C" fn ct_binsec_chacha20poly1305_seal() -> ! {
+    // SAFETY: These pointers reference fixed harness globals with static storage.
+    let key = unsafe { array_from_global(&raw const CT_BINSEC_KEY_32) };
+    // SAFETY: These pointers reference fixed harness globals with static storage.
+    let mut buffer = unsafe { array_from_global(&raw const CT_BINSEC_AEAD_BUFFER_32) };
+    xor_keystream_portable(&key, 1, &[7u8; 12], &mut buffer);
+    let mut acc = 0u8;
+    for byte in buffer {
+      acc ^= byte;
+    }
+    ct_binsec_done(acc)
+  }
+}
+
+#[cfg(all(test, feature = "std", feature = "chacha20poly1305"))]
+mod kernel_tests;

@@ -90,14 +90,9 @@ Enable it by name.
 | `serde`         | Serializes public types. |
 | `serde-secrets` | Also serializes secret keys and shared secrets. Use it only at an explicit key-storage boundary. |
 | `portable-only` | Uses portable Rust instead of accelerated backends, with the exceptions below. |
-| `diag`          | Exposes capability and backend-selection introspection. Enables `std`. |
 
-Benchmark, constant-time, zeroization, forced-kernel,
-and component hooks need both `diag` and the repository-only `rscrypto_internal` compiler cfg.
-The ML-DSA signing-attempt counter needs the repository-only `rscrypto_mldsa_attempts` cfg instead.
-No Cargo feature combination exposes them, including `--all-features`.
-Applications must not use either cfg.
-It has no compatibility guarantee.
+Checksum, hash, and AEAD introspection use the corresponding primitive features.
+Library tests can call private kernels directly.
 
 With `chacha20poly1305`, move a fresh key into `ChaCha20Poly1305SealingKey::new(key)`.
 Keep one sealing key per sender. Its `seal` methods return a unique 12-byte nonce with each ciphertext.

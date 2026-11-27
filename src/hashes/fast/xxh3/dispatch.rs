@@ -60,7 +60,7 @@ struct ActiveDispatch {
   )))]
   long128: Hash128Fn,
   stream_accumulate: StreamAccumulateFn,
-  #[cfg(feature = "diag")]
+
   long_id: Xxh3KernelId,
 }
 
@@ -119,7 +119,7 @@ fn active() -> ActiveDispatch {
       )))]
       long128: hash128_long_fn(long_id),
       stream_accumulate: kernel_stream_accumulate_fn(long_id),
-      #[cfg(feature = "diag")]
+
       long_id,
     }
   })
@@ -130,7 +130,6 @@ pub(crate) fn stream_accumulate_fn() -> StreamAccumulateFn {
   active().stream_accumulate
 }
 
-#[cfg(any(feature = "diag", all(test, all(target_arch = "x86_64", target_feature = "sse2"))))]
 #[inline]
 #[must_use]
 fn kernel_id64_for_len(long_id: Xxh3KernelId, caps: Caps, len: usize) -> Xxh3KernelId {
@@ -149,7 +148,6 @@ fn kernel_id64_for_len(long_id: Xxh3KernelId, caps: Caps, len: usize) -> Xxh3Ker
   long_id
 }
 
-#[cfg(feature = "diag")]
 #[inline]
 #[must_use]
 pub(crate) fn kernel_name64_for_len(len: usize) -> &'static str {
@@ -157,7 +155,6 @@ pub(crate) fn kernel_name64_for_len(len: usize) -> &'static str {
   kernel_id64_for_len(d.long_id, crate::platform::caps(), len).as_str()
 }
 
-#[cfg(feature = "diag")]
 #[inline]
 #[must_use]
 pub(crate) fn kernel_name128_for_len(len: usize) -> &'static str {

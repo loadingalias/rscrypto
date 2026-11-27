@@ -1864,14 +1864,6 @@ pub(super) fn clmul128_reduce_is_portable() -> bool {
   true
 }
 
-/// Multiplies two little-endian POLYVAL field elements with the portable
-/// carryless-multiply and reduction implementation.
-#[cfg(all(rscrypto_internal, feature = "diag", feature = "aes-gcm-siv"))]
-#[must_use]
-pub fn diag_polyval_reduce_portable(a: &[u8; 16], b: &[u8; 16]) -> [u8; 16] {
-  clmul128_reduce_portable(u128::from_le_bytes(*a), u128::from_le_bytes(*b)).to_le_bytes()
-}
-
 /// Precompute hash key powers [H, H^2, H^3, H^4] for 4-block wide processing.
 ///
 /// Used by both GHASH and POLYVAL to enable the schoolbook-then-reduce
@@ -3169,5 +3161,30 @@ mod tests {
     let blocks = [0u128; 4];
     let result = accumulate_4blocks(0, h, &h_powers_rev, &blocks);
     assert_eq!(result, 0);
+  }
+}
+
+#[cfg(all(test, not(miri), feature = "portable-only", feature = "aes-gcm-siv"))]
+mod binsec {
+  use super::*;
+  use crate::binsec::*;
+
+  fn polyval_reduce_portable(a: &[u8; 16], b: &[u8; 16]) -> [u8; 16] {
+    clmul128_reduce_portable(u128::from_le_bytes(*a), u128::from_le_bytes(*b)).to_le_bytes()
+  }
+
+  #[unsafe(no_mangle)]
+  #[inline(never)]
+  pub(super) extern "C" fn ct_binsec_polyval_reduce_portable() -> ! {
+    // SAFETY: These pointers reference fixed harness globals with static storage.
+    let a = unsafe { array_from_global(&raw const CT_BINSEC_KEY_16) };
+    // SAFETY: These pointers reference fixed harness globals with static storage.
+    let b = unsafe { array_from_global(&raw const CT_BINSEC_TAG_16) };
+    let out = polyval_reduce_portable(&a, &b);
+    let mut acc = 0u8;
+    for byte in out {
+      acc ^= byte;
+    }
+    ct_binsec_done(acc)
   }
 }

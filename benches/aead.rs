@@ -258,47 +258,6 @@ fn chacha20_poly1305_encrypt(c: &mut Criterion) {
       ),
     );
 
-    #[cfg(all(rscrypto_internal, feature = "diag"))]
-    g.bench_function(
-      BenchmarkId::new("rscrypto-owned", len),
-      checked_with(
-        data.clone(),
-        |buf| {
-          buf.copy_from_slice(data);
-          rscrypto::aead::diag_chacha20poly1305_encrypt_in_place_owned(
-            black_box(&cipher_rs),
-            black_box(&nonce_rs),
-            black_box(AAD),
-            black_box(&mut *buf),
-          )
-          .expect("valid AEAD benchmark operation must succeed")
-        },
-        |tag, buf| assert_eq!(sealed(buf, tag), expected),
-      ),
-    );
-
-    #[cfg(all(rscrypto_internal, feature = "diag", target_arch = "x86_64", target_os = "linux"))]
-    if *len != 0 {
-      g.bench_function(
-        BenchmarkId::new("rscrypto-x86-asm", len),
-        checked_with(
-          data.clone(),
-          |buf| {
-            buf.copy_from_slice(data);
-            rscrypto::aead::diag_chacha20poly1305_encrypt_in_place_x86_64_asm(
-              black_box(&cipher_rs),
-              black_box(&nonce_rs),
-              black_box(AAD),
-              black_box(&mut *buf),
-            )
-            .expect("x86 asm path must apply to benchmarked non-empty sizes")
-            .expect("valid AEAD benchmark operation must succeed")
-          },
-          |tag, buf| assert_eq!(sealed(buf, tag), expected),
-        ),
-      );
-    }
-
     g.bench_function(
       BenchmarkId::new("rustcrypto", len),
       checked_with(
@@ -420,51 +379,6 @@ fn chacha20_poly1305_decrypt(c: &mut Criterion) {
       ),
     );
     segments_row(&mut g, &cipher_rs, &nonce_rs, &ciphertext, &tag_rs, data);
-
-    #[cfg(all(rscrypto_internal, feature = "diag"))]
-    g.bench_function(
-      BenchmarkId::new("rscrypto-owned", len),
-      checked_with(
-        ciphertext.clone(),
-        |buf| {
-          buf.copy_from_slice(&ciphertext);
-          rscrypto::aead::diag_chacha20poly1305_decrypt_in_place_owned(
-            black_box(&cipher_rs),
-            black_box(&nonce_rs),
-            black_box(AAD),
-            black_box(&mut *buf),
-            black_box(&tag_rs),
-          )
-          .expect("valid AEAD benchmark operation must succeed");
-          black_box(&*buf);
-        },
-        |(), buf| assert_eq!(buf, data),
-      ),
-    );
-
-    #[cfg(all(rscrypto_internal, feature = "diag", target_arch = "x86_64", target_os = "linux"))]
-    if *len != 0 {
-      g.bench_function(
-        BenchmarkId::new("rscrypto-x86-asm", len),
-        checked_with(
-          ciphertext.clone(),
-          |buf| {
-            buf.copy_from_slice(&ciphertext);
-            rscrypto::aead::diag_chacha20poly1305_decrypt_in_place_x86_64_asm(
-              black_box(&cipher_rs),
-              black_box(&nonce_rs),
-              black_box(AAD),
-              black_box(&mut *buf),
-              black_box(&tag_rs),
-            )
-            .expect("x86 asm path must apply to benchmarked non-empty sizes")
-            .expect("valid AEAD benchmark operation must succeed");
-            black_box(&*buf);
-          },
-          |(), buf| assert_eq!(buf, data),
-        ),
-      );
-    }
 
     g.bench_function(
       BenchmarkId::new("rustcrypto", len),

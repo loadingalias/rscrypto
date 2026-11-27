@@ -13,7 +13,7 @@ rscrypto = { path = "../..", default-features = false, features = [
   "blake2s",
   "blake3",
   "chacha20-rng",
-  "diag",
+  "std",
   "ecdsa",
   "ed25519",
   "hkdf",

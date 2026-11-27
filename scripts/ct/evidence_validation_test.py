@@ -649,12 +649,10 @@ def main() -> None:
   )
 
   def diagnostic_target_on_diagnostic_case(manifest) -> None:
-    case = dudect_case(manifest, "mldsa_probe_product_zero_vs_zero")
-    case["diagnostic_targets"] = ["powerpc64le-unknown-linux-gnu"]
-    case["diagnostic_targets_reason"] = "fixture"
+    dudect_case(manifest, "mldsa_product_fixed_vs_random")["gate"] = "diagnostic"
 
   assert (
-    "DudeCT case mldsa_probe_product_zero_vs_zero diagnostic_targets applies only to a required case"
+    "DudeCT case mldsa_product_fixed_vs_random diagnostic_targets applies only to a required case"
     in manifest_errors(diagnostic_target_on_diagnostic_case)
   )
 

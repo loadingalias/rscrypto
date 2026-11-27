@@ -42,7 +42,8 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 [workspace]
 resolver = "3"
-members = [".", "rscrypto-rustls"]
+members = ["rscrypto-rustls"]
+exclude = ["tools/ct-dudect/vendor/dudect-bencher"]
 
 [lints]
 workspace = true
@@ -56,8 +57,6 @@ let_underscore_drop = "deny"
 unreachable_pub = "deny"
 unexpected_cfgs = { level = "deny", check-cfg = [
   'cfg(miri)',
-  'cfg(rscrypto_internal)',
-  'cfg(rscrypto_mldsa_attempts)',
   'cfg(target_feature, values("movdiri", "movdir64b", "serialize"))',
 ] }
 
@@ -227,7 +226,6 @@ rand_core = ["chacha20-rng", "dep:rand_core"]
 serde = ["dep:serde"]
 serde-secrets = ["serde"]
 parallel = ["std", "blake3", "argon2", "dep:rayon"]
-diag = ["std"]
 
 # Select portable Rust: runtime detection reports no capabilities, and assembly
 # that the crate selects from the target alone is turned off. Hash backends that
@@ -336,6 +334,10 @@ fips205 = "=0.5.0"
 darkbio-crypto = { version = "=0.20.1", default-features = false, features = ["xdsa"] }
 kryptering = { version = "=0.7.1", default-features = false, features = ["rustcrypto", "post-quantum"] }
 
+[target.'cfg(any(unix, windows))'.dev-dependencies]
+# A path-only dev dependency stays out of the published manifest and lockfile.
+dudect-bencher = { path = "tools/ct-dudect/vendor/dudect-bencher" }
+
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 # Explicit collection boundaries avoid ARM Callgrind return-heuristic leakage.
 gungraun = { version = "=0.20.0", features = ["act"] }
@@ -391,7 +393,7 @@ bench = false
 
 [[example]]
 name = "introspect"
-required-features = ["crc32", "sha2", "chacha20poly1305", "diag"]
+required-features = ["crc32", "sha2", "chacha20poly1305"]
 
 [[example]]
 name = "argon2id_password_hashing"
@@ -456,11 +458,6 @@ required-features = [
 name = "storage_record"
 harness = false
 required-features = ["std", "blake3", "aegis256"]
-
-[[bench]]
-name = "aead_kernels"
-harness = false
-required-features = ["chacha20poly1305", "diag", "sha2"]
 
 [[bench]]
 name = "poly1305"
@@ -614,6 +611,13 @@ overflow-checks = true
 lto = "fat"
 panic = "abort"
 codegen-units = 1
+
+# Match the portable operation harness when BINSEC loads the library test executable.
+[profile.binsec]
+inherits = "release"
+lto = false
+strip = false
+overflow-checks = false
 
 [profile.bench]
 inherits = "release"

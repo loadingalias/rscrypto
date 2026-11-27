@@ -6,7 +6,59 @@
 
 use alloc::{boxed::Box, vec::Vec};
 
-use super::{Crc, SLICES, Spec, Word, combine_powers, reference, wide_table};
+use super::{Crc, SLICES, Spec, Word, combine_powers, mask, wide_table};
+
+/// Bitwise reference CRC: the register after `data`, from `register`, both in the specification's
+/// form.
+///
+/// This follows the definition one bit at a time and shares no table or constant with the fast
+/// paths, so it is their test oracle.
+#[must_use]
+fn reference(spec: &Spec, register: u64, data: &[u8]) -> u64 {
+  let width_mask = mask(spec.width);
+  let mut reg = register & width_mask;
+  let mut i = 0usize;
+  if spec.reflected {
+    let poly = spec.poly.reverse_bits() >> (64u32.strict_sub(spec.width));
+    while i < data.len() {
+      reg ^= data[i] as u64;
+      let mut bit = 0u32;
+      while bit < 8 {
+        reg = if reg & 1 == 1 { (reg >> 1) ^ poly } else { reg >> 1 };
+        bit = bit.strict_add(1);
+      }
+      i = i.strict_add(1);
+    }
+  } else {
+    let top = 1u64 << (spec.width.strict_sub(1));
+    while i < data.len() {
+      reg ^= (data[i] as u64) << (spec.width.strict_sub(8));
+      let mut bit = 0u32;
+      while bit < 8 {
+        reg = if reg & top != 0 {
+          ((reg << 1) ^ spec.poly) & width_mask
+        } else {
+          (reg << 1) & width_mask
+        };
+        bit = bit.strict_add(1);
+      }
+      i = i.strict_add(1);
+    }
+  }
+  reg
+}
+
+impl<W: Word> Crc<W> {
+  /// The word-domain register for a register value in the specification's form.
+  fn register_to_word(&self, register: u64) -> W {
+    self.domain_to_word(self.spec.domain(register & mask(self.spec.width)))
+  }
+
+  /// The register value in the specification's form for a word-domain register.
+  fn word_to_register(&self, word: W) -> u64 {
+    self.spec.register(self.word_to_domain(word))
+  }
+}
 
 /// The shipped CRCs with their published check values over `"123456789"`.
 const CATALOG: [(Spec, u64); 7] = [
@@ -486,7 +538,7 @@ engine! {
 /// This covers the CRC-32 instruction kernels and their fusion with folding, whose rounds start
 /// at 1408 bytes and double.
 fn tiers_match<A: super::Algo>(name: &str) {
-  use super::dispatch::{CrcForce, available, kernel};
+  use super::dispatch::{TIERS, Tier, available, kernel};
   let crc = A::CRC;
   let mut rng = Rng(4);
   let input = rng.bytes(90_000);
@@ -494,20 +546,12 @@ fn tiers_match<A: super::Algo>(name: &str) {
   for base in [1408usize, 2816, 4224, 5632, 11264, 22528, 45056, 90_000 - 40] {
     lengths.extend(base.strict_sub(17)..base.strict_add(18).min(90_000));
   }
-  let tiers = [
-    CrcForce::Reference,
-    CrcForce::Portable,
-    CrcForce::Hwcrc,
-    CrcForce::Pclmul,
-    CrcForce::Vpclmul,
-    CrcForce::Pmull,
-    CrcForce::PmullEor3,
-    CrcForce::Vpmsum,
-    CrcForce::Vgfm,
-    CrcForce::Zbc,
-    CrcForce::Zvbc,
-  ];
-  for tier in tiers.into_iter().filter(|&tier| available(tier, A::HW)) {
+  for tier in TIERS
+    .iter()
+    .copied()
+    .chain([Tier::Portable])
+    .filter(|&tier| available(tier, A::HW))
+  {
     let update = kernel::<A>(tier);
     for &len in &lengths {
       let part = &input[1..len.strict_add(1)];

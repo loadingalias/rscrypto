@@ -265,7 +265,6 @@ jobs:
           scripts/check/check.sh native
           just test --all --release
           just test --all --release --portable
-          if [[ "$PLATFORM" != x86_64-linux ]]; then just test-evidence; fi
           if [[ "$PLATFORM" == x86_64-linux || "$PLATFORM" == aarch64-linux ]]; then just test-musl; fi
           git diff --exit-code HEAD
 
@@ -337,8 +336,6 @@ jobs:
           just test --all --release
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           just test --all --release --portable
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          just test-evidence
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           git diff --exit-code HEAD
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

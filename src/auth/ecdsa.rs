@@ -190,13 +190,6 @@ const P256_B: Uint<4> = Uint([
   0xb3eb_bd55_7698_86bc,
   0x5ac6_35d8_aa3a_93e7,
 ]);
-#[cfg(any(test, all(rscrypto_internal, feature = "diag", feature = "ecdsa-p256")))]
-const P256_GX: Uint<4> = Uint([
-  0xf4a1_3945_d898_c296,
-  0x7703_7d81_2deb_33a0,
-  0xf8bc_e6e5_63a4_40f2,
-  0x6b17_d1f2_e12c_4247,
-]);
 
 const P384_FIELD: Uint<6> = Uint([
   0x0000_0000_ffff_ffff,
@@ -245,15 +238,6 @@ const P384_B: Uint<6> = Uint([
   0x181d_9c6e_fe81_4112,
   0x988e_056b_e3f8_2d19,
   0xb331_2fa7_e23e_e7e4,
-]);
-#[cfg(any(test, all(rscrypto_internal, feature = "diag", feature = "ecdsa-p384")))]
-const P384_GX: Uint<6> = Uint([
-  0x3a54_5e38_7276_0ab7,
-  0x5502_f25d_bf55_296c,
-  0x59f7_41e0_8254_2a38,
-  0x6e1d_3b62_8ba7_9b98,
-  0x8eb1_c71e_f320_ad74,
-  0xaa87_ca22_be8b_0537,
 ]);
 
 static P256_FIELD_MODULUS: Modulus<4> = Modulus {
@@ -2475,7 +2459,6 @@ impl<const L: usize> Jacobian<L> {
   }
 
   #[cfg(any(
-    all(rscrypto_internal, feature = "diag"),
     all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
     all(
       target_arch = "x86_64",
@@ -2820,7 +2803,7 @@ fn sign_digest_with_r_product_blinded<const L: usize>(
   ))
 }
 
-#[cfg(any(test, all(rscrypto_internal, feature = "diag"), target_arch = "s390x"))]
+#[cfg(any(test, target_arch = "s390x"))]
 fn blinded_nonce_inverse_montgomery<const L: usize>(
   curve: &Curve<L>,
   nonce: &SecretScalar<L>,
@@ -3508,300 +3491,6 @@ fn select_signing_generator_affine_ct<const L: usize>(curve: &Curve<L>, digit: u
     x: FieldElement::from_montgomery(x, curve.field_modulus),
     y: FieldElement::from_montgomery(y, curve.field_modulus),
   }
-}
-
-/// Return the P-256 signing-comb coordinates selected by `digit` as Montgomery limbs.
-#[cfg(all(rscrypto_internal, feature = "diag", feature = "ecdsa-p256"))]
-pub fn diag_ecdsa_p256_select_signing_generator_affine_limb_digest(digit: u8) -> [u64; 8] {
-  let selected = select_signing_generator_affine_ct(&P256, usize::from(digit));
-  let mut out = [0u64; 8];
-  out[..4].copy_from_slice(&selected.x.value.0);
-  out[4..].copy_from_slice(&selected.y.value.0);
-  out
-}
-
-/// Derive the deterministic P-256 nonce for `message` and return its scalar limbs.
-#[cfg(all(rscrypto_internal, feature = "diag", feature = "ecdsa-p256"))]
-pub fn diag_ecdsa_p256_nonce_reduce_limb_digest(secret: [u8; 32], message: &[u8]) -> [u64; 4] {
-  let secret = ZeroizingBytes::new(secret);
-  let digest = Sha256::digest(message);
-  let mut wide = ZeroizingBytes::zeroed();
-  hmac_expand_p256(secret.as_array(), &digest, wide.as_mut_array());
-  let nonce = SecretScalar::new(reduce_wide_order_nonzero(wide.as_array(), &P256_ORDER_MODULUS));
-  nonce.value().0
-}
-
-/// Reduce a wide P-256 nonce candidate to a nonzero scalar and return its limbs.
-#[cfg(all(rscrypto_internal, feature = "diag", feature = "ecdsa-p256"))]
-pub fn diag_ecdsa_p256_reduce_wide_order_limb_digest(wide: [u8; 64]) -> [u64; 4] {
-  let wide = ZeroizingBytes::new(wide);
-  let nonce = SecretScalar::new(reduce_wide_order_nonzero(wide.as_array(), &P256_ORDER_MODULUS));
-  nonce.value().0
-}
-
-/// Return the affine limbs produced by blinded P-256 basepoint multiplication.
-#[cfg(all(rscrypto_internal, feature = "diag", feature = "ecdsa-p256"))]
-pub fn diag_ecdsa_p256_basepoint_blinded_limb_digest(secret: [u8; 32], blind: [u8; 64], message: &[u8]) -> [u64; 8] {
-  let secret = ZeroizingBytes::new(secret);
-  let blind = ZeroizingBytes::new(blind);
-  let digest = Sha256::digest(message);
-  let mut wide = ZeroizingBytes::zeroed();
-  hmac_expand_p256(secret.as_array(), &digest, wide.as_mut_array());
-  let nonce = SecretScalar::new(reduce_wide_order_nonzero(wide.as_array(), &P256_ORDER_MODULUS));
-  let (nonce_blind, _) = signing_blinds(blind.as_array(), &P256_ORDER_MODULUS);
-  let point = scalar_mul_basepoint_blinded(&P256, &nonce, &nonce_blind, P256_FIELD_MINUS_TWO);
-  let mut out = [0u64; 8];
-  out[..4].copy_from_slice(&point.x.value.0);
-  out[4..].copy_from_slice(&point.y.value.0);
-  out
-}
-
-/// Run P-256 scalar signing finalization with supplied nonce material and return `r || s` limbs.
-#[cfg(all(rscrypto_internal, feature = "diag", feature = "ecdsa-p256"))]
-pub fn diag_ecdsa_p256_scalar_finish_limb_digest(secret: [u8; 32], nonce_wide: [u8; 64], message: &[u8]) -> [u64; 8] {
-  let secret = ZeroizingBytes::new(secret);
-  let nonce_wide = ZeroizingBytes::new(nonce_wide);
-  let digest = Sha256::digest(message);
-  let secret_scalar = SecretScalar::from_be_bytes(secret.as_array());
-  let nonce = SecretScalar::new(reduce_wide_order_nonzero(nonce_wide.as_array(), &P256_ORDER_MODULUS));
-  let r = P256_GX.reduce_once_ct(P256_ORDER_MODULUS.value);
-  let (r, s) = sign_digest_with_r(&P256, &secret_scalar, &nonce, &digest, r).unwrap_or((Uint::ZERO, Uint::ZERO));
-  let mut out = [0u64; 8];
-  out[..4].copy_from_slice(&r.0);
-  out[4..].copy_from_slice(&s.0);
-  out
-}
-
-/// Multiply the P-256 secret scalar by a fixed public `r` and return the order-field limbs.
-#[cfg(all(rscrypto_internal, feature = "diag", feature = "ecdsa-p256"))]
-pub fn diag_ecdsa_p256_order_mul_fixed_r_limb_digest(secret: [u8; 32]) -> [u64; 4] {
-  let secret = ZeroizingBytes::new(secret);
-  let secret_scalar = SecretScalar::from_be_bytes(secret.as_array());
-  let r = P256_GX.reduce_once_ct(P256_ORDER_MODULUS.value);
-  let rd = SecretScalar::new(mul_mod_montgomery_ct(r, secret_scalar.value(), &P256_ORDER_MODULUS));
-  rd.value().0
-}
-
-/// Run the blinded P-256 order multiplication stage for a fixed public `r` and return its limbs.
-#[cfg(all(rscrypto_internal, feature = "diag", feature = "ecdsa-p256"))]
-pub fn diag_ecdsa_p256_order_mul_blinded_fixed_r_limb_digest(secret: [u8; 32], blind: [u8; 64]) -> [u64; 4] {
-  let secret = ZeroizingBytes::new(secret);
-  let blind = ZeroizingBytes::new(blind);
-  let secret_scalar = SecretScalar::from_be_bytes(secret.as_array());
-  let (_, scalar_blind) = signing_blinds(blind.as_array(), &P256_ORDER_MODULUS);
-  let r = P256_GX.reduce_once_ct(P256_ORDER_MODULUS.value);
-  let rd = SecretScalar::new(mul_mod_montgomery_blinded_ct(
-    r,
-    secret_scalar.value(),
-    scalar_blind.value(),
-    &P256_ORDER_MODULUS,
-  ));
-  rd.value().0
-}
-
-/// Derive and invert the deterministic P-256 nonce and return its Montgomery limbs.
-#[cfg(all(rscrypto_internal, feature = "diag", feature = "ecdsa-p256"))]
-pub fn diag_ecdsa_p256_nonce_inverse_limb_digest(secret: [u8; 32], message: &[u8]) -> [u64; 4] {
-  let secret = ZeroizingBytes::new(secret);
-  let digest = Sha256::digest(message);
-  let mut wide = ZeroizingBytes::zeroed();
-  hmac_expand_p256(secret.as_array(), &digest, wide.as_mut_array());
-  let nonce = SecretScalar::new(reduce_wide_order_nonzero(wide.as_array(), &P256_ORDER_MODULUS));
-  let inverse = SecretScalar::new(
-    nonce
-      .value()
-      .inv_mod_ct_montgomery(&P256_ORDER_MODULUS, P256_ORDER_MINUS_TWO),
-  );
-  inverse.value().0
-}
-
-/// Derive and invert the deterministic P-256 nonce through the caller-blinded s390x path.
-#[cfg(all(rscrypto_internal, feature = "diag", feature = "ecdsa-p256"))]
-pub fn diag_ecdsa_p256_nonce_inverse_blinded_limb_digest(
-  secret: [u8; 32],
-  blind: [u8; 64],
-  message: &[u8],
-) -> [u64; 4] {
-  let secret = ZeroizingBytes::new(secret);
-  let blind = ZeroizingBytes::new(blind);
-  let digest = Sha256::digest(message);
-  let mut wide = ZeroizingBytes::zeroed();
-  hmac_expand_p256(secret.as_array(), &digest, wide.as_mut_array());
-  let (_, nonce_blind) = signing_blinds(blind.as_array(), &P256_ORDER_MODULUS);
-  let nonce = SecretScalar::new(reduce_wide_order_nonzero(wide.as_array(), &P256_ORDER_MODULUS));
-  blinded_nonce_inverse_montgomery(&P256, &nonce, &nonce_blind).value().0
-}
-
-/// Run the final P-256 signing multiplication with supplied nonce material and return its limbs.
-#[cfg(all(rscrypto_internal, feature = "diag", feature = "ecdsa-p256"))]
-pub fn diag_ecdsa_p256_final_multiply_limb_digest(secret: [u8; 32], nonce_wide: [u8; 64], message: &[u8]) -> [u64; 4] {
-  let secret = ZeroizingBytes::new(secret);
-  let nonce_wide = ZeroizingBytes::new(nonce_wide);
-  let digest = Sha256::digest(message);
-  let secret_scalar = SecretScalar::from_be_bytes(secret.as_array());
-  let nonce = SecretScalar::new(reduce_wide_order_nonzero(nonce_wide.as_array(), &P256_ORDER_MODULUS));
-  let r = P256_GX.reduce_once_ct(P256_ORDER_MODULUS.value);
-  let z = reduce_digest_for_scalar(&digest, P256_ORDER_MODULUS.value);
-  let rd = SecretScalar::new(mul_mod_montgomery_ct(r, secret_scalar.value(), &P256_ORDER_MODULUS));
-  let sum = SecretScalar::new(montgomery_mul(
-    z.add_mod_ct(&rd.value(), P256_ORDER_MODULUS.value),
-    P256_ORDER_MODULUS.r2,
-    &P256_ORDER_MODULUS,
-  ));
-  let nonce_inverse = SecretScalar::new(
-    nonce
-      .value()
-      .inv_mod_ct_montgomery(&P256_ORDER_MODULUS, P256_ORDER_MINUS_TWO),
-  );
-  let product = SecretScalar::new(montgomery_mul(nonce_inverse.value(), sum.value(), &P256_ORDER_MODULUS));
-  product.value().0
-}
-
-/// Return the P-384 signing-comb coordinates selected by `digit` as Montgomery limbs.
-#[cfg(all(rscrypto_internal, feature = "diag", feature = "ecdsa-p384"))]
-pub fn diag_ecdsa_p384_select_signing_generator_affine_limb_digest(digit: u8) -> [u64; 12] {
-  let selected = select_signing_generator_affine_ct(&P384, usize::from(digit));
-  let mut out = [0u64; 12];
-  out[..6].copy_from_slice(&selected.x.value.0);
-  out[6..].copy_from_slice(&selected.y.value.0);
-  out
-}
-
-/// Derive the deterministic P-384 nonce for `message` and return its scalar limbs.
-#[cfg(all(rscrypto_internal, feature = "diag", feature = "ecdsa-p384"))]
-pub fn diag_ecdsa_p384_nonce_reduce_limb_digest(secret: [u8; 48], message: &[u8]) -> [u64; 6] {
-  let secret = ZeroizingBytes::new(secret);
-  let digest = Sha384::digest(message);
-  let mut wide = ZeroizingBytes::zeroed();
-  hmac_expand_p384(secret.as_array(), &digest, wide.as_mut_array());
-  let nonce = SecretScalar::new(reduce_wide_order_nonzero(wide.as_array(), &P384_ORDER_MODULUS));
-  nonce.value().0
-}
-
-/// Reduce a wide P-384 nonce candidate to a nonzero scalar and return its limbs.
-#[cfg(all(rscrypto_internal, feature = "diag", feature = "ecdsa-p384"))]
-pub fn diag_ecdsa_p384_reduce_wide_order_limb_digest(wide: [u8; 96]) -> [u64; 6] {
-  let wide = ZeroizingBytes::new(wide);
-  let nonce = SecretScalar::new(reduce_wide_order_nonzero(wide.as_array(), &P384_ORDER_MODULUS));
-  nonce.value().0
-}
-
-/// Return the affine limbs produced by blinded P-384 basepoint multiplication.
-#[cfg(all(rscrypto_internal, feature = "diag", feature = "ecdsa-p384"))]
-pub fn diag_ecdsa_p384_basepoint_blinded_limb_digest(secret: [u8; 48], blind: [u8; 96], message: &[u8]) -> [u64; 12] {
-  let secret = ZeroizingBytes::new(secret);
-  let blind = ZeroizingBytes::new(blind);
-  let digest = Sha384::digest(message);
-  let mut wide = ZeroizingBytes::zeroed();
-  hmac_expand_p384(secret.as_array(), &digest, wide.as_mut_array());
-  let nonce = SecretScalar::new(reduce_wide_order_nonzero(wide.as_array(), &P384_ORDER_MODULUS));
-  let (nonce_blind, _) = signing_blinds(blind.as_array(), &P384_ORDER_MODULUS);
-  let point = scalar_mul_basepoint_blinded(&P384, &nonce, &nonce_blind, P384_FIELD_MINUS_TWO);
-  let mut out = [0u64; 12];
-  out[..6].copy_from_slice(&point.x.value.0);
-  out[6..].copy_from_slice(&point.y.value.0);
-  out
-}
-
-/// Derive the P-384 nonce point and return its reduced affine x-coordinate limbs.
-#[cfg(all(rscrypto_internal, feature = "diag", feature = "ecdsa-p384"))]
-pub fn diag_ecdsa_p384_basepoint_r_limb_digest(secret: [u8; 48], message: &[u8]) -> [u64; 6] {
-  let secret = ZeroizingBytes::new(secret);
-  let digest = Sha384::digest(message);
-  let mut wide = ZeroizingBytes::zeroed();
-  hmac_expand_p384(secret.as_array(), &digest, wide.as_mut_array());
-  let nonce = SecretScalar::new(reduce_wide_order_nonzero(wide.as_array(), &P384_ORDER_MODULUS));
-  let point =
-    scalar_mul_basepoint_backend(&P384, &nonce).unwrap_or_else(|| scalar_mul_basepoint_comb_ct_secret(&P384, &nonce));
-  point
-    .to_affine_x_ct(P384_FIELD_MINUS_TWO)
-    .to_uint()
-    .reduce_once_ct(P384_ORDER_MODULUS.value)
-    .0
-}
-
-/// Run P-384 scalar signing finalization with supplied nonce material and return `r || s` limbs.
-#[cfg(all(rscrypto_internal, feature = "diag", feature = "ecdsa-p384"))]
-pub fn diag_ecdsa_p384_scalar_finish_limb_digest(secret: [u8; 48], nonce_wide: [u8; 96], message: &[u8]) -> [u64; 12] {
-  let secret = ZeroizingBytes::new(secret);
-  let nonce_wide = ZeroizingBytes::new(nonce_wide);
-  let digest = Sha384::digest(message);
-  let secret_scalar = SecretScalar::from_be_bytes(secret.as_array());
-  let nonce = SecretScalar::new(reduce_wide_order_nonzero(nonce_wide.as_array(), &P384_ORDER_MODULUS));
-  let r = P384_GX.reduce_once_ct(P384_ORDER_MODULUS.value);
-  let (r, s) = sign_digest_with_r(&P384, &secret_scalar, &nonce, &digest, r).unwrap_or((Uint::ZERO, Uint::ZERO));
-  let mut out = [0u64; 12];
-  out[..6].copy_from_slice(&r.0);
-  out[6..].copy_from_slice(&s.0);
-  out
-}
-
-/// Multiply the P-384 secret scalar by a fixed public `r` and return the order-field limbs.
-#[cfg(all(rscrypto_internal, feature = "diag", feature = "ecdsa-p384"))]
-pub fn diag_ecdsa_p384_order_mul_fixed_r_limb_digest(secret: [u8; 48]) -> [u64; 6] {
-  let secret = ZeroizingBytes::new(secret);
-  let secret_scalar = SecretScalar::from_be_bytes(secret.as_array());
-  let r = P384_GX.reduce_once_ct(P384_ORDER_MODULUS.value);
-  let rd = SecretScalar::new(mul_mod_montgomery_ct(r, secret_scalar.value(), &P384_ORDER_MODULUS));
-  rd.value().0
-}
-
-/// Derive and invert the deterministic P-384 nonce and return its Montgomery limbs.
-#[cfg(all(rscrypto_internal, feature = "diag", feature = "ecdsa-p384"))]
-pub fn diag_ecdsa_p384_nonce_inverse_limb_digest(secret: [u8; 48], message: &[u8]) -> [u64; 6] {
-  let secret = ZeroizingBytes::new(secret);
-  let digest = Sha384::digest(message);
-  let mut wide = ZeroizingBytes::zeroed();
-  hmac_expand_p384(secret.as_array(), &digest, wide.as_mut_array());
-  let nonce = SecretScalar::new(reduce_wide_order_nonzero(wide.as_array(), &P384_ORDER_MODULUS));
-  let inverse = SecretScalar::new(
-    nonce
-      .value()
-      .inv_mod_ct_montgomery(&P384_ORDER_MODULUS, P384_ORDER_MINUS_TWO),
-  );
-  inverse.value().0
-}
-
-/// Derive and invert the deterministic P-384 nonce through the caller-blinded s390x path.
-#[cfg(all(rscrypto_internal, feature = "diag", feature = "ecdsa-p384"))]
-pub fn diag_ecdsa_p384_nonce_inverse_blinded_limb_digest(
-  secret: [u8; 48],
-  blind: [u8; 96],
-  message: &[u8],
-) -> [u64; 6] {
-  let secret = ZeroizingBytes::new(secret);
-  let blind = ZeroizingBytes::new(blind);
-  let digest = Sha384::digest(message);
-  let mut wide = ZeroizingBytes::zeroed();
-  hmac_expand_p384(secret.as_array(), &digest, wide.as_mut_array());
-  let (_, nonce_blind) = signing_blinds(blind.as_array(), &P384_ORDER_MODULUS);
-  let nonce = SecretScalar::new(reduce_wide_order_nonzero(wide.as_array(), &P384_ORDER_MODULUS));
-  blinded_nonce_inverse_montgomery(&P384, &nonce, &nonce_blind).value().0
-}
-
-/// Run the final P-384 signing multiplication with supplied nonce material and return its limbs.
-#[cfg(all(rscrypto_internal, feature = "diag", feature = "ecdsa-p384"))]
-pub fn diag_ecdsa_p384_final_multiply_limb_digest(secret: [u8; 48], nonce_wide: [u8; 96], message: &[u8]) -> [u64; 6] {
-  let secret = ZeroizingBytes::new(secret);
-  let nonce_wide = ZeroizingBytes::new(nonce_wide);
-  let digest = Sha384::digest(message);
-  let secret_scalar = SecretScalar::from_be_bytes(secret.as_array());
-  let nonce = SecretScalar::new(reduce_wide_order_nonzero(nonce_wide.as_array(), &P384_ORDER_MODULUS));
-  let r = P384_GX.reduce_once_ct(P384_ORDER_MODULUS.value);
-  let z = reduce_digest_for_scalar(&digest, P384_ORDER_MODULUS.value);
-  let rd = SecretScalar::new(mul_mod_montgomery_ct(r, secret_scalar.value(), &P384_ORDER_MODULUS));
-  let sum = SecretScalar::new(montgomery_mul(
-    z.add_mod_ct(&rd.value(), P384_ORDER_MODULUS.value),
-    P384_ORDER_MODULUS.r2,
-    &P384_ORDER_MODULUS,
-  ));
-  let nonce_inverse = SecretScalar::new(
-    nonce
-      .value()
-      .inv_mod_ct_montgomery(&P384_ORDER_MODULUS, P384_ORDER_MINUS_TWO),
-  );
-  let product = SecretScalar::new(montgomery_mul(nonce_inverse.value(), sum.value(), &P384_ORDER_MODULUS));
-  product.value().0
 }
 
 fn projective_x_matches_scalar<const L: usize>(point: Jacobian<L>, scalar: Uint<L>, curve: &Curve<L>) -> bool {
@@ -4643,6 +4332,23 @@ fn short_der_length(len: usize) -> u8 {
 
 #[cfg(test)]
 mod tests {
+
+  const P256_GX: Uint<4> = Uint([
+    0xf4a1_3945_d898_c296,
+    0x7703_7d81_2deb_33a0,
+    0xf8bc_e6e5_63a4_40f2,
+    0x6b17_d1f2_e12c_4247,
+  ]);
+
+  const P384_GX: Uint<6> = Uint([
+    0x3a54_5e38_7276_0ab7,
+    0x5502_f25d_bf55_296c,
+    0x59f7_41e0_8254_2a38,
+    0x6e1d_3b62_8ba7_9b98,
+    0x8eb1_c71e_f320_ad74,
+    0xaa87_ca22_be8b_0537,
+  ]);
+
   use alloc::format;
 
   use super::*;
@@ -5902,3 +5608,75 @@ mod tests {
     }
   }
 }
+
+#[cfg(all(
+  test,
+  not(miri),
+  feature = "portable-only",
+  any(feature = "ecdsa-p256", feature = "ecdsa-p384")
+))]
+mod binsec {
+  use super::*;
+  use crate::binsec::*;
+  use core::ptr;
+
+  #[cfg(feature = "ecdsa-p256")]
+  fn ecdsa_p256_select_signing_generator_affine_limb_digest(digit: u8) -> [u64; 8] {
+    let selected = select_signing_generator_affine_ct(&P256, usize::from(digit));
+    let mut out = [0u64; 8];
+    out[..4].copy_from_slice(&selected.x.value.0);
+    out[4..].copy_from_slice(&selected.y.value.0);
+    out
+  }
+
+  #[cfg(feature = "ecdsa-p384")]
+  fn ecdsa_p384_select_signing_generator_affine_limb_digest(digit: u8) -> [u64; 12] {
+    let selected = select_signing_generator_affine_ct(&P384, usize::from(digit));
+    let mut out = [0u64; 12];
+    out[..6].copy_from_slice(&selected.x.value.0);
+    out[6..].copy_from_slice(&selected.y.value.0);
+    out
+  }
+
+  #[cfg(feature = "ecdsa-p256")]
+  #[unsafe(no_mangle)]
+  #[inline(never)]
+  pub(super) extern "C" fn ct_binsec_ecdsa_p256_select_signing_generator_affine() -> ! {
+    // SAFETY: This pointer references a fixed harness global with static storage.
+    let digit = unsafe { ptr::read_volatile(ptr::addr_of!(CT_BINSEC_ECDSA_DIGIT)) };
+    let limbs = ecdsa_p256_select_signing_generator_affine_limb_digest(digit);
+
+    let mut acc = 0u64;
+    for limb in limbs {
+      acc ^= limb;
+    }
+    let folded = acc | (acc >> 8) | (acc >> 16) | (acc >> 24) | (acc >> 32) | (acc >> 40) | (acc >> 48) | (acc >> 56);
+    ct_binsec_done(folded.to_le_bytes()[0])
+  }
+
+  #[cfg(feature = "ecdsa-p384")]
+  #[unsafe(no_mangle)]
+  #[inline(never)]
+  pub(super) extern "C" fn ct_binsec_ecdsa_p384_select_signing_generator_affine() -> ! {
+    // SAFETY: This pointer references a fixed harness global with static storage.
+    let digit = unsafe { ptr::read_volatile(ptr::addr_of!(CT_BINSEC_ECDSA_DIGIT)) };
+    let limbs = ecdsa_p384_select_signing_generator_affine_limb_digest(digit);
+
+    let mut acc = 0u64;
+    for limb in limbs {
+      acc ^= limb;
+    }
+    let folded = acc | (acc >> 8) | (acc >> 16) | (acc >> 24) | (acc >> 32) | (acc >> 40) | (acc >> 48) | (acc >> 56);
+    ct_binsec_done(folded.to_le_bytes()[0])
+  }
+}
+
+#[cfg(all(
+  test,
+  feature = "full",
+  feature = "parallel",
+  feature = "getrandom",
+  any(unix, windows),
+  not(miri)
+))]
+pub(crate) mod ct_tests;

@@ -619,18 +619,6 @@ impl<W: Word> Crc<W> {
     }
   }
 
-  /// The word-domain register for a register value in the specification's form.
-  #[inline(always)]
-  pub(in crate::checksum) fn register_to_word(&self, register: u64) -> W {
-    self.domain_to_word(self.spec.domain(register & mask(self.spec.width)))
-  }
-
-  /// The register value in the specification's form for a word-domain register.
-  #[inline(always)]
-  pub(in crate::checksum) fn word_to_register(&self, word: W) -> u64 {
-    self.spec.register(self.word_to_domain(word))
-  }
-
   /// `crc(A || B)` from `crc(A)`, `crc(B)`, and the length of `B`, as finalized values.
   ///
   /// `crc(A || B) = (crc(A) ^ xorout ^ init) * x^(8 * len(B)) ^ crc(B)`, modulo `G`. `shift`
@@ -684,46 +672,6 @@ pub(in crate::checksum) fn shift_by(
     k = k.strict_add(1);
   }
   value
-}
-
-/// Bitwise reference CRC: the register after `data`, from `register`, both in the specification's
-/// form.
-///
-/// This follows the definition one bit at a time and shares no table or constant with the fast
-/// paths, so it is their test oracle.
-#[must_use]
-pub(in crate::checksum) const fn reference(spec: &Spec, register: u64, data: &[u8]) -> u64 {
-  let width_mask = mask(spec.width);
-  let mut reg = register & width_mask;
-  let mut i = 0usize;
-  if spec.reflected {
-    let poly = spec.poly.reverse_bits() >> (64u32.strict_sub(spec.width));
-    while i < data.len() {
-      reg ^= data[i] as u64;
-      let mut bit = 0u32;
-      while bit < 8 {
-        reg = if reg & 1 == 1 { (reg >> 1) ^ poly } else { reg >> 1 };
-        bit = bit.strict_add(1);
-      }
-      i = i.strict_add(1);
-    }
-  } else {
-    let top = 1u64 << (spec.width.strict_sub(1));
-    while i < data.len() {
-      reg ^= (data[i] as u64) << (spec.width.strict_sub(8));
-      let mut bit = 0u32;
-      while bit < 8 {
-        reg = if reg & top != 0 {
-          ((reg << 1) ^ spec.poly) & width_mask
-        } else {
-          (reg << 1) & width_mask
-        };
-        bit = bit.strict_add(1);
-      }
-      i = i.strict_add(1);
-    }
-  }
-  reg
 }
 
 #[cfg(test)]

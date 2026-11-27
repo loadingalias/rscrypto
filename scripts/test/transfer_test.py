@@ -261,7 +261,7 @@ class Bundles(unittest.TestCase):
                     case.doCleanups()
 
     def check_test_prepare_keeps_both_full_release_modes_and_fails_closed(self, target, machine):
-        for name in ('Cargo.toml', 'rscrypto-rustls/Cargo.toml', '.config/tooling.toml', 'scripts/ct/internal.py', 'scripts/ct/provenance.py'):
+        for name in ('Cargo.toml', 'rscrypto-rustls/Cargo.toml', '.config/tooling.toml', 'scripts/ct/provenance.py'):
             destination = self.root / name
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(ROOT / name, destination)
@@ -286,11 +286,9 @@ elif name=='cargo' and args[0]=='build':
         (release / binary).write_bytes(b'binary fixture')
         (release / binary).chmod(0o755)
 elif name=='cargo':
-    internal = 'internal-' in args[args.index('--archive-file')+1]
-    flags = os.environ.get('CARGO_ENCODED_RUSTFLAGS', '').split('\\x1f')
-    assert ('rscrypto_internal' in flags) == internal
-    if os.environ.get('TRANSFER_FAIL') in ('1', 'internal' if internal else 'public'): sys.exit(23)
-    Path(args[args.index('--archive-file')+1]).write_bytes(b'archive fixture')
+    archive = Path(args[args.index('--archive-file')+1])
+    if os.environ.get('TRANSFER_FAIL') in ('1', archive.name.split('.')[0]): sys.exit(23)
+    archive.write_bytes(b'archive fixture')
 elif name=='rustc': print('rustc pinned fixture')
 elif name.endswith('gcc'): print('gcc pinned fixture')
 ''')
@@ -312,20 +310,15 @@ elif name.endswith('gcc'): print('gcc pinned fixture')
             calls = [json.loads(row) for row in log.read_text().splitlines()]
             self.assertIn(['check.sh', 'target', target], calls)
             builds = [row for row in calls if row[:3] == ['cargo', 'nextest', 'archive']]
-            self.assertEqual(len(builds), 4)
+            self.assertEqual(len(builds), 2)
             self.assertTrue(all('--workspace' in row and '--locked' in row and '--release' in row for row in builds))
             self.assertTrue(all(row[row.index('--target') + 1] == target for row in builds))
             native = builds[0][builds[0].index('--features') + 1].split(',')
             self.assertFalse(any(feature.endswith('/portable-only') for feature in native))
             self.assertIn('rscrypto-rustls/ml-dsa', native)
             self.assertIn('--all-features', builds[1])
-            for row in builds[:2]:
+            for row in builds:
                 self.assertNotIn('--lib', row)
-            for row in builds[2:]:
-                self.assertIn('--lib', row)
-                self.assertEqual([row[i + 1] for i, value in enumerate(row) if value == '--test'],
-                    ['aead_kernel_equivalence', 'argon2_kernels', 'chacha20poly1305', 'rsa_public_key', 'pbkdf2_evidence'])
-            self.assertIn('--all-features', builds[3])
             # The painted-stack binaries travel in the same sealed bundle.
             stack = [row for row in calls if row[:2] == ['cargo', 'build'] and '--example' not in row]
             self.assertEqual(len(stack), 2)
@@ -338,8 +331,8 @@ elif name.endswith('gcc'): print('gcc pinned fixture')
             introspect, = [row for row in calls if row[:2] == ['cargo', 'build'] and '--example' in row]
             self.assertEqual(introspect[introspect.index('--example') + 1], 'introspect')
             self.assertEqual(introspect[introspect.index('--target') + 1], target)
-            with patch.dict(os.environ, TRANSFER_FAIL='internal'):
-                failed = self.root / 'target/failed-internal.tar.gz'
+            with patch.dict(os.environ, TRANSFER_FAIL='portable'):
+                failed = self.root / 'target/failed-portable.tar.gz'
                 with self.assertRaises(subprocess.CalledProcessError): cross.prepare(target, failed)
                 self.assertFalse(failed.exists())
             with patch.dict(os.environ, TRANSFER_FAIL='1'):
@@ -380,7 +373,7 @@ class NativeArchive(unittest.TestCase):
             (root / '.config/nextest.toml').write_text('nextest-version = ' +
                 '{ required = "' + config['nextest-version']['required'] + '" }\n'
                 '[profile.default]\nsuccess-output = "immediate"\n'
-                '[profile.cross]\n[profile.cross-internal]\n')
+                '[profile.cross]\n')
             env = {**os.environ, 'RUSTUP_TOOLCHAIN': channel, 'CARGO_RAIL_CACHE': 'off'}
             subprocess.run(['cargo', 'generate-lockfile', '--offline'], cwd=root, env=env, check=True, capture_output=True)
             subprocess.run(['git', 'init', '-q', str(root)], check=True)
@@ -398,15 +391,12 @@ class NativeArchive(unittest.TestCase):
                  else 'host: x86_64-unknown-linux-gnu') if line.startswith('host: ') else line
                 for line in metadata['nextest'].splitlines())
             for mode in cross.MODES:
-                internal = mode.startswith('internal-')
-                mode_env = {**env, **({'CARGO_ENCODED_RUSTFLAGS': '--cfg\x1frscrypto_internal'} if internal else {})}
                 feature_args = ['--features', 'portable-only'] if mode.endswith('portable') else []
                 built = subprocess.run(['cargo', 'nextest', 'archive', '--locked', '--workspace', '--release',
                                 *feature_args, '--archive-file', str(directory / (mode + '.tar.zst'))], cwd=root,
-                               env=mode_env, capture_output=True, text=True)
+                               env=env, capture_output=True, text=True)
                 self.assertEqual(built.returncode, 0, built.stderr)
-                metadata['modes'][mode] = {'internal': internal,
-                    'encoded_rustflags': mode_env.get('CARGO_ENCODED_RUSTFLAGS')}
+                metadata['modes'][mode] = {'command': built.args}
             # The bundled detection report runs on the consumer host, and the summary keeps what it printed.
             introspect = directory / 'introspect'
             introspect.write_text('#!/bin/sh\necho "Platform: fixture caps (Riscv64)"\n')
@@ -423,22 +413,17 @@ class NativeArchive(unittest.TestCase):
             self.assertEqual(len(summaries), 1)
             summary = json.loads(summaries[0].read_text())
             self.assertEqual(summary['status'], 'pass')
-            self.assertEqual(set(summary['modes']), {'native', 'portable', 'internal-native', 'internal-portable'})
+            self.assertEqual(set(summary['modes']), {'native', 'portable'})
             self.assertEqual(summary['nextest'], consumer_version)
             self.assertEqual(summary['detection'], 'Platform: fixture caps (Riscv64)\n')
             self.assertNotEqual(summary['nextest'], metadata['nextest'])
             # One record per ChaCha20 differential test; each record covers every available backend.
-            self.assertEqual(len(summary['modes']['internal-native']['backend_evidence']), len(BACKEND_TESTS))
-            self.assertEqual(len(summary['modes']['internal-portable']['backend_evidence']), len(BACKEND_TESTS))
+            self.assertEqual(len(summary['modes']['native']['backend_evidence']), len(BACKEND_TESTS))
+            self.assertEqual(len(summary['modes']['portable']['backend_evidence']), len(BACKEND_TESTS))
 
-            for mutation in ('missing-suite', 'missing-flag', 'wrong-boundary'):
+            for mutation in cross.MODES:
                 broken = json.loads(json.dumps(metadata))
-                if mutation == 'missing-suite':
-                    del broken['modes']['internal-portable']
-                elif mutation == 'missing-flag':
-                    broken['modes']['internal-native']['encoded_rustflags'] = ''
-                else:
-                    broken['modes']['native']['internal'] = True
+                del broken['modes'][mutation]
                 bundle.seal(root, directory, 'rscrypto.cross.tests', TARGET, bundle.source_identity(root), broken)
                 archive.unlink()
                 bundle.pack(directory, archive, compression='xz')
@@ -453,9 +438,7 @@ class ExecutionDiagnostics(unittest.TestCase):
         execute = subprocess.run
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            modes = {mode: {'internal': mode.startswith('internal-'),
-                           'encoded_rustflags': '--cfg\x1frscrypto_internal' if mode.startswith('internal-') else ''}
-                     for mode in cross.MODES}
+            modes = {mode: {} for mode in cross.MODES}
             manifest = {'metadata': {'nextest': 'fixture', 'modes': modes}}
             console = io.StringIO()
 
@@ -487,9 +470,7 @@ class ExecutionDiagnostics(unittest.TestCase):
         for failing in (None, 'worker'):
             with self.subTest(failing=failing), tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary)
-                modes = {mode: {'internal': mode.startswith('internal-'),
-                               'encoded_rustflags': '--cfg\x1frscrypto_internal' if mode.startswith('internal-') else ''}
-                         for mode in cross.MODES}
+                modes = {mode: {} for mode in cross.MODES}
                 manifest = {'source': 'fixture', 'metadata': {'nextest': 'fixture', 'modes': modes, 'stack_paint': {}}}
                 suites, measurements = [], []
 

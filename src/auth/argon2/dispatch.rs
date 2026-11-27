@@ -188,7 +188,7 @@ static ACTIVE_KERNEL: OnceCache<KernelId> = OnceCache::new();
 
 /// Select the best kernel available on the current host.
 ///
-/// First call resolves; subsequent calls hit [`ACTIVE_KERNEL`] and return
+/// The first call detects capabilities. Later calls return
 /// without re-walking `ALL_KERNELS`. The cache value is `KernelId` (Copy),
 /// so the cached read is a single atomic-acquire load.
 ///
@@ -208,7 +208,7 @@ static ACTIVE_KERNEL: OnceCache<KernelId> = OnceCache::new();
 /// only when neither is present does the dispatcher fall through to the
 /// portable kernel.
 #[must_use]
-pub(super) fn active_kernel() -> KernelId {
+pub fn active_kernel() -> KernelId {
   ACTIVE_KERNEL.get_or_init(|| {
     let host = caps();
     for &id in ALL_KERNELS {
@@ -402,5 +402,66 @@ mod tests {
         id.as_str()
       );
     }
+  }
+  #[test]
+  #[cfg(not(feature = "portable-only"))]
+  fn active_kernel_is_reported_correctly() {
+    let active = active_kernel();
+
+    #[cfg(target_arch = "aarch64")]
+    assert_eq!(active, KernelId::Portable, "expected portable AArch64 dispatch");
+
+    #[cfg(target_arch = "x86_64")]
+    {
+      let host = crate::platform::caps();
+      let avx512_caps = required_caps(KernelId::X86Avx512);
+      let avx2_caps = required_caps(KernelId::X86Avx2);
+
+      if host.has(avx512_caps) {
+        assert_eq!(active, KernelId::X86Avx512, "expected AVX-512 to win dispatch");
+      } else if host.has(avx2_caps) {
+        assert_eq!(active, KernelId::X86Avx2, "expected AVX2 to win dispatch");
+      } else {
+        assert_eq!(active, KernelId::Portable);
+      }
+    }
+
+    #[cfg(target_arch = "powerpc64")]
+    if crate::platform::caps().has(required_caps(KernelId::PowerVsx)) {
+      assert_eq!(active, KernelId::PowerVsx, "expected POWER VSX to win dispatch");
+    } else {
+      assert_eq!(active, KernelId::Portable);
+    }
+
+    #[cfg(target_arch = "s390x")]
+    if crate::platform::caps().has(required_caps(KernelId::S390xVector)) {
+      assert_eq!(active, KernelId::S390xVector, "expected s390x z/Vector to win dispatch");
+    } else {
+      assert_eq!(active, KernelId::Portable);
+    }
+
+    #[cfg(target_arch = "riscv64")]
+    if crate::platform::caps().has(required_caps(KernelId::Riscv64V)) {
+      assert_eq!(active, KernelId::Riscv64V, "expected RVV to win dispatch");
+    } else {
+      assert_eq!(active, KernelId::Portable);
+    }
+
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+    if crate::platform::caps().has(required_caps(KernelId::WasmSimd128)) {
+      assert_eq!(active, KernelId::WasmSimd128, "expected wasm simd128 to win dispatch");
+    } else {
+      assert_eq!(active, KernelId::Portable);
+    }
+
+    #[cfg(not(any(
+      target_arch = "aarch64",
+      target_arch = "x86_64",
+      target_arch = "powerpc64",
+      target_arch = "s390x",
+      target_arch = "riscv64",
+      all(target_arch = "wasm32", target_feature = "simd128"),
+    )))]
+    assert_eq!(active, KernelId::Portable);
   }
 }

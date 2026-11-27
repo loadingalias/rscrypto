@@ -77,13 +77,13 @@
 //! - `expert` (requires `blake3` feature) - BLAKE3 subtree hashing (`blake3_tree`), the Bao
 //!   combined-stream decoder (`bao`, requires `std`), and `BLAKE3_PORTABLE_SOURCE`, the source
 //!   text of the portable BLAKE3 compression function.
-//! - `introspect` (requires `diag` feature) - Advanced kernel selection reporting.
+//! - `introspect` - Advanced kernel selection reporting.
 //!
 //! # Advanced
 //!
 //! Dispatch is automatic by default.
 //!
-//! - Use `crate::hashes::introspect` (requires `diag` feature) for kernel reporting and size-based
+//! - Use `crate::hashes::introspect` for kernel reporting and size-based
 //!   dispatch details.
 //! - Use `crate::hashes::fast` for explicit fast-hash family access.
 #[doc(hidden)]
@@ -99,7 +99,7 @@ pub(crate) mod common;
 pub mod crypto;
 #[cfg(any(feature = "xxh3", feature = "xxh32", feature = "xxh64", feature = "rapidhash"))]
 pub mod fast;
-#[cfg(feature = "diag")]
+
 pub mod introspect;
 
 /// Hash capabilities whose inputs callers must structure correctly.

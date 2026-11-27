@@ -186,7 +186,7 @@ mod gather;
 mod ghash;
 #[cfg(any(feature = "aes-gcm", feature = "chacha20poly1305"))]
 mod header_protection;
-#[cfg(feature = "diag")]
+
 pub mod introspect;
 #[cfg(feature = "aes-gcm")]
 mod nonce_counter;
@@ -204,156 +204,37 @@ mod segments;
   feature = "aes-gcm",
   feature = "chacha20poly1305",
   feature = "xchacha20poly1305",
-  all(
-    feature = "aes-gcm-siv",
-    any(
-      feature = "diag",
-      target_arch = "aarch64",
-      all(target_arch = "powerpc64", not(feature = "portable-only")),
-      all(target_arch = "riscv64", not(feature = "portable-only")),
-      all(target_arch = "s390x", not(feature = "portable-only")),
-      all(target_arch = "x86_64", target_feature = "sse2")
-    )
-  ),
-  all(
-    feature = "aegis256",
-    any(
-      feature = "diag",
-      target_arch = "aarch64",
-      all(target_arch = "powerpc64", not(feature = "portable-only"), target_endian = "little"),
-      all(target_arch = "riscv64", not(feature = "portable-only")),
-      all(target_arch = "s390x", not(feature = "portable-only")),
-      all(target_arch = "x86_64", target_feature = "sse2")
-    )
-  )
+  feature = "aes-gcm-siv",
+  feature = "aegis256"
 ))]
 mod targets;
 #[cfg(feature = "xchacha20poly1305")]
 mod xchacha20poly1305;
-#[cfg(all(
-  rscrypto_internal,
-  feature = "diag",
-  target_arch = "aarch64",
-  any(feature = "chacha20poly1305", feature = "xchacha20poly1305")
-))]
-pub use crate::backend::chacha20::diag_chacha20_xor_keystream_aarch64_neon;
-#[cfg(all(rscrypto_internal, feature = "diag", feature = "aegis256"))]
-pub use aegis256::diag_aegis256_update_portable;
+
 #[cfg(feature = "aegis256")]
 pub use aegis256::{Aegis256, Aegis256Key, Aegis256Tag};
 #[cfg(feature = "aes-gcm")]
 pub use aes_gcm::{Aes128Gcm, Aes128GcmKey, Aes128GcmTag, Aes256Gcm, Aes256GcmKey, Aes256GcmTag};
-#[cfg(all(rscrypto_internal, feature = "diag", feature = "aes-gcm"))]
-pub use aes_gcm::{
-  diag_aes128gcm_ctr32_be, diag_aes128gcm_ghash, diag_aes128gcm_tag_aes, diag_aes256gcm_ctr32_be, diag_aes256gcm_ghash,
-  diag_aes256gcm_tag_aes,
-};
+
 #[cfg(feature = "aes-gcm-siv")]
 pub use aes_gcm_siv::{Aes128GcmSiv, Aes128GcmSivKey, Aes128GcmSivTag, Aes256GcmSiv, Aes256GcmSivKey, Aes256GcmSivTag};
-#[cfg(all(rscrypto_internal, feature = "diag", feature = "aes-gcm-siv"))]
-pub use aes_gcm_siv::{
-  diag_aes128gcmsiv_ctr32, diag_aes128gcmsiv_derive_keys, diag_aes128gcmsiv_polyval_digest,
-  diag_aes128gcmsiv_raw_tag_aes, diag_aes256gcmsiv_ctr32, diag_aes256gcmsiv_derive_keys, diag_aes256gcmsiv_raw_tag_aes,
-};
-#[cfg(all(rscrypto_internal, feature = "diag", feature = "aegis256"))]
-pub use aes_round::diag_aes_enc_round_portable;
+
 #[cfg(feature = "aes-siv")]
 pub use aes_siv_cmac256::{
   AesSivCmac256, AesSivCmac256Key, AesSivCmac256Nonce, AesSivCmac256NonceError, AesSivCmac256Tag,
 };
-#[cfg(all(rscrypto_internal, feature = "diag", feature = "aes-siv"))]
-pub use aes_siv_cmac256::{diag_aes_siv_cmac256_open_portable, diag_aes_siv_cmac256_s2v_portable};
-#[cfg(all(rscrypto_internal, feature = "diag", feature = "ascon-aead"))]
-pub use ascon128::diag_ascon_aead128_tag_portable;
+
 #[cfg(feature = "ascon-aead")]
 pub use ascon128::{AsconAead128, AsconAead128Key, AsconAead128Tag};
-// Backend-equivalence tests use these entry points to bypass runtime dispatch.
-#[cfg(all(
-  rscrypto_internal,
-  feature = "diag",
-  any(feature = "chacha20poly1305", feature = "xchacha20poly1305")
-))]
-pub use crate::backend::chacha20::diag_chacha20_xor_keystream_portable;
-#[cfg(all(
-  rscrypto_internal,
-  feature = "diag",
-  target_arch = "powerpc64",
-  not(feature = "portable-only"),
-  target_endian = "little",
-  any(feature = "chacha20poly1305", feature = "xchacha20poly1305")
-))]
-pub use crate::backend::chacha20::diag_chacha20_xor_keystream_power_vsx;
-#[cfg(all(
-  rscrypto_internal,
-  feature = "diag",
-  target_arch = "riscv64",
-  not(feature = "portable-only"),
-  any(feature = "chacha20poly1305", feature = "xchacha20poly1305")
-))]
-pub use crate::backend::chacha20::diag_chacha20_xor_keystream_riscv64_vector;
-#[cfg(all(
-  rscrypto_internal,
-  feature = "diag",
-  target_arch = "s390x",
-  not(feature = "portable-only"),
-  any(feature = "chacha20poly1305", feature = "xchacha20poly1305")
-))]
-pub use crate::backend::chacha20::diag_chacha20_xor_keystream_s390x_vector;
-#[cfg(all(
-  rscrypto_internal,
-  feature = "diag",
-  target_arch = "wasm32",
-  any(feature = "chacha20poly1305", feature = "xchacha20poly1305")
-))]
-pub use crate::backend::chacha20::diag_chacha20_xor_keystream_wasm_simd128;
-#[cfg(all(
-  rscrypto_internal,
-  feature = "diag",
-  all(target_arch = "x86_64", target_feature = "sse2"),
-  any(feature = "chacha20poly1305", feature = "xchacha20poly1305")
-))]
-pub use crate::backend::chacha20::{diag_chacha20_xor_keystream_x86_avx2, diag_chacha20_xor_keystream_x86_avx512};
+
 #[cfg(feature = "chacha20poly1305")]
 pub use chacha20poly1305::{ChaCha20Poly1305, ChaCha20Poly1305Key, ChaCha20Poly1305SealingKey, ChaCha20Poly1305Tag};
-#[cfg(all(rscrypto_internal, feature = "diag", feature = "chacha20poly1305"))]
-pub use chacha20poly1305::{
-  diag_chacha20poly1305_decrypt_in_place_owned, diag_chacha20poly1305_encrypt_in_place_owned,
-};
-#[cfg(all(
-  rscrypto_internal,
-  feature = "diag",
-  feature = "chacha20poly1305",
-  all(target_arch = "x86_64", target_feature = "sse2"),
-  target_os = "linux"
-))]
-pub use chacha20poly1305::{
-  diag_chacha20poly1305_decrypt_in_place_x86_64_asm, diag_chacha20poly1305_decrypt_segments_x86_64_asm,
-  diag_chacha20poly1305_encrypt_in_place_x86_64_asm,
-};
-#[cfg(all(rscrypto_internal, feature = "diag", feature = "aes-gcm"))]
-pub use ghash::diag_ghash_block_portable;
+
 #[cfg(feature = "aes-gcm")]
 pub use nonce_counter::NonceCounter;
 #[cfg(any(feature = "aes-gcm", feature = "chacha20poly1305"))]
 pub use nonce_sequence::{NonceCounterExhausted, NonceCounterSealError};
-#[cfg(all(
-  rscrypto_internal,
-  feature = "diag",
-  target_arch = "aarch64",
-  any(target_os = "linux", target_os = "macos"),
-  any(feature = "chacha20poly1305", feature = "xchacha20poly1305")
-))]
-pub use poly1305::diag_chacha20poly1305_authenticate_aead_aarch64_neon_par4;
-#[cfg(all(
-  rscrypto_internal,
-  feature = "diag",
-  any(feature = "chacha20poly1305", feature = "xchacha20poly1305")
-))]
-pub use poly1305::{diag_chacha20poly1305_authenticate_aead, diag_poly1305_block_portable_digest};
-#[cfg(all(rscrypto_internal, feature = "diag", feature = "aes-gcm-siv"))]
-pub use polyval::diag_polyval_reduce_portable;
-#[cfg(all(rscrypto_internal, feature = "diag", feature = "chacha20poly1305"))]
-pub use targets::diag_chacha20_backend_id;
+
 #[cfg(feature = "xchacha20poly1305")]
 pub use xchacha20poly1305::{XChaCha20Poly1305, XChaCha20Poly1305Key, XChaCha20Poly1305Tag};
 
@@ -898,26 +779,6 @@ pub(crate) fn open_bit_lengths(aad_len: usize, text_len: usize) -> Result<AeadBy
   AeadByteLengths::try_new_bit_lengths(aad_len, text_len).map_err(|_| OpenError::too_large())
 }
 
-/// Fold diagnostic output to one block, so a CT harness compares 16 bytes.
-#[cfg(all(
-  rscrypto_internal,
-  feature = "diag",
-  any(feature = "aes-gcm", feature = "aes-gcm-siv")
-))]
-fn diag_fold16(data: &[u8]) -> [u8; 16] {
-  let (blocks, tail) = data.as_chunks::<16>();
-  let mut acc = 0u128;
-  for block in blocks {
-    acc ^= u128::from_ne_bytes(*block);
-  }
-  if !tail.is_empty() {
-    let mut block = [0u8; 16];
-    block[..tail.len()].copy_from_slice(tail);
-    acc ^= u128::from_ne_bytes(block);
-  }
-  acc.to_ne_bytes()
-}
-
 #[cfg(test)]
 mod tests {
   use alloc::string::ToString;
@@ -993,5 +854,32 @@ mod tests {
     let too_large = usize::try_from((u64::MAX / 8).strict_add(1)).expect("test length fits 64-bit usize");
     assert_eq!(AeadByteLengths::try_new_bit_lengths(too_large, 0), Err(LengthOverflow));
     assert_eq!(AeadByteLengths::try_new_bit_lengths(0, too_large), Err(LengthOverflow));
+  }
+}
+
+#[cfg(all(
+  test,
+  feature = "full",
+  feature = "parallel",
+  feature = "getrandom",
+  any(unix, windows),
+  not(miri)
+))]
+pub(crate) mod ct_tests {
+  pub(crate) use super::{aes_gcm::ct_tests::*, aes_gcm_siv::ct_tests::*, aes_siv_cmac256::ct_tests::*};
+  /// Fold diagnostic output to one block, so a CT harness compares 16 bytes.
+  #[cfg(any(feature = "aes-gcm", feature = "aes-gcm-siv"))]
+  pub(crate) fn fold16(data: &[u8]) -> [u8; 16] {
+    let (blocks, tail) = data.as_chunks::<16>();
+    let mut acc = 0u128;
+    for block in blocks {
+      acc ^= u128::from_ne_bytes(*block);
+    }
+    if !tail.is_empty() {
+      let mut block = [0u8; 16];
+      block[..tail.len()].copy_from_slice(tail);
+      acc ^= u128::from_ne_bytes(block);
+    }
+    acc.to_ne_bytes()
   }
 }

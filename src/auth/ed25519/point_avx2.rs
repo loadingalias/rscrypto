@@ -453,27 +453,6 @@ pub(crate) unsafe fn scalar_mul_basepoint_avx2(scalar_bytes: &[u8; 32]) -> Exten
   acc.to_extended()
 }
 
-/// Select one signed fixed-base table digit through the production AVX2 selector.
-///
-/// # Safety
-///
-/// Caller must ensure AVX2 is available.
-#[cfg(all(rscrypto_internal, feature = "diag", feature = "ed25519"))]
-#[inline]
-#[target_feature(enable = "avx2")]
-pub unsafe fn diag_select_basepoint_cached_avx2_limb_digest(digit: i8) -> [u64; 20] {
-  use basepoint_radix16_ifma::BASEPOINT_RADIX16_IFMA_RAW;
-
-  let identity = ExtendedPointAvx2::from_extended(&ExtendedPoint::identity()).to_cached();
-  let selected = select_signed_cached_avx2(&BASEPOINT_RADIX16_IFMA_RAW[0], digit, &identity);
-  let fields = selected.0.split();
-  let mut out = [0u64; 20];
-  for (chunk, field) in out.as_chunks_mut::<5>().0.iter_mut().zip(fields.iter()) {
-    chunk.copy_from_slice(field.limbs());
-  }
-  out
-}
-
 /// Build a runtime table of odd multiples `[1P, 3P, 5P, ..., (2n-1)P]` in
 /// Hamburg-scaled cached AVX2 format.
 ///
@@ -863,27 +842,6 @@ pub(crate) unsafe fn scalar_mul_basepoint_ifma(scalar_bytes: &[u8; 32]) -> Exten
   acc.to_extended()
 }
 
-/// Select one signed fixed-base table digit through the production IFMA selector.
-///
-/// # Safety
-///
-/// Caller must ensure AVX2 is available.
-#[cfg(all(rscrypto_internal, feature = "diag", feature = "ed25519"))]
-#[inline]
-#[target_feature(enable = "avx2")]
-pub unsafe fn diag_select_basepoint_cached_ifma_limb_digest(digit: i8) -> [u64; 20] {
-  use basepoint_radix16_ifma::BASEPOINT_RADIX16_IFMA_RAW;
-
-  let identity = cached_identity_ifma();
-  let selected = select_signed_cached_ifma(&BASEPOINT_RADIX16_IFMA_RAW[0], digit, &identity);
-  let fields = selected.0.split();
-  let mut out = [0u64; 20];
-  for (chunk, field) in out.as_chunks_mut::<5>().0.iter_mut().zip(fields.iter()) {
-    chunk.copy_from_slice(field.limbs());
-  }
-  out
-}
-
 // Radix-16 IFMA Straus removed — superseded by straus_wnaf_vartime_ifma.
 
 // ===========================================================================
@@ -968,28 +926,6 @@ fn load_cached_raw(entry: &[[i64; 4]; 5]) -> [__m256i; 5] {
 #[target_feature(enable = "avx2")]
 fn load_cached_ifma_raw(entry: &[[i64; 4]; 5]) -> CachedPointIfma {
   CachedPointIfma(FieldElement51x4(load_cached_raw(entry)))
-}
-
-/// The exact result of converting the identity to IFMA cached form.
-/// Its D lane is p, the previous conversion's reduced representation of zero.
-///
-/// # Safety
-///
-/// Caller must ensure AVX2 is available.
-#[inline]
-#[target_feature(enable = "avx2")]
-#[cfg(all(feature = "ed25519", any(test, all(rscrypto_internal, feature = "diag"))))]
-fn cached_identity_ifma() -> CachedPointIfma {
-  let d2 = FieldElement::from_small(D2);
-  let d2_twice = FieldElement::from_small(D2 * 2);
-  let zero = FieldElement::from_limbs([
-    (1 << 51) - 19,
-    (1 << 51) - 1,
-    (1 << 51) - 1,
-    (1 << 51) - 1,
-    (1 << 51) - 1,
-  ]);
-  CachedPointIfma(FieldElement51x4::new(&d2, &d2, &d2_twice, &zero))
 }
 
 /// Add a signed wNAF digit from the static raw basepoint table.
@@ -1082,6 +1018,28 @@ pub(crate) unsafe fn straus_wnaf_vartime_ifma(s: &[u8; 32], h: &[u8; 32], a: &Ex
 #[cfg(target_arch = "x86_64")]
 #[cfg(feature = "ed25519")]
 mod tests {
+  /// The exact result of converting the identity to IFMA cached form.
+  /// Its D lane is p, the previous conversion's reduced representation of zero.
+  ///
+  /// # Safety
+  ///
+  /// Caller must ensure AVX2 is available.
+  #[inline]
+  #[target_feature(enable = "avx2")]
+  #[cfg(all(feature = "ed25519", test))]
+  pub(super) fn cached_identity_ifma() -> CachedPointIfma {
+    let d2 = FieldElement::from_small(D2);
+    let d2_twice = FieldElement::from_small(D2 * 2);
+    let zero = FieldElement::from_limbs([
+      (1 << 51) - 19,
+      (1 << 51) - 1,
+      (1 << 51) - 1,
+      (1 << 51) - 1,
+      (1 << 51) - 1,
+    ]);
+    CachedPointIfma(FieldElement51x4::new(&d2, &d2, &d2_twice, &zero))
+  }
+
   use super::{ExtendedPoint, *};
 
   fn avx512ifma_available_for_tests() -> bool {
@@ -1723,5 +1681,83 @@ mod tests {
         "IFMA basepoint mul [1]B should match scalar"
       );
     }
+  }
+}
+
+#[cfg(all(test, not(miri), feature = "portable-only", feature = "ed25519"))]
+mod binsec {
+  use super::*;
+  use crate::binsec::*;
+  use core::ptr;
+
+  #[target_feature(enable = "avx2")]
+  unsafe fn select_basepoint_cached_avx2_limb_digest(digit: i8) -> [u64; 20] {
+    use basepoint_radix16_ifma::BASEPOINT_RADIX16_IFMA_RAW;
+
+    let identity = ExtendedPointAvx2::from_extended(&ExtendedPoint::identity()).to_cached();
+    let selected = select_signed_cached_avx2(&BASEPOINT_RADIX16_IFMA_RAW[0], digit, &identity);
+    let fields = selected.0.split();
+    let mut out = [0u64; 20];
+    for (chunk, field) in out.as_chunks_mut::<5>().0.iter_mut().zip(fields.iter()) {
+      chunk.copy_from_slice(field.limbs());
+    }
+    out
+  }
+
+  #[target_feature(enable = "avx2")]
+  unsafe fn select_basepoint_cached_ifma_limb_digest(digit: i8) -> [u64; 20] {
+    use basepoint_radix16_ifma::BASEPOINT_RADIX16_IFMA_RAW;
+
+    let identity = super::tests::cached_identity_ifma();
+    let selected = select_signed_cached_ifma(&BASEPOINT_RADIX16_IFMA_RAW[0], digit, &identity);
+    let fields = selected.0.split();
+    let mut out = [0u64; 20];
+    for (chunk, field) in out.as_chunks_mut::<5>().0.iter_mut().zip(fields.iter()) {
+      chunk.copy_from_slice(field.limbs());
+    }
+    out
+  }
+
+  #[cfg(target_arch = "x86_64")]
+  #[unsafe(no_mangle)]
+  #[inline(never)]
+  #[target_feature(enable = "avx2")]
+  /// # Safety
+  ///
+  /// The caller must ensure AVX2 is available before invoking this entrypoint.
+  pub(super) unsafe extern "C" fn ct_binsec_ed25519_select_basepoint_cached_avx2() -> ! {
+    // SAFETY: This pointer references a fixed harness global with static storage.
+    let digit = unsafe { ptr::read_volatile(ptr::addr_of!(CT_BINSEC_ED25519_DIGIT)) };
+    // SAFETY: This entrypoint is compiled with AVX2 enabled and is selected only
+    // for the x86_64 AVX2 BINSEC kernel.
+    let limbs = unsafe { select_basepoint_cached_avx2_limb_digest(digit) };
+
+    let mut acc = 0u64;
+    for limb in limbs {
+      acc ^= limb;
+    }
+    let folded = acc | (acc >> 8) | (acc >> 16) | (acc >> 24) | (acc >> 32) | (acc >> 40) | (acc >> 48) | (acc >> 56);
+    ct_binsec_done(folded.to_le_bytes()[0])
+  }
+
+  #[cfg(target_arch = "x86_64")]
+  #[unsafe(no_mangle)]
+  #[inline(never)]
+  #[target_feature(enable = "avx2")]
+  /// # Safety
+  ///
+  /// The caller must ensure AVX2 is available before invoking this entrypoint.
+  pub(super) unsafe extern "C" fn ct_binsec_ed25519_select_basepoint_cached_ifma() -> ! {
+    // SAFETY: This pointer references a fixed harness global with static storage.
+    let digit = unsafe { ptr::read_volatile(ptr::addr_of!(CT_BINSEC_ED25519_DIGIT)) };
+    // SAFETY: AVX2 is enabled; the IFMA table selector itself uses only AVX2.
+    let limbs = unsafe { select_basepoint_cached_ifma_limb_digest(digit) };
+
+    let mut acc = 0u64;
+    for limb in limbs {
+      acc ^= limb;
+    }
+    let folded = acc | (acc >> 8) | (acc >> 16) | (acc >> 24) | (acc >> 32) | (acc >> 40) | (acc >> 48) | (acc >> 56);
+    ct_binsec_done(folded.to_le_bytes()[0])
   }
 }

@@ -984,40 +984,6 @@ pub(super) fn agree(bytes: &[u8; FIELD_BYTES], public: PublicPoint, shared: &mut
   x.zeroize_no_fence();
 }
 
-/// Return the production fixed-base comb selection as Montgomery limbs.
-#[cfg(all(rscrypto_internal, feature = "diag"))]
-pub(super) fn diag_select_generator_limb_digest(digit: u8) -> [u64; 2 * LIMBS] {
-  let (selected, _) = Affine::select_generator_comb(usize::from(digit));
-  let mut output = [0u64; 2 * LIMBS];
-  output[..LIMBS].copy_from_slice(&selected.x.0.0);
-  output[LIMBS..].copy_from_slice(&selected.y.0.0);
-  output
-}
-
-/// Return the production signed-window selection over a fixed public table,
-/// followed by its digit-zero mask.
-///
-/// The table holds distinct canonical limb patterns rather than curve points;
-/// the evidence concerns only the selector's data flow.
-#[cfg(all(rscrypto_internal, feature = "diag"))]
-pub(super) fn diag_select_window_limb_digest(digit: u8) -> [u64; 2 * LIMBS + 1] {
-  let zero = FieldElement::ZERO;
-  let mut table = [Affine { x: zero, y: zero }; WINDOW_TABLE_SIZE];
-  for (index, entry) in (1u64..).zip(table.iter_mut()) {
-    let pattern = |lane: u64| FieldElement::from_montgomery(Uint([index.strict_mul(lane); LIMBS]));
-    *entry = Affine {
-      x: pattern(0x0101),
-      y: pattern(0x0303),
-    };
-  }
-  let (selected, infinity) = Affine::select_signed(&table, digit);
-  let mut output = [0u64; 2 * LIMBS + 1];
-  output[..LIMBS].copy_from_slice(&selected.x.0.0);
-  output[LIMBS..2 * LIMBS].copy_from_slice(&selected.y.0.0);
-  output[2 * LIMBS] = infinity;
-  output
-}
-
 include!("nist_limbs.rs");
 
 #[inline(always)]
@@ -1890,5 +1856,68 @@ mod tests {
     minus_two.y = minus_two.y.negate();
     assert_ne!(minus_two.add_mixed_complete(two_affine, 0).infinity_mask(), 0);
     assert_eq!(encode(two.add_mixed_distinct(g, 0)), encode(generator_multiple(3)));
+  }
+}
+
+#[cfg(all(test, not(miri), feature = "portable-only", feature = "p384-ecdh"))]
+mod binsec {
+  use super::*;
+  use crate::binsec::*;
+  use core::ptr;
+
+  fn select_generator_limb_digest(digit: u8) -> [u64; 2 * LIMBS] {
+    let (selected, _) = Affine::select_generator_comb(usize::from(digit));
+    let mut output = [0u64; 2 * LIMBS];
+    output[..LIMBS].copy_from_slice(&selected.x.0.0);
+    output[LIMBS..].copy_from_slice(&selected.y.0.0);
+    output
+  }
+
+  fn select_window_limb_digest(digit: u8) -> [u64; 2 * LIMBS + 1] {
+    let zero = FieldElement::ZERO;
+    let mut table = [Affine { x: zero, y: zero }; WINDOW_TABLE_SIZE];
+    for (index, entry) in (1u64..).zip(table.iter_mut()) {
+      let pattern = |lane: u64| FieldElement::from_montgomery(Uint([index.strict_mul(lane); LIMBS]));
+      *entry = Affine {
+        x: pattern(0x0101),
+        y: pattern(0x0303),
+      };
+    }
+    let (selected, infinity) = Affine::select_signed(&table, digit);
+    let mut output = [0u64; 2 * LIMBS + 1];
+    output[..LIMBS].copy_from_slice(&selected.x.0.0);
+    output[LIMBS..2 * LIMBS].copy_from_slice(&selected.y.0.0);
+    output[2 * LIMBS] = infinity;
+    output
+  }
+
+  #[unsafe(no_mangle)]
+  #[inline(never)]
+  pub(super) extern "C" fn ct_binsec_p384_ecdh_select_generator() -> ! {
+    // SAFETY: This pointer references a fixed harness global with static storage.
+    let digit = unsafe { ptr::read_volatile(ptr::addr_of!(CT_BINSEC_P384_ECDH_GENERATOR_DIGIT)) };
+    let limbs = select_generator_limb_digest(digit);
+
+    let mut acc = 0u64;
+    for limb in limbs {
+      acc ^= limb;
+    }
+    let folded = acc | (acc >> 8) | (acc >> 16) | (acc >> 24) | (acc >> 32) | (acc >> 40) | (acc >> 48) | (acc >> 56);
+    ct_binsec_done(folded.to_le_bytes()[0])
+  }
+
+  #[unsafe(no_mangle)]
+  #[inline(never)]
+  pub(super) extern "C" fn ct_binsec_p384_ecdh_select_window() -> ! {
+    // SAFETY: This pointer references a fixed harness global with static storage.
+    let digit = unsafe { ptr::read_volatile(ptr::addr_of!(CT_BINSEC_P384_ECDH_WINDOW_DIGIT)) };
+    let limbs = select_window_limb_digest(digit);
+
+    let mut acc = 0u64;
+    for limb in limbs {
+      acc ^= limb;
+    }
+    let folded = acc | (acc >> 8) | (acc >> 16) | (acc >> 24) | (acc >> 32) | (acc >> 40) | (acc >> 48) | (acc >> 56);
+    ct_binsec_done(folded.to_le_bytes()[0])
   }
 }

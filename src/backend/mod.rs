@@ -20,7 +20,6 @@ pub(crate) mod ascon;
     not(all(target_arch = "aarch64", target_os = "macos"))
   ),
   feature = "blake3",
-  all(feature = "ascon-hash", feature = "diag"),
   feature = "xxh3"
 ))]
 pub(crate) mod cache;
@@ -59,7 +58,6 @@ pub(crate) mod curve25519;
   any(
     test,
     miri,
-    all(rscrypto_internal, feature = "diag"),
     not(any(
       all(
         target_arch = "aarch64",

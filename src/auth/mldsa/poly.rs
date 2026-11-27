@@ -245,7 +245,6 @@ impl Poly {
 
   #[cfg(any(
     test,
-    all(rscrypto_internal, feature = "diag"),
     not(all(
       target_arch = "aarch64",
       any(target_os = "macos", target_os = "linux"),
@@ -882,7 +881,6 @@ pub(super) fn reduce(x: u32) -> u32 {
 // The vector backends replace every AArch64 NEON caller outside tests and diagnostics.
 #[cfg(any(
   test,
-  all(rscrypto_internal, feature = "diag"),
   not(all(
     target_arch = "aarch64",
     any(target_os = "macos", target_os = "linux"),
@@ -918,7 +916,6 @@ pub(super) fn montgomery(a: u32, b: u32) -> u32 {
 /// The forced-portable timing and differential paths always instantiate `false`.
 #[cfg(any(
   test,
-  all(rscrypto_internal, feature = "diag"),
   not(all(
     target_arch = "aarch64",
     any(target_os = "macos", target_os = "linux"),
@@ -988,7 +985,6 @@ pub(super) fn power2_round(x: u32) -> (u32, u32) {
 /// Algorithm 36. Public parameter selection gives constant divisors.
 #[cfg(any(
   test,
-  all(rscrypto_internal, feature = "diag"),
   not(all(
     target_arch = "aarch64",
     any(target_os = "macos", target_os = "linux"),
@@ -1005,7 +1001,6 @@ pub(super) fn decompose(x: u32, gamma2: u32) -> (u32, u32) {
 /// Callers needing only this component need not compute the low remainder.
 #[cfg(any(
   test,
-  all(rscrypto_internal, feature = "diag"),
   not(all(
     target_arch = "aarch64",
     any(target_os = "macos", target_os = "linux"),
@@ -1549,5 +1544,29 @@ mod tests {
       product.inverse_ntt();
       assert_eq!(product.0, expected, "residue-boundary case {case}");
     }
+  }
+}
+
+#[cfg(all(test, not(miri), feature = "portable-only", feature = "ml-dsa"))]
+mod binsec {
+  use super::*;
+  use crate::binsec::*;
+  use core::ptr;
+
+  /// Analyze the production portable Montgomery leaf over its complete input domain.
+  #[unsafe(no_mangle)]
+  #[inline(never)]
+  pub(super) extern "C" fn ct_binsec_mldsa_montgomery() -> ! {
+    let operands = ptr::addr_of!(CT_BINSEC_MLDSA_OPERANDS).cast::<u32>();
+    // SAFETY: Both addresses refer to initialized, harness-owned static storage.
+    // The harness is single-threaded and no reference to either operand is created.
+    let (a, b) = unsafe { (ptr::read_volatile(operands), ptr::read_volatile(operands.add(1))) };
+    // Every pair below 2q has a preimage. Normalization is harness input preparation;
+    // the multiplication and reduction execute the actual production function.
+    let product = montgomery(a % 16_760_834, b % 16_760_834);
+    // SAFETY: This harness-owned static has no concurrent reader or writer. Keep
+    // every result bit observable so the compiler cannot prune the arithmetic.
+    unsafe { ptr::write_volatile(ptr::addr_of_mut!(CT_BINSEC_MLDSA_PRODUCT), product) };
+    ct_binsec_done(0)
   }
 }

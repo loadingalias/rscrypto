@@ -399,23 +399,6 @@ fn encrypt_portable(key: &[u8; KEY_SIZE], nonce: &[u8; NONCE_SIZE], aad: &[u8], 
   tag
 }
 
-#[cfg(all(rscrypto_internal, feature = "diag"))]
-/// Run one portable AEGIS-256 state update and return its diagnostic final tag.
-#[unsafe(no_mangle)]
-#[inline(never)]
-#[must_use]
-pub fn diag_aegis256_update_portable(
-  key: &[u8; KEY_SIZE],
-  nonce: &[u8; NONCE_SIZE],
-  block: &[u8; BLOCK_SIZE],
-) -> [u8; TAG_SIZE] {
-  let mut s = init(key, nonce);
-  update(&mut s, block);
-  let tag = finalize(&mut s, 0, BLOCK_SIZE);
-  ct::zeroize(s.as_flattened_mut());
-  tag
-}
-
 fn decrypt_portable(key: &[u8; KEY_SIZE], nonce: &[u8; NONCE_SIZE], aad: &[u8], buffer: &mut [u8]) -> [u8; TAG_SIZE] {
   let mut s = init(key, nonce);
   process_aad(&mut s, aad);
@@ -1092,5 +1075,40 @@ mod tests {
       let expected = portable_aes_round(&block, &key);
       assert_eq!(got, expected, "vperm round mismatch for block[0]=0x{:02X}", val,);
     }
+  }
+}
+
+#[cfg(all(test, not(miri), feature = "portable-only", feature = "aegis256"))]
+mod binsec {
+  use super::*;
+  use crate::binsec::*;
+
+  fn aegis256_update_portable(
+    key: &[u8; KEY_SIZE],
+    nonce: &[u8; NONCE_SIZE],
+    block: &[u8; BLOCK_SIZE],
+  ) -> [u8; TAG_SIZE] {
+    let mut s = init(key, nonce);
+    update(&mut s, block);
+    let tag = finalize(&mut s, 0, BLOCK_SIZE);
+    ct::zeroize(s.as_flattened_mut());
+    tag
+  }
+
+  #[unsafe(no_mangle)]
+  #[inline(never)]
+  pub(super) extern "C" fn ct_binsec_aegis256_update_portable() -> ! {
+    // SAFETY: These pointers reference fixed harness globals with static storage.
+    let key = unsafe { array_from_global(&raw const CT_BINSEC_KEY_32) };
+    // SAFETY: These pointers reference fixed harness globals with static storage.
+    let nonce = unsafe { array_from_global(&raw const CT_BINSEC_AEGIS_NONCE_32) };
+    // SAFETY: These pointers reference fixed harness globals with static storage.
+    let block = unsafe { array_from_global(&raw const CT_BINSEC_TAG_16) };
+    let out = aegis256_update_portable(&key, &nonce, &block);
+    let mut acc = 0u8;
+    for byte in out {
+      acc ^= byte;
+    }
+    ct_binsec_done(acc)
   }
 }

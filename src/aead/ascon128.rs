@@ -367,29 +367,6 @@ impl Aead for AsconAead128 {
   }
 }
 
-#[cfg(all(rscrypto_internal, feature = "diag"))]
-/// Compare a portable Ascon-AEAD128 tag computation with an expected diagnostic tag.
-#[unsafe(no_mangle)]
-#[inline(never)]
-pub fn diag_ascon_aead128_tag_portable(
-  key: &[u8; KEY_SIZE],
-  nonce: &[u8; NONCE_SIZE],
-  block: &[u8; RATE],
-  expected: &[u8; TAG_SIZE],
-) -> ct::CtDecision {
-  let key = AsconAead128Key::from_bytes(*key);
-  let nonce = Nonce128::from_bytes(*nonce);
-  let cipher = AsconAead128::new(&key);
-  let mut s = cipher.initialize(&nonce);
-  AsconAead128::process_aad(&mut s, b"binsec");
-  s[0] ^= load_bytes(&block[..8]);
-  s[1] ^= load_bytes(&block[8..]);
-  permute_8_portable(&mut s);
-  let tag = cipher.finalize(&mut s);
-  ct::zeroize_words(&mut s);
-  ct::fixed_eq(&tag, expected)
-}
-
 #[cfg(test)]
 mod tests {
   use alloc::{vec, vec::Vec};
@@ -713,5 +690,45 @@ mod tests {
     let aad: Vec<u8> = (0u8..48).collect();
     let pt: Vec<u8> = (0u8..97).map(|i| i.wrapping_mul(17)).collect();
     assert_matches_oracle(key, nonce, &aad, &pt);
+  }
+}
+
+#[cfg(all(test, not(miri), feature = "portable-only", feature = "ascon-aead"))]
+mod binsec {
+  use super::*;
+  use crate::binsec::*;
+
+  fn ascon_aead128_tag_portable(
+    key: &[u8; KEY_SIZE],
+    nonce: &[u8; NONCE_SIZE],
+    block: &[u8; RATE],
+    expected: &[u8; TAG_SIZE],
+  ) -> ct::CtDecision {
+    let key = AsconAead128Key::from_bytes(*key);
+    let nonce = Nonce128::from_bytes(*nonce);
+    let cipher = AsconAead128::new(&key);
+    let mut s = cipher.initialize(&nonce);
+    AsconAead128::process_aad(&mut s, b"binsec");
+    s[0] ^= load_bytes(&block[..8]);
+    s[1] ^= load_bytes(&block[8..]);
+    permute_8_portable(&mut s);
+    let tag = cipher.finalize(&mut s);
+    ct::zeroize_words(&mut s);
+    ct::fixed_eq(&tag, expected)
+  }
+
+  #[unsafe(no_mangle)]
+  #[inline(never)]
+  pub(super) extern "C" fn ct_binsec_ascon_aead128_tag_portable() -> ! {
+    // SAFETY: These pointers reference fixed harness globals with static storage.
+    let key = unsafe { array_from_global(&raw const CT_BINSEC_KEY_16) };
+    // SAFETY: These pointers reference fixed harness globals with static storage.
+    let nonce = unsafe { array_from_global(&raw const CT_BINSEC_NONCE_16) };
+    // SAFETY: These pointers reference fixed harness globals with static storage.
+    let block = unsafe { array_from_global(&raw const CT_BINSEC_TAG_16) };
+    // SAFETY: These pointers reference fixed harness globals with static storage.
+    let expected = unsafe { array_from_global(&raw const CT_BINSEC_RHS_16) };
+    let ok = ascon_aead128_tag_portable(&key, &nonce, &block, &expected);
+    ct_binsec_done(u8::from(ok.declassify()))
   }
 }

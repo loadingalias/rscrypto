@@ -95,7 +95,7 @@ def main():
     parser.add_argument('--out', type=Path, required=True)
     parser.add_argument('--case', required=True,
                         help='exact manifest case, comma-separated cases, mldsa for every required '
-                             'ML-DSA kernel case, or mldsa-probe for the diagnostic ML-DSA probes')
+                             'ML-DSA kernel case')
     parser.add_argument('--target', choices=sorted(TARGETS), default='riscv64gc-unknown-linux-gnu',
                         help='native target of the sealed archive; defaults to RISC-V for existing replays')
     parser.add_argument('--repetitions', type=int, choices=(1, 3), default=3,

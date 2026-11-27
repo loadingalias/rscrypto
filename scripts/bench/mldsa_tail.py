@@ -1,11 +1,5 @@
 #!/usr/bin/env -S uv run python
-"""Retain an ML-DSA signing-tail baseline: per-signature latency and attempt counts.
-
-Builds tools/mldsa-tail twice: the production build times each signature, and a
-`--cfg rscrypto_mldsa_attempts` build counts rejection-sampling attempts (its
-latency is not production latency). Both sign the same deterministic inputs.
-Both outputs and the provenance are printed so a remote `just ssh-just` log carries them home.
-"""
+"""Record production ML-DSA signing latency for reproducible keys and messages."""
 
 import argparse
 from datetime import datetime, timezone
@@ -22,17 +16,14 @@ MANIFEST = ROOT / 'tools/mldsa-tail/Cargo.toml'
 BINARY = 'rscrypto-mldsa-tail'
 
 
-def build(output, name, rustflags, portable):
-  target_dir = ROOT / 'target' / 'mldsa-tail' / name
+def build(output, portable):
+  target_dir = ROOT / 'target' / 'mldsa-tail' / 'production'
   command = ['cargo', 'build', '--locked', '--profile', 'release-symbols', '--manifest-path', str(MANIFEST),
              '--target-dir', str(target_dir)]
   if portable:
     command += ['--features', 'portable-only']
-  environment = dict(os.environ)
-  if rustflags:
-    environment['RUSTFLAGS'] = ' '.join(filter(None, [environment.get('RUSTFLAGS', ''), rustflags]))
-  with (output / f'build-{name}.log').open('wb') as log:
-    subprocess.run(command, stdout=log, stderr=subprocess.STDOUT, check=True, timeout=1200, env=environment)
+  with (output / 'build-production.log').open('wb') as log:
+    subprocess.run(command, stdout=log, stderr=subprocess.STDOUT, check=True, timeout=1200)
   binary = target_dir / 'release-symbols' / (BINARY + ('.exe' if os.name == 'nt' else ''))
   return command, binary
 
@@ -54,15 +45,14 @@ def main():
   source_evidence(output)
   provenance = {'identity': build_identity(), 'keys': args.keys, 'messages': args.messages,
                 'portable': args.portable, 'runs': {}}
-  for name, rustflags in (('production', ''), ('attempts', '--cfg rscrypto_mldsa_attempts')):
-    command, binary = build(output, name, rustflags, args.portable)
-    run = [str(binary), str(args.keys), str(args.messages)]
-    result = subprocess.run(run, capture_output=True, check=True, timeout=3600)
-    (output / f'{name}.txt').write_bytes(result.stdout)
-    provenance['runs'][name] = {'build': command, 'rustflags': rustflags, 'run': run,
-                                'executable_sha256': hashlib.sha256(binary.read_bytes()).hexdigest()}
-    print(f'== {name}')
-    print(result.stdout.decode(), end='')
+  command, binary = build(output, args.portable)
+  run = [str(binary), str(args.keys), str(args.messages)]
+  result = subprocess.run(run, capture_output=True, check=True, timeout=3600)
+  (output / 'production.txt').write_bytes(result.stdout)
+  provenance['runs']['production'] = {'build': command, 'run': run,
+                              'executable_sha256': hashlib.sha256(binary.read_bytes()).hexdigest()}
+  print('Production signing latency')
+  print(result.stdout.decode(), end='')
   (output / 'provenance.json').write_text(json.dumps(provenance, indent=2) + '\n')
   print('== provenance')
   print(json.dumps(provenance, indent=2))

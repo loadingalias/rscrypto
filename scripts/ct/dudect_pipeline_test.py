@@ -30,8 +30,10 @@ def main():
     runner.write_text(f"#!{sys.executable}\n" + '''
 import os, sys
 from pathlib import Path
-name = sys.argv[sys.argv.index('--filter') + 1]
-seed = sys.argv[sys.argv.index('--seed') + 1] if '--seed' in sys.argv else ''
+assert sys.argv[1:] == ['--ignored', '--exact', 'ct_tests::dudect::measure', '--nocapture']
+name = os.environ['RSCRYPTO_CT_DUDECT_FILTER']
+seed = os.environ.get('RSCRYPTO_CT_DUDECT_SEED', '')
+csv = Path(os.environ['RSCRYPTO_CT_DUDECT_OUT'])
 with Path('executions').open('a') as log:
   log.write(name + '\\n')
 with Path('seeds').open('a') as log:
@@ -42,11 +44,11 @@ if mode == 'failure':
 if mode == 'missing':
   sys.exit(0)
 if mode == 'partial':
-  Path(sys.argv[2]).write_text('benchname,sequence,class,runtime_ns\\n' + name + ',0,')
+  csv.write_text('benchname,sequence,class,runtime_ns\\n' + name + ',0,')
   sys.exit(0)
 name = 'manifest_' + name
 count = int(os.environ['RSCRYPTO_CT_DUDECT_SAMPLES'])
-Path(sys.argv[2]).write_text('benchname,sequence,class,runtime_ns\\n' + ''.join(
+csv.write_text('benchname,sequence,class,runtime_ns\\n' + ''.join(
   f'{name},{i},{i % 2},100\\n' for i in range(count)))
 runs = Path('runs-' + name)
 attempt = int(runs.read_text()) + 1 if runs.exists() else 1

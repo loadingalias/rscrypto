@@ -14,14 +14,12 @@ use core::arch::x86_64::*;
 use super::Adler32Fn;
 use super::{
   blocks::{BLOCK, CHUNK_BLOCKS, Step, WEIGHTS, finish, fold},
-  config::Adler32Force,
   portable,
 };
 use crate::platform::{Caps, caps::x86};
 
-/// One x86-64 kernel: its force, required capabilities, entry point, and canonical name.
+/// One x86-64 kernel: its required capabilities, entry point, and canonical name.
 pub(in crate::checksum) struct Kernel {
-  pub(in crate::checksum) force: Adler32Force,
   pub(in crate::checksum) requires: Caps,
   /// Callable only on a CPU whose cached detection reports `requires`.
   pub(in crate::checksum) update: Adler32Fn,
@@ -33,19 +31,16 @@ pub(in crate::checksum) struct Kernel {
 /// features that it implies.
 pub(in crate::checksum) const KERNELS: [Kernel; 3] = [
   Kernel {
-    force: Adler32Force::Avx512Vnni,
     requires: x86::AVX512F.union(x86::AVX512BW).union(x86::AVX512VNNI),
     update: adler32_avx512_vnni_safe,
     name: "x86_64/avx512-vnni",
   },
   Kernel {
-    force: Adler32Force::Avx2,
     requires: x86::AVX2,
     update: adler32_avx2_safe,
     name: "x86_64/avx2",
   },
   Kernel {
-    force: Adler32Force::Ssse3,
     requires: x86::SSSE3,
     update: adler32_ssse3_safe,
     name: "x86_64/ssse3",
@@ -471,7 +466,6 @@ pub(in crate::checksum) fn adler32_avx512_vnni_safe(adler: u32, data: &[u8]) -> 
 mod tests {
   extern crate std;
 
-  use super::KERNELS;
   use crate::checksum::adler32::blocks::checks;
 
   #[test]
@@ -490,13 +484,6 @@ mod tests {
       && std::arch::is_x86_feature_detected!("avx512vnni")
     {
       checks::assert_matches_portable("avx512-vnni", super::adler32_avx512_vnni_safe);
-    }
-  }
-
-  #[test]
-  fn the_forced_tier_runs_through_the_public_api() {
-    for kernel in &KERNELS {
-      checks::assert_forced_kernel_runs(kernel.force, kernel.name);
     }
   }
 }

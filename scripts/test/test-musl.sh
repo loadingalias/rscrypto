@@ -13,4 +13,3 @@ export "CARGO_TARGET_${target_key^^}_LINKER"=musl-gcc
 export "CC_$target_key"=musl-gcc
 scripts/test/test.sh --all --release
 scripts/test/test.sh --all --release --portable
-just test-evidence

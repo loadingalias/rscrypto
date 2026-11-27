@@ -16,5 +16,4 @@ unset RSCRYPTO_SKIP_DOCTESTS
 scripts/check/check.sh native
 just test --all --release
 just test --all --release --portable
-just test-evidence
 just test-rsa-macos-asm

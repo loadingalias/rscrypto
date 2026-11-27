@@ -26,7 +26,6 @@ just bench-provider-scorecard rscrypto mldsa65 X25519MLKEM768 AES256-GCM-SHA384 
 just bench-provider-resources mldsa87 X25519MLKEM768 AES256-GCM-SHA384 full --workers 64
 ```
 
-This connection workload has no internal-kernel diagnostic mode; `--diag` is rejected before compilation.
 
 The default campaign and the Bench workflow measure TLS and QUIC through the rustls providers.
 An explicit local TLS selector includes the OpenSSL 4.0.3 peer.

@@ -134,7 +134,6 @@ fn validate_output_len(output_len: usize) -> Result<u8, Blake2Error> {
   Ok(output_len)
 }
 
-#[cfg(feature = "diag")]
 #[inline]
 #[must_use]
 pub(crate) fn kernel_name_for_len(len: usize) -> &'static str {
@@ -304,55 +303,6 @@ impl Core {
     write_output(&h, self.nn, out);
 
     ct::zeroize_words_no_fence(&mut h);
-  }
-
-  #[cfg(any(test, all(rscrypto_internal, feature = "diag", feature = "argon2")))]
-  fn new_with_compress_for_test(
-    nn: u8,
-    key: &[u8],
-    compress: kernels::CompressFn,
-    compress_blocks: kernels::CompressBlocksFn,
-  ) -> Self {
-    assert!(
-      nn >= 1 && nn as usize <= MAX_OUTPUT_LEN,
-      "Blake2b output length must be 1-64"
-    );
-    assert!(key.len() <= MAX_KEY_LEN, "Blake2b key must be at most 64 bytes");
-
-    let kk = u8::try_from(key.len()).expect("validated Blake2b key length fits in u8");
-    let h = init_state(nn, kk);
-    let stored_key = if kk > 0 {
-      let mut bytes = [0u8; MAX_KEY_LEN];
-      if let Some(dst) = bytes.get_mut(..key.len()) {
-        dst.copy_from_slice(key);
-      }
-      MaybeUninit::new(bytes)
-    } else {
-      MaybeUninit::uninit()
-    };
-    let mut buf = [0u8; BLOCK_SIZE];
-    let buf_len = if kk > 0 {
-      if let Some(dst) = buf.get_mut(..key.len()) {
-        dst.copy_from_slice(key);
-      }
-      BLOCK_SIZE_U8
-    } else {
-      0
-    };
-
-    Self {
-      h,
-      buf,
-      buf_len,
-      t: Blake2bCounter::zero(),
-      nn,
-      kk,
-      key: stored_key,
-      salt: [0u8; SALT_LEN],
-      personal: [0u8; PERSONAL_LEN],
-      compress,
-      compress_blocks,
-    }
   }
 
   /// Reset to the initial state (including re-buffering the key if keyed and
@@ -767,41 +717,6 @@ pub struct Blake2b256(Core);
 
 impl_blake2_digest!(Blake2b256, Blake2bKey, 32);
 
-#[cfg(all(rscrypto_internal, feature = "diag"))]
-#[must_use]
-/// Derive a keyed Blake2b-256 diagnostic digest with the portable backend.
-pub fn diag_blake2b256_keyed_digest_portable(key: &[u8; 32]) -> [u8; 32] {
-  let mut out = [0u8; 32];
-  oneshot_small_into_with_params(
-    32,
-    key,
-    None,
-    b"binsec",
-    &mut out,
-    kernels::compress_fn(kernels::Blake2bKernelId::Portable),
-  );
-  out
-}
-
-#[cfg(all(rscrypto_internal, feature = "diag", feature = "argon2"))]
-pub(crate) fn diag_hash_parts_portable(output_len: u8, parts: &[&[u8]], out: &mut [u8]) {
-  assert_eq!(
-    out.len(),
-    output_len as usize,
-    "diag Blake2b portable output length must match output buffer"
-  );
-  let mut state = Core::new_with_compress_for_test(
-    output_len,
-    &[],
-    kernels::compress_fn(kernels::Blake2bKernelId::Portable),
-    kernels::compress_blocks_fn(kernels::Blake2bKernelId::Portable),
-  );
-  for part in parts {
-    state.update(part);
-  }
-  state.finalize_into(out);
-}
-
 // ─── Blake2b512 ─────────────────────────────────────────────────────────────
 
 /// Blake2b-512 cryptographic hash (64-byte output).
@@ -1025,6 +940,56 @@ impl Drop for Blake2b {
 
 #[cfg(test)]
 mod tests {
+  impl Core {
+    fn new_with_compress_for_test(
+      nn: u8,
+      key: &[u8],
+      compress: kernels::CompressFn,
+      compress_blocks: kernels::CompressBlocksFn,
+    ) -> Self {
+      assert!(
+        nn >= 1 && nn as usize <= MAX_OUTPUT_LEN,
+        "Blake2b output length must be 1-64"
+      );
+      assert!(key.len() <= MAX_KEY_LEN, "Blake2b key must be at most 64 bytes");
+
+      let kk = u8::try_from(key.len()).expect("validated Blake2b key length fits in u8");
+      let h = init_state(nn, kk);
+      let stored_key = if kk > 0 {
+        let mut bytes = [0u8; MAX_KEY_LEN];
+        if let Some(dst) = bytes.get_mut(..key.len()) {
+          dst.copy_from_slice(key);
+        }
+        MaybeUninit::new(bytes)
+      } else {
+        MaybeUninit::uninit()
+      };
+      let mut buf = [0u8; BLOCK_SIZE];
+      let buf_len = if kk > 0 {
+        if let Some(dst) = buf.get_mut(..key.len()) {
+          dst.copy_from_slice(key);
+        }
+        BLOCK_SIZE_U8
+      } else {
+        0
+      };
+
+      Self {
+        h,
+        buf,
+        buf_len,
+        t: Blake2bCounter::zero(),
+        nn,
+        kk,
+        key: stored_key,
+        salt: [0u8; SALT_LEN],
+        personal: [0u8; PERSONAL_LEN],
+        compress,
+        compress_blocks,
+      }
+    }
+  }
+
   use alloc::vec;
 
   use blake2::{
@@ -1103,24 +1068,6 @@ mod tests {
       let actual = Blake2b512::digest(data);
       assert_eq!(actual, expected, "Blake2b512 mismatch for len={}", data.len());
     }
-  }
-
-  #[test]
-  #[cfg(all(rscrypto_internal, feature = "diag", feature = "argon2"))]
-  fn diag_hash_parts_portable_handles_multiblock_parts() {
-    let first = [0x11u8; 4];
-    let second = [0x22u8; 1024];
-    let third = [0x33u8; 17];
-
-    let mut oracle = OracleBlake2b512::new();
-    oracle.update(first);
-    oracle.update(second);
-    oracle.update(third);
-    let expected = oracle.finalize();
-
-    let mut actual = [0u8; 64];
-    diag_hash_parts_portable(64, &[&first, &second, &third], &mut actual);
-    assert_eq!(&actual[..], expected.as_slice());
   }
 
   // ── Streaming ─────────────────────────────────────────────────────────

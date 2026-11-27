@@ -44,15 +44,6 @@ pub(crate) fn h_to_polyval(h_bytes: &[u8; KEY_SIZE]) -> u128 {
   mul_x_polyval(h)
 }
 
-/// Computes one GHASH block with the portable POLYVAL-domain reduction.
-#[cfg(all(rscrypto_internal, feature = "diag"))]
-#[must_use]
-pub fn diag_ghash_block_portable(h_bytes: &[u8; KEY_SIZE], block: &[u8; KEY_SIZE]) -> [u8; KEY_SIZE] {
-  let h = h_to_polyval(h_bytes);
-  let block = u128::from_be_bytes(*block);
-  super::polyval::clmul128_reduce_portable(block, h).to_be_bytes()
-}
-
 pub(super) struct GhashAccumulator(pub(super) u128);
 
 impl Drop for GhashAccumulator {
@@ -456,5 +447,32 @@ mod tests {
       result, POLYVAL_FEEDBACK,
       "mulX(x^127) should reduce to feedback polynomial"
     );
+  }
+}
+
+#[cfg(all(test, not(miri), feature = "portable-only", feature = "aes-gcm"))]
+mod binsec {
+  use super::*;
+  use crate::binsec::*;
+
+  fn ghash_block_portable(h_bytes: &[u8; KEY_SIZE], block: &[u8; KEY_SIZE]) -> [u8; KEY_SIZE] {
+    let h = h_to_polyval(h_bytes);
+    let block = u128::from_be_bytes(*block);
+    crate::aead::polyval::clmul128_reduce_portable(block, h).to_be_bytes()
+  }
+
+  #[unsafe(no_mangle)]
+  #[inline(never)]
+  pub(super) extern "C" fn ct_binsec_ghash_block_portable() -> ! {
+    // SAFETY: These pointers reference fixed harness globals with static storage.
+    let h = unsafe { array_from_global(&raw const CT_BINSEC_KEY_16) };
+    // SAFETY: These pointers reference fixed harness globals with static storage.
+    let block = unsafe { array_from_global(&raw const CT_BINSEC_TAG_16) };
+    let out = ghash_block_portable(&h, &block);
+    let mut acc = 0u8;
+    for byte in out {
+      acc ^= byte;
+    }
+    ct_binsec_done(acc)
   }
 }

@@ -36,7 +36,6 @@ if os.environ.get('FAIL_BUILD'):
   sys.exit(8)
 features = sys.argv[sys.argv.index('--features') + 1]
 flags = os.environ.get('CARGO_ENCODED_RUSTFLAGS', '').split('\x1f')
-if 'diag' in features.split(','): assert 'rscrypto_internal' in flags
 with open('build-flags.jsonl', 'a') as log: log.write(json.dumps(flags) + '\n')
 for index, value in enumerate(sys.argv):
   if value != '--bench': continue
@@ -71,8 +70,6 @@ cases = {
              'slhdsa-sha2-128s/hash-verify/sha256/32/fips205',
              'slhdsa-shake-256f/verify/32/rustcrypto', *filter(None, [os.environ.get('EXTRA_CASE')])],
 }.get(binary, [binary + '/rscrypto/64'])
-if binary == 'blake3' and 'diag' in pathlib.Path(sys.argv[0]).with_suffix('.features').read_text().split(','):
-  cases.append('blake3/rscrypto-scalar/64')
 with open('executor.jsonl', 'a') as log:
   log.write(json.dumps({'binary': binary, 'args': sys.argv[1:], 'home': os.environ['CRITERION_HOME']}) + '\n')
 if '--list' in sys.argv:
@@ -159,8 +156,7 @@ class RunnerTests(unittest.TestCase):
     self.root = Path(temporary.name)
     shutil.copytree(ROOT / "scripts/bench", self.root / "scripts/bench", ignore=shutil.ignore_patterns("__pycache__"))
     (self.root / "scripts/ct").mkdir()
-    for name in ("internal.py", "provenance.py"):
-      shutil.copy2(ROOT / "scripts/ct" / name, self.root / "scripts/ct" / name)
+    shutil.copy2(ROOT / "scripts/ct/provenance.py", self.root / "scripts/ct/provenance.py")
     (self.root / "scripts/lib").mkdir()
     for name in ("python.sh", "toolchain.py"):
       shutil.copy2(ROOT / "scripts/lib" / name, self.root / "scripts/lib" / name)
@@ -439,12 +435,12 @@ sys.exit(64)
   def test_codegen_uses_target_configuration_and_literal_arguments(self):
     self.tool('cargo', "pathlib.Path('inspection.json').write_text(json.dumps(sys.argv[1:]))")
     for mode in ('codegen', 'llvm-lines'):
-      self.ok(self.invoke(mode, 'blake3', '--diag', '--', '--filter', 'symbol with spaces'))
+      self.ok(self.invoke(mode, 'blake3', '--', '--filter', 'symbol with spaces'))
       command = json.loads((self.root / 'inspection.json').read_text())
       self.assertEqual(command[-2:], ['--filter', 'symbol with spaces'])
       self.assertIn('--no-default-features', command)
       self.assertEqual(command[command.index('--profile') + 1], 'bench')
-      self.assertEqual(command[command.index('--features') + 1], 'blake3,diag,parallel,std')
+      self.assertEqual(command[command.index('--features') + 1], 'blake3,parallel,std')
 
   def test_completion_requires_all_measurement_evidence(self):
     for env in ({'NO_MEASUREMENT': '1'}, {'MISSING_FILE': 'sample.json'}, {'EMPTY_SAMPLES': '1'},
@@ -461,7 +457,7 @@ sys.exit(64)
       self.assertNotEqual(self.bench('sha256', f'baseline={previous}', **env).returncode, 0)
 
   def test_discovery_preserves_evidence_and_build_scope(self):
-    self.ok(self.bench('--diag', 'blake3', '--list'))
+    self.ok(self.bench('blake3', '--list'))
     result = self.bench('crc64-nvme', '--list')
     self.ok(result)
     self.assertIn('crc64-nvme/rscrypto/64', result.stdout)
@@ -474,12 +470,11 @@ sys.exit(64)
     self.assertEqual(len(plan), 2)
     self.assertNotEqual(plan[0]['home'], plan[1]['home'])
     self.assertTrue(all('--no-default-features' in entry['artifact']['command'] for entry in plan))
-    # sha2 requires internal diagnostics, crc does not. Each measurement must reuse
-    # the flags of its own preparation rather than inheriting another target's flags.
     builds = [json.loads(line) for line in (self.root / 'builds.jsonl').read_text().splitlines()][2:]
     flags = [json.loads(line) for line in (self.root / 'build-flags.jsonl').read_text().splitlines()][2:]
     self.assertEqual([row[row.index('--bench') + 1] for row in builds], ['crc', 'crc', 'sha2', 'sha2'])
-    self.assertEqual(['rscrypto_internal' in row for row in flags], [False, False, True, True])
+    self.assertEqual(flags[0], flags[1])
+    self.assertEqual(flags[2], flags[3])
 
   def test_discovery_runs_once_per_configuration(self):
     self.ok(self.bench('sha256', 'sha512', 'filter=rscrypto', 'filter=other', '--list'))
@@ -530,14 +525,6 @@ sys.exit(64)
     result = self.bench('sha256', '--quick', WRONG_SAMPLE_COUNT='1')
     self.assertNotEqual(result.returncode, 0)
     self.assertIn('observed sample count differs', result.stderr)
-
-  def test_diagnostic_boolean_options(self):
-    for option, enabled in ((['--diag'], True), (['--diag', 'false'], False), (['--diag', 'TRUE'], True)):
-      for arguments in ((*option, 'blake3'), ('blake3', *option)):
-        with self.subTest(arguments=arguments):
-          result = self.bench(*arguments, '--list', BENCH_DIAG=str(not enabled).lower())
-          self.ok(result)
-          self.assertEqual('blake3/rscrypto-scalar/64' in result.stdout, enabled)
 
   def test_invalid_requests_do_not_build(self):
     # Target names are plain selectors; the old `bench=` and BENCH_BENCH forms must fail.
@@ -628,8 +615,8 @@ sys.exit(64)
     extra = ['-C', 'target-cpu=x86-64-v4']
     self.assertEqual(flagged({'RUSTFLAGS': '-C  opt-level=3'}, extra), {'CARGO_ENCODED_RUSTFLAGS': '-C\x1fopt-level=3\x1f-C\x1ftarget-cpu=x86-64-v4'})
     # Cargo ignores RUSTFLAGS when the encoded form is set, so only the encoded flags carry forward.
-    self.assertEqual(flagged({'RUSTFLAGS': '-C opt-level=1', 'CARGO_ENCODED_RUSTFLAGS': '--cfg\x1frscrypto_internal'}, extra),
-                     {'CARGO_ENCODED_RUSTFLAGS': '--cfg\x1frscrypto_internal\x1f-C\x1ftarget-cpu=x86-64-v4'})
+    self.assertEqual(flagged({'RUSTFLAGS': '-C opt-level=1', 'CARGO_ENCODED_RUSTFLAGS': '--cfg\x1ffixture_cfg'}, extra),
+                     {'CARGO_ENCODED_RUSTFLAGS': '--cfg\x1ffixture_cfg\x1f-C\x1ftarget-cpu=x86-64-v4'})
 
   def test_architecture_limited_configurations(self):
     import runner

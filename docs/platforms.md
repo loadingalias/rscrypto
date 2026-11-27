@@ -89,10 +89,7 @@ A restored virtual-machine snapshot or another copied memory image is not detect
   - wasm32 selects a SIMD128 kernel when the artifact is built with `simd128`, unless `portable-only`
     is set. Builds without `simd128` use the portable kernel.
   - `portable-only` and Miri select the portable kernel.
-  - `RSCRYPTO_ADLER32_FORCE` (`portable`, `neon`, `neon-dotprod`, `ssse3`, `avx2`, `avx512-vnni`,
-    `vmsum`, `vsum`, or `rvv`) forces a kernel, as the CRC force variables do; a kernel that
-    the CPU lacks falls back to automatic selection.
-    `Adler32::config()` reports the request and the effective choice.
+  - `checksum::introspect::kernel_for::<Adler32>(len)` reports the selected kernel.
   - Other targets use the portable kernel.
 - **X-Wing** has no backend or dispatch of its own. It runs the ML-KEM-768, X25519, and SHA-3
   backends that each target selects for those primitives. X25519 assembly runs on Apple and Linux
@@ -240,7 +237,7 @@ Backend availability changes with the primitive, the target, the compiler, and t
 Use `rscrypto::platform` and the `introspect` example to inspect one build:
 
 ```bash
-cargo run --example introspect --features 'crc32,sha2,chacha20poly1305,diag'
+cargo run --example introspect --features 'crc32,sha2,chacha20poly1305'
 ```
 
 For target-specific timing claims, see [`constant-time.md`](constant-time.md).

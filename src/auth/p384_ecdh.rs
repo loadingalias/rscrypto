@@ -315,21 +315,6 @@ impl Drop for P384SharedSecret {
   }
 }
 
-/// Return the production P-384 fixed-base comb selection as Montgomery limbs.
-#[cfg(all(rscrypto_internal, feature = "diag"))]
-#[doc(hidden)]
-pub fn diag_p384_ecdh_select_generator_limb_digest(digit: u8) -> [u64; 12] {
-  p384_portable::diag_select_generator_limb_digest(digit)
-}
-
-/// Return the production P-384 signed-window selection as Montgomery limbs,
-/// followed by its digit-zero mask.
-#[cfg(all(rscrypto_internal, feature = "diag"))]
-#[doc(hidden)]
-pub fn diag_p384_ecdh_select_window_limb_digest(digit: u8) -> [u64; 13] {
-  p384_portable::diag_select_window_limb_digest(digit)
-}
-
 #[cfg(test)]
 mod tests {
   use super::{

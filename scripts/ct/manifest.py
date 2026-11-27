@@ -60,12 +60,6 @@ def replay_cases(cases: dict[str, dict], selection: str, target: str | None = No
     if not selected:
       raise ValueError("ML-DSA replay requires the manifest's required kernel cases")
     return selected
-  if selection == "mldsa-probe":
-    selected = sorted(name for name, case in cases.items()
-                      if name.startswith("mldsa_probe_") and is_diagnostic_dudect_case(case, target))
-    if not selected:
-      raise ValueError("ML-DSA probe replay requires the manifest's diagnostic probe cases")
-    return selected
   if selection not in cases:
     raise ValueError(f"unknown CT diagnostic case: {selection}")
   return [selection]

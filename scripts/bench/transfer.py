@@ -8,7 +8,7 @@ import shutil
 import subprocess
 import tempfile
 
-from execution import enable_internal, build, build_command, build_identity, digest, exit_code, hardware
+from execution import build, build_command, build_identity, digest, exit_code, hardware
 from evidence import collect
 from cross_build import LINUX_TARGETS, environment, require_host, verify_elf
 import evidence_bundle as bundle
@@ -24,7 +24,6 @@ def prepare(root, target, archive, output, rows, settings):
     if any(row.get('rustflags') for row in rows):
         raise ValueError('transferred benchmarks cannot use catalog rustflags')
     os.environ.update(environment(target))
-    enable_internal(rows, target)
     source = bundle.source_identity(root)
     parent = output / 'preparation' / target
     parent.mkdir(parents=True, exist_ok=True)

@@ -72,10 +72,10 @@ run_checks() {
   local mode=$1
   repair=()
   if [[ "$mode" == fix ]]; then
-    cargo "+$channel" fmt --all
+    cargo "+$channel" fmt -p rscrypto -p rscrypto-rustls
     repair=(--fix --allow-dirty --allow-staged)
   else
-    cargo "+$channel" fmt --all -- --check
+    cargo "+$channel" fmt -p rscrypto -p rscrypto-rustls -- --check
   fi
 
   for target in "${targets[@]}"; do
@@ -88,7 +88,7 @@ run_checks() {
         features=full,rand_core,serde,serde-secrets,websocket-sha1
         ;;
       wasm32-wasip1)
-        features=std,full,diag,rand_core,serde,serde-secrets,websocket-sha1,getrandom
+        features=std,full,rand_core,serde,serde-secrets,websocket-sha1,getrandom
         ;;
     esac
     args=(-p rscrypto --locked --target "$target" "${scope[@]}" --no-default-features)
@@ -108,7 +108,7 @@ run_checks() {
   done
 
   if [[ "$mode" == fix ]]; then
-    cargo "+$channel" fmt --all
+    cargo "+$channel" fmt -p rscrypto -p rscrypto-rustls
   fi
 }
 if [[ "$mode" == check ]]; then

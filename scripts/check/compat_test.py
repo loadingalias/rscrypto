@@ -37,13 +37,10 @@ count = len(Path(os.environ['LOG']).read_text().splitlines())
 sys.exit(7 if count == int(os.environ['FAIL_AT']) else 0)
 """)
             runner.chmod(0o755)
-            binary = root / 'bin'
-            binary.mkdir()
-            (binary / 'just').symlink_to(runner)
             environment = {key: value for key, value in os.environ.items() if key not in ('BASH_ENV', 'ENV')}
-            environment['PATH'] = str(binary) + os.pathsep + os.environ['PATH']
+            profiles = [['--all', '--release'], ['--all', '--release', '--portable']]
             for arch in ('x86_64', 'aarch64'):
-                for fail_at in (0, 1, 2, 3):
+                for fail_at in range(len(profiles) + 1):
                     log = root / 'log'
                     log.write_text('')
                     result = subprocess.run([shutil.which('bash'), 'scripts/test/test-musl.sh'], cwd=root,
@@ -51,10 +48,8 @@ sys.exit(7 if count == int(os.environ['FAIL_AT']) else 0)
                                                  'LOG': str(log), 'FAIL_AT': str(fail_at)}, capture_output=True, text=True)
                     self.assertEqual(result.returncode, 7 if fail_at else 0, result.stderr)
                     rows = [json.loads(line) for line in log.read_text().splitlines()]
-                    profiles = [['--all', '--release'], ['--all', '--release', '--portable'], ['test-evidence']]
-                    profiles = profiles[:fail_at or len(profiles)]
                     self.assertEqual(rows, [[profile, arch + '-unknown-linux-musl', 'musl-gcc', 'musl-gcc']
-                                            for profile in profiles])
+                                            for profile in profiles[:fail_at or len(profiles)]])
 
     def test_plan_covers_contracts(self):
         plan = list(compat.cases())

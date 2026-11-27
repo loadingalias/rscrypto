@@ -162,7 +162,7 @@ class ManualBench(unittest.TestCase):
         inputs = ci.dispatch_inputs(request('slhdsa-shake-192s,hash-slhdsa-shake-192s,mldsa65,mldsa87'))
         selectors = ('slhdsa-shake-192s-keygen', 'slhdsa-shake-192s-sign', 'slhdsa-shake-192s-verify',
                      'slhdsa-shake-192s-import', 'hash-slhdsa-shake-192s-sign', 'hash-slhdsa-shake-192s-verify')
-        self.assertEqual({name: args[:-2] for name, args in ci.jobs(inputs)['auth'].items()},
+        self.assertEqual({name: args[:-1] for name, args in ci.jobs(inputs)['auth'].items()},
                          {**{name: [name] for name in selectors}, 'mldsa': ['mldsa65', 'mldsa87']})
         env = request('slhdsa-shake-192s,hash-slhdsa-shake-192s')
         with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, env, clear=True), \
@@ -371,9 +371,9 @@ class ManualBench(unittest.TestCase):
             self.assertEqual({(row['target'], row['family']) for row in json.loads(values['builds'])['include']},
                              {(target, 'hashes') for target in
                               ('riscv64gc-unknown-linux-gnu', 'powerpc64le-unknown-linux-gnu', 's390x-unknown-linux-gnu')})
-            self.assertIn('hashes / sha2: just bench sha256 output_dir=target/bench diag=false filter="rscrypto" 64$',
+            self.assertIn('hashes / sha2: just bench sha256 output_dir=target/bench filter="rscrypto" 64$',
                           result.stdout)
-            self.assertIn('hashes / blake3: just bench blake3 output_dir=target/bench diag=false', result.stdout)
+            self.assertIn('hashes / blake3: just bench blake3 output_dir=target/bench', result.stdout)
 
 
 if __name__ == '__main__':

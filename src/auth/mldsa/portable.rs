@@ -452,29 +452,6 @@ pub(super) fn sign<const K: usize, const L: usize>(
   })
 }
 
-/// Signing-attempt counter for the signing-tail baseline (`tools/mldsa-tail`).
-///
-/// Only builds with `--cfg rscrypto_mldsa_attempts` contain it; production,
-/// test, and constant-time evidence builds do not. It counts attempts across
-/// every signature in the process and is meant for one measuring thread.
-#[cfg(rscrypto_mldsa_attempts)]
-pub(super) mod attempts {
-  use core::sync::atomic::{AtomicUsize, Ordering};
-
-  static ATTEMPTS: AtomicUsize = AtomicUsize::new(0);
-
-  pub(super) fn record() {
-    ATTEMPTS.store(ATTEMPTS.load(Ordering::Relaxed).strict_add(1), Ordering::Relaxed);
-  }
-
-  /// Return the attempts counted since the last call and reset the count.
-  pub(crate) fn take() -> usize {
-    let attempts = ATTEMPTS.load(Ordering::Relaxed);
-    ATTEMPTS.store(0, Ordering::Relaxed);
-    attempts
-  }
-}
-
 // Kept out of line with both row products: when LLVM inlined this loop into
 // the generic prepared-key callers, prepared signing became measurably slower.
 #[inline(never)]
@@ -505,8 +482,6 @@ pub(super) fn sign_with_state<const K: usize, const L: usize>(
     // FIPS 204 potential corrections (2026-07-31): the minimum cap is 821.
     // Each attempt consumes L nonces; 821*7 remains below 2^16.
     for attempt in 0usize..821 {
-      #[cfg(rscrypto_mldsa_attempts)]
-      attempts::record();
       signature.fill(0);
       // Nonces stay attempt·L + i; consecutive pairs share one two-state Keccak schedule.
       let first_nonce = attempt.strict_mul(L);

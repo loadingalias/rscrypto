@@ -18,7 +18,7 @@ import tempfile
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from benchmark_catalog import applies, architecture, case_class, load_catalog, normalize, resolve_selector, scope
-from execution import enable_internal, build, build_command, build_environment, build_identity, digest, discover, match_cases, exit_code, identity, write_json, source_evidence
+from execution import build, build_command, build_environment, build_identity, digest, discover, match_cases, exit_code, identity, write_json, source_evidence
 from measure import measure, verify
 import settings
 
@@ -44,7 +44,6 @@ def parse(arguments: list[str]):
   bench.add_argument("--list-target", help=argparse.SUPPRESS)
   bench.add_argument("--run-selector", action="append", help=argparse.SUPPRESS)
   bench.add_argument("--run-label", help=argparse.SUPPRESS)
-  bench.add_argument("--diag", nargs="?", const=True, type=boolean, default=False)
   bench.add_argument("--openssl", nargs="?", const=True, type=boolean)
   bench.add_argument("--quick", nargs="?", const=True, type=boolean, default=False)
   bench.add_argument("--output-dir", default="benchmark_results")
@@ -60,7 +59,6 @@ def parse(arguments: list[str]):
   profile.add_argument("case", nargs="?")
   profile.add_argument("seconds", nargs="?", type=float, default=settings.PROFILE_CAPTURE_DEFAULT_SECONDS)
   profile.add_argument("--list", action="store_true")
-  profile.add_argument("--diag", action="store_true")
   profile_transfer = profile.add_mutually_exclusive_group()
   profile_transfer.add_argument("--prepare-archive", type=Path)
   profile_transfer.add_argument("--run-archive", type=Path)
@@ -68,13 +66,12 @@ def parse(arguments: list[str]):
   for name in ("codegen", "llvm-lines"):
     command = commands.add_parser(name)
     command.add_argument("target")
-    command.add_argument("--diag", action="store_true")
   export = commands.add_parser("export")
   export.add_argument("run", type=Path)
   normalized = []
   value_follows = False
   for index, token in enumerate(arguments):
-    if not value_follows and arguments[0] == "bench" and token in {"--diag", "--quick", "--openssl"}:
+    if not value_follows and arguments[0] == "bench" and token in {"--quick", "--openssl"}:
       value = arguments[index + 1].lower() if index + 1 < len(arguments) else ""
       normalized.append(token if value in {"true", "false"} else token + "=true")
     elif not value_follows and arguments[0] == "bench" and "=" in token and re.fullmatch(r"[a-z_]+", token.split("=", 1)[0]):
@@ -91,7 +88,7 @@ def parse(arguments: list[str]):
     args = parser.parse_args(normalized)
   if args.mode == "bench":
     # Every accepted environment option has the same meaning as its CLI form.
-    known = {"BENCH_FILTER", "BENCH_DIAG", "BENCH_LIST", "BENCH_OUTPUT_DIR", "BENCH_BASELINE",
+    known = {"BENCH_FILTER", "BENCH_LIST", "BENCH_OUTPUT_DIR", "BENCH_BASELINE",
              "BENCH_WARMUP_MS", "BENCH_MEASURE_MS", "BENCH_SAMPLE_SIZE", "BENCH_QUICK", "BENCH_OPENSSL"}
     unknown = set(key for key in os.environ if key.startswith("BENCH_")) - known
     if unknown:
@@ -105,7 +102,7 @@ def parse(arguments: list[str]):
       if name == "filter":
         getattr(args, name).insert(0, value)
       elif not explicit:
-        setattr(args, name, boolean(value) if name in {"diag", "list", "quick", "openssl"} else
+        setattr(args, name, boolean(value) if name in {"list", "quick", "openssl"} else
                 int(value) if name in {"warmup_ms", "measure_ms", "sample_size"} else
                 Path(value) if name == "baseline" else value)
     if args.openssl is None:
@@ -115,15 +112,11 @@ def parse(arguments: list[str]):
   return args
 
 
-def target(catalog, name: str, diag: bool, openssl: bool = True) -> dict:
+def target(catalog, name: str, openssl: bool = True) -> dict:
   entry = catalog["benches"].get(name)
   if entry is None or entry["kind"] != "criterion":
     raise ValueError(f"unknown Criterion target: {name}")
-  if diag and 'manifest' in entry:
-    raise ValueError(f"diagnostics are not supported by independent benchmark target: {name}")
   features = set(entry["features"])
-  if diag:
-    features.add("diag")
   if not openssl:
     features.discard("openssl-peer")
   return {"binary": entry["binary"], "features": sorted(features), **({'manifest': entry['manifest']} if 'manifest' in entry else {}),
@@ -159,7 +152,7 @@ def requests(args, catalog, every_architecture=False) -> list[dict]:
     if skipped:
       raise ValueError(f"{', '.join(skipped)} does not run on {arch}")
     raise ValueError("selection produced no benchmark configurations")
-  return [target(catalog, name, args.diag, args.openssl) | {"bench": name, "scope": case_scope, "pattern": pattern}
+  return [target(catalog, name, args.openssl) | {"bench": name, "scope": case_scope, "pattern": pattern}
           for name, case_scope, pattern in dict.fromkeys(rows)]
 
 
@@ -193,16 +186,12 @@ def run_budget(args, catalog, rows=None) -> int:
   return ordinary
 
 
-def partitions(catalog, diag: bool, openssl: bool) -> dict[tuple, dict[str, str]]:
+def partitions(catalog, openssl: bool) -> dict[tuple, dict[str, str]]:
   """Map the build of each split target to the algorithm filters that must partition its cases."""
   result = {}
   for name, bench in catalog["benches"].items():
-    # Independent targets cannot be selected with diagnostics. Their partitions
-    # must not reject an unrelated root-workspace diagnostic selection.
-    if diag and "manifest" in bench:
-      continue
     if bench.get("split") == "algorithms":
-      result[configuration(target(catalog, name, diag, openssl))] = {
+      result[configuration(target(catalog, name, openssl))] = {
         algorithm: row["filter"] for algorithm, row in catalog["algorithms"].items() if row["bench"] == name}
   return result
 
@@ -292,13 +281,11 @@ def bench(args, catalog) -> None:
     from transfer import prepare
     prepare(ROOT, args.target, args.prepare_archive.resolve(), Path(args.output_dir).resolve(), rows, effective)
     return
-  if not args.run_archive:
-    enable_internal(rows)
   if args.list:
     with tempfile.TemporaryDirectory(prefix="rscrypto-list-") as directory:
       root = Path(directory)
       plan = resolve(rows, effective, root / "output.txt", dict(os.environ) | {"CRITERION_HOME": directory},
-                     split=partitions(catalog, args.diag, args.openssl))
+                     split=partitions(catalog, args.openssl))
       for entry in plan:
         for case in entry["cases"]:
           print(f"[{case_class(catalog, entry['binary'], case)}] {entry['binary']} {case}")
@@ -335,7 +322,7 @@ def bench(args, catalog) -> None:
       prepared = consume(ROOT, args.target, args.run_archive.resolve(), root / 'input', rows, effective)
       write_json(root / 'transfer.json', {'archive_sha256': digest(args.run_archive), 'target': args.target,
                                         'manifest': 'input/bundle.json'})
-    plan = resolve(rows, effective, root / "output.txt", env, prepared, partitions(catalog, args.diag, args.openssl))
+    plan = resolve(rows, effective, root / "output.txt", env, prepared, partitions(catalog, args.openssl))
     shutil.rmtree(root / "discovery", ignore_errors=True)
     write_json(root / "plan.json", plan)
     measure(root, plan, baseline, budget)
@@ -352,11 +339,11 @@ def bench(args, catalog) -> None:
     print(f"Results: {root}", flush=True)
 
 
-def inspectable(catalog, name: str, diag: bool) -> dict:
+def inspectable(catalog, name: str) -> dict:
   """Profiling and code inspection support only configurations without catalog code-generation flags."""
   if name in catalog["benches"] and not applies(catalog["benches"][name], architecture()):
     raise ValueError(f"{name} does not run on {architecture()}")
-  entry = target(catalog, name, diag)
+  entry = target(catalog, name)
   if "rustflags" in entry:
     raise ValueError(f"{name} uses catalog rustflags, which profiling and code inspection do not apply")
   return entry
@@ -364,9 +351,7 @@ def inspectable(catalog, name: str, diag: bool) -> dict:
 
 def run_profile(args, catalog) -> None:
   from profile import profile
-  entry = inspectable(catalog, args.benchmark, args.diag)
-  if not (args.prepare_archive or args.run_archive):
-    enable_internal([entry])
+  entry = inspectable(catalog, args.benchmark)
   profile(args, entry)
 
 
@@ -384,8 +369,7 @@ def main() -> int:
   elif args.mode == "profile":
     run_profile(args, catalog)
   else:
-    entry = inspectable(catalog, args.target, args.diag)
-    enable_internal([entry])
+    entry = inspectable(catalog, args.target)
     command = ["cargo", "asm" if args.mode == "codegen" else "llvm-lines", "--locked", "--lib", "--profile", "bench",
                "--no-default-features", "--features", ",".join(entry["features"])]
     extra = args.args[1:] if args.args[:1] == ["--"] else args.args

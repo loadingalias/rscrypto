@@ -160,7 +160,6 @@ macro_rules! define_sha_family_dispatch {
     #[derive(Clone, Copy)]
     struct Entry {
       compress_blocks: $compress_fn_ty,
-      #[cfg(feature = "diag")]
       name: &'static str,
     }
 
@@ -184,13 +183,11 @@ macro_rules! define_sha_family_dispatch {
         let id = resolve($runtime_kernel(caps), caps);
         Entry {
           compress_blocks: $compress_fn(id),
-          #[cfg(feature = "diag")]
           name: id.as_str(),
         }
       })
     }
 
-    #[cfg(feature = "diag")]
     #[inline]
     #[must_use]
     pub(crate) fn kernel_name_for_len(_len: usize) -> &'static str {
@@ -292,37 +289,31 @@ macro_rules! define_blake2_dispatch {
     struct Resolved {
       compress: $compress_fn_ty,
       compress_blocks: $compress_blocks_fn_ty,
-      #[cfg(feature = "diag")]
-      name: &'static str,
     }
 
     #[cfg(not(all(target_arch = "aarch64", target_os = "macos")))]
     static ACTIVE: crate::backend::cache::OnceCache<Resolved> = crate::backend::cache::OnceCache::new();
 
     #[cfg(not(all(target_arch = "aarch64", target_os = "macos")))]
-    fn resolve() -> Resolved {
+    fn selected_kernel() -> $kernel_id {
       let caps = crate::platform::caps();
       let candidates: &[$kernel_id] = &[$($candidates)*];
 
       if !$prefers_portable(caps) {
         for &id in candidates {
           if caps.has($required_caps(id)) {
-            return Resolved {
-              compress: $compress_fn(id),
-              compress_blocks: $compress_blocks_fn(id),
-              #[cfg(feature = "diag")]
-              name: id.as_str(),
-            };
+            return id;
           }
         }
       }
 
-      Resolved {
-        compress: $compress_fn($portable_kernel),
-        compress_blocks: $compress_blocks_fn($portable_kernel),
-        #[cfg(feature = "diag")]
-        name: $portable_kernel.as_str(),
-      }
+      $portable_kernel
+    }
+
+    #[cfg(not(all(target_arch = "aarch64", target_os = "macos")))]
+    fn resolve() -> Resolved {
+      let id = selected_kernel();
+      Resolved { compress: $compress_fn(id), compress_blocks: $compress_blocks_fn(id) }
     }
 
     #[inline]
@@ -347,7 +338,6 @@ macro_rules! define_blake2_dispatch {
       ACTIVE.get_or_init(resolve).compress_blocks
     }
 
-    #[cfg(feature = "diag")]
     #[inline]
     #[must_use]
     pub(super) fn kernel_name_for_len(_len: usize) -> &'static str {
@@ -356,7 +346,7 @@ macro_rules! define_blake2_dispatch {
         $portable_kernel.as_str()
       }
       #[cfg(not(all(target_arch = "aarch64", target_os = "macos")))]
-      ACTIVE.get_or_init(resolve).name
+      selected_kernel().as_str()
     }
   };
 }

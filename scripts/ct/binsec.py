@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import shutil
@@ -16,8 +17,7 @@ from pathlib import Path
 # Embedded Windows Python omits the script directory.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from provenance import sha256_file, zig_executable
-from internal import build_environment
+from provenance import resolved_rustflags, sha256_file, zig_executable
 from manifest import binsec_kernel_targets, target_record
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -25,8 +25,11 @@ HARNESS_MANIFEST = ROOT / "tools" / "ct-binsec-harness" / "Cargo.toml"
 HARNESS_BIN = "rscrypto-ct-binsec-harness"
 
 
-@lru_cache(maxsize=1)
-def candidate_identity() -> dict[str, object]:
+LEAF_FEATURES = ["std", "full", "getrandom", "portable-only"]
+
+
+@lru_cache(maxsize=2)
+def candidate_identity(lib_test: bool = False) -> dict[str, object]:
   with (ROOT / "Cargo.toml").open("rb") as source:
     crate = tomllib.load(source)
   with HARNESS_MANIFEST.open("rb") as source:
@@ -34,6 +37,13 @@ def candidate_identity() -> dict[str, object]:
   with (ROOT / "tools" / "Cargo.toml").open("rb") as source:
     profiles = tomllib.load(source)["profile"]
   dependency = harness["dependencies"]["rscrypto"]
+  manifest = ROOT / "Cargo.toml" if lib_test else HARNESS_MANIFEST
+  lockfile = ROOT / "Cargo.lock" if lib_test else ROOT / "tools" / "Cargo.lock"
+  if lib_test:
+    profiles = crate["profile"]
+  settings = {**profiles["release"], **{k: v for k, v in profiles["binsec"].items() if k != "inherits"}}
+  if lib_test:
+    settings["panic"] = "unwind"  # Cargo links the library test harness with unwinding.
   rustc_verbose = run(["rustc", "-vV"]).stdout.strip()
   status = run(["git", "status", "--short", "--untracked-files=all"]).stdout.splitlines()
   return {
@@ -42,14 +52,15 @@ def candidate_identity() -> dict[str, object]:
     "git_dirty": bool(status),
     "git_status": status,
     "ct_manifest_sha256": sha256_file(ROOT / "ct.toml"),
-    "harness_manifest_sha256": sha256_file(HARNESS_MANIFEST),
-    "harness_lockfile_sha256": sha256_file(ROOT / "tools" / "Cargo.lock"),
+    "harness_manifest_sha256": sha256_file(manifest),
+    "harness_lockfile_sha256": sha256_file(lockfile),
     "rustc_verbose": rustc_verbose,
     "cargo": run(["cargo", "-V"]).stdout.strip(),
-    "features": dependency["features"],
+    "harness": "lib-test" if lib_test else "public",
+    "features": LEAF_FEATURES if lib_test else dependency["features"],
     "default_features": dependency.get("default-features", True),
     # The `binsec` Cargo profile: the release settings with its own overrides.
-    "profile_settings": {**profiles["release"], **{k: v for k, v in profiles["binsec"].items() if k != "inherits"}},
+    "profile_settings": settings,
   }
 
 
@@ -231,7 +242,8 @@ def build_harness(target: str, profile: str, rustflags: list[str]) -> tuple[Path
   ]
   proof_flags = list(rustflags) if rustflags else default_target_rustflags(target)
   proof_flags.extend(binsec_proof_rustflags(target))
-  env, effective_rustflags = build_environment(target, proof_flags)
+  effective_rustflags = [*resolved_rustflags(ROOT, target)[2], *proof_flags]
+  env = {**os.environ, "CARGO_ENCODED_RUSTFLAGS": "\x1f".join(effective_rustflags)}
   configure_cross_linker(env, target)
   result = subprocess.run(cmd, cwd=ROOT, env=env, text=True, check=False)
   if result.returncode != 0:
@@ -242,6 +254,38 @@ def build_harness(target: str, profile: str, rustflags: list[str]) -> tuple[Path
   if not binary.exists():
     raise SystemExit(f"BINSEC harness binary missing: {binary}")
   return binary, effective_rustflags
+
+
+@lru_cache(maxsize=None)
+def build_library_tests(target: str, rustflags: tuple[str, ...]) -> tuple[Path, list[str]]:
+  """Build the private proof roots in their owning modules and retain their C symbols."""
+  target_dir = ROOT / "target" / "ct-binsec-build"
+  target_dir.mkdir(parents=True, exist_ok=True)
+  flags = [*resolved_rustflags(ROOT, target)[2], *(rustflags or default_target_rustflags(target)), *binsec_proof_rustflags(target)]
+  memory = HARNESS_MANIFEST.parent / "src" / "memory.rs"
+  identity = hashlib.sha256(repr((sha256_file(memory), target, flags, run(["rustc", "-vV"]).stdout)).encode()).hexdigest()
+  obj = target_dir / f"memory-{identity}.o"
+  if not obj.exists():
+    result = run(["rustc", "--edition=2024", "--crate-type=lib", "--target", target, *flags, "-C", "opt-level=3",
+                  "--emit", f"obj={obj}", str(memory)])
+    if result.returncode:
+      raise SystemExit(result.stderr)
+  flags.extend(["-C", f"link-arg={obj}"])
+  symbols = {row["symbol"] for row in kernels(load_manifest(), None, target) if row.get("harness") == "lib-test"}
+  for symbol in sorted(symbols):
+    flags.extend(["-C", f"link-arg=-Wl,-u,{symbol}"])
+  env = os.environ.copy()
+  env["CARGO_ENCODED_RUSTFLAGS"] = "\x1f".join(flags)
+  configure_cross_linker(env, target)
+  cmd = ["cargo", "test", "--locked", "-p", "rscrypto", "--lib", "--no-run", "--profile", "binsec",
+         "--target", target, "--target-dir", str(target_dir), "--no-default-features",
+         "--features", ",".join(LEAF_FEATURES), "--message-format=json-render-diagnostics"]
+  result = subprocess.run(cmd, cwd=ROOT, env=env, text=True, stdout=subprocess.PIPE, check=True)
+  executables = [Path(row["executable"]) for line in result.stdout.splitlines() if (row := json.loads(line)).get("reason") == "compiler-artifact"
+                 and row["target"]["name"] == "rscrypto" and row["profile"]["test"] and row.get("executable")]
+  if len(executables) != 1 or not executables[0].is_file():
+    raise SystemExit("Cargo did not produce the rscrypto library test executable")
+  return executables[0], flags
 
 
 def symbol_names(binary: Path) -> set[str]:
@@ -381,7 +425,7 @@ def write_report(
     "schema_version": 1,
     "kind": "rscrypto.ct.binsec",
     "crate": "rscrypto",
-    **candidate_identity(),
+    **candidate_identity(kernel.get("harness") == "lib-test"),
     "backend": "llvm",
     "target": target,
     "target_triple": target,
@@ -496,7 +540,10 @@ def main() -> int:
     rustflags = [str(flag) for flag in kernel.get("rustflags", [])]
     kernel_timeout = int(kernel.get("timeout", args.timeout))
     kernel_smt_timeout = int(kernel.get("smt_timeout", args.smt_timeout if args.smt_timeout is not None else kernel_timeout))
-    binary, effective_rustflags = build_harness(target, profile, rustflags)
+    if kernel.get("harness") == "lib-test":
+      binary, effective_rustflags = build_library_tests(target, tuple(rustflags))
+    else:
+      binary, effective_rustflags = build_harness(target, profile, rustflags)
     harness_elf_type = elf_type(binary)
     names = symbol_names(binary)
 

@@ -15,8 +15,6 @@ mod aarch64;
 #[cfg(feature = "std")]
 pub(crate) mod dispatch;
 #[doc(hidden)]
-#[cfg(feature = "std")]
-pub(crate) mod dispatch_tables;
 #[cfg(all(test, feature = "std"))]
 mod kernel_test;
 #[cfg(feature = "std")]
@@ -25,6 +23,16 @@ pub(crate) mod kernels;
 mod x86_64_avx2;
 #[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "std"))]
 mod x86_64_avx512;
+
+#[cfg(feature = "std")]
+pub(crate) const fn kernel_name_for_len(_len: usize) -> &'static str {
+  dispatch::scalar_kernel_id().as_str()
+}
+
+#[cfg(not(feature = "std"))]
+pub(crate) const fn kernel_name_for_len(_len: usize) -> &'static str {
+  "portable"
+}
 
 const RATE: usize = 8;
 

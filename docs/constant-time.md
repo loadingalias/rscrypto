@@ -249,8 +249,7 @@ and they create their private scratch for each call.
 Key import, validation, release, and DER export run only in setup and diagnostic roots.
 The `rsa.private_key_material` root is the bounded same-width component-validation leaf
 that its claim names, which BINSEC and DudeCT also cover.
-Broad import, validation, and export keep their diagnostic DudeCT cases and the diagnostic
-`ct_entry_rsa_private_key_pkcs8_roundtrip` root.
+The assembly harness retains `ct_entry_rsa_private_key_pkcs8_roundtrip` for import and export.
 That root is not a release equality root, so the public-length comparisons in import validation
 have source review but no linked-binary equality evidence; `public_len_comparison` in `ct.toml` counts them.
 `unreachable_symbols` under `[asm_select_branch]` lists the import, validation, and release symbols.
@@ -290,12 +289,10 @@ For strict manifest and artifact coverage, build the artifacts, then run `just c
 This checks compiler output and coverage only.
 Timing and formal evidence need their own target runs.
 
-The bounded PBKDF2 proof hooks use `verify_primitive` with one iteration and a fixed salt.
-They must reach key derivation and comparison.
-The application password-policy verifier rejects these weak parameters before comparison,
-so earlier proofs of the policy-rejecting hooks do not prove PBKDF2 verification coverage.
-Regression tests for the internal hooks check both successful and failed verification.
-Application password policies are separate and do not change.
+The portable-only BINSEC harness calls `HmacSha256::verify` after updating the MAC with six public bytes.
+Its truncated case calls `HmacSha256::verify_truncated_tag_64` with the same message.
+The PBKDF2 cases call `verify_password_primitive` with one iteration and the four-byte salt `salt`.
+These inputs exercise key derivation and comparison. The password-policy verifier rejects these parameters before comparison.
 
 ### Linked-artifact review, 2026-10-18
 
@@ -1528,8 +1525,7 @@ These operations are outside the constant-time claims on purpose:
 - RSA prime generation;
 - Argon2d, the data-dependent phase of Argon2id, and scrypt memory access;
 - caller callbacks, operating-system allocation, thread scheduling, and entropy acquisition;
-- external implementations of public traits;
-- diagnostic APIs, which expose evidence values on purpose.
+- external implementations of public traits.
 
 Authentication failures stay opaque, also when their inputs are public.
 
@@ -1749,9 +1745,45 @@ that blinds and unblinds every private operation.
 The public use count and the process origin choose between the two.
 A workspace of another key is refused by its public key binding before any secret work.
 The PSS salt and each refresh come from separate caller callbacks.
-The diagnostic DudeCT case `rsa_pkcs1v15_cached_blinding_fixed_vs_random_message`
-measures message dependence through a warm workspace. No evidence unit relies on it yet,
-and the workspace adds no timing claim.
+The warm workspace has no separate timing claim.
+
+### DudeCT case migration from v0.13
+
+The v0.13 manifest classified 62 cases as diagnostic. None supplied required evidence for an operation or evidence unit.
+The table maps their input classes to the claims that retain coverage. [Original case names and input definitions](https://github.com/loadingalias/rscrypto/blob/836e6d61226c19fd98c17fea04f8d02302b9bce0/ct.toml)
+
+| Original cases or class | Count | Claim and retained evidence |
+|---|---:|---|
+| AES-128/256-GCM-SIV raw tag AES, varying block | 2 | `aead.open_authentication` retains the fixed-block key comparisons and the full open cases. |
+| P-256 ECDH agreement, same/same and fixed/fixed. P-256 field multiply, same/same and fixed/random | 4 | `kx.p256_ecdh` retains public derivation, agreement, and both window-selection proofs. |
+| P-256 ECDSA nonce reduction, blinded basepoint, scalar finish, fixed-r order multiply, blinded order multiply, nonce inverse, final multiply | 7 | `signature.ecdsa_p256_sign` retains signing, wide reduction, and blinded nonce inversion. |
+| P-384 ECDSA nonce reduction, blinded basepoint, scalar finish, fixed-r order multiply, nonce inverse, final multiply | 6 | `signature.ecdsa_p384_sign` retains signing, wide reduction, and blinded nonce inversion. |
+| RSA PKCS #1 v1.5 warm blinding workspace and full-width versus short canonical CRT exponent | 2 | `rsa.private_ops` covers fixed-width private operations. The warm workspace has no separate timing claim. |
+| RSA PKCS #8 import, export, full validation, validation stages 0–4, 30–32 and 40–42, and import stages 50–54 | 19 | `rsa.private_key_material` covers same-width component validation. The two import fixtures have different public moduli. |
+| AES-SIV seal, fixed/fixed keys, equal/distinct key halves, and fixed distinct/random keys | 3 | `aead.symmetric_transform.aes_siv_cmac256` retains the full seal and portable S2V cases. |
+| ML-DSA product, Montgomery multiplication, forward NTT, and inverse NTT. Each compared zero/zero, zero/fixed, and high/random coefficients. | 12 | `signature.mldsa.secret_kernels` retains dense inputs and target-specific zero-input cases for all four kernels. |
+| ML-DSA product with one/fixed, minus one/fixed, offset zero/fixed, and one/minus one coefficients | 4 | `signature.mldsa.secret_kernels` retains the production polynomial product comparisons. |
+| ML-DSA-44, ML-DSA-65, and ML-DSA-87 key preparation with zero/random secrets | 3 | `signature.mldsa.secret_kernels` retains valid-key preparation for all three parameter sets. |
+
+The compiler inventory now records 3,826 operations. The earlier composite signer change removed seven entries and added three.
+This cleanup renames the Argon2 kernel report and preserves the inventory count.
+
+The campaign starts one library test process for each selected timing case.
+The public BINSEC harness and the private library-test entries both use `portable-only`.
+
+Five additional ML-DSA cases have a diagnostic verdict only on POWER. Other targets still require them.
+The POWER qualification and its operand distributions appear under [Power and frequency channels](#power-and-frequency-channels).
+
+The RISC-V scan from run `45735935304` has seven pending RSA branch reviews.
+
+| Previous linked symbol | Offsets in that binary |
+|---|---|
+| `ct_entry_rsa_pkcs1v15_decrypt_fixed_blinding` | `+0x166`, `+0x214`, `+0x760`, `+0x9f0`, `+0xb00` |
+| `ct_entry_rsa_pss_sign_fixed_blinding` | `+0x24c` |
+| `implicit_rejection_prf` | `+0x126` |
+
+The next campaign must locate each branch in the rebuilt binary.
+It must also verify the x86-64 Ed25519 AVX2 basepoint selection entry.
 
 ### ML-DSA
 
@@ -1873,7 +1905,7 @@ when every coefficient repeats one value than when the coefficients are random.
 Random operands with the same distribution cannot be told apart,
 and scalar Montgomery products show no difference.
 This is a power effect on those hosts, not a secret-dependent instruction choice.
-The `mldsa_probe_*` diagnostic cases in `ct.toml` reproduce it.
+The v0.13 `mldsa_probe_*` cases recorded this difference.
 
 ML-DSA secret polynomials have small, heavily repeated coefficients.
 On the POWER vector backend, their forward NTT is therefore blinded:

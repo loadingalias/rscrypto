@@ -20,13 +20,13 @@ run_named_test() {
 }
 
 run_gate() {
-  local test_name flags cpu_brand hypervisor_present profile build_output binary symbols description symbol
+  local test_name cpu_brand hypervisor_present profile build_output binary symbols description symbol
   local expected_symbols=() nm_args=()
   if [[ "$platform" == linux ]]; then
     [[ "$(uname -s)" == Linux && "$(uname -m)" == x86_64 ]] || fail "requires a Linux x86-64 host"
     flags=$(awk '/^flags[[:space:]]*:/ { sub(/^[^:]*:[[:space:]]*/, ""); print; exit }' /proc/cpuinfo)
     [[ " $flags " == *" bmi2 "* && " $flags " == *" adx "* ]] || fail "requires BMI2 and ADX"
-    test_name=auth::rsa::tests::x86_64_rsa_montgomery_kernel_matches_portable_across_supported_widths
+    test_name=auth::rsa::arithmetic::tests::x86_64_rsa_montgomery_kernel_matches_portable_across_supported_widths
     # The owned kernel is inline assembly in Rust functions of this module.
     expected_symbols=(rsa_x86_64_mont)
   else
@@ -38,22 +38,20 @@ run_gate() {
     printf 'CPU: %s\nHypervisor present: %s\n' "$cpu_brand" "$hypervisor_present"
     [[ "$hypervisor_present" == 0 ]] || fail "requires a physical Apple Silicon Mac"
     rustc -vV
-    test_name=auth::rsa::tests::aarch64_macos_rsa_montgomery_asm_matches_portable_across_supported_widths
+    test_name=auth::rsa::arithmetic::tests::aarch64_macos_rsa_montgomery_asm_matches_portable_across_supported_widths
     nm_args=(-m)
     expected_symbols=(_rscrypto_rsa_mont_reduce_cios_32_aarch64_apple_darwin
       _rscrypto_rsa_mont_reduce_cios_words_aarch64_apple_darwin)
   fi
 
   for profile in debug release; do
-    local args=(test --locked --features "rsa,diag,getrandom" --lib)
+    local args=(test --locked --features "rsa,getrandom" --lib)
     [[ "$profile" == debug ]] || args+=(--release)
     run_named_test "$test_name" cargo "${args[@]}" --
   done
 
-  build_output=$(scripts/lib/python.sh scripts/ct/internal.py \
-    --target "$(scripts/lib/toolchain.sh --print-host)" -- \
-    cargo test --locked --release --features rsa,diag --test rsa_public_key --no-run --message-format=json)
-  binary=$(jq -ers '[.[] | select(.reason == "compiler-artifact" and .target.name == "rsa_public_key" and .executable != null) | .executable]
+  build_output=$(cargo test --locked --release --no-default-features --features std,full,parallel,getrandom --test rsa_public_key --no-run --message-format=json)
+  binary=$(jq -ers '[.[] | select(.reason == "compiler-artifact" and .target.name == "rsa_public_key" and .profile.test and .executable != null) | .executable]
     | if length == 1 then .[0] else error("expected one RSA test executable") end' <<<"$build_output")
   [[ -n "$binary" && -x "$binary" ]] || fail "could not resolve optimized RSA test binary"
   if [[ "$platform" == macos ]]; then
@@ -64,7 +62,7 @@ run_gate() {
   for symbol in "${expected_symbols[@]}"; do
     [[ "$symbols" == *"$symbol"* ]] || fail "optimized binary lacks $symbol"
   done
-  run_named_test public_operation_montgomery_candidates_match_current_path "$binary"
+  run_named_test public_operation_boundary_representatives_match_independent_reference_across_supported_sizes "$binary"
 }
 
 if [[ "$platform" == macos ]]; then

@@ -13,8 +13,10 @@ import tomllib
 def native_features(root, packages=(), excludes=()):
     manifest = tomllib.loads((root / 'Cargo.toml').read_text())
     graphs, edges = {}, {}
-    for member in manifest['workspace']['members']:
-        package = tomllib.loads((root / member / 'Cargo.toml').read_text())
+    members = [manifest] if 'package' in manifest else []
+    members.extend(tomllib.loads((root / member / 'Cargo.toml').read_text())
+                   for member in manifest['workspace']['members'] if member != '.')
+    for package in members:
         name = package['package']['name']
         graphs[name] = package.get('features', {})
         edges[name] = {dependency for table in ('dependencies', 'dev-dependencies', 'build-dependencies')

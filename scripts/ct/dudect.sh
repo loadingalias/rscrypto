@@ -88,10 +88,7 @@ fi
 export RUSTUP_TOOLCHAIN
 RUSTUP_TOOLCHAIN="$("$TOOLCHAIN")"
 
-# Build and provenance reporting must observe the same internal compiler flags.
 PYTHON="$("$ROOT/scripts/lib/python.sh" --print)"
-export CARGO_ENCODED_RUSTFLAGS
-CARGO_ENCODED_RUSTFLAGS="$("$PYTHON" "$ROOT/scripts/ct/internal.py" --target "$TARGET" --print-encoded-rustflags)"
 
 HOST_TARGET="$(rustc -vV | awk -F': ' '/^host:/ {print $2}')"
 target_runs_on_host() {
@@ -149,13 +146,11 @@ if [[ ! -s "$CACHED_LINKER_COMMAND" ]]; then
   rm -rf "$BUILD_TARGET_DIR"
 fi
 mkdir -p "$BUILD_TARGET_DIR"
-CARGO_ARGS=(--manifest-path "$ROOT/tools/ct-dudect/Cargo.toml" --target-dir "$BUILD_TARGET_DIR" --target "$TARGET")
-if [[ "$PROFILE" == "release" ]]; then
-  CARGO_ARGS+=(--release)
-elif [[ "$PROFILE" != "debug" ]]; then
-  echo "unsupported dudect profile: $PROFILE" >&2
+if [[ "$PROFILE" != "release" ]]; then
+  echo "DudeCT requires the release profile" >&2
   exit 2
 fi
+if [[ "$TARGET" == *-windows-* ]]; then BINARY_PATH="$BINARY_PATH.exe"; fi
 
 # Name the Windows LTO object explicitly; Cargo's intermediate layout varies by release.
 WINDOWS_OBJECT_PATH="$BUILD_TARGET_DIR/rscrypto_ct_dudect.o"
@@ -168,7 +163,8 @@ if [[ "$TARGET" == *-windows-* ]]; then
   EMIT="obj=$rustc_object_path,link"
 fi
 linker_log_candidate="$(mktemp "$OUT_DIR/.dudect-linker-command.XXXXXXXX")"
-cargo rustc --locked "${CARGO_ARGS[@]}" --bin rscrypto-ct-dudect -- "--emit=$EMIT" --print link-args 2>&1 | tee "$linker_log_candidate"
+"$PYTHON" "$ROOT/scripts/ct/library_harness.py" --target "$TARGET" --target-dir "$BUILD_TARGET_DIR" \
+  --output "$BINARY_PATH" -- "--emit=$EMIT" --print link-args 2>&1 | tee "$linker_log_candidate"
 link_command_count=$(grep -Ec '"-o"|"/OUT:' "$linker_log_candidate" || true)
 if [[ "$link_command_count" -gt 1 ]]; then
   echo "expected at most one DudeCT linker command; found $link_command_count" >&2
@@ -186,17 +182,6 @@ if [[ ! -s "$CACHED_LINKER_COMMAND" ]]; then
 fi
 
 cp "$CACHED_LINKER_COMMAND" "$LINKER_COMMAND_PATH"
-
-BUILT_BINARY="$BUILD_TARGET_DIR/$TARGET/$PROFILE/rscrypto-ct-dudect"
-if [[ -f "$BUILT_BINARY.exe" ]]; then
-  BUILT_BINARY="$BUILT_BINARY.exe"
-  BINARY_PATH="$BINARY_PATH.exe"
-fi
-if [[ ! -f "$BUILT_BINARY" ]]; then
-  echo "DudeCT executable missing: $BUILT_BINARY" >&2
-  exit 1
-fi
-cp "$BUILT_BINARY" "$BINARY_PATH"
 
 SYSROOT="$(rustc --print sysroot)"
 if command -v cygpath >/dev/null 2>&1; then

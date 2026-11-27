@@ -557,16 +557,6 @@ pub struct Ed25519Keypair {
   expanded: hash::ExpandedSecret,
 }
 
-#[cfg(all(rscrypto_internal, feature = "diag"))]
-#[doc(hidden)]
-#[derive(Clone, Copy, Debug)]
-pub struct DiagEd25519VerifyScalars {
-  pub r_bytes: [u8; PUBLIC_KEY_LENGTH],
-  pub s_canonical: [u8; SECRET_KEY_LENGTH],
-  pub challenge: [u8; SECRET_KEY_LENGTH],
-  pub public_key: [u8; PUBLIC_KEY_LENGTH],
-}
-
 impl Ed25519Keypair {
   /// Compare both halves of two keypairs without exposing a branchable boolean.
   #[inline]
@@ -866,170 +856,6 @@ fn hash_challenge(r_bytes: &[u8; PUBLIC_KEY_LENGTH], public_key: &[u8; PUBLIC_KE
   Sha512::digest_64_byte_prefix(&prefix, message)
 }
 
-/// Secret intermediates of one production signature, for phase timing probes.
-#[cfg(any(test, all(rscrypto_internal, feature = "diag")))]
-#[doc(hidden)]
-#[derive(Clone, Copy)]
-pub struct DiagEd25519SignInputs {
-  /// SHA-512 of the nonce prefix and message, before reduction.
-  pub nonce_digest: [u8; 64],
-  /// Reduced nonce scalar `r`.
-  pub nonce: [u8; SECRET_KEY_LENGTH],
-  /// Clamped secret scalar `a`.
-  pub secret_scalar: [u8; SECRET_KEY_LENGTH],
-  /// Reduced challenge scalar `k`.
-  pub challenge: [u8; SECRET_KEY_LENGTH],
-}
-
-#[cfg(any(test, all(rscrypto_internal, feature = "diag")))]
-impl core::fmt::Debug for DiagEd25519SignInputs {
-  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-    f.debug_struct("DiagEd25519SignInputs").finish_non_exhaustive()
-  }
-}
-
-/// Derive the signing intermediates `sign` computes for `secret` and `message`.
-#[cfg(any(test, all(rscrypto_internal, feature = "diag")))]
-#[doc(hidden)]
-#[must_use]
-pub fn diag_ed25519_sign_inputs(secret: &Ed25519SecretKey, message: &[u8]) -> DiagEd25519SignInputs {
-  let expanded = hash::ExpandedSecret::from_secret_key(secret);
-  let mut nonce_hasher = Sha512::new();
-  nonce_hasher.update(expanded.nonce_prefix());
-  nonce_hasher.update(message);
-  let nonce_digest = nonce_hasher.finalize_secret();
-  let nonce = scalar::to_bytes(&scalar::reduce_64_bytes_mod_order_secret(&nonce_digest));
-  let r_encoded = basepoint_mul_encoded_dispatch(&nonce);
-  let challenge_digest = hash_challenge(&r_encoded, &expanded.public_key_bytes(), message);
-  DiagEd25519SignInputs {
-    nonce_digest,
-    nonce,
-    secret_scalar: *expanded.scalar_bytes(),
-    challenge: scalar::to_bytes(&scalar::reduce_bytes_mod_order(&challenge_digest)),
-  }
-}
-
-/// Execute the production signing nonce reduction.
-#[cfg(any(test, all(rscrypto_internal, feature = "diag")))]
-#[doc(hidden)]
-#[must_use]
-pub fn diag_ed25519_sign_nonce_reduce(nonce_digest: &[u8; 64]) -> [u8; SECRET_KEY_LENGTH] {
-  crate::traits::ct::with_data_independent_timing(|| {
-    scalar::to_bytes(&scalar::reduce_64_bytes_mod_order_secret(nonce_digest))
-  })
-}
-
-/// Execute the production signing commitment `R = r·B`.
-#[cfg(any(test, all(rscrypto_internal, feature = "diag")))]
-#[doc(hidden)]
-#[must_use]
-pub fn diag_ed25519_sign_commitment(nonce: &[u8; SECRET_KEY_LENGTH]) -> [u8; PUBLIC_KEY_LENGTH] {
-  crate::traits::ct::with_data_independent_timing(|| basepoint_mul_encoded_dispatch(nonce))
-}
-
-/// Execute the production signing response `S = k·a + r (mod L)`.
-#[cfg(any(test, all(rscrypto_internal, feature = "diag")))]
-#[doc(hidden)]
-#[must_use]
-pub fn diag_ed25519_sign_response(inputs: &DiagEd25519SignInputs) -> [u8; SECRET_KEY_LENGTH] {
-  crate::traits::ct::with_data_independent_timing(|| {
-    let challenge = scalar::decode_words_le(&inputs.challenge);
-    let secret_scalar = scalar::decode_words_le(&inputs.secret_scalar);
-    let nonce = scalar::decode_words_le(&inputs.nonce);
-    scalar::to_bytes(&scalar::mul_add_mod_secret(&challenge, &secret_scalar, &nonce))
-  })
-}
-
-#[cfg(all(rscrypto_internal, feature = "diag"))]
-#[doc(hidden)]
-#[must_use]
-pub fn diag_ed25519_verify_scalars(
-  public_key: &Ed25519PublicKey,
-  signature: &Ed25519Signature,
-  message: &[u8],
-) -> Option<DiagEd25519VerifyScalars> {
-  let (r_bytes, s_bytes) = split_signature(signature);
-  let s = scalar::from_canonical_bytes(&s_bytes)?;
-  let challenge_digest = hash_challenge(&r_bytes, public_key.as_bytes(), message);
-  let challenge = scalar::reduce_bytes_mod_order(&challenge_digest);
-
-  Some(DiagEd25519VerifyScalars {
-    r_bytes,
-    s_canonical: scalar::to_bytes(&s),
-    challenge: scalar::to_bytes(&challenge),
-    public_key: *public_key.as_bytes(),
-  })
-}
-
-#[cfg(all(rscrypto_internal, feature = "diag"))]
-#[doc(hidden)]
-#[must_use]
-pub fn diag_ed25519_verify_challenge_reduce_digest(
-  public_key: &Ed25519PublicKey,
-  signature: &Ed25519Signature,
-  message: &[u8],
-) -> [u8; SECRET_KEY_LENGTH] {
-  let (r_bytes, _) = split_signature(signature);
-  let challenge_digest = hash_challenge(&r_bytes, public_key.as_bytes(), message);
-  let challenge = scalar::reduce_bytes_mod_order(&challenge_digest);
-  scalar::to_bytes(&challenge)
-}
-
-#[cfg(all(rscrypto_internal, feature = "diag"))]
-#[doc(hidden)]
-#[must_use]
-pub fn diag_ed25519_verify_public_decode_digest(public_key: &[u8; PUBLIC_KEY_LENGTH]) -> [u8; PUBLIC_KEY_LENGTH] {
-  point::ExtendedPoint::from_bytes(public_key)
-    .and_then(point::ExtendedPoint::to_bytes)
-    .unwrap_or_default()
-}
-
-#[cfg(all(rscrypto_internal, feature = "diag"))]
-#[doc(hidden)]
-#[must_use]
-pub fn diag_ed25519_verify_r_decode_digest(r_bytes: &[u8; PUBLIC_KEY_LENGTH]) -> [u8; PUBLIC_KEY_LENGTH] {
-  if is_small_order_encoded(r_bytes) {
-    return [0; PUBLIC_KEY_LENGTH];
-  }
-  point::ExtendedPoint::from_bytes(r_bytes)
-    .and_then(point::ExtendedPoint::to_bytes)
-    .unwrap_or_default()
-}
-
-#[cfg(all(rscrypto_internal, feature = "diag"))]
-#[doc(hidden)]
-#[must_use]
-pub fn diag_ed25519_verify_portable_double_scalar_digest(
-  s_canonical: &[u8; SECRET_KEY_LENGTH],
-  challenge: &[u8; SECRET_KEY_LENGTH],
-  public_key: &[u8; PUBLIC_KEY_LENGTH],
-) -> [u8; PUBLIC_KEY_LENGTH] {
-  point::ExtendedPoint::from_bytes(public_key)
-    .map(|a_point| point::straus_wnaf_basepoint_vartime(s_canonical, challenge, &a_point.neg()))
-    .and_then(point::ExtendedPoint::to_bytes)
-    .unwrap_or_default()
-}
-
-#[cfg(all(
-  rscrypto_internal,
-  feature = "diag",
-  target_arch = "aarch64",
-  any(target_os = "macos", target_os = "linux"),
-  not(feature = "portable-only"),
-  not(miri)
-))]
-#[doc(hidden)]
-#[must_use]
-pub fn diag_ed25519_verify_aarch64_asm_double_scalar_digest(
-  s_canonical: &[u8; SECRET_KEY_LENGTH],
-  challenge: &[u8; SECRET_KEY_LENGTH],
-  public_key: &[u8; PUBLIC_KEY_LENGTH],
-) -> [u8; PUBLIC_KEY_LENGTH] {
-  point::ExtendedPoint::from_bytes(public_key)
-    .and_then(|point| aarch64_asm::double_scalar_basepoint_encoded(s_canonical, challenge, &point.neg()))
-    .unwrap_or_default()
-}
-
 // The eight canonical encodings of the Edwards25519 subgroup of order eight.
 const SMALL_ORDER_ENCODINGS: [[u8; PUBLIC_KEY_LENGTH]; 8] = [
   [
@@ -1178,9 +1004,12 @@ mod tests {
   use alloc::format;
 
   use super::{
-    Ed25519Keypair, Ed25519PublicKey, Ed25519SecretKey, Ed25519Signature, constants, diag_ed25519_sign_commitment,
-    diag_ed25519_sign_inputs, diag_ed25519_sign_nonce_reduce, diag_ed25519_sign_response, field, hash, point, scalar,
-    verify,
+    Ed25519Keypair, Ed25519PublicKey, Ed25519SecretKey, Ed25519Signature, constants,
+    ct_tests::{
+      diag_ed25519_sign_commitment, diag_ed25519_sign_inputs, diag_ed25519_sign_nonce_reduce,
+      diag_ed25519_sign_response,
+    },
+    field, hash, point, scalar, verify,
   };
 
   /// The signing-phase timing probes must time the steps `sign` executes: the
@@ -1608,3 +1437,6 @@ mod tests {
     assert!(super::aarch64_asm::double_scalar_basepoint_encoded(&s, &h, &projective).is_none());
   }
 }
+
+#[cfg(test)]
+pub(crate) mod ct_tests;

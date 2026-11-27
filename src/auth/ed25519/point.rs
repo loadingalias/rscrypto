@@ -516,18 +516,6 @@ fn select_signed_cached(table: &[CachedPoint; 8], digit: i8) -> CachedPoint {
   select_cached(&selected, &neg, core::hint::black_box(ct_negative_mask_i8(digit)))
 }
 
-/// Select one signed digit from the first portable basepoint table and return its field limbs.
-#[cfg(all(rscrypto_internal, feature = "diag", feature = "ed25519"))]
-#[inline(always)]
-pub fn diag_select_basepoint_cached_limb_digest(digit: i8) -> [u64; 15] {
-  let selected = select_signed_cached(&BASEPOINT_RADIX16_TABLE[0], digit);
-  let mut out = [0u64; 15];
-  out[0..5].copy_from_slice(selected.y_plus_x.limbs());
-  out[5..10].copy_from_slice(selected.y_minus_x.limbs());
-  out[10..15].copy_from_slice(selected.t2d.limbs());
-  out
-}
-
 /// Add a signed digit from a projective cached table (runtime table).
 #[cfg(feature = "ed25519")]
 #[inline]
@@ -804,5 +792,36 @@ pub(crate) mod tests {
     let expected = decode_hex_32("d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a").ok();
 
     assert_eq!(public, expected);
+  }
+}
+
+#[cfg(all(test, not(miri), feature = "portable-only", feature = "ed25519"))]
+mod binsec {
+  use super::*;
+  use crate::binsec::*;
+  use core::ptr;
+
+  fn select_basepoint_cached_limb_digest(digit: i8) -> [u64; 15] {
+    let selected = select_signed_cached(&BASEPOINT_RADIX16_TABLE[0], digit);
+    let mut out = [0u64; 15];
+    out[0..5].copy_from_slice(selected.y_plus_x.limbs());
+    out[5..10].copy_from_slice(selected.y_minus_x.limbs());
+    out[10..15].copy_from_slice(selected.t2d.limbs());
+    out
+  }
+
+  #[unsafe(no_mangle)]
+  #[inline(never)]
+  pub(super) extern "C" fn ct_binsec_ed25519_select_basepoint_cached() -> ! {
+    // SAFETY: This pointer references a fixed harness global with static storage.
+    let digit = unsafe { ptr::read_volatile(ptr::addr_of!(CT_BINSEC_ED25519_DIGIT)) };
+    let limbs = select_basepoint_cached_limb_digest(digit);
+
+    let mut acc = 0u64;
+    for limb in limbs {
+      acc ^= limb;
+    }
+    let folded = acc | (acc >> 8) | (acc >> 16) | (acc >> 24) | (acc >> 32) | (acc >> 40) | (acc >> 48) | (acc >> 56);
+    ct_binsec_done(folded.to_le_bytes()[0])
   }
 }

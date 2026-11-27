@@ -177,10 +177,7 @@ pub(crate) unsafe fn compress_in_place_avx2_bytes(
 
 // On ASM-supported platforms, we prefer the handwritten assembly. This intrinsics
 // version is kept as fallback for other x86_64 platforms (e.g., FreeBSD, illumos).
-#[cfg(any(
-  all(rscrypto_internal, feature = "diag"),
-  not(any(target_os = "linux", target_os = "macos", target_os = "windows"))
-))]
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
 #[target_feature(enable = "avx512f,avx512vl,avx2,sse4.1,ssse3")]
 /// Compresses one byte-oriented block in place with AVX-512.
 ///
@@ -205,10 +202,7 @@ pub(crate) unsafe fn compress_in_place_avx512_bytes(
   }
 }
 
-#[cfg(any(
-  all(rscrypto_internal, feature = "diag"),
-  not(any(target_os = "linux", target_os = "macos", target_os = "windows"))
-))]
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
 #[target_feature(enable = "avx512f,avx512vl,avx2,sse4.1,ssse3")]
 /// Compresses one byte-oriented block to a chaining value with AVX-512.
 ///

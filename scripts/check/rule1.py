@@ -10,10 +10,6 @@ import re
 import sys
 
 ROOT = Path(__file__).resolve().parents[2]
-# RULE1-PURITY (docs/tasks/delivery.md) removes each entry. An entry that matches nothing fails.
-ALLOWED = {
-  ('src/traits/ct.rs', 'tests::DIT_ENTRIES.with(|entries| entries.set(entries.get().strict_add(1)));'),
-}
 MOD = re.compile(r'^\s*(?:pub(?:\([^)]*\))?\s+)?mod\s+(\w+)\s*([;{])')
 PATH = re.compile(r'#\[path\s*=\s*"([^"]+)"\]')
 INCLUDE = re.compile(r'^\s*include!\("([^"]+\.rs)"\);')
@@ -125,13 +121,9 @@ def violations(root):
 
 def main():
   found = violations(ROOT)
-  new = [v for v in found if (v[0], v[2]) not in ALLOWED]
-  stale = ALLOWED - {(v[0], v[2]) for v in found}
-  for path, line, text in new:
+  for path, line, text in found:
     print(f'{path}:{line}: test-only item in production code: {text}', file=sys.stderr)
-  for path, text in sorted(stale):
-    print(f'{path}: stale RULE 1 allowance: {text}', file=sys.stderr)
-  return 1 if new or stale else 0
+  return int(bool(found))
 
 
 if __name__ == '__main__':

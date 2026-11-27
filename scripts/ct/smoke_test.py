@@ -16,8 +16,8 @@ ROOT = Path(__file__).resolve().parents[2]
 def main():
   with tempfile.TemporaryDirectory() as temporary:
     root = Path(temporary)
-    for name in ('scripts/ct/dudect.sh', 'scripts/ct/dudect_execute.py', 'scripts/ct/manifest.py',
-                 'scripts/ct/provenance.py', 'scripts/ct/internal.py', 'scripts/lib/python.sh'):
+    for name in ('ct.toml', 'scripts/ct/library_harness.py', 'scripts/ct/dudect.sh', 'scripts/ct/dudect_execute.py', 'scripts/ct/manifest.py',
+                 'scripts/ct/provenance.py', 'scripts/lib/python.sh'):
       path = root / name
       path.parent.mkdir(parents=True, exist_ok=True)
       shutil.copy2(ROOT / name, path)
@@ -40,6 +40,7 @@ build = Path(args[args.index('--target-dir') + 1]) / args[args.index('--target')
 build.mkdir(parents=True, exist_ok=True)
 path = build / 'rscrypto-ct-dudect'
 path.write_text('unused fixture')
+print(json.dumps({'reason': 'compiler-artifact', 'target': {'name': 'rscrypto'}, 'profile': {'test': True}, 'executable': str(path)}))
 print('linker "-o" fixture')
 ''')
     # Reporting and the timing binary are substitutes; selection, budgets, shell
@@ -69,7 +70,7 @@ if __name__ == '__main__':
     env.update(PATH=str(binary) + os.pathsep + os.environ['PATH'], PYTHON=sys.executable,
                LLVM_OBJDUMP=str(binary / 'llvm'), LLVM_NM=str(binary / 'llvm'),
                CARGO_ENCODED_RUSTFLAGS='-C\x1flink-arg=path with spaces')
-    expected_flags = ['-C', 'link-arg=path with spaces', '--cfg', 'rscrypto_internal']
+    expected_flags = ['-C', 'link-arg=path with spaces']
     for args, override, expected in (
       (['--smoke'], {}, [['cheap', 2000], ['expensive', 16]]),
       (['--smoke', '--filter', 'expensive'], {}, [['expensive', 16]]),

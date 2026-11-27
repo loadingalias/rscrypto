@@ -982,46 +982,6 @@ pub(crate) fn authenticate_aead_short_text_portable(aad: &[u8], ciphertext: &[u8
   )
 }
 
-#[cfg(all(rscrypto_internal, feature = "diag"))]
-/// Computes a ChaCha20-Poly1305 authenticator through the selected Poly1305 backend.
-pub fn diag_chacha20poly1305_authenticate_aead(aad: &[u8], ciphertext: &[u8], key: &[u8; 32]) -> [u8; 16] {
-  #[cfg(feature = "chacha20poly1305")]
-  let primitive = AeadPrimitive::ChaCha20Poly1305;
-  #[cfg(all(not(feature = "chacha20poly1305"), feature = "xchacha20poly1305"))]
-  let primitive = AeadPrimitive::XChaCha20Poly1305;
-  authenticate_aead(primitive, aad, ciphertext, key)
-}
-
-#[cfg(all(rscrypto_internal, feature = "diag"))]
-#[unsafe(no_mangle)]
-#[inline(never)]
-/// Computes a diagnostic Poly1305 tag after one block using the portable backend.
-///
-/// `partial` suppresses the full-block high bit for a caller-prepared partial-block encoding.
-pub fn diag_poly1305_block_portable_digest(key: &[u8; 32], block: &[u8; 16], partial: bool) -> [u8; 16] {
-  let mut state = State::new(key);
-  state.compute_block_portable(block, partial);
-  state.tag()
-}
-
-#[cfg(all(
-  rscrypto_internal,
-  feature = "diag",
-  target_arch = "aarch64",
-  any(target_os = "linux", target_os = "macos")
-))]
-/// Computes a ChaCha20-Poly1305 authenticator with the four-lane AArch64 NEON backend.
-pub fn diag_chacha20poly1305_authenticate_aead_aarch64_neon_par4(
-  aad: &[u8],
-  ciphertext: &[u8],
-  key: &[u8; 32],
-) -> [u8; 16] {
-  let mut mac = aarch64_neon::AeadPar4::new(key);
-  mac.update_padded_segment(aad);
-  mac.update_padded_segment(ciphertext);
-  mac.finalize(super::AeadByteLengths::from_usize(aad.len(), ciphertext.len()))
-}
-
 #[cfg(target_arch = "aarch64")]
 #[path = "poly1305/aarch64_neon.rs"]
 pub(crate) mod aarch64_neon;
@@ -1125,21 +1085,6 @@ mod tests {
 
     let actual = super::authenticate_aead(primitive(), &aad, &ciphertext, &poly_key);
     assert_eq!(actual, expected);
-    #[cfg(all(rscrypto_internal, feature = "diag"))]
-    assert_eq!(
-      super::diag_chacha20poly1305_authenticate_aead(&aad, &ciphertext, &poly_key),
-      expected
-    );
-    #[cfg(all(
-      rscrypto_internal,
-      feature = "diag",
-      target_arch = "aarch64",
-      any(target_os = "linux", target_os = "macos")
-    ))]
-    assert_eq!(
-      super::diag_chacha20poly1305_authenticate_aead_aarch64_neon_par4(&aad, &ciphertext, &poly_key),
-      expected
-    );
   }
 
   #[test]
@@ -1494,5 +1439,36 @@ mod tests {
 
     let result = par4_neon(&aad, &ciphertext, &poly_key);
     assert_eq!(result, expected);
+  }
+}
+
+#[cfg(all(test, not(miri), feature = "portable-only", feature = "chacha20poly1305"))]
+mod binsec {
+  use super::*;
+  use crate::binsec::*;
+  use core::ptr;
+
+  fn poly1305_block_portable_digest(key: &[u8; 32], block: &[u8; 16], partial: bool) -> [u8; 16] {
+    let mut state = State::new(key);
+    state.compute_block_portable(block, partial);
+    state.tag()
+  }
+
+  #[unsafe(no_mangle)]
+  #[inline(never)]
+  pub(super) extern "C" fn ct_binsec_poly1305_block_portable() -> ! {
+    // SAFETY: These pointers reference fixed harness globals with static storage.
+    let key = unsafe { array_from_global(&raw const CT_BINSEC_POLY1305_KEY) };
+    // SAFETY: These pointers reference fixed harness globals with static storage.
+    let block = unsafe { array_from_global(&raw const CT_BINSEC_POLY1305_BLOCK) };
+    // SAFETY: This pointer references a fixed harness global with static storage.
+    let partial = unsafe { ptr::read_volatile(ptr::addr_of!(CT_BINSEC_POLY1305_PARTIAL)) } != 0;
+    let tag = poly1305_block_portable_digest(&key, &block, partial);
+
+    let mut acc = 0u8;
+    for byte in tag {
+      acc ^= byte;
+    }
+    ct_binsec_done(acc)
   }
 }

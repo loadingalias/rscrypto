@@ -53,7 +53,6 @@ const MAX_KEY_LEN_U8: u8 = 32;
 const MAX_KEY_LEN: usize = MAX_KEY_LEN_U8 as usize;
 const MAX_OUTPUT_LEN_U8: u8 = 32;
 
-#[cfg(feature = "diag")]
 #[inline]
 #[must_use]
 pub(crate) fn kernel_name_for_len(len: usize) -> &'static str {
@@ -622,22 +621,6 @@ impl Blake2sParams {
 pub struct Blake2s256(Core);
 
 impl_blake2_digest!(Blake2s256, Blake2sKey, 32);
-
-#[cfg(all(rscrypto_internal, feature = "diag"))]
-/// Derive a keyed Blake2s-256 diagnostic digest with the portable backend.
-#[must_use]
-pub fn diag_blake2s256_keyed_digest_portable(key: &[u8; 32]) -> [u8; 32] {
-  let mut out = [0u8; 32];
-  oneshot_small_into_with_params(
-    32,
-    key,
-    None,
-    b"binsec",
-    &mut out,
-    kernels::compress_fn(kernels::Blake2sKernelId::Portable),
-  );
-  out
-}
 
 // ─── Blake2s128 ─────────────────────────────────────────────────────────────
 

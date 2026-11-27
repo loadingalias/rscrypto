@@ -36,21 +36,10 @@ export RUSTUP_TOOLCHAIN
 export CARGO_RAIL_CACHE=off
 export CARGO_PROFILE_TEST_OPT_LEVEL=0
 
-# Miri cannot execute SIMD/CLMUL kernels directly. Force CRC families onto their
-# portable tiers so the lane spends time validating real pointer/length logic
-# instead of re-running selector machinery that Miri cannot meaningfully
-# distinguish from the hardware paths.
-export RSCRYPTO_CRC16_CCITT_FORCE=portable
-export RSCRYPTO_CRC16_IBM_FORCE=portable
-export RSCRYPTO_CRC24_FORCE=portable
-export RSCRYPTO_CRC32_FORCE=portable
-export RSCRYPTO_CRC64_FORCE=portable
-export RSCRYPTO_ADLER32_FORCE=portable
-
 # Single-crate layout: run Miri on the whole rscrypto crate.
 # The #[cfg(miri)] guards in dispatch/SIMD modules ensure portable code is used.
 
-MIRI_FEATURES="${RSCRYPTO_MIRI_FEATURES:-full,diag}"
+MIRI_FEATURES="${RSCRYPTO_MIRI_FEATURES:-full}"
 MIRI_SCOPE="${RSCRYPTO_MIRI_SCOPE:-focused}"
 
 case "${1:-}" in
@@ -151,7 +140,7 @@ case "$MIRI_SCOPE" in
       "auth::p384_ecdh::tests::miri_uses_portable_p384_ecdh_path"
     run_miri_lib_filter_features "ML-KEM portable round trip and rejection under Miri" \
       "auth::mlkem::operations::tests::miri_mlkem512_portable_round_trip_and_rejection" \
-      "ml-kem,diag" \
+      "ml-kem" \
       1
     run_miri_test_target "Argon2 MatrixView/portable kernel under Miri" "argon2_miri" "argon2"
     run_miri_lib_filter_features "scrypt caller work-memory byte view under Miri" \
@@ -185,8 +174,8 @@ case "$MIRI_SCOPE" in
     echo "Full-size import, private operations, rejection, keygen, vectors, leakage, and assembly stay in native lanes"
 
     run_miri_lib_filter_features "RSA focused unsafe-boundary proofs under Miri" \
-      "auth::rsa::tests::rsa_miri_proof_" \
-      "rsa,diag" \
+      "rsa_miri_proof_" \
+      "rsa" \
       3
     ;;
   exhaustive)

@@ -84,7 +84,6 @@ pub(crate) enum Blake2bKernelId {
 }
 
 impl Blake2bKernelId {
-  #[cfg(any(test, feature = "diag"))]
   #[inline]
   #[must_use]
   pub(crate) const fn as_str(self) -> &'static str {

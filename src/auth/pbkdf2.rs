@@ -232,7 +232,6 @@ macro_rules! define_pbkdf2_sha2 {
       f_fn: $f_fn:path,
       iter1_fn: $iter1_fn:path,
       derive_key_fast_path: $derive_key_fast_path:path,
-      test_oneshot: $test_oneshot:path,
       word_ty: $word_ty:ty,
       recommended_iterations: $recommended_iterations:expr,
     }
@@ -679,11 +678,6 @@ macro_rules! define_pbkdf2_sha2 {
         })
       }
 
-      /// Build with a specific digest compress function for tests and internal proofs.
-      #[cfg(any(test, all(rscrypto_internal, feature = "diag")))]
-      pub(crate) fn new_with_compress_for_test(password: &[u8], compress: $compress_ty) -> Self {
-        Self::from_key_schedule(password, compress, |password| $test_oneshot(password, compress))
-      }
     }
 
     impl Drop for $name {
@@ -736,68 +730,9 @@ define_pbkdf2_sha2! {
     f_fn: pbkdf2_sha256_f,
     iter1_fn: pbkdf2_sha256_iter1,
     derive_key_fast_path: pbkdf2_sha256_derive_key_fast_path,
-    test_oneshot: sha256_oneshot_with_compress,
     word_ty: u32,
     recommended_iterations: 600_000,
   }
-}
-
-/// One-shot SHA-256 digest with a specific compress function for tests and internal proofs.
-#[cfg(any(test, all(rscrypto_internal, feature = "diag")))]
-fn sha256_oneshot_with_compress(data: &[u8], compress: Sha256KernelId) -> [u8; SHA256_OUTPUT_SIZE] {
-  let mut state = SHA256_H0;
-  let mut pos = 0usize;
-  while pos.strict_add(SHA256_BLOCK_SIZE) <= data.len() {
-    compress.call(&mut state, &data[pos..pos.strict_add(SHA256_BLOCK_SIZE)]);
-    pos = pos.strict_add(SHA256_BLOCK_SIZE);
-  }
-  let mut block = [0u8; SHA256_BLOCK_SIZE];
-  let tail = data.len().strict_sub(pos);
-  block[..tail].copy_from_slice(&data[pos..]);
-  block[tail] = 0x80;
-  if tail >= 56 {
-    compress.call(&mut state, &block);
-    block = [0u8; SHA256_BLOCK_SIZE];
-  }
-  block[56..64].copy_from_slice(&(data.len() as u64).strict_mul(8).to_be_bytes());
-  compress.call(&mut state, &block);
-  let mut out = [0u8; SHA256_OUTPUT_SIZE];
-  let (chunks, _) = out.as_chunks_mut::<4>();
-  for (chunk, &word) in chunks.iter_mut().zip(state.iter()) {
-    chunk.copy_from_slice(&word.to_be_bytes());
-  }
-  ct::zeroize_words_no_fence(&mut state);
-  ct::zeroize_no_fence(&mut block);
-  core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
-  out
-}
-
-#[cfg(all(rscrypto_internal, feature = "diag"))]
-#[must_use]
-/// Return whether portable PBKDF2-HMAC-SHA256 derives `expected` from `password`
-/// using the salt `salt` and one iteration, without application password-policy checks.
-pub fn diag_pbkdf2_sha256_verify_portable(
-  password: &[u8; SHA256_OUTPUT_SIZE],
-  expected: &[u8; SHA256_OUTPUT_SIZE],
-) -> bool {
-  let compress = crate::hashes::crypto::sha256::kernels::Sha256KernelId::Portable;
-  Pbkdf2Sha256::new_with_compress_for_test(password, compress)
-    .verify_primitive_unguarded(b"salt", 1, expected)
-    .is_ok()
-}
-
-#[cfg(all(rscrypto_internal, feature = "diag"))]
-#[must_use]
-/// Return whether portable PBKDF2-HMAC-SHA512 derives `expected` from `password`
-/// using the salt `salt` and one iteration, without application password-policy checks.
-pub fn diag_pbkdf2_sha512_verify_portable(
-  password: &[u8; SHA512_OUTPUT_SIZE],
-  expected: &[u8; SHA512_OUTPUT_SIZE],
-) -> bool {
-  let compress = crate::hashes::crypto::sha512::kernels::Sha512KernelId::Portable;
-  Pbkdf2Sha512::new_with_compress_for_test(password, compress)
-    .verify_primitive_unguarded(b"salt", 1, expected)
-    .is_ok()
 }
 
 #[inline]
@@ -1144,7 +1079,6 @@ define_pbkdf2_sha2! {
     f_fn: pbkdf2_sha512_f,
     iter1_fn: pbkdf2_sha512_iter1,
     derive_key_fast_path: pbkdf2_sha512_derive_key_fast_path,
-    test_oneshot: sha512_oneshot_with_compress,
     word_ty: u64,
     recommended_iterations: 220_000,
   }
@@ -1163,36 +1097,6 @@ fn pbkdf2_sha512_derive_key_fast_path(
   _okm: &mut [u8],
 ) -> Result<bool, Pbkdf2Error> {
   Ok(false)
-}
-
-/// One-shot SHA-512 digest with a specific compress function for tests and internal proofs.
-#[cfg(any(test, all(rscrypto_internal, feature = "diag")))]
-fn sha512_oneshot_with_compress(data: &[u8], compress: Sha512KernelId) -> [u8; SHA512_OUTPUT_SIZE] {
-  let mut state = SHA512_H0;
-  let mut pos = 0usize;
-  while pos.strict_add(SHA512_BLOCK_SIZE) <= data.len() {
-    compress.call(&mut state, &data[pos..pos.strict_add(SHA512_BLOCK_SIZE)]);
-    pos = pos.strict_add(SHA512_BLOCK_SIZE);
-  }
-  let mut block = [0u8; SHA512_BLOCK_SIZE];
-  let tail = data.len().strict_sub(pos);
-  block[..tail].copy_from_slice(&data[pos..]);
-  block[tail] = 0x80;
-  if tail >= 112 {
-    compress.call(&mut state, &block);
-    block = [0u8; SHA512_BLOCK_SIZE];
-  }
-  block[112..128].copy_from_slice(&(data.len() as u128).strict_mul(8).to_be_bytes());
-  compress.call(&mut state, &block);
-  let mut out = [0u8; SHA512_OUTPUT_SIZE];
-  let (chunks, _) = out.as_chunks_mut::<8>();
-  for (chunk, &word) in chunks.iter_mut().zip(state.iter()) {
-    chunk.copy_from_slice(&word.to_be_bytes());
-  }
-  ct::zeroize_words_no_fence(&mut state);
-  ct::zeroize_no_fence(&mut block);
-  core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
-  out
 }
 
 /// Compute one PBKDF2-SHA512 block: `F(Password, Salt, c, i)`.
@@ -1989,7 +1893,7 @@ mod tests {
       let mut expected = vec![0u8; dk_len];
       oracle_sha256(password, salt, iterations, &mut expected);
 
-      let state = Pbkdf2Sha256::new_with_compress_for_test(password, id);
+      let state = Pbkdf2Sha256::from_key_schedule(password, id, Sha256::digest_secret);
       let mut actual = vec![0u8; dk_len];
       state
         .derive(salt, iterations, &mut actual)
@@ -2025,7 +1929,7 @@ mod tests {
       let mut expected = vec![0u8; dk_len];
       oracle_sha512(password, salt, iterations, &mut expected);
 
-      let state = Pbkdf2Sha512::new_with_compress_for_test(password, id);
+      let state = Pbkdf2Sha512::from_key_schedule(password, id, Sha512::digest_secret);
       let mut actual = vec![0u8; dk_len];
       state
         .derive(salt, iterations, &mut actual)

@@ -115,11 +115,9 @@ pub(super) fn configure_isa() -> Result<(), String> {
     .map_err(|error| format!("set BLAKE3 benchmark ISA before detection: {error}"))?;
   }
   let effective = platform::caps();
-  #[cfg(feature = "diag")]
+
   let selected_bulk = Some(rscrypto::hashes::introspect::kernel_for::<Blake3>(usize::MAX));
-  #[cfg(not(feature = "diag"))]
-  let selected_bulk: Option<&str> = None;
-  #[cfg(feature = "diag")]
+
   if requested != "auto" {
     let expected = match requested.as_str() {
       "sse41" => "x86_64/sse4.1",
@@ -393,7 +391,6 @@ pub(super) fn bench(c: &mut Criterion) {
   if !super::bench_config::selected("blake3/mixed-batch/") {
     return;
   }
-  super::print_blake3_diag_once();
   let mut fixtures = Vec::new();
   for (case, lengths) in CASES {
     for count in [16usize, 65] {

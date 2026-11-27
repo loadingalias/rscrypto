@@ -22,7 +22,7 @@ EMBED_CHANNEL = '1.85'
 # no primitive. Every other feature runs its own tests alone.
 UMBRELLAS = {'aead', 'auth', 'checksums', 'crypto-hashes', 'default', 'ecdsa', 'fast-hashes', 'full', 'hashes',
              'kdfs', 'key-exchange', 'macs', 'password-hashing', 'signatures'}
-NOT_PRIMITIVES = {'alloc', 'diag', 'getrandom', 'portable-only', 'rand_core', 'serde', 'serde-secrets', 'std'}
+NOT_PRIMITIVES = {'alloc', 'getrandom', 'portable-only', 'rand_core', 'serde', 'serde-secrets', 'std'}
 
 
 def read(path):
@@ -130,7 +130,7 @@ def cases():
     for target in targets():
         features = ['full', 'rand_core', 'serde', 'serde-secrets', 'websocket-sha1']
         if target == 'wasm32-wasip1':
-            features += ['std', 'diag', 'getrandom']
+            features += ['std', 'getrandom']
         yield target, [check(canonical, target, features, 'build')], {}
 
     # Embedders build the exported portable BLAKE3 text alone: no cfg, crate, unsafe code, or warning.

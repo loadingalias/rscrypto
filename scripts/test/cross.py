@@ -1,8 +1,7 @@
 #!/usr/bin/env -S uv run python
 """Build target test suites on x86-64; execute the sealed suites on native hardware.
 
-Doctests run only on the native CI rows. Each cross suite runs under the `cross` or
-`cross-internal` Nextest profile, which skips work the native rows or another suite
+Doctests run only on the native CI rows. Each cross suite runs under the `cross` Nextest profile, which skips work the native rows or another suite
 already cover on the same target (`.config/nextest.toml`). Under emulation (`run --emulated`),
 only the native-dispatch suites run, under the `emulated` profiles: they select the extension
 kernels, and the native runner covers the portable suites.
@@ -23,15 +22,15 @@ sys.path.insert(0, str(ROOT / 'scripts/lib'))
 import evidence_bundle as bundle
 from cross_build import TARGETS, environment, require_host
 from workspace_features import native_features
-from evidence_suite import TARGET_ARGS, validate_backend_evidence
+from evidence_suite import validate_backend_evidence
 
-MODES = ("native", "portable", "internal-native", "internal-portable")
-EMULATED_MODES = ("native", "internal-native")
+MODES = ("native", "portable")
+EMULATED_MODES = ("native",)
 # Painted-stack measurements (scripts/stack/painted.py) run from the same bundle.
 STACK_PAINT = ROOT / 'tools/stack-paint'
 STACK_BINARIES = ('rscrypto-stack-edges', 'rscrypto-stack-worker')
 # `examples/introspect.rs` prints the capabilities that runtime detection reports and the kernels that it selects.
-INTROSPECT = ['--example', 'introspect', '--features', 'crc32,sha2,chacha20poly1305,diag']
+INTROSPECT = ['--example', 'introspect', '--features', 'crc32,sha2,chacha20poly1305']
 
 
 def features(mode):
@@ -79,20 +78,12 @@ def prepare(target, archive):
         metadata['linker'] = {'path': str(compiler), 'sha256': bundle.digest(compiler),
                              'version': subprocess.check_output([str(compiler), '--version'], text=True)}
         for mode in MODES:
-            internal = mode.startswith('internal-')
-            mode_env = env.copy()
-            if internal:
-                flags = subprocess.check_output([sys.executable, '-B', str(ROOT / 'scripts/ct/internal.py'),
-                    '--target', target, '--print-encoded-rustflags'], cwd=ROOT, env=env, text=True)
-                mode_env['CARGO_ENCODED_RUSTFLAGS'] = flags
             args = ['--target', target, *features(mode)]
             command = ['cargo', 'nextest', 'archive', '--locked', '--workspace', '--release', *args,
                        '--archive-file', str(out / f'{mode}.tar.zst')]
-            if internal:
-                command += TARGET_ARGS
-            subprocess.run(command, cwd=ROOT, env=mode_env, check=True)
-            metadata['modes'][mode] = {'command': command, 'internal': internal,
-                'encoded_rustflags': mode_env.get('CARGO_ENCODED_RUSTFLAGS')}
+            subprocess.run(command, cwd=ROOT, env=env, check=True)
+            metadata['modes'][mode] = {'command': command,
+                'encoded_rustflags': env.get('CARGO_ENCODED_RUSTFLAGS')}
         metadata['stack_paint'] = {}
         for configuration in ('native', 'portable'):
             build_dir = ROOT / 'target/stack-paint' / configuration
@@ -130,12 +121,7 @@ def execute(target, archive, emulated=False):
     if nextest_identity(manifest['metadata']['nextest']) != nextest_identity(version):
         raise ValueError('producer and consumer Nextest versions differ')
     if set(manifest['metadata']['modes']) != set(MODES):
-        raise ValueError('ordinary and internal suites require both dispatch modes')
-    for mode, record in manifest['metadata']['modes'].items():
-        internal = mode.startswith('internal-')
-        flags = (record.get('encoded_rustflags') or '').split('\x1f')
-        if record.get('internal') != internal or ('rscrypto_internal' in flags) != internal:
-            raise ValueError('test archive internal-build provenance differs from its suite')
+        raise ValueError('test archives require both native and portable suites')
     # The detection of this host shows which kernels its suites can select.
     detected = None
     if 'introspect' in manifest['metadata']:
@@ -149,20 +135,18 @@ def execute(target, archive, emulated=False):
              if 'stack_paint' in manifest['metadata'] else None)
     results = {}
     for mode in EMULATED_MODES if emulated else MODES:
-        internal = mode.startswith('internal-')
         log_path = out / f'{mode}-nextest.log'
         with log_path.open('w') as log:
             result = subprocess.run(['cargo', 'nextest', 'run', '--archive-file', str(incoming / f'{mode}.tar.zst'),
                             '--workspace-remap', str(ROOT), '--config-file', str(ROOT / '.config/nextest.toml'),
-                            '--profile', ('emulated' if emulated else 'cross') + ('-internal' if internal else ''),
+                            '--profile', 'emulated' if emulated else 'cross',
                             '--no-tests', 'fail'], cwd=ROOT, stdout=log, stderr=subprocess.STDOUT, check=False)
         if result.returncode:
             print(f'{target} {mode} Nextest failed; full log: {log_path}\n'
                   f'{log_path.read_text(errors="replace")[-16384:]}', file=sys.stderr, flush=True)
             result.check_returncode()
         results[mode] = {'status': 'pass'}
-        if internal:
-            results[mode]['backend_evidence'] = validate_backend_evidence((out / f'{mode}-nextest.log').read_text(),
+        results[mode]['backend_evidence'] = validate_backend_evidence((out / f'{mode}-nextest.log').read_text(),
                 'portable-only' if mode.endswith('portable') else 'production-auto')
     # Detect accidental changes to inputs throughout execution as well as before it.
     bundle.verify(ROOT, incoming, 'rscrypto.cross.tests', target)
@@ -170,7 +154,7 @@ def execute(target, archive, emulated=False):
         'archive_sha256': bundle.digest(archive), 'host': platform.uname()._asdict(),
         'nextest': version, 'detection': detected, 'emulated': emulated, 'modes': results,
         'stack_paint': stack}, indent=2) + '\n')
-    print(f'{target} ordinary and internal suites passed: {out}', flush=True)
+    print(f'{target} native and portable suites passed: {out}', flush=True)
 
 
 def stack_paint(target, binaries, output):

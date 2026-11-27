@@ -61,7 +61,7 @@ def bench_of(catalog: dict, entry: dict) -> str:
              if bench["kind"] == "criterion" and bench["binary"] == entry["binary"]
              and bench.get("manifest") == manifest
              and bench.get("rustflags", []) == entry.get("rustflags", [])
-             and set(bench["features"]) in (features, features - {"diag"})]
+             and set(bench["features"]) == features]
   if len(matches) != 1:
     raise ComparisonError(f"cannot identify the catalog target of {entry['home']}: {matches}")
   return matches[0]

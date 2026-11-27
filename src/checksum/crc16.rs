@@ -25,7 +25,6 @@ define_crc! {
   output_size: 2,
   spec: Spec::new(16, 0x1021, true, 0xFFFF, 0xFFFF),
   hw: Hw::None,
-  env: "RSCRYPTO_CRC16_CCITT_FORCE",
   buffered: BufferedCrc16Ccitt,
 }
 
@@ -52,6 +51,5 @@ define_crc! {
   output_size: 2,
   spec: Spec::new(16, 0x8005, true, 0, 0),
   hw: Hw::None,
-  env: "RSCRYPTO_CRC16_IBM_FORCE",
   buffered: BufferedCrc16Ibm,
 }

@@ -117,9 +117,6 @@ done
 
 PYTHON="$("$ROOT/scripts/lib/python.sh" --print)"
 
-CARGO_ENCODED_RUSTFLAGS="$("$PYTHON" "$ROOT/scripts/ct/internal.py" --target "$TARGET" --print-encoded-rustflags)"
-export CARGO_ENCODED_RUSTFLAGS
-
 OUT_DIR="$ROOT/target/ct/$TARGET/$PROFILE"
 ARTIFACT_DIR="$OUT_DIR/artifacts"
 BUILD_TARGET_DIR="$ROOT/target/ct-build/$TARGET/$PROFILE"
@@ -184,25 +181,20 @@ if [[ "$TARGET" == *linux* ]]; then
     FINAL_LINK_ARGS+=("-C" "link-arg=-Wl,--Map=$LINK_MAP")
   fi
 elif [[ "$TARGET" == *windows-msvc ]]; then
-  FINAL_LINK_ARGS+=("-C" "link-arg=/MAP:$LINK_MAP")
+  FINAL_LINK_ARGS+=("-C" "link-arg=/MAP:${LINK_MAP#"$ROOT"/}")
 elif [[ "$TARGET" == *apple-darwin ]]; then
   # The symbolizer does not read ld64 maps; asm_heuristics.py takes data atom extents from it.
   LD64_MAP="$ARTIFACT_DIR/rscrypto-ct-evidence.ld64-map.txt"
   FINAL_LINK_ARGS+=("-C" "link-arg=-Wl,-map,$LD64_MAP")
 fi
 echo "building final linked equality evidence binary for $TARGET ($PROFILE)"
-cargo rustc \
-  --color never \
-  --locked \
-  --manifest-path tools/ct-harness/Cargo.toml \
-  --target-dir "$BUILD_TARGET_DIR" \
-  --target "$TARGET" \
-  --release \
-  --bin rscrypto-ct-evidence \
-  -- \
-  --emit=llvm-ir,asm,obj,link \
-  --print link-args \
-  "${FINAL_LINK_ARGS[@]}" \
+FINAL_BINARY="$ARTIFACT_DIR/rscrypto-ct-evidence"
+if [[ "$TARGET" == *-windows-* ]]; then FINAL_BINARY="$FINAL_BINARY.exe"; fi
+# Rustc resolves these paths from the workspace root, including under Git Bash on Windows.
+prefix="${ARTIFACT_DIR#"$ROOT"/}/rscrypto_ct_evidence"
+"$PYTHON" "$ROOT/scripts/ct/library_harness.py" --target "$TARGET" --target-dir "$BUILD_TARGET_DIR" \
+  --output "$FINAL_BINARY" -- "--emit=llvm-ir=$prefix.ll,asm=$prefix.s,obj=$prefix.o,link" \
+  --print link-args "${FINAL_LINK_ARGS[@]}" \
   2>&1 | tee "$LINK_LOG"
 
 link_command_count=$(grep -Ec '"-o"|"/OUT:' "$LINK_LOG" || true)
@@ -219,37 +211,12 @@ if [[ "$TARGET" == *apple-darwin && ! -s "$LD64_MAP" ]]; then
   exit 1
 fi
 
-BIN_EMITTED=()
-while IFS= read -r artifact; do
-  BIN_EMITTED+=("$artifact")
-done < <(
-  find "$EMIT_ROOT" -type f \
-    \( -name 'rscrypto_ct_evidence*.ll' \
-    -o -name 'rscrypto_ct_evidence*.s' \
-    -o -name 'rscrypto_ct_evidence*.o' \
-    -o -name 'rscrypto_ct_evidence*.obj' \) \
-    | sort
-)
-
-if [[ ${#BIN_EMITTED[@]} -ne 3 ]]; then
-  echo "expected one fresh equality binary each for LLVM IR, assembly, and object output; found ${#BIN_EMITTED[@]}" >&2
-  printf '  %s\n' "${BIN_EMITTED[@]}" >&2
-  exit 1
-fi
-
-for artifact in "${BIN_EMITTED[@]}"; do
-  cp "$artifact" "$ARTIFACT_DIR/"
+for artifact in "$prefix.ll" "$prefix.s" "$prefix.o" "$FINAL_BINARY"; do
+  if [[ ! -s "$artifact" ]]; then
+    echo "missing linked CT artifact: $artifact" >&2
+    exit 1
+  fi
 done
-
-FINAL_BINARY="$BUILD_TARGET_DIR/$TARGET/$PROFILE/rscrypto-ct-evidence"
-if [[ -f "$FINAL_BINARY.exe" ]]; then
-  FINAL_BINARY="$FINAL_BINARY.exe"
-fi
-if [[ ! -f "$FINAL_BINARY" ]]; then
-  echo "final linked equality evidence binary missing: $FINAL_BINARY" >&2
-  exit 1
-fi
-cp "$FINAL_BINARY" "$ARTIFACT_DIR/"
 
 OBJECTS=()
 while IFS= read -r obj; do
@@ -360,7 +327,7 @@ fi
   --out-dir "$OUT_DIR" \
   --build-target-dir "$BUILD_TARGET_DIR" \
   --backend llvm \
-  --features std,full,parallel,diag,getrandom \
+  --features std,full,parallel,getrandom \
   --llvm-objdump "$LLVM_OBJDUMP" \
   --llvm-nm "$LLVM_NM" \
   --llvm-size "$LLVM_SIZE" \

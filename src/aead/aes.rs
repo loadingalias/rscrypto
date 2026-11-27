@@ -2044,27 +2044,6 @@ pub(crate) fn aes128_expand_key(key: &[u8; KEY_SIZE_128]) -> Aes128EncKey {
   }
 }
 
-/// Construct the table-free portable AES-128 key representation for proof harnesses.
-///
-/// This bypasses runtime hardware selection without creating a second AES implementation. On
-/// RV64 and s390x, the table-free fixslice fallback is the portable authority.
-#[cfg(all(rscrypto_internal, feature = "diag", feature = "aes-siv"))]
-#[inline]
-pub(crate) fn aes128_expand_key_forced_portable(key: &[u8; KEY_SIZE_128]) -> Aes128EncKey {
-  #[cfg(any(target_arch = "riscv64", target_arch = "s390x"))]
-  {
-    Aes128EncKey {
-      inner: fixslice64_key_inner_128(key),
-    }
-  }
-  #[cfg(not(any(target_arch = "riscv64", target_arch = "s390x")))]
-  {
-    Aes128EncKey {
-      inner: Key128Inner::PortableRoundKeys(aes128_expand_key_portable(key)),
-    }
-  }
-}
-
 // aarch64: block-batch helpers inside one AES-CE target scope
 
 /// Encrypt multiple AES-256 blocks inside one AES-CE target scope.
@@ -6863,5 +6842,32 @@ mod tests {
 
     fixslice64::encrypt_4blocks(&fixslice, &mut blocks);
     assert_eq!(blocks, expected);
+  }
+}
+
+#[cfg(all(
+  test,
+  feature = "full",
+  feature = "parallel",
+  feature = "getrandom",
+  any(unix, windows),
+  not(miri)
+))]
+pub(super) mod ct_tests {
+  use super::*;
+  #[inline]
+  pub(in crate::aead) fn aes128_expand_key_forced_portable(key: &[u8; KEY_SIZE_128]) -> Aes128EncKey {
+    #[cfg(any(target_arch = "riscv64", target_arch = "s390x"))]
+    {
+      Aes128EncKey {
+        inner: fixslice64_key_inner_128(key),
+      }
+    }
+    #[cfg(not(any(target_arch = "riscv64", target_arch = "s390x")))]
+    {
+      Aes128EncKey {
+        inner: Key128Inner::PortableRoundKeys(aes128_expand_key_portable(key)),
+      }
+    }
   }
 }

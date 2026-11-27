@@ -24,36 +24,6 @@ use rscrypto::{Pbkdf2Sha256, Pbkdf2Sha512};
 /// iteration-dominated counts.
 const PRIMITIVE_ITERATIONS: [u32; 3] = [1, 100, 1000];
 
-#[cfg(all(rscrypto_internal, feature = "diag"))]
-fn print_pbkdf2_diag_once() {
-  use std::sync::Once;
-
-  static ONCE: Once = Once::new();
-  ONCE.call_once(|| {
-    use rscrypto::{Sha256, hashes::introspect::kernel_for};
-
-    eprintln!("rscrypto-diag pbkdf2 runtime_caps={}", rscrypto::platform::caps());
-    eprintln!("rscrypto-diag pbkdf2 static_caps={}", rscrypto::platform::caps_static());
-    eprintln!(
-      "rscrypto-diag pbkdf2 target_features sha={} sha512={} avx2={} avx512f={}",
-      cfg!(target_feature = "sha"),
-      cfg!(target_feature = "sha512"),
-      cfg!(target_feature = "avx2"),
-      cfg!(target_feature = "avx512f")
-    );
-    eprintln!(
-      "rscrypto-diag pbkdf2 sha256_kernel 64={} 4096={} 1048576={}",
-      kernel_for::<Sha256>(64),
-      kernel_for::<Sha256>(4096),
-      kernel_for::<Sha256>(1_048_576)
-    );
-  });
-}
-
-#[cfg(not(all(rscrypto_internal, feature = "diag")))]
-#[inline]
-fn print_pbkdf2_diag_once() {}
-
 /// Returns a verification row. `verify` is the row's timed path: it must accept `expected`, and outside timing it
 /// must reject `expected` with its last byte changed.
 fn verify_row<'a>(
@@ -95,7 +65,6 @@ macro_rules! pbkdf2_benches {
       if !bench_config::selected($group) {
         return;
       }
-      print_pbkdf2_diag_once();
 
       let password = $password;
       let salt = $salt;
@@ -233,7 +202,6 @@ macro_rules! pbkdf2_benches {
       if !derive_selected && !verify_selected {
         return;
       }
-      print_pbkdf2_diag_once();
 
       let password = $password;
       let salt = $salt;
@@ -401,7 +369,6 @@ fn pbkdf2_sha256_internal(c: &mut Criterion) {
   if !bench_config::selected("pbkdf2-sha256/internal/") {
     return;
   }
-  print_pbkdf2_diag_once();
 
   let password = [0x55u8; 32];
   let salt = [0x33u8; 16];

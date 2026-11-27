@@ -75,7 +75,6 @@ pub(crate) enum Sha512KernelId {
 }
 
 impl Sha512KernelId {
-  #[cfg(any(test, feature = "diag"))]
   #[inline]
   #[must_use]
   pub(crate) const fn as_str(self) -> &'static str {

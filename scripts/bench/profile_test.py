@@ -52,14 +52,13 @@ class ProfileTests(unittest.TestCase):
           self.assertIn(diagnostic, result.stderr)
     self.assertFalse((self.root / 'target/profiles').exists())
 
-  def test_discovery_and_diagnostic_build_parity(self):
+  def test_discovery_build_parity(self):
     for env in ({}, {'RUSTFLAGS': ''}, {'RUSTFLAGS': '-C target-cpu=generic'},
                 {'CARGO_ENCODED_RUSTFLAGS': '-C\x1ftarget-cpu=generic'}, {'DEV_MACHINE_TARGET': 'fixture'}):
-      self.fixture.ok(self.fixture.bench('blake3', '--diag', '--list', **env))
-      self.fixture.ok(self.profile('blake3', '--diag', '--list', **env))
+      self.fixture.ok(self.fixture.bench('blake3', '--list', **env))
+      self.fixture.ok(self.profile('blake3', '--list', **env))
       builds = [json.loads(row) for row in (self.root / 'builds.jsonl').read_text().splitlines()]
       self.assertEqual(builds[-2], builds[-1])
-      self.assertIn('diag', builds[-1][builds[-1].index('--features') + 1].split(','))
     self.assertFalse((self.root / 'target/profiles').exists())
     self.assertFalse(self.fixture.runs())
 

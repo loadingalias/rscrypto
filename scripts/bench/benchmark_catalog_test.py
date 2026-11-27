@@ -222,10 +222,9 @@ def main() -> None:
   if aes_profile != {
     "bench": "aead",
     "case": "aes-128-gcm/copy-and-encrypt/rscrypto/4096",
-    "diagnostic": False,
   }:
     fail("aead/aes profile preset no longer names the representative production case")
-  for field, value in (("bench", "structural"), ("case", ""), ("diagnostic", "false")):
+  for field, value in (("bench", "structural"), ("case", "")):
     broken = copy.deepcopy(catalog)
     broken["profile_presets"]["aead/aes"][field] = value
     try:
@@ -244,19 +243,13 @@ def main() -> None:
     fail("catalog accepted an architecture-specific profile bundle")
   for binary, case, expected_class in (
     ("sha2", "sha256/rscrypto/64", "ordinary"),
-    ("sha2", "sha256/internal/compress/rscrypto/64", "diagnostic"),
-    ("blake3", "blake3/rscrypto-scalar/64", "diagnostic"),
     ("blake3", "blake3/keyed/rscrypto/64", "ordinary"),
     ("pbkdf2", "pbkdf2-sha256/iters=1000/rscrypto/32", "expensive"),
     ("pbkdf2", "pbkdf2-sha256/verify/iters=600000/rscrypto/32", "expensive"),
     ("pbkdf2", "pbkdf2-sha256/internal/iters=1000/rscrypto-oneshot/32", "diagnostic"),
     ("password_hashing", "argon2id-owasp/rscrypto/m=19MiB_t=2_p=1", "expensive"),
-    ("rsa", "rsa-2048-private-signing/blinding-inverse-scratch-rscrypto", "diagnostic"),
     ("rsa", "rsa-2048-private-signing/sign-pss-sha256/caller-entropy/rscrypto", "expensive"),
-    ("aead_kernels", "aead-kernel/poly1305-auth/dispatched/64", "diagnostic"),
     ("aead", "chacha20-poly1305/copy-and-encrypt/rscrypto/64", "ordinary"),
-    ("aead", "chacha20-poly1305/copy-and-encrypt/rscrypto-owned/64", "diagnostic"),
-    ("aead", "chacha20-poly1305/copy-and-decrypt/rscrypto-x86-asm/64", "diagnostic"),
     ("blake2", "blake2/short-oneshot/rscrypto/blake2b256/16", "ordinary"),
     ("blake2", "blake2/single-update/rscrypto/blake2b256/16", "ordinary"),
   ):

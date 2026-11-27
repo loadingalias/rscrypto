@@ -144,16 +144,14 @@ def validate_catalog(catalog: dict) -> None:
   for name, preset in presets.items():
     if not re.fullmatch(r"[a-z0-9-]+/[a-z0-9-]+", name):
       raise CatalogError(f"invalid profile preset name: {name}")
-    if not isinstance(preset, dict) or set(preset) != {"bench", "case", "diagnostic"}:
-      raise CatalogError(f"profile preset {name} must contain bench, case, and diagnostic")
+    if not isinstance(preset, dict) or set(preset) != {"bench", "case"}:
+      raise CatalogError(f"profile preset {name} must contain bench and case")
     bench = benches.get(preset.get("bench"))
     if bench is None or bench["kind"] != "criterion":
       raise CatalogError(f"profile preset {name} references an unknown Criterion bench")
     case = preset.get("case")
     if not isinstance(case, str) or not case:
       raise CatalogError(f"profile preset {name} needs one exact case")
-    if not isinstance(preset.get("diagnostic"), bool):
-      raise CatalogError(f"profile preset {name} needs a Boolean diagnostic field")
 
   binaries = {bench["binary"] for bench in benches.values()}
   classes = catalog.get("case_classes")
