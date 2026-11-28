@@ -26,9 +26,12 @@ for example SHA-256 on Apple Silicon.
 It excludes the nightly-only POWER, IBM Z, and RISC-V backends from compilation.
 It does not promise to remove every accelerated backend from the binary.
 
-Detection runs once and is cached.
-Set capability overrides, and get process permissions such as Linux AMX authorization,
-before the first `platform::caps()` call.
+Builds with `std` or 64-bit atomics cache the first detection result.
+Other builds detect on each call and return `OverrideError::Unsupported` for capability overrides.
+Set a capability override or obtain Linux AMX permission before the first cached detection.
+For each capability set, start a fresh process and call `platform::expert::try_set_override` before using any primitive.
+An override accepts the portable profile or a subset of the capabilities on the detected architecture.
+An Intel host therefore cannot exercise AMD-specific dispatch. [Override validation](../src/platform/detect.rs)
 
 On Intel hybrid CPUs (Alder Lake through Arrow Lake), detection removes AVX-512 and AVX10
 even when CPUID reports them.
@@ -239,6 +242,9 @@ Use `rscrypto::platform` and the `introspect` example to inspect one build:
 ```bash
 cargo run --example introspect --features 'crc32,sha2,chacha20poly1305'
 ```
+
+The example prints the CRC-32C and SHA-256 kernels for 64, 4,096, and 1,048,576 bytes. It also prints the ChaCha20-Poly1305 backend.
+For a checksum, `checksum::introspect::kernel_for::<T>(len)` reads the production selection for that length. [Example source](../examples/introspect.rs)
 
 For target-specific timing claims, see [`constant-time.md`](constant-time.md).
 For performance evidence, see [`benchmarking.md`](benchmarking.md).

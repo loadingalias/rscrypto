@@ -1,8 +1,19 @@
 # API compatibility choices
 
-These choices retain existing caller contracts after the API review.
-Reopen them for a concrete caller requirement or correctness defect.
-A naming preference alone does not justify breaking callers or adding another synonym.
+This guide covers unreleased migrations and existing caller contracts.
+
+## Checksum dispatch changes since v0.13
+
+Remove `diag` from Cargo feature lists. Enable the primitive you inspect, such as `crc32` or `adler32`.
+Replace `checksum::diag` with `checksum::introspect`. Use `kernel_for::<T>(len)` to read the production selector for an input length in bytes.
+The detailed CRC-32 and CRC-64 reports retain the polynomial, length, architecture, and selected kernel.
+For Argon2, enable `argon2` and call `auth::argon2::active_kernel()` to read the selected compression kernel.
+
+Remove uses of `CrcForce`, `CrcConfig`, `Adler32Force`, `Adler32Config`, and their `config()` accessors.
+The CRC reports dropped `SelectionReason`, `reason`, and `effective_force`.
+The library no longer reads `RSCRYPTO_CRC*_FORCE` or `RSCRYPTO_ADLER32_FORCE`.
+To exercise a subset of the host's capabilities, set the mask before detection in a fresh process.
+[Platform selection](platforms.md#backend-selection) · [Checksum reports](../src/checksum/introspect.rs)
 
 ## Hash outputs and collection seeds
 
@@ -34,6 +45,6 @@ Their immutable values, units, and validation rules are documented at the method
 Renaming them or adding parallel getters would add migration work or duplicate API
 without changing those contracts.
 
-Keep `platform::get()` for the cached `Detected` value containing architecture
-and capabilities. Use `platform::caps()` or `platform::arch()` for one field.
+Keep `platform::get()` for the `Detected` value containing architecture and capabilities.
+Use `platform::caps()` or `platform::arch()` for one field.
 The existing names and initialization rules remain the caller contract.

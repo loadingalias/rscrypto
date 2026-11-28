@@ -91,8 +91,8 @@ Enable it by name.
 | `serde-secrets` | Also serializes secret keys and shared secrets. Use it only at an explicit key-storage boundary. |
 | `portable-only` | Uses portable Rust instead of accelerated backends, with the exceptions below. |
 
-Checksum, hash, and AEAD introspection use the corresponding primitive features.
-Library tests can call private kernels directly.
+Enable the corresponding checksum, hash, or AEAD feature to read its selected backend.
+Checksum reports use the production selector for the requested input length. [Checksum API migration](api-compatibility.md#checksum-dispatch-changes-since-v013)
 
 With `chacha20poly1305`, move a fresh key into `ChaCha20Poly1305SealingKey::new(key)`.
 Keep one sealing key per sender. Its `seal` methods return a unique 12-byte nonce with each ciphertext.

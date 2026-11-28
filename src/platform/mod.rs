@@ -59,7 +59,7 @@ pub use process::{ProcessOrigin, ProcessOriginUnavailable};
 
 /// Get detected CPU capabilities and architecture.
 ///
-/// Results are cached after first call.
+/// Builds with `std` or 64-bit atomics cache the first result.
 ///
 /// On Linux and Android x86_64, AMX capabilities are reported only when the
 /// process already has permission for tile state. Detection does not request

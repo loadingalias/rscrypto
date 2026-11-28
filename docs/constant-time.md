@@ -246,12 +246,11 @@ primitive needs a classification before the shared finding is accepted.
 The enforced roots follow the claims as written.
 The RSA sign and decrypt roots borrow a key that a setup entry imported,
 and they create their private scratch for each call.
-Key import, validation, release, and DER export run only in setup and diagnostic roots.
+Separate fixture entries import and release the RSA key. The retained `ct_entry_rsa_private_key_pkcs8_roundtrip` exercises key import, full validation, and DER export.
 The `rsa.private_key_material` root is the bounded same-width component-validation leaf
 that its claim names, which BINSEC and DudeCT also cover.
-The assembly harness retains `ct_entry_rsa_private_key_pkcs8_roundtrip` for import and export.
-That root is not a release equality root, so the public-length comparisons in import validation
-have source review but no linked-binary equality evidence; `public_len_comparison` in `ct.toml` counts them.
+The round-trip entry sits outside the release equality roots. Its import length comparisons have source review.
+`public_len_comparison` in `ct.toml` counts them.
 `unreachable_symbols` under `[asm_select_branch]` lists the import, validation, and release symbols.
 The scanner fails when the linked direct-call and tail-transfer closure of an enforced root reaches
 one of them, and when one of them is missing from the linked binary.
@@ -820,8 +819,9 @@ x86-64 Linux, Windows x86-64, RISC-V and IBM Z. `just ct-renew` compared each ta
   `0x100260` to `0x1001e0`. The SHA-256 initial state at `+20016`/`+20032` (now `+20080`/`+20096`) and the 64
   P-256 bytes at `+19920` (now `+19984`) are byte-identical in the two linked binaries.
 
-With the renewals, all four artifact sets scan with no stale waiver and no unwaived finding. The harness insertion
-also moved 43 waiver source references into `tools/ct-harness/src/lib.rs` by 27 lines; they were shifted with it.
+With the renewals, all four artifact sets scan with no stale waiver and no unwaived finding.
+The review also updated 43 source references after the harness change moved their lines by 27.
+[Harness at the reviewed revision](https://github.com/loadingalias/rscrypto/blob/6c6bbc7f2c272acc82e0019214d6fee7dbbc0569/tools/ct-harness/src/lib.rs)
 
 ### AES/TLS generated-code review (2026-11-02)
 
@@ -1768,11 +1768,14 @@ The table maps their input classes to the claims that retain coverage. [Original
 The compiler inventory now records 3,826 operations. The earlier composite signer change removed seven entries and added three.
 This cleanup renames the Argon2 kernel report and preserves the inventory count.
 
-The campaign starts one library test process for each selected timing case.
-The public BINSEC harness and the private library-test entries both use `portable-only`.
+DudeCT starts one native library test process for each selected timing case.
+BINSEC builds its public harness and private proof entries with `portable-only`.
+The x86-64 basepoint proof calls the AVX2 selector directly.
 
 Five additional ML-DSA cases have a diagnostic verdict only on POWER. Other targets still require them.
 The POWER qualification and its operand distributions appear under [Power and frequency channels](#power-and-frequency-channels).
+
+### HMAC verification and RSA qualification after v0.13
 
 The RISC-V binary at `604f6695` calls RSA functions that the earlier binary inlined.
 The table traces the seven earlier findings through those calls. Offsets are relative to their linked functions.
@@ -1800,7 +1803,7 @@ Three RSA branches return the opaque operation status permitted by `rsa.private_
 The campaign recorded 146 passing timing cases on POWER, 83 on IBM Z, and 80 on RISC-V.
 On each machine, a Rust test progress message interrupted the next result line. Each archive retained the complete sample set for that case.
 The remaining cases need measurements. Linux x86-64 and AArch64 completed four fixed-width equality proofs each before the private test executable failed to link.
-The public HMAC verification proofs and the x86-64 Ed25519 AVX2 basepoint selection proof remain open. Windows stopped during tool setup.
+That run stopped before public HMAC verification and the x86-64 Ed25519 AVX2 basepoint selection proof. Windows stopped during tool setup.
 [RISC-V timing archive](https://github.com/loadingalias/rscrypto/actions/runs/46075155382)
 
 At `2338424a`, AArch64 GNU completed 50 of 52 proofs. These include full and truncated public HMAC-SHA256 verification.
@@ -1810,8 +1813,9 @@ The model admits either initial DIT state and follows the production capability 
 x86-64 Linux completed eight proofs before its AVX2 library-test build stopped. These two jobs stopped before native timing.
 [GNU proof results](https://github.com/loadingalias/rscrypto/actions/runs/46088642577)
 
-Local BINSEC 0.11.1 proved both corrected AArch64 PBKDF2 drivers secure. Each completed three paths.
-The corrected x86-64 AVX2 Ed25519 selector completed its single path and passed. No path was cut or discontinued in these three proofs.
+Local BINSEC 0.11.1 reported both AArch64 PBKDF2 drivers secure on `de22881e`. Each completed three paths.
+The x86-64 AVX2 Ed25519 selector completed its single path and passed. All seven paths reached the intended endpoint.
+[Proof harness and scanner changes](https://github.com/loadingalias/rscrypto/commit/de22881e4f3d786e94863e2ebdd6438d7c7d9dbb)
 
 The Windows job linked the release binary. Its scanner stopped on `vextracti32x4` and `vbroadcasti32x4` in SHA-512.
 Scanning that binary with both instruction rules exposed 58 blocking branches. The review traced 56 distinct conditions and retired 76 stale primitive-scoped records.
@@ -1819,8 +1823,10 @@ Two conditions return the opaque RSA operation status. Invalid PKCS #1 v1.5 padd
 The updated records cover all 58 branches. The Windows job stopped before timing.
 [Windows release binary](https://github.com/loadingalias/rscrypto/actions/runs/46088642577/job/140809388670)
 
-POWER passed all 169 required timing cases, including 16 RSA cases. Its release report had zero blocking findings.
-[POWER results](https://github.com/loadingalias/rscrypto/actions/runs/46088642577/job/140809388665)
+On `2338424a`, POWER passed all 169 required timing cases and IBM Z passed all 174.
+Each lane passed 16 RSA cases and reported zero blocking findings. AArch64 musl passed its assembly scan.
+The x86-64 Linux, AArch64 GNU, and Windows results above provide no native timing measurements for that commit.
+[POWER results](https://github.com/loadingalias/rscrypto/actions/runs/46088642577/job/140809388665) · [IBM Z results](https://github.com/loadingalias/rscrypto/actions/runs/46088642577/job/140809388686) · [AArch64 results](https://github.com/loadingalias/rscrypto/actions/runs/46088642577/job/140809388700)
 
 ### ML-DSA
 
@@ -1863,7 +1869,7 @@ The digest selects the revealed leaves and chain lengths, and it depends on the 
 Random messages in both classes give that public work one distribution.
 No case covers import, hedged or pre-hash signing, or the other 11 sets.
 No linked-root closure or BINSEC kernel covers SLH-DSA.
-SLH-DSA has no timing claim until the CT campaign passes these cases on every lane.
+Promotion requires passing native timing cases on every required lane and linked assembly review of the key-generation and signing entry points.
 
 ## Native evidence by platform
 

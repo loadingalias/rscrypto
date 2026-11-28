@@ -2,7 +2,8 @@
 
 Run `just ct-test` to check the exporter and the report validation.
 Run timing cases through `just ct-dudect` or `just ct-full`.
-The release-profile library test calls the vendored runner for each selected case.
+Each selected case runs in a fresh process of the release-profile library test executable.
+The driver uses one test thread. This keeps test progress messages out of the timing results.
 
 ## HMAC host controls
 
@@ -45,6 +46,8 @@ The CSV columns are `benchname,sequence,class,runtime_ns`.
 ## Local runner patch
 
 `vendor/dudect-bencher` keeps the selected upstream 0.7.0 source and its licenses.
+The published crate includes the examples and changelog referenced by the upstream README.
+[Examples](https://docs.rs/crate/dudect-bencher/0.7.0/source/examples/) · [Changelog](https://docs.rs/crate/dudect-bencher/0.7.0/source/CHANGELOG.md)
 
 - `UPSTREAM.json` records the identity of the crate archive and the original file hashes.
 - Its `local_files` entries record the exact hashes of the three patched files: `src/ctbench.rs`

@@ -179,7 +179,7 @@ Passed checks:
   portable-only feature selections, respectively.
 - The internal evidence wrapper ran `cargo test --release --locked --no-default-features --features argon2,scrypt,phc-strings,diag --lib traits::ct::tests`:
   8 tests passed, including public guard entry, state restoration, and pure
-  proof leaves staying outside the guard.
+  proof leaves staying outside the guard. For the current build, omit `diag`. [Feature migration](api-compatibility.md#checksum-dispatch-changes-since-v013)
 - `cargo +1.100.0-beta.1 test --release --locked --no-default-features --features argon2,phc-strings --test phc_external_entropy`,
   repeated with `scrypt,phc-strings`: 2 tests passed per selection. The library
   selections enable neither `std` nor `getrandom`; the host test harness uses

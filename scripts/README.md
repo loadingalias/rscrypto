@@ -483,12 +483,12 @@ DudeCT prepares one binary, disassembly, symbol map, linker log,
 and provenance snapshot for each invocation, under `target/ct/<target>/<profile>/dudect/runs/<run>/shared/`.
 
 - The bundle is read-only after preparation.
-- Each `ct-full` case runs that binary and writes its own CSV, stdout, and report under `cases/<manifest-name>-<unique>/`.
+- Each `ct-full` case runs the release-profile library test in a fresh process with one test thread.
+  It writes its own CSV, stdout, and report under `cases/<manifest-name>-<unique>/`.
   Reports reference the shared files and their hashes; they do not copy them.
-- `ct-full` confirms a required case before it decides it when the screening |t| exceeds the threshold
-  or reaches `review_fraction` of it. The confirmation reruns the same binary with `sample_factor`
-  times the samples, in its own case directory. `[dudect_confirmation]` in `ct.toml` sets both values,
-  and [the constant-time policy](../docs/constant-time.md#dudect-decision) explains the decision.
+- A failed screening measurement fails the case. A passing required case needs confirmation when its absolute t-statistic reaches `review_fraction` of the threshold.
+  Confirmation uses the same binary, a fresh seed, and `sample_factor` times the samples. Both measurements must pass.
+  The manifest sets both values in `[dudect_confirmation]`. [Timing decision](../docs/constant-time.md#dudect-decision)
 - Standalone selection evidence is under the same run's `selection/` directory,
   with a small latest report at `dudect/dudect-report.json`.
 - A failed preparation or execution cannot reuse the measurements of an earlier run.

@@ -98,7 +98,7 @@ fn validate_override(value: Option<Detected>) -> Result<Option<Detected>, Overri
 
 /// Get detected CPU capabilities and architecture.
 ///
-/// Results are cached after first call.
+/// Builds with `std` or 64-bit atomics cache the first result.
 ///
 #[inline]
 #[must_use]

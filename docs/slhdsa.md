@@ -64,8 +64,9 @@ These checks cover every set unless the row names one.
 
 - **Timing.** `ct.toml` registers `signature.slhdsa` with a best-effort claim. Its DudeCT cases
   measure SHA2-128s key generation and deterministic signing, with a fixed against a random secret
-  key. SLH-DSA has no timing claim until the CT campaign passes them on every lane. No case covers
-  import, hedged or pre-hash signing, or the other sets.
+  key. Promotion requires both passing native timing cases and linked assembly review of those operations.
+  The cases cover neither key import nor hedged or pre-hash signing. The other 11 parameter sets have no timing case.
+  [Constant-time evidence](constant-time.md#slh-dsa)
 - **Stack and residue.** No native residue run covers Windows, a set other than SHA2-128s, or the
   `*_in` constructors, and no stack bound covers a set other than SHA2-128s.
 - **Targets.** POWER, IBM Z, and RISC-V run no small-set differentials or fuzzing. Windows AArch64

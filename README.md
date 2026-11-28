@@ -9,7 +9,7 @@
 One feature model controls all of them.
 Portable Rust is the reference implementation.
 SIMD and assembly backends make it faster on supported targets.
-Production builds do not depend on C, FFI, OpenSSL, or system libraries.
+The shipped crates compile no C or C++ code. CPU detection and optional operating-system randomness use platform services.
 
 The `rscrypto` crate supplies primitives.
 The companion [`rscrypto-rustls`](#tls-and-quic-provider) supplies TLS and QUIC cryptographic adapters.
@@ -119,8 +119,7 @@ It needs the `websocket-sha1` feature.
 No umbrella feature, including `full`, enables it.
 
 See [docs.rs](https://docs.rs/rscrypto) for exact types and methods.
-The [API compatibility notes](docs/api-compatibility.md) explain output types, collection seeds,
-and retained method names.
+The [API compatibility notes](docs/api-compatibility.md) cover checksum dispatch changes since v0.13, output types, collection seeds, and retained method names.
 The [cryptographic resilience guide](docs/cryptographic-resilience.md) explains security assumptions,
 migration boundaries, and the evidence to review when choosing stronger cryptography.
 
@@ -152,8 +151,8 @@ At compile time, the target sets which backends are available.
 With `std`, `rscrypto` also detects CPU features at run time and selects a backend.
 If no accelerated backend is available, the portable implementation runs.
 
-The [platform guide](docs/platforms.md) lists the supported targets.
-It also explains dispatch, `no_std` support, and the limits of `portable-only`.
+The [platform guide](docs/platforms.md) lists supported targets, `no_std` behavior, and the limits of `portable-only`.
+To see which kernel handles a given input length, run the [introspection example](docs/platforms.md#inspect-one-build).
 
 ## Assurance
 
