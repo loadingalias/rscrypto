@@ -1164,11 +1164,16 @@ macro_rules! impl_mlkem_profile_ops {
       ) -> Result<($ciphertext, $shared_secret), MlKemError> {
         let mut random = ZeroizingBytes::<{ $profile::ENCAPSULATION_RANDOM_SIZE }>::zeroed();
         fill_random(random.as_mut_array())?;
-        let (ciphertext, shared_secret) = $encapsulate_prepared(&self.arithmetic, self.key_hash(), random.as_array());
-        Ok((
-          $ciphertext::from_bytes(ciphertext),
-          $shared_secret::from_bytes(shared_secret),
-        ))
+        let mut ciphertext = $ciphertext([0; $ct_bytes]);
+        let mut shared_secret = $shared_secret([0; $shared_secret::LENGTH]);
+        $encapsulate_prepared(
+          &self.arithmetic,
+          self.key_hash(),
+          random.as_array(),
+          &mut ciphertext.0,
+          &mut shared_secret.0,
+        );
+        Ok((ciphertext, shared_secret))
       }
     }
     impl $prepared_decapsulation_key {
@@ -1181,11 +1186,14 @@ macro_rules! impl_mlkem_profile_ops {
       #[inline]
       #[must_use]
       pub fn decapsulate(&self, ciphertext: &$ciphertext) -> $shared_secret {
-        $shared_secret::from_bytes($decapsulate_prepared(
+        let mut shared_secret = $shared_secret([0; $shared_secret::LENGTH]);
+        $decapsulate_prepared(
           self.as_bytes(),
           &self.arithmetic,
           ciphertext.as_bytes(),
-        ))
+          &mut shared_secret.0,
+        );
+        shared_secret
       }
     }
     impl Kem for $profile {
@@ -1217,7 +1225,9 @@ macro_rules! impl_mlkem_profile_ops {
       ) -> Result<(Self::Ciphertext, Self::SharedSecret), Self::EncapsulationError> {
         let mut random = ZeroizingBytes::<{ Self::ENCAPSULATION_RANDOM_SIZE }>::zeroed();
         fill_random(random.as_mut_array())?;
-        let (ciphertext, shared_secret) = operations::encapsulate::<
+        let mut ciphertext = $ciphertext([0; $ct_bytes]);
+        let mut shared_secret = $shared_secret([0; $shared_secret::LENGTH]);
+        operations::encapsulate::<
           $k,
           $eta1_random_bytes,
           $dk_pke_bytes,
@@ -1227,18 +1237,21 @@ macro_rules! impl_mlkem_profile_ops {
           $dv,
           $poly_du_bytes,
           $poly_dv_bytes,
-        >(encapsulation_key.as_bytes(), random.as_array());
-        Ok((
-          $ciphertext::from_bytes(ciphertext),
-          $shared_secret::from_bytes(shared_secret),
-        ))
+        >(
+          encapsulation_key.as_bytes(),
+          random.as_array(),
+          &mut ciphertext.0,
+          &mut shared_secret.0,
+        );
+        Ok((ciphertext, shared_secret))
       }
 
       fn decapsulate(
         decapsulation_key: &Self::DecapsulationKey,
         ciphertext: &Self::Ciphertext,
       ) -> Result<Self::SharedSecret, Self::DecapsulationError> {
-        Ok($shared_secret::from_bytes(operations::decapsulate::<
+        let mut shared_secret = $shared_secret([0; $shared_secret::LENGTH]);
+        operations::decapsulate::<
           $k,
           $eta1_random_bytes,
           $dk_pke_bytes,
@@ -1252,7 +1265,9 @@ macro_rules! impl_mlkem_profile_ops {
         >(
           decapsulation_key.as_bytes(),
           ciphertext.as_bytes(),
-        )?))
+          &mut shared_secret.0,
+        );
+        Ok(shared_secret)
       }
     }
 
@@ -1427,16 +1442,15 @@ impl_mlkem_profile_ops!(
 // internal forms take them directly: they draw no randomness and cannot fail.
 #[cfg(feature = "x-wing")]
 impl MlKem768PreparedEncapsulationKey {
-  /// FIPS 203 ML-KEM.Encaps_internal with the coins `m`.
+  /// FIPS 203 ML-KEM.Encaps_internal with the coins `m`, written into
+  /// `ciphertext` and `shared`.
   pub(crate) fn encapsulate_internal(
     &self,
     m: &[u8; ML_KEM_ENCAPSULATION_RANDOM_SIZE],
-  ) -> (MlKem768Ciphertext, MlKem768SharedSecret) {
-    let (ciphertext, shared_secret) = operations::encapsulate_prepared_768(&self.arithmetic, self.key_hash(), m);
-    (
-      MlKem768Ciphertext::from_bytes(ciphertext),
-      MlKem768SharedSecret::from_bytes(shared_secret),
-    )
+    ciphertext: &mut [u8; MlKem768Ciphertext::LENGTH],
+    shared: &mut [u8; MlKem768SharedSecret::LENGTH],
+  ) {
+    operations::encapsulate_prepared_768(&self.arithmetic, self.key_hash(), m, ciphertext, shared);
   }
 }
 
@@ -1462,13 +1476,13 @@ impl MlKem768PreparedDecapsulationKey {
     );
   }
 
-  /// FIPS 203 ML-KEM.Decaps_internal of an encoded ciphertext.
-  pub(crate) fn decapsulate_internal(&self, ciphertext: &[u8; 1088]) -> MlKem768SharedSecret {
-    MlKem768SharedSecret::from_bytes(operations::decapsulate_prepared_768(
-      self.as_bytes(),
-      &self.arithmetic,
-      ciphertext,
-    ))
+  /// FIPS 203 ML-KEM.Decaps_internal of an encoded ciphertext, written into `shared`.
+  pub(crate) fn decapsulate_internal(
+    &self,
+    ciphertext: &[u8; MlKem768Ciphertext::LENGTH],
+    shared: &mut [u8; MlKem768SharedSecret::LENGTH],
+  ) {
+    operations::decapsulate_prepared_768(self.as_bytes(), &self.arithmetic, ciphertext, shared);
   }
 }
 

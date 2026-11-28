@@ -215,15 +215,20 @@ pub trait HpkeSuite: sealed::Sealed + Sized {
   #[must_use]
   fn derive_keypair_in<A: Allocator>(ikm: &[u8], alloc: A) -> Box<Self::PrivateKey, A>;
 
+  /// The all-zero encapsulation that [`Self::__encap`] overwrites.
+  #[doc(hidden)]
+  fn __empty_encapsulation() -> Self::Encapsulation;
+
   /// `Encap(pkR)` with the randomness from `fill_random`, writing the
-  /// shared secret into `shared_secret`.
+  /// encapsulation and the shared secret in place.
   #[doc(hidden)]
   fn __encap(
     public_key: &Self::PublicKey,
     fill_random: &mut impl FnMut(&mut [u8]) -> Result<(), HpkeError>,
+    encapsulation: &mut Self::Encapsulation,
     shared_secret: &mut [u8; SHARED_SECRET_SIZE],
     token: HpkeSuiteToken,
-  ) -> Result<Self::Encapsulation, HpkeError>;
+  ) -> Result<(), HpkeError>;
 
   /// `Decap(enc, skR)`, writing the shared secret into `shared_secret`.
   #[doc(hidden)]
@@ -250,10 +255,16 @@ pub trait HpkeSuite: sealed::Sealed + Sized {
     aad: &[u8],
     plaintext: &[u8],
     out: &mut [u8],
-    fill_random: impl FnMut(&mut [u8]) -> Result<(), HpkeError>,
+    mut fill_random: impl FnMut(&mut [u8]) -> Result<(), HpkeError>,
   ) -> Result<Self::Encapsulation, HpkeError> {
-    let (encapsulation, mut sender) = HpkeSender::<Self>::setup(public_key, info, fill_random)?;
-    sender.seal(aad, plaintext, out)?;
+    let mut encapsulation = Self::__empty_encapsulation();
+    // Borrow the context where `set_up` built it: `?` would move it out of the `Result`.
+    with_data_independent_timing(|| {
+      match &mut HpkeSender::<Self>::set_up(public_key, info, &mut fill_random, &mut encapsulation) {
+        Ok(sender) => sender.seal(aad, plaintext, out),
+        Err(error) => Err(*error),
+      }
+    })?;
     Ok(encapsulation)
   }
 
@@ -270,7 +281,12 @@ pub trait HpkeSuite: sealed::Sealed + Sized {
     ciphertext: &[u8],
     out: &mut [u8],
   ) -> Result<(), HpkeError> {
-    HpkeReceiver::<Self>::setup(encapsulation, private_key, info)?.open(aad, ciphertext, out)
+    with_data_independent_timing(
+      || match &mut HpkeReceiver::<Self>::set_up(encapsulation, private_key, info) {
+        Ok(receiver) => receiver.open(aad, ciphertext, out),
+        Err(error) => Err(*error),
+      },
+    )
   }
 }
 
@@ -303,23 +319,24 @@ fn key_schedule<S: HpkeSuite, R>(
 }
 
 impl<S: HpkeSuite> Context<S> {
-  /// The key schedule. The base nonce is written in place in the context.
+  /// The key schedule. No call borrows the context before it is complete, so
+  /// it is built in the return place.
   fn new(shared_secret: &[u8; SHARED_SECRET_SIZE], info: &[u8]) -> Self {
     key_schedule::<S, _>(shared_secret, info, |secret, suite_id, context| {
+      let mut base_nonce = ZeroizingBytes::<NONCE_SIZE>::zeroed();
+      labeled_expand(secret, suite_id, b"base_nonce", context, base_nonce.as_mut_array());
       let mut exporter_secret = ZeroizingBytes::<HASH_SIZE>::zeroed();
       labeled_expand(secret, suite_id, b"exp", context, exporter_secret.as_mut_array());
-      let mut schedule = Self {
+      Self {
         aead: S::__aead(
           |key| labeled_expand(secret, suite_id, b"key", context, key),
           HpkeSuiteToken(()),
         ),
-        base_nonce: [0; NONCE_SIZE],
+        base_nonce: *base_nonce.as_array(),
         exporter: HkdfSha256::from_prk(exporter_secret.as_array()),
         sequence: 0,
         origin: ProcessOrigin::current(),
-      };
-      labeled_expand(secret, suite_id, b"base_nonce", context, &mut schedule.base_nonce);
-      schedule
+      }
     })
   }
 
@@ -494,16 +511,27 @@ impl<S: HpkeSuite> HpkeSender<S> {
     info: &[u8],
     mut fill_random: impl FnMut(&mut [u8]) -> Result<(), HpkeError>,
   ) -> Result<(S::Encapsulation, Self), HpkeError> {
-    with_data_independent_timing(|| {
-      let mut shared_secret = ZeroizingBytes::<SHARED_SECRET_SIZE>::zeroed();
-      let encapsulation = S::__encap(
-        public_key,
-        &mut fill_random,
-        shared_secret.as_mut_array(),
-        HpkeSuiteToken(()),
-      )?;
-      Ok((encapsulation, Self(Context::new(shared_secret.as_array(), info))))
-    })
+    let mut encapsulation = S::__empty_encapsulation();
+    let sender = with_data_independent_timing(|| Self::set_up(public_key, info, &mut fill_random, &mut encapsulation))?;
+    Ok((encapsulation, sender))
+  }
+
+  /// [`Self::setup`] without its DIT scope, writing the encapsulation in place.
+  fn set_up(
+    public_key: &S::PublicKey,
+    info: &[u8],
+    fill_random: &mut impl FnMut(&mut [u8]) -> Result<(), HpkeError>,
+    encapsulation: &mut S::Encapsulation,
+  ) -> Result<Self, HpkeError> {
+    let mut shared_secret = ZeroizingBytes::<SHARED_SECRET_SIZE>::zeroed();
+    S::__encap(
+      public_key,
+      fill_random,
+      encapsulation,
+      shared_secret.as_mut_array(),
+      HpkeSuiteToken(()),
+    )?;
+    Ok(Self(Context::new(shared_secret.as_array(), info)))
   }
 
   /// Like [`Self::setup`], with the context built in place in memory from
@@ -522,18 +550,21 @@ impl<S: HpkeSuite> HpkeSender<S> {
     mut fill_random: impl FnMut(&mut [u8]) -> Result<(), HpkeError>,
     alloc: A,
   ) -> Result<(S::Encapsulation, Box<Self, A>), HpkeError> {
-    with_data_independent_timing(|| {
+    let mut encapsulation = S::__empty_encapsulation();
+    let sender = with_data_independent_timing(|| {
       let mut shared_secret = ZeroizingBytes::<SHARED_SECRET_SIZE>::zeroed();
-      let encapsulation = S::__encap(
+      S::__encap(
         public_key,
         &mut fill_random,
+        &mut encapsulation,
         shared_secret.as_mut_array(),
         HpkeSuiteToken(()),
       )?;
       let mut sender = Box::new_in(Self(Context::unkeyed()), alloc);
       sender.0.schedule(shared_secret.as_array(), info);
-      Ok((encapsulation, sender))
-    })
+      Ok(sender)
+    })?;
+    Ok((encapsulation, sender))
   }
 
   /// `Context.Seal(aad, pt)`: seal `plaintext` into `out` as `ciphertext || tag`.
@@ -581,16 +612,19 @@ impl<S: HpkeSuite> HpkeReceiver<S> {
   /// Returns [`HpkeError::DecapsulationFailed`] when the KEM rejects
   /// `encapsulation`.
   pub fn setup(encapsulation: &S::Encapsulation, private_key: &S::PrivateKey, info: &[u8]) -> Result<Self, HpkeError> {
-    with_data_independent_timing(|| {
-      let mut shared_secret = ZeroizingBytes::<SHARED_SECRET_SIZE>::zeroed();
-      S::__decap(
-        encapsulation,
-        private_key,
-        shared_secret.as_mut_array(),
-        HpkeSuiteToken(()),
-      )?;
-      Ok(Self(Context::new(shared_secret.as_array(), info)))
-    })
+    with_data_independent_timing(|| Self::set_up(encapsulation, private_key, info))
+  }
+
+  /// [`Self::setup`] without its DIT scope.
+  fn set_up(encapsulation: &S::Encapsulation, private_key: &S::PrivateKey, info: &[u8]) -> Result<Self, HpkeError> {
+    let mut shared_secret = ZeroizingBytes::<SHARED_SECRET_SIZE>::zeroed();
+    S::__decap(
+      encapsulation,
+      private_key,
+      shared_secret.as_mut_array(),
+      HpkeSuiteToken(()),
+    )?;
+    Ok(Self(Context::new(shared_secret.as_array(), info)))
   }
 
   /// Like [`Self::setup`], with the context built in place in memory from
@@ -813,12 +847,17 @@ mod x25519_aes128gcm {
 
     /// The ephemeral key is `DeriveKeyPair` of 32 random bytes, as RFC 9180
     /// section 7.1.3 allows, so test vectors run through this path.
+    fn __empty_encapsulation() -> X25519PublicKey {
+      X25519PublicKey::from_bytes([0; X25519PublicKey::LENGTH])
+    }
+
     fn __encap(
       public_key: &X25519PublicKey,
       fill_random: &mut impl FnMut(&mut [u8]) -> Result<(), HpkeError>,
+      encapsulation: &mut X25519PublicKey,
       shared_secret: &mut [u8; SHARED_SECRET_SIZE],
       _: HpkeSuiteToken,
-    ) -> Result<X25519PublicKey, HpkeError> {
+    ) -> Result<(), HpkeError> {
       let mut ikm = ZeroizingBytes::<{ X25519SecretKey::LENGTH }>::zeroed();
       fill_random(ikm.as_mut_array())?;
       let ephemeral = Self::derive_keypair(ikm.as_array());
@@ -828,7 +867,8 @@ mod x25519_aes128gcm {
         .diffie_hellman_into(public_key, dh.as_mut_array())
         .map_err(|_| HpkeError::EncapsulationFailed)?;
       extract_and_expand(dh.as_array(), &ephemeral.public, public_key, shared_secret);
-      Ok(ephemeral.public)
+      *encapsulation = ephemeral.public;
+      Ok(())
     }
 
     fn __decap(
@@ -940,12 +980,17 @@ mod xwing_chacha20poly1305 {
       key
     }
 
+    fn __empty_encapsulation() -> XWingCiphertext {
+      XWingCiphertext::from_bytes([0; XWingCiphertext::LENGTH])
+    }
+
     fn __encap(
       public_key: &XWingPreparedEncapsulationKey,
       fill_random: &mut impl FnMut(&mut [u8]) -> Result<(), HpkeError>,
+      encapsulation: &mut XWingCiphertext,
       shared_secret: &mut [u8; SHARED_SECRET_SIZE],
       _: HpkeSuiteToken,
-    ) -> Result<XWingCiphertext, HpkeError> {
+    ) -> Result<(), HpkeError> {
       let mut fill_error = None;
       public_key
         .encapsulate_into(
@@ -955,6 +1000,7 @@ mod xwing_chacha20poly1305 {
               XWingError::RandomGenerationFailed
             })
           },
+          encapsulation,
           shared_secret,
         )
         .map_err(|error| match (error, fill_error) {

@@ -555,18 +555,20 @@ impl XWingPreparedEncapsulationKey {
     &self,
     fill_random: impl FnMut(&mut [u8]) -> Result<(), XWingError>,
   ) -> Result<(XWingCiphertext, XWingSharedSecret), XWingError> {
+    let mut ciphertext = XWingCiphertext([0; XWingCiphertext::LENGTH]);
     let mut shared = XWingSharedSecret([0; XWingSharedSecret::LENGTH]);
-    let ciphertext = self.encapsulate_into(fill_random, &mut shared.0)?;
+    self.encapsulate_into(fill_random, &mut ciphertext, &mut shared.0)?;
     Ok((ciphertext, shared))
   }
 
-  /// [`Self::encapsulate`], writing the shared secret into `shared`, so that
-  /// no returned owner is moved.
+  /// [`Self::encapsulate`], writing the ciphertext and the shared secret in
+  /// place, so that no returned owner is moved. A failure writes neither.
   pub(crate) fn encapsulate_into(
     &self,
     mut fill_random: impl FnMut(&mut [u8]) -> Result<(), XWingError>,
+    ciphertext: &mut XWingCiphertext,
     shared: &mut [u8; XWingSharedSecret::LENGTH],
-  ) -> Result<XWingCiphertext, XWingError> {
+  ) -> Result<(), XWingError> {
     with_data_independent_timing(|| {
       let mut random = ZeroizingBytes::<ENCAPSULATION_RANDOM_SIZE>::zeroed();
       fill_random(random.as_mut_array())?;
@@ -581,21 +583,26 @@ impl XWingPreparedEncapsulationKey {
       ephemeral
         .diffie_hellman_into(&self.x25519, x25519_shared.as_mut_array())
         .map_err(|_| XWingError::InvalidEncapsulationKey)?;
-      let x25519_ciphertext = ephemeral.public_key();
-      let (ml_kem_ciphertext, ml_kem_shared) = self.ml_kem.encapsulate_internal(coins);
-
-      let mut ciphertext = [0u8; XWingCiphertext::LENGTH];
-      let (ml_kem_part, x25519_part) = ciphertext.split_at_mut(ML_KEM_CIPHERTEXT_SIZE);
-      ml_kem_part.copy_from_slice(ml_kem_ciphertext.as_bytes());
-      x25519_part.copy_from_slice(x25519_ciphertext.as_bytes());
+      let (ml_kem_part, x25519_part) = ciphertext
+        .0
+        .split_first_chunk_mut::<ML_KEM_CIPHERTEXT_SIZE>()
+        .expect("the ML-KEM part fits the ciphertext");
+      let x25519_part = x25519_part
+        .as_mut_array::<{ X25519PublicKey::LENGTH }>()
+        .expect("the X25519 part ends the ciphertext");
+      *x25519_part = *ephemeral.public_key().as_bytes();
+      let mut ml_kem_shared = ZeroizingBytes::<{ MlKem768SharedSecret::LENGTH }>::zeroed();
+      self
+        .ml_kem
+        .encapsulate_internal(coins, ml_kem_part, ml_kem_shared.as_mut_array());
       combine(
-        &ml_kem_shared,
+        ml_kem_shared.as_array(),
         x25519_shared.as_array(),
-        x25519_ciphertext.as_bytes(),
+        x25519_part,
         self.x25519.as_bytes(),
         shared,
       );
-      Ok(XWingCiphertext(ciphertext))
+      Ok(())
     })
   }
 }
@@ -682,9 +689,12 @@ impl XWingPreparedDecapsulationKey {
           x25519_shared.as_mut_array(),
         )
         .map_err(|_| XWingError::InvalidCiphertext)?;
-      let ml_kem_shared = self.ml_kem.decapsulate_internal(ciphertext.ml_kem());
+      let mut ml_kem_shared = ZeroizingBytes::<{ MlKem768SharedSecret::LENGTH }>::zeroed();
+      self
+        .ml_kem
+        .decapsulate_internal(ciphertext.ml_kem(), ml_kem_shared.as_mut_array());
       combine(
-        &ml_kem_shared,
+        ml_kem_shared.as_array(),
         x25519_shared.as_array(),
         x25519_ciphertext,
         self.x25519_public.as_bytes(),
@@ -737,20 +747,14 @@ fn encapsulation_key(ml_kem: &[u8; ML_KEM_ENCAPSULATION_KEY_SIZE], x25519: &X255
 
 /// `Combiner` of the draft, written into `shared`.
 fn combine(
-  ml_kem_shared: &MlKem768SharedSecret,
+  ml_kem_shared: &[u8; MlKem768SharedSecret::LENGTH],
   x25519_shared: &[u8; X25519SharedSecret::LENGTH],
   x25519_ciphertext: &[u8; X25519PublicKey::LENGTH],
   x25519_public: &[u8; X25519PublicKey::LENGTH],
   shared: &mut [u8; XWingSharedSecret::LENGTH],
 ) {
   secret::sha3_256(
-    &[
-      ml_kem_shared.as_bytes(),
-      x25519_shared,
-      x25519_ciphertext,
-      x25519_public,
-      LABEL,
-    ],
+    &[ml_kem_shared, x25519_shared, x25519_ciphertext, x25519_public, LABEL],
     shared,
   );
 }

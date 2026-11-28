@@ -36,9 +36,11 @@ compiler/register/spill copies remain separate limitations.
 
 On AArch64, `with_data_independent_timing` passes the result of each scope through a compiler
 barrier, so the result gets its own stack slot inside the call. When a scope returns a secret by
-value, as the sender and receiver `setup` of HPKE do, that slot is one more copy that nothing
-clears. The `*_in` forms return a pointer, so they make no such copy. The residue boards have no
-DIT, so no residue run measures this path.
+value, that slot is one more copy that nothing clears. ML-KEM encapsulation and decapsulation,
+X-Wing encapsulation, and the HPKE `*_in`, single-shot `seal`, and single-shot `open` forms write
+their results in place, so their scopes return no secret. The by-value HPKE `setup` of both roles
+still returns its context through the barrier, and so does each other scope that returns a key or
+a shared secret by value. The residue boards have no DIT, so no residue run measures this path.
 
 The Bao decoder clears its fixed input buffer on returned errors and on drop.
 A caught reader panic permanently disables decoding; the buffer is cleared
@@ -216,8 +218,8 @@ erasure of every compiler-created copy, register, or spill.
   `prepare_in`, `Kem::decapsulate`, and encapsulation left no byte of the ML-KEM secret vector, `z`,
   the X25519 secret key, the encapsulation coins, or the X25519 ephemeral key, on both boards and both
   backends. The scenarios now require this.
-- Encapsulation and decapsulation write the X25519 output and the combiner output in place, so no
-  moved owner holds them inside the call. They return the shared secret by value, which leaves a
+- Encapsulation and decapsulation write the X25519 output, the ML-KEM shared secret and ciphertext,
+  and the combiner output in place, so no moved owner holds them inside the call. They return the shared secret by value, which leaves a
   moved-from copy of it in the caller's frame: the same run found 16 to 32 bytes of it there for both
   operations, on both boards and both backends. Those scenarios are measured only. HPKE calls the
   in-place forms directly.
@@ -231,10 +233,13 @@ erasure of every compiler-created copy, register, or spill.
   states drop before the call returns. `psk_id_hash` and `info_hash` are public.
 - The KEM writes its shared secret into a zeroizing buffer in the setup frame, which clears on return.
 - The AEAD key is expanded directly into the key owner's zeroizing buffer and then into the AEAD
-  context. The key owner clears on drop. The base nonce is expanded in place in the context. The
-  exporter secret is expanded into a zeroizing buffer, and the context keeps its HKDF state: the PRK
-  and its HMAC inner and outer midstates, which `HkdfSha256` clears on drop. `setup_in` writes that
-  state in place with `set_prk`.
+  context. The key owner clears on drop. The base nonce and the exporter secret are expanded into
+  zeroizing buffers, and the context keeps the exporter's HKDF state: the PRK and its HMAC inner and
+  outer midstates, which `HkdfSha256` clears on drop. The by-value key schedule builds the context in
+  its return place. `setup_in` writes the base nonce and that state in place in the boxed context,
+  with `set_prk` for the HKDF state.
+- The KEM writes the encapsulation in place. The single-shot `seal` and `open` build the context
+  inside their DIT scope and use it where it was built, so no by-value move of it occurs.
 - DHKEM(X25519) draws its 32 random bytes into a zeroizing buffer. `DeriveKeyPair` writes the
   secret key in place in its owner, and the ephemeral key and the X25519 shared secret clear on drop.
   X-Wing `DeriveKeyPair` writes the SHAKE256 output in place in the seed owner and expands it in
