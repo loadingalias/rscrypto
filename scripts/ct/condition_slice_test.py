@@ -583,6 +583,7 @@ def effect_rule_regressions() -> None:
       (x86, "c4 42 7f cd f5\tvsha512msg2\t%ymm13, %ymm14", {"v13", "v14"}, {"v14"}),
       (x86, "62 f2 ed 48 7e c8\tvpermt2q\t%zmm0, %zmm2, %zmm1", {"v0", "v1", "v2"}, {"v1"}),
       (x86, "62 f3 fd 48 00 c1 4e\tvpermq\t$0x4e, %zmm1, %zmm0", {"v1"}, {"v0"}),
+      (x86, "62 03 7d 28 39 c1 01\tvextracti32x4\t$0x1, %ymm24, %xmm25", {"v24"}, {"v25"}),
       ("aarch64-unknown-linux-gnu", "ce7e83a3\tsha512h\tq3, q29, v30.2d", {"v3", "v29", "v30"}, {"v3"}),
       ("aarch64-unknown-linux-gnu", "cec08230\tsha512su0\tv16.2d, v17.2d", {"v16", "v17"}, {"v16"})]:
     row, = decode_lines(body(["1000: " + instruction]))
@@ -592,6 +593,13 @@ def effect_rule_regressions() -> None:
                                      "1003: c4 e3 7d 39 06 01\tvextracti128\t$1, %ymm0, (%rsi)"]))
   assert x86_memory(hint).accesses == (Access(False, "rsi"),)
   assert x86_memory(extract).accesses == (Access(True, "rsi", width=16),)
+  store, broadcast = decode_lines(body([
+    "1000: 62 f3 7d 48 39 43 04 02\tvextracti32x4\t$0x2, %zmm0, 0x40(%rbx)",
+    "1008: 62 42 7d 28 5a 04 17\tvbroadcasti32x4\t(%r15,%rdx), %ymm24",
+  ]))
+  assert x86_memory(store).accesses == (Access(True, "rbx", displacement=64, width=16),)
+  assert x86_memory(broadcast).accesses == (Access(False, "r15", "rdx", width=16),)
+  assert isa_effects(x86)(broadcast, "") == Effects(frozenset({"r15", "rdx"}), frozenset({"v24"}), load=True)
 
   # RV64 Zknh reads rs1 and writes rd. A write to x0 cannot change the branch input.
   for opcode, mnemonic in enumerate(("sha512sum0", "sha512sum1", "sha512sig0", "sha512sig1"), 0x104):

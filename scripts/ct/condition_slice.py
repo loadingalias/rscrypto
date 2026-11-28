@@ -135,7 +135,7 @@ X86_VECTOR = re.compile(
   r"|vpcmp(?:eq|lt|le|neq|nlt|nle)u[bwdq]|v?ps(?:ll|rl|ra)[wdq]|v?ps(?:ll|rl)dq|v?punpck[lh](?:bw|wd|dq|qdq)"
   r"|v?pack[us]s(?:wb|dw)|v?pshuf(?:b|d|lw|hw)|v?palignr|v?pblendw|v?shufp[sd]|valign[dq]|vpternlog[dq]"
   r"|vpmadd52[lh]uq|v?pinsr[bwdq]|vinsert[if](?:128|32x4|64x2|32x8|64x4)|v?pextr[bwdq]|v?pmovmskb"
-  r"|vpbroadcast[bwdq]|vbroadcasti128|vextracti128|vperm2i128|vpermq|vpermt2q|vpblendd|vprolq"
+  r"|vpbroadcast[bwdq]|vbroadcasti(?:128|32x4)|vextracti(?:128|32x4)|vperm2i128|vpermq|vpermt2q|vpblendd|vprolq"
   r"|sha256(?:rnds2|msg1|msg2)|vsha512(?:rnds2|msg1|msg2)"
   # Mask-register moves and logic (AVX-512).
   r"|kmov[bwdq]|knot[bwdq]|k(?:and|andn|or|xor|xnor|add)[bwdq]|kunpck(?:bw|wd|dq)|kshift[lr][bwdq]")
@@ -959,7 +959,8 @@ def immediate(text: str) -> int | None:
 X86_MEMORY = re.compile(r"^(?:%[a-z]s:)?(?P<displacement>-?(?:0x)?[0-9a-f]+)?\((?P<base>%[a-z0-9]+)?"
                         r"(?:,\s*(?P<index>%[a-z0-9]+)?(?:,\s*\d+)?)?\)$")
 X86_SUFFIX_WIDTH = {"b": 1, "w": 2, "l": 4, "q": 8}
-X86_STORE_ONLY = {"mov", "movabs", "set", "movnti", "vextracti128"}
+X86_EXTRACT_128 = {"vextracti128", "vextracti32x4"}
+X86_STORE_ONLY = {"mov", "movabs", "set", "movnti"} | X86_EXTRACT_128
 X86_LOAD_ONLY = X86_COMPARES | {"movzx", "movsx", "movsxd", "push", "imul", "mul", "div", "idiv", "crc32", "popcnt",
                                 "lzcnt", "tzcnt", "bsf", "bsr", "cmov", "andn", "bextr", "bzhi", "pext", "pdep", "mulx"}
 X86_STRING = re.compile(r"^(?:stos|movs|cmps|scas|lods)[bwlq]?$")
@@ -987,7 +988,7 @@ def x86_element_width(mnemonic: str, operands: list[str]) -> int | None:
     return vector // int(embedded.group(1)) or None
   if mnemonic in {"movddup", "vmovddup"} and operands[-1:] and operands[-1].startswith("%xmm"):
     return 8
-  if mnemonic == "vextracti128":
+  if mnemonic in X86_EXTRACT_128:
     return 16
   if match := X86_BROADCAST.fullmatch(mnemonic):
     integer, floating, lane = match.groups()

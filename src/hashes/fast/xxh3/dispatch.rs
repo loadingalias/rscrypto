@@ -67,15 +67,10 @@ struct ActiveDispatch {
 static ACTIVE: OnceCache<ActiveDispatch> = OnceCache::new();
 
 #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
-// Zen5 measurements show AVX-512 startup cost losing badly for XXH3-64 at 256B/1KiB,
-// while larger buffers amortize it. Keep this limited to 64-bit long paths.
-const ZEN5_XXH3_64_AVX2_LONG_MAX: usize = 1024;
-
-#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 #[inline(always)]
-fn use_zen5_xxh3_64_avx2_short_long(len: usize) -> bool {
-  len <= ZEN5_XXH3_64_AVX2_LONG_MAX
-    && crate::platform::caps().has(crate::platform::caps::x86::AMD_ZEN5 | crate::platform::caps::x86::AVX2)
+fn use_zen5_xxh3_64_avx2_short_long(len: usize, caps: impl FnOnce() -> Caps) -> bool {
+  // Zen 5 favors AVX2 for 64-bit long hashes through 1 KiB. Larger inputs skip capability detection here.
+  len <= 1024 && caps().has(crate::platform::caps::x86::AMD_ZEN5 | crate::platform::caps::x86::AVX2)
 }
 
 #[inline]
@@ -138,9 +133,7 @@ fn kernel_id64_for_len(long_id: Xxh3KernelId, caps: Caps, len: usize) -> Xxh3Ker
   }
 
   #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
-  if len <= ZEN5_XXH3_64_AVX2_LONG_MAX
-    && caps.has(crate::platform::caps::x86::AMD_ZEN5 | crate::platform::caps::x86::AVX2)
-  {
+  if use_zen5_xxh3_64_avx2_short_long(len, || caps) {
     return Xxh3KernelId::Avx2;
   }
 
@@ -256,7 +249,7 @@ pub(crate) fn hash64_with_seed(seed: u64, data: &[u8]) -> u64 {
 ))]
 #[inline(always)]
 fn hash64_long_default(data: &[u8]) -> u64 {
-  if use_zen5_xxh3_64_avx2_short_long(data.len()) {
+  if use_zen5_xxh3_64_avx2_short_long(data.len(), crate::platform::caps) {
     super::x86_64_avx2::xxh3_64_long_default(data)
   } else {
     super::x86_64_avx512::xxh3_64_long_default(data)
@@ -330,7 +323,7 @@ fn hash64_long_default(data: &[u8]) -> u64 {
 ))]
 #[inline(always)]
 fn hash64_long(seed: u64, data: &[u8]) -> u64 {
-  if use_zen5_xxh3_64_avx2_short_long(data.len()) {
+  if use_zen5_xxh3_64_avx2_short_long(data.len(), crate::platform::caps) {
     super::x86_64_avx2::xxh3_64_long(data, seed)
   } else {
     super::x86_64_avx512::xxh3_64_long(data, seed)
@@ -400,7 +393,7 @@ fn hash64_long(seed: u64, data: &[u8]) -> u64 {
 fn hash64_long_runtime(seed: u64, data: &[u8]) -> u64 {
   #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   {
-    if use_zen5_xxh3_64_avx2_short_long(data.len()) {
+    if use_zen5_xxh3_64_avx2_short_long(data.len(), crate::platform::caps) {
       return super::x86_64_avx2::xxh3_64_long(data, seed);
     }
   }

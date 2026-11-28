@@ -1803,6 +1803,25 @@ The remaining cases need measurements. Linux x86-64 and AArch64 completed four f
 The public HMAC verification proofs and the x86-64 Ed25519 AVX2 basepoint selection proof remain open. Windows stopped during tool setup.
 [RISC-V timing archive](https://github.com/loadingalias/rscrypto/actions/runs/46075155382)
 
+At `2338424a`, AArch64 GNU completed 50 of 52 proofs. These include full and truncated public HMAC-SHA256 verification.
+Both PBKDF2 proofs stopped at the Linux `getauxval` call. The solver starts at the operation and skips the dynamic loader.
+The proof harness now supplies both public Linux capability words. It models the three DIT register instructions that its AArch64 decoder lacks.
+The model admits either initial DIT state and follows the production capability check, enable, and restore.
+x86-64 Linux completed eight proofs before its AVX2 library-test build stopped. These two jobs stopped before native timing.
+[GNU proof results](https://github.com/loadingalias/rscrypto/actions/runs/46088642577)
+
+Local BINSEC 0.11.1 proved both corrected AArch64 PBKDF2 drivers secure. Each completed three paths.
+The corrected x86-64 AVX2 Ed25519 selector completed its single path and passed. No path was cut or discontinued in these three proofs.
+
+The Windows job linked the release binary. Its scanner stopped on `vextracti32x4` and `vbroadcasti32x4` in SHA-512.
+Scanning that binary with both instruction rules exposed 58 blocking branches. The review traced 56 distinct conditions and retired 76 stale primitive-scoped records.
+Two conditions return the opaque RSA operation status. Invalid PKCS #1 v1.5 padding still produces an implicit-rejection result.
+The updated records cover all 58 branches. The Windows job stopped before timing.
+[Windows release binary](https://github.com/loadingalias/rscrypto/actions/runs/46088642577/job/140809388670)
+
+POWER passed all 169 required timing cases, including 16 RSA cases. Its release report had zero blocking findings.
+[POWER results](https://github.com/loadingalias/rscrypto/actions/runs/46088642577/job/140809388665)
+
 ### ML-DSA
 
 ML-DSA has a separate required boundary, `signature.mldsa.secret_kernels`.

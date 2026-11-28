@@ -1,5 +1,22 @@
 use core::ptr;
 
+// The AArch64 Linux loader supplies both public capability words before process startup.
+#[cfg(all(target_arch = "aarch64", target_os = "linux"))]
+#[unsafe(no_mangle)]
+static mut CT_BINSEC_LINUX_HWCAPS: [core::ffi::c_ulong; 2] = [0; 2];
+
+#[cfg(all(target_arch = "aarch64", target_os = "linux"))]
+#[unsafe(no_mangle)]
+extern "C" fn getauxval(kind: core::ffi::c_ulong) -> core::ffi::c_ulong {
+  let index = match kind {
+    16 => 0, // AT_HWCAP
+    26 => 1, // AT_HWCAP2
+    _ => return 0,
+  };
+  // SAFETY: The two indices select initialized words. BINSEC sets their public values before entering the operation.
+  unsafe { ptr::addr_of!(CT_BINSEC_LINUX_HWCAPS).cast::<core::ffi::c_ulong>().add(index).read_volatile() }
+}
+
 #[unsafe(no_mangle)]
 #[inline(never)]
 /// C-compatible volatile byte fill for the analysis harness.

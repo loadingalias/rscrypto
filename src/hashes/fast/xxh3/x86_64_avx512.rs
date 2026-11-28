@@ -10,10 +10,7 @@
 
 use core::arch::x86_64::*;
 
-use super::{
-  ACC_NB, DEFAULT_SECRET, DEFAULT_SECRET_SIZE, INITIAL_ACC, PRIME32_1, PRIME64_1, PRIME64_2, SECRET_CONSUME_RATE,
-  SECRET_LASTACC_START, SECRET_MERGEACCS_START, STRIPE_LEN,
-};
+use super::{ACC_NB, DEFAULT_SECRET_SIZE, PRIME32_1, SECRET_CONSUME_RATE, STRIPE_LEN};
 
 /// Shuffle mask: swap 32-bit pairs within each 64-bit lane.
 ///
@@ -241,117 +238,125 @@ pub(crate) unsafe fn stream_accumulate(
   }
 }
 
-#[target_feature(enable = "avx512f")]
-/// # Safety
-///
-/// The current CPU must support AVX-512F, and `input` must contain more than
-/// 240 bytes.
-unsafe fn hash_long_internal_loop(input: &[u8], secret: &[u8; DEFAULT_SECRET_SIZE]) -> [u64; ACC_NB] {
-  // SAFETY: AVX-512F available via target_feature. Input/secret bounds checked
-  // by caller.
-  unsafe {
-    let mut acc = load_acc(&INITIAL_ACC);
+// AVX2-only builds use AVX2 for one-shot hashing. Streaming can still select AVX-512.
+core::cfg_select! {
+  any(all(test, not(miri)), target_feature = "avx512f", not(target_feature = "avx2")) => {
+    use super::{DEFAULT_SECRET, INITIAL_ACC, PRIME64_1, PRIME64_2, SECRET_LASTACC_START, SECRET_MERGEACCS_START};
 
-    let nb_stripes = secret.len().strict_sub(STRIPE_LEN).strict_div(SECRET_CONSUME_RATE);
-    let block_len = STRIPE_LEN.strict_mul(nb_stripes);
-    let nb_blocks = input.len().strict_sub(1).strict_div(block_len);
+    #[target_feature(enable = "avx512f")]
+    /// # Safety
+    ///
+    /// The current CPU must support AVX-512F, and `input` must contain more than
+    /// 240 bytes.
+    unsafe fn hash_long_internal_loop(input: &[u8], secret: &[u8; DEFAULT_SECRET_SIZE]) -> [u64; ACC_NB] {
+      // SAFETY: AVX-512F available via target_feature. Input/secret bounds checked
+      // by caller.
+      unsafe {
+        let mut acc = load_acc(&INITIAL_ACC);
 
-    // Each block pointer stays within `input`: `nb_blocks` full blocks end
-    // before its last byte.
-    let mut block = input.as_ptr();
-    for _ in 0..nb_blocks {
-      acc = accumulate_stripes(acc, block, secret.as_ptr(), nb_stripes);
-      scramble_acc(&mut acc, secret.as_ptr().add(secret.len().strict_sub(STRIPE_LEN)));
-      block = block.add(block_len);
+        let nb_stripes = secret.len().strict_sub(STRIPE_LEN).strict_div(SECRET_CONSUME_RATE);
+        let block_len = STRIPE_LEN.strict_mul(nb_stripes);
+        let nb_blocks = input.len().strict_sub(1).strict_div(block_len);
+
+        // Each block pointer stays within `input`: `nb_blocks` full blocks end
+        // before its last byte.
+        let mut block = input.as_ptr();
+        for _ in 0..nb_blocks {
+          acc = accumulate_stripes(acc, block, secret.as_ptr(), nb_stripes);
+          scramble_acc(&mut acc, secret.as_ptr().add(secret.len().strict_sub(STRIPE_LEN)));
+          block = block.add(block_len);
+        }
+
+        // Remaining stripes in final partial block
+        let nb_stripes_final = input
+          .len()
+          .strict_sub(1)
+          .strict_sub(block_len.strict_mul(nb_blocks))
+          .strict_div(STRIPE_LEN);
+        acc = accumulate_stripes(acc, block, secret.as_ptr(), nb_stripes_final);
+
+        // Last stripe (may overlap with previous)
+        acc = _mm512_add_epi64(
+          acc,
+          stripe_term(
+            input.as_ptr().add(input.len().strict_sub(STRIPE_LEN)),
+            secret
+              .as_ptr()
+              .add(secret.len().strict_sub(STRIPE_LEN).strict_sub(SECRET_LASTACC_START)),
+          ),
+        );
+
+        store_acc(acc)
+      }
     }
 
-    // Remaining stripes in final partial block
-    let nb_stripes_final = input
-      .len()
-      .strict_sub(1)
-      .strict_sub(block_len.strict_mul(nb_blocks))
-      .strict_div(STRIPE_LEN);
-    acc = accumulate_stripes(acc, block, secret.as_ptr(), nb_stripes_final);
+    // Top-level kernel functions (safe wrappers)
 
-    // Last stripe (may overlap with previous)
-    acc = _mm512_add_epi64(
-      acc,
-      stripe_term(
-        input.as_ptr().add(input.len().strict_sub(STRIPE_LEN)),
+    /// Long-path entry point (>240B) — no ≤240B branches.
+    pub(crate) fn xxh3_64_long_default(input: &[u8]) -> u64 {
+      // SAFETY: Dispatcher verifies AVX-512F before selecting this kernel.
+      let acc = unsafe { hash_long_internal_loop(input, &DEFAULT_SECRET) };
+      super::merge_accs(
+        &acc,
+        &DEFAULT_SECRET,
+        SECRET_MERGEACCS_START,
+        (input.len() as u64).wrapping_mul(PRIME64_1),
+      )
+    }
+
+    pub(crate) fn xxh3_64_long(input: &[u8], seed: u64) -> u64 {
+      if seed == 0 {
+        xxh3_64_long_default(input)
+      } else {
+        let secret = super::custom_default_secret(seed);
+        // SAFETY: Dispatcher verifies AVX-512F before selecting this kernel.
+        let acc = unsafe { hash_long_internal_loop(input, &secret) };
+        super::merge_accs(
+          &acc,
+          &secret,
+          SECRET_MERGEACCS_START,
+          (input.len() as u64).wrapping_mul(PRIME64_1),
+        )
+      }
+    }
+
+    /// Long-path entry point (>240B) — no ≤240B branches.
+    pub(crate) fn xxh3_128_long_default(input: &[u8]) -> u128 {
+      // SAFETY: Dispatcher verifies AVX-512F before selecting this kernel.
+      let acc = unsafe { hash_long_internal_loop(input, &DEFAULT_SECRET) };
+      xxh3_128_long_finalize(&acc, &DEFAULT_SECRET, input.len())
+    }
+
+    pub(crate) fn xxh3_128_long(input: &[u8], seed: u64) -> u128 {
+      if seed == 0 {
+        xxh3_128_long_default(input)
+      } else {
+        let secret = super::custom_default_secret(seed);
+        // SAFETY: Dispatcher verifies AVX-512F before selecting this kernel.
+        let acc = unsafe { hash_long_internal_loop(input, &secret) };
+        xxh3_128_long_finalize(&acc, &secret, input.len())
+      }
+    }
+
+    #[inline(always)]
+    fn xxh3_128_long_finalize(acc: &[u64; ACC_NB], secret: &[u8], len: usize) -> u128 {
+      let lo = super::merge_accs(
+        acc,
+        secret,
+        SECRET_MERGEACCS_START,
+        (len as u64).wrapping_mul(PRIME64_1),
+      );
+      let hi = super::merge_accs(
+        acc,
+        secret,
         secret
-          .as_ptr()
-          .add(secret.len().strict_sub(STRIPE_LEN).strict_sub(SECRET_LASTACC_START)),
-      ),
-    );
-
-    store_acc(acc)
+          .len()
+          .strict_sub(ACC_NB.strict_mul(core::mem::size_of::<u64>()))
+          .strict_sub(SECRET_MERGEACCS_START),
+        !(len as u64).wrapping_mul(PRIME64_2),
+      );
+      (lo as u128) | ((hi as u128) << 64)
+    }
   }
-}
-
-// Top-level kernel functions (safe wrappers)
-
-/// Long-path entry point (>240B) — no ≤240B branches.
-pub(crate) fn xxh3_64_long_default(input: &[u8]) -> u64 {
-  // SAFETY: Dispatcher verifies AVX-512F before selecting this kernel.
-  let acc = unsafe { hash_long_internal_loop(input, &DEFAULT_SECRET) };
-  super::merge_accs(
-    &acc,
-    &DEFAULT_SECRET,
-    SECRET_MERGEACCS_START,
-    (input.len() as u64).wrapping_mul(PRIME64_1),
-  )
-}
-
-pub(crate) fn xxh3_64_long(input: &[u8], seed: u64) -> u64 {
-  if seed == 0 {
-    xxh3_64_long_default(input)
-  } else {
-    let secret = super::custom_default_secret(seed);
-    // SAFETY: Dispatcher verifies AVX-512F before selecting this kernel.
-    let acc = unsafe { hash_long_internal_loop(input, &secret) };
-    super::merge_accs(
-      &acc,
-      &secret,
-      SECRET_MERGEACCS_START,
-      (input.len() as u64).wrapping_mul(PRIME64_1),
-    )
-  }
-}
-
-/// Long-path entry point (>240B) — no ≤240B branches.
-pub(crate) fn xxh3_128_long_default(input: &[u8]) -> u128 {
-  // SAFETY: Dispatcher verifies AVX-512F before selecting this kernel.
-  let acc = unsafe { hash_long_internal_loop(input, &DEFAULT_SECRET) };
-  xxh3_128_long_finalize(&acc, &DEFAULT_SECRET, input.len())
-}
-
-pub(crate) fn xxh3_128_long(input: &[u8], seed: u64) -> u128 {
-  if seed == 0 {
-    xxh3_128_long_default(input)
-  } else {
-    let secret = super::custom_default_secret(seed);
-    // SAFETY: Dispatcher verifies AVX-512F before selecting this kernel.
-    let acc = unsafe { hash_long_internal_loop(input, &secret) };
-    xxh3_128_long_finalize(&acc, &secret, input.len())
-  }
-}
-
-#[inline(always)]
-fn xxh3_128_long_finalize(acc: &[u64; ACC_NB], secret: &[u8], len: usize) -> u128 {
-  let lo = super::merge_accs(
-    acc,
-    secret,
-    SECRET_MERGEACCS_START,
-    (len as u64).wrapping_mul(PRIME64_1),
-  );
-  let hi = super::merge_accs(
-    acc,
-    secret,
-    secret
-      .len()
-      .strict_sub(ACC_NB.strict_mul(core::mem::size_of::<u64>()))
-      .strict_sub(SECRET_MERGEACCS_START),
-    !(len as u64).wrapping_mul(PRIME64_2),
-  );
-  (lo as u128) | ((hi as u128) << 64)
+  _ => {}
 }

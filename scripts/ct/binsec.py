@@ -358,6 +358,17 @@ def binsec_script(
       secret_lines.append(f"secret global {secret['name']}")
 
   public_lines = []
+  if "CT_BINSEC_LINUX_HWCAPS" in symbols:
+    # The loader supplies the public capability words. The caller can enter with either PSTATE.DIT value.
+    # UNISIM 0.0.14 cannot decode the three DIT instructions in DataIndependentTiming.
+    # MRS returns PSTATE.DIT in bit 24 of X8. Each MSR immediate writes only the one-bit state.
+    public_lines.extend([
+      "public global CT_BINSEC_LINUX_HWCAPS",
+      "pstate_dit<1> := nondet",
+      "replace opcode a8 42 3b d5 by x8 := (uext64 pstate_dit) lsl 24; end",
+      "replace opcode 5f 41 03 d5 by pstate_dit := 1; end",
+      "replace opcode 5f 40 03 d5 by pstate_dit := 0; end",
+    ])
   for public in kernel.get("public", []):
     if public.get("kind") == "global":
       public_lines.append(f"public global {public['name']}")
